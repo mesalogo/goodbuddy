@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next'
 import type {
   DocumentParsingDiagnostic,
   DocumentOcrModelCatalogViewEntry,
-  DocumentOcrModelOperation,
   DocumentParsingSettings,
   DocumentParsingSnapshot,
   DocumentParsingTestPurpose
@@ -35,6 +34,7 @@ import {
   SettingsCategoryHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
+import { modelOperationPercent } from './model-download-presentation'
 
 type DocumentParsingSettingsSectionProps = {
   onNotify?: (notification: AppNotificationInput) => void
@@ -53,17 +53,6 @@ function catalogSize(entry: DocumentOcrModelCatalogViewEntry): number {
     (total, file) => total + file.size,
     0
   )
-}
-
-function progressPercent(
-  operation: DocumentOcrModelOperation
-): number | undefined {
-  return operation.totalBytes && operation.totalBytes > 0
-    ? Math.min(
-        100,
-        (operation.completedBytes / operation.totalBytes) * 100
-      )
-    : undefined
 }
 
 function StatusRow({
@@ -486,7 +475,7 @@ export function DocumentParsingSettingsSection({
     (operation) => operation.modelId === draft.localOcrModelId
   )
   const modelProgress = modelOperation
-    ? progressPercent(modelOperation)
+    ? modelOperationPercent(modelOperation)
     : undefined
   const modelDownloadAvailability = model?.downloadAvailability.find(
     (availability) =>

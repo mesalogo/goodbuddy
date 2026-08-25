@@ -155,6 +155,11 @@ export const embeddingModelSnapshotSchema = z
 export type EmbeddingModelSnapshot = z.infer<
   typeof embeddingModelSnapshotSchema
 >
+export const embeddingModelProgressSnapshotSchema =
+  embeddingModelSnapshotSchema.pick({ operations: true })
+export type EmbeddingModelProgressSnapshot = z.infer<
+  typeof embeddingModelProgressSnapshotSchema
+>
 
 export const embeddingModelActionInputSchema = z
   .object({ modelId: embeddingModelIdSchema })

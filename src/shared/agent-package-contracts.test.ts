@@ -10,7 +10,7 @@ import {
 const digest = 'a'.repeat(64)
 
 function catalogEntry() {
-  const version = '0.11.2-e2e.13'
+  const version = '0.11.2'
   const archive = agentPackageArchiveName(version, 'x64')
   return {
     format: 'goodbuddy-agent-package',
@@ -51,7 +51,7 @@ describe('Agent package contracts', () => {
   it('binds each catalog archive name to its signed identity', () => {
     expect(agentPackageCatalogEntrySchema.parse(catalogEntry()))
       .toMatchObject({
-        version: '0.11.2-e2e.13',
+        version: '0.11.2',
         architecture: 'x64'
       })
     expect(() =>

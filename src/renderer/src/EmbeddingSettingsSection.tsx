@@ -1,17 +1,24 @@
 import {
   Activity,
+  CheckCircle2,
   Download,
   FlaskConical,
   Plus,
+  Square,
   Trash2,
-  Upload,
-  X
+  Upload
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type {
-  EmbeddingDiagnosticResult
+  EmbeddingDiagnosticResult,
+  EmbeddingModelSnapshot
 } from '../../shared/embedding-contracts'
 import { formatMediumDateTime } from './locale-formatters'
+import {
+  formatModelPackageBytes,
+  modelOperationPercent
+} from './model-download-presentation'
 
 export interface EmbeddingConnectionPresentation {
   id: string
@@ -25,7 +32,6 @@ export interface EmbeddingConnectionPresentation {
   clearApiKey?: boolean
   statusText?: string
   installed?: boolean
-  operationActive?: boolean
 }
 
 export interface EmbeddingSettingsSectionProps {
@@ -34,6 +40,11 @@ export interface EmbeddingSettingsSectionProps {
   selectedConnectionId?: string
   diagnostic?: EmbeddingDiagnosticResult | null
   diagnosticRunning?: boolean
+  models?: EmbeddingModelSnapshot
+  pendingOperation?: {
+    modelId: string
+    kind: EmbeddingModelSnapshot['operations'][number]['kind']
+  }
   enabled: boolean
   secureStorageAvailable: boolean
   busy?: boolean
@@ -50,7 +61,33 @@ export interface EmbeddingSettingsSectionProps {
   onCancelBuiltin: (modelId: string) => void
   onImportBuiltin: (modelId: string) => void
   onRemoveBuiltin: (modelId: string) => void
+  onOpenModelDownloadSourceSettings?: () => void
   onTestConnection: (connectionId: string) => void
+}
+
+function operationLabel(
+  operation: EmbeddingModelSnapshot['operations'][number],
+  t: TFunction<'settingsSections'>
+): string {
+  if (operation.phase === 'installing') {
+    return t('embedding.operations.installing')
+  }
+  if (operation.phase === 'preparing') {
+    return operation.kind === 'import'
+      ? t('embedding.operations.preparingImport')
+      : t('embedding.operations.preparingDownloadFrom', {
+          source: t(
+            `modelDownloadSources.${operation.downloadSource}`
+          )
+        })
+  }
+  return operation.kind === 'import'
+    ? t('embedding.operations.importing')
+    : t('embedding.operations.downloadingFrom', {
+        source: t(
+          `modelDownloadSources.${operation.downloadSource}`
+        )
+      })
 }
 
 function embeddingEndpointDestination(endpoint: string | undefined):
@@ -128,6 +165,8 @@ export function EmbeddingSettingsSection({
   selectedConnectionId,
   diagnostic,
   diagnosticRunning = false,
+  models,
+  pendingOperation,
   enabled,
   secureStorageAvailable,
   busy = false,
@@ -141,6 +180,7 @@ export function EmbeddingSettingsSection({
   onCancelBuiltin,
   onImportBuiltin,
   onRemoveBuiltin,
+  onOpenModelDownloadSourceSettings,
   onTestConnection
 }: EmbeddingSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
@@ -152,6 +192,69 @@ export function EmbeddingSettingsSection({
     selected?.kind === 'openai-compatible'
       ? embeddingEndpointDestination(selected.endpoint)
       : undefined
+  const selectedModel =
+    selected?.kind === 'builtin'
+      ? models?.catalog.find((model) => model.id === selected.model)
+      : undefined
+  const installedModel =
+    selected?.kind === 'builtin'
+      ? models?.installed.find((model) => model.id === selected.model)
+      : undefined
+  const activeOperation =
+    selected?.kind === 'builtin'
+      ? models?.operations.find(
+          (operation) => operation.modelId === selected.model
+        )
+      : undefined
+  const optimisticOperation =
+    selected?.kind === 'builtin' &&
+    !activeOperation &&
+    pendingOperation?.modelId === selected.model
+      ? {
+          modelId: selected.model,
+          kind: pendingOperation.kind,
+          phase: 'preparing' as const,
+          currentFile: null,
+          completedBytes: 0,
+          totalBytes: null,
+          ...(pendingOperation.kind === 'download' && models
+            ? { downloadSource: models.selectedDownloadSource }
+            : {})
+        }
+      : undefined
+  const operation = activeOperation ?? optimisticOperation
+  const percent = operation
+    ? modelOperationPercent(operation)
+    : undefined
+  const downloadAvailability = selectedModel?.downloadAvailability.find(
+    (availability) =>
+      availability.source === models?.selectedDownloadSource
+  )
+  const sourceAvailable =
+    models === undefined ||
+    (selectedModel !== undefined &&
+      downloadAvailability?.available === true)
+  const modelSize =
+    installedModel?.files.reduce(
+      (total, file) => total + file.size,
+      0
+    ) ??
+    downloadAvailability?.totalBytes ??
+    selectedModel?.files.reduce(
+      (total, file) => total + file.size,
+      0
+    )
+  const modelDisplayName = selectedModel?.displayName ?? selected?.name ?? ''
+  const modelInstalled = Boolean(installedModel || selected?.installed)
+  const modelStatus =
+    operation
+      ? operationLabel(operation, t)
+      : modelInstalled
+        ? t('embedding.status.installed')
+        : selectedModel && !sourceAvailable
+          ? t('embedding.status.sourceUnavailable')
+          : selected?.statusText ??
+            t('embedding.status.availableToDownload')
 
   return (
     <section
@@ -263,14 +366,77 @@ export function EmbeddingSettingsSection({
             </div>
 
             {selected.kind === 'builtin' ? (
-              <>
-                <dl className="runtime-overview__details">
-                  <dt>{t('embedding.connections.modelLabel')}</dt>
-                  <dd>{selected.model}</dd>
-                  <dt>{t('embedding.connections.statusLabel')}</dt>
-                  <dd>{selected.statusText}</dd>
-                </dl>
-                <div className="runtime-config-actions">
+              <article className="document-ocr-model speech-model-card embedding-model-card">
+                <div className="document-ocr-model__header">
+                  <div className="document-ocr-model__summary">
+                    <div className="document-ocr-model__name">
+                      <strong>{modelDisplayName}</strong>
+                      {selectedModel?.recommended && (
+                        <span className="speech-model-tag speech-model-tag--recommended">
+                          {t('embedding.tags.recommended')}
+                        </span>
+                      )}
+                    </div>
+                    {selectedModel?.description && (
+                      <p>{selectedModel.description}</p>
+                    )}
+                    <div className="document-ocr-model__tags">
+                      {models && (
+                        <span className="speech-model-tag">
+                          {t(
+                            `modelDownloadSources.${models.selectedDownloadSource}`
+                          )}
+                        </span>
+                      )}
+                      <span className="speech-model-tag">
+                        {selected.model}
+                      </span>
+                      {selectedModel && (
+                        <>
+                          <span className="speech-model-tag">
+                            {t('embedding.metadata.dimensions', {
+                              count: selectedModel.dimensions
+                            })}
+                          </span>
+                          <span className="speech-model-tag">
+                            {selectedModel.quantization.toUpperCase()}
+                          </span>
+                          <span className="speech-model-tag">
+                            {t('embedding.metadata.contextTokens', {
+                              count: selectedModel.contextTokens
+                            })}
+                          </span>
+                          <span className="speech-model-tag">
+                            {modelSize
+                              ? formatModelPackageBytes(modelSize)
+                              : t('embedding.status.unknownSize')}
+                          </span>
+                          <span className="speech-model-tag">
+                            {selectedModel.license.name}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="document-ocr-model__state">
+                  <span
+                    className={
+                      'document-ocr-model__status' +
+                      (modelInstalled
+                        ? ' document-ocr-model__status--installed'
+                        : '')
+                    }
+                  >
+                    {modelInstalled && (
+                      <CheckCircle2 aria-hidden="true" size={13} />
+                    )}
+                    {modelStatus}
+                  </span>
+                </div>
+
+                <div className="document-ocr-model__actions">
                   <button
                     aria-label={t('embedding.accessibility.test', {
                       name: selected.name
@@ -285,27 +451,41 @@ export function EmbeddingSettingsSection({
                       ? t('embedding.diagnostic.testing')
                       : t('embedding.actions.test')}
                   </button>
-                  {selected.operationActive ? (
+                  {operation ? (
                     <button
                       aria-label={t('embedding.accessibility.cancel', {
-                        name: selected.name
+                        name: modelDisplayName
                       })}
                       className="secondary-button"
                       onClick={() => onCancelBuiltin(selected.model)}
                       type="button"
                     >
-                      <X aria-hidden="true" size={13} />
+                      <Square aria-hidden="true" size={12} />
                       {t('embedding.actions.cancel')}
+                    </button>
+                  ) : modelInstalled ? (
+                    <button
+                      aria-label={t('embedding.accessibility.remove', {
+                        name: modelDisplayName
+                      })}
+                      className="danger-ghost"
+                      disabled={busy}
+                      onClick={() => onRemoveBuiltin(selected.model)}
+                      type="button"
+                    >
+                      <Trash2 aria-hidden="true" size={13} />
+                      {t('embedding.actions.remove')}
                     </button>
                   ) : (
                     <>
-                      {!selected.installed && (
+                      {sourceAvailable && (
                         <button
                           aria-label={t(
                             'embedding.accessibility.download',
-                            { name: selected.name }
+                            { name: modelDisplayName }
                           )}
-                          className="secondary-button"
+                          className="primary-button"
+                          disabled={busy}
                           onClick={() => onDownloadBuiltin(selected.model)}
                           type="button"
                         >
@@ -313,34 +493,74 @@ export function EmbeddingSettingsSection({
                           {t('embedding.actions.download')}
                         </button>
                       )}
+                      {!sourceAvailable &&
+                        onOpenModelDownloadSourceSettings && (
+                          <button
+                            className="secondary-button"
+                            onClick={onOpenModelDownloadSourceSettings}
+                            type="button"
+                          >
+                            {t(
+                              'embedding.actions.openDownloadSourceSettings'
+                            )}
+                          </button>
+                        )}
                       <button
                         aria-label={t('embedding.accessibility.import', {
-                          name: selected.name
+                          name: modelDisplayName
                         })}
                         className="secondary-button"
+                        disabled={busy}
                         onClick={() => onImportBuiltin(selected.model)}
                         type="button"
                       >
                         <Upload aria-hidden="true" size={13} />
                         {t('embedding.actions.importZip')}
                       </button>
-                      {selected.installed && (
-                        <button
-                          aria-label={t('embedding.accessibility.remove', {
-                            name: selected.name
-                          })}
-                          className="danger-button danger-button--quiet"
-                          onClick={() => onRemoveBuiltin(selected.model)}
-                          type="button"
-                        >
-                          <Trash2 aria-hidden="true" size={13} />
-                          {t('embedding.actions.remove')}
-                        </button>
-                      )}
                     </>
                   )}
                 </div>
-              </>
+
+                {!sourceAvailable && selectedModel && (
+                  <p className="settings-warning">
+                    {t('embedding.sourceUnavailableDescription', {
+                      source: t(
+                        `modelDownloadSources.${models?.selectedDownloadSource}`
+                      )
+                    })}
+                  </p>
+                )}
+
+                {operation && (
+                  <div
+                    aria-live="polite"
+                    className="document-ocr-model__operation"
+                  >
+                    <progress
+                      aria-label={t(
+                        operation.kind === 'import'
+                          ? 'embedding.accessibility.importProgress'
+                          : 'embedding.accessibility.downloadProgress',
+                        { name: modelDisplayName }
+                      )}
+                      max={100}
+                      {...(percent === undefined
+                        ? {}
+                        : { value: percent })}
+                    />
+                    <small>
+                      {operation.currentFile
+                        ? t('embedding.operations.processingFile', {
+                            file: operation.currentFile
+                          })
+                        : operationLabel(operation, t) + '…'}
+                      {percent === undefined
+                        ? ''
+                        : ' · ' + percent.toFixed(0) + '%'}
+                    </small>
+                  </div>
+                )}
+              </article>
             ) : (
               <>
                 <label className="field">

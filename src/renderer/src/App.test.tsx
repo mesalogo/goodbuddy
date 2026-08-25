@@ -6153,7 +6153,7 @@ describe('App', () => {
             platform: 'linux' as const,
             architecture: 'x64' as const,
             state: 'verified' as const,
-            version: '0.11.2-e2e.13',
+            version: '0.11.2',
             agentProtocol: { major: 2, minor: 0 },
             remoteRuntimeVersion: '1.18.9'
           },

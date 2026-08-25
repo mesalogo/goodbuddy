@@ -86,6 +86,7 @@ import type {
 } from '../shared/speech-model-contracts'
 import type {
   EmbeddingDiagnosticResult,
+  EmbeddingModelProgressSnapshot,
   EmbeddingModelSnapshot,
   EmbeddingSettingsSnapshot,
   KnowledgeEmbeddingIndexSnapshot
@@ -620,6 +621,10 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.embeddingSettingsGet
       ) as Promise<EmbeddingSettingsSnapshot>,
+    getModelProgress: () =>
+      ipcRenderer.invoke(
+        ipcChannels.embeddingModelsProgress
+      ) as Promise<EmbeddingModelProgressSnapshot>,
     diagnose: (connectionId: string) =>
       ipcRenderer.invoke(
         ipcChannels.embeddingDiagnose,

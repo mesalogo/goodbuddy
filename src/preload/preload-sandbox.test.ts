@@ -65,6 +65,7 @@ describe('sandboxed preload', () => {
         /embeddings: \{(?<body>[\s\S]*?)\n {2}\},\n {2}documentParsing:/u
       )?.groups?.body ?? ''
     expect(embeddings).toContain('getSnapshot:')
+    expect(embeddings).toContain('getModelProgress:')
     expect(embeddings).toContain('diagnose: (connectionId: string)')
     expect(embeddings).toContain('setCurrent: (connectionId: string)')
     expect(embeddings).toContain('installModel:')

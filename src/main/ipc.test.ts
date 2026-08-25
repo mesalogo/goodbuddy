@@ -35,6 +35,12 @@ describe('embedding IPC boundary', () => {
     expect(region).toContain('embeddingConnectionIdRequestSchema.parse(input)')
     expect(region).toContain('embeddingModelInstallInputSchema.parse(input)')
     expect(region).toContain('embeddingModelActionInputSchema.parse(input)')
+    expect(region).toContain(
+      'embeddingModelProgressSnapshotSchema.parse'
+    )
+    expect(region).toContain(
+      'embeddingModelManager.getProgressSnapshot()'
+    )
     expect(region).toContain("properties: ['openFile']")
     expect(region).toContain('filters: modelArchiveDialogFilters')
     expect(region).not.toMatch(
@@ -1090,7 +1096,7 @@ describe('registerIpcHandlers SSH hosts', () => {
           platform: 'linux',
           architecture: 'x64',
           state: 'verified',
-          version: '0.11.2-e2e.13',
+          version: '0.11.2',
           remoteRuntimeVersion: '1.18.9',
           agentProtocol: { major: 2, minor: 0 }
         },
@@ -1128,7 +1134,7 @@ describe('registerIpcHandlers SSH hosts', () => {
       importArchive: vi.fn(async () => agentPackageInventory),
       getExportArchiveName: vi.fn(
         async () =>
-          'goodbuddy-agent-0.11.2-e2e.13-linux-arm64.gbagent'
+          'goodbuddy-agent-0.11.2-linux-arm64.gbagent'
       ),
       exportArchive: vi.fn(async () => undefined)
     }

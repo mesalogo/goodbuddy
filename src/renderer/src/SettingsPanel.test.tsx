@@ -32,6 +32,7 @@ import type {
 } from '../../shared/shortcut'
 import type {
   EmbeddingDiagnosticResult,
+  EmbeddingModelSnapshot,
   EmbeddingSettingsSnapshot
 } from '../../shared/embedding-contracts'
 import type { SpeechModelSnapshot } from '../../shared/speech-model-contracts'
@@ -406,6 +407,43 @@ const updateExpert = vi.fn<DesktopApi['experts']['update']>(
 const removeExpert = vi.fn<DesktopApi['experts']['remove']>(
   async () => {}
 )
+const embeddingCatalogEntry = {
+  id: 'granite-embedding-97m-multilingual-r2-int8',
+  displayName: 'Granite Embedding 97M Multilingual R2',
+  description: '面向多语言检索的本地 INT8 向量模型。',
+  languages: ['200+ languages'],
+  runtime: 'onnxruntime-web/wasm' as const,
+  dimensions: 384,
+  contextTokens: 32_768,
+  quantization: 'INT8',
+  recommended: true,
+  available: true,
+  license: {
+    name: 'Apache License 2.0',
+    notice: 'Apache License 2.0',
+    url: 'https://example.com/license'
+  },
+  files: [
+    {
+      name: 'model.onnx',
+      role: 'model' as const,
+      size: 2 * 1024 * 1024,
+      sha256: 'a'.repeat(64)
+    }
+  ],
+  downloadAvailability: [
+    {
+      source: 'modelscope' as const,
+      available: true as const,
+      totalBytes: 2 * 1024 * 1024
+    },
+    {
+      source: 'hugging-face' as const,
+      available: true as const,
+      totalBytes: 2 * 1024 * 1024
+    }
+  ]
+}
 const embeddingSnapshot: EmbeddingSettingsSnapshot = {
   configuration: {
     provider: 'openai-compatible',
@@ -418,7 +456,7 @@ const embeddingSnapshot: EmbeddingSettingsSnapshot = {
       id: builtinEmbeddingConnectionId,
       name: 'GoodBuddy 内置向量模型',
       kind: 'builtin',
-      model: 'granite-embedding-107m-multilingual',
+      model: embeddingCatalogEntry.id,
       credentialConfigured: false
     },
     {
@@ -434,12 +472,15 @@ const embeddingSnapshot: EmbeddingSettingsSnapshot = {
   currentConnectionId: legacyEmbeddingConnectionId,
   models: {
     selectedDownloadSource: 'modelscope',
-    catalog: [],
+    catalog: [embeddingCatalogEntry],
     installed: [],
     operations: []
   }
 }
 const getEmbeddingSnapshot = vi.fn(async () => embeddingSnapshot)
+const getEmbeddingModelProgress = vi.fn(async () => ({
+  operations: embeddingSnapshot.models.operations
+}))
 const diagnoseEmbedding = vi.fn(
   async (): Promise<EmbeddingDiagnosticResult> => ({
     status: 'available',
@@ -478,7 +519,7 @@ const agentPackageInventory: AgentPackageInventory = {
       platform: 'linux',
       architecture: 'x64',
       state: 'verified',
-      version: '0.11.2-e2e.13',
+      version: '0.11.2',
       agentProtocol: { major: 2, minor: 0 },
       remoteRuntimeVersion: '1.18.9'
     },
@@ -839,6 +880,7 @@ describe('SettingsPanel runtime files', () => {
         },
         embeddings: {
           getSnapshot: getEmbeddingSnapshot,
+          getModelProgress: getEmbeddingModelProgress,
           diagnose: diagnoseEmbedding,
           setCurrent: setCurrentEmbedding,
           installModel: installEmbeddingModel,
@@ -4387,6 +4429,83 @@ describe('SettingsPanel runtime files', () => {
     expect(
       within(section).queryByRole('button', { name: '重建向量索引' })
     ).not.toBeInTheDocument()
+  })
+
+  it('shows immediate progress when downloading the built-in vector model', async () => {
+    let finishInstall:
+      | ((snapshot: EmbeddingModelSnapshot) => void)
+      | undefined
+    installEmbeddingModel.mockImplementationOnce(
+      () =>
+        new Promise<EmbeddingModelSnapshot>((resolve) => {
+          finishInstall = resolve
+        })
+    )
+    const onNotify = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onNotify={onNotify}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '向量模型' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '编辑向量模型连接 GoodBuddy 内置向量模型'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '下载 Granite Embedding 97M Multilingual R2'
+      })
+    )
+
+    await waitFor(() =>
+      expect(installEmbeddingModel).toHaveBeenCalledWith(
+        embeddingCatalogEntry.id,
+        'modelscope'
+      )
+    )
+    expect(
+      screen.getByText('正在准备从 ModelScope 下载')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', {
+        name: 'Granite Embedding 97M Multilingual R2下载进度'
+      })
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(getEmbeddingModelProgress).toHaveBeenCalled()
+    )
+
+    await act(async () => {
+      finishInstall?.({
+        ...embeddingSnapshot.models,
+        installed: [
+          {
+            id: embeddingCatalogEntry.id,
+            displayName: embeddingCatalogEntry.displayName,
+            source: 'download',
+            installedAt: '2026-08-25T00:00:00.000Z',
+            files: embeddingCatalogEntry.files
+          }
+        ]
+      })
+    })
+    await waitFor(() =>
+      expect(onNotify).toHaveBeenCalledWith({
+        tone: 'success',
+        message: 'Granite Embedding 97M Multilingual R2 已安装',
+        dedupeKey: `embedding-model-${embeddingCatalogEntry.id}`
+      })
+    )
   })
 
   it('preserves embedding credentials after a failed save, clears them after success, and sets the current connection explicitly', async () => {

@@ -331,6 +331,7 @@ export const settingsSections = {
       download: '下载',
       cancel: '取消',
       importZip: '导入 ZIP',
+      openDownloadSourceSettings: '前往通用设置',
       remove: '移除模型',
       clearCredential: '清除凭据',
       clearAfterSave: '保存后清除凭据'
@@ -342,8 +343,38 @@ export const settingsSections = {
       download: '下载 {{name}}',
       cancel: '取消下载 {{name}}',
       import: '从 ZIP 导入 {{name}}',
-      remove: '移除本地模型 {{name}}'
+      remove: '移除本地模型 {{name}}',
+      downloadProgress: '{{name}}下载进度',
+      importProgress: '{{name}}导入进度'
     },
+    tags: {
+      recommended: '推荐'
+    },
+    metadata: {
+      dimensions: '{{count}} 维',
+      contextTokens: '{{count}} Token 上下文'
+    },
+    status: {
+      installed: '已安装',
+      availableToDownload: '可下载',
+      sourceUnavailable: '当前来源不可下载',
+      unknownSize: '大小未知'
+    },
+    operations: {
+      installing: '正在安装',
+      preparingImport: '正在准备导入',
+      preparingDownloadFrom: '正在准备从 {{source}} 下载',
+      importing: '正在导入',
+      downloadingFrom: '正在从 {{source}} 下载',
+      processingFile: '正在处理 {{file}}'
+    },
+    notifications: {
+      installed: '{{name}} 已安装',
+      importedZip: '{{name}} 已从 ZIP 导入',
+      removed: '{{name}} 已移除'
+    },
+    sourceUnavailableDescription:
+      '当前下载源 {{source}} 不提供此模型的完整已验证文件；可切换下载源或从 ZIP 导入。',
     fields: {
       name: '名称',
       endpoint: '向量接口 URL',

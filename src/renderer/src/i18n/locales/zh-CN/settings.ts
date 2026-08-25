@@ -120,6 +120,7 @@ export const settings = {
     testRuntime: 'Runtime 连接测试失败',
     embeddingDiagnosticUnavailable: '向量诊断服务不可用',
     testEmbedding: '向量模型测试失败',
+    manageEmbeddingModel: '向量模型操作失败',
     selectFile: '选择文件失败',
     openRuntimeConfig: '打开 Runtime 配置失败',
     selectWorkspace: '选择工作区目录失败',

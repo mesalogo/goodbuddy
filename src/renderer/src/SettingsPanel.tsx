@@ -700,6 +700,11 @@ export function SettingsPanel({
     useState(false)
   const [embeddingModelActionRunning, setEmbeddingModelActionRunning] =
     useState(false)
+  const [embeddingModelPendingOperation, setEmbeddingModelPendingOperation] =
+    useState<{
+      modelId: string
+      kind: EmbeddingModelSnapshot['operations'][number]['kind']
+    }>()
   const [error, setError] = useState<string>()
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [clearingLocalData, setClearingLocalData] = useState(false)
@@ -1012,6 +1017,7 @@ export function SettingsPanel({
         setError(undefined)
         setConfirmingClear(false)
         setClearingLocalData(false)
+        setEmbeddingModelPendingOperation(undefined)
         setModelType('llm')
         setSpeechModelDraftId(undefined)
         setPersistedSpeechModelId(undefined)
@@ -1082,26 +1088,54 @@ export function SettingsPanel({
     }
   }, [i18n, open])
 
+  const refreshEmbeddingModelProgress =
+    useCallback(async (): Promise<void> => {
+      const embeddings = window.goodbuddy.embeddings
+      if (!embeddings) {
+        return
+      }
+      const progress = await embeddings.getModelProgress()
+      setEmbeddingModels((current) =>
+        current
+          ? { ...current, operations: progress.operations }
+          : current
+      )
+    }, [])
+
   useEffect(() => {
-    const embeddings = window.goodbuddy.embeddings
     if (
       !open ||
-      !embeddings ||
-      !embeddingModels?.operations.length
+      (!embeddingModelPendingOperation &&
+        !embeddingModels?.operations.length)
     ) {
       return
     }
-    const timer = window.setInterval(() => {
-      void embeddings.getSnapshot().then(
-        (snapshot) => {
-          setEmbeddingSnapshot(snapshot)
-          setEmbeddingModels(snapshot.models)
-        },
-        () => undefined
-      )
-    }, 300)
-    return () => window.clearInterval(timer)
-  }, [embeddingModels?.operations.length, open])
+    let active = true
+    let timer: number | undefined
+    const poll = async (): Promise<void> => {
+      try {
+        await refreshEmbeddingModelProgress()
+      } catch {
+        // The final operation result reports actionable errors.
+      } finally {
+        if (active) {
+          timer = window.setTimeout(() => void poll(), 300)
+        }
+      }
+    }
+    timer = window.setTimeout(() => void poll(), 300)
+    return () => {
+      active = false
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [
+    embeddingModelPendingOperation,
+    embeddingModels?.operations.length,
+    open,
+    refreshEmbeddingModelProgress
+  ])
 
   const normalizedContextCompression =
     normalizeContextCompressionTokenDrafts(
@@ -1490,9 +1524,14 @@ export function SettingsPanel({
   }
 
   const runEmbeddingModelOperation = async (
+    modelId: string,
+    kind:
+      | EmbeddingModelSnapshot['operations'][number]['kind']
+      | undefined,
     operation: (
       api: NonNullable<typeof window.goodbuddy.embeddings>
-    ) => Promise<EmbeddingModelSnapshot | undefined>
+    ) => Promise<EmbeddingModelSnapshot | undefined>,
+    successMessage: string
   ): Promise<void> => {
     const embeddings = window.goodbuddy.embeddings
     if (!embeddings) {
@@ -1500,18 +1539,43 @@ export function SettingsPanel({
       return
     }
     setEmbeddingModelActionRunning(true)
+    setEmbeddingModelPendingOperation(
+      kind ? { modelId, kind } : undefined
+    )
     setError(undefined)
+    let reconcileSnapshot = false
     try {
       const models = await operation(embeddings)
       if (models) {
         setEmbeddingModels(models)
-        const snapshot = await embeddings.getSnapshot()
-        setEmbeddingSnapshot(snapshot)
+        setEmbeddingSnapshot((current) =>
+          current ? { ...current, models } : current
+        )
+        onNotify({
+          tone: 'success',
+          message: successMessage,
+          dedupeKey: `embedding-model-${modelId}`
+        })
+      } else {
+        reconcileSnapshot = true
       }
     } catch (reason) {
-      setError(settingsErrorMessage(reason, t('errors.saveSettings')))
+      reconcileSnapshot = true
+      setError(
+        settingsErrorMessage(reason, t('errors.manageEmbeddingModel'))
+      )
     } finally {
       setEmbeddingModelActionRunning(false)
+      setEmbeddingModelPendingOperation(undefined)
+      if (reconcileSnapshot) {
+        void embeddings.getSnapshot().then(
+          (snapshot) => {
+            setEmbeddingSnapshot(snapshot)
+            setEmbeddingModels(snapshot.models)
+          },
+          () => undefined
+        )
+      }
     }
   }
 
@@ -1530,7 +1594,9 @@ export function SettingsPanel({
       setEmbeddingSnapshot(snapshot)
       setEmbeddingModels(snapshot.models)
     } catch (reason) {
-      setError(settingsErrorMessage(reason, t('errors.saveSettings')))
+      setError(
+        settingsErrorMessage(reason, t('errors.manageEmbeddingModel'))
+      )
     }
   }
 
@@ -3162,7 +3228,6 @@ export function SettingsPanel({
                     return {
                       ...connection,
                       installed,
-                      operationActive: Boolean(operation),
                       statusText: operation
                         ? t('model.embedding.progress', {
                             percent: progress ?? 0
@@ -3182,6 +3247,8 @@ export function SettingsPanel({
               diagnostic={embeddingDiagnostic}
               diagnosticRunning={embeddingDiagnosticRunning}
               enabled={knowledgeEmbeddingEnabled}
+              models={embeddingModels}
+              pendingOperation={embeddingModelPendingOperation}
               busy={saving || embeddingModelActionRunning}
               secureStorageAvailable={
                 settings?.secureStorageAvailable ?? false
@@ -3226,29 +3293,61 @@ export function SettingsPanel({
                 )
               }}
               onDownloadBuiltin={(modelId) => {
+                if (!embeddingModels) {
+                  setError(t('errors.readEmbeddingStatus'))
+                  return
+                }
                 const model = embeddingModels?.catalog.find(
                   (candidate) => candidate.id === modelId
                 )
-                if (model && embeddingModels) {
-                  void runEmbeddingModelOperation((api) =>
+                void runEmbeddingModelOperation(
+                  modelId,
+                  'download',
+                  (api) =>
                     api.installModel(
-                      model.id,
+                      modelId,
                       embeddingModels.selectedDownloadSource
-                    )
-                  )
-                }
+                    ),
+                  i18n.t('embedding.notifications.installed', {
+                    ns: 'settingsSections',
+                    name: model?.displayName ?? modelId
+                  })
+                )
               }}
               onEnabledChange={setKnowledgeEmbeddingEnabled}
               onImportBuiltin={(modelId) => {
-                void runEmbeddingModelOperation((api) =>
-                  api.importModelArchive(modelId)
+                const name =
+                  embeddingModels?.catalog.find(
+                    (candidate) => candidate.id === modelId
+                  )?.displayName ?? modelId
+                void runEmbeddingModelOperation(
+                  modelId,
+                  'import',
+                  (api) => api.importModelArchive(modelId),
+                  i18n.t('embedding.notifications.importedZip', {
+                    ns: 'settingsSections',
+                    name
+                  })
                 )
               }}
               onRemoveBuiltin={(modelId) => {
-                void runEmbeddingModelOperation((api) =>
-                  api.removeModel(modelId)
+                const name =
+                  embeddingModels?.catalog.find(
+                    (candidate) => candidate.id === modelId
+                  )?.displayName ?? modelId
+                void runEmbeddingModelOperation(
+                  modelId,
+                  undefined,
+                  (api) => api.removeModel(modelId),
+                  i18n.t('embedding.notifications.removed', {
+                    ns: 'settingsSections',
+                    name
+                  })
                 )
               }}
+              onOpenModelDownloadSourceSettings={() =>
+                requestTabChange('platform-features')
+              }
               onSelectConnection={setEditingEmbeddingConnectionId}
               onSetCurrent={setActiveEmbeddingConnectionId}
               onTestConnection={(connectionId) => {

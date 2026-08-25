@@ -129,6 +129,7 @@ import {
   embeddingConnectionIdRequestSchema,
   embeddingModelActionInputSchema,
   embeddingModelInstallInputSchema,
+  embeddingModelProgressSnapshotSchema,
   embeddingModelSnapshotSchema,
   embeddingSettingsSnapshotSchema,
   knowledgeEmbeddingIndexCancelRequestSchema,
@@ -4859,6 +4860,16 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.embeddingSettingsGet, async (event) => {
     assertTrustedSender(event, window)
     return getEmbeddingSettingsSnapshot()
+  })
+
+  registerHandler(ipcChannels.embeddingModelsProgress, (event) => {
+    assertTrustedSender(event, window)
+    if (!embeddingModelManager) {
+      throw new Error('内置向量模型服务不可用')
+    }
+    return embeddingModelProgressSnapshotSchema.parse(
+      embeddingModelManager.getProgressSnapshot()
+    )
   })
 
   registerHandler(

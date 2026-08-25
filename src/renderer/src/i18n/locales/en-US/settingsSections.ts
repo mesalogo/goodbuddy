@@ -346,6 +346,7 @@ export const settingsSections = {
       download: 'Download',
       cancel: 'Cancel',
       importZip: 'Import ZIP',
+      openDownloadSourceSettings: 'Go to General settings',
       remove: 'Remove model',
       clearCredential: 'Clear credential',
       clearAfterSave: 'Credential will be cleared on save'
@@ -357,8 +358,38 @@ export const settingsSections = {
       download: 'Download {{name}}',
       cancel: 'Cancel download for {{name}}',
       import: 'Import {{name}} from ZIP',
-      remove: 'Remove local model {{name}}'
+      remove: 'Remove local model {{name}}',
+      downloadProgress: 'Download progress for {{name}}',
+      importProgress: 'Import progress for {{name}}'
     },
+    tags: {
+      recommended: 'Recommended'
+    },
+    metadata: {
+      dimensions: '{{count}} dimensions',
+      contextTokens: '{{count}}-token context'
+    },
+    status: {
+      installed: 'Installed',
+      availableToDownload: 'Available to download',
+      sourceUnavailable: 'Unavailable from current source',
+      unknownSize: 'Unknown size'
+    },
+    operations: {
+      installing: 'Installing',
+      preparingImport: 'Preparing import',
+      preparingDownloadFrom: 'Preparing download from {{source}}',
+      importing: 'Importing',
+      downloadingFrom: 'Downloading from {{source}}',
+      processingFile: 'Processing {{file}}'
+    },
+    notifications: {
+      installed: '{{name}} installed',
+      importedZip: '{{name}} imported from ZIP',
+      removed: '{{name}} removed'
+    },
+    sourceUnavailableDescription:
+      'The current download source, {{source}}, does not provide the complete verified files for this model. Switch sources or import a ZIP.',
     fields: {
       name: 'Name',
       endpoint: 'Embedding API URL',

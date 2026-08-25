@@ -17,6 +17,10 @@ import type {
   SpeechModelSnapshot
 } from '../../shared/speech-model-contracts'
 import type { AppNotificationInput } from './notifications'
+import {
+  formatModelPackageBytes,
+  modelOperationPercent
+} from './model-download-presentation'
 
 type SpeechModelSettingsSectionProps = {
   onNotify?: (notification: AppNotificationInput) => void
@@ -30,24 +34,8 @@ type SpeechModelSettingsSectionProps = {
   onOpenModelDownloadSourceSettings?: () => void
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) {
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 function catalogSize(entry: SpeechModelCatalogViewEntry): number {
   return entry.files.reduce((total, file) => total + file.size, 0)
-}
-
-function progressPercent(operation: SpeechModelOperation): number | undefined {
-  return operation.totalBytes && operation.totalBytes > 0
-    ? Math.min(
-        100,
-        (operation.completedBytes / operation.totalBytes) * 100
-      )
-    : undefined
 }
 
 function operationLabel(
@@ -307,7 +295,7 @@ export function SpeechModelSettingsSection({
     ? operationsById.get(model.id)
     : undefined
   const percent = operation
-    ? progressPercent(operation)
+    ? modelOperationPercent(operation)
     : undefined
   const downloadAvailability = model?.downloadAvailability.find(
     (availability) =>
@@ -488,7 +476,7 @@ export function SpeechModelSettingsSection({
                 </span>
                 <span className="speech-model-tag">
                   {size
-                    ? formatBytes(size)
+                    ? formatModelPackageBytes(size)
                     : t('speech.status.unknownSize')}
                 </span>
                 <span className="speech-model-tag">

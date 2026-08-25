@@ -17,6 +17,7 @@ import {
   EmbeddingSettingsSection,
   type EmbeddingSettingsSectionProps
 } from './EmbeddingSettingsSection'
+import type { EmbeddingModelSnapshot } from '../../shared/embedding-contracts'
 import { changeUiLocale } from './i18n'
 
 const connections: EmbeddingSettingsSectionProps['connections'] = [
@@ -40,6 +41,51 @@ const connections: EmbeddingSettingsSectionProps['connections'] = [
     statusText: '已配置凭据'
   }
 ]
+
+const models: EmbeddingModelSnapshot = {
+  selectedDownloadSource: 'modelscope',
+  catalog: [
+    {
+      id: 'granite-embedding-107m',
+      displayName: 'Granite Embedding 107M',
+      description: '用于多语言本地向量检索。',
+      languages: ['200+ languages'],
+      runtime: 'onnxruntime-web/wasm',
+      dimensions: 384,
+      contextTokens: 32_768,
+      quantization: 'INT8',
+      recommended: true,
+      available: true,
+      license: {
+        name: 'Apache License 2.0',
+        notice: 'Apache License 2.0',
+        url: 'https://example.com/license'
+      },
+      files: [
+        {
+          name: 'model.onnx',
+          role: 'model',
+          size: 2 * 1024 * 1024,
+          sha256: 'a'.repeat(64)
+        }
+      ],
+      downloadAvailability: [
+        {
+          source: 'modelscope',
+          available: true,
+          totalBytes: 2 * 1024 * 1024
+        },
+        {
+          source: 'hugging-face',
+          available: true,
+          totalBytes: 2 * 1024 * 1024
+        }
+      ]
+    }
+  ],
+  installed: [],
+  operations: []
+}
 
 function renderSection(
   overrides: Partial<EmbeddingSettingsSectionProps> = {}
@@ -162,6 +208,124 @@ describe('EmbeddingSettingsSection', () => {
     expect(props.onImportBuiltin).toHaveBeenCalledWith(
       'granite-embedding-107m'
     )
+  })
+
+  it('matches speech downloads with visible progress and cancellation', () => {
+    const props = renderSection({
+      models: {
+        ...models,
+        operations: [
+          {
+            modelId: 'granite-embedding-107m',
+            kind: 'download',
+            phase: 'transferring',
+            currentFile: 'model.onnx',
+            completedBytes: 1024 * 1024,
+            totalBytes: 2 * 1024 * 1024,
+            downloadSource: 'modelscope'
+          }
+        ]
+      },
+      selectedConnectionId: 'builtin'
+    })
+
+    expect(screen.getByText('Granite Embedding 107M')).toBeInTheDocument()
+    expect(screen.getByText('推荐')).toBeInTheDocument()
+    expect(screen.getByText('ModelScope')).toBeInTheDocument()
+    expect(screen.getByText('2.0 MB')).toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', {
+        name: 'Granite Embedding 107M下载进度'
+      })
+    ).toHaveValue(50)
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '取消下载 Granite Embedding 107M'
+      })
+    )
+    expect(props.onCancelBuiltin).toHaveBeenCalledWith(
+      'granite-embedding-107m'
+    )
+  })
+
+  it('shows preparation immediately after the download click', () => {
+    renderSection({
+      models,
+      pendingOperation: {
+        modelId: 'granite-embedding-107m',
+        kind: 'download'
+      },
+      selectedConnectionId: 'builtin'
+    })
+
+    expect(
+      screen.getByText('正在准备从 ModelScope 下载')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', {
+        name: 'Granite Embedding 107M下载进度'
+      })
+    ).not.toHaveAttribute('value')
+  })
+
+  it('keeps an unavailable source explicit and opens General settings', () => {
+    const onOpenModelDownloadSourceSettings = vi.fn()
+    renderSection({
+      models: {
+        ...models,
+        catalog: models.catalog.map((model) => ({
+          ...model,
+          downloadAvailability: model.downloadAvailability.map(
+            (availability) =>
+              availability.source === 'modelscope'
+                ? {
+                    source: 'modelscope' as const,
+                    available: false as const,
+                    unavailableReason: '当前来源缺少完整文件'
+                  }
+                : availability
+          )
+        }))
+      },
+      onOpenModelDownloadSourceSettings,
+      selectedConnectionId: 'builtin'
+    })
+
+    expect(screen.getByText('当前来源不可下载')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', {
+        name: '下载 Granite Embedding 107M'
+      })
+    ).not.toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: '前往通用设置' })
+    )
+    expect(onOpenModelDownloadSourceSettings).toHaveBeenCalledOnce()
+  })
+
+  it('announces ZIP imports as import progress', () => {
+    renderSection({
+      models: {
+        ...models,
+        operations: [
+          {
+            modelId: 'granite-embedding-107m',
+            kind: 'import',
+            phase: 'transferring',
+            currentFile: 'model.onnx',
+            completedBytes: 1024,
+            totalBytes: 2048
+          }
+        ]
+      },
+      selectedConnectionId: 'builtin'
+    })
+
+    expect(
+      screen.getByRole('progressbar', {
+        name: 'Granite Embedding 107M导入进度'
+      })
+    ).toHaveValue(50)
   })
 
   it('identifies a loopback custom endpoint without showing a remote warning', () => {

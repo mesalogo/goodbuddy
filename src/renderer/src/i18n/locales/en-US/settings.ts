@@ -140,6 +140,7 @@ export const settings = {
     embeddingDiagnosticUnavailable:
       'Vector diagnostics are unavailable',
     testEmbedding: 'Vector model test failed',
+    manageEmbeddingModel: 'Embedding model operation failed',
     selectFile: 'Could not select the file',
     openRuntimeConfig: 'Could not open the Runtime configuration',
     selectWorkspace: 'Could not select the workspace folder',

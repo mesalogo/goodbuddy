@@ -98,6 +98,7 @@ export const ipcChannels = {
   embeddingSettingsGet: 'settings:embedding:get',
   embeddingDiagnose: 'settings:embedding:diagnose',
   embeddingSetCurrent: 'settings:embedding:set-current',
+  embeddingModelsProgress: 'settings:embedding-models:progress',
   embeddingModelsInstall: 'settings:embedding-models:install',
   embeddingModelsCancel: 'settings:embedding-models:cancel',
   embeddingModelsImportArchive:

@@ -96,6 +96,7 @@ import type {
 } from './speech-model-contracts'
 import type {
   EmbeddingDiagnosticResult,
+  EmbeddingModelProgressSnapshot,
   EmbeddingModelSnapshot,
   EmbeddingSettingsSnapshot,
   KnowledgeEmbeddingIndexSnapshot
@@ -1663,6 +1664,7 @@ export type DesktopApi = {
   }
   embeddings?: {
     getSnapshot: () => Promise<EmbeddingSettingsSnapshot>
+    getModelProgress: () => Promise<EmbeddingModelProgressSnapshot>
     diagnose: (connectionId: string) => Promise<EmbeddingDiagnosticResult>
     setCurrent: (
       connectionId: string
