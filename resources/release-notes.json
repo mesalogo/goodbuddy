@@ -2,6 +2,64 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.2",
+      "releasedAt": "2026-08-25",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.11.2 新增托管 SSH 远程项目、内置 Granite 向量模型、会话分支和应用内反馈，并改进魔法笔记、知识图谱、模型下载及桌面布局。"
+          ],
+          "features": [
+            "**托管 SSH 远程项目（技术预览）。** 在“设置 → 平台功能”中启用后，可管理 Linux x64/arm64 Host，并通过 Ask 或 Execute 使用签名 Agent 与兼容的 OpenCode Runtime。Agent 包需在设置中手动下载、更新或离线导入，打开项目不会自动下载；SSH 断线后，Host 上的任务可继续运行并恢复未同步输出。",
+            "**内置 Granite 向量模型。** 可下载、校验、离线导入、移除并运行内置 Granite 多语言 Embedding 模型，同时继续支持自定义 OpenAI 兼容向量连接和检索诊断。",
+            "**独立会话分支。** 本地会话可通过“在新会话中继续”创建独立分支并保留来源，不复制原会话的任务、队列、运行记录、记忆或成果归属。",
+            "**应用内反馈。** 可在“关于与更新”中提交问题、建议或体验反馈；邮箱和单张截图均为可选项，失败后会保留草稿供重试。",
+            "**魔法笔记待办数量。** 左侧导航可显示未完成待办数量，并可在“平台功能 → 魔法笔记”中关闭；超过 99 项时显示“99+”。",
+            "**Linux 与 LoongArch 构建。** Linux x64/arm64 桌面版新增 RPM 安装包，并提供独立、可复现的 Debian loong64 实验性预览构建流程。"
+          ],
+          "fixes": [
+            "**向量模型下载反馈。** 修复点击内置向量模型“下载”后界面看似无响应的问题；现在会立即显示下载来源、模型信息、实时进度和取消操作，行为与语音模型下载一致。",
+            "**长文档知识图谱。** 图谱抽取改为按 Token 分批、重试和超时处理；图谱失败不再导致新文档全文检索一并失败，并改进中文检索与关系上下文。",
+            "**ModelScope 语音模型。** 修复选择 ModelScope 后部分语音模型仍无法下载的问题，六个支持的模型现在均使用固定且经过完整性验证的来源。",
+            "**魔法笔记与平台功能。** 待办勾选会立即同步源笔记，同时修复暗色模式输入提示过暗，以及“平台功能”页签可能不可见的问题。",
+            "**助手工作栏与主导航。** 工作栏保持停靠和可调整大小，统一切换与任务入口，恢复左侧全高导航，并避免遮挡聊天输入区。",
+            "**界面信息与会话列表。** 恢复关键页面说明和视觉层级；会话更多操作仅在悬停、键盘聚焦或菜单打开时显示，为标题和时间保留更多空间。"
+          ],
+          "notices": [
+            "远程项目默认关闭且完全可选。首次使用前必须手动准备兼容的 `.gbagent` 包，下载源跟随“关于与更新”中的 GitHub 或镜像节点选择；本次正式 Agent 版本为 `0.11.2`。",
+            "LoongArch 仍是独立实验性预览，不进入标准更新索引；当前不包含 Agent、Remote Runtime、OpenCode 和原生 Canvas。",
+            "反馈不会自动附带会话、日志、文件、设置或凭据。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.11.2 adds managed SSH remote projects, a built-in Granite embedding model, conversation branching, and in-app feedback, with improvements to Magic Notes, knowledge graphs, model downloads, and desktop layout."
+          ],
+          "features": [
+            "**Managed SSH remote projects (technical preview).** Enable Remote Projects under Settings → Platform Features to manage Linux x64/arm64 Hosts and use signed Agents with a compatible OpenCode Runtime in Ask or Execute. Agent packages must be downloaded, updated, or imported manually in Settings; opening a project never downloads one automatically. Host work can continue through an SSH disconnect and recover unsynchronized output.",
+            "**Built-in Granite embedding model.** Download, verify, import offline, remove, and run the managed Granite multilingual embedding model while retaining custom OpenAI-compatible vector connections and retrieval diagnostics.",
+            "**Independent conversation branches.** Continue a local conversation in a new branch that records its source without copying Tasks, queued input, runs, memories, or artifact ownership.",
+            "**In-app feedback.** Submit problems, ideas, or experience notes from About & Updates. An email address and one screenshot are optional, and failed submissions retain the draft for retry.",
+            "**Magic Notes todo count.** The primary navigation can show incomplete todo counts, with an option under Platform Features → Magic Notes to hide the badge. Counts above 99 display as “99+”.",
+            "**Linux and LoongArch builds.** Linux x64/arm64 desktop releases add RPM installers, and the repository now provides a separate reproducible experimental Debian loong64 preview build."
+          ],
+          "fixes": [
+            "**Embedding model download feedback.** Fixed the built-in model Download action appearing unresponsive. It now immediately shows the source, model details, live progress, and cancellation, matching speech model downloads.",
+            "**Long-document knowledge graphs.** Graph extraction now uses token-bounded batches, retries, and timeouts. Graph failures no longer discard a new document’s full-text index, and Chinese retrieval and relationship context are improved.",
+            "**ModelScope speech models.** Fixed supported speech models remaining unavailable after selecting ModelScope. All six models now use fixed, integrity-verified sources.",
+            "**Magic Notes and Platform Features.** Todo changes immediately refresh their source note. Dark-mode placeholder contrast and disappearing Platform Features tabs are also fixed.",
+            "**Assistant workbar and primary navigation.** The workbar remains docked and resizable, uses consistent toggle and Task entry points, restores the full-height sidebar, and no longer crowds the composer.",
+            "**Interface guidance and conversation rows.** Restored essential workflow guidance and visual hierarchy. Conversation actions now appear only on hover, keyboard focus, or while their menu is open, leaving more room for titles and timestamps."
+          ],
+          "notices": [
+            "Remote Projects are disabled by default and remain optional. A compatible `.gbagent` package must be prepared manually before first use, and its source follows the GitHub or mirror selection in About & Updates. This release uses the formal Agent version `0.11.2`.",
+            "LoongArch remains a separate experimental preview outside the standard update index. It currently excludes Agent, Remote Runtime, OpenCode, and native Canvas.",
+            "Feedback never automatically includes conversations, logs, files, settings, or credentials."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.0",
       "releasedAt": "2026-08-20",
       "notes": {
