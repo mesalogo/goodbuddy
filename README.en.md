@@ -15,6 +15,7 @@ A secure, cross-platform, local-first desktop AI assistant and Agent workspace.
 - **Knowledge workspace**: Import files, folders, and web pages, then search them with full-text, phrase, vector, and graph retrieval.
 - **Work management**: Organize projects, conversations, tasks, activity, artifacts, memory, Magic Notes, and Smart Heartbeat.
 - **Remote channels**: Connect WeChat ClawBot, WeCom, and DingTalk with separate remote sessions for each sender.
+- **Managed SSH projects (technical preview)**: Remote support is off by default and does not affect ordinary desktop use. After enabling it, manually download the independently signed package for the Linux Host architecture under Settings > Platform Features > Remote Projects, or import/export an offline `.gbagent`. Each package contains the Agent, pinned Node, and the GoodBuddy-adapted remote OpenCode Runtime; online downloads follow the GitHub or mirror source selected under About & Updates.
 - **Desktop context**: Add selected files, screenshots, application windows, clipboard content, and voice.
 - **Offline speech**: Use local SenseVoice, Paraformer, and Whisper models.
 - **Rich responses**: Render Markdown, LaTeX, and controlled Mermaid diagrams.
@@ -39,7 +40,11 @@ Download a build from [GitHub Releases](https://github.com/mesalogo/goodbuddy/re
 | --- | --- | --- |
 | Windows | `x64`, `arm64` | NSIS, portable ZIP |
 | macOS | `x64`, `arm64` | DMG, ZIP |
-| Linux | `x64`, `arm64` | AppImage, DEB |
+| Linux | `x64`, `arm64` | AppImage, DEB, RPM |
+
+Desktop installers do not contain remote Agent payloads. No Agent package is
+needed for local projects; managed SSH users install one explicitly in
+Settings.
 
 Code signing and macOS notarization are not configured yet, so your operating system may display a security warning.
 

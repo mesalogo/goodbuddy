@@ -7,6 +7,7 @@ import {
   within,
   waitFor
 } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   AgentEvent,
@@ -3417,6 +3418,58 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
+  it('keeps adjacent streamed text blocks exact in StrictMode', async () => {
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>
+    )
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '读取验收标记' }
+    })
+    await waitFor(() => expect(screen.getByLabelText('发送')).toBeEnabled())
+    fireEvent.click(screen.getByLabelText('发送'))
+
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: 'GO'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: 'ODBUDDY_REMOTE_TOOL_4C6B9D8A'
+      })
+    })
+
+    const expected = 'GOODBUDDY_REMOTE_TOOL_4C6B9D8A'
+    const text = await screen.findByText(expected)
+    const assistantArticle = text.closest('article')
+    expect(assistantArticle).not.toBeNull()
+    expect(
+      assistantArticle!.querySelectorAll(
+        '.message-blocks > .message__content'
+      )
+    ).toHaveLength(1)
+    expect(
+      assistantArticle!.querySelector('.message-blocks')
+    ).toHaveTextContent(expected)
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+  })
+
   it('persists only the changed conversation and streamed assistant message', async () => {
     const activeConversationId =
       '00000000-0000-4000-8000-000000000441'
@@ -4657,7 +4710,11 @@ describe('App', () => {
   })
 
   it('restores a queued message when Agent preflight rejects it', async () => {
-    run.mockRejectedValueOnce(new Error('Runtime 暂不可用'))
+    run.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'agent:run': Error: Runtime 暂不可用"
+      )
+    )
     render(<App />)
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
@@ -4671,6 +4728,9 @@ describe('App', () => {
     expect(
       await screen.findByText('Runtime 暂不可用')
     ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Error invoking remote method/u)
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByText('需要稍后重试的消息')
     ).not.toBeInTheDocument()
@@ -5691,6 +5751,103 @@ describe('App', () => {
     )
   })
 
+  it('shows only supported OpenCode choices in a managed SSH conversation', async () => {
+    installRemoteProjectsSetting(true)
+    const remoteProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000119',
+      name: '仅 OpenCode 远程项目',
+      rootPath: '/srv/project',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000219',
+        remoteRootPath: '/srv/project'
+      },
+      builtInDefault: false
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      remoteProject
+    ])
+    vi.mocked(api.projects.remote.activate).mockResolvedValueOnce(
+      remoteProject
+    )
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: '00000000-0000-4000-8000-000000000319',
+        projectId: remoteProject.id,
+        runtimeSelection: {
+          provider: 'model',
+          profileId: modelProfileId
+        },
+        title: '旧直连模型会话',
+        updatedAt: 1_775_000_000_000,
+        messages: []
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000419',
+        projectId: remoteProject.id,
+        runtimeSelection: {
+          provider: 'continue',
+          profileId: modelProfileId
+        },
+        title: '旧 Continue 会话',
+        updatedAt: 1_774_000_000_000,
+        messages: []
+      }
+    ])
+
+    render(<App />)
+    await screen.findByRole('button', { name: '当前项目' })
+    selectProjectOption(remoteProject.name)
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: '当前项目' })
+      ).toHaveTextContent(remoteProject.name)
+    )
+
+    const runtimeButton = await screen.findByRole('button', {
+      name: /OpenCode · 默认模型/u
+    })
+    fireEvent.click(runtimeButton)
+    const runtimeMenu = screen.getByRole('menu', {
+      name: 'Runtime 和模型'
+    })
+    expect(
+      within(runtimeMenu).getByRole('menuitemradio', {
+        name: /^OpenCode · 默认模型.*sonnet-5$/u
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(runtimeMenu).getAllByRole('menuitemradio')
+    ).toHaveLength(1)
+    expect(
+      within(runtimeMenu).queryByText('直连模型')
+    ).not.toBeInTheDocument()
+    expect(
+      within(runtimeMenu).queryByText('Continue Runtime')
+    ).not.toBeInTheDocument()
+    expect(
+      within(runtimeMenu).queryByText(/DeepSeek Harness/u)
+    ).not.toBeInTheDocument()
+    expect(
+      within(runtimeMenu).getByRole('menuitem', {
+        name: '管理 Runtime 和模型连接'
+      })
+    ).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(
+      screen.getByText('旧 Continue 会话').closest('button')!
+    )
+    expect(
+      await screen.findByRole('button', {
+        name: /OpenCode · 默认模型/u
+      })
+    ).toBeInTheDocument()
+  })
+
   it('keeps saved remote projects hidden while the preview is disabled', async () => {
     installRemoteProjectsSetting(false)
     const remoteProject = {
@@ -5872,7 +6029,9 @@ describe('App', () => {
       remoteProject
     ])
     vi.mocked(api.projects.remote.activate).mockRejectedValueOnce(
-      new Error('Agent upload failed')
+      new Error(
+        "Error invoking remote method 'projects:remote:activate': AgentInstallationError: Agent upload failed"
+      )
     )
     render(<App />)
     await waitFor(() =>
@@ -5987,6 +6146,31 @@ describe('App', () => {
         hosts: [host],
         secureStorageAvailable: true
       })),
+      getAgentPackageInventory: vi.fn(async () => ({
+        checkedAt: '2026-08-24T00:00:00.000Z',
+        entries: [
+          {
+            platform: 'linux' as const,
+            architecture: 'x64' as const,
+            state: 'verified' as const,
+            version: '0.11.2-e2e.13',
+            agentProtocol: { major: 2, minor: 0 },
+            remoteRuntimeVersion: '1.18.9'
+          },
+          {
+            platform: 'linux' as const,
+            architecture: 'arm64' as const,
+            state: 'not-downloaded' as const,
+            version: null,
+            agentProtocol: null,
+            remoteRuntimeVersion: null
+          }
+        ]
+      })),
+      downloadAgentPackage: vi.fn(),
+      importAgentPackage: vi.fn(),
+      exportAgentPackage: vi.fn(async () => {}),
+      onAgentPackageProgress: vi.fn(() => () => {}),
       remove: vi.fn(async () => undefined),
       inspectDraftHostKey: vi.fn(async () => ({
         candidateId,
@@ -6038,6 +6222,9 @@ describe('App', () => {
           }
         }]
       })),
+      updateRemoteEnvironment: vi.fn(async () => undefined),
+      cancelRemoteEnvironmentUpdate: vi.fn(async () => undefined),
+      onRemoteEnvironmentUpdateProgress: vi.fn(() => () => undefined),
       browseDirectories: vi.fn(async () => ({
         path: '/root',
         homeDirectory: '/root',

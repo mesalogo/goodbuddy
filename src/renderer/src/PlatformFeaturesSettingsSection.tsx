@@ -1,5 +1,17 @@
-import { RotateCcw, Save } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import {
+  Cpu,
+  Download,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Upload
+} from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   ApplicationSettings,
@@ -7,6 +19,13 @@ import type {
   ModelDownloadSource
 } from '../../shared/application-settings-contracts'
 import type { MagicNoteCommentFormat } from '../../shared/magic-notes-contracts'
+import type {
+  AgentPackageDownloadProgress,
+  AgentPackageInventory
+} from '../../shared/agent-package-contracts'
+import type {
+  AgentArchitecture
+} from '../../shared/agent-installation-contracts'
 import {
   canonicalizeShortcutAccelerator,
   type GlobalShortcutSettings,
@@ -22,6 +41,7 @@ import {
   SettingsCategoryHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
+import { displayErrorMessage } from './error-message'
 
 type PlatformFeaturesSettingsSectionProps = {
   onMagicNotesEnabledChange: (enabled: boolean) => void
@@ -78,6 +98,17 @@ export function PlatformFeaturesSettingsSection({
   )
   const [saving, setSaving] = useState(false)
   const [sourceError, setSourceError] = useState<string>()
+  const [agentInventory, setAgentInventory] =
+    useState<AgentPackageInventory>()
+  const [agentInventoryLoading, setAgentInventoryLoading] =
+    useState(false)
+  const [agentInventoryError, setAgentInventoryError] =
+    useState<string>()
+  const [agentPackageBusy, setAgentPackageBusy] =
+    useState<AgentArchitecture | 'import'>()
+  const [agentPackageProgress, setAgentPackageProgress] =
+    useState<AgentPackageDownloadProgress>()
+  const agentInventoryRequested = useRef(false)
   const [error, setError] = useState<string | undefined>(() =>
     window.goodbuddy.updates
       ? undefined
@@ -108,6 +139,160 @@ export function PlatformFeaturesSettingsSection({
       active = false
     }
   }, [t])
+
+  const loadAgentInventory = useCallback(async (
+    refresh = false
+  ): Promise<void> => {
+    const getInventory =
+      window.goodbuddy.sshHosts?.getAgentPackageInventory
+    if (!getInventory) {
+      setAgentInventoryError(
+        t(
+          'platformFeatures.remoteProjects.agentInventory.errors.unavailable'
+        )
+      )
+      return
+    }
+    setAgentInventoryLoading(true)
+    setAgentInventoryError(undefined)
+    try {
+      setAgentInventory(await getInventory(refresh))
+    } catch (reason) {
+      setAgentInventoryError(
+        displayErrorMessage(
+          reason,
+          t(
+            'platformFeatures.remoteProjects.agentInventory.errors.readFailed'
+          )
+        )
+      )
+    } finally {
+      setAgentInventoryLoading(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    if (
+      activeSection !== 'remote-projects' ||
+      agentInventoryRequested.current
+    ) {
+      return
+    }
+    agentInventoryRequested.current = true
+    void loadAgentInventory()
+  }, [activeSection, loadAgentInventory])
+
+  useEffect(() => {
+    const subscribe =
+      window.goodbuddy.sshHosts?.onAgentPackageProgress
+    return subscribe?.((progress) =>
+      setAgentPackageProgress(progress)
+    )
+  }, [])
+
+  const downloadAgentPackage = async (
+    architecture: AgentArchitecture
+  ): Promise<void> => {
+    const download =
+      window.goodbuddy.sshHosts?.downloadAgentPackage
+    if (!download) {
+      return
+    }
+    setAgentPackageBusy(architecture)
+    setAgentPackageProgress(undefined)
+    setAgentInventoryError(undefined)
+    try {
+      setAgentInventory(await download(architecture))
+      onNotify?.({
+        dedupeKey: `agent-package-downloaded:${architecture}`,
+        message: t(
+          'platformFeatures.remoteProjects.agentInventory.notifications.downloaded',
+          { architecture }
+        ),
+        tone: 'success'
+      })
+    } catch (reason) {
+      setAgentInventoryError(
+        displayErrorMessage(
+          reason,
+          t(
+            'platformFeatures.remoteProjects.agentInventory.errors.downloadFailed'
+          )
+        )
+      )
+    } finally {
+      setAgentPackageBusy(undefined)
+      setAgentPackageProgress(undefined)
+    }
+  }
+
+  const importAgentPackage = async (): Promise<void> => {
+    const importPackage =
+      window.goodbuddy.sshHosts?.importAgentPackage
+    if (!importPackage) {
+      return
+    }
+    setAgentPackageBusy('import')
+    setAgentInventoryError(undefined)
+    try {
+      const inventory = await importPackage()
+      if (inventory) {
+        setAgentInventory(inventory)
+        onNotify?.({
+          dedupeKey: 'agent-package-imported',
+          message: t(
+            'platformFeatures.remoteProjects.agentInventory.notifications.imported'
+          ),
+          tone: 'success'
+        })
+      }
+    } catch (reason) {
+      setAgentInventoryError(
+        displayErrorMessage(
+          reason,
+          t(
+            'platformFeatures.remoteProjects.agentInventory.errors.importFailed'
+          )
+        )
+      )
+    } finally {
+      setAgentPackageBusy(undefined)
+    }
+  }
+
+  const exportAgentPackage = async (
+    architecture: AgentArchitecture
+  ): Promise<void> => {
+    const exportPackage =
+      window.goodbuddy.sshHosts?.exportAgentPackage
+    if (!exportPackage) {
+      return
+    }
+    setAgentPackageBusy(architecture)
+    setAgentInventoryError(undefined)
+    try {
+      await exportPackage(architecture)
+      onNotify?.({
+        dedupeKey: `agent-package-exported:${architecture}`,
+        message: t(
+          'platformFeatures.remoteProjects.agentInventory.notifications.exported',
+          { architecture }
+        ),
+        tone: 'success'
+      })
+    } catch (reason) {
+      setAgentInventoryError(
+        displayErrorMessage(
+          reason,
+          t(
+            'platformFeatures.remoteProjects.agentInventory.errors.exportFailed'
+          )
+        )
+      )
+    } finally {
+      setAgentPackageBusy(undefined)
+    }
+  }
 
   useEffect(() => {
     const shortcuts = window.goodbuddy.shortcuts
@@ -649,6 +834,197 @@ export function PlatformFeaturesSettingsSection({
             </p>
           )
         )}
+        <article className="capability-card">
+          <div className="capability-card__header">
+            <div>
+              <strong>
+                {t(
+                  'platformFeatures.remoteProjects.agentInventory.title'
+                )}
+              </strong>
+              <small>
+                {t(
+                  'platformFeatures.remoteProjects.agentInventory.description'
+                )}
+              </small>
+            </div>
+            <div className="capability-card__actions">
+              <button
+                className="secondary-button"
+                disabled={agentPackageBusy !== undefined}
+                onClick={() => void importAgentPackage()}
+                type="button"
+              >
+                <Upload aria-hidden="true" size={13} />
+                {t(
+                  'platformFeatures.remoteProjects.agentInventory.import'
+                )}
+              </button>
+              <button
+                aria-label={t(
+                  'platformFeatures.remoteProjects.agentInventory.refresh'
+                )}
+                className="secondary-button"
+                disabled={
+                  agentInventoryLoading ||
+                  agentPackageBusy !== undefined
+                }
+                onClick={() => void loadAgentInventory(true)}
+                type="button"
+              >
+                <RefreshCw
+                  aria-hidden="true"
+                  className={
+                    agentInventoryLoading
+                      ? 'bundled-agent-inventory__spinner'
+                      : undefined
+                  }
+                  size={13}
+                />
+                {t(
+                  'platformFeatures.remoteProjects.agentInventory.refresh'
+                )}
+              </button>
+            </div>
+          </div>
+          {agentInventory && (
+            <p className="settings-notice">
+              {t(
+                'platformFeatures.remoteProjects.agentInventory.summary',
+                {
+                  available: agentInventory.entries.filter(
+                    (entry) => entry.state === 'verified'
+                  ).length,
+                  total: agentInventory.entries.length
+                }
+              )}
+            </p>
+          )}
+          {agentInventoryLoading && !agentInventory ? (
+            <p className="settings-notice" role="status">
+              {t(
+                'platformFeatures.remoteProjects.agentInventory.loading'
+              )}
+            </p>
+          ) : agentInventoryError ? (
+            <p className="settings-warning" role="alert">
+              {agentInventoryError}
+            </p>
+          ) : agentInventory ? (
+            <div
+              aria-label={t(
+                'platformFeatures.remoteProjects.agentInventory.listLabel'
+              )}
+              className="bundled-agent-inventory"
+              role="list"
+            >
+              {agentInventory.entries.map((entry) => (
+                <article
+                  className="bundled-agent-inventory__item"
+                  key={entry.architecture}
+                  role="listitem"
+                >
+                  <div className="bundled-agent-inventory__item-header">
+                    <Cpu aria-hidden="true" size={16} />
+                    <strong>
+                      Linux {entry.architecture}
+                    </strong>
+                    <span
+                      className={`bundled-agent-inventory__badge bundled-agent-inventory__badge--${entry.state}`}
+                    >
+                      {t(
+                        `platformFeatures.remoteProjects.agentInventory.states.${entry.state}`
+                      )}
+                    </span>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>
+                        {t(
+                          'platformFeatures.remoteProjects.agentInventory.fields.agentVersion'
+                        )}
+                      </dt>
+                      <dd>{entry.version ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        {t(
+                          'platformFeatures.remoteProjects.agentInventory.fields.architecture'
+                        )}
+                      </dt>
+                      <dd>{entry.architecture}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        {t(
+                          'platformFeatures.remoteProjects.agentInventory.fields.runtimeVersion'
+                        )}
+                      </dt>
+                      <dd>{entry.remoteRuntimeVersion ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        {t(
+                          'platformFeatures.remoteProjects.agentInventory.fields.protocol'
+                        )}
+                      </dt>
+                      <dd>
+                        {entry.agentProtocol
+                          ? `${entry.agentProtocol.major}.${entry.agentProtocol.minor}`
+                          : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                  {agentPackageProgress?.architecture ===
+                    entry.architecture &&
+                    agentPackageBusy === entry.architecture && (
+                      <p className="settings-notice" role="status">
+                        {t(
+                          `platformFeatures.remoteProjects.agentInventory.progress.${agentPackageProgress.phase}`
+                        )}
+                      </p>
+                    )}
+                  <div className="capability-card__actions">
+                    <button
+                      className="secondary-button"
+                      disabled={agentPackageBusy !== undefined}
+                      onClick={() =>
+                        void downloadAgentPackage(
+                          entry.architecture
+                        )
+                      }
+                      type="button"
+                    >
+                      <Download aria-hidden="true" size={13} />
+                      {t(
+                        entry.state === 'verified'
+                          ? 'platformFeatures.remoteProjects.agentInventory.update'
+                          : 'platformFeatures.remoteProjects.agentInventory.download'
+                      )}
+                    </button>
+                    {entry.state === 'verified' && (
+                      <button
+                        className="secondary-button"
+                        disabled={agentPackageBusy !== undefined}
+                        onClick={() =>
+                          void exportAgentPackage(
+                            entry.architecture
+                          )
+                        }
+                        type="button"
+                      >
+                        <Upload aria-hidden="true" size={13} />
+                        {t(
+                          'platformFeatures.remoteProjects.agentInventory.export'
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </article>
       </section>
 
       <section

@@ -21,8 +21,8 @@ const targetDefinitions = [
   { platform: 'windows', arch: 'arm64', formats: ['nsis', 'portable'] },
   { platform: 'macos', arch: 'x64', formats: ['dmg', 'zip'] },
   { platform: 'macos', arch: 'arm64', formats: ['dmg', 'zip'] },
-  { platform: 'linux', arch: 'x64', formats: ['AppImage', 'deb'] },
-  { platform: 'linux', arch: 'arm64', formats: ['AppImage', 'deb'] }
+  { platform: 'linux', arch: 'x64', formats: ['AppImage', 'deb', 'rpm'] },
+  { platform: 'linux', arch: 'arm64', formats: ['AppImage', 'deb', 'rpm'] }
 ]
 const allowedExtensions = {
   nsis: '.exe',
@@ -30,7 +30,8 @@ const allowedExtensions = {
   dmg: '.dmg',
   zip: '.zip',
   AppImage: '.AppImage',
-  deb: '.deb'
+  deb: '.deb',
+  rpm: '.rpm'
 }
 
 function parseArguments(argv) {
@@ -319,6 +320,7 @@ async function main(argv = process.argv.slice(2)) {
 module.exports = {
   aggregateRelease,
   assertSafeName,
+  expectedFormatForFile,
   parseArguments,
   targetDefinitions
 }

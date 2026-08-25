@@ -4,7 +4,6 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -12,7 +11,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 interface ReleaseOptions {
   platform: 'windows' | 'macos' | 'linux'
@@ -23,17 +22,6 @@ interface ReleaseOptions {
   unsigned: boolean
   help: boolean
 }
-
-type VerifyRemoteRuntimeBundle = (
-  bundleDirectory: string,
-  options: {
-    projectRoot: string
-    architecture: 'x64' | 'arm64'
-    registry: Record<string, unknown>
-    lock: Record<string, unknown>
-    verificationEnvironment: 'production'
-  }
-) => void
 
 interface ReleaseBuilderModule {
   assertReplaceableOutput: (
@@ -162,27 +150,6 @@ interface ReleaseBuilderModule {
     options: ReleaseOptions
   ) => void
   verifyPortableZip: (filePath: string) => void
-  verifyReleaseAgentResources: (
-    projectRoot?: string,
-    verifyBundleMatrix?: (
-      bundleRoot: string,
-      options: { projectRoot: string }
-    ) => void
-  ) => void
-  verifyReleaseRemoteRuntimeResources: (
-    projectRoot?: string,
-    verifyBundleMatrix?: (
-      bundleRoot: string,
-      options: { projectRoot: string }
-    ) => void
-  ) => void
-  verifyRemoteRuntimeBundleMatrix: (
-    resourcesRoot: string,
-    options: {
-      projectRoot: string
-      verifyBundleDirectory: VerifyRemoteRuntimeBundle
-    }
-  ) => void
   verifyArchiveIntegrity: (
     filePath: string,
     expectedIntegrity: string
@@ -230,60 +197,6 @@ const windowsOptions: ReleaseOptions = {
   dryRun: false,
   unsigned: false,
   help: false
-}
-
-function createRemoteRuntimeMatrixFixture(): {
-  projectRoot: string
-  resourcesRoot: string
-  options: {
-    projectRoot: string
-    verifyBundleDirectory: VerifyRemoteRuntimeBundle
-  }
-  cleanup: () => void
-} {
-  const projectRoot = mkdtempSync(
-    join(tmpdir(), 'goodbuddy-release-runtime-')
-  )
-  const resourcesRoot = join(
-    projectRoot,
-    '.remote-runtime-resources'
-  )
-  mkdirSync(join(projectRoot, 'resources'), { recursive: true })
-  writeFileSync(
-    join(projectRoot, 'resources', 'agent-release-keys.json'),
-    JSON.stringify({ formatVersion: 1 })
-  )
-  writeFileSync(
-    join(projectRoot, 'remote-runtime-lock.json'),
-    JSON.stringify({
-      formatVersion: 1,
-      runtimes: {
-        opencode: {
-          targets: {
-            x64: {
-              package: 'opencode-linux-x64-baseline',
-              integrity: 'sha512-x64'
-            },
-            arm64: {
-              package: 'opencode-linux-arm64',
-              integrity: 'sha512-arm64'
-            }
-          }
-        }
-      }
-    })
-  )
-  return {
-    projectRoot,
-    resourcesRoot,
-    options: {
-      projectRoot,
-      verifyBundleDirectory: vi.fn<VerifyRemoteRuntimeBundle>()
-    },
-    cleanup: () => {
-      rmSync(projectRoot, { recursive: true, force: true })
-    }
-  }
 }
 
 function pe(machine: number): Buffer {
@@ -389,7 +302,7 @@ describe('release build arguments', () => {
   it.each([
     ['win32', 'x64', 'windows', ['nsis', 'portable']],
     ['darwin', 'arm64', 'macos', ['dmg', 'zip']],
-    ['linux', 'x64', 'linux', ['AppImage', 'deb']]
+    ['linux', 'x64', 'linux', ['AppImage', 'deb', 'rpm']]
   ])(
     'uses %s host defaults',
     (host, arch, platform, formats) => {
@@ -432,7 +345,7 @@ describe('release build arguments', () => {
   it.each([
     [['--platform', 'freebsd'], '不支持当前系统'],
     [['--arch', 'ia32'], '不支持的架构'],
-    [['--format', 'rpm'], '不支持打包格式'],
+    [['--format', 'zip'], '不支持打包格式'],
     [['--platform', 'linux', '--unsigned'], '仅支持 macOS'],
     [['--unknown'], '未知参数']
   ])('rejects invalid arguments', (arguments_, message) => {
@@ -481,278 +394,6 @@ describe('release build arguments', () => {
         argument.includes('portable.artifactName=')
       )
     ).toBe(false)
-  })
-
-  it('verifies both Agent bundles through the release preflight', () => {
-    const projectRoot = join('workspace', 'goodbuddy')
-    const verifyBundleMatrix = vi.fn()
-
-    releaseBuilder.verifyReleaseAgentResources(
-      projectRoot,
-      verifyBundleMatrix
-    )
-
-    expect(verifyBundleMatrix).toHaveBeenCalledOnce()
-    expect(verifyBundleMatrix).toHaveBeenCalledWith(
-      join(projectRoot, '.agent-resources'),
-      { projectRoot }
-    )
-    expect(() =>
-      releaseBuilder.verifyReleaseAgentResources(
-        projectRoot,
-        () => {
-          throw new Error('invalid Agent bundle')
-        }
-      )
-    ).toThrow('invalid Agent bundle')
-  })
-
-  it('verifies both remote Runtime bundles through the release preflight', () => {
-    const projectRoot = join('workspace', 'goodbuddy')
-    const verifyBundleMatrix = vi.fn()
-
-    releaseBuilder.verifyReleaseRemoteRuntimeResources(
-      projectRoot,
-      verifyBundleMatrix
-    )
-
-    expect(verifyBundleMatrix).toHaveBeenCalledOnce()
-    expect(verifyBundleMatrix).toHaveBeenCalledWith(
-      join(projectRoot, '.remote-runtime-resources'),
-      { projectRoot }
-    )
-    expect(() =>
-      releaseBuilder.verifyReleaseRemoteRuntimeResources(
-        projectRoot,
-        () => {
-          throw new Error('invalid remote Runtime bundle')
-        }
-      )
-    ).toThrow('invalid remote Runtime bundle')
-  })
-
-  it('discovers one canonical remote Runtime digest directory per architecture', () => {
-    const projectRoot = mkdtempSync(
-      join(tmpdir(), 'goodbuddy-release-runtime-')
-    )
-    const resourcesRoot = join(
-      projectRoot,
-      '.remote-runtime-resources'
-    )
-    const digests = {
-      x64: '1'.repeat(64),
-      arm64: '2'.repeat(64)
-    }
-    const registry = { formatVersion: 1 }
-    const lock = {
-      formatVersion: 1,
-      runtimes: {
-        opencode: {
-          targets: {
-            x64: {
-              package: 'opencode-linux-x64-baseline',
-              integrity: 'sha512-x64'
-            },
-            arm64: {
-              package: 'opencode-linux-arm64',
-              integrity: 'sha512-arm64'
-            }
-          }
-        }
-      }
-    }
-    const verifyBundleDirectory = vi.fn()
-
-    try {
-      mkdirSync(join(projectRoot, 'resources'), { recursive: true })
-      writeFileSync(
-        join(projectRoot, 'resources', 'agent-release-keys.json'),
-        JSON.stringify(registry)
-      )
-      writeFileSync(
-        join(projectRoot, 'remote-runtime-lock.json'),
-        JSON.stringify(lock)
-      )
-      for (const architecture of ['x64', 'arm64'] as const) {
-        mkdirSync(
-          join(
-            resourcesRoot,
-            `linux-${architecture}`,
-            'opencode',
-            digests[architecture]
-          ),
-          { recursive: true }
-        )
-      }
-
-      releaseBuilder.verifyRemoteRuntimeBundleMatrix(
-        resourcesRoot,
-        { projectRoot, verifyBundleDirectory }
-      )
-
-      expect(verifyBundleDirectory).toHaveBeenCalledTimes(2)
-      for (const architecture of ['x64', 'arm64'] as const) {
-        expect(verifyBundleDirectory).toHaveBeenCalledWith(
-          join(
-            resourcesRoot,
-            `linux-${architecture}`,
-            'opencode',
-            digests[architecture]
-          ),
-          {
-            projectRoot,
-            architecture,
-            registry,
-            lock,
-            verificationEnvironment: 'production'
-          }
-        )
-      }
-    } finally {
-      rmSync(projectRoot, { recursive: true, force: true })
-    }
-  })
-
-  it('rejects a missing remote Runtime digest directory', () => {
-    const fixture = createRemoteRuntimeMatrixFixture()
-
-    try {
-      mkdirSync(
-        join(
-          fixture.resourcesRoot,
-          'linux-x64',
-          'opencode'
-        ),
-        { recursive: true }
-      )
-      expect(() =>
-        releaseBuilder.verifyRemoteRuntimeBundleMatrix(
-          fixture.resourcesRoot,
-          fixture.options
-        )
-      ).toThrow(
-        /must contain exactly one digest directory for x64; found 0/u
-      )
-    } finally {
-      fixture.cleanup()
-    }
-  })
-
-  it('rejects multiple remote Runtime digest directories', () => {
-    const fixture = createRemoteRuntimeMatrixFixture()
-    const runtimeRoot = join(
-      fixture.resourcesRoot,
-      'linux-x64',
-      'opencode'
-    )
-
-    try {
-      mkdirSync(join(runtimeRoot, '1'.repeat(64)), {
-        recursive: true
-      })
-      mkdirSync(join(runtimeRoot, '2'.repeat(64)))
-
-      expect(() =>
-        releaseBuilder.verifyRemoteRuntimeBundleMatrix(
-          fixture.resourcesRoot,
-          fixture.options
-        )
-      ).toThrow(
-        /must contain exactly one digest directory for x64; found 2/u
-      )
-    } finally {
-      fixture.cleanup()
-    }
-  })
-
-  it('rejects malformed entries in a remote Runtime digest root', () => {
-    const fixture = createRemoteRuntimeMatrixFixture()
-    const runtimeRoot = join(
-      fixture.resourcesRoot,
-      'linux-x64',
-      'opencode'
-    )
-
-    try {
-      mkdirSync(join(runtimeRoot, 'NOT-A-CANONICAL-DIGEST'), {
-        recursive: true
-      })
-
-      expect(() =>
-        releaseBuilder.verifyRemoteRuntimeBundleMatrix(
-          fixture.resourcesRoot,
-          fixture.options
-        )
-      ).toThrow(
-        /contains an unexpected entry for x64: NOT-A-CANONICAL-DIGEST/u
-      )
-    } finally {
-      fixture.cleanup()
-    }
-  })
-
-  it('rejects non-directory remote Runtime digest entries', () => {
-    const fixture = createRemoteRuntimeMatrixFixture()
-    const runtimeRoot = join(
-      fixture.resourcesRoot,
-      'linux-x64',
-      'opencode'
-    )
-    const digest = '1'.repeat(64)
-
-    try {
-      mkdirSync(runtimeRoot, { recursive: true })
-      writeFileSync(join(runtimeRoot, digest), 'not a bundle')
-
-      expect(() =>
-        releaseBuilder.verifyRemoteRuntimeBundleMatrix(
-          fixture.resourcesRoot,
-          fixture.options
-        )
-      ).toThrow(
-        new RegExp(
-          `entry must be a real directory for x64: ${digest}`,
-          'u'
-        )
-      )
-    } finally {
-      fixture.cleanup()
-    }
-  })
-
-  it('rejects symlinked remote Runtime digest directories', () => {
-    const fixture = createRemoteRuntimeMatrixFixture()
-    const runtimeRoot = join(
-      fixture.resourcesRoot,
-      'linux-x64',
-      'opencode'
-    )
-    const digest = '1'.repeat(64)
-    const target = join(fixture.projectRoot, 'runtime-target')
-
-    try {
-      mkdirSync(runtimeRoot, { recursive: true })
-      mkdirSync(target)
-      symlinkSync(
-        target,
-        join(runtimeRoot, digest),
-        process.platform === 'win32' ? 'junction' : 'dir'
-      )
-
-      expect(() =>
-        releaseBuilder.verifyRemoteRuntimeBundleMatrix(
-          fixture.resourcesRoot,
-          fixture.options
-        )
-      ).toThrow(
-        new RegExp(
-          `entry must be a real directory for x64: ${digest}`,
-          'u'
-        )
-      )
-    } finally {
-      fixture.cleanup()
-    }
   })
 
   it('explicitly disables notarization for unsigned macOS packages', () => {
@@ -851,7 +492,7 @@ describe('release build arguments', () => {
       releaseBuilder.targetRuntimePackageNames({
         ...windowsOptions,
         platform: 'linux',
-        formats: ['AppImage', 'deb']
+        formats: ['AppImage', 'deb', 'rpm']
       })
     ).toEqual([
       '@koromix/koffi-linux-x64',
@@ -1172,55 +813,19 @@ describe('release build arguments', () => {
     ).toBe(true)
   })
 
-  it('adds the complete Agent matrix only to release packages', () => {
+  it('keeps remote Agent and Runtime payloads out of release packages', () => {
     const resourceEntries = releaseConfig.extraResources
 
-    expect(resourceEntries).toEqual(
-      expect.arrayContaining([
-        {
-          from: 'resources/agent-release-keys.json',
-          to: 'agent-release-keys.json'
-        },
-        {
-          from: 'agent-runtime-lock.json',
-          to: 'agent-runtime-lock.json'
-        },
-        {
-          from: '.agent-resources/linux-x64',
-          to: 'agents/linux-x64',
-          filter: ['**/*']
-        },
-        {
-          from: '.agent-resources/linux-arm64',
-          to: 'agents/linux-arm64',
-          filter: ['**/*']
-        },
-        {
-          from: 'remote-runtime-lock.json',
-          to: 'remote-runtime-lock.json'
-        },
-        {
-          from: '.remote-runtime-resources/linux-x64',
-          to: 'remote-runtimes/linux-x64',
-          filter: ['**/*']
-        },
-        {
-          from: '.remote-runtime-resources/linux-arm64',
-          to: 'remote-runtimes/linux-arm64',
-          filter: ['**/*']
-        }
-      ])
-    )
     expect(
       resourceEntries.filter((entry) =>
         entry.from.startsWith('.agent-resources/')
       )
-    ).toHaveLength(2)
+    ).toHaveLength(0)
     expect(
       resourceEntries.filter((entry) =>
         entry.from.startsWith('.remote-runtime-resources/')
       )
-    ).toHaveLength(2)
+    ).toHaveLength(0)
     expect(
       resourceEntries.filter(
         (entry) => entry.from === 'agent-runtime-lock.json'
@@ -1560,6 +1165,50 @@ describe('release output safety', () => {
           windowsOptions
         )
       ).toThrow('portable 产物数量错误')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('validates AppImage, DEB, and RPM package signatures', () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), 'goodbuddy-linux-artifacts-')
+    )
+    const options: ReleaseOptions = {
+      platform: 'linux',
+      arch: 'x64',
+      formats: ['AppImage', 'deb', 'rpm'],
+      skipBuild: false,
+      dryRun: false,
+      unsigned: false,
+      help: false
+    }
+    try {
+      writeFileSync(
+        join(directory, 'GoodBuddy-linux-x86_64.AppImage'),
+        elf(62)
+      )
+      writeFileSync(
+        join(directory, 'GoodBuddy-linux-amd64.deb'),
+        Buffer.from('!<arch>\n', 'ascii')
+      )
+      const rpm = Buffer.alloc(96)
+      rpm.set([0xed, 0xab, 0xee, 0xdb])
+      writeFileSync(
+        join(directory, 'GoodBuddy-linux-x86_64.rpm'),
+        rpm
+      )
+
+      expect(() =>
+        releaseBuilder.verifyArtifacts(directory, options)
+      ).not.toThrow()
+      writeFileSync(
+        join(directory, 'GoodBuddy-linux-x86_64.rpm'),
+        'not-rpm'
+      )
+      expect(() =>
+        releaseBuilder.verifyArtifacts(directory, options)
+      ).toThrow('RPM lead magic')
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

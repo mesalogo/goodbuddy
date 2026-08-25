@@ -282,6 +282,27 @@ export type SshHostRemoteEnvironment = z.infer<
   typeof sshHostRemoteEnvironmentSchema
 >
 
+export const remoteEnvironmentUpdatePhaseSchema = z.enum([
+  'agent',
+  'runtime',
+  'finalizing'
+])
+
+export type RemoteEnvironmentUpdatePhase = z.infer<
+  typeof remoteEnvironmentUpdatePhaseSchema
+>
+
+export const remoteEnvironmentUpdateProgressSchema = z
+  .object({
+    hostId: sshHostIdSchema,
+    phase: remoteEnvironmentUpdatePhaseSchema
+  })
+  .strict()
+
+export type RemoteEnvironmentUpdateProgress = z.infer<
+  typeof remoteEnvironmentUpdateProgressSchema
+>
+
 export const agentBootstrapIncompatibleReasonSchema = z.enum([
   'non-linux',
   'unsupported-architecture',

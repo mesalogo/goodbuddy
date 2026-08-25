@@ -39,6 +39,7 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 - [长期助手路线图](./roadmap/long-term-assistant-roadmap.md)
 - [电脑控制实施状态](./status/computer-control-implementation-status.md)
 - [知识检索评估](./quality/knowledge-retrieval-evaluation.md)
+- [GoodBuddy 龙芯（LoongArch）预览版构建与功能列表](./development/loongarch-preview-build.md)
 - [统一界面设计系统](../UI-DESIGN.md)
 
 ## 目录规则
@@ -47,6 +48,7 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 2. 跨功能技术总纲放在 `docs/architecture/`。
 3. 产品级设计放在 `docs/design/`，路线图和实施状态分别放在 `roadmap`、`status`。
 4. 测试方法、评估协议和质量报告放在 `docs/quality/`。
-5. 一个概念只能有一份权威定义；其他文档链接到它，不复制另一套术语。
-6. Task、Job、Run、Subagent 和 Conversation 的含义以
+5. 开发环境、实验性构建和移植说明放在 `docs/development/`。
+6. 一个概念只能有一份权威定义；其他文档链接到它，不复制另一套术语。
+7. Task、Job、Run、Subagent 和 Conversation 的含义以
    [Task 与 Job 统一领域模型](./prd/task-and-job/task-and-job-model.md) 为准。

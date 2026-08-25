@@ -64,10 +64,27 @@ export const settingsSections = {
     environment: {
       title: '远程运行环境',
       description:
-        '只读检查当前 Host 已登记版本；打开远程项目时才会安装或更新。',
+        '更新 Host 可能替换 Agent 和 Runtime，并中断正在进行的远程工作；Host 配置和项目文件会保留。',
       loading: '正在读取 Agent 和 Runtime 版本…',
+      update: '更新版本',
+      updateNamed: '更新 {{name}} 的远程运行环境版本',
+      cancelUpdate: '取消更新',
+      cancelUpdateNamed: '取消 {{name}} 的远程运行环境更新',
+      cancelling: '正在取消…',
       refresh: '刷新版本',
       refreshNamed: '刷新 {{name}} 的远程运行环境版本',
+      progress: {
+        preparing: '正在准备更新…',
+        agent: '正在更新 GoodBuddy Agent…',
+        runtime: '正在更新 Runtime…',
+        finalizing: '正在完成远程运行环境更新…',
+        cancelling: '正在取消远程运行环境更新…'
+      },
+      errors: {
+        updateFailed: '更新远程运行环境失败，请重试',
+        cancelled: '远程运行环境更新已取消，可重试',
+        cancelFailed: '取消远程运行环境更新失败'
+      },
       installed: 'Host 已安装',
       expected: 'GoodBuddy 所需',
       notInstalled: '尚未安装',
@@ -160,7 +177,8 @@ export const settingsSections = {
       environmentReadFailed: '读取远程运行环境版本失败'
     },
     notifications: {
-      removed: 'SSH 主机“{{name}}”已删除'
+      removed: 'SSH 主机“{{name}}”已删除',
+      environmentUpdated: 'SSH 主机“{{name}}”的远程运行环境已更新'
     }
   },
   speech: {
@@ -438,7 +456,49 @@ export const settingsSections = {
     remoteProjects: {
       title: '远程项目（技术预览）',
       description: '启用 SSH Host 管理和由 GoodBuddy 托管的远程项目。',
-      enabled: '启用远程项目'
+      enabled: '启用远程项目',
+      agentInventory: {
+        title: 'GoodBuddy Agent 包',
+        description:
+          'Agent 包独立发布，包含 Agent、固定 Node 和桌面版本适配的远端 OpenCode Runtime。在线操作使用“关于与更新”中选择的更新源；未使用远程项目时不会下载。',
+        loading: '正在校验本地 Agent 包…',
+        refresh: '刷新本地清单',
+        import: '导入离线包',
+        export: '导出离线包',
+        download: '下载',
+        update: '检查并更新',
+        listLabel: '本地 Agent 包清单',
+        summary: '当前 {{available}} / {{total}} 个 Linux 架构可用。',
+        states: {
+          verified: '已下载并验证',
+          'not-downloaded': '未下载',
+          invalid: '校验失败'
+        },
+        fields: {
+          agentVersion: 'Agent 版本',
+          architecture: '架构',
+          runtimeVersion: '远端 OpenCode',
+          protocol: 'Agent 协议'
+        },
+        progress: {
+          catalog: '正在读取签名发布目录…',
+          downloading: '正在下载 Agent 包…',
+          verifying: '正在校验签名和完整性…',
+          installing: '正在写入本地缓存…'
+        },
+        notifications: {
+          downloaded: 'Linux {{architecture}} Agent 包已更新',
+          imported: 'Agent 离线包已导入并验证',
+          exported: 'Linux {{architecture}} Agent 包已导出'
+        },
+        errors: {
+          unavailable: '当前版本未提供 Agent 包管理服务',
+          readFailed: '读取本地 Agent 包清单失败，请重试',
+          downloadFailed: 'Agent 包下载或校验失败',
+          importFailed: 'Agent 离线包导入或校验失败',
+          exportFailed: 'Agent 离线包导出失败'
+        }
+      }
     },
     shortcut: {
       title: '全局快捷唤起',

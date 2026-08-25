@@ -93,6 +93,7 @@ function harness(overrides: {
       return connectionManager as unknown as RemoteAgentConnectionManager
     }
   )
+  const loadAgentBundle = vi.fn()
   const services = new RemoteAgentServices({
     sshHostStore,
     goodBuddyVersion: '0.11.0',
@@ -100,6 +101,9 @@ function harness(overrides: {
     appPath: join('workspace', 'goodbuddy'),
     resourcesPath: join('installed', 'resources'),
     packaged: false,
+    agentPackageManager: {
+      loadAgentBundle
+    } as never,
     factories: {
       createSshConnectionPool:
         createSshConnectionPool as never,
@@ -119,7 +123,8 @@ function harness(overrides: {
     createSshConnectionPool,
     createControllerStateStore,
     createAgentInstallationManager,
-    createConnectionManager
+    createConnectionManager,
+    loadAgentBundle
   }
 }
 
@@ -140,6 +145,9 @@ describe('RemoteAgentServices', () => {
     )
     expect(installerOptions?.sshPool).toBe(connectionOptions?.sshPool)
     expect(installerOptions?.sshPool).toBe(instance.services.sshPool)
+    expect(installerOptions?.packageBundleLoader).toBe(
+      instance.loadAgentBundle
+    )
 
     await expect(
       instance.services.targetResolver.resolve('host-1')
@@ -204,7 +212,10 @@ describe('RemoteAgentServices', () => {
       userDataPath: join('profile', 'GoodBuddy'),
       appPath: join('workspace', 'goodbuddy'),
       resourcesPath: join('installed', 'resources'),
-      packaged: false
+      packaged: false,
+      agentPackageManager: {
+        loadAgentBundle: vi.fn()
+      } as never
     })
 
     expect(resolveConnectionTarget).not.toHaveBeenCalled()

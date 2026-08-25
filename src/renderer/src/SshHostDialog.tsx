@@ -19,7 +19,7 @@ import type {
   SshHostValidationResult
 } from '../../shared/ssh-host-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
-import { sshHostErrorMessage } from './ssh-host-ui'
+import { displayErrorMessage } from './error-message'
 
 type HostDraft = {
   name: string
@@ -254,7 +254,7 @@ export function SshHostDialog({
       setStage('host-key')
     } catch (reason) {
       setError(
-        sshHostErrorMessage(
+        displayErrorMessage(
           reason,
           t('sshHosts.errors.inspectFailed')
         )
@@ -325,7 +325,7 @@ export function SshHostDialog({
       })
     } catch (reason) {
       setError(
-        sshHostErrorMessage(
+        displayErrorMessage(
           reason,
           t('sshHosts.errors.validationFailed')
         )

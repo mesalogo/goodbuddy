@@ -5,7 +5,6 @@ const {
   createWriteStream,
   existsSync,
   closeSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -39,13 +38,6 @@ const { sha256File } = require('./file-hash.cjs')
 const {
   detectBinaryArchitecture
 } = require('./binary-architecture.cjs')
-const {
-  verifyAgentBundleMatrix
-} = require('./agent-bundle.cjs')
-const {
-  supportedArchitectures: remoteRuntimeArchitectures,
-  verifyBundleDirectory: verifyRemoteRuntimeBundle
-} = require('./remote-runtime-bundle.cjs')
 
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(
@@ -135,8 +127,8 @@ const platformDefinitions = {
   },
   linux: {
     builderFlag: '--linux',
-    defaultFormats: ['AppImage', 'deb'],
-    supportedFormats: ['AppImage', 'deb'],
+    defaultFormats: ['AppImage', 'deb', 'rpm'],
+    supportedFormats: ['AppImage', 'deb', 'rpm'],
     unpackedPattern: /^linux(?:-.+)?-unpacked$/u,
     executable: [packageJson.name],
     runtimeExecutable: 'opencode'
@@ -148,7 +140,8 @@ const formatExtensions = {
   dmg: '.dmg',
   zip: '.zip',
   AppImage: '.AppImage',
-  deb: '.deb'
+  deb: '.deb',
+  rpm: '.rpm'
 }
 
 function normalizePlatform(value) {
@@ -398,103 +391,6 @@ function electronBuilderEnvironment(
   }
   builderEnvironment.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
   return builderEnvironment
-}
-
-function verifyReleaseAgentResources(
-  projectRoot = root,
-  verifyBundleMatrix = verifyAgentBundleMatrix
-) {
-  verifyBundleMatrix(
-    join(projectRoot, '.agent-resources'),
-    { projectRoot }
-  )
-}
-
-function verifyRemoteRuntimeBundleMatrix(
-  resourcesRoot,
-  options = {}
-) {
-  const projectRoot = options.projectRoot ?? root
-  const verifyBundleDirectory =
-    options.verifyBundleDirectory ?? verifyRemoteRuntimeBundle
-  const registry = readJsonFile(
-    options.registryPath ??
-      join(projectRoot, 'resources', 'agent-release-keys.json'),
-    'Remote Runtime trusted key registry'
-  )
-  const lock = readJsonFile(
-    options.lockPath ??
-      join(projectRoot, 'remote-runtime-lock.json'),
-    'Remote Runtime lock'
-  )
-  for (const architecture of remoteRuntimeArchitectures) {
-    const runtimeRoot = join(
-      resourcesRoot,
-      `linux-${architecture}`,
-      'opencode'
-    )
-    let rootStat
-    try {
-      rootStat = lstatSync(runtimeRoot)
-    } catch (error) {
-      throw new Error(
-        `Remote Runtime bundle root is missing for ${architecture}: ${runtimeRoot}`,
-        { cause: error }
-      )
-    }
-    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-      throw new Error(
-        `Remote Runtime bundle root must be a real directory for ${architecture}: ${runtimeRoot}`
-      )
-    }
-    let entries
-    try {
-      entries = readdirSync(runtimeRoot, { withFileTypes: true })
-    } catch (error) {
-      throw new Error(
-        `Remote Runtime bundle root cannot be read for ${architecture}: ${runtimeRoot}`,
-        { cause: error }
-      )
-    }
-    for (const entry of entries) {
-      if (!/^[a-f0-9]{64}$/u.test(entry.name)) {
-        throw new Error(
-          `Remote Runtime bundle root contains an unexpected entry for ${architecture}: ${entry.name}`
-        )
-      }
-      const entryStat = lstatSync(join(runtimeRoot, entry.name))
-      if (entryStat.isSymbolicLink() || !entryStat.isDirectory()) {
-        throw new Error(
-          `Remote Runtime bundle entry must be a real directory for ${architecture}: ${entry.name}`
-        )
-      }
-    }
-    if (entries.length !== 1) {
-      throw new Error(
-        `Remote Runtime bundle root must contain exactly one digest directory for ${architecture}; found ${entries.length}`
-      )
-    }
-    verifyBundleDirectory(
-      join(runtimeRoot, entries[0].name),
-      {
-        projectRoot,
-        architecture,
-        registry,
-        lock,
-        verificationEnvironment: 'production'
-      }
-    )
-  }
-}
-
-function verifyReleaseRemoteRuntimeResources(
-  projectRoot = root,
-  verifyBundleMatrix = verifyRemoteRuntimeBundleMatrix
-) {
-  verifyBundleMatrix(
-    join(projectRoot, '.remote-runtime-resources'),
-    { projectRoot }
-  )
 }
 
 function binaryArchitecture(filePath) {
@@ -1154,25 +1050,9 @@ function verifyUnpackedOutput(directory, options) {
     join(resources, 'agent-runtime-lock.json'),
     'Agent Runtime 锁定清单'
   )
-  verifyAgentBundleMatrix(join(resources, 'agents'), {
-    projectRoot: root,
-    registryPath: join(resources, 'agent-release-keys.json'),
-    lockPath: join(resources, 'agent-runtime-lock.json')
-  })
   assertFile(
     join(resources, 'remote-runtime-lock.json'),
     'Remote Runtime 锁定清单'
-  )
-  verifyRemoteRuntimeBundleMatrix(
-    join(resources, 'remote-runtimes'),
-    {
-      projectRoot: root,
-      registryPath: join(
-        resources,
-        'agent-release-keys.json'
-      ),
-      lockPath: join(resources, 'remote-runtime-lock.json')
-    }
   )
   assertFile(runtimeExecutable, 'OpenCode Runtime')
   assertFile(
@@ -1570,6 +1450,12 @@ function verifyArtifactSignature(filePath, format, arch) {
   ) {
     throw new Error('deb 产物不是有效的 ar 归档')
   }
+  if (
+    format === 'rpm' &&
+    readChunk(filePath, 4).toString('hex') !== 'edabeedb'
+  ) {
+    throw new Error('rpm 产物缺少 RPM lead magic')
+  }
 }
 
 async function writeManifest(directory, options) {
@@ -1703,7 +1589,7 @@ function printHelp() {
 默认格式：
   windows: nsis, portable (ZIP)
   macos:   dmg, zip
-  linux:   AppImage, deb`)
+  linux:   AppImage, deb, rpm`)
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -1743,8 +1629,6 @@ async function main(argv = process.argv.slice(2)) {
     )
   }
 
-  verifyReleaseAgentResources()
-  verifyReleaseRemoteRuntimeResources()
   rmSync(stagingDirectory, { recursive: true, force: true })
   let cleanupTargetDependencies = () => undefined
   try {
@@ -1814,9 +1698,6 @@ module.exports = {
   verifyArtifacts,
   verifyArtifactSignature,
   verifyPortableZip,
-  verifyReleaseAgentResources,
-  verifyReleaseRemoteRuntimeResources,
-  verifyRemoteRuntimeBundleMatrix,
   writeManifest
 }
 

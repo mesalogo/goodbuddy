@@ -15,6 +15,7 @@ import {
   SettingsCategoryHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
+import { displayErrorMessage } from './error-message'
 import { FeedbackDialog } from './FeedbackDialog'
 
 function formatBytes(bytes: number): string {
@@ -29,20 +30,11 @@ function updateErrorMessage(
   fallback: string,
   networkMessage: string
 ): string {
-  if (!(reason instanceof Error)) {
-    return fallback
-  }
-  const message = reason.message
-    .replace(
-      /^Error invoking remote method '[^']+':\s*/,
-      ''
-    )
-    .replace(/^(?:TypeError|Error):\s*/, '')
-    .trim()
+  const message = displayErrorMessage(reason, fallback)
   if (/fetch failed/i.test(message)) {
     return networkMessage
   }
-  return message || fallback
+  return message
 }
 
 export function UpdateSettingsSection(): React.JSX.Element {

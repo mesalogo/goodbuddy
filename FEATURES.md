@@ -23,7 +23,8 @@
 
 - [x] **直连模型 Runtime**：支持问答、知识总结、受控工具执行和图像生成。
 - [x] **OpenCode 与 Continue**：使用隔离子进程、环境变量白名单、统一配置、取消、总执行时限、有界流式输出和活动记录；共享进程回收逻辑保留 Windows 完整进程树终止，并对采用独立进程组的 POSIX 子进程执行组回收。交互提问只由前台对话回答，定时任务、远程通道和委派等后台执行遇到提问时会立即失败并提示改为前台运行，避免无限等待。
-- [x] **托管 SSH OpenCode 闭环（技术预览，签名工件待发布）**：该能力由“设置 > 平台功能”中的独立“远程项目（技术预览）”页签控制，默认关闭。关闭时隐藏 SSH Host 管理、托管 SSH 项目创建和已保存远程项目，Main 同时拒绝新的远程操作；已有 Host、项目和凭据原样保留，关闭期间的远程激活会被取消，当前远程项目切回第一个普通本地项目。启用后，项目创建/设置可选择已保存 SSH Host、远端工作目录和 Ask/Execute；新建项目可手工输入路径，或通过 Main 管理的只读、有界 SFTP 目录选择器浏览，选择结果仍需通过正常保存验证，普通非 Git 目录也可作为 Workspace，Git 状态/差异能力仅在仓库可安全解析时启用。应用重启后固定进入项目列表中的第一个普通本地项目，不会自动激活上次远程项目；只有用户主动切换到托管 SSH 项目时才开始远端验证，相同项目的重复激活共享同一操作。Host 地址、用户或固定 Host Key 变化时会关闭旧连接并定向退役该 Host 的 Runtime 缓存；所有引用项目保持待重新激活状态，当前项目自动重新激活并刷新验证，其他项目在下次选择时刷新，重新选择当前 SSH 项目也会强制验证。失败或取消后 Composer 继续禁用，用户排队消息保留在 Main 持久队列中，直到成功激活后继续。主动切换期间侧栏显示 Host、Agent、Workspace、Runtime、Saving 五阶段进度和取消入口，并暂时禁用冲突的项目切换、创建与设置操作。Main 验证并安装签名 Agent/OpenCode Runtime，通过按需启动的 detached Agent、私有 Unix socket 和 ACP v3 保持长任务不受 SSH 抖动影响；Main 持久化单调恢复 cursor，重连后恢复同一 binding、重放未确认输出并继续同一 OpenCode Session，只有确认远端 close 后才删除恢复 identity，Agent 终态事务会清空 active journal frame。Agent、固定 Node Runtime 与 OpenCode Runtime 分别维护精确工件；Agent 升级会在签名、registry、owner/mode/size 与 digest 全部一致时复用现有 Node，否则上传候选 Node。桌面更新后用户首次打开对应托管 SSH 项目会自动升级内置 Agent/Runtime，并在完整验证成功后原子刷新项目绑定，失败时保留旧绑定。普通 Portable 携带两个 lock 与 production 公钥 registry；若本地存在 Agent 工件，构建会先严格校验再嵌入，运行时可自动安装或升级，不存在工件时仍保持 metadata-only，只复用完整验证通过的匹配组件。SSH Host 设置以只读卡片显示 Host 已安装版本与当前 GoodBuddy 所需版本，查看设置不会触发安装。Ask 使用 bubblewrap 只读 Workspace；Execute 直接使用所选 SSH 账号的完整权限，不要求额外 consent 或逐工具审批。模型凭据和 Provider URL 留在 Main；模型桥不限制 Prompt 内的模型调用轮数、工具调用次数或 Token，只保留取消、Runtime deadline、有界传输与结果不确定时禁止自动重放。Windows 到 Linux x64 的安装、metadata-only Portable 项目保存、provider-free 模型桥、断线重放、Session 续接和零残留清理已使用 production 签名工件完成真实 Host 验证；production 公钥 registry 已供应，剩余发布门槛是当前 Linux x64/arm64 正式签名工件完整矩阵与经明确授权的有界真实模型调用。
+- [x] **托管 SSH OpenCode 闭环（技术预览）**：该能力由“设置 > 平台功能”中的独立“远程项目（技术预览）”页签控制并默认关闭；关闭时不影响任何本地项目、普通桌面功能或桌面发布。启用后可管理固定 Host Key 的 SSH Host、浏览有界远端目录并创建 Ask/Execute 项目；Ask 在 Runtime 边界通过 bubblewrap 保持 Workspace 只读，Execute 使用所选 SSH 账号的完整权限。Main 通过签名 Agent、私有 Unix socket、ACP v3、持久恢复 cursor 和 Main-only 模型桥维持长任务、重连与会话恢复，模型凭据不进入远端。远端组件不嵌入桌面包，也不会在项目激活时自动下载；用户必须先在该设置页按 Linux x64/arm64 手动下载最新兼容的签名 `.gbagent`，或导入/导出离线包。每个复合包包含 Agent、固定 Node 与由桌面源码统一维护适配的 OpenCode Runtime；在线来源跟随“关于与更新”的 GitHub/北京 OSS 选择，签名累计目录绑定最低桌面版本、Agent 协议、架构、大小、SHA-256 和固定 URL。缺少某架构包只使该架构托管 SSH 不可用。持久化验证继续精确绑定 Agent installation 与签名 Runtime digest；托管 SSH 会话只显示支持的 OpenCode 选择。Windows 到 Linux x64 的安装、provider-free 模型桥、断线重放、Session 续接和零残留清理已完成真实 Host 验证；签名 Agent 0.11.2-e2e.12 与 OpenCode Runtime 1.18.9 已完成一次只提交一遍、只调用一个 Ask 原生 read、无标题轮次且精确返回证据内容的有界真实模型验收，当前源码 lock 为后续安全修复后的 Agent 0.11.2-e2e.13。
+- [x] **SSH Host 运行环境手动更新**：远程运行环境卡片只读取 Host 已安装 Agent/Runtime 与当前本地复合包所需版本，不会联网。用户显式触发后，Main 按 Agent、Runtime 顺序使用对应 Host 架构的已验证本地 `.gbagent` 强制重新校验并安装，显示阶段进度并允许在最终收尾前取消；尚未下载时提示先到平台功能设置下载或导入。更新期间保留旧版本卡片，失败或取消后刷新实际状态并允许重试；成功后定向清理该 Host 缓存并使引用项目重新验证，不删除 Host 配置、凭据、项目设置或 Workspace 文件。
 - [x] **DeepSeek Harness（预览）**：使用 GoodBuddy 固定 Host 和 OpenAI 兼容模型连接；Ask 只允许调用 Host 中真实注册的 `read`、`skill` 以及 Main 管理的 Web Search/Fetch 代理，拒绝插件同名冒充，Execute 放行全部已启用内置及插件工具，并以当前用户权限运行。图像输入跟随所选模型连接的能力声明，文本模型在 Host 或模型调用前拒绝图片，图片模型通过有界内联内容和临时 Attachment Store 接收 JPEG/PNG。
 - [x] **DSH npm 插件市场**：市场默认关闭，由用户显式开启后搜索公共 npm 的 `dsh-plugin` 包，使用捆绑 npm 执行精确版本安装和普通 lifecycle scripts，并支持启停、JSON 配置、移除、失败启动自动停用和离线管理已安装插件；关闭市场只隐藏目录与管理界面，不改变已有插件的启停状态，第三方代码不受 Ask 初始化隔离。
 - [x] **Ask 与 Execute 工作模式**：Ask 保持只读；Execute 是用户对当前本机或 SSH 账号可用工具、进程、网络和可写路径的完整授权。
@@ -87,14 +88,14 @@
 
 - [x] **0BSD 开源许可**：原创代码可自由使用、复制、修改、分发和商用；第三方组件和资源仍遵循各自许可证。
 - [x] **可复现依赖安装与源码构建**：使用锁定依赖、Node.js 24 和统一的测试、类型检查、Lint、生产构建命令。
-- [x] **六平台原生发布矩阵**：Windows、macOS、Linux 的 `x64`、`arm64` 目标由原生 Runner 构建，并提供发布清单和 SHA-256 哈希。
+- [x] **六平台原生发布矩阵**：Windows、macOS、Linux 的 `x64`、`arm64` 目标由原生 Runner 构建，并提供发布清单和 SHA-256 哈希；Linux 同时生成 AppImage、DEB 和 RPM。
 
 ### 开放接口、团队协作与远程执行
 
 - [x] **远程任务委派**：仅在用户显式配置端点和令牌后启用，按全局内网兼容模式使用 HTTP(S)，结果进入持久化发件箱。
 - [ ] **Headless Runtime API**（规划中）：提供本机优先的任务、事件、状态和成果 API，以及有范围、有效期、限流和撤销能力的令牌。
 - [ ] **GoodBuddy Team Hub**（规划中）：以可选服务提供组织、RBAC、项目共享、远程 Agent、策略下发和租户审计。
-- [ ] **SSH 主机与远程执行空间发布验收**：主机 CRUD、Host Key、加密凭据、Project UI、Workspace、OpenCode ACP、Main-only 模型桥、Ask 只读、Execute 完整账号权限、取消、detached Agent 重连和 release-only 双架构资源校验已经接线。Windows 到 Linux x64 的真实 Host provider-free 安装、metadata-only Portable 复用与项目保存、桥接、断线恢复、输出重放、同 Session 续接与清理已经通过；production signing key registry 已供应。剩余门槛是生成并导入当前 Agent/Runtime 版本的 Linux x64/arm64 正式签名工件完整矩阵，并在明确授权后完成一次有界真实模型调用验收。门槛未满足时不提供未验证 SSH fallback。
+- [ ] **SSH 主机与远程执行空间发布验收**：主机 CRUD、Host Key、加密凭据、Project UI、Workspace、OpenCode ACP、Main-only 模型桥、Ask 只读、Execute 完整账号权限、取消、detached Agent 重连和 release-only 双架构资源校验已经接线。Windows 到 Linux x64 的真实 Host provider-free 安装、metadata-only Portable 复用与项目保存、桥接、断线恢复、输出重放、同 Session 续接与清理已经通过；Agent 0.11.2-e2e.12 与 OpenCode Runtime 1.18.9 的真实模型 Ask 验收也已通过，单次用户操作只执行一个原生 read，两个 build 模型轮次均完成交付，没有 title 轮次或请求重放。公开 signing key registry 已供应。剩余门槛是生成并导入 Linux x64/arm64 当前发布版本的正式签名工件完整矩阵。门槛未满足时不提供未验证 SSH fallback。
 - [ ] **多云远程沙盒 Agent**（规划中）：通过云厂商 API 和 SSH Agent 管理专用 Linux 沙盒；凭据留在 Main 进程，高风险控制面操作单独确认。
 
 ## 规划原则

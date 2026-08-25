@@ -230,6 +230,16 @@ export function canonicalAgentManifestBytes(
   return Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
 
+export function canonicalAgentReleaseKeyRegistryBytes(
+  registry: AgentReleaseKeyRegistry
+): Buffer {
+  const canonical = agentReleaseKeyRegistrySchema.parse(registry)
+  return Buffer.from(
+    `${JSON.stringify(canonical, null, 2)}\n`,
+    'utf8'
+  )
+}
+
 export function agentManifestSignaturePayload(
   manifestBytes: Uint8Array
 ): Buffer {

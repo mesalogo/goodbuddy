@@ -4,15 +4,17 @@ const {
   writeFileSync
 } = require('node:fs')
 const { dirname, resolve } = require('node:path')
+const {
+  expectedFormatForFile,
+  targetDefinitions
+} = require('./aggregate-release.cjs')
 
-const supportedTargets = new Map([
-  ['windows-x64', ['nsis', 'portable']],
-  ['windows-arm64', ['nsis', 'portable']],
-  ['macos-x64', ['dmg', 'zip']],
-  ['macos-arm64', ['dmg', 'zip']],
-  ['linux-x64', ['AppImage', 'deb']],
-  ['linux-arm64', ['AppImage', 'deb']]
-])
+const supportedTargets = new Map(
+  targetDefinitions.map((target) => [
+    `${target.platform}-${target.arch}`,
+    target
+  ])
+)
 
 function parseArguments(argv) {
   const options = {}
@@ -81,32 +83,6 @@ function assertFile(file, targetKey) {
   }
 }
 
-function formatForFile(fileName, platform) {
-  if (platform === 'windows') {
-    if (/-setup\.exe$/u.test(fileName)) {
-      return 'nsis'
-    }
-    if (/-portable\.zip$/u.test(fileName)) {
-      return 'portable'
-    }
-  } else if (platform === 'macos') {
-    if (fileName.endsWith('.dmg')) {
-      return 'dmg'
-    }
-    if (fileName.endsWith('.zip')) {
-      return 'zip'
-    }
-  } else if (platform === 'linux') {
-    if (fileName.endsWith('.AppImage')) {
-      return 'AppImage'
-    }
-    if (fileName.endsWith('.deb')) {
-      return 'deb'
-    }
-  }
-  return undefined
-}
-
 function createSiteRelease(manifest, baseUrlValue) {
   if (
     !manifest ||
@@ -123,7 +99,8 @@ function createSiteRelease(manifest, baseUrlValue) {
   const targets = {}
   for (const target of manifest.targets) {
     const key = `${target?.platform}-${target?.arch}`
-    const expectedFormats = supportedTargets.get(key)
+    const expectedTarget = supportedTargets.get(key)
+    const expectedFormats = expectedTarget?.formats
     if (
       !expectedFormats ||
       seenTargets.has(key) ||
@@ -140,7 +117,10 @@ function createSiteRelease(manifest, baseUrlValue) {
     const files = {}
     for (const file of target.files) {
       assertFile(file, key)
-      const format = formatForFile(file.name, target.platform)
+      const format = expectedFormatForFile(
+        file.name,
+        expectedTarget
+      )
       if (!format || !expectedFormats.includes(format) || files[format]) {
         throw new Error(`发布文件格式无效：${file.name}`)
       }

@@ -30,6 +30,7 @@ import {
   getBundledRemoteRuntimeRoot,
   type BundledRemoteRuntimeResourcePaths
 } from './bundled-remote-runtime-resources'
+import { isMissingPathError } from './path-errors'
 
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
 const digestDirectoryPattern = /^[a-f0-9]{64}$/u
@@ -257,15 +258,6 @@ async function resolveSingleDigestDirectory(
     )
   }
   return bundleDirectory
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === 'ENOENT'
-  )
 }
 
 async function validateVerifiedBundle(

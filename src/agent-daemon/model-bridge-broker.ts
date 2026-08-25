@@ -584,11 +584,21 @@ async function readExactly(
   let remaining = byteLength
   while (remaining > 0) {
     signal.throwIfAborted()
-    const chunk = socket.read(remaining) as Buffer | null
-    if (chunk !== null) {
+    const readableBytes = Math.min(
+      remaining,
+      socket.readableLength
+    )
+    if (readableBytes > 0) {
+      const chunk = socket.read(readableBytes) as Buffer | null
+      if (chunk === null || chunk.byteLength !== readableBytes) {
+        throw new ModelBridgeBrokerError('transport-failed')
+      }
       chunks.push(chunk)
       remaining -= chunk.byteLength
       continue
+    }
+    if (socket.readableEnded || socket.destroyed) {
+      throw new ModelBridgeBrokerError('transport-failed')
     }
     await new Promise<void>((resolve, reject) => {
       const onReadable = (): void => {
@@ -619,6 +629,17 @@ async function readExactly(
       socket.once('end', onClose)
       socket.once('error', onError)
       signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      if (socket.readableLength > 0) {
+        onReadable()
+        return
+      }
+      if (socket.readableEnded || socket.destroyed) {
+        onClose()
+      }
     })
   }
   return Buffer.concat(chunks, byteLength)

@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -8,6 +9,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  RemoteEnvironmentUpdateProgress,
   SshHost,
   SshHostRemoteEnvironment,
   SshHostValidationResult,
@@ -71,6 +73,22 @@ const discardCandidate = vi.fn()
 const validateAndSave = vi.fn()
 const getRemoteEnvironment =
   vi.fn<(hostId: string) => Promise<SshHostRemoteEnvironment>>()
+const updateRemoteEnvironment =
+  vi.fn<(hostId: string) => Promise<void>>()
+const cancelRemoteEnvironmentUpdate =
+  vi.fn<(hostId: string) => Promise<void>>()
+let remoteEnvironmentUpdateProgressListener:
+  | ((event: RemoteEnvironmentUpdateProgress) => void)
+  | undefined
+const unsubscribeRemoteEnvironmentUpdateProgress = vi.fn()
+const onRemoteEnvironmentUpdateProgress = vi.fn(
+  (
+    listener: (event: RemoteEnvironmentUpdateProgress) => void
+  ): (() => void) => {
+    remoteEnvironmentUpdateProgressListener = listener
+    return unsubscribeRemoteEnvironmentUpdateProgress
+  }
+)
 
 const remoteEnvironment: SshHostRemoteEnvironment = {
   hostId,
@@ -100,6 +118,29 @@ const remoteEnvironment: SshHostRemoteEnvironment = {
       architecture: 'x64'
     }
   }]
+}
+
+const currentRemoteEnvironment: SshHostRemoteEnvironment = {
+  ...remoteEnvironment,
+  agent: {
+    ...remoteEnvironment.agent,
+    state: 'current',
+    installed: remoteEnvironment.agent.expected
+  }
+}
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason: unknown) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
 }
 
 function openNewHostDialog(): void {
@@ -155,6 +196,17 @@ describe('SshHostsSettingsSection', () => {
     discardCandidate.mockResolvedValue(undefined)
     validateAndSave.mockResolvedValue(validationResult)
     getRemoteEnvironment.mockResolvedValue(remoteEnvironment)
+    updateRemoteEnvironment.mockResolvedValue(undefined)
+    cancelRemoteEnvironmentUpdate.mockResolvedValue(undefined)
+    remoteEnvironmentUpdateProgressListener = undefined
+    onRemoteEnvironmentUpdateProgress.mockImplementation(
+      (
+        listener: (event: RemoteEnvironmentUpdateProgress) => void
+      ): (() => void) => {
+        remoteEnvironmentUpdateProgressListener = listener
+        return unsubscribeRemoteEnvironmentUpdateProgress
+      }
+    )
     Object.defineProperty(window, 'goodbuddy', {
       configurable: true,
       value: {
@@ -164,7 +216,10 @@ describe('SshHostsSettingsSection', () => {
           inspectDraftHostKey,
           discardCandidate,
           validateAndSave,
-          getRemoteEnvironment
+          getRemoteEnvironment,
+          updateRemoteEnvironment,
+          cancelRemoteEnvironmentUpdate,
+          onRemoteEnvironmentUpdateProgress
         }
       }
     })
@@ -573,5 +628,412 @@ describe('SshHostsSettingsSection', () => {
       expect(getRemoteEnvironment).toHaveBeenCalledTimes(2)
     )
     expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+  })
+
+  it('places Update immediately before Refresh and disables it when versions are current', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    getRemoteEnvironment.mockResolvedValue(currentRemoteEnvironment)
+    render(<SshHostsSettingsSection />)
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    const host = screen.getByRole('region', { name: 'Build host' })
+    const updateButton = within(host).getByRole('button', {
+      name: '更新 Build host 的远程运行环境版本'
+    })
+    const refreshButton = within(host).getByRole('button', {
+      name: '刷新 Build host 的远程运行环境版本'
+    })
+    expect(updateButton.nextElementSibling).toBe(refreshButton)
+    expect(updateButton).toBeDisabled()
+    expect(updateRemoteEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('updates with phase progress, preserves cards, refreshes, and reports success once', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const updateOperation = deferred<void>()
+    updateRemoteEnvironment.mockReturnValue(updateOperation.promise)
+    const onHostUpdated = vi.fn()
+    const onNotify = vi.fn()
+    render(
+      <SshHostsSettingsSection
+        onHostUpdated={onHostUpdated}
+        onNotify={onNotify}
+      />
+    )
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    const host = screen.getByRole('region', { name: 'Build host' })
+    fireEvent.click(
+      within(host).getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+
+    expect(updateRemoteEnvironment).toHaveBeenCalledOnce()
+    expect(updateRemoteEnvironment).toHaveBeenCalledWith(hostId)
+    expect(within(host).getByText('GoodBuddy Agent')).toBeInTheDocument()
+    expect(within(host).getByText('OpenCode Runtime')).toBeInTheDocument()
+    expect(
+      within(host).getByRole('button', {
+        name: '刷新 Build host 的远程运行环境版本'
+      })
+    ).toBeDisabled()
+    expect(within(host).getByRole('status')).toHaveTextContent(
+      '正在准备更新'
+    )
+
+    act(() => {
+      remoteEnvironmentUpdateProgressListener?.({
+        hostId: candidateId,
+        phase: 'agent'
+      })
+    })
+    expect(within(host).getByRole('status')).toHaveTextContent(
+      '正在准备更新'
+    )
+    act(() => {
+      remoteEnvironmentUpdateProgressListener?.({
+        hostId,
+        phase: 'agent'
+      })
+    })
+    expect(within(host).getByRole('status')).toHaveTextContent(
+      '正在更新 GoodBuddy Agent'
+    )
+    act(() => {
+      remoteEnvironmentUpdateProgressListener?.({
+        hostId,
+        phase: 'runtime'
+      })
+    })
+    expect(within(host).getByRole('status')).toHaveTextContent(
+      '正在更新 Runtime'
+    )
+    act(() => {
+      remoteEnvironmentUpdateProgressListener?.({
+        hostId,
+        phase: 'finalizing'
+      })
+    })
+    expect(within(host).getByRole('status')).toHaveTextContent(
+      '正在完成远程运行环境更新'
+    )
+    expect(
+      within(host).getByRole('button', {
+        name: '取消 Build host 的远程运行环境更新'
+      })
+    ).toBeDisabled()
+
+    await act(async () => {
+      updateOperation.resolve(undefined)
+      await updateOperation.promise
+    })
+    await waitFor(() =>
+      expect(getRemoteEnvironment).toHaveBeenCalledTimes(2)
+    )
+    await waitFor(() =>
+      expect(
+        within(host).queryByText('正在完成远程运行环境更新')
+      ).not.toBeInTheDocument()
+    )
+    expect(onHostUpdated).toHaveBeenCalledOnce()
+    expect(onHostUpdated).toHaveBeenCalledWith(hostId)
+    expect(onNotify).toHaveBeenCalledOnce()
+    expect(onNotify).toHaveBeenCalledWith({
+      dedupeKey: `ssh-host-environment-updated:${hostId}`,
+      message: 'SSH 主机“Build host”的远程运行环境已更新',
+      tone: 'success'
+    })
+  })
+
+  it('reports a successful environment update after the settings section unmounts', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const updateOperation = deferred<void>()
+    updateRemoteEnvironment.mockReturnValue(updateOperation.promise)
+    const onHostUpdated = vi.fn()
+    const onNotify = vi.fn()
+    const { unmount } = render(
+      <SshHostsSettingsSection
+        onHostUpdated={onHostUpdated}
+        onNotify={onNotify}
+      />
+    )
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+    expect(updateRemoteEnvironment).toHaveBeenCalledWith(hostId)
+
+    unmount()
+    await act(async () => {
+      updateOperation.resolve()
+      await updateOperation.promise
+    })
+
+    expect(onHostUpdated).toHaveBeenCalledOnce()
+    expect(onHostUpdated).toHaveBeenCalledWith(hostId)
+    expect(onNotify).toHaveBeenCalledOnce()
+  })
+
+  it('reports a failed environment update after the settings section unmounts', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const updateOperation = deferred<void>()
+    updateRemoteEnvironment.mockReturnValue(updateOperation.promise)
+    const onHostUpdated = vi.fn()
+    const onNotify = vi.fn()
+    const { unmount } = render(
+      <SshHostsSettingsSection
+        onHostUpdated={onHostUpdated}
+        onNotify={onNotify}
+      />
+    )
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+    unmount()
+    await act(async () => {
+      updateOperation.reject(new Error('Runtime finalization failed'))
+      await updateOperation.promise.catch(() => undefined)
+    })
+
+    expect(onHostUpdated).not.toHaveBeenCalled()
+    expect(onNotify).toHaveBeenCalledWith({
+      dedupeKey:
+        `ssh-host-environment-update-failed:${hostId}`,
+      message: 'Runtime finalization failed',
+      tone: 'error'
+    })
+  })
+
+  it('prevents conflicting Host actions while an update is active', async () => {
+    const secondHost = {
+      ...verifiedHost,
+      id: candidateId,
+      name: 'Deploy host'
+    }
+    getSnapshot.mockResolvedValue({
+      hosts: [verifiedHost, secondHost],
+      secureStorageAvailable: true
+    })
+    getRemoteEnvironment.mockImplementation(async (requestedHostId) => ({
+      ...remoteEnvironment,
+      hostId: requestedHostId
+    }))
+    const updateOperation = deferred<void>()
+    updateRemoteEnvironment.mockReturnValue(updateOperation.promise)
+    render(<SshHostsSettingsSection />)
+
+    await waitFor(() =>
+      expect(getRemoteEnvironment).toHaveBeenCalledTimes(2)
+    )
+    const buildHost = screen.getByRole('region', {
+      name: 'Build host'
+    })
+    const deployHost = screen.getByRole('region', {
+      name: 'Deploy host'
+    })
+    fireEvent.click(
+      within(buildHost).getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+
+    expect(
+      within(buildHost).getByRole('button', {
+        name: '编辑 Build host'
+      })
+    ).toBeDisabled()
+    expect(
+      within(buildHost).getByRole('button', { name: '删除' })
+    ).toBeDisabled()
+    expect(
+      within(deployHost).getByRole('button', {
+        name: '更新 Deploy host 的远程运行环境版本'
+      })
+    ).toBeDisabled()
+
+    await act(async () => {
+      updateOperation.resolve(undefined)
+      await updateOperation.promise
+    })
+  })
+
+  it('keeps an update failure retryable, strips IPC prefixes, and refreshes partial state', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    getRemoteEnvironment
+      .mockResolvedValueOnce(remoteEnvironment)
+      .mockResolvedValue(currentRemoteEnvironment)
+    updateRemoteEnvironment.mockRejectedValue(
+      new Error(
+        "Error invoking remote method 'ssh-hosts:update-remote-environment': AgentInstallationError: Agent deployment failed"
+      )
+    )
+    const onHostUpdated = vi.fn()
+    const onNotify = vi.fn()
+    render(
+      <SshHostsSettingsSection
+        onHostUpdated={onHostUpdated}
+        onNotify={onNotify}
+      />
+    )
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Agent deployment failed')
+    expect(alert).not.toHaveTextContent('Error invoking remote method')
+    expect(alert).not.toHaveTextContent('AgentInstallationError')
+    await waitFor(() =>
+      expect(getRemoteEnvironment).toHaveBeenCalledTimes(2)
+    )
+    expect(
+      screen.getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    ).toBeEnabled()
+    expect(onHostUpdated).not.toHaveBeenCalled()
+    expect(onNotify).not.toHaveBeenCalled()
+  })
+
+  it('cancels an update, stays disabled while cancelling, and refreshes after settlement', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const updateOperation = deferred<void>()
+    updateRemoteEnvironment.mockReturnValue(updateOperation.promise)
+    const onHostUpdated = vi.fn()
+    const onNotify = vi.fn()
+    render(
+      <SshHostsSettingsSection
+        onHostUpdated={onHostUpdated}
+        onNotify={onNotify}
+      />
+    )
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+    const cancelButton = screen.getByRole('button', {
+      name: '取消 Build host 的远程运行环境更新'
+    })
+    fireEvent.click(cancelButton)
+
+    expect(cancelRemoteEnvironmentUpdate).toHaveBeenCalledOnce()
+    expect(cancelRemoteEnvironmentUpdate).toHaveBeenCalledWith(hostId)
+    expect(cancelButton).toBeDisabled()
+    expect(cancelButton).toHaveTextContent('正在取消…')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '正在取消远程运行环境更新'
+    )
+
+    await act(async () => {
+      updateOperation.reject(
+        new Error(
+          "Error invoking remote method 'ssh-hosts:update-remote-environment': Error: 更新已取消"
+        )
+      )
+      await Promise.resolve()
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '更新已取消'
+    )
+    await waitFor(() =>
+      expect(getRemoteEnvironment).toHaveBeenCalledTimes(2)
+    )
+    expect(onHostUpdated).not.toHaveBeenCalled()
+    expect(onNotify).not.toHaveBeenCalled()
+  })
+
+  it('keeps a real update failure visible when it races with cancellation', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const updateOperation = deferred<void>()
+    updateRemoteEnvironment.mockReturnValue(updateOperation.promise)
+    render(<SshHostsSettingsSection />)
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '取消 Build host 的远程运行环境更新'
+      })
+    )
+    await act(async () => {
+      updateOperation.reject(
+        new Error(
+          "Error invoking remote method 'ssh-hosts:update-remote-environment': AgentInstallationError: Agent deployment failed"
+        )
+      )
+      await Promise.resolve()
+    })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Agent deployment failed'
+    )
+    expect(screen.getByRole('alert')).not.toHaveTextContent(
+      '更新已取消'
+    )
+  })
+
+  it('allows cancellation to be retried when the cancel request fails', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const updateOperation = deferred<void>()
+    updateRemoteEnvironment.mockReturnValue(updateOperation.promise)
+    cancelRemoteEnvironmentUpdate.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'ssh-hosts:cancel-update': Error: Cancel request failed"
+      )
+    )
+    render(<SshHostsSettingsSection />)
+
+    expect(await screen.findByText('GoodBuddy Agent')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '更新 Build host 的远程运行环境版本'
+      })
+    )
+    const cancelButton = screen.getByRole('button', {
+      name: '取消 Build host 的远程运行环境更新'
+    })
+    fireEvent.click(cancelButton)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Cancel request failed'
+    )
+    await waitFor(() => expect(cancelButton).toBeEnabled())
+    expect(cancelButton).toHaveTextContent('取消更新')
+
+    await act(async () => {
+      updateOperation.resolve(undefined)
+      await updateOperation.promise
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    )
+  })
+
+  it('subscribes to update progress once and unsubscribes on unmount', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const { unmount } = render(<SshHostsSettingsSection />)
+
+    expect(onRemoteEnvironmentUpdateProgress).toHaveBeenCalledOnce()
+    unmount()
+    expect(unsubscribeRemoteEnvironmentUpdateProgress).toHaveBeenCalledOnce()
   })
 })

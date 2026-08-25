@@ -1246,7 +1246,7 @@ describe('AcpRemoteRuntime', () => {
     ])
   })
 
-  it('routes permission through the authorizer and denies Ask mode', async () => {
+  it('routes Execute permission through the authorizer and denies mutating Ask permission', async () => {
     const client: { value?: AgentSideConnection } = {}
     const outcomes: string[] = []
     const server = fakeServer({
@@ -1306,7 +1306,11 @@ describe('AcpRemoteRuntime', () => {
                 kind: 'reject_once'
               }
             ],
-            toolCall: { toolCallId: 'tool-2', title: 'Write' }
+            toolCall: {
+              toolCallId: 'tool-2',
+              title: 'Write',
+              kind: 'edit'
+            }
           })
           outcomes.push(
             response.outcome.outcome === 'selected'
@@ -1326,6 +1330,98 @@ describe('AcpRemoteRuntime', () => {
     )
     expect(authorize).toHaveBeenCalledOnce()
     expect(outcomes).toEqual(['allow', 'reject'])
+  })
+
+  it('allows only one-shot read permission in Ask mode', async () => {
+    const client: { value?: AgentSideConnection } = {}
+    const outcomes: string[] = []
+    const server = fakeServer({
+      prompt: async ({ sessionId }) => {
+        for (const toolCall of [
+          {
+            toolCallId: 'tool-read',
+            title: 'Read',
+            kind: 'read' as const
+          },
+          {
+            toolCallId: 'tool-search',
+            title: 'Search',
+            kind: 'search' as const
+          }
+        ]) {
+          const response = await client.value!.requestPermission({
+            sessionId,
+            options: [
+              {
+                optionId: `${toolCall.toolCallId}-once`,
+                name: 'Allow once',
+                kind: 'allow_once'
+              },
+              {
+                optionId: `${toolCall.toolCallId}-always`,
+                name: 'Allow always',
+                kind: 'allow_always'
+              },
+              {
+                optionId: `${toolCall.toolCallId}-reject`,
+                name: 'Reject',
+                kind: 'reject_once'
+              }
+            ],
+            toolCall
+          })
+          outcomes.push(
+            response.outcome.outcome === 'selected'
+              ? response.outcome.optionId
+              : 'cancelled'
+          )
+        }
+        const persistentRead =
+          await client.value!.requestPermission({
+            sessionId,
+            options: [
+              {
+                optionId: 'read-always',
+                name: 'Allow always',
+                kind: 'allow_always'
+              },
+              {
+                optionId: 'read-reject',
+                name: 'Reject',
+                kind: 'reject_once'
+              }
+            ],
+            toolCall: {
+              toolCallId: 'tool-persistent-read',
+              title: 'Read',
+              kind: 'read'
+            }
+          })
+        outcomes.push(
+          persistentRead.outcome.outcome === 'selected'
+            ? persistentRead.outcome.optionId
+            : 'cancelled'
+        )
+        return { stopReason: 'end_turn' }
+      }
+    })
+    client.value = server.client
+    const authorize = vi.fn(async () => 'once' as const)
+
+    await collect(
+      runtime(server).run(
+        { ...request, workMode: 'ask' },
+        new AbortController().signal,
+        authorize
+      )
+    )
+
+    expect(authorize).not.toHaveBeenCalled()
+    expect(outcomes).toEqual([
+      'tool-read-once',
+      'tool-search-reject',
+      'read-reject'
+    ])
   })
 
   it('auto-allows Execute permissions without an external authorizer', async () => {

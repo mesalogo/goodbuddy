@@ -31,6 +31,7 @@ import {
 } from './model-bridge-broker'
 
 const temporaryPaths: string[] = []
+const modelBridgeRouteToken = 'A'.repeat(43)
 const validResponse: RemoteModelGatewayResponse = {
   status: 201,
   headers: {
@@ -202,6 +203,27 @@ describe('model bridge loopback helper', () => {
         body: ''
       })
       expect(response.status).toBe(413)
+      expect(exchange).not.toHaveBeenCalled()
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it('rejects loopback requests without the per-helper route capability', async () => {
+    const exchange = vi.fn(async () => validResponse)
+    const proxy = new ModelBridgeLoopbackProxy({ exchange })
+    const origin = await proxy.listen()
+    try {
+      const response = await sendHttp(origin, {
+        authenticated: false,
+        path: '/v1/messages',
+        headers: {
+          'x-api-key': MODEL_BRIDGE_SDK_AUTH_SENTINEL
+        },
+        body: '{}'
+      })
+
+      expect(response.status).toBe(404)
       expect(exchange).not.toHaveBeenCalled()
     } finally {
       await proxy.close()
@@ -430,17 +452,24 @@ describe('model bridge loopback helper', () => {
         protocol,
         model: 'private-model',
         name: 'Private model',
-        loopbackOrigin: 'http://127.0.0.1:12345',
+        loopbackOrigin:
+          `http://127.0.0.1:12345/${modelBridgeRouteToken}`,
         supportsImageInput: true
       })
 
       expect(config).toMatchObject({
         model: `${providerId}/private-model`,
+        agent: {
+          title: {
+            disable: true
+          }
+        },
         provider: {
           [providerId]: {
             npm,
             options: {
-              baseURL: 'http://127.0.0.1:12345/v1'
+              baseURL:
+                `http://127.0.0.1:12345/${modelBridgeRouteToken}/v1`
             },
             models: {
               'private-model': {
@@ -522,6 +551,52 @@ describe('model bridge Unix broker', () => {
 
       await broker.close()
       expect(existsSync(socketPath)).toBe(false)
+    }
+  )
+
+  runOnUnix(
+    'drains a response larger than the Unix socket receive buffer',
+    async () => {
+      const scratch = privateTemporaryDirectory()
+      const responseBody = Buffer.alloc(256 * 1024, 0x61)
+      const broker = new ModelBridgeBrokerServer({
+        scratchDirectory: scratch,
+        dispatch: async () => ({
+          ...validResponse,
+          bodyBase64: responseBody.toString('base64')
+        })
+      })
+      await broker.listen()
+      try {
+        const exchange = createUnixModelBridgeExchange({
+          socketPath: broker.socketPath,
+          requestTimeoutMs: 2_000
+        })
+        const exchanged = await exchange(
+          {
+            method: 'POST',
+            path: '/v1/responses',
+            headers: { 'content-type': 'application/json' },
+            bodyBase64: Buffer.from('{}').toString('base64')
+          },
+          {
+            requestId: 'request-large-response',
+            signal: new AbortController().signal
+          }
+        )
+        expect('response' in exchanged).toBe(true)
+        if ('response' in exchanged) {
+          expect(
+            Buffer.from(
+              exchanged.response.bodyBase64,
+              'base64'
+            ).byteLength
+          ).toBe(responseBody.byteLength)
+          await exchanged.acknowledgeDelivery()
+        }
+      } finally {
+        await broker.close()
+      }
     }
   )
 
@@ -608,6 +683,7 @@ async function sendHttp(
   options: {
     method?: string
     path?: string
+    authenticated?: boolean
     headers?: Record<string, string>
     body?: string
   }
@@ -618,11 +694,19 @@ async function sendHttp(
 }> {
   const url = new URL(origin)
   const body = options.body ?? ''
+  const requestPath = options.path ?? '/v1/messages'
+  const basePath =
+    url.pathname === '/'
+      ? ''
+      : url.pathname.replace(/\/$/u, '')
   const requestOptions: RequestOptions = {
     hostname: url.hostname,
     port: url.port,
     method: options.method ?? 'POST',
-    path: options.path ?? '/v1/messages',
+    path:
+      options.authenticated === false
+        ? requestPath
+        : `${basePath}${requestPath}`,
     headers: {
       ...(options.headers ?? {}),
       ...(!hasHeader(options.headers, 'content-length') &&

@@ -162,8 +162,16 @@ export type {
 import type { WeixinBindingSnapshot } from './weixin-channel-contracts'
 import type { RemoteChannelActivity } from './remote-channel-contracts'
 import type {
+  AgentPackageDownloadProgress,
+  AgentPackageInventory
+} from './agent-package-contracts'
+import type {
+  AgentArchitecture
+} from './agent-installation-contracts'
+import type {
   SshHostDraftInspectionRequest,
   SshHostKeyInspection,
+  RemoteEnvironmentUpdateProgress,
   SshHostRemoteEnvironment,
   SshHostsSnapshot,
   SshDirectoryBrowseResult,
@@ -1548,6 +1556,19 @@ export type DesktopApi = {
   }
   sshHosts?: {
     getSnapshot: () => Promise<SshHostsSnapshot>
+    getAgentPackageInventory: (
+      refresh?: boolean
+    ) => Promise<AgentPackageInventory>
+    downloadAgentPackage: (
+      architecture: AgentArchitecture
+    ) => Promise<AgentPackageInventory>
+    importAgentPackage: () => Promise<AgentPackageInventory | undefined>
+    exportAgentPackage: (
+      architecture: AgentArchitecture
+    ) => Promise<void>
+    onAgentPackageProgress: (
+      listener: (progress: AgentPackageDownloadProgress) => void
+    ) => () => void
     remove: (hostId: string) => Promise<void>
     inspectDraftHostKey: (
       input: SshHostDraftInspectionRequest
@@ -1559,6 +1580,11 @@ export type DesktopApi = {
     getRemoteEnvironment: (
       hostId: string
     ) => Promise<SshHostRemoteEnvironment>
+    updateRemoteEnvironment: (hostId: string) => Promise<void>
+    cancelRemoteEnvironmentUpdate: (hostId: string) => Promise<void>
+    onRemoteEnvironmentUpdateProgress: (
+      listener: (progress: RemoteEnvironmentUpdateProgress) => void
+    ) => () => void
     browseDirectories: (
       hostId: string,
       path?: string

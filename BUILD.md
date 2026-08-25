@@ -127,18 +127,28 @@ npm run dist:linux:arm64
 每个 Linux 架构生成：
 
 - `deb`：适用于麒麟、统信 UOS 等 Debian 系桌面。
+- `rpm`：适用于 Fedora、RHEL、Rocky Linux、openEuler 等 RPM 系桌面。
 - AppImage：适用于免安装验证和便携运行。
 
 打包产物位于 `dist`。
 
 以上 `dist*` 与 `portable` 命令用于普通本地桌面打包。它们会携带
 `agent-runtime-lock.json`、`remote-runtime-lock.json` 与公开的
-`agent-release-keys.json`。普通 `dist*` 仍为 metadata-only；本地 `portable`
-若发现 `.agent-resources/linux-x64` 或 `linux-arm64`，会先按当前 lock 与公钥
-registry 完整校验，再把已存在的 Agent 工件嵌入 Portable。设置
-`GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS=x64`（或 `x64,arm64`）可要求指定架构
-必须存在并成功嵌入，否则构建失败。没有本地工件时，Portable 仍可验证并复用 Host 上
-与 lock 完全匹配的签名 Agent，但不能安装缺失或不匹配的 Agent。
+`agent-release-keys.json`，但所有桌面构建路径（包括本地 `portable`）都不会嵌入
+可安装的远端 Agent 或远端 Runtime payload。没有使用托管 SSH 时，无需下载任何额外
+组件，缺少远端包也不能阻塞普通桌面打包或发布。
+
+“设置 > 平台功能 > 远程项目（技术预览）”列出用户数据目录中已经下载或导入的
+Linux x64/arm64 复合 Agent 包，并分别显示 `已下载并验证 / 未下载 / 校验失败`。
+在线“下载/检查并更新”必须由用户显式触发，来源跟随“关于与更新”的 `github` 或
+`mirror` 选择；打开远程项目不会自动下载。用户也可导入或导出 `.gbagent` 离线包。
+Main 在写入缓存前校验签名目录、目录签名、大小、SHA-256、桌面最低版本、Agent 协议、
+内部 Agent/Runtime 签名和完整 payload。缓存位于 Electron `userData` 下的
+`remote-components/agent-packages`，不暴露给 Renderer。
+
+“SSH 主机 > 远程运行环境”的“更新版本”只使用已验证的本地复合包。对应 Host 架构
+尚未下载时会提示先到设置下载或导入，不会联网，也不会影响本地项目、普通桌面功能或
+其他架构的 Agent 包。
 
 ## Runtime 资源
 
@@ -154,33 +164,56 @@ registry 完整校验，再把已存在的 Agent 工件嵌入 Portable。设置
 
 ## GoodBuddy Agent 工件
 
-Linux Agent 工件与普通桌面构建相互独立，由专用命令管理：
+面向用户发布的是按远端 Host 架构区分的复合 `.gbagent`，每个包同时包含签名
+Agent、固定 Node 和当前桌面源码维护并适配的签名 OpenCode Runtime。Runtime 不建立
+独立的用户版本流。生产构建命令为：
 
 ```bash
-# 只能在对应 Linux 架构上使用锁定的 Node Runtime 原生构建并签名
-npm run agent:build -- --arch <x64|arm64> --runtime-archive <node-runtime.tar.gz>
-
-# 导入由原生 CI 生成的签名归档，导入时会完整校验
-npm run agent:import -- --arch x64 --archive <goodbuddy-agent-linux-x64.tar>
-npm run agent:import -- --arch arm64 --archive <goodbuddy-agent-linux-arm64.tar>
-
-# 独立重新校验本地工件
-npm run agent:verify -- --arch x64
-npm run agent:verify -- --arch arm64
+node build/agent-package.cjs build \
+  --arch <x64|arm64> \
+  --minimum-desktop-version <desktop-version> \
+  --node-archive <locked-node-runtime.tar.gz> \
+  --runtime-archive <locked-opencode-package.tgz> \
+  --output goodbuddy-agent-<agent-version>-linux-<arch>.gbagent
 ```
 
-默认位置为 `.agent-resources/linux-x64` 和 `.agent-resources/linux-arm64`，该目录是
-生成内容，不提交到仓库。普通命令不会隐式构建或导入 Agent；`npm run portable`
-只会校验并嵌入已经存在的本地 Agent 工件。
+底层 `agent:build/import/verify` 与 `remote-runtime:build/import/verify` 命令继续用于
+开发、签名和复合包组装验证；其 `.agent-resources` 与
+`.remote-runtime-resources` 输出都是不提交的生成内容，也不会被任何桌面打包命令发现
+或嵌入。
 
 ### Agent 原生 CI 策略
 
-Agent 的 Linux x64 与 arm64 构建应使用同一源码 commit/tag 上的原生 GitHub Actions
-job 或可复用 workflow，不维护长期分叉的 Agent 源码分支。这样桌面源码、协议、lock
-文件和签名 manifest 的来源保持一致。若后续把 Agent 构建从统一发布 workflow 拆出，
-应使用 `workflow_dispatch`、可复用 workflow 或 Agent tag 触发，明确 checkout 待发布
-桌面的精确 commit，并输出供发布 workflow 下载、`agent:import` 和 `agent:verify` 的
-两套签名归档；发布 job 仍必须在嵌入前后验证两种架构，不能信任分支名或未校验 artifact。
+Agent 源码、共享协议、lock、bundle 工具和测试与桌面应用保持在同一仓库、同一 commit；
+不维护长期分叉的 Agent 源码分支。`.github/workflows/agents.yml` 在相关 Pull Request、
+`main` push 和手工触发时，分别使用 `ubuntu-24.04` 与 `ubuntu-24.04-arm` 原生构建
+Linux x64/arm64 复合包。每个 job 从 `agent-runtime-lock.json` 解析官方 Node HTTPS
+地址与 digest，并从 `remote-runtime-lock.json` 解析固定 OpenCode npm 包与 integrity；
+下载后再次校验，随后使用仅存在于进程内的临时 Ed25519 测试 key 构建两次，完成内外层
+测试签名验证、Agent 原生启动 smoke 和确定性 `.gbagent` 对比。
+
+该验证 workflow 不读取 production signing secret，不修改公开 key registry，也不上传
+可安装 Agent 工件。`.github/workflows/agent-release.yml` 是唯一 production Agent
+发布路径：只接受指向受保护 `main` 历史的 annotated
+`agent-v${agent-runtime-lock.agentVersion}` 标签，在 `agent-signing` Environment 中
+原生构建两种架构，生成并签名累计目录，然后同步到非 Latest 的 GitHub Agent Release
+与北京 OSS。该 Environment 保护以下两组变量与 Secret：
+
+- `GOODBUDDY_AGENT_SIGNING_KEY_ID` /
+  `GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY`
+- `GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID` /
+  `GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY`
+
+私钥只注入对应签名步骤；预检只读取 key ID 并确认公钥已在
+`resources/agent-release-keys.json` 注册为 production 且未撤销。
+
+累计目录使用 `agent-catalog.json` 与 `agent-catalog.sig`。每个条目绑定 Agent 版本、
+最低桌面版本、Agent 协议、远端 OpenCode 版本/digest、架构、文件名、大小、SHA-256
+以及固定 GitHub/OSS URL。同一版本和架构的字节不可改变；目录最多保留 200 个条目。
+OSS 先写 `agent-releases/v<version>/` 不可变对象，GitHub Release 公开且验证后才更新
+单一 `agent-releases/latest.json` 指针。该指针只引用同一不可变版本目录中的
+`agent-catalog.json` 与 `agent-catalog.sig`，避免客户端观察到跨版本组合。Agent Release 必须使用
+`--latest=false`，不得改变桌面 Release 的 Latest 标记。
 
 ### 远程 OpenCode Runtime 基础
 
@@ -190,6 +223,23 @@ baseline 与 arm64 官方包 integrity、`bin/opencode` 入口和固定 `acp` �
 的 Koffi 版本。Agent bundle 将 Koffi loader 作为 external module，并只携带目标
 Linux 架构的 glibc/musl 原生 binding；构建与导入都会校验其 ELF 架构和 MIT 许可证。
 
+远程 Runtime 工件由以下命令独立管理：
+
+```bash
+# 在对应 Linux 原生 Runner 上从 lock 指定的 npm 归档构建并签名
+npm run remote-runtime:build -- --arch <x64|arm64> \
+  --runtime-archive <locked-opencode-package.tgz>
+
+# 为复合 Agent 包组装导入并完整验证签名归档
+npm run remote-runtime:import -- --arch x64 --archive <runtime-x64.tar>
+npm run remote-runtime:import -- --arch arm64 --archive <runtime-arm64.tar>
+```
+
+默认生成目录为 `.remote-runtime-resources/linux-<arch>/opencode/<digest>`，
+不提交到仓库。生产 workflow 从 `remote-runtime-lock.json` 解析固定包名、版本和
+integrity，以 `--ignore-scripts` 从官方 npm registry 获取归档；bundle 工具在签名前
+再次验证归档 SHA-512、包名、版本和 ELF 架构。
+
 源码已经实现 Runtime bundle build/import/verify、Daemon 侧
 manifest/Ed25519/payload/ELF/lock 校验、digest registry、ACP v3、直接进程 ownership、
 Ask 的固定 `bwrap` 只读 profile 和 `runtime/model-bridge` v1。Agent 通过私有 Unix socket
@@ -197,8 +247,16 @@ Ask 的固定 `bwrap` 只读 profile 和 `runtime/model-bridge` v1。Agent 通�
 启动签名 Runtime；Ask 才使用只读 bubblewrap。
 
 OpenCode 通过已签名 Agent helper 和每次 Prompt 的私有 Unix socket 使用 Main-only 模型
-网关；Provider URL、API Key 和真实 Provider 认证头不进入远端。Anthropic/OpenAI SDK 只使用
-固定非秘密本地兼容标记，helper 核对后丢弃。
+网关；Provider URL、API Key 和真实 Provider 认证头不进入远端。helper 的 loopback
+HTTP 入口使用每个进程随机生成的路径 capability，Anthropic/OpenAI SDK 需要的固定非秘密
+本地兼容标记由 helper 核对后丢弃。GoodBuddy 自己维护会话标题，所以生成的 OpenCode
+配置必须禁用 title Agent；工具循环只使用 build Agent 的模型轮次。
+
+Ask 模式的 ACP 权限中介只可为原生 `read` 选择 `allow_once`；其他工具种类和
+`allow_always` 请求必须拒绝，Workspace 的真正只读边界仍由 `bwrap` 执行。Unix 模型桥
+broker 必须按 socket 当前已缓冲字节增量读取长度帧，不能等待 `read(remaining)` 一次返回
+完整大响应。Agent 传输或权限实现变化后，除了普通测试，还要在原生 Linux 上运行包含
+至少 256 KiB 响应的模型桥回归。
 
 `agent-runtime-lock.json` 维护独立于桌面应用的 Agent 版本，
 `remote-runtime-lock.json` 维护 OpenCode Runtime 版本。Agent 内容变化时必须更新
@@ -206,18 +264,24 @@ OpenCode 通过已签名 Agent helper 和每次 Prompt 的私有 Unix socket 使
 唯一标识对应版本的精确工件。变更后必须重新构建、签名并导入 Linux x64/arm64 两套工件；
 旧版本或旧 digest 会按设计校验失败。不要手工把本机 `.runtime-resources` 当作远程 bundle。
 
-桌面应用更新后，用户下次打开托管 SSH 项目会使用该桌面版本内置的签名 Agent/Runtime
-执行一次完整激活。所需版本健康且项目事务提交成功后才刷新项目绑定；失败不会覆盖旧安装或
-把未提交的新 identity 暴露给 Workspace/Runtime。
+桌面应用更新后不会在项目激活时自动下载 Agent。用户先在设置中显式下载“最新兼容”
+版本或导入离线包；随后打开托管 SSH 项目时，Main 才使用该 Host 架构的本地验证包执行
+完整激活。所需版本健康且项目事务提交成功后才刷新项目绑定；失败不会覆盖旧安装或把
+未提交的新 identity 暴露给 Workspace/Runtime。
+
+用户也可在 SSH Host 的远程运行环境卡片显式选择“更新版本”。该路径按 Agent、
+OpenCode Runtime 顺序使用对应架构的本地复合包，支持阶段进度和取消；成功后使引用该 Host
+的项目重新验证。验收应覆盖激活与此手动入口，并确认失败或取消不会删除
+Host 配置、凭据、项目设置、Workspace 文件或仍可用的旧安装。
 
 ## 跨平台 CI 与 GitHub Release
 
 `.github/workflows/packages.yml` 是统一发布工作流。它先验证并生成一次
 `out` 生产 bundle，再在六个原生 Runner 上分别打包 Windows、macOS 和
 Linux 的 `x64`、`arm64` 版本。生产 bundle 仅作为短期 Actions artifact
-供打包任务复用，不会上传到 GitHub Release。工作流另行在 Linux x64/arm64
-Runner 上原生构建并签名 Agent，桌面矩阵下载、导入并校验两套归档后才调用
-`release:package`；桌面 Runner 不重新构建 Agent。
+供打包任务复用，不会上传到 GitHub Release。该工作流不构建、下载、签名或嵌入
+远端 Agent/OpenCode 复合包，也不依赖 `agent-signing` Environment；远端包缺失或
+Agent 发布失败不会阻塞任何桌面目标。
 
 本地构建单个平台目标：
 
@@ -225,17 +289,11 @@ Runner 上原生构建并签名 Agent，桌面矩阵下载、导入并校验两�
 npm run release:package -- --platform <windows|macos|linux> --arch <x64|arm64>
 ```
 
-`release:package` 是唯一会嵌入远程 Agent 和远程 OpenCode Runtime 的桌面打包入口。公开
-签名 key registry 已由基础打包配置统一携带；运行前
-必须已经导入 Linux x64 与 arm64 两套签名 Agent/Runtime 工件；脚本会在启动
-Electron Builder 前验证完整矩阵，
-使用 `build/electron-builder.release.cjs` 加入两套 bundle，并连同基础配置中的
+`release:package` 仅构建桌面产品。基础配置统一携带
 `agent-release-keys.json`、`agent-runtime-lock.json` 与 `remote-runtime-lock.json`
-在打包后再次验证
-应用内副本。任一架构缺失、签名无效、组件版本、digest、ELF 架构、许可证或 lock
-不匹配都会失败，不会生成不完整的发布包。当前仓库已包含 production 公钥 registry；
-production preflight 仍要求外部安全供应与当前源码、lock 完全匹配的 Linux x64/arm64
-签名工件，缺少任一架构时会故意失败。
+供 Main 校验独立下载的复合包，但 release 配置不增加 `.agent-resources` 或
+`.remote-runtime-resources`。发布校验继续检查桌面自身的 OpenCode、Continue 与
+DeepSeek Harness Runtime、`app.asar`、目标架构和安装包签名。
 
 在 macOS 上明确生成未签名、未公证的开发验证包：
 
@@ -244,7 +302,8 @@ npm run release:package -- --platform macos --arch <x64|arm64> --unsigned
 ```
 
 默认发布产物为 Windows 的 NSIS 安装包与 portable ZIP、macOS 的 DMG 与
-ZIP，以及 Linux 的 AppImage 与 DEB。Windows portable ZIP 解压后可直接
+ZIP，以及 Linux 的 AppImage、DEB 与 RPM。Linux 原生 Runner 必须安装
+`rpm`/`rpmbuild` 工具后再调用 electron-builder。Windows portable ZIP 解压后可直接
 运行 `GoodBuddy.exe`，并包含启用便携数据目录的
 `.goodbuddy-portable.json`。每个目标目录都包含带文件大小和 SHA-256 的
 `release-manifest.json`。
@@ -257,14 +316,27 @@ ZIP，以及 Linux 的 AppImage 与 DEB。Windows portable ZIP 解压后可直�
 全部目标成功后，才会严格校验并聚合所有平台产物，生成按平台重命名的
 manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流通过
 GitHub OIDC 获取短期 STS 凭据，将发布资产和 `site-release.json` 上传到
-北京 OSS 的不可变版本目录，并公开校验 12 个安装包。验证通过后才创建或
-更新 draft GitHub Release、上传 20 个 Release 资产并正式发布，最后原子
+北京 OSS 的不可变版本目录，并公开校验 14 个安装包。验证通过后才创建或
+更新 draft GitHub Release、上传 22 个 Release 资产并正式发布，最后原子
 切换官网 `latest.json`。任一步失败都不会提前切换官网最新版本。
 
 同一标签重跑时，工作流会根据 `resources/release-notes.json` 重新生成并
 覆盖 GitHub Release 正文，以 `--clobber` 更新已知发布资产，同时保留未知
 附件。若源码与发布元数据未变化，应修正外部配置后重跑同一不可变标签；
 只有必须修改代码或元数据时才递增版本并创建新标签。
+
+Agent 发布使用另一套标签和 workflow：
+
+```bash
+agent_tag="agent-v$(node -p "require('./agent-runtime-lock.json').agentVersion")"
+git tag -a "$agent_tag" -m "GoodBuddy Agent $(node -p "require('./agent-runtime-lock.json').agentVersion")"
+```
+
+实际创建或推送前同样必须获得用户确认。`.github/workflows/agent-release.yml`
+原生构建两个 `.gbagent`、签名累计目录、上传
+`agent-releases/v<agent-version>/`，创建 `--latest=false` GitHub Release，再切换
+OSS 签名目录指针。生产发布需要 `agent-signing` 与 `aliyun-oss-release` 两个受保护
+Environment；普通分支/PR 的 `agents.yml` 不使用其中任何 Secret。
 
 中英文发布说明统一维护在 `resources/release-notes.json`。新版本按“本次
 亮点 / Highlights”“功能更新 / Features”“问题修复 / Bug Fixes”“使用前

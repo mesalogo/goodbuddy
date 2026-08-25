@@ -1,0 +1,606 @@
+name: GoodBuddy Agent Release
+
+on:
+  push:
+    tags:
+      - 'agent-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize Agent release
+    if: >-
+      github.ref_type == 'tag' &&
+      startsWith(github.ref_name, 'agent-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      authorized: ${{ steps.policy.outputs.authorized }}
+      version: ${{ steps.policy.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify immutable Agent release tag
+        id: policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./agent-runtime-lock.json').agentVersion")"
+          expected="agent-v$version"
+          test "$GITHUB_REF_NAME" = "$expected"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = "tag"
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+          echo "authorized=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Linux ${{ matrix.arch }} compound package
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    environment:
+      name: agent-signing
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve locked native inputs
+        id: inputs
+        shell: bash
+        env:
+          AGENT_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { appendFileSync } = require('node:fs')
+          const { createHash } = require('node:crypto')
+          const agent = require('./agent-runtime-lock.json')
+          const remote = require('./remote-runtime-lock.json')
+          const node = agent.node?.targets?.[`linux-${process.env.AGENT_ARCH}`]
+          const runtime = remote.runtimes?.opencode
+          const opencode = runtime?.targets?.[process.env.AGENT_ARCH]
+          if (
+            !node ||
+            !opencode ||
+            !/^[A-Za-z0-9._-]+\.tar\.gz$/u.test(node.archive) ||
+            !/^[a-f0-9]{64}$/u.test(node.sha256) ||
+            !/^[a-z0-9][a-z0-9._-]*$/u.test(opencode.package) ||
+            !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(opencode.integrity)
+          ) {
+            throw new Error('Locked native Agent package inputs are invalid')
+          }
+          const nodeUrl = new URL(node.archive, agent.node.source)
+          if (
+            nodeUrl.protocol !== 'https:' ||
+            nodeUrl.hostname !== 'nodejs.org' ||
+            nodeUrl.username ||
+            nodeUrl.password ||
+            nodeUrl.search ||
+            nodeUrl.hash
+          ) {
+            throw new Error('Agent Node runtime must use the official HTTPS origin')
+          }
+          const opencodeArchive =
+            `${opencode.package}-${runtime.version}.tgz`
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `node-archive=${node.archive}`,
+              `node-sha256=${node.sha256}`,
+              `node-url=${nodeUrl.href}`,
+              `opencode-package=${opencode.package}`,
+              `opencode-version=${runtime.version}`,
+              `opencode-integrity=${opencode.integrity}`,
+              `opencode-archive=${opencodeArchive}`,
+              `cache-key=${createHash('sha256')
+                .update(`${node.sha256}:${opencode.integrity}`)
+                .digest('hex')}`,
+              ''
+            ].join('\n')
+          )
+          NODE
+
+      - name: Cache verified native inputs
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/goodbuddy-agent-release-inputs
+          key: goodbuddy-agent-release-${{ matrix.arch }}-${{ steps.inputs.outputs.cache-key }}
+
+      - name: Acquire and verify native inputs
+        shell: bash
+        env:
+          NODE_ARCHIVE: ${{ steps.inputs.outputs.node-archive }}
+          NODE_SHA256: ${{ steps.inputs.outputs.node-sha256 }}
+          NODE_URL: ${{ steps.inputs.outputs.node-url }}
+          OPENCODE_ARCHIVE: ${{ steps.inputs.outputs.opencode-archive }}
+          OPENCODE_INTEGRITY: ${{ steps.inputs.outputs.opencode-integrity }}
+          OPENCODE_PACKAGE: ${{ steps.inputs.outputs.opencode-package }}
+          OPENCODE_VERSION: ${{ steps.inputs.outputs.opencode-version }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/goodbuddy-agent-release-inputs"
+          mkdir -p "$directory"
+          node_archive="$directory/$NODE_ARCHIVE"
+          if [[ ! -f "$node_archive" ]]; then
+            curl --proto '=https' --tlsv1.2 \
+              --fail --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --connect-timeout 15 --max-time 300 \
+              --max-filesize 104857600 \
+              "$NODE_URL" --output "$node_archive.partial"
+            mv "$node_archive.partial" "$node_archive"
+          fi
+          printf '%s  %s\n' "$NODE_SHA256" "$node_archive" |
+            sha256sum --check --strict -
+
+          opencode_archive="$directory/$OPENCODE_ARCHIVE"
+          if [[ ! -f "$opencode_archive" ]]; then
+            npm pack \
+              --ignore-scripts \
+              --registry https://registry.npmjs.org/ \
+              --pack-destination "$directory" \
+              "$OPENCODE_PACKAGE@$OPENCODE_VERSION"
+          fi
+          node - "$opencode_archive" "$OPENCODE_INTEGRITY" <<'NODE'
+          const { createHash } = require('node:crypto')
+          const { readFileSync, statSync } = require('node:fs')
+          const [archive, expected] = process.argv.slice(2)
+          const size = statSync(archive).size
+          if (size <= 0 || size > 536870912) {
+            throw new Error('OpenCode Runtime archive exceeds its safety limit')
+          }
+          const actual = `sha512-${createHash('sha512')
+            .update(readFileSync(archive))
+            .digest('base64')}`
+          if (actual !== expected) {
+            throw new Error('OpenCode Runtime archive integrity mismatch')
+          }
+          NODE
+
+      - name: Preflight production signing identities
+        shell: bash
+        env:
+          GOODBUDDY_AGENT_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_AGENT_SIGNING_KEY_ID }}
+          GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID }}
+        run: |
+          set -euo pipefail
+          node build/agent-bundle.cjs preflight
+          node build/remote-runtime-bundle.cjs preflight
+
+      - name: Build production compound Agent package
+        shell: bash
+        env:
+          AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+          GOODBUDDY_AGENT_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_AGENT_SIGNING_KEY_ID }}
+          GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY: ${{ secrets.GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY }}
+          GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID }}
+          GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY: ${{ secrets.GOODBUDDY_REMOTE_RUNTIME_SIGNING_PRIVATE_KEY }}
+          NODE_ARCHIVE: ${{ steps.inputs.outputs.node-archive }}
+          OPENCODE_ARCHIVE: ${{ steps.inputs.outputs.opencode-archive }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/goodbuddy-agent-output"
+          mkdir -p "$output"
+          node build/agent-package.cjs build \
+            --arch "$AGENT_ARCH" \
+            --minimum-desktop-version "$(node -p "require('./package.json').version")" \
+            --node-archive "$RUNNER_TEMP/goodbuddy-agent-release-inputs/$NODE_ARCHIVE" \
+            --runtime-archive "$RUNNER_TEMP/goodbuddy-agent-release-inputs/$OPENCODE_ARCHIVE" \
+            --output "$output/goodbuddy-agent-$AGENT_VERSION-linux-$AGENT_ARCH.gbagent" \
+            > "$output/result.json"
+          node - "$output/result.json" "$AGENT_ARCH" "$AGENT_VERSION" <<'NODE'
+          const { readFileSync } = require('node:fs')
+          const [resultPath, architecture, version] = process.argv.slice(2)
+          const result = JSON.parse(readFileSync(resultPath, 'utf8'))
+          if (
+            result.descriptor?.architecture !== architecture ||
+            result.descriptor?.version !== version ||
+            result.archive !==
+              `goodbuddy-agent-${version}-linux-${architecture}.gbagent` ||
+            !/^[a-f0-9]{64}$/u.test(result.sha256)
+          ) {
+            throw new Error('Production Agent package result is invalid')
+          }
+          NODE
+
+      - name: Upload verified compound package
+        uses: actions/upload-artifact@v7
+        with:
+          name: goodbuddy-agent-package-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/goodbuddy-agent-output/goodbuddy-agent-*.gbagent
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  catalog:
+    name: Sign cumulative Agent catalog
+    needs:
+      - authorize
+      - build
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: agent-signing
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download compound packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: goodbuddy-agent-package-linux-*
+          path: dist/agent-release
+          merge-multiple: true
+
+      - name: Fetch previous signed catalog when available
+        id: previous
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          root="https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases"
+          current_catalog_status="$(
+            curl --silent --show-error \
+              --output dist/agent-release/previous.json \
+              --write-out '%{http_code}' \
+              "$root/v$AGENT_VERSION/agent-catalog.json"
+          )"
+          current_signature_status="$(
+            curl --silent --show-error \
+              --output dist/agent-release/previous.sig \
+              --write-out '%{http_code}' \
+              "$root/v$AGENT_VERSION/agent-catalog.sig"
+          )"
+          if [[ "$current_catalog_status" == 200 && "$current_signature_status" == 200 ]]; then
+            echo "arguments=--previous-catalog dist/agent-release/previous.json --previous-signature dist/agent-release/previous.sig" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$current_catalog_status" != 404 || "$current_signature_status" != 404 ]]; then
+            echo "Current Agent catalog objects are inconsistent: $current_catalog_status / $current_signature_status" >&2
+            exit 1
+          fi
+          rm -f dist/agent-release/previous.json dist/agent-release/previous.sig
+          pointer_status="$(
+            curl --silent --show-error \
+              --output dist/agent-release/previous-pointer.json \
+              --write-out '%{http_code}' \
+              "$root/latest.json"
+          )"
+          if [[ "$pointer_status" == 200 ]]; then
+          readarray -t paths < <(
+          node - dist/agent-release/previous-pointer.json <<'NODE'
+          const { readFileSync } = require('node:fs')
+          const pointer = JSON.parse(readFileSync(process.argv[2], 'utf8'))
+          if (
+            pointer?.formatVersion !== 1 ||
+            !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(pointer.version) ||
+            pointer.catalog !== `v${pointer.version}/agent-catalog.json` ||
+            pointer.signature !== `v${pointer.version}/agent-catalog.sig`
+          ) {
+            throw new Error('Previous Agent catalog pointer is invalid')
+          }
+          process.stdout.write(`${pointer.catalog}\n${pointer.signature}\n`)
+          NODE
+          )
+            curl --fail --silent --show-error \
+              "$root/${paths[0]}" \
+              --output dist/agent-release/previous.json
+            curl --fail --silent --show-error \
+              "$root/${paths[1]}" \
+              --output dist/agent-release/previous.sig
+            echo "arguments=--previous-catalog dist/agent-release/previous.json --previous-signature dist/agent-release/previous.sig" >> "$GITHUB_OUTPUT"
+          elif [[ "$pointer_status" == 404 ]]; then
+            rm -f dist/agent-release/previous-pointer.json
+            echo "arguments=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Agent catalog pointer request failed: $pointer_status" >&2
+            exit 1
+          fi
+
+      - name: Sign cumulative Agent catalog
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+          PREVIOUS_ARGUMENTS: ${{ steps.previous.outputs.arguments }}
+          GOODBUDDY_AGENT_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_AGENT_SIGNING_KEY_ID }}
+          GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY: ${{ secrets.GOODBUDDY_AGENT_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          generated_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          read -r -a previous <<< "$PREVIOUS_ARGUMENTS"
+          node build/agent-catalog.cjs create \
+            --x64-package "dist/agent-release/goodbuddy-agent-$AGENT_VERSION-linux-x64.gbagent" \
+            --arm64-package "dist/agent-release/goodbuddy-agent-$AGENT_VERSION-linux-arm64.gbagent" \
+            "${previous[@]}" \
+            --catalog dist/agent-release/agent-catalog.json \
+            --signature dist/agent-release/agent-catalog.sig \
+            --generated-at "$generated_at"
+          node build/agent-catalog.cjs verify \
+            --catalog dist/agent-release/agent-catalog.json \
+            --signature dist/agent-release/agent-catalog.sig
+
+      - name: Upload signed release set
+        uses: actions/upload-artifact@v7
+        with:
+          name: goodbuddy-agent-release-${{ needs.authorize.outputs.version }}
+          path: |
+            dist/agent-release/goodbuddy-agent-*.gbagent
+            dist/agent-release/agent-catalog.json
+            dist/agent-release/agent-catalog.sig
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish Agent to GitHub and OSS
+    needs:
+      - authorize
+      - catalog
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: aliyun-oss-release
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+
+      - name: Install verification dependencies
+        run: npm ci
+
+      - name: Download signed release set
+        uses: actions/download-artifact@v8
+        with:
+          name: goodbuddy-agent-release-${{ needs.authorize.outputs.version }}
+          path: dist/agent-release
+
+      - name: Verify signed release set
+        run: |
+          node build/agent-catalog.cjs verify \
+            --catalog dist/agent-release/agent-catalog.json \
+            --signature dist/agent-release/agent-catalog.sig
+
+      - name: Verify OSS release configuration
+        shell: bash
+        env:
+          OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+          OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          ROLE_ARN: ${{ vars.ALIYUN_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          test "$OSS_BUCKET" = "goodbuddy"
+          test "$OSS_ENDPOINT" = "https://oss-cn-beijing.aliyuncs.com"
+          case "$OIDC_PROVIDER_ARN" in
+            acs:ram::*:oidc-provider/*) ;;
+            *) echo "OIDC Provider ARN 无效" >&2; exit 1 ;;
+          esac
+          case "$ROLE_ARN" in
+            acs:ram::*:role/*) ;;
+            *) echo "RAM Role ARN 无效" >&2; exit 1 ;;
+          esac
+
+      - name: Authenticate to Alibaba Cloud
+        uses: aliyun/configure-aliyun-credentials-action@v1
+        with:
+          role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-session-name: goodbuddy-agent-${{ github.run_id }}
+          role-session-expiration: 3600
+          audience: sts.aliyuncs.com
+
+      - name: Install ossutil
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="2.3.0"
+          archive="$RUNNER_TEMP/ossutil.zip"
+          directory="$RUNNER_TEMP/ossutil"
+          curl --fail --silent --show-error --location \
+            "https://gosspublic.alicdn.com/ossutil/v2/$version/ossutil-$version-linux-amd64.zip" \
+            --output "$archive"
+          mkdir "$directory"
+          unzip -q "$archive" -d "$directory"
+          binary="$(find "$directory" -type f -name ossutil -print -quit)"
+          test -n "$binary"
+          chmod +x "$binary"
+          echo "$(dirname "$binary")" >> "$GITHUB_PATH"
+
+      - name: Upload immutable Agent release to OSS
+        id: oss
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+          OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          export OSS_ACCESS_KEY_ID="$ALIBABA_CLOUD_ACCESS_KEY_ID"
+          export OSS_ACCESS_KEY_SECRET="$ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+          export OSS_SESSION_TOKEN="$ALIBABA_CLOUD_SECURITY_TOKEN"
+          endpoint_host="${OSS_ENDPOINT#https://}"
+          region="${endpoint_host#oss-}"
+          region="${region%.aliyuncs.com}"
+          test "$region" = "cn-beijing"
+          for file in dist/agent-release/*; do
+            name="$(basename "$file")"
+            ossutil cp "$file" \
+              "oss://${OSS_BUCKET}/agent-releases/v${AGENT_VERSION}/${name}" \
+              --endpoint "$OSS_ENDPOINT" \
+              --region "$region" \
+              --update
+          done
+          echo "region=$region" >> "$GITHUB_OUTPUT"
+
+      - name: Verify public immutable OSS packages
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          root="https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases/v$AGENT_VERSION"
+          for architecture in x64 arm64; do
+            name="goodbuddy-agent-$AGENT_VERSION-linux-$architecture.gbagent"
+            curl --fail --silent --show-error --location \
+              "$root/$name" --output "$RUNNER_TEMP/$name"
+            cmp "dist/agent-release/$name" "$RUNNER_TEMP/$name"
+          done
+          for name in agent-catalog.json agent-catalog.sig; do
+            curl --fail --silent --show-error --location \
+              "$root/$name" --output "$RUNNER_TEMP/immutable-$name"
+            cmp "dist/agent-release/$name" \
+              "$RUNNER_TEMP/immutable-$name"
+          done
+
+      - name: Publish non-Latest GitHub Agent release
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="agent-v$AGENT_VERSION"
+          title="GoodBuddy Agent $AGENT_VERSION"
+          notes="$RUNNER_TEMP/agent-release-notes.md"
+          cat > "$notes" <<EOF
+          GoodBuddy Agent $AGENT_VERSION
+
+          此版本供 GoodBuddy 的“设置 > 平台功能 > 远程项目”手动下载。软件包包含 Agent、固定 Node 和 GoodBuddy 适配的远端 OpenCode Runtime。
+
+          This release is downloaded manually from GoodBuddy Settings > Platform Features > Remote Projects. Each package contains the Agent, pinned Node, and the GoodBuddy-adapted remote OpenCode Runtime.
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" == true ]]; then
+              gh release edit "$tag" \
+                --title "$title" \
+                --notes-file "$notes" \
+                --latest=false
+              gh release upload "$tag" dist/agent-release/* --clobber
+              gh release edit "$tag" --draft=false --latest=false
+            else
+              verify="$RUNNER_TEMP/github-agent-release"
+              mkdir "$verify"
+              gh release download "$tag" --dir "$verify"
+              for file in dist/agent-release/*; do
+                cmp "$file" "$verify/$(basename "$file")"
+              done
+            fi
+          else
+            gh release create "$tag" \
+              --draft \
+              --verify-tag \
+              --title "$title" \
+              --notes-file "$notes" \
+              --latest=false
+            gh release upload "$tag" dist/agent-release/* --clobber
+            gh release edit "$tag" --draft=false --latest=false
+          fi
+          test "$(gh api repos/mesalogo/goodbuddy/releases/latest --jq .tag_name)" != "$tag"
+
+      - name: Point OSS Agent catalog to published release
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+          OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+          OSS_REGION: ${{ steps.oss.outputs.region }}
+        run: |
+          set -euo pipefail
+          export OSS_ACCESS_KEY_ID="$ALIBABA_CLOUD_ACCESS_KEY_ID"
+          export OSS_ACCESS_KEY_SECRET="$ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+          export OSS_SESSION_TOKEN="$ALIBABA_CLOUD_SECURITY_TOKEN"
+          node - "$AGENT_VERSION" > dist/agent-release/latest.json <<'NODE'
+          const version = process.argv[2]
+          process.stdout.write(`${JSON.stringify({
+            formatVersion: 1,
+            version,
+            catalog: `v${version}/agent-catalog.json`,
+            signature: `v${version}/agent-catalog.sig`
+          }, null, 2)}\n`)
+          NODE
+          ossutil cp dist/agent-release/latest.json \
+            "oss://${OSS_BUCKET}/agent-releases/latest.json" \
+            --endpoint "$OSS_ENDPOINT" \
+            --region "$OSS_REGION" \
+            --force
+
+      - name: Verify public Agent catalogs
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          mirror="https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases"
+          github="https://github.com/mesalogo/goodbuddy/releases/download/agent-v$AGENT_VERSION"
+          curl --fail --silent --show-error --location \
+            "$mirror/latest.json" --output "$RUNNER_TEMP/mirror-pointer.json"
+          curl --fail --silent --show-error --location \
+            "$mirror/v$AGENT_VERSION/agent-catalog.json" \
+            --output "$RUNNER_TEMP/mirror.json"
+          curl --fail --silent --show-error --location \
+            "$mirror/v$AGENT_VERSION/agent-catalog.sig" \
+            --output "$RUNNER_TEMP/mirror.sig"
+          curl --fail --silent --show-error --location \
+            "$github/agent-catalog.json" --output "$RUNNER_TEMP/github.json"
+          curl --fail --silent --show-error --location \
+            "$github/agent-catalog.sig" --output "$RUNNER_TEMP/github.sig"
+          cmp dist/agent-release/latest.json "$RUNNER_TEMP/mirror-pointer.json"
+          cmp dist/agent-release/agent-catalog.json "$RUNNER_TEMP/mirror.json"
+          cmp dist/agent-release/agent-catalog.sig "$RUNNER_TEMP/mirror.sig"
+          cmp dist/agent-release/agent-catalog.json "$RUNNER_TEMP/github.json"
+          cmp dist/agent-release/agent-catalog.sig "$RUNNER_TEMP/github.sig"

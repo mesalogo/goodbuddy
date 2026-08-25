@@ -6,6 +6,7 @@ import {
   sshDirectoryBrowseResultSchema,
   sshHostCreateInputSchema,
   sshHostDraftInspectionRequestSchema,
+  remoteEnvironmentUpdateProgressSchema,
   sshHostRemoteEnvironmentSchema,
   sshHostValidationRequestSchema
 } from './ssh-host-contracts'
@@ -241,6 +242,28 @@ describe('SSH host contracts', () => {
         credential: 'secret'
       })
     ).toThrow()
+  })
+
+  it('strictly validates coarse remote environment update progress', () => {
+    const hostId = '00000000-0000-4000-8000-000000000101'
+    for (const phase of ['agent', 'runtime', 'finalizing']) {
+      expect(
+        remoteEnvironmentUpdateProgressSchema.parse({
+          hostId,
+          phase
+        })
+      ).toEqual({ hostId, phase })
+    }
+    for (const progress of [
+      { hostId: 'not-a-uuid', phase: 'agent' },
+      { hostId, phase: 'uploading' },
+      { hostId, phase: 'runtime', path: '/home/user' },
+      { hostId, phase: 'agent', command: 'whoami' }
+    ]) {
+      expect(() =>
+        remoteEnvironmentUpdateProgressSchema.parse(progress)
+      ).toThrow()
+    }
   })
 
   it('validates strict directory browse requests and treats an omitted path as valid', () => {

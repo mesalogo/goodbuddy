@@ -41,8 +41,8 @@
     "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
     "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64",
     "dist:linux": "npm run dist:linux:x64 && npm run dist:linux:arm64",
-    "dist:linux:x64": "npm run build && electron-builder --linux AppImage deb --x64",
-    "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb --arm64",
+    "dist:linux:x64": "npm run build && electron-builder --linux AppImage deb rpm --x64",
+    "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb rpm --arm64",
     "icons": "node build/generate-icons.mjs",
     "release:package": "node build/build-release.cjs",
     "portable": "node build/build-portable.cjs"
@@ -251,7 +251,8 @@
       "syncDesktopName": true,
       "target": [
         "AppImage",
-        "deb"
+        "deb",
+        "rpm"
       ],
       "category": "Utility"
     }

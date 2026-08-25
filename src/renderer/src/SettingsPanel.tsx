@@ -49,6 +49,7 @@ import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSecti
 import { SpeechModelSettingsSection } from './SpeechModelSettingsSection'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 import { DshMarketplaceSection } from './DshMarketplaceSection'
+import { displayErrorMessage } from './error-message'
 import { SshHostsSettingsSection } from './SshHostsSettingsSection'
 import {
   RuntimeCustomizationSection,
@@ -232,13 +233,7 @@ type SettingsPanelProps = {
 }
 
 function settingsErrorMessage(reason: unknown, fallback: string): string {
-  if (!(reason instanceof Error)) {
-    return fallback
-  }
-  const message = reason.message.replace(
-    /^Error invoking remote method '[^']+': (?:Error: )?/u,
-    ''
-  )
+  const message = displayErrorMessage(reason, fallback)
   try {
     const issues: unknown = JSON.parse(message)
     if (

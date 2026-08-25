@@ -22,13 +22,12 @@ import {
   type RemoteRuntimeActivator
 } from './remote-runtime-installation-manager'
 import {
-  createRemoteRuntimeResourceLoader,
-  loadRemoteRuntimeVerificationMetadata
-} from './remote-runtime-resource-loader'
-import {
   createManagedModelBridge,
   reconcileStartupModelCalls
 } from './managed-model-bridge'
+import type {
+  AgentPackageManager
+} from './agent-package-manager'
 
 const RUNTIME_BINDING_DATABASE_NAME = 'remote-runtime-bindings.sqlite'
 const MODEL_CALL_DATABASE_NAME = 'remote-model-calls-v2.sqlite'
@@ -47,6 +46,10 @@ export type ManagedRemoteExecutionServicesOptions = {
   appPath: string
   resourcesPath: string
   packaged: boolean
+  agentPackageManager: Pick<
+    AgentPackageManager,
+    'loadRuntimeBundle' | 'loadRuntimeMetadata'
+  >
   resolveModelProfile(
     selection: AgentRuntimeSelection
   ): Promise<ResolvedModelProfile | undefined>
@@ -132,13 +135,10 @@ export class ManagedRemoteExecutionServices {
       new RemoteRuntimeInstallationManager({
         resolver: options.agentServices.targetResolver,
         sshPool: options.agentServices.sshPool,
-        loadVerifiedBundle: createRemoteRuntimeResourceLoader(
-          this.runtimeResourcePaths
-        ),
-        loadVerificationMetadata: () =>
-          loadRemoteRuntimeVerificationMetadata(
-            this.runtimeResourcePaths
-          ),
+        loadVerifiedBundle:
+          options.agentPackageManager.loadRuntimeBundle,
+        loadVerificationMetadata:
+          options.agentPackageManager.loadRuntimeMetadata,
         activate
       })
     this.runtimeValidator = new ManagedRemoteProjectRuntimeValidator({

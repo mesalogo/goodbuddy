@@ -32,6 +32,9 @@ const tar = require('tar')
 const {
   detectElfArchitecture
 } = require('./binary-architecture.cjs')
+const {
+  preflightRegisteredProductionKey
+} = require('./signing-key-preflight.cjs')
 
 const root = join(__dirname, '..')
 const domainSeparator = Buffer.from(
@@ -379,36 +382,15 @@ function preflightProductionSigningKey(options = {}) {
   const projectRoot = options.projectRoot ?? root
   const environment = options.environment ?? process.env
   const keyId = options.keyId ?? environment[signingKeyIdEnvironment]
-  if (!keyId) {
-    throw new Error(
-      `${signingKeyIdEnvironment} is not configured; provision the production Agent signing key ID before building a release`
-    )
-  }
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
-  const signingRecord = registry.keys.find(
-    (key) => key.keyId === keyId
-  )
-  if (!signingRecord) {
-    throw new Error(
-      `Production Agent public signing key ID "${keyId}" is absent from resources/agent-release-keys.json; provision the matching public key before building a release`
-    )
-  }
-  if (signingRecord.environment !== 'production') {
-    throw new Error(
-      `Production Agent signing key ID "${keyId}" is not registered for production`
-    )
-  }
-  if (
-    registry.revocations.some(
-      (revocation) => revocation.keyId === keyId
-    )
-  ) {
-    throw new Error(
-      `Production Agent signing key ID "${keyId}" is revoked`
-    )
-  }
-  return signingRecord
+  return preflightRegisteredProductionKey({
+    component: 'Agent',
+    keyId,
+    registry,
+    missingKeyIdMessage:
+      `${signingKeyIdEnvironment} is not configured; provision the production Agent signing key ID before building a release`
+  })
 }
 
 function publicKeySpkiBase64(key) {

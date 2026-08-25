@@ -35,6 +35,9 @@ const tar = require('tar')
 const {
   detectElfArchitecture
 } = require('./binary-architecture.cjs')
+const {
+  preflightRegisteredProductionKey
+} = require('./signing-key-preflight.cjs')
 
 const root = join(__dirname, '..')
 const supportedArchitectures = Object.freeze(['x64', 'arm64'])
@@ -310,15 +313,17 @@ function trustedKeyForSigning(
 function preflightProductionSigningKey(options = {}) {
   const projectRoot = options.projectRoot ?? root
   const environment = options.environment ?? process.env
+  const keyId =
+    options.keyId ?? environment[signingKeyIdEnvironment]
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
-  const identity = options.signingIdentity ??
-    productionSigningIdentity(environment)
-  return trustedKeyForSigning(
-    identity,
+  return preflightRegisteredProductionKey({
+    component: 'Runtime',
+    keyId,
     registry,
-    'production'
-  )
+    missingKeyIdMessage:
+      `${signingKeyIdEnvironment} is not configured; provision the production Runtime signing key ID before building a release`
+  })
 }
 
 function assertSafeManifestPath(filePath) {
@@ -640,30 +645,39 @@ function verifyBundleDirectory(bundleDirectoryInput, options = {}) {
 }
 
 function lockedArchive(lock, architecture, archivePath) {
-  targetName(architecture)
-  const runtime = lock.runtimes.opencode
-  const target = runtime.targets[architecture]
+  const input = resolveLockedRuntimeInput(lock, architecture)
   if (!archivePath || !existsSync(archivePath)) {
     throw new Error(
-      `Locked OpenCode archive is required: ${target.package}-${runtime.version}.tgz`
+      `Locked OpenCode archive is required: ${input.archive}`
     )
   }
   if (!statSync(archivePath).isFile()) {
     throw new Error(`Runtime archive is not a file: ${archivePath}`)
   }
-  const expectedName = `${target.package}-${runtime.version}.tgz`
-  if (basename(archivePath) !== expectedName) {
+  if (basename(archivePath) !== input.archive) {
     throw new Error(
-      `Runtime archive filename mismatch: expected ${expectedName}`
+      `Runtime archive filename mismatch: expected ${input.archive}`
     )
   }
   const actualIntegrity = sha512FileIntegrity(archivePath)
-  if (actualIntegrity !== target.integrity) {
+  if (actualIntegrity !== input.integrity) {
     throw new Error(
       `Runtime archive integrity mismatch for ${targetName(architecture)}`
     )
   }
-  return target
+  return lock.runtimes.opencode.targets[architecture]
+}
+
+function resolveLockedRuntimeInput(lock, architecture) {
+  targetName(architecture)
+  const runtime = lock.runtimes.opencode
+  const target = runtime.targets[architecture]
+  return {
+    packageName: target.package,
+    version: runtime.version,
+    integrity: target.integrity,
+    archive: `${target.package}-${runtime.version}.tgz`
+  }
 }
 
 function createManifest(bundleDirectory, metadata) {
@@ -1102,6 +1116,7 @@ module.exports = {
   readRemoteRuntimeLock,
   readTrustedKeyRegistry,
   redactSecrets,
+  resolveLockedRuntimeInput,
   signaturePayload,
   supportedArchitectures,
   targetName,

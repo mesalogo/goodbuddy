@@ -1,0 +1,313 @@
+name: GoodBuddy Agents
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/agents.yml'
+      - 'agent-runtime-lock.json'
+      - 'build/agent-bundle.cjs'
+      - 'build/agent-package.cjs'
+      - 'build/agent-ci-bundle.cjs'
+      - 'build/file-hash.cjs'
+      - 'build/remote-runtime-bundle.cjs'
+      - 'build/signing-key-preflight.cjs'
+      - 'package-lock.json'
+      - 'package.json'
+      - 'resources/agent-release-keys.json'
+      - 'remote-runtime-lock.json'
+      - 'src/agent-daemon/**'
+      - 'src/shared/**'
+      - 'tests/agent-bundle.test.ts'
+      - 'tests/agent-package.test.ts'
+      - 'tests/agents-workflow.test.ts'
+      - 'tests/remote-runtime-bundle.test.ts'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/agents.yml'
+      - 'agent-runtime-lock.json'
+      - 'build/agent-bundle.cjs'
+      - 'build/agent-package.cjs'
+      - 'build/agent-ci-bundle.cjs'
+      - 'build/file-hash.cjs'
+      - 'build/remote-runtime-bundle.cjs'
+      - 'build/signing-key-preflight.cjs'
+      - 'package-lock.json'
+      - 'package.json'
+      - 'resources/agent-release-keys.json'
+      - 'remote-runtime-lock.json'
+      - 'src/agent-daemon/**'
+      - 'src/shared/**'
+      - 'tests/agent-bundle.test.ts'
+      - 'tests/agent-package.test.ts'
+      - 'tests/agents-workflow.test.ts'
+      - 'tests/remote-runtime-bundle.test.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agents-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate Agent source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Agent source and workflow
+        run: |
+          npm test -- \
+            tests/agent-bundle.test.ts \
+            tests/agent-package.test.ts \
+            tests/remote-runtime-bundle.test.ts \
+            tests/agents-workflow.test.ts
+          npm run typecheck
+
+  build:
+    name: Build Linux ${{ matrix.arch }} Agent
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve locked official Node runtime
+        id: runtime
+        shell: bash
+        env:
+          AGENT_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { appendFileSync } = require('node:fs')
+          const lock = require('./agent-runtime-lock.json')
+          const target = lock.node?.targets?.[`linux-${process.env.AGENT_ARCH}`]
+          if (
+            !target ||
+            !/^[A-Za-z0-9._-]+\.tar\.gz$/u.test(target.archive) ||
+            !/^[a-f0-9]{64}$/u.test(target.sha256)
+          ) {
+            throw new Error('Locked Agent Node runtime metadata is invalid')
+          }
+          const url = new URL(target.archive, lock.node.source)
+          if (
+            url.protocol !== 'https:' ||
+            url.hostname !== 'nodejs.org' ||
+            url.username ||
+            url.password ||
+            url.search ||
+            url.hash
+          ) {
+            throw new Error('Agent Node runtime must use the official HTTPS origin')
+          }
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `archive=${target.archive}`,
+              `sha256=${target.sha256}`,
+              `url=${url.href}`,
+              ''
+            ].join('\n')
+          )
+          NODE
+
+      - name: Cache verified Node runtime input
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/goodbuddy-agent-node
+          key: goodbuddy-agent-ci-node-${{ matrix.arch }}-${{ steps.runtime.outputs.sha256 }}
+
+      - name: Acquire and verify locked Node runtime
+        shell: bash
+        env:
+          NODE_ARCHIVE: ${{ steps.runtime.outputs.archive }}
+          NODE_SHA256: ${{ steps.runtime.outputs.sha256 }}
+          NODE_URL: ${{ steps.runtime.outputs.url }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/goodbuddy-agent-node"
+          archive="$directory/$NODE_ARCHIVE"
+          mkdir -p "$directory"
+          if [[ ! -f "$archive" ]]; then
+            rm -f "$archive.partial"
+            curl --proto '=https' --tlsv1.2 \
+              --fail --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --connect-timeout 15 --max-time 300 \
+              --max-filesize 104857600 \
+              "$NODE_URL" --output "$archive.partial"
+            mv "$archive.partial" "$archive"
+          fi
+          printf '%s  %s\n' "$NODE_SHA256" "$archive" |
+            sha256sum --check --strict -
+
+      - name: Resolve locked OpenCode Runtime
+        id: opencode
+        shell: bash
+        env:
+          AGENT_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { appendFileSync } = require('node:fs')
+          const { createHash: hash } = require('node:crypto')
+          const lock = require('./remote-runtime-lock.json')
+          const runtime = lock.runtimes?.opencode
+          const target = runtime?.targets?.[process.env.AGENT_ARCH]
+          if (
+            !runtime ||
+            !target ||
+            !/^[a-z0-9][a-z0-9._-]*$/u.test(target.package) ||
+            !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(runtime.version) ||
+            !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(target.integrity)
+          ) {
+            throw new Error('Locked OpenCode Runtime metadata is invalid')
+          }
+          const archive = `${target.package}-${runtime.version}.tgz`
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            [
+              `package=${target.package}`,
+              `version=${runtime.version}`,
+              `integrity=${target.integrity}`,
+              `archive=${archive}`,
+              `cache-key=${hash('sha256').update(target.integrity).digest('hex')}`,
+              ''
+            ].join('\n')
+          )
+          NODE
+
+      - name: Cache verified OpenCode Runtime input
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/goodbuddy-opencode-runtime
+          key: goodbuddy-agent-ci-opencode-${{ matrix.arch }}-${{ steps.opencode.outputs.cache-key }}
+
+      - name: Acquire and verify locked OpenCode Runtime
+        shell: bash
+        env:
+          OPENCODE_ARCHIVE: ${{ steps.opencode.outputs.archive }}
+          OPENCODE_INTEGRITY: ${{ steps.opencode.outputs.integrity }}
+          OPENCODE_PACKAGE: ${{ steps.opencode.outputs.package }}
+          OPENCODE_VERSION: ${{ steps.opencode.outputs.version }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/goodbuddy-opencode-runtime"
+          archive="$directory/$OPENCODE_ARCHIVE"
+          mkdir -p "$directory"
+          if [[ ! -f "$archive" ]]; then
+            npm pack \
+              --ignore-scripts \
+              --registry https://registry.npmjs.org/ \
+              --pack-destination "$directory" \
+              "$OPENCODE_PACKAGE@$OPENCODE_VERSION"
+          fi
+          node - "$archive" "$OPENCODE_INTEGRITY" <<'NODE'
+          const { createHash } = require('node:crypto')
+          const { readFileSync, statSync } = require('node:fs')
+          const [archive, expected] = process.argv.slice(2)
+          const size = statSync(archive).size
+          if (size <= 0 || size > 536870912) {
+            throw new Error('OpenCode Runtime archive exceeds its safety limit')
+          }
+          const actual = `sha512-${createHash('sha512')
+            .update(readFileSync(archive))
+            .digest('base64')}`
+          if (actual !== expected) {
+            throw new Error('OpenCode Runtime archive integrity mismatch')
+          }
+          NODE
+
+      - name: Run native Agent regressions
+        run: |
+          npm test -- \
+            src/agent-daemon/model-bridge.test.ts \
+            src/agent-daemon/lifecycle.test.ts
+
+      - name: Build and verify ephemeral signed compound Agent package twice
+        id: agent
+        shell: bash
+        env:
+          AGENT_ARCH: ${{ matrix.arch }}
+          NODE_ARCHIVE: ${{ steps.runtime.outputs.archive }}
+          OPENCODE_ARCHIVE: ${{ steps.opencode.outputs.archive }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/goodbuddy-agent-ci"
+          rm -rf "$directory"
+          mkdir -p "$directory"
+          agent_version="$(node -p "require('./agent-runtime-lock.json').agentVersion")"
+          node build/agent-ci-bundle.cjs \
+            --arch "$AGENT_ARCH" \
+            --node-archive "$RUNNER_TEMP/goodbuddy-agent-node/$NODE_ARCHIVE" \
+            --opencode-archive "$RUNNER_TEMP/goodbuddy-opencode-runtime/$OPENCODE_ARCHIVE" \
+            --output-directory "$directory/bundle" \
+            --archive "$directory/goodbuddy-agent-$agent_version-linux-$AGENT_ARCH.gbagent" |
+            tee "$directory/result.json"
+          node - <<'NODE'
+          const { appendFileSync, readFileSync } = require('node:fs')
+          const result = JSON.parse(
+            readFileSync(
+              `${process.env.RUNNER_TEMP}/goodbuddy-agent-ci/result.json`,
+              'utf8'
+            )
+          )
+          if (
+            result.architecture !== process.env.AGENT_ARCH ||
+            !/^[a-f0-9]{64}$/u.test(result.archiveSha256)
+          ) {
+            throw new Error('Agent CI result is invalid')
+          }
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `sha256=${result.archiveSha256}\n`
+          )
+          NODE
+
+      - name: Record verified Agent build
+        shell: bash
+        env:
+          AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_SHA256: ${{ steps.agent.outputs.sha256 }}
+        run: |
+          {
+            echo "### Linux $AGENT_ARCH Agent"
+            echo
+            echo "Native compound Agent, Node, and OpenCode Runtime build, test-signature verification, launch smoke, and deterministic archive comparison passed."
+            echo
+            echo "Archive SHA-256: \`$AGENT_SHA256\`"
+            echo
+            echo "The ephemeral CI key and bundle are not published."
+          } >> "$GITHUB_STEP_SUMMARY"

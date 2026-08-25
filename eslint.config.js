@@ -5,7 +5,15 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'out/**', 'coverage/**']
+    ignores: [
+      '.agent-resources/**',
+      '.remote-runtime-resources/**',
+      '.runtime-resources/**',
+      'coverage/**',
+      'dist/**',
+      'node_modules/**',
+      'out/**'
+    ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

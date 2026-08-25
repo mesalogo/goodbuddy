@@ -975,7 +975,9 @@ describe('RemoteRuntimeInstallationManager', () => {
       ]
     })
     const first = fixture.manager.ensureInstalled('host-1')
-    const second = fixture.manager.ensureInstalled('host-1')
+    const second = fixture.manager.ensureInstalled('host-1', {
+      force: true
+    })
     await vi.waitFor(() =>
       expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
     )
@@ -1002,6 +1004,22 @@ describe('RemoteRuntimeInstallationManager', () => {
     expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
     expect(fixture.activate).toHaveBeenCalledOnce()
     expect(phases).toEqual(['inspecting-host', 'complete'])
+  })
+
+  it('force bypasses the settled Runtime cache and refreshes it after verification', async () => {
+    const fixture = await harness()
+    const first = await fixture.manager.ensureInstalled('host-1')
+
+    const refreshed = await fixture.manager.ensureInstalled(
+      'host-1',
+      { force: true }
+    )
+    const cached = await fixture.manager.ensureInstalled('host-1')
+
+    expect(refreshed).toEqual(first)
+    expect(cached).toEqual(refreshed)
+    expect(fixture.sshPool.acquire).toHaveBeenCalledTimes(2)
+    expect(fixture.activate).toHaveBeenCalledTimes(2)
   })
 
   it('reports activation errors distinctly after verified publication', async () => {

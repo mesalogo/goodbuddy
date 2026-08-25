@@ -48,8 +48,8 @@ const targetDefinitions = [
   ['windows', 'arm64', ['nsis', 'portable']],
   ['macos', 'x64', ['dmg', 'zip']],
   ['macos', 'arm64', ['dmg', 'zip']],
-  ['linux', 'x64', ['AppImage', 'deb']],
-  ['linux', 'arm64', ['AppImage', 'deb']]
+  ['linux', 'x64', ['AppImage', 'deb', 'rpm']],
+  ['linux', 'arm64', ['AppImage', 'deb', 'rpm']]
 ] as const
 
 function createAggregateManifest() {
@@ -145,7 +145,7 @@ describe('site release manifest', () => {
 
     await expect(
       verifier.verifySiteRelease(manifest, request)
-    ).resolves.toBe(12)
-    expect(request).toHaveBeenCalledTimes(12)
+    ).resolves.toBe(14)
+    expect(request).toHaveBeenCalledTimes(14)
   })
 })

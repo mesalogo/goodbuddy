@@ -60,6 +60,7 @@ describe('managed daemon lifecycle', () => {
       lifetimeMs: 100
     })
     const challenge = verifier.issue()
+    expect(challenge.serverNonce).toMatch(/^[a-f0-9]{64}$/u)
     const response = verifier.createResponse({
       serverNonce: challenge.serverNonce,
       clientNonce: 'client-1',

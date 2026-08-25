@@ -34,12 +34,12 @@
     "linux-x64": Object.freeze({
       platform: "linux",
       arch: "x64",
-      formats: Object.freeze(["AppImage", "deb"]),
+      formats: Object.freeze(["AppImage", "deb", "rpm"]),
     }),
     "linux-arm64": Object.freeze({
       platform: "linux",
       arch: "arm64",
-      formats: Object.freeze(["AppImage", "deb"]),
+      formats: Object.freeze(["AppImage", "deb", "rpm"]),
     }),
   });
   const targetKeys = Object.freeze(Object.keys(targetDefinitions));
@@ -78,10 +78,12 @@
 
     const artifactArch =
       arch === "x64"
-        ? format === "AppImage"
-          ? "x86_64"
-          : "amd64"
-        : arch;
+        ? format === "deb"
+          ? "amd64"
+          : "x86_64"
+        : format === "rpm"
+          ? "aarch64"
+          : "arm64";
     return `GoodBuddy-${version}-linux-${artifactArch}.${format}`;
   };
 

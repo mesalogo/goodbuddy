@@ -24,6 +24,7 @@ GoodBuddy是一个开箱即用的 AI 生产平台，安全、跨平台、本地�
 - **知识工作区**：支持文件、目录和网页导入，以及全文、词组、向量和图谱混合检索。
 - **工作管理**：集中管理 Projects、对话、任务、活动、成果、记忆、魔法笔记和智能心跳；可从稳定的本地会话复制当前聊天内容并创建互不影响的会话分支。
 - **远程通道**：支持微信 ClawBot、企业微信和钉钉，每个发送者使用独立远程会话。
+- **托管 SSH 项目（技术预览）**：远程能力默认关闭且不影响普通桌面使用。启用后，在“设置 > 平台功能 > 远程项目”按 Linux Host 架构手动下载独立签名的 Agent 包，或导入/导出 `.gbagent` 离线包；每个包包含 Agent、固定 Node 和 GoodBuddy 适配的远端 OpenCode Runtime，在线来源跟随“关于与更新”的 GitHub/镜像选择。
 - **桌面上下文**：可选择文件、截图、应用窗口、剪贴板和语音作为上下文。
 - **离线语音**：支持 SenseVoice、Paraformer 和 Whisper 本地模型。
 - **富文本回答**：支持 Markdown、LaTeX 公式和受控 Mermaid 图表。
@@ -47,7 +48,10 @@ GoodBuddy是一个开箱即用的 AI 生产平台，安全、跨平台、本地�
 | --- | --- | --- |
 | Windows | `x64`、`arm64` | NSIS、便携 ZIP |
 | macOS | `x64`、`arm64` | DMG、ZIP |
-| Linux | `x64`、`arm64` | AppImage、DEB |
+| Linux | `x64`、`arm64` | AppImage、DEB、RPM |
+
+桌面安装包不包含远端 Agent payload。仅使用本地项目时无需下载任何
+Agent 包；托管 SSH 用户可在设置中按需管理。
 
 当前尚未配置代码签名和 macOS notarization，系统可能显示安全提示。
 

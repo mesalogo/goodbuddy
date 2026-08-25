@@ -151,6 +151,13 @@ describe('sandboxed preload', () => {
     )
     expect(source).toContain('sshHosts: {')
     expect(source).toContain('getSnapshot:')
+    expect(source).toContain(
+      'getAgentPackageInventory: (refresh = false)'
+    )
+    expect(source).toContain('downloadAgentPackage:')
+    expect(source).toContain('importAgentPackage:')
+    expect(source).toContain('exportAgentPackage: async')
+    expect(source).toContain('onAgentPackageProgress:')
     expect(source).toContain('inspectDraftHostKey:')
     expect(source).toContain('discardCandidate:')
     expect(source).toContain('validateAndSave:')
@@ -160,7 +167,40 @@ describe('sandboxed preload', () => {
     expect(source).toContain('cancelDirectoryBrowse: async ()')
     expect(source).toContain('getRemoteEnvironment: (hostId: string)')
     expect(source).toContain(
+      'updateRemoteEnvironment: async (hostId: string)'
+    )
+    expect(source).toContain(
+      'cancelRemoteEnvironmentUpdate: async (hostId: string)'
+    )
+    expect(source).toContain(
+      'onRemoteEnvironmentUpdateProgress:'
+    )
+    expect(source).toContain(
       'ipcChannels.sshHostsRemoteEnvironment'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsAgentPackageInventory'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsAgentPackageDownload'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsAgentPackageImport'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsAgentPackageExport'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsAgentPackageProgress'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsUpdateRemoteEnvironment'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsCancelRemoteEnvironmentUpdate'
+    )
+    expect(source).toContain(
+      'ipcChannels.sshHostsRemoteEnvironmentUpdateProgress'
     )
     expect(source).toContain('ipcChannels.sshHostsBrowseDirectories')
     expect(source).toContain(
@@ -177,6 +217,9 @@ describe('sandboxed preload', () => {
         ?.groups?.body ?? ''
     expect(sshHostsSource).not.toMatch(
       /\b(?:credential|password|revision|sftp|shell|command)\b/iu
+    )
+    expect(sshHostsSource).not.toMatch(
+      /\b(?:detail|phaseName|installationId)\b/iu
     )
   })
 

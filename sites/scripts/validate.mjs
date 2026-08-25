@@ -501,7 +501,7 @@ const expectedDownloadOptions = {
   },
   linux: {
     arches: ["x64", "arm64"],
-    formats: ["AppImage", "deb"],
+    formats: ["AppImage", "deb", "rpm"],
   },
 };
 for (const [platform, expected] of Object.entries(expectedDownloadOptions)) {
@@ -598,7 +598,7 @@ for (const asset of cssAssets) {
 }
 
 report(
-  !/<a\b[^>]*href="[^"]+\.(?:exe|dmg|zip|AppImage|deb)(?:[?#][^"]*)?"/i.test(
+  !/<a\b[^>]*href="[^"]+\.(?:exe|dmg|zip|AppImage|deb|rpm)(?:[?#][^"]*)?"/i.test(
     `${html}\n${englishHtml}`,
   ),
   "具体安装资产链接应由 OSS 发布索引动态提供",

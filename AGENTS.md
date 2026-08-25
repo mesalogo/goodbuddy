@@ -190,30 +190,43 @@ Release note: 修复左上角项目设置与消息通道项目设置不一致的
   packages for the native host and writes to
   `dist/release/<platform>-<arch>`.
 - Default deliverables are NSIS and portable ZIP for Windows, DMG and ZIP for
-  macOS, and AppImage and DEB for Linux. Every target includes
+  macOS, and AppImage, DEB, and RPM for Linux. Every target includes
   `release-manifest.json` with SHA-256 hashes.
 - `build/build-release.cjs` verifies the unpacked application, `app.asar`,
   bundled Continue and OpenCode runtimes, executable architecture, and package
   signatures before atomically replacing a release directory.
-- Ordinary `build` and `dist*` commands package the Agent and remote Runtime
-  version locks plus the public signing-key registry without embedding
-  installable Linux bundles. Local `portable` builds also discover and strictly
-  verify any existing `.agent-resources/linux-{x64,arm64}` bundles before
-  embedding them; `GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS` can require an exact
-  local architecture set. A metadata-only package may reuse an
-  already-installed Host Agent/Runtime only after the installed signed
-  manifests, locked identities, managed ownership and modes, critical Agent
-  payload, Host-side full payload verification, and lifecycle health all pass;
-  it cannot install a missing or mismatched Host component. Manage Agent
-  artifacts only through `agent:build`, `agent:import`, and `agent:verify`.
-- Build Linux x64 and arm64 Agent artifacts on native GitHub Actions runners
-  from the exact desktop source commit/tag. Prefer dedicated jobs or a
-  reusable/manual workflow over a long-lived divergent Agent source branch.
-- `release:package` is the only release path that requires the complete Agent
-  matrix. It must verify both signed Linux x64 and arm64 bundles before
-  Electron Builder, then verify the embedded copies in the unpacked
-  application. A missing or invalid architecture must fail the release rather
-  than producing a partial package.
+- All desktop build paths, including local `portable`, package the Agent and
+  remote Runtime version locks plus the public signing-key registry without
+  embedding installable Linux Agent or remote Runtime payloads. Managed SSH is
+  optional: users explicitly download a compatible compound `.gbagent` package
+  from Settings or import one offline before GoodBuddy can install or update a
+  Host.
+- Each independently published Linux x64 or arm64 `.gbagent` contains the
+  Agent daemon, pinned Node, and the desktop-maintained compatible OpenCode
+  Runtime. Build both architectures on native GitHub Actions runners from one
+  immutable `agent-v<agentVersion>` tag.
+- Keep the GoodBuddy Agent source, shared protocol/contracts, runtime lock,
+  bundle tooling, and tests in this repository so a desktop commit identifies
+  the exact Agent source it expects. Do not create a separate Agent repository
+  or long-lived Agent release branch unless the Agent becomes an independently
+  released product serving multiple clients.
+- `.github/workflows/agents.yml` is the branch and pull-request build
+  verification workflow for GoodBuddy Agent. It must build Linux x64 and
+  arm64 on native runners from the checked-out commit, acquire the locked
+  official Node archive and locked OpenCode npm archive, verify every locked
+  digest, use only an ephemeral in-memory test signing identity, and verify the
+  resulting compound package and deterministic archive. It must not read
+  production signing secrets, publish installable release artifacts, or modify
+  the checked-in public key registry.
+- `.github/workflows/agent-release.yml` is the only production compound Agent
+  publication path. It requires an annotated immutable Agent tag, the protected
+  `agent-signing` Environment, native x64/arm64 builds, production Agent and
+  Runtime signing-key preflights, a signed cumulative catalog, a non-Latest
+  GitHub Agent Release, and synchronized immutable Beijing OSS objects plus the
+  final signed latest-catalog pointer.
+- `.github/workflows/packages.yml` and `release:package` build only desktop
+  products. Missing Agent packages, remote Runtime inputs, or Agent signing
+  credentials must never block an ordinary desktop package or release.
 - Keep electron-builder invocations on `--publish never`. Main-branch builds
   run validation and build the production bundle without running the native
   package matrix. Manual builds upload 30-day GitHub Actions artifacts.
@@ -229,6 +242,28 @@ Release note: 修复左上角项目设置与消息通道项目设置不一致的
   CommonJS macOS icon tool.
 - Tag builds must use `v${package.version}`. The workflow also supports manual
   dispatch and main-branch changes to release tooling.
+
+### Agent Release Process
+
+- Agent releases use annotated `agent-v${agent-runtime-lock.agentVersion}` tags
+  and are separate from desktop `v${package.version}` releases. Confirm the
+  exact Agent release commit and tag with the user before creating or pushing
+  either.
+- The tagged commit must be reachable from protected `main`. The two native
+  jobs build the compound x64/arm64 packages from the same source and locks;
+  the catalog job rejects missing architectures, changed bytes for an existing
+  version/architecture identity, invalid prior signatures, and incompatible
+  matrix metadata.
+- Agent GitHub Releases are ordinary non-draft, non-prerelease releases but
+  must use `--latest=false`; they must never replace the desktop release marked
+  Latest. Publish immutable packages and the versioned catalog to
+  `agent-releases/v<agentVersion>/` in Beijing OSS, publish the GitHub Agent
+  Release, then atomically update the single `agent-releases/latest.json`
+  pointer to that version's immutable catalog and signature.
+- Do not report an Agent release complete until both public package
+  architectures match the signed catalog by size and SHA-256, the GitHub and
+  OSS catalog bytes/signatures are identical, the application can read the
+  selected source, and GitHub's repository Latest tag remains the desktop tag.
 
 ### Tagged Release Process
 
@@ -310,13 +345,13 @@ surface together before a new release.
   It must be able to write immutable version objects and the final latest
   pointer without granting unrelated administration privileges.
 - Upload release assets and `site-release.json` under the immutable
-  `releases/<tag>/` prefix first. Verify all 12 installer URLs publicly before
+  `releases/<tag>/` prefix first. Verify all 14 installer URLs publicly before
   creating or publishing the GitHub Release. Update
   `releases/latest.json` only after the GitHub Release is public and all prior
   checks succeeded.
-- The expected GitHub Release contains 20 assets: 12 installers (two formats
-  for each of six platform/architecture targets), six renamed target
-  manifests, one aggregate `release-manifest.json`, and one `SHA256SUMS`.
+- The expected GitHub Release contains 22 assets: 14 installers (two formats
+  for each Windows/macOS target and three formats for each Linux target), six
+  renamed target manifests, one aggregate `release-manifest.json`, and one `SHA256SUMS`.
   `site-release.json` is an OSS publication artifact, not a GitHub Release
   asset.
 
@@ -368,18 +403,18 @@ Do not report a release complete until all of the following are verified:
 2. The public GitHub Release is non-draft, non-prerelease, marked Latest, and
    uses the expected tag and title. Its body must exactly match the Markdown
    generated from the approved packaged bilingual notes.
-3. The GitHub asset set has exactly the expected 20 names and every asset is
+3. The GitHub asset set has exactly the expected 22 names and every asset is
    uploaded. Compare installer sizes and SHA-256 digests with the aggregate
    manifest and `SHA256SUMS`.
 4. The Beijing `releases/latest.json` returns HTTP 200, has the expected stable
-   version, exact six targets and 12 installer entries, the trusted Beijing
+   version, exact six targets and 14 installer entries, the trusted Beijing
    URLs, and the GitHub fallback URL. It must match the immutable
    `releases/<tag>/site-release.json`.
-5. All 12 public installer URLs accept `HEAD` without redirects and report the
+5. All 14 public installer URLs accept `HEAD` without redirects and report the
    declared size. For small JSON/checksum metadata, prefer a `GET` byte and
    digest comparison; OSS may gzip JSON responses and omit an uncompressed
    `Content-Length` on `HEAD`.
-6. The live website successfully fetches the index and produces the 12 correct
+6. The live website successfully fetches the index and produces the 14 correct
    platform/architecture/format links. Exercise the application's actual
    mirror checker against the public index for all six targets.
 7. Both remote `main` refs and both peeled tag refs still equal the approved

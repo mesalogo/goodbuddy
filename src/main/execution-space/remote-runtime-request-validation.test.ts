@@ -36,42 +36,30 @@ function descriptor(): SshExecutionSpaceDescriptor {
 }
 
 describe('assertRemoteRuntimeRequestValidated', () => {
-  it('accepts the exact persisted Runtime, Agent, and work mode', () => {
+  it('accepts complete evidence from the current Agent installation', () => {
     expect(() =>
-      assertRemoteRuntimeRequestValidated(
-        descriptor(),
-        { provider: 'opencode' },
-        'ask'
-      )
+      assertRemoteRuntimeRequestValidated(descriptor())
     ).not.toThrow()
   })
 
-  it('rejects Runtime selection and work-mode reuse', () => {
+  it('does not couple current requests to a persisted model profile or work mode', () => {
+    const changedRequestEvidence = descriptor()
+    changedRequestEvidence.runtimeValidation = {
+      ...changedRequestEvidence.runtimeValidation!,
+      runtimeSelectionKey:
+        'opencode:00000000-0000-4000-8000-000000000099',
+      workMode: 'execute'
+    }
+
     expect(() =>
-      assertRemoteRuntimeRequestValidated(
-        descriptor(),
-        {
-          provider: 'opencode',
-          profileId: '00000000-0000-4000-8000-000000000001'
-        },
-        'ask'
-      )
-    ).toThrow('Runtime 选择已变化')
-    expect(() =>
-      assertRemoteRuntimeRequestValidated(
-        descriptor(),
-        { provider: 'opencode' },
-        'execute'
-      )
-    ).toThrow('仅验证了 Ask')
+      assertRemoteRuntimeRequestValidated(changedRequestEvidence)
+    ).not.toThrow()
   })
 
   it('rejects missing or cross-installation evidence', () => {
     expect(() =>
       assertRemoteRuntimeRequestValidated(
-        { ...descriptor(), runtimeValidation: undefined },
-        { provider: 'opencode' },
-        'ask'
+        { ...descriptor(), runtimeValidation: undefined }
       )
     ).toThrow('缺少完整')
     expect(() =>
@@ -82,9 +70,7 @@ describe('assertRemoteRuntimeRequestValidated', () => {
             ...descriptor().runtimeValidation!,
             agentInstallationIdAtValidation: 'installation-2'
           }
-        },
-        { provider: 'opencode' },
-        'ask'
+        }
       )
     ).toThrow('缺少完整')
   })

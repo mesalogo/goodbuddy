@@ -1,5 +1,13 @@
 const { readFileSync } = require('node:fs')
 const { resolve } = require('node:path')
+const {
+  targetDefinitions
+} = require('./aggregate-release.cjs')
+
+const expectedInstallerCount = targetDefinitions.reduce(
+  (count, target) => count + target.formats.length,
+  0
+)
 
 function parseArguments(argv) {
   if (argv.length !== 2 || argv[0] !== '--manifest' || !argv[1]) {
@@ -12,7 +20,7 @@ async function verifySiteRelease(manifest, request = fetch) {
   const files = Object.values(manifest?.targets ?? {}).flatMap(
     (target) => Object.values(target?.files ?? {})
   )
-  if (files.length !== 12) {
+  if (files.length !== expectedInstallerCount) {
     throw new Error(`官网发布文件数量错误：${files.length}`)
   }
   const urls = new Set()

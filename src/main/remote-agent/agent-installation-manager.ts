@@ -30,6 +30,7 @@ import {
 } from './bundled-agent-resources'
 import {
   assertAgentManifestMatchesRuntimeLock,
+  canonicalAgentReleaseKeyRegistryBytes,
   readAgentReleaseKeyRegistry,
   readAgentRuntimeLock,
   verifyAgentManifestSignature,
@@ -37,6 +38,8 @@ import {
   type AgentVerificationEnvironment,
   type VerifiedAgentBundle
 } from './agent-bundle-verifier'
+import { settleBoundedly } from './bounded-settlement'
+import { isMissingPathError } from './path-errors'
 
 const MAXIMUM_INSTALLATION_FILES = 300
 const MAXIMUM_INSTALLATION_BYTES = 512 * 1024 * 1024
@@ -78,6 +81,7 @@ export interface AgentInstallationTargetResolver {
 export type AgentInstallationRequestOptions = {
   signal?: AbortSignal
   onProgress?: (phase: AgentInstallationPhase) => void
+  force?: boolean
 }
 
 export class AgentInstallationError extends Error {
@@ -120,6 +124,7 @@ export type AgentInstallationBundleLoader = (
 ) => Promise<{
   bundle: VerifiedAgentBundle
   registry: AgentReleaseKeyRegistry
+  release?: () => void
 }>
 
 export class AgentInstallationManager {
@@ -143,6 +148,7 @@ export class AgentInstallationManager {
     sftpLimits?: BoundedSftpLimits
     maximumConcurrentHosts?: number
     loadVerifiedBundle?: AgentInstallationBundleLoader
+    packageBundleLoader?: AgentInstallationBundleLoader
   }) {
     this.#resolver = options.resolver
     this.#sshPool = options.sshPool
@@ -152,13 +158,30 @@ export class AgentInstallationManager {
     this.#sftpLimits = options.sftpLimits
     this.#maximumConcurrentHosts =
       options.maximumConcurrentHosts ?? 8
-    this.#loadBundle = options.loadVerifiedBundle
     if (
-      this.#loadBundle &&
+      options.loadVerifiedBundle &&
+      options.packageBundleLoader
+    ) {
+      throw new Error(
+        'Agent installation accepts only one bundle loader'
+      )
+    }
+    this.#loadBundle =
+      options.packageBundleLoader ?? options.loadVerifiedBundle
+    if (
+      options.loadVerifiedBundle &&
       this.#verificationEnvironment !== 'test'
     ) {
       throw new Error(
         'Injected Agent bundles are allowed only in test verification'
+      )
+    }
+    if (
+      this.#verificationEnvironment === 'production' &&
+      options.packageBundleLoader === undefined
+    ) {
+      throw new Error(
+        'Production Agent installation requires a verified package loader'
       )
     }
     if (
@@ -190,18 +213,18 @@ export class AgentInstallationManager {
       throw new Error('Resolved SSH host does not match the request')
     }
     const operationKey = targetIdentityKey(target)
+    const existing = this.#active.get(operationKey)
+    if (existing) {
+      return this.#waitForActive(existing, options)
+    }
     const installed = this.#installed.get(operationKey)
-    if (installed !== undefined) {
+    if (!options.force && installed !== undefined) {
       try {
         options.onProgress?.('complete')
       } catch {
         // Progress observers cannot alter the installation outcome.
       }
       return installed
-    }
-    const existing = this.#active.get(operationKey)
-    if (existing) {
-      return this.#waitForActive(existing, options)
     }
     if (this.#active.size >= this.#maximumConcurrentHosts) {
       throw new AgentInstallationError(
@@ -323,6 +346,7 @@ export class AgentInstallationManager {
     let activationStarted = false
     let installationId: VerifiedAgentInstallationId | undefined
     let registrySnapshots: readonly ManagedFileSnapshot[] | undefined
+    let releaseBundle: (() => void) | undefined
     try {
       lease = await this.#sshPool.acquire(target, signal)
       assertLeaseMatchesTarget(lease, target)
@@ -354,8 +378,10 @@ export class AgentInstallationManager {
         progress('complete')
         return reused
       }
-      const { bundle, registry, registryBytes } =
+      const loaded =
         await this.#loadVerifiedBundle(probe.architecture)
+      const { bundle, registry, registryBytes } = loaded
+      releaseBundle = loaded.release
       assertBundleCapacity(bundle.manifest, registryBytes.byteLength)
       const candidateInstallationId = installationIdFor(bundle)
       installationId = candidateInstallationId
@@ -552,6 +578,7 @@ export class AgentInstallationManager {
         }
       }
       lease?.release()
+      releaseBundle?.()
     }
   }
 
@@ -561,24 +588,28 @@ export class AgentInstallationManager {
     bundle: VerifiedAgentBundle
     registry: AgentReleaseKeyRegistry
     registryBytes: Buffer
+    release?: () => void
   }> {
     if (this.#loadBundle) {
       const loaded = await this.#loadBundle(architecture)
-      if (loaded.bundle.manifest.arch !== architecture) {
-        throw new Error(
-          'Verified Agent bundle architecture does not match the host'
-        )
-      }
-      const canonicalRegistry = agentReleaseKeyRegistrySchema.parse(
-        loaded.registry
-      )
-      return {
-        bundle: loaded.bundle,
-        registry: canonicalRegistry,
-        registryBytes: Buffer.from(
-          `${JSON.stringify(canonicalRegistry, null, 2)}\n`,
-          'utf8'
-        )
+      try {
+        if (loaded.bundle.manifest.arch !== architecture) {
+          throw new Error(
+            'Verified Agent bundle architecture does not match the host'
+          )
+        }
+        const canonicalRegistry =
+          agentReleaseKeyRegistrySchema.parse(loaded.registry)
+        return {
+          bundle: loaded.bundle,
+          registry: canonicalRegistry,
+          registryBytes:
+            canonicalAgentReleaseKeyRegistryBytes(canonicalRegistry),
+          ...(loaded.release ? { release: loaded.release } : {})
+        }
+      } catch (error) {
+        loaded.release?.()
+        throw error
       }
     }
     const [registry, runtimeLock] = await Promise.all([
@@ -602,10 +633,8 @@ export class AgentInstallationManager {
     return {
       bundle,
       registry: canonicalRegistry,
-      registryBytes: Buffer.from(
-        `${JSON.stringify(canonicalRegistry, null, 2)}\n`,
-        'utf8'
-      )
+      registryBytes:
+        canonicalAgentReleaseKeyRegistryBytes(canonicalRegistry)
     }
   }
 
@@ -619,28 +648,18 @@ export class AgentInstallationManager {
     },
     signal: AbortSignal
   ): Promise<AgentInstallationIdentity> {
-    const [registry, runtimeLock, registryBytes] =
-      await Promise.all([
-        readAgentReleaseKeyRegistry(
-          this.#resourcePaths.keyRegistryPath
-        ),
-        readAgentRuntimeLock(this.#resourcePaths.runtimeLockPath),
-        readFile(this.#resourcePaths.keyRegistryPath)
-      ])
-    const canonicalRegistryBytes = Buffer.from(
-      `${JSON.stringify(
-        agentReleaseKeyRegistrySchema.parse(registry),
-        null,
-        2
-      )}\n`,
-      'utf8'
+    const [canonicalRegistryBytes, runtimeLock] = await Promise.all([
+      readFile(this.#resourcePaths.keyRegistryPath),
+      readAgentRuntimeLock(this.#resourcePaths.runtimeLockPath)
+    ])
+    const registry = parseCanonicalAgentReleaseKeyRegistry(
+      canonicalRegistryBytes,
+      'Agent trusted key registry'
     )
-    if (!canonicalRegistryBytes.equals(registryBytes)) {
-      throw new Error('Agent trusted key registry is not canonical')
-    }
 
     let metadataSftp: StagedSftp | undefined
     let installationSftp: StagedSftp | undefined
+    let currentMatchesLock = false
     try {
       metadataSftp = await lease.openStagedSftp(
         probe.canonicalHomeDirectory,
@@ -652,19 +671,13 @@ export class AgentInstallationManager {
         },
         signal
       )
-      const remoteRegistryBytes = await metadataSftp.readFile(
+      const remoteRegistryBytes = await readVerifiedRemoteFile(
+        metadataSftp,
         AGENT_REGISTRY_PATH,
+        probe.uid,
+        PRIVATE_FILE_MODE,
         signal
       )
-      const remoteReleaseKeyBytes = await metadataSftp.readFile(
-        RELEASE_KEYS_PATH,
-        signal
-      )
-      if (!remoteReleaseKeyBytes.equals(canonicalRegistryBytes)) {
-        throw new Error(
-          'Installed Agent release-key registry does not match this GoodBuddy build'
-        )
-      }
       const remoteRegistry = parseInstallationRegistryState(
         parseJsonBytes(
           remoteRegistryBytes,
@@ -680,10 +693,23 @@ export class AgentInstallationManager {
           `agent-${current.manifestSha256}`
       ) {
         throw new AgentInstallationError(
-          'This package does not include Agent installation resources and the Host has no matching current Agent',
+          'This GoodBuddy package lacks matching Agent installation resources, and the Host has no matching current Agent',
           'incompatible'
         )
       }
+      currentMatchesLock = true
+      const remoteReleaseKeyBytes = await readVerifiedRemoteFile(
+        metadataSftp,
+        RELEASE_KEYS_PATH,
+        probe.uid,
+        PRIVATE_FILE_MODE,
+        signal
+      )
+      const remoteReleaseKeyRegistry =
+        parseCanonicalAgentReleaseKeyRegistry(
+          remoteReleaseKeyBytes,
+          'Installed Agent release-key registry'
+        )
       const destination =
         `.goodbuddy/agent/installations/${current.installationId}`
       const manifestBytes = await metadataSftp.readFile(
@@ -702,6 +728,12 @@ export class AgentInstallationManager {
         manifestBytes,
         signatureBytes,
         registry,
+        this.#verificationEnvironment
+      )
+      verifyAgentManifestSignature(
+        manifestBytes,
+        signatureBytes,
+        remoteReleaseKeyRegistry,
         this.#verificationEnvironment
       )
       assertAgentManifestMatchesRuntimeLock(
@@ -774,9 +806,9 @@ export class AgentInstallationManager {
       if (error instanceof AgentInstallationError) {
         throw error
       }
-      if (isMissingPathError(error)) {
+      if (isMissingPathError(error) && !currentMatchesLock) {
         throw new AgentInstallationError(
-          'This package does not include Agent installation resources and the Host has no matching current Agent',
+          'This GoodBuddy package lacks matching Agent installation resources, and the Host has no matching current Agent',
           'incompatible',
           error
         )
@@ -817,6 +849,21 @@ function parseJsonBytes(
       cause: error
     })
   }
+}
+
+function parseCanonicalAgentReleaseKeyRegistry(
+  value: Buffer,
+  description: string
+): AgentReleaseKeyRegistry {
+  const registry = agentReleaseKeyRegistrySchema.parse(
+    parseJsonBytes(value, description)
+  )
+  const canonicalBytes =
+    canonicalAgentReleaseKeyRegistryBytes(registry)
+  if (!canonicalBytes.equals(value)) {
+    throw new Error(`${description} is not canonical`)
+  }
+  return registry
 }
 
 function decodeDetachedSignature(
@@ -1504,17 +1551,38 @@ async function verifyRemoteFile(
   mode: number,
   signal?: AbortSignal
 ): Promise<void> {
-  await assertRemoteMetadata(
+  const contents = await readVerifiedRemoteFile(
     sftp,
+    path,
+    uid,
+    mode,
+    signal,
+    size
+  )
+  if (sha256(contents) !== digest) {
+    throw new Error(`Remote Agent file readback mismatch: ${path}`)
+  }
+}
+
+async function readVerifiedRemoteFile(
+  sftp: StagedSftp,
+  path: string,
+  uid: number,
+  mode: number,
+  signal?: AbortSignal,
+  expectedSize?: number
+): Promise<Buffer> {
+  const metadata = await sftp.stat(path, signal)
+  assertMetadata(
+    metadata,
     path,
     'file',
     uid,
     mode,
-    size,
-    signal
+    expectedSize
   )
   const contents = await sftp.readFile(path, signal)
-  if (contents.byteLength !== size || sha256(contents) !== digest) {
+  if (contents.byteLength !== metadata.size) {
     throw new Error(`Remote Agent file readback mismatch: ${path}`)
   }
   await assertRemoteMetadata(
@@ -1523,9 +1591,10 @@ async function verifyRemoteFile(
     'file',
     uid,
     mode,
-    size,
+    metadata.size,
     signal
   )
+  return contents
 }
 
 async function assertRemoteMetadata(
@@ -1691,40 +1760,6 @@ function waitForOperation<T>(
       }
     )
   })
-}
-
-async function settleBoundedly(
-  promises: readonly Promise<unknown>[],
-  timeoutMs: number
-): Promise<void> {
-  if (promises.length === 0) {
-    return
-  }
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  try {
-    await Promise.race([
-      Promise.allSettled(promises),
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(resolve, timeoutMs)
-      })
-    ])
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout)
-    }
-  }
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (
-      (error as { code?: unknown }).code === 2 ||
-      (error as { code?: unknown }).code === 'ENOENT'
-    )
-  )
 }
 
 function rethrowAbort(error: unknown): void {

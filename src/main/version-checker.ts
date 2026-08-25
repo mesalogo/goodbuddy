@@ -66,7 +66,8 @@ const formatSchema = z.enum([
   'dmg',
   'zip',
   'AppImage',
-  'deb'
+  'deb',
+  'rpm'
 ])
 
 const releaseTargetSchema = z
@@ -336,7 +337,7 @@ function isCanonicalReleaseAssetApiUrl(value: string): boolean {
 const expectedFormats: Record<ReleasePlatform, string[]> = {
   windows: ['nsis', 'portable'],
   macos: ['dmg', 'zip'],
-  linux: ['AppImage', 'deb']
+  linux: ['AppImage', 'deb', 'rpm']
 }
 
 function hasExpectedFileFormats(
@@ -350,7 +351,9 @@ function hasExpectedFileFormats(
     )
   }
   const extensions =
-    platform === 'macos' ? ['.dmg', '.zip'] : ['.AppImage', '.deb']
+    platform === 'macos'
+      ? ['.dmg', '.zip']
+      : ['.AppImage', '.deb', '.rpm']
   return extensions.every(
     (extension) =>
       files.filter((file) => file.name.endsWith(extension)).length === 1

@@ -25,6 +25,9 @@ import type {
 } from '../../shared/capability-contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type {
+  AgentPackageInventory
+} from '../../shared/agent-package-contracts'
+import type {
   GlobalShortcutSettingsSnapshot
 } from '../../shared/shortcut'
 import type {
@@ -468,6 +471,34 @@ let applicationSettings: ApplicationSettings = {
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
 }
+const agentPackageInventory: AgentPackageInventory = {
+  checkedAt: '2026-08-24T00:00:00.000Z',
+  entries: [
+    {
+      platform: 'linux',
+      architecture: 'x64',
+      state: 'verified',
+      version: '0.11.2-e2e.13',
+      agentProtocol: { major: 2, minor: 0 },
+      remoteRuntimeVersion: '1.18.9'
+    },
+    {
+      platform: 'linux',
+      architecture: 'arm64',
+      state: 'not-downloaded',
+      version: null,
+      agentProtocol: null,
+      remoteRuntimeVersion: null
+    }
+  ]
+}
+const getAgentPackageInventory = vi.fn<
+  NonNullable<DesktopApi['sshHosts']>['getAgentPackageInventory']
+>(async (): Promise<AgentPackageInventory> => agentPackageInventory)
+const downloadAgentPackage = vi.fn(async () => agentPackageInventory)
+const importAgentPackage = vi.fn(async () => agentPackageInventory)
+const exportAgentPackage = vi.fn(async () => {})
+const onAgentPackageProgress = vi.fn(() => () => {})
 const getApplicationSettings = vi.fn(async () => ({
   ...applicationSettings
 }))
@@ -691,6 +722,10 @@ describe('SettingsPanel runtime files', () => {
       magicNoteCommentMode: 'immediate',
       magicNoteCommentFormat: 'combined'
     }
+    getAgentPackageInventory.mockReset()
+    getAgentPackageInventory.mockResolvedValue(
+      agentPackageInventory
+    )
     speechModelSnapshot = createSpeechModelSnapshot()
     shortcutSettingsSnapshot = {
       settings: {
@@ -757,6 +792,11 @@ describe('SettingsPanel runtime files', () => {
             hosts: [],
             secureStorageAvailable: true
           })),
+          getAgentPackageInventory,
+          downloadAgentPackage,
+          importAgentPackage,
+          exportAgentPackage,
+          onAgentPackageProgress,
           create: vi.fn(),
           update: vi.fn(),
           remove: vi.fn(async () => undefined),
@@ -1781,12 +1821,72 @@ describe('SettingsPanel runtime files', () => {
         name: '远程项目（技术预览）'
       })
     ).not.toBeInTheDocument()
+    expect(getAgentPackageInventory).not.toHaveBeenCalled()
     fireEvent.click(remoteProjectsTab)
     expect(remoteProjectsTab).toHaveAttribute('aria-selected', 'true')
     const remoteProjectsSwitch = await screen.findByRole('switch', {
       name: '远程项目（技术预览）'
     })
     expect(remoteProjectsSwitch).not.toBeChecked()
+    expect(
+      await screen.findByText('GoodBuddy Agent 包')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('当前 1 / 2 个 Linux 架构可用。')
+    ).toBeInTheDocument()
+    expect(screen.getByText('Linux x64')).toBeInTheDocument()
+    expect(screen.getByText('Linux arm64')).toBeInTheDocument()
+    expect(screen.getByText('已下载并验证')).toBeInTheDocument()
+    expect(screen.getByText('未下载')).toBeInTheDocument()
+    expect(getAgentPackageInventory).toHaveBeenCalledOnce()
+    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(1, false)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '刷新本地清单' })
+    )
+    await waitFor(() =>
+      expect(getAgentPackageInventory).toHaveBeenCalledTimes(2)
+    )
+    expect(getAgentPackageInventory).toHaveBeenNthCalledWith(2, true)
+
+    const x64Card = screen
+      .getByText('Linux x64')
+      .closest('[role="listitem"]')
+    const arm64Card = screen
+      .getByText('Linux arm64')
+      .closest('[role="listitem"]')
+    expect(x64Card).not.toBeNull()
+    expect(arm64Card).not.toBeNull()
+    fireEvent.click(
+      within(x64Card as HTMLElement).getByRole('button', {
+        name: '检查并更新'
+      })
+    )
+    await waitFor(() =>
+      expect(downloadAgentPackage).toHaveBeenCalledWith('x64')
+    )
+    fireEvent.click(
+      within(x64Card as HTMLElement).getByRole('button', {
+        name: '导出离线包'
+      })
+    )
+    await waitFor(() =>
+      expect(exportAgentPackage).toHaveBeenCalledWith('x64')
+    )
+    fireEvent.click(
+      within(arm64Card as HTMLElement).getByRole('button', {
+        name: '下载'
+      })
+    )
+    await waitFor(() =>
+      expect(downloadAgentPackage).toHaveBeenCalledWith('arm64')
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '导入离线包' })
+    )
+    await waitFor(() =>
+      expect(importAgentPackage).toHaveBeenCalledOnce()
+    )
 
     fireEvent.click(remoteProjectsSwitch)
 
@@ -1797,6 +1897,64 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(onRemoteProjectsEnabledChange).toHaveBeenCalledWith(true)
     expect(remoteProjectsSwitch).toBeChecked()
+  })
+
+  it('shows Agent package loading and recovers from a refresh error', async () => {
+    let resolveInventory:
+      | ((inventory: AgentPackageInventory) => void)
+      | undefined
+    getAgentPackageInventory.mockReturnValueOnce(
+      new Promise<AgentPackageInventory>((resolve) => {
+        resolveInventory = resolve
+      })
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    fireEvent.click(
+      await screen.findByRole('tab', {
+        name: '远程项目（技术预览）'
+      })
+    )
+    expect(
+      await screen.findByText('正在校验本地 Agent 包…')
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      resolveInventory?.(agentPackageInventory)
+      await Promise.resolve()
+    })
+    expect(
+      await screen.findByText('当前 1 / 2 个 Linux 架构可用。')
+    ).toBeInTheDocument()
+
+    getAgentPackageInventory.mockRejectedValueOnce(
+      new Error('inventory unavailable')
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '刷新本地清单' })
+    )
+    expect(
+      await screen.findByText('inventory unavailable')
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '刷新本地清单' })
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByText('inventory unavailable')
+      ).not.toBeInTheDocument()
+    )
+    expect(getAgentPackageInventory).toHaveBeenCalledTimes(3)
   })
 
   it('shows the SSH Hosts category only while Remote Projects is enabled', () => {

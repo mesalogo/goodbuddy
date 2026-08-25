@@ -255,9 +255,10 @@ function usageEvent(
 /**
  * Generic ACP runtime over an authenticated remote virtual channel.
  *
- * The class deliberately does not claim confinement from ACP itself. Execute
- * is available only when the injected channel attests both sandboxing and the
- * pre-side-effect approval bridge.
+ * The class deliberately does not claim confinement from ACP itself. Ask
+ * permits only one-shot native reads, while the injected channel's read-only
+ * sandbox remains the filesystem boundary. Execute follows the user's full
+ * authorization for the selected SSH account.
  */
 export class AcpRemoteRuntime implements AgentRuntime {
   readonly requiresToolApproval = false
@@ -1655,8 +1656,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     )
     if (
       !prompt?.open ||
-      prompt.completed ||
-      prompt.workMode !== 'execute'
+      prompt.completed
     ) {
       return permissionRejection(permission)
     }
@@ -1666,6 +1666,16 @@ export class AcpRemoteRuntime implements AgentRuntime {
     const allowAlways = permission.options.find(
       (option) => option.kind === 'allow_always'
     )
+    if (prompt.workMode === 'ask') {
+      return permission.toolCall.kind === 'read' && allowOnce
+        ? {
+            outcome: {
+              outcome: 'selected',
+              optionId: allowOnce.optionId
+            }
+          }
+        : permissionRejection(permission)
+    }
     if (!prompt.authorize) {
       const selected = allowAlways ?? allowOnce
       return selected

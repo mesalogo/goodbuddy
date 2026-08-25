@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接、终态清理，以及 metadata-only Portable 对已安装 production 签名 Agent/Runtime 的验证复用已经在真实 Host 上完成 provider-free 验证。远程 OpenCode 功能仍处于发布前验证阶段；production 公钥 registry 已供应，正式发布前仍需提供并校验 Linux x64 与 Linux arm64 的当前签名 Agent/Runtime 工件完整矩阵，并完成一次经明确授权的有界真实模型调用。
+本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已前进到 Agent `0.11.2-e2e.13`，尚未复用旧版本号。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
 
 ## 产品语义
 
@@ -56,12 +56,21 @@ Detached GoodBuddy Agent
   manifest、registry identity、owner/mode/size 和 Node digest 都可验证，且候选
   manifest 声明完全相同的 Node，安装器直接在新的 side-by-side 目录中复用该 Node；
   否则正常上传候选 Node。Agent 不匹配不会阻止升级，也不会覆盖旧安装。
-- 桌面版本携带所需的签名 Agent 与 Runtime。Agent 和 Runtime 各自维护组件版本，签名摘要标识对应版本的精确工件。应用重启固定进入第一个普通本地项目，不自动连接上次远程项目；用户主动切换并首次打开托管 SSH 项目时，Main 才从当前桌面资源选择目标架构工件，Host 尚未安装该 identity 时自动上传并启动。相同 Renderer 对同一项目的并发激活共享一个 Main 操作。
+- 桌面包只携带版本 lock 与 production 公钥，不携带远端 payload。用户必须先在设置中显式下载最新兼容的目标架构复合包，或导入离线 `.gbagent`；项目激活不会联网下载。每个复合包绑定 Agent、固定 Node 与桌面维护的 OpenCode Runtime 精确工件。应用重启固定进入第一个普通本地项目，不自动连接上次远程项目；用户主动切换托管 SSH 项目时，Main 从本地验证缓存选择 Host 架构工件，Host 尚未安装该 identity 时上传并启动。相同 Renderer 对同一项目的并发激活共享一个 Main 操作。
 - Agent、Workspace 和 Runtime 全部验证成功后，Main 才在同一 SQLite 事务中刷新项目保存的 Agent/Runtime evidence，然后把项目设为当前项目。上传、启动、验证或事务失败时，项目继续绑定旧 identity，不能用未提交的新 identity 绕过持久化绑定校验。
 - SSH 连接先尝试 attach；Agent 不存在或未运行时执行幂等 bootstrap，然后重新 attach。
 - Agent 是按需启动的 detached process，不注册开机服务，不依赖 systemd、D-Bus 或 Linger。
+- 每个模型桥 helper 都为 loopback HTTP 入口生成一次性随机路径 capability；只有写入当前 OpenCode 子进程配置的 URL 可以访问该入口，其他本机用户即使发现临时端口也不能提交模型请求。
 - Agent 监听当前用户拥有的私有 Unix socket。SSH 中断只关闭 relay，不拥有 Agent 和活动 Runtime 的生命周期。
-- SSH Host 设置通过固定探针和有界 SFTP 只读显示 Host 已登记的 Agent/OpenCode 版本，并与当前 GoodBuddy 所需版本比较；打开设置不安装或切换远端组件。
+- SSH Host 设置通过固定探针和有界 SFTP 显示 Host 已登记的 Agent/OpenCode 版本，并与当前 GoodBuddy 所需版本比较；打开设置或“刷新版本”只读取状态，不安装或切换远端组件。
+- “平台功能 > 远程项目”中的本地 Agent 包清单与 Host 状态分离。Main 对用户数据目录中
+  Linux x64/arm64 `.gbagent` 分别执行外层可信签名、桌面/协议兼容性、内部 Agent/Runtime
+  签名、架构与完整 payload 校验；Renderer 只得到版本、架构、远端 Runtime 版本、协议和
+  `verified | not-downloaded | invalid`，不得到缓存路径、key ID 或 digest。在线下载只由
+  用户点击触发，并使用“关于与更新”选择的 GitHub 或北京 OSS 来源；离线导入/导出通过
+  Main 管理的文件对话框完成。
+- 当任一组件缺失或不是当前版本时，用户可显式选择“更新版本”。Main 使用同一个取消信号依次强制执行 Agent、Runtime 安装器，并把 Agent、Runtime、Finalizing 阶段只发送给发起更新的 Renderer。更新启动仍受技术预览开关和可信 Sender 校验约束；取消不受开关约束，确保操作开始后即使关闭功能也能停止。
+- 更新成功后才定向清理该 Host 的 Agent 连接和 Runtime 选择缓存，并让当前引用项目重新激活；失败或取消保留 Host 配置、凭据、项目、Workspace 和可继续验证的旧组件，Renderer 刷新实际版本并允许重试。同一 Renderer 同时只更新一个 Host，窗口销毁或 Main 退出会取消活动更新并执行有界收尾。
 - 显式 stop、升级、身份冲突或进程退出时清理 GoodBuddy 自己的 socket、状态和子进程；不得删除或覆盖无关 Host 文件。
 
 ## Workspace
@@ -79,6 +88,9 @@ Main 传入已规范化的绝对 POSIX root。Agent 返回 Workspace identity、
 ## Runtime
 
 首个远程 Runtime 固定为签名 OpenCode ACP bundle。
+托管 SSH 项目的 Composer Runtime 菜单只显示当前配置的 OpenCode 和管理入口，不显示
+直连模型、Continue 或 DeepSeek Harness。激活旧远程会话时，若其保存了其他 Runtime
+selection，Renderer 会恢复为当前 OpenCode 配置；Main 的远程请求校验仍是最终边界。
 
 ### Ask
 
@@ -88,8 +100,11 @@ Ask 使用系统 `bwrap`：
 - 独立可写 scratch HOME、TMPDIR 和 XDG 目录；
 - 固定环境名和固定 Runtime argv；
 - 通过只读边界阻止 Workspace 修改。
+- ACP 权限请求只有在工具种类为原生 `read` 且 Runtime 提供 `allow_once` 选项时才允许；
+  search、edit、execute、未知工具以及只提供持久授权的请求全部拒绝。
 
-Host 缺少 `bwrap` 时 Ask 不可用。
+`allow_once` 只解决 OpenCode 发起原生读取前的 ACP 协商，真正的文件系统边界仍是只读
+`bwrap` bind。Host 缺少 `bwrap` 时 Ask 不可用。
 
 ### Execute
 
@@ -135,13 +150,35 @@ Execute 不经过 Ask 的 bubblewrap profile：
   返回的实际 usage；不限制 Prompt 内的模型调用轮数、工具调用次数、累计 Token
   或单次模型输出 Token。取消、Runtime deadline、请求/响应字节上限和结果不确定时
   禁止自动重放仍然保留。
-- OpenCode 同一 Prompt 内的标题请求和主请求可以并发到达本机 helper；helper 在
-  单一稳定模型桥上按到达顺序等待并交付，不返回本地 `bridge-busy`，每个响应只有在
-  HTTP 完整 flush 后才发送 delivery ACK。
+- helper 可以接收同一 Prompt 内并发到达的模型桥请求；它在单一稳定模型桥上按到达
+  顺序等待并交付，不返回本地 `bridge-busy`，每个响应只有在 HTTP 完整 flush 后才
+  发送 delivery ACK。
+- GoodBuddy 自己管理会话标题，因此传给 OpenCode 的配置禁用 title Agent；一次用户
+  Prompt 不会额外触发标题模型请求。
 - 一条模型桥消息编码为一个 canonical JSON blob frame；blob frame 最大 2 MiB，
   Provider 请求与响应 body 仍各自限制为 768 KiB。每条模型消息只调用一次 SSH
   write，不再二次分片、等待逐帧 credit 或合并多个协议帧。凭据不进入 Renderer、
   SSH 命令参数或远端环境。
+- Unix socket 接收端按 `readableLength` 中已经缓冲的字节增量排空一个声明长度的帧，
+  不会在部分大响应到达时反复请求尚未缓冲的完整剩余长度；短读、连接结束、错误和取消
+  都会使当前交换失败。原生 Linux 回归覆盖至少 256 KiB 的 broker 响应。
+- Renderer 把相邻 text/reasoning delta 合并为消息 block 时始终替换最后一个 block，
+  不修改既有 React state 对象。这样开发环境 StrictMode 重复调用 state updater 时，
+  block metadata 与 canonical 消息正文保持一致。
+
+## 已完成的 E2E 验收记录
+
+- 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
+  和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
+  的双架构验收。当前源码 lock 是 `0.11.2-e2e.13`，需要由新的复合包发布流程另行验证。
+- 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
+  OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
+- 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
+  `read`，读取专用测试 Workspace 中的证据文件，再在第二个 build 模型轮次生成最终
+  回答；没有 title 模型轮次，也没有第二个工具调用。
+- 两个模型轮次都记录已交付，远端 helper 保持休眠且 Unix socket 没有未读响应积压。
+  持久化的 canonical 助手正文精确为 `GOODBUDDY_REMOTE_TOOL_4C6B9D8A`。验收操作没有
+  重放任何结果未知或已经完成的 Provider 请求。
 
 ## 项目保存
 
@@ -153,7 +190,14 @@ Execute 不经过 Ask 的 bubblewrap profile：
 - Runtime selection、bundle digest、adapter digest；
 - `ask | execute`。
 
-打开托管 SSH 项目会从这些已保存字段重建验证输入，不接受 Renderer 回传的旧项目草稿。这样桌面更新后的第一次打开可以自动安装对应 Agent/Runtime，并原子刷新以上字段，同时保留项目名称、说明、Host、远端工作目录、Runtime selection 和默认工作模式。
+打开托管 SSH 项目会从这些已保存字段重建验证输入，不接受 Renderer 回传的旧项目草稿。桌面更新后，用户先显式准备兼容复合包，第一次打开才可安装对应 Agent/Runtime 并原子刷新以上字段，同时保留项目名称、说明、Host、远端工作目录、Runtime selection 和默认工作模式。
+
+请求前置校验只要求 Workspace 验证与 Runtime 验证来自同一个当前 Agent
+installation。它不比较激活时保存的模型 profile 或默认工作模式与当前会话选择，
+因为这些不是签名远端 Runtime 的身份；切换当前模型配置或 Ask/Execute 不需要重新激活
+项目。实时 Runtime 创建仍只接受 OpenCode，使用当前解析后的模型 profile 建立 Main-only
+模型桥，并再次精确核对 Agent identity、Runtime bundle/adapter digest、架构、capability
+和连接身份。Ask/Execute 权限继续由每次 Prompt 的 ACP Runtime 边界执行。
 
 Renderer 在用户主动打开托管 SSH 项目时订阅同一次 Main 保存操作的进度，依次显示
 Host、Agent、Workspace、Runtime 和 Saving。操作完成、失败或取消后会清除阻塞进度；
@@ -166,18 +210,21 @@ Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转
 
 ## 资源与发布
 
-- 普通 `build` 和 `dist*` 携带
+- 所有桌面构建（包括 `portable` 与 `release:package`）只携带
   `agent-runtime-lock.json`、`remote-runtime-lock.json` 与公开的
-  `agent-release-keys.json`，但不嵌入可安装的 Linux Agent/Runtime bundle。本地
-  `portable` 会自动完整校验并嵌入已存在的 `.agent-resources` Agent 工件，也可通过
-  `GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS` 强制要求指定架构。若包内没有工件而 Host
-  已有与 lock 匹配的当前组件，Main 会验证签名 manifest、安装与
-  registry identity、owner/mode/size 和 Agent 关键 payload，并要求签名 Agent 在
-  lifecycle/Runtime activation 边界完整复验 payload 后才复用；缺失或不匹配时不会
-  降级信任或尝试无 bundle 安装。
-- `agent:build`、`agent:import`、`agent:verify` 管理 Agent 工件。
-- 远程 Runtime 使用 `remote-runtime-lock.json` 和一个当前 manifest 格式。
-- `release:package` 在 Electron Builder 前后校验 Linux x64 与 arm64 的签名 Agent/Runtime 完整矩阵；任一架构缺失或无效时失败。
+  `agent-release-keys.json`，不嵌入 `.agent-resources`、
+  `.remote-runtime-resources` 或任何可安装 Linux 远端 payload。
+- `build/agent-package.cjs` 在对应原生 Linux 架构组装确定性 `.gbagent`，外层签名覆盖
+  描述符和每个内部文件身份；内部 Agent 与 Runtime 仍分别使用既有签名 manifest 和 lock
+  校验。`build/agent-catalog.cjs` 为双架构包生成签名累计目录，拒绝同一版本/架构改变字节。
+- `.github/workflows/agents.yml` 只使用进程内临时测试 key 做分支/PR 原生验证，不发布。
+  `.github/workflows/agent-release.yml` 才可在 annotated `agent-v<version>` 标签和受保护
+  `agent-signing` Environment 中构建 production 包。Agent GitHub Release 必须
+  `--latest=false`；北京 OSS 先写 `agent-releases/v<version>/`，GitHub 公开后才切换
+  单一 `agent-releases/latest.json` 指针，使客户端始终从同一不可变版本目录读取目录与签名。
+- Main 的本地缓存只发布完整验证成功的内容。在线目录和包都绑定固定 GitHub/OSS URL、
+  大小和 SHA-256；选取规则是桌面最低版本满足、Agent protocol major 相同且 minor 不高于
+  当前支持值的最高 SemVer。缺少某架构仅使该架构 Host 的托管 SSH 无法激活。
 
 ## 发布前验证
 
@@ -185,7 +232,8 @@ Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转
 2. `npm run typecheck`
 3. `npm run lint`
 4. `npm run build`
-5. 校验并导入双架构签名资源。
+5. 用测试签名复合包验证在线下载源选择和离线导入/导出；正式 Agent 候选还需公开校验
+   双架构 production 包与签名目录。
 6. 在已固定 Host Key 的 Linux x64 测试 Host 上验证 attach-or-bootstrap。
 7. 在 GoodBuddy 专用测试目录验证 Ask 无法修改文件。
 8. 验证 Execute 可以写文件、启动进程和访问网络，同时不触碰无关 Host 文件。

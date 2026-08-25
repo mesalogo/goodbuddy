@@ -16,8 +16,8 @@ const definitions = [
   ["windows", "arm64", ["nsis", "portable"]],
   ["macos", "x64", ["dmg", "zip"]],
   ["macos", "arm64", ["dmg", "zip"]],
-  ["linux", "x64", ["AppImage", "deb"]],
-  ["linux", "arm64", ["AppImage", "deb"]],
+  ["linux", "x64", ["AppImage", "deb", "rpm"]],
+  ["linux", "arm64", ["AppImage", "deb", "rpm"]],
 ];
 
 const canonicalFileName = (version, platform, arch, format) => {
@@ -41,10 +41,12 @@ const canonicalFileName = (version, platform, arch, format) => {
     "linux-x64": {
       AppImage: `GoodBuddy-${version}-linux-x86_64.AppImage`,
       deb: `GoodBuddy-${version}-linux-amd64.deb`,
+      rpm: `GoodBuddy-${version}-linux-x86_64.rpm`,
     },
     "linux-arm64": {
       AppImage: `GoodBuddy-${version}-linux-arm64.AppImage`,
       deb: `GoodBuddy-${version}-linux-arm64.deb`,
+      rpm: `GoodBuddy-${version}-linux-aarch64.rpm`,
     },
   };
   return names[`${platform}-${arch}`][format];

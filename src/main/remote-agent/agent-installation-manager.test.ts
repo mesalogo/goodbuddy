@@ -4,6 +4,7 @@ import {
   sign
 } from 'node:crypto'
 import {
+  chmod,
   mkdtemp,
   mkdir,
   readFile,
@@ -331,6 +332,19 @@ async function bundleFixture(): Promise<VerifiedAgentBundle> {
     manifest,
     manifestSha256: sha256(manifestBytes)
   }
+}
+
+function elfFixture(architecture: 'x64' | 'arm64'): Buffer {
+  const header = Buffer.alloc(64)
+  header[0] = 0x7f
+  header.write('ELF', 1, 'ascii')
+  header[4] = 2
+  header[5] = 1
+  header.writeUInt16LE(
+    architecture === 'x64' ? 62 : 183,
+    18
+  )
+  return header
 }
 
 async function harness(options: {
@@ -666,6 +680,7 @@ function populateInstallation(
 async function metadataOnlyHarness(options: {
   remoteRegistryBytes?: Buffer
   remoteReleaseKeyBytes?: Buffer
+  hostRegistrySubset?: boolean
   corruptPath?: string
   resolverTargets?: SshConnectionPoolTarget[]
   candidateResources?: boolean
@@ -675,16 +690,27 @@ async function metadataOnlyHarness(options: {
 } = {}) {
   const bundle = await bundleFixture()
   const keyPair = generateKeyPairSync('ed25519')
+  const unrelatedKeyPair = generateKeyPairSync('ed25519')
   const signedRegistry: AgentReleaseKeyRegistry = {
     formatVersion: 1,
-    keys: [{
-      keyId: 'test-key',
-      publicKeySpkiBase64: keyPair.publicKey.export({
-        format: 'der',
-        type: 'spki'
-      }).toString('base64'),
-      environment: 'test'
-    }],
+    keys: [
+      {
+        keyId: 'test-key',
+        publicKeySpkiBase64: keyPair.publicKey.export({
+          format: 'der',
+          type: 'spki'
+        }).toString('base64'),
+        environment: 'test'
+      },
+      {
+        keyId: 'unrelated-new-key',
+        publicKeySpkiBase64: unrelatedKeyPair.publicKey.export({
+          format: 'der',
+          type: 'spki'
+        }).toString('base64'),
+        environment: 'test'
+      }
+    ],
     revocations: []
   }
   const manifestBytes = await readFile(
@@ -806,7 +832,15 @@ async function metadataOnlyHarness(options: {
     mode: 0o600,
     uid,
     contents:
-      options.remoteReleaseKeyBytes ?? registryBytes
+      options.remoteReleaseKeyBytes ??
+      (
+        options.hostRegistrySubset
+          ? Buffer.from(`${JSON.stringify({
+              ...signedRegistry,
+              keys: [signedRegistry.keys[0]]
+            }, null, 2)}\n`)
+          : registryBytes
+      )
   })
   for (const file of bundle.manifest.files) {
     const contents = await readFile(
@@ -919,6 +953,25 @@ async function metadataOnlyHarness(options: {
 }
 
 describe('AgentInstallationManager', () => {
+  it('requires the independently verified package loader in production', () => {
+    expect(() =>
+      new AgentInstallationManager({
+        resolver: { resolve: vi.fn() },
+        sshPool: { acquire: vi.fn() },
+        resourcePaths: {
+          keyRegistryPath: 'unused',
+          runtimeLockPath: 'unused',
+          bundleDirectories: {
+            x64: 'unused',
+            arm64: 'unused'
+          }
+        }
+      })
+    ).toThrow(
+      'Production Agent installation requires a verified package loader'
+    )
+  })
+
   it('cryptographically reuses an exact current Host Agent when bundle resources are absent', async () => {
     const fixture = await metadataOnlyHarness()
 
@@ -938,7 +991,43 @@ describe('AgentInstallationManager', () => {
     expect(fixture.release).toHaveBeenCalledOnce()
   })
 
-  it('rejects metadata-only Agent reuse when trust metadata differs', async () => {
+  it('reuses a canonical older Host key subset containing the current signing key', async () => {
+    const fixture = await metadataOnlyHarness({
+      hostRegistrySubset: true
+    })
+
+    await expect(
+      fixture.manager.ensureInstalled('host-1')
+    ).resolves.toMatchObject({
+      installationId: fixture.installationId,
+      architecture: 'x64'
+    })
+    expect(fixture.lifecycleActions).toEqual(['health'])
+  })
+
+  it('classifies an old Agent as incompatible before reading differing Host key bytes', async () => {
+    const fixture = await metadataOnlyHarness({
+      currentAgentVersion: '0.9.0',
+      remoteReleaseKeyBytes: Buffer.from(
+        '{\n  "formatVersion": 1,\n  "keys": [],\n  "revocations": []\n}\n'
+      )
+    })
+
+    await expect(
+      fixture.manager.ensureInstalled('host-1')
+    ).rejects.toMatchObject({
+      reason: 'incompatible',
+      message: expect.stringContaining(
+        'lacks matching Agent installation resources'
+      )
+    })
+    expect(fixture.sftp.operations).not.toContain(
+      'read:.goodbuddy/agent/release-keys.json'
+    )
+    expect(fixture.lifecycleActions).toEqual([])
+  })
+
+  it('rejects a lock-matching Agent when the Host registry lacks its signing key', async () => {
     const fixture = await metadataOnlyHarness({
       remoteReleaseKeyBytes: Buffer.from(
         '{"formatVersion":1,"keys":[],"revocations":[]}\n'
@@ -951,7 +1040,18 @@ describe('AgentInstallationManager', () => {
     expect(fixture.lifecycleActions).toEqual([])
   })
 
-  it.each(['manifest.sig', 'lib/agent.cjs'])(
+  it('keeps a lock-matching Agent with an invalid signature classified as corrupt', async () => {
+    const fixture = await metadataOnlyHarness({
+      corruptPath: 'manifest.sig'
+    })
+
+    await expect(
+      fixture.manager.ensureInstalled('host-1')
+    ).rejects.toMatchObject({ reason: 'corrupt' })
+    expect(fixture.lifecycleActions).toEqual([])
+  })
+
+  it.each(['lib/agent.cjs'])(
     'rejects metadata-only Agent reuse when %s is corrupt',
     async (corruptPath) => {
       const fixture = await metadataOnlyHarness({ corruptPath })
@@ -1028,6 +1128,236 @@ describe('AgentInstallationManager', () => {
     expect(phases.at(-1)).toBe('complete')
     expect(fixture.release).toHaveBeenCalledOnce()
     expect(fixture.sftp.closed).toBe(true)
+  })
+
+  it('dispatches an arm64 Host through the normal arm64 bundle-directory loader', async () => {
+    const resourceRoot = await mkdtemp(
+      join(tmpdir(), 'agent-normal-loader-')
+    )
+    const x64Directory = join(resourceRoot, 'linux-x64')
+    const arm64Directory = join(resourceRoot, 'linux-arm64')
+    await Promise.all([
+      mkdir(x64Directory, { recursive: true }),
+      mkdir(arm64Directory, { recursive: true })
+    ])
+    await writeFile(
+      join(x64Directory, 'manifest.json'),
+      'not the selected architecture\n'
+    )
+
+    const payloads = [
+      {
+        path: 'node',
+        contents: elfFixture('arm64'),
+        mode: '0755' as const
+      },
+      {
+        path: 'goodbuddy-agent',
+        contents: Buffer.from('agent'),
+        mode: '0755' as const
+      },
+      {
+        path: 'lib/agent.cjs',
+        contents: Buffer.from('script'),
+        mode: '0644' as const
+      },
+      ...[
+        'lib/node_modules/koffi/package.json',
+        'lib/node_modules/koffi/index.js',
+        'lib/node_modules/koffi/src/koffi/index.js',
+        'lib/node_modules/koffi/src/koffi/src/static.js',
+        'lib/node_modules/@koromix/koffi-linux-arm64/package.json',
+        'lib/node_modules/@koromix/koffi-linux-arm64/index.js'
+      ].map((path) => ({
+        path,
+        contents: Buffer.from(path),
+        mode: '0644' as const
+      })),
+      ...[
+        'lib/node_modules/@koromix/koffi-linux-arm64/linux_arm64/koffi.node',
+        'lib/node_modules/@koromix/koffi-linux-arm64/musl_arm64/koffi.node'
+      ].map((path) => ({
+        path,
+        contents: elfFixture('arm64'),
+        mode: '0644' as const
+      })),
+      {
+        path: 'licenses/koffi-MIT.txt',
+        contents: Buffer.from('koffi license'),
+        mode: '0644' as const
+      },
+      {
+        path: 'licenses/koffi-native-MIT.txt',
+        contents: Buffer.from('native license'),
+        mode: '0644' as const
+      }
+    ]
+    const manifest: AgentBundleManifest = {
+      formatVersion: 1,
+      product: 'GoodBuddy',
+      agentVersion: '1.0.0',
+      platform: 'linux',
+      arch: 'arm64',
+      protocol: { major: 1, minor: 0 },
+      signingKeyId: 'test-key',
+      entrypoint: {
+        path: 'goodbuddy-agent',
+        runtimePath: 'node',
+        scriptPath: 'lib/agent.cjs'
+      },
+      files: payloads.map((file) => ({
+        path: file.path,
+        size: file.contents.byteLength,
+        sha256: sha256(file.contents),
+        mode: file.mode
+      })),
+      licenses: [
+        {
+          package: 'koffi',
+          version: '3.1.4',
+          spdx: 'MIT',
+          path: 'licenses/koffi-MIT.txt'
+        },
+        {
+          package: '@koromix/koffi-linux-arm64',
+          version: '3.1.4',
+          spdx: 'MIT',
+          path: 'licenses/koffi-native-MIT.txt'
+        }
+      ]
+    }
+    for (const payload of payloads) {
+      const destination = join(
+        arm64Directory,
+        ...payload.path.split('/')
+      )
+      await mkdir(join(destination, '..'), { recursive: true })
+      await writeFile(destination, payload.contents)
+      await chmod(
+        destination,
+        payload.mode === '0755' ? 0o755 : 0o644
+      )
+    }
+    const keyPair = generateKeyPairSync('ed25519')
+    const signedRegistry: AgentReleaseKeyRegistry = {
+      formatVersion: 1,
+      keys: [{
+        keyId: 'test-key',
+        publicKeySpkiBase64: keyPair.publicKey.export({
+          format: 'der',
+          type: 'spki'
+        }).toString('base64'),
+        environment: 'test'
+      }],
+      revocations: []
+    }
+    const manifestBytes = Buffer.from(
+      `${JSON.stringify(manifest, null, 2)}\n`
+    )
+    await Promise.all([
+      writeFile(
+        join(arm64Directory, 'manifest.json'),
+        manifestBytes
+      ),
+      writeFile(
+        join(arm64Directory, 'manifest.sig'),
+        Buffer.from(`${sign(
+          null,
+          agentManifestSignaturePayload(manifestBytes),
+          keyPair.privateKey
+        ).toString('base64')}\n`)
+      )
+    ])
+    await Promise.all([
+      chmod(join(arm64Directory, 'manifest.json'), 0o644),
+      chmod(join(arm64Directory, 'manifest.sig'), 0o644)
+    ])
+    const rootLock = JSON.parse(
+      await readFile(
+        join(process.cwd(), 'agent-runtime-lock.json'),
+        'utf8'
+      )
+    ) as Record<string, unknown>
+    const keyRegistryPath = join(
+      resourceRoot,
+      'agent-release-keys.json'
+    )
+    const runtimeLockPath = join(
+      resourceRoot,
+      'agent-runtime-lock.json'
+    )
+    await Promise.all([
+      writeFile(
+        keyRegistryPath,
+        Buffer.from(`${JSON.stringify(
+          signedRegistry,
+          null,
+          2
+        )}\n`)
+      ),
+      writeFile(
+        runtimeLockPath,
+        Buffer.from(`${JSON.stringify({
+          ...rootLock,
+          agentVersion: manifest.agentVersion,
+          protocol: manifest.protocol
+        }, null, 2)}\n`)
+      )
+    ])
+
+    const sftp = new MemorySftp()
+    const release = vi.fn()
+    const lease = {
+      identity: {
+        hostId: 'host-1',
+        hostRevision: 1,
+        hostKeyGeneration: 1,
+        authenticationIdentity: 'b'.repeat(64)
+      },
+      isUsable: () => true,
+      runAgentBootstrapProbe: vi.fn(async () => ({
+        ready: true,
+        platform: 'linux',
+        architecture: 'arm64',
+        canonicalHomeDirectory: home,
+        uid,
+        shell: '/bin/bash',
+        procfs: 'ready'
+      }) as const),
+      openStagedSftp: vi.fn(async () => sftp),
+      runAgentLifecycleAction: vi.fn(async () => ({
+        exitCode: 0,
+        stdout: '',
+        stderr: ''
+      })),
+      release
+    } as unknown as SshConnectionLease
+    const manager = new AgentInstallationManager({
+      resolver: { resolve: vi.fn(async () => target()) },
+      sshPool: { acquire: vi.fn(async () => lease) },
+      resourcePaths: {
+        keyRegistryPath,
+        runtimeLockPath,
+        bundleDirectories: {
+          x64: x64Directory,
+          arm64: arm64Directory
+        }
+      },
+      verificationEnvironment: 'test'
+    })
+
+    await expect(
+      manager.ensureInstalled('host-1')
+    ).resolves.toMatchObject({
+      architecture: 'arm64',
+      agentVersion: manifest.agentVersion
+    })
+    expect(
+      sftp.operations.some((operation) =>
+        operation.endsWith('/node')
+      )
+    ).toBe(true)
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('upgrades an unverifiable current Agent when candidate resources exist', async () => {
@@ -1227,7 +1557,9 @@ describe('AgentInstallationManager', () => {
     })
     const fixture = await harness({ bootstrapGate: gate })
     const first = fixture.manager.ensureInstalled('host-1')
-    const second = fixture.manager.ensureInstalled('host-1')
+    const second = fixture.manager.ensureInstalled('host-1', {
+      force: true
+    })
     await vi.waitFor(() =>
       expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
     )
@@ -1248,6 +1580,27 @@ describe('AgentInstallationManager', () => {
     expect(second).toEqual(first)
     expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
     expect(phases).toEqual(['inspecting-host', 'complete'])
+  })
+
+  it('force bypasses the settled installation cache and refreshes it after verification', async () => {
+    const fixture = await harness()
+    const first = await fixture.manager.ensureInstalled('host-1')
+
+    const refreshed = await fixture.manager.ensureInstalled(
+      'host-1',
+      { force: true }
+    )
+    const cached = await fixture.manager.ensureInstalled('host-1')
+
+    expect(refreshed).toEqual(first)
+    expect(cached).toEqual(refreshed)
+    expect(fixture.sshPool.acquire).toHaveBeenCalledTimes(2)
+    expect(fixture.lifecycleActions).toEqual([
+      'bootstrap',
+      'health',
+      'bootstrap',
+      'health'
+    ])
   })
 
   it('keeps a shared install running when the first waiter cancels', async () => {

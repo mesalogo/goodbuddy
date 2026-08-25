@@ -132,7 +132,8 @@ function mirrorFileName(
     dmg: 'installer.dmg',
     zip: 'portable.zip',
     AppImage: 'portable.AppImage',
-    deb: 'installer.deb'
+    deb: 'installer.deb',
+    rpm: 'installer.rpm'
   }
   return `GoodBuddy-${latestVersion}-${platform}-${arch}-${suffixes[format]}`
 }
@@ -147,8 +148,8 @@ function mirrorIndexPayload(): MirrorTestIndex {
     { platform: 'windows', arch: 'arm64', formats: ['nsis', 'portable'] },
     { platform: 'macos', arch: 'x64', formats: ['dmg', 'zip'] },
     { platform: 'macos', arch: 'arm64', formats: ['dmg', 'zip'] },
-    { platform: 'linux', arch: 'x64', formats: ['AppImage', 'deb'] },
-    { platform: 'linux', arch: 'arm64', formats: ['AppImage', 'deb'] }
+    { platform: 'linux', arch: 'x64', formats: ['AppImage', 'deb', 'rpm'] },
+    { platform: 'linux', arch: 'arm64', formats: ['AppImage', 'deb', 'rpm'] }
   ]
   const releaseBase =
     `https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/` +

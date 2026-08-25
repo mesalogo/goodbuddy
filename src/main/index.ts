@@ -131,7 +131,16 @@ import {
   type ExecutionSpaceDescriptor
 } from './execution-space'
 import { RemoteAgentServices } from './remote-agent/remote-agent-services'
+import {
+  resolveBundledAgentResourcePaths
+} from './remote-agent/bundled-agent-resources'
+import {
+  AgentPackageManager
+} from './remote-agent/agent-package-manager'
 import { ManagedRemoteExecutionServices } from './remote-agent/managed-remote-execution-services'
+import {
+  RemoteEnvironmentUpdateService
+} from './remote-agent/remote-environment-update-service'
 import type {
   RuntimeSettings,
   RuntimeSettingsInput
@@ -630,17 +639,33 @@ if (hasSingleInstanceLock) {
       join(app.getPath('userData'), 'runtime-settings.json'),
       secureCipher
     )
+    const applicationSettingsStore = new ApplicationSettingsStore(
+      join(app.getPath('userData'), 'application-settings.json')
+    )
     const sshHostStore = new SshHostStore(
       join(app.getPath('userData'), 'ssh-hosts.json'),
       secureCipher
     )
+    const agentMetadataPaths = resolveBundledAgentResourcePaths({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged
+    })
+    const agentPackageManager = new AgentPackageManager({
+      userDataPath: app.getPath('userData'),
+      desktopVersion: app.getVersion(),
+      keyRegistryPath: agentMetadataPaths.keyRegistryPath,
+      getUpdateSource: async () =>
+        (await applicationSettingsStore.get()).updateSource
+    })
     const startupRemoteAgentServices = new RemoteAgentServices({
       sshHostStore,
       goodBuddyVersion: app.getVersion(),
       userDataPath: app.getPath('userData'),
       appPath: app.getAppPath(),
       resourcesPath: process.resourcesPath,
-      packaged: app.isPackaged
+      packaged: app.isPackaged,
+      agentPackageManager
     })
     remoteAgentServices = startupRemoteAgentServices
     const startupManagedRemoteExecutionServices =
@@ -651,6 +676,7 @@ if (hasSingleInstanceLock) {
         appPath: app.getAppPath(),
         resourcesPath: process.resourcesPath,
         packaged: app.isPackaged,
+        agentPackageManager,
         resolveRuntimeSelection: async (selection) =>
           resolveConfiguredAgentRuntimeSelection(
             await settingsStore.getResolvedSettings(),
@@ -702,7 +728,9 @@ if (hasSingleInstanceLock) {
           startupRemoteAgentServices.resourcePaths.runtimeLockPath,
         remoteRuntimeLockPath:
           startupManagedRemoteExecutionServices.runtimeResourcePaths
-            .runtimeLockPath
+            .runtimeLockPath,
+        loadExpectedCatalog: (architecture) =>
+          agentPackageManager.getExpectedCatalog(architecture)
       })
     const [initialRuntimeSettings, initialResolvedSettings] =
       await Promise.all([
@@ -722,9 +750,6 @@ if (hasSingleInstanceLock) {
     const channelSettingsStore = new ChannelSettingsStore(
       join(app.getPath('userData'), 'channel-settings.json'),
       secureCipher
-    )
-    const applicationSettingsStore = new ApplicationSettingsStore(
-      join(app.getPath('userData'), 'application-settings.json')
     )
     const startupFeedbackService = new FeedbackService({
       appVersion: app.getVersion(),
@@ -1215,6 +1240,23 @@ if (hasSingleInstanceLock) {
         database: startupAssistantDatabase,
         notify: sendRemoteProjectSaveProgress
       })
+    const remoteEnvironmentUpdateService =
+      new RemoteEnvironmentUpdateService(
+        startupRemoteAgentServices.installationManager,
+        startupManagedRemoteExecutionServices
+          .runtimeInstallationManager,
+        async (hostId) => {
+          const invalidations = [
+            startupRemoteAgentServices.invalidateHost(hostId)
+          ]
+          if (selectedRuntimeManager) {
+            invalidations.push(
+              selectedRuntimeManager.invalidateHost(hostId)
+            )
+          }
+          await Promise.all(invalidations)
+        }
+      )
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
@@ -1269,7 +1311,9 @@ if (hasSingleInstanceLock) {
         }
         return provider
       },
-      setCurrentEmbeddingConnection
+      setCurrentEmbeddingConnection,
+      remoteEnvironmentUpdateService,
+      agentPackageManager
     )
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,

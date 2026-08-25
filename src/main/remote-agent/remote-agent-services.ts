@@ -1,7 +1,10 @@
 import { join } from 'node:path'
 import { SshConnectionPool } from '../ssh/ssh-connection-pool'
 import type { SshHostStore } from '../ssh/ssh-host-store'
-import { AgentInstallationManager } from './agent-installation-manager'
+import {
+  AgentInstallationManager,
+  type AgentInstallationBundleLoader
+} from './agent-installation-manager'
 import {
   resolveBundledAgentResourcePaths,
   type BundledAgentResourcePaths
@@ -14,6 +17,9 @@ import {
   RemoteAgentConnectionManager,
   type RemoteAgentTargetResolver
 } from './remote-agent-connection-manager'
+import type {
+  AgentPackageManager
+} from './agent-package-manager'
 
 const CONTROLLER_STATE_FILE_NAME = 'remote-agent-controller-state.json'
 
@@ -26,6 +32,7 @@ type RemoteAgentServiceFactories = {
     resolver: RemoteAgentTargetResolver
     sshPool: SshConnectionPool
     resourcePaths: BundledAgentResourcePaths
+    packageBundleLoader: AgentInstallationBundleLoader
   }) => AgentInstallationManager
   createConnectionManager: (options: {
     resolver: RemoteAgentTargetResolver
@@ -42,6 +49,10 @@ export type RemoteAgentServicesOptions = {
   appPath: string
   resourcesPath: string
   packaged: boolean
+  agentPackageManager: Pick<
+    AgentPackageManager,
+    'loadAgentBundle'
+  >
   factories?: Partial<RemoteAgentServiceFactories>
 }
 
@@ -90,7 +101,9 @@ export class RemoteAgentServices {
       factories.createAgentInstallationManager({
         resolver: this.targetResolver,
         sshPool: this.sshPool,
-        resourcePaths: this.resourcePaths
+        resourcePaths: this.resourcePaths,
+        packageBundleLoader:
+          options.agentPackageManager.loadAgentBundle
       })
     this.connectionManager = factories.createConnectionManager({
       resolver: this.targetResolver,

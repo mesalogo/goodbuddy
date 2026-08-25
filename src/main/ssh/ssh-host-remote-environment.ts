@@ -51,16 +51,19 @@ export type SshHostRemoteEnvironmentInspectorOptions = {
   sshPool: Pick<SshConnectionPool, 'acquire'>
   agentRuntimeLockPath: string
   remoteRuntimeLockPath: string
-  loadExpectedCatalog?: () => Promise<ExpectedCatalog>
+  loadExpectedCatalog?: (
+    architecture: 'x64' | 'arm64'
+  ) => Promise<ExpectedCatalog>
   now?: () => Date
 }
 
 export class SshHostRemoteEnvironmentInspector {
   readonly #sshHosts: SshHostRemoteEnvironmentInspectorOptions['sshHosts']
   readonly #sshPool: SshHostRemoteEnvironmentInspectorOptions['sshPool']
-  readonly #loadExpectedCatalog: () => Promise<ExpectedCatalog>
+  readonly #loadExpectedCatalog: (
+    architecture: 'x64' | 'arm64'
+  ) => Promise<ExpectedCatalog>
   readonly #now: () => Date
-  #expectedCatalog?: Promise<ExpectedCatalog>
 
   constructor(options: SshHostRemoteEnvironmentInspectorOptions) {
     this.#sshHosts = options.sshHosts
@@ -111,7 +114,7 @@ export class SshHostRemoteEnvironmentInspector {
       )
       const [catalog, agentRegistry, runtimeRegistry] =
         await Promise.all([
-          this.#expected(),
+          this.#expected(probe.architecture),
           readOptionalRegistry(
             sftp,
             AGENT_REGISTRY_PATH,
@@ -155,9 +158,10 @@ export class SshHostRemoteEnvironmentInspector {
     }
   }
 
-  #expected(): Promise<ExpectedCatalog> {
-    this.#expectedCatalog ??= this.#loadExpectedCatalog()
-    return this.#expectedCatalog
+  #expected(
+    architecture: 'x64' | 'arm64'
+  ): Promise<ExpectedCatalog> {
+    return this.#loadExpectedCatalog(architecture)
   }
 }
 

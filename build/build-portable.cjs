@@ -11,11 +11,6 @@ const {
   writeFileSync
 } = require('node:fs')
 const { dirname, join, parse, resolve } = require('node:path')
-const {
-  supportedArchitectures,
-  targetName,
-  verifyLockedBundle
-} = require('./agent-bundle.cjs')
 
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(
@@ -130,100 +125,7 @@ function pruneLocales(directory) {
   }
 }
 
-function parseRequiredAgentArchitectures(value) {
-  if (value === undefined) {
-    return []
-  }
-  const architectures = value
-    .split(',')
-    .map((architecture) => architecture.trim())
-  if (
-    architectures.length === 0 ||
-    architectures.some(
-      (architecture) =>
-        !supportedArchitectures.includes(architecture)
-    )
-  ) {
-    throw new Error(
-      'GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS 仅支持逗号分隔的 x64 和 arm64'
-    )
-  }
-  return [...new Set(architectures)]
-}
-
-function discoverLocalAgentResources(projectRoot = root) {
-  return supportedArchitectures.filter((architecture) =>
-    statSync(
-      join(
-        projectRoot,
-        '.agent-resources',
-        targetName(architecture)
-      ),
-      { throwIfNoEntry: false }
-    )?.isDirectory()
-  )
-}
-
-function embedPortableAgentResources(directory, options = {}) {
-  const projectRoot = options.projectRoot ?? root
-  const requiredArchitectures =
-    options.requiredArchitectures ??
-    parseRequiredAgentArchitectures(
-      process.env.GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS
-    )
-  const verifyBundle =
-    options.verifyLockedBundle ?? verifyLockedBundle
-  const availableArchitectures =
-    discoverLocalAgentResources(projectRoot)
-  const missingArchitectures = requiredArchitectures.filter(
-    (architecture) =>
-      !availableArchitectures.includes(architecture)
-  )
-  if (missingArchitectures.length > 0) {
-    throw new Error(
-      `Portable 构建缺少要求的 Agent 资源：${missingArchitectures
-        .map(targetName)
-        .join(', ')}`
-    )
-  }
-
-  for (const architecture of availableArchitectures) {
-    verifyBundle(
-      join(
-        projectRoot,
-        '.agent-resources',
-        targetName(architecture)
-      ),
-      architecture,
-      { projectRoot }
-    )
-  }
-  for (const architecture of availableArchitectures) {
-    const target = targetName(architecture)
-    const source = join(
-      projectRoot,
-      '.agent-resources',
-      target
-    )
-    const destination = join(
-      directory,
-      'resources',
-      'agents',
-      target
-    )
-    rmSync(destination, { recursive: true, force: true })
-    cpSync(source, destination, {
-      recursive: true,
-      force: true
-    })
-  }
-  return availableArchitectures
-}
-
-function portableRequiredPaths(
-  directory,
-  agentArchitectures = []
-) {
+function portableRequiredPaths(directory) {
   return [
     join(directory, 'GoodBuddy.exe'),
     join(directory, 'resources', 'app.asar'),
@@ -245,33 +147,12 @@ function portableRequiredPaths(
       'runtimes',
       'continue',
       'package.json'
-    ),
-    ...agentArchitectures.flatMap((architecture) => {
-      const agentDirectory = join(
-        directory,
-        'resources',
-        'agents',
-        targetName(architecture)
-      )
-      return [
-        join(agentDirectory, 'manifest.json'),
-        join(agentDirectory, 'manifest.sig'),
-        join(agentDirectory, 'goodbuddy-agent'),
-        join(agentDirectory, 'node'),
-        join(agentDirectory, 'lib', 'agent.cjs')
-      ]
-    })
+    )
   ]
 }
 
-function assertPortableOutput(
-  directory,
-  agentArchitectures = []
-) {
-  const requiredPaths = portableRequiredPaths(
-    directory,
-    agentArchitectures
-  )
+function assertPortableOutput(directory) {
+  const requiredPaths = portableRequiredPaths(directory)
   const missing = requiredPaths.filter(
     (filePath) => !statSync(filePath, { throwIfNoEntry: false })?.isFile()
   )
@@ -330,8 +211,7 @@ function writePortableMarker(directory) {
 
 function replacePortableOutput(
   source,
-  destination,
-  agentArchitectures = []
+  destination
 ) {
   const replacement = `${destination}.replacement-${process.pid}`
   const backup = `${destination}.previous-${process.pid}`
@@ -341,7 +221,7 @@ function replacePortableOutput(
   copyDirectoryContents(source, replacement)
   try {
     writePortableMarker(replacement)
-    assertPortableOutput(replacement, agentArchitectures)
+    assertPortableOutput(replacement)
 
     if (!existsSync(destination)) {
       renameSync(replacement, destination)
@@ -363,7 +243,7 @@ function replacePortableOutput(
         }
         renameSync(preservedData, destinationData)
       }
-      assertPortableOutput(destination, agentArchitectures)
+      assertPortableOutput(destination)
     } catch (error) {
       try {
         const movedData = join(destination, 'data')
@@ -405,10 +285,6 @@ function main() {
       `拒绝使用不安全的输出目录：${portablePath}`
     )
   }
-  const requiredAgentArchitectures =
-    parseRequiredAgentArchitectures(
-      process.env.GOODBUDDY_PORTABLE_REQUIRE_AGENT_ARCHS
-    )
   const electronDist = ensureElectronRuntime()
   mkdirSync(outputRoot, { recursive: true })
   rmSync(stagingRoot, { recursive: true, force: true })
@@ -493,19 +369,8 @@ function main() {
   }
   try {
     pruneLocales(unpackedPath)
-    const embeddedAgentArchitectures =
-      embedPortableAgentResources(unpackedPath, {
-        requiredArchitectures: requiredAgentArchitectures
-      })
-    assertPortableOutput(
-      unpackedPath,
-      embeddedAgentArchitectures
-    )
-    replacePortableOutput(
-      unpackedPath,
-      portablePath,
-      embeddedAgentArchitectures
-    )
+    assertPortableOutput(unpackedPath)
+    replacePortableOutput(unpackedPath, portablePath)
   } finally {
     rmSync(stagingRoot, { recursive: true, force: true })
   }
@@ -516,9 +381,6 @@ function main() {
 
 module.exports = {
   assertPortableOutput,
-  discoverLocalAgentResources,
-  embedPortableAgentResources,
-  parseRequiredAgentArchitectures,
   portableRequiredPaths
 }
 

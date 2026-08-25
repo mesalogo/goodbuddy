@@ -76,7 +76,6 @@ type RemoteRuntimeBundleModule = {
   preflightProductionSigningKey(options: {
     projectRoot: string
     environment: NodeJS.ProcessEnv
-    lock: RemoteRuntimeLock
     registry: AgentReleaseKeyRegistry
   }): unknown
   verifyBundleDirectory(
@@ -294,10 +293,33 @@ describe('Remote Runtime bundle tooling', () => {
       runtimeBundle.preflightProductionSigningKey({
         projectRoot: process.cwd(),
         environment: {},
-        lock,
         registry
       })
-    ).toThrow(/are required for production Runtime signing/iu)
+    ).toThrow(/signing key ID before building a release/iu)
+  })
+
+  it('preflights a registered production key without reading its private key', () => {
+    const productionRegistry: AgentReleaseKeyRegistry = {
+      ...registry,
+      keys: registry.keys.map((key) => ({
+        ...key,
+        environment: 'production'
+      }))
+    }
+
+    expect(
+      runtimeBundle.preflightProductionSigningKey({
+        projectRoot: process.cwd(),
+        environment: {
+          GOODBUDDY_REMOTE_RUNTIME_SIGNING_KEY_ID:
+            'runtime-fixture'
+        },
+        registry: productionRegistry
+      })
+    ).toMatchObject({
+      keyId: 'runtime-fixture',
+      environment: 'production'
+    })
   })
 })
 

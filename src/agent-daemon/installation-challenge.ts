@@ -34,7 +34,7 @@ export class InstallationChallengeVerifier {
 
   issue(): InstallationChallenge {
     this.#purgeExpired()
-    const serverNonce = randomBytes(32).toString('base64url')
+    const serverNonce = randomBytes(32).toString('hex')
     const expiresAt = this.#now() + this.#lifetimeMs
     this.#pending.set(serverNonce, expiresAt)
     return { serverNonce, expiresAt }

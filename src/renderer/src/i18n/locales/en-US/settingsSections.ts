@@ -71,10 +71,27 @@ export const settingsSections = {
     environment: {
       title: 'Remote environment',
       description:
-        'Read-only view of versions registered on this Host. Installation and updates happen only when a remote project is opened.',
+        'Updating this Host may replace the Agent and Runtime and interrupt active remote work. Host configuration and project files are preserved.',
       loading: 'Loading Agent and Runtime versions…',
+      update: 'Update versions',
+      updateNamed: 'Update remote environment versions for {{name}}',
+      cancelUpdate: 'Cancel update',
+      cancelUpdateNamed: 'Cancel the remote environment update for {{name}}',
+      cancelling: 'Cancelling…',
       refresh: 'Refresh versions',
       refreshNamed: 'Refresh remote environment versions for {{name}}',
+      progress: {
+        preparing: 'Preparing the update…',
+        agent: 'Updating GoodBuddy Agent…',
+        runtime: 'Updating Runtime…',
+        finalizing: 'Finalizing the remote environment update…',
+        cancelling: 'Cancelling the remote environment update…'
+      },
+      errors: {
+        updateFailed: 'Could not update the remote environment. Try again.',
+        cancelled: 'The remote environment update was cancelled. You can retry.',
+        cancelFailed: 'Could not cancel the remote environment update.'
+      },
       installed: 'Installed on Host',
       expected: 'Required by GoodBuddy',
       notInstalled: 'Not installed',
@@ -171,7 +188,9 @@ export const settingsSections = {
         'Could not read remote environment versions'
     },
     notifications: {
-      removed: 'SSH host “{{name}}” deleted'
+      removed: 'SSH host “{{name}}” deleted',
+      environmentUpdated:
+        'Remote environment updated for SSH host “{{name}}”'
     }
   },
   speech: {
@@ -466,7 +485,54 @@ export const settingsSections = {
       title: 'Remote Projects (Technical Preview)',
       description:
         'Enables SSH Host management and GoodBuddy-managed remote projects.',
-      enabled: 'Enable Remote Projects'
+      enabled: 'Enable Remote Projects',
+      agentInventory: {
+        title: 'GoodBuddy Agent packages',
+        description:
+          'Agent packages are released independently and include the Agent, pinned Node, and the remote OpenCode Runtime adapted by GoodBuddy. Online actions use the source selected under About & Updates; nothing is downloaded until remote projects are used.',
+        loading: 'Verifying local Agent packages…',
+        refresh: 'Refresh local inventory',
+        import: 'Import offline package',
+        export: 'Export offline package',
+        download: 'Download',
+        update: 'Check for updates',
+        listLabel: 'Local Agent package inventory',
+        summary:
+          '{{available}} of {{total}} Linux architectures are available.',
+        states: {
+          verified: 'Downloaded and verified',
+          'not-downloaded': 'Not downloaded',
+          invalid: 'Verification failed'
+        },
+        fields: {
+          agentVersion: 'Agent version',
+          architecture: 'Architecture',
+          runtimeVersion: 'Remote OpenCode',
+          protocol: 'Agent protocol'
+        },
+        progress: {
+          catalog: 'Reading the signed release catalog…',
+          downloading: 'Downloading the Agent package…',
+          verifying: 'Verifying signature and integrity…',
+          installing: 'Writing the local cache…'
+        },
+        notifications: {
+          downloaded: 'Linux {{architecture}} Agent package updated',
+          imported: 'Agent offline package imported and verified',
+          exported: 'Linux {{architecture}} Agent package exported'
+        },
+        errors: {
+          unavailable:
+            'Agent package management is not available in this version.',
+          readFailed:
+            'Could not load local Agent packages. Try again.',
+          downloadFailed:
+            'Agent package download or verification failed',
+          importFailed:
+            'Agent offline package import or verification failed',
+          exportFailed: 'Agent offline package export failed'
+        }
+      }
     },
     shortcut: {
       title: 'Global quick access',

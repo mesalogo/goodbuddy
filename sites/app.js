@@ -49,6 +49,7 @@
     zip: "ZIP",
     AppImage: "AppImage",
     deb: "DEB",
+    rpm: "RPM",
   };
 
   const formatFileSize = (bytes) => {

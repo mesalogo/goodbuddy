@@ -85,9 +85,9 @@ https://github.com/mesalogo/goodbuddy/releases/latest
 安装包文件名必须与发布生成器完全一致：Windows 使用
 `GoodBuddy-${version}-windows-${arch}-setup.exe` 与
 `GoodBuddy-${version}-windows-${arch}-portable.zip`；macOS 使用
-`GoodBuddy-${version}-mac-${arch}.dmg|zip`；Linux x64 的 AppImage 与
-DEB 分别使用 electron-builder 的 `x86_64` 与 `amd64` 架构名，Linux
-arm64 使用 `arm64`。
+`GoodBuddy-${version}-mac-${arch}.dmg|zip`；Linux x64 的 AppImage、DEB 与
+RPM 分别使用 electron-builder 的 `x86_64`、`amd64` 与 `x86_64` 架构名。
+Linux arm64 的 AppImage/DEB 使用 `arm64`，RPM 使用 `aarch64`。
 
 ## 字体与可访问性
 

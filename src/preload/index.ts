@@ -102,12 +102,20 @@ import type {
   DocumentParsingTestPurpose
 } from '../shared/document-parsing-contracts'
 import type { AgentRuntimeSelection } from '../shared/runtime-selection-contracts'
+import type {
+  AgentPackageDownloadProgress,
+  AgentPackageInventory
+} from '../shared/agent-package-contracts'
+import type {
+  AgentArchitecture
+} from '../shared/agent-installation-contracts'
 import type { WeixinBindingSnapshot } from '../shared/weixin-channel-contracts'
 import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
 import type {
   SshHostDraftInspectionRequest,
   SshDirectoryBrowseResult,
   SshHostKeyInspection,
+  RemoteEnvironmentUpdateProgress,
   SshHostRemoteEnvironment,
   SshHostsSnapshot,
   SshHostValidationRequest,
@@ -331,6 +339,41 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.sshHostsGet
       ) as Promise<SshHostsSnapshot>,
+    getAgentPackageInventory: (refresh = false) =>
+      ipcRenderer.invoke(
+        ipcChannels.sshHostsAgentPackageInventory,
+        { refresh }
+      ) as Promise<AgentPackageInventory>,
+    downloadAgentPackage: (architecture: AgentArchitecture) =>
+      ipcRenderer.invoke(
+        ipcChannels.sshHostsAgentPackageDownload,
+        { architecture }
+      ) as Promise<AgentPackageInventory>,
+    importAgentPackage: () =>
+      ipcRenderer.invoke(
+        ipcChannels.sshHostsAgentPackageImport
+      ) as Promise<AgentPackageInventory | undefined>,
+    exportAgentPackage: async (architecture: AgentArchitecture) => {
+      await ipcRenderer.invoke(
+        ipcChannels.sshHostsAgentPackageExport,
+        { architecture }
+      )
+    },
+    onAgentPackageProgress: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        progress: AgentPackageDownloadProgress
+      ): void => listener(progress)
+      ipcRenderer.on(
+        ipcChannels.sshHostsAgentPackageProgress,
+        handler
+      )
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.sshHostsAgentPackageProgress,
+          handler
+        )
+    },
     remove: async (hostId: string) => {
       await ipcRenderer.invoke(ipcChannels.sshHostsRemove, {
         hostId
@@ -357,6 +400,33 @@ const desktopApi: DesktopApi = {
         ipcChannels.sshHostsRemoteEnvironment,
         { hostId }
       ) as Promise<SshHostRemoteEnvironment>,
+    updateRemoteEnvironment: async (hostId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.sshHostsUpdateRemoteEnvironment,
+        { hostId }
+      )
+    },
+    cancelRemoteEnvironmentUpdate: async (hostId: string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.sshHostsCancelRemoteEnvironmentUpdate,
+        { hostId }
+      )
+    },
+    onRemoteEnvironmentUpdateProgress: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        progress: RemoteEnvironmentUpdateProgress
+      ): void => listener(progress)
+      ipcRenderer.on(
+        ipcChannels.sshHostsRemoteEnvironmentUpdateProgress,
+        handler
+      )
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.sshHostsRemoteEnvironmentUpdateProgress,
+          handler
+        )
+    },
     browseDirectories: (hostId: string, path?: string) =>
       ipcRenderer.invoke(ipcChannels.sshHostsBrowseDirectories, {
         hostId,

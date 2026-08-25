@@ -1,18 +1,12 @@
-import type { WorkMode } from '../../shared/assistant-contracts'
-import {
-  agentRuntimeSelectionKey,
-  type AgentRuntimeSelection
-} from '../../shared/runtime-selection-contracts'
 import type { SshExecutionSpaceDescriptor } from './execution-space-resolver'
 
 /**
- * Prevents a request from reusing persisted remote Runtime evidence under a
- * different Runtime selection, work mode, or Agent install.
+ * Prevents a request from combining persisted remote Runtime evidence with a
+ * different Agent installation. Runtime provider, model profile, and Ask /
+ * Execute behavior are validated by the live Runtime path for each request.
  */
 export function assertRemoteRuntimeRequestValidated(
-  executionSpace: SshExecutionSpaceDescriptor,
-  selection: AgentRuntimeSelection,
-  workMode: WorkMode
+  executionSpace: SshExecutionSpaceDescriptor
 ): void {
   const executionValidation = executionSpace.validation
   const runtimeValidation = executionSpace.runtimeValidation
@@ -23,16 +17,5 @@ export function assertRemoteRuntimeRequestValidated(
       runtimeValidation.agentInstallationIdAtValidation
   ) {
     throw new Error('远程 Project 缺少完整的当前验证，请重新验证')
-  }
-  if (
-    runtimeValidation.runtimeSelectionKey !==
-    agentRuntimeSelectionKey(selection)
-  ) {
-    throw new Error('远程 Project 的 Runtime 选择已变化，请重新验证')
-  }
-  if (runtimeValidation.workMode !== workMode) {
-    throw new Error(
-      `远程 Project 仅验证了 ${runtimeValidation.workMode === 'ask' ? 'Ask' : 'Execute'} 模式，请先重新验证工作模式`
-    )
   }
 }

@@ -30,6 +30,7 @@ import type {
 } from '../../shared/document-parsing-contracts'
 import type { AppNotificationInput } from './notifications'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import { displayErrorMessage } from './error-message'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
@@ -39,16 +40,6 @@ type DocumentParsingSettingsSectionProps = {
   onNotify?: (notification: AppNotificationInput) => void
   onOpenModelDownloadSourceSettings?: () => void
   onDirtyChange?: (dirty: boolean) => void
-}
-
-function errorMessage(reason: unknown, fallback: string): string {
-  if (!(reason instanceof Error)) {
-    return fallback
-  }
-  return reason.message.replace(
-    /^Error invoking remote method '[^']+': (?:Error: )?/u,
-    ''
-  )
 }
 
 function formatBytes(bytes: number): string {
@@ -292,7 +283,10 @@ export function DocumentParsingSettingsSection({
       (reason: unknown) => {
         if (active) {
           setError(
-            errorMessage(reason, t('errors.readDocumentParsing'))
+            displayErrorMessage(
+              reason,
+              t('errors.readDocumentParsing')
+            )
           )
         }
       }
@@ -361,7 +355,7 @@ export function DocumentParsingSettingsSection({
       return next
     } catch (reason) {
       setError(
-        errorMessage(reason, t('errors.saveDocumentParsing'))
+        displayErrorMessage(reason, t('errors.saveDocumentParsing'))
       )
       return undefined
     } finally {
@@ -390,7 +384,7 @@ export function DocumentParsingSettingsSection({
     } catch (reason) {
       if (mountedRef.current) {
         setError(
-          errorMessage(
+          displayErrorMessage(
             reason,
             t('errors.manageDocumentOcrModel')
           )
@@ -442,7 +436,7 @@ export function DocumentParsingSettingsSection({
       }
     } catch (reason) {
       setError(
-        errorMessage(reason, t('errors.testDocumentParsing'))
+        displayErrorMessage(reason, t('errors.testDocumentParsing'))
       )
     } finally {
       setTestingPurpose(undefined)

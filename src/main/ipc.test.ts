@@ -18,6 +18,7 @@ import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
 import {
   registerIpcHandlers,
+  sendRemoteEnvironmentUpdateProgress,
   sendRemoteProjectSaveProgress
 } from './ipc'
 
@@ -1062,6 +1063,75 @@ describe('registerIpcHandlers SSH hosts', () => {
     const sshHostRemoteEnvironmentInspector = {
       inspect: inspectRemoteEnvironment
     }
+    const remoteEnvironmentUpdateService = {
+      update: vi.fn(
+        async (
+          owner: typeof webContents,
+          updateHostId: string,
+          onProgress?: (progress: {
+            hostId: string
+            phase: 'agent'
+          }) => void
+        ) => {
+          expect(owner).toBe(webContents)
+          onProgress?.({
+            hostId: updateHostId,
+            phase: 'agent'
+          })
+        }
+      ),
+      cancel: vi.fn(),
+      dispose: vi.fn(async () => undefined)
+    }
+    const agentPackageInventory = {
+      checkedAt: '2030-01-01T00:00:00.000Z',
+      entries: [
+        {
+          platform: 'linux',
+          architecture: 'x64',
+          state: 'verified',
+          version: '0.11.2-e2e.13',
+          remoteRuntimeVersion: '1.18.9',
+          agentProtocol: { major: 2, minor: 0 }
+        },
+        {
+          platform: 'linux',
+          architecture: 'arm64',
+          state: 'not-downloaded',
+          version: null,
+          remoteRuntimeVersion: null,
+          agentProtocol: null
+        }
+      ]
+    } as const
+    const agentPackageManager = {
+      getSnapshot: vi.fn(async () => agentPackageInventory),
+      download: vi.fn(
+        async (
+          architecture: 'x64' | 'arm64',
+          onProgress?: (progress: {
+            architecture: 'x64' | 'arm64'
+            phase: 'downloading'
+            completedBytes: number
+            totalBytes: number
+          }) => void
+        ) => {
+          onProgress?.({
+            architecture,
+            phase: 'downloading',
+            completedBytes: 1,
+            totalBytes: 2
+          })
+          return agentPackageInventory
+        }
+      ),
+      importArchive: vi.fn(async () => agentPackageInventory),
+      getExportArchiveName: vi.fn(
+        async () =>
+          'goodbuddy-agent-0.11.2-e2e.13-linux-arm64.gbagent'
+      ),
+      exportArchive: vi.fn(async () => undefined)
+    }
     const selectedRuntimes = {
       reset: vi.fn(async () => undefined)
     }
@@ -1107,7 +1177,12 @@ describe('registerIpcHandlers SSH hosts', () => {
       undefined,
       remoteProjectSaveService as never,
       sshHostDirectoryBrowser as never,
-      sshHostRemoteEnvironmentInspector as never
+      sshHostRemoteEnvironmentInspector as never,
+      undefined,
+      undefined,
+      undefined,
+      remoteEnvironmentUpdateService as never,
+      agentPackageManager as never
     )
     const event = {
       sender: webContents,
@@ -1125,6 +1200,62 @@ describe('registerIpcHandlers SSH hosts', () => {
     await expect(
       electronMocks.handlers.get(ipcChannels.sshHostsGet)?.(event)
     ).resolves.toEqual(snapshot)
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsAgentPackageInventory
+      )?.(event, { refresh: true })
+    ).resolves.toEqual(agentPackageInventory)
+    expect(
+      agentPackageManager.getSnapshot
+    ).toHaveBeenCalledWith({ refresh: true })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsAgentPackageDownload
+      )?.(event, { architecture: 'x64' })
+    ).resolves.toEqual(agentPackageInventory)
+    expect(agentPackageManager.download).toHaveBeenCalledWith(
+      'x64',
+      expect.any(Function)
+    )
+    expect(webContents.send).toHaveBeenCalledWith(
+      ipcChannels.sshHostsAgentPackageProgress,
+      {
+        architecture: 'x64',
+        phase: 'downloading',
+        completedBytes: 1,
+        totalBytes: 2
+      }
+    )
+
+    electronMocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['C:\\transfer\\agent.gbagent']
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsAgentPackageImport
+      )?.(event)
+    ).resolves.toEqual(agentPackageInventory)
+    expect(agentPackageManager.importArchive).toHaveBeenCalledWith(
+      'C:\\transfer\\agent.gbagent'
+    )
+
+    electronMocks.showSaveDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePath: 'C:\\transfer\\agent'
+    })
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsAgentPackageExport
+      )?.(event, { architecture: 'arm64' })
+    ).resolves.toBeUndefined()
+    expect(agentPackageManager.exportArchive).toHaveBeenCalledWith(
+      'arm64',
+      'C:\\transfer\\agent.gbagent'
+    )
+    expect(
+      agentPackageManager.getExportArchiveName
+    ).toHaveBeenCalledWith('arm64')
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsInspectDraftKey
@@ -1209,6 +1340,44 @@ describe('registerIpcHandlers SSH hosts', () => {
 
     await expect(
       electronMocks.handlers.get(
+        ipcChannels.sshHostsUpdateRemoteEnvironment
+      )?.(event, { hostId })
+    ).resolves.toBeUndefined()
+    expect(remoteEnvironmentUpdateService.update).toHaveBeenCalledWith(
+      webContents,
+      hostId,
+      expect.any(Function)
+    )
+    expect(webContents.send).toHaveBeenCalledWith(
+      ipcChannels.sshHostsRemoteEnvironmentUpdateProgress,
+      { hostId, phase: 'agent' }
+    )
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsUpdateRemoteEnvironment
+      )?.(event, { hostId, command: 'whoami' })
+    ).rejects.toThrow()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsUpdateRemoteEnvironment
+      )?.(
+        { sender: {}, senderFrame: webContents.mainFrame },
+        { hostId }
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    expect(remoteEnvironmentUpdateService.update).toHaveBeenCalledOnce()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsCancelRemoteEnvironmentUpdate
+      )?.(event, { hostId })
+    ).resolves.toBeUndefined()
+    expect(remoteEnvironmentUpdateService.cancel).toHaveBeenCalledWith(
+      webContents,
+      hostId
+    )
+
+    await expect(
+      electronMocks.handlers.get(
         ipcChannels.sshHostsValidateAndSave
       )?.(event, {
         candidateId: 'not-a-uuid',
@@ -1223,6 +1392,17 @@ describe('registerIpcHandlers SSH hosts', () => {
         senderFrame: webContents.mainFrame
       })
     ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsAgentPackageInventory
+      )?.({
+        sender: {},
+        senderFrame: webContents.mainFrame
+      })
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    expect(
+      agentPackageManager.getSnapshot
+    ).toHaveBeenCalledOnce()
 
     await expect(
       electronMocks.handlers.get(
@@ -1349,6 +1529,9 @@ describe('registerIpcHandlers SSH hosts', () => {
 
     await dispose()
     expect(remoteProjectSaveService.dispose).toHaveBeenCalledOnce()
+    expect(
+      remoteEnvironmentUpdateService.dispose
+    ).toHaveBeenCalledOnce()
   })
 
   it('blocks disabled and unavailable preview access before remote services', async () => {
@@ -1393,6 +1576,11 @@ describe('registerIpcHandlers SSH hosts', () => {
     }
     const sshHostRemoteEnvironmentInspector = {
       inspect: vi.fn()
+    }
+    const remoteEnvironmentUpdateService = {
+      update: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn(async () => undefined)
     }
     const executionSpaceResolver = {
       resolveProject: vi.fn()
@@ -1455,7 +1643,11 @@ describe('registerIpcHandlers SSH hosts', () => {
       executionSpaceResolver as never,
       remoteProjectSaveService as never,
       sshHostDirectoryBrowser as never,
-      sshHostRemoteEnvironmentInspector as never
+      sshHostRemoteEnvironmentInspector as never,
+      undefined,
+      undefined,
+      undefined,
+      remoteEnvironmentUpdateService as never
     )
     const event = {
       sender: webContents,
@@ -1498,6 +1690,7 @@ describe('registerIpcHandlers SSH hosts', () => {
         { candidateId, fingerprintSha256: fingerprint, input: createInput }
       ],
       [ipcChannels.sshHostsRemoteEnvironment, { hostId }],
+      [ipcChannels.sshHostsUpdateRemoteEnvironment, { hostId }],
       [
         ipcChannels.sshHostsBrowseDirectories,
         { hostId, path: '/srv' }
@@ -1554,11 +1747,21 @@ describe('registerIpcHandlers SSH hosts', () => {
     ).not.toHaveBeenCalled()
     expect(remoteProjectSaveService.activate).not.toHaveBeenCalled()
     expect(remoteProjectSaveService.save).not.toHaveBeenCalled()
+    expect(remoteEnvironmentUpdateService.update).not.toHaveBeenCalled()
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsCancelDirectoryBrowse
       )?.(event)
     ).resolves.toBeUndefined()
+    await expect(
+      electronMocks.handlers.get(
+        ipcChannels.sshHostsCancelRemoteEnvironmentUpdate
+      )?.(event, { hostId })
+    ).resolves.toBeUndefined()
+    expect(remoteEnvironmentUpdateService.cancel).toHaveBeenCalledWith(
+      webContents,
+      hostId
+    )
     await expect(
       electronMocks.handlers.get(
         ipcChannels.remoteProjectCancelCurrent
@@ -1602,6 +1805,35 @@ describe('registerIpcHandlers SSH hosts', () => {
     )
     owner.isDestroyed.mockReturnValue(true)
     sendRemoteProjectSaveProgress(owner as never, progress)
+    expect(owner.send).toHaveBeenCalledOnce()
+  })
+
+  it('sends validated update progress only to a live owning WebContents', () => {
+    const owner = {
+      id: 1,
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const progress = {
+      hostId: '00000000-0000-4000-8000-000000000105',
+      phase: 'runtime' as const
+    }
+
+    sendRemoteEnvironmentUpdateProgress(owner as never, progress)
+    expect(owner.send).toHaveBeenCalledWith(
+      ipcChannels.sshHostsRemoteEnvironmentUpdateProgress,
+      progress
+    )
+    expect(() =>
+      sendRemoteEnvironmentUpdateProgress(owner as never, {
+        ...progress,
+        phase: 'uploading'
+      } as never)
+    ).toThrow()
+    owner.isDestroyed.mockReturnValue(true)
+    sendRemoteEnvironmentUpdateProgress(owner as never, progress)
     expect(owner.send).toHaveBeenCalledOnce()
   })
 })
@@ -7597,6 +7829,121 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(receivedRequest?.knowledgeCapabilityToken).toBeUndefined()
     expect(receivedRequest?.trustedInstructions).not.toContain(
       'note_list'
+    )
+    await harness.dispose()
+  })
+
+  it('advertises only native read access to remote Agent Runtime Ask requests', async () => {
+    let receivedRequest:
+      | {
+          trustedInstructions?: string
+          workMode?: string
+        }
+      | undefined
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: {
+        requestId: string
+        trustedInstructions?: string
+        workMode?: string
+      }) {
+        receivedRequest = request
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => selectedRuntime),
+      getStatus: vi.fn(),
+      releaseConversation: vi.fn(async () => undefined)
+    }
+    const harness = createHarness(
+      {
+        runtimeId: 'model',
+        capability: 'chat',
+        supportsToolExecution: true,
+        run: vi.fn()
+      },
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    const projectId = '00000000-0000-4000-8000-000000000451'
+    const agentInstallationId = 'agent-installation-1'
+    harness.getApplicationSettings.mockResolvedValue({
+      magicNotesEnabled: false,
+      remoteProjectsEnabled: true
+    } as never)
+    harness.assistantDatabase.getProject.mockReturnValue({
+      id: projectId,
+      name: 'Remote project',
+      description: '',
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: '00000000-0000-4000-8000-000000000452',
+        remoteRootPath: '/srv/project',
+        validation: {
+          hostRevision: 1,
+          hostKeyGeneration: 1,
+          remoteUsername: 'builder',
+          workspaceIdentity: 'workspace-1',
+          agentProtocolMajor: 2,
+          agentInstallationIdAtValidation: agentInstallationId,
+          agentBinaryDigestAtValidation: `sha256:${'a'.repeat(64)}`,
+          agentVersionAtValidation: '0.11.2-e2e.12',
+          agentArchitectureAtValidation: 'x64',
+          validatedAt: '2026-08-25T00:00:00.000Z'
+        }
+      },
+      defaultWorkMode: 'ask',
+      runtimeSelection: { provider: 'opencode' },
+      runtimeValidation: {
+        runtimeSelectionKey: 'opencode:default',
+        runtimeBundleDigest: `sha256:${'b'.repeat(64)}`,
+        runtimeAdapterDigest: `sha256:${'c'.repeat(64)}`,
+        agentInstallationIdAtValidation: agentInstallationId,
+        validatedAt: '2026-08-25T00:00:00.000Z',
+        workMode: 'execute'
+      },
+      kind: 'user',
+      status: 'active',
+      createdAt: '2026-08-25T00:00:00.000Z',
+      updatedAt: '2026-08-25T00:00:00.000Z'
+    } as never)
+
+    await harness.handler?.(
+      trustedEvent(harness.webContents),
+      {
+        requestId: '00000000-0000-4000-8000-000000000453',
+        conversationId: 'conversation-remote-ask',
+        projectId,
+        prompt: 'Read marker.txt',
+        workMode: 'ask',
+        runtimeSelection: { provider: 'opencode' },
+        knowledgeLibraryIds: []
+      }
+    )
+
+    expect(selectedRuntimes.getRuntime).toHaveBeenCalledWith(
+      { provider: 'opencode' },
+      expect.objectContaining({
+        kind: 'ssh',
+        remoteRootPath: '/srv/project'
+      })
+    )
+    expect(receivedRequest).toMatchObject({ workMode: 'ask' })
+    expect(receivedRequest?.trustedInstructions).toContain(
+      'only the native read tool'
+    )
+    expect(receivedRequest?.trustedInstructions).toContain(
+      'Do not call any other tool or make changes'
+    )
+    expect(receivedRequest?.trustedInstructions).not.toContain(
+      'Do not call tools'
     )
     await harness.dispose()
   })

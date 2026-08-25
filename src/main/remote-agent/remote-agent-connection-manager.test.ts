@@ -175,7 +175,9 @@ function harness(
   }
   const clients: FakeProtocolClient[] = []
   const stateFile = new MemoryStateFile()
-  const connectTransport = vi.fn(async () => {
+  const connectTransport = vi.fn<
+    typeof AgentAttachTransport.connect
+  >(async () => {
     await connectGate
     const welcome: AttachWelcome = {
       type: 'goodbuddy-agent-welcome',
@@ -231,6 +233,9 @@ describe('RemoteAgentConnectionManager', () => {
     ])
     expect(first.client).toBe(second.client)
     expect(test.connectTransport).toHaveBeenCalledTimes(1)
+    expect(
+      test.connectTransport.mock.calls[0]![0].preface.clientNonce
+    ).toMatch(/^[a-f0-9]{48}$/u)
     expect(test.sshPool.acquire).toHaveBeenCalledTimes(1)
     first.release()
     expect(test.release).not.toHaveBeenCalled()

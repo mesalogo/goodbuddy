@@ -34,6 +34,8 @@ import type {
   SshConnectionPool,
   SshConnectionPoolTarget
 } from '../ssh/ssh-connection-pool'
+import { settleBoundedly } from './bounded-settlement'
+import { isMissingPathError } from './path-errors'
 
 const MAXIMUM_INSTALLATION_FILES = 200
 const MAXIMUM_INSTALLATION_BYTES = 512 * 1024 * 1024
@@ -90,6 +92,7 @@ export interface RemoteRuntimeInstallationTargetResolver {
 export type RemoteRuntimeInstallationRequestOptions = {
   signal?: AbortSignal
   onProgress?: (phase: RemoteRuntimeInstallationPhase) => void
+  force?: boolean
 }
 
 export class RemoteRuntimeInstallationError extends Error {
@@ -118,6 +121,7 @@ export type VerifiedRemoteRuntimeInstallationBundle =
   RuntimeBundleBase & {
     canonicalReleaseKeyRegistryBytes: Uint8Array
     canonicalRemoteRuntimeLockBytes: Uint8Array
+    release?: () => void
   }
 
 export type RemoteRuntimeInstallationBundleLoader = (
@@ -132,7 +136,9 @@ export type RemoteRuntimeInstallationVerificationMetadata = {
 }
 
 export type RemoteRuntimeInstallationVerificationMetadataLoader =
-  () => Promise<RemoteRuntimeInstallationVerificationMetadata>
+  (
+    architecture: AgentArchitecture
+  ) => Promise<RemoteRuntimeInstallationVerificationMetadata>
 
 export type RemoteRuntimeActivator = (
   lease: SshConnectionLease,
@@ -160,6 +166,7 @@ type CleanupEntry = {
 type LoadedBundle = RuntimeBundleBase & {
   releaseKeyRegistryBytes: Buffer
   remoteRuntimeLockBytes: Buffer
+  release?: () => void
 }
 
 export class RemoteRuntimeInstallationManager {
@@ -227,14 +234,14 @@ export class RemoteRuntimeInstallationManager {
     }
 
     const operationKey = targetIdentityKey(target)
-    const installed = this.#installed.get(operationKey)
-    if (installed !== undefined) {
-      emitOne(options.onProgress, 'complete')
-      return installed
-    }
     const existing = this.#active.get(operationKey)
     if (existing) {
       return this.#waitForActive(existing, options)
+    }
+    const installed = this.#installed.get(operationKey)
+    if (!options.force && installed !== undefined) {
+      emitOne(options.onProgress, 'complete')
+      return installed
     }
     if (this.#active.size >= this.#maximumConcurrentHosts) {
       throw new RemoteRuntimeInstallationError(
@@ -345,6 +352,7 @@ export class RemoteRuntimeInstallationManager {
     let cleanupHomeDirectory: string | undefined
     const cleanup: CleanupEntry[] = []
     let stagingPublished = false
+    let releaseBundle: (() => void) | undefined
     try {
       lease = await this.#sshPool.acquire(target, signal)
       assertLeaseMatchesTarget(lease, target)
@@ -373,6 +381,7 @@ export class RemoteRuntimeInstallationManager {
         bundle = await this.#loadAndValidateBundle(
           probe.architecture
         )
+        releaseBundle = bundle.release
       } catch (error) {
         if (
           error instanceof RemoteRuntimeBundleResourcesUnavailableError
@@ -563,13 +572,14 @@ export class RemoteRuntimeInstallationManager {
         }
       }
       lease?.release()
+      releaseBundle?.()
     }
   }
 
   async #loadAndValidateBundle(
     architecture: AgentArchitecture
   ): Promise<LoadedBundle> {
-    let loaded: VerifiedRemoteRuntimeInstallationBundle
+    let loaded: VerifiedRemoteRuntimeInstallationBundle | undefined
     try {
       loaded = await this.#loadVerifiedBundle(architecture)
       const manifest = remoteRuntimeBundleManifestSchema.parse(
@@ -612,9 +622,11 @@ export class RemoteRuntimeInstallationManager {
         manifest,
         manifestDigest: loaded.manifestDigest,
         releaseKeyRegistryBytes,
-        remoteRuntimeLockBytes
+        remoteRuntimeLockBytes,
+        ...(loaded.release ? { release: loaded.release } : {})
       }
     } catch (error) {
+      loaded?.release?.()
       rethrowAbort(error)
       if (
         error instanceof RemoteRuntimeBundleResourcesUnavailableError
@@ -649,7 +661,7 @@ export class RemoteRuntimeInstallationManager {
     }
     let metadataSftp: StagedSftp | undefined
     try {
-      const metadata = await loadMetadata()
+      const metadata = await loadMetadata(probe.architecture)
       const releaseKeyRegistryBytes = canonicalJsonBytes(
         metadata.canonicalReleaseKeyRegistryBytes,
         agentReleaseKeyRegistrySchema,
@@ -1572,28 +1584,6 @@ function waitForOperation<T>(
   })
 }
 
-async function settleBoundedly(
-  promises: readonly Promise<unknown>[],
-  timeoutMs: number
-): Promise<void> {
-  if (promises.length === 0) {
-    return
-  }
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  try {
-    await Promise.race([
-      Promise.allSettled(promises),
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(resolve, timeoutMs)
-      })
-    ])
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout)
-    }
-  }
-}
-
 function emitOne(
   callback:
     | ((phase: RemoteRuntimeInstallationPhase) => void)
@@ -1605,18 +1595,6 @@ function emitOne(
   } catch {
     // Progress observers cannot alter installation outcomes.
   }
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (
-      (error as { code?: unknown }).code === 2 ||
-      (error as { code?: unknown }).code === 'ENOENT'
-    )
-  )
 }
 
 function isAbortError(error: unknown): boolean {

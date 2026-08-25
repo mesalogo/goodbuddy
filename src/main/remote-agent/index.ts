@@ -95,3 +95,10 @@ export type {
   RemoteProjectRuntimeValidationLease,
   RemoteProjectRuntimeValidator
 } from './remote-project-save-service'
+export {
+  RemoteEnvironmentUpdateService
+} from './remote-environment-update-service'
+export type {
+  RemoteEnvironmentUpdateOwner,
+  RemoteEnvironmentUpdateProgressObserver
+} from './remote-environment-update-service'

@@ -248,6 +248,44 @@ function harness(
 }
 
 describe('createManagedRemoteAcpRuntime', () => {
+  it('accepts the current OpenCode model profile independently of persisted validation', async () => {
+    const fixture = harness({
+      selection: {
+        provider: 'opencode',
+        profileId: '00000000-0000-4000-8000-000000000099'
+      }
+    })
+
+    const runtime = await createManagedRemoteAcpRuntime(
+      fixture.options
+    )
+
+    await expect(runtime.getStatus()).resolves.toMatchObject({
+      id: 'opencode',
+      available: true
+    })
+    await runtime.dispose()
+  })
+
+  it('rejects non-OpenCode providers before acquiring remote resources', async () => {
+    const fixture = harness({
+      selection: { provider: 'continue' }
+    })
+
+    await expect(
+      createManagedRemoteAcpRuntime(fixture.options)
+    ).rejects.toThrow(/validated OpenCode project evidence/iu)
+    expect(
+      fixture.options.agentServices.installationManager.ensureInstalled
+    ).not.toHaveBeenCalled()
+    expect(
+      fixture.options.runtimeInstallationManager.ensureInstalled
+    ).not.toHaveBeenCalled()
+    expect(
+      fixture.options.agentServices.connectionManager.acquire
+    ).not.toHaveBeenCalled()
+  })
+
   it('binds exact persisted evidence and owns its trust and connection leases', async () => {
     const fixture = harness()
     const runtime = await createManagedRemoteAcpRuntime(

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { spawn as nodeSpawn } from 'node:child_process'
 import {
   createServer,
@@ -37,12 +37,18 @@ export type ModelBridgeProtocol = ModelBridgeModelProtocol
 // The Anthropic and OpenAI SDK adapters refuse to issue a request without an
 // apiKey option. This fixed value is only a local compatibility marker. The
 // loopback proxy verifies and removes its header before creating the wire
-// request, so it is neither a credential nor visible outside the sandbox.
+// request. A separate per-helper random route capability authenticates local
+// requests, so this marker is neither a credential nor visible upstream.
 export const MODEL_BRIDGE_SDK_AUTH_SENTINEL =
   'goodbuddy-local-model-bridge-v1'
 
 export type OpenCodeModelBridgeProviderConfig = {
   model: string
+  agent: {
+    title: {
+      disable: true
+    }
+  }
   provider: Record<
     string,
     {
@@ -100,6 +106,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 180_000
 const RESPONSE_CLOSE_TIMEOUT_MS = 2_000
 const MAXIMUM_HTTP_HEADER_BYTES = 16 * 1024
 const MAXIMUM_HTTP_HEADER_COUNT = 32
+const MODEL_BRIDGE_ROUTE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u
 const CREDENTIAL_INBOUND_HEADER_NAMES = new Set([
   'api-key',
   'authorization',
@@ -116,6 +123,7 @@ const FORWARDED_HEADER_NAMES = [
 
 export class ModelBridgeLoopbackProxy {
   readonly #exchange: ModelBridgeExchange
+  readonly #routeToken: string
   readonly #maximumConnections: number
   readonly #requestTimeoutMs: number
   readonly #sockets = new Set<Socket>()
@@ -128,10 +136,15 @@ export class ModelBridgeLoopbackProxy {
 
   constructor(options: {
     exchange: ModelBridgeExchange
+    routeToken?: string
     maximumConnections?: number
     requestTimeoutMs?: number
   }) {
     this.#exchange = options.exchange
+    this.#routeToken = parseModelBridgeRouteToken(
+      options.routeToken ??
+        randomBytes(32).toString('base64url')
+    )
     this.#maximumConnections = boundedInteger(
       options.maximumConnections ?? DEFAULT_MAXIMUM_CONNECTIONS,
       1,
@@ -195,7 +208,8 @@ export class ModelBridgeLoopbackProxy {
           'Model bridge loopback address is unavailable'
         )
       }
-      this.#origin = `http://${LOOPBACK_HOST}:${address.port}`
+      this.#origin =
+        `http://${LOOPBACK_HOST}:${address.port}/${this.#routeToken}`
       return this.#origin
     } catch (error) {
       await this.close()
@@ -280,7 +294,10 @@ export class ModelBridgeLoopbackProxy {
     timeout.unref?.()
 
     try {
-      const request = await parseHttpRequest(incoming)
+      const request = await parseHttpRequest(
+        incoming,
+        this.#routeToken
+      )
       await this.#acquireDispatch(cancellation.signal)
       dispatchHeld = true
       dispatched = normalizeExchangeResult(
@@ -483,6 +500,14 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   const baseURL = `${origin}/v1`
   return {
     model: `${providerId}/${model}`,
+    // GoodBuddy owns conversation titles. A first-prompt title request can
+    // race the real ACP prompt, abandon its Provider response, and correctly
+    // poison the no-replay ledger before the user request can run.
+    agent: {
+      title: {
+        disable: true
+      }
+    },
     provider: {
       [providerId]: {
         name,
@@ -513,12 +538,15 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
 }
 
 async function parseHttpRequest(
-  incoming: IncomingMessage
+  incoming: IncomingMessage,
+  routeToken: string
 ): Promise<RemoteModelGatewayRequest> {
   if (incoming.method !== 'POST') {
     throw new HttpRequestError(405, 'method-not-allowed')
   }
-  const path = remoteModelApiPathSchema.safeParse(incoming.url)
+  const path = remoteModelApiPathSchema.safeParse(
+    authenticatedApiPath(incoming.url, routeToken)
+  )
   if (!path.success) {
     throw new HttpRequestError(404, 'path-not-allowed')
   }
@@ -838,14 +866,35 @@ function parseLoopbackOrigin(input: string): string {
     url.hostname !== LOOPBACK_HOST ||
     url.username ||
     url.password ||
-    url.pathname !== '/' ||
+    !MODEL_BRIDGE_ROUTE_TOKEN_PATTERN.test(
+      url.pathname.slice(1)
+    ) ||
     url.search ||
     url.hash ||
     url.port === ''
   ) {
-    throw new Error('Model bridge origin must be loopback HTTP')
+    throw new Error(
+      'Model bridge origin must be authenticated loopback HTTP'
+    )
   }
-  return url.origin
+  return `${url.origin}${url.pathname}`
+}
+
+function parseModelBridgeRouteToken(value: string): string {
+  if (!MODEL_BRIDGE_ROUTE_TOKEN_PATTERN.test(value)) {
+    throw new Error('Model bridge route capability is invalid')
+  }
+  return value
+}
+
+function authenticatedApiPath(
+  input: string | undefined,
+  routeToken: string
+): string | undefined {
+  const prefix = `/${routeToken}`
+  return input?.startsWith(`${prefix}/`)
+    ? input.slice(prefix.length)
+    : undefined
 }
 
 function boundedMetadataText(

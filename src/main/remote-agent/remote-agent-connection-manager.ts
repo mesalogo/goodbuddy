@@ -360,7 +360,7 @@ export class RemoteAgentConnectionManager {
           protocol: protocolVersion(entry.installation),
           goodBuddyVersion: this.#goodBuddyVersion,
           controllerId,
-          clientNonce: randomBytes(24).toString('base64url'),
+          clientNonce: randomBytes(24).toString('hex'),
           hostRevision: target.hostRevision,
           hostKeyGeneration: target.hostKeyGeneration
         },

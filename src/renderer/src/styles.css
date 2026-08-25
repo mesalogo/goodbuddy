@@ -6591,6 +6591,96 @@ button > svg {
   display: none;
 }
 
+.bundled-agent-inventory {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bundled-agent-inventory__item {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+
+.bundled-agent-inventory__item-header {
+  display: flex;
+  align-items: center;
+  color: var(--text-primary);
+  gap: var(--space-2);
+}
+
+.bundled-agent-inventory__item-header > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.bundled-agent-inventory__badge {
+  margin-left: auto;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--font-caption);
+  white-space: nowrap;
+}
+
+.bundled-agent-inventory__badge--verified {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.bundled-agent-inventory__badge--not-downloaded,
+.bundled-agent-inventory__badge--invalid {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.bundled-agent-inventory__item dl {
+  display: grid;
+  margin: var(--space-3) 0 0;
+  gap: var(--space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bundled-agent-inventory__item dl > div {
+  min-width: 0;
+}
+
+.bundled-agent-inventory__item dt,
+.bundled-agent-inventory__item dd {
+  margin: 0;
+}
+
+.bundled-agent-inventory__item dt {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.bundled-agent-inventory__item dd {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bundled-agent-inventory__spinner {
+  animation: bundled-agent-inventory-spin 800ms linear infinite;
+}
+
+@keyframes bundled-agent-inventory-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .bundled-agent-inventory {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .model-download-source {
   display: grid;
   min-width: 0;
@@ -6895,13 +6985,13 @@ button > svg {
   gap: var(--space-3);
 }
 
-.ssh-host-environment__header > div {
+.ssh-host-environment__summary {
   display: grid;
   min-width: 0;
   gap: var(--space-1);
 }
 
-.ssh-host-environment__header > div > span {
+.ssh-host-environment__summary > span {
   display: flex;
   align-items: center;
   color: var(--text-primary);
@@ -6909,15 +6999,22 @@ button > svg {
   gap: var(--space-2);
 }
 
-.ssh-host-environment__header > div > span > svg {
+.ssh-host-environment__summary > span > svg {
   flex: 0 0 auto;
   color: var(--accent);
 }
 
-.ssh-host-environment__header small {
+.ssh-host-environment__summary small {
   color: var(--text-muted);
   font-size: var(--font-caption);
   line-height: 1.5;
+}
+
+.ssh-host-environment__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .ssh-host-environment__grid {
@@ -7367,8 +7464,9 @@ button > svg {
     flex-direction: column;
   }
 
-  .ssh-host-environment__header > .secondary-button {
+  .ssh-host-environment__actions {
     align-self: flex-start;
+    flex-wrap: wrap;
   }
 
   .ssh-host-card__actions > .danger-confirm {

@@ -156,7 +156,7 @@ describe('release asset aggregation', () => {
       ])
 
       const outputNames = readdirSync(output)
-      expect(outputNames).toHaveLength(20)
+      expect(outputNames).toHaveLength(22)
       expect(outputNames).toContain('release-manifest.json')
       expect(outputNames).toContain('SHA256SUMS')
       expect(outputNames).not.toContain('builder-debug.yml')
@@ -180,7 +180,7 @@ describe('release asset aggregation', () => {
         join(output, 'SHA256SUMS'),
         'utf8'
       )
-      expect(sums.trim().split('\n')).toHaveLength(19)
+      expect(sums.trim().split('\n')).toHaveLength(21)
       expect(sums).toContain(
         'release-manifest-windows-x64.json'
       )

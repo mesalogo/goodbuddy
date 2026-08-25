@@ -215,6 +215,7 @@ import {
   type KeepAliveCacheEntry
 } from './keep-alive-cache'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import { displayErrorMessage } from './error-message'
 import { getProjectDisplayText } from './project-display'
 
 const knowledgeWorkspaceRoute = createPreloadableComponent(
@@ -561,10 +562,13 @@ function appendMessageContentBlock(
   const current = [...blocks]
   const previous = current.at(-1)
   if (previous?.type === type) {
-    previous.content = `${previous.content}${delta}`.slice(
-      0,
-      maxMessageContentLength
-    )
+    current[current.length - 1] = {
+      ...previous,
+      content: `${previous.content}${delta}`.slice(
+        0,
+        maxMessageContentLength
+      )
+    }
     return current
   }
   if (current.length >= maxMessageBlocks) {
@@ -670,19 +674,6 @@ function createConversation(
       }
     ]
   }
-}
-
-function displayErrorMessage(reason: unknown, fallback: string): string {
-  if (
-    typeof reason === 'object' &&
-    reason !== null &&
-    'message' in reason &&
-    typeof reason.message === 'string' &&
-    reason.message
-  ) {
-    return reason.message
-  }
-  return fallback
 }
 
 function createConversationBranchTitle(
@@ -1415,10 +1406,30 @@ function getProjectDefaultRuntimeSelection(
   project: AssistantProject | undefined,
   settings: RuntimeSettings
 ): AgentRuntimeSelection {
+  if (isManagedSshProject(project)) {
+    return getRuntimeSelectionForProvider('opencode', settings)
+  }
   const selection = project?.runtimeSelection
   return !selection || selection.provider === 'auto'
     ? getDefaultRuntimeSelection(settings)
     : selection
+}
+
+type ManagedSshProject = AssistantProject & {
+  kind: 'user'
+  executionSpace: Extract<
+    AssistantProject['executionSpace'],
+    { kind: 'ssh' }
+  >
+}
+
+function isManagedSshProject(
+  project: AssistantProject | undefined
+): project is ManagedSshProject {
+  return (
+    project?.kind === 'user' &&
+    project.executionSpace.kind === 'ssh'
+  )
 }
 
 function isOrdinaryLocalProject(
@@ -2877,6 +2888,12 @@ function App(): React.JSX.Element {
     () => conversations.find((conversation) => conversation.id === activeId),
     [activeId, conversations]
   )
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId),
+    [activeProjectId, projects]
+  )
+  const activeProjectUsesManagedSsh =
+    isManagedSshProject(activeProject)
   const cachedWorkspaceViewKeys = useMemo(
     () => new Set(cachedWorkspaceViews.map((entry) => entry.key)),
     [cachedWorkspaceViews]
@@ -3367,10 +3384,6 @@ function App(): React.JSX.Element {
     },
     [notify, projects, runtimeSettings, setActiveId, setView]
   )
-  const activeProject = useMemo(
-    () => projects.find((project) => project.id === activeProjectId),
-    [activeProjectId, projects]
-  )
   const activeRemoteProjectRequiresActivation =
     remoteProjectsRequiringActivation.has(activeProjectId)
   const activeProjectDisplayName = activeProject
@@ -3681,7 +3694,13 @@ function App(): React.JSX.Element {
 
   const switchRuntime = useCallback(
     async (selection: AgentRuntimeSelection): Promise<void> => {
-      if (!runtimeSettings || !activeConversation || runtimeSwitching) {
+      if (
+        !runtimeSettings ||
+        !activeConversation ||
+        runtimeSwitching ||
+        (activeProjectUsesManagedSsh &&
+          selection.provider !== 'opencode')
+      ) {
         return
       }
       runtimeMenuButtonRef.current?.focus()
@@ -3751,6 +3770,7 @@ function App(): React.JSX.Element {
     },
     [
       activeConversation,
+      activeProjectUsesManagedSsh,
       runtimeLabels,
       runtimeSettings,
       runtimeSwitching
@@ -4936,10 +4956,10 @@ function App(): React.JSX.Element {
           })
           return { project, current: false }
         }
-        const message =
-          reason instanceof Error && reason.message
-            ? reason.message
-            : tRef.current('notices.remoteProjectActivationUnknownError')
+        const message = displayErrorMessage(
+          reason,
+          tRef.current('notices.remoteProjectActivationUnknownError')
+        )
         throw new Error(
           tRef.current('notices.remoteProjectActivationFailed', {
             message
@@ -4985,15 +5005,17 @@ function App(): React.JSX.Element {
         )
         notify({
           tone: 'error',
-          message:
-            reason instanceof Error && reason.message
-              ? tRef.current(
-                  'notices.remoteProjectActivationCancelFailed',
-                  { message: reason.message }
-                )
-              : tRef.current(
+          message: tRef.current(
+            'notices.remoteProjectActivationCancelFailed',
+            {
+              message: displayErrorMessage(
+                reason,
+                tRef.current(
                   'notices.remoteProjectActivationCancelUnknownError'
                 )
+              )
+            }
+          )
         })
       }
     )
@@ -5794,6 +5816,26 @@ function App(): React.JSX.Element {
         )
     )
     if (conversation) {
+      if (isManagedSshProject(selected)) {
+        const runtimeSelection = runtimeSettings
+          ? getRuntimeSelectionForProvider(
+              'opencode',
+              runtimeSettings
+            )
+          : ({ provider: 'opencode' } as const)
+        setConversations((current) =>
+          current.map((candidate) =>
+            candidate.projectId === selected.id &&
+            candidate.runtimeSelection?.provider !== 'opencode'
+              ? {
+                  ...candidate,
+                  runtimeSelection,
+                  updatedAt: Date.now()
+                }
+              : candidate
+          )
+        )
+      }
       setActiveId(conversation.id)
     } else if (selected.kind === 'channel') {
       setActiveId('')
@@ -6729,10 +6771,10 @@ function App(): React.JSX.Element {
       } catch (reason) {
         notify({
           tone: 'error',
-          message:
-            reason instanceof Error
-              ? reason.message
-              : t('notices.sendFailed')
+          message: displayErrorMessage(
+            reason,
+            t('notices.sendFailed')
+          )
         })
       }
       return
@@ -6919,8 +6961,10 @@ function App(): React.JSX.Element {
       )
       notify({
         tone: 'error',
-        message:
-          error instanceof Error ? error.message : t('notices.sendFailed')
+        message: displayErrorMessage(
+          error,
+          t('notices.sendFailed')
+        )
       })
       await releaseQueuedItem()
     } finally {
@@ -9214,49 +9258,55 @@ function App(): React.JSX.Element {
                         ref={runtimeMenuRef}
                         role="menu"
                       >
-                        <strong
-                          role="presentation"
-                        >
-                          {t('runtime.directModels')}
-                        </strong>
-                        {runtimeSettings?.modelProfiles.map((profile) => (
-                        <button
-                          aria-checked={
-                            activeRuntimeSelectionKey ===
-                            `model:${profile.id}`
-                          }
-                          key={profile.id}
-                          onClick={() =>
-                            void switchRuntime({
-                              provider: 'model',
-                              profileId: profile.id
-                            })
-                          }
-                          role="menuitemradio"
-                          tabIndex={
-                            activeRuntimeSelectionKey ===
-                            `model:${profile.id}`
-                              ? 0
-                              : -1
-                          }
-                          type="button"
-                        >
-                          <span>
-                            {profile.name}
-                            {profile.protocol ===
-                              'openai-images-generations' && (
-                              <span className="runtime-capability-badge">
-                                {t('runtime.imageGeneration')}
-                              </span>
+                        {!activeProjectUsesManagedSsh && (
+                          <>
+                            <strong role="presentation">
+                              {t('runtime.directModels')}
+                            </strong>
+                            {runtimeSettings?.modelProfiles.map(
+                              (profile) => (
+                                <button
+                                  aria-checked={
+                                    activeRuntimeSelectionKey ===
+                                    `model:${profile.id}`
+                                  }
+                                  key={profile.id}
+                                  onClick={() =>
+                                    void switchRuntime({
+                                      provider: 'model',
+                                      profileId: profile.id
+                                    })
+                                  }
+                                  role="menuitemradio"
+                                  tabIndex={
+                                    activeRuntimeSelectionKey ===
+                                    `model:${profile.id}`
+                                      ? 0
+                                      : -1
+                                  }
+                                  type="button"
+                                >
+                                  <span>
+                                    {profile.name}
+                                    {profile.protocol ===
+                                      'openai-images-generations' && (
+                                      <span className="runtime-capability-badge">
+                                        {t(
+                                          'runtime.imageGeneration'
+                                        )}
+                                      </span>
+                                    )}
+                                  </span>
+                                  <small>{profile.modelName}</small>
+                                </button>
+                              )
                             )}
-                          </span>
-                          <small>{profile.modelName}</small>
-                        </button>
-                        ))}
-                        <div
-                          className="runtime-picker__divider"
-                          role="separator"
-                        />
+                            <div
+                              className="runtime-picker__divider"
+                              role="separator"
+                            />
+                          </>
+                        )}
                         <strong
                           role="presentation"
                         >
@@ -9284,76 +9334,89 @@ function App(): React.JSX.Element {
                           <small>{openCodeMenuSource.detail}</small>
                         </button>
                         )}
-                        <div
-                          className="runtime-picker__divider"
-                          role="separator"
-                        />
-                        <strong
-                          role="presentation"
-                        >
-                          Continue Runtime
-                        </strong>
-                        {continueMenuSelection && continueMenuSource && (
-                        <button
-                          aria-checked={
-                            activeRuntimeSelectionKey ===
-                            agentRuntimeSelectionKey(continueMenuSelection)
-                          }
-                          onClick={() =>
-                            void switchRuntime(continueMenuSelection)
-                          }
-                          role="menuitemradio"
-                          tabIndex={
-                            activeRuntimeSelectionKey ===
-                            agentRuntimeSelectionKey(continueMenuSelection)
-                              ? 0
-                              : -1
-                          }
-                          type="button"
-                        >
-                          <span>{continueMenuSource.label}</span>
-                          <small>{continueMenuSource.detail}</small>
-                        </button>
-                        )}
-                        <div
-                          className="runtime-picker__divider"
-                          role="separator"
-                        />
-                        <strong role="presentation">
-                          {t('runtime.deepseekHarnessGroup')}
-                        </strong>
-                        {deepseekHarnessMenuSelection &&
-                          deepseekHarnessMenuSource && (
-                          <button
-                            aria-checked={
-                              activeRuntimeSelectionKey ===
-                              agentRuntimeSelectionKey(
-                                deepseekHarnessMenuSelection
-                              )
-                            }
-                            onClick={() =>
-                              void switchRuntime(
-                                deepseekHarnessMenuSelection
-                              )
-                            }
-                            role="menuitemradio"
-                            tabIndex={
-                              activeRuntimeSelectionKey ===
-                              agentRuntimeSelectionKey(
-                                deepseekHarnessMenuSelection
-                              )
-                                ? 0
-                                : -1
-                            }
-                            type="button"
-                          >
-                            <span>
-                              {deepseekHarnessMenuSource.label}
-                            </span>
-                            <small>
-                              {deepseekHarnessMenuSource.detail}
-                            </small>
-                          </button>
+                        {!activeProjectUsesManagedSsh && (
+                          <>
+                            <div
+                              className="runtime-picker__divider"
+                              role="separator"
+                            />
+                            <strong role="presentation">
+                              Continue Runtime
+                            </strong>
+                            {continueMenuSelection &&
+                              continueMenuSource && (
+                                <button
+                                  aria-checked={
+                                    activeRuntimeSelectionKey ===
+                                    agentRuntimeSelectionKey(
+                                      continueMenuSelection
+                                    )
+                                  }
+                                  onClick={() =>
+                                    void switchRuntime(
+                                      continueMenuSelection
+                                    )
+                                  }
+                                  role="menuitemradio"
+                                  tabIndex={
+                                    activeRuntimeSelectionKey ===
+                                    agentRuntimeSelectionKey(
+                                      continueMenuSelection
+                                    )
+                                      ? 0
+                                      : -1
+                                  }
+                                  type="button"
+                                >
+                                  <span>
+                                    {continueMenuSource.label}
+                                  </span>
+                                  <small>
+                                    {continueMenuSource.detail}
+                                  </small>
+                                </button>
+                              )}
+                            <div
+                              className="runtime-picker__divider"
+                              role="separator"
+                            />
+                            <strong role="presentation">
+                              {t('runtime.deepseekHarnessGroup')}
+                            </strong>
+                            {deepseekHarnessMenuSelection &&
+                              deepseekHarnessMenuSource && (
+                                <button
+                                  aria-checked={
+                                    activeRuntimeSelectionKey ===
+                                    agentRuntimeSelectionKey(
+                                      deepseekHarnessMenuSelection
+                                    )
+                                  }
+                                  onClick={() =>
+                                    void switchRuntime(
+                                      deepseekHarnessMenuSelection
+                                    )
+                                  }
+                                  role="menuitemradio"
+                                  tabIndex={
+                                    activeRuntimeSelectionKey ===
+                                    agentRuntimeSelectionKey(
+                                      deepseekHarnessMenuSelection
+                                    )
+                                      ? 0
+                                      : -1
+                                  }
+                                  type="button"
+                                >
+                                  <span>
+                                    {deepseekHarnessMenuSource.label}
+                                  </span>
+                                  <small>
+                                    {deepseekHarnessMenuSource.detail}
+                                  </small>
+                                </button>
+                              )}
+                          </>
                         )}
                         <div
                           className="runtime-picker__divider"

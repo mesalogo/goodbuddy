@@ -44,7 +44,7 @@ import { getProjectDisplayText } from './project-display'
 import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
 import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 import { SegmentedControl } from './WorkspacePrimitives'
-import { sshHostErrorMessage } from './ssh-host-ui'
+import { displayErrorMessage } from './error-message'
 
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
@@ -421,7 +421,7 @@ export function ProjectSwitcher({
       if (requestId !== directoryBrowseRequestRef.current) {
         return
       }
-      const message = sshHostErrorMessage(
+      const message = displayErrorMessage(
         reason,
         t('projectSwitcher.remote.directoryPicker.unknownError')
       )
@@ -605,7 +605,7 @@ export function ProjectSwitcher({
       closeDialog()
     } catch (reason) {
       setError(
-        sshHostErrorMessage(
+        displayErrorMessage(
           reason,
           t('projectSwitcher.remote.errors.save')
         )
@@ -635,11 +635,12 @@ export function ProjectSwitcher({
       closeDialog()
     } catch (reason) {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : dialogMode === 'settings'
+        displayErrorMessage(
+          reason,
+          dialogMode === 'settings'
             ? t('projectSwitcher.errors.save')
             : t('projectSwitcher.errors.create')
+        )
       )
     } finally {
       setSaving(false)
@@ -658,9 +659,10 @@ export function ProjectSwitcher({
       }
     } catch (reason) {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : t('projectSwitcher.errors.selectRoot')
+        displayErrorMessage(
+          reason,
+          t('projectSwitcher.errors.selectRoot')
+        )
       )
     }
   }
@@ -673,9 +675,10 @@ export function ProjectSwitcher({
       closeDialog()
     } catch (reason) {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : t('projectSwitcher.errors.archive')
+        displayErrorMessage(
+          reason,
+          t('projectSwitcher.errors.archive')
+        )
       )
     } finally {
       setArchiving(false)
@@ -693,9 +696,10 @@ export function ProjectSwitcher({
       closeDialog()
     } catch (reason) {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : t('projectSwitcher.errors.delete')
+        displayErrorMessage(
+          reason,
+          t('projectSwitcher.errors.delete')
+        )
       )
     } finally {
       setDeleting(false)

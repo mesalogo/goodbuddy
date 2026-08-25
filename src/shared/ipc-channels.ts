@@ -41,8 +41,24 @@ export const ipcChannels = {
     'settings:ssh-hosts:discard-candidate',
   sshHostsValidateAndSave:
     'settings:ssh-hosts:validate-and-save',
+  sshHostsAgentPackageInventory:
+    'settings:ssh-hosts:agent-package:inventory',
+  sshHostsAgentPackageDownload:
+    'settings:ssh-hosts:agent-package:download',
+  sshHostsAgentPackageImport:
+    'settings:ssh-hosts:agent-package:import',
+  sshHostsAgentPackageExport:
+    'settings:ssh-hosts:agent-package:export',
+  sshHostsAgentPackageProgress:
+    'settings:ssh-hosts:agent-package:progress',
   sshHostsRemoteEnvironment:
     'settings:ssh-hosts:remote-environment',
+  sshHostsUpdateRemoteEnvironment:
+    'settings:ssh-hosts:remote-environment:update',
+  sshHostsCancelRemoteEnvironmentUpdate:
+    'settings:ssh-hosts:remote-environment:update:cancel',
+  sshHostsRemoteEnvironmentUpdateProgress:
+    'settings:ssh-hosts:remote-environment:update:progress',
   sshHostsBrowseDirectories:
     'settings:ssh-hosts:directories:browse',
   sshHostsCancelDirectoryBrowse:
