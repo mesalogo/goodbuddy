@@ -60,11 +60,15 @@ export type VerifyBundledAgentOptions = {
 export async function readAgentReleaseKeyRegistry(
   filePath: string
 ): Promise<AgentReleaseKeyRegistry> {
-  const value = await readJsonMetadata(
+  const bytes = await readBoundedFile(
     filePath,
+    MAXIMUM_METADATA_BYTES,
     'Agent trusted key registry'
   )
-  return parseAgentReleaseKeyRegistry(value)
+  return parseAgentReleaseKeyRegistryBytes(
+    bytes,
+    'Agent trusted key registry'
+  )
 }
 
 export async function readAgentRuntimeLock(
@@ -233,11 +237,34 @@ export function canonicalAgentManifestBytes(
 export function canonicalAgentReleaseKeyRegistryBytes(
   registry: AgentReleaseKeyRegistry
 ): Buffer {
-  const canonical = agentReleaseKeyRegistrySchema.parse(registry)
+  const canonical = parseAgentReleaseKeyRegistry(registry)
   return Buffer.from(
     `${JSON.stringify(canonical, null, 2)}\n`,
     'utf8'
   )
+}
+
+export function parseAgentReleaseKeyRegistryBytes(
+  bytes: Uint8Array,
+  description = 'Agent trusted key registry'
+): AgentReleaseKeyRegistry {
+  let value: unknown
+  try {
+    value = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    ) as unknown
+  } catch (error) {
+    throw new Error(`${description} is invalid JSON`, {
+      cause: error
+    })
+  }
+  try {
+    return parseAgentReleaseKeyRegistry(value)
+  } catch (error) {
+    throw new Error(`${description} contract is invalid`, {
+      cause: error
+    })
+  }
 }
 
 export function agentManifestSignaturePayload(
@@ -451,7 +478,7 @@ function importEd25519PublicKey(key: AgentReleaseKey) {
   return publicKey
 }
 
-function parseAgentReleaseKeyRegistry(
+export function parseAgentReleaseKeyRegistry(
   value: unknown
 ): AgentReleaseKeyRegistry {
   const registry = parseContract(

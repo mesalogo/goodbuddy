@@ -11,7 +11,6 @@ import {
   type VerifyRuntimeBundleOptions
 } from '../../shared/node/runtime-bundle-verifier'
 import {
-  agentReleaseKeyRegistrySchema,
   type AgentArchitecture,
   type AgentReleaseKeyRegistry
 } from '../../shared/agent-installation-contracts'
@@ -30,6 +29,9 @@ import {
   getBundledRemoteRuntimeRoot,
   type BundledRemoteRuntimeResourcePaths
 } from './bundled-remote-runtime-resources'
+import {
+  parseAgentReleaseKeyRegistry
+} from './agent-bundle-verifier'
 import { isMissingPathError } from './path-errors'
 
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
@@ -106,8 +108,9 @@ export async function loadRemoteRuntimeVerificationMetadata(
   const [keyRegistry, runtimeLock] = await Promise.all([
     readCanonicalMetadata(
       paths.keyRegistryPath,
-      agentReleaseKeyRegistrySchema,
-      'Runtime release-key registry'
+      { parse: parseAgentReleaseKeyRegistry },
+      'Runtime release-key registry',
+      true
     ),
     readCanonicalMetadata(
       paths.runtimeLockPath,
@@ -139,7 +142,8 @@ function assertSafeVerificationInjection(
 async function readCanonicalMetadata<T>(
   filePathInput: string,
   schema: { parse(value: unknown): T },
-  label: string
+  label: string,
+  acceptEquivalentJsonFormatting = false
 ): Promise<CanonicalMetadata<T>> {
   const filePath = resolve(filePathInput)
   const pathStat = await lstat(filePath)
@@ -212,7 +216,10 @@ async function readCanonicalMetadata<T>(
     `${JSON.stringify(value, null, 2)}\n`,
     'utf8'
   )
-  if (!canonicalBytes.equals(bytes)) {
+  if (
+    !acceptEquivalentJsonFormatting &&
+    !canonicalBytes.equals(bytes)
+  ) {
     throw new Error(`${label} is not canonical`)
   }
   return { bytes: canonicalBytes, value }

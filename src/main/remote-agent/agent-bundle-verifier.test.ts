@@ -32,6 +32,8 @@ import type {
 import {
   agentManifestSignaturePayload,
   canonicalAgentManifestBytes,
+  canonicalAgentReleaseKeyRegistryBytes,
+  parseAgentReleaseKeyRegistryBytes,
   verifyAgentBundleDirectory,
   verifyAgentManifestSignature,
   type VerifiedAgentBundle
@@ -280,6 +282,35 @@ afterEach(() => {
 })
 
 describe('runtime and build-time Agent verifier parity', () => {
+  it('accepts equivalent registry whitespace and canonicalizes validated keys', () => {
+    const canonical = canonicalAgentReleaseKeyRegistryBytes(registry)
+    const crlf = Buffer.from(
+      canonical.toString('utf8').replace(/\n/gu, '\r\n'),
+      'utf8'
+    )
+
+    const parsed = parseAgentReleaseKeyRegistryBytes(crlf)
+
+    expect(parsed).toEqual(registry)
+    expect(canonicalAgentReleaseKeyRegistryBytes(parsed)).toEqual(
+      canonical
+    )
+  })
+
+  it('rejects malformed or non-Ed25519 registry keys', () => {
+    expect(() =>
+      parseAgentReleaseKeyRegistryBytes(
+        Buffer.from(JSON.stringify({
+          ...registry,
+          keys: [{
+            ...registry.keys[0],
+            publicKeySpkiBase64: 'AAAA'
+          }]
+        }))
+      )
+    ).toThrow('contract is invalid')
+  })
+
   it('uses the exact build-time canonical bytes and signature domain', async () => {
     const manifest = writeBundle()
     const manifestBytes = readFileSync(

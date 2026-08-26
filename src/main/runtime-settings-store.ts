@@ -259,7 +259,7 @@ const storedEmbeddingConnectionSchema = z.discriminatedUnion('kind', [
     .strict()
 ])
 
-const storedSettingsSchema = version18StoredSettingsSchema
+const version19StoredSettingsSchema = version18StoredSettingsSchema
   .omit({ version: true })
   .extend({
     version: z.literal(19),
@@ -268,6 +268,12 @@ const storedSettingsSchema = version18StoredSettingsSchema
       .min(1)
       .max(20),
     activeEmbeddingConnectionId: z.string().uuid()
+  })
+
+const storedSettingsSchema = version19StoredSettingsSchema
+  .omit({ version: true })
+  .extend({
+    version: z.literal(20)
   })
 
 type StoredSettings = z.infer<typeof storedSettingsSchema>
@@ -280,6 +286,9 @@ type Version17StoredSettings = z.infer<
 >
 type Version18StoredSettings = z.infer<
   typeof version18StoredSettingsSchema
+>
+type Version19StoredSettings = z.infer<
+  typeof version19StoredSettingsSchema
 >
 type Version16StoredSettings = z.infer<
   typeof version16StoredSettingsSchema
@@ -449,7 +458,7 @@ type ResolvedModelCredential = {
 }
 
 const defaultSettings: StoredSettings = {
-  version: 19,
+  version: 20,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -653,7 +662,7 @@ function migrateVersion17(
 function migrateVersion18(
   settings: Version18StoredSettings
 ): StoredSettings {
-  return {
+  return migrateVersion19({
     ...settings,
     version: 19,
     embeddingConnections: [
@@ -673,6 +682,36 @@ function migrateVersion18(
       }
     ],
     activeEmbeddingConnectionId: legacyEmbeddingConnectionId
+  })
+}
+
+function migrateVersion19(
+  settings: Version19StoredSettings
+): StoredSettings {
+  return {
+    ...settings,
+    version: 20,
+    modelProfiles: settings.modelProfiles.map((profile) =>
+      profile.id === defaultModelProfileId &&
+      profile.name === '默认模型' &&
+      profile.baseUrl === 'https://bigtoken.ai' &&
+      profile.modelName === 'sonnet-5' &&
+      profile.protocol === 'anthropic-messages' &&
+      profile.authentication === 'api-key' &&
+      profile.supportsImageInput === false &&
+      profile.imageGenerationQuality === 'auto' &&
+      profile.contextWindowTokens === undefined &&
+      profile.credential === undefined
+        ? {
+            ...profile,
+            baseUrl: defaultRuntimeSettings.modelBaseUrl,
+            modelName: defaultRuntimeSettings.modelName,
+            protocol: defaultRuntimeSettings.modelProtocol,
+            authentication:
+              defaultRuntimeSettings.modelAuthentication
+          }
+        : profile
+    )
   }
 }
 
@@ -995,13 +1034,17 @@ export class RuntimeSettingsStore {
       const parsed: unknown = JSON.parse(contents)
       assertSupportedSettingsVersion(
         parsed,
-        19,
+        20,
         (version) =>
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${version}，请升级应用后重试`
       )
       const current = storedSettingsSchema.safeParse(parsed)
+      const version19 =
+        version19StoredSettingsSchema.safeParse(parsed)
       if (current.success) {
         this.settings = current.data
+      } else if (version19.success) {
+        this.settings = migrateVersion19(version19.data)
       } else {
         const version18 =
           version18StoredSettingsSchema.safeParse(parsed)
@@ -1377,10 +1420,7 @@ export class RuntimeSettingsStore {
       settings.modelProfiles.find(
         (profile) => profile.id === settings.defaultModelProfileId
       ) ?? settings.modelProfiles[0]
-    const environmentApiKey =
-      defaultProfile?.authentication === 'api-key'
-        ? this.getEnvironmentApiKey()
-        : undefined
+    const environmentApiKey = this.getEnvironmentApiKey()
     return new Map(
       settings.modelProfiles.map((profile) => {
         const environmentManaged =
@@ -1401,11 +1441,11 @@ export class RuntimeSettingsStore {
           profile.id,
           {
             activeApiKey:
-              profile.authentication === 'api-key'
-                ? environmentManaged
-                  ? environmentApiKey
-                  : storedApiKey
-                : undefined,
+              environmentManaged
+                ? environmentApiKey
+                : profile.authentication === 'api-key'
+                  ? storedApiKey
+                  : undefined,
             configured: environmentManaged || Boolean(storedApiKey),
             source
           }
@@ -1457,7 +1497,9 @@ export class RuntimeSettingsStore {
       baseUrl,
       model,
       protocol: profile.protocol,
-      authentication: profile.authentication,
+      authentication: environmentManaged
+        ? 'api-key'
+        : profile.authentication,
       supportsImageInput: profile.supportsImageInput,
       contextWindowTokens: profile.contextWindowTokens,
       imageGenerationQuality: profile.imageGenerationQuality,
@@ -2228,7 +2270,7 @@ export class RuntimeSettingsStore {
 
     const next: StoredSettings = {
       ...current,
-      version: 19,
+      version: 20,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId,
@@ -2289,7 +2331,7 @@ export class RuntimeSettingsStore {
       const current = await this.load()
       const next: StoredSettings = {
         ...current,
-        version: 19,
+        version: 20,
         runtimeCustomization: parsed
       }
       await writeJsonFileAtomically(this.filePath, next)

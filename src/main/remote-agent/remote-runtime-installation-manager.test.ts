@@ -236,7 +236,10 @@ const registry: AgentReleaseKeyRegistry = {
   formatVersion: 1,
   keys: [{
     keyId: 'test-key',
-    publicKeySpkiBase64: 'AAAA',
+    publicKeySpkiBase64: Buffer.from(
+      '302a300506032b6570032100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+      'hex'
+    ).toString('base64'),
     environment: 'test'
   }],
   revocations: []

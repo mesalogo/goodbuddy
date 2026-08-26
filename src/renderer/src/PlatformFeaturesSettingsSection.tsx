@@ -930,10 +930,26 @@ export function PlatformFeaturesSettingsSection({
                       Linux {entry.architecture}
                     </strong>
                     <span
-                      className={`bundled-agent-inventory__badge bundled-agent-inventory__badge--${entry.state}`}
+                      className={`bundled-agent-inventory__badge bundled-agent-inventory__badge--${
+                        entry.updateAvailable
+                          ? 'update-available'
+                          : agentInventory.catalog.state ===
+                              'available' &&
+                              entry.state === 'verified' &&
+                              entry.latestVersion !== null
+                            ? 'up-to-date'
+                            : entry.state
+                      }`}
                     >
                       {t(
-                        `platformFeatures.remoteProjects.agentInventory.states.${entry.state}`
+                        entry.updateAvailable
+                          ? 'platformFeatures.remoteProjects.agentInventory.states.updateAvailable'
+                          : agentInventory.catalog.state ===
+                              'available' &&
+                              entry.state === 'verified' &&
+                              entry.latestVersion !== null
+                            ? 'platformFeatures.remoteProjects.agentInventory.states.upToDate'
+                            : `platformFeatures.remoteProjects.agentInventory.states.${entry.state}`
                       )}
                     </span>
                   </div>
@@ -945,6 +961,14 @@ export function PlatformFeaturesSettingsSection({
                         )}
                       </dt>
                       <dd>{entry.version ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        {t(
+                          'platformFeatures.remoteProjects.agentInventory.fields.latestVersion'
+                        )}
+                      </dt>
+                      <dd>{entry.latestVersion ?? '—'}</dd>
                     </div>
                     <div>
                       <dt>
@@ -985,23 +1009,36 @@ export function PlatformFeaturesSettingsSection({
                       </p>
                     )}
                   <div className="capability-card__actions">
-                    <button
-                      className="secondary-button"
-                      disabled={agentPackageBusy !== undefined}
-                      onClick={() =>
-                        void downloadAgentPackage(
-                          entry.architecture
-                        )
-                      }
-                      type="button"
-                    >
-                      <Download aria-hidden="true" size={13} />
-                      {t(
-                        entry.state === 'verified'
-                          ? 'platformFeatures.remoteProjects.agentInventory.update'
-                          : 'platformFeatures.remoteProjects.agentInventory.download'
-                      )}
-                    </button>
+                    {(
+                      entry.updateAvailable ||
+                      (
+                        entry.state !== 'verified' &&
+                        entry.latestVersion !== null
+                      ) ||
+                      agentInventory.catalog.state !== 'available'
+                    ) && (
+                      <button
+                        className="secondary-button"
+                        disabled={agentPackageBusy !== undefined}
+                        onClick={() =>
+                          void downloadAgentPackage(
+                            entry.architecture
+                          )
+                        }
+                        type="button"
+                      >
+                        <Download aria-hidden="true" size={13} />
+                        {t(
+                          entry.updateAvailable
+                            ? 'platformFeatures.remoteProjects.agentInventory.updateTo'
+                            : entry.state !== 'verified' &&
+                                entry.latestVersion !== null
+                              ? 'platformFeatures.remoteProjects.agentInventory.downloadVersion'
+                              : 'platformFeatures.remoteProjects.agentInventory.update',
+                          { version: entry.latestVersion }
+                        )}
+                      </button>
+                    )}
                     {entry.state === 'verified' && (
                       <button
                         className="secondary-button"
@@ -1024,6 +1061,21 @@ export function PlatformFeaturesSettingsSection({
               ))}
             </div>
           ) : null}
+          {agentInventory?.catalog.state === 'available' && (
+            <p className="settings-notice" role="status">
+              {t(
+                'platformFeatures.remoteProjects.agentInventory.catalog.available'
+              )}
+            </p>
+          )}
+          {agentInventory?.catalog.state === 'unavailable' && (
+            <p className="settings-warning" role="alert">
+              {t(
+                'platformFeatures.remoteProjects.agentInventory.catalog.unavailable',
+                { error: agentInventory.catalog.error }
+              )}
+            </p>
+          )}
         </article>
       </section>
 

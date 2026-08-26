@@ -133,6 +133,20 @@ describe('Agent installation contracts', () => {
     ).toThrow()
   })
 
+  it('rejects Base64 encodings with non-zero padding bits', () => {
+    expect(() =>
+      agentReleaseKeyRegistrySchema.parse({
+        formatVersion: 1,
+        keys: [{
+          keyId: 'test-key',
+          publicKeySpkiBase64: 'ZE==',
+          environment: 'test'
+        }],
+        revocations: []
+      })
+    ).toThrow('canonical Base64')
+  })
+
   it('requires both locked Linux targets and the fixed Node patch', () => {
     const target = {
       archive: 'node.tar.gz',

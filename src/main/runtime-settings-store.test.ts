@@ -80,6 +80,63 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('seeds a local provider-neutral model connection', async () => {
+    const { store } = await createStore()
+
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'http://127.0.0.1:11434/v1',
+      modelName: 'qwen3',
+      modelProtocol: 'openai-chat-completions',
+      modelAuthentication: 'none',
+      modelProfiles: [
+        expect.objectContaining({
+          id: '00000000-0000-4000-8000-000000000001',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelName: 'qwen3',
+          authentication: 'none'
+        })
+      ]
+    })
+  })
+
+  it('replaces only the untouched legacy BigToken seed', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const version19 = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    version19.version = 19
+    await writeFile(filePath, JSON.stringify(version19), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'http://127.0.0.1:11434/v1',
+      modelName: 'qwen3',
+      modelAuthentication: 'none'
+    })
+  })
+
+  it('preserves an explicitly credentialed BigToken connection', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(
+      settings({
+        apiKey: { action: 'replace', value: 'explicit-key' }
+      })
+    )
+    const version19 = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    version19.version = 19
+    await writeFile(filePath, JSON.stringify(version19), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'https://bigtoken.ai',
+      modelName: 'sonnet-5',
+      apiKey: 'explicit-key'
+    })
+  })
+
   it('restores an exact credential-bearing snapshot after a failed activation', async () => {
     const { store } = await createStore()
     await store.update(
@@ -382,7 +439,7 @@ describe('RuntimeSettingsStore', () => {
     })
 
     await expect(store.getResolvedSettings()).resolves.toMatchObject({
-      modelProtocol: 'anthropic-messages',
+      modelProtocol: 'openai-chat-completions',
       deepseekHarnessModelProfile: {
         id: 'goodbuddy-platform-harness',
         name: '管理员预置模型',
@@ -398,7 +455,9 @@ describe('RuntimeSettingsStore', () => {
 
     const publicSettings = await store.getPublicSettings()
     expect(JSON.stringify(publicSettings)).not.toContain(apiKey)
-    expect(publicSettings.modelProtocol).toBe('anthropic-messages')
+    expect(publicSettings.modelProtocol).toBe(
+      'openai-chat-completions'
+    )
   })
 
   it.each([
@@ -481,7 +540,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
-    expect(persisted.version).toBe(19)
+    expect(persisted.version).toBe(20)
     expect(persisted).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
@@ -760,7 +819,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(19)
+    expect(persisted.version).toBe(20)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -780,7 +839,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(19)
+    expect(persisted.version).toBe(20)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -1058,7 +1117,7 @@ describe('RuntimeSettingsStore', () => {
       (JSON.parse(await readFile(filePath, 'utf8')) as {
         version: number
       }).version
-    ).toBe(19)
+    ).toBe(20)
   })
 
   it('migrates version 13 with reranking disabled by default', async () => {
@@ -1565,7 +1624,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(19)
+    expect(persisted.version).toBe(20)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -1653,7 +1712,7 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
-  it('does not mix an environment key with a stored base URL', async () => {
+  it('keeps provider-specific environment aliases for existing deployments', async () => {
     const { filePath, store } = await createStore()
     await store.update(
       settings({
@@ -1663,11 +1722,14 @@ describe('RuntimeSettingsStore', () => {
     )
 
     const environmentStore = new RuntimeSettingsStore(filePath, cipher, {
-      GOODBUDDY_BIGTOKEN_API_KEY: 'YOUR_API_KEY_HERE'
+      GOODBUDDY_BIGTOKEN_API_KEY: 'legacy-key',
+      GOODBUDDY_BIGTOKEN_BASE_URL: 'https://legacy.example',
+      GOODBUDDY_BIGTOKEN_MODEL: 'legacy-model'
     })
     await expect(environmentStore.getResolvedSettings()).resolves.toMatchObject({
-      apiKey: 'YOUR_API_KEY_HERE',
-      modelBaseUrl: 'https://bigtoken.ai'
+      apiKey: 'legacy-key',
+      modelBaseUrl: 'https://legacy.example',
+      modelName: 'legacy-model'
     })
   })
 
@@ -1724,7 +1786,7 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
-  it('prefers generic model environment variables over legacy fallbacks', async () => {
+  it('prefers generic model environment variables over legacy aliases', async () => {
     const { filePath } = await createStore()
     const store = new RuntimeSettingsStore(filePath, cipher, {
       GOODBUDDY_MODEL_API_KEY: 'generic-key',
@@ -1864,7 +1926,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 19,
+      version: 20,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -2143,7 +2205,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(19)
+    expect(persisted.version).toBe(20)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

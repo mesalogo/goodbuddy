@@ -6148,12 +6148,19 @@ describe('App', () => {
       })),
       getAgentPackageInventory: vi.fn(async () => ({
         checkedAt: '2026-08-24T00:00:00.000Z',
+        catalog: {
+          state: 'available' as const,
+          checkedAt: '2026-08-24T00:00:00.000Z',
+          error: null
+        },
         entries: [
           {
             platform: 'linux' as const,
             architecture: 'x64' as const,
             state: 'verified' as const,
             version: '0.11.2',
+            latestVersion: '0.11.4',
+            updateAvailable: true,
             agentProtocol: { major: 2, minor: 0 },
             remoteRuntimeVersion: '1.18.9'
           },
@@ -6162,6 +6169,8 @@ describe('App', () => {
             architecture: 'arm64' as const,
             state: 'not-downloaded' as const,
             version: null,
+            latestVersion: '0.11.4',
+            updateAvailable: false,
             agentProtocol: null,
             remoteRuntimeVersion: null
           }

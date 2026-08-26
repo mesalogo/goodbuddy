@@ -209,14 +209,42 @@ export const agentPackageInventoryEntrySchema = z
     architecture: agentArchitectureSchema,
     state: agentPackageStateSchema,
     version: semanticVersionSchema.nullable(),
+    latestVersion: semanticVersionSchema.nullable(),
+    updateAvailable: z.boolean(),
     remoteRuntimeVersion: semanticVersionSchema.nullable(),
     agentProtocol: agentProtocolVersionSchema.nullable()
   })
   .strict()
 
+export const agentPackageCatalogStatusSchema = z
+  .discriminatedUnion('state', [
+    z
+      .object({
+        state: z.literal('not-checked'),
+        checkedAt: z.null(),
+        error: z.null()
+      })
+      .strict(),
+    z
+      .object({
+        state: z.literal('available'),
+        checkedAt: z.string().datetime(),
+        error: z.null()
+      })
+      .strict(),
+    z
+      .object({
+        state: z.literal('unavailable'),
+        checkedAt: z.string().datetime(),
+        error: z.string().trim().min(1).max(2_000)
+      })
+      .strict()
+  ])
+
 export const agentPackageInventorySchema = z
   .object({
     checkedAt: z.string().datetime(),
+    catalog: agentPackageCatalogStatusSchema,
     entries: z
       .array(agentPackageInventoryEntrySchema)
       .length(agentArchitectureSchema.options.length)

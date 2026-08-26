@@ -38,12 +38,12 @@ import {
   canonicalJson
 } from '../../shared/agent-protocol/canonical'
 import {
-  agentReleaseKeyRegistrySchema,
   type AgentArchitecture,
   type AgentReleaseKeyRegistry
 } from '../../shared/agent-installation-contracts'
 import {
-  canonicalAgentReleaseKeyRegistryBytes,
+  parseAgentReleaseKeyRegistry,
+  parseAgentReleaseKeyRegistryBytes,
   verifyAgentBundleDirectory,
   type AgentVerificationEnvironment,
   type VerifiedAgentBundle
@@ -156,8 +156,11 @@ export async function verifyExtractedAgentPackage(options: {
       'Agent package is not compatible with this GoodBuddy version'
     )
   }
-  const registry = parseCanonicalRegistry(registryBytes)
-  const trustedRegistry = agentReleaseKeyRegistrySchema.parse(
+  const registry = parseAgentReleaseKeyRegistryBytes(
+    registryBytes,
+    'Agent package key registry'
+  )
+  const trustedRegistry = parseAgentReleaseKeyRegistry(
     options.trustedRegistry
   )
   verifyDescriptorSignature(
@@ -543,20 +546,6 @@ function parseCanonicalDescriptor(
     throw new Error('Agent package descriptor is not canonical')
   }
   return descriptor
-}
-
-function parseCanonicalRegistry(bytes: Buffer) {
-  const registry = agentReleaseKeyRegistrySchema.parse(
-    JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    )
-  )
-  if (
-    !canonicalAgentReleaseKeyRegistryBytes(registry).equals(bytes)
-  ) {
-    throw new Error('Agent package key registry is not canonical')
-  }
-  return registry
 }
 
 function verifyDescriptorSignature(

@@ -520,26 +520,37 @@ export const settingsSections = {
       agentInventory: {
         title: 'GoodBuddy Agent packages',
         description:
-          'Agent packages are released independently and include the Agent, pinned Node, and the remote OpenCode Runtime adapted by GoodBuddy. Online actions use the source selected under About & Updates; nothing is downloaded until remote projects are used.',
-        loading: 'Verifying local Agent packages…',
-        refresh: 'Refresh local inventory',
+          'Agent packages are released independently and include the Agent, pinned Node, and the remote OpenCode Runtime adapted by GoodBuddy. Opening this page reads only the small signed catalog to show available updates and never downloads an Agent package automatically. Online actions use the source selected under About & Updates.',
+        loading: 'Verifying local Agent packages and checking online versions…',
+        refresh: 'Refresh package inventory',
         import: 'Import offline package',
         export: 'Export offline package',
         download: 'Download',
         update: 'Check for updates',
+        updateTo: 'Update to {{version}}',
+        downloadVersion: 'Download {{version}}',
         listLabel: 'Local Agent package inventory',
         summary:
           '{{available}} of {{total}} Linux architectures are available.',
         states: {
           verified: 'Downloaded and verified',
           'not-downloaded': 'Not downloaded',
-          invalid: 'Verification failed'
+          invalid: 'Verification failed',
+          updateAvailable: 'Update available',
+          upToDate: 'Up to date'
         },
         fields: {
-          agentVersion: 'Agent version',
+          agentVersion: 'Local Agent',
+          latestVersion: 'Latest online version',
           architecture: 'Architecture',
           runtimeVersion: 'Remote OpenCode',
           protocol: 'Agent protocol'
+        },
+        catalog: {
+          available:
+            'Online versions were checked through the signed catalog. Agent packages are transferred only after you choose Download or Update.',
+          unavailable:
+            'Could not check online Agent versions: {{error}}. Verified local packages and offline imports remain available. Refresh to try again.'
         },
         progress: {
           catalog: 'Reading the signed release catalog…',
@@ -556,7 +567,7 @@ export const settingsSections = {
           unavailable:
             'Agent package management is not available in this version.',
           readFailed:
-            'Could not load local Agent packages. Try again.',
+            'Could not load Agent packages. Try again.',
           downloadFailed:
             'Agent package download or verification failed',
           importFailed:

@@ -2,6 +2,46 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.5",
+      "releasedAt": "2026-08-26",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.11.5 修复 Agent 下载兼容性，显示可用 Agent 更新，并调整新安装的默认模型连接。"
+          ],
+          "features": [
+            "**Agent 更新提示。** “设置 → 平台功能 → 远程项目”现在会显示本地 Agent 版本、在线最新兼容版本以及“有更新 / 已是最新”。打开页面只检查小型签名目录，不会自动下载 Agent 包。"
+          ],
+          "fixes": [
+            "**Agent 公钥目录。** 修复 Windows 发布包使用 CRLF 换行时，合法 Agent 下载被拒绝的问题。JSON 排版不再影响信任，Ed25519 公钥、签名、撤销状态和 SHA-256 校验保持不变。",
+            "**默认模型连接。** 新安装改用本机 Ollama 兼容连接；升级只替换未配置凭据的旧默认项，用户显式保存的连接保持不变。",
+            "**侧栏菜单稳定性。** 修复魔法笔记未完成待办数字出现或隐藏时左侧菜单行高变化的问题；相邻入口现在保持固定位置。"
+          ],
+          "notices": [
+            "本次正式 Agent 版本为 `0.11.5`，提供 Linux x64 与 arm64；大型包继续使用流式 SHA-256 校验，不会降级为 MD5。",
+            "`0.11.5` 将另外提供独立的实验性 LoongArch 桌面预览包。它不进入标准更新索引，且不包含 Agent、Remote Runtime、OpenCode 和原生 Canvas。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.11.5 fixes Agent download compatibility, shows available Agent updates, and updates the default model connection for new installations."
+          ],
+          "features": [
+            "**Agent update status.** Settings → Platform Features → Remote Projects now shows the local Agent version, latest compatible online version, and Update available / Up to date status. Opening the page checks only the small signed catalog and never downloads an Agent package automatically."
+          ],
+          "fixes": [
+            "**Agent public-key registry.** Fixed valid Agent downloads being rejected when Windows release packages used CRLF line endings. JSON formatting no longer affects trust, while Ed25519 keys, signatures, revocations, and SHA-256 verification remain unchanged.",
+            "**Default model connection.** New installations now use a local Ollama-compatible connection. Upgrades replace only the old default when it has no configured credential, while explicitly saved user connections remain unchanged.",
+            "**Stable sidebar navigation.** Fixed the Magic Notes incomplete-todo count changing the sidebar row height when the badge appeared or disappeared. Neighboring navigation items now remain in place."
+          ],
+          "notices": [
+            "The formal Agent version is `0.11.5`, with Linux x64 and arm64 packages. Large packages continue to use streaming SHA-256 and are not downgraded to MD5.",
+            "A separate experimental LoongArch desktop preview will be provided for `0.11.5`. It remains outside the standard update index and excludes Agent, Remote Runtime, OpenCode, and native Canvas."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.4",
       "releasedAt": "2026-08-26",
       "notes": {

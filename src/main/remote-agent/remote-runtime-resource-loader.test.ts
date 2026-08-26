@@ -173,6 +173,23 @@ describe('remote Runtime resource loader', () => {
     })
   })
 
+  it('accepts equivalent key-registry formatting and returns canonical bytes', async () => {
+    const fixture = await createFixture()
+    await writeFile(
+      fixture.paths.keyRegistryPath,
+      Buffer.from(
+        canonical(registry).toString('utf8').replace(/\n/gu, '\r\n')
+      )
+    )
+
+    await expect(
+      loadRemoteRuntimeVerificationMetadata(fixture.paths)
+    ).resolves.toMatchObject({
+      releaseKeyRegistry: registry,
+      canonicalReleaseKeyRegistryBytes: canonical(registry)
+    })
+  })
+
   it('rejects a symlinked digest directory', async () => {
     const fixture = await createFixture({ digestDirectories: 0 })
     const target = join(fixture.root, 'target')
@@ -225,11 +242,6 @@ describe('remote Runtime resource loader', () => {
       name: 'malformed',
       bytes: Buffer.from('not json\n'),
       error: 'invalid JSON'
-    },
-    {
-      name: 'noncanonical',
-      bytes: Buffer.from(JSON.stringify(registry)),
-      error: 'not canonical'
     },
     {
       name: 'oversize',

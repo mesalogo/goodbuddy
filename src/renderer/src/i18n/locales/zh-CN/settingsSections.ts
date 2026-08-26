@@ -491,25 +491,36 @@ export const settingsSections = {
       agentInventory: {
         title: 'GoodBuddy Agent 包',
         description:
-          'Agent 包独立发布，包含 Agent、固定 Node 和桌面版本适配的远端 OpenCode Runtime。在线操作使用“关于与更新”中选择的更新源；未使用远程项目时不会下载。',
-        loading: '正在校验本地 Agent 包…',
-        refresh: '刷新本地清单',
+          'Agent 包独立发布，包含 Agent、固定 Node 和桌面版本适配的远端 OpenCode Runtime。打开此页只读取小型签名目录并显示可用更新，不会自动下载 Agent 包；在线操作使用“关于与更新”中选择的更新源。',
+        loading: '正在校验本地 Agent 包并检查在线版本…',
+        refresh: '刷新包清单',
         import: '导入离线包',
         export: '导出离线包',
         download: '下载',
         update: '检查并更新',
+        updateTo: '更新到 {{version}}',
+        downloadVersion: '下载 {{version}}',
         listLabel: '本地 Agent 包清单',
         summary: '当前 {{available}} / {{total}} 个 Linux 架构可用。',
         states: {
           verified: '已下载并验证',
           'not-downloaded': '未下载',
-          invalid: '校验失败'
+          invalid: '校验失败',
+          updateAvailable: '有更新',
+          upToDate: '已是最新'
         },
         fields: {
-          agentVersion: 'Agent 版本',
+          agentVersion: '本地 Agent',
+          latestVersion: '在线最新版本',
           architecture: '架构',
           runtimeVersion: '远端 OpenCode',
           protocol: 'Agent 协议'
+        },
+        catalog: {
+          available:
+            '在线版本已通过签名目录检查；只有点击下载或更新后才会传输 Agent 包。',
+          unavailable:
+            '未能检查在线 Agent 版本：{{error}}。本地已验证包和离线导入仍可使用，可刷新重试。'
         },
         progress: {
           catalog: '正在读取签名发布目录…',
@@ -524,7 +535,7 @@ export const settingsSections = {
         },
         errors: {
           unavailable: '当前版本未提供 Agent 包管理服务',
-          readFailed: '读取本地 Agent 包清单失败，请重试',
+          readFailed: '读取 Agent 包清单失败，请重试',
           downloadFailed: 'Agent 包下载或校验失败',
           importFailed: 'Agent 离线包导入或校验失败',
           exportFailed: 'Agent 离线包导出失败'

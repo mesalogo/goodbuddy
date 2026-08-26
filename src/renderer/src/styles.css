@@ -3084,14 +3084,15 @@ textarea:focus-visible {
 
 .nav-item__badge {
   display: grid;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 5px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
   border-radius: 999px;
   background: var(--danger-solid);
   color: var(--text-on-accent);
   font-size: 10px;
   font-weight: 700;
+  line-height: 1;
   place-items: center;
 }
 
@@ -6628,6 +6629,16 @@ button > svg {
 .bundled-agent-inventory__badge--verified {
   background: var(--success-subtle);
   color: var(--success);
+}
+
+.bundled-agent-inventory__badge--up-to-date {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.bundled-agent-inventory__badge--update-available {
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 .bundled-agent-inventory__badge--not-downloaded,

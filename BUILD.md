@@ -139,12 +139,19 @@ npm run dist:linux:arm64
 组件，缺少远端包也不能阻塞普通桌面打包或发布。
 
 “设置 > 平台功能 > 远程项目（技术预览）”列出用户数据目录中已经下载或导入的
-Linux x64/arm64 复合 Agent 包，并分别显示 `已下载并验证 / 未下载 / 校验失败`。
-在线“下载/检查并更新”必须由用户显式触发，来源跟随“关于与更新”的 `github` 或
-`mirror` 选择；打开远程项目不会自动下载。用户也可导入或导出 `.gbagent` 离线包。
+Linux x64/arm64 复合 Agent 包。首次打开和手动刷新会从“关于与更新”所选来源读取
+小型签名目录，显示本地版本、在线最新兼容版本以及 `有更新 / 已是最新 / 未下载 /
+校验失败`；此检查不会下载 `.gbagent`。只有用户点击“下载”或“更新到”后才传输包，
+用户也可导入或导出 `.gbagent` 离线包。
 Main 在写入缓存前校验签名目录、目录签名、大小、SHA-256、桌面最低版本、Agent 协议、
 内部 Agent/Runtime 签名和完整 payload。缓存位于 Electron `userData` 下的
 `remote-components/agent-packages`，不暴露给 Renderer。
+
+公钥 registry 的信任来自严格 schema、唯一 key ID、规范 Base64、有效 Ed25519 key、
+production/test 环境和撤销列表，不来自 JSON 空白或换行。读取桌面资源、复合包和 Host
+已有 registry 时接受等价 UTF-8 JSON 格式；向 Host 写入前统一重新序列化为确定性 LF
+JSON。签名目录、包描述符、manifest、签名和 payload 的原始字节校验保持不变，包下载
+继续流式计算 SHA-256，不使用 MD5。
 
 “SSH 主机 > 远程运行环境”的“更新版本”只使用已验证的本地复合包。对应 Host 架构
 尚未下载时会提示先到设置下载或导入，不会联网，也不会影响本地项目、普通桌面功能或

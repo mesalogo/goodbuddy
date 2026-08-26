@@ -514,12 +514,19 @@ let applicationSettings: ApplicationSettings = {
 }
 const agentPackageInventory: AgentPackageInventory = {
   checkedAt: '2026-08-24T00:00:00.000Z',
+  catalog: {
+    state: 'available',
+    checkedAt: '2026-08-24T00:00:00.000Z',
+    error: null
+  },
   entries: [
     {
       platform: 'linux',
       architecture: 'x64',
       state: 'verified',
       version: '0.11.2',
+      latestVersion: '0.11.4',
+      updateAvailable: true,
       agentProtocol: { major: 2, minor: 0 },
       remoteRuntimeVersion: '1.18.9'
     },
@@ -528,6 +535,8 @@ const agentPackageInventory: AgentPackageInventory = {
       architecture: 'arm64',
       state: 'not-downloaded',
       version: null,
+      latestVersion: '0.11.4',
+      updateAvailable: false,
       agentProtocol: null,
       remoteRuntimeVersion: null
     }
@@ -1878,13 +1887,13 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('Linux x64')).toBeInTheDocument()
     expect(screen.getByText('Linux arm64')).toBeInTheDocument()
-    expect(screen.getByText('已下载并验证')).toBeInTheDocument()
+    expect(screen.getByText('有更新')).toBeInTheDocument()
     expect(screen.getByText('未下载')).toBeInTheDocument()
     expect(getAgentPackageInventory).toHaveBeenCalledOnce()
     expect(getAgentPackageInventory).toHaveBeenNthCalledWith(1, false)
 
     fireEvent.click(
-      screen.getByRole('button', { name: '刷新本地清单' })
+      screen.getByRole('button', { name: '刷新包清单' })
     )
     await waitFor(() =>
       expect(getAgentPackageInventory).toHaveBeenCalledTimes(2)
@@ -1899,14 +1908,34 @@ describe('SettingsPanel runtime files', () => {
       .closest('[role="listitem"]')
     expect(x64Card).not.toBeNull()
     expect(arm64Card).not.toBeNull()
+    downloadAgentPackage.mockResolvedValueOnce({
+      ...agentPackageInventory,
+      entries: agentPackageInventory.entries.map((entry) =>
+        entry.architecture === 'x64'
+          ? {
+              ...entry,
+              version: '0.11.4',
+              updateAvailable: false
+            }
+          : entry
+      )
+    })
     fireEvent.click(
       within(x64Card as HTMLElement).getByRole('button', {
-        name: '检查并更新'
+        name: '更新到 0.11.4'
       })
     )
     await waitFor(() =>
       expect(downloadAgentPackage).toHaveBeenCalledWith('x64')
     )
+    expect(
+      await within(x64Card as HTMLElement).findByText('已是最新')
+    ).toBeInTheDocument()
+    expect(
+      within(x64Card as HTMLElement).queryByRole('button', {
+        name: /更新到/u
+      })
+    ).not.toBeInTheDocument()
     fireEvent.click(
       within(x64Card as HTMLElement).getByRole('button', {
         name: '导出离线包'
@@ -1917,7 +1946,7 @@ describe('SettingsPanel runtime files', () => {
     )
     fireEvent.click(
       within(arm64Card as HTMLElement).getByRole('button', {
-        name: '下载'
+        name: '下载 0.11.4'
       })
     )
     await waitFor(() =>
@@ -1967,7 +1996,9 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(
-      await screen.findByText('正在校验本地 Agent 包…')
+      await screen.findByText(
+        '正在校验本地 Agent 包并检查在线版本…'
+      )
     ).toBeInTheDocument()
 
     await act(async () => {
@@ -1982,14 +2013,14 @@ describe('SettingsPanel runtime files', () => {
       new Error('inventory unavailable')
     )
     fireEvent.click(
-      screen.getByRole('button', { name: '刷新本地清单' })
+      screen.getByRole('button', { name: '刷新包清单' })
     )
     expect(
       await screen.findByText('inventory unavailable')
     ).toBeInTheDocument()
 
     fireEvent.click(
-      screen.getByRole('button', { name: '刷新本地清单' })
+      screen.getByRole('button', { name: '刷新包清单' })
     )
     await waitFor(() =>
       expect(
@@ -1997,6 +2028,55 @@ describe('SettingsPanel runtime files', () => {
       ).not.toBeInTheDocument()
     )
     expect(getAgentPackageInventory).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps local Agent packages usable when the online catalog is unavailable', async () => {
+    getAgentPackageInventory.mockResolvedValueOnce({
+      ...agentPackageInventory,
+      catalog: {
+        state: 'unavailable',
+        checkedAt: '2026-08-24T00:00:00.000Z',
+        error: 'network unavailable'
+      },
+      entries: agentPackageInventory.entries.map((entry) => ({
+        ...entry,
+        latestVersion: null,
+        updateAvailable: false
+      }))
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    fireEvent.click(
+      await screen.findByRole('tab', {
+        name: '远程项目（技术预览）'
+      })
+    )
+
+    expect(
+      await screen.findByText(/network unavailable/u)
+    ).toBeInTheDocument()
+    const x64Card = screen
+      .getByText('Linux x64')
+      .closest('[role="listitem"]')
+    expect(
+      within(x64Card as HTMLElement).getByRole('button', {
+        name: '检查并更新'
+      })
+    ).toBeInTheDocument()
+    expect(
+      within(x64Card as HTMLElement).getByRole('button', {
+        name: '导出离线包'
+      })
+    ).toBeInTheDocument()
   })
 
   it('shows the SSH Hosts category only while Remote Projects is enabled', () => {

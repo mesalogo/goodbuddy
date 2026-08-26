@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已转为正式 Agent `0.11.4`。失败的 `agent-v0.11.3` 保持不可变且未发布。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
+本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已转为正式 Agent `0.11.5`。失败的 `agent-v0.11.3` 保持不可变且未发布。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
 
 ## 产品语义
 
@@ -65,10 +65,10 @@ Detached GoodBuddy Agent
 - SSH Host 设置通过固定探针和有界 SFTP 显示 Host 已登记的 Agent/OpenCode 版本，并与当前 GoodBuddy 所需版本比较；打开设置或“刷新版本”只读取状态，不安装或切换远端组件。
 - “平台功能 > 远程项目”中的本地 Agent 包清单与 Host 状态分离。Main 对用户数据目录中
   Linux x64/arm64 `.gbagent` 分别执行外层可信签名、桌面/协议兼容性、内部 Agent/Runtime
-  签名、架构与完整 payload 校验；Renderer 只得到版本、架构、远端 Runtime 版本、协议和
-  `verified | not-downloaded | invalid`，不得到缓存路径、key ID 或 digest。在线下载只由
-  用户点击触发，并使用“关于与更新”选择的 GitHub 或北京 OSS 来源；离线导入/导出通过
-  Main 管理的文件对话框完成。
+  签名、架构与完整 payload 校验；首次打开和手动刷新还会读取“关于与更新”所选来源的
+  小型签名目录。Renderer 只得到本地/在线版本、是否有更新、架构、远端 Runtime 版本、
+  协议和本地状态，不得到缓存路径、key ID 或 digest。目录检查不下载 `.gbagent`，在线
+  包下载只由用户点击带目标版本的操作触发；离线导入/导出通过 Main 管理的文件对话框完成。
 - 当任一组件缺失或不是当前版本时，用户可显式选择“更新版本”。Main 使用同一个取消信号依次强制执行 Agent、Runtime 安装器，并把 Agent、Runtime、Finalizing 阶段只发送给发起更新的 Renderer。更新启动仍受技术预览开关和可信 Sender 校验约束；取消不受开关约束，确保操作开始后即使关闭功能也能停止。
 - 更新成功后才定向清理该 Host 的 Agent 连接和 Runtime 选择缓存，并让当前引用项目重新激活；失败或取消保留 Host 配置、凭据、项目、Workspace 和可继续验证的旧组件，Renderer 刷新实际版本并允许重试。同一 Renderer 同时只更新一个 Host，窗口销毁或 Main 退出会取消活动更新并执行有界收尾。
 - 显式 stop、升级、身份冲突或进程退出时清理 GoodBuddy 自己的 socket、状态和子进程；不得删除或覆盖无关 Host 文件。
@@ -170,7 +170,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。当前源码 lock 是正式版本 `0.11.4`，需要由新的复合包发布流程另行验证。
+  的双架构验收。当前源码 lock 是正式版本 `0.11.5`，需要由新的复合包发布流程另行验证。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
@@ -227,6 +227,10 @@ Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转
 - Main 的本地缓存只发布完整验证成功的内容。在线目录和包都绑定固定 GitHub/OSS URL、
   大小和 SHA-256；选取规则是桌面最低版本满足、Agent protocol major 相同且 minor 不高于
   当前支持值的最高 SemVer。缺少某架构仅使该架构 Host 的托管 SSH 无法激活。
+- `agent-release-keys.json` 读取时按 UTF-8 JSON 解析并严格验证 schema、唯一 key ID、
+  规范 Base64、有效 Ed25519 key、环境和撤销列表，不把 CRLF/LF 或普通 JSON 空白作为
+  信任条件。上传到 Host 前重新序列化为确定性 LF JSON。签名目录、描述符、manifest 和
+  payload 仍按原始签名字节及 SHA-256 验证。
 
 ## 发布前验证
 

@@ -477,10 +477,10 @@ export const defaultContextCompressionSettings = {
 
 export const defaultRuntimeSettings = {
   provider: 'model',
-  modelBaseUrl: 'https://bigtoken.ai',
-  modelName: 'sonnet-5',
-  modelProtocol: 'anthropic-messages',
-  modelAuthentication: 'api-key',
+  modelBaseUrl: 'http://127.0.0.1:11434/v1',
+  modelName: 'qwen3',
+  modelProtocol: 'openai-chat-completions',
+  modelAuthentication: 'none',
   supportsImageInput: false,
   imageGenerationQuality: 'auto',
   opencodeBaseUrl: '',

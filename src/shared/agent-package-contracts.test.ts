@@ -67,12 +67,19 @@ describe('Agent package contracts', () => {
       platform: 'linux',
       state: 'not-downloaded',
       version: null,
+      latestVersion: null,
+      updateAvailable: false,
       remoteRuntimeVersion: null,
       agentProtocol: null
     } as const
     expect(
       agentPackageInventorySchema.parse({
         checkedAt: '2026-08-25T00:00:00.000Z',
+        catalog: {
+          state: 'not-checked',
+          checkedAt: null,
+          error: null
+        },
         entries: [
           { ...entry, architecture: 'x64' },
           { ...entry, architecture: 'arm64' }
@@ -82,6 +89,11 @@ describe('Agent package contracts', () => {
     expect(() =>
       agentPackageInventorySchema.parse({
         checkedAt: '2026-08-25T00:00:00.000Z',
+        catalog: {
+          state: 'not-checked',
+          checkedAt: null,
+          error: null
+        },
         entries: [
           { ...entry, architecture: 'x64' },
           { ...entry, architecture: 'x64' }

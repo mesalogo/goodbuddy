@@ -35,6 +35,9 @@ import type {
   SshConnectionPoolTarget
 } from '../ssh/ssh-connection-pool'
 import { settleBoundedly } from './bounded-settlement'
+import {
+  parseAgentReleaseKeyRegistryBytes
+} from './agent-bundle-verifier'
 import { isMissingPathError } from './path-errors'
 
 const MAXIMUM_INSTALLATION_FILES = 200
@@ -711,18 +714,13 @@ export class RemoteRuntimeInstallationManager {
         metadataSftp.readFile(RELEASE_KEYS_PATH, signal),
         metadataSftp.readFile(RUNTIME_LOCK_PATH, signal)
       ])
-      const remoteReleaseKeyRegistryBytes = canonicalJsonBytes(
-        remoteReleaseKeyBytes,
-        agentReleaseKeyRegistrySchema,
+      const remoteReleaseKeyRegistryBytes =
+        Buffer.from(remoteReleaseKeyBytes)
+      const remoteReleaseKeyRegistry =
+        parseAgentReleaseKeyRegistryBytes(
+          remoteReleaseKeyRegistryBytes,
         'Installed Runtime release-key registry'
       )
-      const remoteReleaseKeyRegistry =
-        agentReleaseKeyRegistrySchema.parse(
-          parseJsonBytes(
-            remoteReleaseKeyRegistryBytes,
-            'Installed Runtime release-key registry'
-          )
-        )
       if (!remoteRuntimeLockFileBytes.equals(remoteRuntimeLockBytes)) {
         throw new Error(
           'Installed Runtime lock does not match this GoodBuddy build'

@@ -32,7 +32,6 @@ import {
 } from '../../shared/agent-protocol/contracts'
 import {
   agentArchitectureSchema,
-  agentReleaseKeyRegistrySchema,
   type AgentArchitecture,
   type AgentReleaseKeyRegistry
 } from '../../shared/agent-installation-contracts'
@@ -49,7 +48,7 @@ import type {
   AgentInstallationBundleLoader
 } from './agent-installation-manager'
 import {
-  canonicalAgentReleaseKeyRegistryBytes
+  readAgentReleaseKeyRegistry
 } from './agent-bundle-verifier'
 import type {
   RemoteRuntimeInstallationBundleLoader,
@@ -84,6 +83,18 @@ type InstalledRecord = {
   verified: VerifiedAgentPackage
 }
 
+type CatalogState =
+  | {
+      state: 'available'
+      checkedAt: string
+      catalog: AgentPackageCatalog
+    }
+  | {
+      state: 'unavailable'
+      checkedAt: string
+      error: string
+    }
+
 export type AgentPackageManagerOptions = {
   userDataPath: string
   desktopVersion: string
@@ -111,6 +122,7 @@ export class AgentPackageManager {
   >()
   readonly #leaseCounts = new Map<string, number>()
   readonly #pendingRemovals = new Set<string>()
+  #catalogState?: CatalogState
 
   constructor(options: AgentPackageManagerOptions) {
     this.#rootDirectory = resolve(
@@ -170,11 +182,17 @@ export class AgentPackageManager {
         } catch {
           state = 'invalid'
         }
+        const latestVersion = this.#latestVersion(architecture)
         return {
           platform: 'linux' as const,
           architecture,
           state,
           version: record?.verified.descriptor.version ?? null,
+          latestVersion,
+          updateAvailable: this.#updateAvailable(
+            latestVersion,
+            record
+          ),
           remoteRuntimeVersion:
             record?.verified.descriptor.remoteRuntime.version ?? null,
           agentProtocol:
@@ -184,13 +202,15 @@ export class AgentPackageManager {
     )
     return agentPackageInventorySchema.parse({
       checkedAt: this.#now().toISOString(),
+      catalog: this.#publicCatalogState(),
       entries
     })
   }
 
-  getSnapshot(
+  async getSnapshot(
     options: { refresh?: boolean } = {}
   ): Promise<AgentPackageInventory> {
+    await this.#checkCatalog()
     return this.getInventory(options)
   }
 
@@ -229,23 +249,33 @@ export class AgentPackageManager {
         totalBytes: null
       })
       const source = await this.#getUpdateSource()
-      const catalog = await this.#loadCatalog(source)
+      const catalog = await this.#loadCatalogAndRemember(source)
       const entry = selectLatestCompatibleEntry(
         catalog,
         architecture,
         this.#desktopVersion
       )
       const current = await this.#loadInstalled(architecture)
+      const comparison = current
+        ? compareSemanticVersions(
+            entry.version,
+            current.verified.descriptor.version
+          )
+        : 1
       if (
         current &&
-        compareSemanticVersions(
-          entry.version,
-          current.verified.descriptor.version
-        ) < 0
+        comparison < 0
       ) {
         throw new Error(
           'Agent 发布目录不能降级已安装的兼容版本'
         )
+      }
+      if (
+        current &&
+        comparison === 0 &&
+        current.archiveSha256 === entry.sha256
+      ) {
+        return this.getInventory()
       }
       const staging = await this.#createStaging(architecture)
       const archivePath = join(staging, entry.archive)
@@ -710,6 +740,90 @@ export class AgentPackageManager {
     return catalog
   }
 
+  async #loadCatalogAndRemember(
+    source: UpdateSource
+  ): Promise<AgentPackageCatalog> {
+    const checkedAt = this.#now().toISOString()
+    try {
+      const catalog = await this.#loadCatalog(source)
+      this.#catalogState = {
+        state: 'available',
+        checkedAt,
+        catalog
+      }
+      return catalog
+    } catch (error) {
+      this.#catalogState = {
+        state: 'unavailable',
+        checkedAt,
+        error: boundedErrorMessage(error)
+      }
+      throw error
+    }
+  }
+
+  async #checkCatalog(): Promise<void> {
+    try {
+      await this.#loadCatalogAndRemember(
+        await this.#getUpdateSource()
+      )
+    } catch {
+      // The failed catalog state is already recorded. Local packages remain usable.
+    }
+  }
+
+  #latestVersion(
+    architecture: AgentArchitecture
+  ): string | null {
+    if (this.#catalogState?.state !== 'available') {
+      return null
+    }
+    try {
+      return selectLatestCompatibleEntry(
+        this.#catalogState.catalog,
+        architecture,
+        this.#desktopVersion
+      ).version
+    } catch {
+      return null
+    }
+  }
+
+  #updateAvailable(
+    latestVersion: string | null,
+    installed: InstalledRecord | undefined
+  ): boolean {
+    return installed !== undefined &&
+      latestVersion !== null &&
+      compareSemanticVersions(
+        latestVersion,
+        installed.verified.descriptor.version
+      ) > 0
+  }
+
+  #publicCatalogState():
+  AgentPackageInventory['catalog'] {
+    if (this.#catalogState === undefined) {
+      return {
+        state: 'not-checked',
+        checkedAt: null,
+        error: null
+      }
+    }
+    if (this.#catalogState.state === 'available') {
+      return {
+        state: 'available',
+        checkedAt: this.#catalogState.checkedAt,
+        error: null
+      }
+    }
+    return {
+      state: 'unavailable',
+      checkedAt: this.#catalogState.checkedAt,
+      error: this.#catalogState.error
+    }
+  }
+
   async #fetchMirrorCatalog(): Promise<[Buffer, Buffer]> {
     const pointerBytes = await this.#fetchBounded(
       `${MIRROR_ROOT}latest.json`
@@ -874,7 +988,7 @@ export class AgentPackageManager {
   }
 
   #loadTrustedRegistry(): Promise<AgentReleaseKeyRegistry> {
-    this.#trustedRegistry ??= readCanonicalRegistry(
+    this.#trustedRegistry ??= readAgentReleaseKeyRegistry(
       this.#keyRegistryPath
     )
     return this.#trustedRegistry
@@ -1010,23 +1124,6 @@ function assertCanonicalDownload(
   }
 }
 
-async function readCanonicalRegistry(
-  filePath: string
-): Promise<AgentReleaseKeyRegistry> {
-  const bytes = await readFile(filePath)
-  const registry = agentReleaseKeyRegistrySchema.parse(
-    JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    )
-  )
-  if (
-    !canonicalAgentReleaseKeyRegistryBytes(registry).equals(bytes)
-  ) {
-    throw new Error('Agent 签名公钥目录不是规范格式')
-  }
-  return registry
-}
-
 function parseCanonicalCatalog(bytes: Buffer): AgentPackageCatalog {
   const catalog = agentPackageCatalogSchema.parse(
     JSON.parse(
@@ -1123,6 +1220,16 @@ function verifyCatalogSignature(
   ) {
     throw new Error('Agent 发布目录签名校验失败')
   }
+}
+
+function boundedErrorMessage(error: unknown): string {
+  const message = error instanceof Error
+    ? error.message
+    : String(error)
+  return (
+    message.trim().slice(0, 2_000) ||
+    'Agent 发布目录检查失败'
+  )
 }
 
 async function copyAndHashBoundedRegularFile(

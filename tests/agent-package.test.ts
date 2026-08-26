@@ -472,6 +472,74 @@ describe('compound Agent packages', () => {
     ).rejects.toThrow('does not match its Agent bundle')
   })
 
+  it('accepts a signed package whose key registry uses CRLF', async () => {
+    const files = unzipSync(
+      new Uint8Array(readFileSync(packagePath))
+    )
+    const registryBytes = Buffer.from(
+      Buffer.from(files['agent-release-keys.json']!)
+        .toString('utf8')
+        .replace(/\n/gu, '\r\n')
+    )
+    files['agent-release-keys.json'] =
+      new Uint8Array(registryBytes)
+    const descriptor = agentPackageDescriptorSchema.parse(
+      JSON.parse(
+        Buffer.from(files['agent-package.json']!).toString('utf8')
+      )
+    )
+    const updatedDescriptor = {
+      ...descriptor,
+      files: descriptor.files.map((file) =>
+        file.path === 'agent-release-keys.json'
+          ? {
+              ...file,
+              size: registryBytes.byteLength,
+              sha256: createHash('sha256')
+                .update(registryBytes)
+                .digest('hex')
+            }
+          : file
+      )
+    }
+    updatedDescriptor.contentDigest =
+      agentPackage.descriptorContentDigest(updatedDescriptor)
+    const descriptorBytes =
+      agentPackage.descriptorBytes(updatedDescriptor)
+    files['agent-package.json'] = new Uint8Array(descriptorBytes)
+    files['agent-package.sig'] = new Uint8Array(
+      Buffer.from(
+        `${sign(
+          null,
+          Buffer.concat([
+            agentPackage.signatureDomain,
+            descriptorBytes
+          ]),
+          privateKey
+        ).toString('base64')}\n`
+      )
+    )
+    const crlfPath = join(
+      temporaryRoot,
+      'crlf-registry.gbagent'
+    )
+    writeFileSync(crlfPath, Buffer.from(zipSync(files)))
+
+    await expect(
+      extractAndVerifyAgentPackage({
+        archivePath: crlfPath,
+        destinationDirectory: join(
+          temporaryRoot,
+          'crlf-registry-output'
+        ),
+        desktopVersion: '0.11.0',
+        trustedRegistry: registry
+      })
+    ).resolves.toMatchObject({
+      descriptor: { architecture: 'x64' }
+    })
+  })
+
   it('orders SemVer prereleases and selects the latest compatible protocol', () => {
     expect(compareSemanticVersions('1.0.0-e2e.10', '1.0.0-e2e.9'))
       .toBeGreaterThan(0)
@@ -715,7 +783,7 @@ describe('compound Agent packages', () => {
   })
 
   it.each(['github', 'mirror'] as const)(
-    'follows the selected %s source only after a manual download',
+    'checks the selected %s catalog without downloading until requested',
     async (source) => {
       const root = join(temporaryRoot, `online-${source}`)
       mkdirSync(root)
@@ -723,6 +791,7 @@ describe('compound Agent packages', () => {
       writeFileSync(
         keyRegistryPath,
         `${JSON.stringify(registry, null, 2)}\n`
+          .replace(/\n/gu, '\r\n')
       )
       const catalog = signedCatalog()
       const requested: string[] = []
@@ -774,6 +843,42 @@ describe('compound Agent packages', () => {
 
       await manager.getInventory()
       expect(requested).toEqual([])
+      const snapshot = await manager.getSnapshot()
+      expect(snapshot.catalog).toMatchObject({
+        state: 'available',
+        error: null
+      })
+      expect(
+        snapshot.entries.find(
+          (entry) => entry.architecture === 'x64'
+        )
+      ).toMatchObject({
+        state: 'not-downloaded',
+        latestVersion: agentLock.agentVersion,
+        updateAvailable: false
+      })
+      expect(requested).toContain(
+        source === 'github'
+          ? 'https://api.github.com/repos/mesalogo/goodbuddy/releases?per_page=100'
+          : 'https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases/latest.json'
+      )
+      expect(requested).not.toContain(
+        source === 'github'
+          ? packageEntry().downloads.github.url
+          : packageEntry().downloads.mirror.url
+      )
+      await manager.download('x64')
+      const installedSnapshot = await manager.getInventory()
+      expect(
+        installedSnapshot.entries.find(
+          (entry) => entry.architecture === 'x64'
+        )
+      ).toMatchObject({
+        state: 'verified',
+        version: agentLock.agentVersion,
+        latestVersion: agentLock.agentVersion,
+        updateAvailable: false
+      })
       await manager.download('x64')
       expect(requested).toContain(
         source === 'github'
@@ -785,6 +890,16 @@ describe('compound Agent packages', () => {
           ? packageEntry().downloads.github.url
           : packageEntry().downloads.mirror.url
       )
+      expect(
+        requested.filter(
+          (url) =>
+            url === (
+              source === 'github'
+                ? packageEntry().downloads.github.url
+                : packageEntry().downloads.mirror.url
+            )
+        )
+      ).toHaveLength(1)
     }
   )
 
@@ -838,6 +953,14 @@ describe('compound Agent packages', () => {
       fetch: transport as typeof fetch
     })
 
+    await expect(manager.getSnapshot()).resolves.toMatchObject({
+      catalog: {
+        state: 'unavailable',
+        error: 'Agent 发布目录签名校验失败'
+      },
+      entries: expect.any(Array)
+    })
+    expect(packageRequested).toBe(false)
     await expect(manager.download('x64')).rejects.toThrow(
       'Agent 发布目录签名校验失败'
     )

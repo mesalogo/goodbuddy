@@ -1091,12 +1091,19 @@ describe('registerIpcHandlers SSH hosts', () => {
     }
     const agentPackageInventory = {
       checkedAt: '2030-01-01T00:00:00.000Z',
+      catalog: {
+        state: 'available',
+        checkedAt: '2030-01-01T00:00:00.000Z',
+        error: null
+      },
       entries: [
         {
           platform: 'linux',
           architecture: 'x64',
           state: 'verified',
           version: '0.11.2',
+          latestVersion: '0.11.4',
+          updateAvailable: true,
           remoteRuntimeVersion: '1.18.9',
           agentProtocol: { major: 2, minor: 0 }
         },
@@ -1105,6 +1112,8 @@ describe('registerIpcHandlers SSH hosts', () => {
           architecture: 'arm64',
           state: 'not-downloaded',
           version: null,
+          latestVersion: '0.11.4',
+          updateAvailable: false,
           remoteRuntimeVersion: null,
           agentProtocol: null
         }

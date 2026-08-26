@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, readFile } from 'node:fs/promises'
 import {
-  agentReleaseKeyRegistrySchema,
   type AgentArchitecture,
   type AgentBundleManifest,
   type AgentReleaseKeyRegistry
@@ -31,6 +30,8 @@ import {
 import {
   assertAgentManifestMatchesRuntimeLock,
   canonicalAgentReleaseKeyRegistryBytes,
+  parseAgentReleaseKeyRegistry,
+  parseAgentReleaseKeyRegistryBytes,
   readAgentReleaseKeyRegistry,
   readAgentRuntimeLock,
   verifyAgentManifestSignature,
@@ -599,7 +600,7 @@ export class AgentInstallationManager {
           )
         }
         const canonicalRegistry =
-          agentReleaseKeyRegistrySchema.parse(loaded.registry)
+          parseAgentReleaseKeyRegistry(loaded.registry)
         return {
           bundle: loaded.bundle,
           registry: canonicalRegistry,
@@ -627,7 +628,7 @@ export class AgentInstallationManager {
         verificationEnvironment: this.#verificationEnvironment
       }
     )
-    const canonicalRegistry = agentReleaseKeyRegistrySchema.parse(
+    const canonicalRegistry = parseAgentReleaseKeyRegistry(
       registry
     )
     return {
@@ -648,14 +649,14 @@ export class AgentInstallationManager {
     },
     signal: AbortSignal
   ): Promise<AgentInstallationIdentity> {
-    const [canonicalRegistryBytes, runtimeLock] = await Promise.all([
-      readFile(this.#resourcePaths.keyRegistryPath),
+    const [registry, runtimeLock] = await Promise.all([
+      readAgentReleaseKeyRegistry(
+        this.#resourcePaths.keyRegistryPath
+      ),
       readAgentRuntimeLock(this.#resourcePaths.runtimeLockPath)
     ])
-    const registry = parseCanonicalAgentReleaseKeyRegistry(
-      canonicalRegistryBytes,
-      'Agent trusted key registry'
-    )
+    const canonicalRegistryBytes =
+      canonicalAgentReleaseKeyRegistryBytes(registry)
 
     let metadataSftp: StagedSftp | undefined
     let installationSftp: StagedSftp | undefined
@@ -706,7 +707,7 @@ export class AgentInstallationManager {
         signal
       )
       const remoteReleaseKeyRegistry =
-        parseCanonicalAgentReleaseKeyRegistry(
+        parseAgentReleaseKeyRegistryBytes(
           remoteReleaseKeyBytes,
           'Installed Agent release-key registry'
         )
@@ -849,21 +850,6 @@ function parseJsonBytes(
       cause: error
     })
   }
-}
-
-function parseCanonicalAgentReleaseKeyRegistry(
-  value: Buffer,
-  description: string
-): AgentReleaseKeyRegistry {
-  const registry = agentReleaseKeyRegistrySchema.parse(
-    parseJsonBytes(value, description)
-  )
-  const canonicalBytes =
-    canonicalAgentReleaseKeyRegistryBytes(registry)
-  if (!canonicalBytes.equals(value)) {
-    throw new Error(`${description} is not canonical`)
-  }
-  return registry
 }
 
 function decodeDetachedSignature(

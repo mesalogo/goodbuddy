@@ -6,6 +6,19 @@ const sha256Pattern = /^[a-f0-9]{64}$/u
 const keyIdPattern = /^[a-z0-9][a-z0-9._-]{0,63}$/u
 const canonicalBase64Pattern =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u
+const canonicalDoublePaddingCharacterPattern = /[AQgw]==$/u
+const canonicalSinglePaddingCharacterPattern =
+  /[AEIMQUYcgkosw048]=$/u
+
+function hasCanonicalBase64Padding(value: string): boolean {
+  if (value.endsWith('==')) {
+    return canonicalDoublePaddingCharacterPattern.test(value)
+  }
+  if (value.endsWith('=')) {
+    return canonicalSinglePaddingCharacterPattern.test(value)
+  }
+  return true
+}
 
 export const agentArchitectureSchema = z.enum(['x64', 'arm64'])
 
@@ -151,7 +164,11 @@ export const agentReleaseKeySchema = z
       .string()
       .min(4)
       .max(4_096)
-      .regex(canonicalBase64Pattern),
+      .regex(canonicalBase64Pattern)
+      .refine(
+        hasCanonicalBase64Padding,
+        'Agent public key must use canonical Base64'
+      ),
     environment: z.enum(['production', 'test'])
   })
   .strict()
