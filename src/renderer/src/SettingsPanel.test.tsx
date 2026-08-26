@@ -1112,6 +1112,10 @@ describe('SettingsPanel runtime files', () => {
     expect(contextWindow).toHaveValue(null)
     expect(contextWindow).toHaveAttribute('min', '32')
     fireEvent.change(contextWindow, { target: { value: '256' } })
+    const maximumOutput = screen.getByLabelText('Anthropic 最大输出')
+    expect(maximumOutput).toHaveValue(32)
+    expect(maximumOutput).toHaveAttribute('min', '1')
+    fireEvent.change(maximumOutput, { target: { value: '48' } })
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() =>
@@ -1120,7 +1124,8 @@ describe('SettingsPanel runtime files', () => {
           modelProfiles: expect.arrayContaining([
             expect.objectContaining({
               id: modelProfileId,
-              contextWindowTokens: 256_000
+              contextWindowTokens: 256_000,
+              maximumOutputTokens: 48_000
             })
           ])
         })

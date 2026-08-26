@@ -476,6 +476,7 @@ describe('ModelAgentRuntime', () => {
       model: 'sonnet-5',
       protocol: 'anthropic-messages',
       authentication: 'api-key',
+      maximumOutputTokens: 48_000,
       skillInstructions: '# 文档写作',
       fetcher
     })
@@ -500,11 +501,13 @@ describe('ModelAgentRuntime', () => {
 
     const body = JSON.parse(init?.body as string) as {
       model: string
+      max_tokens: number
       stream: boolean
       system: string
     }
     expect(body).toMatchObject({
       model: 'sonnet-5',
+      max_tokens: 48_000,
       stream: true
     })
     expect(body.system).toMatch(

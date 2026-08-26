@@ -568,6 +568,9 @@ export {
   minimumModelContextWindowTokens
 } from './context-window'
 
+export const defaultAnthropicMaximumOutputTokens = 32_000
+export const maximumModelOutputTokens = 10_000_000
+
 const modelProfileInputSchema = z
   .object({
     id: modelProfileIdSchema,
@@ -587,6 +590,12 @@ const modelProfileInputSchema = z
       .int()
       .min(minimumModelContextWindowTokens)
       .max(maximumModelContextWindowTokens)
+      .optional(),
+    maximumOutputTokens: z
+      .number()
+      .int()
+      .min(1)
+      .max(maximumModelOutputTokens)
       .optional(),
     imageGenerationQuality: imageGenerationQualitySchema,
     apiKey: modelApiKeyUpdateSchema
@@ -968,6 +977,7 @@ export type ModelConnectionSettings = {
   authentication: ModelAuthentication
   supportsImageInput?: boolean
   contextWindowTokens?: number
+  maximumOutputTokens?: number
   imageGenerationQuality: ImageGenerationQuality
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment' | 'unreadable'

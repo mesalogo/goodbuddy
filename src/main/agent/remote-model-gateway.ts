@@ -386,6 +386,7 @@ export function createResolvedModelProfileDigest(
       authentication: profile.authentication,
       supportsImageInput: profile.supportsImageInput === true,
       contextWindowTokens: profile.contextWindowTokens ?? null,
+      maximumOutputTokens: profile.maximumOutputTokens ?? null,
       imageGenerationQuality: profile.imageGenerationQuality ?? null
     })
   )

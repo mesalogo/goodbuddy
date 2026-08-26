@@ -170,6 +170,12 @@ const currentStoredModelProfileSchema = storedModelProfileSchema.extend({
     .int()
     .min(8_000)
     .max(10_000_000)
+    .optional(),
+  maximumOutputTokens: z
+    .number()
+    .int()
+    .min(1)
+    .max(10_000_000)
     .optional()
 })
 
@@ -434,6 +440,7 @@ export type ResolvedModelProfile = {
   authentication: RuntimeSettings['modelAuthentication']
   supportsImageInput?: boolean
   contextWindowTokens?: number
+  maximumOutputTokens?: number
   imageGenerationQuality?: RuntimeSettings['imageGenerationQuality']
   apiKey?: string
 }
@@ -1468,6 +1475,7 @@ export class RuntimeSettingsStore {
     authentication: RuntimeSettings['modelAuthentication']
     supportsImageInput: boolean
     contextWindowTokens?: number
+    maximumOutputTokens?: number
     imageGenerationQuality: RuntimeSettings['imageGenerationQuality']
     credentialSource: RuntimeSettings['credentialSource']
   } {
@@ -1529,6 +1537,7 @@ export class RuntimeSettingsStore {
         : profile.authentication,
       supportsImageInput: profile.supportsImageInput,
       contextWindowTokens: profile.contextWindowTokens,
+      maximumOutputTokens: profile.maximumOutputTokens,
       imageGenerationQuality: profile.imageGenerationQuality,
       credentialSource: credential.source
     }
@@ -1552,6 +1561,7 @@ export class RuntimeSettingsStore {
           authentication: effective.authentication,
           supportsImageInput: effective.supportsImageInput,
           contextWindowTokens: effective.contextWindowTokens,
+          maximumOutputTokens: effective.maximumOutputTokens,
           imageGenerationQuality: effective.imageGenerationQuality,
           apiKey: effective.apiKey
         }
@@ -1569,6 +1579,7 @@ export class RuntimeSettingsStore {
         authentication: profile.authentication,
         supportsImageInput: profile.supportsImageInput,
         contextWindowTokens: profile.contextWindowTokens,
+        maximumOutputTokens: profile.maximumOutputTokens,
         imageGenerationQuality: profile.imageGenerationQuality,
         apiKey: credential.activeApiKey
       }
@@ -1651,6 +1662,7 @@ export class RuntimeSettingsStore {
         authentication: resolved.authentication,
         supportsImageInput: resolved.supportsImageInput,
         contextWindowTokens: resolved.contextWindowTokens,
+        maximumOutputTokens: resolved.maximumOutputTokens,
         imageGenerationQuality:
           resolved.imageGenerationQuality ??
           defaultRuntimeSettings.imageGenerationQuality,
@@ -1672,6 +1684,7 @@ export class RuntimeSettingsStore {
         authentication: profile.authentication,
         supportsImageInput: profile.supportsImageInput,
         contextWindowTokens: profile.contextWindowTokens,
+        maximumOutputTokens: profile.maximumOutputTokens,
         imageGenerationQuality:
           profile.imageGenerationQuality ??
           defaultRuntimeSettings.imageGenerationQuality,
@@ -1966,6 +1979,7 @@ export class RuntimeSettingsStore {
               authentication: input.modelAuthentication,
               supportsImageInput: profile.supportsImageInput,
               contextWindowTokens: profile.contextWindowTokens,
+              maximumOutputTokens: profile.maximumOutputTokens,
               imageGenerationQuality: input.imageGenerationQuality,
               apiKey: input.apiKey
             }
@@ -1978,6 +1992,7 @@ export class RuntimeSettingsStore {
               authentication: profile.authentication,
               supportsImageInput: profile.supportsImageInput,
               contextWindowTokens: profile.contextWindowTokens,
+              maximumOutputTokens: profile.maximumOutputTokens,
               imageGenerationQuality: profile.imageGenerationQuality,
               apiKey: { action: 'keep' as const }
             }
@@ -2029,6 +2044,7 @@ export class RuntimeSettingsStore {
           authentication: profile.authentication,
           supportsImageInput: profile.supportsImageInput ?? false,
           contextWindowTokens: profile.contextWindowTokens,
+          maximumOutputTokens: profile.maximumOutputTokens,
           imageGenerationQuality: profile.imageGenerationQuality
         }
         if (

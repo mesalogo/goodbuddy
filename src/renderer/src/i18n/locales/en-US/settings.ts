@@ -721,6 +721,9 @@ export const settings = {
       contextWindow: 'Context window (optional)',
       contextWindowDescription:
         'Enter 32K–10000K tokens. Leave blank when unknown. This value is used only for GoodBuddy local budget calculations.',
+      maximumOutput: 'Anthropic maximum output',
+      maximumOutputDescription:
+        'The Anthropic Messages protocol requires this value on every request. Enter 1K–10000K tokens. It limits only one model response, not tool rounds or cumulative usage.',
       imageQuality: 'Image quality',
       imageQualityAriaLabel: 'Image quality for {{name}}',
       quality: {

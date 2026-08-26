@@ -34,6 +34,7 @@ import type {
 } from '../../shared/contracts'
 import {
   defaultContextCompressionSettings,
+  defaultAnthropicMaximumOutputTokens,
   builtinEmbeddingConnectionId,
   defaultModelProfileId as builtInDefaultModelProfileId,
   defaultRuntimeSettings,
@@ -257,6 +258,9 @@ function toModelProfileDrafts(
   return settings.modelProfiles.map((profile) => ({
     ...profile,
     supportsImageInput: profile.supportsImageInput ?? false,
+    maximumOutputTokens:
+      profile.maximumOutputTokens ??
+      defaultAnthropicMaximumOutputTokens,
     apiKey: '',
     clearApiKey: false
   }))
@@ -1285,6 +1289,7 @@ export function SettingsPanel({
           authentication: profile.authentication,
           supportsImageInput: profile.supportsImageInput,
           contextWindowTokens: profile.contextWindowTokens,
+          maximumOutputTokens: profile.maximumOutputTokens,
           imageGenerationQuality: profile.imageGenerationQuality,
           apiKey: profile.clearApiKey
             ? ({ action: 'clear' } as const)
@@ -1670,6 +1675,7 @@ export function SettingsPanel({
         protocol: 'openai-chat-completions',
         authentication: defaultRuntimeSettings.modelAuthentication,
         supportsImageInput: defaultRuntimeSettings.supportsImageInput,
+        maximumOutputTokens: defaultAnthropicMaximumOutputTokens,
         imageGenerationQuality:
           defaultRuntimeSettings.imageGenerationQuality,
         apiKeyConfigured: false,
@@ -3136,6 +3142,34 @@ export function SettingsPanel({
                           {t('model.profile.contextWindowDescription')}
                         </small>
                       </label>
+                      {profile.protocol === 'anthropic-messages' && (
+                        <label className="field">
+                          <span>{t('model.profile.maximumOutput')}</span>
+                          <input
+                            aria-label={t('model.profile.maximumOutput')}
+                            inputMode="numeric"
+                            max={10_000}
+                            min={1}
+                            onChange={(event) => {
+                              const value = event.target.valueAsNumber
+                              updateModelProfile(profile.id, {
+                                maximumOutputTokens: Number.isFinite(value)
+                                  ? Math.round(value * 1_000)
+                                  : defaultAnthropicMaximumOutputTokens
+                              })
+                            }}
+                            placeholder="32"
+                            type="number"
+                            value={
+                              (profile.maximumOutputTokens ??
+                                defaultAnthropicMaximumOutputTokens) / 1_000
+                            }
+                          />
+                          <small>
+                            {t('model.profile.maximumOutputDescription')}
+                          </small>
+                        </label>
+                      )}
                     </>
                   )}
                   {profile.protocol ===

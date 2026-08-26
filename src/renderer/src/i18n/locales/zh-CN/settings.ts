@@ -662,6 +662,9 @@ export const settings = {
       contextWindow: '上下文上限（可选）',
       contextWindowDescription:
         '以 K tokens 填写，范围为 32K–10000K。留空表示未知；此值仅用于 GoodBuddy 本地预算计算。',
+      maximumOutput: 'Anthropic 最大输出',
+      maximumOutputDescription:
+        'Anthropic Messages 协议要求每次请求提供该值。填写 1K–10000K tokens；它只限制单次模型响应，不限制工具调用轮次或累计用量。',
       imageQuality: '图片质量',
       imageQualityAriaLabel: '图片质量 {{name}}',
       quality: {

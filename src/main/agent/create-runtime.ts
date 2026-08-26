@@ -96,7 +96,8 @@ function resolveContextCompression(
               'openai-images-generations'
             >,
             authentication: summaryProfile.authentication,
-            contextWindowTokens: summaryProfile.contextWindowTokens
+            contextWindowTokens: summaryProfile.contextWindowTokens,
+            maximumOutputTokens: summaryProfile.maximumOutputTokens
           }
         }
       : {})
@@ -120,6 +121,7 @@ export function createDefaultModelRuntime(
     protocol: settings.modelProtocol,
     authentication: settings.modelAuthentication,
     supportsImageInput: settings.supportsImageInput,
+    maximumOutputTokens: currentProfile?.maximumOutputTokens,
     defaultWorkspace: settings.workspacePath || defaultWorkspace,
     contextCompression: resolveContextCompression(
       settings,
@@ -141,6 +143,7 @@ export function createModelProfileRuntime(
     protocol: profile.protocol,
     authentication: profile.authentication,
     supportsImageInput: profile.supportsImageInput,
+    maximumOutputTokens: profile.maximumOutputTokens,
     imageGenerationQuality:
       profile.imageGenerationQuality ??
       defaultRuntimeSettings.imageGenerationQuality,

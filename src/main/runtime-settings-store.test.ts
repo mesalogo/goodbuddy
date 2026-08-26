@@ -283,6 +283,7 @@ describe('RuntimeSettingsStore', () => {
             authentication: 'none',
             supportsImageInput: false,
             contextWindowTokens: 256_000,
+            maximumOutputTokens: 48_000,
             imageGenerationQuality: 'auto',
             apiKey: { action: 'keep' }
           }
@@ -302,7 +303,8 @@ describe('RuntimeSettingsStore', () => {
       modelProfiles: [
         {
           id: profileId,
-          contextWindowTokens: 256_000
+          contextWindowTokens: 256_000,
+          maximumOutputTokens: 48_000
         }
       ],
       contextCompression: {
@@ -316,7 +318,8 @@ describe('RuntimeSettingsStore', () => {
       modelProfiles: [
         {
           id: profileId,
-          contextWindowTokens: 256_000
+          contextWindowTokens: 256_000,
+          maximumOutputTokens: 48_000
         }
       ],
       contextCompression: {

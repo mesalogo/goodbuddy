@@ -8,6 +8,7 @@ import type {
   ModelProtocol,
   RuntimeConversationCompactInput
 } from '../../shared/contracts'
+import { defaultAnthropicMaximumOutputTokens } from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { WorkspaceAccess } from '../workspace'
@@ -233,8 +234,10 @@ export type ModelRuntimeOptions = {
       protocol: Exclude<ModelProtocol, 'openai-images-generations'>
       authentication: ModelAuthentication
       contextWindowTokens?: number
+      maximumOutputTokens?: number
     }
   }
+  maximumOutputTokens?: number
 }
 
 function getErrorMessage(value: unknown): string | undefined {
@@ -1794,10 +1797,9 @@ export class ModelAgentRuntime implements AgentRuntime {
   }
 
   private get anthropicProtocolMaximumTokens(): number {
-    return Math.max(
-      this.options.contextCompression?.contextWindowTokens ??
-        minimumModelContextWindowTokens,
-      minimumModelContextWindowTokens
+    return (
+      this.options.maximumOutputTokens ??
+      defaultAnthropicMaximumOutputTokens
     )
   }
 
@@ -1877,7 +1879,8 @@ export class ModelAgentRuntime implements AgentRuntime {
         ModelProtocol,
         'openai-images-generations'
       >,
-      authentication: this.options.authentication
+      authentication: this.options.authentication,
+      maximumOutputTokens: this.options.maximumOutputTokens
     }
     const summaryRuntime = new ModelAgentRuntime({
       ...summaryModel,
