@@ -159,9 +159,7 @@
     link.tabIndex = -1;
     link.classList.add("is-disabled");
     setLinkText(link, "龙芯预览包暂不可用");
-    meta.textContent =
-      "实验预览 · 仅 DEB · 索引尚未发布或校验失败；" +
-      "尚未完成真机验证。";
+    meta.textContent = "实验预览 · 仅 DEB · 索引尚未发布或校验失败。";
   };
 
   const setLoongArchFormat = (formatSelect, selected) => {
@@ -201,7 +199,7 @@
       meta.textContent =
         `GoodBuddy ${verifiedLoongArchPreview.goodBuddyVersion} · ` +
         `${formatFileSize(verifiedLoongArchPreview.artifact.size)} · ` +
-        `实验预览 · 未完成龙芯真机验证 · SHA-256 ` +
+        `实验预览 · SHA-256 ` +
         `${verifiedLoongArchPreview.artifact.sha256.slice(0, 12)}…`;
       return;
     }

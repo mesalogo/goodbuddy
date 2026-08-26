@@ -275,9 +275,10 @@ test("enables only a validated LoongArch preview download", async () => {
   assert.equal(link.getAttribute("rel"), "noreferrer");
   assert.equal(link.hasAttribute("aria-disabled"), false);
   assert.equal(link.classList.contains("is-disabled"), false);
-  assert.match(meta.textContent, /GoodBuddy 0\.11\.5/);
-  assert.match(meta.textContent, /178 MB/);
-  assert.match(meta.textContent, /未完成龙芯真机验证/);
+  assert.equal(
+    meta.textContent,
+    "GoodBuddy 0.11.5 · 178 MB · 实验预览 · SHA-256 aaaaaaaaaaaa…",
+  );
   dom.window.close();
 });
 
@@ -300,7 +301,10 @@ test("keeps the LoongArch preview disabled when its index is unavailable", async
   assert.equal(link.getAttribute("aria-disabled"), "true");
   assert.equal(link.tabIndex, -1);
   assert.equal(link.classList.contains("is-disabled"), true);
-  assert.match(meta.textContent, /尚未发布或校验失败/);
+  assert.equal(
+    meta.textContent,
+    "实验预览 · 仅 DEB · 索引尚未发布或校验失败。",
+  );
 
   arch.value = "x64";
   arch.dispatchEvent(new window.Event("change"));
