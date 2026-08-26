@@ -42,7 +42,7 @@ Debian `loong64` 桌面，不代表 GoodBuddy 已将龙芯纳入正式发布支�
 | React 界面和主进程业务代码 | 已打包 | 生产 bundle 构建、测试、类型检查和 lint 已通过 |
 | 直接模型调用路径 | 已打包 | JavaScript 代码与生产依赖已包含；待龙芯真机端到端验证 |
 | Continue Runtime | 已打包 | CLI JavaScript 入口及 npm Runtime 已包含；待真机执行验证 |
-| 本地终端能力 | 已打包 | node-pty 1.1.0 已针对 Electron 42.3.0 交叉编译并验证为 LoongArch ELF；待真机 PTY 验证 |
+| 本地终端能力 | 已打包 | 输入锁文件固定的 node-pty（当前为 1.2.0-beta.15）已针对 Electron 42.3.0 交叉编译并验证为 LoongArch ELF；待真机 PTY 验证 |
 | Koffi glibc 原生绑定 | 已打包 | Koffi 3.1.4 LoongArch glibc binding 已校验为 LoongArch ELF |
 | 内置 Skills | 已打包 | 静态资源已进入 DEB |
 | GoodBuddy Agent | **不包含** | 当前 Agent 的正式构建和双 glibc/musl 产物契约不支持 LoongArch |
@@ -198,7 +198,8 @@ SHA256SUMS
 1. 校验 Electron zip 的固定 SHA-256。
 2. 删除 npm 错误解析出的宿主架构可选原生包。
 3. 按 lockfile integrity 校验并安装 Koffi LoongArch glibc binding。
-4. 使用上游 node-gyp 11.4.2 和 Electron 42.3.0 headers 交叉编译 node-pty。
+4. 读取输入 lockfile 固定的 node-pty 版本，并使用上游 node-gyp 11.4.2
+   和 Electron 42.3.0 headers 交叉编译。
 5. 拒绝 `node_modules` 中任何不是 LoongArch ELF 的 `.node` 文件。
 6. 拒绝意外进入包内的 Agent、Remote Runtime 或 OpenCode 目录。
 7. 生成 `Architecture: loong64` 的 DEB，解包后再次校验关键 ELF。

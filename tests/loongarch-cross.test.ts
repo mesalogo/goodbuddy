@@ -92,6 +92,12 @@ describe('LoongArch preview package contract', () => {
       'assert_loongarch_elf "${node_pty_binding}"'
     )
     expect(previewScript).toContain(
+      "packages['node_modules/node-pty'].version"
+    )
+    expect(previewScript).not.toContain(
+      'node_pty_version="1.1.0"'
+    )
+    expect(previewScript).toContain(
       'assert_loongarch_elf "${koffi_binding}"'
     )
     expect(previewScript).toContain('libpulse0')

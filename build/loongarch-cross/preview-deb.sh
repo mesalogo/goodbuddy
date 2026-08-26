@@ -9,7 +9,6 @@ output_root="${3:-/preview-output}"
 electron_version="42.3.0"
 electron_sha256="92b0ca0c9c18ed90166918a4ac1970266c4fa967aee9277031b3b250b905526e"
 koffi_version="3.1.4"
-node_pty_version="1.1.0"
 node_gyp_version="11.4.2"
 preview_iteration="1"
 application_directory="GoodBuddy-LoongArch-Preview"
@@ -67,6 +66,10 @@ tar -xzf "${input_archive}" -C "${input_root}"
 project_version="$(
   node -p \
     "require('${input_root}/package.json').version"
+)"
+node_pty_version="$(
+  node -p \
+    "require('${input_root}/package-lock.json').packages['node_modules/node-pty'].version"
 )"
 preview_version="${project_version}-loong64-preview.${preview_iteration}"
 deb_version="${project_version}~loong64preview${preview_iteration}"
@@ -171,7 +174,7 @@ tar \
 koffi_binding="${koffi_target}/linux_loong64/koffi.node"
 assert_loongarch_elf "${koffi_binding}"
 
-echo "== cross-build node-pty for Electron ${electron_version} =="
+echo "== cross-build node-pty ${node_pty_version} for Electron ${electron_version} =="
 node_gyp_root="${work_root}/node-gyp"
 npm install \
   --ignore-scripts \

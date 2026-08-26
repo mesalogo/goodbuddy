@@ -191,7 +191,7 @@ export class AgentPackageManager {
           latestVersion,
           updateAvailable: this.#updateAvailable(
             latestVersion,
-            record
+            record?.verified.descriptor.version ?? null
           ),
           remoteRuntimeVersion:
             record?.verified.descriptor.remoteRuntime.version ?? null,
@@ -210,8 +210,27 @@ export class AgentPackageManager {
   async getSnapshot(
     options: { refresh?: boolean } = {}
   ): Promise<AgentPackageInventory> {
-    await this.#checkCatalog()
-    return this.getInventory(options)
+    const catalogCheck = this.#checkCatalog()
+    const inventory = await this.getInventory(options)
+    await catalogCheck
+    return agentPackageInventorySchema.parse({
+      ...inventory,
+      checkedAt: this.#now().toISOString(),
+      catalog: this.#publicCatalogState(),
+      entries: inventory.entries.map((entry) => {
+        const latestVersion = this.#latestVersion(
+          entry.architecture
+        )
+        return {
+          ...entry,
+          latestVersion,
+          updateAvailable: this.#updateAvailable(
+            latestVersion,
+            entry.version
+          )
+        }
+      })
+    })
   }
 
   async getExpectedCatalog(
@@ -791,13 +810,13 @@ export class AgentPackageManager {
 
   #updateAvailable(
     latestVersion: string | null,
-    installed: InstalledRecord | undefined
+    installedVersion: string | null
   ): boolean {
-    return installed !== undefined &&
+    return installedVersion !== null &&
       latestVersion !== null &&
       compareSemanticVersions(
         latestVersion,
-        installed.verified.descriptor.version
+        installedVersion
       ) > 0
   }
 

@@ -68,7 +68,7 @@ The preview:
 
 - uses a separate application name and user-data directory;
 - includes the direct model path and Continue runtime;
-- cross-builds node-pty against Electron 42.3.0;
+- cross-builds the input lockfile's node-pty version against Electron 42.3.0;
 - includes Koffi's LoongArch glibc binding;
 - does not include GoodBuddy Agent, Remote Runtime, OpenCode, or native Canvas;
 - is not part of the production release matrix.

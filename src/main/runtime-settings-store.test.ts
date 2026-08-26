@@ -137,6 +137,27 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
+  it('preserves the historical connection for a legacy environment key', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const version19 = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as Record<string, unknown>
+    version19.version = 19
+    await writeFile(filePath, JSON.stringify(version19), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {
+      GOODBUDDY_BIGTOKEN_API_KEY: 'legacy-key'
+    })
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      modelBaseUrl: 'https://bigtoken.ai',
+      modelName: 'sonnet-5',
+      modelProtocol: 'anthropic-messages',
+      modelAuthentication: 'api-key',
+      apiKey: 'legacy-key'
+    })
+  })
+
   it('restores an exact credential-bearing snapshot after a failed activation', async () => {
     const { store } = await createStore()
     await store.update(

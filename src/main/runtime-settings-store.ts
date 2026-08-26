@@ -375,6 +375,9 @@ const encryptSavedApiKey = (
   })
 
 const platformHarnessProfileId = 'goodbuddy-platform-harness'
+const historicalDefaultModelBaseUrl = 'https://bigtoken.ai'
+const historicalDefaultModelName = 'sonnet-5'
+const historicalDefaultModelProtocol = 'anthropic-messages'
 
 export type CredentialCipher = SettingsCredentialCipher
 
@@ -694,9 +697,9 @@ function migrateVersion19(
     modelProfiles: settings.modelProfiles.map((profile) =>
       profile.id === defaultModelProfileId &&
       profile.name === '默认模型' &&
-      profile.baseUrl === 'https://bigtoken.ai' &&
-      profile.modelName === 'sonnet-5' &&
-      profile.protocol === 'anthropic-messages' &&
+      profile.baseUrl === historicalDefaultModelBaseUrl &&
+      profile.modelName === historicalDefaultModelName &&
+      profile.protocol === historicalDefaultModelProtocol &&
       profile.authentication === 'api-key' &&
       profile.supportsImageInput === false &&
       profile.imageGenerationQuality === 'auto' &&
@@ -1480,23 +1483,47 @@ export class RuntimeSettingsStore {
       throw new Error(`模型连接不存在：${profile.id}`)
     }
     const environmentManaged = credential.source === 'environment'
-    const environmentBaseUrl =
-      this.environment.GOODBUDDY_MODEL_BASE_URL?.trim() ||
+    const genericEnvironmentApiKey =
+      this.environment.GOODBUDDY_MODEL_API_KEY?.trim()
+    const legacyEnvironmentApiKey =
+      this.environment.GOODBUDDY_BIGTOKEN_API_KEY?.trim()
+    const genericEnvironmentBaseUrl =
+      this.environment.GOODBUDDY_MODEL_BASE_URL?.trim()
+    const legacyEnvironmentBaseUrl =
       this.environment.GOODBUDDY_BIGTOKEN_BASE_URL?.trim()
-    const environmentModel =
-      this.environment.GOODBUDDY_MODEL_NAME?.trim() ||
+    const genericEnvironmentModel =
+      this.environment.GOODBUDDY_MODEL_NAME?.trim()
+    const legacyEnvironmentModel =
       this.environment.GOODBUDDY_BIGTOKEN_MODEL?.trim()
+    const legacyEnvironmentConnection =
+      environmentManaged &&
+      !genericEnvironmentApiKey &&
+      Boolean(legacyEnvironmentApiKey) &&
+      !genericEnvironmentBaseUrl &&
+      !genericEnvironmentModel
+    const environmentBaseUrl =
+      genericEnvironmentBaseUrl || legacyEnvironmentBaseUrl
+    const environmentModel =
+      genericEnvironmentModel || legacyEnvironmentModel
     const baseUrl = environmentManaged
-      ? environmentBaseUrl || defaultRuntimeSettings.modelBaseUrl
+      ? environmentBaseUrl ||
+        (legacyEnvironmentConnection
+          ? historicalDefaultModelBaseUrl
+          : defaultRuntimeSettings.modelBaseUrl)
       : profile.baseUrl
     const model = environmentManaged
-      ? environmentModel || defaultRuntimeSettings.modelName
+      ? environmentModel ||
+        (legacyEnvironmentConnection
+          ? historicalDefaultModelName
+          : defaultRuntimeSettings.modelName)
       : profile.modelName
     return {
       apiKey: credential.activeApiKey,
       baseUrl,
       model,
-      protocol: profile.protocol,
+      protocol: legacyEnvironmentConnection
+        ? historicalDefaultModelProtocol
+        : profile.protocol,
       authentication: environmentManaged
         ? 'api-key'
         : profile.authentication,
