@@ -17,6 +17,8 @@
   const isEnglish = root.lang.toLowerCase().startsWith("en");
   const releaseManifestUrl =
     "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/latest.json";
+  const loongArchPreviewManifestUrl =
+    "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/latest.json";
   const releaseFallbackUrl =
     "https://github.com/mesalogo/goodbuddy/releases/latest";
   const releaseRequestTimeoutMs = 10_000;
@@ -24,6 +26,8 @@
   const downloadCards = [
     ...document.querySelectorAll("[data-download-card]"),
   ];
+  let verifiedRelease;
+  let verifiedLoongArchPreview;
   const interfaceCopy = isEnglish
     ? {
         themeDark: "Switch to dark theme",
@@ -65,8 +69,7 @@
     }
   };
 
-  const readBoundedJson = async (response) => {
-    const maximumBytes = releaseIndexApi?.maximumIndexBytes;
+  const readBoundedJson = async (response, maximumBytes) => {
     if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
       throw new Error("发布索引大小上限无效");
     }
@@ -111,30 +114,165 @@
     return JSON.parse(new TextDecoder().decode(bytes));
   };
 
-  const setReleaseLink = (link, url, visibleText) => {
+  const setLinkText = (link, visibleText) => {
     const newWindowNotice = link.querySelector(".sr-only");
-    link.href = url;
     link.replaceChildren(document.createTextNode(visibleText));
     if (newWindowNotice) {
       link.append(newWindowNotice);
     }
   };
 
-  const setFallbackDownloads = () => {
+  const setReleaseLink = (link, url, visibleText) => {
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.removeAttribute("aria-disabled");
+    link.removeAttribute("tabindex");
+    link.classList.remove("is-disabled");
+    setLinkText(link, visibleText);
+  };
+
+  const getDownloadCardControls = (card) => {
+    const platform = card.dataset.downloadCard;
+    const archSelect = card.querySelector("[data-download-arch]");
+    const formatSelect = card.querySelector("[data-download-format]");
+    const container = card.closest(".download-card");
+    const link = container?.querySelector("[data-release-link]");
+    const meta = container?.querySelector("[data-download-meta]");
+    if (
+      !platform ||
+      !(archSelect instanceof HTMLSelectElement) ||
+      !(formatSelect instanceof HTMLSelectElement) ||
+      !(link instanceof HTMLAnchorElement) ||
+      !(meta instanceof HTMLElement)
+    ) {
+      throw new Error("下载卡片结构无效");
+    }
+    return { platform, archSelect, formatSelect, link, meta };
+  };
+
+  const setDownloadUnavailable = (link, meta) => {
+    link.removeAttribute("href");
+    link.removeAttribute("target");
+    link.removeAttribute("rel");
+    link.setAttribute("aria-disabled", "true");
+    link.tabIndex = -1;
+    link.classList.add("is-disabled");
+    setLinkText(link, "龙芯预览包暂不可用");
+    meta.textContent =
+      "实验预览 · 仅 DEB · 索引尚未发布或校验失败；" +
+      "尚未完成真机验证。";
+  };
+
+  const setLoongArchFormat = (formatSelect, selected) => {
+    for (const option of formatSelect.options) {
+      const unavailable = selected && option.value !== "deb";
+      option.hidden = unavailable;
+      option.disabled = unavailable;
+    }
+    if (selected) {
+      formatSelect.value = "deb";
+    }
+    formatSelect.disabled = selected;
+  };
+
+  const updateDownloadCard = (card) => {
+    const {
+      platform,
+      archSelect,
+      formatSelect,
+      link,
+      meta,
+    } = getDownloadCardControls(card);
+    const loongArchSelected =
+      platform === "linux" && archSelect.value === "loong64";
+    setLoongArchFormat(formatSelect, loongArchSelected);
+
+    if (loongArchSelected) {
+      if (!verifiedLoongArchPreview) {
+        setDownloadUnavailable(link, meta);
+        return;
+      }
+      setReleaseLink(
+        link,
+        verifiedLoongArchPreview.artifact.url,
+        "下载 Linux 龙芯 LoongArch DEB 预览版 →",
+      );
+      meta.textContent =
+        `GoodBuddy ${verifiedLoongArchPreview.goodBuddyVersion} · ` +
+        `${formatFileSize(verifiedLoongArchPreview.artifact.size)} · ` +
+        `实验预览 · 未完成龙芯真机验证 · SHA-256 ` +
+        `${verifiedLoongArchPreview.artifact.sha256.slice(0, 12)}…`;
+      return;
+    }
+
+    if (!verifiedRelease) {
+      setReleaseLink(
+        link,
+        releaseFallbackUrl,
+        `前往 GitHub 下载 ${platformNames[platform] ?? platform} →`,
+      );
+      meta.textContent = "请在 GitHub Release 中选择对应的安装文件。";
+      return;
+    }
+
+    const target =
+      verifiedRelease.targets[`${platform}-${archSelect.value}`];
+    const file = target?.files?.[formatSelect.value];
+    if (!file) {
+      throw new Error("下载选项不在已校验的发布索引中");
+    }
+    const platformName = platformNames[platform] ?? platform;
+    const archName =
+      platform === "macos" && archSelect.value === "arm64"
+        ? "Apple 芯片"
+        : archSelect.value === "arm64"
+          ? "ARM64"
+          : "x64";
+    const formatName = formatNames[formatSelect.value] ?? formatSelect.value;
+    setReleaseLink(
+      link,
+      file.url,
+      `下载 ${platformName} ${archName} ${formatName} →`,
+    );
+    meta.textContent =
+      `GoodBuddy ${verifiedRelease.version} · ` +
+      `${formatFileSize(file.size)} · ` +
+      `${archSelect.options[archSelect.selectedIndex]?.text ?? archSelect.value}`;
+  };
+
+  const updateAllDownloadCards = () => {
     for (const card of downloadCards) {
-      const platform = card.dataset.downloadCard;
-      const link = card.closest(".download-card")?.querySelector("[data-release-link]");
-      const meta = card.closest(".download-card")?.querySelector("[data-download-meta]");
-      if (link instanceof HTMLAnchorElement) {
-        setReleaseLink(
-          link,
-          releaseFallbackUrl,
-          `前往 GitHub 下载 ${platformNames[platform] ?? platform ?? ""} →`,
-        );
-      }
-      if (meta instanceof HTMLElement) {
-        meta.textContent = "请在 GitHub Release 中选择对应的安装文件。";
-      }
+      updateDownloadCard(card);
+    }
+  };
+
+  const setFallbackDownloads = () => {
+    verifiedRelease = undefined;
+    updateAllDownloadCards();
+  };
+
+  const setLoongArchPreviewUnavailable = () => {
+    verifiedLoongArchPreview = undefined;
+    const linuxCard = downloadCards.find(
+      (card) => card.dataset.downloadCard === "linux",
+    );
+    if (linuxCard) {
+      updateDownloadCard(linuxCard);
+    }
+  };
+
+  const configureLoongArchPreview = (payload) => {
+    if (!releaseIndexApi?.validateLoongArchPreviewIndex) {
+      throw new Error("龙芯预览索引校验器不可用");
+    }
+    verifiedLoongArchPreview =
+      releaseIndexApi.validateLoongArchPreviewIndex(payload);
+    const linuxCard = downloadCards.find(
+      (card) => card.dataset.downloadCard === "linux",
+    );
+    if (linuxCard) {
+      updateDownloadCard(linuxCard);
     }
   };
 
@@ -142,71 +280,37 @@
     if (!releaseIndexApi?.validateReleaseIndex) {
       throw new Error("发布索引校验器不可用");
     }
-    const release = releaseIndexApi.validateReleaseIndex(payload);
+    verifiedRelease = releaseIndexApi.validateReleaseIndex(payload);
+    updateAllDownloadCards();
+  };
 
-    const updateCard = (card) => {
-      const platform = card.dataset.downloadCard;
-      const archSelect = card.querySelector("[data-download-arch]");
-      const formatSelect = card.querySelector("[data-download-format]");
-      const link = card.closest(".download-card")?.querySelector("[data-release-link]");
-      const meta = card.closest(".download-card")?.querySelector("[data-download-meta]");
-      if (
-        !platform ||
-        !(archSelect instanceof HTMLSelectElement) ||
-        !(formatSelect instanceof HTMLSelectElement) ||
-        !(link instanceof HTMLAnchorElement) ||
-        !(meta instanceof HTMLElement)
-      ) {
-        throw new Error("下载卡片结构无效");
-      }
-
-      const target = release.targets[`${platform}-${archSelect.value}`];
-      const file = target?.files?.[formatSelect.value];
-      if (!file) {
-        throw new Error("下载选项不在已校验的发布索引中");
-      }
-
-      const platformName = platformNames[platform] ?? platform;
-      const archName =
-        platform === "macos" && archSelect.value === "arm64"
-          ? "Apple 芯片"
-          : archSelect.value === "arm64"
-            ? "ARM64"
-            : "x64";
-      const formatName = formatNames[formatSelect.value] ?? formatSelect.value;
-      setReleaseLink(
-        link,
-        file.url,
-        `下载 ${platformName} ${archName} ${formatName} →`,
-      );
-      meta.textContent =
-        `GoodBuddy ${release.version} · ${formatFileSize(file.size)} · ` +
-        `${archSelect.options[archSelect.selectedIndex]?.text ?? archSelect.value}`;
-    };
-
+  const initializeDownloadCards = () => {
     for (const card of downloadCards) {
-      const selects = card.querySelectorAll("select");
-      for (const select of selects) {
+      for (const select of card.querySelectorAll("select")) {
         select.addEventListener("change", () => {
           try {
-            updateCard(card);
+            updateDownloadCard(card);
           } catch {
             setFallbackDownloads();
           }
         });
       }
-      updateCard(card);
+      updateDownloadCard(card);
     }
   };
 
-  const loadRelease = async () => {
+  const fetchBoundedIndex = async (
+    url,
+    maximumBytes,
+    errorLabel,
+  ) => {
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort(),
       releaseRequestTimeoutMs,
     );
     try {
-      const response = await fetch(releaseManifestUrl, {
+      const response = await fetch(url, {
         cache: "no-store",
         credentials: "omit",
         redirect: "error",
@@ -214,13 +318,39 @@
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`发布索引请求失败：${response.status}`);
+        throw new Error(`${errorLabel}请求失败：${response.status}`);
       }
-      configureDownloads(await readBoundedJson(response));
-    } catch {
-      setFallbackDownloads();
+      return await readBoundedJson(response, maximumBytes);
     } finally {
       window.clearTimeout(timeout);
+    }
+  };
+
+  const loadRelease = async () => {
+    try {
+      configureDownloads(
+        await fetchBoundedIndex(
+          releaseManifestUrl,
+          releaseIndexApi?.maximumIndexBytes,
+          "发布索引",
+        ),
+      );
+    } catch {
+      setFallbackDownloads();
+    }
+  };
+
+  const loadLoongArchPreview = async () => {
+    try {
+      configureLoongArchPreview(
+        await fetchBoundedIndex(
+          loongArchPreviewManifestUrl,
+          releaseIndexApi?.maximumPreviewIndexBytes,
+          "龙芯预览索引",
+        ),
+      );
+    } catch {
+      setLoongArchPreviewUnavailable();
     }
   };
 
@@ -311,8 +441,10 @@
 
   applyTheme(getSavedTheme() ?? (systemTheme.matches ? "dark" : "light"));
   setHeaderState();
+  initializeDownloadCards();
   if (!isEnglish) {
     void loadRelease();
+    void loadLoongArchPreview();
   }
 
   themeToggle?.addEventListener("click", () => {

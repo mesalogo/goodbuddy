@@ -250,8 +250,9 @@ for (const breakpoint of ["1199px", "959px", "719px"]) {
 const requiredCopy = [
   "免注册",
   "支持信创软硬件的一站式 AI 助手",
-  "首个支持龙芯的开源桌面 AI 助理产品",
+  "首个全面覆盖国产化 CPU 架构的开源桌面 AI 助理产品",
   "龙芯 LoongArch 独立编译预览版",
+  "龙芯 LoongArch（实验预览）",
   "桌面助手",
   "AI 编程工具台",
   "Windows、macOS、Linux",
@@ -329,6 +330,18 @@ report(
   "每个平台必须提供安装包类型选择器",
 );
 report(
+  /<option\s+value="loong64">龙芯 LoongArch（实验预览）<\/option>/.test(
+    html,
+  ),
+  "Linux 处理器选项必须包含龙芯实验预览",
+);
+report(
+  /const setLoongArchFormat =[\s\S]*option\.value !== "deb"[\s\S]*formatSelect\.value = "deb"[\s\S]*formatSelect\.disabled = selected/.test(
+    appJs,
+  ),
+  "龙芯处理器必须只允许选择 DEB",
+);
+report(
   !/data-release-status|download-release-status/.test(`${html}\n${englishHtml}\n${css}\n${appJs}`),
   "官网不得显示下载源状态提示",
 );
@@ -361,6 +374,27 @@ report(
     "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/latest.json",
   ),
   "官网必须从 GoodBuddy OSS 加载最新发布索引",
+);
+report(
+  appJs.includes(
+    "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/latest.json",
+  ),
+  "官网必须从独立 OSS 索引加载龙芯预览包",
+);
+report(
+  /validateLoongArchPreviewIndex\(payload\)/.test(appJs),
+  "龙芯预览下载链接必须先通过独立索引校验",
+);
+report(
+  /catch\s*\{[\s\S]*setLoongArchPreviewUnavailable\(\)/.test(appJs),
+  "龙芯预览索引失败时必须保持下载入口禁用",
+);
+report(
+  releaseIndexJs.includes(
+    "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/latest.json",
+  ) &&
+    /const validateLoongArchPreviewIndex =/.test(releaseIndexJs),
+  "龙芯预览索引必须使用独立受信任前缀和校验器",
 );
 report(
   appJs.includes("https://github.com/mesalogo/goodbuddy/releases/latest"),
@@ -502,7 +536,7 @@ const expectedDownloadOptions = {
     formats: ["dmg", "zip"],
   },
   linux: {
-    arches: ["x64", "arm64"],
+    arches: ["x64", "arm64", "loong64"],
     formats: ["AppImage", "deb", "rpm"],
   },
 };

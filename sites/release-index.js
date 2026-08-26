@@ -3,9 +3,12 @@
 
   const mirrorIndexUrl =
     "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/latest.json";
+  const loongArchPreviewIndexUrl =
+    "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/latest.json";
   const fallbackUrl =
     "https://github.com/mesalogo/goodbuddy/releases/latest";
   const maximumIndexBytes = 512 * 1024;
+  const maximumPreviewIndexBytes = 16 * 1024;
   const semVerPattern =
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+((?:[0-9a-zA-Z-]+)(?:\.[0-9a-zA-Z-]+)*))?$/u;
   const sha256Pattern = /^[a-f0-9]{64}$/u;
@@ -201,8 +204,93 @@
     return index;
   };
 
+  const validateLoongArchPreviewIndex = (index) => {
+    assert(
+      hasExactKeys(index, [
+        "formatVersion",
+        "product",
+        "goodBuddyVersion",
+        "previewVersion",
+        "architecture",
+        "format",
+        "artifact",
+        "manifestUrl",
+        "checksumUrl",
+      ]),
+      "龙芯预览索引结构无效",
+    );
+    assert(index.formatVersion === 1, "龙芯预览索引版本无效");
+    assert(
+      index.product === "GoodBuddy LoongArch Preview",
+      "龙芯预览产品名称无效",
+    );
+    assert(
+      typeof index.goodBuddyVersion === "string" &&
+        index.goodBuddyVersion.length <= 256,
+      "龙芯预览 GoodBuddy 版本无效",
+    );
+    const parsedVersion = semVerPattern.exec(index.goodBuddyVersion);
+    assert(
+      parsedVersion && !parsedVersion[4],
+      "龙芯预览必须基于稳定 GoodBuddy 版本",
+    );
+    const previewPrefix = `${index.goodBuddyVersion}-loong64-preview.`;
+    assert(
+      typeof index.previewVersion === "string" &&
+        index.previewVersion.startsWith(previewPrefix) &&
+        /^[1-9]\d*$/u.test(index.previewVersion.slice(previewPrefix.length)),
+      "龙芯预览版本无效",
+    );
+    assert(index.architecture === "loong64", "龙芯预览架构无效");
+    assert(index.format === "deb", "龙芯预览格式无效");
+    assert(
+      hasExactKeys(index.artifact, ["name", "size", "sha256", "url"]),
+      "龙芯预览文件结构无效",
+    );
+
+    const expectedName =
+      `GoodBuddy-${index.goodBuddyVersion}-linux-loong64-preview.deb`;
+    assert(
+      index.artifact.name === expectedName &&
+        safeFileNamePattern.test(index.artifact.name),
+      "龙芯预览文件名无效",
+    );
+    assert(
+      Number.isSafeInteger(index.artifact.size) && index.artifact.size > 0,
+      "龙芯预览文件大小无效",
+    );
+    assert(
+      typeof index.artifact.sha256 === "string" &&
+        sha256Pattern.test(index.artifact.sha256),
+      "龙芯预览 SHA-256 无效",
+    );
+
+    const previewBase = new URL(
+      `v${index.goodBuddyVersion}/`,
+      loongArchPreviewIndexUrl,
+    );
+    assertExactUrl(
+      index.artifact.url,
+      new URL(encodeURIComponent(expectedName), previewBase).href,
+      "龙芯预览文件地址",
+    );
+    assertExactUrl(
+      index.manifestUrl,
+      new URL("preview-manifest.json", previewBase).href,
+      "龙芯预览 manifest 地址",
+    );
+    assertExactUrl(
+      index.checksumUrl,
+      new URL("SHA256SUMS", previewBase).href,
+      "龙芯预览校验清单地址",
+    );
+    return index;
+  };
+
   window.GoodBuddyReleaseIndex = Object.freeze({
     maximumIndexBytes,
+    maximumPreviewIndexBytes,
     validateReleaseIndex,
+    validateLoongArchPreviewIndex,
   });
 })();

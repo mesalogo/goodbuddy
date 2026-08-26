@@ -86,6 +86,99 @@ const renderApp = (legacy = false) => {
   return { dom, queries, window };
 };
 
+const renderLoongArchPreview = (payload) => {
+  const dom = new JSDOM(
+    `<!doctype html>
+      <html lang="zh-CN">
+        <head><meta name="theme-color" content="#f6f8fb"></head>
+        <body>
+          <header data-site-header>
+            <button type="button" data-menu-toggle>菜单</button>
+            <nav data-navigation></nav>
+            <button type="button" data-theme-toggle>主题</button>
+          </header>
+          <div data-menu-backdrop></div>
+          <main>
+            <article class="download-card">
+              <div data-download-card="linux">
+                <select data-download-arch>
+                  <option value="x64">x64</option>
+                  <option value="arm64">ARM64</option>
+                  <option value="loong64">龙芯 LoongArch（实验预览）</option>
+                </select>
+                <select data-download-format>
+                  <option value="AppImage">AppImage</option>
+                  <option value="deb">DEB</option>
+                  <option value="rpm">RPM</option>
+                </select>
+              </div>
+              <a
+                class="button button--download"
+                href="https://github.com/mesalogo/goodbuddy/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+                data-release-link
+              >下载 Linux 版<span class="sr-only">（在新窗口打开）</span></a>
+              <p data-download-meta></p>
+            </article>
+          </main>
+          <span data-current-year></span>
+        </body>
+      </html>`,
+    {
+      runScripts: "outside-only",
+      url: "https://example.test/",
+    },
+  );
+  const { window } = dom;
+  createMediaQueries(window, false);
+  window.TextDecoder = TextDecoder;
+  window.GoodBuddyReleaseIndex = {
+    maximumIndexBytes: 512 * 1024,
+    maximumPreviewIndexBytes: 16 * 1024,
+    validateReleaseIndex() {
+      throw new Error("正式发布索引在此测试中不可用");
+    },
+    validateLoongArchPreviewIndex(value) {
+      return value;
+    },
+  };
+  window.fetch = async (url) => {
+    if (!String(url).includes("/loongarch-preview/")) {
+      throw new Error("正式发布索引在此测试中不可用");
+    }
+    if (!payload) {
+      throw new Error("龙芯预览索引不可用");
+    }
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    let delivered = false;
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === "content-length" ? String(bytes.length) : null;
+        },
+      },
+      body: {
+        getReader() {
+          return {
+            async read() {
+              if (delivered) {
+                return { done: true, value: undefined };
+              }
+              delivered = true;
+              return { done: false, value: bytes };
+            },
+          };
+        },
+      },
+    };
+  };
+  window.eval(source);
+  return { dom, window };
+};
+
 for (const legacy of [false, true]) {
   test(
     `mobile menu isolates content and restores focus with ${
@@ -149,3 +242,71 @@ for (const legacy of [false, true]) {
     },
   );
 }
+
+test("enables only a validated LoongArch preview download", async () => {
+  const artifactUrl =
+    "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/v0.11.5/GoodBuddy-0.11.5-linux-loong64-preview.deb";
+  const { dom, window } = renderLoongArchPreview({
+    goodBuddyVersion: "0.11.5",
+    artifact: {
+      size: 186_853_872,
+      sha256: "a".repeat(64),
+      url: artifactUrl,
+    },
+  });
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+  const arch = window.document.querySelector("[data-download-arch]");
+  const format = window.document.querySelector(
+    "[data-download-format]",
+  );
+  const link = window.document.querySelector("[data-release-link]");
+  const meta = window.document.querySelector("[data-download-meta]");
+  arch.value = "loong64";
+  arch.dispatchEvent(new window.Event("change"));
+
+  assert.equal(format.value, "deb");
+  assert.equal(format.disabled, true);
+  assert.equal(format.options[0].hidden, true);
+  assert.equal(format.options[1].hidden, false);
+  assert.equal(format.options[2].hidden, true);
+  assert.equal(link.getAttribute("href"), artifactUrl);
+  assert.equal(link.getAttribute("target"), "_blank");
+  assert.equal(link.getAttribute("rel"), "noreferrer");
+  assert.equal(link.hasAttribute("aria-disabled"), false);
+  assert.equal(link.classList.contains("is-disabled"), false);
+  assert.match(meta.textContent, /GoodBuddy 0\.11\.5/);
+  assert.match(meta.textContent, /178 MB/);
+  assert.match(meta.textContent, /未完成龙芯真机验证/);
+  dom.window.close();
+});
+
+test("keeps the LoongArch preview disabled when its index is unavailable", async () => {
+  const { dom, window } = renderLoongArchPreview(null);
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+  const arch = window.document.querySelector("[data-download-arch]");
+  const format = window.document.querySelector(
+    "[data-download-format]",
+  );
+  const link = window.document.querySelector("[data-release-link]");
+  const meta = window.document.querySelector("[data-download-meta]");
+  arch.value = "loong64";
+  arch.dispatchEvent(new window.Event("change"));
+
+  assert.equal(format.value, "deb");
+  assert.equal(format.disabled, true);
+  assert.equal(link.hasAttribute("href"), false);
+  assert.equal(link.getAttribute("aria-disabled"), "true");
+  assert.equal(link.tabIndex, -1);
+  assert.equal(link.classList.contains("is-disabled"), true);
+  assert.match(meta.textContent, /尚未发布或校验失败/);
+
+  arch.value = "x64";
+  arch.dispatchEvent(new window.Event("change"));
+  assert.equal(format.disabled, false);
+  assert.equal(format.options[0].hidden, false);
+  assert.equal(link.getAttribute("href"), "https://github.com/mesalogo/goodbuddy/releases/latest");
+  assert.equal(link.hasAttribute("aria-disabled"), false);
+  dom.window.close();
+});

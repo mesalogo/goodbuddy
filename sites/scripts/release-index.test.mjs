@@ -9,7 +9,10 @@ const { test } = process.env.VITEST
 const source = await readFile(path.resolve("sites/release-index.js"), "utf8");
 const context = vm.createContext({ URL, window: {} });
 vm.runInContext(source, context, { filename: "release-index.js" });
-const { validateReleaseIndex } = context.window.GoodBuddyReleaseIndex;
+const {
+  validateReleaseIndex,
+  validateLoongArchPreviewIndex,
+} = context.window.GoodBuddyReleaseIndex;
 
 const definitions = [
   ["windows", "x64", ["nsis", "portable"]],
@@ -88,6 +91,36 @@ const expectRejected = (mutate) => {
   const index = validIndex();
   mutate(index);
   assert.throws(() => validateReleaseIndex(index));
+};
+
+const validLoongArchPreviewIndex = () => {
+  const goodBuddyVersion = "1.2.3";
+  const previewBase =
+    `https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/v${goodBuddyVersion}/`;
+  const name =
+    `GoodBuddy-${goodBuddyVersion}-linux-loong64-preview.deb`;
+  return {
+    formatVersion: 1,
+    product: "GoodBuddy LoongArch Preview",
+    goodBuddyVersion,
+    previewVersion: `${goodBuddyVersion}-loong64-preview.1`,
+    architecture: "loong64",
+    format: "deb",
+    artifact: {
+      name,
+      size: 186_000_000,
+      sha256: "a".repeat(64),
+      url: new URL(encodeURIComponent(name), previewBase).href,
+    },
+    manifestUrl: new URL("preview-manifest.json", previewBase).href,
+    checksumUrl: new URL("SHA256SUMS", previewBase).href,
+  };
+};
+
+const expectLoongArchPreviewRejected = (mutate) => {
+  const index = validLoongArchPreviewIndex();
+  mutate(index);
+  assert.throws(() => validateLoongArchPreviewIndex(index));
 };
 
 test("accepts the canonical stable six-target release index", () => {
@@ -202,5 +235,51 @@ test("requires exact checksum and GitHub fallback URLs", () => {
   });
   expectRejected((index) => {
     index.fallbackUrl = "https://github.com/mesalogo/goodbuddy/releases";
+  });
+});
+
+test("accepts the isolated immutable LoongArch preview index", () => {
+  const index = validLoongArchPreviewIndex();
+  assert.equal(validateLoongArchPreviewIndex(index), index);
+});
+
+test("binds the LoongArch preview to its stable version and exact OSS prefix", () => {
+  for (const version of ["v1.2.3", "1.2.3-rc.1", "1.2"]) {
+    expectLoongArchPreviewRejected((index) => {
+      index.goodBuddyVersion = version;
+    });
+  }
+  expectLoongArchPreviewRejected((index) => {
+    index.previewVersion = "1.2.3-loong64-preview.0";
+  });
+  expectLoongArchPreviewRejected((index) => {
+    index.artifact.url = index.artifact.url.replace(
+      "/releases/loongarch-preview/v1.2.3/",
+      "/releases/v1.2.3/",
+    );
+  });
+  expectLoongArchPreviewRejected((index) => {
+    index.manifestUrl += "?download=1";
+  });
+  expectLoongArchPreviewRejected((index) => {
+    index.unexpected = true;
+  });
+});
+
+test("requires one canonical LoongArch DEB with bounded metadata", () => {
+  expectLoongArchPreviewRejected((index) => {
+    index.architecture = "arm64";
+  });
+  expectLoongArchPreviewRejected((index) => {
+    index.format = "rpm";
+  });
+  expectLoongArchPreviewRejected((index) => {
+    index.artifact.name = "GoodBuddy-1.2.3-linux-loong64.deb";
+  });
+  expectLoongArchPreviewRejected((index) => {
+    index.artifact.size = 0;
+  });
+  expectLoongArchPreviewRejected((index) => {
+    index.artifact.sha256 = "A".repeat(64);
   });
 });

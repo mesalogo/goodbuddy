@@ -1274,7 +1274,7 @@ p {
 
 .download-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
 }
 
@@ -1383,6 +1383,13 @@ p {
   color: var(--accent-hover);
   text-decoration-color: currentColor;
   transform: translateX(2px);
+}
+
+.button--download.is-disabled {
+  background: transparent;
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-decoration: none;
 }
 
 .download-meta {

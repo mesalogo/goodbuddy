@@ -4,7 +4,7 @@
 
 正式站点地址：<https://mesalogo.github.io/goodbuddy/>
 
-首页将 GoodBuddy 定位为“首个支持龙芯的开源桌面 AI 助理产品”和
+首页将 GoodBuddy 定位为“首个全面覆盖国产化 CPU 架构的开源桌面 AI 助理产品”和
 “免注册、支持信创软硬件的一站式 AI 助手”，优先展示三大桌面系统、正式
 x64 / arm64 下载入口、独立编译的龙芯 loong64 预览版、统一 Agent Runtime，
 以及知识库、魔法笔记、智能心跳、桌面上下文和远程消息通道等桌面助手能力。
@@ -89,6 +89,64 @@ https://github.com/mesalogo/goodbuddy/releases/latest
 `GoodBuddy-${version}-mac-${arch}.dmg|zip`；Linux x64 的 AppImage、DEB 与
 RPM 分别使用 electron-builder 的 `x86_64`、`amd64` 与 `x86_64` 架构名。
 Linux arm64 的 AppImage/DEB 使用 `arm64`，RPM 使用 `aarch64`。
+Linux 处理器选择器另外提供龙芯 `loong64` 实验预览；选中后安装包类型固定为
+DEB，并改用下述独立预览索引，不会把 `loong64` 注入正式六目标索引。
+
+### 龙芯实验预览通道
+
+龙芯包不加入上述正式索引，而使用独立 OSS 前缀：
+
+```text
+releases/
+└── loongarch-preview/
+    ├── latest.json
+    └── v<GoodBuddy 版本>/
+        ├── GoodBuddy-<版本>-linux-loong64-preview.deb
+        ├── preview-manifest.json
+        └── SHA256SUMS
+```
+
+版本目录不可变。先上传并公开验证三个版本对象，最后才覆盖
+`releases/loongarch-preview/latest.json`；不得把预览包放入 `releases/v*`、
+`releases/latest.json`、标准 GitHub Release 资产或桌面自动更新索引。
+版本对象建议使用 OSS Standard 存储、继承 Bucket 的公开读取策略，并设置长期
+immutable 缓存；`latest.json` 应使用 `application/json` 和短缓存或
+`no-cache`。`SHA256SUMS` 必须只记录 DEB 文件名，不得记录构建容器绝对路径。
+
+官网只读取以下严格结构，且仅接受北京 OSS
+`releases/loongarch-preview/v<goodBuddyVersion>/` 下的精确 HTTPS 地址：
+
+```json
+{
+  "formatVersion": 1,
+  "product": "GoodBuddy LoongArch Preview",
+  "goodBuddyVersion": "0.11.5",
+  "previewVersion": "0.11.5-loong64-preview.1",
+  "architecture": "loong64",
+  "format": "deb",
+  "artifact": {
+    "name": "GoodBuddy-0.11.5-linux-loong64-preview.deb",
+    "size": 186853872,
+    "sha256": "672321e314fbdb91c6d7b2b549a838e556bd7e597746a3e6d346b936f2ff8369",
+    "url": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/v0.11.5/GoodBuddy-0.11.5-linux-loong64-preview.deb"
+  },
+  "manifestUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/v0.11.5/preview-manifest.json",
+  "checksumUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/v0.11.5/SHA256SUMS"
+}
+```
+
+上传仍应使用 GitHub OIDC 获取的短期 STS 凭据和固定 `ossutil 2.3.0`，Bucket
+为 `goodbuddy`，Endpoint 为 `https://oss-cn-beijing.aliyuncs.com`，Region
+为 `cn-beijing`。上传版本对象前先读取目标对象元数据：不存在时才上传，已存在
+且大小和 SHA-256 相同时跳过，任一字节不同时必须停止；`--update` 只用于传输
+优化，不能代替不可变性检查。也可为版本前缀启用 OSS 保留策略/WORM。指针仅在
+所有公开 GET、大小、SHA-256、manifest 和 DEB 元数据检查通过后使用
+`--force` 更新。手工上传时也应遵循同一顺序，不使用长期 AccessKey。
+
+若独立索引不存在、超时、过大、字段多缺、版本不稳定、摘要格式错误或任一
+URL 不匹配受信任前缀，中文官网选择龙芯处理器时会保持下载按钮禁用；Linux
+x64 / arm64 及另外两个正式平台入口不受影响。英文页面继续只展示正式
+GitHub Release。
 
 ## 字体与可访问性
 
