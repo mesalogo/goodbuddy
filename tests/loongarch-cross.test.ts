@@ -98,6 +98,9 @@ describe('LoongArch preview package contract', () => {
       'node_pty_version="1.1.0"'
     )
     expect(previewScript).toContain(
+      'sha256sum "${artifact_name}" > SHA256SUMS'
+    )
+    expect(previewScript).toContain(
       'assert_loongarch_elf "${koffi_binding}"'
     )
     expect(previewScript).toContain('libpulse0')

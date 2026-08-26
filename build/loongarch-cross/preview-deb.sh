@@ -300,7 +300,10 @@ assert_loongarch_elf \
 assert_loongarch_elf \
   "${verify_root}/opt/${application_directory}/resources/app/${koffi_binding#${app_root}/}"
 
-sha256sum "${artifact}" > "${artifact_root}/SHA256SUMS"
+(
+  cd "${artifact_root}"
+  sha256sum "${artifact_name}" > SHA256SUMS
+)
 cat > "${artifact_root}/preview-manifest.json" <<EOF
 {
   "formatVersion": 1,
