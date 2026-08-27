@@ -2,6 +2,9 @@ import type { TranslationShape } from '../../resource-types'
 import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
+  brand: {
+    subtitle: 'Intelligent Workspace'
+  },
   notifications: {
     success: 'Success',
     error: 'Error',

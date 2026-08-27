@@ -7916,6 +7916,7 @@ function App(): React.JSX.Element {
           </div>
           <div className="brand__copy">
             <strong>GoodBuddy</strong>
+            <span>{t('brand.subtitle')}</span>
           </div>
         </div>
 

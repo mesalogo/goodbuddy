@@ -1,4 +1,7 @@
 export const app = {
+  brand: {
+    subtitle: '智能工作台'
+  },
   notifications: {
     success: '成功',
     error: '错误',

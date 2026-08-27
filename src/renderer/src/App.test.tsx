@@ -1336,7 +1336,7 @@ describe('App', () => {
         /你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件/u
       )
     ).toBeInTheDocument()
-    expect(screen.queryByText('桌面工作区')).not.toBeInTheDocument()
+    expect(screen.getByText('智能工作台')).toBeInTheDocument()
     expect(screen.queryByText('GOODBUDDY 工作台')).not.toBeInTheDocument()
     expect(
       document.querySelector('.composer__runtime-toolbar')
