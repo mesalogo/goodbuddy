@@ -1163,7 +1163,7 @@ describe('App', () => {
         screen.getByLabelText('Message GoodBuddy')
       ).toHaveAttribute(
         'placeholder',
-        'Message GoodBuddy…'
+        'Message GoodBuddy…\nEnter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text'
       )
       expect(
         screen.getByLabelText('Message GoodBuddy')
@@ -5581,7 +5581,7 @@ describe('App', () => {
     ).toHaveTextContent(/^Ask$/u)
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
       'placeholder',
-      '给 GoodBuddy 发消息…'
+      '给 GoodBuddy 发消息…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本'
     )
     expect(
       within(conversationSettings).getByRole('button', {

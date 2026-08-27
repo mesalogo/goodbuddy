@@ -8908,11 +8908,11 @@ function App(): React.JSX.Element {
             <div className="composer__input">
               <textarea
                 aria-label={t('composer.inputLabel')}
-                placeholder={
+                placeholder={`${
                   runtime?.capability === 'image-generation'
                     ? t('composer.imagePlaceholder')
                     : t('composer.placeholder')
-                }
+                }\n${t('composer.keyboardHint')}`}
                 ref={inputRef}
                 rows={3}
                 title={t('composer.keyboardHint')}
