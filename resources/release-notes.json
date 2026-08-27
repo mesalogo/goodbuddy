@@ -2,6 +2,44 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.6",
+      "releasedAt": "2026-08-27",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.11.6 新增侧栏品牌定制，并修复 Anthropic 输出上限与关键界面提示。"
+          ],
+          "features": [
+            "**侧栏品牌定制。** “设置 → 外观 → 品牌定制”现在可修改左上角品牌名称、中英文副标题和本地 Logo，并提供实时预览、默认 Logo、恢复默认及本机持久化。"
+          ],
+          "fixes": [
+            "**Anthropic 输出上限。** Anthropic 直连模型现在可单独配置单次最大输出，不再错误复用上下文窗口；OpenAI 直连请求和工具调用轮次不增加额外配额。",
+            "**输入框与品牌提示。** 恢复聊天和生图输入框中的发送、换行与粘贴快捷键说明，并恢复左上角品牌副标题。"
+          ],
+          "notices": [
+            "品牌定制仅保存在当前设备并只影响左上角品牌区；安装包、更新、Agent 和协议身份仍为 GoodBuddy。",
+            "Anthropic 单次最大输出未填写时默认使用 32K Token；实际可用上限仍取决于所选模型和服务商。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.11.6 adds sidebar brand customization while fixing Anthropic output limits and essential interface guidance."
+          ],
+          "features": [
+            "**Sidebar brand customization.** Settings → Appearance → Brand customization now lets you change the top-left brand name, Chinese and English subtitles, and a local logo, with live preview, default-logo, full-reset, and on-device persistence."
+          ],
+          "fixes": [
+            "**Anthropic output limits.** Direct Anthropic connections now have an independent per-response maximum output setting instead of incorrectly reusing the context window. OpenAI direct requests and tool rounds receive no additional quota.",
+            "**Composer and brand guidance.** Restored send, newline, and paste shortcuts in chat and image-generation input hints, along with the subtitle beneath the top-left brand name."
+          ],
+          "notices": [
+            "Brand customization is stored only on the current device and affects only the top-left brand area. Installer, update, Agent, and protocol identities remain GoodBuddy.",
+            "Anthropic per-response maximum output defaults to 32K tokens when left unset. The selected model and provider may enforce a lower limit."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.5",
       "releasedAt": "2026-08-26",
       "notes": {
