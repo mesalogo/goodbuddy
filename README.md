@@ -96,7 +96,8 @@ npm run lint
 
 目前采用微信群的方式供大家高效交流，大家可以微信扫码进入社区群：
 
-<img width="993" height="1335" alt="image" src="https://github.com/user-attachments/assets/4893715a-edaf-4db6-8a6d-d529b972db8e" />
+<img width="1250" height="1743" alt="6ae8664c83b2f182aa81ae94afe691fe" src="https://github.com/user-attachments/assets/10bb7ac2-0bc1-41a9-978d-c2862923fcd6" />
+
 
 
 ## 开源许可
