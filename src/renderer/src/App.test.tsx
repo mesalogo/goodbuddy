@@ -18,6 +18,10 @@ import type {
 } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
+import {
+  loadBrandingPreferences,
+  saveBrandingPreferences
+} from './branding'
 import type {
   AssistantProject,
   AssistantSchedule,
@@ -1343,6 +1347,33 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('loads customized branding into the primary sidebar', async () => {
+    expect(
+      saveBrandingPreferences({
+        name: '研发伙伴',
+        subtitleZhCN: '团队工作台',
+        subtitleEnUS: 'Team Workspace',
+        logoDataUrl: 'data:image/png;base64,iVBORw0KGgo='
+      })
+    ).toBe(true)
+
+    render(<App />)
+
+    await screen.findByRole('heading', {
+      name: '今天想一起完成什么？'
+    })
+    const brand = document.querySelector('.brand')
+    expect(brand).not.toBeNull()
+    expect(within(brand as HTMLElement).getByText('研发伙伴'))
+      .toBeInTheDocument()
+    expect(within(brand as HTMLElement).getByText('团队工作台'))
+      .toBeInTheDocument()
+    expect(brand?.querySelector('img')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,iVBORw0KGgo='
+    )
+  })
+
   it('renders the unified user and Scheduled Task queue above the Composer', async () => {
     const conversationId =
       '00000000-0000-4000-8000-000000000951'
@@ -1748,6 +1779,41 @@ describe('App', () => {
       knowledge: 0,
       magicNotes: 0,
       settings: 0
+    })
+  })
+
+  it('saves branding from Appearance and updates the sidebar immediately', async () => {
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /本地工作区/u
+      })
+    )
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '外观' })
+    )
+    fireEvent.change(screen.getByLabelText('品牌名称'), {
+      target: { value: '研发伙伴' }
+    })
+    fireEvent.change(screen.getByLabelText('中文副标题'), {
+      target: { value: '团队工作台' }
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存品牌设置' })
+    )
+
+    expect(await screen.findByText('品牌设置已保存'))
+      .toBeInTheDocument()
+    const brand = document.querySelector('.brand')
+    expect(brand).not.toBeNull()
+    expect(within(brand as HTMLElement).getByText('研发伙伴'))
+      .toBeInTheDocument()
+    expect(within(brand as HTMLElement).getByText('团队工作台'))
+      .toBeInTheDocument()
+    expect(loadBrandingPreferences()).toMatchObject({
+      name: '研发伙伴',
+      subtitleZhCN: '团队工作台'
     })
   })
 
@@ -8710,7 +8776,7 @@ describe('App', () => {
     expect((await screen.findAllByText('生图')).length).toBeGreaterThan(0)
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
       'placeholder',
-      '描述你想生成的图片…'
+      '描述你想生成的图片…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本'
     )
     await waitFor(() =>
       expect(api.artifacts.list).toHaveBeenCalled()

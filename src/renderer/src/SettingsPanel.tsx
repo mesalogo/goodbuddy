@@ -76,6 +76,11 @@ import { EmbeddingSettingsSection } from './EmbeddingSettingsSection'
 import { useUiLocale } from './i18n/UiLocaleProvider'
 import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
 import { findPreferredCompatibleModelProfile } from './model-profile-selection'
+import { BrandingSettingsSection } from './BrandingSettingsSection'
+import {
+  defaultBrandingPreferences,
+  type BrandingPreferences
+} from './branding'
 
 type ModelType = 'llm' | 'embedding' | 'rerank' | 'speech'
 type AgentRuntimeType =
@@ -218,6 +223,11 @@ type SettingsPanelProps = {
   onClearLocalData: () => Promise<void>
   appearanceTheme?: AppearanceTheme
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
+  brandingPreferences?: BrandingPreferences
+  brandingFallbackLogo?: string
+  onBrandingPreferencesChange?: (
+    preferences: BrandingPreferences
+  ) => boolean
   magicNotesEnabled?: boolean
   remoteProjectsEnabled?: boolean
   onMagicNotesEnabledChange?: (enabled: boolean) => void
@@ -584,6 +594,9 @@ export function SettingsPanel({
   onExpertsChanged = () => {},
   appearanceTheme = 'system',
   onAppearanceThemeChange = () => {},
+  brandingPreferences = defaultBrandingPreferences,
+  brandingFallbackLogo,
+  onBrandingPreferencesChange = () => false,
   magicNotesEnabled = false,
   remoteProjectsEnabled = false,
   onMagicNotesEnabledChange = () => {},
@@ -598,6 +611,7 @@ export function SettingsPanel({
     setPreference: setUiLocalePreference
   } = useUiLocale()
   const [settings, setSettings] = useState<RuntimeSettings>()
+  const [brandingDirty, setBrandingDirty] = useState(false)
   const [provider, setProvider] =
     useState<RuntimeSettingsInput['provider']>(
       defaultRuntimeSettings.provider
@@ -927,11 +941,13 @@ export function SettingsPanel({
     runtimeDraftDirty ||
     speechModelSelectionDirty ||
     runtimeCustomizationDirty ||
+    brandingDirty ||
     platformFeaturesDirty ||
     documentParsingDirty ||
     sshHostsDirty
   const navigationWouldLoseDraft =
     runtimeCustomizationDirty ||
+    brandingDirty ||
     platformFeaturesDirty ||
     documentParsingDirty ||
     sshHostsDirty
@@ -939,6 +955,7 @@ export function SettingsPanel({
     runtimeCustomizationDirty &&
     !runtimeDraftDirty &&
     !speechModelSelectionDirty &&
+    !brandingDirty &&
     !platformFeaturesDirty &&
     !documentParsingDirty &&
     !sshHostsDirty
@@ -1188,6 +1205,7 @@ export function SettingsPanel({
     setSpeechModelDraftId(undefined)
     setPersistedSpeechModelId(undefined)
     setSpeechModelSelectionDirty(false)
+    setBrandingDirty(false)
     setPlatformFeaturesDirty(false)
     setDocumentParsingDirty(false)
     setSshHostsDirty(false)
@@ -1213,6 +1231,7 @@ export function SettingsPanel({
     setSpeechModelSelectionDirty(false)
     runtimeCustomizationRef.current?.discard()
     setRuntimeCustomizationDirty(false)
+    setBrandingDirty(false)
     setPlatformFeaturesDirty(false)
     setDocumentParsingDirty(false)
     setSshHostsDirty(false)
@@ -2110,6 +2129,12 @@ export function SettingsPanel({
                   ))}
                 </div>
               </div>
+              <BrandingSettingsSection
+                fallbackLogo={brandingFallbackLogo}
+                onChange={onBrandingPreferencesChange}
+                onDirtyChange={setBrandingDirty}
+                preferences={brandingPreferences}
+              />
             </>
           )}
           {activeTab === 'platform-features' && (

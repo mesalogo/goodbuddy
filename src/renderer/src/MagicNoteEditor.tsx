@@ -22,6 +22,7 @@ import {
   magicNoteDataBytes,
   type MagicNoteRichContent
 } from '../../shared/magic-notes-contracts'
+import { readFileAsDataUrl } from './file-data-url'
 
 const supportedImageTypes = new Set([
   'image/jpeg',
@@ -39,32 +40,6 @@ export type MagicNoteEditorProps = {
   onChange: (content: MagicNoteRichContent) => void
   onError: (message: string) => void
   onParagraphCommit?: (content: MagicNoteRichContent) => void
-}
-
-function readFileAsDataUrl(
-  file: File,
-  mimeType: string,
-  readFailedMessage: string
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') {
-        reject(new Error(readFailedMessage))
-        return
-      }
-      const separatorIndex = reader.result.indexOf(',')
-      if (separatorIndex < 0) {
-        reject(new Error(readFailedMessage))
-        return
-      }
-      resolve(
-        `data:${mimeType};base64,${reader.result.slice(separatorIndex + 1)}`
-      )
-    }
-    reader.onerror = () => reject(new Error(readFailedMessage))
-    reader.readAsDataURL(file)
-  })
 }
 
 function safeEmbeddedFileName(file: File): string {
@@ -273,9 +248,6 @@ export function MagicNoteEditor({
       return
     }
     try {
-      const readFailedMessage = translateRef.current(
-        'editor.fileReadFailed'
-      )
       const embeds = await Promise.all(
         classified.map(async ({ file, kind, mimeType }) => ({
           kind,
@@ -283,11 +255,7 @@ export function MagicNoteEditor({
             name: safeEmbeddedFileName(file),
             mimeType,
             size: file.size,
-            dataUrl: await readFileAsDataUrl(
-              file,
-              mimeType,
-              readFailedMessage
-            )
+            dataUrl: await readFileAsDataUrl(file, mimeType)
           }
         }))
       )
@@ -302,12 +270,8 @@ export function MagicNoteEditor({
         index += 2
       }
       quill.setSelection(index, 0, 'silent')
-    } catch (error) {
-      onErrorRef.current(
-        error instanceof Error
-          ? error.message
-          : translateRef.current('editor.fileReadFailed')
-      )
+    } catch {
+      onErrorRef.current(translateRef.current('editor.fileReadFailed'))
     }
   }
 

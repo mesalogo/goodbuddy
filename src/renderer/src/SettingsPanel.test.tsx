@@ -48,8 +48,21 @@ import {
 } from './RuntimeCustomizationSection'
 import { changeUiLocale } from './i18n'
 import { UiLocaleProvider } from './i18n/UiLocaleProvider'
+import type { BrandingPreferences } from './branding'
 
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
+const nativeImage = globalThis.Image
+
+class DecodableBrandImage {
+  naturalWidth = 64
+  naturalHeight = 64
+  onload: (() => void) | null = null
+  onerror: (() => void) | null = null
+
+  set src(_value: string) {
+    queueMicrotask(() => this.onload?.())
+  }
+}
 const browserProfileId = '00000000-0000-4000-8000-000000000201'
 const runtimeSettings: RuntimeSettings = {
   provider: 'auto',
@@ -934,6 +947,10 @@ describe('SettingsPanel runtime files', () => {
 
   afterEach(() => {
     cleanup()
+    Object.defineProperty(globalThis, 'Image', {
+      configurable: true,
+      value: nativeImage
+    })
   })
 
   it('offers system, light, and dark appearance modes', async () => {
@@ -961,6 +978,99 @@ describe('SettingsPanel runtime files', () => {
       within(themeOptions).getByRole('radio', { name: /暗色/u })
     )
     expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark')
+  })
+
+  it('customizes and restores the sidebar brand from Appearance', async () => {
+    const onBrandingPreferencesChange = vi.fn<
+      (preferences: BrandingPreferences) => boolean
+    >(() => true)
+
+    function BrandingHarness(): React.JSX.Element {
+      const [preferences, setPreferences] = useState({
+        name: 'GoodBuddy',
+        subtitleZhCN: '智能工作台',
+        subtitleEnUS: 'Intelligent Workspace'
+      })
+      return (
+        <SettingsPanel
+          {...heartbeatSettingsProps}
+          brandingFallbackLogo="default-logo.png"
+          brandingPreferences={preferences}
+          onBrandingPreferencesChange={(next) => {
+            onBrandingPreferencesChange(next)
+            setPreferences(next)
+            return true
+          }}
+          open
+          onClearLocalData={vi.fn(async () => {})}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      )
+    }
+
+    render(<BrandingHarness />)
+    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
+
+    expect(screen.getByRole('img', { name: '品牌效果预览' }))
+      .toHaveTextContent('GoodBuddy')
+    expect(screen.getByLabelText('品牌名称')).toHaveValue('GoodBuddy')
+
+    fireEvent.change(screen.getByLabelText('品牌名称'), {
+      target: { value: '研发伙伴' }
+    })
+    fireEvent.change(screen.getByLabelText('中文副标题'), {
+      target: { value: '团队工作台' }
+    })
+    fireEvent.change(screen.getByLabelText('英文副标题'), {
+      target: { value: 'Team Workspace' }
+    })
+    expect(screen.getByRole('img', { name: '品牌效果预览' }))
+      .toHaveTextContent('研发伙伴')
+
+    Object.defineProperty(globalThis, 'Image', {
+      configurable: true,
+      value: DecodableBrandImage
+    })
+    fireEvent.change(screen.getByLabelText('选择 Logo'), {
+      target: {
+        files: [
+          new File(
+            [
+              Uint8Array.from([
+                0x89,
+                0x50,
+                0x4e,
+                0x47,
+                0x0d,
+                0x0a,
+                0x1a,
+                0x0a
+              ])
+            ],
+            'brand.png',
+            { type: 'image/png' }
+          )
+        ]
+      }
+    })
+    await screen.findByRole('button', { name: '使用默认 Logo' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '保存品牌设置' })
+    )
+    expect(onBrandingPreferencesChange).toHaveBeenCalledWith({
+      name: '研发伙伴',
+      subtitleZhCN: '团队工作台',
+      subtitleEnUS: 'Team Workspace',
+      logoDataUrl: 'data:image/png;base64,iVBORw0KGgo='
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认' }))
+    expect(screen.getByLabelText('品牌名称')).toHaveValue('GoodBuddy')
+    expect(screen.getByLabelText('中文副标题')).toHaveValue(
+      '智能工作台'
+    )
   })
 
   it('configures direct model context compression with explicit token budgets', async () => {

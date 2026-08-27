@@ -181,6 +181,11 @@ import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
 import goodbuddyDarkIcon from './assets/goodbuddy-dark.png'
 import goodbuddyLightIcon from './assets/goodbuddy-light.png'
 import {
+  loadBrandingPreferences,
+  saveBrandingPreferences
+} from './branding'
+import { BrandLockup } from './BrandLockup'
+import {
   applyAppearanceTheme,
   loadAppearanceTheme,
   resolveAppearanceTheme,
@@ -2084,6 +2089,9 @@ function App(): React.JSX.Element {
   const [runtimeSwitching, setRuntimeSwitching] = useState(false)
   const [appearanceTheme, setAppearanceTheme] =
     useState<AppearanceTheme>(loadAppearanceTheme)
+  const [brandingPreferences, setBrandingPreferences] = useState(
+    loadBrandingPreferences
+  )
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     () =>
       typeof window.matchMedia === 'function' &&
@@ -2093,6 +2101,10 @@ function App(): React.JSX.Element {
     appearanceTheme,
     systemPrefersDark
   )
+  const brandingSubtitle =
+    locale === 'en-US'
+      ? brandingPreferences.subtitleEnUS
+      : brandingPreferences.subtitleZhCN
   const toggleAppearanceTheme = useCallback((): void => {
     setAppearanceTheme(
       resolvedAppearanceTheme === 'dark' ? 'light' : 'dark'
@@ -7902,23 +7914,19 @@ function App(): React.JSX.Element {
         ref={sidebarRef}
         role={narrowWindow && sidebarOpen ? 'dialog' : undefined}
       >
-        <div className="brand">
-          <div className="brand__mark">
-            <img
-              alt=""
-              aria-hidden="true"
-              src={
-                resolvedAppearanceTheme === 'dark'
-                  ? goodbuddyDarkIcon
-                  : goodbuddyLightIcon
-              }
-            />
-          </div>
-          <div className="brand__copy">
-            <strong>GoodBuddy</strong>
-            <span>{t('brand.subtitle')}</span>
-          </div>
-        </div>
+        <BrandLockup
+          className="brand"
+          copyClassName="brand__copy"
+          logo={
+            brandingPreferences.logoDataUrl ??
+            (resolvedAppearanceTheme === 'dark'
+              ? goodbuddyDarkIcon
+              : goodbuddyLightIcon)
+          }
+          markClassName="brand__mark"
+          name={brandingPreferences.name}
+          subtitle={brandingSubtitle || undefined}
+        />
 
         <ProjectSwitcher
           activeProjectId={activeProjectId}
@@ -10126,11 +10134,29 @@ function App(): React.JSX.Element {
             >
               <SettingsPanel
             appearanceTheme={appearanceTheme}
+            brandingFallbackLogo={
+              resolvedAppearanceTheme === 'dark'
+                ? goodbuddyDarkIcon
+                : goodbuddyLightIcon
+            }
+            brandingPreferences={brandingPreferences}
             initialCategory={settingsInitialCategory}
             initialChannel={settingsInitialChannel}
             magicNotesEnabled={magicNotesEnabled}
             remoteProjectsEnabled={remoteProjectsEnabled}
             onAppearanceThemeChange={setAppearanceTheme}
+            onBrandingPreferencesChange={(preferences) => {
+              if (!saveBrandingPreferences(preferences)) {
+                return false
+              }
+              setBrandingPreferences(preferences)
+              notify({
+                tone: 'success',
+                message: t('notices.brandingSaved'),
+                dedupeKey: 'branding-saved'
+              })
+              return true
+            }}
             onClearLocalData={clearLocalData}
             onClose={() => {
               setSettingsInitialCategory(undefined)

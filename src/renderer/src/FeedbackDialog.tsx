@@ -24,6 +24,7 @@ import {
   type FeedbackSubmissionErrorCode
 } from '../../shared/feedback-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import { loadImageDimensions } from './file-data-url'
 
 type FeedbackDialogProps = {
   appInfo: AppInfo
@@ -47,21 +48,6 @@ function formatScreenshotBytes(bytes: number): string {
   return bytes >= 1_024 * 1_024
     ? `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`
     : `${Math.max(1, Math.ceil(bytes / 1_024))} KB`
-}
-
-function imageDimensions(
-  objectUrl: string
-): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const image = new Image()
-    image.onload = () =>
-      resolve({
-        width: image.naturalWidth,
-        height: image.naturalHeight
-      })
-    image.onerror = () => reject(new Error('Image could not be decoded'))
-    image.src = objectUrl
-  })
 }
 
 export function FeedbackDialog({
@@ -174,7 +160,7 @@ export function FeedbackDialog({
       }
       objectUrl = URL.createObjectURL(file)
       pendingScreenshotUrlsRef.current.add(objectUrl)
-      const { width, height } = await imageDimensions(objectUrl)
+      const { width, height } = await loadImageDimensions(objectUrl)
       if (selection !== screenshotSelectionRef.current) {
         pendingScreenshotUrlsRef.current.delete(objectUrl)
         URL.revokeObjectURL(objectUrl)

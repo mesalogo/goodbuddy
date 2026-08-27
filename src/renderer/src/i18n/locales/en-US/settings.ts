@@ -16,8 +16,8 @@ export const settings = {
   categories: {
     appearance: {
       label: 'Appearance',
-      navigationDescription: 'Theme and interface language',
-      description: 'Theme and interface language'
+      navigationDescription: 'Theme, language, and branding',
+      description: 'Theme, language, and brand customization'
     },
     platformFeatures: {
       label: 'Platform features',
@@ -878,6 +878,36 @@ export const settings = {
           label: 'English',
           description: 'Use the English interface'
         }
+      }
+    },
+    branding: {
+      title: 'Brand customization',
+      description:
+        'Customize the brand name, subtitle, and logo in the top-left corner',
+      previewLabel: 'Brand preview',
+      fields: {
+        name: 'Brand name',
+        subtitleZhCN: 'Chinese subtitle',
+        subtitleEnUS: 'English subtitle'
+      },
+      logo: {
+        select: 'Choose logo',
+        useDefault: 'Use default logo',
+        help:
+          'Supports PNG, JPEG, or WebP up to 4096 × 4096 and 512 KB'
+      },
+      actions: {
+        restore: 'Restore defaults',
+        save: 'Save branding'
+      },
+      errors: {
+        unsupportedLogo: 'Choose a PNG, JPEG, or WebP image',
+        logoTooLarge: 'The logo file cannot exceed 512 KB',
+        invalidLogo:
+          'The logo is invalid, has the wrong format, or is too large',
+        readLogoFailed: 'The logo could not be read. Choose it again.',
+        saveFailed:
+          'Branding could not be saved. Check local storage and try again.'
       }
     }
   }

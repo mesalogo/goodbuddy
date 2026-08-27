@@ -12,8 +12,8 @@ export const settings = {
   categories: {
     appearance: {
       label: '外观',
-      navigationDescription: '主题与界面语言',
-      description: '主题与界面语言'
+      navigationDescription: '主题、语言与品牌',
+      description: '主题、语言与品牌定制'
     },
     platformFeatures: {
       label: '平台功能',
@@ -808,6 +808,33 @@ export const settings = {
           label: 'English',
           description: 'Use the English interface'
         }
+      }
+    },
+    branding: {
+      title: '品牌定制',
+      description: '定制左上角品牌名称、副标题与 Logo',
+      previewLabel: '品牌效果预览',
+      fields: {
+        name: '品牌名称',
+        subtitleZhCN: '中文副标题',
+        subtitleEnUS: '英文副标题'
+      },
+      logo: {
+        select: '选择 Logo',
+        useDefault: '使用默认 Logo',
+        help:
+          '支持 PNG、JPEG 或 WebP，尺寸不超过 4096 × 4096，文件不能超过 512 KB'
+      },
+      actions: {
+        restore: '恢复默认',
+        save: '保存品牌设置'
+      },
+      errors: {
+        unsupportedLogo: '请选择 PNG、JPEG 或 WebP 图片',
+        logoTooLarge: 'Logo 文件不能超过 512 KB',
+        invalidLogo: 'Logo 图片无效、格式不符或尺寸过大',
+        readLogoFailed: '读取 Logo 失败，请重新选择',
+        saveFailed: '保存品牌设置失败，请检查本地存储后重试'
       }
     }
   }

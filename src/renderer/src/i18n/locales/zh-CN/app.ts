@@ -1,7 +1,4 @@
 export const app = {
-  brand: {
-    subtitle: '智能工作台'
-  },
   notifications: {
     success: '成功',
     error: '错误',
@@ -533,6 +530,7 @@ export const app = {
     }
   },
   notices: {
+    brandingSaved: '品牌设置已保存',
     updateAvailable: '发现 GoodBuddy {{version}}，可在“关于与更新”中查看',
     remoteProjectActivated: '远程项目 Agent 和 Runtime 已就绪',
     remoteProjectActivationFailed:

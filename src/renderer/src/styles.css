@@ -2359,8 +2359,16 @@ textarea:focus-visible {
 
 .brand__copy {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 2px;
+}
+
+.brand__copy strong,
+.brand__copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand__copy strong {
@@ -13736,6 +13744,84 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: 14px;
 }
 
+.branding-settings__preview {
+  display: flex;
+  align-items: center;
+  min-height: 76px;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  gap: var(--space-3);
+}
+
+.branding-settings__preview-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  overflow: hidden;
+  border: 1px solid var(--accent-selected);
+  border-radius: 12px;
+  background: var(--accent-subtle);
+  place-items: center;
+}
+
+.branding-settings__preview-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.branding-settings__preview-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.branding-settings__preview-copy strong,
+.branding-settings__preview-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branding-settings__preview-copy strong {
+  color: var(--text-primary);
+  font-size: var(--font-section-title);
+}
+
+.branding-settings__preview-copy span {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.branding-settings__fields {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.branding-settings__logo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.branding-settings__logo button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.branding-settings__logo small {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
 .appearance-options {
   display: grid;
   gap: 10px;
@@ -14492,6 +14578,10 @@ details.settings-section > :not(summary) + :not(summary) {
   }
 
   .appearance-options {
+    grid-template-columns: 1fr;
+  }
+
+  .branding-settings__fields {
     grid-template-columns: 1fr;
   }
 
