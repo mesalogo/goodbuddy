@@ -282,6 +282,36 @@ test("enables only a validated LoongArch preview download", async () => {
   dom.window.close();
 });
 
+test("keeps Chinese downloads disabled while the OSS indexes are loading", async () => {
+  const { dom, window } = renderLoongArchPreview({
+    goodBuddyVersion: "0.11.5",
+    artifact: {
+      size: 186_853_872,
+      sha256: "a".repeat(64),
+      url: "https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/loongarch-preview/v0.11.5/GoodBuddy-0.11.5-linux-loong64-preview.deb",
+    },
+  });
+  const arch = window.document.querySelector("[data-download-arch]");
+  const link = window.document.querySelector("[data-release-link]");
+  const meta = window.document.querySelector("[data-download-meta]");
+
+  assert.equal(link.hasAttribute("href"), false);
+  assert.equal(link.getAttribute("aria-disabled"), "true");
+  assert.equal(link.tabIndex, -1);
+  assert.equal(link.classList.contains("is-disabled"), true);
+  assert.equal(link.textContent, "正在获取 Linux 下载信息…（在新窗口打开）");
+  assert.equal(meta.textContent, "正在从 OSS 获取最新版本。");
+
+  arch.value = "loong64";
+  arch.dispatchEvent(new window.Event("change"));
+  assert.equal(link.hasAttribute("href"), false);
+  assert.equal(link.getAttribute("aria-disabled"), "true");
+  assert.equal(link.textContent, "正在获取龙芯预览版下载信息…（在新窗口打开）");
+  assert.equal(meta.textContent, "正在从 OSS 获取最新版本。");
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  dom.window.close();
+});
+
 test("keeps the LoongArch preview disabled when its index is unavailable", async () => {
   const { dom, window } = renderLoongArchPreview(null);
   await new Promise((resolve) => window.setTimeout(resolve, 0));

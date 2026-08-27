@@ -28,6 +28,8 @@
   ];
   let verifiedRelease;
   let verifiedLoongArchPreview;
+  let releaseLoadState = "loading";
+  let loongArchPreviewLoadState = "loading";
   const interfaceCopy = isEnglish
     ? {
         themeDark: "Switch to dark theme",
@@ -162,6 +164,17 @@
     meta.textContent = "实验预览 · 仅 DEB · 索引尚未发布或校验失败。";
   };
 
+  const setDownloadPending = (link, meta, visibleText) => {
+    link.removeAttribute("href");
+    link.removeAttribute("target");
+    link.removeAttribute("rel");
+    link.setAttribute("aria-disabled", "true");
+    link.tabIndex = -1;
+    link.classList.add("is-disabled");
+    setLinkText(link, visibleText);
+    meta.textContent = "正在从 OSS 获取最新版本。";
+  };
+
   const setLoongArchFormat = (formatSelect, selected) => {
     for (const option of formatSelect.options) {
       const unavailable = selected && option.value !== "deb";
@@ -188,7 +201,11 @@
 
     if (loongArchSelected) {
       if (!verifiedLoongArchPreview) {
-        setDownloadUnavailable(link, meta);
+        if (loongArchPreviewLoadState === "loading") {
+          setDownloadPending(link, meta, "正在获取龙芯预览版下载信息…");
+        } else {
+          setDownloadUnavailable(link, meta);
+        }
         return;
       }
       setReleaseLink(
@@ -205,12 +222,20 @@
     }
 
     if (!verifiedRelease) {
-      setReleaseLink(
-        link,
-        releaseFallbackUrl,
-        `前往 GitHub 下载 ${platformNames[platform] ?? platform} →`,
-      );
-      meta.textContent = "请在 GitHub Release 中选择对应的安装文件。";
+      if (releaseLoadState === "loading") {
+        setDownloadPending(
+          link,
+          meta,
+          `正在获取 ${platformNames[platform] ?? platform} 下载信息…`,
+        );
+      } else {
+        setReleaseLink(
+          link,
+          releaseFallbackUrl,
+          `前往 GitHub 下载 ${platformNames[platform] ?? platform} →`,
+        );
+        meta.textContent = "请在 GitHub Release 中选择对应的安装文件。";
+      }
       return;
     }
 
@@ -247,11 +272,13 @@
 
   const setFallbackDownloads = () => {
     verifiedRelease = undefined;
+    releaseLoadState = "fallback";
     updateAllDownloadCards();
   };
 
   const setLoongArchPreviewUnavailable = () => {
     verifiedLoongArchPreview = undefined;
+    loongArchPreviewLoadState = "unavailable";
     const linuxCard = downloadCards.find(
       (card) => card.dataset.downloadCard === "linux",
     );
@@ -266,6 +293,7 @@
     }
     verifiedLoongArchPreview =
       releaseIndexApi.validateLoongArchPreviewIndex(payload);
+    loongArchPreviewLoadState = "ready";
     const linuxCard = downloadCards.find(
       (card) => card.dataset.downloadCard === "linux",
     );
@@ -279,6 +307,7 @@
       throw new Error("发布索引校验器不可用");
     }
     verifiedRelease = releaseIndexApi.validateReleaseIndex(payload);
+    releaseLoadState = "ready";
     updateAllDownloadCards();
   };
 

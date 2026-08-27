@@ -311,11 +311,12 @@ const releaseLinks = [
 report(releaseLinks.length >= 3, "缺少三个桌面系统的官方下载入口");
 for (const link of releaseLinks) {
   report(
-    /href="https:\/\/github\.com\/mesalogo\/goodbuddy\/releases\/latest"/.test(link),
-    `下载入口必须指向官方最新 Release：${link}`,
+    !/\shref=/.test(link),
+    `中文下载入口加载期间不得预先指向 GitHub：${link}`,
   );
-  report(/target="_blank"/.test(link), `下载入口必须在新窗口打开：${link}`);
-  report(/rel="[^"]*noreferrer[^"]*"/.test(link), `下载入口缺少 noreferrer：${link}`);
+  report(/aria-disabled="true"/.test(link), `中文下载入口加载期间必须禁用：${link}`);
+  report(/tabindex="-1"/.test(link), `禁用的中文下载入口不得进入 Tab 顺序：${link}`);
+  report(/\bis-disabled\b/.test(link), `中文下载入口缺少禁用样式：${link}`);
 }
 report(
   (html.match(/data-download-card="(?:windows|macos|linux)"/g) ?? []).length === 3,

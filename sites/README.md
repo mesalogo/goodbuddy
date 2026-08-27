@@ -71,6 +71,10 @@ Windows、macOS 和 Linux 下载卡片分别提供处理器架构与安装包类
 整组按钮会以 fail-closed 方式继续指向 GitHub 最新正式 Release，不会混用
 部分 OSS 数据：
 
+中文页面等待 OSS 索引时，三个正式下载入口保持禁用并显示加载状态，不会先
+短暂渲染或跳转到 GitHub。只有索引请求或完整校验明确失败后，正式下载入口
+才会显示 GitHub Release 回退；英文页面仍始终直接使用 GitHub Release。
+
 ```text
 https://github.com/mesalogo/goodbuddy/releases/latest
 ```
