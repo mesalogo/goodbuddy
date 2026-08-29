@@ -1,6 +1,6 @@
 {
   "name": "goodbuddy",
-  "version": "0.11.9",
+  "version": "0.11.10",
   "private": true,
   "description": "Secure desktop AI workspace with controlled Agent Runtimes",
   "desktopName": "GoodBuddy",

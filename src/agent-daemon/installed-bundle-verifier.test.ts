@@ -113,7 +113,9 @@ describe('installed Agent bundle verifier', () => {
     if (process.platform !== 'win32') {
       writeBundle()
       chmodSync(join(installationDirectory, 'goodbuddy-agent'), 0o777)
-      await expect(verifyBundle()).rejects.toThrow('mode mismatch')
+      await expect(verifyBundle()).rejects.toThrow(
+        'entrypoint metadata changed'
+      )
       resetInstallation()
     }
 

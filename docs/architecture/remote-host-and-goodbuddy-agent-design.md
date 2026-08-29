@@ -13,8 +13,8 @@ Windows 到 Linux x64 的既有安装、
 Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实
 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与
 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback
-路径 capability 后，Agent `0.11.7` 已通过独立 workflow 发布 Linux x64/arm64 复合包和
-签名累计目录；当前源码准备 `0.11.9`，修复 Host 更新并消除重复 payload 验证。失败的
+路径 capability 后，Agent `0.11.9` 已通过独立 workflow 发布 Linux x64/arm64 复合包和
+签名累计目录；当前桌面源码准备 `0.11.10`，修复 Host 更新并消除重复 payload 验证。失败的
 `agent-v0.11.3` 保持不可变且未发布。
 
 ## 产品语义
@@ -245,8 +245,8 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。Agent `0.11.7` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 是修复候选 `0.11.9`。
+  的双架构验收。Agent `0.11.9` 后续已由原生 workflow 发布并公开验证双架构工件；
+  当前源码 lock 固定为 `0.11.9`。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生

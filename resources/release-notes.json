@@ -2,12 +2,12 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.11.9",
+      "version": "0.11.10",
       "releasedAt": "2026-08-29",
       "notes": {
         "zh-CN": {
           "highlights": [
-            "GoodBuddy 0.11.9 修复正式环境中的 Host 更新失败，并显著缩短 Agent 与 OpenCode Runtime 的安装、恢复和日常启动校验。"
+            "GoodBuddy 0.11.10 修复正式环境中的 Host 更新失败，并显著缩短 Agent 与 OpenCode Runtime 的安装、恢复和日常启动校验。"
           ],
           "features": [],
           "fixes": [
@@ -21,7 +21,7 @@
         },
         "en-US": {
           "highlights": [
-            "GoodBuddy 0.11.9 fixes Host updates in production and substantially reduces Agent and OpenCode Runtime verification during installation, recovery, and normal startup."
+            "GoodBuddy 0.11.10 fixes Host updates in production and substantially reduces Agent and OpenCode Runtime verification during installation, recovery, and normal startup."
           ],
           "features": [],
           "fixes": [
