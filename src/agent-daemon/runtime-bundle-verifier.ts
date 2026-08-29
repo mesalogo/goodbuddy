@@ -3,6 +3,7 @@ export {
   loadRegisteredRuntimeBundle,
   readRemoteRuntimeLock,
   runtimeManifestSignaturePayload,
+  verifyPublishedRuntimeBundle,
   verifyRuntimeBundle,
   verifyRuntimeManifestSignature
 } from '../shared/node/runtime-bundle-verifier'

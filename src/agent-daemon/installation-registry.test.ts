@@ -76,6 +76,33 @@ describe('Agent installation registry', () => {
     ).toThrow('authorized registry role')
   })
 
+  it('replaces same-installation legacy metadata after verification', () => {
+    const root = privateTemporaryDirectory()
+    const storagePath = resolve(root, 'registry.json')
+    writeFileSync(
+      storagePath,
+      `${JSON.stringify({
+        formatVersion: 1,
+        current: {
+          installationId: 'install-a',
+          agentVersion: '0.11.1',
+          manifestSha256: 'a'.repeat(64),
+          arch: 'x64'
+        }
+      }, null, 2)}\n`,
+      { mode: 0o600 }
+    )
+    const registry = new InstallationRegistry({ storagePath })
+    const current = verified('install-a', '0.11.1', 'a')
+
+    expect(registry.isCurrent(current)).toBe(false)
+    registry.refreshCurrent(current)
+    expect(registry.snapshot().current).toMatchObject({
+      installationId: 'install-a',
+      protocol: { major: 1, minor: 0 }
+    })
+  })
+
   it('replaces a stale candidate with the requested signed identity', () => {
     const { registry } = createRegistry()
     registry.stageCandidate(verified('install-a', '0.11.0', 'a'))

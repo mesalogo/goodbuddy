@@ -31,7 +31,7 @@ import {
   loadRegisteredAgentBundle,
   readManagedAgentReleaseKeyRegistry,
   RegisteredAgentBundleError,
-  verifyInstalledAgentBundle,
+  verifyPublishedAgentBundle,
   type VerifiedInstalledAgentBundle
 } from './installed-bundle-verifier'
 import { InstallationRegistry } from './installation-registry'
@@ -41,7 +41,7 @@ import {
 import {
   loadRegisteredRuntimeBundle,
   readRemoteRuntimeLock,
-  verifyRuntimeBundle,
+  verifyPublishedRuntimeBundle,
   type VerifiedRuntimeBundle
 } from './runtime-bundle-verifier'
 import { createProductionRuntimeProtocol } from './runtime-composition'
@@ -91,7 +91,7 @@ export type AgentCliDependencies = {
   runtimeReleaseKeyRegistry?: AgentReleaseKeyRegistry
   runtimeLock?: RemoteRuntimeLock
   runtimeRegistry?: RuntimeBundleRegistry
-  verifyRuntime?: typeof verifyRuntimeBundle
+  verifyRuntime?: typeof verifyPublishedRuntimeBundle
   runtimeVerificationEnvironment?: 'production' | 'test'
   currentArchitecture?: () => AgentArchitecture
   runModelBridgeHelper?: typeof runOpenCodeModelBridgeHelper
@@ -299,7 +299,7 @@ async function runRuntime(
   const verified =
     registered === undefined || forceVerification
     ? await (
-        dependencies.verifyRuntime ?? verifyRuntimeBundle
+        dependencies.verifyRuntime ?? verifyPublishedRuntimeBundle
       )(paths.bundleDirectory, verificationOptions)
     : await loadRegisteredRuntimeBundle(
         registered.bundleDirectory,
@@ -524,10 +524,11 @@ async function runLifecycle(
           paths,
           dependencies
         )
-      const alreadyCurrent =
+      const currentInstallationMatches =
         registry.snapshot().current?.installationId ===
         installationId
-      if (!alreadyCurrent) {
+      const alreadyCurrent = registry.isCurrent(verified)
+      if (!alreadyCurrent && !currentInstallationMatches) {
         registry.stageCandidate(verified)
       }
       prepareManagedSocketDirectory(paths)
@@ -539,7 +540,11 @@ async function runLifecycle(
         verified
       ).bootstrap()
       if (!alreadyCurrent) {
-        registry.promoteCandidate(installationId)
+        if (currentInstallationMatches) {
+          registry.refreshCurrent(verified)
+        } else {
+          registry.promoteCandidate(installationId)
+        }
       }
       io.output.write(`${JSON.stringify(status)}\n`)
       break
@@ -757,7 +762,7 @@ async function verifyManagedInstallation(
       storagePath: resolve(agentRoot, 'registry.json')
     })
   const verified = await (
-    dependencies.verifyInstallation ?? verifyInstalledAgentBundle
+    dependencies.verifyInstallation ?? verifyPublishedAgentBundle
   )(dirname(paths.executablePath), {
     installationId,
     architecture,

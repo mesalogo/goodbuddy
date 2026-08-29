@@ -142,6 +142,8 @@ type InstallerOptions = {
   operationRoot: string
   archive: string
   expectedSha256: string
+  /** The acquisition path verified the archive before installer execution. */
+  archiveSha256Verified?: boolean
   homeDirectory?: string
   emit?: (event: PackageInstallerEvent) => void
 }
@@ -1361,6 +1363,7 @@ function sameSnapshot(
 function verifyArchive(
   archivePath: string,
   expectedSha256: string,
+  archiveSha256Verified: boolean,
   emit: (phase: string) => void
 ): VerifiedPackage {
   const handle = openSync(
@@ -1376,11 +1379,14 @@ function verifyArchive(
     ) {
       throw new Error('Agent package archive is not a bounded regular file')
     }
-    emit('hashing-archive')
-    const archiveSha256 = hashArchive(handle, snapshot.size)
-    if (archiveSha256 !== expectedSha256) {
-      throw new Error('Agent package archive SHA-256 does not match the authenticated catalog')
+    if (!archiveSha256Verified) {
+      emit('hashing-archive')
+      const archiveSha256 = hashArchive(handle, snapshot.size)
+      if (archiveSha256 !== expectedSha256) {
+        throw new Error('Agent package archive SHA-256 does not match the authenticated catalog')
+      }
     }
+    const archiveSha256 = expectedSha256
     emit('verifying-zip')
     const entries = parseZip(handle, snapshot.size)
     const descriptorBytes = readEntry(handle, entries, PACKAGE_DESCRIPTOR)
@@ -1637,28 +1643,7 @@ function persistPreparedState(
   if (bytes.length > MAXIMUM_METADATA_BYTES) {
     throw new Error('Prepared package state exceeds its limit')
   }
-  const handle = openSync(
-    temporary,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-    0o600
-  )
-  try {
-    let offset = 0
-    while (offset < bytes.length) {
-      offset += writeFileChunk(handle, bytes, offset)
-    }
-    fsyncSync(handle)
-  } finally {
-    closeSync(handle)
-  }
-  try {
-    chmodSync(temporary, 0o600)
-    renameSync(temporary, destination)
-  } finally {
-    if (existsSync(temporary)) {
-      unlinkSync(temporary)
-    }
-  }
+  writeBufferAtomically(destination, temporary, bytes)
 }
 
 function writePreparedFile(
@@ -1677,6 +1662,15 @@ function writePreparedFile(
     directory,
     `.${name}-${process.pid}-${Date.now().toString(36)}.tmp`
   )
+  writeBufferAtomically(destination, temporary, bytes)
+}
+
+function writeBufferAtomically(
+  destination: string,
+  temporary: string,
+  bytes: Buffer,
+  replaceExistingOnWindows = false
+): void {
   const handle = openSync(
     temporary,
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
@@ -1693,6 +1687,13 @@ function writePreparedFile(
   }
   try {
     chmodSync(temporary, 0o600)
+    if (
+      replaceExistingOnWindows &&
+      process.platform === 'win32' &&
+      existsSync(destination)
+    ) {
+      unlinkSync(destination)
+    }
     renameSync(temporary, destination)
   } finally {
     if (existsSync(temporary)) {
@@ -1808,6 +1809,7 @@ export function preparePackage(options: InstallerOptions): PackageInstallerResul
   const verified = verifyArchive(
     inputs.archive,
     inputs.expectedSha256,
+    options.archiveSha256Verified === true,
     progress
   )
   try {
@@ -1940,31 +1942,12 @@ function writePrivateFileAtomic(
     dirname(destination),
     `.${basename(destination)}-${process.pid}-${Date.now().toString(36)}.tmp`
   )
-  const handle = openSync(
+  writeBufferAtomically(
+    destination,
     temporary,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-    0o600
+    contents,
+    true
   )
-  try {
-    let offset = 0
-    while (offset < contents.length) {
-      offset += writeFileChunk(handle, contents, offset)
-    }
-    fsyncSync(handle)
-  } finally {
-    closeSync(handle)
-  }
-  try {
-    chmodSync(temporary, 0o600)
-    if (process.platform === 'win32' && existsSync(destination)) {
-      unlinkSync(destination)
-    }
-    renameSync(temporary, destination)
-  } finally {
-    if (existsSync(temporary)) {
-      unlinkSync(temporary)
-    }
-  }
 }
 
 function restoreLocalMetadata(
@@ -2571,14 +2554,18 @@ function parseCli(argv: readonly string[]): {
   const command = argv[0]
   if (command !== 'prepare' && command !== 'commit') {
     throw new Error(
-      'Usage: remote-package-installer.mjs <prepare|commit> --operation-root <absolute-path> --archive <absolute-path> --expected-sha256 <hex>'
+      'Usage: remote-package-installer.mjs <prepare|commit> --operation-root <absolute-path> --archive <absolute-path> --expected-sha256 <hex> [--archive-sha256-verified true]'
     )
   }
   const values: Record<string, string> = {}
-  const allowed = new Set([
+  const required = [
     '--operation-root',
     '--archive',
     '--expected-sha256'
+  ] as const
+  const allowed = new Set([
+    ...required,
+    '--archive-sha256-verified'
   ])
   for (let index = 1; index < argv.length; index += 2) {
     const flag = argv[index]
@@ -2594,17 +2581,25 @@ function parseCli(argv: readonly string[]): {
     }
     values[flag] = value
   }
-  for (const flag of allowed) {
+  for (const flag of required) {
     if (values[flag] === undefined) {
       throw new Error(`Missing required package installer argument: ${flag}`)
     }
+  }
+  if (
+    values['--archive-sha256-verified'] !== undefined &&
+    values['--archive-sha256-verified'] !== 'true'
+  ) {
+    throw new Error('Invalid package installer argument')
   }
   return {
     command,
     options: {
       operationRoot: values['--operation-root']!,
       archive: values['--archive']!,
-      expectedSha256: values['--expected-sha256']!
+      expectedSha256: values['--expected-sha256']!,
+      archiveSha256Verified:
+        values['--archive-sha256-verified'] === 'true'
     }
   }
 }

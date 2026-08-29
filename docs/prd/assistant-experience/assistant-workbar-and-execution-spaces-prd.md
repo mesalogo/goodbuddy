@@ -589,12 +589,11 @@ attach 并读取 current registry，不存在项目中的旧 Host revision 或�
 - Agent 与 Runtime 各自维护版本，签名摘要标识精确工件。Host 在解包到准备目录的同一遍
   处理中完成完整 payload 校验，commit 只复核签名 metadata 并原子替换 side-by-side
   目录，不重新读取归档、扫描旧目录或使用跨安装硬链接。
-- commit 终态持久化；控制通道丢失时，`commit-status` 读取终态，或从已认证准备状态
-  幂等完成中断的目录/metadata 发布，不重新下载或准备包。prepare 完成后、commit 前快照
-  Agent/Runtime 五个 metadata 文件；任一组件 adoption 失败恢复原字节或原缺失状态，
-  已发布 payload 不得成为 current。新 Agent/Runtime 各自最多完整验证一次；注册后的
+- Main 只保存清理 operation staging 所需的 operation ID。控制通道中断或 adoption 失败
+  后，下次更新尽力清理旧暂存并重新 prepare，不保存或恢复 Agent/Runtime metadata 副本。
+  新 Agent/Runtime 各自最多完整验证一次；注册后的
   health、capabilities 和 prompt 启动只检查 registry、签名 manifest 与入口 metadata。
-  确认 adoption 后显式 cleanup，cleanup 失败不回滚健康环境。
+  确认 adoption 后显式 cleanup，cleanup 失败不回滚健康环境，也不阻塞下一次 fresh prepare。
 - 握手报告 installation、Daemon boot identity、协议、系统、架构、用户监督器和能力。
 - 在远程执行路径规范化、Git、文件、PTY、进程组和 Runtime 管理。
 - 持久化有界 Agent 到 Main 输出；SSH 断开后 Agent 继续运行，同一 Agent 重连时只恢复

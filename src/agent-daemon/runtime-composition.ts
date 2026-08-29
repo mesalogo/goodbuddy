@@ -240,20 +240,10 @@ export async function createProductionRuntimeProtocol(
           options.architecture
         ),
       loadRegisteredRuntimeBundle: async (resolved) => {
-        const verified = await loadRegistered(
+        return await loadRegistered(
           resolved.entry,
           resolved.bundleDirectory
         )
-        if (
-          verified.manifestDigest !== resolved.entry.manifestDigest ||
-          verified.manifest.bundleDigest !==
-            resolved.entry.bundleDigest
-        ) {
-          throw new Error(
-            'Runtime bundle no longer matches its registered identity'
-          )
-        }
-        return verified
       },
       resolveWorkspace: async (preparation, context) =>
         resolveCurrentWorkspace(

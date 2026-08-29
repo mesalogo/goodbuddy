@@ -152,19 +152,13 @@ daemon 参与。两种 acquisition 的差别只在于如何把同一个签名 co
    `prepare` channel 发送有界 one-shot installer 与结构化输入。
 2. Host 在解包写入准备目录的同一遍处理中校验归档大小、SHA-256、外层及内层签名、
    平台、架构、协议和每个 payload digest；不再先完整扫描 payload、再重复解包和哈希。
-3. `prepare` 完成后、`commit` 前按原字节记录 Agent 与 Runtime 的五个
-   current/registry metadata 文件，
-   同时记录原本缺失的状态。
-4. `commit` 只复核有界的签名 manifest、准备回执和入口 metadata，再以目录 rename 发布
+3. `commit` 只复核有界的签名 manifest、准备回执和入口 metadata，再以目录 rename 发布
    已准备内容及包内认证的公钥 registry/Runtime lock；不会重读归档或遍历 payload。
-   终态先持久化到 operation staging；控制通道丢失时，同一 operation 的
-   `commit-status` 读取终态，或从已认证准备状态幂等完成中断的 rename/metadata 发布。
-5. commit 后在同一条已固定身份的 SSH lease 上执行 Agent bootstrap/readiness 和 Runtime
+4. commit 后在同一条已固定身份的 SSH lease 上执行 Agent bootstrap/readiness 和 Runtime
    activate。新 Agent 最多完整验证一次，新 Runtime 最多完整验证一次；注册成功后的
    health、capabilities 和 prompt 启动只读取 registry、签名 manifest 与入口 metadata。
-   adoption 失败时停止候选，并把五个 metadata 文件恢复为原字节或原缺失状态。
-6. Main 确认 adoption 后显式执行 cleanup。cleanup 失败只保留待重试的有界 operation，
-   不回滚已经健康的 Agent/Runtime。
+5. Main 确认 adoption 后显式执行 cleanup。cleanup 失败不回滚已经健康的 Agent/Runtime，
+   也不阻塞下一次更新。
 
 这不是两个并行安装管理器，也不存在把 Agent 与 Runtime payload 逐文件走 SFTP 安装的
 第二条路径。两种 acquisition 共享相同的 prepare、commit、adoption、finalize 与 cleanup。
@@ -194,8 +188,8 @@ Host 下载返回明确失败；本次操作不自动切换 acquisition，用户
   Runtime。
 - 每次显式安装或重装都从本次已经校验并解包的准备目录原子替换对应 Agent 与 Runtime
   digest 目录，不为节省本机磁盘写入而重新遍历旧目录，也不使用跨安装硬链接。
-- 操作响应丢失后的同 operation 重试只检查签名 manifest、registry identity 和三份小型
-  trust metadata，不重新读取归档或 payload；正常 cleanup 随后删除准备目录。
+- 操作中断后不续写旧 operation。下一次更新尽力清理其 staging，并从签名候选重新
+  prepare；正常 cleanup 随后删除本次准备目录。
 
 只有真实包体和发布频率证明网络成本仍不可接受时，才另行设计 Agent、Node 和 Runtime
 独立签名组件目录；本功能不提前引入第二套发布协议。
@@ -220,14 +214,11 @@ Host 下载返回明确失败；本次操作不自动切换 acquisition，用户
 
 同一 Host identity 同时只允许一个由用户启动、Main-owned 的准备操作。重复观察者加入
 已有操作，不启动第二次发布；窗口关闭、显式取消、Host identity 改变或 Main 退出时执行
-有界取消。Main 在 commit 前为该 Host 持久化一个不含凭据的 pending operation 记录，
-其中包含五份有界 metadata 的原字节/原缺失快照；
-commit 指令开始后若 SSH 通道、输出或终态丢失，当前操作保留该记录和远端 staging。
-下一次重试或应用重启后的首次操作先对同一 Host identity 执行 `commit-status` 并
-恢复 adoption；恢复中的 Agent/Runtime adoption 失败仍使用该持久化快照回滚。它不会
-重新下载或准备包，也不开始第二条 acquisition。环境健康后再重试
-cleanup，确认清理后删除 pending 记录。
-取消在最终原子切换完成后不再伪装成回滚成功。
+有界取消。Main 只为该 Host 持久化一个不含凭据的 version-1 pending operation ID，用于
+下一次操作开始时尽力清理旧 staging。无论旧 cleanup 成功、目标已变化还是旧记录损坏，
+都删除这条可丢弃记录并开始 fresh prepare；不保存远端 metadata 副本，不续写旧 commit，
+也不跨重启恢复 adoption。当前操作中可确定的失败会立即尽力 cleanup。环境已健康后的
+cleanup 失败不回滚环境，也不阻塞下一次更新。
 
 ## 项目创建与切换
 
@@ -277,8 +268,9 @@ cleanup，确认清理后删除 pending 记录。
   这些路径不会取得安装包、发布组件或通过 SFTP 扫描 payload。
 - Host 卡片即使显示相同版本也保留显式重装操作，用于修复 registry、签名或 payload
   identity 异常；若同一 digest 的 GoodBuddy-owned 目录校验失败，重装会先隔离旧目录，
-  完整发布并验证新目录，失败时恢复旧目录。重装不要求删除 Host、凭据或项目，也不会处理
-  所有者异常、符号链接或非 GoodBuddy 管理路径。
+  并在原子 commit 失败时恢复旧目录。commit 成功后的 adoption 失败保留新发布内容，
+  下次重装清理旧暂存并重新 prepare/adopt。重装不要求删除 Host、凭据或项目，也不会
+  处理所有者异常、符号链接或非 GoodBuddy 管理路径。
 - 由桌面控制面打包有界 one-shot installer，并通过固定短命令 `exec sh -s` 和 stdin
   发送脚本及结构化输入，避免 SSH command 长度限制；既有 package format v1 归档内固定
   Node 负责解码和运行它。
@@ -296,9 +288,8 @@ cleanup，确认清理后删除 pending 记录。
 - 如果 Host 未就绪或版本不兼容，项目仍可在本地选择，但实际远程操作失败；不再走旧的
   隐式安装。
 - 已下载或导入的本地 `.gbagent` 保持可用，不能因加入远程直连而迁移或删除。
-- `0.11.7` 遗留的 version-1 pending operation 没有持久化 metadata 快照，也没有新格式的
-  已解包准备状态；`0.11.8` 只清理其暂存并重新执行一次认证 prepare，不尝试用新 installer
-  续写旧 commit。
+- pending operation 保持 version 1，只记录 Host、目标 identity 与 operation ID，用于
+  尽力清理旧 staging；它不是远端环境状态或恢复日志。
 - 远程直连继续使用现有 package format version 1，不要求归档携带 installer，也不要求
   目录声明额外的 bootstrap 能力元数据。
 
@@ -330,7 +321,6 @@ cleanup，确认清理后删除 pending 记录。
     仍待完成。
 12. Host 不可达或远端目录不存在时，用户仍可从项目浮动管理入口删除本地项目；删除 Host
     会列出并本地清理全部关联项目，但不会连接 Host 或删除任何远端目录和内容。
-13. commit 终态可在通道丢失后用 `commit-status` 读取，或从已认证准备状态幂等完成；
-    Agent 或 Runtime
-    adoption 失败恢复五个 metadata 文件的原字节/原缺失状态；已健康环境的 cleanup
-    失败保留为维护重试，不触发环境回滚。
+13. 中断或 adoption 失败后的下一次更新只尽力清理旧 staging，然后 fresh prepare；
+    pending record 不包含远端 metadata 副本。已健康环境的 cleanup 失败不触发回滚，
+    也不阻塞下一次更新。

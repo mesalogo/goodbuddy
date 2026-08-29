@@ -25,7 +25,6 @@ import { HostActivationCoordinator } from './host-activation-coordinator'
 import { isMissingPathError } from './path-errors'
 import { remoteHostTargetIdentityKey } from './remote-host-target-identity'
 
-const PRIVATE_FILE_MODE = 0o600
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
 const AGENT_REGISTRY_PATH = '.goodbuddy/agent/registry.json'
 const MAXIMUM_DIAGNOSTIC_CHARACTERS = 800
@@ -192,19 +191,6 @@ export class AgentInstallationManager {
         },
         signal
       )
-      const metadata = await sftp.lstat(
-        AGENT_REGISTRY_PATH,
-        signal
-      )
-      if (
-        metadata.type !== 'file' ||
-        metadata.uid !== probe.uid ||
-        metadata.mode !== PRIVATE_FILE_MODE
-      ) {
-        throw new Error(
-          'Installed Agent registry metadata is invalid'
-        )
-      }
       const registry = parseInstallationRegistryState(
         parseJsonBytes(
           await sftp.readFile(AGENT_REGISTRY_PATH, signal),

@@ -1,12 +1,7 @@
-import {
-  readFileSync,
-  readdirSync
-} from 'node:fs'
-import {
-  join,
-  resolve
-} from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import type {
+  RemoteRuntimeBundleManifest
+} from '../../shared/remote-runtime-launch-contracts'
 import type {
   SshConnectionPoolTarget
 } from '../ssh/ssh-connection-pool'
@@ -17,24 +12,62 @@ import {
 
 const HOST_ID = 'host-1'
 const AGENT_ID = `agent-${'a'.repeat(64)}` as never
-const runtimeRoot = resolve(
-  '.remote-runtime-resources',
-  'linux-x64',
-  'opencode'
-)
-const digestDirectory = readdirSync(runtimeRoot)[0]!
-const manifest = JSON.parse(
-  readFileSync(
-    join(runtimeRoot, digestDirectory, 'manifest.json'),
-    'utf8'
-  )
-) as {
-  runtimeId: string
-  runtimeVersion: string
-  architecture: 'x64'
-  bundleDigest: string
-  adapterDigest: string
-  acpCapabilitiesDigest: string
+const digestDirectory = 'a'.repeat(64)
+const manifest: RemoteRuntimeBundleManifest = {
+  formatVersion: 2,
+  product: 'GoodBuddy',
+  runtimeId: 'opencode',
+  runtimeVersion: '1.18.9',
+  provider: 'opencode',
+  platform: 'linux',
+  architecture: 'x64',
+  signingKeyId: 'runtime-test',
+  bundleDigest: `sha256:${digestDirectory}`,
+  adapterDigest: `sha256:${'b'.repeat(64)}`,
+  sourcePackage: {
+    name: 'opencode-linux-x64-baseline',
+    integrity:
+      'sha512-x4KiJk9EF7ktM18Ru5Jue4kTntxMvlhWb7tHniQGGRvY2KeoK1iIkyAFd7ri5H/fSkM22hNv/Gg1Jk6/h9IlxQ=='
+  },
+  entrypoint: {
+    identity: 'opencode-acp',
+    path: 'bin/opencode',
+    sha256: 'c'.repeat(64),
+    argvPrefix: ['acp']
+  },
+  files: [
+    {
+      path: 'bin/opencode',
+      size: 100,
+      sha256: 'c'.repeat(64),
+      mode: '0755'
+    },
+    {
+      path: 'licenses/opencode.txt',
+      size: 10,
+      sha256: 'd'.repeat(64),
+      mode: '0644'
+    }
+  ],
+  licenses: [
+    {
+      package: 'opencode',
+      version: '1.18.9',
+      spdx: 'MIT',
+      path: 'licenses/opencode.txt'
+    }
+  ],
+  allowedEnvironmentNames: ['HOME', 'LANG'],
+  protocol: {
+    major: 2,
+    minor: 0
+  },
+  acpCapabilitiesDigest: `sha256:${'e'.repeat(64)}`,
+  limits: {
+    maximumPromptRuntimeMilliseconds: 60_000,
+    maximumPromptInputBytes: 4096,
+    maximumPromptOutputBytes: 1024
+  }
 }
 const entry = {
   runtimeId: manifest.runtimeId,

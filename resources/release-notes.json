@@ -2,35 +2,35 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.11.8",
+      "version": "0.11.9",
       "releasedAt": "2026-08-29",
       "notes": {
         "zh-CN": {
           "highlights": [
-            "GoodBuddy 0.11.8 修复正式环境中的 Host 更新失败，并显著缩短 Agent 与 OpenCode Runtime 的安装、恢复和日常启动校验。"
+            "GoodBuddy 0.11.9 修复正式环境中的 Host 更新失败，并显著缩短 Agent 与 OpenCode Runtime 的安装、恢复和日常启动校验。"
           ],
           "features": [],
           "fixes": [
-            "**Host 更新恢复可用。** 修复已发布 OpenCode Runtime 在采用阶段被桌面内置锁重复校验而失败的问题。Host 现在信任签名复合包中的版本锁和身份，并在同一条固定 SSH 连接上完成 Agent 启动、健康检查与 Runtime 激活。",
-            "**不再重复扫描远端包体。** Host 在解包时完成完整 SHA-256 与签名校验；commit 只检查签名元数据。Main 不再通过 SFTP 逐文件读取 Agent/Runtime，后续健康检查、能力发现和每次提问只使用已登记 identity、manifest 与入口元数据。仍保留 SHA-256，提速来自消除重复读取。",
-            "**中断与清理更可靠。** 中断的 commit 可从已认证准备状态继续，待恢复操作会保留五份元数据快照并在采用失败时回滚。环境已健康后，暂存清理失败只留待重试，不再错误回滚；安装错误会显示具体的有界原因。"
+            "**Host 更新恢复可用。** 修复已发布 OpenCode Runtime 在采用阶段被桌面内置锁重复校验而失败的问题。Host 现在使用签名复合包中的版本锁和身份，并在同一条固定 SSH 连接上完成 Agent 启动、健康检查与 Runtime 激活。",
+            "**不再重复扫描远端包体。** 每种获取路径只对复合包执行一次完整 SHA-256；Host installer 在解包时验证全部签名与 payload digest，commit 只检查签名元数据。Main 不再通过 SFTP 逐文件读取 Agent/Runtime，后续健康检查、能力发现和每次提问只使用已登记 identity、manifest 与入口元数据。仍保留 SHA-256，提速来自消除重复读取。",
+            "**失败后直接重试。** 未完成操作只保留一个小型 staging 清理记录；下次更新先尽力清理旧暂存，再重新 prepare，不保存或回滚 Agent/Runtime 元数据副本。已健康环境不会因暂存清理失败而回滚，安装错误仍会显示具体的有界原因。"
           ],
           "notices": [
-            "**技术预览与版本要求。** 远程项目仍默认关闭且为技术预览。Host 需要安装单独发布的 Agent `0.11.8`，提供 Linux x64 和 arm64；桌面包不内置 Agent 或远程 Runtime，本次不构建 LoongArch 预览。"
+            "**技术预览与版本要求。** 远程项目仍默认关闭且为技术预览。Host 需要安装单独发布的 Agent `0.11.9`，提供 Linux x64 和 arm64；桌面包不内置 Agent 或远程 Runtime，本次不构建 LoongArch 预览。"
           ]
         },
         "en-US": {
           "highlights": [
-            "GoodBuddy 0.11.8 fixes Host updates in production and substantially reduces Agent and OpenCode Runtime verification during installation, recovery, and normal startup."
+            "GoodBuddy 0.11.9 fixes Host updates in production and substantially reduces Agent and OpenCode Runtime verification during installation, recovery, and normal startup."
           ],
           "features": [],
           "fixes": [
             "**Host updates work again.** Fixed published OpenCode Runtime adoption failing because it was redundantly checked against the desktop-bundled lock. The Host now uses the signed compound package's lock and identity, then starts and health-checks the Agent and activates Runtime on one pinned SSH connection.",
-            "**No repeated remote payload scans.** The Host completes full SHA-256 and signature verification while extracting, and commit checks only signed metadata. Main no longer reads Agent or Runtime file trees over SFTP. Later health, capability, and prompt paths use registered identities, manifests, and entrypoint metadata. SHA-256 remains; the speedup comes from eliminating rereads.",
-            "**Reliable interruption and cleanup recovery.** Interrupted commits resume from authenticated prepared state. Pending recovery keeps snapshots of all five metadata files and restores them if adoption fails. Once the environment is healthy, staging cleanup failures are retried instead of rolling it back, and bounded installer errors retain their concrete cause."
+            "**No repeated remote payload scans.** Each acquisition path performs one full SHA-256 pass over the compound package. The Host installer verifies every signature and payload digest while extracting, and commit checks only signed metadata. Main no longer reads Agent or Runtime file trees over SFTP. Later health, capability, and prompt paths use registered identities, manifests, and entrypoint metadata. SHA-256 remains; the speedup comes from eliminating rereads.",
+            "**Simple retry after failures.** An unfinished operation keeps only a small staging-cleanup receipt. The next update makes one best-effort cleanup attempt and performs a fresh prepare without saving or restoring copies of Agent or Runtime metadata. A healthy environment is not rolled back for staging cleanup failures, and bounded installer errors retain their concrete cause."
           ],
           "notices": [
-            "**Technical preview and version requirement.** Remote Projects remain disabled by default and in technical preview. Hosts require the separately published Agent `0.11.8` for Linux x64 or arm64. Desktop packages do not embed the Agent or remote Runtime, and this release does not build a LoongArch preview."
+            "**Technical preview and version requirement.** Remote Projects remain disabled by default and in technical preview. Hosts require the separately published Agent `0.11.9` for Linux x64 or arm64. Desktop packages do not embed the Agent or remote Runtime, and this release does not build a LoongArch preview."
           ]
         }
       }

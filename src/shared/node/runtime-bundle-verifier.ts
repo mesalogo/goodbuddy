@@ -26,7 +26,7 @@ import {
   type AgentReleaseKeyRegistry
 } from '../agent-installation-contracts'
 import {
-  assertDetachedRemoteRuntimeBundleDigest,
+  digestRemoteRuntimeBundleIdentity,
   digestRemoteRuntimeBundleManifest,
   remoteRuntimeBundleManifestSchema,
   remoteRuntimeLockSchema,
@@ -73,6 +73,68 @@ export type LoadRegisteredRuntimeBundleOptions =
   }
 
 export async function verifyRuntimeBundle(
+  bundleDirectoryInput: string,
+  options: VerifyRuntimeBundleOptions
+): Promise<VerifiedRuntimeBundle> {
+  const verified = await verifyPublishedRuntimeBundle(
+    bundleDirectoryInput,
+    options
+  )
+  const { bundleDirectory, manifest } = verified
+  const inventory = await inventoryBundleFiles(
+    bundleDirectory,
+    options.uid
+  )
+  const declaredPaths = new Set(
+    manifest.files.map((file) => file.path)
+  )
+  for (const file of manifest.files) {
+    const filePath = join(
+      bundleDirectory,
+      ...file.path.split('/')
+    )
+    const stat = inventory.get(file.path)
+    if (stat === undefined) {
+      throw new Error(`Runtime payload is missing: ${file.path}`)
+    }
+    if (stat.size !== file.size) {
+      throw new Error(`Runtime payload size mismatch: ${file.path}`)
+    }
+    if ((await sha256File(filePath)) !== file.sha256) {
+      throw new Error(`Runtime payload hash mismatch: ${file.path}`)
+    }
+    if (
+      shouldEnforceMode(options) &&
+      modeString(stat.mode) !== file.mode
+    ) {
+      throw new Error(`Runtime payload mode mismatch: ${file.path}`)
+    }
+  }
+
+  const actualPaths = new Set(inventory.keys())
+  const expectedPaths = new Set([
+    ...declaredPaths,
+    MANIFEST_FILE_NAME,
+    SIGNATURE_FILE_NAME
+  ])
+  if (
+    actualPaths.size !== expectedPaths.size ||
+    [...actualPaths].some((path) => !expectedPaths.has(path))
+  ) {
+    throw new Error(
+      'Runtime bundle contains undeclared or missing files'
+    )
+  }
+
+  return verified
+}
+
+/**
+ * Authenticates a package-installer-published Runtime from signed metadata and
+ * bounded entrypoint metadata. The installer already hashed every payload
+ * file while extracting it.
+ */
+export async function verifyPublishedRuntimeBundle(
   bundleDirectoryInput: string,
   options: VerifyRuntimeBundleOptions
 ): Promise<VerifiedRuntimeBundle> {
@@ -125,55 +187,35 @@ export async function verifyRuntimeBundle(
     )
   }
 
-  const inventory = await inventoryBundleFiles(
-    bundleDirectory,
-    options.uid
+  const executableRecord = manifest.files.find(
+    (file) => file.path === manifest.entrypoint.path
   )
-  const declaredPaths = new Set(
-    manifest.files.map((file) => file.path)
-  )
-  for (const file of manifest.files) {
-    const filePath = join(
-      bundleDirectory,
-      ...file.path.split('/')
-    )
-    const stat = inventory.get(file.path)
-    if (stat === undefined) {
-      throw new Error(`Runtime payload is missing: ${file.path}`)
-    }
-    if (stat.size !== file.size) {
-      throw new Error(`Runtime payload size mismatch: ${file.path}`)
-    }
-    if ((await sha256File(filePath)) !== file.sha256) {
-      throw new Error(`Runtime payload hash mismatch: ${file.path}`)
-    }
-    if (
-      shouldEnforceMode(options) &&
-      modeString(stat.mode) !== file.mode
-    ) {
-      throw new Error(`Runtime payload mode mismatch: ${file.path}`)
-    }
-  }
-
-  const actualPaths = new Set(inventory.keys())
-  const expectedPaths = new Set([
-    ...declaredPaths,
-    MANIFEST_FILE_NAME,
-    SIGNATURE_FILE_NAME
-  ])
-  if (
-    actualPaths.size !== expectedPaths.size ||
-    [...actualPaths].some((path) => !expectedPaths.has(path))
-  ) {
+  if (executableRecord === undefined) {
     throw new Error(
-      'Runtime bundle contains undeclared or missing files'
+      'Published Runtime entrypoint is not declared'
     )
   }
-
   const executablePath = join(
     bundleDirectory,
     ...manifest.entrypoint.path.split('/')
   )
+  const executableStat = await lstat(executablePath)
+  assertOwnedRegularFile(
+    executableStat,
+    'Runtime executable',
+    options.uid
+  )
+  if (
+    executableStat.size !== executableRecord.size ||
+    (
+      shouldEnforceMode(options) &&
+      modeString(executableStat.mode) !== executableRecord.mode
+    )
+  ) {
+    throw new Error(
+      'Published Runtime entrypoint metadata changed'
+    )
+  }
   await assertElfArchitecture(
     executablePath,
     options.architecture,
@@ -197,57 +239,14 @@ export async function loadRegisteredRuntimeBundle(
   bundleDirectoryInput: string,
   options: LoadRegisteredRuntimeBundleOptions
 ): Promise<VerifiedRuntimeBundle> {
-  const bundleDirectory = assertAbsoluteManagedPath(
-    resolve(bundleDirectoryInput)
-  )
   const registered = runtimeRegistryEntrySchema.parse(
     options.registered
   )
-  const rootStat = await lstat(bundleDirectory)
-  assertOwnedDirectory(
-    rootStat,
-    'Runtime bundle directory',
-    options.uid
-  )
-  if (
-    shouldEnforceMode(options) &&
-    modeString(rootStat.mode) !== '0700'
-  ) {
-    throw new Error(
-      'Runtime bundle directory permissions must be 0700'
-    )
-  }
-  if (
-    basename(bundleDirectory) !==
-    registered.bundleDigest.slice('sha256:'.length)
-  ) {
-    throw new Error(
-      'Registered Runtime digest does not match its managed directory'
-    )
-  }
-
-  const manifestBytes = await readMetadataFile(
-    join(bundleDirectory, MANIFEST_FILE_NAME),
-    'Runtime manifest',
+  const verified = await verifyPublishedRuntimeBundle(
+    bundleDirectoryInput,
     options
   )
-  const signatureBytes = await readSignature(
-    join(bundleDirectory, SIGNATURE_FILE_NAME),
-    options
-  )
-  const manifest = await verifyRuntimeManifestSignature(
-    manifestBytes,
-    signatureBytes,
-    options.releaseKeyRegistry,
-    options.verificationEnvironment ?? 'production'
-  )
-  assertRuntimeManifestMatchesLock(
-    manifest,
-    remoteRuntimeLockSchema.parse(options.runtimeLock),
-    options.architecture
-  )
-  const manifestDigest =
-    await digestRemoteRuntimeBundleManifest(manifest)
+  const { manifest, manifestDigest } = verified
   if (
     manifest.runtimeId !== registered.runtimeId ||
     manifest.runtimeVersion !== registered.runtimeVersion ||
@@ -266,41 +265,7 @@ export async function loadRegisteredRuntimeBundle(
     )
   }
 
-  const executableRecord = manifest.files.find(
-    (file) => file.path === manifest.entrypoint.path
-  )
-  if (executableRecord === undefined) {
-    throw new Error(
-      'Registered Runtime entrypoint is not declared'
-    )
-  }
-  const executablePath = join(
-    bundleDirectory,
-    ...manifest.entrypoint.path.split('/')
-  )
-  const executableStat = await lstat(executablePath)
-  assertOwnedRegularFile(
-    executableStat,
-    'Runtime executable',
-    options.uid
-  )
-  if (
-    executableStat.size !== executableRecord.size ||
-    (
-      shouldEnforceMode(options) &&
-      modeString(executableStat.mode) !== executableRecord.mode
-    )
-  ) {
-    throw new Error(
-      'Registered Runtime entrypoint metadata changed'
-    )
-  }
-  return {
-    bundleDirectory,
-    executablePath,
-    manifest,
-    manifestDigest
-  }
+  return verified
 }
 
 export function canonicalRuntimeManifestBytes(
@@ -362,16 +327,12 @@ export async function verifyRuntimeManifestSignature(
   ) {
     throw new Error('Runtime manifest signature verification failed')
   }
-  await assertDetachedRemoteRuntimeBundleDigest({
-    manifest,
-    detachedSignature: {
-      manifestDigest:
-        await digestRemoteRuntimeBundleManifest(manifest),
-      algorithm: 'ed25519',
-      keyId: manifest.signingKeyId,
-      signatureBase64: signatureBytes.toString('base64')
-    }
-  })
+  if (
+    await digestRemoteRuntimeBundleIdentity(manifest) !==
+    manifest.bundleDigest
+  ) {
+    throw new Error('Runtime bundle identity digest does not match')
+  }
   return manifest
 }
 

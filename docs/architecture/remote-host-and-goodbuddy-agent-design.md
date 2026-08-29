@@ -14,7 +14,7 @@ Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续�
 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与
 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback
 路径 capability 后，Agent `0.11.7` 已通过独立 workflow 发布 Linux x64/arm64 复合包和
-签名累计目录；当前源码准备 `0.11.8`，修复 Host 更新并消除重复 payload 验证。失败的
+签名累计目录；当前源码准备 `0.11.9`，修复 Host 更新并消除重复 payload 验证。失败的
 `agent-v0.11.3` 保持不可变且未发布。
 
 ## 产品语义
@@ -108,16 +108,16 @@ Detached GoodBuddy Agent
   bootstrap Node；约 294 MiB 完整包不会一次读入 Main `Buffer`，Host 仍再次校验完整包。
 - 两种 acquisition 交付到固定 operation staging 后，完全共用 control-plane
   `prepare → commit → Agent activate/health → Runtime activate → finalize → cleanup`。
-  commit 终态持久化；通道丢失时 `commit-status` 读取终态，或从已认证准备状态幂等完成
-  中断的目录/metadata 发布，不重新下载或准备包。prepare
-  完成后、commit 前快照 Agent/Runtime 五个 metadata 文件，任一组件 adoption 失败都恢复其原字节或原缺失
-  状态；已经发布的 side-by-side payload 可以保留但不能成为 current。确认 adoption 后
-  才显式 cleanup；cleanup 失败只保留维护重试，不回滚健康环境。Host 在 prepare 解包时
+  Main 只保存清理 operation staging 所需的 operation ID。中断或 adoption 失败后，下次
+  更新尽力清理旧暂存并重新 prepare，不保存或恢复 Agent/Runtime metadata 副本。确认
+  adoption 后才显式 cleanup；cleanup 失败不回滚健康环境，也不阻塞下一次 fresh prepare。
+  Host 在 prepare 解包时
   完成一次完整 payload 校验，commit 和后续注册检查不再遍历包体。首次 bootstrap 不依赖
   既有 Agent daemon，也不要求 format v1 归档携带 `agent/lib/package-installer.cjs`。
 - 即使版本号均为当前版本，Host 卡片仍提供同版本“重新安装”，用于修复 registry、签名
   或安装 identity 异常。GoodBuddy-owned 同 digest 目录损坏时先隔离后替换，并在发布或
-  激活失败时恢复；不要求删除 Host、凭据或引用项目。
+  原子 commit 失败时恢复；commit 成功后的激活失败保留新发布内容，下次点击重新安装时
+  清理旧暂存并重新 prepare/adopt。不要求删除 Host、凭据或引用项目。
 - Host 卡片的“版本匹配”badge 只表达版本事实，不代表 Agent 正在运行或环境健康。重新安装
   失败时明确显示本次操作未完成，并以随后重新检查的版本卡片表达当前事实；提交结果
   不确定时不声称旧版本未被替换。
@@ -246,7 +246,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
   的双架构验收。Agent `0.11.7` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 是修复候选 `0.11.8`。
+  当前源码 lock 是修复候选 `0.11.9`。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生

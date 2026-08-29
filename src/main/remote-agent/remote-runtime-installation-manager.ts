@@ -19,7 +19,6 @@ import { isMissingPathError } from './path-errors'
 import { remoteHostTargetIdentityKey } from './remote-host-target-identity'
 
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
-const PRIVATE_FILE_MODE = 0o600
 const RUNTIME_REGISTRY_PATH =
   '.goodbuddy/runtimes/registry.json'
 const OPENCODE_ROOT = '.goodbuddy/runtimes/opencode'
@@ -212,12 +211,6 @@ export class RemoteRuntimeInstallationManager {
         },
         signal
       )
-      await assertPrivateMetadata(
-        sftp,
-        RUNTIME_REGISTRY_PATH,
-        probe.uid,
-        signal
-      )
       const registry = parseRuntimeRegistryState(
         parseJsonBytes(
           await sftp.readFile(
@@ -246,12 +239,6 @@ export class RemoteRuntimeInstallationManager {
           `${OPENCODE_ROOT}/${digestDirectoryName(
             current.bundleDigest
           )}/manifest.json`
-        await assertPublicMetadata(
-          sftp,
-          manifestPath,
-          probe.uid,
-          signal
-        )
         const manifest =
           remoteRuntimeBundleManifestSchema.parse(
             parseJsonBytes(
@@ -317,44 +304,6 @@ export class RemoteRuntimeInstallationManager {
     }
   }
 
-}
-
-async function assertPrivateMetadata(
-  sftp: StagedSftp,
-  path: string,
-  uid: number,
-  signal: AbortSignal
-): Promise<void> {
-  const metadata = await sftp.lstat(path, signal)
-  if (
-    metadata.type !== 'file' ||
-    metadata.uid !== uid ||
-    metadata.mode !== PRIVATE_FILE_MODE ||
-    metadata.size > MAXIMUM_METADATA_BYTES
-  ) {
-    throw new Error(
-      `Remote Runtime metadata is invalid: ${path}`
-    )
-  }
-}
-
-async function assertPublicMetadata(
-  sftp: StagedSftp,
-  path: string,
-  uid: number,
-  signal: AbortSignal
-): Promise<void> {
-  const metadata = await sftp.lstat(path, signal)
-  if (
-    metadata.type !== 'file' ||
-    metadata.uid !== uid ||
-    metadata.mode !== 0o644 ||
-    metadata.size > MAXIMUM_METADATA_BYTES
-  ) {
-    throw new Error(
-      `Remote Runtime manifest metadata is invalid: ${path}`
-    )
-  }
 }
 
 function digestDirectoryName(bundleDigest: string): string {

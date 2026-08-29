@@ -230,7 +230,6 @@ describe("fixed SSH remote package bootstrap", () => {
     await executor.prepare(candidate);
     await executor.prepareUploaded(candidate);
     await executor.commit(candidate);
-    await executor.commitStatus(candidate);
     await executor.cleanup(operationId);
 
     const fields = requests.map((request) => request.split("\n"));
@@ -246,7 +245,7 @@ describe("fixed SSH remote package bootstrap", () => {
       controlPlaneInstallerSha256,
       controlPlaneInstaller.toString("base64"),
     ]);
-    for (const index of [4, 5, 6]) {
+    for (const index of [4, 5]) {
       expect(fields[index]?.slice(5, 8)).toEqual(["0", "0".repeat(64), ""]);
     }
     expect(requests.map((request) => request.split("\n")[1])).toEqual([
@@ -255,7 +254,6 @@ describe("fixed SSH remote package bootstrap", () => {
       "prepare",
       "prepare-uploaded",
       "commit",
-      "commit-status",
       "cleanup",
     ]);
     expect(fields[3]?.slice(8)).toEqual(["0", ""]);
@@ -501,6 +499,12 @@ describe("fixed SSH remote package bootstrap", () => {
     expect(uploadedBlock).toContain('[ ! -x "$bootstrap/agent/node" ]');
     expect(uploadedBlock).toContain("run_prepare");
     expect(uploadedBlock).not.toMatch(/\b(?:curl|sha256sum|unzip)\b/u);
+    expect(SSH_REMOTE_PACKAGE_BOOTSTRAP_SCRIPT).toContain(
+      '--archive-sha256-verified true',
+    );
+    expect(SSH_REMOTE_PACKAGE_BOOTSTRAP_SCRIPT).toContain(
+      'actual_sha256=$(sha256sum "$archive"',
+    );
   });
 
   it("rejects empty installer terminal files for prepare and status", () => {

@@ -67,7 +67,6 @@ function createConnection(identity: SshPoolConnectionIdentity) {
     prepareRemotePackageBootstrap: vi.fn(),
     prepareUploadedRemotePackageBootstrap: vi.fn(),
     commitRemotePackageBootstrap: vi.fn(),
-    getRemotePackageBootstrapCommitStatus: vi.fn(),
     cleanupRemotePackageBootstrap: vi.fn(),
     runAgentLifecycleAction: vi.fn(),
     runAgentRuntimeAction: vi.fn(),
@@ -270,10 +269,6 @@ describe("SSH connection pool", () => {
       unavailable: false,
       reason: "size-mismatch",
     });
-    connection.getRemotePackageBootstrapCommitStatus.mockResolvedValue({
-      committed: false,
-      reason: "operation-unavailable",
-    });
     const pool = new SshConnectionPool(async () => connection);
     const lease = await pool.acquireRemotePackageBootstrap(createTarget());
     const candidate = {
@@ -304,12 +299,6 @@ describe("SSH connection pool", () => {
     });
     expect(
       connection.prepareUploadedRemotePackageBootstrap,
-    ).toHaveBeenCalledWith(candidate, undefined);
-    await expect(lease.commitStatus(candidate)).resolves.toMatchObject({
-      reason: "operation-unavailable",
-    });
-    expect(
-      connection.getRemotePackageBootstrapCommitStatus,
     ).toHaveBeenCalledWith(candidate, undefined);
     expect(lease).not.toHaveProperty("exec");
     expect(lease).not.toHaveProperty("sftp");
@@ -703,6 +692,10 @@ describe("authenticated ssh2 connection", () => {
       ready: true,
       architecture: "arm64",
     });
+    await expect(connection.runAgentBootstrapProbe()).resolves.toMatchObject({
+      ready: true,
+      architecture: "arm64",
+    });
     expect(client.exec).toHaveBeenCalledWith(
       AGENT_BOOTSTRAP_PROBE_COMMAND,
       {
@@ -713,6 +706,71 @@ describe("authenticated ssh2 connection", () => {
       },
       expect.any(Function),
     );
+    expect(client.exec).toHaveBeenCalledOnce();
+    client.emit("close");
+    await expect(connection.runAgentBootstrapProbe()).rejects.toThrow(
+      "SSH 连接已关闭",
+    );
+  });
+
+  it("caches an incompatible bootstrap result on the connection", async () => {
+    const channel = Object.assign(new EventEmitter(), {
+      stderr: new EventEmitter(),
+      destroy: vi.fn(),
+    });
+    const output = [
+      "GOODBUDDY_AGENT_BOOTSTRAP_PROBE_V1",
+      "home=/home/builder",
+      "uid=1001",
+      "os=Linux",
+      "arch=riscv64",
+      "shell=/bin/bash",
+      "procfs=ready",
+      "",
+    ].join("\n");
+    const client = Object.assign(new EventEmitter(), {
+      connect: vi.fn(function connect(this: EventEmitter) {
+        this.emit("ready");
+      }),
+      end: vi.fn(),
+      destroy: vi.fn(),
+      exec: vi.fn(
+        (
+          _command: string,
+          _options: unknown,
+          callback: (error: Error | undefined, stream: typeof channel) => void,
+        ) => {
+          callback(undefined, channel);
+          setTimeout(() => {
+            channel.emit("data", output);
+            channel.emit("close", 0);
+          }, 0);
+        },
+      ),
+      sftp: vi.fn(),
+    });
+    const target = createTarget();
+    const connection = await Ssh2AuthenticatedConnection.connect(
+      target,
+      {
+        hostId: target.host.id,
+        hostRevision: target.hostRevision,
+        hostKeyGeneration: target.hostKeyGeneration,
+        authenticationIdentity: "a".repeat(64),
+      },
+      new AbortController().signal,
+      { createClient: () => client as never },
+    );
+
+    await expect(connection.runAgentBootstrapProbe()).resolves.toEqual({
+      ready: false,
+      reason: "unsupported-architecture",
+    });
+    await expect(connection.runAgentBootstrapProbe()).resolves.toEqual({
+      ready: false,
+      reason: "unsupported-architecture",
+    });
+    expect(client.exec).toHaveBeenCalledOnce();
   });
 
   it("cancels a running bootstrap probe and destroys its channel", async () => {

@@ -233,10 +233,6 @@ export interface SshRemotePackageBootstrapExecutor {
     candidate: SshRemotePackageCandidate,
     options?: SshRemotePackageBootstrapOptions,
   ): Promise<SshRemotePackageBootstrapCommitResult>;
-  commitStatus(
-    candidate: SshRemotePackageCandidate,
-    options?: SshRemotePackageBootstrapOptions,
-  ): Promise<SshRemotePackageBootstrapCommitResult>;
   cleanup(
     operationId: string,
     options?: Pick<SshRemotePackageBootstrapOptions, "signal">,
@@ -572,6 +568,7 @@ run_prepare() {
   "$bootstrap/agent/node" "$bootstrap/package-installer.mjs" \
     prepare --operation-root "$operation_root" --archive "$archive" \
     --expected-sha256 "$expected_sha256" \
+    --archive-sha256-verified true \
     >"$installer_output" 2>/dev/null || true
   installer_output_size=$(wc -c < "$installer_output" 2>/dev/null) ||
     stop failed installer-failed
@@ -1610,9 +1607,6 @@ export function createSshRemotePackageBootstrapExecutor(
         };
       }
       throw new Error("Agent 远程安装提交返回了无效结果");
-    },
-    commitStatus(candidate, options = {}) {
-      return readCommitStatus(candidate, options);
     },
     async cleanup(operationId, options = {}) {
       const verifiedOperationId = validateOperationId(operationId);

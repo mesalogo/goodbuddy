@@ -40,6 +40,14 @@ export class InstallationRegistry {
     return structuredClone(this.#state)
   }
 
+  isCurrent(verified: VerifiedInstalledAgentBundle): boolean {
+    const current = this.#state.current
+    return (
+      current !== undefined &&
+      entryEquals(current, entryFromVerified(verified))
+    )
+  }
+
   stageCandidate(
     verified: VerifiedInstalledAgentBundle
   ): InstallationRegistryEntry {
@@ -96,6 +104,25 @@ export class InstallationRegistry {
     this.#commit({
       formatVersion: 1,
       current: candidate
+    })
+    return this.snapshot()
+  }
+
+  refreshCurrent(
+    verified: VerifiedInstalledAgentBundle
+  ): InstallationRegistryState {
+    const entry = entryFromVerified(verified)
+    if (
+      this.#state.current?.installationId !==
+      entry.installationId
+    ) {
+      throw new Error(
+        'Verified Agent installation is not the current identity'
+      )
+    }
+    this.#commit({
+      formatVersion: 1,
+      current: entry
     })
     return this.snapshot()
   }
@@ -234,7 +261,9 @@ function entryEquals(
     left.installationId === right.installationId &&
     left.agentVersion === right.agentVersion &&
     left.manifestSha256 === right.manifestSha256 &&
-    left.arch === right.arch
+    left.arch === right.arch &&
+    JSON.stringify(left.protocol) ===
+      JSON.stringify(right.protocol)
   )
 }
 

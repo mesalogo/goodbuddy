@@ -111,6 +111,66 @@ export async function verifyInstalledAgentBundle(
   installationDirectoryInput: string,
   options: VerifyInstalledAgentBundleOptions
 ): Promise<VerifiedInstalledAgentBundle> {
+  const verified = await verifyPublishedAgentBundle(
+    installationDirectoryInput,
+    options
+  )
+  const {
+    installationDirectory,
+    manifest
+  } = verified
+  const declaredPaths = new Set(
+    manifest.files.map((file) => file.path)
+  )
+  for (const file of manifest.files) {
+    const filePath = join(
+      installationDirectory,
+      ...file.path.split('/')
+    )
+    const stat = await lstat(filePath)
+    assertOwnedRegularFile(stat, file.path, options.uid)
+    if (stat.size !== file.size) {
+      throw new Error(`Agent payload size mismatch: ${file.path}`)
+    }
+    if ((await sha256File(filePath)) !== file.sha256) {
+      throw new Error(`Agent payload hash mismatch: ${file.path}`)
+    }
+    if (
+      shouldEnforceMode(options) &&
+      modeString(stat.mode) !== file.mode
+    ) {
+      throw new Error(`Agent payload mode mismatch: ${file.path}`)
+    }
+  }
+
+  const actualPaths = new Set(
+    await listInstallationFiles(installationDirectory, options)
+  )
+  const expectedPaths = new Set([
+    ...declaredPaths,
+    MANIFEST_FILE_NAME,
+    SIGNATURE_FILE_NAME
+  ])
+  if (
+    actualPaths.size !== expectedPaths.size ||
+    [...actualPaths].some((path) => !expectedPaths.has(path))
+  ) {
+    throw new Error(
+      'Agent installation contains undeclared or missing files'
+    )
+  }
+  return verified
+}
+
+/**
+ * Authenticates a package-installer-published Agent from signed metadata and
+ * bounded entrypoint metadata. The installer already hashed every payload
+ * file while extracting it.
+ */
+export async function verifyPublishedAgentBundle(
+  installationDirectoryInput: string,
+  options: VerifyInstalledAgentBundleOptions
+): Promise<VerifiedInstalledAgentBundle> {
   const installationId = validateInstallationId(options.installationId)
   const installationDirectory = resolve(installationDirectoryInput)
   assertAbsoluteManagedPath(installationDirectory)
@@ -162,47 +222,11 @@ export async function verifyInstalledAgentBundle(
     )
   }
 
-  const declaredPaths = new Set(
-    manifest.files.map((file) => file.path)
+  const executablePath = await assertAgentEntrypoints(
+    installationDirectory,
+    manifest,
+    options
   )
-  for (const file of manifest.files) {
-    const filePath = join(
-      installationDirectory,
-      ...file.path.split('/')
-    )
-    const stat = await lstat(filePath)
-    assertOwnedRegularFile(stat, file.path, options.uid)
-    if (stat.size !== file.size) {
-      throw new Error(`Agent payload size mismatch: ${file.path}`)
-    }
-    if ((await sha256File(filePath)) !== file.sha256) {
-      throw new Error(`Agent payload hash mismatch: ${file.path}`)
-    }
-    if (
-      shouldEnforceMode(options) &&
-      modeString(stat.mode) !== file.mode
-    ) {
-      throw new Error(`Agent payload mode mismatch: ${file.path}`)
-    }
-  }
-
-  const actualPaths = new Set(
-    await listInstallationFiles(installationDirectory, options)
-  )
-  const expectedPaths = new Set([
-    ...declaredPaths,
-    MANIFEST_FILE_NAME,
-    SIGNATURE_FILE_NAME
-  ])
-  if (
-    actualPaths.size !== expectedPaths.size ||
-    [...actualPaths].some((path) => !expectedPaths.has(path))
-  ) {
-    throw new Error(
-      'Agent installation contains undeclared or missing files'
-    )
-  }
-
   await assertElfArchitecture(
     join(installationDirectory, manifest.entrypoint.runtimePath),
     manifest.arch,
@@ -212,10 +236,7 @@ export async function verifyInstalledAgentBundle(
   return {
     installationId,
     installationDirectory,
-    executablePath: join(
-      installationDirectory,
-      manifest.entrypoint.path
-    ),
+    executablePath,
     manifest,
     manifestSha256,
     binaryDigest: `sha256:${manifestSha256}`
@@ -326,19 +347,9 @@ async function loadRegisteredAgentBundleUnchecked(
     )
   }
 
-  const executablePath = join(
+  const executablePath = await assertAgentEntrypoints(
     installationDirectory,
-    manifest.entrypoint.path
-  )
-  await assertRegisteredEntrypoint(executablePath, '0755', options)
-  await assertRegisteredEntrypoint(
-    join(installationDirectory, manifest.entrypoint.runtimePath),
-    '0755',
-    options
-  )
-  await assertRegisteredEntrypoint(
-    join(installationDirectory, manifest.entrypoint.scriptPath),
-    '0644',
+    manifest,
     options
   )
   return {
@@ -500,24 +511,45 @@ function importPublicKey(key: AgentReleaseKey) {
   return publicKey
 }
 
-async function assertRegisteredEntrypoint(
-  filePath: string,
-  expectedMode: string,
+async function assertAgentEntrypoints(
+  installationDirectory: string,
+  manifest: AgentBundleManifest,
   options: Pick<
-    LoadRegisteredAgentBundleOptions,
+    VerifyInstalledAgentBundleOptions,
     'uid' | 'filesystemPlatform' | 'enforceFilesystemMode'
   >
-): Promise<void> {
-  const stat = await lstat(filePath)
-  assertOwnedRegularFile(stat, filePath, options.uid)
-  if (
-    shouldEnforceMode(options) &&
-    modeString(stat.mode) !== expectedMode
-  ) {
-    throw new Error(
-      `Agent payload mode mismatch: ${basename(filePath)}`
+): Promise<string> {
+  for (const path of [
+    manifest.entrypoint.path,
+    manifest.entrypoint.runtimePath,
+    manifest.entrypoint.scriptPath
+  ]) {
+    const record = manifest.files.find((file) => file.path === path)
+    if (record === undefined) {
+      throw new Error(`Agent entrypoint is not declared: ${path}`)
+    }
+    const filePath = join(
+      installationDirectory,
+      ...path.split('/')
     )
+    const stat = await lstat(filePath)
+    assertOwnedRegularFile(stat, filePath, options.uid)
+    if (
+      stat.size !== record.size ||
+      (
+        shouldEnforceMode(options) &&
+        modeString(stat.mode) !== record.mode
+      )
+    ) {
+      throw new Error(
+        `Agent entrypoint metadata changed: ${basename(filePath)}`
+      )
+    }
   }
+  return join(
+    installationDirectory,
+    manifest.entrypoint.path
+  )
 }
 
 async function readMetadataFile(

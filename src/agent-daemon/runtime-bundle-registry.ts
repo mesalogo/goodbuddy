@@ -283,8 +283,8 @@ async function loadVerifiedRuntimeCapabilities(
           entry.runtimeId,
           entry.bundleDigest
         )
-      const verified = options.loadRegistered === undefined
-        ? await loadRegisteredRuntimeBundle(
+      await (options.loadRegistered === undefined
+        ? loadRegisteredRuntimeBundle(
             bundleDirectory,
             {
               registered: entry,
@@ -315,21 +315,10 @@ async function loadVerifiedRuntimeCapabilities(
                 : { uid: options.uid })
             }
           )
-        : await options.loadRegistered(
+        : options.loadRegistered(
             entry,
             bundleDirectory
-          )
-      if (
-        verified.manifest.runtimeVersion !== entry.runtimeVersion ||
-        verified.manifestDigest !== entry.manifestDigest ||
-        verified.manifest.bundleDigest !== entry.bundleDigest ||
-        verified.manifest.acpCapabilitiesDigest !==
-          entry.acpCapabilitiesDigest
-      ) {
-        throw new Error(
-          'Runtime bundle no longer matches its registry identity'
-        )
-      }
+          ))
       capabilities.push({
         runtimeId: entry.runtimeId,
         version: entry.runtimeVersion,

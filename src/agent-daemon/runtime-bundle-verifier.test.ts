@@ -8,7 +8,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type RemoteRuntimeBundleManifest
 } from '../shared/remote-runtime-launch-contracts'
-import { verifyRuntimeBundle } from './runtime-bundle-verifier'
+import {
+  verifyPublishedRuntimeBundle,
+  verifyRuntimeBundle
+} from './runtime-bundle-verifier'
 import {
   RuntimeBundleRegistry,
   createVerifiedRuntimeCapabilitySource
@@ -215,6 +218,45 @@ describe('Remote Runtime bundle verifier', () => {
       'Verified Runtime unavailable: opencode',
       expect.any(Error)
     )
+  })
+
+  it('adopts signed published metadata without rehashing unrelated payload', async () => {
+    const fixture = await createBundle()
+    const options = {
+      architecture: 'x64' as const,
+      releaseKeyRegistry: fixture.registry,
+      runtimeLock: lock,
+      verificationEnvironment: 'test' as const,
+      filesystemPlatform: 'win32' as const
+    }
+    writeFileSync(
+      join(fixture.bundleDirectory, 'licenses', 'opencode.txt'),
+      'changed after extraction'
+    )
+    await expect(
+      verifyPublishedRuntimeBundle(
+        fixture.bundleDirectory,
+        options
+      )
+    ).resolves.toMatchObject({
+      manifest: { runtimeVersion: '1.18.9' }
+    })
+
+    writeFileSync(
+      join(fixture.bundleDirectory, 'bin', 'opencode'),
+      Buffer.concat([
+        readFileSync(
+          join(fixture.bundleDirectory, 'bin', 'opencode')
+        ),
+        Buffer.from('changed')
+      ])
+    )
+    await expect(
+      verifyPublishedRuntimeBundle(
+        fixture.bundleDirectory,
+        options
+      )
+    ).rejects.toThrow('entrypoint metadata changed')
   })
 })
 

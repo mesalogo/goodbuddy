@@ -99,10 +99,6 @@ export interface AuthenticatedSshConnection {
     candidate: SshRemotePackageCandidate,
     options?: SshRemotePackageBootstrapOptions,
   ): Promise<SshRemotePackageBootstrapCommitResult>;
-  getRemotePackageBootstrapCommitStatus(
-    candidate: SshRemotePackageCandidate,
-    options?: SshRemotePackageBootstrapOptions,
-  ): Promise<SshRemotePackageBootstrapCommitResult>;
   cleanupRemotePackageBootstrap(
     operationId: string,
     options?: Pick<SshRemotePackageBootstrapOptions, "signal">,
@@ -134,7 +130,6 @@ export interface SshConnectionLease extends Omit<
   | "dispose"
   | "createRemotePackageUploadStaging"
   | "prepareUploadedRemotePackageBootstrap"
-  | "getRemotePackageBootstrapCommitStatus"
 > {
   release(): void;
 }
@@ -150,7 +145,6 @@ type InternalSshConnectionLease = SshConnectionLease &
     AuthenticatedSshConnection,
     | "createRemotePackageUploadStaging"
     | "prepareUploadedRemotePackageBootstrap"
-    | "getRemotePackageBootstrapCommitStatus"
   >;
 
 type ClientLike = Pick<
@@ -290,6 +284,7 @@ function waitForSharedConnection(
 export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
   private usable = true;
   private disposed = false;
+  private agentBootstrapProbe: AgentBootstrapProbeResult | undefined;
 
   private constructor(
     readonly identity: SshPoolConnectionIdentity,
@@ -298,6 +293,7 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
   ) {
     const disconnected = (): void => {
       this.usable = false;
+      this.agentBootstrapProbe = undefined;
     };
     this.client.on("close", disconnected);
     this.client.on("end", disconnected);
@@ -423,6 +419,11 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
   async runAgentBootstrapProbe(
     signal?: AbortSignal,
   ): Promise<AgentBootstrapProbeResult> {
+    this.assertUsable();
+    signal?.throwIfAborted();
+    if (this.agentBootstrapProbe !== undefined) {
+      return this.agentBootstrapProbe;
+    }
     const result = await this.runBoundedCommand(
       AGENT_BOOTSTRAP_PROBE_COMMAND,
       signal,
@@ -430,7 +431,9 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
     if (result.exitCode !== 0 || result.stderr.length !== 0) {
       throw new Error("Agent 启动探针执行失败");
     }
-    return parseAgentBootstrapProbeOutput(result.stdout);
+    const probe = parseAgentBootstrapProbeOutput(result.stdout);
+    this.agentBootstrapProbe = probe;
+    return probe;
   }
 
   probeRemotePackageBootstrap(
@@ -469,13 +472,6 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
     options?: SshRemotePackageBootstrapOptions,
   ): Promise<SshRemotePackageBootstrapCommitResult> {
     return this.remotePackageBootstrap().commit(candidate, options);
-  }
-
-  getRemotePackageBootstrapCommitStatus(
-    candidate: SshRemotePackageCandidate,
-    options?: SshRemotePackageBootstrapOptions,
-  ): Promise<SshRemotePackageBootstrapCommitResult> {
-    return this.remotePackageBootstrap().commitStatus(candidate, options);
   }
 
   cleanupRemotePackageBootstrap(
@@ -587,6 +583,7 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
     }
     this.disposed = true;
     this.usable = false;
+    this.agentBootstrapProbe = undefined;
     this.client.end();
     this.client.destroy();
   }
@@ -878,11 +875,6 @@ export class SshConnectionPool {
         ),
       commit: (candidate, options) =>
         lease.commitRemotePackageBootstrap(candidate, options),
-      commitStatus: (candidate, options) =>
-        bootstrapConnection.getRemotePackageBootstrapCommitStatus(
-          candidate,
-          options,
-        ),
       cleanup: (operationId, options) =>
         lease.cleanupRemotePackageBootstrap(operationId, options),
       release: () => lease.release(),
@@ -954,13 +946,6 @@ export class SshConnectionPool {
       commitRemotePackageBootstrap: (candidate, options) => {
         assertActive();
         return connection.commitRemotePackageBootstrap(candidate, options);
-      },
-      getRemotePackageBootstrapCommitStatus: (candidate, options) => {
-        assertActive();
-        return connection.getRemotePackageBootstrapCommitStatus(
-          candidate,
-          options,
-        );
       },
       cleanupRemotePackageBootstrap: (operationId, options) => {
         assertActive();

@@ -24,6 +24,7 @@ import {
   canonicalInstalledAgentManifestBytes,
   installedAgentManifestSignaturePayload,
   loadRegisteredAgentBundle,
+  verifyPublishedAgentBundle,
   verifyInstalledAgentBundle
 } from './installed-bundle-verifier'
 
@@ -88,7 +89,7 @@ describe('installed Agent bundle verifier', () => {
       'tampered'
     )
     await expect(verifyBundle()).rejects.toThrow(
-      /size mismatch|hash mismatch/u
+      /entrypoint metadata changed|size mismatch|hash mismatch/u
     )
 
     resetInstallation()
@@ -132,6 +133,26 @@ describe('installed Agent bundle verifier', () => {
       'signature verification failed'
     )
 
+  })
+
+  it('adopts signed published metadata without rehashing unrelated payload', async () => {
+    writeBundle()
+    writeFileSync(
+      join(installationDirectory, 'licenses', 'GoodBuddy-0BSD.txt'),
+      'changed after extraction'
+    )
+    await expect(verifyPublishedBundle()).resolves.toMatchObject({
+      installationId: 'install-10',
+      manifest: { agentVersion: '0.11.0' }
+    })
+
+    writeFileSync(
+      join(installationDirectory, 'lib', 'agent.cjs'),
+      'changed entrypoint'
+    )
+    await expect(verifyPublishedBundle()).rejects.toThrow(
+      'entrypoint metadata changed'
+    )
   })
 
   it('loads Host-managed registry evidence without repeating signature or payload verification', async () => {
@@ -261,6 +282,16 @@ function writeBundle(arch: 'x64' | 'arm64' = 'x64'): void {
 
 function verifyBundle() {
   return verifyInstalledAgentBundle(installationDirectory, {
+    installationId: 'install-10',
+    architecture: 'x64',
+    releaseKeyRegistry,
+    verificationEnvironment: 'test',
+    enforceFilesystemMode: process.platform !== 'win32'
+  })
+}
+
+function verifyPublishedBundle() {
+  return verifyPublishedAgentBundle(installationDirectory, {
     installationId: 'install-10',
     architecture: 'x64',
     releaseKeyRegistry,

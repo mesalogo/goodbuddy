@@ -4,12 +4,10 @@ import {
   SshRemotePackageCommitIndeterminateError,
   type SshRemotePackageIdentity
 } from '../ssh/ssh-remote-package-bootstrap'
-import type { StagedSftp } from '../ssh/bounded-sftp'
 import type {
   AgentPackageArchiveLease,
   VerifiedRemoteAgentInstallCandidate
 } from './agent-package-manager'
-import { REMOTE_ENVIRONMENT_METADATA_PATHS } from './remote-environment-metadata'
 import type {
   PendingRemoteEnvironmentOperation
 } from './remote-environment-operation-store'
@@ -100,70 +98,11 @@ type FixtureOptions = {
   prepare?: ReturnType<typeof vi.fn>
   prepareUploaded?: ReturnType<typeof vi.fn>
   commit?: ReturnType<typeof vi.fn>
-  commitStatus?: ReturnType<typeof vi.fn>
   cleanup?: ReturnType<typeof vi.fn>
   uploadFile?: ReturnType<typeof vi.fn>
   activateAgent?: ReturnType<typeof vi.fn>
   activateRuntime?: ReturnType<typeof vi.fn>
-  metadataFiles?: Map<string, Buffer>
-  metadataReplaceFailure?: Error
   pendingOperation?: PendingRemoteEnvironmentOperation
-}
-
-function missingPath(): Error & { code: string } {
-  return Object.assign(new Error('missing'), { code: 'ENOENT' })
-}
-
-function metadataSftp(
-  files: Map<string, Buffer>,
-  calls: string[],
-  replaceFailure?: Error
-): StagedSftp {
-  const temporary = new Map<string, Buffer>()
-  return {
-    stagingDirectory: '/home/goodbuddy',
-    mkdir: vi.fn(),
-    uploadFile: vi.fn(),
-    writeFile: vi.fn(async (path: string, contents: Buffer) => {
-      temporary.set(path, Buffer.from(contents))
-    }),
-    readFile: vi.fn(async (path: string) => {
-      const contents = files.get(path) ?? temporary.get(path)
-      if (!contents) throw missingPath()
-      return Buffer.from(contents)
-    }),
-    lstat: vi.fn(async (path: string) => {
-      const contents = files.get(path) ?? temporary.get(path)
-      if (!contents) throw missingPath()
-      return {
-        type: 'file' as const,
-        size: contents.byteLength,
-        mode: 0o600,
-        uid: 1000,
-        gid: 1000,
-        atime: 0,
-        mtime: 0
-      }
-    }),
-    stat: vi.fn(),
-    chmod: vi.fn(),
-    setExecutable: vi.fn(),
-    rename: vi.fn(),
-    replaceFile: vi.fn(async (source: string, destination: string) => {
-      if (replaceFailure) throw replaceFailure
-      const contents = temporary.get(source)
-      if (!contents) throw missingPath()
-      files.set(destination, contents)
-      temporary.delete(source)
-    }),
-    unlink: vi.fn(async (path: string) => {
-      if (!files.delete(path) && !temporary.delete(path)) {
-        throw missingPath()
-      }
-    }),
-    rmdir: vi.fn(),
-    close: vi.fn(() => calls.push('close-metadata'))
-  }
 }
 
 function fixture(options: FixtureOptions = {}) {
@@ -182,12 +121,6 @@ function fixture(options: FixtureOptions = {}) {
     hostKeyGeneration: targets[0]!.hostKeyGeneration,
     authenticationIdentity: '3'.repeat(64)
   }
-  const metadataFiles = options.metadataFiles ?? new Map<string, Buffer>()
-  const metadata = metadataSftp(
-    metadataFiles,
-    calls,
-    options.metadataReplaceFailure
-  )
   const uploadFile = options.uploadFile ?? vi.fn(async (
     path: string
   ) => {
@@ -202,14 +135,6 @@ function fixture(options: FixtureOptions = {}) {
     close: vi.fn(() => calls.push('close-upload'))
   }
   const regularRelease = vi.fn(() => calls.push('release-probe'))
-  const stopCandidate = vi.fn(async (
-    _installationId?: string,
-    _action?: string
-  ) => {
-    void _installationId
-    void _action
-    calls.push('stop-candidate')
-  })
   const activateAgent = options.activateAgent ?? vi.fn(async () => {
     calls.push('agent')
     return { exitCode: 0, stdout: '{}', stderr: '' }
@@ -233,27 +158,17 @@ function fixture(options: FixtureOptions = {}) {
         procfs: 'ready'
       }
     }),
-    openStagedSftp: vi.fn(async (root: string) => {
-      if (root.includes('install-operations')) {
-        calls.push('open-upload')
-        return uploadSftp
-      }
-      calls.push('open-metadata')
-      return metadata
+    openStagedSftp: vi.fn(async () => {
+      calls.push('open-upload')
+      return uploadSftp
     }),
     runAgentLifecycleAction: vi.fn(async (
       installationId: string,
       action: string
-    ) => {
-      if (action === 'stop') {
-        await stopCandidate(installationId, action)
-        return { exitCode: 0, stdout: '{}', stderr: '' }
-      }
-      return (activateAgent as (
+    ) => (activateAgent as (
         installationId: string,
         action: string
-      ) => Promise<unknown>)(installationId, action)
-    }),
+      ) => Promise<unknown>)(installationId, action)),
     runAgentRuntimeAction: vi.fn(async (
       installationId: string,
       action: unknown
@@ -302,13 +217,6 @@ function fixture(options: FixtureOptions = {}) {
     calls.push('cleanup')
     return { cleaned: true, operationId }
   })
-  const commitStatus = options.commitStatus ?? vi.fn(async (
-    input: { operationId: string }
-  ) => ({
-    committed: true,
-    operationId: input.operationId,
-    identity
-  }))
   const bootstrapRelease = vi.fn(() => calls.push('release-bootstrap'))
   const probe = vi.fn(async () => {
     calls.push('method-probe')
@@ -337,7 +245,6 @@ function fixture(options: FixtureOptions = {}) {
     prepare,
     prepareUploaded,
     commit,
-    commitStatus,
     cleanup,
     release: bootstrapRelease
   }
@@ -402,8 +309,6 @@ function fixture(options: FixtureOptions = {}) {
     resolver,
     regularLease,
     bootstrapLease,
-    metadata,
-    metadataFiles,
     uploadFile,
     probe,
     createUploadStaging,
@@ -417,8 +322,6 @@ function fixture(options: FixtureOptions = {}) {
     archiveRelease,
     regularRelease,
     bootstrapRelease,
-    stopCandidate,
-    commitStatus,
     operationStore
   }
 }
@@ -445,15 +348,12 @@ describe('RemoteEnvironmentPreparer', () => {
       'acquire-bootstrap',
       'save-operation',
       'prepare',
-      'open-metadata',
-      'save-operation',
       'resolve',
       'commit',
       'agent',
       'runtime',
       'cleanup',
       'remove-operation',
-      'close-metadata',
       'release-bootstrap',
       'release-probe'
     ])
@@ -483,7 +383,7 @@ describe('RemoteEnvironmentPreparer', () => {
       remoteCandidate.operationId,
       { signal: controller.signal }
     )
-    expect(value.operationStore.save).toHaveBeenCalledTimes(2)
+    expect(value.operationStore.save).toHaveBeenCalledOnce()
     expect(value.operationStore.remove).toHaveBeenCalledOnce()
     expect(progress.some((event) =>
       event.method === 'remote-download' &&
@@ -532,7 +432,6 @@ describe('RemoteEnvironmentPreparer', () => {
     )).resolves.toBeUndefined()
     expect(value.activateAgent).toHaveBeenCalledOnce()
     expect(value.activateRuntime).toHaveBeenCalledOnce()
-    expect(value.stopCandidate).not.toHaveBeenCalled()
     expect(value.operationStore.remove).not.toHaveBeenCalled()
   })
 
@@ -725,13 +624,13 @@ describe('RemoteEnvironmentPreparer', () => {
       new AbortController().signal
     )).rejects.toBeInstanceOf(SshRemotePackageCommitIndeterminateError)
     expect(value.cleanup).not.toHaveBeenCalled()
-    expect(value.operationStore.save).toHaveBeenCalledTimes(2)
+    expect(value.operationStore.save).toHaveBeenCalledOnce()
     expect(value.operationStore.remove).not.toHaveBeenCalled()
     expect(value.activateAgent).not.toHaveBeenCalled()
     expect(value.activateRuntime).not.toHaveBeenCalled()
   })
 
-  it('rolls metadata back when cancellation arrives with a successful commit result', async () => {
+  it('cleans staging when cancellation arrives with a successful commit result', async () => {
     const controller = new AbortController()
     const cancellation =
       new DOMException('cancelled after commit', 'AbortError')
@@ -752,7 +651,6 @@ describe('RemoteEnvironmentPreparer', () => {
       undefined,
       controller.signal
     )).rejects.toBe(cancellation)
-    expect(value.stopCandidate).toHaveBeenCalledOnce()
     expect(value.cleanup).toHaveBeenCalledOnce()
     expect(value.operationStore.remove).toHaveBeenCalledOnce()
     expect(value.activateAgent).not.toHaveBeenCalled()
@@ -778,61 +676,7 @@ describe('RemoteEnvironmentPreparer', () => {
     expect(value.operationStore.remove).not.toHaveBeenCalled()
   })
 
-  it('resumes adoption for a committed operation instead of reinstalling it', async () => {
-    const pendingOperationId =
-      '00000000-0000-4000-8000-000000000777'
-    const originalTarget = target()
-    const renamedTarget = target({
-      host: {
-        ...originalTarget.host,
-        name: 'Renamed builder'
-      },
-      hostRevision: 99
-    })
-    const value = fixture({
-      targets: [renamedTarget],
-      pendingOperation: {
-        version: 2,
-        hostId: HOST_ID,
-        targetIdentity:
-          remoteHostRecoveryIdentityKey(originalTarget),
-        operationId: pendingOperationId,
-        size: candidate.size,
-        sha256: candidate.sha256,
-        urls: candidate.urls,
-        metadataSnapshots:
-          REMOTE_ENVIRONMENT_METADATA_PATHS.map(
-            (path) => ({
-              path,
-              uid: 1000
-            })
-          )
-      }
-    })
-
-    await value.preparer.prepare(
-      HOST_ID,
-      'remote-download',
-      undefined,
-      new AbortController().signal
-    )
-
-    expect(value.commitStatus).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operationId: pendingOperationId
-      }),
-      expect.any(Object)
-    )
-    expect(value.cleanup.mock.calls[0]?.[0]).toBe(
-      pendingOperationId
-    )
-    expect(value.activateAgent).toHaveBeenCalledOnce()
-    expect(value.activateRuntime).toHaveBeenCalledOnce()
-    expect(value.prepare).not.toHaveBeenCalled()
-    expect(value.operationStore.remove).toHaveBeenCalledOnce()
-  })
-
-  it('cleans a legacy pending operation and starts a fresh authenticated prepare', async () => {
+  it('cleans pending staging and starts a fresh authenticated prepare', async () => {
     const originalTarget = target()
     const pendingOperationId =
       '00000000-0000-4000-8000-000000000780'
@@ -843,10 +687,7 @@ describe('RemoteEnvironmentPreparer', () => {
         hostId: HOST_ID,
         targetIdentity:
           remoteHostRecoveryIdentityKey(originalTarget),
-        operationId: pendingOperationId,
-        size: candidate.size,
-        sha256: candidate.sha256,
-        urls: candidate.urls
+        operationId: pendingOperationId
       }
     })
 
@@ -857,7 +698,6 @@ describe('RemoteEnvironmentPreparer', () => {
       new AbortController().signal
     )
 
-    expect(value.commitStatus).not.toHaveBeenCalled()
     expect(value.cleanup.mock.calls[0]?.[0]).toBe(
       pendingOperationId
     )
@@ -865,104 +705,30 @@ describe('RemoteEnvironmentPreparer', () => {
     expect(value.operationStore.remove).toHaveBeenCalledTimes(2)
   })
 
-  it('restores the durable snapshot when resumed commit does not complete', async () => {
+  it('does not block a fresh prepare when stale staging cleanup fails', async () => {
     const originalTarget = target()
-    const originals = new Map<string, Buffer>(
-      REMOTE_ENVIRONMENT_METADATA_PATHS.map(
-        (path, index) => [
-          path,
-          Buffer.from(`before-commit-${index}`)
-        ]
-      )
-    )
-    const files = new Map<string, Buffer>(
-      REMOTE_ENVIRONMENT_METADATA_PATHS.map(
-        (path) => [path, Buffer.from('partial-commit')]
-      )
-    )
+    let cleanupCalls = 0
     const value = fixture({
       targets: [originalTarget],
-      metadataFiles: files,
       pendingOperation: {
-        version: 2,
+        version: 1,
         hostId: HOST_ID,
         targetIdentity:
           remoteHostRecoveryIdentityKey(originalTarget),
         operationId:
-          '00000000-0000-4000-8000-000000000781',
-        size: candidate.size,
-        sha256: candidate.sha256,
-        urls: candidate.urls,
-        metadataSnapshots: [...originals].map(
-          ([path, contents]) => ({
-            path: path as never,
-            uid: 1000,
-            contentsBase64: contents.toString('base64')
-          })
-        )
+          '00000000-0000-4000-8000-000000000779'
       },
-      commitStatus: vi.fn(async () => ({
-        committed: false,
-        reason: 'installer-failed'
-      }))
-    })
-
-    await value.preparer.prepare(
-      HOST_ID,
-      'remote-download',
-      undefined,
-      new AbortController().signal
-    )
-
-    expect([...files]).toEqual([...originals])
-    expect(value.prepare).toHaveBeenCalledOnce()
-  })
-
-  it('restores persisted pre-commit metadata when resumed Runtime adoption fails', async () => {
-    const originalTarget = target()
-    const originals = new Map<string, Buffer>(
-      REMOTE_ENVIRONMENT_METADATA_PATHS.map(
-        (path, index) => [
-          path,
-          Buffer.from(`original-${index}`)
-        ]
-      )
-    )
-    const files = new Map<string, Buffer>(
-      REMOTE_ENVIRONMENT_METADATA_PATHS.map(
-        (path) => [path, Buffer.from('published')]
-      )
-    )
-    const runtimeFailure = new Error('runtime recovery failed')
-    const value = fixture({
-      targets: [originalTarget],
-      metadataFiles: files,
-      pendingOperation: {
-        version: 2,
-        hostId: HOST_ID,
-        targetIdentity:
-          remoteHostRecoveryIdentityKey(originalTarget),
-        operationId:
-          '00000000-0000-4000-8000-000000000779',
-        size: candidate.size,
-        sha256: candidate.sha256,
-        urls: candidate.urls,
-        metadataSnapshots: [...originals].map(
-          ([path, contents]) => ({
-            path: path as never,
-            uid: 1000,
-            contentsBase64: contents.toString('base64')
-          })
-        )
-      },
-      activateAgent: vi.fn(async () => {
-        for (const path of REMOTE_ENVIRONMENT_METADATA_PATHS) {
-          files.set(path, Buffer.from('adopting'))
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' }
-      }),
-      activateRuntime: vi.fn(async () => {
-        throw runtimeFailure
+      cleanup: vi.fn(async (operationId: string) => {
+        cleanupCalls += 1
+        return cleanupCalls === 1
+          ? {
+              cleaned: false as const,
+              reason: 'cleanup-failed' as const
+            }
+          : {
+              cleaned: true as const,
+              operationId
+            }
       })
     })
 
@@ -971,14 +737,14 @@ describe('RemoteEnvironmentPreparer', () => {
       'remote-download',
       undefined,
       new AbortController().signal
-    )).rejects.toThrow('runtime recovery failed')
-    expect([...files]).toEqual([...originals])
-    expect(value.stopCandidate).toHaveBeenCalledOnce()
-    expect(value.cleanup).not.toHaveBeenCalled()
-    expect(value.operationStore.remove).not.toHaveBeenCalled()
+    )).resolves.toBeUndefined()
+
+    expect(value.prepare).toHaveBeenCalledOnce()
+    expect(value.cleanup).toHaveBeenCalledTimes(2)
+    expect(value.operationStore.remove).toHaveBeenCalledTimes(2)
   })
 
-  it('retains pending recovery evidence when the real SSH target changes', async () => {
+  it('drops stale cleanup state when the SSH target changed and starts fresh', async () => {
     const originalTarget = target()
     const changedTarget = target({
       host: {
@@ -986,6 +752,8 @@ describe('RemoteEnvironmentPreparer', () => {
         hostname: 'different.example'
       }
     })
+    const pendingOperationId =
+      '00000000-0000-4000-8000-000000000778'
     const value = fixture({
       targets: [changedTarget],
       pendingOperation: {
@@ -993,45 +761,27 @@ describe('RemoteEnvironmentPreparer', () => {
         hostId: HOST_ID,
         targetIdentity:
           remoteHostRecoveryIdentityKey(originalTarget),
-        operationId:
-          '00000000-0000-4000-8000-000000000778',
-        size: candidate.size,
-        sha256: candidate.sha256,
-        urls: candidate.urls
+        operationId: pendingOperationId
       }
     })
 
-    await expect(value.preparer.prepare(
+    await value.preparer.prepare(
       HOST_ID,
       'remote-download',
       undefined,
       new AbortController().signal
-    )).rejects.toBeInstanceOf(
-      SshRemotePackageCommitIndeterminateError
     )
-    expect(value.commitStatus).not.toHaveBeenCalled()
-    expect(value.operationStore.remove).not.toHaveBeenCalled()
+
+    expect(value.prepare).toHaveBeenCalledOnce()
+    expect(value.cleanup.mock.calls.some(
+      (call) => call[0] === pendingOperationId
+    )).toBe(false)
+    expect(value.operationStore.remove).toHaveBeenCalledTimes(2)
   })
 
-  it('stops the committed Agent and restores all five metadata files when Runtime adoption fails', async () => {
-    const originals = new Map<string, Buffer>()
-    for (const [index, path] of REMOTE_ENVIRONMENT_METADATA_PATHS.entries()) {
-      if (index !== 2) originals.set(path, Buffer.from(`original-${index}`))
-    }
-    const files = new Map(
-      [...originals].map(([path, contents]) => [path, Buffer.from(contents)])
-    )
-    const runtimeFailure = new Error('runtime health failed')
+  it('cleans staging and leaves a fresh retry after Runtime adoption fails', async () => {
+    const runtimeFailure = new Error('runtime failed')
     const value = fixture({
-      metadataFiles: files,
-      activateAgent: vi.fn(async () => {
-        value.calls.push('agent')
-        value.metadataFiles.clear()
-        for (const path of REMOTE_ENVIRONMENT_METADATA_PATHS) {
-          value.metadataFiles.set(path, Buffer.from('new'))
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' }
-      }),
       activateRuntime: vi.fn(async () => {
         throw runtimeFailure
       })
@@ -1043,42 +793,7 @@ describe('RemoteEnvironmentPreparer', () => {
       undefined,
       new AbortController().signal
     )).rejects.toBe(runtimeFailure)
-    expect(value.stopCandidate).toHaveBeenCalledWith(
-      identity.agent.installationId,
-      'stop'
-    )
-    expect([...value.metadataFiles]).toEqual([...originals])
     expect(value.cleanup).toHaveBeenCalledOnce()
-  })
-
-  it('throws AggregateError when adoption and metadata rollback both fail', async () => {
-    const path = REMOTE_ENVIRONMENT_METADATA_PATHS[0]
-    const files = new Map([[path, Buffer.from('original')]])
-    const runtimeFailure = new Error('runtime failed')
-    const rollbackFailure = new Error('replace failed')
-    const value = fixture({
-      metadataFiles: files,
-      metadataReplaceFailure: rollbackFailure,
-      activateAgent: vi.fn(async () => {
-        files.set(path, Buffer.from('changed'))
-        return { exitCode: 0, stdout: '{}', stderr: '' }
-      }),
-      activateRuntime: vi.fn(async () => {
-        throw runtimeFailure
-      })
-    })
-
-    const caught = await value.preparer.prepare(
-      HOST_ID,
-      'remote-download',
-      undefined,
-      new AbortController().signal
-    ).catch((error: unknown) => error)
-    expect(caught).toBeInstanceOf(AggregateError)
-    expect((caught as AggregateError).errors[0]).toBe(runtimeFailure)
-    expect((caught as AggregateError).errors[1]).toBeInstanceOf(
-      AggregateError
-    )
-    expect(value.stopCandidate).toHaveBeenCalledOnce()
+    expect(value.operationStore.remove).toHaveBeenCalledOnce()
   })
 })
