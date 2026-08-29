@@ -508,9 +508,12 @@ describe("fixed SSH remote package bootstrap", () => {
       SSH_REMOTE_PACKAGE_BOOTSTRAP_SCRIPT.match(
         /\[ "\$installer_output_size" -gt 0 \]/gu,
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(SSH_REMOTE_PACKAGE_BOOTSTRAP_SCRIPT).toContain(
       '[ "$installer_output_size" -le 49152 ]',
+    );
+    expect(SSH_REMOTE_PACKAGE_BOOTSTRAP_SCRIPT).toContain(
+      'action=commit',
     );
   });
 
@@ -677,6 +680,7 @@ describe("fixed SSH remote package bootstrap", () => {
       prepared: false,
       unavailable: false,
       reason: "installer-failed",
+      detail: "archive verification failed",
     });
 
     const rollbackFailure = createChannel((_payload, active) => {
@@ -692,6 +696,7 @@ describe("fixed SSH remote package bootstrap", () => {
     ).resolves.toEqual({
       committed: false,
       reason: "installer-rollback-incomplete",
+      detail: "managed destination restore failed",
     });
   });
 

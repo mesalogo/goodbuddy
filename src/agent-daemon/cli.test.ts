@@ -192,11 +192,13 @@ describe('Agent CLI fixed command contract', () => {
       state: 'ready' as const,
       installationId
     }))
+    const verifyInstallation = vi.fn(async () => verified)
     const dependencies: AgentCliDependencies = {
       installationPaths: () => installationPaths,
       releaseKeyRegistry,
       installationRegistry,
-      verifyInstallation: async () => verified,
+      verifyInstallation,
+      loadRegisteredInstallation: async () => verified,
       createLifecycle: (() => ({
         status,
         bootstrap
@@ -227,6 +229,21 @@ describe('Agent CLI fixed command contract', () => {
     ).toBe(0)
     expect(status).toHaveBeenCalledOnce()
     expect(bootstrap).toHaveBeenCalledOnce()
+    expect(
+      installationRegistry.snapshot().current?.installationId
+    ).toBe(installationId)
+
+    expect(
+      await runAgentCli(
+        buildFixedAgentCliArgv(installationId, {
+          kind: 'lifecycle',
+          action: 'adopt'
+        }),
+        { ...dependencies, io: cliIo() }
+      )
+    ).toBe(0)
+    expect(verifyInstallation).toHaveBeenCalledOnce()
+    expect(bootstrap).toHaveBeenCalledTimes(2)
   })
 
   it('dispatches generated attach argv using only derived managed paths', async () => {
@@ -469,6 +486,31 @@ describe('Agent CLI fixed command contract', () => {
       architecture: 'x64',
       runtimeVersion: '1.18.9'
     })
+
+    expect(
+      await runAgentCli(
+        buildFixedAgentCliArgv(
+          verifyAgentInstallationId('install-1'),
+          {
+            kind: 'runtime-activate',
+            runtimeId: 'opencode',
+            bundleDigest,
+            architecture: 'x64',
+            forceVerification: true
+          }
+        ),
+        {
+          runtimePaths: () => paths,
+          runtimeReleaseKeyRegistry: releaseKeyRegistry,
+          runtimeLock: {} as RemoteRuntimeLock,
+          runtimeRegistry: registry,
+          verifyRuntime,
+          currentArchitecture: () => 'x64',
+          io: cliIo()
+        }
+      )
+    ).toBe(0)
+    expect(verifyRuntime).toHaveBeenCalledTimes(2)
   })
 
   it('derives Runtime paths and rejects activation argv injection', async () => {

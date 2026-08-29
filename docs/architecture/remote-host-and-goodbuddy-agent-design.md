@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录截至 2026-08-28 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+本文记录截至 2026-08-29 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
 Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
 详细事务与验收边界见
 [SSH Host 远程环境准备与直连下载设计](./remote-host-environment-provisioning-design.md)；
@@ -13,10 +13,9 @@ Windows 到 Linux x64 的既有安装、
 Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实
 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与
 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback
-路径 capability 后，当前源码 lock 已更新为待发布 Agent `0.11.7`。失败的 `agent-v0.11.3`
-保持不可变且未发布。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry
-已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64
-复合包和签名累计目录。
+路径 capability 后，Agent `0.11.7` 已通过独立 workflow 发布 Linux x64/arm64 复合包和
+签名累计目录；当前源码准备 `0.11.8`，修复 Host 更新并消除重复 payload 验证。失败的
+`agent-v0.11.3` 保持不可变且未发布。
 
 ## 产品语义
 
@@ -66,17 +65,16 @@ Detached GoodBuddy Agent
 
 - Agent bundle 通过 manifest、Ed25519 签名、payload digest、平台和架构校验。
 - 安装使用当前 SSH 用户目录中的 GoodBuddy-owned 路径和 side-by-side digest 目录。
-- Agent 代码与固定 Node Runtime 是独立 payload。升级时如果当前 Host Agent 的签名
-  manifest、registry identity、owner/mode/size 和 Node digest 都可验证，且候选
-  manifest 声明完全相同的 Node，安装器直接在新的 side-by-side 目录中复用该 Node；
-  否则正常上传候选 Node。Agent 不匹配不会阻止升级，也不会覆盖旧安装。
+- Agent 代码与固定 Node Runtime 一起位于签名 compound payload。显式安装或重装从本次
+  已完整校验的准备目录原子发布整个 Agent，不扫描旧安装、不创建跨版本 Node 硬链接；
+  Agent 不匹配不会阻止升级，也不会覆盖 GoodBuddy-owned 路径以外的内容。
 - 桌面包只携带版本 lock 与 production 公钥，不携带远端 payload。Host 卡片只有一个按
   版本事实显示“安装远程环境”“更新远程环境”或“重新安装”的主按钮；次级
   SegmentedControl 选择“自动”“Host 下载”或“GoodBuddy 传输”，默认“自动”且不持久化。
   每个复合包绑定 Agent、固定 Node 与桌面维护的 OpenCode Runtime 精确工件。添加或重新
   验证 Host 只保存并探测，不自动传输完整包。
 - Host 管理独占 Agent/Runtime 的包准备、更新和完整 payload 验证。已有项目的打开和切换
-  只更新本地项目选择。Workspace 和执行路径按需通过安装管理器解析 Host current identity，
+  只更新本地项目选择。Workspace 和执行路径按需读取 Host current registry，
   执行固定 `attach-or-bootstrap` 并复用当前 Agent 连接；同一进程内复用已确认 identity。
   它们不取得安装包、不发布组件，也不通过 SFTP 重读或哈希 payload。
 - Agent 的固定 attach/按需启动命令只读取 Host 管理已提交的 installation registry 和
@@ -110,11 +108,13 @@ Detached GoodBuddy Agent
   bootstrap Node；约 294 MiB 完整包不会一次读入 Main `Buffer`，Host 仍再次校验完整包。
 - 两种 acquisition 交付到固定 operation staging 后，完全共用 control-plane
   `prepare → commit → Agent activate/health → Runtime activate → finalize → cleanup`。
-  commit 终态持久化；通道丢失只用 `commit-status` 只读恢复，不重放 commit。prepare
+  commit 终态持久化；通道丢失时 `commit-status` 读取终态，或从已认证准备状态幂等完成
+  中断的目录/metadata 发布，不重新下载或准备包。prepare
   完成后、commit 前快照 Agent/Runtime 五个 metadata 文件，任一组件 adoption 失败都恢复其原字节或原缺失
   状态；已经发布的 side-by-side payload 可以保留但不能成为 current。确认 adoption 后
-  才显式 cleanup。首次 bootstrap 不依赖既有 Agent daemon，也不要求 format v1 归档携带
-  `agent/lib/package-installer.cjs`。
+  才显式 cleanup；cleanup 失败只保留维护重试，不回滚健康环境。Host 在 prepare 解包时
+  完成一次完整 payload 校验，commit 和后续注册检查不再遍历包体。首次 bootstrap 不依赖
+  既有 Agent daemon，也不要求 format v1 归档携带 `agent/lib/package-installer.cjs`。
 - 即使版本号均为当前版本，Host 卡片仍提供同版本“重新安装”，用于修复 registry、签名
   或安装 identity 异常。GoodBuddy-owned 同 digest 目录损坏时先隔离后替换，并在发布或
   激活失败时恢复；不要求删除 Host、凭据或引用项目。
@@ -187,8 +187,8 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 直接启动已签名 Runtime entrypoint；
 - 使用 Main-only 模型桥时，签名 Agent launcher 会 `exec` 候选 manifest 锁定的
-  Node Runtime；完全相同且已验证的 Node 可在 Agent 版本间复用。进程 owner 校验
-  最终 Node executable，而不是已经被替换的 shell launcher 路径；
+  Node Runtime；进程 owner 校验最终 Node executable，而不是已经被替换的 shell
+  launcher 路径；
 - `cwd` 为项目 Workspace；
 - 继承 SSH 账号的正常环境、文件系统、进程和网络能力；
 - 不进行 T2/T3、confinement attestation、approval bridge 或逐工具批准。
@@ -245,7 +245,8 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。当前源码 lock 是待发布版本 `0.11.7`，需要由新的复合包发布流程另行验证。
+  的双架构验收。Agent `0.11.7` 后续已由原生 workflow 发布并公开验证双架构工件；
+  当前源码 lock 是修复候选 `0.11.8`。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生

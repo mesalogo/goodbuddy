@@ -16,7 +16,14 @@ export const installationRegistryEntrySchema = z
     installationId: installationRegistryIdSchema,
     agentVersion: componentVersionSchema,
     manifestSha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    arch: z.enum(['x64', 'arm64'])
+    arch: z.enum(['x64', 'arm64']),
+    protocol: z
+      .object({
+        major: z.number().int().min(0).max(65_535),
+        minor: z.number().int().min(0).max(65_535)
+      })
+      .strict()
+      .optional()
   })
   .strict()
 
@@ -137,6 +144,7 @@ export const runtimeRegistryEntrySchema = z
     architecture: z.enum(['x64', 'arm64']),
     bundleDigest: sha256DigestSchema,
     manifestDigest: sha256DigestSchema,
+    runtimeAdapterDigest: sha256DigestSchema.optional(),
     acpCapabilitiesDigest: sha256DigestSchema
   })
   .strict()
@@ -219,7 +227,10 @@ function canonicalInstallationEntry(
     installationId: entry.installationId,
     agentVersion: entry.agentVersion,
     manifestSha256: entry.manifestSha256,
-    arch: entry.arch
+    arch: entry.arch,
+    ...(entry.protocol === undefined
+      ? {}
+      : { protocol: entry.protocol })
   })
 }
 
@@ -233,6 +244,12 @@ function canonicalRuntimeEntry(
     architecture: entry.architecture,
     bundleDigest: entry.bundleDigest,
     manifestDigest: entry.manifestDigest,
+    ...(entry.runtimeAdapterDigest === undefined
+      ? {}
+      : {
+          runtimeAdapterDigest:
+            entry.runtimeAdapterDigest
+        }),
     acpCapabilitiesDigest: entry.acpCapabilitiesDigest
   })
 }
@@ -245,6 +262,7 @@ function installationEntryEquals(
     left.installationId === right.installationId &&
     left.agentVersion === right.agentVersion &&
     left.manifestSha256 === right.manifestSha256 &&
-    left.arch === right.arch
+    left.arch === right.arch &&
+    JSON.stringify(left.protocol) === JSON.stringify(right.protocol)
   )
 }

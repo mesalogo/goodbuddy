@@ -1260,11 +1260,6 @@ if (hasSingleInstanceLock) {
         resolver: startupRemoteAgentServices.targetResolver,
         sshPool: startupRemoteAgentServices.sshPool,
         agentPackageManager,
-        agentInstallationManager:
-          startupRemoteAgentServices.installationManager,
-        runtimeInstallationManager:
-          startupManagedRemoteExecutionServices
-            .runtimeInstallationManager,
         operationStore:
           new RemoteEnvironmentOperationStore(
             app.getPath('userData')

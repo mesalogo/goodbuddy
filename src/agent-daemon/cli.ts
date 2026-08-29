@@ -39,6 +39,7 @@ import {
   RuntimeBundleRegistry
 } from './runtime-bundle-registry'
 import {
+  loadRegisteredRuntimeBundle,
   readRemoteRuntimeLock,
   verifyRuntimeBundle,
   type VerifiedRuntimeBundle
@@ -111,6 +112,7 @@ export type ManagedRuntimePaths = {
 }
 
 const LIFECYCLE_ACTIONS = new Set([
+  'adopt',
   'bootstrap',
   'status',
   'health',
@@ -225,7 +227,8 @@ async function runRuntime(
     'installation-id',
     'runtime-id',
     'bundle-digest',
-    'architecture'
+    'architecture',
+    'force-verification'
   ])
   requireOptions(options, [
     'installation-id',
@@ -243,6 +246,16 @@ async function runRuntime(
   const architecture = validateRuntimeArchitecture(
     options.architecture!
   )
+  const forceVerification =
+    options['force-verification'] === 'true'
+  if (
+    options['force-verification'] !== undefined &&
+    !forceVerification
+  ) {
+    throw new Error(
+      'Invalid Runtime force-verification option'
+    )
+  }
   const hostArchitecture =
     dependencies.currentArchitecture?.() ??
     currentAgentArchitecture()
@@ -271,15 +284,30 @@ async function runRuntime(
       runtimeRoot: paths.runtimeRoot,
       storagePath: paths.registryPath
     })
-  const verified = await (
-    dependencies.verifyRuntime ?? verifyRuntimeBundle
-  )(paths.bundleDirectory, {
+  const verificationOptions = {
     architecture,
     releaseKeyRegistry,
     runtimeLock,
     verificationEnvironment:
       dependencies.runtimeVerificationEnvironment ?? 'production'
-  })
+  } as const
+  const registered = registry.find(
+    runtimeId,
+    bundleDigest,
+    architecture
+  )
+  const verified =
+    registered === undefined || forceVerification
+    ? await (
+        dependencies.verifyRuntime ?? verifyRuntimeBundle
+      )(paths.bundleDirectory, verificationOptions)
+    : await loadRegisteredRuntimeBundle(
+        registered.bundleDirectory,
+        {
+          ...verificationOptions,
+          registered: registered.entry
+        }
+      )
   assertActivatedRuntimeIdentity(
     verified,
     runtimeId,
@@ -352,7 +380,8 @@ async function runDaemon(
       installationId,
       paths,
       dependencies,
-      'registered'
+      'registered',
+      verified
     ).recordCurrentDaemonReady(daemon.status().daemonBootId)
     await (dependencies.waitForShutdown?.() ?? waitForShutdownSignal())
   } finally {
@@ -374,7 +403,7 @@ async function runAttach(
     installationId,
     dependencies
   )
-  await loadManagedInstallation(
+  const { verified } = await loadManagedInstallation(
     installationId,
     paths,
     dependencies
@@ -399,7 +428,8 @@ async function runAttach(
         installationId,
         paths,
         dependencies,
-        'registered'
+        'registered',
+        verified
       ).bootstrap()
     }
   })
@@ -451,10 +481,17 @@ async function runDoctor(
     options['installation-id']!
   )
   const paths = resolveInstallationPaths(installationId, dependencies)
-  const status = await createDetachedLifecycle(
+  const { verified } = await loadManagedInstallation(
     installationId,
     paths,
     dependencies
+  )
+  const status = await createDetachedLifecycle(
+    installationId,
+    paths,
+    dependencies,
+    'registered',
+    verified
   ).status()
   io.output.write(`${JSON.stringify({
     platform: process.platform,
@@ -479,48 +516,150 @@ async function runLifecycle(
     options['installation-id']!
   )
   const paths = resolveInstallationPaths(installationId, dependencies)
-  const { verified, registry } = await verifyManagedInstallation(
-      installationId,
-      paths,
-      dependencies
-    )
-  const lifecycle = createDetachedLifecycle(
-    installationId,
-    paths,
-    dependencies
-  )
   switch (action) {
-    case 'bootstrap': {
-      registry.stageCandidate(verified)
-      prepareManagedSocketDirectory(paths)
-      const status = await lifecycle.bootstrap()
-      io.output.write(`${JSON.stringify(status)}\n`)
-      break
-    }
-    case 'status': {
-      registry.assertVerifiedRole(verified, ['current', 'candidate'])
-      io.output.write(`${JSON.stringify(await lifecycle.status())}\n`)
-      break
-    }
-    case 'health': {
-      registry.assertVerifiedRole(verified, ['current', 'candidate'])
-      const status = await lifecycle.health()
-      if (
-        registry.snapshot().candidate?.installationId ===
+    case 'adopt': {
+      const { verified, registry } =
+        await verifyManagedInstallation(
+          installationId,
+          paths,
+          dependencies
+        )
+      const alreadyCurrent =
+        registry.snapshot().current?.installationId ===
         installationId
-      ) {
+      if (!alreadyCurrent) {
+        registry.stageCandidate(verified)
+      }
+      prepareManagedSocketDirectory(paths)
+      const status = await createDetachedLifecycle(
+        installationId,
+        paths,
+        dependencies,
+        'verified',
+        verified
+      ).bootstrap()
+      if (!alreadyCurrent) {
         registry.promoteCandidate(installationId)
       }
       io.output.write(`${JSON.stringify(status)}\n`)
       break
     }
+    case 'bootstrap': {
+      const agentRoot = dirname(
+        dirname(dirname(paths.executablePath))
+      )
+      const registry =
+        dependencies.installationRegistry ??
+        new InstallationRegistry({
+          storagePath: resolve(agentRoot, 'registry.json')
+        })
+      const snapshot = registry.snapshot()
+      const current = snapshot.current?.installationId ===
+        installationId
+        ? snapshot.current
+        : undefined
+      const candidate = snapshot.candidate?.installationId ===
+        installationId
+        ? snapshot.candidate
+        : undefined
+      const registered = current ?? candidate
+      const isNewInstallation = registered === undefined
+      const verified = isNewInstallation
+        ? (
+            await verifyManagedInstallation(
+              installationId,
+              paths,
+              dependencies
+            )
+          ).verified
+        : await (
+            dependencies.loadRegisteredInstallation ??
+            loadRegisteredAgentBundle
+          )(dirname(paths.executablePath), {
+            installationId,
+            architecture: currentAgentArchitecture(),
+            registered
+          })
+      if (isNewInstallation) {
+        registry.stageCandidate(verified)
+      }
+      prepareManagedSocketDirectory(paths)
+      const lifecycle = createDetachedLifecycle(
+        installationId,
+        paths,
+        dependencies,
+        'verified',
+        verified
+      )
+      const status = await lifecycle.bootstrap()
+      if (current === undefined) {
+        registry.promoteCandidate(installationId)
+      }
+      io.output.write(`${JSON.stringify(status)}\n`)
+      break
+    }
+    case 'status': {
+      const { verified } = await loadManagedInstallation(
+        installationId,
+        paths,
+        dependencies
+      )
+      const lifecycle = createDetachedLifecycle(
+        installationId,
+        paths,
+        dependencies,
+        'registered',
+        verified
+      )
+      io.output.write(`${JSON.stringify(await lifecycle.status())}\n`)
+      break
+    }
+    case 'health': {
+      const { verified } = await loadManagedInstallation(
+        installationId,
+        paths,
+        dependencies
+      )
+      const lifecycle = createDetachedLifecycle(
+        installationId,
+        paths,
+        dependencies,
+        'registered',
+        verified
+      )
+      const status = await lifecycle.health()
+      io.output.write(`${JSON.stringify(status)}\n`)
+      break
+    }
     case 'stop': {
-      registry.assertVerifiedRole(verified, ['current', 'candidate'])
+      const { verified } = await loadManagedInstallation(
+        installationId,
+        paths,
+        dependencies
+      )
+      const lifecycle = createDetachedLifecycle(
+        installationId,
+        paths,
+        dependencies,
+        'registered',
+        verified
+      )
       io.output.write(`${JSON.stringify(await lifecycle.stop())}\n`)
       break
     }
     case 'retire': {
-      registry.assertVerifiedRole(verified, ['current', 'candidate'])
+      const { verified } = await loadManagedInstallation(
+        installationId,
+        paths,
+        dependencies
+      )
+      const lifecycle = createDetachedLifecycle(
+        installationId,
+        paths,
+        dependencies,
+        'registered',
+        verified
+      )
       io.output.write(`${JSON.stringify(await lifecycle.retire())}\n`)
       break
     }
@@ -531,7 +670,8 @@ function createDetachedLifecycle(
   installationId: string,
   paths: ManagedInstallationPaths,
   dependencies: AgentCliDependencies,
-  identitySource: 'verified' | 'registered' = 'verified'
+  identitySource: 'verified' | 'registered' = 'verified',
+  verifiedInstallation?: VerifiedInstalledAgentBundle
 ): DetachedAgentLifecycle {
   const options: DetachedAgentLifecycleOptions = {
     installationId,
@@ -539,6 +679,9 @@ function createDetachedLifecycle(
     stateDirectory: paths.stateDirectory,
     socketPath: paths.socketPath,
     verifyInstallation: async () => {
+      if (verifiedInstallation !== undefined) {
+        return verifiedInstallation
+      }
       if (identitySource === 'registered') {
         return (
           await loadManagedInstallation(

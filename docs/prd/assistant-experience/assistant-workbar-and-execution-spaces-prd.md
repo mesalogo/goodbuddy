@@ -586,12 +586,15 @@ attach 并读取 current registry，不存在项目中的旧 Host revision 或�
   prepare channel 发送有界 one-shot installer；Host 先验证目录绑定的归档大小和 SHA-256，
   再由 format v1 归档内固定 Node 解码并运行 installer。归档无需包含
   `agent/lib/package-installer.cjs`，目录不提供或检查额外的 bootstrap 能力元数据。
-- Agent 与 Runtime 各自维护版本，签名摘要标识精确工件；使用 side-by-side 安装、自检和
-  健康切换，失败时不改变当前项目绑定。相同且可验证的 Node 使用硬链接复用，相同 Runtime
-  digest 不重复安装。
-- commit 终态持久化，控制通道丢失时只用 `commit-status` 恢复而不重放。prepare 完成后、commit 前快照
+- Agent 与 Runtime 各自维护版本，签名摘要标识精确工件。Host 在解包到准备目录的同一遍
+  处理中完成完整 payload 校验，commit 只复核签名 metadata 并原子替换 side-by-side
+  目录，不重新读取归档、扫描旧目录或使用跨安装硬链接。
+- commit 终态持久化；控制通道丢失时，`commit-status` 读取终态，或从已认证准备状态
+  幂等完成中断的目录/metadata 发布，不重新下载或准备包。prepare 完成后、commit 前快照
   Agent/Runtime 五个 metadata 文件；任一组件 adoption 失败恢复原字节或原缺失状态，
-  已发布 payload 不得成为 current，确认 adoption 后显式 cleanup。
+  已发布 payload 不得成为 current。新 Agent/Runtime 各自最多完整验证一次；注册后的
+  health、capabilities 和 prompt 启动只检查 registry、签名 manifest 与入口 metadata。
+  确认 adoption 后显式 cleanup，cleanup 失败不回滚健康环境。
 - 握手报告 installation、Daemon boot identity、协议、系统、架构、用户监督器和能力。
 - 在远程执行路径规范化、Git、文件、PTY、进程组和 Runtime 管理。
 - 持久化有界 Agent 到 Main 输出；SSH 断开后 Agent 继续运行，同一 Agent 重连时只恢复

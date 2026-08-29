@@ -22,12 +22,10 @@ import {
   type RemoteRuntimeActivator
 } from './remote-runtime-installation-manager'
 import {
-  loadRemoteRuntimeVerificationMetadata
-} from './remote-runtime-resource-loader'
-import {
   createManagedModelBridge,
   reconcileStartupModelCalls
 } from './managed-model-bridge'
+import { boundedDiagnostic } from './bounded-diagnostic'
 
 const RUNTIME_BINDING_DATABASE_NAME = 'remote-runtime-bindings.sqlite'
 const MODEL_CALL_DATABASE_NAME = 'remote-model-calls-v2.sqlite'
@@ -101,19 +99,9 @@ export class ManagedRemoteExecutionServices {
           )
         ).installationId
       signal.throwIfAborted()
-      const current = await options.agentServices.targetResolver.resolve(
-        lease.identity.hostId
-      )
-      signal.throwIfAborted()
-      if (
-        runtimeId !== 'opencode' ||
-        current.host.id !== lease.identity.hostId ||
-        current.hostRevision !== lease.identity.hostRevision ||
-        current.hostKeyGeneration !==
-          lease.identity.hostKeyGeneration
-      ) {
+      if (runtimeId !== 'opencode') {
         throw new Error(
-          'Remote Agent or SSH host identity changed before Runtime activation'
+          'Remote Runtime identity is unsupported'
         )
       }
       const result = await lease.runAgentRuntimeAction(
@@ -127,17 +115,20 @@ export class ManagedRemoteExecutionServices {
         signal
       )
       if (result.exitCode !== 0) {
-        throw new Error('Remote Runtime activation failed')
+        const detail = boundedDiagnostic(
+          `${result.stderr}\n${result.stdout}`
+        )
+        throw new Error(
+          detail.length > 0
+            ? `Remote Runtime activation failed: ${detail}`
+            : `Remote Runtime activation failed (exit ${String(result.exitCode)})`
+        )
       }
     }
     this.runtimeInstallationManager =
       new RemoteRuntimeInstallationManager({
         resolver: options.agentServices.targetResolver,
         sshPool: options.agentServices.sshPool,
-        loadVerificationMetadata: () =>
-          loadRemoteRuntimeVerificationMetadata(
-            this.runtimeResourcePaths
-          ),
         activate
       })
     this.runtimeValidator = new ManagedRemoteProjectRuntimeValidator({

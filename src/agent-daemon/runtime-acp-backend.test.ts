@@ -268,7 +268,7 @@ function harness(input: {
   const backend = new RuntimeAcpBackend({
     journal,
     resolveRuntimeBundle: vi.fn(async () => resolved),
-    reverifyRuntimeBundle: vi.fn(async () => verifiedBundle()),
+    loadRegisteredRuntimeBundle: vi.fn(async () => verifiedBundle()),
     resolveWorkspace: vi.fn(async (preparation) => ({
       workspaceIdentity: preparation.workspaceIdentity,
       workspaceDirectory: '/workspace',

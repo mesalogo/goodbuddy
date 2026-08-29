@@ -11,12 +11,10 @@ import {
   fstatSync,
   fsyncSync,
   lstatSync,
-  linkSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readSync,
-  readdirSync,
   renameSync,
   rmSync,
   statSync,
@@ -28,9 +26,7 @@ import {
   basename,
   dirname,
   join,
-  relative,
-  resolve,
-  sep
+  resolve
 } from 'node:path'
 import { crc32 } from 'node:zlib'
 
@@ -154,7 +150,12 @@ type VerifiedPackage = {
   archiveSha256: string
   entries: Map<string, ZipEntry>
   descriptor: JsonRecord
+  descriptorBytes: Buffer
+  packageSignatureBytes: Buffer
   registry: TrustedRegistry
+  releaseKeyRegistryBytes: Buffer
+  agentRuntimeLockBytes: Buffer
+  remoteRuntimeLockBytes: Buffer
   agentManifest: JsonRecord
   runtimeManifest: JsonRecord
   agentManifestSha256: string
@@ -166,6 +167,11 @@ type VerifiedPackage = {
 type PreparedState = {
   formatVersion: 1
   archiveSha256: string
+  releaseKeyRegistrySha256: string
+  agentRuntimeLockSha256: string
+  remoteRuntimeLockSha256: string
+  packageDescriptorSha256: string
+  packageSignatureSha256: string
   agent: PackageInstallerAgentIdentity
   runtime: PackageInstallerRuntimeIdentity
 }
@@ -543,7 +549,28 @@ function readEntry(handle: number, entries: Map<string, ZipEntry>, name: string)
   if (entry === undefined || entry.size > MAXIMUM_METADATA_BYTES) {
     throw new Error(`Agent package metadata is missing or too large: ${name}`)
   }
-  return streamEntry(handle, entry).bytes!
+  const actual = streamEntry(handle, entry)
+  if (actual.crc32 !== entry.checksum) {
+    throw new Error(`Agent package ZIP checksum mismatch: ${name}`)
+  }
+  return actual.bytes!
+}
+
+function assertDeclaredMetadata(
+  name: string,
+  bytes: Buffer,
+  declared: ReadonlyMap<string, FileRecord>
+): void {
+  const expected = declared.get(name)
+  if (
+    expected === undefined ||
+    expected.size !== bytes.byteLength ||
+    expected.sha256 !== sha256(bytes)
+  ) {
+    throw new Error(
+      `Agent package metadata digest mismatch: ${name}`
+    )
+  }
 }
 
 function parseJson(bytes: Buffer, label: string): unknown {
@@ -1372,24 +1399,44 @@ function verifyArchive(
       signatureBytes
     )
     const declaredMap = new Map(declared.map((file) => [file.path, file]))
+    assertDeclaredMetadata(
+      'agent-release-keys.json',
+      registryBytes,
+      declaredMap
+    )
     emit('verifying-payload')
-    for (const entry of entries.values()) {
-      const actual = streamEntry(handle, entry)
-      if (actual.crc32 !== entry.checksum) {
-        throw new Error(`Agent package ZIP checksum mismatch: ${entry.name}`)
-      }
-      const expected = declaredMap.get(entry.name)
-      if (expected !== undefined && actual.sha256 !== expected.sha256) {
-        throw new Error(`Agent package payload digest mismatch: ${entry.name}`)
-      }
-    }
     const agentManifestBytes = readEntry(handle, entries, 'agent/manifest.json')
+    assertDeclaredMetadata(
+      'agent/manifest.json',
+      agentManifestBytes,
+      declaredMap
+    )
+    const agentRuntimeLockBytes = readEntry(
+      handle,
+      entries,
+      'agent-runtime-lock.json'
+    )
+    assertDeclaredMetadata(
+      'agent-runtime-lock.json',
+      agentRuntimeLockBytes,
+      declaredMap
+    )
+    const agentSignatureBytes = readEntry(
+      handle,
+      entries,
+      'agent/manifest.sig'
+    )
+    assertDeclaredMetadata(
+      'agent/manifest.sig',
+      agentSignatureBytes,
+      declaredMap
+    )
     const agentManifest = assertAgentManifest(
       agentManifestBytes,
-      readEntry(handle, entries, 'agent/manifest.sig'),
+      agentSignatureBytes,
       registry,
       parseCanonicalJson(
-        readEntry(handle, entries, 'agent-runtime-lock.json'),
+        agentRuntimeLockBytes,
         'Agent runtime lock'
       ),
       descriptor,
@@ -1403,16 +1450,39 @@ function verifyArchive(
       entries,
       `runtime/opencode/${runtimeDigest}/manifest.json`
     )
+    assertDeclaredMetadata(
+      `runtime/opencode/${runtimeDigest}/manifest.json`,
+      runtimeManifestBytes,
+      declaredMap
+    )
+    const remoteRuntimeLockBytes = readEntry(
+      handle,
+      entries,
+      'remote-runtime-lock.json'
+    )
+    assertDeclaredMetadata(
+      'remote-runtime-lock.json',
+      remoteRuntimeLockBytes,
+      declaredMap
+    )
+    const runtimeSignaturePath =
+      `runtime/opencode/${runtimeDigest}/manifest.sig`
+    const runtimeSignatureBytes = readEntry(
+      handle,
+      entries,
+      runtimeSignaturePath
+    )
+    assertDeclaredMetadata(
+      runtimeSignaturePath,
+      runtimeSignatureBytes,
+      declaredMap
+    )
     const runtime = assertRuntimeManifest(
       runtimeManifestBytes,
-      readEntry(
-        handle,
-        entries,
-        `runtime/opencode/${runtimeDigest}/manifest.sig`
-      ),
+      runtimeSignatureBytes,
       registry,
       parseCanonicalJson(
-        readEntry(handle, entries, 'remote-runtime-lock.json'),
+        remoteRuntimeLockBytes,
         'Remote Runtime lock'
       ),
       descriptor,
@@ -1427,7 +1497,12 @@ function verifyArchive(
       archiveSha256,
       entries,
       descriptor,
+      descriptorBytes,
+      packageSignatureBytes: signatureBytes,
       registry,
+      releaseKeyRegistryBytes: registryBytes,
+      agentRuntimeLockBytes,
+      remoteRuntimeLockBytes,
       agentManifest,
       runtimeManifest: runtime.manifest,
       agentManifestSha256,
@@ -1512,6 +1587,31 @@ function persistPreparedState(
   } else {
     mkdirSync(preparedRoot, { recursive: false, mode: 0o700 })
   }
+  writePreparedFile(
+    preparedRoot,
+    'agent-release-keys.json',
+    verified.releaseKeyRegistryBytes
+  )
+  writePreparedFile(
+    preparedRoot,
+    'agent-runtime-lock.json',
+    verified.agentRuntimeLockBytes
+  )
+  writePreparedFile(
+    preparedRoot,
+    'remote-runtime-lock.json',
+    verified.remoteRuntimeLockBytes
+  )
+  writePreparedFile(
+    preparedRoot,
+    PACKAGE_DESCRIPTOR,
+    verified.descriptorBytes
+  )
+  writePreparedFile(
+    preparedRoot,
+    PACKAGE_SIGNATURE,
+    verified.packageSignatureBytes
+  )
   const destination = join(preparedRoot, 'result.json')
   const temporary = join(
     preparedRoot,
@@ -1520,6 +1620,16 @@ function persistPreparedState(
   const state: PreparedState = {
     formatVersion: 1,
     archiveSha256: verified.archiveSha256,
+    releaseKeyRegistrySha256:
+      sha256(verified.releaseKeyRegistryBytes),
+    agentRuntimeLockSha256:
+      sha256(verified.agentRuntimeLockBytes),
+    remoteRuntimeLockSha256:
+      sha256(verified.remoteRuntimeLockBytes),
+    packageDescriptorSha256:
+      sha256(verified.descriptorBytes),
+    packageSignatureSha256:
+      sha256(verified.packageSignatureBytes),
     agent: verified.agent,
     runtime: verified.runtime
   }
@@ -1551,12 +1661,57 @@ function persistPreparedState(
   }
 }
 
+function writePreparedFile(
+  directory: string,
+  name: string,
+  bytes: Buffer
+): void {
+  if (
+    bytes.byteLength <= 0 ||
+    bytes.byteLength > MAXIMUM_METADATA_BYTES
+  ) {
+    throw new Error(`Prepared package metadata is invalid: ${name}`)
+  }
+  const destination = join(directory, name)
+  const temporary = join(
+    directory,
+    `.${name}-${process.pid}-${Date.now().toString(36)}.tmp`
+  )
+  const handle = openSync(
+    temporary,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    0o600
+  )
+  try {
+    let offset = 0
+    while (offset < bytes.length) {
+      offset += writeFileChunk(handle, bytes, offset)
+    }
+    fsyncSync(handle)
+  } finally {
+    closeSync(handle)
+  }
+  try {
+    chmodSync(temporary, 0o600)
+    renameSync(temporary, destination)
+  } finally {
+    if (existsSync(temporary)) {
+      unlinkSync(temporary)
+    }
+  }
+}
+
 function extractPayload(
   archive: string,
-  operationRoot: string,
+  destinationRoot: string,
   verified: VerifiedPackage
-): string {
-  const temporary = mkdtempSync(join(operationRoot, '.commit-payload-'))
+): void {
+  if (existsSync(destinationRoot)) {
+    throw new Error('Prepared package payload already exists')
+  }
+  const temporary = mkdtempSync(
+    join(dirname(destinationRoot), '.payload-')
+  )
   try {
     mkdirSync(join(temporary, 'agent'), { recursive: true, mode: 0o700 })
     mkdirSync(join(temporary, 'runtime'), { recursive: true, mode: 0o700 })
@@ -1598,7 +1753,9 @@ function extractPayload(
             actual.crc32 !== entry.checksum ||
             actual.sha256 !== expected.sha256
           ) {
-            throw new Error(`Extracted package payload verification failed: ${name}`)
+            throw new Error(
+              `Extracted package payload digest or checksum mismatch: ${name}`
+            )
           }
         }
       }
@@ -1610,7 +1767,7 @@ function extractPayload(
     }
     assertExtractedArchitectures(temporary, verified.agent.architecture)
     chmodSync(temporary, 0o700)
-    return temporary
+    renameSync(temporary, destinationRoot)
   } catch (error) {
     rmSync(temporary, { recursive: true, force: true })
     throw error
@@ -1628,13 +1785,45 @@ export function preparePackage(options: InstallerOptions): PackageInstallerResul
   const inputs = assertAbsoluteInputs(options)
   const progress = eventEmitter('prepare', options.emit)
   progress('validating')
+  const preparedRoot = join(inputs.operationRoot, 'prepared')
+  const preparedStatePath = join(preparedRoot, 'result.json')
+  if (existsSync(preparedStatePath)) {
+    const state = readPreparedState(preparedStatePath)
+    if (state.archiveSha256 !== inputs.expectedSha256) {
+      throw new Error(
+        'Prepared package state does not match the requested archive'
+      )
+    }
+    const result: PackageInstallerResult = {
+      type: 'result',
+      command: 'prepare',
+      status: 'prepared',
+      archiveSha256: state.archiveSha256,
+      agent: state.agent,
+      runtime: state.runtime
+    }
+    options.emit?.(result)
+    return result
+  }
   const verified = verifyArchive(
     inputs.archive,
     inputs.expectedSha256,
     progress
   )
-  progress('persisting-prepared-state')
-  persistPreparedState(inputs.operationRoot, verified)
+  try {
+    mkdirSync(preparedRoot, { recursive: false, mode: 0o700 })
+    progress('extracting-payload')
+    extractPayload(
+      inputs.archive,
+      join(preparedRoot, 'payload'),
+      verified
+    )
+    progress('persisting-prepared-state')
+    persistPreparedState(inputs.operationRoot, verified)
+  } catch (error) {
+    rmSync(preparedRoot, { recursive: true, force: true })
+    throw error
+  }
   const result: PackageInstallerResult = {
     type: 'result',
     command: 'prepare',
@@ -1645,59 +1834,6 @@ export function preparePackage(options: InstallerOptions): PackageInstallerResul
   }
   options.emit?.(result)
   return result
-}
-
-function listFiles(root: string): string[] {
-  const output: string[] = []
-  const pending = [root]
-  while (pending.length > 0) {
-    const current = pending.pop()!
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const path = join(current, entry.name)
-      if (entry.isSymbolicLink()) {
-        throw new Error(`Prepared payload contains a symbolic link: ${path}`)
-      }
-      if (entry.isDirectory()) {
-        pending.push(path)
-      } else if (entry.isFile()) {
-        output.push(path)
-      } else {
-        throw new Error(`Prepared payload contains an unsupported entry: ${path}`)
-      }
-    }
-  }
-  return output.sort((left, right) =>
-    Buffer.compare(
-      Buffer.from(relative(root, left).split(sep).join('/'), 'utf8'),
-      Buffer.from(relative(root, right).split(sep).join('/'), 'utf8')
-    )
-  )
-}
-
-function directoriesEqual(left: string, right: string): boolean {
-  const leftFiles = listFiles(left)
-  const rightFiles = listFiles(right)
-  if (leftFiles.length !== rightFiles.length) {
-    return false
-  }
-  for (let index = 0; index < leftFiles.length; index += 1) {
-    const leftName = relative(left, leftFiles[index]!).split(sep).join('/')
-    const rightName = relative(right, rightFiles[index]!).split(sep).join('/')
-    const leftMetadata = statSync(leftFiles[index]!)
-    const rightMetadata = statSync(rightFiles[index]!)
-    if (
-      leftName !== rightName ||
-      leftMetadata.size !== rightMetadata.size ||
-      (
-        process.platform !== 'win32' &&
-        (leftMetadata.mode & 0o777) !== (rightMetadata.mode & 0o777)
-      ) ||
-      hashFile(leftFiles[index]!) !== hashFile(rightFiles[index]!)
-    ) {
-      return false
-    }
-  }
-  return true
 }
 
 type PublishedDirectory = {
@@ -1724,10 +1860,6 @@ function publishDirectory(
     ) {
       throw new Error(`Existing digest destination has conflicting content: ${destination}`)
     }
-    if (directoriesEqual(source, destination)) {
-      rmSync(source, { recursive: true, force: true })
-      return { destination }
-    }
     const backupRoot = mkdtempSync(
       join(operationRoot, '.replaced-destination-')
     )
@@ -1748,13 +1880,6 @@ function publishDirectory(
   try {
     renameSync(source, destination)
   } catch (error) {
-    if (
-      existsSync(destination) &&
-      directoriesEqual(source, destination)
-    ) {
-      rmSync(source, { recursive: true, force: true })
-      return { destination }
-    }
     throw new Error(
       'Prepared payload could not be atomically published on the managed filesystem',
       { cause: error }
@@ -1777,6 +1902,94 @@ function ensureOwnedManagedHierarchy(
     join(managedRoot, 'runtimes', runtimeId)
   ]) {
     ensureOwnedManagedDirectory(directory)
+  }
+}
+
+type LocalMetadataSnapshot = {
+  path: string
+  contents: Buffer | undefined
+}
+
+function snapshotLocalMetadata(
+  paths: readonly string[]
+): LocalMetadataSnapshot[] {
+  return paths.map((path) => ({
+    path,
+    contents: existsSync(path)
+      ? readBoundedRegularFile(
+          path,
+          MAXIMUM_METADATA_BYTES,
+          'Managed environment metadata',
+          '0600'
+        )
+      : undefined
+  }))
+}
+
+function writePrivateFileAtomic(
+  destination: string,
+  contents: Buffer
+): void {
+  if (
+    contents.byteLength <= 0 ||
+    contents.byteLength > MAXIMUM_METADATA_BYTES
+  ) {
+    throw new Error('Managed environment metadata is invalid')
+  }
+  const temporary = join(
+    dirname(destination),
+    `.${basename(destination)}-${process.pid}-${Date.now().toString(36)}.tmp`
+  )
+  const handle = openSync(
+    temporary,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    0o600
+  )
+  try {
+    let offset = 0
+    while (offset < contents.length) {
+      offset += writeFileChunk(handle, contents, offset)
+    }
+    fsyncSync(handle)
+  } finally {
+    closeSync(handle)
+  }
+  try {
+    chmodSync(temporary, 0o600)
+    if (process.platform === 'win32' && existsSync(destination)) {
+      unlinkSync(destination)
+    }
+    renameSync(temporary, destination)
+  } finally {
+    if (existsSync(temporary)) {
+      unlinkSync(temporary)
+    }
+  }
+}
+
+function restoreLocalMetadata(
+  snapshots: readonly LocalMetadataSnapshot[]
+): void {
+  const errors: unknown[] = []
+  for (const snapshot of snapshots) {
+    try {
+      if (snapshot.contents === undefined) {
+        rmSync(snapshot.path, { force: true })
+      } else {
+        writePrivateFileAtomic(
+          snapshot.path,
+          snapshot.contents
+        )
+      }
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      'Managed environment metadata rollback was incomplete'
+    )
   }
 }
 
@@ -1853,12 +2066,37 @@ function readPreparedState(path: string): PreparedState {
   const value = parseCanonicalJson(bytes, 'Prepared package state')
   exactKeys(
     value,
-    ['formatVersion', 'archiveSha256', 'agent', 'runtime'],
+    [
+      'formatVersion',
+      'archiveSha256',
+      'releaseKeyRegistrySha256',
+      'agentRuntimeLockSha256',
+      'remoteRuntimeLockSha256',
+      'packageDescriptorSha256',
+      'packageSignatureSha256',
+      'agent',
+      'runtime'
+    ],
     'Prepared package state'
   )
   if (
     value.formatVersion !== 1 ||
     !sha256Pattern.test(String(value.archiveSha256)) ||
+    !sha256Pattern.test(
+      String(value.releaseKeyRegistrySha256)
+    ) ||
+    !sha256Pattern.test(
+      String(value.agentRuntimeLockSha256)
+    ) ||
+    !sha256Pattern.test(
+      String(value.remoteRuntimeLockSha256)
+    ) ||
+    !sha256Pattern.test(
+      String(value.packageDescriptorSha256)
+    ) ||
+    !sha256Pattern.test(
+      String(value.packageSignatureSha256)
+    ) ||
     !isRecord(value.agent) ||
     !isRecord(value.runtime)
   ) {
@@ -1923,6 +2161,16 @@ function readPreparedState(path: string): PreparedState {
   return {
     formatVersion: 1,
     archiveSha256: String(value.archiveSha256),
+    releaseKeyRegistrySha256:
+      String(value.releaseKeyRegistrySha256),
+    agentRuntimeLockSha256:
+      String(value.agentRuntimeLockSha256),
+    remoteRuntimeLockSha256:
+      String(value.remoteRuntimeLockSha256),
+    packageDescriptorSha256:
+      String(value.packageDescriptorSha256),
+    packageSignatureSha256:
+      String(value.packageSignatureSha256),
     agent: {
       installationId: agent.installationId,
       agentVersion: String(agent.agentVersion),
@@ -1944,34 +2192,6 @@ function readPreparedState(path: string): PreparedState {
       architecture: runtime.architecture as Architecture,
       protocol: runtimeProtocol
     }
-  }
-}
-
-function safeRegularFile(
-  path: string,
-  expectedMode: '0600' | '0644' | '0755',
-  expectedSize?: number
-): boolean {
-  try {
-    const metadata = lstatSync(path)
-    const getuid = process.getuid
-    return (
-      metadata.isFile() &&
-      !metadata.isSymbolicLink() &&
-      (getuid === undefined || metadata.uid === getuid.call(process)) &&
-      (process.platform === 'win32' ||
-        (metadata.mode & 0o777) ===
-          (
-            expectedMode === '0755'
-              ? 0o755
-              : expectedMode === '0600'
-                ? 0o600
-                : 0o644
-          )) &&
-      (expectedSize === undefined || metadata.size === expectedSize)
-    )
-  } catch {
-    return false
   }
 }
 
@@ -2016,297 +2236,137 @@ function readBoundedRegularFile(
   }
 }
 
-function hashFile(path: string): string {
-  const handle = openSync(
-    path,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
-  )
-  try {
-    const snapshot = fstatSync(handle)
-    if (!snapshot.isFile()) {
-      throw new Error(`Installed payload is not a regular file: ${path}`)
-    }
-    const digest = hashArchive(handle, snapshot.size)
-    if (!sameSnapshot(snapshot, fstatSync(handle))) {
-      throw new Error(`Installed payload changed while it was hashed: ${path}`)
-    }
-    return digest
-  } finally {
-    closeSync(handle)
-  }
-}
-
-function verifyAgentTree(
-  root: string,
-  verified: VerifiedPackage
+function assertPreparedIdentity(
+  agentRoot: string,
+  runtimeRoot: string,
+  state: PreparedState,
+  releaseKeyRegistryBytes: Buffer,
+  agentRuntimeLockBytes: Buffer,
+  remoteRuntimeLockBytes: Buffer,
+  descriptorBytes: Buffer,
+  packageSignatureBytes: Buffer
 ): void {
-  const files = parseFiles(verified.agentManifest.files, 'Agent manifest')
-  const expected = new Set([
-    ...files.map((file) => file.path),
-    'manifest.json',
-    'manifest.sig'
-  ])
-  const actual = listFiles(root).map((path) =>
-    relative(root, path).split(sep).join('/')
+  const descriptor = parseCanonicalJson(
+    descriptorBytes,
+    'Prepared Agent package descriptor'
   )
-  if (
-    actual.length !== expected.size ||
-    actual.some((path) => !expected.has(path))
-  ) {
-    throw new Error('Prepared Agent payload contains undeclared or missing files')
-  }
-  for (const file of files) {
-    const path = join(root, ...file.path.split('/'))
-    if (
-      !safeRegularFile(path, file.mode, file.size) ||
-      hashFile(path) !== file.sha256
-    ) {
-      throw new Error(`Prepared Agent payload verification failed: ${file.path}`)
-    }
-  }
-  for (const name of ['manifest.json', 'manifest.sig'] as const) {
-    const path = join(root, name)
-    const entry = verified.entries.get(`agent/${name}`)
-    if (
-      entry === undefined ||
-      !safeRegularFile(path, '0644', entry.size) ||
-      hashFile(path) !==
-        streamVerifiedEntryDigest(verified, `agent/${name}`)
-    ) {
-      throw new Error(`Prepared Agent metadata verification failed: ${name}`)
-    }
-  }
-}
-
-function verifyRuntimeTree(
-  root: string,
-  verified: VerifiedPackage
-): void {
-  const files = parseFiles(verified.runtimeManifest.files, 'Runtime manifest')
-  const expected = new Set([
-    ...files.map((file) => file.path),
-    'manifest.json',
-    'manifest.sig'
-  ])
-  const actual = listFiles(root).map((path) =>
-    relative(root, path).split(sep).join('/')
+  const declared = parseFiles(
+    descriptor.files,
+    'Prepared Agent package'
   )
-  if (
-    actual.length !== expected.size ||
-    actual.some((path) => !expected.has(path))
-  ) {
-    throw new Error('Prepared Runtime payload contains undeclared or missing files')
+  const entries = new Map<string, ZipEntry>()
+  for (const file of declared) {
+    entries.set(file.path, {
+      name: file.path,
+      size: file.size,
+      checksum: 0,
+      mode: file.mode,
+      dataOffset: 0,
+      recordStart: 0,
+      recordEnd: 0
+    })
   }
-  for (const file of files) {
-    const path = join(root, ...file.path.split('/'))
-    if (
-      !safeRegularFile(path, file.mode, file.size) ||
-      hashFile(path) !== file.sha256
-    ) {
-      throw new Error(`Prepared Runtime payload verification failed: ${file.path}`)
-    }
+  for (const name of [PACKAGE_DESCRIPTOR, PACKAGE_SIGNATURE]) {
+    entries.set(name, {
+      name,
+      size: name === PACKAGE_DESCRIPTOR
+        ? descriptorBytes.byteLength
+        : packageSignatureBytes.byteLength,
+      checksum: 0,
+      mode: '0644',
+      dataOffset: 0,
+      recordStart: 0,
+      recordEnd: 0
+    })
   }
-  const runtimePrefix =
-    `runtime/opencode/${verified.runtime.bundleDigest.slice('sha256:'.length)}/`
-  for (const name of ['manifest.json', 'manifest.sig'] as const) {
-    const path = join(root, name)
-    const entry = verified.entries.get(`${runtimePrefix}${name}`)
-    if (
-      entry === undefined ||
-      !safeRegularFile(path, '0644', entry.size) ||
-      hashFile(path) !==
-        streamVerifiedEntryDigest(verified, `${runtimePrefix}${name}`)
-    ) {
-      throw new Error(`Prepared Runtime metadata verification failed: ${name}`)
-    }
-  }
-}
-
-function streamVerifiedEntryDigest(
-  verified: VerifiedPackage,
-  name: string
-): string {
-  const file = parseFiles(
-    verified.descriptor.files,
-    'Agent package'
-  ).find((candidate) => candidate.path === name)
-  if (file === undefined) {
-    throw new Error(`Agent package file is missing: ${name}`)
-  }
-  return file.sha256
-}
-
-function tryReuseCurrentNode(
-  preparedRoot: string,
-  managedRoot: string,
-  verified: VerifiedPackage
-): void {
-  const candidateRuntimePath = isRecord(verified.agentManifest.entrypoint)
-    ? verified.agentManifest.entrypoint.runtimePath
-    : undefined
-  const candidateNode = parseFiles(
-    verified.agentManifest.files,
-    'Agent manifest'
-  ).find((file) => file.path === candidateRuntimePath)
-  if (candidateNode === undefined) {
-    return
-  }
-  const destination = join(
-    preparedRoot,
-    'agent',
-    ...candidateNode.path.split('/')
+  const registry = parseRegistry(releaseKeyRegistryBytes)
+  const packageFiles = new Map(
+    assertOuterDescriptor(
+      descriptor,
+      descriptorBytes,
+      entries,
+      registry,
+      packageSignatureBytes
+    ).map((file) => [file.path, file])
   )
-  const linked = join(preparedRoot, '.reused-node')
-  const backup = join(preparedRoot, '.candidate-node')
-  let movedCandidate = false
-  try {
-    const registryPath = join(managedRoot, 'agent', 'registry.json')
-    const registryValue = parseJson(
-      readBoundedRegularFile(
-        registryPath,
-        MAXIMUM_METADATA_BYTES,
-        'Installed Agent registry',
-        '0600'
-      ),
-      'Installed Agent registry'
-    )
-    if (!isRecord(registryValue)) {
-      return
-    }
-    exactKeys(
-      registryValue,
-      ['formatVersion', 'current'],
-      'Installed Agent registry'
-    )
-    if (registryValue.formatVersion !== 1 || !isRecord(registryValue.current)) {
-      return
-    }
-    const current = registryValue.current
-    exactKeys(
-      current,
-      ['installationId', 'agentVersion', 'manifestSha256', 'arch'],
-      'Installed Agent registry current entry'
-    )
-    if (
-      typeof current.installationId !== 'string' ||
-      typeof current.agentVersion !== 'string' ||
-      !versionPattern.test(current.agentVersion) ||
-      !sha256Pattern.test(String(current.manifestSha256)) ||
-      current.installationId !== `agent-${String(current.manifestSha256)}` ||
-      current.arch !== verified.agent.architecture
-    ) {
-      return
-    }
-    const root = join(
-      managedRoot,
-      'agent',
-      'installations',
-      current.installationId
-    )
-    const manifestPath = join(root, 'manifest.json')
-    const signaturePath = join(root, 'manifest.sig')
-    const manifestBytes = readBoundedRegularFile(
-      manifestPath,
+  const agentManifestBytes = readBoundedRegularFile(
+    join(agentRoot, 'manifest.json'),
+    MAXIMUM_METADATA_BYTES,
+    'Prepared Agent manifest',
+    '0644'
+  )
+  const agentManifest = assertAgentManifest(
+    agentManifestBytes,
+    readBoundedRegularFile(
+      join(agentRoot, 'manifest.sig'),
       MAXIMUM_METADATA_BYTES,
-      'Installed Agent manifest',
+      'Prepared Agent manifest signature',
       '0644'
-    )
-    const signatureBytes = readBoundedRegularFile(
-      signaturePath,
+    ),
+    registry,
+    parseCanonicalJson(
+      agentRuntimeLockBytes,
+      'Prepared Agent runtime lock'
+    ),
+    descriptor,
+    packageFiles
+  )
+  const runtime = assertRuntimeManifest(
+    readBoundedRegularFile(
+      join(runtimeRoot, 'manifest.json'),
       MAXIMUM_METADATA_BYTES,
-      'Installed Agent manifest signature',
+      'Prepared Runtime manifest',
       '0644'
+    ),
+    readBoundedRegularFile(
+      join(runtimeRoot, 'manifest.sig'),
+      MAXIMUM_METADATA_BYTES,
+      'Prepared Runtime manifest signature',
+      '0644'
+    ),
+    registry,
+    parseCanonicalJson(
+      remoteRuntimeLockBytes,
+      'Prepared Remote Runtime lock'
+    ),
+    descriptor,
+    packageFiles
+  )
+  const agentManifestSha256 = sha256(agentManifestBytes)
+  const architecture = descriptor.architecture as Architecture
+  const expectedAgent: PackageInstallerAgentIdentity = {
+    installationId: `agent-${agentManifestSha256}`,
+    agentVersion: String(agentManifest.agentVersion),
+    manifestSha256: agentManifestSha256,
+    binaryDigest: `sha256:${agentManifestSha256}`,
+    platform: 'linux',
+    architecture,
+    protocol: protocol(agentManifest.protocol, 'Agent protocol'),
+    supervisor: 'detached-on-demand'
+  }
+  const expectedRuntime: PackageInstallerRuntimeIdentity = {
+    runtimeId: 'opencode',
+    runtimeVersion: String(runtime.manifest.runtimeVersion),
+    bundleDigest: String(runtime.manifest.bundleDigest),
+    manifestDigest: runtime.manifestDigest,
+    runtimeAdapterDigest: String(runtime.manifest.adapterDigest),
+    acpCapabilitiesDigest: String(
+      runtime.manifest.acpCapabilitiesDigest
+    ),
+    platform: 'linux',
+    architecture,
+    protocol: protocol(
+      runtime.manifest.protocol,
+      'Runtime protocol'
     )
-    const manifest = parseCanonicalJson(manifestBytes, 'Installed Agent manifest')
-    exactKeys(
-      manifest,
-      [
-        'formatVersion',
-        'product',
-        'agentVersion',
-        'platform',
-        'arch',
-        'protocol',
-        'signingKeyId',
-        'entrypoint',
-        'files',
-        'licenses'
-      ],
-      'Installed Agent manifest'
+  }
+  if (
+    canonicalJson(state.agent) !== canonicalJson(expectedAgent) ||
+    canonicalJson(state.runtime) !== canonicalJson(expectedRuntime)
+  ) {
+    throw new Error(
+      'Prepared package identity does not match the authenticated archive'
     )
-    verifySignature(
-      manifestBytes,
-      signatureBytes,
-      trustedProductionKey(verified.registry, manifest.signingKeyId),
-      AGENT_SIGNATURE_DOMAIN,
-      'Installed Agent manifest'
-    )
-    if (
-      manifest.formatVersion !== 1 ||
-      manifest.product !== 'GoodBuddy' ||
-      manifest.platform !== 'linux' ||
-      manifest.agentVersion !== current.agentVersion ||
-      manifest.arch !== current.arch ||
-      sha256(manifestBytes) !== current.manifestSha256 ||
-      !isRecord(manifest.entrypoint)
-    ) {
-      return
-    }
-    const entrypoint = manifest.entrypoint
-    exactKeys(
-      entrypoint,
-      ['path', 'runtimePath', 'scriptPath'],
-      'Installed Agent entrypoint'
-    )
-    const currentNode = parseFiles(
-      manifest.files,
-      'Installed Agent manifest'
-    ).find((file) => file.path === entrypoint.runtimePath)
-    if (
-      currentNode === undefined ||
-      canonicalJson(currentNode) !== canonicalJson(candidateNode)
-    ) {
-      return
-    }
-    const source = join(root, ...currentNode.path.split('/'))
-    if (
-      !safeRegularFile(source, currentNode.mode, currentNode.size) ||
-      hashFile(source) !== currentNode.sha256 ||
-      !safeRegularFile(destination, candidateNode.mode, candidateNode.size) ||
-      hashFile(destination) !== candidateNode.sha256
-    ) {
-      return
-    }
-    linkSync(source, linked)
-    if (
-      !safeRegularFile(linked, currentNode.mode, currentNode.size) ||
-      lstatSync(linked).ino !== lstatSync(source).ino
-    ) {
-      unlinkSync(linked)
-      return
-    }
-    renameSync(destination, backup)
-    movedCandidate = true
-    renameSync(linked, destination)
-    unlinkSync(backup)
-    movedCandidate = false
-  } catch {
-    try {
-      if (existsSync(linked)) {
-        unlinkSync(linked)
-      }
-      if (movedCandidate && existsSync(backup)) {
-        if (existsSync(destination)) {
-          unlinkSync(destination)
-        }
-        renameSync(backup, destination)
-        movedCandidate = false
-      } else if (existsSync(backup)) {
-        unlinkSync(backup)
-      }
-    } catch {
-      // The normal candidate remains authoritative unless a swap completed.
-    }
   }
 }
 
@@ -2326,84 +2386,146 @@ export function commitPackage(options: InstallerOptions): PackageInstallerResult
   if (state.archiveSha256 !== inputs.expectedSha256) {
     throw new Error('Prepared package state does not match the requested archive')
   }
-  progress('revalidating-archive')
-  const verified = verifyArchive(
-    inputs.archive,
-    inputs.expectedSha256,
-    progress
+  const releaseKeyRegistryBytes = readBoundedRegularFile(
+    join(preparedRoot, 'agent-release-keys.json'),
+    MAXIMUM_METADATA_BYTES,
+    'Prepared Agent release-key registry',
+    '0600'
+  )
+  const agentRuntimeLockBytes = readBoundedRegularFile(
+    join(preparedRoot, 'agent-runtime-lock.json'),
+    MAXIMUM_METADATA_BYTES,
+    'Prepared Agent runtime lock',
+    '0600'
+  )
+  const remoteRuntimeLockBytes = readBoundedRegularFile(
+    join(preparedRoot, 'remote-runtime-lock.json'),
+    MAXIMUM_METADATA_BYTES,
+    'Prepared Remote Runtime lock',
+    '0600'
+  )
+  const descriptorBytes = readBoundedRegularFile(
+    join(preparedRoot, PACKAGE_DESCRIPTOR),
+    MAXIMUM_METADATA_BYTES,
+    'Prepared Agent package descriptor',
+    '0600'
+  )
+  const packageSignatureBytes = readBoundedRegularFile(
+    join(preparedRoot, PACKAGE_SIGNATURE),
+    MAXIMUM_METADATA_BYTES,
+    'Prepared Agent package signature',
+    '0600'
   )
   if (
-    state.archiveSha256 !== verified.archiveSha256 ||
-    canonicalJson(state.agent) !== canonicalJson(verified.agent) ||
-    canonicalJson(state.runtime) !== canonicalJson(verified.runtime)
+    sha256(releaseKeyRegistryBytes) !==
+      state.releaseKeyRegistrySha256 ||
+    sha256(agentRuntimeLockBytes) !==
+      state.agentRuntimeLockSha256 ||
+    sha256(remoteRuntimeLockBytes) !==
+      state.remoteRuntimeLockSha256 ||
+    sha256(descriptorBytes) !==
+      state.packageDescriptorSha256 ||
+    sha256(packageSignatureBytes) !==
+      state.packageSignatureSha256
   ) {
-    throw new Error('Prepared package state does not match the authenticated archive')
+    throw new Error(
+      'Prepared package metadata does not match its authenticated identity'
+    )
   }
-  progress('extracting-payload')
-  const extractedRoot = extractPayload(
-    inputs.archive,
-    inputs.operationRoot,
-    verified
+  const payloadRoot = join(preparedRoot, 'payload')
+  if (
+    !existsSync(payloadRoot) ||
+    !lstatSync(payloadRoot).isDirectory() ||
+    lstatSync(payloadRoot).isSymbolicLink()
+  ) {
+    throw new Error('Prepared package payload directory is invalid')
+  }
+  const agentSource = join(payloadRoot, 'agent')
+  const runtimeSource = join(payloadRoot, 'runtime')
+  const agentSourceExists = existsSync(agentSource)
+  const runtimeSourceExists = existsSync(runtimeSource)
+  if (agentSourceExists && runtimeSourceExists) {
+    assertPreparedIdentity(
+      agentSource,
+      runtimeSource,
+      state,
+      releaseKeyRegistryBytes,
+      agentRuntimeLockBytes,
+      remoteRuntimeLockBytes,
+      descriptorBytes,
+      packageSignatureBytes
+    )
+  }
+  const home = resolve(options.homeDirectory ?? homedir())
+  const managedRoot = join(home, '.goodbuddy')
+  ensureOwnedManagedHierarchy(
+    home,
+    state.runtime.runtimeId
   )
+  const agentDestination = join(
+    managedRoot,
+    'agent',
+    'installations',
+    state.agent.installationId
+  )
+  const runtimeDestination = join(
+    managedRoot,
+    'runtimes',
+    state.runtime.runtimeId,
+    state.runtime.bundleDigest.slice('sha256:'.length)
+  )
+  const metadataPaths = [
+    join(managedRoot, 'agent', 'release-keys.json'),
+    join(managedRoot, 'runtimes', 'release-keys.json'),
+    join(managedRoot, 'runtimes', 'remote-runtime-lock.json')
+  ] as const
+  if (!agentSourceExists || !runtimeSourceExists) {
+    assertPreparedIdentity(
+      agentSourceExists ? agentSource : agentDestination,
+      runtimeSourceExists ? runtimeSource : runtimeDestination,
+      state,
+      releaseKeyRegistryBytes,
+      agentRuntimeLockBytes,
+      remoteRuntimeLockBytes,
+      descriptorBytes,
+      packageSignatureBytes
+    )
+  }
+  progress('publishing-content')
+  const metadataSnapshots = snapshotLocalMetadata(metadataPaths)
+  const published: PublishedDirectory[] = []
   try {
-    const home = resolve(options.homeDirectory ?? homedir())
-    const managedRoot = join(home, '.goodbuddy')
-    ensureOwnedManagedHierarchy(
-      home,
-      verified.runtime.runtimeId
-    )
-    tryReuseCurrentNode(extractedRoot, managedRoot, verified)
-    verifyAgentTree(join(extractedRoot, 'agent'), verified)
-    verifyRuntimeTree(join(extractedRoot, 'runtime'), verified)
-    progress('publishing-content')
-    const agentDestination = join(
-      managedRoot,
-      'agent',
-      'installations',
-      verified.agent.installationId
-    )
-    const runtimeDestination = join(
-      managedRoot,
-      'runtimes',
-      verified.runtime.runtimeId,
-      verified.runtime.bundleDigest.slice('sha256:'.length)
-    )
-    const published: PublishedDirectory[] = []
-    try {
+    if (agentSourceExists) {
       published.push(
         publishDirectory(
-          join(extractedRoot, 'agent'),
+          agentSource,
           agentDestination,
           inputs.operationRoot
         )
       )
-      verifyAgentTree(agentDestination, verified)
+    }
+    if (runtimeSourceExists) {
       published.push(
         publishDirectory(
-          join(extractedRoot, 'runtime'),
+          runtimeSource,
           runtimeDestination,
           inputs.operationRoot
         )
       )
-      verifyRuntimeTree(runtimeDestination, verified)
-    } catch (error) {
-      const rollbackErrors: unknown[] = []
-      for (const entry of [...published].reverse()) {
-        try {
-          restoreReplacedDirectory(entry)
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError)
-        }
-      }
-      if (rollbackErrors.length > 0) {
-        throw new PackageInstallerRollbackIncompleteError(
-          [error, ...rollbackErrors],
-          'Package commit failed and a replaced managed destination could not be restored',
-          { cause: error }
-        )
-      }
-      throw error
     }
+    progress('publishing-metadata')
+    writePrivateFileAtomic(
+      metadataPaths[0],
+      releaseKeyRegistryBytes
+    )
+    writePrivateFileAtomic(
+      metadataPaths[1],
+      releaseKeyRegistryBytes
+    )
+    writePrivateFileAtomic(
+      metadataPaths[2],
+      remoteRuntimeLockBytes
+    )
     for (const entry of published) {
       discardReplacedDirectory(entry)
     }
@@ -2411,14 +2533,34 @@ export function commitPackage(options: InstallerOptions): PackageInstallerResult
       type: 'result',
       command: 'commit',
       status: 'committed',
-      archiveSha256: verified.archiveSha256,
-      agent: verified.agent,
-      runtime: verified.runtime
+      archiveSha256: state.archiveSha256,
+      agent: state.agent,
+      runtime: state.runtime
     }
     options.emit?.(result)
     return result
-  } finally {
-    rmSync(extractedRoot, { recursive: true, force: true })
+  } catch (error) {
+    const rollbackErrors: unknown[] = []
+    try {
+      restoreLocalMetadata(metadataSnapshots)
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError)
+    }
+    for (const entry of [...published].reverse()) {
+      try {
+        restoreReplacedDirectory(entry)
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError)
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new PackageInstallerRollbackIncompleteError(
+        [error, ...rollbackErrors],
+        'Package commit failed and managed state could not be fully restored',
+        { cause: error }
+      )
+    }
+    throw error
   }
 }
 

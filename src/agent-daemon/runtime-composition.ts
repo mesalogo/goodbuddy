@@ -7,6 +7,9 @@ import type {
   AgentReleaseKeyRegistry
 } from '../shared/agent-installation-contracts'
 import type { AgentFrame } from '../shared/agent-protocol'
+import type {
+  RuntimeRegistryEntry
+} from '../shared/remote-environment-registry-contracts'
 import type { RemoteRuntimeLock } from '../shared/remote-runtime-launch-contracts'
 import type { EventJournal } from './event-journal'
 import {
@@ -22,7 +25,8 @@ import {
 } from './runtime-bundle-registry'
 import {
   readRemoteRuntimeLock,
-  verifyRuntimeBundle
+  loadRegisteredRuntimeBundle,
+  type VerifiedRuntimeBundle
 } from './runtime-bundle-verifier'
 import { RuntimeAcpBackend } from './runtime-acp-backend'
 import type { ProtocolMethodContext } from './protocol-server'
@@ -111,37 +115,90 @@ export async function createProductionRuntimeProtocol(
     }
     return registry
   }
-  const currentVerificationOptions = async () => {
-    const metadataOptions =
-      options.filesystemPlatform === undefined
-        ? {}
-        : { filesystemPlatform: options.filesystemPlatform }
-    const [releaseKeyRegistry, runtimeLock] = await Promise.all([
-      options.releaseKeyRegistry ??
-        readManagedAgentReleaseKeyRegistry(
-          join(runtimeRoot, 'release-keys.json'),
-          metadataOptions
-        ),
-      options.runtimeLock ??
-        readRemoteRuntimeLock(
-          join(runtimeRoot, 'remote-runtime-lock.json'),
-          metadataOptions
-        )
-    ])
-    return {
-      architecture: options.architecture,
-      releaseKeyRegistry,
-      runtimeLock,
-      verificationEnvironment,
-      ...(options.filesystemPlatform === undefined
-        ? {}
-        : { filesystemPlatform: options.filesystemPlatform })
-    } as const
+  let verificationOptionsPromise:
+    | Promise<{
+        architecture: AgentArchitecture
+        releaseKeyRegistry: AgentReleaseKeyRegistry
+        runtimeLock: RemoteRuntimeLock
+        verificationEnvironment: 'production' | 'test'
+        filesystemPlatform?: NodeJS.Platform
+      }>
+    | undefined
+  const currentVerificationOptions = () => {
+    verificationOptionsPromise ??= (async () => {
+      const metadataOptions =
+        options.filesystemPlatform === undefined
+          ? {}
+          : {
+              filesystemPlatform:
+                options.filesystemPlatform
+            }
+      const [releaseKeyRegistry, runtimeLock] =
+        await Promise.all([
+          options.releaseKeyRegistry ??
+            readManagedAgentReleaseKeyRegistry(
+              join(runtimeRoot, 'release-keys.json'),
+              metadataOptions
+            ),
+          options.runtimeLock ??
+            readRemoteRuntimeLock(
+              join(
+                runtimeRoot,
+                'remote-runtime-lock.json'
+              ),
+              metadataOptions
+            )
+        ])
+      return {
+        architecture: options.architecture,
+        releaseKeyRegistry,
+        runtimeLock,
+        verificationEnvironment,
+        ...(options.filesystemPlatform === undefined
+          ? {}
+          : {
+              filesystemPlatform:
+                options.filesystemPlatform
+            })
+      }
+    })()
+    void verificationOptionsPromise.catch(() => {
+      verificationOptionsPromise = undefined
+    })
+    return verificationOptionsPromise
+  }
+  const verifiedRuntimeCache =
+    new Map<string, Promise<VerifiedRuntimeBundle>>()
+  const loadRegistered = (
+    entry: RuntimeRegistryEntry,
+    bundleDirectory: string
+  ): Promise<VerifiedRuntimeBundle> => {
+    const key = `${bundleDirectory}\0${JSON.stringify(entry)}`
+    const cached = verifiedRuntimeCache.get(key)
+    if (cached !== undefined) {
+      return cached
+    }
+    const loading = (async () =>
+      await loadRegisteredRuntimeBundle(
+        bundleDirectory,
+        {
+          ...(await currentVerificationOptions()),
+          registered: entry
+        }
+      ))()
+    verifiedRuntimeCache.set(key, loading)
+    void loading.catch(() => {
+      if (verifiedRuntimeCache.get(key) === loading) {
+        verifiedRuntimeCache.delete(key)
+      }
+    })
+    return loading
   }
   const verifiedCapabilities = async () => {
     const source = createVerifiedRuntimeCapabilitySource({
       registry: currentRegistry(),
       ...(await currentVerificationOptions()),
+      loadRegistered,
       reportError: options.reportError
     })
     return await source()
@@ -182,10 +239,10 @@ export async function createProductionRuntimeProtocol(
           bundleDigest,
           options.architecture
         ),
-      reverifyRuntimeBundle: async (resolved) => {
-        const verified = await verifyRuntimeBundle(
-          resolved.bundleDirectory,
-          await currentVerificationOptions()
+      loadRegisteredRuntimeBundle: async (resolved) => {
+        const verified = await loadRegistered(
+          resolved.entry,
+          resolved.bundleDirectory
         )
         if (
           verified.manifestDigest !== resolved.entry.manifestDigest ||

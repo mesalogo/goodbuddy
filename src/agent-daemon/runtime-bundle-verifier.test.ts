@@ -155,7 +155,7 @@ describe('Remote Runtime bundle verifier', () => {
     ).rejects.toThrow(/managed directory/iu)
   })
 
-  it('advertises only a bundle that still verifies against its registry', async () => {
+  it('uses registered metadata without rereading Runtime payload files', async () => {
     const fixture = await createBundle()
     const runtimeRoot = dirname(dirname(fixture.bundleDirectory))
     const registry = new RuntimeBundleRegistry({
@@ -197,6 +197,18 @@ describe('Remote Runtime bundle verifier', () => {
     writeFileSync(
       join(fixture.bundleDirectory, 'licenses', 'opencode.txt'),
       'mutated'
+    )
+    await expect(capabilities()).resolves.toHaveLength(1)
+    expect(reportError).not.toHaveBeenCalled()
+
+    writeFileSync(
+      join(fixture.bundleDirectory, 'bin', 'opencode'),
+      Buffer.concat([
+        readFileSync(
+          join(fixture.bundleDirectory, 'bin', 'opencode')
+        ),
+        Buffer.from('changed')
+      ])
     )
     await expect(capabilities()).resolves.toEqual([])
     expect(reportError).toHaveBeenCalledWith(

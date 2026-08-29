@@ -46,9 +46,9 @@ const progressPhases = [
   "verifying-payload",
   "persisting-prepared-state",
   "validating-prepared-state",
-  "revalidating-archive",
   "extracting-payload",
   "publishing-content",
+  "publishing-metadata",
 ] as const;
 
 const unavailableReasons = [
@@ -166,6 +166,7 @@ export type SshRemotePackageBootstrapPrepareResult =
       prepared: false;
       unavailable: false;
       reason: SshRemotePackageBootstrapFailureReason;
+      detail?: string;
     };
 
 export type SshRemotePackageUploadStagingResult =
@@ -195,6 +196,7 @@ export type SshRemotePackageBootstrapCommitResult =
   | {
       committed: false;
       reason: SshRemotePackageBootstrapFailureReason;
+      detail?: string;
     };
 
 export type SshRemotePackageBootstrapCleanupResult =
@@ -268,6 +270,7 @@ type TerminalMessage =
       type: "result";
       status: "failed";
       reason: SshRemotePackageBootstrapFailureReason;
+      detail?: string;
     }
   | {
       type: "result";
@@ -467,23 +470,29 @@ if [ "$action" = prepare-status ]; then
 fi
 if [ "$action" = commit-status ]; then
   installer_output="$operation_root/installer-commit.ndjson"
-  if [ ! -d "$operation_root" ] || [ -L "$operation_root" ] ||
-     [ ! -f "$installer_output" ] || [ -L "$installer_output" ]; then
-    stop failed operation-unavailable
+  if [ -d "$operation_root" ] && [ ! -L "$operation_root" ] &&
+     [ -f "$installer_output" ] && [ ! -L "$installer_output" ]; then
+    installer_output_size=$(wc -c < "$installer_output" 2>/dev/null) ||
+      stop failed operation-unavailable
+    set -- $installer_output_size
+    installer_output_size=${SHELL_FIRST_POSITIONAL_OR_EMPTY}
+    case "$installer_output_size" in
+      ""|*[!0-9]*) stop failed operation-unavailable ;;
+    esac
+    [ "$installer_output_size" -le 49152 ] ||
+      stop failed operation-unavailable
+    terminal_line=$(tail -n 1 "$installer_output" 2>/dev/null) ||
+      stop failed operation-unavailable
+    if printf %s "$terminal_line" | grep '"type":"result"' >/dev/null 2>&1 ||
+       printf %s "$terminal_line" | grep '"type":"error"' >/dev/null 2>&1; then
+      cat -- "$installer_output" || stop failed operation-unavailable
+      exit 0
+    fi
   fi
-  installer_output_size=$(wc -c < "$installer_output" 2>/dev/null) ||
-    stop failed operation-unavailable
-  set -- $installer_output_size
-  installer_output_size=${SHELL_FIRST_POSITIONAL_OR_EMPTY}
-  case "$installer_output_size" in
-    ""|*[!0-9]*) stop failed operation-unavailable ;;
-  esac
-  [ "$installer_output_size" -gt 0 ] ||
-    stop failed operation-unavailable
-  [ "$installer_output_size" -le 49152 ] ||
-    stop failed operation-unavailable
-  cat -- "$installer_output" || stop failed operation-unavailable
-  exit 0
+  # A process or channel loss may leave a partial publication without a
+  # terminal line. The installer commit is idempotent and completes it from
+  # the authenticated prepared state.
+  action=commit
 fi
 if [ "$action" = commit ]; then
   if [ ! -d "$operation_root" ] || [ -L "$operation_root" ] ||
@@ -1109,6 +1118,7 @@ function parseMessage(
           message.status === "rollback-incomplete"
             ? "installer-rollback-incomplete"
             : "installer-failed",
+        detail: message.message,
       },
     };
   }
@@ -1444,6 +1454,9 @@ export function createSshRemotePackageBootstrapExecutor(
         prepared: false,
         unavailable: false,
         reason: result.reason,
+        ...(result.detail === undefined
+          ? {}
+          : { detail: result.detail }),
       };
     }
     throw new Error("Agent 远程安装准备返回了无效结果");
@@ -1473,7 +1486,13 @@ export function createSshRemotePackageBootstrapExecutor(
       };
     }
     if (result.status === "failed") {
-      return { committed: false, reason: result.reason };
+      return {
+        committed: false,
+        reason: result.reason,
+        ...(result.detail === undefined
+          ? {}
+          : { detail: result.detail }),
+      };
     }
     throw new Error("Agent 远程安装提交状态返回了无效结果");
   };
@@ -1582,7 +1601,13 @@ export function createSshRemotePackageBootstrapExecutor(
         };
       }
       if (result.status === "failed") {
-        return { committed: false, reason: result.reason };
+        return {
+          committed: false,
+          reason: result.reason,
+          ...(result.detail === undefined
+            ? {}
+            : { detail: result.detail }),
+        };
       }
       throw new Error("Agent 远程安装提交返回了无效结果");
     },

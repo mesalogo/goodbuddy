@@ -182,6 +182,17 @@ Release note: 修复左上角项目设置与消息通道项目设置不一致的
 
 ## Release Packaging
 
+- Unless the user explicitly requests a local Windows package, never run local
+  Windows packaging or launch probes as part of release preparation. In
+  particular, do not run `npm run portable`, Windows
+  `npm run release:package`, direct `electron-builder` packaging, or launch a
+  locally packaged Windows app before publishing a release. Source validation
+  and the native GitHub Actions jobs are the release authorities.
+- After a release is published, confirm only that the expected Windows assets
+  exist in the public release metadata. Do not locally rebuild or launch the
+  Windows package, download or hash published installers, attach browser
+  automation to a packaged app, or perform exhaustive per-asset network probes
+  unless the user explicitly asks for that additional validation.
 - `.github/workflows/packages.yml` is the canonical cross-platform packaging
   workflow. It validates and builds `out` once, then packages on six native
   runners: Windows, macOS, and Linux, each for x64 and arm64.

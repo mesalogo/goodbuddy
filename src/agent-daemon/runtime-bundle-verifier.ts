@@ -1,5 +1,6 @@
 export {
   canonicalRuntimeManifestBytes,
+  loadRegisteredRuntimeBundle,
   readRemoteRuntimeLock,
   runtimeManifestSignaturePayload,
   verifyRuntimeBundle,
@@ -8,5 +9,6 @@ export {
 
 export type {
   VerifiedRuntimeBundle,
+  LoadRegisteredRuntimeBundleOptions,
   VerifyRuntimeBundleOptions
 } from '../shared/node/runtime-bundle-verifier'

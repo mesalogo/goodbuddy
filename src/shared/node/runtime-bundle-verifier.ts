@@ -33,6 +33,10 @@ import {
   type RemoteRuntimeBundleManifest,
   type RemoteRuntimeLock
 } from '../remote-runtime-launch-contracts'
+import {
+  runtimeRegistryEntrySchema,
+  type RuntimeRegistryEntry
+} from '../remote-environment-registry-contracts'
 
 export type InstalledBundleVerificationEnvironment =
   | 'production'
@@ -62,6 +66,11 @@ export type VerifyRuntimeBundleOptions = {
   filesystemPlatform?: NodeJS.Platform
   uid?: number
 }
+
+export type LoadRegisteredRuntimeBundleOptions =
+  VerifyRuntimeBundleOptions & {
+    registered: RuntimeRegistryEntry
+  }
 
 export async function verifyRuntimeBundle(
   bundleDirectoryInput: string,
@@ -176,6 +185,121 @@ export async function verifyRuntimeBundle(
     manifest,
     manifestDigest:
       await digestRemoteRuntimeBundleManifest(manifest)
+  }
+}
+
+/**
+ * Reconstructs a Runtime identity that was fully verified when it was
+ * registered. Normal capabilities and prompt launches use this bounded
+ * metadata path instead of hashing the complete Runtime payload again.
+ */
+export async function loadRegisteredRuntimeBundle(
+  bundleDirectoryInput: string,
+  options: LoadRegisteredRuntimeBundleOptions
+): Promise<VerifiedRuntimeBundle> {
+  const bundleDirectory = assertAbsoluteManagedPath(
+    resolve(bundleDirectoryInput)
+  )
+  const registered = runtimeRegistryEntrySchema.parse(
+    options.registered
+  )
+  const rootStat = await lstat(bundleDirectory)
+  assertOwnedDirectory(
+    rootStat,
+    'Runtime bundle directory',
+    options.uid
+  )
+  if (
+    shouldEnforceMode(options) &&
+    modeString(rootStat.mode) !== '0700'
+  ) {
+    throw new Error(
+      'Runtime bundle directory permissions must be 0700'
+    )
+  }
+  if (
+    basename(bundleDirectory) !==
+    registered.bundleDigest.slice('sha256:'.length)
+  ) {
+    throw new Error(
+      'Registered Runtime digest does not match its managed directory'
+    )
+  }
+
+  const manifestBytes = await readMetadataFile(
+    join(bundleDirectory, MANIFEST_FILE_NAME),
+    'Runtime manifest',
+    options
+  )
+  const signatureBytes = await readSignature(
+    join(bundleDirectory, SIGNATURE_FILE_NAME),
+    options
+  )
+  const manifest = await verifyRuntimeManifestSignature(
+    manifestBytes,
+    signatureBytes,
+    options.releaseKeyRegistry,
+    options.verificationEnvironment ?? 'production'
+  )
+  assertRuntimeManifestMatchesLock(
+    manifest,
+    remoteRuntimeLockSchema.parse(options.runtimeLock),
+    options.architecture
+  )
+  const manifestDigest =
+    await digestRemoteRuntimeBundleManifest(manifest)
+  if (
+    manifest.runtimeId !== registered.runtimeId ||
+    manifest.runtimeVersion !== registered.runtimeVersion ||
+    manifest.architecture !== registered.architecture ||
+    manifest.bundleDigest !== registered.bundleDigest ||
+    manifestDigest !== registered.manifestDigest ||
+    (
+      registered.runtimeAdapterDigest !== undefined &&
+      manifest.adapterDigest !== registered.runtimeAdapterDigest
+    ) ||
+    manifest.acpCapabilitiesDigest !==
+      registered.acpCapabilitiesDigest
+  ) {
+    throw new Error(
+      'Runtime manifest does not match its registered identity'
+    )
+  }
+
+  const executableRecord = manifest.files.find(
+    (file) => file.path === manifest.entrypoint.path
+  )
+  if (executableRecord === undefined) {
+    throw new Error(
+      'Registered Runtime entrypoint is not declared'
+    )
+  }
+  const executablePath = join(
+    bundleDirectory,
+    ...manifest.entrypoint.path.split('/')
+  )
+  const executableStat = await lstat(executablePath)
+  assertOwnedRegularFile(
+    executableStat,
+    'Runtime executable',
+    options.uid
+  )
+  if (
+    executableStat.size !== executableRecord.size ||
+    (
+      shouldEnforceMode(options) &&
+      modeString(executableStat.mode) !== executableRecord.mode
+    )
+  ) {
+    throw new Error(
+      'Registered Runtime entrypoint metadata changed'
+    )
+  }
+  return {
+    bundleDirectory,
+    executablePath,
+    manifest,
+    manifestDigest
   }
 }
 

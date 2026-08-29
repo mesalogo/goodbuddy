@@ -173,9 +173,12 @@ JSON。签名目录、包描述符、manifest、签名和 payload 的原始字�
 两种 acquisition 都把同一签名 compound `.gbagent` 交付到固定 operation staging，随后
 共用 control-plane `prepare → commit → Agent activate/health → Runtime activate →
 finalize → cleanup`。commit 终态持久化，通道丢失时只用 `commit-status` 读取恢复而不
-重放 commit。prepare 完成后、commit 前快照 Agent/Runtime 五个 metadata 文件；任一 adoption 失败恢复
+重新下载或准备包；若终态文件不完整，`commit-status` 会从已认证准备状态幂等完成剩余
+rename/metadata 发布。prepare 完成后、commit 前快照 Agent/Runtime 五个 metadata 文件；任一 adoption 失败恢复
 原字节或原缺失状态，已发布 side-by-side payload 不成为 current，确认 adoption 后显式
-cleanup。
+cleanup。Host 在 prepare 解包时完成一次完整 payload 校验；commit 只复核签名 metadata
+并原子发布，Agent/Runtime 注册后的 health、capabilities 和 prompt 启动不再遍历或哈希
+完整 payload。cleanup 失败保留为维护重试，不回滚已健康环境。
 
 进入“主机与远程执行”设置页只读取本地 Host 列表，不逐台连接。用户点击某台 Host 的
 “刷新版本”后才执行远端版本和直连准备能力探测。项目切换只更新本地选择，不建立 SSH
@@ -217,8 +220,8 @@ Agent、固定 Node 和当前桌面源码维护并适配的签名 OpenCode Runti
 独立的用户版本流。远程直连所需的有界 one-shot installer 由桌面控制面打包并通过固定
 SSH prepare channel 发送，不是 `.gbagent` 的必需条目。Host 按签名目录校验完整归档
 大小和 SHA-256 后，包内固定 Node 解码并运行 installer。两种 acquisition 都在固定
-operation staging 中执行同一 prepare/commit；commit 终态持久化并可通过只读
-`commit-status` 恢复。Agent/Runtime adoption 使用 commit 前五个 metadata 文件的原字节
+operation staging 中执行同一 prepare/commit；commit 终态持久化，`commit-status`
+可读取终态或从已认证准备状态幂等完成中断的发布。Agent/Runtime adoption 使用 commit 前五个 metadata 文件的原字节
 或原缺失状态回滚，已发布 side-by-side payload 不会因此成为 current。生产构建命令为：
 
 ```bash

@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -497,7 +498,15 @@ describe('compound Agent packages', () => {
     })
     expect(events.at(-1)).toEqual(prepared)
     expect(readdirSync(join(operationRoot, 'prepared')))
-      .toEqual(['result.json'])
+      .toEqual([
+        'agent-package.json',
+        'agent-package.sig',
+        'agent-release-keys.json',
+        'agent-runtime-lock.json',
+        'payload',
+        'remote-runtime-lock.json',
+        'result.json'
+      ])
     expectGlobalMetadataUnchanged(globalMetadata)
 
     const cliOperationRoot = join(temporaryRoot, 'remote-cli-operation')
@@ -569,13 +578,23 @@ describe('compound Agent packages', () => {
       commitEvents.filter(
         (event) =>
           event.type === 'progress' &&
-          event.phase === 'extracting-payload'
+          event.phase === 'publishing-content'
       )
     ).toHaveLength(1)
     expect(readdirSync(join(operationRoot, 'prepared')))
-      .toEqual(['result.json'])
+      .toEqual([
+        'agent-package.json',
+        'agent-package.sig',
+        'agent-release-keys.json',
+        'agent-runtime-lock.json',
+        'payload',
+        'remote-runtime-lock.json',
+        'result.json'
+      ])
     expect(readdirSync(operationRoot)).toEqual(['prepared'])
-    expectGlobalMetadataUnchanged(globalMetadata)
+    expectRegistriesUnchangedAndPackageTrustPublished(
+      globalMetadata
+    )
 
     packageInstaller.preparePackage({
       operationRoot,
@@ -591,7 +610,76 @@ describe('compound Agent packages', () => {
         homeDirectory
       })
     ).not.toThrow()
-    expectGlobalMetadataUnchanged(globalMetadata)
+    expectRegistriesUnchangedAndPackageTrustPublished(
+      globalMetadata
+    )
+  })
+
+  it('resumes commit after an Agent directory was already published', () => {
+    const operationRoot = join(
+      temporaryRoot,
+      'partial-commit-operation'
+    )
+    const homeDirectory = join(
+      temporaryRoot,
+      'partial-commit-home'
+    )
+    const prepared = packageInstaller.preparePackage({
+      operationRoot,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory
+    })
+    const agentSource = join(
+      operationRoot,
+      'prepared',
+      'payload',
+      'agent'
+    )
+    const agentDestination = join(
+      homeDirectory,
+      '.goodbuddy',
+      'agent',
+      'installations',
+      prepared.agent.installationId
+    )
+    mkdirSync(dirname(agentDestination), {
+      recursive: true,
+      mode: 0o700
+    })
+    renameSync(agentSource, agentDestination)
+
+    expect(
+      packageInstaller.commitPackage({
+        operationRoot,
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+    ).toMatchObject({
+      status: 'committed',
+      agent: prepared.agent,
+      runtime: prepared.runtime
+    })
+    expect(
+      lstatSync(join(agentDestination, 'goodbuddy-agent'))
+        .isFile()
+    ).toBe(true)
+    expect(
+      lstatSync(
+        join(
+          homeDirectory,
+          '.goodbuddy',
+          'runtimes',
+          'opencode',
+          prepared.runtime.bundleDigest.slice(
+            'sha256:'.length
+          ),
+          'bin',
+          'opencode'
+        )
+      ).isFile()
+    ).toBe(true)
   })
 
   it('requires untampered prepared state before commit mutation', () => {
@@ -816,7 +904,9 @@ describe('compound Agent packages', () => {
     expect(
       readFileSync(join(agentDestination, 'manifest.json'))
     ).toBeTruthy()
-    expectGlobalMetadataUnchanged(globalMetadata)
+    expectRegistriesUnchangedAndPackageTrustPublished(
+      globalMetadata
+    )
   })
 
   it('restores a replaced Agent directory when Runtime publication fails', () => {
@@ -861,7 +951,7 @@ describe('compound Agent packages', () => {
     expect(readdirSync(agentDestination)).toEqual(['old-marker'])
   })
 
-  it('reuses only an identical trusted installed Node without changing global metadata', () => {
+  it('publishes each Agent payload independently of existing installations', () => {
     const variantAgent = join(temporaryRoot, 'reuse-variant-agent')
     writeAgentBundle(variantAgent, 'x64')
     writeFileSync(
@@ -999,7 +1089,7 @@ describe('compound Agent packages', () => {
     )
     expect(
       lstatSync(identical.currentNode).ino
-    ).toBe(
+    ).not.toBe(
       lstatSync(
         installedVariantNode(
           identical.homeDirectory,
@@ -1007,7 +1097,9 @@ describe('compound Agent packages', () => {
         )
       ).ino
     )
-    expectGlobalMetadataUnchanged(identical.globalMetadata)
+    expectRegistriesUnchangedAndPackageTrustPublished(
+      identical.globalMetadata
+    )
 
     const changed = installCurrent('changed')
     const changedResult = prepareAndCommit({
@@ -1029,7 +1121,9 @@ describe('compound Agent packages', () => {
         )
       ).ino
     )
-    expectGlobalMetadataUnchanged(changed.globalMetadata)
+    expectRegistriesUnchangedAndPackageTrustPublished(
+      changed.globalMetadata
+    )
 
     const corrupt = installCurrent('corrupt')
     writeFileSync(corrupt.currentNode, Buffer.from('corrupt Node'))
@@ -1044,7 +1138,9 @@ describe('compound Agent packages', () => {
         )
       ).ino
     )
-    expectGlobalMetadataUnchanged(corrupt.globalMetadata)
+    expectRegistriesUnchangedAndPackageTrustPublished(
+      corrupt.globalMetadata
+    )
 
     const untrusted = installCurrent('untrusted')
     const currentRoot = dirname(untrusted.currentNode)
@@ -1063,7 +1159,9 @@ describe('compound Agent packages', () => {
         )
       ).ino
     )
-    expectGlobalMetadataUnchanged(untrusted.globalMetadata)
+    expectRegistriesUnchangedAndPackageTrustPublished(
+      untrusted.globalMetadata
+    )
   })
 
   it('fails the remote installer closed on traversal, duplicates, corruption, and hash mismatch', () => {
@@ -2283,5 +2381,22 @@ function expectGlobalMetadataUnchanged(
 ): void {
   for (const [path, bytes] of files) {
     expect(readFileSync(path)).toEqual(bytes)
+  }
+}
+
+function expectRegistriesUnchangedAndPackageTrustPublished(
+  files: ReadonlyMap<string, Buffer>
+): void {
+  for (const [path, bytes] of files) {
+    if (path.endsWith('registry.json')) {
+      expect(readFileSync(path)).toEqual(bytes)
+      continue
+    }
+    const actual = JSON.parse(readFileSync(path, 'utf8'))
+    expect(actual).toEqual(
+      path.endsWith('remote-runtime-lock.json')
+        ? remoteRuntimeLock
+        : registry
+    )
   }
 }

@@ -310,7 +310,16 @@ async function loadRegisteredAgentBundleUnchecked(
       manifestBytes
     ) ||
     manifest.agentVersion !== registered.agentVersion ||
-    manifest.arch !== registered.arch
+    manifest.arch !== registered.arch ||
+    (
+      registered.protocol !== undefined &&
+      (
+        manifest.protocol.major !==
+          registered.protocol.major ||
+        manifest.protocol.minor !==
+          registered.protocol.minor
+      )
+    )
   ) {
     throw new Error(
       'Agent manifest does not match the Host-managed registry'

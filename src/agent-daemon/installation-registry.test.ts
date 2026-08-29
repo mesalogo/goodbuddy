@@ -116,7 +116,8 @@ describe('Agent installation registry', () => {
         installationId: 'install-a',
         agentVersion: '0.11.0',
         manifestSha256: 'a'.repeat(64),
-        arch: 'x64'
+        arch: 'x64',
+        protocol: { major: 1, minor: 0 }
       }
     })
     expect(readFileSync(storagePath, 'utf8')).toBe(legacyBytes)

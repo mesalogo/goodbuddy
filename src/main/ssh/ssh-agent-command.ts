@@ -24,6 +24,7 @@ export const AGENT_BOOTSTRAP_PROBE_COMMAND = [
 ].join('; ')
 
 const lifecycleActions = [
+  'adopt',
   'bootstrap',
   'health',
   'status',
@@ -48,6 +49,7 @@ export type AgentRuntimeActivationAction = {
   runtimeId: typeof RUNTIME_ID
   bundleDigest: string
   architecture: AgentRuntimeArchitecture
+  forceVerification?: true
 }
 
 export type FixedAgentSshAction =
@@ -232,7 +234,10 @@ export function buildFixedAgentCliArgv(
         '--bundle-digest',
         action.bundleDigest,
         '--architecture',
-        action.architecture
+        action.architecture,
+        ...(action.forceVerification === true
+          ? ['--force-verification', 'true']
+          : [])
       ]
     }
   }

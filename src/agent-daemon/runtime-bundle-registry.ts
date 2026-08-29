@@ -25,7 +25,7 @@ import {
 } from './managed-paths'
 import type { InstalledBundleVerificationEnvironment } from './installed-bundle-verifier'
 import {
-  verifyRuntimeBundle,
+  loadRegisteredRuntimeBundle,
   type VerifiedRuntimeBundle
 } from './runtime-bundle-verifier'
 
@@ -120,6 +120,27 @@ export class RuntimeBundleRegistry {
     entry: RuntimeRegistryEntry
     bundleDirectory: string
   } {
+    const resolved = this.find(
+      runtimeIdInput,
+      bundleDigestInput,
+      architecture
+    )
+    if (resolved === undefined) {
+      throw new Error(
+        'Runtime bundle is not the verified current bundle'
+      )
+    }
+    return resolved
+  }
+
+  find(
+    runtimeIdInput: string,
+    bundleDigestInput: string,
+    architecture: AgentArchitecture
+  ): {
+    entry: RuntimeRegistryEntry
+    bundleDirectory: string
+  } | undefined {
     const runtimeId = agentIdentifierSchema.parse(runtimeIdInput)
     const bundleDigest = sha256DigestSchema.parse(bundleDigestInput)
     this.#state = this.#load({ createIfMissing: false })
@@ -130,9 +151,7 @@ export class RuntimeBundleRegistry {
         candidate.architecture === architecture
     )
     if (entry === undefined) {
-      throw new Error(
-        'Runtime bundle is not the verified current bundle'
-      )
+      return undefined
     }
     return {
       entry: { ...entry },
@@ -231,7 +250,7 @@ export class RuntimeBundleRegistry {
   }
 }
 
-export function createVerifiedRuntimeCapabilitySource(options: {
+type VerifiedRuntimeCapabilitySourceOptions = {
   registry: RuntimeBundleRegistry
   architecture: AgentArchitecture
   releaseKeyRegistry: AgentReleaseKeyRegistry
@@ -241,53 +260,65 @@ export function createVerifiedRuntimeCapabilitySource(options: {
   filesystemPlatform?: NodeJS.Platform
   uid?: number
   reportError?: (message: string, error: unknown) => void
-}): () => Promise<DaemonCapabilities['runtimes']> {
+  loadRegistered?: (
+    entry: RuntimeRegistryEntry,
+    bundleDirectory: string
+  ) => Promise<VerifiedRuntimeBundle>
+}
+
+export function createVerifiedRuntimeCapabilitySource(
+  options: VerifiedRuntimeCapabilitySourceOptions
+): () => Promise<DaemonCapabilities['runtimes']> {
   return async () => await loadVerifiedRuntimeCapabilities(options)
 }
 
-async function loadVerifiedRuntimeCapabilities(options: {
-  registry: RuntimeBundleRegistry
-  architecture: AgentArchitecture
-  releaseKeyRegistry: AgentReleaseKeyRegistry
-  runtimeLock: RemoteRuntimeLock
-  verificationEnvironment?: InstalledBundleVerificationEnvironment
-  enforceFilesystemMode?: boolean
-  filesystemPlatform?: NodeJS.Platform
-  uid?: number
-  reportError?: (message: string, error: unknown) => void
-}): Promise<DaemonCapabilities['runtimes']> {
+async function loadVerifiedRuntimeCapabilities(
+  options: VerifiedRuntimeCapabilitySourceOptions
+): Promise<DaemonCapabilities['runtimes']> {
   const capabilities: DaemonCapabilities['runtimes'] = []
   for (const entry of options.registry.current(options.architecture)) {
     try {
-      const verified = await verifyRuntimeBundle(
+      const bundleDirectory =
         options.registry.bundleDirectory(
           entry.runtimeId,
           entry.bundleDigest
-        ),
-        {
-          architecture: options.architecture,
-          releaseKeyRegistry: options.releaseKeyRegistry,
-          runtimeLock: options.runtimeLock,
-          ...(options.verificationEnvironment === undefined
-            ? {}
-            : {
-                verificationEnvironment:
-                  options.verificationEnvironment
-              }),
-          ...(options.enforceFilesystemMode === undefined
-            ? {}
-            : {
-                enforceFilesystemMode:
-                  options.enforceFilesystemMode
-              }),
-          ...(options.filesystemPlatform === undefined
-            ? {}
-            : {
-                filesystemPlatform: options.filesystemPlatform
-              }),
-          ...(options.uid === undefined ? {} : { uid: options.uid })
-        }
-      )
+        )
+      const verified = options.loadRegistered === undefined
+        ? await loadRegisteredRuntimeBundle(
+            bundleDirectory,
+            {
+              registered: entry,
+              architecture: options.architecture,
+              releaseKeyRegistry:
+                options.releaseKeyRegistry,
+              runtimeLock: options.runtimeLock,
+              ...(options.verificationEnvironment === undefined
+                ? {}
+                : {
+                    verificationEnvironment:
+                      options.verificationEnvironment
+                  }),
+              ...(options.enforceFilesystemMode === undefined
+                ? {}
+                : {
+                    enforceFilesystemMode:
+                      options.enforceFilesystemMode
+                  }),
+              ...(options.filesystemPlatform === undefined
+                ? {}
+                : {
+                    filesystemPlatform:
+                      options.filesystemPlatform
+                  }),
+              ...(options.uid === undefined
+                ? {}
+                : { uid: options.uid })
+            }
+          )
+        : await options.loadRegistered(
+            entry,
+            bundleDirectory
+          )
       if (
         verified.manifest.runtimeVersion !== entry.runtimeVersion ||
         verified.manifestDigest !== entry.manifestDigest ||
@@ -326,6 +357,7 @@ function entryFromVerified(
     architecture: verified.manifest.architecture,
     bundleDigest: verified.manifest.bundleDigest,
     manifestDigest: verified.manifestDigest,
+    runtimeAdapterDigest: verified.manifest.adapterDigest,
     acpCapabilitiesDigest:
       verified.manifest.acpCapabilitiesDigest
   })

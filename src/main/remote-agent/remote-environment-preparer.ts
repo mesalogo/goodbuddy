@@ -8,6 +8,7 @@ import type {
 import type { StagedSftp } from '../ssh/bounded-sftp'
 import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
 import type {
+  AgentDiagnosticResult,
   SshConnectionLease,
   SshConnectionPool,
   SshRemotePackageBootstrapLease
@@ -25,7 +26,6 @@ import {
   type SshRemotePackageIdentity
 } from '../ssh/ssh-remote-package-bootstrap'
 import type {
-  AgentInstallationManager,
   AgentInstallationTargetResolver
 } from './agent-installation-manager'
 import type {
@@ -38,26 +38,41 @@ import {
   snapshotRemoteEnvironmentMetadata,
   type RemoteEnvironmentMetadataSnapshot
 } from './remote-environment-metadata'
-import {
-  mapAgentInstallationPhase,
-  mapRuntimeInstallationPhase
-} from './remote-environment-progress'
 import type {
+  PersistedRemoteEnvironmentMetadataSnapshot,
   RemoteEnvironmentOperationStore
 } from './remote-environment-operation-store'
 import type {
   RemoteEnvironmentPreparer as Preparer,
   RemoteEnvironmentUpdateProgressObserver
 } from './remote-environment-update-service'
-import type {
-  RemoteRuntimeInstallationManager
-} from './remote-runtime-installation-manager'
 import {
   remoteHostRecoveryIdentityKey
 } from './remote-host-target-identity'
+import { boundedDiagnostic } from './bounded-diagnostic'
 
 const MAXIMUM_PACKAGE_BYTES = 512 * 1024 * 1024
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
+const MAXIMUM_DIAGNOSTIC_CHARACTERS = 800
+
+function assertAgentCommandSucceeded(
+  result: AgentDiagnosticResult,
+  label: string
+): void {
+  if (result.exitCode === 0) {
+    return
+  }
+  const detail = `${result.stderr}\n${result.stdout}`
+  const bounded = boundedDiagnostic(
+    detail,
+    MAXIMUM_DIAGNOSTIC_CHARACTERS
+  )
+  throw new Error(
+    bounded.length > 0
+      ? `${label}失败：${bounded}`
+      : `${label}失败，退出码 ${String(result.exitCode)}`
+  )
+}
 
 export type RemoteEnvironmentPreparerOptions = {
   resolver: AgentInstallationTargetResolver
@@ -70,14 +85,6 @@ export type RemoteEnvironmentPreparerOptions = {
     | 'getRemoteInstallCandidate'
     | 'acquireInstallArchive'
     | 'acquireGoodBuddyInstallArchive'
-  >
-  agentInstallationManager: Pick<
-    AgentInstallationManager,
-    'activatePublished'
-  >
-  runtimeInstallationManager: Pick<
-    RemoteRuntimeInstallationManager,
-    'activatePublished'
   >
   operationStore: Pick<
     RemoteEnvironmentOperationStore,
@@ -95,10 +102,6 @@ export class RemoteEnvironmentPreparer implements Preparer {
   readonly #sshPool: RemoteEnvironmentPreparerOptions['sshPool']
   readonly #agentPackageManager:
     RemoteEnvironmentPreparerOptions['agentPackageManager']
-  readonly #agentInstallationManager:
-    RemoteEnvironmentPreparerOptions['agentInstallationManager']
-  readonly #runtimeInstallationManager:
-    RemoteEnvironmentPreparerOptions['runtimeInstallationManager']
   readonly #operationStore:
     RemoteEnvironmentPreparerOptions['operationStore']
 
@@ -106,10 +109,6 @@ export class RemoteEnvironmentPreparer implements Preparer {
     this.#resolver = options.resolver
     this.#sshPool = options.sshPool
     this.#agentPackageManager = options.agentPackageManager
-    this.#agentInstallationManager =
-      options.agentInstallationManager
-    this.#runtimeInstallationManager =
-      options.runtimeInstallationManager
     this.#operationStore = options.operationStore
   }
 
@@ -135,12 +134,15 @@ export class RemoteEnvironmentPreparer implements Preparer {
     const target = await this.#resolver.resolve(hostId)
     signal.throwIfAborted()
     assertValidSshConnectionTarget(hostId, target)
-    await this.#reconcilePendingOperation(
+    const recovered = await this.#reconcilePendingOperation(
       hostId,
       target,
       emit,
       signal
     )
+    if (recovered) {
+      return
+    }
 
     let probeLease: SshConnectionLease | undefined
     let bootstrapLease:
@@ -304,6 +306,17 @@ export class RemoteEnvironmentPreparer implements Preparer {
           probe.uid,
           signal
         )
+      await this.#operationStore.save({
+        version: 2,
+        hostId,
+        targetIdentity: remoteHostRecoveryIdentityKey(target),
+        operationId,
+        size: remoteCandidate.size,
+        sha256: remoteCandidate.sha256,
+        urls: [...remoteCandidate.urls],
+        metadataSnapshots:
+          persistMetadataSnapshots(metadataSnapshots)
+      })
 
       // Keep the full target re-resolution immediately adjacent to commit.
       await assertTargetCurrent(this.#resolver, target, signal)
@@ -319,7 +332,6 @@ export class RemoteEnvironmentPreparer implements Preparer {
           }
         }
       )
-      signal.throwIfAborted()
       if (!committed.committed) {
         if (
           committed.reason ===
@@ -330,7 +342,7 @@ export class RemoteEnvironmentPreparer implements Preparer {
           )
         }
         throw new Error(
-          `远端安装提交失败：${committed.reason}`
+          `远端安装提交失败：${committed.detail ?? committed.reason}`
         )
       }
       if (
@@ -344,52 +356,34 @@ export class RemoteEnvironmentPreparer implements Preparer {
       }
       assertPackageIdentity(committed.identity, candidate)
       committedIdentity = committed.identity
-
-      await assertTargetCurrent(this.#resolver, target, signal)
-      const activeAgent =
-        await this.#agentInstallationManager.activatePublished(
-        hostId,
-        committed.identity.agent,
-        {
-          signal,
-          onProgress: (phase) => {
-            const mapped = mapAgentInstallationPhase(phase)
-            if (mapped) {
-              emit(method, mapped)
-            }
-          }
-        }
-      )
       signal.throwIfAborted()
-      await assertTargetCurrent(this.#resolver, target, signal)
 
-      await this.#runtimeInstallationManager.activatePublished(
-        hostId,
-        committed.identity.runtime,
-        {
-          agentInstallationId: activeAgent.installationId,
-          signal,
-          onProgress: (phase) => {
-            const mapped = mapRuntimeInstallationPhase(phase)
-            if (mapped) {
-              emit(method, mapped)
-            }
-          }
-        }
-      )
-      signal.throwIfAborted()
-      await assertTargetCurrent(this.#resolver, target, signal)
-
-      const cleanup = await bootstrapLease.cleanup(operationId, {
+      await this.#adoptCommittedEnvironment(
+        probeLease,
+        committed.identity,
+        method,
+        emit,
         signal
-      })
-      if (!cleanup.cleaned) {
-        throw new Error(
-          `远程环境已安装，但暂存文件清理失败：${cleanup.reason}`
+      )
+
+      emit(method, 'finalizing')
+      try {
+        const cleanup = await bootstrapLease.cleanup(
+          operationId,
+          { signal }
         )
+        if (cleanup.cleaned) {
+          operationCleaned = true
+          try {
+            await this.#operationStore.remove(hostId)
+          } catch {
+            // A stale local receipt is harmless after remote cleanup.
+          }
+        }
+      } catch {
+        // The environment is already healthy. Leave the bounded
+        // operation for a later maintenance retry.
       }
-      operationCleaned = true
-      await this.#operationStore.remove(hostId)
     } catch (error) {
       let rollbackError: unknown
       if (
@@ -438,6 +432,48 @@ export class RemoteEnvironmentPreparer implements Preparer {
       bootstrapLease?.release()
       probeLease?.release()
     }
+  }
+
+  async #adoptCommittedEnvironment(
+    lease: SshConnectionLease,
+    identity: SshRemotePackageIdentity,
+    method: RemoteEnvironmentPreparationMethod,
+    emit: (
+      method: RemoteEnvironmentPreparationMethod,
+      phase: RemoteEnvironmentUpdateProgress['phase']
+    ) => void,
+    signal: AbortSignal
+  ): Promise<void> {
+    const installationId = verifyAgentInstallationId(
+      identity.agent.installationId
+    )
+    emit(method, 'installing-agent')
+    assertAgentCommandSucceeded(
+      await lease.runAgentLifecycleAction(
+        installationId,
+        'adopt',
+        signal
+      ),
+      'GoodBuddy Agent 启动与健康检查'
+    )
+    signal.throwIfAborted()
+
+    emit(method, 'installing-runtime')
+    assertAgentCommandSucceeded(
+      await lease.runAgentRuntimeAction(
+        installationId,
+        {
+          kind: 'runtime-activate',
+          runtimeId: identity.runtime.runtimeId,
+          bundleDigest: identity.runtime.bundleDigest,
+          architecture: identity.runtime.architecture,
+          forceVerification: true
+        },
+        signal
+      ),
+      'OpenCode Runtime 激活'
+    )
+    signal.throwIfAborted()
   }
 
   async #prepareUploadedArchive(options: {
@@ -567,10 +603,10 @@ export class RemoteEnvironmentPreparer implements Preparer {
       phase: RemoteEnvironmentUpdateProgress['phase']
     ) => void,
     signal: AbortSignal
-  ): Promise<void> {
+  ): Promise<boolean> {
     const pending = await this.#operationStore.load(hostId)
     if (!pending) {
-      return
+      return false
     }
     if (
       pending.targetIdentity !==
@@ -587,16 +623,42 @@ export class RemoteEnvironmentPreparer implements Preparer {
       sha256: pending.sha256,
       urls: pending.urls
     }
-    const lease =
+    const bootstrapLease =
       await this.#sshPool.acquireRemotePackageBootstrap(
         target,
         signal
       )
+    let commandLease: SshConnectionLease | undefined
+    let recoveryMetadataSftp: StagedSftp | undefined
     try {
-      assertLeaseMatchesTarget(lease, target)
-      const status = await lease.commitStatus(candidate, {
-        signal
-      })
+      assertLeaseMatchesTarget(bootstrapLease, target)
+      if (pending.version === 1) {
+        const cleanup = await bootstrapLease.cleanup(
+          pending.operationId,
+          { signal }
+        )
+        if (
+          !cleanup.cleaned &&
+          cleanup.reason !== 'operation-unavailable'
+        ) {
+          throw new Error(
+            `旧版远程环境暂存清理失败：${cleanup.reason}`
+          )
+        }
+        await this.#operationStore.remove(hostId)
+        return false
+      }
+      const status = await bootstrapLease.commitStatus(
+        candidate,
+        { signal }
+      )
+      if (
+        !status.committed &&
+        status.reason === 'operation-unavailable'
+      ) {
+        await this.#operationStore.remove(hostId)
+        return false
+      }
       if (
         !status.committed &&
         status.reason === 'installer-rollback-incomplete'
@@ -605,19 +667,83 @@ export class RemoteEnvironmentPreparer implements Preparer {
           '上一次远程环境发布失败且回滚结果不完整，请检查 Host 状态'
         )
       }
-      const cleanup = await lease.cleanup(
+      commandLease = await this.#sshPool.acquire(
+        target,
+        signal
+      )
+      assertLeaseMatchesTarget(commandLease, target)
+      const probe =
+        await commandLease.runAgentBootstrapProbe(signal)
+      if (!probe.ready) {
+        throw new Error(
+          `远端系统不能恢复 GoodBuddy 环境：${probe.reason}`
+        )
+      }
+      recoveryMetadataSftp =
+        await commandLease.openStagedSftp(
+          probe.canonicalHomeDirectory,
+          {
+            maximumFileBytes: MAXIMUM_METADATA_BYTES,
+            maximumTotalBytes:
+              MAXIMUM_METADATA_BYTES * 24,
+            maximumOperations: 128
+          },
+          signal
+        )
+      const recoverySnapshots =
+        restorePersistedMetadataSnapshots(
+          pending.metadataSnapshots,
+          probe.uid
+        )
+      if (status.committed) {
+        try {
+          await this.#adoptCommittedEnvironment(
+            commandLease,
+            status.identity,
+            'auto',
+            emit,
+            signal
+          )
+        } catch (error) {
+          await stopCandidateBestEffort(
+            commandLease,
+            status.identity.agent.installationId
+          )
+          try {
+            await restoreRemoteEnvironmentMetadata(
+              recoveryMetadataSftp,
+              recoverySnapshots
+            )
+          } catch (rollbackError) {
+            throw new AggregateError(
+              [error, rollbackError],
+              '上一次远程环境恢复失败，且原有环境元数据未能完整恢复',
+              { cause: rollbackError }
+            )
+          }
+          throw error
+        }
+      } else {
+        await restoreRemoteEnvironmentMetadata(
+          recoveryMetadataSftp,
+          recoverySnapshots
+        )
+      }
+      const cleanup = await bootstrapLease.cleanup(
         pending.operationId,
         { signal }
       )
       if (
-        !cleanup.cleaned &&
-        cleanup.reason !== 'operation-unavailable'
+        cleanup.cleaned ||
+        cleanup.reason === 'operation-unavailable'
       ) {
+        await this.#operationStore.remove(hostId)
+      } else if (!status.committed) {
         throw new Error(
-          `上一次远程环境暂存清理失败：${cleanup.reason}`
+          `上一次未提交的远程环境暂存清理失败：${cleanup.reason}`
         )
       }
-      await this.#operationStore.remove(hostId)
+      return status.committed
     } catch (error) {
       if (
         error instanceof
@@ -625,13 +751,57 @@ export class RemoteEnvironmentPreparer implements Preparer {
       ) {
         throw error
       }
+      const detail = error instanceof Error
+        ? error.message
+        : String(error)
       throw new SshRemotePackageCommitIndeterminateError(
-        '上一次远程环境提交结果仍不确定，请稍后重试'
+        `上一次远程环境恢复失败：${detail}`
       )
     } finally {
-      lease.release()
+      recoveryMetadataSftp?.close()
+      commandLease?.release()
+      bootstrapLease.release()
     }
   }
+}
+
+function persistMetadataSnapshots(
+  snapshots: readonly RemoteEnvironmentMetadataSnapshot[]
+): readonly PersistedRemoteEnvironmentMetadataSnapshot[] {
+  return snapshots.map((snapshot) => ({
+    path: snapshot.path,
+    uid: snapshot.uid,
+    ...(snapshot.contents === undefined
+      ? {}
+      : {
+          contentsBase64:
+            snapshot.contents.toString('base64')
+        })
+  }))
+}
+
+function restorePersistedMetadataSnapshots(
+  snapshots:
+    readonly PersistedRemoteEnvironmentMetadataSnapshot[],
+  uid: number
+): readonly RemoteEnvironmentMetadataSnapshot[] {
+  if (snapshots.some((snapshot) => snapshot.uid !== uid)) {
+    throw new Error(
+      '远程环境恢复元数据与当前 SSH 用户不匹配'
+    )
+  }
+  return snapshots.map((snapshot) => ({
+    path: snapshot.path,
+    uid: snapshot.uid,
+    ...(snapshot.contentsBase64 === undefined
+      ? {}
+      : {
+          contents: Buffer.from(
+            snapshot.contentsBase64,
+            'base64'
+          )
+        })
+  }))
 }
 
 async function resolvePreparationMethod(
@@ -660,7 +830,7 @@ function assertPrepared(
     throw new Error(
       prepared.unavailable
         ? `远端环境准备不可用：${prepared.reason}`
-        : `远端环境准备失败：${prepared.reason}`
+        : `远端环境准备失败：${prepared.detail ?? prepared.reason}`
     )
   }
   if (prepared.operationId !== operationId) {
@@ -809,7 +979,6 @@ function mapBootstrapPhase(
     case 'verifying-zip':
     case 'verifying-payload':
     case 'validating-prepared-state':
-    case 'revalidating-archive':
       return 'verifying'
     case 'extracting':
     case 'preparing':
@@ -819,6 +988,7 @@ function mapBootstrapPhase(
     case 'persisting-prepared-state':
     case 'extracting-payload':
     case 'publishing-content':
+    case 'publishing-metadata':
     case 'cleaning':
       return 'applying'
   }

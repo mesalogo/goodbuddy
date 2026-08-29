@@ -221,7 +221,8 @@ function entryFromVerified(
     installationId: verified.installationId,
     agentVersion: verified.manifest.agentVersion,
     manifestSha256: verified.manifestSha256,
-    arch: verified.manifest.arch
+    arch: verified.manifest.arch,
+    protocol: verified.manifest.protocol
   })
 }
 

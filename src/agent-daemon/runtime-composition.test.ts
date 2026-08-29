@@ -37,7 +37,7 @@ afterEach(() => {
 })
 
 describe('production Runtime composition', () => {
-  it('keeps ACP live and reloads managed metadata installed after daemon startup', async () => {
+  it('loads metadata installed after startup and caches the registered Runtime identity', async () => {
     const fixture = await createRuntimeBundleTestFixture()
     const root = fixture.root
     temporaryPaths.push(root)
@@ -121,11 +121,8 @@ describe('production Runtime composition', () => {
       }, null, 2)}\n`,
       { mode: 0o600 }
     )
-    await expect(protocol.runtimes()).resolves.toEqual([])
-    expect(reportError).toHaveBeenCalledWith(
-      'Verified Runtime unavailable: opencode',
-      expect.any(Error)
-    )
+    await expect(protocol.runtimes()).resolves.toHaveLength(1)
+    expect(reportError).not.toHaveBeenCalled()
 
     await expect(protocol.dispose()).resolves.toBeUndefined()
     events.close()

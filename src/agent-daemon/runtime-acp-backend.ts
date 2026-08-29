@@ -227,7 +227,7 @@ export type RuntimeAcpBackendOptions = {
     runtimeId: string,
     runtimeBundleDigest: string
   ): RuntimeAcpResolvedBundle | Promise<RuntimeAcpResolvedBundle>
-  reverifyRuntimeBundle(
+  loadRegisteredRuntimeBundle(
     resolved: RuntimeAcpResolvedBundle,
     preparation: RemotePromptOperationPreparation
   ): RuntimeAcpVerifiedBundle | Promise<RuntimeAcpVerifiedBundle>
@@ -947,7 +947,7 @@ export class RuntimeAcpBackend {
 
     let verified: RuntimeAcpVerifiedBundle
     try {
-      verified = await this.#options.reverifyRuntimeBundle(
+      verified = await this.#options.loadRegisteredRuntimeBundle(
         binding.resolvedBundle,
         preparation
       )
