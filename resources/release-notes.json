@@ -2,6 +2,46 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.7",
+      "releasedAt": "2026-08-29",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.11.7 让托管 SSH 项目切换与多会话使用更顺畅，重做 Host 远程环境准备，并修复中断后排队消息重复发送。"
+          ],
+          "features": [
+            "**更清楚的 Host 远程环境准备。** “设置 → 平台功能 → 远程项目”的 Host 卡片现在通过一个主按钮完成安装、更新或重装，并可选择“自动”“Host 下载”或“GoodBuddy 传输”。“自动”会在 Host 可直连时由 Host 下载，否则通过 GoodBuddy 传输；已验证的本地或离线导入 Agent 包可以复用，已检查到更高的线上兼容版本时仍使用新版。只有点击主按钮才会开始准备。",
+            "**Host 与项目管理。** 可从项目选择器直接打开远程项目设置；即使 Host 不可达或远端目录已不存在，也能删除本地项目记录。删除 Host 会先列出关联项目，并在确认后清理这些项目及其本机会话、任务、成果、记忆、计划和心跳关联；不会连接 Host 或删除远端文件。"
+          ],
+          "fixes": [
+            "**更快、更可靠的托管 SSH 会话。** 切换已有远程项目现在只更新本地选择，同一 Host 上兼容的项目与对话会共用连接。重连后空闲会话不再因 `stale-controller` 无法继续，正在执行的提问仍按原位置恢复或重放。",
+            "**排队输入不再重复发送。** 如果应用在消息已写入对话、但队列尚未完成时中断，重启恢复会识别已显示的用户消息并清除对应队列项，不会再次发送同一内容；会话分支也不会继承该队列身份。",
+            "**中文下载入口。** 中文官网下载卡片在北京 OSS 索引加载期间保持不可点击，不再短暂暴露 GitHub 回退；仅在索引请求或校验失败后切换到 GitHub。英文下载行为不变。"
+          ],
+          "notices": [
+            "**技术预览与版本要求。** 远程项目仍默认关闭且为技术预览。守护进程端的重连恢复需要 Host 安装单独发布的 Agent `0.11.7`，提供 Linux x64 和 arm64；桌面包不内置 Agent 或远程 Runtime，本次不提供 LoongArch 预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.11.7 makes managed SSH project switching and multi-conversation use smoother, overhauls Host remote-environment setup, and prevents queued input from being sent twice after an interruption."
+          ],
+          "features": [
+            "**Clearer Host remote-environment setup.** Under Settings → Platform Features → Remote Projects, each Host card uses one action for install, update, or reinstall, plus Automatic, Host download, and GoodBuddy transfer methods. Automatic downloads on the Host when direct access works; otherwise GoodBuddy transfers it. Verified local or imported Agent packages can be reused, but a known newer compatible online version still wins. Preparation starts only when you select the action.",
+            "**Host and project management.** Open a remote project's settings directly from the project switcher, and remove its local record even when the Host is unreachable or the remote folder is gone. Deleting a Host now lists linked projects first and, after confirmation, removes their local conversations, Tasks, results, memories, schedules, and Heartbeat links without connecting to the Host or deleting remote files."
+          ],
+          "fixes": [
+            "**Faster, more resilient managed SSH sessions.** Switching an existing remote project is now local-only, and compatible projects and conversations share one Host connection. Reconnection no longer leaves idle sessions blocked by `stale-controller`, while active prompts preserve exact resume or replay behavior.",
+            "**Queued input is no longer sent twice.** If the app is interrupted after a message reaches conversation history but before its queue item completes, startup recovery recognizes the displayed user message and removes the matching queue item instead of sending it again. Conversation branches also discard that queue identity.",
+            "**Chinese download entry.** Download cards on the Chinese website now remain disabled while the Beijing OSS index is loading instead of briefly exposing the GitHub fallback. They switch to GitHub only if the OSS request or validation fails; English downloads are unchanged."
+          ],
+          "notices": [
+            "**Technical preview and version requirement.** Remote Projects remain disabled by default and in technical preview. Daemon-side reconnection recovery requires the separately published Agent `0.11.7` for Linux x64 or arm64. Desktop packages do not embed the Agent or remote Runtime, and this release has no LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.6",
       "releasedAt": "2026-08-27",
       "notes": {
