@@ -133,6 +133,32 @@ describe('SshHostStore', () => {
     })
   })
 
+  it('restores a Host when its related local deletion fails', async () => {
+    const { filePath, store } = await createHarness()
+    const created = await store.commitValidated({
+      input: passwordHostInput(),
+      hostKey: keyA
+    })
+
+    await expect(
+      store.remove(created.id, async () => {
+        throw new Error('project cleanup failed')
+      })
+    ).rejects.toThrow('project cleanup failed')
+
+    await expect(store.resolveHost(created.id)).resolves.toMatchObject({
+      id: created.id,
+      password: 'private password'
+    })
+    expect(
+      (
+        JSON.parse(await readFile(filePath, 'utf8')) as {
+          hosts: Array<{ id: string }>
+        }
+      ).hosts
+    ).toEqual([expect.objectContaining({ id: created.id })])
+  })
+
   it('resolves one atomic connection target snapshot with credentials and generations', async () => {
     const { store } = await createHarness()
     const created = await store.commitValidated({

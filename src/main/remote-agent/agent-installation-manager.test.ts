@@ -4,7 +4,6 @@ import {
   sign
 } from 'node:crypto'
 import {
-  chmod,
   mkdtemp,
   mkdir,
   readFile,
@@ -30,7 +29,6 @@ import {
   type VerifiedAgentBundle
 } from './agent-bundle-verifier'
 import {
-  AgentInstallationError,
   AgentInstallationManager
 } from './agent-installation-manager'
 
@@ -77,6 +75,10 @@ class MemorySftp implements StagedSftp {
       atime: 1,
       mtime: 1
     }
+  }
+
+  async uploadFile(): Promise<void> {
+    throw new Error('uploadFile is unused in this fixture')
   }
 
   async mkdir(path: string): Promise<void> {
@@ -239,19 +241,6 @@ class MemorySftp implements StagedSftp {
   }
 }
 
-const registry: AgentReleaseKeyRegistry = {
-  formatVersion: 1,
-  keys: [{
-    keyId: 'test-key',
-    publicKeySpkiBase64: Buffer.from(
-      '302a300506032b6570032100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
-      'hex'
-    ).toString('base64'),
-    environment: 'test'
-  }],
-  revocations: []
-}
-
 function target(revision = 1): SshConnectionPoolTarget {
   return {
     host: {
@@ -334,133 +323,6 @@ async function bundleFixture(): Promise<VerifiedAgentBundle> {
     bundleDirectory: directory,
     manifest,
     manifestSha256: sha256(manifestBytes)
-  }
-}
-
-function elfFixture(architecture: 'x64' | 'arm64'): Buffer {
-  const header = Buffer.alloc(64)
-  header[0] = 0x7f
-  header.write('ELF', 1, 'ascii')
-  header[4] = 2
-  header[5] = 1
-  header.writeUInt16LE(
-    architecture === 'x64' ? 62 : 183,
-    18
-  )
-  return header
-}
-
-async function harness(options: {
-  sftp?: MemorySftp
-  lifecycleFailure?: 'bootstrap' | 'health'
-  lifecycleCancellation?: 'health'
-  emulateInstallationRegistry?: boolean
-  resolverTargets?: SshConnectionPoolTarget[]
-  bootstrapGate?: Promise<void>
-} = {}) {
-  const bundle = await bundleFixture()
-  const sftp = options.sftp ?? new MemorySftp()
-  const release = vi.fn()
-  const lifecycleActions: string[] = []
-  const installationId =
-    `agent-${bundle.manifestSha256}`
-  const lease = {
-    identity: {
-      hostId: 'host-1',
-      hostRevision: 1,
-      hostKeyGeneration: 1,
-      authenticationIdentity: 'b'.repeat(64)
-    },
-    isUsable: () => true,
-    runAgentBootstrapProbe: vi.fn(async (signal?: AbortSignal) => {
-      if (options.bootstrapGate) {
-        await waitForGate(options.bootstrapGate, signal)
-      }
-      return {
-        ready: true,
-        platform: 'linux',
-        architecture: 'x64',
-        canonicalHomeDirectory: home,
-        uid,
-        shell: '/bin/bash',
-        procfs: 'ready'
-      } as const
-    }),
-    openStagedSftp: vi.fn(async () => sftp),
-    runAgentLifecycleAction: vi.fn(
-      async (
-        _installationId,
-        action: string,
-        signal?: AbortSignal
-      ) => {
-        lifecycleActions.push(action)
-        if (
-          options.emulateInstallationRegistry &&
-          action === 'bootstrap'
-        ) {
-          stageEmulatedCandidate(
-            sftp,
-            bundle,
-            installationId
-          )
-        }
-        if (options.lifecycleCancellation === action) {
-          await waitForGate(
-            new Promise<void>(() => undefined),
-            signal
-          )
-        }
-        const failed = options.lifecycleFailure === action
-        if (
-          options.emulateInstallationRegistry &&
-          action === 'health' &&
-          !failed
-        ) {
-          promoteEmulatedCandidate(
-            sftp,
-            bundle,
-            installationId
-          )
-        }
-        return {
-          exitCode: failed ? 1 : 0,
-          stdout: '',
-          stderr: ''
-        }
-      }
-    ),
-    release
-  } as unknown as SshConnectionLease
-  let resolveCount = 0
-  const targets = options.resolverTargets ?? [target()]
-  const resolver = {
-    resolve: vi.fn(async () =>
-      targets[Math.min(resolveCount++, targets.length - 1)]!
-    )
-  }
-  const sshPool = {
-    acquire: vi.fn(async () => lease)
-  }
-  const manager = new AgentInstallationManager({
-    resolver,
-    sshPool,
-    resourcePaths: {
-      keyRegistryPath: 'unused',
-      runtimeLockPath: 'unused',
-      bundleDirectories: { x64: 'unused', arm64: 'unused' }
-    },
-    verificationEnvironment: 'test',
-    loadVerifiedBundle: async () => ({ bundle, registry })
-  })
-  return {
-    manager,
-    bundle,
-    sftp,
-    release,
-    lifecycleActions,
-    resolver,
-    sshPool,
-    installationId
   }
 }
 
@@ -547,52 +409,6 @@ function legacyRegistryBytes(): Buffer {
 `)
 }
 
-function populateManagedRegistries(
-  fixture: Awaited<ReturnType<typeof harness>>,
-  installationRegistry: Buffer,
-  releaseKeyRegistry: Buffer
-): void {
-  for (const path of [
-    '.goodbuddy',
-    '.goodbuddy/agent',
-    '.goodbuddy/agent/staging',
-    '.goodbuddy/agent/installations'
-  ]) {
-    fixture.sftp.add(path, {
-      type: 'directory',
-      mode: 0o700,
-      uid
-    })
-  }
-  fixture.sftp.add('.goodbuddy/agent/registry.json', {
-    type: 'file',
-    mode: 0o600,
-    uid,
-    contents: Buffer.from(installationRegistry)
-  })
-  fixture.sftp.add('.goodbuddy/agent/release-keys.json', {
-    type: 'file',
-    mode: 0o600,
-    uid,
-    contents: Buffer.from(releaseKeyRegistry)
-  })
-  fixture.sftp.add(
-    '.goodbuddy/agent/installations/old-current',
-    { type: 'directory', mode: 0o700, uid }
-  )
-}
-
-function managedBytes(
-  fixture: Awaited<ReturnType<typeof harness>>,
-  path: string
-): Buffer | undefined {
-  return fixture.sftp.entries.get(`${home}/${path}`)?.contents
-}
-
-function bundledRegistryBytes(): Buffer {
-  return Buffer.from(`${JSON.stringify(registry, null, 2)}\n`)
-}
-
 async function waitForGate(
   gate: Promise<void>,
   signal?: AbortSignal
@@ -623,73 +439,21 @@ async function waitForGate(
   })
 }
 
-function populateInstallation(
-  fixture: Awaited<ReturnType<typeof harness>>
-): void {
-  const root =
-    `.goodbuddy/agent/installations/${fixture.installationId}`
-  fixture.sftp.add(root, {
-    type: 'directory',
-    mode: 0o700,
-    uid
-  })
-  const directories = new Set<string>()
-  for (const file of fixture.bundle.manifest.files) {
-    const parts = file.path.split('/')
-    let directory = root
-    for (const part of parts.slice(0, -1)) {
-      directory = `${directory}/${part}`
-      if (!directories.has(directory)) {
-        fixture.sftp.add(directory, {
-          type: 'directory',
-          mode: 0o700,
-          uid
-        })
-        directories.add(directory)
-      }
-    }
-    fixture.sftp.add(`${root}/${file.path}`, {
-      type: 'file',
-      mode: file.mode === '0755' ? 0o755 : 0o644,
-      uid,
-      contents: Buffer.from(
-        file.path === 'node'
-          ? 'node'
-          : file.path === 'goodbuddy-agent'
-            ? 'agent'
-            : file.path === 'lib/agent.cjs'
-              ? 'script'
-              : 'license'
-      )
-    })
-  }
-  const manifestBytes = Buffer.from(
-    `${JSON.stringify(fixture.bundle.manifest, null, 2)}\n`
-  )
-  fixture.sftp.add(`${root}/manifest.json`, {
-    type: 'file',
-    mode: 0o644,
-    uid,
-    contents: manifestBytes
-  })
-  fixture.sftp.add(`${root}/manifest.sig`, {
-    type: 'file',
-    mode: 0o644,
-    uid,
-    contents: Buffer.from('fixture-signature\n')
-  })
-}
-
 async function metadataOnlyHarness(options: {
   remoteRegistryBytes?: Buffer
   remoteReleaseKeyBytes?: Buffer
   hostRegistrySubset?: boolean
   corruptPath?: string
   resolverTargets?: SshConnectionPoolTarget[]
-  candidateResources?: boolean
   currentAgentVersion?: string
   currentNodeContents?: Buffer
   trustCurrentSignature?: boolean
+  agentStopped?: boolean
+  bootstrapGate?: Promise<void>
+  publishedLifecycleFailure?: 'bootstrap' | 'health'
+  emulatePublishedRegistry?: boolean
+  remoteRegistryAbsent?: boolean
+  remoteReleaseKeysAbsent?: boolean
 } = {}) {
   const bundle = await bundleFixture()
   const keyPair = generateKeyPairSync('ed25519')
@@ -824,27 +588,31 @@ async function metadataOnlyHarness(options: {
         arch: currentManifest.arch
       }
     }, null, 2)}\n`)
-  sftp.add('.goodbuddy/agent/registry.json', {
-    type: 'file',
-    mode: 0o600,
-    uid,
-    contents: persistedRegistry
-  })
-  sftp.add('.goodbuddy/agent/release-keys.json', {
-    type: 'file',
-    mode: 0o600,
-    uid,
-    contents:
-      options.remoteReleaseKeyBytes ??
-      (
-        options.hostRegistrySubset
-          ? Buffer.from(`${JSON.stringify({
-              ...signedRegistry,
-              keys: [signedRegistry.keys[0]]
-            }, null, 2)}\n`)
-          : registryBytes
-      )
-  })
+  if (!options.remoteRegistryAbsent) {
+    sftp.add('.goodbuddy/agent/registry.json', {
+      type: 'file',
+      mode: 0o600,
+      uid,
+      contents: persistedRegistry
+    })
+  }
+  if (!options.remoteReleaseKeysAbsent) {
+    sftp.add('.goodbuddy/agent/release-keys.json', {
+      type: 'file',
+      mode: 0o600,
+      uid,
+      contents:
+        options.remoteReleaseKeyBytes ??
+        (
+          options.hostRegistrySubset
+            ? Buffer.from(`${JSON.stringify({
+                ...signedRegistry,
+                keys: [signedRegistry.keys[0]]
+              }, null, 2)}\n`)
+            : registryBytes
+        )
+    })
+  }
   for (const file of bundle.manifest.files) {
     const contents = await readFile(
       join(bundle.bundleDirectory, ...file.path.split('/'))
@@ -879,6 +647,7 @@ async function metadataOnlyHarness(options: {
   })
 
   const lifecycleActions: string[] = []
+  let healthCalls = 0
   const release = vi.fn()
   const lease = {
     identity: {
@@ -888,7 +657,11 @@ async function metadataOnlyHarness(options: {
       authenticationIdentity: 'b'.repeat(64)
     },
     isUsable: () => true,
-    runAgentBootstrapProbe: vi.fn(async () => ({
+    runAgentBootstrapProbe: vi.fn(async (signal?: AbortSignal) => {
+      if (options.bootstrapGate) {
+        await waitForGate(options.bootstrapGate, signal)
+      }
+      return {
       ready: true,
       platform: 'linux',
       architecture: 'x64',
@@ -896,16 +669,58 @@ async function metadataOnlyHarness(options: {
       uid,
       shell: '/bin/bash',
       procfs: 'ready'
-    }) as const),
+      } as const
+    }),
     openStagedSftp: vi.fn(async () => sftp),
     runAgentLifecycleAction: vi.fn(
       async (_installationId, action: string) => {
         lifecycleActions.push(action)
+        if (
+          options.emulatePublishedRegistry &&
+          action === 'bootstrap'
+        ) {
+          stageEmulatedCandidate(
+            sftp,
+            {
+              ...bundle,
+              manifest: currentManifest,
+              manifestSha256: currentManifestSha256
+            },
+            currentInstallationId
+          )
+        }
+        if (action === 'health') {
+          healthCalls += 1
+        }
+        const publishedFailure =
+          options.publishedLifecycleFailure === action
+        if (
+          options.emulatePublishedRegistry &&
+          action === 'health' &&
+          !publishedFailure
+        ) {
+          promoteEmulatedCandidate(
+            sftp,
+            {
+              ...bundle,
+              manifest: currentManifest,
+              manifestSha256: currentManifestSha256
+            },
+            currentInstallationId
+          )
+        }
         return {
           exitCode:
-            options.corruptPath === 'node' &&
-            !options.candidateResources &&
-            action === 'health'
+            publishedFailure ||
+            (
+              action === 'health' &&
+              (
+                (
+                  options.corruptPath === 'node'
+                ) ||
+                (options.agentStopped === true && healthCalls === 1)
+              )
+            )
               ? 1
               : 0,
           stdout: '',
@@ -933,21 +748,23 @@ async function metadataOnlyHarness(options: {
         arm64: join(resourceRoot, 'missing-arm64')
       }
     },
-    verificationEnvironment: 'test',
-    ...(options.candidateResources
-      ? {
-          loadVerifiedBundle: async () => ({
-            bundle,
-            registry: signedRegistry
-          })
-        }
-      : {})
+    verificationEnvironment: 'test'
   })
   return {
     manager,
     bundle,
     installationId,
     currentInstallationId,
+    publishedIdentity: {
+      installationId: currentInstallationId,
+      agentVersion: currentManifest.agentVersion,
+      manifestSha256: currentManifestSha256,
+      binaryDigest: `sha256:${currentManifestSha256}`,
+      platform: 'linux' as const,
+      architecture: currentManifest.arch,
+      protocol: { ...currentManifest.protocol },
+      supervisor: 'detached-on-demand' as const
+    },
     lifecycleActions,
     resolver,
     sftp,
@@ -956,30 +773,11 @@ async function metadataOnlyHarness(options: {
 }
 
 describe('AgentInstallationManager', () => {
-  it('requires the independently verified package loader in production', () => {
-    expect(() =>
-      new AgentInstallationManager({
-        resolver: { resolve: vi.fn() },
-        sshPool: { acquire: vi.fn() },
-        resourcePaths: {
-          keyRegistryPath: 'unused',
-          runtimeLockPath: 'unused',
-          bundleDirectories: {
-            x64: 'unused',
-            arm64: 'unused'
-          }
-        }
-      })
-    ).toThrow(
-      'Production Agent installation requires a verified package loader'
-    )
-  })
-
   it('cryptographically reuses an exact current Host Agent when bundle resources are absent', async () => {
     const fixture = await metadataOnlyHarness()
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).resolves.toMatchObject({
       installationId: fixture.installationId,
       agentVersion: fixture.bundle.manifest.agentVersion,
@@ -994,13 +792,275 @@ describe('AgentInstallationManager', () => {
     expect(fixture.release).toHaveBeenCalledOnce()
   })
 
+  it('reuses the current Agent identity until the Host is invalidated', async () => {
+    const fixture = await metadataOnlyHarness()
+
+    const first = await fixture.manager.activateInstalled('host-1')
+    await expect(
+      fixture.manager.activateInstalled('host-1')
+    ).resolves.toEqual(first)
+    expect(fixture.lifecycleActions).toEqual(['health'])
+    expect(fixture.release).toHaveBeenCalledOnce()
+
+    fixture.manager.invalidateHost('host-1')
+    await expect(
+      fixture.manager.activateInstalled('host-1')
+    ).resolves.toEqual(first)
+    expect(fixture.lifecycleActions).toEqual(['health', 'health'])
+    expect(fixture.release).toHaveBeenCalledTimes(2)
+  })
+
+  it('activates an exact installed Agent without loading or publishing installable payloads', async () => {
+    const fixture = await metadataOnlyHarness({})
+
+    await expect(
+      fixture.manager.activateInstalled('host-1')
+    ).resolves.toMatchObject({
+      installationId: fixture.currentInstallationId,
+      architecture: 'x64'
+    })
+
+    expect(fixture.lifecycleActions).toEqual(['health'])
+    expect(
+      fixture.sftp.operations.filter((operation) =>
+        /^(?:mkdir|write|chmod|rename|replace|link|unlink|rmdir):/u
+          .test(operation)
+      )
+    ).toEqual([])
+  })
+
+  it('bootstraps a stopped installed Agent without SFTP mutation', async () => {
+    const fixture = await metadataOnlyHarness({
+      agentStopped: true
+    })
+
+    await expect(
+      fixture.manager.activateInstalled('host-1')
+    ).resolves.toMatchObject({
+      installationId: fixture.currentInstallationId
+    })
+
+    expect(fixture.lifecycleActions).toEqual([
+      'health',
+      'bootstrap',
+      'health'
+    ])
+    expect(
+      fixture.sftp.operations.filter((operation) =>
+        /^(?:mkdir|write|chmod|rename|replace|link|unlink|rmdir):/u
+          .test(operation)
+      )
+    ).toEqual([])
+  })
+
+  it('adopts the exact package-published Agent without loading or mutating payloads', async () => {
+    const fixture = await metadataOnlyHarness({})
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toMatchObject({
+      installationId: fixture.currentInstallationId,
+      agentVersion: fixture.bundle.manifest.agentVersion,
+      architecture: 'x64'
+    })
+
+    expect(fixture.lifecycleActions).toEqual([
+      'bootstrap',
+      'health'
+    ])
+    expect(
+      fixture.sftp.operations.filter((operation) =>
+        /^(?:mkdir|write|chmod|rename|replace|link|unlink|rmdir):/u
+          .test(operation)
+      )
+    ).toEqual([])
+  })
+
+  it('adopts a package-published Agent when all global Agent metadata is absent', async () => {
+    const fixture = await metadataOnlyHarness({
+      remoteRegistryAbsent: true,
+      remoteReleaseKeysAbsent: true
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toMatchObject({
+      installationId: fixture.currentInstallationId,
+      architecture: 'x64'
+    })
+
+    expect(fixture.lifecycleActions).toEqual([
+      'bootstrap',
+      'health'
+    ])
+    expect(
+      fixture.sftp.entries.get(
+        `${home}/.goodbuddy/agent/release-keys.json`
+      )?.contents
+    ).toBeDefined()
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/agent/registry.json`
+      )
+    ).toBe(false)
+  })
+
+  it('verifies a published Agent with packaged trust instead of stale Host keys', async () => {
+    const fixture = await metadataOnlyHarness({
+      remoteReleaseKeyBytes: Buffer.from(
+        '{"formatVersion":1,"keys":[],"revocations":[]}\n'
+      )
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toMatchObject({
+      installationId: fixture.currentInstallationId
+    })
+    expect(fixture.lifecycleActions).toEqual([
+      'bootstrap',
+      'health'
+    ])
+  })
+
+  it('rejects a package-published Agent identity mismatch before activation', async () => {
+    const fixture = await metadataOnlyHarness()
+
+    await expect(
+      fixture.manager.activatePublished('host-1', {
+        ...fixture.publishedIdentity,
+        agentVersion: '9.9.9'
+      })
+    ).rejects.toMatchObject({ reason: 'corrupt' })
+
+    expect(fixture.lifecycleActions).toEqual(['stop'])
+  })
+
+  it('does not transfer installer-verified Agent payloads back through SFTP', async () => {
+    const fixture = await metadataOnlyHarness()
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toMatchObject({
+      installationId: fixture.currentInstallationId
+    })
+
+    expect(fixture.lifecycleActions).toEqual([
+      'bootstrap',
+      'health'
+    ])
+    for (const file of fixture.bundle.manifest.files) {
+      expect(fixture.sftp.operations).not.toContain(
+        `read:.goodbuddy/agent/installations/` +
+          `${fixture.currentInstallationId}/${file.path}`
+      )
+    }
+  })
+
+  it('rejects package-published Agent adoption after Host identity changes', async () => {
+    const fixture = await metadataOnlyHarness({
+      resolverTargets: [target(), target(2)]
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).rejects.toMatchObject({
+      reason: 'host-identity-changed'
+    })
+
+    expect(fixture.lifecycleActions).toEqual(['stop'])
+  })
+
+  it('stops a failed package-published Agent and restores registry bytes exactly', async () => {
+    const oldRegistry = legacyRegistryBytes()
+    const oldReleaseKeys = Buffer.from(
+      '{ "legacy": "release keys", "spacing": true }\n'
+    )
+    const fixture = await metadataOnlyHarness({
+      remoteRegistryBytes: oldRegistry,
+      remoteReleaseKeyBytes: oldReleaseKeys,
+      publishedLifecycleFailure: 'health',
+      emulatePublishedRegistry: true
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).rejects.toMatchObject({ reason: 'lifecycle' })
+
+    expect(fixture.lifecycleActions).toEqual([
+      'bootstrap',
+      'health',
+      'stop'
+    ])
+    expect(
+      fixture.sftp.entries.get(
+        `${home}/.goodbuddy/agent/registry.json`
+      )?.contents
+    ).toEqual(oldRegistry)
+    expect(
+      fixture.sftp.entries.get(
+        `${home}/.goodbuddy/agent/release-keys.json`
+      )?.contents
+    ).toEqual(oldReleaseKeys)
+  })
+
+  it('stops a failed package-published Agent and restores global metadata absence', async () => {
+    const fixture = await metadataOnlyHarness({
+      remoteRegistryAbsent: true,
+      remoteReleaseKeysAbsent: true,
+      publishedLifecycleFailure: 'health',
+      emulatePublishedRegistry: true
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).rejects.toMatchObject({ reason: 'lifecycle' })
+
+    expect(fixture.lifecycleActions).toEqual([
+      'bootstrap',
+      'health',
+      'stop'
+    ])
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/agent/registry.json`
+      )
+    ).toBe(false)
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/agent/release-keys.json`
+      )
+    ).toBe(false)
+  })
+
   it('reuses a canonical older Host key subset containing the current signing key', async () => {
     const fixture = await metadataOnlyHarness({
       hostRegistrySubset: true
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).resolves.toMatchObject({
       installationId: fixture.installationId,
       architecture: 'x64'
@@ -1017,7 +1077,7 @@ describe('AgentInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({
       reason: 'incompatible',
       message: expect.stringContaining(
@@ -1038,7 +1098,7 @@ describe('AgentInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({ reason: 'corrupt' })
     expect(fixture.lifecycleActions).toEqual([])
   })
@@ -1049,7 +1109,7 @@ describe('AgentInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({ reason: 'corrupt' })
     expect(fixture.lifecycleActions).toEqual([])
   })
@@ -1060,7 +1120,7 @@ describe('AgentInstallationManager', () => {
       const fixture = await metadataOnlyHarness({ corruptPath })
 
       await expect(
-        fixture.manager.ensureInstalled('host-1')
+        fixture.manager.activateInstalled('host-1')
       ).rejects.toMatchObject({ reason: 'corrupt' })
       expect(fixture.lifecycleActions).toEqual([])
     }
@@ -1072,7 +1132,7 @@ describe('AgentInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({ reason: 'lifecycle' })
     expect(fixture.lifecycleActions).toEqual([
       'health',
@@ -1087,819 +1147,70 @@ describe('AgentInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({
       reason: 'host-identity-changed'
     })
     expect(fixture.lifecycleActions).toEqual([])
   })
 
-  it('installs in manifest order with exact modes and verified readback', async () => {
-    const fixture = await harness()
-    const phases: string[] = []
-    const identity = await fixture.manager.ensureInstalled(
-      'host-1',
-      { onProgress: (phase) => phases.push(phase) }
-    )
-
-    expect(identity).toMatchObject({
-      installationId: fixture.installationId,
-      binaryDigest: `sha256:${fixture.bundle.manifestSha256}`,
-      architecture: 'x64',
-      supervisor: 'detached-on-demand'
-    })
-    expect(fixture.lifecycleActions).toEqual(['bootstrap', 'health'])
-    const payloadWrites = fixture.sftp.operations
-      .filter((operation) => operation.startsWith('write:') &&
-        !operation.includes('.release-keys-'))
-      .map((operation) =>
-        operation.slice(operation.lastIndexOf('/') + 1)
-      )
-    expect(payloadWrites).toEqual([
-      'node',
-      'goodbuddy-agent',
-      'agent.cjs',
-      'LICENSE.txt',
-      'manifest.json',
-      'manifest.sig'
-    ])
-    expect(
-      fixture.sftp.operations.some((operation) =>
-        /chmod:.*goodbuddy-agent:755/u.test(operation)
-      )
-    ).toBe(true)
-    expect(phases.at(-1)).toBe('complete')
-    expect(fixture.release).toHaveBeenCalledOnce()
-    expect(fixture.sftp.closed).toBe(true)
-  })
-
-  it('dispatches an arm64 Host through the normal arm64 bundle-directory loader', async () => {
-    const resourceRoot = await mkdtemp(
-      join(tmpdir(), 'agent-normal-loader-')
-    )
-    const x64Directory = join(resourceRoot, 'linux-x64')
-    const arm64Directory = join(resourceRoot, 'linux-arm64')
-    await Promise.all([
-      mkdir(x64Directory, { recursive: true }),
-      mkdir(arm64Directory, { recursive: true })
-    ])
-    await writeFile(
-      join(x64Directory, 'manifest.json'),
-      'not the selected architecture\n'
-    )
-
-    const payloads = [
-      {
-        path: 'node',
-        contents: elfFixture('arm64'),
-        mode: '0755' as const
-      },
-      {
-        path: 'goodbuddy-agent',
-        contents: Buffer.from('agent'),
-        mode: '0755' as const
-      },
-      {
-        path: 'lib/agent.cjs',
-        contents: Buffer.from('script'),
-        mode: '0644' as const
-      },
-      ...[
-        'lib/node_modules/koffi/package.json',
-        'lib/node_modules/koffi/index.js',
-        'lib/node_modules/koffi/src/koffi/index.js',
-        'lib/node_modules/koffi/src/koffi/src/static.js',
-        'lib/node_modules/@koromix/koffi-linux-arm64/package.json',
-        'lib/node_modules/@koromix/koffi-linux-arm64/index.js'
-      ].map((path) => ({
-        path,
-        contents: Buffer.from(path),
-        mode: '0644' as const
-      })),
-      ...[
-        'lib/node_modules/@koromix/koffi-linux-arm64/linux_arm64/koffi.node',
-        'lib/node_modules/@koromix/koffi-linux-arm64/musl_arm64/koffi.node'
-      ].map((path) => ({
-        path,
-        contents: elfFixture('arm64'),
-        mode: '0644' as const
-      })),
-      {
-        path: 'licenses/koffi-MIT.txt',
-        contents: Buffer.from('koffi license'),
-        mode: '0644' as const
-      },
-      {
-        path: 'licenses/koffi-native-MIT.txt',
-        contents: Buffer.from('native license'),
-        mode: '0644' as const
-      }
-    ]
-    const manifest: AgentBundleManifest = {
-      formatVersion: 1,
-      product: 'GoodBuddy',
-      agentVersion: '1.0.0',
-      platform: 'linux',
-      arch: 'arm64',
-      protocol: { major: 1, minor: 0 },
-      signingKeyId: 'test-key',
-      entrypoint: {
-        path: 'goodbuddy-agent',
-        runtimePath: 'node',
-        scriptPath: 'lib/agent.cjs'
-      },
-      files: payloads.map((file) => ({
-        path: file.path,
-        size: file.contents.byteLength,
-        sha256: sha256(file.contents),
-        mode: file.mode
-      })),
-      licenses: [
-        {
-          package: 'koffi',
-          version: '3.1.4',
-          spdx: 'MIT',
-          path: 'licenses/koffi-MIT.txt'
-        },
-        {
-          package: '@koromix/koffi-linux-arm64',
-          version: '3.1.4',
-          spdx: 'MIT',
-          path: 'licenses/koffi-native-MIT.txt'
-        }
-      ]
-    }
-    for (const payload of payloads) {
-      const destination = join(
-        arm64Directory,
-        ...payload.path.split('/')
-      )
-      await mkdir(join(destination, '..'), { recursive: true })
-      await writeFile(destination, payload.contents)
-      await chmod(
-        destination,
-        payload.mode === '0755' ? 0o755 : 0o644
-      )
-    }
-    const keyPair = generateKeyPairSync('ed25519')
-    const signedRegistry: AgentReleaseKeyRegistry = {
-      formatVersion: 1,
-      keys: [{
-        keyId: 'test-key',
-        publicKeySpkiBase64: keyPair.publicKey.export({
-          format: 'der',
-          type: 'spki'
-        }).toString('base64'),
-        environment: 'test'
-      }],
-      revocations: []
-    }
-    const manifestBytes = Buffer.from(
-      `${JSON.stringify(manifest, null, 2)}\n`
-    )
-    await Promise.all([
-      writeFile(
-        join(arm64Directory, 'manifest.json'),
-        manifestBytes
-      ),
-      writeFile(
-        join(arm64Directory, 'manifest.sig'),
-        Buffer.from(`${sign(
-          null,
-          agentManifestSignaturePayload(manifestBytes),
-          keyPair.privateKey
-        ).toString('base64')}\n`)
-      )
-    ])
-    await Promise.all([
-      chmod(join(arm64Directory, 'manifest.json'), 0o644),
-      chmod(join(arm64Directory, 'manifest.sig'), 0o644)
-    ])
-    const rootLock = JSON.parse(
-      await readFile(
-        join(process.cwd(), 'agent-runtime-lock.json'),
-        'utf8'
-      )
-    ) as Record<string, unknown>
-    const keyRegistryPath = join(
-      resourceRoot,
-      'agent-release-keys.json'
-    )
-    const runtimeLockPath = join(
-      resourceRoot,
-      'agent-runtime-lock.json'
-    )
-    await Promise.all([
-      writeFile(
-        keyRegistryPath,
-        Buffer.from(`${JSON.stringify(
-          signedRegistry,
-          null,
-          2
-        )}\n`)
-      ),
-      writeFile(
-        runtimeLockPath,
-        Buffer.from(`${JSON.stringify({
-          ...rootLock,
-          agentVersion: manifest.agentVersion,
-          protocol: manifest.protocol
-        }, null, 2)}\n`)
-      )
-    ])
-
-    const sftp = new MemorySftp()
-    const release = vi.fn()
-    const lease = {
-      identity: {
-        hostId: 'host-1',
-        hostRevision: 1,
-        hostKeyGeneration: 1,
-        authenticationIdentity: 'b'.repeat(64)
-      },
-      isUsable: () => true,
-      runAgentBootstrapProbe: vi.fn(async () => ({
-        ready: true,
-        platform: 'linux',
-        architecture: 'arm64',
-        canonicalHomeDirectory: home,
-        uid,
-        shell: '/bin/bash',
-        procfs: 'ready'
-      }) as const),
-      openStagedSftp: vi.fn(async () => sftp),
-      runAgentLifecycleAction: vi.fn(async () => ({
-        exitCode: 0,
-        stdout: '',
-        stderr: ''
-      })),
-      release
-    } as unknown as SshConnectionLease
-    const manager = new AgentInstallationManager({
-      resolver: { resolve: vi.fn(async () => target()) },
-      sshPool: { acquire: vi.fn(async () => lease) },
-      resourcePaths: {
-        keyRegistryPath,
-        runtimeLockPath,
-        bundleDirectories: {
-          x64: x64Directory,
-          arm64: arm64Directory
-        }
-      },
-      verificationEnvironment: 'test'
-    })
-
-    await expect(
-      manager.ensureInstalled('host-1')
-    ).resolves.toMatchObject({
-      architecture: 'arm64',
-      agentVersion: manifest.agentVersion
-    })
-    expect(
-      sftp.operations.some((operation) =>
-        operation.endsWith('/node')
-      )
-    ).toBe(true)
-    expect(release).toHaveBeenCalledOnce()
-  })
-
-  it('upgrades an unverifiable current Agent when candidate resources exist', async () => {
-    const fixture = await metadataOnlyHarness({
-      candidateResources: true,
-      currentAgentVersion: '0.9.0',
-      trustCurrentSignature: false
-    })
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).resolves.toMatchObject({
-      installationId: fixture.installationId,
-      agentVersion: fixture.bundle.manifest.agentVersion
-    })
-    expect(fixture.lifecycleActions).toEqual([
-      'bootstrap',
-      'health'
-    ])
-    expect(
-      fixture.sftp.operations.some((operation) =>
-        operation.startsWith('write:') &&
-        operation.endsWith('/node')
-      )
-    ).toBe(true)
-    expect(
-      fixture.sftp.entries.has(
-        `${home}/.goodbuddy/agent/installations/${fixture.currentInstallationId}`
-      )
-    ).toBe(true)
-  })
-
-  it('reuses an exactly verified current Node without uploading it', async () => {
-    const fixture = await metadataOnlyHarness({
-      candidateResources: true,
-      currentAgentVersion: '0.9.0'
-    })
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).resolves.toMatchObject({
-      installationId: fixture.installationId
-    })
-
-    expect(
-      fixture.sftp.operations.some((operation) =>
-        /^link:\.goodbuddy\/agent\/installations\/agent-[a-f0-9]{64}\/node:\.goodbuddy\/agent\/staging\/op-[^/]+\/node$/u
-          .test(operation)
-      )
-    ).toBe(true)
-    expect(
-      fixture.sftp.operations.some((operation) =>
-        operation.startsWith('write:') &&
-        operation.endsWith('/node')
-      )
-    ).toBe(false)
-  })
-
-  it.each([
-    {
-      condition: 'untrusted current manifest',
-      options: { trustCurrentSignature: false }
-    },
-    {
-      condition: 'corrupt current Node',
-      options: { corruptPath: 'node' }
-    },
-    {
-      condition: 'different verified current Node',
-      options: { currentNodeContents: Buffer.from('old-node') }
-    }
-  ])(
-    'uploads candidate Node for $condition',
-    async ({ options }) => {
-      const fixture = await metadataOnlyHarness({
-        candidateResources: true,
-        currentAgentVersion: '0.9.0',
-        ...options
-      })
-
-      await expect(
-        fixture.manager.ensureInstalled('host-1')
-      ).resolves.toMatchObject({
-        installationId: fixture.installationId
-      })
-      expect(
-        fixture.sftp.operations.some((operation) =>
-          operation.startsWith('link:')
-        )
-      ).toBe(false)
-      expect(
-        fixture.sftp.operations.some((operation) =>
-          operation.startsWith('write:') &&
-          operation.endsWith('/node')
-        )
-      ).toBe(true)
-    }
-  )
-
-  it('bootstraps a stopped exact installation and reuses it without upload', async () => {
-    const fixture = await harness()
-    populateInstallation(fixture)
-    await fixture.manager.ensureInstalled('host-1')
-
-    expect(fixture.lifecycleActions).toEqual(['bootstrap', 'health'])
-    expect(
-      fixture.sftp.operations.some((entry) =>
-        entry.startsWith('rename:.goodbuddy/agent/staging/')
-      )
-    ).toBe(false)
-  })
-
-  it('reports lifecycle recovery failure without marking a valid bundle corrupt', async () => {
-    const fixture = await harness({ lifecycleFailure: 'health' })
-    populateInstallation(fixture)
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toMatchObject({ reason: 'lifecycle' })
-    expect(fixture.lifecycleActions).toEqual([
-      'bootstrap',
-      'health',
-      'stop'
-    ])
-    expect(
-      fixture.sftp.operations.some((entry) =>
-        entry.startsWith('rename:.goodbuddy/agent/staging/')
-      )
-    ).toBe(false)
-  })
-
-  it('rejects corrupt readback and removes operation-owned staging', async () => {
-    const sftp = new MemorySftp()
-    const fixture = await harness({ sftp })
-    const originalRead = sftp.readFile.bind(sftp)
-    sftp.readFile = vi.fn(async (path: string) => {
-      const value = await originalRead(path)
-      if (path.endsWith('/node')) {
-        return Buffer.from('bad')
-      }
-      return value
-    })
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toThrow('readback mismatch')
-    expect(
-      [...sftp.entries.keys()].some((path) =>
-        path.includes('/staging/op-')
-      )
-    ).toBe(false)
-    expect(fixture.release).toHaveBeenCalledOnce()
-  })
-
-  it('atomically replaces the managed release-key registry', async () => {
-    const fixture = await harness()
-    fixture.sftp.add('.goodbuddy', {
-      type: 'directory',
-      mode: 0o700,
-      uid
-    })
-    fixture.sftp.add('.goodbuddy/agent', {
-      type: 'directory',
-      mode: 0o700,
-      uid
-    })
-    fixture.sftp.add('.goodbuddy/agent/staging', {
-      type: 'directory',
-      mode: 0o700,
-      uid
-    })
-    fixture.sftp.add('.goodbuddy/agent/installations', {
-      type: 'directory',
-      mode: 0o700,
-      uid
-    })
-    fixture.sftp.add('.goodbuddy/agent/release-keys.json', {
-      type: 'file',
-      mode: 0o600,
-      uid,
-      contents: Buffer.from('old')
-    })
-    await fixture.manager.ensureInstalled('host-1')
-
-    expect(
-      fixture.sftp.operations.some((operation) =>
-        /^replace:\.goodbuddy\/agent\/\.release-keys-.*\.tmp:\.goodbuddy\/agent\/release-keys\.json$/u
-          .test(operation)
-      )
-    ).toBe(true)
-  })
-
-  it('deduplicates concurrent ensures for the same full host identity', async () => {
+  it('deduplicates installed activation and lets one waiter cancel', async () => {
     let releaseGate!: () => void
     const gate = new Promise<void>((resolve) => {
       releaseGate = resolve
     })
-    const fixture = await harness({ bootstrapGate: gate })
-    const first = fixture.manager.ensureInstalled('host-1')
-    const second = fixture.manager.ensureInstalled('host-1', {
-      force: true
-    })
-    await vi.waitFor(() =>
-      expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
-    )
-    releaseGate()
-    const [left, right] = await Promise.all([first, second])
-    expect(left).toEqual(right)
-    expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
-  })
-
-  it('reuses a successful installation for the same Host identity', async () => {
-    const fixture = await harness()
-    const first = await fixture.manager.ensureInstalled('host-1')
-    const phases: string[] = []
-    const second = await fixture.manager.ensureInstalled('host-1', {
-      onProgress: (phase) => phases.push(phase)
-    })
-
-    expect(second).toEqual(first)
-    expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
-    expect(phases).toEqual(['inspecting-host', 'complete'])
-  })
-
-  it('force bypasses the settled installation cache and refreshes it after verification', async () => {
-    const fixture = await harness()
-    const first = await fixture.manager.ensureInstalled('host-1')
-
-    const refreshed = await fixture.manager.ensureInstalled(
-      'host-1',
-      { force: true }
-    )
-    const cached = await fixture.manager.ensureInstalled('host-1')
-
-    expect(refreshed).toEqual(first)
-    expect(cached).toEqual(refreshed)
-    expect(fixture.sshPool.acquire).toHaveBeenCalledTimes(2)
-    expect(fixture.lifecycleActions).toEqual([
-      'bootstrap',
-      'health',
-      'bootstrap',
-      'health'
-    ])
-  })
-
-  it('keeps a shared install running when the first waiter cancels', async () => {
-    let releaseGate!: () => void
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve
-    })
-    const fixture = await harness({ bootstrapGate: gate })
+    const fixture = await metadataOnlyHarness({ bootstrapGate: gate })
     const controller = new AbortController()
-    const canceledPhases: string[] = []
-    const first = fixture.manager.ensureInstalled('host-1', {
-      signal: controller.signal,
-      onProgress: (phase) => canceledPhases.push(phase)
+    const canceled = fixture.manager.activateInstalled('host-1', {
+      signal: controller.signal
     })
-    const survivor = fixture.manager.ensureInstalled('host-1')
+    const survivor = fixture.manager.activateInstalled('host-1')
     await vi.waitFor(() =>
-      expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
+      expect(fixture.resolver.resolve).toHaveBeenCalledTimes(2)
     )
 
     controller.abort()
-    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(canceled).rejects.toMatchObject({ name: 'AbortError' })
     releaseGate()
-
     await expect(survivor).resolves.toMatchObject({
-      installationId: fixture.installationId
+      installationId: fixture.currentInstallationId
     })
-    expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
-    expect(canceledPhases).toEqual(['inspecting-host'])
+    expect(fixture.lifecycleActions).toEqual(['health'])
     expect(fixture.release).toHaveBeenCalledOnce()
   })
 
-  it('aborts a shared install after its last waiter cancels', async () => {
-    const gate = new Promise<void>(() => undefined)
-    const fixture = await harness({ bootstrapGate: gate })
+  it('cancels installed activation when its final waiter leaves', async () => {
+    const fixture = await metadataOnlyHarness({
+      bootstrapGate: new Promise<void>(() => undefined)
+    })
     const controller = new AbortController()
-    const installation = fixture.manager.ensureInstalled('host-1', {
+    const activation = fixture.manager.activateInstalled('host-1', {
       signal: controller.signal
     })
     await vi.waitFor(() =>
-      expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
+      expect(fixture.resolver.resolve).toHaveBeenCalledOnce()
     )
 
     controller.abort()
-
-    await expect(installation).rejects.toMatchObject({
-      name: 'AbortError'
-    })
-    await vi.waitFor(() =>
-      expect(fixture.release).toHaveBeenCalledOnce()
-    )
+    await expect(activation).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(fixture.release).toHaveBeenCalledOnce())
   })
 
-  it('dispose aborts active installs, cleans up, and rejects new calls', async () => {
-    const sftp = new MemorySftp()
-    let startedNodeWrite!: () => void
-    const nodeWriteStarted = new Promise<void>((resolve) => {
-      startedNodeWrite = resolve
+  it('dispose aborts active activation and rejects future calls', async () => {
+    const fixture = await metadataOnlyHarness({
+      bootstrapGate: new Promise<void>(() => undefined)
     })
-    const originalWrite = sftp.writeFile.bind(sftp)
-    sftp.writeFile = vi.fn(async (
-      path: string,
-      contents: Buffer,
-      signal?: AbortSignal
-    ) => {
-      await originalWrite(path, contents)
-      if (path.endsWith('/node')) {
-        startedNodeWrite()
-        await waitForGate(
-          new Promise<void>(() => undefined),
-          signal
-        )
-      }
-    })
-    const fixture = await harness({ sftp })
-    const installation = fixture.manager.ensureInstalled('host-1')
-    await nodeWriteStarted
+    const activation = fixture.manager.activateInstalled('host-1')
+    await vi.waitFor(() =>
+      expect(fixture.resolver.resolve).toHaveBeenCalledOnce()
+    )
 
-    const firstDispose = fixture.manager.dispose()
-    const secondDispose = fixture.manager.dispose()
-    expect(secondDispose).toBe(firstDispose)
-    await expect(installation).rejects.toMatchObject({
-      name: 'AbortError'
-    })
-    await firstDispose
-
-    expect(fixture.release).toHaveBeenCalledOnce()
-    expect(fixture.sftp.closed).toBe(true)
-    expect(
-      [...sftp.entries.keys()].some((path) =>
-        path.includes('/staging/op-')
-      )
-    ).toBe(false)
+    const first = fixture.manager.dispose()
+    expect(fixture.manager.dispose()).toBe(first)
+    await expect(activation).rejects.toMatchObject({ name: 'AbortError' })
+    await first
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toThrow('Agent installation manager is disposed')
-    expect(fixture.resolver.resolve).toHaveBeenCalledOnce()
-  })
-
-  it('cleans tracked staging and releases the lease after abort', async () => {
-    const controller = new AbortController()
-    const sftp = new MemorySftp()
-    sftp.abortController = controller
-    const fixture = await harness({ sftp })
-    const originalWrite = sftp.writeFile.bind(sftp)
-    sftp.writeFile = vi.fn(async (path: string, contents: Buffer) => {
-      await originalWrite(path, contents)
-      if (path.endsWith('/node')) {
-        controller.abort()
-        throw controller.signal.reason
-      }
-    })
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1', {
-        signal: controller.signal
-      })
-    ).rejects.toMatchObject({ name: 'AbortError' })
-    await vi.waitFor(() =>
-      expect(fixture.release).toHaveBeenCalledOnce()
-    )
-    expect(
-      [...sftp.entries.keys()].some((path) =>
-        path.includes('/staging/op-')
-      )
-    ).toBe(false)
-  })
-
-  it('stops before activation when the host identity changes', async () => {
-    const fixture = await harness({
-      resolverTargets: [target(1), target(2)]
-    })
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toMatchObject({
-      reason: 'host-identity-changed'
-    })
-    expect(fixture.lifecycleActions).toEqual([])
-  })
-
-  it('reports an existing bad destination as corrupt without replacing it', async () => {
-    const fixture = await harness()
-    const destination =
-      `.goodbuddy/agent/installations/${fixture.installationId}`
-    fixture.sftp.add(destination, {
-      type: 'directory',
-      mode: 0o700,
-      uid
-    })
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toMatchObject({
-      reason: 'corrupt'
-    })
-    expect(fixture.sftp.entries.has(`${home}/${destination}`)).toBe(true)
-    expect(
-      fixture.sftp.operations.some((entry) =>
-        entry.startsWith('rename:.goodbuddy/agent/staging/')
-      )
-    ).toBe(false)
-  })
-
-  it('leaves an old installation untouched when candidate bootstrap fails', async () => {
-    const fixture = await harness({ lifecycleFailure: 'bootstrap' })
-    fixture.sftp.add(
-      '.goodbuddy/agent/installations/old-current',
-      { type: 'directory', mode: 0o700, uid }
-    )
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toBeInstanceOf(AgentInstallationError)
-    expect(
-      fixture.sftp.entries.has(
-        `${home}/.goodbuddy/agent/installations/old-current`
-      )
-    ).toBe(true)
-    expect(fixture.lifecycleActions).toEqual(['bootstrap', 'stop'])
-  })
-
-  it('restores legacy registry and release-key bytes after upgrade health failure', async () => {
-    const oldRegistry = legacyRegistryBytes()
-    const oldReleaseKeys = Buffer.from(
-      '{ "legacy": true, "spacing": "preserved" }\n'
-    )
-    const fixture = await harness({
-      lifecycleFailure: 'health',
-      emulateInstallationRegistry: true
-    })
-    populateManagedRegistries(
-      fixture,
-      oldRegistry,
-      oldReleaseKeys
-    )
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toMatchObject({ reason: 'lifecycle' })
-
-    expect(fixture.lifecycleActions).toEqual([
-      'bootstrap',
-      'health',
-      'stop'
-    ])
-    expect(
-      managedBytes(fixture, '.goodbuddy/agent/registry.json')
-    ).toEqual(oldRegistry)
-    expect(
-      managedBytes(
-        fixture,
-        '.goodbuddy/agent/release-keys.json'
-      )
-    ).toEqual(oldReleaseKeys)
-    expect(
-      fixture.sftp.entries.has(
-        `${home}/.goodbuddy/agent/installations/old-current`
-      )
-    ).toBe(true)
-  })
-
-  it('stops the candidate and restores exact registry bytes after cancellation', async () => {
-    const oldRegistry = legacyRegistryBytes()
-    const oldReleaseKeys = Buffer.from('old release key bytes\n')
-    const fixture = await harness({
-      lifecycleCancellation: 'health',
-      emulateInstallationRegistry: true
-    })
-    populateManagedRegistries(
-      fixture,
-      oldRegistry,
-      oldReleaseKeys
-    )
-    const controller = new AbortController()
-    const installation = fixture.manager.ensureInstalled('host-1', {
-      signal: controller.signal
-    })
-    await vi.waitFor(() =>
-      expect(fixture.lifecycleActions).toContain('health')
-    )
-
-    controller.abort()
-
-    await expect(installation).rejects.toMatchObject({
-      name: 'AbortError'
-    })
-    await vi.waitFor(() =>
-      expect(fixture.release).toHaveBeenCalledOnce()
-    )
-    expect(fixture.lifecycleActions).toContain('stop')
-    expect(
-      managedBytes(fixture, '.goodbuddy/agent/registry.json')
-    ).toEqual(oldRegistry)
-    expect(
-      managedBytes(
-        fixture,
-        '.goodbuddy/agent/release-keys.json'
-      )
-    ).toEqual(oldReleaseKeys)
-  })
-
-  it('keeps only the promoted current registry after successful upgrade health', async () => {
-    const oldRegistry = legacyRegistryBytes()
-    const fixture = await harness({
-      emulateInstallationRegistry: true
-    })
-    populateManagedRegistries(
-      fixture,
-      oldRegistry,
-      Buffer.from('old release keys\n')
-    )
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).resolves.toMatchObject({
-      installationId: fixture.installationId
-    })
-
-    expect(fixture.lifecycleActions).toEqual([
-      'bootstrap',
-      'health'
-    ])
-    expect(JSON.parse(
-      managedBytes(
-        fixture,
-        '.goodbuddy/agent/registry.json'
-      )!.toString('utf8')
-    )).toEqual({
-      formatVersion: 1,
-      current: registryEntry(
-        fixture.bundle,
-        fixture.installationId
-      )
-    })
-    expect(
-      managedBytes(
-        fixture,
-        '.goodbuddy/agent/release-keys.json'
-      )
-    ).toEqual(bundledRegistryBytes())
   })
 })

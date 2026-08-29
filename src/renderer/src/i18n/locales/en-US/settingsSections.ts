@@ -73,31 +73,74 @@ export const settingsSections = {
       description:
         'Updating this Host may replace the Agent and Runtime and interrupt active remote work. Host configuration and project files are preserved.',
       loading: 'Loading Agent and Runtime versions…',
-      update: 'Update versions',
-      updateNamed: 'Update remote environment versions for {{name}}',
+      notChecked:
+        'Versions have not been checked. This page does not connect automatically; select Refresh versions to check.',
+      methodLabel: 'Installation method',
+      methodSelectorNamed:
+        'Remote environment installation method for {{name}}',
+      actions: {
+        install: 'Install remote environment',
+        installNamed: 'Install the remote environment for {{name}}',
+        update: 'Update remote environment',
+        updateNamed: 'Update the remote environment for {{name}}',
+        reinstall: 'Reinstall',
+        reinstallNamed: 'Reinstall the remote environment for {{name}}'
+      },
       cancelUpdate: 'Cancel update',
       cancelUpdateNamed: 'Cancel the remote environment update for {{name}}',
       cancelling: 'Cancelling…',
       refresh: 'Refresh versions',
       refreshNamed: 'Refresh remote environment versions for {{name}}',
       progress: {
-        preparing: 'Preparing the update…',
-        agent: 'Updating GoodBuddy Agent…',
-        runtime: 'Updating Runtime…',
+        preparing: 'Preparing installation…',
+        probing: 'Checking the remote Host environment…',
+        downloading: 'Transferring the environment package…',
+        verifying: 'Verifying the environment package…',
+        applying: 'Applying the remote environment…',
+        'installing-agent': 'Installing GoodBuddy Agent…',
+        'installing-runtime': 'Installing Runtime…',
+        'checking-health': 'Checking the remote environment…',
         finalizing: 'Finalizing the remote environment update…',
+        complete: 'Remote environment installation complete',
         cancelling: 'Cancelling the remote environment update…'
       },
+      methods: {
+        auto: 'Automatic',
+        'remote-download': 'Host download',
+        'goodbuddy-transfer': 'GoodBuddy transfer'
+      },
+      sources: {
+        github: 'GitHub',
+        mirror: 'mirror node'
+      },
+      remoteDownloadUnavailable: {
+        'package-unavailable':
+          'The current source has no package for this Host. You can still install through GoodBuddy.',
+        'missing-tools':
+          'The remote Host lacks a system tool required to download or unpack the package. You can still install through GoodBuddy.',
+        'home-unwritable':
+          'The remote user directory is not writable. Fix its permissions and refresh, or install through GoodBuddy.',
+        'insufficient-disk-space':
+          'The remote Host does not have enough free space for the package. Free space and refresh, or install through GoodBuddy.',
+        'source-unreachable':
+          'The remote Host cannot reach the selected source ({{source}}). Check its network and refresh, or install through GoodBuddy.',
+        'probe-failed':
+          'Could not complete the remote download capability check. Retry the remote-host installation directly, refresh the check, or reinstall through GoodBuddy.'
+      },
+      remoteDownloadPackageSize: 'Package size: {{size}}',
       errors: {
         updateFailed: 'Could not update the remote environment. Try again.',
         cancelled: 'The remote environment update was cancelled. You can retry.',
-        cancelFailed: 'Could not cancel the remote environment update.'
+        cancelFailed: 'Could not cancel the remote environment update.',
+        reinstallFailedSummary:
+          'This reinstall did not complete. Checking the current versions again.'
       },
       installed: 'Installed on Host',
       expected: 'Required by GoodBuddy',
       notInstalled: 'Not installed',
       versionDetail: 'Linux · {{architecture}}',
       states: {
-        current: 'Current',
+        current: 'Version matched',
         'update-available': 'Update available',
         'not-installed': 'Not installed'
       }
@@ -144,7 +187,8 @@ export const settingsSections = {
       }
     },
     removeMessage:
-      'Deleting “{{name}}” clears the locally saved connection information and encrypted credential. Remote files are not deleted.',
+      'Deleting “{{name}}” clears its locally saved connection information and encrypted credential. Related projects are removed locally without connecting to the Host or deleting remote directories or content.',
+    removeProjectsHeading: 'Also remove these related project records:',
     actions: {
       add: 'Add host',
       edit: 'Edit and revalidate',

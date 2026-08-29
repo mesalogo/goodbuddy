@@ -105,19 +105,34 @@ export class InstallationRegistry {
     roles: readonly ('current' | 'candidate')[]
   ): InstallationRegistryEntry {
     const entry = entryFromVerified(verified)
+    const registered = this.assertRegisteredRole(
+      entry.installationId,
+      roles
+    )
+    if (!entryEquals(registered, entry)) {
+      throw new Error(
+        'Verified Agent installation does not match its authorized registry role'
+      )
+    }
+    return registered
+  }
+
+  assertRegisteredRole(
+    installationIdInput: string,
+    roles: readonly ('current' | 'candidate')[]
+  ): InstallationRegistryEntry {
+    const installationId = installationRegistryIdSchema.parse(
+      installationIdInput
+    )
     const registered = roles
       .map((role) => this.#state[role])
       .find(
         (candidate) =>
-          candidate !== undefined &&
-          candidate.installationId === entry.installationId
+          candidate?.installationId === installationId
       )
-    if (
-      registered === undefined ||
-      !entryEquals(registered, entry)
-    ) {
+    if (registered === undefined) {
       throw new Error(
-        'Verified Agent installation does not match its authorized registry role'
+        'Agent installation does not have an authorized registry role'
       )
     }
     return registered

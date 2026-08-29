@@ -13,7 +13,11 @@ import {
   type RuntimeSettings
 } from '../../shared/contracts'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
-import type { SshDirectoryBrowseResult } from '../../shared/ssh-host-contracts'
+import type {
+  SshDirectoryBrowseResult,
+  SshHost,
+  SshHostRemoteEnvironment
+} from '../../shared/ssh-host-contracts'
 import i18n from './i18n'
 import { ProjectSwitcher } from './ProjectSwitcher'
 
@@ -79,7 +83,9 @@ function renderSwitcher(
   } = {}
 ): {
   onCreate: ReturnType<typeof vi.fn>
+  onDelete: ReturnType<typeof vi.fn>
   onRemoteCommitted: ReturnType<typeof vi.fn>
+  onSelect: ReturnType<typeof vi.fn>
   onSelectRoot: ReturnType<typeof vi.fn>
   onUpdate: ReturnType<typeof vi.fn>
 } {
@@ -93,14 +99,16 @@ function renderSwitcher(
   }))
   const onRemoteCommitted = vi.fn(async () => undefined)
   const onSelectRoot = vi.fn(async () => undefined)
+  const onDelete = vi.fn(async () => undefined)
+  const onSelect = vi.fn()
   render(
     <ProjectSwitcher
       activeProjectId={currentProject.id}
       onArchive={vi.fn(async () => undefined)}
       onCreate={onCreate}
-      onDelete={vi.fn(async () => undefined)}
+      onDelete={onDelete}
       onRemoteCommitted={onRemoteCommitted}
-      onSelect={vi.fn()}
+      onSelect={onSelect}
       onSelectRoot={onSelectRoot}
       onUpdate={onUpdate}
       projects={projects}
@@ -110,7 +118,9 @@ function renderSwitcher(
   )
   return {
     onCreate,
+    onDelete,
     onRemoteCommitted,
+    onSelect,
     onSelectRoot,
     onUpdate
   }
@@ -134,7 +144,9 @@ function directoryResult(
   }
 }
 
-function installRemoteApi() {
+function installRemoteApi(
+  options: { hostValidated?: boolean } = {}
+) {
   let progress: ((value: { phase: 'host' | 'agent' }) => void) | undefined
   const savedProject: AssistantProject = {
     ...project,
@@ -162,24 +174,61 @@ function installRemoteApi() {
     ])
   )
   const cancelDirectoryBrowse = vi.fn(async () => undefined)
+  const hostValidated = options.hostValidated !== false
+  const host: SshHost = {
+    id: hostId,
+    name: 'Build host',
+    hostname: 'build.example.com',
+    port: 22,
+    username: 'builder',
+    authentication: 'system-agent',
+    credentialConfigured: true,
+    credentialSource: 'system-agent',
+    hostKey: {
+      state: hostValidated ? 'verified' : 'unverified',
+      generation: 1
+    },
+    ...(hostValidated
+      ? { lastValidatedAt: '2026-08-04T00:00:00.000Z' }
+      : {}),
+    createdAt: '2026-08-04T00:00:00.000Z',
+    updatedAt: '2026-08-04T00:00:00.000Z'
+  }
   const getSnapshot = vi.fn(async () => ({
-    hosts: [
-      {
-        id: hostId,
-        name: 'Build host',
-        hostname: 'build.example.com',
-        port: 22,
-        username: 'builder',
-        authentication: 'system-agent' as const,
-        credentialConfigured: true,
-        credentialSource: 'system-agent' as const,
-        hostKey: { state: 'verified' as const, generation: 1 },
-        createdAt: '2026-08-04T00:00:00.000Z',
-        updatedAt: '2026-08-04T00:00:00.000Z'
-      }
-    ],
+    hosts: [host],
     secureStorageAvailable: true
   }))
+  const currentVersion = {
+    version: '1.0.0',
+    architecture: 'x64' as const
+  }
+  const getRemoteEnvironment = vi.fn(
+    async (requestedHostId: string): Promise<SshHostRemoteEnvironment> => ({
+      hostId: requestedHostId,
+      checkedAt: '2026-08-24T00:00:00.000Z',
+      architecture: 'x64',
+      agent: {
+        state: 'current',
+        expected: currentVersion,
+        installed: currentVersion
+      },
+      runtimes: [
+        {
+          runtimeId: 'opencode',
+          provider: 'opencode',
+          state: 'current',
+          expected: currentVersion,
+          installed: currentVersion
+        }
+      ],
+      remoteDownload: {
+        available: true,
+        source: 'github',
+        packageSize: 1024
+      }
+    })
+  )
+  const updateRemoteEnvironment = vi.fn(async () => undefined)
   const onSaveProgress = vi.fn(
     (listener: (value: { phase: 'host' | 'agent' }) => void) => {
     progress = listener
@@ -192,7 +241,9 @@ function installRemoteApi() {
       sshHosts: {
         browseDirectories,
         cancelDirectoryBrowse,
-        getSnapshot
+        getSnapshot,
+        getRemoteEnvironment,
+        updateRemoteEnvironment
       },
       projects: {
         remote: {
@@ -209,6 +260,8 @@ function installRemoteApi() {
     browseDirectories,
     cancelDirectoryBrowse,
     getSnapshot,
+    getRemoteEnvironment,
+    updateRemoteEnvironment,
     onSaveProgress,
     emit: (phase: 'host' | 'agent') => progress?.({ phase })
   }
@@ -383,6 +436,60 @@ describe('ProjectSwitcher managed SSH projects', () => {
     ).not.toBeInTheDocument()
     expect(api.getSnapshot).not.toHaveBeenCalled()
     expect(api.onSaveProgress).not.toHaveBeenCalled()
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
+  it('deletes an unreachable remote project from the list without activating it', async () => {
+    const api = installRemoteApi()
+    const remoteProject: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'Remote project',
+      rootPath: '/srv/missing',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/missing'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    const { onDelete, onSelect } = renderSwitcher(project, {
+      projects: [project, remoteProject]
+    })
+
+    fireEvent.click(screen.getByLabelText('当前项目'))
+    fireEvent.click(
+      screen.getByRole('menuitem', {
+        name: '管理项目 Remote project'
+      })
+    )
+    const dialog = screen.getByRole('dialog', { name: '项目设置' })
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(api.getRemoteEnvironment).not.toHaveBeenCalled()
+    expect(api.browseDirectories).not.toHaveBeenCalled()
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '删除项目' })
+    )
+    fireEvent.change(
+      within(dialog).getByLabelText(
+        '输入“Remote project”确认删除'
+      ),
+      { target: { value: 'Remote project' } }
+    )
+    fireEvent.click(
+      within(dialog).getByRole('button', {
+        name: '永久删除项目'
+      })
+    )
+
+    await waitFor(() =>
+      expect(onDelete).toHaveBeenCalledWith(
+        remoteProjectId,
+        'Remote project'
+      )
+    )
+    expect(onSelect).not.toHaveBeenCalled()
     expect(api.save).not.toHaveBeenCalled()
   })
 
@@ -854,5 +961,112 @@ describe('ProjectSwitcher managed SSH projects', () => {
       })
     )
     expect(onUpdate).not.toHaveBeenCalled()
+  })
+
+  it('uses the local validated Host record and defers remote checks to the requested action', async () => {
+    const api = installRemoteApi()
+    renderSwitcher()
+    fireEvent.click(screen.getByLabelText('新建项目'))
+    const dialog = screen.getByRole('dialog', { name: '新建项目' })
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '托管 SSH' })
+    )
+
+    expect(
+      await within(dialog).findByText(
+        '此主机已验证。保存项目时才会连接并检查 Agent、工作区和 Runtime。'
+      )
+    ).toBeInTheDocument()
+    expect(api.getRemoteEnvironment).not.toHaveBeenCalled()
+
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: 'Ready project' }
+    })
+    fireEvent.change(within(dialog).getByLabelText('远端工作目录'), {
+      target: { value: '/srv/project' }
+    })
+    expect(
+      within(dialog).getByRole('button', {
+        name: '浏览远端工作目录'
+      })
+    ).toBeEnabled()
+    fireEvent.click(
+      within(dialog).getByRole('button', {
+        name: '保存远程项目'
+      })
+    )
+    await waitFor(() => expect(api.save).toHaveBeenCalledOnce())
+    expect(api.updateRemoteEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('disables a Host that has not completed local validation', async () => {
+    const api = installRemoteApi({ hostValidated: false })
+    const remoteProject: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'Remote project',
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/project'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    renderSwitcher(remoteProject)
+    fireEvent.click(screen.getByLabelText('项目设置'))
+    const dialog = screen.getByRole('dialog', { name: '项目设置' })
+
+    expect(
+      await within(dialog).findByText(
+        /此主机尚未完成 Host Key 和连接验证/u
+      )
+    ).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('SSH 主机')).toHaveValue(hostId)
+    expect(
+      within(dialog).getByRole('option', {
+        name: /Build host.*需要验证/u
+      })
+    ).toBeDisabled()
+    const save = within(dialog).getByRole('button', {
+      name: '保存远程项目'
+    })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(api.save).not.toHaveBeenCalled()
+    expect(api.updateRemoteEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('never probes remote environments when the project form opens or reopens', async () => {
+    const api = installRemoteApi()
+    renderSwitcher()
+    fireEvent.click(screen.getByLabelText('新建项目'))
+    let dialog = screen.getByRole('dialog', { name: '新建项目' })
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '托管 SSH' })
+    )
+    expect(
+      await within(dialog).findByText(
+        '此主机已验证。保存项目时才会连接并检查 Agent、工作区和 Runtime。'
+      )
+    ).toBeInTheDocument()
+    expect(api.getRemoteEnvironment).not.toHaveBeenCalled()
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '取消' })
+    )
+
+    fireEvent.click(screen.getByLabelText('新建项目'))
+    dialog = screen.getByRole('dialog', { name: '新建项目' })
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '托管 SSH' })
+    )
+    expect(
+      await within(dialog).findByText(
+        '此主机已验证。保存项目时才会连接并检查 Agent、工作区和 Runtime。'
+      )
+    ).toBeInTheDocument()
+    expect(api.getSnapshot).toHaveBeenCalledTimes(2)
+    expect(api.getRemoteEnvironment).not.toHaveBeenCalled()
+    expect(api.updateRemoteEnvironment).not.toHaveBeenCalled()
   })
 })

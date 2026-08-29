@@ -151,11 +151,50 @@ Main 在写入缓存前校验签名目录、目录签名、大小、SHA-256、�
 production/test 环境和撤销列表，不来自 JSON 空白或换行。读取桌面资源、复合包和 Host
 已有 registry 时接受等价 UTF-8 JSON 格式；向 Host 写入前统一重新序列化为确定性 LF
 JSON。签名目录、包描述符、manifest、签名和 payload 的原始字节校验保持不变，包下载
-继续流式计算 SHA-256，不使用 MD5。
+继续流式计算 SHA-256。
 
-“SSH 主机 > 远程运行环境”的“更新版本”只使用已验证的本地复合包。对应 Host 架构
-尚未下载时会提示先到设置下载或导入，不会联网，也不会影响本地项目、普通桌面功能或
-其他架构的 Agent 包。
+“SSH 主机 > 远程运行环境”只有一个按版本事实显示“安装远程环境”“更新远程环境”或
+“重新安装”的主按钮。次级 SegmentedControl 选择默认且不持久化的“自动”、“Host 下载”
+或“GoodBuddy 传输”：
+
+- “Host 下载”使用签名目录中的固定 GitHub/北京镜像 URL、大小、SHA-256、
+  有界重定向链和固定 SSH prepare channel。GoodBuddy 桌面控制面通过该通道发送有界
+  one-shot installer；Host 校验目录绑定的归档大小和 SHA-256 后，由包内固定 Node 解码
+  并运行 installer。
+- “GoodBuddy 传输”在本地缺少精确候选时，于同一次用户操作下载、校验 SHA-256 与签名、
+  缓存并取得 lease，再以有界流式 SFTP 上传一个 compound archive 和归档内已验证的
+  bootstrap Node；约 294 MiB 的整包不会一次读入 Main `Buffer`，Host 仍再次校验。
+- “自动”只在 operation/prepare 前执行 Host capability probe；直连明确可用才选择
+  Host 下载，否则选择 GoodBuddy 传输。显式选择保持有效，prepare、commit 或 adoption
+  失败后不跨 acquisition 自动 fallback。
+
+两种 acquisition 都把同一签名 compound `.gbagent` 交付到固定 operation staging，随后
+共用 control-plane `prepare → commit → Agent activate/health → Runtime activate →
+finalize → cleanup`。commit 终态持久化，通道丢失时只用 `commit-status` 读取恢复而不
+重放 commit。prepare 完成后、commit 前快照 Agent/Runtime 五个 metadata 文件；任一 adoption 失败恢复
+原字节或原缺失状态，已发布 side-by-side payload 不成为 current，确认 adoption 后显式
+cleanup。
+
+进入“主机与远程执行”设置页只读取本地 Host 列表，不逐台连接。用户点击某台 Host 的
+“刷新版本”后才执行远端版本和直连准备能力探测。项目切换只更新本地选择，不建立 SSH
+连接；首次实际使用远程 Workspace 或 Runtime 时才建立连接。当前进程会复用该 Host 已确认
+的 Agent/Runtime identity 和 Agent 连接，Host 编辑或环境更新会定向清空它们。
+直连安装本身只依赖 SSH，不依赖已有 Agent。显式选择 Host 下载时由实际安装流程重新探测
+并报告工具、权限、空间或来源不可达等原因；本次操作不会自动改用 GoodBuddy 传输。
+新建远程项目弹窗也只读本地 Host 验证记录；目录浏览或保存才连接所选 Host。Host 卡片
+在版本相同时仍允许显式重装；损坏的 GoodBuddy-owned 同 digest 目录会先隔离、替换并在
+失败时恢复。直连 bootstrap 使用固定短命令 `exec sh -s`，脚本和有界输入经 stdin 发送，
+避免 SSH command 长度限制。
+
+新增 Host 只保存并探测，不提供自动安装开关；只有用户明确点击主按钮后才传输完整包。现有
+package format v1 归档已经包含固定 Agent 和 Node，可直接用于 Host 直连；归档无需携带
+`agent/lib/package-installer.cjs`，签名目录不提供也不检查额外的 bootstrap 能力元数据。
+首次 bootstrap 不依赖已安装 Agent daemon。目标契约见
+[SSH Host 远程环境准备与直连下载设计](docs/architecture/remote-host-environment-provisioning-design.md)。
+
+删除 Host 或远程项目属于纯本地管理操作。Host 确认框列出全部关联项目记录并级联清理
+本地数据库，但不连接 Host、不检查远端目录，也不删除远端文件；Host 设置文件和项目事务
+的普通失败会回滚已写入的一侧。
 
 ## Runtime 资源
 
@@ -173,7 +212,12 @@ JSON。签名目录、包描述符、manifest、签名和 payload 的原始字�
 
 面向用户发布的是按远端 Host 架构区分的复合 `.gbagent`，每个包同时包含签名
 Agent、固定 Node 和当前桌面源码维护并适配的签名 OpenCode Runtime。Runtime 不建立
-独立的用户版本流。生产构建命令为：
+独立的用户版本流。远程直连所需的有界 one-shot installer 由桌面控制面打包并通过固定
+SSH prepare channel 发送，不是 `.gbagent` 的必需条目。Host 按签名目录校验完整归档
+大小和 SHA-256 后，包内固定 Node 解码并运行 installer。两种 acquisition 都在固定
+operation staging 中执行同一 prepare/commit；commit 终态持久化并可通过只读
+`commit-status` 恢复。Agent/Runtime adoption 使用 commit 前五个 metadata 文件的原字节
+或原缺失状态回滚，已发布 side-by-side payload 不会因此成为 current。生产构建命令为：
 
 ```bash
 node build/agent-package.cjs build \
@@ -271,15 +315,17 @@ broker 必须按 socket 当前已缓冲字节增量读取长度帧，不能等�
 唯一标识对应版本的精确工件。变更后必须重新构建、签名并导入 Linux x64/arm64 两套工件；
 旧版本或旧 digest 会按设计校验失败。不要手工把本机 `.runtime-resources` 当作远程 bundle。
 
-桌面应用更新后不会在项目激活时自动下载 Agent。用户先在设置中显式下载“最新兼容”
-版本或导入离线包；随后打开托管 SSH 项目时，Main 才使用该 Host 架构的本地验证包执行
-完整激活。所需版本健康且项目事务提交成功后才刷新项目绑定；失败不会覆盖旧安装或把
-未提交的新 identity 暴露给 Workspace/Runtime。
+桌面应用更新后不会在项目切换时下载或安装 Agent。用户先在 SSH Host 的远程运行环境
+卡片显式选择直连下载或 GoodBuddy 传输。托管 SSH 项目只保存 Host ID、远端路径、
+Runtime 选择和默认模式；创建或保存时验证 Host 当前环境，普通项目切换只读取这些本地
+配置。首次实际使用 Workspace 或 Runtime 时解析 Host current identity；同一进程内后续
+项目复用已确认的 Agent/Runtime identity 和 Agent 连接。该流程不取得安装包、不重读完整
+payload，也不发布组件。
 
-用户也可在 SSH Host 的远程运行环境卡片显式选择“更新版本”。该路径按 Agent、
-OpenCode Runtime 顺序使用对应架构的本地复合包，支持阶段进度和取消；成功后使引用该 Host
-的项目重新验证。验收应覆盖激活与此手动入口，并确认失败或取消不会删除
-Host 配置、凭据、项目设置、Workspace 文件或仍可用的旧安装。
+两条手动准备路径都支持阶段进度和取消；成功后定向失效该 Host 的连接与 Runtime 缓存，
+引用项目下一次打开自然使用新的 current 环境。验收应覆盖两种准备方式与项目当前环境
+验证入口，并确认失败或取消不会删除 Host 配置、凭据、项目设置、Workspace 文件、全局
+可信元数据或仍可用的旧安装。
 
 ## 跨平台 CI 与 GitHub Release
 

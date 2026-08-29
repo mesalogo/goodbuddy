@@ -3,7 +3,10 @@ import { ensureModelOperationNotAborted } from './model-package-utils'
 const MAX_REDIRECTS = 3
 const redirectStatuses = new Set([301, 302, 303, 307, 308])
 
-function validateDownloadUrl(value: string, modelLabel: string): URL {
+export function validateSecureDownloadUrl(
+  value: string,
+  downloadLabel: string
+): URL {
   const url = new URL(value)
   if (
     url.protocol !== 'https:' ||
@@ -13,10 +16,14 @@ function validateDownloadUrl(value: string, modelLabel: string): URL {
     url.hash
   ) {
     throw new Error(
-      `${modelLabel}下载地址必须是使用标准端口、无凭据和 Fragment 的 HTTPS URL`
+      `${downloadLabel}下载地址必须是使用标准端口、无凭据和 Fragment 的 HTTPS URL`
     )
   }
   return url
+}
+
+export function isDownloadRedirectStatus(status: number): boolean {
+  return redirectStatuses.has(status)
 }
 
 export async function fetchModelDownloadResponse(options: {
@@ -26,7 +33,10 @@ export async function fetchModelDownloadResponse(options: {
   signal: AbortSignal
   modelLabel: string
 }): Promise<Response> {
-  let url = validateDownloadUrl(options.initialUrl, options.modelLabel)
+  let url = validateSecureDownloadUrl(
+    options.initialUrl,
+    options.modelLabel
+  )
   const initialHost = url.hostname
   const allowedRedirectHosts = new Set(options.redirectHosts)
   for (let redirectCount = 0; ; redirectCount += 1) {
@@ -38,7 +48,7 @@ export async function fetchModelDownloadResponse(options: {
       cache: 'no-store',
       signal: options.signal
     })
-    if (!redirectStatuses.has(response.status)) {
+    if (!isDownloadRedirectStatus(response.status)) {
       return response
     }
     if (redirectCount >= MAX_REDIRECTS) {
@@ -54,7 +64,7 @@ export async function fetchModelDownloadResponse(options: {
         `${options.modelLabel}下载重定向缺少地址`
       )
     }
-    const nextUrl = validateDownloadUrl(
+    const nextUrl = validateSecureDownloadUrl(
       new URL(location, url).toString(),
       options.modelLabel
     )

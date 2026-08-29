@@ -37,6 +37,8 @@ const target: SshConnectionPoolTarget = {
   hostRevision: 1,
   hostKeyGeneration: 1
 }
+const controlPlanePackageInstaller =
+  'module.exports = { source: "GoodBuddy" }\n'
 
 function harness(overrides: {
   installationDispose?: () => Promise<void>
@@ -60,7 +62,8 @@ function harness(overrides: {
     dispose: vi.fn(overrides.controllerDispose ?? (() => undefined))
   }
   const installationManager = {
-    ensureInstalled: vi.fn(),
+    activateInstalled: vi.fn(),
+    invalidateHost: vi.fn(),
     dispose: vi.fn(
       overrides.installationDispose ?? (async () => undefined)
     )
@@ -93,7 +96,6 @@ function harness(overrides: {
       return connectionManager as unknown as RemoteAgentConnectionManager
     }
   )
-  const loadAgentBundle = vi.fn()
   const services = new RemoteAgentServices({
     sshHostStore,
     goodBuddyVersion: '0.11.0',
@@ -101,9 +103,7 @@ function harness(overrides: {
     appPath: join('workspace', 'goodbuddy'),
     resourcesPath: join('installed', 'resources'),
     packaged: false,
-    agentPackageManager: {
-      loadAgentBundle
-    } as never,
+    controlPlanePackageInstaller,
     factories: {
       createSshConnectionPool:
         createSshConnectionPool as never,
@@ -123,8 +123,7 @@ function harness(overrides: {
     createSshConnectionPool,
     createControllerStateStore,
     createAgentInstallationManager,
-    createConnectionManager,
-    loadAgentBundle
+    createConnectionManager
   }
 }
 
@@ -137,6 +136,9 @@ describe('RemoteAgentServices', () => {
       instance.createConnectionManager.mock.calls[0]?.[0]
 
     expect(instance.createSshConnectionPool).toHaveBeenCalledOnce()
+    expect(instance.createSshConnectionPool).toHaveBeenCalledWith({
+      controlPlanePackageInstaller
+    })
     expect(installerOptions?.resolver).toBe(
       connectionOptions?.resolver
     )
@@ -145,9 +147,6 @@ describe('RemoteAgentServices', () => {
     )
     expect(installerOptions?.sshPool).toBe(connectionOptions?.sshPool)
     expect(installerOptions?.sshPool).toBe(instance.services.sshPool)
-    expect(installerOptions?.packageBundleLoader).toBe(
-      instance.loadAgentBundle
-    )
 
     await expect(
       instance.services.targetResolver.resolve('host-1')
@@ -162,7 +161,7 @@ describe('RemoteAgentServices', () => {
 
     expect(instance.resolveConnectionTarget).not.toHaveBeenCalled()
     expect(instance.sshPool.acquire).not.toHaveBeenCalled()
-    expect(instance.installationManager.ensureInstalled).not.toHaveBeenCalled()
+    expect(instance.installationManager.activateInstalled).not.toHaveBeenCalled()
     expect(instance.connectionManager.acquire).not.toHaveBeenCalled()
     expect(instance.services.resourcePaths).toEqual({
       keyRegistryPath: join(
@@ -213,9 +212,7 @@ describe('RemoteAgentServices', () => {
       appPath: join('workspace', 'goodbuddy'),
       resourcesPath: join('installed', 'resources'),
       packaged: false,
-      agentPackageManager: {
-        loadAgentBundle: vi.fn()
-      } as never
+      controlPlanePackageInstaller,
     })
 
     expect(resolveConnectionTarget).not.toHaveBeenCalled()
@@ -233,6 +230,9 @@ describe('RemoteAgentServices', () => {
 
     const invalidation = instance.services.invalidateHost('host-1')
 
+    expect(
+      instance.installationManager.invalidateHost
+    ).toHaveBeenCalledWith('host-1')
     expect(invalidateHost).toHaveBeenCalledWith('host-1')
     expect(invalidation).toBe(persistence)
     finishPersistence?.()

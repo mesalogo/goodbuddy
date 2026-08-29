@@ -36,7 +36,9 @@ import {
   type AgentReleaseKeyRegistry
 } from '../../shared/agent-installation-contracts'
 import {
-  fetchModelDownloadResponse
+  fetchModelDownloadResponse,
+  isDownloadRedirectStatus,
+  validateSecureDownloadUrl
 } from '../model-download-transport'
 import {
   compareSemanticVersions,
@@ -44,16 +46,9 @@ import {
   verifyExtractedAgentPackage,
   type VerifiedAgentPackage
 } from './agent-package-verifier'
-import type {
-  AgentInstallationBundleLoader
-} from './agent-installation-manager'
 import {
   readAgentReleaseKeyRegistry
 } from './agent-bundle-verifier'
-import type {
-  RemoteRuntimeInstallationBundleLoader,
-  RemoteRuntimeInstallationVerificationMetadataLoader
-} from './remote-runtime-installation-manager'
 import { isMissingPathError } from './path-errors'
 
 const CATALOG_NAME = 'agent-catalog.json'
@@ -71,6 +66,9 @@ const GITHUB_RELEASE_ROOT =
 const MAXIMUM_CATALOG_BYTES = 1024 * 1024
 const MAXIMUM_PACKAGE_BYTES = 512 * 1024 * 1024
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000
+const REMOTE_CANDIDATE_TIMEOUT_MS = 30_000
+const MAXIMUM_REMOTE_REDIRECTS = 3
+const MAXIMUM_REMOTE_URL_BYTES = 4_096
 const GITHUB_REDIRECT_HOSTS = [
   'objects.githubusercontent.com',
   'release-assets.githubusercontent.com'
@@ -104,6 +102,132 @@ export type AgentPackageManagerOptions = {
   now?: () => Date
 }
 
+export type VerifiedRemoteAgentInstallCandidate = {
+  source: UpdateSource
+  platform: 'linux'
+  architecture: AgentArchitecture
+  version: string
+  minimumDesktopVersion: string
+  agentProtocol: {
+    major: number
+    minor: number
+  }
+  remoteRuntime: {
+    runtimeId: 'opencode'
+    provider: 'opencode'
+    version: string
+    bundleDigest: string
+    protocol: {
+      major: number
+      minor: number
+    }
+  }
+  archive: string
+  size: number
+  sha256: string
+  /**
+   * The canonical signed URL followed by each manually verified redirect.
+   * The remote bootstrap must require this exact sequence.
+   */
+  urls: readonly string[]
+}
+
+export type VerifiedRemoteAgentEnvironmentCatalog = {
+  expected: {
+    agent: { version: string }
+    runtimes: Array<{
+      runtimeId: 'opencode'
+      provider: 'opencode'
+      version: string
+    }>
+  }
+  candidate: VerifiedRemoteAgentInstallCandidate | null
+  candidateFailure?: {
+    reason: 'package-unavailable' | 'probe-failed'
+    source: UpdateSource | null
+    packageSize: number | null
+  }
+}
+
+export type AgentPackageArchiveLease = {
+  candidate: VerifiedRemoteAgentInstallCandidate
+  path: string
+  size: number
+  sha256: string
+  nodePath: string
+  nodeSize: number
+  nodeSha256: string
+  release: () => void
+}
+
+export type AcquireInstallArchiveOptions = {
+  signal?: AbortSignal
+  onProgress?: (progress: AgentPackageDownloadProgress) => void
+}
+
+function expectedCatalog(
+  agentVersion: string,
+  runtimeVersion: string
+): VerifiedRemoteAgentEnvironmentCatalog['expected'] {
+  return {
+    agent: { version: agentVersion },
+    runtimes: [{
+      runtimeId: 'opencode',
+      provider: 'opencode',
+      version: runtimeVersion
+    }]
+  }
+}
+
+function candidateFromCatalogEntry(
+  entry: AgentPackageCatalogEntry,
+  source: UpdateSource
+): VerifiedRemoteAgentInstallCandidate {
+  return {
+    source,
+    platform: 'linux',
+    architecture: entry.architecture,
+    version: entry.version,
+    minimumDesktopVersion: entry.minimumDesktopVersion,
+    agentProtocol: { ...entry.agentProtocol },
+    remoteRuntime: {
+      ...entry.remoteRuntime,
+      protocol: { ...entry.remoteRuntime.protocol }
+    },
+    archive: entry.archive,
+    size: entry.size,
+    sha256: entry.sha256,
+    urls: []
+  }
+}
+
+function candidateFromVerifiedRecord(
+  record: InstalledRecord,
+  source: UpdateSource,
+  size: number
+): VerifiedRemoteAgentInstallCandidate {
+  const descriptor = record.verified.descriptor
+  return {
+    source,
+    platform: 'linux',
+    architecture: descriptor.architecture,
+    version: descriptor.version,
+    minimumDesktopVersion: descriptor.minimumDesktopVersion,
+    agentProtocol: { ...descriptor.agentProtocol },
+    remoteRuntime: {
+      ...descriptor.remoteRuntime,
+      protocol: { ...descriptor.remoteRuntime.protocol }
+    },
+    archive: agentPackageArchiveName(
+      descriptor.version,
+      descriptor.architecture
+    ),
+    size,
+    sha256: record.archiveSha256,
+    urls: []
+  }
+}
+
 export class AgentPackageManager {
   readonly #rootDirectory: string
   readonly #desktopVersion: string
@@ -118,10 +242,11 @@ export class AgentPackageManager {
   >()
   readonly #operations = new Map<
     AgentArchitecture,
-    Promise<AgentPackageInventory>
+    Promise<unknown>
   >()
   readonly #leaseCounts = new Map<string, number>()
   readonly #pendingRemovals = new Set<string>()
+  readonly #startupCleanup: Promise<void>
   #catalogState?: CatalogState
 
   constructor(options: AgentPackageManagerOptions) {
@@ -135,34 +260,8 @@ export class AgentPackageManager {
     this.#getUpdateSource = options.getUpdateSource
     this.#fetch = options.fetch ?? fetch
     this.#now = options.now ?? (() => new Date())
+    this.#startupCleanup = this.#cleanupInterruptedArtifacts()
   }
-
-  readonly loadAgentBundle: AgentInstallationBundleLoader =
-    async (architecture) => {
-      const record = await this.#requireInstalled(architecture)
-      const release = this.#lease(record)
-      return {
-        bundle: record.verified.agentBundle,
-        registry:
-          record.verified.runtimeMetadata.releaseKeyRegistry,
-        release
-      }
-    }
-
-  readonly loadRuntimeBundle: RemoteRuntimeInstallationBundleLoader =
-    async (architecture) => {
-      const record = await this.#requireInstalled(architecture)
-      return {
-        ...record.verified.runtimeBundle,
-        release: this.#lease(record)
-      }
-    }
-
-  readonly loadRuntimeMetadata:
-  RemoteRuntimeInstallationVerificationMetadataLoader =
-    async (architecture) =>
-      (await this.#requireInstalled(architecture))
-        .verified.runtimeMetadata
 
   async getInventory(
     options: { refresh?: boolean } = {}
@@ -233,34 +332,125 @@ export class AgentPackageManager {
     })
   }
 
-  async getExpectedCatalog(
-    architecture: AgentArchitecture
-  ): Promise<{
-    agent: { version: string }
-    runtimes: Array<{
-      runtimeId: 'opencode'
-      provider: 'opencode'
-      version: string
-    }>
-  }> {
-    const descriptor =
-      (await this.#requireInstalled(architecture))
-        .verified.descriptor
+  async getRemoteEnvironmentCatalog(
+    architecture: AgentArchitecture,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<VerifiedRemoteAgentEnvironmentCatalog> {
+    options.signal?.throwIfAborted()
+    let entry: AgentPackageCatalogEntry
+    let source: UpdateSource | undefined
+    try {
+      source = await this.#getUpdateSource()
+      options.signal?.throwIfAborted()
+      const catalog = await this.#loadCatalogAndRemember(
+        source,
+        options.signal
+      )
+      entry = selectLatestCompatibleEntry(
+        catalog,
+        architecture,
+        this.#desktopVersion
+      )
+    } catch (onlineError) {
+      options.signal?.throwIfAborted()
+      const installed = await this.#loadInstalled(architecture)
+      if (!installed) {
+        throw onlineError
+      }
+      return {
+        expected: expectedCatalog(
+          installed.verified.descriptor.version,
+          installed.verified.descriptor.remoteRuntime.version
+        ),
+        candidate: null,
+        candidateFailure: {
+          reason:
+            onlineError instanceof NoCompatibleAgentPackageError
+              ? 'package-unavailable'
+              : 'probe-failed',
+          source: source ?? null,
+          packageSize: null
+        }
+      }
+    }
+    const expected = expectedCatalog(
+      entry.version,
+      entry.remoteRuntime.version
+    )
+    try {
+      return {
+        expected,
+        candidate: await this.#remoteInstallCandidate(
+          entry,
+          source,
+          options.signal
+        )
+      }
+    } catch {
+      options.signal?.throwIfAborted()
+      return {
+        expected,
+        candidate: null,
+        candidateFailure: {
+          reason: 'probe-failed',
+          source,
+          packageSize: entry.size
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns a Main-only, signed and compatibility-checked remote installation
+   * candidate. No local .gbagent cache is required.
+   */
+  async getRemoteInstallCandidate(
+    architecture: AgentArchitecture,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<VerifiedRemoteAgentInstallCandidate> {
+    options.signal?.throwIfAborted()
+    const source = await this.#getUpdateSource()
+    options.signal?.throwIfAborted()
+    const catalog = await this.#loadCatalogAndRemember(
+      source,
+      options.signal
+    )
+    const entry = selectLatestCompatibleEntry(
+      catalog,
+      architecture,
+      this.#desktopVersion
+    )
+    return this.#remoteInstallCandidate(
+      entry,
+      source,
+      options.signal
+    )
+  }
+
+  async #remoteInstallCandidate(
+    entry: AgentPackageCatalogEntry,
+    source: UpdateSource,
+    signal?: AbortSignal
+  ): Promise<VerifiedRemoteAgentInstallCandidate> {
+    assertCanonicalDownload(entry, source)
+    const urls = await this.#resolveRemoteDownloadUrls(
+      entry,
+      source,
+      signal
+    )
     return {
-      agent: { version: descriptor.version },
-      runtimes: [{
-        runtimeId: 'opencode',
-        provider: 'opencode',
-        version: descriptor.remoteRuntime.version
-      }]
+      ...candidateFromCatalogEntry(entry, source),
+      urls
     }
   }
 
   download(
     architecture: AgentArchitecture,
-    onProgress?: (progress: AgentPackageDownloadProgress) => void
+    onProgress?: (progress: AgentPackageDownloadProgress) => void,
+    signal?: AbortSignal
   ): Promise<AgentPackageInventory> {
     return this.#runExclusive(architecture, async () => {
+      signal?.throwIfAborted()
       this.#emit(onProgress, {
         architecture,
         phase: 'catalog',
@@ -268,75 +458,341 @@ export class AgentPackageManager {
         totalBytes: null
       })
       const source = await this.#getUpdateSource()
-      const catalog = await this.#loadCatalogAndRemember(source)
+      signal?.throwIfAborted()
+      const catalog = await this.#loadCatalogAndRemember(
+        source,
+        signal
+      )
       const entry = selectLatestCompatibleEntry(
         catalog,
         architecture,
         this.#desktopVersion
       )
-      const current = await this.#loadInstalled(architecture)
-      const comparison = current
-        ? compareSemanticVersions(
-            entry.version,
-            current.verified.descriptor.version
-          )
-        : 1
-      if (
-        current &&
-        comparison < 0
-      ) {
-        throw new Error(
-          'Agent 发布目录不能降级已安装的兼容版本'
-        )
-      }
-      if (
-        current &&
-        comparison === 0 &&
-        current.archiveSha256 === entry.sha256
-      ) {
-        return this.getInventory()
-      }
-      const staging = await this.#createStaging(architecture)
-      const archivePath = join(staging, entry.archive)
-      try {
-        await this.#downloadArchive(
-          entry,
-          source,
-          archivePath,
-          onProgress
-        )
-        this.#emit(onProgress, {
-          architecture,
-          phase: 'verifying',
-          completedBytes: entry.size,
-          totalBytes: entry.size
-        })
-        const installed = await this.#installArchive(
-          archivePath,
-          architecture,
-          staging
-        )
+      await this.#ensureInstalledCandidate(
+        architecture,
+        entry,
+        source,
+        onProgress,
+        signal
+      )
+      return this.getInventory()
+    })
+  }
+
+  async acquireInstallArchive(
+    architecture: AgentArchitecture,
+    expectedCandidate: VerifiedRemoteAgentInstallCandidate,
+    options: AcquireInstallArchiveOptions = {}
+  ): Promise<AgentPackageArchiveLease> {
+    return this.#runExclusive(
+      architecture,
+      async () => {
+        options.signal?.throwIfAborted()
+        const current = await this.#loadInstalled(architecture)
         if (
-          installed.verified.descriptor.version !== entry.version ||
-          installed.verified.descriptor.remoteRuntime.version !==
-            entry.remoteRuntime.version
+          current &&
+          await this.#recordMatchesRemoteCandidate(
+            current,
+            expectedCandidate
+          )
         ) {
-          throw new Error(
-            'Downloaded Agent package does not match its catalog entry'
+          return this.#archiveLease(
+            current,
+            expectedCandidate
           )
         }
-        this.#emit(onProgress, {
+        const source = await this.#getUpdateSource()
+        options.signal?.throwIfAborted()
+        const catalog = await this.#loadCatalogAndRemember(
+          source,
+          options.signal
+        )
+        const entry = selectLatestCompatibleEntry(
+          catalog,
           architecture,
-          phase: 'installing',
-          completedBytes: entry.size,
-          totalBytes: entry.size
-        })
-        await this.#publishInstalled(installed, architecture)
-        return this.getInventory({ refresh: true })
-      } finally {
-        await rm(staging, { recursive: true, force: true })
+          this.#desktopVersion
+        )
+        assertCandidateMatchesCatalogEntry(
+          expectedCandidate,
+          entry,
+          source
+        )
+        const record = await this.#ensureInstalledCandidate(
+          architecture,
+          entry,
+          source,
+          options.onProgress,
+          options.signal
+        )
+        options.signal?.throwIfAborted()
+        return this.#archiveLease(record, expectedCandidate)
       }
-    })
+    )
+  }
+
+  async acquireGoodBuddyInstallArchive(
+    architecture: AgentArchitecture,
+    options: AcquireInstallArchiveOptions = {}
+  ): Promise<AgentPackageArchiveLease> {
+    return this.#runExclusive(
+      architecture,
+      async () => {
+        options.signal?.throwIfAborted()
+        const source = await this.#getUpdateSource()
+        options.signal?.throwIfAborted()
+        let entry: AgentPackageCatalogEntry | undefined
+        if (this.#catalogState?.state === 'available') {
+          entry = selectLatestCompatibleEntry(
+            this.#catalogState.catalog,
+            architecture,
+            this.#desktopVersion
+          )
+        } else {
+          const record = await this.#loadInstalled(architecture)
+          if (record) {
+            const status = await lstat(record.archivePath)
+            return this.#archiveLease(
+              record,
+              candidateFromVerifiedRecord(
+                record,
+                source,
+                status.size
+              )
+            )
+          }
+          if (this.#catalogState?.state === 'unavailable') {
+            throw new Error(this.#catalogState.error)
+          }
+          const catalog = await this.#loadCatalogAndRemember(
+            source,
+            options.signal
+          )
+          entry = selectLatestCompatibleEntry(
+            catalog,
+            architecture,
+            this.#desktopVersion
+          )
+        }
+        const candidate = candidateFromCatalogEntry(
+          entry,
+          source
+        )
+        const record = await this.#ensureInstalledCandidate(
+          architecture,
+          entry,
+          source,
+          options.onProgress,
+          options.signal
+        )
+        return this.#archiveLease(record, candidate)
+      }
+    )
+  }
+
+  async #archiveLease(
+    record: InstalledRecord,
+    candidate: VerifiedRemoteAgentInstallCandidate
+  ): Promise<AgentPackageArchiveLease> {
+    const archiveStatus = await lstat(record.archivePath)
+    if (
+      !archiveStatus.isFile() ||
+      archiveStatus.isSymbolicLink() ||
+      archiveStatus.size !== candidate.size ||
+      record.archiveSha256 !== candidate.sha256
+    ) {
+      throw new Error(
+        'Cached Agent archive does not match the signed installation candidate'
+      )
+    }
+    const node = record.verified.descriptor.files.find(
+      (file) => file.path === 'agent/node'
+    )
+    if (!node) {
+      throw new Error(
+        'Verified Agent package does not contain agent/node'
+      )
+    }
+    const release = this.#lease(record)
+    return {
+      candidate,
+      path: record.archivePath,
+      size: archiveStatus.size,
+      sha256: record.archiveSha256,
+      nodePath: join(
+        record.verified.rootDirectory,
+        ...node.path.split('/')
+      ),
+      nodeSize: node.size,
+      nodeSha256: node.sha256,
+      release
+    }
+  }
+
+  async #recordMatchesRemoteCandidate(
+    record: InstalledRecord,
+    candidate: VerifiedRemoteAgentInstallCandidate
+  ): Promise<boolean> {
+    const descriptor = record.verified.descriptor
+    if (
+      descriptor.architecture === candidate.architecture &&
+      descriptor.version === candidate.version &&
+      descriptor.minimumDesktopVersion ===
+        candidate.minimumDesktopVersion &&
+      descriptor.agentProtocol.major ===
+        candidate.agentProtocol.major &&
+      descriptor.agentProtocol.minor ===
+        candidate.agentProtocol.minor &&
+      descriptor.remoteRuntime.runtimeId ===
+        candidate.remoteRuntime.runtimeId &&
+      descriptor.remoteRuntime.provider ===
+        candidate.remoteRuntime.provider &&
+      descriptor.remoteRuntime.version ===
+        candidate.remoteRuntime.version &&
+      descriptor.remoteRuntime.bundleDigest ===
+        candidate.remoteRuntime.bundleDigest &&
+      descriptor.remoteRuntime.protocol.major ===
+        candidate.remoteRuntime.protocol.major &&
+      descriptor.remoteRuntime.protocol.minor ===
+        candidate.remoteRuntime.protocol.minor &&
+      record.archiveSha256 === candidate.sha256
+    ) {
+      try {
+        const status = await lstat(record.archivePath)
+        return (
+          status.isFile() &&
+          !status.isSymbolicLink() &&
+          status.size === candidate.size
+        )
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
+  async #ensureInstalledCandidate(
+    architecture: AgentArchitecture,
+    entry: AgentPackageCatalogEntry,
+    source: UpdateSource,
+    onProgress?: (progress: AgentPackageDownloadProgress) => void,
+    signal?: AbortSignal
+  ): Promise<InstalledRecord> {
+    signal?.throwIfAborted()
+    const current = await this.#loadInstalled(architecture)
+    const comparison = current
+      ? compareSemanticVersions(
+          entry.version,
+          current.verified.descriptor.version
+        )
+      : 1
+    if (current && comparison < 0) {
+      throw new Error(
+        'Agent 发布目录不能降级已安装的兼容版本'
+      )
+    }
+    if (
+      current &&
+      comparison === 0 &&
+      await this.#recordMatchesCatalogEntry(current, entry)
+    ) {
+      return current
+    }
+
+    const staging = await this.#createStaging(architecture)
+    const archivePath = join(staging, entry.archive)
+    try {
+      await this.#downloadArchive(
+        entry,
+        source,
+        archivePath,
+        onProgress,
+        signal
+      )
+      signal?.throwIfAborted()
+      this.#emit(onProgress, {
+        architecture,
+        phase: 'verifying',
+        completedBytes: entry.size,
+        totalBytes: entry.size
+      })
+      const installed = await this.#installArchive(
+        archivePath,
+        architecture,
+        staging,
+        entry.sha256
+      )
+      if (!await this.#recordMatchesCatalogEntry(
+        installed,
+        entry
+      )) {
+        throw new Error(
+          'Downloaded Agent package does not match its catalog entry'
+        )
+      }
+      signal?.throwIfAborted()
+      this.#emit(onProgress, {
+        architecture,
+        phase: 'installing',
+        completedBytes: entry.size,
+        totalBytes: entry.size
+      })
+      const published = await this.#publishInstalled(
+        installed,
+        architecture,
+        entry
+      )
+      if (!await this.#recordMatchesCatalogEntry(published, entry)) {
+        throw new Error(
+          'Published Agent package does not match its catalog entry'
+        )
+      }
+      return published
+    } finally {
+      await rm(staging, { recursive: true, force: true })
+    }
+  }
+
+  async #recordMatchesCatalogEntry(
+    record: InstalledRecord,
+    entry: AgentPackageCatalogEntry
+  ): Promise<boolean> {
+    const descriptor = record.verified.descriptor
+    if (
+      descriptor.version !== entry.version ||
+      descriptor.minimumDesktopVersion !==
+        entry.minimumDesktopVersion ||
+      descriptor.platform !== entry.platform ||
+      descriptor.architecture !== entry.architecture ||
+      descriptor.agentProtocol.major !==
+        entry.agentProtocol.major ||
+      descriptor.agentProtocol.minor !==
+        entry.agentProtocol.minor ||
+      descriptor.remoteRuntime.runtimeId !==
+        entry.remoteRuntime.runtimeId ||
+      descriptor.remoteRuntime.provider !==
+        entry.remoteRuntime.provider ||
+      descriptor.remoteRuntime.version !==
+        entry.remoteRuntime.version ||
+      descriptor.remoteRuntime.bundleDigest !==
+        entry.remoteRuntime.bundleDigest ||
+      descriptor.remoteRuntime.protocol.major !==
+        entry.remoteRuntime.protocol.major ||
+      descriptor.remoteRuntime.protocol.minor !==
+        entry.remoteRuntime.protocol.minor ||
+      record.archiveSha256 !== entry.sha256
+    ) {
+      return false
+    }
+    try {
+      const status = await lstat(record.archivePath)
+      return (
+        status.isFile() &&
+        !status.isSymbolicLink() &&
+        status.size === entry.size
+      )
+    } catch {
+      return false
+    }
   }
 
   async importArchive(
@@ -345,7 +801,7 @@ export class AgentPackageManager {
     const staging = await this.#createStaging('import')
     try {
       const copiedArchive = join(staging, basename(archivePath))
-      await copyAndHashBoundedRegularFile(
+      const archiveSha256 = await copyAndHashBoundedRegularFile(
         resolve(archivePath),
         copiedArchive,
         MAXIMUM_PACKAGE_BYTES
@@ -353,7 +809,8 @@ export class AgentPackageManager {
       const installed = await this.#installArchive(
         copiedArchive,
         undefined,
-        staging
+        staging,
+        archiveSha256
       )
       const architecture =
         installed.verified.descriptor.architecture
@@ -361,9 +818,8 @@ export class AgentPackageManager {
         architecture,
         async () => {
           await this.#publishInstalled(installed, architecture)
-          return this.getInventory({ refresh: true })
-        },
-        false
+          return this.getInventory()
+        }
       )
     } finally {
       await rm(staging, { recursive: true, force: true })
@@ -461,9 +917,10 @@ export class AgentPackageManager {
     return installed
   }
 
-  #loadInstalled(
+  async #loadInstalled(
     architecture: AgentArchitecture
   ): Promise<InstalledRecord | undefined> {
+    await this.#startupCleanup
     let promise = this.#installed.get(architecture)
     if (!promise) {
       promise = this.#scanInstalled(architecture)
@@ -542,7 +999,8 @@ export class AgentPackageManager {
   async #installArchive(
     archivePath: string,
     architecture: AgentArchitecture | undefined,
-    staging: string
+    staging: string,
+    verifiedArchiveSha256?: string
   ): Promise<InstalledRecord> {
     const content = join(staging, 'content')
     const verified = await extractAndVerifyAgentPackage({
@@ -556,7 +1014,8 @@ export class AgentPackageManager {
     if (resolve(archivePath) !== resolve(canonicalArchive)) {
       await rename(archivePath, canonicalArchive)
     }
-    const archiveSha256 = await sha256File(canonicalArchive)
+    const archiveSha256 =
+      verifiedArchiveSha256 ?? await sha256File(canonicalArchive)
     await writeFile(
       join(staging, 'archive.sha256'),
       `${archiveSha256}\n`,
@@ -572,8 +1031,9 @@ export class AgentPackageManager {
 
   async #publishInstalled(
     installed: InstalledRecord,
-    architecture: AgentArchitecture
-  ): Promise<void> {
+    architecture: AgentArchitecture,
+    catalogEntry?: AgentPackageCatalogEntry
+  ): Promise<InstalledRecord> {
     const destination = join(
       this.#architectureRoot(architecture),
       installed.verified.descriptor.version
@@ -591,11 +1051,20 @@ export class AgentPackageManager {
         installed.verified.descriptor.contentDigest ||
         current.archiveSha256 !== installed.archiveSha256
       ) {
-        throw new Error(
-          'Agent package version identity is immutable'
-        )
+        if (
+          !catalogEntry ||
+          !await this.#recordMatchesCatalogEntry(
+            installed,
+            catalogEntry
+          )
+        ) {
+          throw new Error(
+            'Agent package version identity is immutable'
+          )
+        }
+      } else {
+        return current
       }
-      return
     }
     const backup = join(
       this.#architectureRoot(architecture),
@@ -624,7 +1093,19 @@ export class AgentPackageManager {
       }
       throw error
     }
-    this.#installed.delete(architecture)
+    const published: InstalledRecord = {
+      ...installed,
+      directory: destination,
+      archivePath: join(destination, 'package.gbagent'),
+      verified: {
+        ...installed.verified,
+        rootDirectory: join(destination, 'content')
+      }
+    }
+    this.#installed.set(
+      architecture,
+      Promise.resolve(published)
+    )
     if (replacedExisting) {
       await rm(backup, { recursive: true, force: true }).catch(
         () => undefined
@@ -634,6 +1115,7 @@ export class AgentPackageManager {
       architecture,
       installed.verified.descriptor.version
     )
+    return published
   }
 
   async #removeOtherVersions(
@@ -661,12 +1143,27 @@ export class AgentPackageManager {
     entry: AgentPackageCatalogEntry,
     source: UpdateSource,
     destination: string,
-    onProgress?: (progress: AgentPackageDownloadProgress) => void
+    onProgress?: (progress: AgentPackageDownloadProgress) => void,
+    signal?: AbortSignal
   ): Promise<void> {
     assertCanonicalDownload(entry, source)
     const controller = new AbortController()
+    const abortFromCaller = (): void => {
+      controller.abort(signal?.reason)
+    }
+    signal?.addEventListener('abort', abortFromCaller, {
+      once: true
+    })
+    if (signal?.aborted) {
+      abortFromCaller()
+    }
     const timeout = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(
+        new DOMException(
+          'Agent package download timed out',
+          'TimeoutError'
+        )
+      ),
       DOWNLOAD_TIMEOUT_MS
     )
     timeout.unref?.()
@@ -699,6 +1196,7 @@ export class AgentPackageManager {
         const handle = await open(destination, 'wx')
         try {
           while (true) {
+            controller.signal.throwIfAborted()
             const result = await reader.read()
             if (result.done) {
               break
@@ -734,17 +1232,21 @@ export class AgentPackageManager {
       }
     } finally {
       clearTimeout(timeout)
+      signal?.removeEventListener('abort', abortFromCaller)
     }
   }
 
   async #loadCatalog(
-    source: UpdateSource
+    source: UpdateSource,
+    signal?: AbortSignal
   ): Promise<AgentPackageCatalog> {
+    signal?.throwIfAborted()
     const registry = await this.#loadTrustedRegistry()
+    signal?.throwIfAborted()
     const [catalogBytes, signatureBytes] =
       source === 'mirror'
-        ? await this.#fetchMirrorCatalog()
-        : await this.#fetchGithubCatalog()
+        ? await this.#fetchMirrorCatalog(signal)
+        : await this.#fetchGithubCatalog(signal)
     const catalog = parseCanonicalCatalog(catalogBytes)
     verifyCatalogSignature(
       catalog,
@@ -760,11 +1262,12 @@ export class AgentPackageManager {
   }
 
   async #loadCatalogAndRemember(
-    source: UpdateSource
+    source: UpdateSource,
+    signal?: AbortSignal
   ): Promise<AgentPackageCatalog> {
     const checkedAt = this.#now().toISOString()
     try {
-      const catalog = await this.#loadCatalog(source)
+      const catalog = await this.#loadCatalog(source, signal)
       this.#catalogState = {
         state: 'available',
         checkedAt,
@@ -843,23 +1346,39 @@ export class AgentPackageManager {
     }
   }
 
-  async #fetchMirrorCatalog(): Promise<[Buffer, Buffer]> {
+  async #fetchMirrorCatalog(
+    signal?: AbortSignal
+  ): Promise<[Buffer, Buffer]> {
     const pointerBytes = await this.#fetchBounded(
-      `${MIRROR_ROOT}latest.json`
+      `${MIRROR_ROOT}latest.json`,
+      [],
+      signal,
+      true
     )
     const pointer = parseCanonicalMirrorPointer(pointerBytes)
     return Promise.all([
       this.#fetchBounded(
-        new URL(pointer.catalog, MIRROR_ROOT).href
+        new URL(pointer.catalog, MIRROR_ROOT).href,
+        [],
+        signal,
+        true
       ),
       this.#fetchBounded(
-        new URL(pointer.signature, MIRROR_ROOT).href
+        new URL(pointer.signature, MIRROR_ROOT).href,
+        [],
+        signal,
+        true
       )
     ])
   }
 
-  async #fetchGithubCatalog(): Promise<[Buffer, Buffer]> {
-    const releases = await this.#fetchJson(GITHUB_RELEASES_API)
+  async #fetchGithubCatalog(
+    signal?: AbortSignal
+  ): Promise<[Buffer, Buffer]> {
+    const releases = await this.#fetchJson(
+      GITHUB_RELEASES_API,
+      signal
+    )
     if (!Array.isArray(releases)) {
       throw new Error('GitHub Agent 发布目录无效')
     }
@@ -907,16 +1426,32 @@ export class AgentPackageManager {
           continue
         }
         return Promise.all([
-          this.#fetchBounded(catalogUrl, GITHUB_REDIRECT_HOSTS),
-          this.#fetchBounded(signatureUrl, GITHUB_REDIRECT_HOSTS)
+          this.#fetchBounded(
+            catalogUrl,
+            GITHUB_REDIRECT_HOSTS,
+            signal
+          ),
+          this.#fetchBounded(
+            signatureUrl,
+            GITHUB_REDIRECT_HOSTS,
+            signal
+          )
         ])
       }
     }
     throw new Error('GitHub 中没有可用的 Agent 发布目录')
   }
 
-  async #fetchJson(url: string): Promise<unknown> {
-    const bytes = await this.#fetchBounded(url)
+  async #fetchJson(
+    url: string,
+    signal?: AbortSignal
+  ): Promise<unknown> {
+    const bytes = await this.#fetchBounded(
+      url,
+      [],
+      signal,
+      true
+    )
     return JSON.parse(
       new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     ) as unknown
@@ -924,22 +1459,40 @@ export class AgentPackageManager {
 
   async #fetchBounded(
     url: string,
-    redirectHosts: readonly string[] = []
+    redirectHosts: readonly string[] = [],
+    signal?: AbortSignal,
+    rejectRedirects = false
   ): Promise<Buffer> {
     const controller = new AbortController()
+    const abortFromCaller = (): void => {
+      controller.abort(signal?.reason)
+    }
+    signal?.addEventListener('abort', abortFromCaller, {
+      once: true
+    })
+    if (signal?.aborted) {
+      abortFromCaller()
+    }
     const timeout = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(
+        new DOMException(
+          'Agent catalog request timed out',
+          'TimeoutError'
+        )
+      ),
       30_000
     )
     timeout.unref?.()
     try {
-      const response = await fetchModelDownloadResponse({
-        transport: this.#fetch,
-        initialUrl: url,
-        redirectHosts,
-        signal: controller.signal,
-        modelLabel: 'Agent 发布目录'
-      })
+      const response = rejectRedirects
+        ? await this.#fetchExactResponse(url, controller.signal)
+        : await fetchModelDownloadResponse({
+            transport: this.#fetch,
+            initialUrl: url,
+            redirectHosts,
+            signal: controller.signal,
+            modelLabel: 'Agent 发布目录'
+          })
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined)
         throw new Error(
@@ -970,6 +1523,142 @@ export class AgentPackageManager {
       return Buffer.concat(chunks, total)
     } finally {
       clearTimeout(timeout)
+      signal?.removeEventListener('abort', abortFromCaller)
+    }
+  }
+
+  async #fetchExactResponse(
+    url: string,
+    signal: AbortSignal
+  ): Promise<Response> {
+    validateSecureDownloadUrl(url, 'Agent 发布目录')
+    const response = await this.#fetch(url, {
+      method: 'GET',
+      redirect: 'manual',
+      credentials: 'omit',
+      cache: 'no-store',
+      signal
+    })
+    if (isDownloadRedirectStatus(response.status)) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error('Agent 发布目录不允许重定向')
+    }
+    return response
+  }
+
+  async #resolveRemoteDownloadUrls(
+    entry: AgentPackageCatalogEntry,
+    source: UpdateSource,
+    signal?: AbortSignal
+  ): Promise<readonly string[]> {
+    const controller = new AbortController()
+    const abortFromCaller = (): void => {
+      controller.abort(signal?.reason)
+    }
+    signal?.addEventListener('abort', abortFromCaller, {
+      once: true
+    })
+    if (signal?.aborted) {
+      abortFromCaller()
+    }
+    const timeout = setTimeout(
+      () => controller.abort(
+        new DOMException(
+          'Agent remote candidate resolution timed out',
+          'TimeoutError'
+        )
+      ),
+      REMOTE_CANDIDATE_TIMEOUT_MS
+    )
+    timeout.unref?.()
+    const urls: string[] = []
+    let current = validateSecureDownloadUrl(
+      entry.downloads[source].url,
+      'Agent 包'
+    )
+    try {
+      for (
+        let redirectCount = 0;
+        redirectCount <= MAXIMUM_REMOTE_REDIRECTS;
+        redirectCount += 1
+      ) {
+        controller.signal.throwIfAborted()
+        const currentUrl = current.href
+        if (
+          Buffer.byteLength(currentUrl, 'utf8') >
+          MAXIMUM_REMOTE_URL_BYTES
+        ) {
+          throw new Error('Agent 包下载地址超出长度限制')
+        }
+        urls.push(currentUrl)
+        let response = await this.#fetch(current, {
+          method: 'HEAD',
+          redirect: 'manual',
+          credentials: 'omit',
+          cache: 'no-store',
+          signal: controller.signal
+        })
+        if (response.status === 405 || response.status === 501) {
+          await response.body?.cancel().catch(() => undefined)
+          response = await this.#fetch(current, {
+            method: 'GET',
+            redirect: 'manual',
+            credentials: 'omit',
+            cache: 'no-store',
+            signal: controller.signal
+          })
+        }
+        if (!isDownloadRedirectStatus(response.status)) {
+          if (!response.ok) {
+            await response.body?.cancel().catch(() => undefined)
+            throw new Error(
+              `Agent 包下载地址检查失败：HTTP ${response.status}`
+            )
+          }
+          const declared = response.headers.get('content-length')
+          await response.body?.cancel().catch(() => undefined)
+          if (
+            declared !== null &&
+            (!/^(?:0|[1-9]\d*)$/u.test(declared) ||
+              Number(declared) !== entry.size)
+          ) {
+            throw new Error('Agent 包下载大小与目录不一致')
+          }
+          return Object.freeze([...urls])
+        }
+        if (
+          source === 'mirror' ||
+          redirectCount === MAXIMUM_REMOTE_REDIRECTS
+        ) {
+          await response.body?.cancel().catch(() => undefined)
+          throw new Error(
+            source === 'mirror'
+              ? 'Agent 镜像下载地址不允许重定向'
+              : 'Agent 包下载重定向次数过多'
+          )
+        }
+        const location = response.headers.get('location')
+        await response.body?.cancel().catch(() => undefined)
+        if (!location) {
+          throw new Error('Agent 包下载重定向缺少地址')
+        }
+        const next = validateSecureDownloadUrl(
+          new URL(location, current).href,
+          'Agent 包'
+        )
+        if (
+          !GITHUB_REDIRECT_HOSTS.includes(
+            next.hostname as (typeof GITHUB_REDIRECT_HOSTS)[number]
+          )
+        ) {
+          throw new Error('Agent 包下载重定向到不受信任的主机')
+        }
+        current = next
+      }
+      throw new Error('Agent 包下载重定向次数过多')
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abortFromCaller)
     }
   }
 
@@ -991,6 +1680,7 @@ export class AgentPackageManager {
   async #createStaging(
     architecture: AgentArchitecture | 'import'
   ): Promise<string> {
+    await this.#startupCleanup
     await mkdir(this.#rootDirectory, { recursive: true })
     const path = join(
       this.#rootDirectory,
@@ -998,6 +1688,52 @@ export class AgentPackageManager {
     )
     await mkdir(path)
     return path
+  }
+
+  async #cleanupInterruptedArtifacts(): Promise<void> {
+    await this.#removeOwnedTemporaryDirectories(
+      this.#rootDirectory,
+      /^\.stage-linux-(?:x64|arm64|import)-[0-9a-f-]{36}$/u
+    )
+    await Promise.all(
+      agentArchitectureSchema.options.map((architecture) =>
+        this.#removeOwnedTemporaryDirectories(
+          this.#architectureRoot(architecture),
+          /^\.backup-[0-9a-f-]{36}$/u
+        )
+      )
+    )
+  }
+
+  async #removeOwnedTemporaryDirectories(
+    root: string,
+    pattern: RegExp
+  ): Promise<void> {
+    let entries
+    try {
+      entries = await readdir(root, { withFileTypes: true })
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return
+      }
+      throw error
+    }
+    await Promise.all(
+      entries
+        .filter(
+          (entry) =>
+            entry.isDirectory() &&
+            !entry.isSymbolicLink() &&
+            pattern.test(entry.name)
+        )
+        .slice(0, 512)
+        .map((entry) =>
+          rm(join(root, entry.name), {
+            recursive: true,
+            force: true
+          }).catch(() => undefined)
+        )
+    )
   }
 
   #architectureRoot(
@@ -1048,31 +1784,18 @@ export class AgentPackageManager {
     await rm(directory, { recursive: true, force: true })
   }
 
-  #runExclusive(
+  #runExclusive<T>(
     architecture: AgentArchitecture,
-    operation: () => Promise<AgentPackageInventory>,
-    joinExisting = true
-  ): Promise<AgentPackageInventory> {
+    operation: () => Promise<T>
+  ): Promise<T> {
     const existing = this.#operations.get(architecture)
     if (existing) {
-      return joinExisting
-        ? existing
-        : existing.then(
-            () =>
-              this.#runExclusive(
-                architecture,
-                operation,
-                false
-              ),
-            () =>
-              this.#runExclusive(
-                architecture,
-                operation,
-                false
-              )
-          )
+      return existing.then(
+        () => this.#runExclusive(architecture, operation),
+        () => this.#runExclusive(architecture, operation)
+      )
     }
-    const promise = operation().finally(() => {
+    const promise: Promise<T> = operation().finally(() => {
       if (this.#operations.get(architecture) === promise) {
         this.#operations.delete(architecture)
       }
@@ -1117,11 +1840,18 @@ export function selectLatestCompatibleEntry(
       compareSemanticVersions(right.version, left.version)
     )[0]
   if (!entry) {
-    throw new Error(
+    throw new NoCompatibleAgentPackageError(
       `没有与当前 GoodBuddy 兼容的 Linux ${architecture} Agent 包`
     )
   }
   return entry
+}
+
+class NoCompatibleAgentPackageError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NoCompatibleAgentPackageError'
+  }
 }
 
 function assertCanonicalDownload(
@@ -1140,6 +1870,47 @@ function assertCanonicalDownload(
         ).href
   if (entry.downloads[source].url !== expected) {
     throw new Error('Agent 包下载地址不受信任')
+  }
+}
+
+function assertCandidateMatchesCatalogEntry(
+  candidate: VerifiedRemoteAgentInstallCandidate,
+  entry: AgentPackageCatalogEntry,
+  source: UpdateSource
+): void {
+  const canonicalUrl = entry.downloads[source].url
+  if (
+    candidate.source !== source ||
+    candidate.platform !== entry.platform ||
+    candidate.architecture !== entry.architecture ||
+    candidate.version !== entry.version ||
+    candidate.minimumDesktopVersion !==
+      entry.minimumDesktopVersion ||
+    candidate.agentProtocol.major !==
+      entry.agentProtocol.major ||
+    candidate.agentProtocol.minor !==
+      entry.agentProtocol.minor ||
+    candidate.remoteRuntime.runtimeId !==
+      entry.remoteRuntime.runtimeId ||
+    candidate.remoteRuntime.provider !==
+      entry.remoteRuntime.provider ||
+    candidate.remoteRuntime.version !==
+      entry.remoteRuntime.version ||
+    candidate.remoteRuntime.bundleDigest !==
+      entry.remoteRuntime.bundleDigest ||
+    candidate.remoteRuntime.protocol.major !==
+      entry.remoteRuntime.protocol.major ||
+    candidate.remoteRuntime.protocol.minor !==
+      entry.remoteRuntime.protocol.minor ||
+    candidate.archive !== entry.archive ||
+    candidate.size !== entry.size ||
+    candidate.sha256 !== entry.sha256 ||
+    candidate.urls.length < 1 ||
+    candidate.urls[0] !== canonicalUrl
+  ) {
+    throw new Error(
+      'Agent install candidate does not match the current signed catalog'
+    )
   }
 }
 

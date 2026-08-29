@@ -2468,13 +2468,18 @@ textarea:focus-visible {
   font-weight: 650;
 }
 
-.project-switcher__group > button {
+.project-switcher__menu-item {
+  position: relative;
+  min-width: 0;
+}
+
+.project-switcher__menu-item > [role="menuitemradio"] {
   display: grid;
   width: 100%;
   min-width: 0;
   min-height: 52px;
   align-items: center;
-  padding: var(--space-2);
+  padding: var(--space-2) 44px var(--space-2) var(--space-2);
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-primary);
@@ -2484,33 +2489,76 @@ textarea:focus-visible {
   text-align: left;
 }
 
-.project-switcher__group > button:hover,
-.project-switcher__group > button[aria-checked="true"] {
+.project-switcher__menu-item > [role="menuitemradio"]:hover,
+.project-switcher__menu-item > [role="menuitemradio"][aria-checked="true"] {
   background: var(--accent-subtle);
   color: var(--accent);
 }
 
-.project-switcher__group > button > span {
+.project-switcher__menu-item > [role="menuitemradio"] > span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-.project-switcher__group > button b,
-.project-switcher__group > button small {
+.project-switcher__menu-item > [role="menuitemradio"] b,
+.project-switcher__menu-item > [role="menuitemradio"] small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.project-switcher__group > button b {
+.project-switcher__menu-item > [role="menuitemradio"] b {
   font-size: var(--font-body);
   font-weight: 650;
 }
 
-.project-switcher__group > button small {
+.project-switcher__menu-item > [role="menuitemradio"] small {
   color: var(--text-muted);
   font-size: var(--font-caption);
+}
+
+.project-switcher__menu-settings {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+  place-items: center;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    opacity var(--motion-fast) ease-out,
+    background var(--motion-fast) ease-out,
+    color var(--motion-fast) ease-out;
+}
+
+.project-switcher__menu-item:hover
+  .project-switcher__menu-settings,
+.project-switcher__menu-item:focus-within
+  .project-switcher__menu-settings,
+.project-switcher__menu-settings:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-switcher__menu-settings:hover,
+.project-switcher__menu-settings:focus-visible {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}
+
+@media (hover: none) {
+  .project-switcher__menu-settings {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .project-create-backdrop {
@@ -6982,6 +7030,25 @@ button > svg {
   margin-left: auto;
 }
 
+.ssh-host-remove-confirmation {
+  display: grid;
+  max-width: 420px;
+  gap: var(--space-2);
+}
+
+.ssh-host-remove-confirmation p {
+  margin: 0;
+}
+
+.ssh-host-remove-confirmation ul {
+  display: grid;
+  max-height: 140px;
+  margin: 0;
+  padding-left: var(--space-5);
+  gap: var(--space-1);
+  overflow: auto;
+}
+
 .ssh-host-test-result {
   display: flex;
   align-items: center;
@@ -6999,7 +7066,7 @@ button > svg {
 
 .ssh-host-environment__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
@@ -7024,16 +7091,38 @@ button > svg {
 }
 
 .ssh-host-environment__summary small {
+  max-width: 680px;
   color: var(--text-muted);
   font-size: var(--font-caption);
   line-height: 1.5;
 }
 
-.ssh-host-environment__actions {
-  display: flex;
+.ssh-host-environment__header > .secondary-button {
   flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-2);
+}
+
+.ssh-host-environment__toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ssh-host-environment__method {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.ssh-host-environment__method > span {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 600;
+}
+
+.ssh-host-environment__toolbar > .primary-button {
+  flex: 0 0 auto;
 }
 
 .ssh-host-environment__grid {
@@ -7045,10 +7134,10 @@ button > svg {
 .ssh-host-environment__runtime {
   display: grid;
   min-width: 0;
-  padding: var(--space-3);
+  padding: var(--space-4);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
-  background: var(--surface-subtle);
+  background: var(--surface-raised);
   gap: var(--space-3);
 }
 
@@ -7066,7 +7155,7 @@ button > svg {
   height: 30px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
-  background: var(--surface-raised);
+  background: var(--surface-subtle);
   color: var(--accent);
   place-items: center;
 }
@@ -7156,10 +7245,49 @@ button > svg {
   color: var(--text-secondary);
 }
 
+.ssh-host-environment__loading--update {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+
+.ssh-host-environment__loading > span {
+  display: grid;
+  min-width: 0;
+  margin-right: auto;
+  gap: var(--space-1);
+}
+
+.ssh-host-environment__loading > span > strong {
+  color: var(--text-primary);
+  font-size: var(--font-caption);
+}
+
+.ssh-host-environment__availability {
+  display: grid;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warning);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+  gap: var(--space-1);
+}
+
+.ssh-host-environment__availability small {
+  color: var(--text-muted);
+  font-size: inherit;
+}
+
 .ssh-host-environment__error {
+  display: grid;
   border: 1px solid var(--danger-border);
   background: var(--danger-subtle);
   color: var(--danger);
+  gap: var(--space-1);
+}
+
+.ssh-host-environment__error > strong {
+  color: var(--danger-strong);
 }
 
 .ssh-host-environment__spinner {
@@ -7483,9 +7611,28 @@ button > svg {
     flex-direction: column;
   }
 
-  .ssh-host-environment__actions {
+  .ssh-host-environment__header > .secondary-button {
     align-self: flex-start;
-    flex-wrap: wrap;
+  }
+
+  .ssh-host-environment__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ssh-host-environment__method > .segmented-control {
+    width: 100%;
+  }
+
+  .ssh-host-environment__method
+    > .segmented-control
+    .segmented-control__option {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .ssh-host-environment__toolbar > .primary-button {
+    align-self: flex-start;
   }
 
   .ssh-host-card__actions > .danger-confirm {

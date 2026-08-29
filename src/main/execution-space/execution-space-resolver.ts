@@ -1,9 +1,5 @@
 import { isAbsolute, normalize, resolve } from 'node:path'
-import type {
-  AssistantProject,
-  ProjectRuntimeValidation,
-  SshExecutionValidation
-} from '../../shared/assistant-contracts'
+import type { AssistantProject } from '../../shared/assistant-contracts'
 import {
   LocalWorkspaceAccess,
   UnsupportedRemoteWorkspaceAccess,
@@ -27,8 +23,6 @@ export type SshExecutionSpaceDescriptor = {
   kind: 'ssh'
   hostId: string
   remoteRootPath: string
-  validation?: SshExecutionValidation
-  runtimeValidation?: ProjectRuntimeValidation
   cacheIdentity: string
   routeIdentity: string
   workspaceAccess: WorkspaceAccess
@@ -79,78 +73,27 @@ export class ExecutionSpaceResolver {
       return this.resolveLocal(executionSpace.rootPath)
     }
 
-    const sshValidation = executionSpace.validation
-    const runtimeValidation = project.runtimeValidation
-    const identity = {
+    const binding: RemoteWorkspaceProjectBinding = {
       hostId: executionSpace.hostId,
-      remoteRootPath: executionSpace.remoteRootPath,
-      validation: sshValidation,
-      runtimeValidation
+      remoteRootPath: executionSpace.remoteRootPath
     }
-    const remoteBinding: RemoteWorkspaceProjectBinding | undefined =
-      sshValidation &&
-      runtimeValidation &&
-      sshValidation.agentInstallationIdAtValidation ===
-        runtimeValidation.agentInstallationIdAtValidation
-        ? {
-            hostId: executionSpace.hostId,
-            remoteRootPath: executionSpace.remoteRootPath,
-            hostRevision: sshValidation.hostRevision,
-            hostKeyGeneration: sshValidation.hostKeyGeneration,
-            remoteUsername: sshValidation.remoteUsername,
-            workspaceIdentity: sshValidation.workspaceIdentity,
-            agentProtocolMajor: sshValidation.agentProtocolMajor,
-            agentInstallationId:
-              sshValidation.agentInstallationIdAtValidation,
-            agentBinaryDigest:
-              sshValidation.agentBinaryDigestAtValidation,
-            agentVersion: sshValidation.agentVersionAtValidation,
-            agentArchitecture:
-              sshValidation.agentArchitectureAtValidation
-          }
-        : undefined
     return {
       kind: 'ssh',
-      ...identity,
+      ...binding,
       cacheIdentity: JSON.stringify([
         'ssh',
-        identity.hostId,
-        identity.remoteRootPath,
-        identity.validation
-          ? [
-              identity.validation.hostRevision,
-              identity.validation.hostKeyGeneration,
-              identity.validation.remoteUsername,
-              identity.validation.workspaceIdentity,
-              identity.validation.agentProtocolMajor,
-              identity.validation.agentInstallationIdAtValidation,
-              identity.validation.agentBinaryDigestAtValidation,
-              identity.validation.agentVersionAtValidation,
-              identity.validation.agentArchitectureAtValidation,
-              identity.validation.validatedAt
-            ]
-          : null,
-        identity.runtimeValidation
-          ? [
-              identity.runtimeValidation.runtimeSelectionKey,
-              identity.runtimeValidation.runtimeBundleDigest,
-              identity.runtimeValidation.runtimeAdapterDigest,
-              identity.runtimeValidation
-                .agentInstallationIdAtValidation,
-              identity.runtimeValidation.validatedAt,
-              identity.runtimeValidation.workMode
-            ]
-          : null
+        binding.hostId,
+        binding.remoteRootPath
       ]),
       routeIdentity: JSON.stringify([
         'ssh',
         project.id,
-        identity.hostId,
-        identity.remoteRootPath
+        binding.hostId,
+        binding.remoteRootPath
       ]),
       workspaceAccess:
-        remoteBinding && this.remoteWorkspaceAccessFactory
-          ? this.remoteWorkspaceAccessFactory.create(remoteBinding)
+        this.remoteWorkspaceAccessFactory
+          ? this.remoteWorkspaceAccessFactory.create(binding)
           : new UnsupportedRemoteWorkspaceAccess(
               REMOTE_EXECUTION_SPACE_UNAVAILABLE
             )

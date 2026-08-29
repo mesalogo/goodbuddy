@@ -10,12 +10,8 @@ import {
   remoteWorkspaceHandleSchema,
   remoteWorkspaceListRequestSchema,
   remoteWorkspaceListResultSchema,
-  remoteWorkspaceOpenRequestSchema,
-  remoteWorkspaceOpenResultSchema,
   remoteWorkspaceReadTextRequestSchema,
   remoteWorkspaceReadTextResultSchema,
-  remoteWorkspaceResumeRequestSchema,
-  remoteWorkspaceResumeResultSchema,
   remoteWorkspaceSearchRequestSchema,
   remoteWorkspaceSearchResultSchema,
   remoteWorkspaceStatRequestSchema,
@@ -31,12 +27,8 @@ import {
   type RemoteWorkspaceHandle,
   type RemoteWorkspaceListRequest,
   type RemoteWorkspaceListResult,
-  type RemoteWorkspaceOpenRequest,
-  type RemoteWorkspaceOpenResult,
   type RemoteWorkspaceReadTextRequest,
   type RemoteWorkspaceReadTextResult,
-  type RemoteWorkspaceResumeRequest,
-  type RemoteWorkspaceResumeResult,
   type RemoteWorkspaceSearchRequest,
   type RemoteWorkspaceSearchResult,
   type RemoteWorkspaceStatRequest,
@@ -67,16 +59,7 @@ const DEFAULT_READ_BYTES = 256 * 1024
 const DEFAULT_SEARCH_RESULTS = 100
 export type RemoteWorkspaceProjectBinding = {
   hostId: string
-  hostRevision: number
-  hostKeyGeneration: number
-  remoteUsername: string
   remoteRootPath: string
-  workspaceIdentity: string
-  agentInstallationId: string
-  agentBinaryDigest: string
-  agentVersion: string
-  agentArchitecture: 'x64' | 'arm64'
-  agentProtocolMajor: number
 }
 
 export type RemoteWorkspaceTransportBinding = {
@@ -98,19 +81,10 @@ export type RemoteWorkspaceTransportBinding = {
  */
 export interface RemoteWorkspaceTransportLease {
   readonly binding: RemoteWorkspaceTransportBinding
-  readonly resumableHandle?: RemoteWorkspaceHandle
   validateWorkspace(
     request: RemoteWorkspaceValidateRequest,
     signal?: AbortSignal
   ): Promise<RemoteWorkspaceValidateResult>
-  openWorkspace(
-    request: RemoteWorkspaceOpenRequest,
-    signal?: AbortSignal
-  ): Promise<RemoteWorkspaceOpenResult>
-  resumeWorkspace(
-    request: RemoteWorkspaceResumeRequest,
-    signal?: AbortSignal
-  ): Promise<RemoteWorkspaceResumeResult>
   closeWorkspace(
     request: RemoteWorkspaceCloseRequest
   ): Promise<RemoteWorkspaceCloseResult>
@@ -182,15 +156,7 @@ function assertTransportBinding(
   if (
     !Number.isSafeInteger(actual.capabilityGeneration) ||
     actual.capabilityGeneration < 1 ||
-    actual.hostId !== expected.hostId ||
-    actual.hostRevision !== expected.hostRevision ||
-    actual.hostKeyGeneration !== expected.hostKeyGeneration ||
-    actual.remoteUsername !== expected.remoteUsername ||
-    actual.agentInstallationId !== expected.agentInstallationId ||
-    actual.agentBinaryDigest !== expected.agentBinaryDigest ||
-    actual.agentVersion !== expected.agentVersion ||
-    actual.agentArchitecture !== expected.agentArchitecture ||
-    actual.agentProtocolMajor !== expected.agentProtocolMajor
+    actual.hostId !== expected.hostId
   ) {
     throw new Error('远程工作区连接绑定已失效')
   }
@@ -202,7 +168,7 @@ function assertHandleBinding(
 ): RemoteWorkspaceHandle {
   const handle = remoteWorkspaceHandleSchema.parse(handleInput)
   if (
-    handle.workspaceIdentity !== expected.workspaceIdentity ||
+    handle.canonicalDisplayPath !== expected.remoteRootPath ||
     handle.access !== 'read-only'
   ) {
     throw new Error('远程工作区身份绑定不匹配')
@@ -328,51 +294,22 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
     try {
       assertTransportBinding(this.binding, lease.binding)
       signal?.throwIfAborted()
-      let handle: RemoteWorkspaceHandle
-      if (lease.resumableHandle) {
-        const previous = assertHandleBinding(
-          this.binding,
-          lease.resumableHandle
+      const validation = remoteWorkspaceValidateResultSchema.parse(
+        await lease.validateWorkspace(
+          remoteWorkspaceValidateRequestSchema.parse({
+            remoteRootPath: this.binding.remoteRootPath,
+            requestedAccess: 'read-only',
+            requiredCapabilities: [
+              ...REMOTE_WORKSPACE_READ_CAPABILITIES
+            ]
+          }),
+          signal
         )
-        const resumed = remoteWorkspaceResumeResultSchema.parse(
-          await lease.resumeWorkspace(
-            remoteWorkspaceResumeRequestSchema.parse({
-              workspaceId: previous.workspaceId,
-              generation: previous.generation,
-              workspaceIdentity: this.binding.workspaceIdentity
-            }),
-            signal
-          )
-        )
-        handle = resumed.resumed
-          ? assertHandleBinding(this.binding, resumed.handle)
-          : assertHandleBinding(
-              this.binding,
-              remoteWorkspaceOpenResultSchema.parse(
-                await lease.openWorkspace(
-                  remoteWorkspaceOpenRequestSchema.parse({
-                    workspaceIdentity: this.binding.workspaceIdentity,
-                    requestedAccess: 'read-only'
-                  }),
-                  signal
-                )
-              )
-            )
-      } else {
-        const validation = remoteWorkspaceValidateResultSchema.parse(
-          await lease.validateWorkspace(
-            remoteWorkspaceValidateRequestSchema.parse({
-              remoteRootPath: this.binding.remoteRootPath,
-              requestedAccess: 'read-only',
-              requiredCapabilities: [
-                ...REMOTE_WORKSPACE_READ_CAPABILITIES
-              ]
-            }),
-            signal
-          )
-        )
-        handle = assertHandleBinding(this.binding, validation.handle)
-      }
+      )
+      const handle = assertHandleBinding(
+        this.binding,
+        validation.handle
+      )
       assertTransportBinding(this.binding, lease.binding)
       retained = true
       return {

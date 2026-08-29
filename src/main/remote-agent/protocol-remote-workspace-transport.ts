@@ -1,8 +1,5 @@
-import {
-  REMOTE_WORKSPACE_READ_CAPABILITIES,
-  remoteWorkspaceHandleSchema,
-  type RemoteWorkspaceCloseResult,
-  type RemoteWorkspaceHandle
+import type {
+  RemoteWorkspaceCloseResult
 } from '../../shared/remote-agent-contracts'
 import type {
   RemoteWorkspaceProjectBinding,
@@ -23,26 +20,13 @@ import type {
 
 const WORKSPACE_READ_CAPABILITY = 'workspace/read'
 const WORKSPACE_READ_CAPABILITY_VERSION = 1
-export type DurableRemoteWorkspaceValidation = {
-  binding: RemoteWorkspaceTransportBinding
-  workspaceIdentity: string
-  handle: RemoteWorkspaceHandle
-  validatedAt: string
-}
-
 export type RemoteWorkspaceInstallationResolution = {
   installation: RemoteAgentInstallationIdentity
-  /**
-   * This value must come from durable validation storage. The transport never
-   * promotes an in-memory handle or an incomplete record into resume state.
-   */
-  durableWorkspaceValidation?: DurableRemoteWorkspaceValidation
 }
 
 export interface RemoteWorkspaceInstallationIdentityResolver {
   resolve(
     hostId: string,
-    installationId: string,
     signal?: AbortSignal
   ): Promise<RemoteWorkspaceInstallationResolution>
 }
@@ -85,7 +69,6 @@ export class ProtocolRemoteWorkspaceTransport
     const projectBinding = { ...binding }
     const resolved = await this.installations.resolve(
       projectBinding.hostId,
-      projectBinding.agentInstallationId,
       signal
     )
     let resolution: RemoteWorkspaceInstallationResolution | undefined
@@ -94,15 +77,13 @@ export class ProtocolRemoteWorkspaceTransport
     try {
       resolution = snapshotResolution(resolved)
       signal?.throwIfAborted()
-      assertResolution(projectBinding, resolution)
       connection = await this.connections.acquire(
         projectBinding.hostId,
         requireWorkspaceReadCapability(resolution.installation),
         signal
       )
-      const status = connection.status
       assertConnectionIdentity(projectBinding, resolution, connection)
-      assertConnectionStatus(projectBinding, resolution, status)
+      assertConnectionStatus(resolution, connection.status)
       const capabilities = await connection.client.request(
         'agent/capabilities',
         {},
@@ -116,23 +97,11 @@ export class ProtocolRemoteWorkspaceTransport
       ) {
         throw staleGenerationError()
       }
-      const transportBinding = liveBinding(
-        projectBinding,
-        resolution,
-        connection,
-        capabilities.generation
-      )
-      const resumableHandle = validatedResumableHandle(
-        projectBinding,
-        transportBinding,
-        resolution.durableWorkspaceValidation
-      )
       const lease = createLease({
         binding: projectBinding,
         resolution,
         connection,
-        acquiredCapabilityGeneration: capabilities.generation,
-        resumableHandle
+        acquiredCapabilityGeneration: capabilities.generation
       })
       retained = true
       return lease
@@ -148,7 +117,6 @@ function snapshotResolution(
   resolution: RemoteWorkspaceInstallationResolution
 ): RemoteWorkspaceInstallationResolution {
   const installation = resolution.installation
-  const durable = resolution.durableWorkspaceValidation
   return {
     installation: {
       ...installation,
@@ -163,20 +131,7 @@ function snapshotResolution(
                 ...entry
               }))
           })
-    },
-    ...(durable === undefined
-      ? {}
-      : {
-          durableWorkspaceValidation: {
-            binding: { ...durable.binding },
-            workspaceIdentity: durable.workspaceIdentity,
-            handle: {
-              ...durable.handle,
-              capabilities: [...durable.handle.capabilities]
-            },
-            validatedAt: durable.validatedAt
-          }
-        })
+    }
   }
 }
 
@@ -185,7 +140,6 @@ type LeaseState = {
   resolution: RemoteWorkspaceInstallationResolution
   connection: RemoteAgentConnection
   acquiredCapabilityGeneration: number
-  resumableHandle?: RemoteWorkspaceHandle
 }
 
 function createLease(state: LeaseState): RemoteWorkspaceTransportLease {
@@ -218,7 +172,6 @@ function createLease(state: LeaseState): RemoteWorkspaceTransportLease {
       state.connection
     )
     assertConnectionStatus(
-      state.binding,
       state.resolution,
       state.connection.status
     )
@@ -264,15 +217,8 @@ function createLease(state: LeaseState): RemoteWorkspaceTransportLease {
         state.acquiredCapabilityGeneration
       )
     },
-    ...(state.resumableHandle === undefined
-      ? {}
-      : { resumableHandle: state.resumableHandle }),
     validateWorkspace: async (value, signal) =>
       await request('workspace/validate', value, signal),
-    openWorkspace: async (value, signal) =>
-      await request('workspace/open', value, signal),
-    resumeWorkspace: async (value, signal) =>
-      await request('workspace/resume', value, signal),
     closeWorkspace: (value) => {
       currentClient()
       if (
@@ -337,8 +283,6 @@ function releaseLeaseResources(
 
 type WorkspaceReadProtocolMethod =
   | 'workspace/validate'
-  | 'workspace/open'
-  | 'workspace/resume'
   | 'workspace/close'
   | 'workspace/list'
   | 'workspace/stat'
@@ -382,26 +326,6 @@ function requireWorkspaceReadCapability(
   }
 }
 
-function assertResolution(
-  binding: RemoteWorkspaceProjectBinding,
-  resolution: RemoteWorkspaceInstallationResolution
-): void {
-  const protocol = resolution.installation.protocol
-  if (
-    resolution.installation.installationId !==
-      binding.agentInstallationId ||
-    resolution.installation.binaryDigest !==
-      binding.agentBinaryDigest ||
-    resolution.installation.agentVersion !== binding.agentVersion ||
-    resolution.installation.architecture !==
-      binding.agentArchitecture ||
-    protocol === undefined ||
-    protocol.major !== binding.agentProtocolMajor
-  ) {
-    throw bindingMismatchError()
-  }
-}
-
 function assertConnectionIdentity(
   binding: RemoteWorkspaceProjectBinding,
   resolution: RemoteWorkspaceInstallationResolution,
@@ -411,22 +335,18 @@ function assertConnectionIdentity(
   const protocol = resolution.installation.protocol
   if (
     identity.hostId !== binding.hostId ||
-    identity.hostRevision !== binding.hostRevision ||
-    identity.hostKeyGeneration !== binding.hostKeyGeneration ||
-    identity.remoteUsername !== binding.remoteUsername ||
-    identity.installationId !== binding.agentInstallationId ||
-    identity.binaryDigest !== binding.agentBinaryDigest ||
+    identity.installationId !==
+      resolution.installation.installationId ||
     identity.binaryDigest !== resolution.installation.binaryDigest ||
-    identity.protocolMajor !== binding.agentProtocolMajor ||
     protocol === undefined ||
-    identity.protocolMinor !== protocol.minor
+    identity.protocolMajor !== protocol.major ||
+    identity.protocolMinor > protocol.minor
   ) {
     throw bindingMismatchError()
   }
 }
 
 function assertConnectionStatus(
-  binding: RemoteWorkspaceProjectBinding,
   resolution: RemoteWorkspaceInstallationResolution,
   status: RemoteAgentConnection['status']
 ): void {
@@ -434,16 +354,13 @@ function assertConnectionStatus(
   if (
     status.state !== 'ready' ||
     status.draining ||
-    status.installationId !== binding.agentInstallationId ||
-    status.binaryDigest !== binding.agentBinaryDigest ||
+    status.installationId !== installation.installationId ||
     status.binaryDigest !== installation.binaryDigest ||
-    status.agentVersion !== binding.agentVersion ||
     status.agentVersion !== installation.agentVersion ||
-    status.architecture !== binding.agentArchitecture ||
     status.architecture !== installation.architecture ||
-    status.protocol.major !== binding.agentProtocolMajor ||
     installation.protocol === undefined ||
-    status.protocol.minor !== installation.protocol.minor ||
+    status.protocol.major !== installation.protocol.major ||
+    status.protocol.minor > installation.protocol.minor ||
     status.platform !== installation.platform ||
     status.supervisor !== installation.supervisor ||
     installation.agentVersion === undefined
@@ -479,7 +396,7 @@ function liveBinding(
   capabilityGeneration: number
 ): RemoteWorkspaceTransportBinding {
   assertConnectionIdentity(binding, resolution, connection)
-  assertConnectionStatus(binding, resolution, connection.status)
+  assertConnectionStatus(resolution, connection.status)
   if (
     connection.capabilities.generation !== capabilityGeneration
   ) {
@@ -497,54 +414,6 @@ function liveBinding(
     agentProtocolMajor: connection.identity.protocolMajor,
     capabilityGeneration
   }
-}
-
-function validatedResumableHandle(
-  binding: RemoteWorkspaceProjectBinding,
-  transportBinding: RemoteWorkspaceTransportBinding,
-  validation: DurableRemoteWorkspaceValidation | undefined
-): RemoteWorkspaceHandle | undefined {
-  if (validation === undefined) {
-    return undefined
-  }
-  const timestamp = Date.parse(validation.validatedAt)
-  if (
-    !Number.isFinite(timestamp) ||
-    validation.workspaceIdentity !== binding.workspaceIdentity ||
-    !sameTransportBinding(validation.binding, transportBinding)
-  ) {
-    return undefined
-  }
-  const parsed = remoteWorkspaceHandleSchema.safeParse(validation.handle)
-  if (
-    !parsed.success ||
-    parsed.data.workspaceIdentity !== binding.workspaceIdentity ||
-    parsed.data.access !== 'read-only' ||
-    REMOTE_WORKSPACE_READ_CAPABILITIES.some(
-      (capability) => !parsed.data.capabilities.includes(capability)
-    )
-  ) {
-    return undefined
-  }
-  return parsed.data
-}
-
-function sameTransportBinding(
-  left: RemoteWorkspaceTransportBinding,
-  right: RemoteWorkspaceTransportBinding
-): boolean {
-  return (
-    left.hostId === right.hostId &&
-    left.hostRevision === right.hostRevision &&
-    left.hostKeyGeneration === right.hostKeyGeneration &&
-    left.remoteUsername === right.remoteUsername &&
-    left.agentInstallationId === right.agentInstallationId &&
-    left.agentBinaryDigest === right.agentBinaryDigest &&
-    left.agentVersion === right.agentVersion &&
-    left.agentArchitecture === right.agentArchitecture &&
-    left.agentProtocolMajor === right.agentProtocolMajor &&
-    left.capabilityGeneration === right.capabilityGeneration
-  )
 }
 
 function bindingMismatchError(): ProtocolRemoteWorkspaceTransportError {

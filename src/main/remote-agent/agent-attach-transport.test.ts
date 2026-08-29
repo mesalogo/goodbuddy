@@ -248,8 +248,35 @@ describe('AgentAttachTransport', () => {
     await expect(connect(channel)).rejects.toMatchObject({
       code: 'closed',
       message:
-        'Agent attach closed during handshake with diagnostic output'
+        'Agent attach closed during handshake with diagnostic output',
+      diagnostic: undefined
     })
+  })
+
+  it('classifies installation integrity stderr without exposing its contents', async () => {
+    const channel = new FakeChannel()
+    channel.onWrite = () => {
+      queueMicrotask(() => {
+        channel.stderr.emit(
+          'data',
+          'Agent manifest uses an unknown signing key: private-key-id\n'
+        )
+        channel.emit('close')
+      })
+    }
+
+    let error: unknown
+    try {
+      await connect(channel)
+    } catch (reason) {
+      error = reason
+    }
+    expect(error).toBeInstanceOf(AgentAttachTransportError)
+    expect(error).toMatchObject({
+      code: 'closed',
+      diagnostic: 'installation-repair-required'
+    })
+    expect((error as Error).message).not.toContain('private-key-id')
   })
 
   it('writes every frame in caller FIFO order', async () => {

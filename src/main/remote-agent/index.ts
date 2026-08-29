@@ -66,7 +66,6 @@ export {
   ProtocolRemoteWorkspaceTransportError
 } from './protocol-remote-workspace-transport'
 export type {
-  DurableRemoteWorkspaceValidation,
   RemoteWorkspaceInstallationIdentityResolver,
   RemoteWorkspaceInstallationResolution
 } from './protocol-remote-workspace-transport'
@@ -75,10 +74,9 @@ export {
   AgentInstallationManager
 } from './agent-installation-manager'
 export type {
-  AgentInstallationBundleLoader,
   AgentInstallationIdentity,
   AgentInstallationPhase,
-  AgentInstallationRequestOptions,
+  AgentActivationRequestOptions,
   AgentInstallationTargetResolver
 } from './agent-installation-manager'
 export { RemoteAgentServices } from './remote-agent-services'
@@ -90,7 +88,6 @@ export {
 export type {
   RemoteProjectSaveOwner,
   RemoteProjectSaveServiceOptions,
-  RemoteProjectRuntimeValidationEvidence,
   RemoteProjectRuntimeValidationInput,
   RemoteProjectRuntimeValidationLease,
   RemoteProjectRuntimeValidator

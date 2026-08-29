@@ -7,6 +7,7 @@ import {
   sshHostCreateInputSchema,
   sshHostDraftInspectionRequestSchema,
   remoteEnvironmentUpdateProgressSchema,
+  remoteEnvironmentUpdateRequestSchema,
   sshHostRemoteEnvironmentSchema,
   sshHostValidationRequestSchema
 } from './ssh-host-contracts'
@@ -233,7 +234,12 @@ describe('SSH host contracts', () => {
           version: '1.18.9',
           architecture: 'x64'
         }
-      }]
+      }],
+      remoteDownload: {
+        available: true,
+        source: 'mirror',
+        packageSize: 1024
+      }
     }
     expect(sshHostRemoteEnvironmentSchema.parse(status)).toEqual(status)
     expect(() =>
@@ -242,23 +248,86 @@ describe('SSH host contracts', () => {
         credential: 'secret'
       })
     ).toThrow()
+    expect(() =>
+      sshHostRemoteEnvironmentSchema.parse({
+        ...status,
+        remoteDownload: {
+          available: false,
+          source: 'mirror',
+          packageSize: 1024,
+          reason: 'arbitrary-reason'
+        }
+      })
+    ).toThrow()
   })
 
-  it('strictly validates coarse remote environment update progress', () => {
+  it('strictly validates manual remote environment preparation', () => {
     const hostId = '00000000-0000-4000-8000-000000000101'
-    for (const phase of ['agent', 'runtime', 'finalizing']) {
+    for (const method of [
+      'auto',
+      'remote-download',
+      'goodbuddy-transfer'
+    ]) {
+      expect(
+        remoteEnvironmentUpdateRequestSchema.parse({
+          hostId,
+          method
+        })
+      ).toEqual({ hostId, method })
+    }
+    for (const phase of [
+      'probing',
+      'downloading',
+      'verifying',
+      'installing-agent',
+      'installing-runtime',
+      'checking-health',
+      'finalizing',
+      'complete'
+    ]) {
       expect(
         remoteEnvironmentUpdateProgressSchema.parse({
           hostId,
+          method: 'remote-download',
           phase
         })
-      ).toEqual({ hostId, phase })
+      ).toEqual({
+        hostId,
+        method: 'remote-download',
+        phase
+      })
     }
     for (const progress of [
-      { hostId: 'not-a-uuid', phase: 'agent' },
-      { hostId, phase: 'uploading' },
-      { hostId, phase: 'runtime', path: '/home/user' },
-      { hostId, phase: 'agent', command: 'whoami' }
+      {
+        hostId: 'not-a-uuid',
+        method: 'remote-download',
+        phase: 'probing'
+      },
+      { hostId, method: 'automatic', phase: 'probing' },
+      {
+        hostId,
+        method: 'remote-download',
+        phase: 'uploading'
+      },
+      {
+        hostId,
+        method: 'goodbuddy-transfer',
+        phase: 'verifying',
+        path: '/home/user'
+      },
+      {
+        hostId,
+        method: 'remote-download',
+        phase: 'downloading',
+        command: 'whoami'
+      },
+      {
+        hostId,
+        method: 'remote-download',
+        phase: 'downloading',
+        completedBytes: 2,
+        totalBytes: 1
+      }
     ]) {
       expect(() =>
         remoteEnvironmentUpdateProgressSchema.parse(progress)

@@ -4,18 +4,21 @@ import {
   sign,
   type KeyObject
 } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { c as createTar } from 'tar'
 import { unzipSync, zipSync } from 'fflate'
 import {
@@ -142,6 +145,66 @@ type AgentCatalogModule = {
   ): AgentPackageCatalog
 }
 
+type PackageInstallerModule = {
+  preparePackage(options: {
+    operationRoot: string
+    archive: string
+    expectedSha256: string
+    homeDirectory: string
+    emit?: (event: unknown) => void
+  }): {
+    type: 'result'
+    command: 'prepare'
+    status: 'prepared'
+    archiveSha256: string
+    agent: {
+      installationId: string
+      agentVersion: string
+      manifestSha256: string
+      binaryDigest: string
+      platform: 'linux'
+      architecture: 'x64' | 'arm64'
+      protocol: { major: number; minor: number }
+      supervisor: 'detached-on-demand'
+    }
+    runtime: {
+      runtimeId: 'opencode'
+      runtimeVersion: string
+      bundleDigest: string
+      manifestDigest: string
+      runtimeAdapterDigest: string
+      acpCapabilitiesDigest: string
+      platform: 'linux'
+      architecture: 'x64' | 'arm64'
+      protocol: { major: number; minor: number }
+    }
+  }
+  commitPackage(options: {
+    operationRoot: string
+    archive: string
+    expectedSha256: string
+    homeDirectory: string
+    emit?: (event: unknown) => void
+  }): {
+    command: 'commit'
+    status: 'committed'
+    agent: PackageInstallerModule[
+      'preparePackage'
+    ] extends (...args: never[]) => infer Result
+      ? Result extends { agent: infer Agent }
+        ? Agent
+        : never
+      : never
+    runtime: PackageInstallerModule[
+      'preparePackage'
+    ] extends (...args: never[]) => infer Result
+      ? Result extends { runtime: infer Runtime }
+        ? Runtime
+        : never
+      : never
+  }
+}
+
 const require = createRequire(import.meta.url)
 const agentBundle = require(
   '../build/agent-bundle.cjs'
@@ -173,11 +236,36 @@ let packageResult: ReturnType<
 let arm64PackageResult: ReturnType<
   AgentPackageModule['assembleAgentPackage']
 >
+let packageInstaller: PackageInstallerModule
+let installerBundle = ''
 
 beforeAll(() => {
   temporaryRoot = resolve(
     mkdtempSync(join(tmpdir(), 'goodbuddy-agent-package-test-'))
   )
+  installerBundle = join(
+    temporaryRoot,
+    'package-installer-fixture.cjs'
+  )
+  execFileSync(process.execPath, [
+    '-e',
+    [
+      "require('esbuild').buildSync({",
+      `entryPoints:[${JSON.stringify(
+        join(
+          process.cwd(),
+          'src',
+          'main',
+          'remote-agent',
+          'control-plane-package-installer.ts'
+        )
+      )}],`,
+      `outfile:${JSON.stringify(installerBundle)},`,
+      "bundle:true,platform:'node',target:['node24.19'],",
+      "format:'cjs',logLevel:'silent'})"
+    ].join('')
+  ])
+  packageInstaller = require(installerBundle) as PackageInstallerModule
   privateKey = createPrivateKey({
     key: Buffer.from(
       '302e020100300506032b657004220420404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f',
@@ -303,6 +391,27 @@ describe('compound Agent packages', () => {
         mode: '0755'
       })
     )
+    for (const [result, archivePath] of [
+      [packageResult, packagePath],
+      [arm64PackageResult, arm64PackagePath]
+    ] as const) {
+      expect(result.descriptor.files).toContainEqual(
+        expect.objectContaining({
+          path: 'agent/node',
+          mode: '0755'
+        })
+      )
+      expect(result.descriptor.files).not.toContainEqual(
+        expect.objectContaining({
+          path: 'agent/lib/package-installer.cjs'
+        })
+      )
+      expect(
+        Object.keys(
+          unzipSync(new Uint8Array(readFileSync(archivePath)))
+        )
+      ).not.toContain('agent/lib/package-installer.cjs')
+    }
 
     const contentRoot = join(temporaryRoot, 'verified')
     const verified = await extractAndVerifyAgentPackage({
@@ -323,11 +432,7 @@ describe('compound Agent packages', () => {
       }
     })
     if (process.platform !== 'win32') {
-      for (const directory of [
-        verified.rootDirectory,
-        verified.agentBundle.bundleDirectory,
-        verified.runtimeBundle.bundleDirectory
-      ]) {
+      for (const directory of [verified.rootDirectory]) {
         expect(lstatSync(directory).mode & 0o777).toBe(0o700)
       }
     }
@@ -353,6 +458,673 @@ describe('compound Agent packages', () => {
     expect(readFileSync(secondPath)).toEqual(
       readFileSync(packagePath)
     )
+  })
+
+  it('prepares and commits a format-v1 package without an embedded installer', () => {
+    const operationRoot = join(temporaryRoot, 'remote-operation')
+    const homeDirectory = join(temporaryRoot, 'remote-home')
+    const globalMetadata = seedGlobalManagedMetadata(
+      homeDirectory,
+      'a'
+    )
+    const events: unknown[] = []
+    const prepared = packageInstaller.preparePackage({
+      operationRoot,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory,
+      emit: (event) => events.push(event)
+    })
+    expect(prepared).toMatchObject({
+      type: 'result',
+      command: 'prepare',
+      status: 'prepared',
+      archiveSha256: packageResult.sha256,
+      agent: {
+        installationId: expect.stringMatching(/^agent-[a-f0-9]{64}$/u),
+        agentVersion: agentLock.agentVersion,
+        architecture: 'x64',
+        protocol: agentLock.protocol
+      },
+      runtime: {
+        runtimeId: 'opencode',
+        runtimeVersion:
+          remoteRuntimeLock.runtimes.opencode.version,
+        bundleDigest:
+          packageResult.descriptor.remoteRuntime.bundleDigest,
+        architecture: 'x64'
+      }
+    })
+    expect(events.at(-1)).toEqual(prepared)
+    expect(readdirSync(join(operationRoot, 'prepared')))
+      .toEqual(['result.json'])
+    expectGlobalMetadataUnchanged(globalMetadata)
+
+    const cliOperationRoot = join(temporaryRoot, 'remote-cli-operation')
+    const cliLines = execFileSync(
+      process.execPath,
+      [
+        installerBundle,
+        'prepare',
+        '--operation-root',
+        cliOperationRoot,
+        '--archive',
+        packagePath,
+        '--expected-sha256',
+        packageResult.sha256
+      ],
+      { encoding: 'utf8' }
+    )
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(cliLines[0]).toMatchObject({
+      type: 'progress',
+      command: 'prepare',
+      phase: 'validating'
+    })
+    expect(cliLines.at(-1)).toMatchObject({
+      type: 'result',
+      command: 'prepare',
+      status: 'prepared',
+      agent: prepared.agent,
+      runtime: prepared.runtime
+    })
+
+    const commitEvents: Array<Record<string, unknown>> = []
+    const committed = packageInstaller.commitPackage({
+      operationRoot,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory,
+      emit: (event) => {
+        commitEvents.push(event as Record<string, unknown>)
+      }
+    })
+    expect(committed).toMatchObject({
+      command: 'commit',
+      status: 'committed',
+      agent: prepared.agent,
+      runtime: prepared.runtime
+    })
+    const agentDestination = join(
+      homeDirectory,
+      '.goodbuddy',
+      'agent',
+      'installations',
+      prepared.agent.installationId
+    )
+    const runtimeDestination = join(
+      homeDirectory,
+      '.goodbuddy',
+      'runtimes',
+      'opencode',
+      prepared.runtime.bundleDigest.slice('sha256:'.length)
+    )
+    expect(lstatSync(join(agentDestination, 'lib', 'agent.cjs')).isFile())
+      .toBe(true)
+    expect(lstatSync(join(runtimeDestination, 'bin', 'opencode')).isFile())
+      .toBe(true)
+    expect(
+      commitEvents.filter(
+        (event) =>
+          event.type === 'progress' &&
+          event.phase === 'extracting-payload'
+      )
+    ).toHaveLength(1)
+    expect(readdirSync(join(operationRoot, 'prepared')))
+      .toEqual(['result.json'])
+    expect(readdirSync(operationRoot)).toEqual(['prepared'])
+    expectGlobalMetadataUnchanged(globalMetadata)
+
+    packageInstaller.preparePackage({
+      operationRoot,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory
+    })
+    expect(() =>
+      packageInstaller.commitPackage({
+        operationRoot,
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+    ).not.toThrow()
+    expectGlobalMetadataUnchanged(globalMetadata)
+  })
+
+  it('requires untampered prepared state before commit mutation', () => {
+    const homeDirectory = join(temporaryRoot, 'prepared-state-home')
+    const tamperedOperation = join(
+      temporaryRoot,
+      'tampered-prepared-state-operation'
+    )
+    packageInstaller.preparePackage({
+      operationRoot: tamperedOperation,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory
+    })
+    const statePath = join(tamperedOperation, 'prepared', 'result.json')
+    const state = JSON.parse(
+      readFileSync(statePath, 'utf8')
+    ) as Record<string, unknown>
+    const stateAgent = state.agent as Record<string, unknown>
+    stateAgent.agentVersion = '99.0.0'
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`)
+    expect(() =>
+      packageInstaller.commitPackage({
+        operationRoot: tamperedOperation,
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+    ).toThrow('does not match the authenticated archive')
+    expect(readdirSync(tamperedOperation)).toEqual(['prepared'])
+
+    const missingOperation = join(
+      temporaryRoot,
+      'missing-prepared-state-operation'
+    )
+    packageInstaller.preparePackage({
+      operationRoot: missingOperation,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory
+    })
+    rmSync(join(missingOperation, 'prepared', 'result.json'))
+    expect(() =>
+      packageInstaller.commitPackage({
+        operationRoot: missingOperation,
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+    ).toThrow()
+    expect(readdirSync(missingOperation)).toEqual(['prepared'])
+  })
+
+  it('preserves current registries when commit fails', () => {
+    const operationRoot = join(temporaryRoot, 'failed-commit-operation')
+    const homeDirectory = join(temporaryRoot, 'failed-commit-home')
+    const globalMetadata = seedGlobalManagedMetadata(
+      homeDirectory,
+      'e'
+    )
+    const prepared = packageInstaller.preparePackage({
+      operationRoot,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory
+    })
+    const conflictingAgentDestination = join(
+      homeDirectory,
+      '.goodbuddy',
+      'agent',
+      'installations',
+      prepared.agent.installationId
+    )
+    mkdirSync(dirname(conflictingAgentDestination), {
+      recursive: true,
+      mode: 0o700
+    })
+    writeFileSync(
+      conflictingAgentDestination,
+      'different'
+    )
+
+    expect(() =>
+      packageInstaller.commitPackage({
+        operationRoot,
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+    ).toThrow('conflicting content')
+    expectGlobalMetadataUnchanged(globalMetadata)
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'rejects symbolic-link ancestors before publishing managed payloads',
+    () => {
+      const cases = [
+        {
+          name: 'managed-root',
+          link(homeDirectory: string, linkTarget: string) {
+            symlinkSync(
+              linkTarget,
+              join(homeDirectory, '.goodbuddy')
+            )
+          }
+        },
+        {
+          name: 'agent-installations',
+          link(homeDirectory: string, linkTarget: string) {
+            const agentRoot = join(
+              homeDirectory,
+              '.goodbuddy',
+              'agent'
+            )
+            mkdirSync(agentRoot, {
+              recursive: true,
+              mode: 0o700
+            })
+            symlinkSync(
+              linkTarget,
+              join(agentRoot, 'installations')
+            )
+          }
+        },
+        {
+          name: 'runtime-root',
+          link(homeDirectory: string, linkTarget: string) {
+            const runtimes = join(
+              homeDirectory,
+              '.goodbuddy',
+              'runtimes'
+            )
+            mkdirSync(runtimes, {
+              recursive: true,
+              mode: 0o700
+            })
+            symlinkSync(
+              linkTarget,
+              join(runtimes, 'opencode')
+            )
+          }
+        }
+      ]
+
+      for (const fixture of cases) {
+        const operationRoot = join(
+          temporaryRoot,
+          `symlink-${fixture.name}-operation`
+        )
+        const homeDirectory = join(
+          temporaryRoot,
+          `symlink-${fixture.name}-home`
+        )
+        const linkTarget = join(
+          temporaryRoot,
+          `symlink-${fixture.name}-target`
+        )
+        mkdirSync(homeDirectory, { mode: 0o700 })
+        mkdirSync(linkTarget, { mode: 0o700 })
+        fixture.link(homeDirectory, linkTarget)
+        packageInstaller.preparePackage({
+          operationRoot,
+          archive: packagePath,
+          expectedSha256: packageResult.sha256,
+          homeDirectory
+        })
+
+        expect(() =>
+          packageInstaller.commitPackage({
+            operationRoot,
+            archive: packagePath,
+            expectedSha256: packageResult.sha256,
+            homeDirectory
+          })
+        ).toThrow('Managed installation directory is unsafe')
+        expect(readdirSync(linkTarget)).toEqual([])
+      }
+    }
+  )
+
+  it('replaces a conflicting managed digest directory during explicit repair', () => {
+    const operationRoot = join(temporaryRoot, 'repair-commit-operation')
+    const homeDirectory = join(temporaryRoot, 'repair-commit-home')
+    const globalMetadata = seedGlobalManagedMetadata(
+      homeDirectory,
+      'f'
+    )
+    const prepared = packageInstaller.preparePackage({
+      operationRoot,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory
+    })
+    const agentDestination = join(
+      homeDirectory,
+      '.goodbuddy',
+      'agent',
+      'installations',
+      prepared.agent.installationId
+    )
+    mkdirSync(agentDestination, { recursive: true, mode: 0o700 })
+    writeFileSync(
+      join(agentDestination, 'conflicting-content'),
+      'different'
+    )
+
+    expect(
+      packageInstaller.commitPackage({
+        operationRoot,
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+    ).toMatchObject({
+      status: 'committed',
+      agent: prepared.agent,
+      runtime: prepared.runtime
+    })
+    expect(
+      readdirSync(agentDestination)
+    ).not.toContain('conflicting-content')
+    expect(
+      readFileSync(join(agentDestination, 'manifest.json'))
+    ).toBeTruthy()
+    expectGlobalMetadataUnchanged(globalMetadata)
+  })
+
+  it('restores a replaced Agent directory when Runtime publication fails', () => {
+    const operationRoot = join(temporaryRoot, 'repair-rollback-operation')
+    const homeDirectory = join(temporaryRoot, 'repair-rollback-home')
+    const prepared = packageInstaller.preparePackage({
+      operationRoot,
+      archive: packagePath,
+      expectedSha256: packageResult.sha256,
+      homeDirectory
+    })
+    const agentDestination = join(
+      homeDirectory,
+      '.goodbuddy',
+      'agent',
+      'installations',
+      prepared.agent.installationId
+    )
+    mkdirSync(agentDestination, { recursive: true, mode: 0o700 })
+    writeFileSync(join(agentDestination, 'old-marker'), 'old')
+    const runtimeDestination = join(
+      homeDirectory,
+      '.goodbuddy',
+      'runtimes',
+      'opencode',
+      prepared.runtime.bundleDigest.slice('sha256:'.length)
+    )
+    mkdirSync(dirname(runtimeDestination), {
+      recursive: true,
+      mode: 0o700
+    })
+    writeFileSync(runtimeDestination, 'unsafe destination type')
+
+    expect(() =>
+      packageInstaller.commitPackage({
+        operationRoot,
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+    ).toThrow('conflicting content')
+    expect(readdirSync(agentDestination)).toEqual(['old-marker'])
+  })
+
+  it('reuses only an identical trusted installed Node without changing global metadata', () => {
+    const variantAgent = join(temporaryRoot, 'reuse-variant-agent')
+    writeAgentBundle(variantAgent, 'x64')
+    writeFileSync(
+      join(variantAgent, 'lib', 'agent.cjs'),
+      'module.exports={variant:true}\n'
+    )
+    signAgentBundleManifest(variantAgent, 'x64')
+    const variantPath = join(
+      temporaryRoot,
+      'reuse-variant',
+      agentPackageArchiveName(agentLock.agentVersion, 'x64')
+    )
+    mkdirSync(dirname(variantPath), { recursive: true })
+    const variant = agentPackage.assembleAgentPackage({
+      projectRoot: process.cwd(),
+      architecture: 'x64',
+      minimumDesktopVersion: '0.11.0',
+      output: variantPath,
+      agentBundle: variantAgent,
+      runtimeBundle: findRuntimeBundleDirectory(),
+      agentLock,
+      runtimeLock: remoteRuntimeLock,
+      registry,
+      testSigningIdentity: {
+        keyId: 'agent-package-fixture',
+        privateKey
+      }
+    })
+    const changedNodeAgent = join(temporaryRoot, 'reuse-changed-node-agent')
+    writeAgentBundle(changedNodeAgent, 'x64')
+    writeFileSync(
+      join(changedNodeAgent, 'node'),
+      Buffer.concat([elf('x64'), Buffer.from('different Node payload')])
+    )
+    chmodSync(join(changedNodeAgent, 'node'), 0o755)
+    signAgentBundleManifest(changedNodeAgent, 'x64')
+    const changedNodePath = join(
+      temporaryRoot,
+      'reuse-changed-node',
+      agentPackageArchiveName(agentLock.agentVersion, 'x64')
+    )
+    mkdirSync(dirname(changedNodePath), { recursive: true })
+    const changedNodeVariant = agentPackage.assembleAgentPackage({
+      projectRoot: process.cwd(),
+      architecture: 'x64',
+      minimumDesktopVersion: '0.11.0',
+      output: changedNodePath,
+      agentBundle: changedNodeAgent,
+      runtimeBundle: findRuntimeBundleDirectory(),
+      agentLock,
+      runtimeLock: remoteRuntimeLock,
+      registry,
+      testSigningIdentity: {
+        keyId: 'agent-package-fixture',
+        privateKey
+      }
+    })
+    const prepareAndCommit = (
+      options: Parameters<PackageInstallerModule['preparePackage']>[0]
+    ) => {
+      packageInstaller.preparePackage(options)
+      return packageInstaller.commitPackage(options)
+    }
+
+    const installCurrent = (
+      name: string
+    ): {
+      homeDirectory: string
+      currentNode: string
+      globalMetadata: Map<string, Buffer>
+    } => {
+      const homeDirectory = join(temporaryRoot, `reuse-${name}-home`)
+      const globalMetadata = seedGlobalManagedMetadata(homeDirectory, 'b')
+      const current = prepareAndCommit({
+        operationRoot: join(temporaryRoot, `reuse-${name}-current-operation`),
+        archive: packagePath,
+        expectedSha256: packageResult.sha256,
+        homeDirectory
+      })
+      const registryPath = join(
+        homeDirectory,
+        '.goodbuddy',
+        'agent',
+        'registry.json'
+      )
+      const registryBytes = Buffer.from(
+        `${JSON.stringify({
+          formatVersion: 1,
+          current: {
+            installationId: current.agent.installationId,
+            agentVersion: current.agent.agentVersion,
+            manifestSha256: current.agent.manifestSha256,
+            arch: current.agent.architecture
+          }
+        }, null, 2)}\n`
+      )
+      writeFileSync(registryPath, registryBytes)
+      globalMetadata.set(registryPath, registryBytes)
+      return {
+        homeDirectory,
+        currentNode: join(
+          homeDirectory,
+          '.goodbuddy',
+          'agent',
+          'installations',
+          current.agent.installationId,
+          'node'
+        ),
+        globalMetadata
+      }
+    }
+    const commitVariant = (name: string, homeDirectory: string) =>
+      prepareAndCommit({
+        operationRoot: join(temporaryRoot, `reuse-${name}-variant-operation`),
+        archive: variantPath,
+        expectedSha256: variant.sha256,
+        homeDirectory
+      })
+    const installedVariantNode = (
+      homeDirectory: string,
+      installationId: string
+    ) => join(
+      homeDirectory,
+      '.goodbuddy',
+      'agent',
+      'installations',
+      installationId,
+      'node'
+    )
+
+    const identical = installCurrent('identical')
+    const identicalResult = commitVariant(
+      'identical',
+      identical.homeDirectory
+    )
+    expect(
+      lstatSync(identical.currentNode).ino
+    ).toBe(
+      lstatSync(
+        installedVariantNode(
+          identical.homeDirectory,
+          identicalResult.agent.installationId
+        )
+      ).ino
+    )
+    expectGlobalMetadataUnchanged(identical.globalMetadata)
+
+    const changed = installCurrent('changed')
+    const changedResult = prepareAndCommit({
+      operationRoot: join(
+        temporaryRoot,
+        'reuse-changed-variant-operation'
+      ),
+      archive: changedNodePath,
+      expectedSha256: changedNodeVariant.sha256,
+      homeDirectory: changed.homeDirectory
+    })
+    expect(
+      lstatSync(changed.currentNode).ino
+    ).not.toBe(
+      lstatSync(
+        installedVariantNode(
+          changed.homeDirectory,
+          changedResult.agent.installationId
+        )
+      ).ino
+    )
+    expectGlobalMetadataUnchanged(changed.globalMetadata)
+
+    const corrupt = installCurrent('corrupt')
+    writeFileSync(corrupt.currentNode, Buffer.from('corrupt Node'))
+    const corruptResult = commitVariant('corrupt', corrupt.homeDirectory)
+    expect(
+      lstatSync(corrupt.currentNode).ino
+    ).not.toBe(
+      lstatSync(
+        installedVariantNode(
+          corrupt.homeDirectory,
+          corruptResult.agent.installationId
+        )
+      ).ino
+    )
+    expectGlobalMetadataUnchanged(corrupt.globalMetadata)
+
+    const untrusted = installCurrent('untrusted')
+    const currentRoot = dirname(untrusted.currentNode)
+    const signaturePath = join(currentRoot, 'manifest.sig')
+    const signature = readFileSync(signaturePath)
+    signature[0] = signature[0] === 65 ? 66 : 65
+    writeFileSync(signaturePath, signature)
+    const untrustedResult = commitVariant('untrusted', untrusted.homeDirectory)
+    expect(
+      lstatSync(untrusted.currentNode).ino
+    ).not.toBe(
+      lstatSync(
+        installedVariantNode(
+          untrusted.homeDirectory,
+          untrustedResult.agent.installationId
+        )
+      ).ino
+    )
+    expectGlobalMetadataUnchanged(untrusted.globalMetadata)
+  })
+
+  it('fails the remote installer closed on traversal, duplicates, corruption, and hash mismatch', () => {
+    const run = (archive: string, expectedSha256?: string) =>
+      packageInstaller.preparePackage({
+        operationRoot: join(
+          temporaryRoot,
+          `rejected-${basename(archive)}`
+        ),
+        archive,
+        expectedSha256:
+          expectedSha256 ??
+          createHash('sha256').update(readFileSync(archive)).digest('hex'),
+        homeDirectory: join(temporaryRoot, 'rejected-home')
+      })
+
+    const traversal = join(temporaryRoot, 'installer-traversal.gbagent')
+    writeFileSync(
+      traversal,
+      renameStoredZipEntry(
+        readFileSync(packagePath),
+        'agent/node',
+        '../outside'
+      )
+    )
+    expect(() => run(traversal)).toThrow(/unsafe|unordered/u)
+
+    const duplicate = join(temporaryRoot, 'installer-duplicate.gbagent')
+    const names = Object.keys(
+      unzipSync(new Uint8Array(readFileSync(packagePath)))
+    )
+    const duplicatePair = names
+      .flatMap((left) =>
+        names.map((right) => [left, right] as const)
+      )
+      .find(
+        ([left, right]) =>
+          left !== right && Buffer.byteLength(left) === Buffer.byteLength(right)
+      )
+    expect(duplicatePair).toBeDefined()
+    writeFileSync(
+      duplicate,
+      renameStoredZipEntry(
+        readFileSync(packagePath),
+        duplicatePair![0],
+        duplicatePair![1]
+      )
+    )
+    expect(() => run(duplicate)).toThrow(/duplicate|unordered/u)
+
+    const corrupt = join(temporaryRoot, 'installer-corrupt.gbagent')
+    const corruptBytes = corruptStoredZipEntry(
+      readFileSync(packagePath),
+      'agent/lib/agent.cjs'
+    )
+    writeFileSync(corrupt, corruptBytes)
+    expect(() => run(corrupt)).toThrow(/checksum|digest|header/u)
+
+    expect(() =>
+      run(packagePath, '0'.repeat(64))
+    ).toThrow('SHA-256 does not match')
   })
 
   it('rejects traversal, undeclared payload, and untrusted outer signatures', async () => {
@@ -627,7 +1399,6 @@ describe('compound Agent packages', () => {
         })
       ])
     )
-
     const secondCatalog = join(secondRoot, 'agent-catalog.json')
     const secondSignature = join(secondRoot, 'agent-catalog.sig')
     agentCatalog.createCatalog({
@@ -760,21 +1531,6 @@ describe('compound Agent packages', () => {
       remoteRuntimeVersion:
         remoteRuntimeLock.runtimes.opencode.version
     })
-    const loadedAgent = await manager.loadAgentBundle('x64')
-    expect(loadedAgent).toMatchObject({
-      bundle: {
-        manifest: { agentVersion: agentLock.agentVersion }
-      }
-    })
-    loadedAgent.release?.()
-    const loadedRuntime = await manager.loadRuntimeBundle('x64')
-    expect(loadedRuntime).toMatchObject({
-      manifest: {
-        runtimeVersion:
-          remoteRuntimeLock.runtimes.opencode.version
-      }
-    })
-    loadedRuntime.release?.()
 
     const exported = join(temporaryRoot, 'offline-export.gbagent')
     writeFileSync(exported, 'previous')
@@ -1067,6 +1823,13 @@ function writeAgentBundle(
   ]) {
     chmodSync(join(directory, path), 0o755)
   }
+  signAgentBundleManifest(directory, architecture)
+}
+
+function signAgentBundleManifest(
+  directory: string,
+  architecture: 'x64' | 'arm64'
+): void {
   const manifest = agentBundle.createManifest(directory, {
     agentVersion: agentLock.agentVersion,
     nodeVersion: agentLock.node.version,
@@ -1382,4 +2145,143 @@ function mirrorPointer(): Buffer {
         `v${agentLock.agentVersion}/agent-catalog.sig`
     }, null, 2)}\n`
   )
+}
+
+function renameStoredZipEntry(
+  archive: Buffer,
+  oldName: string,
+  newName: string
+): Buffer {
+  const oldBytes = Buffer.from(oldName, 'utf8')
+  const newBytes = Buffer.from(newName, 'utf8')
+  if (oldBytes.length !== newBytes.length) {
+    throw new Error('ZIP fixture names must have equal byte lengths')
+  }
+  const output = Buffer.from(archive)
+  let replacements = 0
+  for (let offset = 0; offset <= output.length - 46; offset += 1) {
+    const signature = output.readUInt32LE(offset)
+    const nameOffset =
+      signature === 0x04034b50
+        ? offset + 30
+        : signature === 0x02014b50
+          ? offset + 46
+          : -1
+    const lengthOffset =
+      signature === 0x04034b50
+        ? offset + 26
+        : signature === 0x02014b50
+          ? offset + 28
+          : -1
+    if (
+      nameOffset >= 0 &&
+      output.readUInt16LE(lengthOffset) === oldBytes.length &&
+      output.subarray(nameOffset, nameOffset + oldBytes.length)
+        .equals(oldBytes)
+    ) {
+      newBytes.copy(output, nameOffset)
+      replacements += 1
+    }
+  }
+  if (replacements !== 2) {
+    throw new Error(
+      `Expected local and central ZIP names, received ${replacements}`
+    )
+  }
+  return output
+}
+
+function corruptStoredZipEntry(
+  archive: Buffer,
+  name: string
+): Buffer {
+  const output = Buffer.from(archive)
+  const nameBytes = Buffer.from(name, 'utf8')
+  for (let offset = 0; offset <= output.length - 30; offset += 1) {
+    if (output.readUInt32LE(offset) !== 0x04034b50) {
+      continue
+    }
+    const nameLength = output.readUInt16LE(offset + 26)
+    const extraLength = output.readUInt16LE(offset + 28)
+    if (
+      nameLength === nameBytes.length &&
+      output.subarray(offset + 30, offset + 30 + nameLength)
+        .equals(nameBytes)
+    ) {
+      const dataOffset = offset + 30 + nameLength + extraLength
+      output[dataOffset] = (output[dataOffset] ?? 0) ^ 1
+      return output
+    }
+  }
+  throw new Error(`ZIP fixture entry was not found: ${name}`)
+}
+
+function seedGlobalManagedMetadata(
+  homeDirectory: string,
+  digestCharacter: string
+): Map<string, Buffer> {
+  const managedRoot = join(homeDirectory, '.goodbuddy')
+  const files = new Map<string, Buffer>([
+    [
+      join(managedRoot, 'agent', 'release-keys.json'),
+      Buffer.from(`${JSON.stringify(registry, null, 4)}\r\n`)
+    ],
+    [
+      join(managedRoot, 'agent', 'registry.json'),
+      Buffer.from(
+        `${JSON.stringify({
+          formatVersion: 1,
+          current: {
+            installationId:
+              `agent-${digestCharacter.repeat(64)}`,
+            agentVersion: '0.10.0',
+            manifestSha256: digestCharacter.repeat(64),
+            arch: 'x64'
+          }
+        }, null, 4)}\r\n`
+      )
+    ],
+    [
+      join(managedRoot, 'runtimes', 'release-keys.json'),
+      Buffer.from(`${JSON.stringify(registry, null, 3)}\r\n`)
+    ],
+    [
+      join(
+        managedRoot,
+        'runtimes',
+        'remote-runtime-lock.json'
+      ),
+      Buffer.from(`${JSON.stringify(remoteRuntimeLock, null, 3)}\r\n`)
+    ],
+    [
+      join(managedRoot, 'runtimes', 'registry.json'),
+      Buffer.from(
+        `${JSON.stringify({
+          formatVersion: 1,
+          current: [{
+            runtimeId: 'opencode',
+            runtimeVersion: '1.0.0',
+            architecture: 'x64',
+            bundleDigest:
+              `sha256:${digestCharacter.repeat(64)}`,
+            manifestDigest: `sha256:${'1'.repeat(64)}`,
+            acpCapabilitiesDigest: `sha256:${'2'.repeat(64)}`
+          }]
+        }, null, 4)}\r\n`
+      )
+    ]
+  ])
+  for (const [path, bytes] of files) {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    writeFileSync(path, bytes, { mode: 0o600 })
+  }
+  return files
+}
+
+function expectGlobalMetadataUnchanged(
+  files: ReadonlyMap<string, Buffer>
+): void {
+  for (const [path, bytes] of files) {
+    expect(readFileSync(path)).toEqual(bytes)
+  }
 }

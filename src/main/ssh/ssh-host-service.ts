@@ -73,14 +73,25 @@ export class SshHostService {
     return this.store.getSnapshot()
   }
 
-  async remove(hostId: string): Promise<void> {
-    await this.store.remove(hostId)
+  remove(hostId: string): Promise<void>
+  remove<T>(
+    hostId: string,
+    commitLocalDeletion: () => T
+  ): Promise<T>
+  async remove<T>(
+    hostId: string,
+    commitLocalDeletion?: () => T
+  ): Promise<T | void> {
+    const result = commitLocalDeletion
+      ? await this.store.remove(hostId, commitLocalDeletion)
+      : await this.store.remove(hostId)
     for (const [candidateId, pending] of this.pendingHostKeys) {
       if (pending.hostId === hostId) {
         this.pendingHostKeys.delete(candidateId)
       }
     }
     this.lifecycleHooks.onHostRemoved?.(hostId)
+    return result
   }
 
   async inspectDraftHostKey(

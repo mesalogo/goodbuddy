@@ -155,11 +155,7 @@ class MemoryAcpJournal implements RuntimeAcpJournal {
 }
 
 class FakeProcess implements RuntimeAcpProcessOwner {
-  readonly identity: RuntimeAcpProcessIdentity = {
-    launchId: 'launch-1',
-    processId: 'process-1',
-    supervisorIdentityDigest: digest('9')
-  }
+  readonly identity: RuntimeAcpProcessIdentity
   readonly writes: Uint8Array[] = []
   readonly stops: string[] = []
   readonly prompts: Array<{
@@ -167,14 +163,23 @@ class FakeProcess implements RuntimeAcpProcessOwner {
     maximumInputBytes: number
   }> = []
   completions = 0
-  reconciliation: RuntimeAcpProcessReconciliation = {
-    identity: this.identity,
-    state: 'running',
-    processTree: 'running'
-  }
+  reconciliation: RuntimeAcpProcessReconciliation
   #listener?: (
     output: RuntimeAcpProcessOutput
   ) => void | Promise<void>
+
+  constructor(identity = '1') {
+    this.identity = {
+      launchId: `launch-${identity}`,
+      processId: `process-${identity}`,
+      supervisorIdentityDigest: digest(identity)
+    }
+    this.reconciliation = {
+      identity: this.identity,
+      state: 'running',
+      processTree: 'running'
+    }
+  }
 
   beginPrompt(input: {
     deadlineAt: string
@@ -238,6 +243,8 @@ function harness(input: {
   now?: number
   maximumOutputBytes?: number
   bridgeCloseError?: boolean
+  uniqueProcesses?: boolean
+  outputGate?: Promise<void>
 } = {}) {
   const workMode = input.workMode ?? 'ask'
   let now = input.now ?? 1_000
@@ -275,10 +282,13 @@ function harness(input: {
         workMode: launch.workMode,
         scratch: launch.scratch
       })
-      return process
+      return input.uniqueProcesses && launches.length > 1
+        ? new FakeProcess(String(launches.length))
+        : process
     }),
     now: () => now,
     outputSink: vi.fn(async (frame) => {
+      await input.outputGate
       outputFrames.push(Buffer.from(frame.payload).toString())
     }),
     blobSink,
@@ -644,6 +654,113 @@ describe('RuntimeAcpBackend', () => {
     ).rejects.toMatchObject({ code: 'stale-controller' })
   })
 
+  it('reopens a detached idle binding after a proven same-controller takeover', async () => {
+    const fixture = harness()
+    await open(fixture)
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      fixture.preparation()
+    )
+    await invoke(fixture, 'runtime/completePrompt', {
+      bindingId: 'binding-1',
+      operationId: 'request-1',
+      requestId: 'request-1'
+    })
+    fixture.context.abort.abort()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    const replacement = protocolContext({
+      generation: 2,
+      connectionId: 'connection-2'
+    })
+    replacement.controllerTakeoverProven = true
+    await expect(
+      fixture.backend.methods['runtime/openAcpChannel']!(
+        fixture.openRequest,
+        replacement
+      )
+    ).resolves.toMatchObject({
+      bindingId: 'binding-1',
+      channelEpoch: '1001'
+    })
+    expect(fixture.process.stops).toEqual(['binding-closed'])
+    expect(fixture.journal.retired).toContainEqual({
+      controllerId: 'controller-1',
+      bindingId: 'binding-1',
+      channelEpoch: '1000'
+    })
+  })
+
+  it('drains the detached old epoch before replacing an idle binding', async () => {
+    let releaseOutput!: () => void
+    const outputGate = new Promise<void>((resolve) => {
+      releaseOutput = resolve
+    })
+    const fixture = harness({ outputGate })
+    await open(fixture)
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      fixture.preparation()
+    )
+    const pendingOutput = fixture.process.emit('stdout', 'pending')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await invoke(fixture, 'runtime/completePrompt', {
+      bindingId: 'binding-1',
+      operationId: 'request-1',
+      requestId: 'request-1'
+    })
+    fixture.context.abort.abort()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    const replacement = protocolContext({
+      generation: 2,
+      connectionId: 'connection-2'
+    })
+    replacement.controllerTakeoverProven = true
+    let replaced = false
+    const reopen = fixture.backend.methods[
+      'runtime/openAcpChannel'
+    ]!(fixture.openRequest, replacement).then((result) => {
+      replaced = true
+      return result
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(replaced).toBe(false)
+
+    releaseOutput()
+    await pendingOutput
+    await expect(reopen).resolves.toMatchObject({
+      bindingId: 'binding-1',
+      channelEpoch: '1001'
+    })
+    expect(fixture.journal.frames).toContainEqual(
+      expect.objectContaining({
+        bindingId: 'binding-1',
+        channelEpoch: '1000',
+        sequence: '1'
+      })
+    )
+  })
+
+  it('does not adopt an idle binding without exact takeover proof', async () => {
+    const fixture = harness()
+    await open(fixture)
+    fixture.context.abort.abort()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    await expect(
+      fixture.backend.methods['runtime/openAcpChannel']!(
+        fixture.openRequest,
+        protocolContext({
+          generation: 2,
+          connectionId: 'connection-2'
+        })
+      )
+    ).rejects.toMatchObject({ code: 'stale-controller' })
+  })
+
   it('reopens a definitively closed stable binding with a fresh epoch and generation', async () => {
     const fixture = harness()
     await open(fixture)
@@ -799,6 +916,13 @@ describe('RuntimeAcpBackend', () => {
       generation: 2,
       connectionId: 'connection-2'
     })
+    resumedContext.controllerTakeoverProven = true
+    await expect(
+      fixture.backend.methods['runtime/openAcpChannel']!(
+        fixture.openRequest,
+        resumedContext
+      )
+    ).rejects.toMatchObject({ code: 'stale-controller' })
     await expect(
       fixture.backend.methods['runtime/resumeAcpChannel']!(
         {
@@ -1018,6 +1142,43 @@ describe('RuntimeAcpBackend', () => {
       )
     ).rejects.toMatchObject({ code: 'identity' })
     expect(fixture.process.stops).toEqual(['identity-conflict'])
+  })
+
+  it('runs independent conversations for two workspaces on one controller', async () => {
+    const fixture = harness({ uniqueProcesses: true })
+    await open(fixture)
+    const secondOpen = {
+      ...fixture.openRequest,
+      bindingId: 'binding-2',
+      workspaceIdentity: 'workspace-identity-2'
+    }
+    await invoke(
+      fixture,
+      'runtime/openAcpChannel',
+      secondOpen
+    )
+
+    await Promise.all([
+      invoke(
+        fixture,
+        'runtime/preparePrompt',
+        fixture.preparation()
+      ),
+      invoke(
+        fixture,
+        'runtime/preparePrompt',
+        fixture.preparation({
+          bindingId: 'binding-2',
+          operationId: 'request-2',
+          requestId: 'request-2',
+          channelEpoch: '1001',
+          workspaceIdentity: 'workspace-identity-2'
+        })
+      )
+    ])
+
+    expect(fixture.launches).toHaveLength(2)
+    expect(fixture.process.stops).toEqual([])
   })
 })
 

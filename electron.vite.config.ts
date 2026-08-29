@@ -136,6 +136,9 @@ function rendererBundleModuleManifestPlugin(): Plugin {
 export function stableMainEntryFileName(chunk: {
   readonly name: string
 }): string {
+  if (chunk.name === 'remote-package-installer') {
+    return 'remote-package-installer.mjs'
+  }
   return [
     'deepseek-harness-host-bootstrap',
     'embedding-inference-bootstrap'
@@ -191,6 +194,9 @@ export default defineConfig({
           ),
           'embedding-inference-bootstrap': resolve(
             'src/main/embedding-inference-bootstrap.ts'
+          ),
+          'remote-package-installer': resolve(
+            'src/main/remote-agent/control-plane-package-installer-cli.ts'
           )
         },
         external: [

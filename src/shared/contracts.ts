@@ -173,7 +173,9 @@ import type {
   SshHostDraftInspectionRequest,
   SshHostKeyInspection,
   RemoteEnvironmentUpdateProgress,
+  RemoteEnvironmentUpdateRequest,
   SshHostRemoteEnvironment,
+  SshHostRemovalResult,
   SshHostsSnapshot,
   SshDirectoryBrowseResult,
   SshHostValidationRequest,
@@ -1580,7 +1582,7 @@ export type DesktopApi = {
     onAgentPackageProgress: (
       listener: (progress: AgentPackageDownloadProgress) => void
     ) => () => void
-    remove: (hostId: string) => Promise<void>
+    remove: (hostId: string) => Promise<SshHostRemovalResult>
     inspectDraftHostKey: (
       input: SshHostDraftInspectionRequest
     ) => Promise<SshHostKeyInspection>
@@ -1591,7 +1593,9 @@ export type DesktopApi = {
     getRemoteEnvironment: (
       hostId: string
     ) => Promise<SshHostRemoteEnvironment>
-    updateRemoteEnvironment: (hostId: string) => Promise<void>
+    updateRemoteEnvironment: (
+      input: RemoteEnvironmentUpdateRequest
+    ) => Promise<void>
     cancelRemoteEnvironmentUpdate: (hostId: string) => Promise<void>
     onRemoteEnvironmentUpdateProgress: (
       listener: (progress: RemoteEnvironmentUpdateProgress) => void
@@ -1735,7 +1739,6 @@ export type DesktopApi = {
     setArchived: (projectId: string, archived: boolean) => Promise<void>
     delete: (projectId: string, confirmation: string) => Promise<void>
     remote: {
-      activate: (projectId: string) => Promise<AssistantProject>
       save: (
         input: RemoteProjectSaveRequest
       ) => Promise<AssistantProject>

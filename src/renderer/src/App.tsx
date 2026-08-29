@@ -89,9 +89,6 @@ import {
   agentRuntimeSelectionSchema,
   type AgentRuntimeSelection
 } from '../../shared/runtime-selection-contracts'
-import type {
-  RemoteProjectSavePhase
-} from '../../shared/remote-project-candidate-contracts'
 import {
   getDefaultRuntimeSelection,
   getRuntimeSelectionForProvider
@@ -1994,25 +1991,6 @@ function App(): React.JSX.Element {
   const [selectedExpertId, setSelectedExpertId] = useState('')
   const [activeProjectId, setActiveProjectId] = useState('')
   const activeProjectIdRef = useRef(activeProjectId)
-  const remoteProjectActivationRequestRef = useRef(0)
-  const remoteProjectActivationControlRef = useRef<{
-    requestId: number
-    projectId: string
-    cancelRequested: boolean
-  } | undefined>(undefined)
-  const [remoteProjectActivation, setRemoteProjectActivation] =
-    useState<{
-      projectId: string
-      phase: RemoteProjectSavePhase
-      cancelling: boolean
-    }>()
-  const remoteProjectsRequiringActivationRef = useRef(
-    new Set<string>()
-  )
-  const [
-    remoteProjectsRequiringActivation,
-    setRemoteProjectsRequiringActivation
-  ] = useState<Set<string>>(() => new Set())
   const workspaceChangesRequestRef = useRef(0)
   const runtimeStatusRequestRef = useRef(0)
   const runtimeSetupPromptedRef = useRef(false)
@@ -3020,6 +2998,7 @@ function App(): React.JSX.Element {
     if (
       !activeRuntimeSelection ||
       activeConversation?.remote ||
+      activeProjectUsesManagedSsh ||
       (activeRuntimeSelection.provider !== 'opencode' &&
         activeRuntimeSelection.provider !== 'continue')
     ) {
@@ -3053,6 +3032,7 @@ function App(): React.JSX.Element {
       })
   }, [
     activeConversation?.remote,
+    activeProjectUsesManagedSsh,
     activeProjectId,
     activeRuntimeSelection,
     activeRuntimeSelectionKey
@@ -3396,8 +3376,6 @@ function App(): React.JSX.Element {
     },
     [notify, projects, runtimeSettings, setActiveId, setView]
   )
-  const activeRemoteProjectRequiresActivation =
-    remoteProjectsRequiringActivation.has(activeProjectId)
   const activeProjectDisplayName = activeProject
     ? getProjectDisplayText(activeProject, tWorkspace).name
     : undefined
@@ -4880,191 +4858,6 @@ function App(): React.JSX.Element {
     []
   )
 
-  const activateRemoteProject = useCallback(
-    async (
-      project: AssistantProject
-    ): Promise<{
-      project: AssistantProject
-      current: boolean
-    }> => {
-      if (
-        !remoteProjectsEnabled ||
-        project.executionSpace.kind !== 'ssh'
-      ) {
-        return { project, current: false }
-      }
-      const requestId = remoteProjectActivationRequestRef.current + 1
-      remoteProjectActivationRequestRef.current = requestId
-      const control = {
-        requestId,
-        projectId: project.id,
-        cancelRequested: false
-      }
-      remoteProjectActivationControlRef.current = control
-      setRemoteProjectActivation({
-        projectId: project.id,
-        phase: 'host',
-        cancelling: false
-      })
-      const removeProgress =
-        window.goodbuddy.projects.remote.onSaveProgress(
-          (progress) => {
-            if (
-              remoteProjectActivationControlRef.current !==
-              control
-            ) {
-              return
-            }
-            setRemoteProjectActivation({
-              projectId: project.id,
-              phase: progress.phase,
-              cancelling: control.cancelRequested
-            })
-          }
-        )
-      try {
-        const activated =
-          await window.goodbuddy.projects.remote.activate(project.id)
-        setProjects((current) =>
-          current.map((candidate) =>
-            candidate.id === activated.id ? activated : candidate
-          )
-        )
-        const current =
-          remoteProjectActivationRequestRef.current === requestId &&
-          !control.cancelRequested
-        if (current) {
-          notify({
-            tone: 'success',
-            message: tRef.current('notices.remoteProjectActivated'),
-            dedupeKey: `remote-project-activated:${project.id}`
-          })
-        } else if (
-          remoteProjectActivationRequestRef.current === requestId &&
-          control.cancelRequested
-        ) {
-          notify({
-            tone: 'info',
-            message: tRef.current(
-              'notices.remoteProjectActivationCancelled'
-            ),
-            dedupeKey: `remote-project-cancelled:${project.id}`
-          })
-        }
-        return { project: activated, current }
-      } catch (reason) {
-        if (
-          remoteProjectActivationRequestRef.current !== requestId
-        ) {
-          return { project, current: false }
-        }
-        if (control.cancelRequested) {
-          notify({
-            tone: 'info',
-            message: tRef.current(
-              'notices.remoteProjectActivationCancelled'
-            ),
-            dedupeKey: `remote-project-cancelled:${project.id}`
-          })
-          return { project, current: false }
-        }
-        const message = displayErrorMessage(
-          reason,
-          tRef.current('notices.remoteProjectActivationUnknownError')
-        )
-        throw new Error(
-          tRef.current('notices.remoteProjectActivationFailed', {
-            message
-          }),
-          { cause: reason }
-        )
-      } finally {
-        removeProgress()
-        if (
-          remoteProjectActivationControlRef.current === control
-        ) {
-          remoteProjectActivationControlRef.current = undefined
-          setRemoteProjectActivation(undefined)
-        }
-      }
-    },
-    [notify, remoteProjectsEnabled]
-  )
-
-  const cancelRemoteProjectActivation = useCallback((): void => {
-    const control = remoteProjectActivationControlRef.current
-    if (!control || control.cancelRequested) {
-      return
-    }
-    control.cancelRequested = true
-    setRemoteProjectActivation((current) =>
-      current && current.projectId === control.projectId
-        ? { ...current, cancelling: true }
-        : current
-    )
-    void window.goodbuddy.projects.remote.cancelCurrent().catch(
-      (reason: unknown) => {
-        if (
-          remoteProjectActivationControlRef.current !== control
-        ) {
-          return
-        }
-        control.cancelRequested = false
-        setRemoteProjectActivation((current) =>
-          current && current.projectId === control.projectId
-            ? { ...current, cancelling: false }
-            : current
-        )
-        notify({
-          tone: 'error',
-          message: tRef.current(
-            'notices.remoteProjectActivationCancelFailed',
-            {
-              message: displayErrorMessage(
-                reason,
-                tRef.current(
-                  'notices.remoteProjectActivationCancelUnknownError'
-                )
-              )
-            }
-          )
-        })
-      }
-    )
-  }, [notify])
-
-  const markRemoteProjectsRequiringActivation = useCallback(
-    (projectIds: string[]): void => {
-      const next = new Set(remoteProjectsRequiringActivationRef.current)
-      let changed = false
-      for (const projectId of projectIds) {
-        if (!next.has(projectId)) {
-          next.add(projectId)
-          changed = true
-        }
-      }
-      if (!changed) {
-        return
-      }
-      remoteProjectsRequiringActivationRef.current = next
-      setRemoteProjectsRequiringActivation(next)
-    },
-    []
-  )
-
-  const clearRemoteProjectActivationRequirement = useCallback(
-    (projectId: string): void => {
-      if (!remoteProjectsRequiringActivationRef.current.has(projectId)) {
-        return
-      }
-      const next = new Set(remoteProjectsRequiringActivationRef.current)
-      next.delete(projectId)
-      remoteProjectsRequiringActivationRef.current = next
-      setRemoteProjectsRequiringActivation(next)
-    },
-    []
-  )
-
   const resumeProjectConversationQueues = useCallback(
     (projectId: string): void => {
       const conversationIds = conversationsRef.current
@@ -5094,57 +4887,6 @@ function App(): React.JSX.Element {
     [notify]
   )
 
-  const handleSshHostUpdated = useCallback(
-    (hostId: string): void => {
-      if (!remoteProjectsEnabled) {
-        return
-      }
-      const affectedProjects = projects.filter(
-        (candidate) =>
-          candidate.executionSpace.kind === 'ssh' &&
-          candidate.executionSpace.hostId === hostId
-      )
-      markRemoteProjectsRequiringActivation(
-        affectedProjects.map((project) => project.id)
-      )
-      const project = affectedProjects.find(
-        (candidate) => candidate.id === activeProjectIdRef.current
-      )
-      if (!project) {
-        return
-      }
-      void activateRemoteProject(project).then(
-        (activated) => {
-          if (!activated.current) {
-            return
-          }
-          clearRemoteProjectActivationRequirement(activated.project.id)
-          resumeProjectConversationQueues(activated.project.id)
-        },
-        (reason: unknown) => {
-          notify({
-            tone: 'error',
-            message:
-              reason instanceof Error
-                ? reason.message
-                : tRef.current(
-                    'notices.remoteProjectActivationUnknownError'
-                  )
-          })
-        }
-      )
-    },
-    [
-      activateRemoteProject,
-      clearRemoteProjectActivationRequirement,
-      markRemoteProjectsRequiringActivation,
-      notify,
-      projects,
-      remoteProjectsEnabled,
-      resumeProjectConversationQueues
-    ]
-  )
-
   useEffect(() => {
     let active = true
     const initialization = Promise.all([
@@ -5160,7 +4902,6 @@ function App(): React.JSX.Element {
         if (!project) {
           throw new Error('没有可用的本地项目')
         }
-        remoteProjectActivationRequestRef.current += 1
         setActiveProjectId(project.id)
         setWorkMode(
           normalizeInteractiveWorkMode(project.defaultWorkMode)
@@ -5814,12 +5555,15 @@ function App(): React.JSX.Element {
       )
   }, [startNewConversation])
 
-  const commitProjectSelection = (selected: AssistantProject): void => {
+  const commitProjectSelection = (
+    selected: AssistantProject,
+    candidateConversations = conversationsRef.current
+  ): void => {
     setActiveProjectId(selected.id)
     setWorkMode(
       normalizeInteractiveWorkMode(selected.defaultWorkMode)
     )
-    const conversation = conversationsRef.current.find(
+    const conversation = candidateConversations.find(
       (candidate) =>
         candidate.projectId === selected.id &&
         (
@@ -5873,39 +5617,20 @@ function App(): React.JSX.Element {
     if (!project) {
       return
     }
-    if (project.executionSpace.kind !== 'ssh') {
-      remoteProjectActivationRequestRef.current += 1
-      commitProjectSelection(project)
+    if (
+      project.executionSpace.kind === 'ssh' &&
+      !remoteProjectsEnabled
+    ) {
       return
     }
-    if (!remoteProjectsEnabled) {
-      return
-    }
-    void activateRemoteProject(project).then(
-      (activated) => {
-        if (activated.current) {
-          clearRemoteProjectActivationRequirement(activated.project.id)
-          commitProjectSelection(activated.project)
-          resumeProjectConversationQueues(activated.project.id)
-        }
-      },
-      (reason: unknown) => {
-        notify({
-          tone: 'error',
-          message:
-            reason instanceof Error
-              ? reason.message
-              : t('notices.remoteProjectActivationUnknownError')
-        })
-      }
-    )
+    commitProjectSelection(project)
+    resumeProjectConversationQueues(project.id)
   }
 
   const createProject = async (
     input: ProjectCreateInput
   ): Promise<AssistantProject> => {
     const project = await window.goodbuddy.projects.create(input)
-    remoteProjectActivationRequestRef.current += 1
     setProjects((current) => [project, ...current])
     setActiveProjectId(project.id)
     setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode))
@@ -5959,9 +5684,7 @@ function App(): React.JSX.Element {
           )
         : [project, ...current]
     )
-    remoteProjectActivationRequestRef.current += 1
     commitProjectSelection(project)
-    clearRemoteProjectActivationRequirement(project.id)
     resumeProjectConversationQueues(project.id)
   }
 
@@ -5971,10 +5694,6 @@ function App(): React.JSX.Element {
     setRemoteProjectsEnabled(enabled)
     if (enabled) {
       return
-    }
-    remoteProjectActivationRequestRef.current += 1
-    if (remoteProjectActivationControlRef.current) {
-      cancelRemoteProjectActivation()
     }
     if (activeProject?.executionSpace.kind !== 'ssh') {
       return
@@ -5987,48 +5706,85 @@ function App(): React.JSX.Element {
 
   const archiveProject = async (projectId: string): Promise<void> => {
     await window.goodbuddy.projects.setArchived(projectId, true)
-    clearRemoteProjectActivationRequirement(projectId)
     const remaining = projects.filter((project) => project.id !== projectId)
     setProjects(remaining)
-    const next = remoteProjectsEnabled
-      ? remaining[0]
-      : remaining.find(isOrdinaryLocalProject)
-    if (next) {
-      selectProject(next.id)
+    if (projectId === activeProjectIdRef.current) {
+      const next =
+        remaining.find(isOrdinaryLocalProject) ??
+        (remoteProjectsEnabled ? remaining[0] : undefined)
+      if (next) {
+        selectProject(next.id)
+      }
     }
   }
 
-  const deleteProject = async (
-    projectId: string,
-    confirmation: string
-  ): Promise<void> => {
-    await window.goodbuddy.projects.delete(projectId, confirmation)
-    clearRemoteProjectActivationRequirement(projectId)
-    const remainingProjects = projects.filter(
-      (project) => project.id !== projectId
+  const removeProjectsFromUi = (
+    projectIds: readonly string[]
+  ): void => {
+    if (projectIds.length === 0) {
+      return
+    }
+    const deletedProjectIds = new Set(projectIds)
+    const referencesDeletedProject = (
+      projectId: string | undefined
+    ): boolean =>
+      projectId !== undefined && deletedProjectIds.has(projectId)
+    const remainingProjects = projectsRef.current.filter(
+      (project) => !deletedProjectIds.has(project.id)
     )
-    const remainingConversations = conversations.filter(
-      (conversation) => conversation.projectId !== projectId
+    const currentConversations = conversationsRef.current
+    const deletedConversationIds = new Set(
+      currentConversations
+        .filter((conversation) =>
+          referencesDeletedProject(conversation.projectId)
+        )
+        .map((conversation) => conversation.id)
     )
-    setProjects(remainingProjects)
-    setConversations(remainingConversations)
+    const remainingConversations = currentConversations.filter(
+      (conversation) =>
+        !referencesDeletedProject(conversation.projectId)
+    )
+    setProjects((current) =>
+      current.filter(
+        (project) => !deletedProjectIds.has(project.id)
+      )
+    )
+    setConversations((current) =>
+      current.filter(
+        (conversation) =>
+          !referencesDeletedProject(conversation.projectId)
+      )
+    )
     setAssistantTasks((current) =>
-      current.filter((task) => task.projectId !== projectId)
+      current.filter(
+        (task) => !referencesDeletedProject(task.projectId)
+      )
     )
     setAssistantArtifacts((current) =>
-      current.filter((artifact) => artifact.projectId !== projectId)
+      current.filter(
+        (artifact) =>
+          !referencesDeletedProject(artifact.projectId)
+      )
     )
     setAssistantMemories((current) =>
       current.filter(
         (memory) =>
           !(
             memory.scope === 'project' &&
-            memory.scopeId === projectId
+            referencesDeletedProject(memory.scopeId)
+          ) &&
+          !(
+            memory.scope === 'conversation' &&
+            memory.scopeId !== undefined &&
+            deletedConversationIds.has(memory.scopeId)
           )
       )
     )
     setAssistantSchedules((current) =>
-      current.filter((schedule) => schedule.projectId !== projectId)
+      current.filter(
+        (schedule) =>
+          !referencesDeletedProject(schedule.projectId)
+      )
     )
     setAssistantHeartbeats((current) =>
       current.flatMap((heartbeat) => {
@@ -6036,44 +5792,32 @@ function App(): React.JSX.Element {
           return heartbeat
         }
         const projectIds = heartbeat.scope.projectIds.filter(
-          (id) => id !== projectId
+          (id) => !deletedProjectIds.has(id)
         )
         return projectIds.length > 0
           ? [{ ...heartbeat, scope: { kind: 'projects', projectIds } }]
           : []
       })
     )
-    const next = remoteProjectsEnabled
-      ? remainingProjects[0]
-      : remainingProjects.find(isOrdinaryLocalProject)
-    if (next) {
-      setActiveProjectId(next.id)
-      setWorkMode(
-        normalizeInteractiveWorkMode(next.defaultWorkMode)
-      )
-      const nextConversation = remainingConversations.find(
-        (conversation) =>
-          conversation.projectId === next.id &&
-          (next.kind !== 'channel' ||
-            conversation.remote !== undefined)
-      )
-      if (nextConversation) {
-        setActiveId(nextConversation.id)
-      } else if (next.kind === 'channel') {
-        setActiveId('')
-      } else {
-        const created = createConversation(
-          next.id,
-          runtimeSettings
-            ? getProjectDefaultRuntimeSelection(next, runtimeSettings)
-            : undefined,
-          t('conversation.greeting')
-        )
-        setConversations((current) => [created, ...current])
-        setActiveId(created.id)
-      }
+    if (!deletedProjectIds.has(activeProjectIdRef.current)) {
+      return
     }
+    const next = remainingProjects.find(isOrdinaryLocalProject)
+    if (next) {
+      commitProjectSelection(next, remainingConversations)
+      return
+    }
+    setActiveProjectId('')
+    setActiveId('')
     setView('chat')
+  }
+
+  const deleteProject = async (
+    projectId: string,
+    confirmation: string
+  ): Promise<void> => {
+    await window.goodbuddy.projects.delete(projectId, confirmation)
+    removeProjectsFromUi([projectId])
   }
 
   const newConversation = (): boolean => {
@@ -6588,39 +6332,6 @@ function App(): React.JSX.Element {
       : commandArguments)
     if (!prompt || !conversationSnapshot) {
       await releaseQueuedItem()
-      return
-    }
-    const dispatchProjectId =
-      queuedInput?.projectId ?? conversationSnapshot.projectId
-    const dispatchProjectReactivating =
-      Boolean(
-        dispatchProjectId &&
-        remoteProjectActivationControlRef.current?.projectId ===
-          dispatchProjectId
-      )
-    const dispatchProjectRequiresActivation =
-      Boolean(
-        dispatchProjectId &&
-        remoteProjectsRequiringActivationRef.current.has(
-          dispatchProjectId
-        )
-      )
-    if (
-      dispatchProjectReactivating ||
-      dispatchProjectRequiresActivation
-    ) {
-      if (queuedInput) {
-        await releaseQueuedItem()
-      } else {
-        notify({
-          tone: 'info',
-          message: t(
-            dispatchProjectRequiresActivation
-              ? 'notices.remoteProjectReconnectRequired'
-              : 'notices.remoteProjectReactivating'
-          )
-        })
-      }
       return
     }
     if (!queuedInput && selectingContextFilesRef.current) {
@@ -7930,7 +7641,6 @@ function App(): React.JSX.Element {
 
         <ProjectSwitcher
           activeProjectId={activeProjectId}
-          onCancelRemoteActivation={cancelRemoteProjectActivation}
           runtimeSettings={runtimeSettings}
           onArchive={archiveProject}
           onCreate={createProject}
@@ -7942,7 +7652,6 @@ function App(): React.JSX.Element {
           }
           onUpdate={updateProject}
           projects={projects}
-          remoteActivation={remoteProjectActivation}
           remoteProjectsEnabled={remoteProjectsEnabled}
         />
 
@@ -9482,20 +9191,15 @@ function App(): React.JSX.Element {
                         )
                       )) ||
                     selectingContextFiles ||
-                    remoteProjectActivation?.projectId ===
-                      activeProjectId ||
-                    activeRemoteProjectRequiresActivation ||
                     !runtime?.available ||
                     runtimeSwitching ||
                     runtimeStatusKey !== activeRuntimeSelectionKey
                   }
                   onClick={() => void submit()}
                   title={
-                    activeRemoteProjectRequiresActivation
-                      ? t('notices.remoteProjectReconnectRequired')
-                      : conversationExecutionRunning
-                        ? t('composer.queueMessageTitle')
-                        : t('composer.sendTitle')
+                    conversationExecutionRunning
+                      ? t('composer.queueMessageTitle')
+                      : t('composer.sendTitle')
                   }
                 >
                   <Send aria-hidden="true" size={17} />
@@ -10195,7 +9899,7 @@ function App(): React.JSX.Element {
             }
             onNotify={notify}
             onLeaveRequestReady={registerSettingsLeaveRequester}
-            onSshHostUpdated={handleSshHostUpdated}
+            onProjectsDeleted={removeProjectsFromUi}
             onSaved={(settings) => {
               setRuntimeSettings(settings)
             }}

@@ -8,7 +8,6 @@ import {
   normalizeInteractiveWorkMode,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
-  projectRuntimeValidationSchema,
   scheduleCreateSchema
 } from '../../shared/assistant-contracts'
 import type {
@@ -36,12 +35,13 @@ import type {
   ModelUsageCallInput,
   ProjectChannel,
   ProjectCreateInput,
-  ProjectRuntimeValidation,
   ScheduleCreateInput,
-  SshExecutionValidation,
   TokenUsageRecord,
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
+import type {
+  SshHostProjectReference
+} from '../../shared/ssh-host-contracts'
 import {
   computerControlErrorCodeSchema,
   computerControlRiskSchema,
@@ -82,9 +82,7 @@ import {
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 30
-
-const LEGACY_UNUSED_APPROVAL_BRIDGE_VERSION = 'unused'
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 31
 
 type ProjectRow = {
   id: string
@@ -103,23 +101,6 @@ type ProjectRow = {
   execution_space_kind: string | null
   execution_space_root_path: string | null
   execution_space_ssh_host_id: string | null
-  execution_space_host_revision: number | null
-  execution_space_host_key_generation: number | null
-  execution_space_remote_username: string | null
-  execution_space_workspace_identity: string | null
-  execution_space_agent_installation_id_at_validation: string | null
-  execution_space_agent_binary_digest_at_validation: string | null
-  execution_space_agent_version_at_validation: string | null
-  execution_space_agent_architecture_at_validation: string | null
-  execution_space_agent_protocol_major: number | null
-  execution_space_validated_at: string | null
-  runtime_validation_project_id: string | null
-  runtime_validation_runtime_selection_key: string | null
-  runtime_validation_runtime_bundle_digest: string | null
-  runtime_validation_runtime_adapter_digest: string | null
-  runtime_validation_agent_installation_id_at_validation: string | null
-  runtime_validation_validated_at: string | null
-  runtime_validation_work_mode: string | null
 }
 
 const projectSelect = `
@@ -130,46 +111,10 @@ const projectSelect = `
          project_execution_spaces.root_path
            AS execution_space_root_path,
          project_execution_spaces.ssh_host_id
-           AS execution_space_ssh_host_id,
-         project_execution_spaces.host_revision
-           AS execution_space_host_revision,
-         project_execution_spaces.host_key_generation
-           AS execution_space_host_key_generation,
-         project_execution_spaces.remote_username
-           AS execution_space_remote_username,
-         project_execution_spaces.workspace_identity
-           AS execution_space_workspace_identity,
-         project_execution_spaces.agent_installation_id_at_validation
-           AS execution_space_agent_installation_id_at_validation,
-         project_execution_spaces.agent_binary_digest_at_validation
-           AS execution_space_agent_binary_digest_at_validation,
-         project_execution_spaces.agent_version_at_validation
-           AS execution_space_agent_version_at_validation,
-         project_execution_spaces.agent_architecture_at_validation
-           AS execution_space_agent_architecture_at_validation,
-         project_execution_spaces.agent_protocol_major
-           AS execution_space_agent_protocol_major,
-         project_execution_spaces.validated_at
-           AS execution_space_validated_at,
-         project_runtime_validations.project_id
-           AS runtime_validation_project_id,
-         project_runtime_validations.runtime_selection_key
-           AS runtime_validation_runtime_selection_key,
-         project_runtime_validations.runtime_bundle_digest
-           AS runtime_validation_runtime_bundle_digest,
-         project_runtime_validations.runtime_adapter_digest
-           AS runtime_validation_runtime_adapter_digest,
-         project_runtime_validations.agent_installation_id_at_validation
-           AS runtime_validation_agent_installation_id_at_validation,
-         project_runtime_validations.validated_at
-           AS runtime_validation_validated_at,
-         project_runtime_validations.work_mode
-           AS runtime_validation_work_mode
+           AS execution_space_ssh_host_id
   FROM projects
   LEFT JOIN project_execution_spaces
     ON project_execution_spaces.project_id = projects.id
-  LEFT JOIN project_runtime_validations
-    ON project_runtime_validations.project_id = projects.id
 `
 
 type TaskRow = {
@@ -467,34 +412,16 @@ export type ClaimedHeartbeatRun = {
   acquired: boolean
 }
 
-export type ValidatedSshProjectExecutionSpace = {
+export type SshProjectExecutionSpace = {
   kind: 'ssh'
   hostId: string
   remoteRootPath: string
-  validation: SshExecutionValidation
 }
 
-export type ValidatedSshHostPrecondition = Readonly<{
-  hostId: string
-  hostRevision: number
-  hostKeyGeneration: number
-  remoteUsername: string
-  remoteRootPath: string
-  workspaceIdentity: string
-  agentProtocolMajor: number
-  agentInstallationId: string
-  agentBinaryDigest: string
-  agentVersion: string
-  agentArchitecture: 'x64' | 'arm64'
-}>
-
-export type ValidatedSshProjectWrite = {
+export type SshProjectWrite = {
   project: ProjectCreateInput
-  executionSpace: ValidatedSshProjectExecutionSpace
-  runtimeValidation: ProjectRuntimeValidation
-  assertSshHostCurrent: (
-    expected: ValidatedSshHostPrecondition
-  ) => void
+  executionSpace: SshProjectExecutionSpace
+  assertCurrent: () => void
 }
 
 export type HeartbeatInputSnapshot = {
@@ -531,95 +458,35 @@ function toProject(row: ProjectRow): AssistantProject {
   if (!row.execution_space_project_id) {
     throw new Error(`项目 ${row.id} 缺少执行空间配置`)
   }
-  const runtimeValidation =
-    row.runtime_validation_project_id &&
-    row.runtime_validation_work_mode !== null
-      ? projectRuntimeValidationSchema.safeParse({
-        runtimeSelectionKey:
-          row.runtime_validation_runtime_selection_key,
-        runtimeBundleDigest:
-          row.runtime_validation_runtime_bundle_digest,
-        runtimeAdapterDigest:
-          row.runtime_validation_runtime_adapter_digest,
-        agentInstallationIdAtValidation:
-          row.runtime_validation_agent_installation_id_at_validation,
-        validatedAt: row.runtime_validation_validated_at,
-        workMode: row.runtime_validation_work_mode
-      })
-      : undefined
-  if (runtimeValidation && !runtimeValidation.success) {
-    throw new Error(`项目 ${row.id} 的 Runtime 验证配置无效`)
-  }
-  const hasExecutionValidation = [
-    row.execution_space_host_revision,
-    row.execution_space_host_key_generation,
-    row.execution_space_remote_username,
-    row.execution_space_workspace_identity,
-    row.execution_space_agent_installation_id_at_validation,
-    row.execution_space_agent_binary_digest_at_validation,
-    row.execution_space_agent_version_at_validation,
-    row.execution_space_agent_architecture_at_validation,
-    row.execution_space_agent_protocol_major,
-    row.execution_space_validated_at
-  ].some((value) => value !== null)
-  if (
-    row.execution_space_kind === 'ssh' &&
-    !hasExecutionValidation
-  ) {
-    throw new Error(`项目 ${row.id} 的执行空间配置无效`)
-  }
-  const persistedExecutionValidation = hasExecutionValidation
-    ? {
-        validation: {
-          hostRevision: row.execution_space_host_revision,
-          hostKeyGeneration:
-            row.execution_space_host_key_generation,
-          remoteUsername: row.execution_space_remote_username,
-          workspaceIdentity:
-            row.execution_space_workspace_identity,
-          agentInstallationIdAtValidation:
-            row.execution_space_agent_installation_id_at_validation,
-          agentBinaryDigestAtValidation:
-            row.execution_space_agent_binary_digest_at_validation,
-          agentVersionAtValidation:
-            row.execution_space_agent_version_at_validation,
-          agentArchitectureAtValidation:
-            row.execution_space_agent_architecture_at_validation,
-          agentProtocolMajor:
-            row.execution_space_agent_protocol_major,
-          validatedAt: row.execution_space_validated_at
-        }
-      }
-    : {}
   const executionSpace =
     persistedProjectExecutionSpaceSchema.safeParse(
       row.execution_space_kind === 'local'
         ? {
             kind: 'local',
-            rootPath: row.execution_space_root_path,
-            ...persistedExecutionValidation
+            rootPath: row.execution_space_root_path
           }
         : row.execution_space_kind === 'ssh'
           ? {
               kind: 'ssh',
               hostId: row.execution_space_ssh_host_id,
-              remoteRootPath: row.execution_space_root_path,
-              ...persistedExecutionValidation
+              remoteRootPath: row.execution_space_root_path
             }
           : { kind: row.execution_space_kind }
     )
   if (!executionSpace.success) {
     throw new Error(`项目 ${row.id} 的执行空间配置无效`)
   }
+  const runtimeSelection =
+    row.kind === 'channel'
+      ? parseRuntimeSelection(row.runtime_selection_json) ?? {
+          provider: 'auto' as const
+        }
+      : parseRuntimeSelection(row.runtime_selection_json)
   if (
-    runtimeValidation?.success &&
     executionSpace.data.kind === 'ssh' &&
-    executionSpace.data.validation !== undefined &&
-    runtimeValidation.data.agentInstallationIdAtValidation !==
-      executionSpace.data.validation
-        .agentInstallationIdAtValidation
+    runtimeSelection === undefined
   ) {
-    throw new Error(`项目 ${row.id} 的执行空间与 Runtime 验证不匹配`)
+    throw new Error(`项目 ${row.id} 缺少远程 Runtime 选择`)
   }
   const rootPath =
     executionSpace.data.kind === 'local'
@@ -631,18 +498,10 @@ function toProject(row: ProjectRow): AssistantProject {
     description: row.description,
     rootPath,
     executionSpace: executionSpace.data,
-    ...(runtimeValidation?.success
-      ? { runtimeValidation: runtimeValidation.data }
-      : {}),
     defaultWorkMode: normalizeInteractiveWorkMode(
       row.default_work_mode
     ),
-    runtimeSelection:
-      row.kind === 'channel'
-        ? parseRuntimeSelection(row.runtime_selection_json) ?? {
-            provider: 'auto'
-          }
-        : parseRuntimeSelection(row.runtime_selection_json),
+    runtimeSelection,
     kind: row.kind,
     channel: row.channel ?? undefined,
     builtInDefault: row.built_in_default === 1,
@@ -1187,50 +1046,30 @@ function serializeConversationMessageMetadata(
   })
 }
 
-type NormalizedValidatedSshProjectWrite = Omit<
-  ValidatedSshProjectWrite,
-  'project' | 'executionSpace' | 'runtimeValidation'
+type NormalizedSshProjectWrite = Omit<
+  SshProjectWrite,
+  'project' | 'executionSpace'
 > & {
   project: ProjectCreateInput
-  executionSpace: ValidatedSshProjectExecutionSpace
-  runtimeValidation: ProjectRuntimeValidation
+  executionSpace: SshProjectExecutionSpace
 }
 
-function normalizeValidatedSshProjectWrite(
-  write: ValidatedSshProjectWrite
-): NormalizedValidatedSshProjectWrite {
+function normalizeSshProjectWrite(
+  write: SshProjectWrite
+): NormalizedSshProjectWrite {
   const project = projectCreateSchema.parse(write.project)
   const executionSpace =
     persistedProjectExecutionSpaceSchema.parse(write.executionSpace)
-  if (
-    executionSpace.kind !== 'ssh' ||
-    executionSpace.validation === undefined
-  ) {
+  if (executionSpace.kind !== 'ssh') {
     throw new Error('远程项目必须使用 SSH 执行空间')
-  }
-  const runtimeValidation = projectRuntimeValidationSchema.parse(
-    write.runtimeValidation
-  )
-  if (project.defaultWorkMode !== runtimeValidation.workMode) {
-    throw new Error('Runtime 验证与项目默认工作模式不匹配')
   }
   if (project.rootPath !== executionSpace.remoteRootPath) {
     throw new Error('项目目录与远程执行空间目录不匹配')
   }
-  if (
-    project.runtimeSelection &&
-    runtimeValidation.runtimeSelectionKey !==
-      agentRuntimeSelectionKey(project.runtimeSelection)
-  ) {
-    throw new Error('Runtime 验证与项目 Runtime 选择不匹配')
+  if (project.runtimeSelection === undefined) {
+    throw new Error('远程项目必须选择 Runtime')
   }
-  if (
-    runtimeValidation.agentInstallationIdAtValidation !==
-    executionSpace.validation.agentInstallationIdAtValidation
-  ) {
-    throw new Error('执行空间与 Runtime 验证的 Agent 身份不匹配')
-  }
-  if (typeof write.assertSshHostCurrent !== 'function') {
+  if (typeof write.assertCurrent !== 'function') {
     throw new TypeError('缺少 SSH Host 事务前置校验')
   }
   return {
@@ -1238,144 +1077,48 @@ function normalizeValidatedSshProjectWrite(
     executionSpace: {
       kind: 'ssh',
       hostId: executionSpace.hostId,
-      remoteRootPath: executionSpace.remoteRootPath,
-      validation: executionSpace.validation
+      remoteRootPath: executionSpace.remoteRootPath
     },
-    runtimeValidation,
-    assertSshHostCurrent: write.assertSshHostCurrent
+    assertCurrent: write.assertCurrent
   }
 }
 
-function assertValidatedSshHostCurrent(
-  write: NormalizedValidatedSshProjectWrite
-): void {
-  const { executionSpace } = write
-  write.assertSshHostCurrent({
-    hostId: executionSpace.hostId,
-    hostRevision: executionSpace.validation.hostRevision,
-    hostKeyGeneration:
-      executionSpace.validation.hostKeyGeneration,
-    remoteUsername: executionSpace.validation.remoteUsername,
-    remoteRootPath: executionSpace.remoteRootPath,
-    workspaceIdentity:
-      executionSpace.validation.workspaceIdentity,
-    agentProtocolMajor:
-      executionSpace.validation.agentProtocolMajor,
-    agentInstallationId:
-      executionSpace.validation.agentInstallationIdAtValidation,
-    agentBinaryDigest:
-      executionSpace.validation.agentBinaryDigestAtValidation,
-    agentVersion:
-      executionSpace.validation.agentVersionAtValidation,
-    agentArchitecture:
-      executionSpace.validation.agentArchitectureAtValidation
-  })
-}
-
-function insertValidatedSshExecutionSpace(
+function insertSshExecutionSpace(
   database: DatabaseSync,
   projectId: string,
-  executionSpace: ValidatedSshProjectExecutionSpace
+  executionSpace: SshProjectExecutionSpace
 ): void {
-  const validation = executionSpace.validation
   database
     .prepare(
       `INSERT INTO project_execution_spaces
-        (project_id, kind, root_path, ssh_host_id, host_revision,
-         host_key_generation, remote_username, workspace_identity,
-         agent_installation_id_at_validation,
-         agent_binary_digest_at_validation,
-         agent_version_at_validation,
-         agent_architecture_at_validation, agent_protocol_major,
-         trust_attestation_revision, validated_at)
-       VALUES (?, 'ssh', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (project_id, kind, root_path, ssh_host_id)
+       VALUES (?, 'ssh', ?, ?)`
     )
     .run(
       projectId,
       executionSpace.remoteRootPath,
-      executionSpace.hostId,
-      validation.hostRevision,
-      validation.hostKeyGeneration,
-      validation.remoteUsername,
-      validation.workspaceIdentity,
-      validation.agentInstallationIdAtValidation,
-      validation.agentBinaryDigestAtValidation,
-      validation.agentVersionAtValidation,
-      validation.agentArchitectureAtValidation,
-      validation.agentProtocolMajor,
-      0,
-      validation.validatedAt
+      executionSpace.hostId
     )
 }
 
-function updateValidatedSshExecutionSpace(
+function updateSshExecutionSpace(
   database: DatabaseSync,
   projectId: string,
-  executionSpace: ValidatedSshProjectExecutionSpace
+  executionSpace: SshProjectExecutionSpace
 ): number {
-  const validation = executionSpace.validation
   return Number(
     database
     .prepare(
       `UPDATE project_execution_spaces
-       SET root_path = ?, ssh_host_id = ?, host_revision = ?,
-           host_key_generation = ?, remote_username = ?,
-           workspace_identity = ?,
-           agent_installation_id_at_validation = ?,
-           agent_binary_digest_at_validation = ?,
-           agent_version_at_validation = ?,
-           agent_architecture_at_validation = ?,
-           agent_protocol_major = ?,
-           trust_attestation_revision = ?, validated_at = ?
+       SET root_path = ?, ssh_host_id = ?
        WHERE project_id = ? AND kind = 'ssh'`
     )
     .run(
       executionSpace.remoteRootPath,
       executionSpace.hostId,
-      validation.hostRevision,
-      validation.hostKeyGeneration,
-      validation.remoteUsername,
-      validation.workspaceIdentity,
-      validation.agentInstallationIdAtValidation,
-      validation.agentBinaryDigestAtValidation,
-      validation.agentVersionAtValidation,
-      validation.agentArchitectureAtValidation,
-      validation.agentProtocolMajor,
-      0,
-      validation.validatedAt,
       projectId
     ).changes
   )
-}
-
-function insertProjectRuntimeValidation(
-  database: DatabaseSync,
-  projectId: string,
-  validation: ProjectRuntimeValidation
-): void {
-  database
-    .prepare(
-      `INSERT INTO project_runtime_validations
-        (project_id, runtime_selection_key, runtime_bundle_digest,
-         runtime_adapter_digest, confinement_policy_digest,
-         approval_bridge_version,
-         agent_installation_id_at_validation, validated_at, work_mode,
-         trust_tier, trust_attestation_revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      projectId,
-      validation.runtimeSelectionKey,
-      validation.runtimeBundleDigest,
-      validation.runtimeAdapterDigest,
-      validation.runtimeAdapterDigest,
-      LEGACY_UNUSED_APPROVAL_BRIDGE_VERSION,
-      validation.agentInstallationIdAtValidation,
-      validation.validatedAt,
-      validation.workMode,
-      null,
-      null
-    )
 }
 
 function nextProjectUpdatedAt(current: string): string {
@@ -1386,6 +1129,92 @@ function nextProjectUpdatedAt(current: string): string {
       ? Math.max(now, currentTimestamp + 1)
       : now
   ).toISOString()
+}
+
+function prepareProjectDeletionStatements(database: DatabaseSync) {
+  return {
+    notifications: database.prepare(
+      `DELETE FROM notifications
+       WHERE task_id IN (
+         SELECT id FROM tasks WHERE project_id = ?
+       ) OR schedule_id IN (
+         SELECT id FROM schedules WHERE project_id = ?
+       )`
+    ),
+    delegationOutbox: database.prepare(
+      `DELETE FROM delegation_outbox
+       WHERE task_id IN (
+         SELECT id FROM tasks WHERE project_id = ?
+       )`
+    ),
+    memories: database.prepare(
+      `DELETE FROM memory_items
+       WHERE (scope = 'project' AND scope_id = ?)
+          OR (scope = 'conversation' AND scope_id IN (
+            SELECT id FROM conversations WHERE project_id = ?
+          ))`
+    ),
+    heartbeatArtifacts: database.prepare(
+      `DELETE FROM artifacts
+       WHERE id IN (
+         SELECT e.artifact_id
+         FROM heartbeat_entries e
+         JOIN heartbeat_configs c ON c.id = e.config_id
+         JOIN heartbeat_config_projects hp ON hp.config_id = c.id
+         WHERE hp.project_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM heartbeat_config_projects other
+             WHERE other.config_id = c.id
+               AND other.project_id <> ?
+           )
+       )`
+    ),
+    heartbeatConfigs: database.prepare(
+      `DELETE FROM heartbeat_configs
+       WHERE scope_kind = 'projects'
+         AND EXISTS (
+           SELECT 1 FROM heartbeat_config_projects hp
+           WHERE hp.config_id = heartbeat_configs.id
+             AND hp.project_id = ?
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM heartbeat_config_projects other
+           WHERE other.config_id = heartbeat_configs.id
+             AND other.project_id <> ?
+         )`
+    ),
+    artifacts: database.prepare(
+      'DELETE FROM artifacts WHERE project_id = ?'
+    ),
+    tasks: database.prepare('DELETE FROM tasks WHERE project_id = ?'),
+    conversations: database.prepare(
+      'DELETE FROM conversations WHERE project_id = ?'
+    ),
+    schedules: database.prepare(
+      'DELETE FROM schedules WHERE project_id = ?'
+    ),
+    project: database.prepare('DELETE FROM projects WHERE id = ?')
+  }
+}
+
+function deleteProjectRecords(
+  database: DatabaseSync,
+  projectId: string,
+  statements = prepareProjectDeletionStatements(database)
+): void {
+  statements.notifications.run(projectId, projectId)
+  statements.delegationOutbox.run(projectId)
+  statements.memories.run(projectId, projectId)
+  statements.heartbeatArtifacts.run(projectId, projectId)
+  statements.heartbeatConfigs.run(projectId, projectId)
+  statements.artifacts.run(projectId)
+  statements.tasks.run(projectId)
+  statements.conversations.run(projectId)
+  statements.schedules.run(projectId)
+  const result = statements.project.run(projectId)
+  if (result.changes !== 1) {
+    throw new Error('项目不存在')
+  }
 }
 
 export class AssistantDatabase {
@@ -1854,17 +1683,17 @@ export class AssistantDatabase {
     return this.getProject(projectId)
   }
 
-  createValidatedSshProject(
-    write: ValidatedSshProjectWrite
+  createSshProject(
+    write: SshProjectWrite
   ): AssistantProject {
-    const normalized = normalizeValidatedSshProjectWrite(write)
+    const normalized = normalizeSshProjectWrite(write)
     const database = this.requireDatabase()
     const id = randomUUID()
     const now = new Date().toISOString()
     database.exec('BEGIN IMMEDIATE')
     let transactionActive = true
     try {
-      assertValidatedSshHostCurrent(normalized)
+      normalized.assertCurrent()
       database
         .prepare(
           `INSERT INTO projects
@@ -1885,15 +1714,10 @@ export class AssistantDatabase {
           now,
           now
         )
-      insertValidatedSshExecutionSpace(
+      insertSshExecutionSpace(
         database,
         id,
         normalized.executionSpace
-      )
-      insertProjectRuntimeValidation(
-        database,
-        id,
-        normalized.runtimeValidation
       )
       const project = readProject(database, id)
       database.exec('COMMIT')
@@ -1907,12 +1731,12 @@ export class AssistantDatabase {
     }
   }
 
-  updateValidatedSshProject(
+  updateSshProject(
     projectId: string,
     expectedUpdatedAt: string,
-    write: ValidatedSshProjectWrite
+    write: SshProjectWrite
   ): AssistantProject {
-    const normalized = normalizeValidatedSshProjectWrite(write)
+    const normalized = normalizeSshProjectWrite(write)
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     let transactionActive = true
@@ -1961,7 +1785,7 @@ export class AssistantDatabase {
       if (current.updated_at !== expectedUpdatedAt) {
         throw new Error('项目已被其他操作更新，请重新加载后重试')
       }
-      assertValidatedSshHostCurrent(normalized)
+      normalized.assertCurrent()
       const updatedAt = nextProjectUpdatedAt(current.updated_at)
       const projectResult = database
         .prepare(
@@ -1987,7 +1811,7 @@ export class AssistantDatabase {
       if (projectResult.changes !== 1) {
         throw new Error('项目已被其他操作更新，请重新加载后重试')
       }
-      const executionResult = updateValidatedSshExecutionSpace(
+      const executionResult = updateSshExecutionSpace(
         database,
         projectId,
         normalized.executionSpace
@@ -1995,45 +1819,6 @@ export class AssistantDatabase {
       if (executionResult !== 1) {
         throw new Error('项目执行空间配置无效')
       }
-      database
-        .prepare(
-          `INSERT INTO project_runtime_validations
-            (project_id, runtime_selection_key, runtime_bundle_digest,
-             runtime_adapter_digest, confinement_policy_digest,
-             approval_bridge_version,
-             agent_installation_id_at_validation, validated_at,
-             work_mode, trust_tier, trust_attestation_revision)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(project_id) DO UPDATE SET
-             runtime_selection_key = excluded.runtime_selection_key,
-             runtime_bundle_digest = excluded.runtime_bundle_digest,
-             runtime_adapter_digest = excluded.runtime_adapter_digest,
-             confinement_policy_digest =
-               excluded.confinement_policy_digest,
-             approval_bridge_version =
-               excluded.approval_bridge_version,
-             agent_installation_id_at_validation =
-               excluded.agent_installation_id_at_validation,
-             validated_at = excluded.validated_at,
-             work_mode = excluded.work_mode,
-             trust_tier = excluded.trust_tier,
-             trust_attestation_revision =
-               excluded.trust_attestation_revision`
-        )
-        .run(
-          projectId,
-          normalized.runtimeValidation.runtimeSelectionKey,
-          normalized.runtimeValidation.runtimeBundleDigest,
-          normalized.runtimeValidation.runtimeAdapterDigest,
-          normalized.runtimeValidation.runtimeAdapterDigest,
-          LEGACY_UNUSED_APPROVAL_BRIDGE_VERSION,
-          normalized.runtimeValidation
-            .agentInstallationIdAtValidation,
-          normalized.runtimeValidation.validatedAt,
-          normalized.runtimeValidation.workMode,
-          null,
-          null
-        )
       const project = readProject(database, projectId)
       database.exec('COMMIT')
       transactionActive = false
@@ -2046,11 +1831,13 @@ export class AssistantDatabase {
     }
   }
 
-  listProjectIdsReferencingSshHost(sshHostId: string): string[] {
+  listProjectsReferencingSshHost(
+    sshHostId: string
+  ): SshHostProjectReference[] {
     return (
       this.requireDatabase()
         .prepare(
-          `SELECT project_execution_spaces.project_id
+          `SELECT projects.id, projects.name
            FROM project_execution_spaces
            INNER JOIN projects
              ON projects.id = project_execution_spaces.project_id
@@ -2058,8 +1845,77 @@ export class AssistantDatabase {
              AND project_execution_spaces.ssh_host_id = ?
            ORDER BY projects.created_at ASC, projects.rowid ASC`
         )
-        .all(sshHostId) as Array<{ project_id: string }>
-    ).map((row) => row.project_id)
+        .all(sshHostId) as SshHostProjectReference[]
+    )
+  }
+
+  listSshHostProjectReferences(): Array<{
+    hostId: string
+  } & SshHostProjectReference> {
+    return this.requireDatabase()
+      .prepare(
+        `SELECT project_execution_spaces.ssh_host_id AS "hostId",
+                projects.id, projects.name
+         FROM project_execution_spaces
+         INNER JOIN projects
+           ON projects.id = project_execution_spaces.project_id
+         WHERE project_execution_spaces.kind = 'ssh'
+           AND project_execution_spaces.ssh_host_id IS NOT NULL
+         ORDER BY projects.created_at ASC, projects.rowid ASC`
+      )
+      .all() as Array<{ hostId: string } & SshHostProjectReference>
+  }
+
+  deleteProjectsReferencingSshHost(
+    sshHostId: string
+  ): SshHostProjectReference[] {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const projects = this.listProjectsReferencingSshHost(sshHostId)
+      if (projects.length === 0) {
+        database.exec('COMMIT')
+        return []
+      }
+      const activeLocalProjectCount = database
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM projects
+           INNER JOIN project_execution_spaces
+             ON project_execution_spaces.project_id = projects.id
+           WHERE projects.kind = 'user'
+             AND projects.status = 'active'
+             AND project_execution_spaces.kind = 'local'`
+        )
+        .get() as { count: number }
+      const deletedActiveProjectCount = database
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM projects
+           INNER JOIN project_execution_spaces
+             ON project_execution_spaces.project_id = projects.id
+           WHERE projects.kind = 'user'
+             AND projects.status = 'active'
+             AND project_execution_spaces.kind = 'ssh'
+             AND project_execution_spaces.ssh_host_id = ?`
+        )
+        .get(sshHostId) as { count: number }
+      if (
+        deletedActiveProjectCount.count > 0 &&
+        activeLocalProjectCount.count < 1
+      ) {
+        throw new Error('至少需要保留一个可用项目')
+      }
+      const statements = prepareProjectDeletionStatements(database)
+      for (const project of projects) {
+        deleteProjectRecords(database, project.id, statements)
+      }
+      database.exec('COMMIT')
+      return projects
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   setProjectArchived(projectId: string, archived: boolean): void {
@@ -2083,7 +1939,11 @@ export class AssistantDatabase {
     }
   }
 
-  deleteProject(projectId: string, confirmation: string): void {
+  deleteProject(
+    projectId: string,
+    confirmation: string,
+    options: { allowActiveTasks?: boolean } = {}
+  ): void {
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -2105,13 +1965,30 @@ export class AssistantDatabase {
       if (confirmation !== project.name) {
         throw new Error('项目名称确认不匹配')
       }
-      const activeProjectCount = database
+      const activeLocalProjectCount = database
         .prepare(
-          `SELECT COUNT(*) AS count FROM projects
-           WHERE kind = 'user' AND status = 'active'`
+          `SELECT COUNT(*) AS count
+           FROM projects
+           INNER JOIN project_execution_spaces
+             ON project_execution_spaces.project_id = projects.id
+           WHERE projects.kind = 'user'
+             AND projects.status = 'active'
+             AND project_execution_spaces.kind = 'local'`
         )
         .get() as { count: number }
-      if (project.status === 'active' && activeProjectCount.count <= 1) {
+      const projectIsActiveLocal =
+        project.status === 'active' &&
+        database
+          .prepare(
+            `SELECT kind FROM project_execution_spaces
+             WHERE project_id = ?`
+          )
+          .get(projectId)?.kind === 'local'
+      if (
+        project.status === 'active' &&
+        activeLocalProjectCount.count <
+          (projectIsActiveLocal ? 2 : 1)
+      ) {
         throw new Error('至少需要保留一个可用项目')
       }
       const activeTaskCount = database
@@ -2128,88 +2005,14 @@ export class AssistantDatabase {
              )`
         )
         .get(projectId) as { count: number }
-      if (activeTaskCount.count > 0) {
+      if (
+        activeTaskCount.count > 0 &&
+        options.allowActiveTasks !== true
+      ) {
         throw new Error('项目仍有进行中的任务，请先停止任务')
       }
 
-      database
-        .prepare(
-          `DELETE FROM notifications
-           WHERE task_id IN (
-             SELECT id FROM tasks WHERE project_id = ?
-           ) OR schedule_id IN (
-             SELECT id FROM schedules WHERE project_id = ?
-           )`
-        )
-        .run(projectId, projectId)
-      database
-        .prepare(
-          `DELETE FROM delegation_outbox
-           WHERE task_id IN (
-             SELECT id FROM tasks WHERE project_id = ?
-           )`
-        )
-        .run(projectId)
-      database
-        .prepare(
-          `DELETE FROM memory_items
-           WHERE (scope = 'project' AND scope_id = ?)
-              OR (scope = 'conversation' AND scope_id IN (
-                SELECT id FROM conversations WHERE project_id = ?
-              ))`
-        )
-        .run(projectId, projectId)
-      database
-        .prepare(
-          `DELETE FROM artifacts
-           WHERE id IN (
-             SELECT e.artifact_id
-             FROM heartbeat_entries e
-             JOIN heartbeat_configs c ON c.id = e.config_id
-             JOIN heartbeat_config_projects hp ON hp.config_id = c.id
-             WHERE hp.project_id = ?
-               AND NOT EXISTS (
-                 SELECT 1 FROM heartbeat_config_projects other
-                 WHERE other.config_id = c.id
-                   AND other.project_id <> ?
-               )
-           )`
-        )
-        .run(projectId, projectId)
-      database
-        .prepare(
-          `DELETE FROM heartbeat_configs
-           WHERE scope_kind = 'projects'
-             AND EXISTS (
-               SELECT 1 FROM heartbeat_config_projects hp
-               WHERE hp.config_id = heartbeat_configs.id
-                 AND hp.project_id = ?
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM heartbeat_config_projects other
-               WHERE other.config_id = heartbeat_configs.id
-                 AND other.project_id <> ?
-             )`
-        )
-        .run(projectId, projectId)
-      database
-        .prepare('DELETE FROM artifacts WHERE project_id = ?')
-        .run(projectId)
-      database
-        .prepare('DELETE FROM tasks WHERE project_id = ?')
-        .run(projectId)
-      database
-        .prepare('DELETE FROM conversations WHERE project_id = ?')
-        .run(projectId)
-      database
-        .prepare('DELETE FROM schedules WHERE project_id = ?')
-        .run(projectId)
-      const result = database
-        .prepare('DELETE FROM projects WHERE id = ?')
-        .run(projectId)
-      if (result.changes !== 1) {
-        throw new Error('项目不存在')
-      }
+      deleteProjectRecords(database, projectId)
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
@@ -8181,506 +7984,57 @@ export class AssistantDatabase {
         throw error
       }
     }
-    if (version.user_version < 29) {
-      const executionSpaceColumns = new Set(
-        (
-          database
-            .prepare('PRAGMA table_info(project_execution_spaces)')
-            .all() as Array<{ name: string }>
-        ).map((column) => column.name)
-      )
-      const runtimeValidationColumns = new Set(
-        (
-          database
-            .prepare(
-              'PRAGMA table_info(project_runtime_validations)'
-            )
-            .all() as Array<{ name: string }>
-        ).map((column) => column.name)
-      )
+    if (version.user_version < 31) {
       database.exec('BEGIN IMMEDIATE')
       try {
-        if (
-          !executionSpaceColumns.has(
-            'agent_binary_digest_at_validation'
-          )
-        ) {
-          database.exec(`
-            ALTER TABLE project_execution_spaces
-              ADD COLUMN agent_binary_digest_at_validation TEXT;
-          `)
-        }
-        if (
-          !executionSpaceColumns.has(
-            'agent_version_at_validation'
-          )
-        ) {
-          database.exec(`
-            ALTER TABLE project_execution_spaces
-              ADD COLUMN agent_version_at_validation TEXT;
-          `)
-        }
-        if (
-          !executionSpaceColumns.has(
-            'agent_architecture_at_validation'
-          )
-        ) {
-          database.exec(`
-            ALTER TABLE project_execution_spaces
-              ADD COLUMN agent_architecture_at_validation TEXT;
-          `)
-        }
-        if (!runtimeValidationColumns.has('work_mode')) {
-          database.exec(`
-            ALTER TABLE project_runtime_validations
-              ADD COLUMN work_mode TEXT;
-          `)
-        }
-        if (!runtimeValidationColumns.has('trust_tier')) {
-          database.exec(`
-            ALTER TABLE project_runtime_validations
-              ADD COLUMN trust_tier TEXT;
-          `)
-        }
-        if (
-          !runtimeValidationColumns.has(
-            'trust_attestation_revision'
-          )
-        ) {
-          database.exec(`
-            ALTER TABLE project_runtime_validations
-              ADD COLUMN trust_attestation_revision INTEGER;
-          `)
-        }
         database.exec(`
           DROP TRIGGER IF EXISTS
             project_execution_spaces_validate_insert;
           DROP TRIGGER IF EXISTS
             project_execution_spaces_validate_update;
-          CREATE TRIGGER project_execution_spaces_validate_insert
-          BEFORE INSERT ON project_execution_spaces
-          WHEN COALESCE(NOT (
-            (
-              NEW.kind = 'local' AND
-              length(NEW.root_path) <= 4096 AND
-              NEW.ssh_host_id IS NULL AND
-              NEW.host_revision IS NULL AND
-              NEW.host_key_generation IS NULL AND
-              NEW.remote_username IS NULL AND
-              NEW.workspace_identity IS NULL AND
-              NEW.agent_installation_id_at_validation IS NULL AND
-              NEW.agent_binary_digest_at_validation IS NULL AND
-              NEW.agent_version_at_validation IS NULL AND
-              NEW.agent_architecture_at_validation IS NULL AND
-              NEW.agent_protocol_major IS NULL AND
-              NEW.trust_attestation_revision IS NULL AND
-              NEW.validated_at IS NULL
-            ) OR (
-              NEW.kind = 'ssh' AND
-              length(NEW.root_path) <= 4096 AND
-              length(trim(NEW.root_path)) > 0 AND
-              NEW.ssh_host_id IS NOT NULL AND
-              length(NEW.ssh_host_id) = 36 AND
-              typeof(NEW.host_revision) = 'integer' AND
-              NEW.host_revision > 0 AND
-              typeof(NEW.host_key_generation) = 'integer' AND
-              NEW.host_key_generation > 0 AND
-              length(trim(NEW.remote_username)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.workspace_identity)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.agent_installation_id_at_validation))
-                BETWEEN 1 AND 1000 AND
-              length(NEW.agent_binary_digest_at_validation) = 71 AND
-              substr(NEW.agent_binary_digest_at_validation, 1, 7) =
-                'sha256:' AND
-              substr(NEW.agent_binary_digest_at_validation, 8)
-                NOT GLOB '*[^0-9a-f]*' AND
-              length(NEW.agent_version_at_validation) BETWEEN 1 AND 128 AND
-              substr(NEW.agent_version_at_validation, 1, 1)
-                NOT GLOB '[^0-9A-Za-z]' AND
-              NEW.agent_version_at_validation
-                NOT GLOB '*[^0-9A-Za-z.+_-]*' AND
-              NEW.agent_architecture_at_validation IN ('x64', 'arm64') AND
-              typeof(NEW.agent_protocol_major) = 'integer' AND
-              NEW.agent_protocol_major > 0 AND
-              typeof(NEW.trust_attestation_revision) = 'integer' AND
-              NEW.trust_attestation_revision > 0 AND
-              length(NEW.validated_at) > 0
-            )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project execution space validation'
-            );
-          END;
-          CREATE TRIGGER project_execution_spaces_validate_update
-          BEFORE UPDATE ON project_execution_spaces
-          WHEN COALESCE(NOT (
-            (
-              NEW.kind = 'local' AND
-              length(NEW.root_path) <= 4096 AND
-              NEW.ssh_host_id IS NULL AND
-              NEW.host_revision IS NULL AND
-              NEW.host_key_generation IS NULL AND
-              NEW.remote_username IS NULL AND
-              NEW.workspace_identity IS NULL AND
-              NEW.agent_installation_id_at_validation IS NULL AND
-              NEW.agent_binary_digest_at_validation IS NULL AND
-              NEW.agent_version_at_validation IS NULL AND
-              NEW.agent_architecture_at_validation IS NULL AND
-              NEW.agent_protocol_major IS NULL AND
-              NEW.trust_attestation_revision IS NULL AND
-              NEW.validated_at IS NULL
-            ) OR (
-              NEW.kind = 'ssh' AND
-              length(NEW.root_path) <= 4096 AND
-              length(trim(NEW.root_path)) > 0 AND
-              NEW.ssh_host_id IS NOT NULL AND
-              length(NEW.ssh_host_id) = 36 AND
-              typeof(NEW.host_revision) = 'integer' AND
-              NEW.host_revision > 0 AND
-              typeof(NEW.host_key_generation) = 'integer' AND
-              NEW.host_key_generation > 0 AND
-              length(trim(NEW.remote_username)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.workspace_identity)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.agent_installation_id_at_validation))
-                BETWEEN 1 AND 1000 AND
-              length(NEW.agent_binary_digest_at_validation) = 71 AND
-              substr(NEW.agent_binary_digest_at_validation, 1, 7) =
-                'sha256:' AND
-              substr(NEW.agent_binary_digest_at_validation, 8)
-                NOT GLOB '*[^0-9a-f]*' AND
-              length(NEW.agent_version_at_validation) BETWEEN 1 AND 128 AND
-              substr(NEW.agent_version_at_validation, 1, 1)
-                NOT GLOB '[^0-9A-Za-z]' AND
-              NEW.agent_version_at_validation
-                NOT GLOB '*[^0-9A-Za-z.+_-]*' AND
-              NEW.agent_architecture_at_validation IN ('x64', 'arm64') AND
-              typeof(NEW.agent_protocol_major) = 'integer' AND
-              NEW.agent_protocol_major > 0 AND
-              typeof(NEW.trust_attestation_revision) = 'integer' AND
-              NEW.trust_attestation_revision > 0 AND
-              length(NEW.validated_at) > 0
-            )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project execution space validation'
-            );
-          END;
           DROP TRIGGER IF EXISTS
             project_runtime_validations_validate_insert;
           DROP TRIGGER IF EXISTS
             project_runtime_validations_validate_update;
-          CREATE TRIGGER project_runtime_validations_validate_insert
-          BEFORE INSERT ON project_runtime_validations
-          WHEN COALESCE(NOT (
-            length(trim(NEW.runtime_selection_key))
-              BETWEEN 1 AND 1000 AND
-            length(NEW.runtime_bundle_digest) = 71 AND
-            substr(NEW.runtime_bundle_digest, 1, 7) = 'sha256:' AND
-            substr(NEW.runtime_bundle_digest, 8)
-              NOT GLOB '*[^0-9a-f]*' AND
-            length(NEW.runtime_adapter_digest) = 71 AND
-            substr(NEW.runtime_adapter_digest, 1, 7) = 'sha256:' AND
-            substr(NEW.runtime_adapter_digest, 8)
-              NOT GLOB '*[^0-9a-f]*' AND
-            length(NEW.confinement_policy_digest) = 71 AND
-            substr(NEW.confinement_policy_digest, 1, 7) =
-              'sha256:' AND
-            substr(NEW.confinement_policy_digest, 8)
-              NOT GLOB '*[^0-9a-f]*' AND
-            length(trim(NEW.approval_bridge_version))
-              BETWEEN 1 AND 1000 AND
-            length(trim(NEW.agent_installation_id_at_validation))
-              BETWEEN 1 AND 1000 AND
-            length(NEW.validated_at) > 0 AND
-            (
-              (NEW.work_mode = 'ask' AND NEW.trust_tier = 'T2') OR
-              (NEW.work_mode = 'execute' AND NEW.trust_tier = 'T3')
-            ) AND
-            typeof(NEW.trust_attestation_revision) = 'integer' AND
-            NEW.trust_attestation_revision > 0 AND
-            EXISTS (
-              SELECT 1 FROM projects
-              WHERE projects.id = NEW.project_id
-                AND projects.default_work_mode = NEW.work_mode
-            )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project runtime authorization'
-            );
-          END;
-          CREATE TRIGGER project_runtime_validations_validate_update
-          BEFORE UPDATE ON project_runtime_validations
-          WHEN COALESCE(NOT (
-            (
-              OLD.work_mode IS NULL AND
-              OLD.trust_tier IS NULL AND
-              OLD.trust_attestation_revision IS NULL AND
-              NEW.work_mode IS NULL AND
-              NEW.trust_tier IS NULL AND
-              NEW.trust_attestation_revision IS NULL
-            ) OR (
-              length(trim(NEW.runtime_selection_key))
-                BETWEEN 1 AND 1000 AND
-              length(NEW.runtime_bundle_digest) = 71 AND
-              substr(NEW.runtime_bundle_digest, 1, 7) = 'sha256:' AND
-              substr(NEW.runtime_bundle_digest, 8)
-                NOT GLOB '*[^0-9a-f]*' AND
-              length(NEW.runtime_adapter_digest) = 71 AND
-              substr(NEW.runtime_adapter_digest, 1, 7) =
-                'sha256:' AND
-              substr(NEW.runtime_adapter_digest, 8)
-                NOT GLOB '*[^0-9a-f]*' AND
-              length(NEW.confinement_policy_digest) = 71 AND
-              substr(NEW.confinement_policy_digest, 1, 7) =
-                'sha256:' AND
-              substr(NEW.confinement_policy_digest, 8)
-                NOT GLOB '*[^0-9a-f]*' AND
-              length(trim(NEW.approval_bridge_version))
-                BETWEEN 1 AND 1000 AND
-              length(trim(NEW.agent_installation_id_at_validation))
-                BETWEEN 1 AND 1000 AND
-              length(NEW.validated_at) > 0 AND
+          DROP INDEX IF EXISTS
+            project_execution_spaces_ssh_host_idx;
+
+          ALTER TABLE project_execution_spaces
+            RENAME TO legacy_project_execution_spaces;
+
+          CREATE TABLE project_execution_spaces (
+            project_id TEXT PRIMARY KEY
+              REFERENCES projects(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK(kind IN ('local', 'ssh')),
+            root_path TEXT NOT NULL
+              CHECK(length(root_path) <= 4096),
+            ssh_host_id TEXT,
+            CHECK(
               (
-                (NEW.work_mode = 'ask' AND NEW.trust_tier = 'T2') OR
-                (NEW.work_mode = 'execute' AND NEW.trust_tier = 'T3')
-              ) AND
-              typeof(NEW.trust_attestation_revision) = 'integer' AND
-              NEW.trust_attestation_revision > 0 AND
-              EXISTS (
-                SELECT 1 FROM projects
-                WHERE projects.id = NEW.project_id
-                  AND projects.default_work_mode = NEW.work_mode
+                kind = 'local' AND
+                ssh_host_id IS NULL
+              ) OR (
+                kind = 'ssh' AND
+                ssh_host_id IS NOT NULL AND
+                length(ssh_host_id) = 36 AND
+                length(trim(root_path)) > 0
               )
             )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project runtime authorization'
-            );
-          END;
-          PRAGMA user_version = 29;
-          COMMIT;
-        `)
-      } catch (error) {
-        database.exec('ROLLBACK')
-        throw error
-      }
-    }
-    if (version.user_version < ASSISTANT_DATABASE_SCHEMA_VERSION) {
-      database.exec('BEGIN IMMEDIATE')
-      try {
-        database.exec(`
-          DROP TRIGGER IF EXISTS
-            project_execution_spaces_validate_insert;
-          DROP TRIGGER IF EXISTS
-            project_execution_spaces_validate_update;
-          DROP TRIGGER IF EXISTS
-            project_runtime_validations_validate_insert;
-          DROP TRIGGER IF EXISTS
-            project_runtime_validations_validate_update;
+          );
 
-          UPDATE project_execution_spaces
-          SET trust_attestation_revision = 0
-          WHERE kind = 'ssh'
-            AND host_revision IS NOT NULL;
+          INSERT INTO project_execution_spaces
+            (project_id, kind, root_path, ssh_host_id)
+          SELECT project_id, kind, root_path, ssh_host_id
+          FROM legacy_project_execution_spaces;
 
-          UPDATE project_runtime_validations
-          SET confinement_policy_digest = runtime_adapter_digest,
-              approval_bridge_version =
-                '${LEGACY_UNUSED_APPROVAL_BRIDGE_VERSION}',
-              trust_tier = NULL,
-              trust_attestation_revision = NULL;
+          DROP TABLE project_runtime_validations;
+          DROP TABLE legacy_project_execution_spaces;
 
-          CREATE TRIGGER project_execution_spaces_validate_insert
-          BEFORE INSERT ON project_execution_spaces
-          WHEN COALESCE(NOT (
-            (
-              NEW.kind = 'local' AND
-              length(NEW.root_path) <= 4096 AND
-              NEW.ssh_host_id IS NULL AND
-              NEW.host_revision IS NULL AND
-              NEW.host_key_generation IS NULL AND
-              NEW.remote_username IS NULL AND
-              NEW.workspace_identity IS NULL AND
-              NEW.agent_installation_id_at_validation IS NULL AND
-              NEW.agent_binary_digest_at_validation IS NULL AND
-              NEW.agent_version_at_validation IS NULL AND
-              NEW.agent_architecture_at_validation IS NULL AND
-              NEW.agent_protocol_major IS NULL AND
-              NEW.trust_attestation_revision IS NULL AND
-              NEW.validated_at IS NULL
-            ) OR (
-              NEW.kind = 'ssh' AND
-              length(NEW.root_path) <= 4096 AND
-              length(trim(NEW.root_path)) > 0 AND
-              length(NEW.ssh_host_id) = 36 AND
-              typeof(NEW.host_revision) = 'integer' AND
-              NEW.host_revision > 0 AND
-              typeof(NEW.host_key_generation) = 'integer' AND
-              NEW.host_key_generation > 0 AND
-              length(trim(NEW.remote_username)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.workspace_identity)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.agent_installation_id_at_validation))
-                BETWEEN 1 AND 1000 AND
-              length(NEW.agent_binary_digest_at_validation) = 71 AND
-              substr(NEW.agent_binary_digest_at_validation, 1, 7) =
-                'sha256:' AND
-              substr(NEW.agent_binary_digest_at_validation, 8)
-                NOT GLOB '*[^0-9a-f]*' AND
-              length(NEW.agent_version_at_validation) BETWEEN 1 AND 128 AND
-              substr(NEW.agent_version_at_validation, 1, 1)
-                NOT GLOB '[^0-9A-Za-z]' AND
-              NEW.agent_version_at_validation
-                NOT GLOB '*[^0-9A-Za-z.+_-]*' AND
-              NEW.agent_architecture_at_validation IN ('x64', 'arm64') AND
-              typeof(NEW.agent_protocol_major) = 'integer' AND
-              NEW.agent_protocol_major > 0 AND
-              NEW.trust_attestation_revision = 0 AND
-              length(NEW.validated_at) > 0
-            )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project execution space validation'
-            );
-          END;
+          CREATE INDEX project_execution_spaces_ssh_host_idx
+            ON project_execution_spaces(ssh_host_id, project_id)
+            WHERE kind = 'ssh';
 
-          CREATE TRIGGER project_execution_spaces_validate_update
-          BEFORE UPDATE ON project_execution_spaces
-          WHEN COALESCE(NOT (
-            (
-              NEW.kind = 'local' AND
-              length(NEW.root_path) <= 4096 AND
-              NEW.ssh_host_id IS NULL AND
-              NEW.host_revision IS NULL AND
-              NEW.host_key_generation IS NULL AND
-              NEW.remote_username IS NULL AND
-              NEW.workspace_identity IS NULL AND
-              NEW.agent_installation_id_at_validation IS NULL AND
-              NEW.agent_binary_digest_at_validation IS NULL AND
-              NEW.agent_version_at_validation IS NULL AND
-              NEW.agent_architecture_at_validation IS NULL AND
-              NEW.agent_protocol_major IS NULL AND
-              NEW.trust_attestation_revision IS NULL AND
-              NEW.validated_at IS NULL
-            ) OR (
-              NEW.kind = 'ssh' AND
-              length(NEW.root_path) <= 4096 AND
-              length(trim(NEW.root_path)) > 0 AND
-              length(NEW.ssh_host_id) = 36 AND
-              typeof(NEW.host_revision) = 'integer' AND
-              NEW.host_revision > 0 AND
-              typeof(NEW.host_key_generation) = 'integer' AND
-              NEW.host_key_generation > 0 AND
-              length(trim(NEW.remote_username)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.workspace_identity)) BETWEEN 1 AND 1000 AND
-              length(trim(NEW.agent_installation_id_at_validation))
-                BETWEEN 1 AND 1000 AND
-              length(NEW.agent_binary_digest_at_validation) = 71 AND
-              substr(NEW.agent_binary_digest_at_validation, 1, 7) =
-                'sha256:' AND
-              substr(NEW.agent_binary_digest_at_validation, 8)
-                NOT GLOB '*[^0-9a-f]*' AND
-              length(NEW.agent_version_at_validation) BETWEEN 1 AND 128 AND
-              substr(NEW.agent_version_at_validation, 1, 1)
-                NOT GLOB '[^0-9A-Za-z]' AND
-              NEW.agent_version_at_validation
-                NOT GLOB '*[^0-9A-Za-z.+_-]*' AND
-              NEW.agent_architecture_at_validation IN ('x64', 'arm64') AND
-              typeof(NEW.agent_protocol_major) = 'integer' AND
-              NEW.agent_protocol_major > 0 AND
-              NEW.trust_attestation_revision = 0 AND
-              length(NEW.validated_at) > 0
-            )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project execution space validation'
-            );
-          END;
-
-          CREATE TRIGGER project_runtime_validations_validate_insert
-          BEFORE INSERT ON project_runtime_validations
-          WHEN COALESCE(NOT (
-            length(trim(NEW.runtime_selection_key))
-              BETWEEN 1 AND 1000 AND
-            length(NEW.runtime_bundle_digest) = 71 AND
-            substr(NEW.runtime_bundle_digest, 1, 7) = 'sha256:' AND
-            substr(NEW.runtime_bundle_digest, 8)
-              NOT GLOB '*[^0-9a-f]*' AND
-            length(NEW.runtime_adapter_digest) = 71 AND
-            substr(NEW.runtime_adapter_digest, 1, 7) = 'sha256:' AND
-            substr(NEW.runtime_adapter_digest, 8)
-              NOT GLOB '*[^0-9a-f]*' AND
-            NEW.confinement_policy_digest =
-              NEW.runtime_adapter_digest AND
-            NEW.approval_bridge_version =
-              '${LEGACY_UNUSED_APPROVAL_BRIDGE_VERSION}' AND
-            length(trim(NEW.agent_installation_id_at_validation))
-              BETWEEN 1 AND 1000 AND
-            length(NEW.validated_at) > 0 AND
-            NEW.work_mode IN ('ask', 'execute') AND
-            NEW.trust_tier IS NULL AND
-            NEW.trust_attestation_revision IS NULL AND
-            EXISTS (
-              SELECT 1 FROM projects
-              WHERE projects.id = NEW.project_id
-                AND projects.default_work_mode = NEW.work_mode
-            )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project runtime validation'
-            );
-          END;
-
-          CREATE TRIGGER project_runtime_validations_validate_update
-          BEFORE UPDATE ON project_runtime_validations
-          WHEN COALESCE(NOT (
-            length(trim(NEW.runtime_selection_key))
-              BETWEEN 1 AND 1000 AND
-            length(NEW.runtime_bundle_digest) = 71 AND
-            substr(NEW.runtime_bundle_digest, 1, 7) = 'sha256:' AND
-            substr(NEW.runtime_bundle_digest, 8)
-              NOT GLOB '*[^0-9a-f]*' AND
-            length(NEW.runtime_adapter_digest) = 71 AND
-            substr(NEW.runtime_adapter_digest, 1, 7) = 'sha256:' AND
-            substr(NEW.runtime_adapter_digest, 8)
-              NOT GLOB '*[^0-9a-f]*' AND
-            NEW.confinement_policy_digest =
-              NEW.runtime_adapter_digest AND
-            NEW.approval_bridge_version =
-              '${LEGACY_UNUSED_APPROVAL_BRIDGE_VERSION}' AND
-            length(trim(NEW.agent_installation_id_at_validation))
-              BETWEEN 1 AND 1000 AND
-            length(NEW.validated_at) > 0 AND
-            NEW.work_mode IN ('ask', 'execute') AND
-            NEW.trust_tier IS NULL AND
-            NEW.trust_attestation_revision IS NULL AND
-            EXISTS (
-              SELECT 1 FROM projects
-              WHERE projects.id = NEW.project_id
-                AND projects.default_work_mode = NEW.work_mode
-            )
-          ), 1)
-          BEGIN
-            SELECT RAISE(
-              ABORT,
-              'invalid project runtime validation'
-            );
-          END;
-
-          PRAGMA user_version = ${ASSISTANT_DATABASE_SCHEMA_VERSION};
+          PRAGMA user_version = 31;
           COMMIT;
         `)
       } catch (error) {

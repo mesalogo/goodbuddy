@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, readFile } from 'node:fs/promises'
 import {
   type AgentArchitecture,
-  type AgentBundleManifest,
-  type AgentReleaseKeyRegistry
+  type AgentBundleManifest
 } from '../../shared/agent-installation-contracts'
 import type { AgentBootstrapIncompatibleReason } from '../../shared/ssh-host-contracts'
 import type {
@@ -20,27 +18,26 @@ import type {
   SshConnectionPool,
   SshConnectionPoolTarget
 } from '../ssh/ssh-connection-pool'
+import type {
+  SshRemotePackageAgentIdentity
+} from '../ssh/ssh-remote-package-bootstrap'
 import {
   parseInstallationRegistryState
 } from '../../shared/remote-environment-registry-contracts'
-import {
-  getBundledAgentDirectory,
-  type BundledAgentResourcePaths
-} from './bundled-agent-resources'
+import type { BundledAgentResourcePaths } from './bundled-agent-resources'
 import {
   assertAgentManifestMatchesRuntimeLock,
   canonicalAgentReleaseKeyRegistryBytes,
-  parseAgentReleaseKeyRegistry,
   parseAgentReleaseKeyRegistryBytes,
   readAgentReleaseKeyRegistry,
   readAgentRuntimeLock,
   verifyAgentManifestSignature,
-  verifyAgentBundleDirectory,
   type AgentVerificationEnvironment,
   type VerifiedAgentBundle
 } from './agent-bundle-verifier'
 import { settleBoundedly } from './bounded-settlement'
 import { isMissingPathError } from './path-errors'
+import { remoteHostTargetIdentityKey } from './remote-host-target-identity'
 
 const MAXIMUM_INSTALLATION_FILES = 300
 const MAXIMUM_INSTALLATION_BYTES = 512 * 1024 * 1024
@@ -56,8 +53,6 @@ const MAXIMUM_METADATA_BYTES = 1024 * 1024
 export type AgentInstallationPhase =
   | 'inspecting-host'
   | 'verifying-bundle'
-  | 'preparing-installation'
-  | 'uploading-bundle'
   | 'starting-agent'
   | 'checking-health'
   | 'complete'
@@ -79,11 +74,13 @@ export interface AgentInstallationTargetResolver {
   resolve(hostId: string): Promise<SshConnectionPoolTarget>
 }
 
-export type AgentInstallationRequestOptions = {
+export type AgentActivationRequestOptions = {
   signal?: AbortSignal
   onProgress?: (phase: AgentInstallationPhase) => void
-  force?: boolean
 }
+
+export type PublishedAgentInstallationIdentity =
+  SshRemotePackageAgentIdentity
 
 export class AgentInstallationError extends Error {
   constructor(
@@ -120,14 +117,6 @@ type ManagedFileSnapshot = {
   uid: number
 }
 
-export type AgentInstallationBundleLoader = (
-  architecture: AgentArchitecture
-) => Promise<{
-  bundle: VerifiedAgentBundle
-  registry: AgentReleaseKeyRegistry
-  release?: () => void
-}>
-
 export class AgentInstallationManager {
   readonly #resolver: AgentInstallationTargetResolver
   readonly #sshPool: Pick<SshConnectionPool, 'acquire'>
@@ -135,9 +124,12 @@ export class AgentInstallationManager {
   readonly #verificationEnvironment: AgentVerificationEnvironment
   readonly #sftpLimits?: BoundedSftpLimits
   readonly #maximumConcurrentHosts: number
-  readonly #loadBundle?: AgentInstallationBundleLoader
   readonly #active = new Map<string, ActiveInstallation>()
-  readonly #installed = new Map<string, AgentInstallationIdentity>()
+  readonly #current = new Map<
+    string,
+    { targetKey: string; identity: AgentInstallationIdentity }
+  >()
+  readonly #cacheGenerations = new Map<string, number>()
   #closed = false
   #disposePromise: Promise<void> | undefined
 
@@ -148,8 +140,6 @@ export class AgentInstallationManager {
     verificationEnvironment?: AgentVerificationEnvironment
     sftpLimits?: BoundedSftpLimits
     maximumConcurrentHosts?: number
-    loadVerifiedBundle?: AgentInstallationBundleLoader
-    packageBundleLoader?: AgentInstallationBundleLoader
   }) {
     this.#resolver = options.resolver
     this.#sshPool = options.sshPool
@@ -160,32 +150,6 @@ export class AgentInstallationManager {
     this.#maximumConcurrentHosts =
       options.maximumConcurrentHosts ?? 8
     if (
-      options.loadVerifiedBundle &&
-      options.packageBundleLoader
-    ) {
-      throw new Error(
-        'Agent installation accepts only one bundle loader'
-      )
-    }
-    this.#loadBundle =
-      options.packageBundleLoader ?? options.loadVerifiedBundle
-    if (
-      options.loadVerifiedBundle &&
-      this.#verificationEnvironment !== 'test'
-    ) {
-      throw new Error(
-        'Injected Agent bundles are allowed only in test verification'
-      )
-    }
-    if (
-      this.#verificationEnvironment === 'production' &&
-      options.packageBundleLoader === undefined
-    ) {
-      throw new Error(
-        'Production Agent installation requires a verified package loader'
-      )
-    }
-    if (
       !Number.isSafeInteger(this.#maximumConcurrentHosts) ||
       this.#maximumConcurrentHosts <= 0 ||
       this.#maximumConcurrentHosts > 32
@@ -194,9 +158,49 @@ export class AgentInstallationManager {
     }
   }
 
-  async ensureInstalled(
+  /**
+   * Verifies and starts the exact Agent selected by packaged trust metadata.
+   * This path never loads an installable Agent bundle or mutates SFTP state.
+   */
+  async activateInstalled(
     hostId: string,
-    options: AgentInstallationRequestOptions = {}
+    options: AgentActivationRequestOptions = {}
+  ): Promise<AgentInstallationIdentity> {
+    return this.#request(hostId, 'activate', options)
+  }
+
+  /**
+   * Adopts an exact Agent directory already published by the authenticated
+   * package installer. Packaged trust verifies the remote contents before
+   * canonical metadata and fixed lifecycle actions promote the candidate.
+   */
+  async activatePublished(
+    hostId: string,
+    expectedIdentity: PublishedAgentInstallationIdentity,
+    options: AgentActivationRequestOptions = {}
+  ): Promise<AgentInstallationIdentity> {
+    assertPublishedAgentIdentity(expectedIdentity)
+    return this.#request(
+      hostId,
+      'adopt',
+      options,
+      expectedIdentity
+    )
+  }
+
+  invalidateHost(hostId: string): void {
+    this.#current.delete(hostId)
+    this.#cacheGenerations.set(
+      hostId,
+      (this.#cacheGenerations.get(hostId) ?? 0) + 1
+    )
+  }
+
+  async #request(
+    hostId: string,
+    mode: 'activate' | 'adopt',
+    options: AgentActivationRequestOptions,
+    expectedIdentity?: PublishedAgentInstallationIdentity
   ): Promise<AgentInstallationIdentity> {
     this.#throwIfClosed()
     options.signal?.throwIfAborted()
@@ -213,19 +217,28 @@ export class AgentInstallationManager {
     if (target.host.id !== hostId) {
       throw new Error('Resolved SSH host does not match the request')
     }
-    const operationKey = targetIdentityKey(target)
+    const targetKey = remoteHostTargetIdentityKey(target)
+    const cacheGeneration =
+      this.#cacheGenerations.get(hostId) ?? 0
+    if (mode === 'activate') {
+      const current = this.#current.get(hostId)
+      if (current?.targetKey === targetKey) {
+        try {
+          options.onProgress?.('complete')
+        } catch {
+          // Progress observers cannot alter the cached result.
+        }
+        return current.identity
+      }
+    }
+    const operationKey = mode === 'adopt'
+      ? `${mode}:${targetKey}:${publishedAgentIdentityKey(
+          expectedIdentity!
+        )}`
+      : `${mode}:${targetKey}`
     const existing = this.#active.get(operationKey)
     if (existing) {
       return this.#waitForActive(existing, options)
-    }
-    const installed = this.#installed.get(operationKey)
-    if (!options.force && installed !== undefined) {
-      try {
-        options.onProgress?.('complete')
-      } catch {
-        // Progress observers cannot alter the installation outcome.
-      }
-      return installed
     }
     if (this.#active.size >= this.#maximumConcurrentHosts) {
       throw new AgentInstallationError(
@@ -249,14 +262,27 @@ export class AgentInstallationManager {
       }
     }
     const controller = new AbortController()
-    const promise = this.#run(
-      target,
-      controller.signal,
-      emitProgress
-    ).then((identity) => {
-      this.#installed.set(operationKey, identity)
-      return identity
-    })
+    const promise = (mode === 'activate'
+      ? this.#activateInstalled(
+          target,
+          controller.signal,
+          emitProgress
+        )
+      : this.#activatePublished(
+          target,
+          expectedIdentity!,
+          controller.signal,
+          emitProgress
+        )).then((identity) => {
+          if (
+            mode === 'activate' &&
+            (this.#cacheGenerations.get(hostId) ?? 0) ===
+              cacheGeneration
+          ) {
+            this.#current.set(hostId, { targetKey, identity })
+          }
+          return identity
+        })
     const active = {
       promise,
       controller,
@@ -279,6 +305,8 @@ export class AgentInstallationManager {
       return this.#disposePromise
     }
     this.#closed = true
+    this.#current.clear()
+    this.#cacheGenerations.clear()
     const operations = [...this.#active.values()]
     const reason = new DOMException(
       'Agent installation manager was disposed',
@@ -291,7 +319,6 @@ export class AgentInstallationManager {
       operations.map((operation) => operation.promise),
       DISPOSE_WAIT_TIMEOUT_MS
     )
-    this.#installed.clear()
     return this.#disposePromise
   }
 
@@ -303,7 +330,7 @@ export class AgentInstallationManager {
 
   async #waitForActive(
     active: ActiveInstallation,
-    options: AgentInstallationRequestOptions
+    options: AgentActivationRequestOptions
   ): Promise<AgentInstallationIdentity> {
     active.waiters += 1
     if (options.onProgress) {
@@ -334,20 +361,12 @@ export class AgentInstallationManager {
     }
   }
 
-  async #run(
+  async #activateInstalled(
     target: SshConnectionPoolTarget,
     signal: AbortSignal,
     progress: (phase: AgentInstallationPhase) => void
   ): Promise<AgentInstallationIdentity> {
     let lease: SshConnectionLease | undefined
-    let sftp: StagedSftp | undefined
-    let cleanupHomeDirectory: string | undefined
-    const cleanup: CleanupEntry[] = []
-    let stagingPublished = false
-    let activationStarted = false
-    let installationId: VerifiedAgentInstallationId | undefined
-    let registrySnapshots: readonly ManagedFileSnapshot[] | undefined
-    let releaseBundle: (() => void) | undefined
     try {
       lease = await this.#sshPool.acquire(target, signal)
       assertLeaseMatchesTarget(lease, target)
@@ -359,50 +378,130 @@ export class AgentInstallationManager {
           probe.reason
         )
       }
-
       progress('verifying-bundle')
-      if (
-        this.#loadBundle === undefined &&
-        !(await bundledAgentDirectoryAvailable(
-          getBundledAgentDirectory(
-            this.#resourcePaths,
-            probe.architecture
-          )
-        ))
-      ) {
-        const reused = await this.#reuseInstalledBundle(
-          target,
-          lease,
-          probe,
-          signal
-        )
-        progress('complete')
-        return reused
-      }
-      const loaded =
-        await this.#loadVerifiedBundle(probe.architecture)
-      const { bundle, registry, registryBytes } = loaded
-      releaseBundle = loaded.release
-      assertBundleCapacity(bundle.manifest, registryBytes.byteLength)
-      const candidateInstallationId = installationIdFor(bundle)
-      installationId = candidateInstallationId
-      const identity = publicIdentity(
-        candidateInstallationId,
-        bundle
-      )
-
-      progress('preparing-installation')
-      sftp = await lease.openStagedSftp(
-        probe.canonicalHomeDirectory,
-        installationSftpLimits(
-          bundle.manifest,
-          registryBytes.byteLength,
-          this.#sftpLimits
-        ),
+      const identity = await this.#reuseInstalledBundle(
+        target,
+        lease,
+        probe,
         signal
       )
-      cleanupHomeDirectory = probe.canonicalHomeDirectory
-      await ensureManagedHierarchy(sftp, probe.uid, signal)
+      progress('complete')
+      return identity
+    } finally {
+      lease?.release()
+    }
+  }
+
+  async #activatePublished(
+    target: SshConnectionPoolTarget,
+    expected: PublishedAgentInstallationIdentity,
+    signal: AbortSignal,
+    progress: (phase: AgentInstallationPhase) => void
+  ): Promise<AgentInstallationIdentity> {
+    let lease: SshConnectionLease | undefined
+    let sftp: StagedSftp | undefined
+    let registrySnapshots: readonly ManagedFileSnapshot[] | undefined
+    const cleanup: CleanupEntry[] = []
+    const installationId = verifyAgentInstallationId(
+      expected.installationId
+    )
+    try {
+      lease = await this.#sshPool.acquire(target, signal)
+      assertLeaseMatchesTarget(lease, target)
+      const probe = await lease.runAgentBootstrapProbe(signal)
+      if (!probe.ready) {
+        throw new AgentInstallationError(
+          `Remote host cannot run the GoodBuddy Agent: ${probe.reason}`,
+          'incompatible',
+          probe.reason
+        )
+      }
+      if (
+        expected.platform !== 'linux' ||
+        expected.architecture !== probe.architecture
+      ) {
+        throw new AgentInstallationError(
+          'Published Agent does not match the Host platform or architecture',
+          'incompatible'
+        )
+      }
+
+      progress('verifying-bundle')
+      const [registry, runtimeLock] = await Promise.all([
+        readAgentReleaseKeyRegistry(
+          this.#resourcePaths.keyRegistryPath
+        ),
+        readAgentRuntimeLock(this.#resourcePaths.runtimeLockPath)
+      ])
+      const canonicalRegistryBytes =
+        canonicalAgentReleaseKeyRegistryBytes(registry)
+      sftp = await lease.openStagedSftp(
+        probe.canonicalHomeDirectory,
+        {
+          maximumFileBytes: Math.max(
+            MAXIMUM_AGENT_FILE_BYTES,
+            this.#sftpLimits?.maximumFileBytes ?? 0
+          ),
+          maximumTotalBytes: Math.max(
+            MAXIMUM_INSTALLATION_BYTES +
+              MAXIMUM_METADATA_BYTES * 4,
+            this.#sftpLimits?.maximumTotalBytes ?? 0
+          ),
+          maximumOperations:
+            this.#sftpLimits?.maximumOperations ?? 2_048,
+          operationTimeoutMs:
+            this.#sftpLimits?.operationTimeoutMs
+        },
+        signal
+      )
+      const destination =
+        `.goodbuddy/agent/installations/${installationId}`
+      const manifestBytes = await sftp.readFile(
+        `${destination}/manifest.json`,
+        signal
+      )
+      const signatureFile = await sftp.readFile(
+        `${destination}/manifest.sig`,
+        signal
+      )
+      const signatureBytes = decodeDetachedSignature(
+        signatureFile,
+        'Agent detached signature'
+      )
+      const manifest = verifyAgentManifestSignature(
+        manifestBytes,
+        signatureBytes,
+        registry,
+        this.#verificationEnvironment
+      )
+      assertAgentManifestMatchesRuntimeLock(
+        manifest,
+        runtimeLock,
+        probe.architecture
+      )
+      const bundle: VerifiedAgentBundle = {
+        bundleDirectory: destination,
+        manifest,
+        manifestSha256: sha256(manifestBytes)
+      }
+      assertPublishedAgentMatches(expected, bundle)
+      assertBundleCapacity(
+        manifest,
+        canonicalRegistryBytes.byteLength
+      )
+      // The fixed SSH installer has already verified the complete published
+      // tree against this signed manifest. Adoption rechecks its immutable
+      // identity and metadata without transferring the payload back to Main.
+      await verifyRemoteInstallationFromMetadata(
+        sftp,
+        destination,
+        bundle,
+        manifestBytes,
+        signatureFile,
+        probe.uid,
+        false,
+        signal
+      )
       registrySnapshots = await snapshotManagedRegistries(
         sftp,
         probe.uid,
@@ -410,232 +509,72 @@ export class AgentInstallationManager {
       )
       await installReleaseKeyRegistry(
         sftp,
-        registryBytes,
+        canonicalRegistryBytes,
         probe.uid,
         cleanup,
         signal
       )
-
-      const destination =
-        `.goodbuddy/agent/installations/${candidateInstallationId}`
-      const existingDestination = await pathMetadata(sftp, destination)
-      if (existingDestination !== undefined) {
-        await verifyRemoteInstallation(
-          sftp,
-          destination,
-          bundle,
-          probe.uid,
-          signal
-        ).catch((error: unknown) => {
-          rethrowAbort(error)
-          throw corruptInstallationError(
-            candidateInstallationId,
-            error
-          )
-        })
-        progress('checking-health')
-        activationStarted = true
-        await expectLifecycleSuccess(
-          lease,
-          candidateInstallationId,
-          'bootstrap',
-          signal
-        ).catch((error: unknown) => {
-          rethrowAbort(error)
-          throw new AgentInstallationError(
-            'Existing Agent installation could not be bootstrapped',
-            'lifecycle'
-          )
-        })
-        await expectLifecycleSuccess(
-          lease,
-          candidateInstallationId,
-          'health',
-          signal
-        ).catch((error: unknown) => {
-          rethrowAbort(error)
-          throw new AgentInstallationError(
-            'Existing Agent installation is not healthy',
-            'lifecycle'
-          )
-        })
-        progress('complete')
-        return identity
-      }
-
-      progress('uploading-bundle')
-      const staging =
-        `.goodbuddy/agent/staging/op-${randomUUID()}`
-      await sftp.mkdir(staging, signal)
-      cleanup.push({ path: staging, type: 'directory' })
-      await assertRemoteMetadata(
-        sftp,
-        staging,
-        'directory',
-        probe.uid,
-        PRIVATE_DIRECTORY_MODE,
-        undefined,
-        signal
-      )
-      const reusedFiles = new Set<string>()
-      if (
-        await tryReuseVerifiedCurrentNode(
-          sftp,
-          staging,
-          bundle,
-          registry,
-          this.#verificationEnvironment,
-          probe.uid,
-          signal
-        )
-      ) {
-        reusedFiles.add(bundle.manifest.entrypoint.runtimePath)
-        cleanup.push({
-          path:
-            `${staging}/${bundle.manifest.entrypoint.runtimePath}`,
-          type: 'file'
-        })
-      }
-      await uploadAndVerifyBundle(
-        sftp,
-        staging,
-        bundle,
-        probe.uid,
-        cleanup,
-        reusedFiles,
-        signal
-      )
-
       const currentTarget = await this.#resolver.resolve(
         target.host.id
       )
       if (
-        targetIdentityKey(currentTarget) !== targetIdentityKey(target)
+        remoteHostTargetIdentityKey(currentTarget) !==
+        remoteHostTargetIdentityKey(target)
       ) {
         throw new AgentInstallationError(
-          'SSH host identity changed before Agent activation',
+          'SSH host identity changed before Agent adoption',
           'host-identity-changed'
         )
       }
-      signal?.throwIfAborted()
-      await sftp.rename(staging, destination, signal)
-      stagingPublished = true
 
       progress('starting-agent')
-      activationStarted = true
       await expectLifecycleSuccess(
         lease,
-        candidateInstallationId,
+        installationId,
         'bootstrap',
         signal
       )
       progress('checking-health')
       await expectLifecycleSuccess(
         lease,
-        candidateInstallationId,
+        installationId,
         'health',
         signal
       )
       progress('complete')
-      return identity
+      return publicIdentity(installationId, bundle)
     } catch (error) {
-      if (sftp && registrySnapshots) {
-        if (activationStarted && lease && installationId) {
-          await stopFailedCandidate(lease, installationId)
-        }
+      if (lease) {
+        await stopFailedCandidate(lease, installationId)
+      }
+      if (registrySnapshots && sftp) {
         await restoreManagedRegistries(
           sftp,
           registrySnapshots
         ).catch((rollbackError: unknown) => {
           throw new AggregateError(
             [error, rollbackError],
-            'Agent installation failed and its previous registry state could not be restored'
+            'Published Agent activation failed and its previous metadata state could not be restored'
           )
         })
       }
-      throw error
-    } finally {
-      let cleanupIncomplete = false
-      if (sftp && !stagingPublished) {
-        cleanupIncomplete = !(await cleanupOwnedStaging(sftp, cleanup))
-      }
-      sftp?.close()
       if (
-        cleanupIncomplete &&
-        lease?.isUsable() &&
-        cleanupHomeDirectory
+        error instanceof AgentInstallationError ||
+        isAbortError(error)
       ) {
-        let cleanupSftp: StagedSftp | undefined
-        try {
-          cleanupSftp = await lease.openStagedSftp(
-            cleanupHomeDirectory,
-            this.#sftpLimits
-          )
-          await cleanupOwnedStaging(cleanupSftp, cleanup)
-        } catch {
-          // The lease may already be unavailable after cancellation.
-        } finally {
-          cleanupSftp?.close()
-        }
-      }
-      lease?.release()
-      releaseBundle?.()
-    }
-  }
-
-  async #loadVerifiedBundle(
-    architecture: AgentArchitecture
-  ): Promise<{
-    bundle: VerifiedAgentBundle
-    registry: AgentReleaseKeyRegistry
-    registryBytes: Buffer
-    release?: () => void
-  }> {
-    if (this.#loadBundle) {
-      const loaded = await this.#loadBundle(architecture)
-      try {
-        if (loaded.bundle.manifest.arch !== architecture) {
-          throw new Error(
-            'Verified Agent bundle architecture does not match the host'
-          )
-        }
-        const canonicalRegistry =
-          parseAgentReleaseKeyRegistry(loaded.registry)
-        return {
-          bundle: loaded.bundle,
-          registry: canonicalRegistry,
-          registryBytes:
-            canonicalAgentReleaseKeyRegistryBytes(canonicalRegistry),
-          ...(loaded.release ? { release: loaded.release } : {})
-        }
-      } catch (error) {
-        loaded.release?.()
         throw error
       }
-    }
-    const [registry, runtimeLock] = await Promise.all([
-      readAgentReleaseKeyRegistry(
-        this.#resourcePaths.keyRegistryPath
-      ),
-      readAgentRuntimeLock(this.#resourcePaths.runtimeLockPath)
-    ])
-    const bundle = await verifyAgentBundleDirectory(
-      getBundledAgentDirectory(this.#resourcePaths, architecture),
-      {
-        architecture,
-        registry,
-        runtimeLock,
-        verificationEnvironment: this.#verificationEnvironment
+      throw new AgentInstallationError(
+        'The published Host Agent could not be verified',
+        'corrupt',
+        error
+      )
+    } finally {
+      if (sftp) {
+        await cleanupOwnedStaging(sftp, cleanup)
       }
-    )
-    const canonicalRegistry = parseAgentReleaseKeyRegistry(
-      registry
-    )
-    return {
-      bundle,
-      registry: canonicalRegistry,
-      registryBytes:
-        canonicalAgentReleaseKeyRegistryBytes(canonicalRegistry)
+      sftp?.close()
+      lease?.release()
     }
   }
 
@@ -782,15 +721,15 @@ export class AgentInstallationManager {
         manifestBytes,
         signatureFile,
         probe.uid,
-        'critical-contents',
+        true,
         signal
       )
       const currentTarget = await this.#resolver.resolve(
         target.host.id
       )
       if (
-        targetIdentityKey(currentTarget) !==
-        targetIdentityKey(target)
+        remoteHostTargetIdentityKey(currentTarget) !==
+        remoteHostTargetIdentityKey(target)
       ) {
         throw new AgentInstallationError(
           'SSH host identity changed before Agent activation',
@@ -826,19 +765,6 @@ export class AgentInstallationManager {
   }
 }
 
-async function bundledAgentDirectoryAvailable(
-  directory: string
-): Promise<boolean> {
-  try {
-    return (await lstat(directory)).isDirectory()
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      return false
-    }
-    throw error
-  }
-}
-
 function parseJsonBytes(
   value: Buffer,
   description: string
@@ -867,29 +793,6 @@ function decodeDetachedSignature(
   return signature
 }
 
-function targetIdentityKey(target: SshConnectionPoolTarget): string {
-  const hostKey = target.host.hostKey
-  return createHash('sha256')
-    .update(JSON.stringify([
-      'goodbuddy-agent-installation-target-v1',
-      target.host.id,
-      target.host.name,
-      target.host.hostname,
-      target.host.port,
-      target.host.username,
-      target.host.authentication,
-      target.host.password ?? null,
-      target.hostRevision,
-      target.hostKeyGeneration,
-      hostKey?.algorithm ?? null,
-      hostKey?.publicKeyBase64 ?? null,
-      hostKey?.fingerprintSha256 ?? null,
-      hostKey?.acceptedAt ?? null,
-      hostKey?.generation ?? null
-    ]))
-    .digest('hex')
-}
-
 function assertLeaseMatchesTarget(
   lease: SshConnectionLease,
   target: SshConnectionPoolTarget
@@ -906,14 +809,6 @@ function assertLeaseMatchesTarget(
   }
 }
 
-function installationIdFor(
-  bundle: VerifiedAgentBundle
-): VerifiedAgentInstallationId {
-  return verifyAgentInstallationId(
-    `agent-${bundle.manifestSha256}`
-  )
-}
-
 function publicIdentity(
   installationId: VerifiedAgentInstallationId,
   bundle: VerifiedAgentBundle
@@ -927,6 +822,66 @@ function publicIdentity(
     architecture: bundle.manifest.arch,
     supervisor: 'detached-on-demand'
   }
+}
+
+function assertPublishedAgentIdentity(
+  identity: PublishedAgentInstallationIdentity
+): void {
+  const installationId = verifyAgentInstallationId(
+    identity.installationId
+  )
+  if (
+    !/^[a-f0-9]{64}$/u.test(identity.manifestSha256) ||
+    installationId !== `agent-${identity.manifestSha256}` ||
+    identity.binaryDigest !==
+      `sha256:${identity.manifestSha256}` ||
+    identity.agentVersion.length < 1 ||
+    identity.platform !== 'linux' ||
+    (identity.architecture !== 'x64' &&
+      identity.architecture !== 'arm64') ||
+    !Number.isSafeInteger(identity.protocol.major) ||
+    identity.protocol.major < 0 ||
+    !Number.isSafeInteger(identity.protocol.minor) ||
+    identity.protocol.minor < 0 ||
+    identity.supervisor !== 'detached-on-demand'
+  ) {
+    throw new AgentInstallationError(
+      'Published Agent identity is invalid',
+      'corrupt'
+    )
+  }
+}
+
+function assertPublishedAgentMatches(
+  expected: PublishedAgentInstallationIdentity,
+  bundle: VerifiedAgentBundle
+): void {
+  if (
+    expected.installationId !==
+      `agent-${bundle.manifestSha256}` ||
+    expected.agentVersion !== bundle.manifest.agentVersion ||
+    expected.manifestSha256 !== bundle.manifestSha256 ||
+    expected.binaryDigest !==
+      `sha256:${bundle.manifestSha256}` ||
+    expected.platform !== bundle.manifest.platform ||
+    expected.architecture !== bundle.manifest.arch ||
+    expected.protocol.major !== bundle.manifest.protocol.major ||
+    expected.protocol.minor !== bundle.manifest.protocol.minor ||
+    expected.supervisor !== 'detached-on-demand'
+  ) {
+    throw new AgentInstallationError(
+      'Published Agent does not match the authenticated package result',
+      'corrupt'
+    )
+  }
+}
+
+function publishedAgentIdentityKey(
+  identity: PublishedAgentInstallationIdentity
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify(identity))
+    .digest('hex')
 }
 
 function assertBundleCapacity(
@@ -979,45 +934,6 @@ function installationSftpLimits(
     maximumOperations:
       configured?.maximumOperations ?? 2_048,
     operationTimeoutMs: configured?.operationTimeoutMs
-  }
-}
-
-async function ensureManagedHierarchy(
-  sftp: StagedSftp,
-  uid: number,
-  signal?: AbortSignal
-): Promise<void> {
-  for (const path of [
-    '.goodbuddy',
-    '.goodbuddy/agent',
-    '.goodbuddy/agent/staging',
-    '.goodbuddy/agent/installations'
-  ]) {
-    const existing = await pathMetadata(sftp, path, signal)
-    if (existing === undefined) {
-      await sftp.mkdir(path, signal)
-    } else {
-      assertMetadata(
-        existing,
-        path,
-        'directory',
-        uid,
-        undefined,
-        undefined
-      )
-      if (existing.mode !== PRIVATE_DIRECTORY_MODE) {
-        await sftp.chmod(path, PRIVATE_DIRECTORY_MODE, signal)
-      }
-    }
-    await assertRemoteMetadata(
-      sftp,
-      path,
-      'directory',
-      uid,
-      PRIVATE_DIRECTORY_MODE,
-      undefined,
-      signal
-    )
   }
 }
 
@@ -1182,271 +1098,6 @@ async function stopFailedCandidate(
   }
 }
 
-async function uploadAndVerifyBundle(
-  sftp: StagedSftp,
-  staging: string,
-  bundle: VerifiedAgentBundle,
-  uid: number,
-  cleanup: CleanupEntry[],
-  reusedFiles: ReadonlySet<string>,
-  signal?: AbortSignal
-): Promise<void> {
-  const createdDirectories = new Set<string>()
-  for (const file of bundle.manifest.files) {
-    const parts = file.path.split('/')
-    let relativeDirectory = ''
-    for (const part of parts.slice(0, -1)) {
-      relativeDirectory = relativeDirectory
-        ? `${relativeDirectory}/${part}`
-        : part
-      if (!createdDirectories.has(relativeDirectory)) {
-        const directory = `${staging}/${relativeDirectory}`
-        await sftp.mkdir(directory, signal)
-        cleanup.push({ path: directory, type: 'directory' })
-        createdDirectories.add(relativeDirectory)
-        await assertRemoteMetadata(
-          sftp,
-          directory,
-          'directory',
-          uid,
-          PRIVATE_DIRECTORY_MODE,
-          undefined,
-          signal
-        )
-      }
-    }
-    if (reusedFiles.has(file.path)) {
-      continue
-    }
-    const contents = await readFile(
-      `${bundle.bundleDirectory}/${file.path}`
-    )
-    if (
-      contents.byteLength !== file.size ||
-      sha256(contents) !== file.sha256
-    ) {
-      throw new Error(
-        `Agent bundle changed after local verification: ${file.path}`
-      )
-    }
-    const destination = `${staging}/${file.path}`
-    cleanup.push({ path: destination, type: 'file' })
-    await sftp.writeFile(destination, contents, signal)
-    await sftp.chmod(
-      destination,
-      file.mode === '0755' ? 0o755 : 0o644,
-      signal
-    )
-    await verifyRemoteFile(
-      sftp,
-      destination,
-      file.size,
-      file.sha256,
-      uid,
-      file.mode === '0755' ? 0o755 : 0o644,
-      signal
-    )
-  }
-
-  for (const metadataName of ['manifest.json', 'manifest.sig']) {
-    const contents = await readFile(
-      `${bundle.bundleDirectory}/${metadataName}`
-    )
-    if (
-      metadataName === 'manifest.json' &&
-      sha256(contents) !== bundle.manifestSha256
-    ) {
-      throw new Error('Agent manifest changed after local verification')
-    }
-    const destination = `${staging}/${metadataName}`
-    cleanup.push({ path: destination, type: 'file' })
-    await sftp.writeFile(destination, contents, signal)
-    await sftp.chmod(destination, METADATA_MODE, signal)
-    await verifyRemoteFile(
-      sftp,
-      destination,
-      contents.byteLength,
-      sha256(contents),
-      uid,
-      METADATA_MODE,
-      signal
-    )
-  }
-}
-
-async function tryReuseVerifiedCurrentNode(
-  sftp: StagedSftp,
-  staging: string,
-  candidate: VerifiedAgentBundle,
-  registry: AgentReleaseKeyRegistry,
-  verificationEnvironment: AgentVerificationEnvironment,
-  uid: number,
-  signal?: AbortSignal
-): Promise<boolean> {
-  const runtimePath = candidate.manifest.entrypoint.runtimePath
-  const candidateNode = candidate.manifest.files.find(
-    (file) => file.path === runtimePath
-  )
-  if (
-    candidateNode === undefined ||
-    sftp.hardLink === undefined
-  ) {
-    return false
-  }
-  const destination = `${staging}/${runtimePath}`
-  try {
-    const registryBytes = await sftp.readFile(
-      AGENT_REGISTRY_PATH,
-      signal
-    )
-    const current = parseInstallationRegistryState(
-      parseJsonBytes(registryBytes, 'Installed Agent registry')
-    ).current
-    if (
-      current === undefined ||
-      current.arch !== candidate.manifest.arch ||
-      current.installationId !==
-        `agent-${current.manifestSha256}`
-    ) {
-      return false
-    }
-    const installationId = verifyAgentInstallationId(
-      current.installationId
-    )
-    const root =
-      `.goodbuddy/agent/installations/${installationId}`
-    await assertRemoteMetadata(
-      sftp,
-      root,
-      'directory',
-      uid,
-      PRIVATE_DIRECTORY_MODE,
-      undefined,
-      signal
-    )
-    const manifestPath = `${root}/manifest.json`
-    const signaturePath = `${root}/manifest.sig`
-    const manifestBytes = await sftp.readFile(
-      manifestPath,
-      signal
-    )
-    const signatureFile = await sftp.readFile(
-      signaturePath,
-      signal
-    )
-    const manifest = verifyAgentManifestSignature(
-      manifestBytes,
-      decodeDetachedSignature(
-        signatureFile,
-        'Agent detached signature'
-      ),
-      registry,
-      verificationEnvironment
-    )
-    if (
-      sha256(manifestBytes) !== current.manifestSha256 ||
-      manifest.agentVersion !== current.agentVersion ||
-      manifest.arch !== current.arch
-    ) {
-      return false
-    }
-    await verifyRemoteFile(
-      sftp,
-      manifestPath,
-      manifestBytes.byteLength,
-      sha256(manifestBytes),
-      uid,
-      METADATA_MODE,
-      signal
-    )
-    await verifyRemoteFile(
-      sftp,
-      signaturePath,
-      signatureFile.byteLength,
-      sha256(signatureFile),
-      uid,
-      METADATA_MODE,
-      signal
-    )
-    const currentNode = manifest.files.find(
-      (file) => file.path === manifest.entrypoint.runtimePath
-    )
-    if (
-      currentNode === undefined ||
-      currentNode.path !== candidateNode.path ||
-      currentNode.size !== candidateNode.size ||
-      currentNode.sha256 !== candidateNode.sha256 ||
-      currentNode.mode !== candidateNode.mode
-    ) {
-      return false
-    }
-    const source = `${root}/${currentNode.path}`
-    const mode = currentNode.mode === '0755' ? 0o755 : 0o644
-    await verifyRemoteFile(
-      sftp,
-      source,
-      currentNode.size,
-      currentNode.sha256,
-      uid,
-      mode,
-      signal
-    )
-    await sftp.hardLink(source, destination, signal)
-    await assertRemoteMetadata(
-      sftp,
-      destination,
-      'file',
-      uid,
-      mode,
-      candidateNode.size,
-      signal
-    )
-    return true
-  } catch (error) {
-    rethrowAbort(error)
-    try {
-      const linked = await pathMetadata(sftp, destination, signal)
-      if (linked !== undefined) {
-        assertMetadata(
-          linked,
-          destination,
-          'file',
-          uid,
-          undefined,
-          undefined
-        )
-        await sftp.unlink(destination, signal)
-      }
-    } catch (cleanupError) {
-      rethrowAbort(cleanupError)
-    }
-    return false
-  }
-}
-
-async function verifyRemoteInstallation(
-  sftp: StagedSftp,
-  destination: string,
-  bundle: VerifiedAgentBundle,
-  uid: number,
-  signal?: AbortSignal
-): Promise<void> {
-  const [manifestBytes, signatureBytes] = await Promise.all([
-    readFile(`${bundle.bundleDirectory}/manifest.json`),
-    readFile(`${bundle.bundleDirectory}/manifest.sig`)
-  ])
-  await verifyRemoteInstallationFromMetadata(
-    sftp,
-    destination,
-    bundle,
-    manifestBytes,
-    signatureBytes,
-    uid,
-    'contents',
-    signal
-  )
-}
-
 async function verifyRemoteInstallationFromMetadata(
   sftp: StagedSftp,
   destination: string,
@@ -1454,7 +1105,7 @@ async function verifyRemoteInstallationFromMetadata(
   manifestBytes: Buffer,
   signatureBytes: Buffer,
   uid: number,
-  verification: 'contents' | 'critical-contents',
+  verifyCriticalContents: boolean,
   signal?: AbortSignal
 ): Promise<void> {
   await assertRemoteMetadata(
@@ -1488,7 +1139,7 @@ async function verifyRemoteInstallationFromMetadata(
     const path = `${destination}/${file.path}`
     const mode = file.mode === '0755' ? 0o755 : 0o644
     if (
-      verification === 'contents' ||
+      verifyCriticalContents &&
       file.path !== bundle.manifest.entrypoint.runtimePath
     ) {
       await verifyRemoteFile(
@@ -1516,15 +1167,28 @@ async function verifyRemoteInstallationFromMetadata(
     ['manifest.json', manifestBytes],
     ['manifest.sig', signatureBytes]
   ] as const) {
-    await verifyRemoteFile(
-      sftp,
-      `${destination}/${metadataName}`,
-      contents.byteLength,
-      sha256(contents),
-      uid,
-      METADATA_MODE,
-      signal
-    )
+    const path = `${destination}/${metadataName}`
+    if (!verifyCriticalContents) {
+      await assertRemoteMetadata(
+        sftp,
+        path,
+        'file',
+        uid,
+        METADATA_MODE,
+        contents.byteLength,
+        signal
+      )
+    } else {
+      await verifyRemoteFile(
+        sftp,
+        path,
+        contents.byteLength,
+        sha256(contents),
+        uid,
+        METADATA_MODE,
+        signal
+      )
+    }
   }
 }
 
@@ -1681,17 +1345,6 @@ async function ensureCurrentAgentHealthy(
   )
 }
 
-function corruptInstallationError(
-  installationId: VerifiedAgentInstallationId,
-  cause: unknown
-): AgentInstallationError {
-  return new AgentInstallationError(
-    `Existing Agent installation is corrupt: ${installationId}`,
-    'corrupt',
-    cause
-  )
-}
-
 async function cleanupOwnedStaging(
   sftp: StagedSftp,
   entries: readonly CleanupEntry[]
@@ -1748,8 +1401,8 @@ function waitForOperation<T>(
   })
 }
 
-function rethrowAbort(error: unknown): void {
-  if (
+function isAbortError(error: unknown): boolean {
+  return (
     (
       error instanceof DOMException &&
       error.name === 'AbortError'
@@ -1760,9 +1413,7 @@ function rethrowAbort(error: unknown): void {
       'name' in error &&
       (error as { name?: unknown }).name === 'AbortError'
     )
-  ) {
-    throw error
-  }
+  )
 }
 
 function sha256(contents: Uint8Array): string {

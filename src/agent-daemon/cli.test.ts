@@ -26,7 +26,10 @@ import {
   type ManagedInstallationPaths
 } from './cli'
 import { InstallationRegistry } from './installation-registry'
-import type { VerifiedInstalledAgentBundle } from './installed-bundle-verifier'
+import {
+  RegisteredAgentBundleError,
+  type VerifiedInstalledAgentBundle
+} from './installed-bundle-verifier'
 import { RuntimeBundleRegistry } from './runtime-bundle-registry'
 import type { VerifiedRuntimeBundle } from './runtime-bundle-verifier'
 import type { RemoteRuntimeLock } from '../shared/remote-runtime-launch-contracts'
@@ -90,7 +93,7 @@ describe('Agent CLI fixed command contract', () => {
     expect(runModelBridgeHelper).toHaveBeenCalledOnce()
   })
 
-  it('passes verified manifest version and protocol into the daemon', async () => {
+  it('starts the daemon from Host-managed registry evidence without full verification', async () => {
     const root = privateTemporaryDirectory()
     const paths: ManagedInstallationPaths = {
       executablePath: resolve(root, 'install-1', 'goodbuddy-agent'),
@@ -115,6 +118,8 @@ describe('Agent CLI fixed command contract', () => {
       status: () => ({ daemonBootId: 'daemon-boot-1' })
     }))
     const recordCurrentDaemonReady = vi.fn(async () => undefined)
+    const verifyInstallation = vi.fn(async () => verified)
+    const loadRegisteredInstallation = vi.fn(async () => verified)
     const io = cliIo()
 
     const result = await runAgentCli(
@@ -123,7 +128,8 @@ describe('Agent CLI fixed command contract', () => {
           installationPaths: () => paths,
           releaseKeyRegistry,
           installationRegistry: registry,
-          verifyInstallation: async () => verified,
+          verifyInstallation,
+          loadRegisteredInstallation,
           peerIdentityProvider: {
             async getPeerIdentity() {
               return { uid: 1 }
@@ -156,6 +162,8 @@ describe('Agent CLI fixed command contract', () => {
     expect(recordCurrentDaemonReady).toHaveBeenCalledWith(
       'daemon-boot-1'
     )
+    expect(loadRegisteredInstallation).toHaveBeenCalledOnce()
+    expect(verifyInstallation).not.toHaveBeenCalled()
   })
 
   it('dispatches generated doctor and lifecycle argv through the real parser', async () => {
@@ -274,6 +282,8 @@ describe('Agent CLI fixed command contract', () => {
       storagePath: resolve(root, 'registry.json')
     })
     installationRegistry.stageCandidate(verified)
+    const verifyInstallation = vi.fn(async () => verified)
+    const loadRegisteredInstallation = vi.fn(async () => verified)
     const io = cliIo()
 
     const attachResult = await runAgentCli(
@@ -283,7 +293,8 @@ describe('Agent CLI fixed command contract', () => {
           installationPaths: () => paths,
           releaseKeyRegistry,
           installationRegistry,
-          verifyInstallation: async () => verified,
+          verifyInstallation,
+          loadRegisteredInstallation,
           io
         }
       )
@@ -296,6 +307,43 @@ describe('Agent CLI fixed command contract', () => {
         socketPath: paths.socketPath,
         secret: Buffer.alloc(32, 7)
       })
+    )
+    expect(loadRegisteredInstallation).toHaveBeenCalledOnce()
+    expect(verifyInstallation).not.toHaveBeenCalled()
+  })
+
+  it('emits a fixed repair diagnostic when registered attach metadata is invalid', async () => {
+    const installationId = verifyAgentInstallationId('install-1')
+    const root = privateTemporaryDirectory()
+    const paths = {
+      executablePath: resolve(root, 'agent', 'goodbuddy-agent'),
+      stateDirectory: resolve(root, 'state', 'install-1'),
+      socketPath: resolve(root, 'run', 'install-1.sock')
+    }
+    const verified = verifiedInstallation(paths, installationId)
+    const installationRegistry = new InstallationRegistry({
+      storagePath: resolve(root, 'registry.json')
+    })
+    installationRegistry.stageCandidate(verified)
+    const io = cliIo()
+
+    const result = await runAgentCli(
+      buildFixedAgentCliArgv(installationId, { kind: 'attach' }),
+      {
+        installationPaths: () => paths,
+        installationRegistry,
+        loadRegisteredInstallation: vi.fn(async () => {
+          throw new RegisteredAgentBundleError(
+            'private installation detail'
+          )
+        }),
+        io
+      }
+    )
+
+    expect(result).toBe(2)
+    expect(io.error.read()?.toString()).toBe(
+      `${AGENT_PROTOCOL_FAILURE_STDERR_PREFIX}installation-repair-required\n`
     )
   })
 

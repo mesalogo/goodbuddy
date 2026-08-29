@@ -12,11 +12,20 @@ import type {
 import type { RuntimeSessionBindingStore } from '../agent/runtime-session-binding-store'
 import type { SshExecutionSpaceDescriptor } from '../execution-space'
 import type { RemoteWorkspaceProjectBinding } from '../workspace'
+import {
+  REMOTE_WORKSPACE_READ_CAPABILITIES,
+  remoteWorkspaceCloseResultSchema,
+  remoteWorkspaceValidateResultSchema,
+  type RemoteWorkspaceHandle
+} from '../../shared/remote-agent-contracts'
 import { createProtocolRemoteRuntimeChannel } from './protocol-remote-runtime-channel'
 import type { RemoteAgentServices } from './remote-agent-services'
-import type { ManagedRemoteWorkspaceAccessFactory } from './managed-remote-workspace-access-factory'
 import type { ManagedModelBridge } from './managed-model-bridge'
-import type { RemoteRuntimeInstallationManager } from './remote-runtime-installation-manager'
+import type { AgentInstallationIdentity } from './agent-installation-manager'
+import type {
+  RemoteRuntimeInstallationIdentity,
+  RemoteRuntimeInstallationManager
+} from './remote-runtime-installation-manager'
 
 const RUNTIME_ACP_CAPABILITY = {
   name: 'runtime/acp',
@@ -34,20 +43,26 @@ type ManagedRemoteTransportIdentity = {
   daemonBootId: string
 }
 
+type ManagedRemoteRuntimeIdentity = {
+  runtimeId: 'opencode'
+  runtimeVersion: string
+  bundleDigest: string
+  runtimeAdapterDigest: string
+  acpCapabilitiesDigest: string
+  platform: 'linux'
+  architecture: 'x64' | 'arm64'
+}
+
 export type ManagedRemoteAcpRuntimeOptions = {
   executionSpace: SshExecutionSpaceDescriptor
   selection: AgentRuntimeSelection
   agentServices: Pick<
     RemoteAgentServices,
-    'installationManager' | 'connectionManager' | 'controllerState'
+    'connectionManager' | 'controllerState' | 'installationManager'
   >
   runtimeInstallationManager: Pick<
     RemoteRuntimeInstallationManager,
-    'ensureInstalled'
-  >
-  workspaceAccessFactory: Pick<
-    ManagedRemoteWorkspaceAccessFactory,
-    'create'
+    'activateInstalled'
   >
   bindingStore: RuntimeSessionBindingStore
   modelBridge: ManagedModelBridge
@@ -58,7 +73,7 @@ export type ManagedRemoteAcpRuntimeOptions = {
 }
 
 /**
- * Acquires every production lease needed by one validated remote Runtime.
+ * Acquires every production lease needed by the Host's current Runtime.
  * The returned Runtime owns those leases and releases them only after all ACP
  * conversation channels have been closed.
  */
@@ -66,15 +81,9 @@ export async function createManagedRemoteAcpRuntime(
   options: ManagedRemoteAcpRuntimeOptions
 ): Promise<AgentRuntime> {
   const descriptor = options.executionSpace
-  const validation = descriptor.validation
-  const runtimeValidation = descriptor.runtimeValidation
-  if (
-    options.selection.provider !== 'opencode' ||
-    validation === undefined ||
-    runtimeValidation === undefined
-  ) {
+  if (options.selection.provider !== 'opencode') {
     throw new Error(
-      'Managed remote execution requires validated OpenCode project evidence'
+      'Managed remote execution requires the OpenCode Runtime'
     )
   }
   const workspaceBinding = workspaceProjectBinding(descriptor)
@@ -88,17 +97,9 @@ export async function createManagedRemoteAcpRuntime(
   let retained = false
   try {
     const agent =
-      await options.agentServices.installationManager.ensureInstalled(
+      await options.agentServices.installationManager.activateInstalled(
         descriptor.hostId
       )
-    assertAgentMatches(workspaceBinding, agent)
-
-    const runtime =
-      await options.runtimeInstallationManager.ensureInstalled(
-        descriptor.hostId
-      )
-    assertRuntimeMatches(runtimeValidation, agent.architecture, runtime)
-
     const activeConnection =
       await options.agentServices.connectionManager.acquire(
       descriptor.hostId,
@@ -111,39 +112,29 @@ export async function createManagedRemoteAcpRuntime(
       }
     )
     connection = activeConnection
-    assertConnectionMatches(workspaceBinding, activeConnection)
-    const initialTransport = {
-      controllerGeneration: activeConnection.client.generation,
-      daemonBootId: activeConnection.status.daemonBootId
-    }
+    assertConnectionMatches(workspaceBinding, agent, activeConnection)
+    const runtimeInstallation =
+      await options.runtimeInstallationManager.activateInstalled(
+        descriptor.hostId,
+        { agentInstallationId: agent.installationId }
+      )
     const capabilities = await activeConnection.refreshCapabilities()
-    assertConnectionMatches(workspaceBinding, activeConnection)
-    assertSameTransport(
-      initialTransport,
-      {
-        controllerGeneration: activeConnection.client.generation,
-        daemonBootId: activeConnection.status.daemonBootId
-      },
-      'Remote Agent transport changed while creating the Runtime'
+    assertConnectionMatches(workspaceBinding, agent, activeConnection)
+    const runtime = runtimeIdentityFromCapabilities(
+      runtimeInstallation,
+      capabilities
     )
-    assertRuntimeAdvertised(runtime, capabilities)
     const controllerId =
       await options.agentServices.controllerState.getControllerId()
-    assertSameTransport(
-      initialTransport,
-      {
-        controllerGeneration: activeConnection.client.generation,
-        daemonBootId: activeConnection.status.daemonBootId
-      },
-      'Remote Agent transport changed while creating the Runtime'
-    )
     const resources = new ManagedRemoteRuntimeResources(
-      options.workspaceAccessFactory,
       workspaceBinding,
+      agent,
       activeConnection,
       runtime,
       options.modelBridge
     )
+    const initialTransport =
+      await resources.prepareTransport(capabilities)
 
     const createRemote = (
       transport: ManagedRemoteTransportIdentity
@@ -156,15 +147,14 @@ export async function createManagedRemoteAcpRuntime(
           controllerId,
           controllerGeneration: transport.controllerGeneration,
           hostId: workspaceBinding.hostId,
-          hostRevision: workspaceBinding.hostRevision,
-          hostKeyGeneration: workspaceBinding.hostKeyGeneration,
-          workspaceIdentity: workspaceBinding.workspaceIdentity,
-          agentInstallationId: workspaceBinding.agentInstallationId,
+          hostRevision: activeConnection.identity.hostRevision,
+          hostKeyGeneration:
+            activeConnection.identity.hostKeyGeneration,
+          workspaceIdentity: resources.workspaceIdentity,
+          agentInstallationId: agent.installationId,
           daemonBootIdAtOpen: transport.daemonBootId,
-          runtimeBundleDigest:
-            runtimeValidation.runtimeBundleDigest,
-          runtimeAdapterDigest:
-            runtimeValidation.runtimeAdapterDigest,
+          runtimeBundleDigest: runtime.bundleDigest,
+          runtimeAdapterDigest: runtime.runtimeAdapterDigest
         },
         channelFactory: async (bindingId) =>
           resources.openChannel(transport, bindingId),
@@ -174,11 +164,12 @@ export async function createManagedRemoteAcpRuntime(
           if (
             identity.controllerId !== controllerId ||
             identity.hostId !== workspaceBinding.hostId ||
-            identity.hostRevision !== workspaceBinding.hostRevision ||
+            identity.hostRevision !==
+              activeConnection.identity.hostRevision ||
             identity.hostKeyGeneration !==
-              workspaceBinding.hostKeyGeneration ||
+              activeConnection.identity.hostKeyGeneration ||
             identity.agentInstallationId !==
-              workspaceBinding.agentInstallationId
+              agent.installationId
           ) {
             throw new Error(
               'Remote Runtime Host identity no longer matches its project'
@@ -217,16 +208,14 @@ class ManagedRemoteRuntimeResources {
   #workspace:
     | {
         transport: ManagedRemoteTransportIdentity
-        access: ReturnType<ManagedRemoteWorkspaceAccessFactory['create']>
+        handle: RemoteWorkspaceHandle
       }
     | undefined
   #workspaceTail: Promise<void> = Promise.resolve()
   #disposePromise?: Promise<void>
-
   constructor(
-    private readonly workspaceFactory:
-      Pick<ManagedRemoteWorkspaceAccessFactory, 'create'>,
     private readonly workspaceBinding: RemoteWorkspaceProjectBinding,
+    private readonly agent: AgentInstallationIdentity,
     private readonly connection: NonNullable<
       Awaited<
         ReturnType<
@@ -234,11 +223,16 @@ class ManagedRemoteRuntimeResources {
         >
       >
     >,
-    private readonly runtime: Awaited<
-      ReturnType<RemoteRuntimeInstallationManager['ensureInstalled']>
-    >,
+    private readonly runtime: ManagedRemoteRuntimeIdentity,
     private readonly modelBridge: ManagedModelBridge
   ) {}
+
+  get workspaceIdentity(): string {
+    if (this.#workspace === undefined) {
+      throw new Error('Remote Workspace is not open')
+    }
+    return this.#workspace.handle.workspaceIdentity
+  }
 
   currentTransportIdentity(): ManagedRemoteTransportIdentity {
     return {
@@ -247,14 +241,30 @@ class ManagedRemoteRuntimeResources {
     }
   }
 
-  async prepareTransport(): Promise<ManagedRemoteTransportIdentity> {
+  async prepareTransport(
+    preparedCapabilities?: Awaited<
+      ReturnType<
+        RemoteAgentServices['connectionManager']['acquire']
+      >
+    >['capabilities']
+  ): Promise<ManagedRemoteTransportIdentity> {
     if (this.connection.state !== 'ready') {
       await this.connection.reconnect()
     }
-    assertConnectionMatches(this.workspaceBinding, this.connection)
+    assertConnectionMatches(
+      this.workspaceBinding,
+      this.agent,
+      this.connection
+    )
     const beforeRefresh = this.currentTransportIdentity()
-    const capabilities = await this.connection.refreshCapabilities()
-    assertConnectionMatches(this.workspaceBinding, this.connection)
+    const capabilities =
+      preparedCapabilities ??
+      await this.connection.refreshCapabilities()
+    assertConnectionMatches(
+      this.workspaceBinding,
+      this.agent,
+      this.connection
+    )
     assertSameTransport(
       beforeRefresh,
       this.currentTransportIdentity(),
@@ -286,7 +296,7 @@ class ManagedRemoteRuntimeResources {
         bindingId,
         runtimeId: 'opencode',
         runtimeBundleDigest: this.runtime.bundleDigest,
-        workspaceIdentity: this.workspaceBinding.workspaceIdentity
+        workspaceIdentity: this.workspaceIdentity
       },
       modelBridge: this.modelBridge.channel
     })
@@ -311,7 +321,6 @@ class ManagedRemoteRuntimeResources {
         this.#workspace !== undefined &&
         sameTransport(this.#workspace.transport, transport)
       ) {
-        await this.#workspace.access.getIdentity()
         assertSameTransport(
           transport,
           this.currentTransportIdentity(),
@@ -322,37 +331,60 @@ class ManagedRemoteRuntimeResources {
       const previous = this.#workspace
       this.#workspace = undefined
       if (previous !== undefined) {
-        await previous.access.dispose().catch(() => undefined)
+        await this.#closeWorkspace(previous.handle).catch(
+          () => undefined
+        )
       }
-      const access = this.workspaceFactory.create(
-        this.workspaceBinding
+      const validated = remoteWorkspaceValidateResultSchema.parse(
+        await this.connection.client.request(
+          'workspace/validate',
+          {
+            remoteRootPath: this.workspaceBinding.remoteRootPath,
+            requestedAccess: 'read-only',
+            requiredCapabilities: [
+              ...REMOTE_WORKSPACE_READ_CAPABILITIES
+            ]
+          }
+        )
       )
       try {
-        const identity = await access.getIdentity()
-        if (
-          identity.kind !== 'remote' ||
-          identity.canonicalDisplayPath !==
-            this.workspaceBinding.remoteRootPath ||
-          identity.id !==
-            `${this.workspaceBinding.hostId}:${this.workspaceBinding.workspaceIdentity}`
-        ) {
-          throw new Error(
-            'Live remote Workspace does not match persisted validation'
-          )
-        }
+        assertWorkspace(
+          this.workspaceBinding,
+          validated.handle
+        )
         assertSameTransport(
           transport,
           this.currentTransportIdentity(),
           'Remote Agent transport changed while opening the Workspace'
         )
-        this.#workspace = { transport, access }
+        this.#workspace = {
+          transport,
+          handle: validated.handle
+        }
       } catch (error) {
-        await access.dispose().catch(() => undefined)
+        await this.#closeWorkspace(validated.handle).catch(
+          () => undefined
+        )
         throw error
       }
     })
     this.#workspaceTail = operation.catch(() => undefined)
     return operation
+  }
+
+  async #closeWorkspace(handle: RemoteWorkspaceHandle): Promise<void> {
+    const result = remoteWorkspaceCloseResultSchema.parse(
+      await this.connection.client.request('workspace/close', {
+        workspaceId: handle.workspaceId,
+        generation: handle.generation
+      })
+    )
+    if (
+      result.workspaceId !== handle.workspaceId ||
+      result.generation !== handle.generation
+    ) {
+      throw new Error('Remote Workspace close confirmation is invalid')
+    }
   }
 
   dispose(): Promise<void> {
@@ -364,7 +396,9 @@ class ManagedRemoteRuntimeResources {
     await this.#workspaceTail
     const errors: unknown[] = []
     try {
-      await this.#workspace?.access.dispose()
+      if (this.#workspace !== undefined) {
+        await this.#closeWorkspace(this.#workspace.handle)
+      }
     } catch (error) {
       errors.push(error)
     }
@@ -562,77 +596,61 @@ function assertSameTransport(
 function workspaceProjectBinding(
   descriptor: SshExecutionSpaceDescriptor
 ): RemoteWorkspaceProjectBinding {
-  const validation = descriptor.validation
-  const runtime = descriptor.runtimeValidation
-  if (
-    validation === undefined ||
-    runtime === undefined ||
-    validation.agentInstallationIdAtValidation !==
-      runtime.agentInstallationIdAtValidation
-  ) {
-    throw new Error('Remote project validation evidence is inconsistent')
-  }
   return {
     hostId: descriptor.hostId,
-    hostRevision: validation.hostRevision,
-    hostKeyGeneration: validation.hostKeyGeneration,
-    remoteUsername: validation.remoteUsername,
-    remoteRootPath: descriptor.remoteRootPath,
-    workspaceIdentity: validation.workspaceIdentity,
-    agentInstallationId:
-      validation.agentInstallationIdAtValidation,
-    agentBinaryDigest:
-      validation.agentBinaryDigestAtValidation,
-    agentVersion: validation.agentVersionAtValidation,
-    agentArchitecture:
-      validation.agentArchitectureAtValidation,
-    agentProtocolMajor: validation.agentProtocolMajor
+    remoteRootPath: descriptor.remoteRootPath
   }
 }
 
-function assertAgentMatches(
+function assertWorkspace(
   binding: RemoteWorkspaceProjectBinding,
-  agent: Awaited<
-    ReturnType<RemoteAgentServices['installationManager']['ensureInstalled']>
-  >
+  handle: RemoteWorkspaceHandle
 ): void {
   if (
-    agent.installationId !== binding.agentInstallationId ||
-    agent.binaryDigest !== binding.agentBinaryDigest ||
-    agent.agentVersion !== binding.agentVersion ||
-    agent.architecture !== binding.agentArchitecture ||
-    agent.protocol.major !== binding.agentProtocolMajor
+    handle.canonicalDisplayPath !== binding.remoteRootPath ||
+    handle.access !== 'read-only' ||
+    REMOTE_WORKSPACE_READ_CAPABILITIES.some(
+      (capability) => !handle.capabilities.includes(capability)
+    )
   ) {
     throw new Error(
-      'Installed remote Agent does not match project validation'
+      'Live remote Workspace does not match the project path'
     )
   }
 }
 
-function assertRuntimeMatches(
-  validation: NonNullable<
-    SshExecutionSpaceDescriptor['runtimeValidation']
-  >,
-  architecture: 'x64' | 'arm64',
-  runtime: Awaited<
-    ReturnType<RemoteRuntimeInstallationManager['ensureInstalled']>
-  >
-): void {
+function runtimeIdentityFromCapabilities(
+  installation: RemoteRuntimeInstallationIdentity,
+  capabilities: Awaited<
+    ReturnType<
+      RemoteAgentServices['connectionManager']['acquire']
+    >
+  >['capabilities']
+): ManagedRemoteRuntimeIdentity {
   if (
-    runtime.runtimeId !== 'opencode' ||
-    runtime.architecture !== architecture ||
-    runtime.bundleDigest !== validation.runtimeBundleDigest ||
-    runtime.runtimeAdapterDigest !==
-      validation.runtimeAdapterDigest
+    installation.runtimeId !== 'opencode' ||
+    installation.platform !== 'linux'
   ) {
     throw new Error(
-      'Installed OpenCode Runtime does not match project validation'
+      'Remote Agent does not advertise the current Runtime'
     )
   }
+  const runtime: ManagedRemoteRuntimeIdentity = {
+    runtimeId: 'opencode',
+    runtimeVersion: installation.runtimeVersion,
+    bundleDigest: installation.bundleDigest,
+    runtimeAdapterDigest: installation.runtimeAdapterDigest,
+    acpCapabilitiesDigest: installation.acpCapabilitiesDigest,
+    platform: 'linux',
+    architecture: installation.architecture
+  }
+  assertRuntimeAdvertised(runtime, capabilities)
+  return runtime
 }
 
 function assertConnectionMatches(
   binding: RemoteWorkspaceProjectBinding,
+  agent: AgentInstallationIdentity,
   connection: Awaited<
     ReturnType<RemoteAgentServices['connectionManager']['acquire']>
   >
@@ -640,31 +658,24 @@ function assertConnectionMatches(
   if (
     connection.state !== 'ready' ||
     connection.identity.hostId !== binding.hostId ||
-    connection.identity.hostRevision !== binding.hostRevision ||
-    connection.identity.hostKeyGeneration !==
-      binding.hostKeyGeneration ||
-    connection.identity.remoteUsername !== binding.remoteUsername ||
-    connection.identity.installationId !==
-      binding.agentInstallationId ||
-    connection.identity.binaryDigest !== binding.agentBinaryDigest ||
-    connection.identity.protocolMajor !== binding.agentProtocolMajor ||
+    connection.identity.installationId !== agent.installationId ||
+    connection.identity.binaryDigest !== agent.binaryDigest ||
+    connection.identity.protocolMajor !== agent.protocol.major ||
     connection.status.state !== 'ready' ||
     connection.status.draining ||
-    connection.status.installationId !== binding.agentInstallationId ||
-    connection.status.binaryDigest !== binding.agentBinaryDigest ||
-    connection.status.agentVersion !== binding.agentVersion ||
-    connection.status.architecture !== binding.agentArchitecture
+    connection.status.installationId !== agent.installationId ||
+    connection.status.binaryDigest !== agent.binaryDigest ||
+    connection.status.agentVersion !== agent.agentVersion ||
+    connection.status.architecture !== agent.architecture
   ) {
     throw new Error(
-      'Remote Agent connection does not match project validation'
+      'Remote Agent connection is not current'
     )
   }
 }
 
 function assertRuntimeAdvertised(
-  runtime: Awaited<
-    ReturnType<RemoteRuntimeInstallationManager['ensureInstalled']>
-  >,
+  runtime: ManagedRemoteRuntimeIdentity,
   capabilities: Awaited<
     ReturnType<
       RemoteAgentServices['connectionManager']['acquire']
@@ -698,7 +709,7 @@ function assertRuntimeAdvertised(
     !advertised[0]!.sessionResume
   ) {
     throw new Error(
-      'Remote Agent does not advertise the validated OpenCode Runtime'
+      'Remote Agent does not advertise the current OpenCode Runtime'
     )
   }
 }

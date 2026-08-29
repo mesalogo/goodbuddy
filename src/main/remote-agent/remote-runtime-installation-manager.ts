@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import {
   agentReleaseKeyRegistrySchema,
   type AgentArchitecture,
@@ -9,16 +7,13 @@ import {
 import type { AgentBootstrapIncompatibleReason } from '../../shared/ssh-host-contracts'
 import {
   assertRuntimeManifestMatchesLock,
-  canonicalRuntimeManifestBytes,
   verifyRuntimeManifestSignature
 } from '../../shared/node/runtime-bundle-verifier'
 import {
   parseRuntimeRegistryState
 } from '../../shared/remote-environment-registry-contracts'
 import {
-  digestRemoteRuntimeBundleIdentity,
   digestRemoteRuntimeBundleManifest,
-  remoteRuntimeBundleManifestSchema,
   remoteRuntimeLockSchema,
   type RemoteRuntimeBundleManifest,
   type RemoteRuntimeLock
@@ -34,11 +29,16 @@ import type {
   SshConnectionPool,
   SshConnectionPoolTarget
 } from '../ssh/ssh-connection-pool'
+import type {
+  SshRemotePackageRuntimeIdentity
+} from '../ssh/ssh-remote-package-bootstrap'
+import type { VerifiedAgentInstallationId } from '../ssh/ssh-agent-command'
 import { settleBoundedly } from './bounded-settlement'
 import {
   parseAgentReleaseKeyRegistryBytes
 } from './agent-bundle-verifier'
 import { isMissingPathError } from './path-errors'
+import { remoteHostTargetIdentityKey } from './remote-host-target-identity'
 
 const MAXIMUM_INSTALLATION_FILES = 200
 const MAXIMUM_INSTALLATION_BYTES = 512 * 1024 * 1024
@@ -51,29 +51,14 @@ const PRIVATE_DIRECTORY_MODE = 0o700
 const DISPOSE_WAIT_TIMEOUT_MS = 5_000
 
 const RUNTIME_ROOT = '.goodbuddy/runtimes'
-const RUNTIME_STAGING_ROOT = `${RUNTIME_ROOT}/staging`
 const OPENCODE_ROOT = `${RUNTIME_ROOT}/opencode`
 const RELEASE_KEYS_PATH = `${RUNTIME_ROOT}/release-keys.json`
 const RUNTIME_LOCK_PATH = `${RUNTIME_ROOT}/remote-runtime-lock.json`
 const RUNTIME_REGISTRY_PATH = `${RUNTIME_ROOT}/registry.json`
 
-export class RemoteRuntimeBundleResourcesUnavailableError
-  extends Error {
-  constructor(cause?: unknown) {
-    super(
-      'OpenCode Runtime installation resources are not included in this package',
-      { cause }
-    )
-    this.name = 'RemoteRuntimeBundleResourcesUnavailableError'
-  }
-}
-
 export type RemoteRuntimeInstallationPhase =
   | 'inspecting-host'
   | 'verifying-bundle'
-  | 'preparing-installation'
-  | 'uploading-bundle'
-  | 'publishing-bundle'
   | 'activating-runtime'
   | 'complete'
 
@@ -92,11 +77,14 @@ export interface RemoteRuntimeInstallationTargetResolver {
   resolve(hostId: string): Promise<SshConnectionPoolTarget>
 }
 
-export type RemoteRuntimeInstallationRequestOptions = {
+export type RemoteRuntimeActivationRequestOptions = {
   signal?: AbortSignal
   onProgress?: (phase: RemoteRuntimeInstallationPhase) => void
-  force?: boolean
+  agentInstallationId?: VerifiedAgentInstallationId
 }
+
+export type PublishedRemoteRuntimeInstallationIdentity =
+  SshRemotePackageRuntimeIdentity
 
 export class RemoteRuntimeInstallationError extends Error {
   constructor(
@@ -120,17 +108,6 @@ type RuntimeBundleBase = {
   manifestDigest: string
 }
 
-export type VerifiedRemoteRuntimeInstallationBundle =
-  RuntimeBundleBase & {
-    canonicalReleaseKeyRegistryBytes: Uint8Array
-    canonicalRemoteRuntimeLockBytes: Uint8Array
-    release?: () => void
-  }
-
-export type RemoteRuntimeInstallationBundleLoader = (
-  architecture: AgentArchitecture
-) => Promise<VerifiedRemoteRuntimeInstallationBundle>
-
 export type RemoteRuntimeInstallationVerificationMetadata = {
   releaseKeyRegistry: AgentReleaseKeyRegistry
   runtimeLock: RemoteRuntimeLock
@@ -148,6 +125,7 @@ export type RemoteRuntimeActivator = (
   runtimeId: string,
   bundleDigest: string,
   architecture: AgentArchitecture,
+  agentInstallationId: VerifiedAgentInstallationId | undefined,
   signal: AbortSignal
 ) => Promise<void>
 
@@ -166,33 +144,41 @@ type CleanupEntry = {
   type: 'file' | 'directory'
 }
 
+type ManagedFileSnapshot = {
+  path: string
+  contents: Buffer | undefined
+  uid: number
+}
+
 type LoadedBundle = RuntimeBundleBase & {
   releaseKeyRegistryBytes: Buffer
   remoteRuntimeLockBytes: Buffer
-  release?: () => void
 }
 
 export class RemoteRuntimeInstallationManager {
   readonly #resolver: RemoteRuntimeInstallationTargetResolver
   readonly #sshPool: Pick<SshConnectionPool, 'acquire'>
-  readonly #loadVerifiedBundle: RemoteRuntimeInstallationBundleLoader
   readonly #loadVerificationMetadata?:
     RemoteRuntimeInstallationVerificationMetadataLoader
   readonly #activate: RemoteRuntimeActivator
   readonly #sftpLimits?: BoundedSftpLimits
   readonly #maximumConcurrentHosts: number
   readonly #active = new Map<string, ActiveInstallation>()
-  readonly #installed = new Map<
+  readonly #current = new Map<
     string,
-    RemoteRuntimeInstallationIdentity
+    {
+      targetKey: string
+      agentKey: string
+      identity: RemoteRuntimeInstallationIdentity
+    }
   >()
+  readonly #cacheGenerations = new Map<string, number>()
   #closed = false
   #disposePromise: Promise<void> | undefined
 
   constructor(options: {
     resolver: RemoteRuntimeInstallationTargetResolver
     sshPool: Pick<SshConnectionPool, 'acquire'>
-    loadVerifiedBundle: RemoteRuntimeInstallationBundleLoader
     loadVerificationMetadata?:
       RemoteRuntimeInstallationVerificationMetadataLoader
     activate: RemoteRuntimeActivator
@@ -201,7 +187,6 @@ export class RemoteRuntimeInstallationManager {
   }) {
     this.#resolver = options.resolver
     this.#sshPool = options.sshPool
-    this.#loadVerifiedBundle = options.loadVerifiedBundle
     this.#loadVerificationMetadata =
       options.loadVerificationMetadata
     this.#activate = options.activate
@@ -219,9 +204,49 @@ export class RemoteRuntimeInstallationManager {
     }
   }
 
-  async ensureInstalled(
+  /**
+   * Verifies and activates the installed Runtime selected by packaged trust
+   * metadata without loading or publishing installable Runtime payloads.
+   */
+  async activateInstalled(
     hostId: string,
-    options: RemoteRuntimeInstallationRequestOptions = {}
+    options: RemoteRuntimeActivationRequestOptions = {}
+  ): Promise<RemoteRuntimeInstallationIdentity> {
+    return this.#request(hostId, 'activate', options)
+  }
+
+  /**
+   * Verifies and activates the exact Runtime directory already published by
+   * the authenticated package installer, installing canonical metadata but
+   * never loading or staging payloads.
+   */
+  async activatePublished(
+    hostId: string,
+    expectedIdentity: PublishedRemoteRuntimeInstallationIdentity,
+    options: RemoteRuntimeActivationRequestOptions = {}
+  ): Promise<RemoteRuntimeInstallationIdentity> {
+    assertPublishedRuntimeIdentity(expectedIdentity)
+    return this.#request(
+      hostId,
+      'adopt',
+      options,
+      expectedIdentity
+    )
+  }
+
+  invalidateHost(hostId: string): void {
+    this.#current.delete(hostId)
+    this.#cacheGenerations.set(
+      hostId,
+      (this.#cacheGenerations.get(hostId) ?? 0) + 1
+    )
+  }
+
+  async #request(
+    hostId: string,
+    mode: 'activate' | 'adopt',
+    options: RemoteRuntimeActivationRequestOptions,
+    expectedIdentity?: PublishedRemoteRuntimeInstallationIdentity
   ): Promise<RemoteRuntimeInstallationIdentity> {
     this.#throwIfClosed()
     options.signal?.throwIfAborted()
@@ -236,15 +261,28 @@ export class RemoteRuntimeInstallationManager {
       )
     }
 
-    const operationKey = targetIdentityKey(target)
+    const targetKey = remoteHostTargetIdentityKey(target)
+    const agentKey = options.agentInstallationId ?? ''
+    const cacheGeneration =
+      this.#cacheGenerations.get(hostId) ?? 0
+    if (mode === 'activate') {
+      const current = this.#current.get(hostId)
+      if (
+        current?.targetKey === targetKey &&
+        current.agentKey === agentKey
+      ) {
+        emitOne(options.onProgress, 'complete')
+        return current.identity
+      }
+    }
+    const operationKey = mode === 'adopt'
+      ? `${mode}:${targetKey}:${publishedRuntimeIdentityKey(
+          expectedIdentity!
+        )}:${agentKey}`
+      : `${mode}:${targetKey}:${agentKey}`
     const existing = this.#active.get(operationKey)
     if (existing) {
       return this.#waitForActive(existing, options)
-    }
-    const installed = this.#installed.get(operationKey)
-    if (!options.force && installed !== undefined) {
-      emitOne(options.onProgress, 'complete')
-      return installed
     }
     if (this.#active.size >= this.#maximumConcurrentHosts) {
       throw new RemoteRuntimeInstallationError(
@@ -264,11 +302,33 @@ export class RemoteRuntimeInstallationManager {
         emitOne(callback, phase)
       }
     }
-    const promise = this.#run(target, controller.signal, progress)
-      .then((identity) => {
-        this.#installed.set(operationKey, identity)
-        return identity
-      })
+    const promise = (mode === 'activate'
+      ? this.#activateInstalled(
+          target,
+          options.agentInstallationId,
+          controller.signal,
+          progress
+        )
+      : this.#activatePublished(
+          target,
+          expectedIdentity!,
+          options.agentInstallationId,
+          controller.signal,
+          progress
+        )).then((identity) => {
+          if (
+            mode === 'activate' &&
+            (this.#cacheGenerations.get(hostId) ?? 0) ===
+              cacheGeneration
+          ) {
+            this.#current.set(hostId, {
+              targetKey,
+              agentKey,
+              identity
+            })
+          }
+          return identity
+        })
     const active: ActiveInstallation = {
       promise,
       controller,
@@ -291,6 +351,8 @@ export class RemoteRuntimeInstallationManager {
       return this.#disposePromise
     }
     this.#closed = true
+    this.#current.clear()
+    this.#cacheGenerations.clear()
     const operations = [...this.#active.values()]
     const reason = new DOMException(
       'Remote Runtime installation manager was disposed',
@@ -303,7 +365,6 @@ export class RemoteRuntimeInstallationManager {
       operations.map((operation) => operation.promise),
       DISPOSE_WAIT_TIMEOUT_MS
     )
-    this.#installed.clear()
     return this.#disposePromise
   }
 
@@ -317,7 +378,7 @@ export class RemoteRuntimeInstallationManager {
 
   async #waitForActive(
     active: ActiveInstallation,
-    options: RemoteRuntimeInstallationRequestOptions
+    options: RemoteRuntimeActivationRequestOptions
   ): Promise<RemoteRuntimeInstallationIdentity> {
     active.waiters += 1
     if (options.onProgress) {
@@ -345,24 +406,20 @@ export class RemoteRuntimeInstallationManager {
     }
   }
 
-  async #run(
+  async #activateInstalled(
     target: SshConnectionPoolTarget,
+    agentInstallationId: VerifiedAgentInstallationId | undefined,
     signal: AbortSignal,
     progress: (phase: RemoteRuntimeInstallationPhase) => void
   ): Promise<RemoteRuntimeInstallationIdentity> {
     let lease: SshConnectionLease | undefined
-    let sftp: StagedSftp | undefined
-    let cleanupHomeDirectory: string | undefined
-    const cleanup: CleanupEntry[] = []
-    let stagingPublished = false
-    let releaseBundle: (() => void) | undefined
     try {
       lease = await this.#sshPool.acquire(target, signal)
       assertLeaseMatchesTarget(lease, target)
       const probe = await lease.runAgentBootstrapProbe(signal)
       if (!probe.ready) {
         throw new RemoteRuntimeInstallationError(
-          `Remote host cannot install the OpenCode Runtime: ${probe.reason}`,
+          `Remote host cannot activate the OpenCode Runtime: ${probe.reason}`,
           'incompatible',
           probe.reason
         )
@@ -377,166 +434,15 @@ export class RemoteRuntimeInstallationManager {
           'incompatible'
         )
       }
-
       progress('verifying-bundle')
-      let bundle: LoadedBundle
-      try {
-        bundle = await this.#loadAndValidateBundle(
-          probe.architecture
-        )
-        releaseBundle = bundle.release
-      } catch (error) {
-        if (
-          error instanceof RemoteRuntimeBundleResourcesUnavailableError
-        ) {
-          if (this.#loadVerificationMetadata === undefined) {
-            throw new RemoteRuntimeInstallationError(
-              'This package does not include Runtime installation resources',
-              'incompatible',
-              safeErrorDetail(error)
-            )
-          }
-          return await this.#reuseInstalledBundle(
-            target,
-            lease,
-            probe,
-            signal,
-            progress
-          )
-        }
-        throw error
-      }
-      assertBundleCapacity(bundle)
-      const identity = publicIdentity(bundle)
-      const destination =
-        `${OPENCODE_ROOT}/${digestDirectoryName(bundle.manifest.bundleDigest)}`
-
-      progress('preparing-installation')
-      sftp = await lease.openStagedSftp(
-        probe.canonicalHomeDirectory,
-        installationSftpLimits(bundle, this.#sftpLimits),
-        signal
-      )
-      cleanupHomeDirectory = probe.canonicalHomeDirectory
-      await ensureManagedHierarchy(sftp, probe.uid, signal)
-      await installPrivateMetadata(
-        sftp,
-        RELEASE_KEYS_PATH,
-        '.release-keys',
-        bundle.releaseKeyRegistryBytes,
-        probe.uid,
-        cleanup,
-        signal
-      )
-      await installPrivateMetadata(
-        sftp,
-        RUNTIME_LOCK_PATH,
-        '.remote-runtime-lock',
-        bundle.remoteRuntimeLockBytes,
-        probe.uid,
-        cleanup,
-        signal
-      )
-
-      const existingDestination = await pathMetadata(
-        sftp,
-        destination,
-        signal
-      )
-      if (existingDestination !== undefined) {
-        await verifyRemoteBundle(
-          sftp,
-          destination,
-          bundle,
-          probe.uid,
-          signal
-        ).catch((error: unknown) => {
-          rethrowAbort(error)
-          throw new RemoteRuntimeInstallationError(
-            'Existing OpenCode Runtime installation is corrupt',
-            'corrupt',
-            safeErrorDetail(error)
-          )
-        })
-        await assertCurrentTarget(
-          this.#resolver,
-          lease,
-          target,
-          signal
-        )
-        progress('activating-runtime')
-        await activateRuntime(
-          this.#activate,
-          lease,
-          bundle,
-          signal
-        )
-        progress('complete')
-        return identity
-      }
-
-      progress('uploading-bundle')
-      const staging = `${RUNTIME_STAGING_ROOT}/op-${randomUUID()}`
-      await sftp.mkdir(staging, signal)
-      trackCleanup(cleanup, { path: staging, type: 'directory' })
-      await assertRemoteMetadata(
-        sftp,
-        staging,
-        'directory',
-        probe.uid,
-        PRIVATE_DIRECTORY_MODE,
-        undefined,
-        signal
-      )
-      await uploadAndVerifyBundle(
-        sftp,
-        staging,
-        bundle,
-        probe.uid,
-        cleanup,
-        signal
-      ).catch((error: unknown) => {
-        rethrowAbort(error)
-        throw new RemoteRuntimeInstallationError(
-          'OpenCode Runtime bundle upload verification failed',
-          'corrupt',
-          safeErrorDetail(error)
-        )
-      })
-
-      await assertCurrentTarget(
-        this.#resolver,
-        lease,
+      return await this.#reuseInstalledBundle(
         target,
-        signal
-      )
-      progress('publishing-bundle')
-      await sftp.rename(staging, destination, signal)
-      stagingPublished = true
-      await verifyRemoteBundle(
-        sftp,
-        destination,
-        bundle,
-        probe.uid,
-        signal
-      ).catch((error: unknown) => {
-        rethrowAbort(error)
-        throw new RemoteRuntimeInstallationError(
-          'Published OpenCode Runtime bundle verification failed',
-          'corrupt',
-          safeErrorDetail(error)
-        )
-      })
-
-      progress('activating-runtime')
-      await activateRuntime(
-        this.#activate,
         lease,
-        bundle,
-        signal
+        probe,
+        agentInstallationId,
+        signal,
+        progress
       )
-      progress('complete')
-      return identity
     } catch (error) {
       if (
         error instanceof RemoteRuntimeInstallationError ||
@@ -545,102 +451,252 @@ export class RemoteRuntimeInstallationManager {
         throw error
       }
       throw new RemoteRuntimeInstallationError(
-        'Remote Runtime installation data is corrupt or unsafe',
+        'Remote Runtime activation data is corrupt or unsafe',
         'corrupt',
         safeErrorDetail(error)
       )
     } finally {
-      let cleanupIncomplete = false
-      if (sftp && !stagingPublished) {
-        cleanupIncomplete = !(await cleanupOwnedStaging(sftp, cleanup))
-      }
-      sftp?.close()
-      if (
-        cleanupIncomplete &&
-        lease?.isUsable() &&
-        cleanupHomeDirectory
-      ) {
-        let cleanupSftp: StagedSftp | undefined
-        try {
-          cleanupSftp = await lease.openStagedSftp(
-            cleanupHomeDirectory,
-            this.#sftpLimits
-          )
-          await cleanupOwnedStaging(cleanupSftp, cleanup)
-        } catch {
-          // Cancellation can make the lease unavailable. Cleanup remains
-          // bounded to this operation's temporary files and staging tree.
-        } finally {
-          cleanupSftp?.close()
-        }
-      }
       lease?.release()
-      releaseBundle?.()
     }
   }
 
-  async #loadAndValidateBundle(
-    architecture: AgentArchitecture
-  ): Promise<LoadedBundle> {
-    let loaded: VerifiedRemoteRuntimeInstallationBundle | undefined
+  async #activatePublished(
+    target: SshConnectionPoolTarget,
+    expected: PublishedRemoteRuntimeInstallationIdentity,
+    agentInstallationId: VerifiedAgentInstallationId | undefined,
+    signal: AbortSignal,
+    progress: (phase: RemoteRuntimeInstallationPhase) => void
+  ): Promise<RemoteRuntimeInstallationIdentity> {
+    let lease: SshConnectionLease | undefined
+    let sftp: StagedSftp | undefined
+    let metadataSnapshots: readonly ManagedFileSnapshot[] | undefined
+    const cleanup: CleanupEntry[] = []
     try {
-      loaded = await this.#loadVerifiedBundle(architecture)
-      const manifest = remoteRuntimeBundleManifestSchema.parse(
-        loaded.manifest
-      )
-      if (
-        manifest.runtimeId !== 'opencode' ||
-        manifest.provider !== 'opencode' ||
-        manifest.platform !== 'linux' ||
-        manifest.architecture !== architecture
-      ) {
-        throw new Error(
-          'Verified Runtime bundle does not match the OpenCode host target'
+      lease = await this.#sshPool.acquire(target, signal)
+      assertLeaseMatchesTarget(lease, target)
+      const probe = await lease.runAgentBootstrapProbe(signal)
+      if (!probe.ready) {
+        throw new RemoteRuntimeInstallationError(
+          `Remote host cannot activate the published OpenCode Runtime: ${probe.reason}`,
+          'incompatible',
+          probe.reason
         )
       }
       if (
-        loaded.manifestDigest !==
-        await digestRemoteRuntimeBundleManifest(manifest)
+        probe.platform !== expected.platform ||
+        probe.architecture !== expected.architecture
       ) {
-        throw new Error('Verified Runtime manifest digest is invalid')
+        throw new RemoteRuntimeInstallationError(
+          'Published Runtime does not match the Host platform or architecture',
+          'incompatible'
+        )
       }
-      if (
-        manifest.bundleDigest !==
-        await digestRemoteRuntimeBundleIdentity(manifest)
-      ) {
-        throw new Error('Verified Runtime bundle digest is invalid')
-      }
-      const releaseKeyRegistryBytes = canonicalJsonBytes(
-        loaded.canonicalReleaseKeyRegistryBytes,
-        agentReleaseKeyRegistrySchema,
-        'Runtime release-key registry'
+
+      progress('verifying-bundle')
+      const metadata = await this.#loadPublishedVerificationMetadata(
+        probe.architecture
       )
-      const remoteRuntimeLockBytes = canonicalJsonBytes(
-        loaded.canonicalRemoteRuntimeLockBytes,
-        remoteRuntimeLockSchema,
-        'Remote Runtime lock'
+      sftp = await lease.openStagedSftp(
+        probe.canonicalHomeDirectory,
+        {
+          maximumFileBytes: Math.max(
+            MAXIMUM_RUNTIME_FILE_BYTES,
+            this.#sftpLimits?.maximumFileBytes ?? 0
+          ),
+          maximumTotalBytes: Math.max(
+            MAXIMUM_INSTALLATION_BYTES +
+              MAXIMUM_METADATA_BYTES * 6,
+            this.#sftpLimits?.maximumTotalBytes ?? 0
+          ),
+          maximumOperations:
+            this.#sftpLimits?.maximumOperations ?? 2_048,
+          operationTimeoutMs:
+            this.#sftpLimits?.operationTimeoutMs
+        },
+        signal
       )
-      return {
-        bundleDirectory: loaded.bundleDirectory,
+      const destination =
+        `${OPENCODE_ROOT}/${digestDirectoryName(
+          expected.bundleDigest
+        )}`
+      const manifestBytes = await sftp.readFile(
+        `${destination}/manifest.json`,
+        signal
+      )
+      const signatureFile = await sftp.readFile(
+        `${destination}/manifest.sig`,
+        signal
+      )
+      const signature = decodeDetachedSignature(
+        signatureFile,
+        'Runtime detached signature'
+      )
+      const manifest = await verifyRuntimeManifestSignature(
+        manifestBytes,
+        signature,
+        metadata.releaseKeyRegistry
+      )
+      assertRuntimeManifestMatchesLock(
         manifest,
-        manifestDigest: loaded.manifestDigest,
-        releaseKeyRegistryBytes,
-        remoteRuntimeLockBytes,
-        ...(loaded.release ? { release: loaded.release } : {})
+        metadata.runtimeLock,
+        probe.architecture
+      )
+      const manifestDigest =
+        await digestRemoteRuntimeBundleManifest(manifest)
+      const bundle: LoadedBundle = {
+        bundleDirectory: destination,
+        manifest,
+        manifestDigest,
+        releaseKeyRegistryBytes:
+          metadata.releaseKeyRegistryBytes,
+        remoteRuntimeLockBytes:
+          metadata.remoteRuntimeLockBytes
       }
+      assertPublishedRuntimeMatches(expected, bundle)
+      assertBundleCapacity(bundle)
+      // The fixed SSH installer has already verified the complete published
+      // tree against this signed manifest. Adoption rechecks its immutable
+      // identity and metadata without transferring the payload back to Main.
+      await verifyRemoteBundleFromMetadata(
+        sftp,
+        destination,
+        bundle,
+        manifestBytes,
+        signatureFile,
+        probe.uid,
+        signal
+      )
+      metadataSnapshots = []
+      for (const path of [
+        RELEASE_KEYS_PATH,
+        RUNTIME_LOCK_PATH,
+        RUNTIME_REGISTRY_PATH
+      ]) {
+        metadataSnapshots = [
+          ...metadataSnapshots,
+          await snapshotManagedFile(
+            sftp,
+            path,
+            probe.uid,
+            signal
+          )
+        ]
+      }
+      await installPrivateMetadata(
+        sftp,
+        RELEASE_KEYS_PATH,
+        '.release-keys',
+        metadata.releaseKeyRegistryBytes,
+        probe.uid,
+        cleanup,
+        signal
+      )
+      await installPrivateMetadata(
+        sftp,
+        RUNTIME_LOCK_PATH,
+        '.remote-runtime-lock',
+        metadata.remoteRuntimeLockBytes,
+        probe.uid,
+        cleanup,
+        signal
+      )
+      await assertCurrentTarget(
+        this.#resolver,
+        lease,
+        target,
+        signal
+      )
+      progress('activating-runtime')
+      await activateRuntime(
+        this.#activate,
+        lease,
+        bundle,
+        agentInstallationId,
+        signal
+      )
+      progress('complete')
+      return publicIdentity(bundle)
     } catch (error) {
-      loaded?.release?.()
-      rethrowAbort(error)
+      if (metadataSnapshots && sftp) {
+        await restoreManagedFiles(sftp, metadataSnapshots).catch(
+          (rollbackError: unknown) => {
+            throw new AggregateError(
+              [error, rollbackError],
+              'Published Runtime activation failed and its previous metadata state could not be restored'
+            )
+          }
+        )
+      }
       if (
-        error instanceof RemoteRuntimeBundleResourcesUnavailableError
+        error instanceof RemoteRuntimeInstallationError ||
+        isAbortError(error)
       ) {
         throw error
       }
       throw new RemoteRuntimeInstallationError(
-        'Verified OpenCode Runtime bundle is corrupt',
+        'The published Host OpenCode Runtime could not be verified',
         'corrupt',
         safeErrorDetail(error)
       )
+    } finally {
+      if (sftp) {
+        await cleanupOwnedStaging(sftp, cleanup)
+      }
+      sftp?.close()
+      lease?.release()
+    }
+  }
+
+  async #loadPublishedVerificationMetadata(
+    architecture: AgentArchitecture
+  ): Promise<{
+    releaseKeyRegistry: AgentReleaseKeyRegistry
+    runtimeLock: RemoteRuntimeLock
+    releaseKeyRegistryBytes: Buffer
+    remoteRuntimeLockBytes: Buffer
+  }> {
+    const loadMetadata = this.#loadVerificationMetadata
+    if (loadMetadata === undefined) {
+      throw new RemoteRuntimeInstallationError(
+        'This package cannot verify a Host Runtime',
+        'incompatible'
+      )
+    }
+    const metadata = await loadMetadata(architecture)
+    const releaseKeyRegistryBytes = canonicalJsonBytes(
+      metadata.canonicalReleaseKeyRegistryBytes,
+      agentReleaseKeyRegistrySchema,
+      'Runtime release-key registry'
+    )
+    const remoteRuntimeLockBytes = canonicalJsonBytes(
+      metadata.canonicalRemoteRuntimeLockBytes,
+      remoteRuntimeLockSchema,
+      'Remote Runtime lock'
+    )
+    const releaseKeyRegistry =
+      agentReleaseKeyRegistrySchema.parse(
+        metadata.releaseKeyRegistry
+      )
+    const runtimeLock = remoteRuntimeLockSchema.parse(
+      metadata.runtimeLock
+    )
+    if (
+      !canonicalJsonValueBytes(releaseKeyRegistry).equals(
+        releaseKeyRegistryBytes
+      ) ||
+      !canonicalJsonValueBytes(runtimeLock).equals(
+        remoteRuntimeLockBytes
+      )
+    ) {
+      throw new Error(
+        'Runtime verification metadata values do not match their canonical bytes'
+      )
+    }
+    return {
+      releaseKeyRegistry,
+      runtimeLock,
+      releaseKeyRegistryBytes,
+      remoteRuntimeLockBytes
     }
   }
 
@@ -652,48 +708,20 @@ export class RemoteRuntimeInstallationManager {
       canonicalHomeDirectory: string
       uid: number
     },
+    agentInstallationId: VerifiedAgentInstallationId | undefined,
     signal: AbortSignal,
     progress: (phase: RemoteRuntimeInstallationPhase) => void
   ): Promise<RemoteRuntimeInstallationIdentity> {
-    const loadMetadata = this.#loadVerificationMetadata
-    if (loadMetadata === undefined) {
-      throw new RemoteRuntimeInstallationError(
-        'This package cannot verify an existing Host Runtime',
-        'incompatible'
-      )
-    }
     let metadataSftp: StagedSftp | undefined
     try {
-      const metadata = await loadMetadata(probe.architecture)
-      const releaseKeyRegistryBytes = canonicalJsonBytes(
-        metadata.canonicalReleaseKeyRegistryBytes,
-        agentReleaseKeyRegistrySchema,
-        'Runtime release-key registry'
+      const {
+        releaseKeyRegistry,
+        runtimeLock,
+        releaseKeyRegistryBytes,
+        remoteRuntimeLockBytes
+      } = await this.#loadPublishedVerificationMetadata(
+        probe.architecture
       )
-      const remoteRuntimeLockBytes = canonicalJsonBytes(
-        metadata.canonicalRemoteRuntimeLockBytes,
-        remoteRuntimeLockSchema,
-        'Remote Runtime lock'
-      )
-      const releaseKeyRegistry =
-        agentReleaseKeyRegistrySchema.parse(
-          metadata.releaseKeyRegistry
-        )
-      const runtimeLock = remoteRuntimeLockSchema.parse(
-        metadata.runtimeLock
-      )
-      if (
-        !canonicalJsonValueBytes(releaseKeyRegistry).equals(
-          releaseKeyRegistryBytes
-        ) ||
-        !canonicalJsonValueBytes(runtimeLock).equals(
-          remoteRuntimeLockBytes
-        )
-      ) {
-        throw new Error(
-          'Runtime verification metadata values do not match their canonical bytes'
-        )
-      }
 
       metadataSftp = await lease.openStagedSftp(
         probe.canonicalHomeDirectory,
@@ -823,7 +851,6 @@ export class RemoteRuntimeInstallationManager {
         PRIVATE_FILE_MODE,
         signal
       )
-      progress('preparing-installation')
       await verifyRemoteBundleFromMetadata(
         metadataSftp,
         destination,
@@ -831,7 +858,6 @@ export class RemoteRuntimeInstallationManager {
         manifestBytes,
         signatureFile,
         probe.uid,
-        'metadata',
         signal
       )
       metadataSftp.close()
@@ -847,6 +873,7 @@ export class RemoteRuntimeInstallationManager {
         this.#activate,
         lease,
         bundle,
+        agentInstallationId,
         signal
       )
       progress('complete')
@@ -872,27 +899,6 @@ export class RemoteRuntimeInstallationManager {
       metadataSftp?.close()
     }
   }
-}
-
-function targetIdentityKey(target: SshConnectionPoolTarget): string {
-  const hostKey = target.host.hostKey
-  return createHash('sha256')
-    .update(JSON.stringify([
-      'goodbuddy-remote-runtime-installation-target-v1',
-      target.host.id,
-      target.host.name,
-      target.host.hostname,
-      target.host.port,
-      target.host.username,
-      target.host.authentication,
-      target.hostRevision,
-      target.hostKeyGeneration,
-      hostKey?.algorithm ?? null,
-      hostKey?.publicKeyBase64 ?? null,
-      hostKey?.fingerprintSha256 ?? null,
-      hostKey?.generation ?? null
-    ]))
-    .digest('hex')
 }
 
 function assertLeaseMatchesTarget(
@@ -927,8 +933,8 @@ async function assertCurrentTarget(
   )
   signal.throwIfAborted()
   if (
-    targetIdentityKey(currentTarget) !==
-    targetIdentityKey(originalTarget)
+    remoteHostTargetIdentityKey(currentTarget) !==
+    remoteHostTargetIdentityKey(originalTarget)
   ) {
     throw new RemoteRuntimeInstallationError(
       'SSH host identity changed before Runtime publication or activation',
@@ -952,6 +958,67 @@ function publicIdentity(
     platform: bundle.manifest.platform,
     architecture: bundle.manifest.architecture
   }
+}
+
+function assertPublishedRuntimeIdentity(
+  identity: PublishedRemoteRuntimeInstallationIdentity
+): void {
+  if (
+    identity.runtimeId !== 'opencode' ||
+    identity.runtimeVersion.length < 1 ||
+    !sha256DigestSchema.safeParse(identity.bundleDigest).success ||
+    !sha256DigestSchema.safeParse(identity.manifestDigest).success ||
+    !sha256DigestSchema.safeParse(
+      identity.runtimeAdapterDigest
+    ).success ||
+    !sha256DigestSchema.safeParse(
+      identity.acpCapabilitiesDigest
+    ).success ||
+    identity.platform !== 'linux' ||
+    (identity.architecture !== 'x64' &&
+      identity.architecture !== 'arm64') ||
+    !Number.isSafeInteger(identity.protocol.major) ||
+    identity.protocol.major < 0 ||
+    !Number.isSafeInteger(identity.protocol.minor) ||
+    identity.protocol.minor < 0
+  ) {
+    throw new RemoteRuntimeInstallationError(
+      'Published Runtime identity is invalid',
+      'corrupt'
+    )
+  }
+}
+
+function assertPublishedRuntimeMatches(
+  expected: PublishedRemoteRuntimeInstallationIdentity,
+  bundle: LoadedBundle
+): void {
+  if (
+    expected.runtimeId !== bundle.manifest.runtimeId ||
+    expected.runtimeVersion !== bundle.manifest.runtimeVersion ||
+    expected.bundleDigest !== bundle.manifest.bundleDigest ||
+    expected.manifestDigest !== bundle.manifestDigest ||
+    expected.runtimeAdapterDigest !== bundle.manifest.adapterDigest ||
+    expected.acpCapabilitiesDigest !==
+      bundle.manifest.acpCapabilitiesDigest ||
+    expected.platform !== bundle.manifest.platform ||
+    expected.architecture !== bundle.manifest.architecture ||
+    expected.protocol.major !== bundle.manifest.protocol.major ||
+    expected.protocol.minor !== bundle.manifest.protocol.minor
+  ) {
+    throw new RemoteRuntimeInstallationError(
+      'Published Runtime does not match the authenticated package result',
+      'corrupt'
+    )
+  }
+}
+
+function publishedRuntimeIdentityKey(
+  identity: PublishedRemoteRuntimeInstallationIdentity
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify(identity))
+    .digest('hex')
 }
 
 function digestDirectoryName(bundleDigest: string): string {
@@ -985,78 +1052,6 @@ function assertBundleCapacity(bundle: LoadedBundle): void {
     throw new RemoteRuntimeInstallationError(
       'OpenCode Runtime bundle exceeds installation safety limits',
       'capacity'
-    )
-  }
-}
-
-function installationSftpLimits(
-  bundle: LoadedBundle,
-  configured?: BoundedSftpLimits
-): BoundedSftpLimits {
-  const largest = Math.max(
-    bundle.releaseKeyRegistryBytes.byteLength,
-    bundle.remoteRuntimeLockBytes.byteLength,
-    ...bundle.manifest.files.map((file) => file.size),
-    MAXIMUM_METADATA_BYTES
-  )
-  const payload =
-    bundle.manifest.files.reduce(
-      (sum, file) => sum + file.size,
-      0
-    ) +
-    bundle.releaseKeyRegistryBytes.byteLength +
-    bundle.remoteRuntimeLockBytes.byteLength +
-    2 * MAXIMUM_METADATA_BYTES
-  return {
-    maximumFileBytes: Math.max(
-      largest,
-      configured?.maximumFileBytes ?? 0
-    ),
-    maximumTotalBytes: Math.max(
-      payload * 4,
-      configured?.maximumTotalBytes ?? 0
-    ),
-    maximumOperations:
-      configured?.maximumOperations ?? 2_048,
-    operationTimeoutMs: configured?.operationTimeoutMs
-  }
-}
-
-async function ensureManagedHierarchy(
-  sftp: StagedSftp,
-  uid: number,
-  signal: AbortSignal
-): Promise<void> {
-  for (const path of [
-    '.goodbuddy',
-    RUNTIME_ROOT,
-    RUNTIME_STAGING_ROOT,
-    OPENCODE_ROOT
-  ]) {
-    const existing = await pathMetadata(sftp, path, signal)
-    if (existing === undefined) {
-      await sftp.mkdir(path, signal)
-    } else {
-      assertMetadata(
-        existing,
-        path,
-        'directory',
-        uid,
-        undefined,
-        undefined
-      )
-      if (existing.mode !== PRIVATE_DIRECTORY_MODE) {
-        await sftp.chmod(path, PRIVATE_DIRECTORY_MODE, signal)
-      }
-    }
-    await assertRemoteMetadata(
-      sftp,
-      path,
-      'directory',
-      uid,
-      PRIVATE_DIRECTORY_MODE,
-      undefined,
-      signal
     )
   }
 }
@@ -1114,123 +1109,109 @@ async function installPrivateMetadata(
   )
 }
 
-async function uploadAndVerifyBundle(
+async function snapshotManagedFile(
   sftp: StagedSftp,
-  staging: string,
-  bundle: LoadedBundle,
+  path: string,
   uid: number,
-  cleanup: CleanupEntry[],
   signal: AbortSignal
-): Promise<void> {
-  const createdDirectories = new Set<string>()
-  for (const file of bundle.manifest.files) {
-    const parts = file.path.split('/')
-    let relativeDirectory = ''
-    for (const part of parts.slice(0, -1)) {
-      relativeDirectory = relativeDirectory
-        ? `${relativeDirectory}/${part}`
-        : part
-      if (!createdDirectories.has(relativeDirectory)) {
-        const directory = `${staging}/${relativeDirectory}`
-        await sftp.mkdir(directory, signal)
-        trackCleanup(cleanup, {
-          path: directory,
-          type: 'directory'
-        })
-        createdDirectories.add(relativeDirectory)
-        await assertRemoteMetadata(
-          sftp,
-          directory,
-          'directory',
-          uid,
-          PRIVATE_DIRECTORY_MODE,
-          undefined,
-          signal
-        )
-      }
-    }
-
-    const contents = await readFile(
-      join(bundle.bundleDirectory, ...file.path.split('/'))
-    )
-    if (
-      contents.byteLength !== file.size ||
-      sha256(contents) !== file.sha256
-    ) {
-      throw new Error(
-        `Runtime bundle changed after local verification: ${file.path}`
-      )
-    }
-    const destination = `${staging}/${file.path}`
-    trackCleanup(cleanup, { path: destination, type: 'file' })
-    await sftp.writeFile(destination, contents, signal)
-    const mode = file.mode === '0755' ? 0o755 : 0o644
-    await sftp.chmod(destination, mode, signal)
-    await verifyRemoteFile(
-      sftp,
-      destination,
-      file.size,
-      file.sha256,
-      uid,
-      mode,
-      signal
-    )
+): Promise<ManagedFileSnapshot> {
+  const metadata = await pathMetadata(sftp, path, signal)
+  if (metadata === undefined) {
+    return { path, contents: undefined, uid }
   }
-
-  const expectedManifestBytes =
-    canonicalRuntimeManifestBytes(bundle.manifest)
-  for (const metadataName of ['manifest.json', 'manifest.sig']) {
-    const contents = await readFile(
-      join(bundle.bundleDirectory, metadataName)
-    )
-    if (
-      contents.byteLength > MAXIMUM_METADATA_BYTES ||
-      (
-        metadataName === 'manifest.json' &&
-        !contents.equals(expectedManifestBytes)
-      )
-    ) {
-      throw new Error(
-        `Runtime bundle metadata changed after verification: ${metadataName}`
-      )
-    }
-    const destination = `${staging}/${metadataName}`
-    trackCleanup(cleanup, { path: destination, type: 'file' })
-    await sftp.writeFile(destination, contents, signal)
-    await sftp.chmod(destination, METADATA_MODE, signal)
-    await verifyRemoteFile(
-      sftp,
-      destination,
-      contents.byteLength,
-      sha256(contents),
-      uid,
-      METADATA_MODE,
-      signal
-    )
+  assertMetadata(
+    metadata,
+    path,
+    'file',
+    uid,
+    PRIVATE_FILE_MODE,
+    undefined
+  )
+  return {
+    path,
+    contents: await sftp.readFile(path, signal),
+    uid
   }
 }
 
-async function verifyRemoteBundle(
+async function restoreManagedFile(
   sftp: StagedSftp,
-  destination: string,
-  bundle: LoadedBundle,
-  uid: number,
-  signal: AbortSignal
+  snapshot: ManagedFileSnapshot
 ): Promise<void> {
-  const [manifestBytes, signatureBytes] = await Promise.all([
-    readFile(join(bundle.bundleDirectory, 'manifest.json')),
-    readFile(join(bundle.bundleDirectory, 'manifest.sig'))
-  ])
-  await verifyRemoteBundleFromMetadata(
-    sftp,
-    destination,
-    bundle,
-    manifestBytes,
-    signatureBytes,
-    uid,
-    'contents',
-    signal
-  )
+  const existing = await pathMetadata(sftp, snapshot.path)
+  if (snapshot.contents === undefined) {
+    if (existing !== undefined) {
+      assertMetadata(
+        existing,
+        snapshot.path,
+        'file',
+        snapshot.uid,
+        PRIVATE_FILE_MODE,
+        undefined
+      )
+      await sftp.unlink(snapshot.path)
+    }
+    return
+  }
+  if (
+    existing !== undefined &&
+    existing.type === 'file' &&
+    existing.uid === snapshot.uid &&
+    existing.mode === PRIVATE_FILE_MODE &&
+    existing.size === snapshot.contents.byteLength &&
+    (await sftp.readFile(snapshot.path)).equals(snapshot.contents)
+  ) {
+    return
+  }
+  if (existing !== undefined) {
+    assertMetadata(
+      existing,
+      snapshot.path,
+      'file',
+      snapshot.uid,
+      undefined,
+      undefined
+    )
+  }
+  const temporary =
+    `${RUNTIME_ROOT}/.registry-rollback-${randomUUID()}.tmp`
+  try {
+    await sftp.writeFile(temporary, snapshot.contents)
+    await sftp.chmod(temporary, PRIVATE_FILE_MODE)
+    await sftp.replaceFile(temporary, snapshot.path)
+    await verifyRemoteFile(
+      sftp,
+      snapshot.path,
+      snapshot.contents.byteLength,
+      sha256(snapshot.contents),
+      snapshot.uid,
+      PRIVATE_FILE_MODE,
+      new AbortController().signal
+    )
+  } catch (error) {
+    await sftp.unlink(temporary).catch(() => undefined)
+    throw error
+  }
+}
+
+async function restoreManagedFiles(
+  sftp: StagedSftp,
+  snapshots: readonly ManagedFileSnapshot[]
+): Promise<void> {
+  const errors: unknown[] = []
+  for (const snapshot of snapshots) {
+    try {
+      await restoreManagedFile(sftp, snapshot)
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      'Remote Runtime metadata rollback was incomplete'
+    )
+  }
 }
 
 async function verifyRemoteBundleFromMetadata(
@@ -1240,7 +1221,6 @@ async function verifyRemoteBundleFromMetadata(
   manifestBytes: Buffer,
   signatureBytes: Buffer,
   uid: number,
-  verification: 'metadata' | 'contents',
   signal: AbortSignal
 ): Promise<void> {
   await assertRemoteMetadata(
@@ -1273,27 +1253,15 @@ async function verifyRemoteBundleFromMetadata(
     }
     const path = `${destination}/${file.path}`
     const mode = file.mode === '0755' ? 0o755 : 0o644
-    if (verification === 'contents') {
-      await verifyRemoteFile(
-        sftp,
-        path,
-        file.size,
-        file.sha256,
-        uid,
-        mode,
-        signal
-      )
-    } else {
-      await assertRemoteMetadata(
-        sftp,
-        path,
-        'file',
-        uid,
-        mode,
-        file.size,
-        signal
-      )
-    }
+    await assertRemoteMetadata(
+      sftp,
+      path,
+      'file',
+      uid,
+      mode,
+      file.size,
+      signal
+    )
   }
   for (const [metadataName, contents] of [
     ['manifest.json', manifestBytes],
@@ -1303,27 +1271,15 @@ async function verifyRemoteBundleFromMetadata(
       throw new Error('Runtime metadata exceeds its safety limit')
     }
     const path = `${destination}/${metadataName}`
-    if (verification === 'contents') {
-      await verifyRemoteFile(
-        sftp,
-        path,
-        contents.byteLength,
-        sha256(contents),
-        uid,
-        METADATA_MODE,
-        signal
-      )
-    } else {
-      await assertRemoteMetadata(
-        sftp,
-        path,
-        'file',
-        uid,
-        METADATA_MODE,
-        contents.byteLength,
-        signal
-      )
-    }
+    await assertRemoteMetadata(
+      sftp,
+      path,
+      'file',
+      uid,
+      METADATA_MODE,
+      contents.byteLength,
+      signal
+    )
   }
 }
 
@@ -1416,6 +1372,7 @@ async function activateRuntime(
   activate: RemoteRuntimeActivator,
   lease: SshConnectionLease,
   bundle: LoadedBundle,
+  agentInstallationId: VerifiedAgentInstallationId | undefined,
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted()
@@ -1425,6 +1382,7 @@ async function activateRuntime(
       bundle.manifest.runtimeId,
       bundle.manifest.bundleDigest,
       bundle.manifest.architecture,
+      agentInstallationId,
       signal
     )
   } catch (error) {

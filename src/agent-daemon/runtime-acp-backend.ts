@@ -621,8 +621,30 @@ export class RuntimeAcpBackend {
         )
       }
       if (existing.state !== 'closed' || existing.process !== undefined) {
-        this.#assertBindingOwner(existing, context)
-        return acpOpenChannelResultSchema.parse(existing.openResult)
+        const ownedByCurrentConnection =
+          existing.controllerGeneration ===
+            context.controller.generation &&
+          existing.connectionId ===
+            context.controller.connectionId
+        if (ownedByCurrentConnection) {
+          return acpOpenChannelResultSchema.parse(existing.openResult)
+        }
+        const canReplaceDetachedIdleBinding =
+          context.controllerTakeoverProven === true &&
+          context.controller.generation >
+            existing.controllerGeneration &&
+          existing.transportState === 'detached' &&
+          existing.activeOperationId === undefined &&
+          (existing.state === 'open' ||
+            existing.state === 'running')
+        if (!canReplaceDetachedIdleBinding) {
+          this.#assertBindingOwner(existing, context)
+        }
+        await Promise.all([
+          existing.inputTail,
+          existing.outputTail
+        ])
+        await this.#stopAndReconcile(existing, 'binding-closed')
       }
       this.#assertOpenCapacity(context.controller.controllerId)
       const channelEpoch = this.#allocateChannelEpoch()

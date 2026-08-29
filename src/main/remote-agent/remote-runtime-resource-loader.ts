@@ -18,13 +18,9 @@ import {
   digestRemoteRuntimeBundleManifest,
   remoteRuntimeBundleManifestSchema,
   remoteRuntimeLockSchema,
+  type RemoteRuntimeBundleManifest,
   type RemoteRuntimeLock
 } from '../../shared/remote-runtime-launch-contracts'
-import {
-  RemoteRuntimeBundleResourcesUnavailableError,
-  type RemoteRuntimeInstallationBundleLoader,
-  type VerifiedRemoteRuntimeInstallationBundle
-} from './remote-runtime-installation-manager'
 import {
   getBundledRemoteRuntimeRoot,
   type BundledRemoteRuntimeResourcePaths
@@ -59,24 +55,19 @@ export type RemoteRuntimeVerificationMetadata = {
   canonicalRemoteRuntimeLockBytes: Buffer
 }
 
-export function createRemoteRuntimeResourceLoader(
-  paths: BundledRemoteRuntimeResourcePaths,
-  options: RemoteRuntimeResourceLoaderOptions = {}
-): RemoteRuntimeInstallationBundleLoader {
-  assertSafeVerificationInjection(options)
-  return (architecture) =>
-    loadVerifiedRemoteRuntimeResourceBundle(
-      paths,
-      architecture,
-      options
-    )
+export type VerifiedRemoteRuntimeResourceBundle = {
+  bundleDirectory: string
+  manifest: RemoteRuntimeBundleManifest
+  manifestDigest: string
+  canonicalReleaseKeyRegistryBytes: Buffer
+  canonicalRemoteRuntimeLockBytes: Buffer
 }
 
 export async function loadVerifiedRemoteRuntimeResourceBundle(
   paths: BundledRemoteRuntimeResourcePaths,
   architecture: AgentArchitecture,
   options: RemoteRuntimeResourceLoaderOptions = {}
-): Promise<VerifiedRemoteRuntimeInstallationBundle> {
+): Promise<VerifiedRemoteRuntimeResourceBundle> {
   assertSafeVerificationInjection(options)
   const verificationEnvironment =
     options.verificationEnvironment ?? 'production'
@@ -234,7 +225,10 @@ async function resolveSingleDigestDirectory(
     rootStat = await lstat(runtimeRoot)
   } catch (error) {
     if (isMissingPathError(error)) {
-      throw new RemoteRuntimeBundleResourcesUnavailableError(error)
+      throw new Error(
+        'OpenCode Runtime resources are not included in this package',
+        { cause: error }
+      )
     }
     throw error
   }
@@ -273,7 +267,7 @@ async function validateVerifiedBundle(
   architecture: AgentArchitecture,
   keyRegistryBytes: Buffer,
   runtimeLockBytes: Buffer
-): Promise<VerifiedRemoteRuntimeInstallationBundle> {
+): Promise<VerifiedRemoteRuntimeResourceBundle> {
   const manifest = remoteRuntimeBundleManifestSchema.parse(
     verified.manifest
   )

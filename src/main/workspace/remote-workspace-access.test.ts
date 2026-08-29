@@ -13,20 +13,11 @@ import {
 const digest = `sha256:${'a'.repeat(64)}`
 const binding: RemoteWorkspaceProjectBinding = {
   hostId: 'host-1',
-  hostRevision: 2,
-  hostKeyGeneration: 3,
-  remoteUsername: 'builder',
-  remoteRootPath: '/srv/project',
-  workspaceIdentity: 'identity-1',
-  agentInstallationId: 'installation-1',
-  agentBinaryDigest: digest,
-  agentVersion: '0.11.0',
-  agentArchitecture: 'x64',
-  agentProtocolMajor: 1
+  remoteRootPath: '/srv/project'
 }
 const handle: RemoteWorkspaceHandle = {
   workspaceId: 'workspace-1',
-  workspaceIdentity: binding.workspaceIdentity,
+  workspaceIdentity: 'identity-1',
   canonicalDisplayPath: binding.remoteRootPath,
   access: 'read-only',
   git: 'available',
@@ -47,24 +38,19 @@ function createLease(
   return {
     binding: {
       hostId: binding.hostId,
-      hostRevision: binding.hostRevision,
-      hostKeyGeneration: binding.hostKeyGeneration,
-      remoteUsername: binding.remoteUsername,
-      agentInstallationId: binding.agentInstallationId,
-      agentBinaryDigest: binding.agentBinaryDigest,
-      agentVersion: binding.agentVersion,
-      agentArchitecture: binding.agentArchitecture,
-      agentProtocolMajor: binding.agentProtocolMajor,
+      hostRevision: 2,
+      hostKeyGeneration: 3,
+      remoteUsername: 'builder',
+      agentInstallationId: 'installation-1',
+      agentBinaryDigest: digest,
+      agentVersion: '0.11.0',
+      agentArchitecture: 'x64',
+      agentProtocolMajor: 1,
       capabilityGeneration: 6
     },
     validateWorkspace: vi.fn(async () => ({
       handle,
       validatedAt: '2026-08-21T00:00:00.000Z'
-    })),
-    openWorkspace: vi.fn(async () => handle),
-    resumeWorkspace: vi.fn(async () => ({
-      resumed: true,
-      handle
     })),
     closeWorkspace: vi.fn(async (request) => ({
       ...request,
@@ -278,64 +264,59 @@ describe('RemoteWorkspaceAccess', () => {
     expect(getGitDiff).not.toHaveBeenCalled()
   })
 
-  it('resumes a previous handle and opens a replacement when resume fails', async () => {
-    const lease = createLease({
-      resumableHandle: handle,
-      resumeWorkspace: vi.fn(async () => ({
-        resumed: false,
-        handle
-      }))
-    })
+  it('validates the configured path instead of resuming persisted state', async () => {
+    const lease = createLease()
     const { access } = createAccess(lease)
 
     await access.getIdentity()
 
-    expect(lease.resumeWorkspace).toHaveBeenCalledWith(
+    expect(lease.validateWorkspace).toHaveBeenCalledWith(
       {
-        workspaceId: 'workspace-1',
-        generation: 5,
-        workspaceIdentity: 'identity-1'
+        remoteRootPath: binding.remoteRootPath,
+        requestedAccess: 'read-only',
+        requiredCapabilities: [
+          'list',
+          'stat',
+          'read-text',
+          'search'
+        ]
       },
       undefined
     )
-    expect(lease.openWorkspace).toHaveBeenCalledWith(
-      {
-        workspaceIdentity: 'identity-1',
-        requestedAccess: 'read-only'
-      },
-      undefined
-    )
-    expect(lease.validateWorkspace).not.toHaveBeenCalled()
   })
 
-  it('rejects immutable transport and workspace binding mismatches', async () => {
-    for (const changedBinding of [
-      { hostKeyGeneration: 99 },
-      { agentBinaryDigest: `sha256:${'b'.repeat(64)}` },
-      { agentVersion: '0.11.1' },
-      { agentArchitecture: 'arm64' as const }
-    ]) {
-      const release = vi.fn()
-      const lease = createLease({
-        binding: {
-          ...createLease().binding,
-          ...changedBinding
-        },
-        release
-      })
-      const { access } = createAccess(lease)
+  it('uses live Agent identity but rejects a different Host or path', async () => {
+    const currentAgent = createLease({
+      binding: {
+        ...createLease().binding,
+        hostRevision: 99,
+        agentBinaryDigest: `sha256:${'b'.repeat(64)}`,
+        agentVersion: '0.11.1',
+        agentArchitecture: 'arm64'
+      }
+    })
+    await expect(
+      createAccess(currentAgent).access.getIdentity()
+    ).resolves.toMatchObject({
+      kind: 'remote',
+      canonicalDisplayPath: binding.remoteRootPath
+    })
 
-      await expect(access.getIdentity()).rejects.toThrow(
-        '绑定已失效'
-      )
-      expect(release).toHaveBeenCalledOnce()
-    }
+    const otherHost = createLease({
+      binding: {
+        ...createLease().binding,
+        hostId: 'host-2'
+      }
+    })
+    await expect(
+      createAccess(otherHost).access.getIdentity()
+    ).rejects.toThrow('绑定已失效')
 
     const identityMismatch = createLease({
       validateWorkspace: vi.fn(async () => ({
         handle: {
           ...handle,
-          workspaceIdentity: 'identity-2'
+          canonicalDisplayPath: '/srv/other'
         },
         validatedAt: '2026-08-21T00:00:00.000Z'
       }))

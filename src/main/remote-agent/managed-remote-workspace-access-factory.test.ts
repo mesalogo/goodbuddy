@@ -5,11 +5,6 @@ import {
 } from '../../shared/agent-protocol'
 import type { RemoteWorkspaceHandle } from '../../shared/remote-agent-contracts'
 import type { RemoteWorkspaceProjectBinding } from '../workspace/remote-workspace-access'
-import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
-import type {
-  AgentInstallationIdentity,
-  AgentInstallationManager
-} from './agent-installation-manager'
 import type { AgentProtocolClient } from './agent-protocol-client'
 import {
   ManagedRemoteWorkspaceAccessFactory,
@@ -19,35 +14,26 @@ import type {
   RemoteAgentConnection,
   RemoteAgentConnectionManager
 } from './remote-agent-connection-manager'
+import type { AgentInstallationIdentity } from './agent-installation-manager'
+import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
 
 const digest = `sha256:${'a'.repeat(64)}`
 const binding: RemoteWorkspaceProjectBinding = {
   hostId: '00000000-0000-4000-8000-000000000201',
-  hostRevision: 2,
-  hostKeyGeneration: 3,
-  remoteUsername: 'builder',
-  remoteRootPath: '/srv/project',
-  workspaceIdentity: 'workspace-identity',
-  agentInstallationId: 'installation-test',
-  agentBinaryDigest: digest,
-  agentVersion: '0.11.0',
-  agentArchitecture: 'x64',
-  agentProtocolMajor: AGENT_PROTOCOL_VERSION.major
+  remoteRootPath: '/srv/project'
 }
 const installation: AgentInstallationIdentity = {
-  installationId: verifyAgentInstallationId(
-    binding.agentInstallationId
-  ),
-  binaryDigest: binding.agentBinaryDigest,
-  agentVersion: binding.agentVersion,
-  protocol: { ...AGENT_PROTOCOL_VERSION },
+  installationId: verifyAgentInstallationId('installation-test'),
+  binaryDigest: digest,
+  agentVersion: '0.11.0',
+  protocol: AGENT_PROTOCOL_VERSION,
   platform: 'linux',
-  architecture: binding.agentArchitecture,
+  architecture: 'x64',
   supervisor: 'detached-on-demand'
 }
 const handle: RemoteWorkspaceHandle = {
   workspaceId: 'workspace-1',
-  workspaceIdentity: binding.workspaceIdentity,
+  workspaceIdentity: 'workspace-identity',
   canonicalDisplayPath: binding.remoteRootPath,
   access: 'read-only',
   git: 'available',
@@ -63,21 +49,38 @@ const handle: RemoteWorkspaceHandle = {
 }
 
 describe('ManagedRemoteWorkspaceAccessFactory', () => {
-  it('verifies installation before network work and owns the connection lease', async () => {
+  it('opens with the Host current Agent and owns the connection lease', async () => {
     const test = createHarness()
     const access = test.factory.create(binding)
 
     await expect(access.getIdentity()).resolves.toEqual({
       kind: 'remote',
-      id: `${binding.hostId}:${binding.workspaceIdentity}`,
+      id: `${binding.hostId}:${handle.workspaceIdentity}`,
       canonicalDisplayPath: binding.remoteRootPath,
       access: 'read-only'
     })
 
     expect(test.events.slice(0, 2)).toEqual([
-      'agent:ensure',
+      'installation:activate',
       'connection:acquire'
     ])
+    expect(test.activateInstalled).toHaveBeenCalledWith(
+      binding.hostId,
+      {}
+    )
+    expect(test.acquire).toHaveBeenCalledWith(
+      binding.hostId,
+      expect.objectContaining({
+        installationId: installation.installationId,
+        binaryDigest: installation.binaryDigest,
+        agentVersion: installation.agentVersion,
+        architecture: installation.architecture,
+        protocol: expect.objectContaining({
+          major: installation.protocol.major
+        })
+      }),
+      undefined
+    )
     expect(test.protocolMethods).toContain('workspace/validate')
     expect(test.protocolMethods).not.toContain('workspace/open')
     expect(test.protocolMethods).not.toContain('workspace/resume')
@@ -91,49 +94,6 @@ describe('ManagedRemoteWorkspaceAccessFactory', () => {
       )
     ).toHaveLength(1)
   })
-
-  it.each([
-    [
-      'installation id',
-      {
-        ...installation,
-        installationId:
-          verifyAgentInstallationId('installation-other')
-      }
-    ],
-    [
-      'binary digest',
-      {
-        ...installation,
-        binaryDigest: `sha256:${'b'.repeat(64)}`
-      }
-    ],
-    ['version', { ...installation, agentVersion: '0.11.1' }],
-    ['architecture', { ...installation, architecture: 'arm64' as const }],
-    [
-      'protocol major',
-      {
-        ...installation,
-        protocol: {
-          ...installation.protocol,
-          major: installation.protocol.major + 1
-        }
-      }
-    ]
-  ])(
-    'rejects an installed Agent with a different persisted %s',
-    async (_field, changedInstallation) => {
-      const test = createHarness({
-        ensureInstalled: async () => changedInstallation
-      })
-      const access = test.factory.create(binding)
-
-      await expect(access.getIdentity()).rejects.toThrow(
-        'does not match the persisted project binding'
-      )
-      expect(test.acquire).not.toHaveBeenCalled()
-    }
-  )
 
   it('propagates connection acquisition failures', async () => {
     const test = createHarness({
@@ -150,25 +110,18 @@ describe('ManagedRemoteWorkspaceAccessFactory', () => {
 
 type HarnessOptions = {
   acquireError?: Error
-  ensureInstalled?: () => Promise<AgentInstallationIdentity>
 }
 
 function createHarness(options: HarnessOptions = {}): {
   factory: ManagedRemoteWorkspaceAccessFactory
   events: string[]
   protocolMethods: string[]
-  ensureInstalled: ReturnType<typeof vi.fn>
   acquire: ReturnType<typeof vi.fn>
+  activateInstalled: ReturnType<typeof vi.fn>
   connectionRelease: ReturnType<typeof vi.fn>
 } {
   const events: string[] = []
   const protocolMethods: string[] = []
-  const ensureInstalled = vi.fn(async () => {
-    events.push('agent:ensure')
-    return options.ensureInstalled
-      ? await options.ensureInstalled()
-      : installation
-  })
   const client = {
     request: vi.fn(async (method: string) => {
       protocolMethods.push(method)
@@ -198,23 +151,23 @@ function createHarness(options: HarnessOptions = {}): {
     identity: {
       cacheKey: 'connection-cache',
       hostId: binding.hostId,
-      hostRevision: binding.hostRevision,
-      hostKeyGeneration: binding.hostKeyGeneration,
-      remoteUsername: binding.remoteUsername,
-      installationId: binding.agentInstallationId,
-      binaryDigest: binding.agentBinaryDigest,
-      protocolMajor: binding.agentProtocolMajor,
-      protocolMinor: installation.protocol.minor
+      hostRevision: 2,
+      hostKeyGeneration: 3,
+      remoteUsername: 'builder',
+      installationId: installation.installationId,
+      binaryDigest: installation.binaryDigest,
+      protocolMajor: installation.protocol.major,
+      protocolMinor: AGENT_PROTOCOL_VERSION.minor
     },
     status: {
       state: 'ready',
-      installationId: binding.agentInstallationId,
-      binaryDigest: binding.agentBinaryDigest,
+      installationId: installation.installationId,
+      binaryDigest: installation.binaryDigest,
       daemonBootId: 'boot-1',
-      agentVersion: binding.agentVersion,
-      protocol: { ...installation.protocol },
+      agentVersion: installation.agentVersion,
+      protocol: { ...AGENT_PROTOCOL_VERSION },
       platform: 'linux',
-      architecture: binding.agentArchitecture,
+      architecture: installation.architecture,
       supervisor: 'detached-on-demand',
       remoteUserIdentity: 'uid:1000',
       draining: false
@@ -235,20 +188,24 @@ function createHarness(options: HarnessOptions = {}): {
     }
     return connection
   })
+  const activateInstalled = vi.fn(async () => {
+    events.push('installation:activate')
+    return installation
+  })
   const factoryOptions = {
-    installationManager: {
-      ensureInstalled
-    } as unknown as Pick<AgentInstallationManager, 'ensureInstalled'>,
     connectionManager: {
       acquire
-    } as unknown as Pick<RemoteAgentConnectionManager, 'acquire'>
+    } as unknown as Pick<RemoteAgentConnectionManager, 'acquire'>,
+    installationManager: {
+      activateInstalled
+    }
   } satisfies ManagedRemoteWorkspaceAccessFactoryOptions
   return {
     factory: new ManagedRemoteWorkspaceAccessFactory(factoryOptions),
     events,
     protocolMethods,
-    ensureInstalled,
     acquire,
+    activateInstalled,
     connectionRelease
   }
 }

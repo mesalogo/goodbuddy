@@ -11,7 +11,7 @@ import {
   utilityProcess
 } from 'electron'
 import { homedir } from 'node:os'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import spawn from 'cross-spawn'
@@ -132,7 +132,8 @@ import {
 } from './execution-space'
 import { RemoteAgentServices } from './remote-agent/remote-agent-services'
 import {
-  resolveBundledAgentResourcePaths
+  resolveBundledAgentResourcePaths,
+  resolveControlPlanePackageInstallerPath
 } from './remote-agent/bundled-agent-resources'
 import {
   AgentPackageManager
@@ -141,6 +142,12 @@ import { ManagedRemoteExecutionServices } from './remote-agent/managed-remote-ex
 import {
   RemoteEnvironmentUpdateService
 } from './remote-agent/remote-environment-update-service'
+import {
+  RemoteEnvironmentPreparer
+} from './remote-agent/remote-environment-preparer'
+import {
+  RemoteEnvironmentOperationStore
+} from './remote-agent/remote-environment-operation-store'
 import type {
   RuntimeSettings,
   RuntimeSettingsInput
@@ -651,6 +658,11 @@ if (hasSingleInstanceLock) {
       resourcesPath: process.resourcesPath,
       packaged: app.isPackaged
     })
+    const controlPlanePackageInstaller = await readFile(
+      resolveControlPlanePackageInstallerPath({
+        appPath: app.getAppPath()
+      })
+    )
     const agentPackageManager = new AgentPackageManager({
       userDataPath: app.getPath('userData'),
       desktopVersion: app.getVersion(),
@@ -665,7 +677,7 @@ if (hasSingleInstanceLock) {
       appPath: app.getAppPath(),
       resourcesPath: process.resourcesPath,
       packaged: app.isPackaged,
-      agentPackageManager
+      controlPlanePackageInstaller
     })
     remoteAgentServices = startupRemoteAgentServices
     const startupManagedRemoteExecutionServices =
@@ -676,7 +688,6 @@ if (hasSingleInstanceLock) {
         appPath: app.getAppPath(),
         resourcesPath: process.resourcesPath,
         packaged: app.isPackaged,
-        agentPackageManager,
         resolveRuntimeSelection: async (selection) =>
           resolveConfiguredAgentRuntimeSelection(
             await settingsStore.getResolvedSettings(),
@@ -695,6 +706,7 @@ if (hasSingleInstanceLock) {
       const invalidations = [
         startupRemoteAgentServices.invalidateHost(hostId)
       ]
+      startupManagedRemoteExecutionServices.invalidateHost(hostId)
       if (selectedRuntimeManager) {
         invalidations.push(
           selectedRuntimeManager.invalidateHost(hostId)
@@ -729,8 +741,11 @@ if (hasSingleInstanceLock) {
         remoteRuntimeLockPath:
           startupManagedRemoteExecutionServices.runtimeResourcePaths
             .runtimeLockPath,
-        loadExpectedCatalog: (architecture) =>
-          agentPackageManager.getExpectedCatalog(architecture)
+        loadRemoteEnvironmentCatalog: (architecture, options) =>
+          agentPackageManager.getRemoteEnvironmentCatalog(
+            architecture,
+            options
+          )
       })
     const [initialRuntimeSettings, initialResolvedSettings] =
       await Promise.all([
@@ -1240,12 +1255,26 @@ if (hasSingleInstanceLock) {
         database: startupAssistantDatabase,
         notify: sendRemoteProjectSaveProgress
       })
+    const remoteEnvironmentPreparer =
+      new RemoteEnvironmentPreparer({
+        resolver: startupRemoteAgentServices.targetResolver,
+        sshPool: startupRemoteAgentServices.sshPool,
+        agentPackageManager,
+        agentInstallationManager:
+          startupRemoteAgentServices.installationManager,
+        runtimeInstallationManager:
+          startupManagedRemoteExecutionServices
+            .runtimeInstallationManager,
+        operationStore:
+          new RemoteEnvironmentOperationStore(
+            app.getPath('userData')
+          )
+      })
     const remoteEnvironmentUpdateService =
       new RemoteEnvironmentUpdateService(
-        startupRemoteAgentServices.installationManager,
-        startupManagedRemoteExecutionServices
-          .runtimeInstallationManager,
+        remoteEnvironmentPreparer,
         async (hostId) => {
+          startupManagedRemoteExecutionServices.invalidateHost(hostId)
           const invalidations = [
             startupRemoteAgentServices.invalidateHost(hostId)
           ]

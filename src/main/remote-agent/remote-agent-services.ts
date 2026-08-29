@@ -1,10 +1,7 @@
 import { join } from 'node:path'
 import { SshConnectionPool } from '../ssh/ssh-connection-pool'
 import type { SshHostStore } from '../ssh/ssh-host-store'
-import {
-  AgentInstallationManager,
-  type AgentInstallationBundleLoader
-} from './agent-installation-manager'
+import { AgentInstallationManager } from './agent-installation-manager'
 import {
   resolveBundledAgentResourcePaths,
   type BundledAgentResourcePaths
@@ -17,14 +14,13 @@ import {
   RemoteAgentConnectionManager,
   type RemoteAgentTargetResolver
 } from './remote-agent-connection-manager'
-import type {
-  AgentPackageManager
-} from './agent-package-manager'
 
 const CONTROLLER_STATE_FILE_NAME = 'remote-agent-controller-state.json'
 
 type RemoteAgentServiceFactories = {
-  createSshConnectionPool: () => SshConnectionPool
+  createSshConnectionPool: (options: {
+    controlPlanePackageInstaller: Buffer | string
+  }) => SshConnectionPool
   createControllerStateStore: (
     filePath: string
   ) => ControllerStateStore
@@ -32,7 +28,6 @@ type RemoteAgentServiceFactories = {
     resolver: RemoteAgentTargetResolver
     sshPool: SshConnectionPool
     resourcePaths: BundledAgentResourcePaths
-    packageBundleLoader: AgentInstallationBundleLoader
   }) => AgentInstallationManager
   createConnectionManager: (options: {
     resolver: RemoteAgentTargetResolver
@@ -49,10 +44,7 @@ export type RemoteAgentServicesOptions = {
   appPath: string
   resourcesPath: string
   packaged: boolean
-  agentPackageManager: Pick<
-    AgentPackageManager,
-    'loadAgentBundle'
-  >
+  controlPlanePackageInstaller: Buffer | string
   factories?: Partial<RemoteAgentServiceFactories>
 }
 
@@ -74,7 +66,8 @@ export class RemoteAgentServices {
 
   constructor(options: RemoteAgentServicesOptions) {
     const factories: RemoteAgentServiceFactories = {
-      createSshConnectionPool: () => new SshConnectionPool(),
+      createSshConnectionPool: (poolOptions) =>
+        new SshConnectionPool(undefined, poolOptions),
       createControllerStateStore: (filePath) =>
         new ControllerStateStore(new JsonControllerStateFile(filePath)),
       createAgentInstallationManager: (managerOptions) =>
@@ -93,7 +86,10 @@ export class RemoteAgentServices {
       resourcesPath: options.resourcesPath,
       packaged: options.packaged
     })
-    this.sshPool = factories.createSshConnectionPool()
+    this.sshPool = factories.createSshConnectionPool({
+      controlPlanePackageInstaller:
+        options.controlPlanePackageInstaller
+    })
     this.controllerState = factories.createControllerStateStore(
       join(options.userDataPath, CONTROLLER_STATE_FILE_NAME)
     )
@@ -101,9 +97,7 @@ export class RemoteAgentServices {
       factories.createAgentInstallationManager({
         resolver: this.targetResolver,
         sshPool: this.sshPool,
-        resourcePaths: this.resourcePaths,
-        packageBundleLoader:
-          options.agentPackageManager.loadAgentBundle
+        resourcePaths: this.resourcePaths
       })
     this.connectionManager = factories.createConnectionManager({
       resolver: this.targetResolver,
@@ -119,6 +113,7 @@ export class RemoteAgentServices {
    * credential-free SSH host lifecycle hook starts fail-closed synchronously.
    */
   invalidateHost(hostId: string): Promise<void> {
+    this.installationManager.invalidateHost(hostId)
     return this.connectionManager.invalidateHost(hostId)
   }
 

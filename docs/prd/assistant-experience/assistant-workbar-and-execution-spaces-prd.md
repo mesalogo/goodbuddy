@@ -6,7 +6,7 @@
 | --- | --- |
 | 状态 | 设计中 |
 | 版本 | 0.5 |
-| 日期 | 2026-08-21 |
+| 日期 | 2026-08-28 |
 | 适用产品 | GoodBuddy 桌面端 |
 | 相关设计 | [统一界面设计系统](../../../UI-DESIGN.md)、[SSH 远程主机与 GoodBuddy Agent 稳定终态设计](../../architecture/remote-host-and-goodbuddy-agent-design.md) |
 | 相关能力 | [会话监督](../supervision/conversation-supervision-prd.md)、[自动化平台](../../architecture/automation-platform-architecture.md)、[长期助手路线图](../../roadmap/long-term-assistant-roadmap.md) |
@@ -477,8 +477,8 @@ type WorkbarPanelInstance = {
 
 设置中心“平台功能”提供独立“远程项目（技术预览）”页签及开关，默认关闭。关闭时不显示
 “主机与远程执行”分类、托管 SSH 项目创建选项和已保存远程项目，Main IPC 同时拒绝新的
-SSH/远程项目操作；已有 Host、项目和凭据保持不变。若关闭时正在激活远程项目，应用发出
-取消并保持或切回普通本地项目；若当前项目已经是远程项目，则切回项目列表中的第一个普通
+SSH/远程项目操作；已有 Host、项目和凭据保持不变。若当前项目已经是远程项目，则切回
+项目列表中的第一个普通
 本地项目。重新启用后恢复完整入口和既有数据。
 
 启用后，设置中心显示“主机与远程执行”分类，管理：
@@ -491,6 +491,9 @@ SSH/远程项目操作；已有 Host、项目和凭据保持不变。若关闭�
 - 删除、重新验证或更新 Host Key。
 
 主机配置是全局资源。项目或工作栏只引用主机 ID，不能复制凭据。
+删除 Host 前列出所有引用它的本地项目记录，包括归档项目；确认后仅删除本机 Host、凭据、
+项目和关联数据，不建立 SSH 连接，也不删除远端目录或内容。若当前项目被删除，界面切回
+普通本地项目。
 
 当前实施状态：设置中心已经实现主机 CRUD 和模态验证向导。新增或目标/认证编辑依次完成
 连接信息、认证前 Host Key 核对、密码/系统 SSH Agent 认证和平台/架构/Shell/Home 有界
@@ -501,22 +504,49 @@ SSH/远程项目操作；已有 Host、项目和凭据保持不变。若关闭�
 和文本模型 profile 验证后原子提交。私钥导入仍未开放。旧流程已保存但
 没有成功探针记录的主机继续读取，但在完成新向导前显示为“需要重新验证”。
 
-应用重启后固定进入项目列表中的第一个普通本地项目，不自动激活上次远程项目。用户主动
-打开已有托管 SSH 项目时，Main 会用数据库中的项目字段重新执行同一套
-Host/Agent/Workspace/Runtime 验证。桌面版本携带的 Agent 或 Runtime identity 已变化时，
-先 side-by-side 安装新候选，全部成功后再原子刷新项目 evidence 并切换当前项目；失败保留
-此前项目和安装绑定，不由 Renderer 用旧草稿重建更新请求。同一 Renderer 对同一项目的
-重复激活共享一个操作，不会并行启动第二次保存。
-主动打开期间，项目切换器在原位置展示 Host、Agent、Workspace、Runtime、Saving
-五个阶段及原生 `progressbar` 语义；用户可以取消，项目切换、创建和设置入口在操作结束前
-保持禁用。成功后才提交项目选择，失败或取消继续保留此前项目。
+当前源码已把 Agent/Runtime 生命周期归入 Host 管理。新增或重新验证 Host
+在身份、认证和系统探针成功后先保存 Host，再只读探测实际组件状态和瞬时下载能力，然后
+结束新增向导。产品不提供自动安装开关，也不在保存后传输包。Host 卡片只有一个按版本
+事实显示“安装远程环境”“更新远程环境”或“重新安装”的主按钮；次级 SegmentedControl
+选择“自动”“Host 下载”或“GoodBuddy 传输”，默认“自动”且不持久化。版本匹配 badge
+不代表环境健康。环境准备失败或取消保留 Host 并显示可重试状态；重新安装失败时显示
+本次操作未完成，并以随后重新检查的版本卡片表达当前事实，不对不确定提交宣称旧版本
+未被替换。详细技术契约见
+[SSH Host 远程环境准备与直连下载设计](../../architecture/remote-host-environment-provisioning-design.md)。
+
+进入或切回“主机与远程执行”页面只读取本地 Host 列表，不逐台建立 SSH 连接。版本和瞬时
+下载能力仅在用户点击某台 Host 的“刷新版本”时探测。该动作不是项目连接前置条件；用户
+切换已有远程项目只更新 Renderer 的本地项目选择，不建立 Host/Agent 连接。
+新建远程项目弹窗同样只读取本地 Host 验证记录，不扫描所有 Host；浏览目录或保存时才连接
+所选 Host。版本号相同时仍允许用户显式重新安装，以修复 registry、签名或 identity 异常，
+且不删除 Host、凭据或项目。由远程主机安装只使用 SSH 和远端系统工具，不依赖已有 Agent；
+“自动”仅在操作开始时探测：直连明确可用才选 Host 下载，否则选 GoodBuddy 传输；用户
+显式选择不被改写，prepare、commit 或 adoption 失败后不在同次操作中切换 acquisition。
+
+项目选择器中每个项目的管理按钮默认隐藏，在悬停、键盘焦点或触屏环境显示。该入口直接
+打开目标项目设置而不先切换项目，因此 Host 不可达或远端目录已不存在时仍可删除本地项目
+记录；删除操作从不删除远端项目内容。
+
+应用重启后固定进入项目列表中的第一个普通本地项目。用户主动打开已有托管 SSH 项目时只
+切换本地项目配置；首次实际使用 Workspace 或 Runtime 时，Main 才通过 Agent/Runtime
+安装管理器解析 Host current identity，执行固定 `attach-or-bootstrap`，并使用同一 Agent
+连接。
+项目数据库不保存 Agent installation、Host revision、Workspace identity 或 Runtime
+digest。当前 registry、连接或 capability 无效时项目保持未切换，并提示到 Host 管理显式
+修复。当前进程缓存每个 Host 已确认的 Agent/Runtime identity，并复用 Agent 连接；Host
+编辑或环境更新会定向清空。Agent 的 attach/按需启动只读取 Host 管理已提交的 registry 与
+匹配 manifest 元数据，不重新验签或哈希完整 Agent payload。项目切换器立即提交本地选择，
+不展示远程激活进度；完整进度和取消只属于新建或显式保存项目。
+
+项目只持久化 Host ID、规范远端路径、Runtime 选择和默认工作模式。新建和保存验证当前
+Workspace/Runtime，但不写入组件 identity；普通切换不做远程验证。未就绪或版本过旧时，
+实际 Workspace/Runtime 操作显示错误。桌面更新造成组件版本变化时，用户先在 Host 管理中
+准备环境；项目切换本身不连接、不下载、不扫描、不安装，也不改写项目。
 
 已保存 Host 的地址、用户或固定 Host Key 变化后，Main 关闭旧连接并定向退役该 Host 的
-Runtime 缓存。当前项目引用该 Host 时，设置保存成功会立即运行上述完整激活流程并刷新
-项目验证；其他项目在下次选择时刷新。用户再次选择当前 SSH 项目也会执行完整激活，
-不能因为项目已经选中而跳过验证。从 Host 保存到项目成功激活之间，项目持续保持需要
-重新连接状态；失败或取消不会重新开放 Composer。已由 Main 派发的用户排队消息退回原
-持久队列，不生成失败消息、不丢失附件，并在成功激活后的 queue-ready 通知中继续派发。
+Runtime 缓存。引用项目下次选择时使用 Host 管理的当前 revision、Host Key 和用户执行固定
+attach 并读取 current registry，不存在项目中的旧 Host revision 或组件 identity；
+当前环境无效时才要求显式修复。
 
 新建托管 SSH 项目时，远端工作目录既可手工输入，也可通过文件夹按钮打开 Main 管理的
 只读、有界 SFTP 目录选择器。选择器从 SSH 账号 Home 或当前有效绝对路径开始，只返回目录，
@@ -545,11 +575,23 @@ Runtime 缓存。当前项目引用该 Host 时，设置保存成功会立即运
 - 安装到远程当前用户的 GoodBuddy-owned 目录，不要求 root。首次连接先 attach，Agent
   不存在或未运行时幂等 bootstrap 为 detached process，再重新 attach；不注册开机服务，
   不依赖 systemd、D-Bus 或 `Linger=yes`。
-- SSH 负责 Host Key、认证、SFTP 安装和固定 `goodbuddy-agent attach` 中继；attach 只连接
-  用户私有 Unix socket。SSH relay 断开不终止 Agent 或活动 Runtime。
-- 上传内容使用应用内置公钥验证的签名 manifest，并校验组件版本、协议、平台、架构、大小
-  和 SHA-256。Agent 与 Runtime 各自维护版本，签名摘要标识精确工件；使用 side-by-side
-  安装、自检和健康切换，失败时不改变当前项目绑定。
+- SSH 负责 Host Key、认证、固定 bootstrap、可选 SFTP 安装和 `goodbuddy-agent attach`
+  中继；attach 只连接用户私有 Unix socket。SSH relay 断开不终止 Agent 或活动 Runtime。
+- Host 环境准备可让远端按签名目录固定的 GitHub/北京镜像 URL、大小和 SHA-256 下载完整
+  `.gbagent`，也可由 GoodBuddy 下载、完整验证后通过有界流式 SFTP 传输一个 compound
+  archive 和归档中已验证的 bootstrap Node；完整包不一次读入 Main `Buffer`，Host 仍再次
+  校验。两种 acquisition 交付到固定 operation staging 后共用
+  `prepare → commit → Agent activate/health → Runtime activate → finalize → cleanup`。
+- 直连首次 bootstrap 不依赖已安装 Agent daemon。GoodBuddy 桌面控制面通过固定 SSH
+  prepare channel 发送有界 one-shot installer；Host 先验证目录绑定的归档大小和 SHA-256，
+  再由 format v1 归档内固定 Node 解码并运行 installer。归档无需包含
+  `agent/lib/package-installer.cjs`，目录不提供或检查额外的 bootstrap 能力元数据。
+- Agent 与 Runtime 各自维护版本，签名摘要标识精确工件；使用 side-by-side 安装、自检和
+  健康切换，失败时不改变当前项目绑定。相同且可验证的 Node 使用硬链接复用，相同 Runtime
+  digest 不重复安装。
+- commit 终态持久化，控制通道丢失时只用 `commit-status` 恢复而不重放。prepare 完成后、commit 前快照
+  Agent/Runtime 五个 metadata 文件；任一组件 adoption 失败恢复原字节或原缺失状态，
+  已发布 payload 不得成为 current，确认 adoption 后显式 cleanup。
 - 握手报告 installation、Daemon boot identity、协议、系统、架构、用户监督器和能力。
 - 在远程执行路径规范化、Git、文件、PTY、进程组和 Runtime 管理。
 - 持久化有界 Agent 到 Main 输出；SSH 断开后 Agent 继续运行，同一 Agent 重连时只恢复
@@ -791,8 +833,18 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - 先完成签名 OpenCode bundle、Ask bubblewrap、Execute 直接进程、官方 ACP channel、
   Main 模型网关、取消、超时和活动记录。
 - OpenCode 闭环稳定后，Continue 与 DeepSeek Harness 复用相同面板和通道契约逐个接入。
-- 一次远程项目保存请求完成 Host/Agent/Workspace/Runtime 全量验证和 SQLite 原子提交。
-- 桌面更新后，用户主动首次打开远程项目时自动安装当前签名 Agent/Runtime，并在成功后原子刷新项目绑定；应用启动本身不连接远程项目。
+- 新增或重新验证 Host 时只保存并探测 Agent/Runtime，不自动安装。用户在 Host 卡片用
+  单一主按钮启动，并用次级控件选择自动、Host 下载或 GoodBuddy 传输；Host 保存与环境
+  准备是两个可独立重试的事务。
+- 控制面直连源码直接使用既有 package format v1 包；不等待发布携带 installer 的新
+  Agent 包，也不通过额外目录元数据判断 bootstrap 能力。GitHub/北京镜像、
+  Linux x64/arm64、取消和离线 GoodBuddy 传输仍须真实 Host 验收，不能据此声称已发布或已完成
+  真实 Host 测试。
+- 一次远程项目保存请求完成 Host/Agent/Workspace/Runtime 当前环境验证和 SQLite 原子
+  提交，但只持久化 Host、路径、Runtime 选择和模式，也不获取或安装组件。
+- 桌面更新后，用户先在 Host 管理中更新当前签名 Agent/Runtime；远程项目下一次实际使用
+  Workspace/Runtime 时直接使用新的 current 环境，无需刷新项目绑定。应用启动和项目切换
+  本身都不连接 Host，也不下载或安装组件。
 - SSH、Main、Daemon、Runtime 和远端重启后的核对、恢复与 `outcome_unknown`。
 - 支持平台的安装、Ask、Execute、取消和重连冒烟测试通过后开放对应 OpenCode 能力。
 
@@ -843,6 +895,11 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - [ ] 重连先恢复 event cursor 并查询 operation；有副作用操作不会自动重放，无法确认的
   结果显示为 `outcome_unknown`。
 - [ ] Agent side-by-side 更新支持所需签名版本的健康切换，失败时保留旧项目绑定。
+- [x] 新增 Host 只探测远端下载能力，不提供自动安装开关，也不传输完整包；Host 卡片用
+  一个按版本事实命名的主按钮与不持久化的 acquisition SegmentedControl 启动准备。
+- [x] 创建、保存、打开和切换托管 SSH 项目都从 Host current registry 与当前 Agent
+  连接验证环境；项目只保存稳定配置，且这些流程不下载 `.gbagent`、上传 payload 或发布
+  安装。
 - [ ] 切换跟随目标后不显示上一对象的过期状态。
 - [ ] 固定目标的订阅在页面切换后保持，关闭时正确释放。
 - [ ] 日志、终端、文件、成果和远程传输均有明确上限和背压。
@@ -867,6 +924,8 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - [自动化平台总体设计](../../architecture/automation-platform-architecture.md) 定义 Plan、Job、Run、监督、预算和记忆。
 - [长期助手路线图](../../roadmap/long-term-assistant-roadmap.md) 记录整体长期能力与实施背景。
 - [DeepSeek Harness Runtime 设计](../../architecture/deepseek-harness-runtime-design.md) 定义该 Runtime 的具体适配边界。
+- [SSH Host 远程环境准备与直连下载设计](../../architecture/remote-host-environment-provisioning-design.md)
+  定义 Host 级组件获取、首次准备、更新、回退和项目只验证边界。
 - [统一界面设计系统](../../../UI-DESIGN.md) 定义视觉、语义、响应式和无障碍规则。
 
 若其他文档把工作栏描述为八个同时固定显示的栏目、根据项目或 Runtime 自动裁剪的动态入口，

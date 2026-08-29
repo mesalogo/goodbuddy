@@ -1,4 +1,8 @@
 import { EventEmitter } from 'node:events'
+import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { BoundedStagedSftp } from './bounded-sftp'
 
@@ -153,17 +157,69 @@ function createSftp(root = '/safe/staging') {
     open: vi.fn(
       (
         path: string,
-        _mode: string,
-        callback: (error?: Error, handle?: Buffer) => void
+        mode: string,
+        attributesOrCallback:
+          | { mode: number }
+          | ((error?: Error, handle?: Buffer) => void),
+        possibleCallback?: (
+          error?: Error,
+          handle?: Buffer
+        ) => void
       ) => {
-        const entry = entries.get(path)
-        if (!entry) {
+        const callback =
+          typeof attributesOrCallback === 'function'
+            ? attributesOrCallback
+            : possibleCallback!
+        let entry = entries.get(path)
+        if (mode === 'wx') {
+          if (entry) {
+            callback(new Error('destination exists'))
+            return
+          }
+          entry = { type: 'file', contents: Buffer.alloc(0) }
+          entries.set(path, entry)
+        } else if (!entry) {
           callback(missingError())
           return
         }
         const handle = Buffer.from(`handle-${nextHandle++}`)
         handles.set(handle.toString(), entry)
         callback(undefined, handle)
+      }
+    ),
+    write: vi.fn(
+      (
+        handle: Buffer,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+        callback: (
+          error: Error | undefined,
+          bytesWritten: number
+        ) => void
+      ) => {
+        const entry = handles.get(handle.toString())
+        if (!entry) {
+          callback(missingError(), 0)
+          return
+        }
+        const requiredSize = position + length
+        if (
+          !entry.contents ||
+          entry.contents.byteLength < requiredSize
+        ) {
+          const grown = Buffer.alloc(requiredSize)
+          entry.contents?.copy(grown)
+          entry.contents = grown
+        }
+        buffer.copy(
+          entry.contents,
+          position,
+          offset,
+          offset + length
+        )
+        callback(undefined, length)
       }
     ),
     fstat: vi.fn(
@@ -221,6 +277,188 @@ function createSftp(root = '/safe/staging') {
 }
 
 describe('bounded staged SFTP', () => {
+  it('streams local files in bounded chunks and verifies both identities', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-sftp-upload-')
+    )
+    try {
+      const sourcePath = join(directory, 'package.gbagent')
+      const contents = Buffer.alloc(3 * 64 * 1024 + 17, 0x5a)
+      await writeFile(sourcePath, contents)
+      const { sftp, entries } = createSftp()
+      const staged = new BoundedStagedSftp(
+        sftp as never,
+        '/safe/staging',
+        {
+          maximumFileBytes: contents.byteLength,
+          maximumTotalBytes: contents.byteLength
+        }
+      )
+
+      await staged.uploadFile('package.gbagent', sourcePath, {
+        size: contents.byteLength,
+        sha256: createHash('sha256')
+          .update(contents)
+          .digest('hex')
+      })
+
+      expect(
+        entries.get('/safe/staging/package.gbagent')?.contents
+      ).toEqual(contents)
+      expect(sftp.write).toHaveBeenCalledTimes(4)
+      expect(
+        Math.max(
+          ...sftp.write.mock.calls.map(
+            ([, , , length]) => length
+          )
+        )
+      ).toBe(64 * 1024)
+      expect(
+        sftp.write.mock.calls.every(
+          ([, buffer]) => buffer.byteLength <= 64 * 1024
+        )
+      ).toBe(true)
+      expect(sftp.open).toHaveBeenCalledWith(
+        '/safe/staging/package.gbagent',
+        'wx',
+        { mode: 0o600 },
+        expect.any(Function)
+      )
+      expect(sftp.fstat).toHaveBeenCalledTimes(2)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects local upload size and hash mismatches', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-sftp-upload-')
+    )
+    try {
+      const sourcePath = join(directory, 'package.gbagent')
+      const contents = Buffer.alloc(64 * 1024 + 1, 0x41)
+      await writeFile(sourcePath, contents)
+
+      const sizeHarness = createSftp()
+      const sizeSftp = new BoundedStagedSftp(
+        sizeHarness.sftp as never,
+        '/safe/staging',
+        {
+          maximumFileBytes: contents.byteLength,
+          maximumTotalBytes: contents.byteLength
+        }
+      )
+      await expect(
+        sizeSftp.uploadFile('size', sourcePath, {
+          size: contents.byteLength - 1,
+          sha256: createHash('sha256')
+            .update(contents)
+            .digest('hex')
+        })
+      ).rejects.toThrow('预期的普通文件')
+      expect(sizeHarness.sftp.open).not.toHaveBeenCalled()
+
+      const hashHarness = createSftp()
+      const hashSftp = new BoundedStagedSftp(
+        hashHarness.sftp as never,
+        '/safe/staging',
+        {
+          maximumFileBytes: contents.byteLength,
+          maximumTotalBytes: contents.byteLength
+        }
+      )
+      await expect(
+        hashSftp.uploadFile('hash', sourcePath, {
+          size: contents.byteLength,
+          sha256: '0'.repeat(64)
+        })
+      ).rejects.toThrow('SHA-256 校验失败')
+      expect(hashHarness.sftp.close).toHaveBeenCalledOnce()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels a streaming upload and rejects unsafe boundaries', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-sftp-upload-')
+    )
+    try {
+      const sourcePath = join(directory, 'package.gbagent')
+      const contents = Buffer.alloc(2 * 64 * 1024, 0x42)
+      await writeFile(sourcePath, contents)
+      const hash = createHash('sha256').update(contents).digest('hex')
+
+      const cancellationHarness = createSftp()
+      cancellationHarness.sftp.write.mockImplementation(
+        () => undefined
+      )
+      const cancellable = new BoundedStagedSftp(
+        cancellationHarness.sftp as never,
+        '/safe/staging',
+        {
+          maximumFileBytes: contents.byteLength,
+          maximumTotalBytes: contents.byteLength
+        }
+      )
+      const controller = new AbortController()
+      const upload = cancellable.uploadFile(
+        'package.gbagent',
+        sourcePath,
+        { size: contents.byteLength, sha256: hash },
+        controller.signal
+      )
+      await vi.waitFor(() =>
+        expect(
+          cancellationHarness.sftp.write
+        ).toHaveBeenCalledOnce()
+      )
+      controller.abort()
+      await expect(upload).rejects.toMatchObject({
+        name: 'AbortError'
+      })
+      expect(
+        cancellationHarness.sftp.end
+      ).toHaveBeenCalledOnce()
+
+      const boundaryHarness = createSftp()
+      const bounded = new BoundedStagedSftp(
+        boundaryHarness.sftp as never,
+        '/safe/staging',
+        {
+          maximumFileBytes: contents.byteLength - 1,
+          maximumTotalBytes: contents.byteLength
+        }
+      )
+      await expect(
+        bounded.uploadFile('too-large', sourcePath, {
+          size: contents.byteLength,
+          sha256: hash
+        })
+      ).rejects.toThrow('大小超过安全限制')
+      boundaryHarness.entries.set('/safe/staging/link', {
+        type: 'symbolic-link'
+      })
+      const ancestors = new BoundedStagedSftp(
+        boundaryHarness.sftp as never,
+        '/safe/staging',
+        {
+          maximumFileBytes: contents.byteLength,
+          maximumTotalBytes: contents.byteLength
+        }
+      )
+      await expect(
+        ancestors.uploadFile('link/package', sourcePath, {
+          size: contents.byteLength,
+          sha256: hash
+        })
+      ).rejects.toThrow('符号链接')
+      expect(boundaryHarness.sftp.open).not.toHaveBeenCalled()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('keeps writes inside staging and supports bounded metadata and reads', async () => {
     const { sftp } = createSftp(
       '/home/builder/.goodbuddy/staging/random'

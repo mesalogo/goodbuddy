@@ -862,7 +862,10 @@ describe('SettingsPanel runtime files', () => {
           onAgentPackageProgress,
           create: vi.fn(),
           update: vi.fn(),
-          remove: vi.fn(async () => undefined),
+          remove: vi.fn(async (hostId: string) => ({
+            hostId,
+            deletedProjects: []
+          })),
           inspectHostKey: vi.fn(),
           acceptHostKey: vi.fn(),
           testConnection: vi.fn()

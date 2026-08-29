@@ -19,7 +19,8 @@ export const workspace = {
       remoteDetail: '{{channel}} · 远程通道 · {{path}}',
       remoteChannel: '远程通道',
       create: '新建项目',
-      settings: '项目设置'
+      settings: '项目设置',
+      settingsNamed: '管理项目 {{name}}'
     },
     dialog: {
       createTitle: '新建项目',
@@ -81,6 +82,23 @@ export const workspace = {
       loadingHosts: '正在读取已保存主机…',
       noHosts: '没有已保存的 SSH 主机',
       hostHelp: '主机凭据由设置中心统一管理，不会复制到项目中。',
+      readiness: {
+        loading: '正在读取主机验证记录…',
+        ready:
+          '此主机已验证。保存项目时才会连接并检查 Agent、工作区和 Runtime。',
+        unready:
+          '此主机尚未完成 Host Key 和连接验证。请先前往“设置 > SSH 主机”完成验证。',
+        error:
+          '无法读取此主机的本地验证记录。请前往“设置 > SSH 主机”检查配置。',
+        saveBlocked:
+          '所选主机尚未完成验证。请先在“设置 > SSH 主机”验证连接。',
+        options: {
+          loading: '读取中',
+          ready: '已验证',
+          unready: '需要验证',
+          error: '记录不可用'
+        }
+      },
       rootHelp: '请输入或选择以 / 开头的规范绝对路径。',
       directoryPicker: {
         browse: '浏览远端工作目录',
@@ -103,13 +121,9 @@ export const workspace = {
         save: '保存远程项目',
         saving: '正在保存远程项目…'
       },
-      activation: {
-        title: '正在连接远程项目“{{project}}”',
-        progressLabel: '远程项目连接进度',
-        stepsLabel: '远程项目连接阶段',
-        cancel: '取消连接',
-        cancelling: '正在取消远程连接…',
-        cancellingAction: '取消中…'
+      progress: {
+        progressLabel: '远程项目保存进度',
+        stepsLabel: '远程项目保存阶段'
       },
       phaseStatus: '当前阶段：{{phase}}',
       phases: {

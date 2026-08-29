@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { lstat as localLstat, open as localOpen } from 'node:fs/promises'
 import type { SFTPWrapper, Stats } from 'ssh2'
 
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
@@ -5,6 +8,7 @@ const MAX_OPERATION_TIMEOUT_MS = 60_000
 const MINIMUM_TRANSFER_BYTES_PER_SECOND = 64 * 1024
 const MAX_TRANSFER_TIMEOUT_MS = 60 * 60_000
 const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024
+const MAX_MAXIMUM_FILE_BYTES = 512 * 1024 * 1024
 const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 const DEFAULT_MAX_OPERATIONS = 2_048
 const MAX_REMOTE_PATH_BYTES = 4_096
@@ -37,12 +41,23 @@ export type SftpEntryMetadata = {
 
 export type AllowedSftpMode = (typeof ALLOWED_MODES)[number]
 
+export type SftpUploadIdentity = {
+  size: number
+  sha256: string
+}
+
 export type StagedSftp = {
   readonly stagingDirectory: string
   mkdir(relativePath: string, signal?: AbortSignal): Promise<void>
   writeFile(
     relativePath: string,
     contents: Buffer,
+    signal?: AbortSignal
+  ): Promise<void>
+  uploadFile(
+    relativePath: string,
+    sourcePath: string,
+    identity: SftpUploadIdentity,
     signal?: AbortSignal
   ): Promise<void>
   readFile(
@@ -100,6 +115,7 @@ type SftpLike = Pick<
   | 'stat'
   | 'open'
   | 'read'
+  | 'write'
   | 'close'
   | 'fstat'
   | 'end'
@@ -246,7 +262,7 @@ export class BoundedStagedSftp implements StagedSftp {
     this.maximumFileBytes = validatePositiveLimit(
       limits.maximumFileBytes,
       DEFAULT_MAX_FILE_BYTES,
-      DEFAULT_MAX_FILE_BYTES
+      MAX_MAXIMUM_FILE_BYTES
     )
     this.maximumTotalBytes = validatePositiveLimit(
       limits.maximumTotalBytes,
@@ -313,6 +329,146 @@ export class BoundedStagedSftp implements StagedSftp {
         this.totalBytes += contents.byteLength
       },
       this.transferTimeoutMs(contents.byteLength)
+    )
+  }
+
+  async uploadFile(
+    relativePath: string,
+    sourcePath: string,
+    identity: SftpUploadIdentity,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const validated = validateRelativePath(relativePath)
+    const remotePath = this.resolveValidated(validated)
+    if (
+      !Number.isSafeInteger(identity.size) ||
+      identity.size < 0 ||
+      identity.size > this.maximumFileBytes
+    ) {
+      throw new Error('SFTP 文件大小超过安全限制')
+    }
+    if (!/^[a-f0-9]{64}$/u.test(identity.sha256)) {
+      throw new Error('SFTP 文件 SHA-256 无效')
+    }
+    return this.enqueue(
+      signal,
+      async () => {
+        if (
+          this.totalBytes + identity.size >
+          this.maximumTotalBytes
+        ) {
+          throw new Error('SFTP 传输总量超过安全限制')
+        }
+        await this.assertSafeAncestors(validated)
+        const pathMetadata = await localLstat(sourcePath)
+        if (
+          !pathMetadata.isFile() ||
+          pathMetadata.isSymbolicLink() ||
+          pathMetadata.size !== identity.size
+        ) {
+          throw new Error('SFTP 本地上传源不是预期的普通文件')
+        }
+        const source = await localOpen(
+          sourcePath,
+          constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+        )
+        let remoteHandle: Buffer | undefined
+        const closeSourceOnAbort = (): void => {
+          void source.close().catch(() => undefined)
+        }
+        signal?.addEventListener('abort', closeSourceOnAbort, {
+          once: true
+        })
+        try {
+          const openedMetadata = await source.stat()
+          if (
+            !openedMetadata.isFile() ||
+            openedMetadata.size !== identity.size ||
+            openedMetadata.dev !== pathMetadata.dev ||
+            openedMetadata.ino !== pathMetadata.ino
+          ) {
+            throw new Error(
+              'SFTP 本地上传源在打开期间发生变化'
+            )
+          }
+          remoteHandle = await this.call<Buffer>((done) => {
+            this.sftp.open(
+              remotePath,
+              'wx',
+              { mode: 0o600 },
+              done
+            )
+          })
+          const initialRemoteMetadata = metadataFromStats(
+            await this.call<Stats>((done) => {
+              this.sftp.fstat(remoteHandle!, done)
+            })
+          )
+          this.assertType(initialRemoteMetadata, 'file')
+          if (initialRemoteMetadata.size !== 0) {
+            throw new Error('SFTP 上传目标初始大小无效')
+          }
+
+          const hash = createHash('sha256')
+          const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES)
+          let position = 0
+          while (true) {
+            signal?.throwIfAborted()
+            const { bytesRead } = await source.read(
+              buffer,
+              0,
+              buffer.byteLength,
+              position
+            )
+            if (bytesRead === 0) {
+              break
+            }
+            position += bytesRead
+            if (
+              position > identity.size ||
+              this.totalBytes + bytesRead >
+                this.maximumTotalBytes
+            ) {
+              throw new Error('SFTP 文件大小超过安全限制')
+            }
+            const chunk = buffer.subarray(0, bytesRead)
+            hash.update(chunk)
+            await this.writeHandle(
+              remoteHandle,
+              chunk,
+              position - bytesRead
+            )
+            this.totalBytes += bytesRead
+          }
+          if (position !== identity.size) {
+            throw new Error('SFTP 本地上传源大小与预期不一致')
+          }
+          if (hash.digest('hex') !== identity.sha256) {
+            throw new Error('SFTP 本地上传源 SHA-256 校验失败')
+          }
+          const remoteMetadata = metadataFromStats(
+            await this.call<Stats>((done) => {
+              this.sftp.fstat(remoteHandle!, done)
+            })
+          )
+          this.assertType(remoteMetadata, 'file')
+          if (remoteMetadata.size !== identity.size) {
+            throw new Error('SFTP 上传目标大小与预期不一致')
+          }
+        } finally {
+          signal?.removeEventListener(
+            'abort',
+            closeSourceOnAbort
+          )
+          await Promise.allSettled([
+            source.close(),
+            remoteHandle
+              ? this.closeHandle(remoteHandle)
+              : Promise.resolve()
+          ])
+        }
+      },
+      this.transferTimeoutMs(identity.size)
     )
   }
 
@@ -711,6 +867,23 @@ export class BoundedStagedSftp implements StagedSftp {
     return actualSize === contents.byteLength
       ? contents
       : contents.subarray(0, actualSize)
+  }
+
+  private async writeHandle(
+    handle: Buffer,
+    contents: Buffer,
+    position: number
+  ): Promise<void> {
+    await this.call<void>((done) => {
+      this.sftp.write(
+        handle,
+        contents,
+        0,
+        contents.byteLength,
+        position,
+        done
+      )
+    })
   }
 
   private async closeHandle(handle: Buffer): Promise<void> {

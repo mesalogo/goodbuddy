@@ -35,6 +35,17 @@ export function resolveBundledAgentResourcePaths(
   }
 }
 
+export function resolveControlPlanePackageInstallerPath(
+  environment: Pick<BundledAgentResourceEnvironment, 'appPath'>
+): string {
+  return join(
+    environment.appPath,
+    'out',
+    'main',
+    'remote-package-installer.mjs'
+  )
+}
+
 export function getBundledAgentDirectory(
   paths: BundledAgentResourcePaths,
   architecture: AgentArchitecture

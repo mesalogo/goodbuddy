@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import {
   agentRuntimeLockSchema,
@@ -23,10 +24,19 @@ import type {
   SshConnectionTarget,
   SshHostStore
 } from './ssh-host-store'
+import {
+  assertSshLeaseMatchesTarget,
+  assertValidSshConnectionTarget,
+  toCurrentSshConnectionTarget
+} from './ssh-connection-target'
 import type {
   SshConnectionLease,
+  SshRemotePackageBootstrapLease,
   SshConnectionPool
 } from './ssh-connection-pool'
+import type {
+  SshRemotePackageBootstrapUnavailableReason
+} from './ssh-remote-package-bootstrap'
 
 const AGENT_REGISTRY_PATH = '.goodbuddy/agent/registry.json'
 const RUNTIME_REGISTRY_PATH = '.goodbuddy/runtimes/registry.json'
@@ -43,38 +53,63 @@ type ExpectedCatalog = {
   }>
 }
 
+type RemoteInstallCandidate = {
+  source: 'github' | 'mirror'
+  size: number
+  sha256: string
+  urls: readonly string[]
+}
+
+type RemoteEnvironmentCatalog = {
+  expected: ExpectedCatalog
+  candidate: RemoteInstallCandidate | null
+  candidateFailure?: {
+    reason: 'package-unavailable' | 'probe-failed'
+    source: 'github' | 'mirror' | null
+    packageSize: number | null
+  }
+}
+
 export type SshHostRemoteEnvironmentInspectorOptions = {
   sshHosts: Pick<
     SshHostStore,
     'resolveConnectionTarget' | 'assertConnectionTargetCurrent'
   >
-  sshPool: Pick<SshConnectionPool, 'acquire'>
+  sshPool: Pick<
+    SshConnectionPool,
+    'acquire' | 'acquireRemotePackageBootstrap'
+  >
   agentRuntimeLockPath: string
   remoteRuntimeLockPath: string
-  loadExpectedCatalog?: (
-    architecture: 'x64' | 'arm64'
-  ) => Promise<ExpectedCatalog>
+  loadRemoteEnvironmentCatalog?: (
+    architecture: 'x64' | 'arm64',
+    options: { signal?: AbortSignal }
+  ) => Promise<RemoteEnvironmentCatalog>
   now?: () => Date
 }
 
 export class SshHostRemoteEnvironmentInspector {
   readonly #sshHosts: SshHostRemoteEnvironmentInspectorOptions['sshHosts']
   readonly #sshPool: SshHostRemoteEnvironmentInspectorOptions['sshPool']
-  readonly #loadExpectedCatalog: (
-    architecture: 'x64' | 'arm64'
-  ) => Promise<ExpectedCatalog>
+  readonly #loadRemoteEnvironmentCatalog: NonNullable<
+    SshHostRemoteEnvironmentInspectorOptions[
+      'loadRemoteEnvironmentCatalog'
+    ]
+  >
   readonly #now: () => Date
 
   constructor(options: SshHostRemoteEnvironmentInspectorOptions) {
     this.#sshHosts = options.sshHosts
     this.#sshPool = options.sshPool
-    this.#loadExpectedCatalog =
-      options.loadExpectedCatalog ??
-      (() =>
-        loadExpectedCatalog(
+    this.#loadRemoteEnvironmentCatalog =
+      options.loadRemoteEnvironmentCatalog ??
+      (async () => ({
+        expected: await loadExpectedCatalog(
           options.agentRuntimeLockPath,
           options.remoteRuntimeLockPath
-        ))
+        ),
+        candidate: null
+      }))
     this.#now = options.now ?? (() => new Date())
   }
 
@@ -86,15 +121,19 @@ export class SshHostRemoteEnvironmentInspector {
     const target =
       await this.#sshHosts.resolveConnectionTarget(hostId)
     signal?.throwIfAborted()
-    assertTarget(hostId, target)
-    const expectedTarget = currentTarget(target)
+    assertValidSshConnectionTarget(hostId, target)
+    const expectedTarget = toCurrentSshConnectionTarget(target)
     this.#sshHosts.assertConnectionTargetCurrent(expectedTarget)
 
     let lease: SshConnectionLease | undefined
     let sftp: StagedSftp | undefined
     try {
       lease = await this.#sshPool.acquire(target, signal)
-      assertLeaseIdentity(target, lease)
+      assertSshLeaseMatchesTarget(
+        lease,
+        target,
+        'SSH 远端运行环境连接身份不匹配'
+      )
       const probe = await lease.runAgentBootstrapProbe(signal)
       signal?.throwIfAborted()
       if (!probe.ready) {
@@ -114,7 +153,10 @@ export class SshHostRemoteEnvironmentInspector {
       )
       const [catalog, agentRegistry, runtimeRegistry] =
         await Promise.all([
-          this.#expected(probe.architecture),
+          this.#loadRemoteEnvironmentCatalog(
+            probe.architecture,
+            { signal }
+          ),
           readOptionalRegistry(
             sftp,
             AGENT_REGISTRY_PATH,
@@ -129,18 +171,36 @@ export class SshHostRemoteEnvironmentInspector {
           )
         ])
       signal?.throwIfAborted()
-      assertLeaseIdentity(target, lease)
+      assertSshLeaseMatchesTarget(
+        lease,
+        target,
+        'SSH 远端运行环境连接身份不匹配'
+      )
+      this.#sshHosts.assertConnectionTargetCurrent(expectedTarget)
+      const remoteDownload = await this.#remoteDownload(
+        target,
+        expectedTarget,
+        catalog.candidate,
+        catalog.candidateFailure,
+        signal
+      )
+      signal?.throwIfAborted()
+      assertSshLeaseMatchesTarget(
+        lease,
+        target,
+        'SSH 远端运行环境连接身份不匹配'
+      )
       this.#sshHosts.assertConnectionTargetCurrent(expectedTarget)
       return sshHostRemoteEnvironmentSchema.parse({
         hostId,
         checkedAt: this.#now().toISOString(),
         architecture: probe.architecture,
         agent: agentStatus(
-          catalog.agent,
+          catalog.expected.agent,
           agentRegistry?.current,
           probe.architecture
         ),
-        runtimes: catalog.runtimes.map((runtime) =>
+        runtimes: catalog.expected.runtimes.map((runtime) =>
           runtimeStatus(
             runtime,
             runtimeRegistry?.current.find(
@@ -150,7 +210,8 @@ export class SshHostRemoteEnvironmentInspector {
             ),
             probe.architecture
           )
-        )
+        ),
+        remoteDownload
       })
     } finally {
       sftp?.close()
@@ -158,49 +219,134 @@ export class SshHostRemoteEnvironmentInspector {
     }
   }
 
-  #expected(
-    architecture: 'x64' | 'arm64'
-  ): Promise<ExpectedCatalog> {
-    return this.#loadExpectedCatalog(architecture)
+  async #remoteDownload(
+    target: SshConnectionTarget,
+    expectedTarget: CurrentSshConnectionTarget,
+    candidate: RemoteInstallCandidate | null,
+    candidateFailure:
+      | RemoteEnvironmentCatalog['candidateFailure']
+      | undefined,
+    signal?: AbortSignal
+  ): Promise<SshHostRemoteEnvironment['remoteDownload']> {
+    if (!candidate) {
+      return unavailableRemoteDownload(
+        candidateFailure?.reason ?? 'package-unavailable',
+        candidateFailure
+          ? {
+              source: candidateFailure.source,
+              packageSize: candidateFailure.packageSize
+            }
+          : null
+      )
+    }
+    const exposure = {
+      source: candidate.source,
+      packageSize: candidate.size
+    }
+    let bootstrapLease:
+      | SshRemotePackageBootstrapLease
+      | undefined
+    try {
+      this.#sshHosts.assertConnectionTargetCurrent(expectedTarget)
+      bootstrapLease =
+        await this.#sshPool.acquireRemotePackageBootstrap(
+          target,
+          signal
+        )
+      assertSshLeaseMatchesTarget(
+        bootstrapLease,
+        target,
+        'SSH 远端运行环境连接身份不匹配'
+      )
+      const result = await bootstrapLease.probe(
+        {
+          operationId: randomUUID(),
+          urls: candidate.urls,
+          size: candidate.size,
+          sha256: candidate.sha256
+        },
+        { signal }
+      )
+      signal?.throwIfAborted()
+      assertSshLeaseMatchesTarget(
+        bootstrapLease,
+        target,
+        'SSH 远端运行环境连接身份不匹配'
+      )
+      this.#sshHosts.assertConnectionTargetCurrent(expectedTarget)
+      return result.available
+        ? {
+            available: true,
+            ...exposure
+          }
+        : unavailableRemoteDownload(
+            mapRemoteUnavailableReason(result.reason),
+            exposure
+          )
+    } catch {
+      signal?.throwIfAborted()
+      if (bootstrapLease) {
+        assertSshLeaseMatchesTarget(
+          bootstrapLease,
+          target,
+          'SSH 远端运行环境连接身份不匹配'
+        )
+        this.#sshHosts.assertConnectionTargetCurrent(
+          expectedTarget
+        )
+      }
+      return unavailableRemoteDownload(
+        'probe-failed',
+        exposure
+      )
+    } finally {
+      bootstrapLease?.release()
+    }
   }
 }
 
-function currentTarget(
-  target: SshConnectionTarget
-): CurrentSshConnectionTarget {
+type RemoteDownloadUnavailable = Extract<
+  SshHostRemoteEnvironment['remoteDownload'],
+  { available: false }
+>
+
+function unavailableRemoteDownload(
+  reason: RemoteDownloadUnavailable['reason'],
+  exposure: {
+    source: 'github' | 'mirror' | null
+    packageSize: number | null
+  } | null
+): SshHostRemoteEnvironment['remoteDownload'] {
   return {
-    hostId: target.host.id,
-    hostRevision: target.hostRevision,
-    hostKeyGeneration: target.hostKeyGeneration,
-    username: target.host.username
+    available: false,
+    source: exposure?.source ?? null,
+    packageSize: exposure?.packageSize ?? null,
+    reason
   }
 }
 
-function assertTarget(
-  requestedHostId: string,
-  target: SshConnectionTarget
-): void {
-  if (
-    target.host.id !== requestedHostId ||
-    target.hostRevision < 1 ||
-    target.hostKeyGeneration < 1 ||
-    !target.host.hostKey ||
-    target.host.hostKey.generation !== target.hostKeyGeneration
-  ) {
-    throw new Error('SSH 主机连接目标无效')
-  }
-}
-
-function assertLeaseIdentity(
-  target: SshConnectionTarget,
-  lease: SshConnectionLease
-): void {
-  if (
-    lease.identity.hostId !== target.host.id ||
-    lease.identity.hostRevision !== target.hostRevision ||
-    lease.identity.hostKeyGeneration !== target.hostKeyGeneration
-  ) {
-    throw new Error('SSH 远端运行环境连接身份不匹配')
+function mapRemoteUnavailableReason(
+  reason: SshRemotePackageBootstrapUnavailableReason
+): Extract<
+  SshHostRemoteEnvironment['remoteDownload'],
+  { available: false }
+>['reason'] {
+  switch (reason) {
+    case 'missing-curl':
+    case 'missing-sha256sum':
+    case 'missing-unzip':
+    case 'bootstrap-tools-unavailable':
+      return 'missing-tools'
+    case 'managed-path-unavailable':
+      return 'home-unwritable'
+    case 'insufficient-disk-space':
+      return 'insufficient-disk-space'
+    case 'download-unavailable':
+      return 'source-unreachable'
+    default:
+      throw new Error(
+        `未知的远端下载安装探测结果：${String(reason)}`
+      )
   }
 }
 

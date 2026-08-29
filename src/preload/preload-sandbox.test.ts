@@ -168,7 +168,7 @@ describe('sandboxed preload', () => {
     expect(source).toContain('cancelDirectoryBrowse: async ()')
     expect(source).toContain('getRemoteEnvironment: (hostId: string)')
     expect(source).toContain(
-      'updateRemoteEnvironment: async (hostId: string)'
+      'input: RemoteEnvironmentUpdateRequest'
     )
     expect(source).toContain(
       'cancelRemoteEnvironmentUpdate: async (hostId: string)'
@@ -230,7 +230,6 @@ describe('sandboxed preload', () => {
       'utf8'
     )
     expect(source).toContain('remote: {')
-    expect(source).toContain('remoteProjectActivate')
     expect(source).toContain('remoteProjectSave')
     expect(source).toContain('remoteProjectCancelCurrent')
     expect(source).toContain('remoteProjectSaveProgress')

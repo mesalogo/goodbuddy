@@ -22,12 +22,12 @@ import {
   type RemoteRuntimeActivator
 } from './remote-runtime-installation-manager'
 import {
+  loadRemoteRuntimeVerificationMetadata
+} from './remote-runtime-resource-loader'
+import {
   createManagedModelBridge,
   reconcileStartupModelCalls
 } from './managed-model-bridge'
-import type {
-  AgentPackageManager
-} from './agent-package-manager'
 
 const RUNTIME_BINDING_DATABASE_NAME = 'remote-runtime-bindings.sqlite'
 const MODEL_CALL_DATABASE_NAME = 'remote-model-calls-v2.sqlite'
@@ -46,10 +46,6 @@ export type ManagedRemoteExecutionServicesOptions = {
   appPath: string
   resourcesPath: string
   packaged: boolean
-  agentPackageManager: Pick<
-    AgentPackageManager,
-    'loadRuntimeBundle' | 'loadRuntimeMetadata'
-  >
   resolveModelProfile(
     selection: AgentRuntimeSelection
   ): Promise<ResolvedModelProfile | undefined>
@@ -93,13 +89,17 @@ export class ManagedRemoteExecutionServices {
       runtimeId,
       bundleDigest,
       architecture,
+      currentAgentInstallationId,
       signal
     ) => {
-      const agent =
-        await options.agentServices.installationManager.ensureInstalled(
-          lease.identity.hostId,
-          { signal }
-        )
+      const agentInstallationId =
+        currentAgentInstallationId ??
+        (
+          await options.agentServices.installationManager.activateInstalled(
+            lease.identity.hostId,
+            { signal }
+          )
+        ).installationId
       signal.throwIfAborted()
       const current = await options.agentServices.targetResolver.resolve(
         lease.identity.hostId
@@ -110,15 +110,14 @@ export class ManagedRemoteExecutionServices {
         current.host.id !== lease.identity.hostId ||
         current.hostRevision !== lease.identity.hostRevision ||
         current.hostKeyGeneration !==
-          lease.identity.hostKeyGeneration ||
-        agent.architecture !== architecture
+          lease.identity.hostKeyGeneration
       ) {
         throw new Error(
           'Remote Agent or SSH host identity changed before Runtime activation'
         )
       }
       const result = await lease.runAgentRuntimeAction(
-        agent.installationId,
+        agentInstallationId,
         {
           kind: 'runtime-activate',
           runtimeId,
@@ -135,10 +134,10 @@ export class ManagedRemoteExecutionServices {
       new RemoteRuntimeInstallationManager({
         resolver: options.agentServices.targetResolver,
         sshPool: options.agentServices.sshPool,
-        loadVerifiedBundle:
-          options.agentPackageManager.loadRuntimeBundle,
-        loadVerificationMetadata:
-          options.agentPackageManager.loadRuntimeMetadata,
+        loadVerificationMetadata: () =>
+          loadRemoteRuntimeVerificationMetadata(
+            this.runtimeResourcePaths
+          ),
         activate
       })
     this.runtimeValidator = new ManagedRemoteProjectRuntimeValidator({
@@ -147,9 +146,9 @@ export class ManagedRemoteExecutionServices {
     })
     this.workspaceAccessFactory =
       new ManagedRemoteWorkspaceAccessFactory({
+        connectionManager: options.agentServices.connectionManager,
         installationManager:
-          options.agentServices.installationManager,
-        connectionManager: options.agentServices.connectionManager
+          options.agentServices.installationManager
       })
     this.bindingStore = new SqliteRuntimeSessionBindingStore(
       join(options.userDataPath, RUNTIME_BINDING_DATABASE_NAME)
@@ -188,6 +187,10 @@ export class ManagedRemoteExecutionServices {
     await this.#readiness
   }
 
+  invalidateHost(hostId: string): void {
+    this.runtimeInstallationManager.invalidateHost(hostId)
+  }
+
   async createRuntime(
     options: Pick<
       ManagedRemoteAcpRuntimeOptions,
@@ -206,14 +209,12 @@ export class ManagedRemoteExecutionServices {
       ...options,
       modelBridge,
       agentServices: {
-        installationManager:
-          this.#agentServices.installationManager,
         connectionManager: this.#agentServices.connectionManager,
-        controllerState: this.#agentServices.controllerState
+        controllerState: this.#agentServices.controllerState,
+        installationManager:
+          this.#agentServices.installationManager
       },
-      runtimeInstallationManager:
-        this.runtimeInstallationManager,
-      workspaceAccessFactory: this.workspaceAccessFactory,
+      runtimeInstallationManager: this.runtimeInstallationManager,
       bindingStore: this.bindingStore
     })
   }

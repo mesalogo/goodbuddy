@@ -9,7 +9,10 @@ import type {
   SshConnectionPoolTarget
 } from '../ssh/ssh-connection-pool'
 import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
-import type { AgentAttachTransport } from './agent-attach-transport'
+import {
+  AgentAttachTransportError,
+  type AgentAttachTransport
+} from './agent-attach-transport'
 import type {
   AgentProtocolClient,
   AgentProtocolMethod
@@ -26,12 +29,14 @@ import {
 
 class MemoryStateFile implements ControllerStateFile {
   value?: unknown
+  writes = 0
 
   async read(): Promise<unknown | undefined> {
     return structuredClone(this.value)
   }
 
   async write(value: PersistedControllerState): Promise<void> {
+    this.writes += 1
     this.value = structuredClone(value)
   }
 }
@@ -152,7 +157,8 @@ const installation = {
 
 function harness(
   connectGate?: Promise<void>,
-  reconnectResumeGate?: Promise<void>
+  reconnectResumeGate?: Promise<void>,
+  idleTimeoutMs = 0
 ) {
   let currentTarget = target()
   const release = vi.fn()
@@ -199,7 +205,7 @@ function harness(
     sshPool,
     controllerState: new ControllerStateStore(stateFile),
     goodBuddyVersion: '0.11.0',
-    idleTimeoutMs: 0,
+    idleTimeoutMs,
     connectTransport,
     createProtocolClient: () => {
       const client = new FakeProtocolClient(clients.length)
@@ -244,6 +250,109 @@ describe('RemoteAgentConnectionManager', () => {
     await test.manager.dispose()
   })
 
+  it('shares one Host connection across caller capability requirements', async () => {
+    const test = harness()
+    const workspace = await test.manager.acquire(
+      'host-1',
+      installation
+    )
+    test.clients[0]!.capabilities = {
+      generation: 2,
+      capabilities: [
+        { name: 'workspace/read', version: 1, critical: true },
+        { name: 'runtime/acp', version: 3, critical: true }
+      ],
+      runtimes: []
+    }
+    await workspace.refreshCapabilities()
+
+    const runtime = await test.manager.acquire('host-1', {
+      ...installation,
+      requiredCapabilities: [
+        {
+          name: 'runtime/acp',
+          exactVersion: 3,
+          critical: true
+        }
+      ]
+    })
+
+    expect(runtime.client).toBe(workspace.client)
+    expect(test.connectTransport).toHaveBeenCalledOnce()
+    runtime.release()
+    workspace.release()
+    await test.manager.dispose()
+  })
+
+  it('rejects only the caller when a shared connection lacks its capability', async () => {
+    const test = harness()
+    const workspace = await test.manager.acquire(
+      'host-1',
+      installation
+    )
+
+    await expect(
+      test.manager.acquire('host-1', {
+        ...installation,
+        requiredCapabilities: [
+          {
+            name: 'runtime/acp',
+            exactVersion: 3,
+            critical: true
+          }
+        ]
+      })
+    ).rejects.toMatchObject({
+      disposition: 'terminal',
+      reason: 'capability'
+    })
+    expect(workspace.status.state).toBe('ready')
+    expect(test.connectTransport).toHaveBeenCalledOnce()
+
+    workspace.release()
+    await test.manager.dispose()
+  })
+
+  it('does not bind shared connection viability to the first caller requirements', async () => {
+    const test = harness(undefined, undefined, 1_000)
+    await expect(
+      test.manager.acquire('host-1', {
+        ...installation,
+        requiredCapabilities: [
+          {
+            name: 'runtime/acp',
+            exactVersion: 3,
+            critical: true
+          }
+        ]
+      })
+    ).rejects.toMatchObject({
+      disposition: 'terminal',
+      reason: 'capability'
+    })
+
+    const workspace = await test.manager.acquire(
+      'host-1',
+      installation
+    )
+    expect(test.connectTransport).toHaveBeenCalledOnce()
+
+    workspace.release()
+    await test.manager.dispose()
+  })
+
+  it('does not persist an unchanged capability refresh', async () => {
+    const test = harness()
+    const lease = await test.manager.acquire('host-1', installation)
+    const writes = test.stateFile.writes
+
+    await lease.refreshCapabilities()
+
+    expect(test.stateFile.writes).toBe(writes)
+    lease.release()
+    await test.manager.dispose()
+  })
+
   it('isolates cache entries across Host revisions', async () => {
     const test = harness()
     const first = await test.manager.acquire('host-1', installation)
@@ -253,6 +362,28 @@ describe('RemoteAgentConnectionManager', () => {
     expect(test.connectTransport).toHaveBeenCalledTimes(2)
     first.release()
     second.release()
+    await test.manager.dispose()
+  })
+
+  it('directs registered installation integrity failures to Host repair', async () => {
+    const test = harness()
+    test.connectTransport.mockRejectedValueOnce(
+      new AgentAttachTransportError(
+        'Agent attach closed during handshake with diagnostic output',
+        'closed',
+        undefined,
+        'installation-repair-required'
+      )
+    )
+
+    await expect(
+      test.manager.acquire('host-1', installation)
+    ).rejects.toMatchObject({
+      message: 'GoodBuddy Agent installation needs repair',
+      disposition: 'terminal',
+      reason: 'protocol'
+    })
+    expect(test.release).toHaveBeenCalledOnce()
     await test.manager.dispose()
   })
 
@@ -352,8 +483,51 @@ describe('RemoteAgentConnectionManager', () => {
       reason: 'capability',
       disposition: 'terminal'
     })
-    expect(lease.capabilities).toEqual(refreshed)
+    expect(lease.capabilities).toEqual(
+      test.clients[0]!.capabilities
+    )
     lease.release()
+    await test.manager.dispose()
+  })
+
+  it('deduplicates concurrent capability refreshes for shared leases', async () => {
+    const test = harness()
+    const [first, second] = await Promise.all([
+      test.manager.acquire('host-1', installation),
+      test.manager.acquire('host-1', installation)
+    ])
+    let finishRefresh!: () => void
+    test.clients[0]!.capabilitiesGate = new Promise<void>((resolve) => {
+      finishRefresh = resolve
+    })
+    test.clients[0]!.capabilities = {
+      generation: 2,
+      capabilities: [
+        { name: 'workspace/read', version: 1, critical: true }
+      ],
+      runtimes: []
+    }
+    const requestsBefore = test.clients[0]!.requests.filter(
+      (request) => request.method === 'agent/capabilities'
+    ).length
+
+    const refreshes = [
+      first.refreshCapabilities(),
+      second.refreshCapabilities()
+    ]
+    finishRefresh()
+
+    await expect(Promise.all(refreshes)).resolves.toEqual([
+      test.clients[0]!.capabilities,
+      test.clients[0]!.capabilities
+    ])
+    expect(
+      test.clients[0]!.requests.filter(
+        (request) => request.method === 'agent/capabilities'
+      )
+    ).toHaveLength(requestsBefore + 1)
+    first.release()
+    second.release()
     await test.manager.dispose()
   })
 
@@ -395,7 +569,7 @@ describe('RemoteAgentConnectionManager', () => {
     await test.manager.dispose()
   })
 
-  it('does not publish a capability refresh after its lease is released in flight', async () => {
+  it('publishes a shared capability refresh for a retained lease', async () => {
     const test = harness()
     const [refreshing, retained] = await Promise.all([
       test.manager.acquire('host-1', installation),
@@ -418,7 +592,7 @@ describe('RemoteAgentConnectionManager', () => {
     finishRefresh()
 
     await expect(refresh).rejects.toThrow('lease is released')
-    expect(retained.capabilities.generation).toBe(1)
+    expect(retained.capabilities.generation).toBe(2)
     retained.release()
     await test.manager.dispose()
   })

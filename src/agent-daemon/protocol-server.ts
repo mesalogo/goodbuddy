@@ -82,6 +82,7 @@ const RUNTIME_ACP_METHODS = [
 export type ProtocolMethodContext = {
   controller: ControllerLease
   channelId: string
+  controllerTakeoverProven?: boolean
   signal?: AbortSignal
 }
 
@@ -841,6 +842,7 @@ class ProtocolConnection {
       const result = await handler(request.params, {
         controller: this.#controller,
         channelId: channel.channelId,
+        controllerTakeoverProven: this.#takeoverProven,
         signal: this.#abortController.signal
       })
       if (request.method === 'runtime/resumeAcpChannel') {

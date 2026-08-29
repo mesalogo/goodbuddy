@@ -980,7 +980,12 @@ describe('registerIpcHandlers SSH hosts', () => {
     }
     const sshHostService = {
       getSnapshot: vi.fn(async () => snapshot),
-      remove: vi.fn(async () => undefined),
+      remove: vi.fn(
+        async (
+          _hostId: string,
+          commitLocalDeletion?: () => unknown
+        ) => commitLocalDeletion?.()
+      ),
       inspectDraftHostKey: vi.fn(async () => ({
         candidateId,
         hostId,
@@ -1003,13 +1008,15 @@ describe('registerIpcHandlers SSH hosts', () => {
         }
       }))
     }
-    const listProjectIdsReferencingSshHost = vi.fn((): string[] => [])
+    const deleteProjectsReferencingSshHost = vi.fn(
+      (): Array<{ id: string; name: string }> => []
+    )
+    const listSshHostProjectReferences = vi.fn(() => [])
     const remoteProject = {
       id: '00000000-0000-4000-8000-000000000107',
       name: 'Remote project'
     }
     const remoteProjectSaveService = {
-      activate: vi.fn(async () => remoteProject),
       save: vi.fn(async () => remoteProject),
       cancelCurrent: vi.fn(),
       dispose: vi.fn(async () => undefined)
@@ -1061,7 +1068,12 @@ describe('registerIpcHandlers SSH hosts', () => {
           version: '1.18.9',
           architecture: 'x64'
         }
-      }]
+      }],
+      remoteDownload: {
+        available: true,
+        source: 'mirror',
+        packageSize: 1024
+      }
     } as const
     const inspectRemoteEnvironment = vi.fn(
       async () => remoteEnvironment
@@ -1073,16 +1085,21 @@ describe('registerIpcHandlers SSH hosts', () => {
       update: vi.fn(
         async (
           owner: typeof webContents,
-          updateHostId: string,
+          request: {
+            hostId: string
+            method: 'remote-download' | 'goodbuddy-transfer'
+          },
           onProgress?: (progress: {
             hostId: string
-            phase: 'agent'
+            method: 'remote-download' | 'goodbuddy-transfer'
+            phase: 'verifying'
           }) => void
         ) => {
           expect(owner).toBe(webContents)
           onProgress?.({
-            hostId: updateHostId,
-            phase: 'agent'
+            hostId: request.hostId,
+            method: request.method,
+            phase: 'verifying'
           })
         }
       ),
@@ -1162,7 +1179,8 @@ describe('registerIpcHandlers SSH hosts', () => {
         queueDueSchedules: vi.fn(() => []),
         listConversationQueueItems: vi.fn(() => []),
         listPendingConversationQueueIds: vi.fn(() => []),
-        listProjectIdsReferencingSshHost
+        listSshHostProjectReferences,
+        deleteProjectsReferencingSshHost
       } as never,
       { clear: vi.fn() } as never,
       {} as never,
@@ -1214,7 +1232,10 @@ describe('registerIpcHandlers SSH hosts', () => {
 
     await expect(
       electronMocks.handlers.get(ipcChannels.sshHostsGet)?.(event)
-    ).resolves.toEqual(snapshot)
+    ).resolves.toEqual({
+      ...snapshot,
+      projectReferences: {}
+    })
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsAgentPackageInventory
@@ -1328,17 +1349,41 @@ describe('registerIpcHandlers SSH hosts', () => {
         event,
         { hostId }
       )
-    ).resolves.toBeUndefined()
-    listProjectIdsReferencingSshHost.mockReturnValue([
-      '00000000-0000-4000-8000-000000000107'
+    ).resolves.toEqual({
+      hostId,
+      deletedProjects: []
+    })
+    deleteProjectsReferencingSshHost.mockReturnValue([
+      {
+        id: '00000000-0000-4000-8000-000000000107',
+        name: 'Remote project'
+      }
     ])
     await expect(
       electronMocks.handlers.get(ipcChannels.sshHostsRemove)?.(
         event,
         { hostId }
       )
-    ).rejects.toThrow('SSH 主机仍被项目引用，无法删除')
-    expect(sshHostService.remove).toHaveBeenCalledOnce()
+    ).resolves.toEqual({
+      hostId,
+      deletedProjects: [
+        {
+          id: '00000000-0000-4000-8000-000000000107',
+          name: 'Remote project'
+        }
+      ]
+    })
+    expect(sshHostService.remove).toHaveBeenCalledTimes(2)
+    sshHostService.remove.mockRejectedValueOnce(
+      new Error('Host store unavailable')
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.sshHostsRemove)?.(
+        event,
+        { hostId }
+      )
+    ).rejects.toThrow('Host store unavailable')
+    expect(deleteProjectsReferencingSshHost).toHaveBeenCalledTimes(2)
 
     await expect(
       electronMocks.handlers.get(
@@ -1356,28 +1401,36 @@ describe('registerIpcHandlers SSH hosts', () => {
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsUpdateRemoteEnvironment
-      )?.(event, { hostId })
+      )?.(event, { hostId, method: 'remote-download' })
     ).resolves.toBeUndefined()
     expect(remoteEnvironmentUpdateService.update).toHaveBeenCalledWith(
       webContents,
-      hostId,
+      { hostId, method: 'remote-download' },
       expect.any(Function)
     )
     expect(webContents.send).toHaveBeenCalledWith(
       ipcChannels.sshHostsRemoteEnvironmentUpdateProgress,
-      { hostId, phase: 'agent' }
+      {
+        hostId,
+        method: 'remote-download',
+        phase: 'verifying'
+      }
     )
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsUpdateRemoteEnvironment
-      )?.(event, { hostId, command: 'whoami' })
+      )?.(event, {
+        hostId,
+        method: 'remote-download',
+        command: 'whoami'
+      })
     ).rejects.toThrow()
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsUpdateRemoteEnvironment
       )?.(
         { sender: {}, senderFrame: webContents.mainFrame },
-        { hostId }
+        { hostId, method: 'remote-download' }
       )
     ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
     expect(remoteEnvironmentUpdateService.update).toHaveBeenCalledOnce()
@@ -1493,15 +1546,6 @@ describe('registerIpcHandlers SSH hosts', () => {
     }
     await expect(
       electronMocks.handlers.get(
-        ipcChannels.remoteProjectActivate
-      )?.(event, remoteProject.id)
-    ).resolves.toEqual(remoteProject)
-    expect(remoteProjectSaveService.activate).toHaveBeenCalledWith(
-      webContents,
-      remoteProject.id
-    )
-    await expect(
-      electronMocks.handlers.get(
         ipcChannels.remoteProjectSave
       )?.(event, remoteDraft)
     ).resolves.toEqual(remoteProject)
@@ -1518,20 +1562,6 @@ describe('registerIpcHandlers SSH hosts', () => {
       remoteProjectSaveService.cancelCurrent
     ).toHaveBeenCalledWith(webContents)
     expect(selectedRuntimes.reset).not.toHaveBeenCalled()
-    await expect(
-      electronMocks.handlers.get(
-        ipcChannels.remoteProjectActivate
-      )?.(event, 'not-a-project-id')
-    ).rejects.toThrow()
-    expect(remoteProjectSaveService.activate).toHaveBeenCalledOnce()
-    remoteProjectSaveService.activate.mockRejectedValueOnce(
-      new Error('activation failed')
-    )
-    await expect(
-      electronMocks.handlers.get(
-        ipcChannels.remoteProjectActivate
-      )?.(event, remoteProject.id)
-    ).rejects.toThrow('activation failed')
     expect(selectedRuntimes.reset).not.toHaveBeenCalled()
     await expect(
       electronMocks.handlers.get(
@@ -1604,7 +1634,8 @@ describe('registerIpcHandlers SSH hosts', () => {
       queueDueSchedules: vi.fn(() => []),
       listConversationQueueItems: vi.fn(() => []),
       listPendingConversationQueueIds: vi.fn(() => []),
-      listProjectIdsReferencingSshHost: vi.fn(() => []),
+      listSshHostProjectReferences: vi.fn(() => []),
+      deleteProjectsReferencingSshHost: vi.fn(() => []),
       getProject: vi.fn(() => remoteProject),
       updateProject: vi.fn(),
       setProjectArchived: vi.fn(),
@@ -1705,12 +1736,14 @@ describe('registerIpcHandlers SSH hosts', () => {
         { candidateId, fingerprintSha256: fingerprint, input: createInput }
       ],
       [ipcChannels.sshHostsRemoteEnvironment, { hostId }],
-      [ipcChannels.sshHostsUpdateRemoteEnvironment, { hostId }],
+      [
+        ipcChannels.sshHostsUpdateRemoteEnvironment,
+        { hostId, method: 'remote-download' }
+      ],
       [
         ipcChannels.sshHostsBrowseDirectories,
         { hostId, path: '/srv' }
       ],
-      [ipcChannels.remoteProjectActivate, projectId],
       [ipcChannels.remoteProjectSave, remoteDraft]
     ]
     for (const [channel, input] of disabledRequests) {
@@ -1786,7 +1819,10 @@ describe('registerIpcHandlers SSH hosts', () => {
       webContents
     )
     expect(
-      assistantDatabase.listProjectIdsReferencingSshHost
+      assistantDatabase.listSshHostProjectReferences
+    ).not.toHaveBeenCalled()
+    expect(
+      assistantDatabase.deleteProjectsReferencingSshHost
     ).not.toHaveBeenCalled()
     expect(assistantDatabase.updateProject).not.toHaveBeenCalled()
     expect(assistantDatabase.setProjectArchived).not.toHaveBeenCalled()
@@ -1833,7 +1869,8 @@ describe('registerIpcHandlers SSH hosts', () => {
     }
     const progress = {
       hostId: '00000000-0000-4000-8000-000000000105',
-      phase: 'runtime' as const
+      method: 'remote-download' as const,
+      phase: 'installing-runtime' as const
     }
 
     sendRemoteEnvironmentUpdateProgress(owner as never, progress)
@@ -7887,7 +7924,6 @@ describe('registerIpcHandlers agent terminal state', () => {
       selectedRuntimes
     )
     const projectId = '00000000-0000-4000-8000-000000000451'
-    const agentInstallationId = 'agent-installation-1'
     harness.getApplicationSettings.mockResolvedValue({
       magicNotesEnabled: false,
       remoteProjectsEnabled: true
@@ -7900,30 +7936,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       executionSpace: {
         kind: 'ssh',
         hostId: '00000000-0000-4000-8000-000000000452',
-        remoteRootPath: '/srv/project',
-        validation: {
-          hostRevision: 1,
-          hostKeyGeneration: 1,
-          remoteUsername: 'builder',
-          workspaceIdentity: 'workspace-1',
-          agentProtocolMajor: 2,
-          agentInstallationIdAtValidation: agentInstallationId,
-          agentBinaryDigestAtValidation: `sha256:${'a'.repeat(64)}`,
-          agentVersionAtValidation: '0.11.2-e2e.12',
-          agentArchitectureAtValidation: 'x64',
-          validatedAt: '2026-08-25T00:00:00.000Z'
-        }
+        remoteRootPath: '/srv/project'
       },
       defaultWorkMode: 'ask',
       runtimeSelection: { provider: 'opencode' },
-      runtimeValidation: {
-        runtimeSelectionKey: 'opencode:default',
-        runtimeBundleDigest: `sha256:${'b'.repeat(64)}`,
-        runtimeAdapterDigest: `sha256:${'c'.repeat(64)}`,
-        agentInstallationIdAtValidation: agentInstallationId,
-        validatedAt: '2026-08-25T00:00:00.000Z',
-        workMode: 'execute'
-      },
       kind: 'user',
       status: 'active',
       createdAt: '2026-08-25T00:00:00.000Z',

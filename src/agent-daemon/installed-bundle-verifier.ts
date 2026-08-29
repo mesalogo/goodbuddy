@@ -17,6 +17,10 @@ import {
   type AgentReleaseKey,
   type AgentReleaseKeyRegistry
 } from '../shared/agent-installation-contracts'
+import {
+  installationRegistryEntrySchema,
+  type InstallationRegistryEntry
+} from '../shared/remote-environment-registry-contracts'
 import { assertAbsoluteManagedPath } from './managed-paths'
 import {
   assertElfArchitecture,
@@ -54,6 +58,22 @@ export type VerifyInstalledAgentBundleOptions = {
   enforceFilesystemMode?: boolean
   filesystemPlatform?: NodeJS.Platform
   uid?: number
+}
+
+export type LoadRegisteredAgentBundleOptions = {
+  installationId: string
+  architecture: AgentArchitecture
+  registered: InstallationRegistryEntry
+  enforceFilesystemMode?: boolean
+  filesystemPlatform?: NodeJS.Platform
+  uid?: number
+}
+
+export class RegisteredAgentBundleError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause })
+    this.name = 'RegisteredAgentBundleError'
+  }
 }
 
 export async function readManagedAgentReleaseKeyRegistry(
@@ -199,6 +219,126 @@ export async function verifyInstalledAgentBundle(
     manifest,
     manifestSha256,
     binaryDigest: `sha256:${manifestSha256}`
+  }
+}
+
+/**
+ * Reconstructs the identity previously verified and committed by Host
+ * management. Normal attach/bootstrap uses this bounded metadata path instead
+ * of rehashing the complete installation on every project switch.
+ */
+export async function loadRegisteredAgentBundle(
+  installationDirectoryInput: string,
+  options: LoadRegisteredAgentBundleOptions
+): Promise<VerifiedInstalledAgentBundle> {
+  try {
+    return await loadRegisteredAgentBundleUnchecked(
+      installationDirectoryInput,
+      options
+    )
+  } catch (error) {
+    if (error instanceof RegisteredAgentBundleError) {
+      throw error
+    }
+    throw new RegisteredAgentBundleError(
+      error instanceof Error
+        ? error.message
+        : 'Registered Agent installation is invalid',
+      error
+    )
+  }
+}
+
+async function loadRegisteredAgentBundleUnchecked(
+  installationDirectoryInput: string,
+  options: LoadRegisteredAgentBundleOptions
+): Promise<VerifiedInstalledAgentBundle> {
+  const installationId = validateInstallationId(options.installationId)
+  const installationDirectory = resolve(installationDirectoryInput)
+  assertAbsoluteManagedPath(installationDirectory)
+  if (basename(installationDirectory) !== installationId) {
+    throw new Error(
+      'Agent installation ID does not match its managed directory'
+    )
+  }
+  const registered = installationRegistryEntrySchema.parse(
+    options.registered
+  )
+  if (
+    registered.installationId !== installationId ||
+    registered.arch !== options.architecture
+  ) {
+    throw new Error(
+      'Registered Agent identity does not match the current installation'
+    )
+  }
+
+  const rootStat = await lstat(installationDirectory)
+  assertOwnedDirectory(
+    rootStat,
+    'Agent installation directory',
+    options.uid
+  )
+  if (
+    shouldEnforceMode(options) &&
+    modeString(rootStat.mode) !== '0700'
+  ) {
+    throw new Error(
+      'Agent installation directory permissions must be 0700'
+    )
+  }
+
+  const manifestBytes = await readMetadataFile(
+    join(installationDirectory, MANIFEST_FILE_NAME),
+    'Agent manifest',
+    options
+  )
+  if (sha256Bytes(manifestBytes) !== registered.manifestSha256) {
+    throw new Error(
+      'Agent manifest does not match the Host-managed registry'
+    )
+  }
+  let untrusted: unknown
+  try {
+    untrusted = JSON.parse(manifestBytes.toString('utf8'))
+  } catch (error) {
+    throw new Error('Agent manifest JSON is invalid', { cause: error })
+  }
+  const manifest = agentBundleManifestSchema.parse(untrusted)
+  if (
+    !canonicalInstalledAgentManifestBytes(manifest).equals(
+      manifestBytes
+    ) ||
+    manifest.agentVersion !== registered.agentVersion ||
+    manifest.arch !== registered.arch
+  ) {
+    throw new Error(
+      'Agent manifest does not match the Host-managed registry'
+    )
+  }
+
+  const executablePath = join(
+    installationDirectory,
+    manifest.entrypoint.path
+  )
+  await assertRegisteredEntrypoint(executablePath, '0755', options)
+  await assertRegisteredEntrypoint(
+    join(installationDirectory, manifest.entrypoint.runtimePath),
+    '0755',
+    options
+  )
+  await assertRegisteredEntrypoint(
+    join(installationDirectory, manifest.entrypoint.scriptPath),
+    '0644',
+    options
+  )
+  return {
+    installationId,
+    installationDirectory,
+    executablePath,
+    manifest,
+    manifestSha256: registered.manifestSha256,
+    binaryDigest: `sha256:${registered.manifestSha256}`
   }
 }
 
@@ -349,6 +489,26 @@ function importPublicKey(key: AgentReleaseKey) {
     )
   }
   return publicKey
+}
+
+async function assertRegisteredEntrypoint(
+  filePath: string,
+  expectedMode: string,
+  options: Pick<
+    LoadRegisteredAgentBundleOptions,
+    'uid' | 'filesystemPlatform' | 'enforceFilesystemMode'
+  >
+): Promise<void> {
+  const stat = await lstat(filePath)
+  assertOwnedRegularFile(stat, filePath, options.uid)
+  if (
+    shouldEnforceMode(options) &&
+    modeString(stat.mode) !== expectedMode
+  ) {
+    throw new Error(
+      `Agent payload mode mismatch: ${basename(filePath)}`
+    )
+  }
 }
 
 async function readMetadataFile(

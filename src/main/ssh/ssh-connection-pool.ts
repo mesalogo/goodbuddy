@@ -1,142 +1,192 @@
-import { createHmac, getCiphers, randomBytes } from 'node:crypto'
-import { Client } from 'ssh2'
-import type {
-  ClientChannel,
-  ConnectConfig,
-  SFTPWrapper
-} from 'ssh2'
+import { createHmac, getCiphers, randomBytes } from "node:crypto";
+import { Client } from "ssh2";
+import type { ClientChannel, ConnectConfig, SFTPWrapper } from "ssh2";
 import {
   BoundedStagedSftp,
   type BoundedSftpLimits,
-  type StagedSftp
-} from './bounded-sftp'
-import { listBoundedSftpDirectories } from './bounded-directory-sftp'
-import type { ResolvedSshHost } from './ssh-host-store'
+  type StagedSftp,
+} from "./bounded-sftp";
+import { listBoundedSftpDirectories } from "./bounded-directory-sftp";
+import type { ResolvedSshHost } from "./ssh-host-store";
 import {
   AGENT_BOOTSTRAP_PROBE_COMMAND,
   buildFixedAgentSshCommand,
   parseAgentBootstrapProbeOutput,
   type AgentLifecycleAction,
   type AgentRuntimeActivationAction,
-  type VerifiedAgentInstallationId
-} from './ssh-agent-command'
+  type VerifiedAgentInstallationId,
+} from "./ssh-agent-command";
+import {
+  createSshRemotePackageBootstrapExecutor,
+  SSH_REMOTE_PACKAGE_BOOTSTRAP_COMMAND,
+  type SshRemotePackageBootstrapCommitResult,
+  type SshRemotePackageBootstrapExecutor,
+  type SshRemotePackageBootstrapOptions,
+  type SshRemotePackageBootstrapPrepareResult,
+  type SshRemotePackageBootstrapProbeResult,
+  type SshRemotePackageBootstrapCleanupResult,
+  type SshRemotePackageUploadStagingResult,
+  type SshRemotePackageCandidate,
+} from "./ssh-remote-package-bootstrap";
 import type {
   AgentBootstrapProbeResult,
-  SshHostDirectoryBrowseResult
-} from '../../shared/ssh-host-contracts'
+  SshHostDirectoryBrowseResult,
+} from "../../shared/ssh-host-contracts";
 import {
   buildAuthenticatedSshConnectConfig,
   createStrongSshAlgorithms,
   defaultSystemAgent,
   safeSshError,
-  SSH_CONNECTION_TIMEOUT_MS
-} from './ssh-transport'
+  SSH_CONNECTION_TIMEOUT_MS,
+} from "./ssh-transport";
 
-const FIXED_COMMAND_TIMEOUT_MS = 15_000
-const CHANNEL_OPEN_TIMEOUT_MS = 10_000
-const MAX_DIAGNOSTIC_OUTPUT_BYTES = 64 * 1024
-const DEFAULT_IDLE_TIMEOUT_MS = 60_000
-const MAX_POOL_ENTRIES = 32
+const FIXED_COMMAND_TIMEOUT_MS = 15_000;
+const CHANNEL_OPEN_TIMEOUT_MS = 10_000;
+const MAX_DIAGNOSTIC_OUTPUT_BYTES = 64 * 1024;
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
+const MAX_POOL_ENTRIES = 32;
 
 export type SshConnectionPoolTarget = {
-  host: ResolvedSshHost
-  hostRevision: number
-  hostKeyGeneration: number
-}
+  host: ResolvedSshHost;
+  hostRevision: number;
+  hostKeyGeneration: number;
+};
 
 export type SshPoolConnectionIdentity = {
-  hostId: string
-  hostRevision: number
-  hostKeyGeneration: number
-  authenticationIdentity: string
-}
+  hostId: string;
+  hostRevision: number;
+  hostKeyGeneration: number;
+  authenticationIdentity: string;
+};
 
 export type AgentDiagnosticResult = {
-  exitCode: number | null
-  stdout: string
-  stderr: string
-}
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+};
 
 export interface AuthenticatedSshConnection {
-  readonly identity: SshPoolConnectionIdentity
-  isUsable(): boolean
+  readonly identity: SshPoolConnectionIdentity;
+  isUsable(): boolean;
   openAgentAttach(
     installationId: VerifiedAgentInstallationId,
-    signal?: AbortSignal
-  ): Promise<ClientChannel>
+    signal?: AbortSignal,
+  ): Promise<ClientChannel>;
   runAgentDoctor(
     installationId: VerifiedAgentInstallationId,
-    signal?: AbortSignal
-  ): Promise<AgentDiagnosticResult>
+    signal?: AbortSignal,
+  ): Promise<AgentDiagnosticResult>;
   runAgentBootstrapProbe(
-    signal?: AbortSignal
-  ): Promise<AgentBootstrapProbeResult>
+    signal?: AbortSignal,
+  ): Promise<AgentBootstrapProbeResult>;
+  probeRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapProbeResult>;
+  createRemotePackageUploadStaging(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageUploadStagingResult>;
+  prepareRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapPrepareResult>;
+  prepareUploadedRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapPrepareResult>;
+  commitRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapCommitResult>;
+  getRemotePackageBootstrapCommitStatus(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapCommitResult>;
+  cleanupRemotePackageBootstrap(
+    operationId: string,
+    options?: Pick<SshRemotePackageBootstrapOptions, "signal">,
+  ): Promise<SshRemotePackageBootstrapCleanupResult>;
   runAgentLifecycleAction(
     installationId: VerifiedAgentInstallationId,
     action: AgentLifecycleAction,
-    signal?: AbortSignal
-  ): Promise<AgentDiagnosticResult>
+    signal?: AbortSignal,
+  ): Promise<AgentDiagnosticResult>;
   runAgentRuntimeAction(
     installationId: VerifiedAgentInstallationId,
     action: AgentRuntimeActivationAction,
-    signal?: AbortSignal
-  ): Promise<AgentDiagnosticResult>
+    signal?: AbortSignal,
+  ): Promise<AgentDiagnosticResult>;
   openStagedSftp(
     stagingDirectory: string,
     limits?: BoundedSftpLimits,
-    signal?: AbortSignal
-  ): Promise<StagedSftp>
+    signal?: AbortSignal,
+  ): Promise<StagedSftp>;
   listDirectories(
     path?: string,
-    signal?: AbortSignal
-  ): Promise<SshHostDirectoryBrowseResult>
-  dispose(): void
+    signal?: AbortSignal,
+  ): Promise<SshHostDirectoryBrowseResult>;
+  dispose(): void;
 }
 
-export interface SshConnectionLease
-  extends Omit<AuthenticatedSshConnection, 'dispose'> {
-  release(): void
+export interface SshConnectionLease extends Omit<
+  AuthenticatedSshConnection,
+  | "dispose"
+  | "createRemotePackageUploadStaging"
+  | "prepareUploadedRemotePackageBootstrap"
+  | "getRemotePackageBootstrapCommitStatus"
+> {
+  release(): void;
 }
+
+export interface SshRemotePackageBootstrapLease extends SshRemotePackageBootstrapExecutor {
+  readonly identity: SshPoolConnectionIdentity;
+  isUsable(): boolean;
+  release(): void;
+}
+
+type InternalSshConnectionLease = SshConnectionLease &
+  Pick<
+    AuthenticatedSshConnection,
+    | "createRemotePackageUploadStaging"
+    | "prepareUploadedRemotePackageBootstrap"
+    | "getRemotePackageBootstrapCommitStatus"
+  >;
 
 type ClientLike = Pick<
   Client,
-  | 'connect'
-  | 'end'
-  | 'destroy'
-  | 'exec'
-  | 'sftp'
-  | 'on'
-  | 'once'
->
+  "connect" | "end" | "destroy" | "exec" | "sftp" | "on" | "once"
+>;
 
 type SshConnectionDependencies = {
-  createClient: () => ClientLike
-  supportedOpenSslCiphers: () => readonly string[]
-  systemAgent: () => string | undefined
-}
+  createClient: () => ClientLike;
+  supportedOpenSslCiphers: () => readonly string[];
+  systemAgent: () => string | undefined;
+  controlPlanePackageInstaller: Buffer | string;
+};
 
 export type SshConnectionFactory = (
   target: SshConnectionPoolTarget,
   identity: SshPoolConnectionIdentity,
-  signal: AbortSignal
-) => Promise<AuthenticatedSshConnection>
+  signal: AbortSignal,
+) => Promise<AuthenticatedSshConnection>;
 
 type PoolEntry = {
-  key: string
-  identity: SshPoolConnectionIdentity
-  controller: AbortController
-  connectionPromise: Promise<AuthenticatedSshConnection>
-  connection?: AuthenticatedSshConnection
-  leases: number
-  waiters: number
-  idleTimer?: ReturnType<typeof setTimeout>
-}
+  key: string;
+  identity: SshPoolConnectionIdentity;
+  controller: AbortController;
+  connectionPromise: Promise<AuthenticatedSshConnection>;
+  connection?: AuthenticatedSshConnection;
+  leases: number;
+  waiters: number;
+  idleTimer?: ReturnType<typeof setTimeout>;
+};
 
 function createAbortError(signal?: AbortSignal): unknown {
   return (
     signal?.reason ??
-    new DOMException('The operation was aborted', 'AbortError')
-  )
+    new DOMException("The operation was aborted", "AbortError")
+  );
 }
 
 function validatePoolTarget(target: SshConnectionPoolTarget): void {
@@ -147,22 +197,19 @@ function validatePoolTarget(target: SshConnectionPoolTarget): void {
     !Number.isSafeInteger(target.hostKeyGeneration) ||
     target.hostKeyGeneration <= 0
   ) {
-    throw new Error('SSH 连接身份无效')
+    throw new Error("SSH 连接身份无效");
   }
   if (!target.host.hostKey) {
-    throw new Error('请先验证并接受 SSH 主机密钥')
+    throw new Error("请先验证并接受 SSH 主机密钥");
   }
-  if (
-    target.host.hostKey.generation !==
-    target.hostKeyGeneration
-  ) {
-    throw new Error('SSH 主机密钥代际不匹配')
+  if (target.host.hostKey.generation !== target.hostKeyGeneration) {
+    throw new Error("SSH 主机密钥代际不匹配");
   }
 }
 
 function validateConnectionIdentity(
   target: SshConnectionPoolTarget,
-  identity: SshPoolConnectionIdentity
+  identity: SshPoolConnectionIdentity,
 ): void {
   if (
     identity.hostId !== target.host.id ||
@@ -170,39 +217,37 @@ function validateConnectionIdentity(
     identity.hostKeyGeneration !== target.hostKeyGeneration ||
     !/^[a-f0-9]{64}$/u.test(identity.authenticationIdentity)
   ) {
-    throw new Error('SSH 连接身份与认证目标不匹配')
+    throw new Error("SSH 连接身份与认证目标不匹配");
   }
 }
 
 function createSshAuthenticationIdentity(
   host: ResolvedSshHost,
   systemAgent: string | undefined,
-  identityKey: Buffer
+  identityKey: Buffer,
 ): string {
   const credentialIdentity =
-    host.authentication === 'password'
-      ? host.password
-      : systemAgent
+    host.authentication === "password" ? host.password : systemAgent;
   if (!credentialIdentity) {
     throw new Error(
-      host.authentication === 'password'
-        ? 'SSH 主机尚未配置密码'
-        : '当前系统未检测到可用的 SSH Agent'
-    )
+      host.authentication === "password"
+        ? "SSH 主机尚未配置密码"
+        : "当前系统未检测到可用的 SSH Agent",
+    );
   }
-  return createHmac('sha256', identityKey)
+  return createHmac("sha256", identityKey)
     .update(
       JSON.stringify([
-        'goodbuddy-ssh-auth-v1',
+        "goodbuddy-ssh-auth-v1",
         host.id,
         host.hostname,
         host.port,
         host.username,
         host.authentication,
-        credentialIdentity
-      ])
+        credentialIdentity,
+      ]),
     )
-    .digest('hex')
+    .digest("hex");
 }
 
 function poolKey(identity: SshPoolConnectionIdentity): string {
@@ -210,471 +255,517 @@ function poolKey(identity: SshPoolConnectionIdentity): string {
     identity.hostId,
     identity.hostRevision,
     identity.hostKeyGeneration,
-    identity.authenticationIdentity
-  ].join('\0')
+    identity.authenticationIdentity,
+  ].join("\0");
 }
 
 function waitForSharedConnection(
   promise: Promise<AuthenticatedSshConnection>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<AuthenticatedSshConnection> {
   if (!signal) {
-    return promise
+    return promise;
   }
   if (signal.aborted) {
-    return Promise.reject(createAbortError(signal))
+    return Promise.reject(createAbortError(signal));
   }
   return new Promise((resolve, reject) => {
     const abort = (): void => {
-      reject(createAbortError(signal))
-    }
-    signal.addEventListener('abort', abort, { once: true })
+      reject(createAbortError(signal));
+    };
+    signal.addEventListener("abort", abort, { once: true });
     promise.then(
       (connection) => {
-        signal.removeEventListener('abort', abort)
-        resolve(connection)
+        signal.removeEventListener("abort", abort);
+        resolve(connection);
       },
       (error: unknown) => {
-        signal.removeEventListener('abort', abort)
-        reject(error)
-      }
-    )
-  })
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
 }
 
-export class Ssh2AuthenticatedConnection
-  implements AuthenticatedSshConnection
-{
-  private usable = true
-  private disposed = false
+export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
+  private usable = true;
+  private disposed = false;
 
   private constructor(
     readonly identity: SshPoolConnectionIdentity,
-    private readonly client: ClientLike
+    private readonly client: ClientLike,
+    private readonly controlPlanePackageInstaller: Buffer,
   ) {
     const disconnected = (): void => {
-      this.usable = false
-    }
-    this.client.on('close', disconnected)
-    this.client.on('end', disconnected)
-    this.client.on('error', disconnected)
+      this.usable = false;
+    };
+    this.client.on("close", disconnected);
+    this.client.on("end", disconnected);
+    this.client.on("error", disconnected);
   }
 
   static connect(
     target: SshConnectionPoolTarget,
     identity: SshPoolConnectionIdentity,
     signal: AbortSignal,
-    dependencies: Partial<SshConnectionDependencies> = {}
+    dependencies: Partial<SshConnectionDependencies> = {},
   ): Promise<Ssh2AuthenticatedConnection> {
-    validatePoolTarget(target)
-    validateConnectionIdentity(target, identity)
+    validatePoolTarget(target);
+    validateConnectionIdentity(target, identity);
     const resolvedDependencies: SshConnectionDependencies = {
       createClient: () => new Client(),
       supportedOpenSslCiphers: getCiphers,
       systemAgent: defaultSystemAgent,
-      ...dependencies
-    }
+      controlPlanePackageInstaller: Buffer.alloc(0),
+      ...dependencies,
+    };
     const algorithms = createStrongSshAlgorithms(
-      resolvedDependencies.supportedOpenSslCiphers()
-    )
+      resolvedDependencies.supportedOpenSslCiphers(),
+    );
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
-        reject(createAbortError(signal))
-        return
+        reject(createAbortError(signal));
+        return;
       }
-      const client = resolvedDependencies.createClient()
-      let settled = false
-      let hostKeyMismatch = false
+      const client = resolvedDependencies.createClient();
+      let settled = false;
+      let hostKeyMismatch = false;
       const settle = (
         connection?: Ssh2AuthenticatedConnection,
-        error?: unknown
+        error?: unknown,
       ): void => {
         if (settled) {
-          connection?.dispose()
-          return
+          connection?.dispose();
+          return;
         }
-        settled = true
-        clearTimeout(timeout)
-        signal.removeEventListener('abort', abort)
+        settled = true;
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", abort);
         if (error) {
-          client.destroy()
-          reject(error)
+          client.destroy();
+          reject(error);
         } else if (connection) {
-          resolve(connection)
+          resolve(connection);
         }
-      }
+      };
       const abort = (): void => {
-        settle(undefined, createAbortError(signal))
-      }
+        settle(undefined, createAbortError(signal));
+      };
       const timeout = setTimeout(() => {
-        settle(undefined, new Error('SSH 连接超时'))
-      }, SSH_CONNECTION_TIMEOUT_MS)
-      signal.addEventListener('abort', abort, { once: true })
-      client.once('error', (error) => {
+        settle(undefined, new Error("SSH 连接超时"));
+      }, SSH_CONNECTION_TIMEOUT_MS);
+      signal.addEventListener("abort", abort, { once: true });
+      client.once("error", (error) => {
         settle(
           undefined,
           hostKeyMismatch
-            ? new Error(
-                'SSH 主机密钥已变化，请重新验证主机身份'
-              )
-            : safeSshError(error)
-        )
-      })
-      client.once('ready', () => {
-        settle(new Ssh2AuthenticatedConnection(identity, client))
-      })
-      let config: ConnectConfig
+            ? new Error("SSH 主机密钥已变化，请重新验证主机身份")
+            : safeSshError(error),
+        );
+      });
+      client.once("ready", () => {
+        settle(
+          new Ssh2AuthenticatedConnection(
+            identity,
+            client,
+            Buffer.from(resolvedDependencies.controlPlanePackageInstaller),
+          ),
+        );
+      });
+      let config: ConnectConfig;
       try {
         config = buildAuthenticatedSshConnectConfig(
           target.host,
           algorithms,
           resolvedDependencies.systemAgent(),
           () => {
-            hostKeyMismatch = true
-          }
-        )
+            hostKeyMismatch = true;
+          },
+        );
       } catch (error) {
-        settle(undefined, error)
-        return
+        settle(undefined, error);
+        return;
       }
-      client.connect(config)
-    })
+      client.connect(config);
+    });
   }
 
   isUsable(): boolean {
-    return this.usable
+    return this.usable;
   }
 
   async openAgentAttach(
     installationId: VerifiedAgentInstallationId,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<ClientChannel> {
     const channel = await this.openFixedChannel(
       buildFixedAgentSshCommand(installationId, {
-        kind: 'attach'
+        kind: "attach",
       }),
-      signal
-    )
+      signal,
+    );
     if (signal?.aborted) {
-      channel.destroy()
-      throw createAbortError(signal)
+      channel.destroy();
+      throw createAbortError(signal);
     }
     if (signal) {
       const abort = (): void => {
-        channel.destroy()
-      }
-      signal.addEventListener('abort', abort, { once: true })
-      channel.once('close', () => {
-        signal.removeEventListener('abort', abort)
-      })
+        channel.destroy();
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      channel.once("close", () => {
+        signal.removeEventListener("abort", abort);
+      });
     }
-    return channel
+    return channel;
   }
 
   async runAgentBootstrapProbe(
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<AgentBootstrapProbeResult> {
     const result = await this.runBoundedCommand(
       AGENT_BOOTSTRAP_PROBE_COMMAND,
-      signal
-    )
-    if (
-      result.exitCode !== 0 ||
-      result.stderr.length !== 0
-    ) {
-      throw new Error('Agent 启动探针执行失败')
+      signal,
+    );
+    if (result.exitCode !== 0 || result.stderr.length !== 0) {
+      throw new Error("Agent 启动探针执行失败");
     }
-    return parseAgentBootstrapProbeOutput(result.stdout)
+    return parseAgentBootstrapProbeOutput(result.stdout);
+  }
+
+  probeRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapProbeResult> {
+    return this.remotePackageBootstrap().probe(candidate, options);
+  }
+
+  createRemotePackageUploadStaging(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageUploadStagingResult> {
+    return this.remotePackageBootstrap().createUploadStaging(
+      candidate,
+      options,
+    );
+  }
+
+  prepareRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapPrepareResult> {
+    return this.remotePackageBootstrap().prepare(candidate, options);
+  }
+
+  prepareUploadedRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapPrepareResult> {
+    return this.remotePackageBootstrap().prepareUploaded(candidate, options);
+  }
+
+  commitRemotePackageBootstrap(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapCommitResult> {
+    return this.remotePackageBootstrap().commit(candidate, options);
+  }
+
+  getRemotePackageBootstrapCommitStatus(
+    candidate: SshRemotePackageCandidate,
+    options?: SshRemotePackageBootstrapOptions,
+  ): Promise<SshRemotePackageBootstrapCommitResult> {
+    return this.remotePackageBootstrap().commitStatus(candidate, options);
+  }
+
+  cleanupRemotePackageBootstrap(
+    operationId: string,
+    options?: Pick<SshRemotePackageBootstrapOptions, "signal">,
+  ): Promise<SshRemotePackageBootstrapCleanupResult> {
+    return this.remotePackageBootstrap().cleanup(operationId, options);
   }
 
   runAgentDoctor(
     installationId: VerifiedAgentInstallationId,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<AgentDiagnosticResult> {
     return this.runBoundedCommand(
       buildFixedAgentSshCommand(installationId, {
-        kind: 'doctor'
+        kind: "doctor",
       }),
-      signal
-    )
+      signal,
+    );
   }
 
   runAgentLifecycleAction(
     installationId: VerifiedAgentInstallationId,
     action: AgentLifecycleAction,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<AgentDiagnosticResult> {
     return this.runBoundedCommand(
       buildFixedAgentSshCommand(installationId, {
-        kind: 'lifecycle',
-        action
+        kind: "lifecycle",
+        action,
       }),
-      signal
-    )
+      signal,
+    );
   }
 
   runAgentRuntimeAction(
     installationId: VerifiedAgentInstallationId,
     action: AgentRuntimeActivationAction,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<AgentDiagnosticResult> {
     return this.runBoundedCommand(
       buildFixedAgentSshCommand(installationId, action),
-      signal
-    )
+      signal,
+    );
   }
 
   openStagedSftp(
     stagingDirectory: string,
     limits?: BoundedSftpLimits,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<StagedSftp> {
-    this.assertUsable()
+    this.assertUsable();
     if (signal?.aborted) {
-      return Promise.reject(createAbortError(signal))
+      return Promise.reject(createAbortError(signal));
     }
     return new Promise((resolve, reject) => {
-      let settled = false
-      const finish = (
-        error?: unknown,
-        sftp?: SFTPWrapper
-      ): void => {
+      let settled = false;
+      const finish = (error?: unknown, sftp?: SFTPWrapper): void => {
         if (settled) {
-          sftp?.end()
-          return
+          sftp?.end();
+          return;
         }
-        settled = true
-        clearTimeout(timeout)
-        signal?.removeEventListener('abort', abort)
+        settled = true;
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
         if (error || !sftp) {
-          reject(error ?? new Error('无法打开 SFTP 通道'))
-          return
+          reject(error ?? new Error("无法打开 SFTP 通道"));
+          return;
         }
         try {
-          resolve(
-            new BoundedStagedSftp(
-              sftp,
-              stagingDirectory,
-              limits
-            )
-          )
+          resolve(new BoundedStagedSftp(sftp, stagingDirectory, limits));
         } catch (validationError) {
-          sftp.end()
-          reject(validationError)
+          sftp.end();
+          reject(validationError);
         }
-      }
+      };
       const abort = (): void => {
-        finish(createAbortError(signal))
-      }
+        finish(createAbortError(signal));
+      };
       const timeout = setTimeout(() => {
-        finish(new Error('SFTP 通道打开超时'))
-      }, CHANNEL_OPEN_TIMEOUT_MS)
-      signal?.addEventListener('abort', abort, { once: true })
+        finish(new Error("SFTP 通道打开超时"));
+      }, CHANNEL_OPEN_TIMEOUT_MS);
+      signal?.addEventListener("abort", abort, { once: true });
       this.client.sftp((error, sftp) => {
-        finish(error, sftp)
-      })
-    })
+        finish(error, sftp);
+      });
+    });
   }
 
   listDirectories(
     path?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<SshHostDirectoryBrowseResult> {
-    this.assertUsable()
+    this.assertUsable();
     return listBoundedSftpDirectories(
       (callback) => {
         this.client.sftp((error, sftp) => {
-          callback(error, sftp)
-        })
+          callback(error, sftp);
+        });
       },
       path,
-      signal
-    )
+      signal,
+    );
   }
 
   dispose(): void {
     if (this.disposed) {
-      return
+      return;
     }
-    this.disposed = true
-    this.usable = false
-    this.client.end()
-    this.client.destroy()
+    this.disposed = true;
+    this.usable = false;
+    this.client.end();
+    this.client.destroy();
   }
 
   private assertUsable(): void {
     if (!this.usable) {
-      throw new Error('SSH 连接已关闭')
+      throw new Error("SSH 连接已关闭");
     }
+  }
+
+  private remotePackageBootstrapExecutor:
+    SshRemotePackageBootstrapExecutor | undefined;
+
+  private remotePackageBootstrap(): SshRemotePackageBootstrapExecutor {
+    this.remotePackageBootstrapExecutor ??=
+      createSshRemotePackageBootstrapExecutor(
+        (signal) =>
+          this.openFixedChannel(
+            SSH_REMOTE_PACKAGE_BOOTSTRAP_COMMAND,
+            signal,
+            true,
+          ),
+        this.controlPlanePackageInstaller,
+      );
+    return this.remotePackageBootstrapExecutor;
   }
 
   private openFixedChannel(
     command: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    allowHalfOpen = false,
   ): Promise<ClientChannel> {
-    this.assertUsable()
+    this.assertUsable();
     if (signal?.aborted) {
-      return Promise.reject(createAbortError(signal))
+      return Promise.reject(createAbortError(signal));
     }
     return new Promise((resolve, reject) => {
-      let settled = false
-      const finish = (
-        error?: unknown,
-        channel?: ClientChannel
-      ): void => {
+      let settled = false;
+      const finish = (error?: unknown, channel?: ClientChannel): void => {
         if (settled) {
-          channel?.destroy()
-          return
+          channel?.destroy();
+          return;
         }
-        settled = true
-        clearTimeout(timeout)
-        signal?.removeEventListener('abort', abort)
+        settled = true;
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
         if (error || !channel) {
-          reject(error ?? new Error('无法打开 Agent SSH 通道'))
+          reject(error ?? new Error("无法打开 Agent SSH 通道"));
         } else {
-          resolve(channel)
+          resolve(channel);
         }
-      }
+      };
       const abort = (): void => {
-        finish(createAbortError(signal))
-      }
+        finish(createAbortError(signal));
+      };
       const timeout = setTimeout(() => {
-        finish(new Error('Agent SSH 通道打开超时'))
-      }, CHANNEL_OPEN_TIMEOUT_MS)
-      signal?.addEventListener('abort', abort, { once: true })
+        finish(new Error("Agent SSH 通道打开超时"));
+      }, CHANNEL_OPEN_TIMEOUT_MS);
+      signal?.addEventListener("abort", abort, { once: true });
       this.client.exec(
         command,
         {
           env: {},
           pty: false,
           x11: false,
-          allowHalfOpen: false
+          allowHalfOpen,
         },
-        (error, channel) => finish(error, channel)
-      )
-    })
+        (error, channel) => finish(error, channel),
+      );
+    });
   }
 
   private async runBoundedCommand(
     command: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<AgentDiagnosticResult> {
-    const channel = await this.openFixedChannel(command, signal)
+    const channel = await this.openFixedChannel(command, signal);
     if (signal?.aborted) {
-      channel.destroy()
-      throw createAbortError(signal)
+      channel.destroy();
+      throw createAbortError(signal);
     }
     return new Promise((resolve, reject) => {
-      const stdout: Buffer[] = []
-      const stderr: Buffer[] = []
-      let outputBytes = 0
-      let settled = false
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let outputBytes = 0;
+      let settled = false;
       const finish = (
         result?: AgentDiagnosticResult,
-        error?: unknown
+        error?: unknown,
       ): void => {
         if (settled) {
-          return
+          return;
         }
-        settled = true
-        clearTimeout(timeout)
-        signal?.removeEventListener('abort', abort)
+        settled = true;
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
         if (error) {
-          channel.destroy()
-          reject(error)
+          channel.destroy();
+          reject(error);
         } else if (result) {
-          resolve(result)
+          resolve(result);
         }
-      }
-      const collect = (
-        destination: Buffer[],
-        chunk: Buffer | string
-      ): void => {
-        const buffer = Buffer.from(chunk)
-        outputBytes += buffer.byteLength
+      };
+      const collect = (destination: Buffer[], chunk: Buffer | string): void => {
+        const buffer = Buffer.from(chunk);
+        outputBytes += buffer.byteLength;
         if (outputBytes > MAX_DIAGNOSTIC_OUTPUT_BYTES) {
-          finish(
-            undefined,
-            new Error('Agent 诊断输出超过安全限制')
-          )
-          return
+          finish(undefined, new Error("Agent 诊断输出超过安全限制"));
+          return;
         }
-        destination.push(buffer)
-      }
+        destination.push(buffer);
+      };
       const abort = (): void => {
-        finish(undefined, createAbortError(signal))
-      }
+        finish(undefined, createAbortError(signal));
+      };
       const timeout = setTimeout(() => {
-        finish(undefined, new Error('Agent 诊断超时'))
-      }, FIXED_COMMAND_TIMEOUT_MS)
-      signal?.addEventListener('abort', abort, { once: true })
-      channel.on('data', (chunk: Buffer | string) => {
-        collect(stdout, chunk)
-      })
-      channel.stderr.on('data', (chunk: Buffer | string) => {
-        collect(stderr, chunk)
-      })
-      channel.once('error', (error: Error) => {
-        finish(undefined, error)
-      })
-      channel.once(
-        'close',
-        (code: number | null) => {
-          finish({
-            exitCode: typeof code === 'number' ? code : null,
-            stdout: Buffer.concat(stdout).toString('utf8'),
-            stderr: Buffer.concat(stderr).toString('utf8')
-          })
-        }
-      )
-    })
+        finish(undefined, new Error("Agent 诊断超时"));
+      }, FIXED_COMMAND_TIMEOUT_MS);
+      signal?.addEventListener("abort", abort, { once: true });
+      channel.on("data", (chunk: Buffer | string) => {
+        collect(stdout, chunk);
+      });
+      channel.stderr.on("data", (chunk: Buffer | string) => {
+        collect(stderr, chunk);
+      });
+      channel.once("error", (error: Error) => {
+        finish(undefined, error);
+      });
+      channel.once("close", (code: number | null) => {
+        finish({
+          exitCode: typeof code === "number" ? code : null,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    });
   }
 }
 
 export class SshConnectionPool {
-  private readonly entries = new Map<string, PoolEntry>()
-  private readonly factory: SshConnectionFactory
-  private readonly systemAgent: () => string | undefined
-  private readonly idleTimeoutMs: number
-  private readonly authenticationIdentityKey = randomBytes(32)
-  private disposed = false
+  private readonly entries = new Map<string, PoolEntry>();
+  private readonly factory: SshConnectionFactory;
+  private readonly systemAgent: () => string | undefined;
+  private readonly idleTimeoutMs: number;
+  private readonly authenticationIdentityKey = randomBytes(32);
+  private disposed = false;
 
   constructor(
     factory?: SshConnectionFactory,
     options: {
-      systemAgent?: () => string | undefined
-      idleTimeoutMs?: number
-    } = {}
+      systemAgent?: () => string | undefined;
+      idleTimeoutMs?: number;
+      controlPlanePackageInstaller?: Buffer | string;
+    } = {},
   ) {
-    this.systemAgent = options.systemAgent ?? defaultSystemAgent
+    this.systemAgent = options.systemAgent ?? defaultSystemAgent;
     this.factory =
       factory ??
       ((target, identity, signal) =>
-        Ssh2AuthenticatedConnection.connect(
-          target,
-          identity,
-          signal,
-          { systemAgent: this.systemAgent }
-        ))
-    this.idleTimeoutMs =
-      options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
-    if (
-      !Number.isSafeInteger(this.idleTimeoutMs) ||
-      this.idleTimeoutMs < 0
-    ) {
-      throw new Error('SSH 连接池空闲超时无效')
+        Ssh2AuthenticatedConnection.connect(target, identity, signal, {
+          systemAgent: this.systemAgent,
+          controlPlanePackageInstaller:
+            options.controlPlanePackageInstaller ?? Buffer.alloc(0),
+        }));
+    this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.idleTimeoutMs) || this.idleTimeoutMs < 0) {
+      throw new Error("SSH 连接池空闲超时无效");
     }
   }
 
   async acquire(
     target: SshConnectionPoolTarget,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<SshConnectionLease> {
     if (this.disposed) {
-      throw new Error('SSH 连接池已关闭')
+      throw new Error("SSH 连接池已关闭");
     }
-    signal?.throwIfAborted()
-    validatePoolTarget(target)
+    signal?.throwIfAborted();
+    validatePoolTarget(target);
     const identity: SshPoolConnectionIdentity = {
       hostId: target.host.id,
       hostRevision: target.hostRevision,
@@ -682,197 +773,257 @@ export class SshConnectionPool {
       authenticationIdentity: createSshAuthenticationIdentity(
         target.host,
         this.systemAgent(),
-        this.authenticationIdentityKey
-      )
-    }
-    const key = poolKey(identity)
-    let entry = this.entries.get(key)
+        this.authenticationIdentityKey,
+      ),
+    };
+    const key = poolKey(identity);
+    let entry = this.entries.get(key);
     if (entry?.connection && !entry.connection.isUsable()) {
-      this.disposeEntry(entry)
-      entry = undefined
+      this.disposeEntry(entry);
+      entry = undefined;
     }
     if (!entry) {
       if (this.entries.size >= MAX_POOL_ENTRIES) {
-        throw new Error('SSH 连接池已达到安全上限')
+        let oldestIdleEntry: PoolEntry | undefined;
+        for (const candidate of this.entries.values()) {
+          if (candidate.leases === 0 && candidate.waiters === 0) {
+            oldestIdleEntry = candidate;
+            break;
+          }
+        }
+        if (oldestIdleEntry) {
+          this.disposeEntry(oldestIdleEntry);
+        } else {
+          throw new Error("SSH 连接池已达到安全上限");
+        }
       }
-      const controller = new AbortController()
+      const controller = new AbortController();
       const newEntry: PoolEntry = {
         key,
         identity,
         controller,
         connectionPromise: Promise.resolve(undefined as never),
         leases: 0,
-        waiters: 0
-      }
+        waiters: 0,
+      };
       newEntry.connectionPromise = this.factory(
         target,
         identity,
-        controller.signal
+        controller.signal,
       ).then(
         (connection) => {
-          if (
-            this.disposed ||
-            this.entries.get(key) !== newEntry
-          ) {
-            connection.dispose()
-            throw new Error('SSH 连接请求已失效')
+          if (this.disposed || this.entries.get(key) !== newEntry) {
+            connection.dispose();
+            throw new Error("SSH 连接请求已失效");
           }
-          newEntry.connection = connection
-          return connection
+          newEntry.connection = connection;
+          return connection;
         },
         (error: unknown) => {
           if (this.entries.get(key) === newEntry) {
-            this.entries.delete(key)
+            this.entries.delete(key);
           }
-          throw error
-        }
-      )
-      this.entries.set(key, newEntry)
-      entry = newEntry
+          throw error;
+        },
+      );
+      this.entries.set(key, newEntry);
+      entry = newEntry;
     }
     if (entry.idleTimer) {
-      clearTimeout(entry.idleTimer)
-      entry.idleTimer = undefined
+      clearTimeout(entry.idleTimer);
+      entry.idleTimer = undefined;
     }
-    entry.waiters += 1
+    entry.waiters += 1;
     try {
       const connection = await waitForSharedConnection(
         entry.connectionPromise,
-        signal
-      )
+        signal,
+      );
       if (!connection.isUsable()) {
-        this.disposeEntry(entry)
-        throw new Error('SSH 连接已关闭')
+        this.disposeEntry(entry);
+        throw new Error("SSH 连接已关闭");
       }
-      entry.leases += 1
-      return this.createLease(entry, connection)
+      entry.leases += 1;
+      return this.createLease(entry, connection);
     } finally {
-      entry.waiters -= 1
+      entry.waiters -= 1;
       if (entry.waiters === 0 && entry.leases === 0) {
-        this.scheduleIdleDisposal(entry)
+        this.scheduleIdleDisposal(entry);
       }
     }
+  }
+
+  async acquireRemotePackageBootstrap(
+    target: SshConnectionPoolTarget,
+    signal?: AbortSignal,
+  ): Promise<SshRemotePackageBootstrapLease> {
+    const lease = await this.acquire(target, signal);
+    const bootstrapConnection = lease as InternalSshConnectionLease;
+    return {
+      identity: lease.identity,
+      isUsable: () => lease.isUsable(),
+      probe: (candidate, options) =>
+        lease.probeRemotePackageBootstrap(candidate, options),
+      createUploadStaging: (candidate, options) =>
+        bootstrapConnection.createRemotePackageUploadStaging(
+          candidate,
+          options,
+        ),
+      prepare: (candidate, options) =>
+        lease.prepareRemotePackageBootstrap(candidate, options),
+      prepareUploaded: (candidate, options) =>
+        bootstrapConnection.prepareUploadedRemotePackageBootstrap(
+          candidate,
+          options,
+        ),
+      commit: (candidate, options) =>
+        lease.commitRemotePackageBootstrap(candidate, options),
+      commitStatus: (candidate, options) =>
+        bootstrapConnection.getRemotePackageBootstrapCommitStatus(
+          candidate,
+          options,
+        ),
+      cleanup: (operationId, options) =>
+        lease.cleanupRemotePackageBootstrap(operationId, options),
+      release: () => lease.release(),
+    };
   }
 
   disposeHost(hostId: string): void {
     for (const entry of this.entries.values()) {
       if (entry.identity.hostId === hostId) {
-        this.disposeEntry(entry)
+        this.disposeEntry(entry);
       }
     }
   }
 
   dispose(): void {
     if (this.disposed) {
-      return
+      return;
     }
-    this.disposed = true
+    this.disposed = true;
     for (const entry of [...this.entries.values()]) {
-      this.disposeEntry(entry)
+      this.disposeEntry(entry);
     }
   }
 
   private createLease(
     entry: PoolEntry,
-    connection: AuthenticatedSshConnection
+    connection: AuthenticatedSshConnection,
   ): SshConnectionLease {
-    let released = false
+    let released = false;
     const assertActive = (): void => {
       if (released) {
-        throw new Error('SSH 连接租约已释放')
+        throw new Error("SSH 连接租约已释放");
       }
-    }
-    return {
+    };
+    const lease: InternalSshConnectionLease = {
       identity: connection.identity,
       isUsable: () => !released && connection.isUsable(),
       openAgentAttach: (installationId, signal) => {
-        assertActive()
-        return connection.openAgentAttach(installationId, signal)
+        assertActive();
+        return connection.openAgentAttach(installationId, signal);
       },
       runAgentDoctor: (installationId, signal) => {
-        assertActive()
-        return connection.runAgentDoctor(installationId, signal)
+        assertActive();
+        return connection.runAgentDoctor(installationId, signal);
       },
       runAgentBootstrapProbe: (signal) => {
-        assertActive()
-        return connection.runAgentBootstrapProbe(signal)
+        assertActive();
+        return connection.runAgentBootstrapProbe(signal);
       },
-      runAgentLifecycleAction: (
-        installationId,
-        action,
-        signal
-      ) => {
-        assertActive()
+      probeRemotePackageBootstrap: (candidate, options) => {
+        assertActive();
+        return connection.probeRemotePackageBootstrap(candidate, options);
+      },
+      createRemotePackageUploadStaging: (candidate, options) => {
+        assertActive();
+        return connection.createRemotePackageUploadStaging(candidate, options);
+      },
+      prepareRemotePackageBootstrap: (candidate, options) => {
+        assertActive();
+        return connection.prepareRemotePackageBootstrap(candidate, options);
+      },
+      prepareUploadedRemotePackageBootstrap: (candidate, options) => {
+        assertActive();
+        return connection.prepareUploadedRemotePackageBootstrap(
+          candidate,
+          options,
+        );
+      },
+      commitRemotePackageBootstrap: (candidate, options) => {
+        assertActive();
+        return connection.commitRemotePackageBootstrap(candidate, options);
+      },
+      getRemotePackageBootstrapCommitStatus: (candidate, options) => {
+        assertActive();
+        return connection.getRemotePackageBootstrapCommitStatus(
+          candidate,
+          options,
+        );
+      },
+      cleanupRemotePackageBootstrap: (operationId, options) => {
+        assertActive();
+        return connection.cleanupRemotePackageBootstrap(operationId, options);
+      },
+      runAgentLifecycleAction: (installationId, action, signal) => {
+        assertActive();
         return connection.runAgentLifecycleAction(
           installationId,
           action,
-          signal
-        )
+          signal,
+        );
       },
-      runAgentRuntimeAction: (
-        installationId,
-        action,
-        signal
-      ) => {
-        assertActive()
-        return connection.runAgentRuntimeAction(
-          installationId,
-          action,
-          signal
-        )
+      runAgentRuntimeAction: (installationId, action, signal) => {
+        assertActive();
+        return connection.runAgentRuntimeAction(installationId, action, signal);
       },
       openStagedSftp: (stagingDirectory, limits, signal) => {
-        assertActive()
-        return connection.openStagedSftp(
-          stagingDirectory,
-          limits,
-          signal
-        )
+        assertActive();
+        return connection.openStagedSftp(stagingDirectory, limits, signal);
       },
       listDirectories: (path, signal) => {
-        assertActive()
-        return connection.listDirectories(path, signal)
+        assertActive();
+        return connection.listDirectories(path, signal);
       },
       release: () => {
         if (released) {
-          return
+          return;
         }
-        released = true
-        entry.leases -= 1
+        released = true;
+        entry.leases -= 1;
         if (entry.leases === 0 && entry.waiters === 0) {
-          this.scheduleIdleDisposal(entry)
+          this.scheduleIdleDisposal(entry);
         }
-      }
-    }
+      },
+    };
+    return lease;
   }
 
   private scheduleIdleDisposal(entry: PoolEntry): void {
-    if (
-      this.entries.get(entry.key) !== entry ||
-      entry.idleTimer
-    ) {
-      return
+    if (this.entries.get(entry.key) !== entry || entry.idleTimer) {
+      return;
     }
     if (!entry.connection || this.idleTimeoutMs === 0) {
-      this.disposeEntry(entry)
-      return
+      this.disposeEntry(entry);
+      return;
     }
     entry.idleTimer = setTimeout(() => {
       if (entry.leases === 0 && entry.waiters === 0) {
-        this.disposeEntry(entry)
+        this.disposeEntry(entry);
       }
-    }, this.idleTimeoutMs)
+    }, this.idleTimeoutMs);
   }
 
   private disposeEntry(entry: PoolEntry): void {
     if (this.entries.get(entry.key) === entry) {
-      this.entries.delete(entry.key)
+      this.entries.delete(entry.key);
     }
     if (entry.idleTimer) {
-      clearTimeout(entry.idleTimer)
-      entry.idleTimer = undefined
+      clearTimeout(entry.idleTimer);
+      entry.idleTimer = undefined;
     }
-    entry.controller.abort()
-    entry.connection?.dispose()
+    entry.controller.abort();
+    entry.connection?.dispose();
   }
 }

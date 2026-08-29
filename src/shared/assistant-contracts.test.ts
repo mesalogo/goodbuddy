@@ -9,8 +9,6 @@ import {
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
   projectExecutionSpaceSchema,
-  projectRuntimeValidationSchema,
-  sshExecutionValidationSchema,
   projectUpdateSchema
 } from './assistant-contracts'
 
@@ -132,120 +130,26 @@ describe('project execution space contracts', () => {
     ).toBe(false)
   })
 
-  it('keeps SSH and Runtime validation identities separate and strict', () => {
-    const validatedAt = '2026-08-21T00:00:00.000Z'
-    const validation = {
-      hostRevision: 2,
-      hostKeyGeneration: 3,
-      remoteUsername: 'builder',
-      workspaceIdentity: 'workspace-identity',
-      agentProtocolMajor: 1,
-      agentInstallationIdAtValidation: 'agent-installation',
-      agentBinaryDigestAtValidation: `sha256:${'a'.repeat(64)}`,
-      agentVersionAtValidation: '0.11.0',
-      agentArchitectureAtValidation: 'x64',
-      validatedAt
-    }
-    const runtimeValidation = {
-      runtimeSelectionKey: 'opencode:profile',
-      runtimeBundleDigest: `sha256:${'b'.repeat(64)}`,
-      runtimeAdapterDigest: `sha256:${'c'.repeat(64)}`,
-      agentInstallationIdAtValidation: 'agent-installation',
-      validatedAt,
-      workMode: 'execute'
-    }
-    expect(
-      sshExecutionValidationSchema.safeParse(validation).success
-    ).toBe(true)
-    expect(
-      projectRuntimeValidationSchema.safeParse(runtimeValidation)
-        .success
-    ).toBe(true)
+  it('persists only the SSH Host and remote path', () => {
     expect(
       persistedProjectExecutionSpaceSchema.parse({
         kind: 'ssh',
         hostId: '00000000-0000-4000-8000-000000000301',
-        remoteRootPath: '/srv/goodbuddy',
-        validation
+        remoteRootPath: '/srv/goodbuddy'
       })
     ).toEqual({
       kind: 'ssh',
       hostId: '00000000-0000-4000-8000-000000000301',
-      remoteRootPath: '/srv/goodbuddy',
-      validation
+      remoteRootPath: '/srv/goodbuddy'
     })
-    expect(
-      sshExecutionValidationSchema.safeParse({
-        hostRevision: 2,
-        hostKeyGeneration: 3,
-        remoteUsername: 'builder',
-        workspaceIdentity: 'workspace-identity',
-        agentProtocolMajor: 1,
-        agentInstallationIdAtValidation: 'agent-installation',
-        agentBinaryDigestAtValidation: `sha256:${'a'.repeat(64)}`,
-        agentVersionAtValidation: '0.11.0',
-        agentArchitectureAtValidation: 'x64',
-        validatedAt,
-        runtimeBundleDigest: 'must-not-be-here'
-      }).success
-    ).toBe(false)
-    expect(
-      persistedProjectExecutionSpaceSchema.safeParse({
-        kind: 'local',
-        rootPath: 'C:\\Workspace',
-        validation
-      }).success
-    ).toBe(false)
     expect(
       persistedProjectExecutionSpaceSchema.safeParse({
         kind: 'ssh',
         hostId: '00000000-0000-4000-8000-000000000301',
         remoteRootPath: '/srv/goodbuddy',
-        hostRevision: 2
+        validation: { hostRevision: 2 }
       }).success
     ).toBe(false)
-
-    for (const invalid of [
-      { ...validation, hostRevision: 0 },
-      { ...validation, trustAttestationRevision: 4 },
-      {
-        ...validation,
-        agentBinaryDigestAtValidation: `sha256:${'A'.repeat(64)}`
-      },
-      { ...validation, agentVersionAtValidation: ' version ' },
-      { ...validation, agentArchitectureAtValidation: 'ia32' }
-    ]) {
-      expect(
-        sshExecutionValidationSchema.safeParse(invalid).success
-      ).toBe(false)
-    }
-
-    for (const invalid of [
-      {
-        ...runtimeValidation,
-        runtimeBundleDigest: 'runtime-digest'
-      },
-      { ...runtimeValidation, trustTier: 'T3' },
-      {
-        ...runtimeValidation,
-        confinementPolicyDigest: `sha256:${'d'.repeat(64)}`
-      },
-      { ...runtimeValidation, approvalBridgeVersion: '1' },
-      {
-        ...runtimeValidation,
-        workMode: 'plan'
-      }
-    ]) {
-      expect(
-        projectRuntimeValidationSchema.safeParse(invalid).success
-      ).toBe(false)
-    }
-    expect(
-      projectRuntimeValidationSchema.safeParse({
-        ...runtimeValidation,
-        workMode: 'ask'
-      }).success
-    ).toBe(true)
   })
 
   it('keeps renderer project create and update inputs local-only', () => {

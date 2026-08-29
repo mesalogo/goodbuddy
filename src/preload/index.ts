@@ -117,7 +117,9 @@ import type {
   SshDirectoryBrowseResult,
   SshHostKeyInspection,
   RemoteEnvironmentUpdateProgress,
+  RemoteEnvironmentUpdateRequest,
   SshHostRemoteEnvironment,
+  SshHostRemovalResult,
   SshHostsSnapshot,
   SshHostValidationRequest,
   SshHostValidationResult
@@ -375,11 +377,10 @@ const desktopApi: DesktopApi = {
           handler
         )
     },
-    remove: async (hostId: string) => {
-      await ipcRenderer.invoke(ipcChannels.sshHostsRemove, {
+    remove: (hostId: string) =>
+      ipcRenderer.invoke(ipcChannels.sshHostsRemove, {
         hostId
-      })
-    },
+      }) as Promise<SshHostRemovalResult>,
     inspectDraftHostKey: (input: SshHostDraftInspectionRequest) =>
       ipcRenderer.invoke(
         ipcChannels.sshHostsInspectDraftKey,
@@ -401,10 +402,12 @@ const desktopApi: DesktopApi = {
         ipcChannels.sshHostsRemoteEnvironment,
         { hostId }
       ) as Promise<SshHostRemoteEnvironment>,
-    updateRemoteEnvironment: async (hostId: string) => {
+    updateRemoteEnvironment: async (
+      input: RemoteEnvironmentUpdateRequest
+    ) => {
       await ipcRenderer.invoke(
         ipcChannels.sshHostsUpdateRemoteEnvironment,
-        { hostId }
+        input
       )
     },
     cancelRemoteEnvironmentUpdate: async (hostId: string) => {
@@ -784,11 +787,6 @@ const desktopApi: DesktopApi = {
       })
     },
     remote: {
-      activate: (projectId: string) =>
-        ipcRenderer.invoke(
-          ipcChannels.remoteProjectActivate,
-          projectId
-        ) as Promise<AssistantProject>,
       save: (input: RemoteProjectSaveRequest) =>
         ipcRenderer.invoke(
           ipcChannels.remoteProjectSave,

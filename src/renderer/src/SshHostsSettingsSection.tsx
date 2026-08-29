@@ -19,6 +19,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
+  RemoteEnvironmentPreparationMethod,
   RemoteEnvironmentUpdatePhase,
   SshHost,
   SshHostConnectionTestResult,
@@ -32,13 +33,15 @@ import { displayErrorMessage } from './error-message'
 import { SshHostDialog } from './SshHostDialog'
 import {
   DestructiveConfirmActions,
-  EmptyState
+  EmptyState,
+  SegmentedControl
 } from './WorkspacePrimitives'
 
 type SshHostsSettingsSectionProps = {
   onDirtyChange?: (dirty: boolean) => void
   onHostUpdated?: (hostId: string) => void
   onNotify?: (notification: AppNotificationInput) => void
+  onProjectsDeleted?: (projectIds: string[]) => void
 }
 
 type RemoteEnvironmentLoadState = {
@@ -49,6 +52,8 @@ type RemoteEnvironmentLoadState = {
 
 type RemoteEnvironmentUpdateState = {
   hostId: string
+  requestedMethod: RemoteEnvironmentPreparationMethod
+  resolvedMethod?: RemoteEnvironmentPreparationMethod
   requestId: number
   phase?: RemoteEnvironmentUpdatePhase
   cancelling: boolean
@@ -56,9 +61,15 @@ type RemoteEnvironmentUpdateState = {
 
 type ActiveRemoteEnvironmentUpdate = {
   hostId: string
+  requestedMethod: RemoteEnvironmentPreparationMethod
   requestId: number
   cancelRequested: boolean
   cancelError?: string
+}
+
+type RemoteEnvironmentUpdateError = {
+  detail: string
+  reinstallAttempt: boolean
 }
 
 function credentialDescription(
@@ -81,12 +92,15 @@ function upsertHost(hosts: SshHost[], host: SshHost): SshHost[] {
 export function SshHostsSettingsSection({
   onDirtyChange,
   onHostUpdated,
-  onNotify
+  onNotify,
+  onProjectsDeleted
 }: SshHostsSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
   const [hosts, setHosts] = useState<SshHost[]>([])
   const [secureStorageAvailable, setSecureStorageAvailable] =
     useState(false)
+  const [projectReferences, setProjectReferences] =
+    useState<SshHostsSnapshot['projectReferences']>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [editingId, setEditingId] = useState<string | 'new'>()
@@ -99,12 +113,16 @@ export function SshHostsSettingsSection({
   const [remoteEnvironments, setRemoteEnvironments] = useState<
     Record<string, RemoteEnvironmentLoadState>
   >({})
+  const [
+    remoteEnvironmentPreparationMethods,
+    setRemoteEnvironmentPreparationMethods
+  ] = useState<Record<string, RemoteEnvironmentPreparationMethod>>({})
   const [remoteEnvironmentUpdate, setRemoteEnvironmentUpdate] =
     useState<RemoteEnvironmentUpdateState>()
   const [
     remoteEnvironmentUpdateErrors,
     setRemoteEnvironmentUpdateErrors
-  ] = useState<Record<string, string>>({})
+  ] = useState<Record<string, RemoteEnvironmentUpdateError>>({})
   const remoteEnvironmentRequests = useRef(new Map<string, number>())
   const activeRemoteEnvironmentUpdate =
     useRef<ActiveRemoteEnvironmentUpdate | undefined>(undefined)
@@ -126,24 +144,29 @@ export function SshHostsSettingsSection({
       return
     }
     return api.onRemoteEnvironmentUpdateProgress(
-      ({ hostId, phase }) => {
+      ({ hostId, method, phase }) => {
         const activeUpdate = activeRemoteEnvironmentUpdate.current
         if (
           !mounted.current ||
           !activeUpdate ||
-          activeUpdate.hostId !== hostId
+          activeUpdate.hostId !== hostId ||
+          (activeUpdate.requestedMethod !== 'auto' &&
+            activeUpdate.requestedMethod !== method)
         ) {
           return
         }
         setRemoteEnvironmentUpdate((current) => {
           if (
             !current ||
-            current.requestId !== activeUpdate.requestId
+            current.requestId !== activeUpdate.requestId ||
+            (current.phase === phase &&
+              current.resolvedMethod === method)
           ) {
             return current
           }
           return {
             ...current,
+            resolvedMethod: method,
             phase
           }
         })
@@ -164,6 +187,7 @@ export function SshHostsSettingsSection({
     (snapshot: SshHostsSnapshot): void => {
       setHosts(snapshot.hosts)
       setSecureStorageAvailable(snapshot.secureStorageAvailable)
+      setProjectReferences(snapshot.projectReferences)
       setError(undefined)
     },
     []
@@ -252,7 +276,8 @@ export function SshHostsSettingsSection({
   )
 
   const updateRemoteEnvironment = async (
-    host: SshHost
+    host: SshHost,
+    method: RemoteEnvironmentPreparationMethod
   ): Promise<void> => {
     if (
       typeof api?.updateRemoteEnvironment !== 'function' ||
@@ -264,6 +289,7 @@ export function SshHostsSettingsSection({
     remoteEnvironmentUpdateRequestId.current = requestId
     const activeUpdate: ActiveRemoteEnvironmentUpdate = {
       hostId: host.id,
+      requestedMethod: method,
       requestId,
       cancelRequested: false
     }
@@ -278,13 +304,24 @@ export function SshHostsSettingsSection({
     })
     setRemoteEnvironmentUpdate({
       hostId: host.id,
+      requestedMethod: method,
       requestId,
       cancelling: false
     })
 
     let succeeded = false
+    const currentEnvironment = remoteEnvironments[host.id]?.value
+    const reinstallingMatchedEnvironment =
+      currentEnvironment !== undefined &&
+      [
+        currentEnvironment.agent,
+        ...currentEnvironment.runtimes
+      ].every(({ state }) => state === 'current')
     try {
-      await api.updateRemoteEnvironment(host.id)
+      await api.updateRemoteEnvironment({
+        hostId: host.id,
+        method
+      })
       succeeded = true
     } catch (reason) {
       const cancelled =
@@ -300,7 +337,11 @@ export function SshHostsSettingsSection({
       if (mounted.current) {
         setRemoteEnvironmentUpdateErrors((current) => ({
           ...current,
-          [host.id]: message
+          [host.id]: {
+            detail: message,
+            reinstallAttempt:
+              reinstallingMatchedEnvironment && !cancelled
+          }
         }))
       } else if (!cancelled) {
         onNotify?.({
@@ -404,7 +445,10 @@ export function SshHostsSettingsSection({
         })
         setRemoteEnvironmentUpdateErrors((current) => ({
           ...current,
-          [hostId]: activeUpdate.cancelError!
+          [hostId]: {
+            detail: activeUpdate.cancelError!,
+            reinstallAttempt: false
+          }
         }))
       }
     }
@@ -419,43 +463,6 @@ export function SshHostsSettingsSection({
     },
     []
   )
-
-  useEffect(() => {
-    if (loading) {
-      return
-    }
-    const hostIds = hosts
-      .filter(
-        (host) =>
-          host.lastValidatedAt &&
-          !remoteEnvironmentRequests.current.has(host.id)
-      )
-      .map((host) => host.id)
-    if (hostIds.length === 0) {
-      return
-    }
-    let active = true
-    let nextIndex = 0
-    const worker = async (): Promise<void> => {
-      while (active) {
-        const hostId = hostIds[nextIndex]
-        nextIndex += 1
-        if (!hostId) {
-          return
-        }
-        await requestRemoteEnvironment(hostId)
-      }
-    }
-    void Promise.all(
-      Array.from(
-        { length: Math.min(3, hostIds.length) },
-        () => worker()
-      )
-    )
-    return () => {
-      active = false
-    }
-  }, [hosts, loading, requestRemoteEnvironment])
 
   const notify = (
     dedupeKey: string,
@@ -488,7 +495,10 @@ export function SshHostsSettingsSection({
     setBusyHostId(host.id)
     setError(undefined)
     try {
-      await api.remove(host.id)
+      const result = await api.remove(host.id)
+      onProjectsDeleted?.(
+        result.deletedProjects.map((project) => project.id)
+      )
       setConfirmingDeleteId(undefined)
       setHosts((current) =>
         current.filter((candidate) => candidate.id !== host.id)
@@ -509,8 +519,24 @@ export function SshHostsSettingsSection({
         delete next[host.id]
         return next
       })
+      setRemoteEnvironmentPreparationMethods((current) => {
+        if (!(host.id in current)) {
+          return current
+        }
+        const next = { ...current }
+        delete next[host.id]
+        return next
+      })
       setRemoteEnvironmentUpdateErrors((current) => {
         if (!(host.id in current)) {
+          return current
+        }
+        const next = { ...current }
+        delete next[host.id]
+        return next
+      })
+      setProjectReferences((current) => {
+        if (!current || !(host.id in current)) {
           return current
         }
         const next = { ...current }
@@ -599,6 +625,8 @@ export function SshHostsSettingsSection({
           className="ssh-hosts-list"
         >
           {hosts.map((host) => {
+            const relatedProjects =
+              projectReferences?.[host.id] ?? []
             const result = testResults[host.id]
             const remoteEnvironment = remoteEnvironments[host.id]
             const hostEnvironmentUpdate =
@@ -608,17 +636,29 @@ export function SshHostsSettingsSection({
             const remoteEnvironmentUpdateError =
               remoteEnvironmentUpdateErrors[host.id]
             const deleting = busyHostId === host.id
-            const environmentNeedsUpdate = Boolean(
-              remoteEnvironment?.value &&
-                [
+            const environmentComponents = remoteEnvironment?.value
+              ? [
                   remoteEnvironment.value.agent,
                   ...remoteEnvironment.value.runtimes
-                ].some(
-                  ({ state }) =>
-                    state === 'update-available' ||
-                    state === 'not-installed'
-                )
-            )
+                ]
+              : []
+            const environmentAction =
+              environmentComponents.some(
+                ({ state }) => state === 'not-installed'
+              )
+                ? 'install'
+                : environmentComponents.some(
+                      ({ state }) => state === 'update-available'
+                    )
+                  ? 'update'
+                  : 'reinstall'
+            const remoteDownload =
+              remoteEnvironment?.value?.remoteDownload
+            const directDownloadActionAvailable =
+              remoteDownload?.available === true ||
+              remoteDownload?.reason === 'probe-failed'
+            const preparationMethod =
+              remoteEnvironmentPreparationMethods[host.id] ?? 'auto'
             const updateApiAvailable =
               typeof api?.updateRemoteEnvironment === 'function' &&
               typeof api.cancelRemoteEnvironmentUpdate ===
@@ -730,92 +770,149 @@ export function SshHostsSettingsSection({
                           {t('sshHosts.environment.description')}
                         </small>
                       </div>
-                      <div className="ssh-host-environment__actions">
+                      <button
+                        aria-label={t(
+                          'sshHosts.environment.refreshNamed',
+                          { name: host.name }
+                        )}
+                        className="secondary-button"
+                        disabled={
+                          remoteEnvironment?.loading ||
+                          Boolean(hostEnvironmentUpdate)
+                        }
+                        onClick={() =>
+                          void requestRemoteEnvironment(host.id)
+                        }
+                        type="button"
+                      >
+                        {remoteEnvironment?.loading ? (
+                          <LoaderCircle
+                            aria-hidden="true"
+                            className="ssh-host-environment__spinner"
+                            size={13}
+                          />
+                        ) : (
+                          <RefreshCw aria-hidden="true" size={13} />
+                        )}
+                        {t('sshHosts.environment.refresh')}
+                      </button>
+                    </div>
+
+                    {!hostEnvironmentUpdate && (
+                      <div className="ssh-host-environment__toolbar">
+                        <div className="ssh-host-environment__method">
+                          <span>
+                            {t('sshHosts.environment.methodLabel')}
+                          </span>
+                          <SegmentedControl
+                            ariaLabel={t(
+                              'sshHosts.environment.methodSelectorNamed',
+                              { name: host.name }
+                            )}
+                            disabled={
+                              !host.lastValidatedAt ||
+                              !remoteEnvironment?.value ||
+                              !updateApiAvailable ||
+                              Boolean(remoteEnvironment?.loading) ||
+                              Boolean(busyHostId) ||
+                              Boolean(editingId) ||
+                              hasActiveRemoteEnvironmentUpdate
+                            }
+                            onChange={(method) =>
+                              setRemoteEnvironmentPreparationMethods(
+                                (current) => ({
+                                  ...current,
+                                  [host.id]: method
+                                })
+                              )
+                            }
+                            options={[
+                              {
+                                value: 'auto',
+                                label: t(
+                                  'sshHosts.environment.methods.auto'
+                                )
+                              },
+                              {
+                                value: 'remote-download',
+                                label: t(
+                                  'sshHosts.environment.methods.remote-download'
+                                )
+                              },
+                              {
+                                value: 'goodbuddy-transfer',
+                                label: t(
+                                  'sshHosts.environment.methods.goodbuddy-transfer'
+                                )
+                              }
+                            ]}
+                            value={preparationMethod}
+                          />
+                        </div>
                         <button
                           aria-label={t(
-                            hostEnvironmentUpdate
-                              ? 'sshHosts.environment.cancelUpdateNamed'
-                              : 'sshHosts.environment.updateNamed',
+                            `sshHosts.environment.actions.${environmentAction}Named`,
                             { name: host.name }
                           )}
-                          className="secondary-button"
+                          className="primary-button"
                           disabled={
-                            hostEnvironmentUpdate
-                              ? hostEnvironmentUpdate.cancelling ||
-                                hostEnvironmentUpdate.phase ===
-                                  'finalizing'
-                              : !host.lastValidatedAt ||
-                                !remoteEnvironment?.value ||
-                                !(
-                                  environmentNeedsUpdate ||
-                                  remoteEnvironmentUpdateError
-                                ) ||
-                                !updateApiAvailable ||
-                                Boolean(remoteEnvironment?.loading) ||
-                                Boolean(busyHostId) ||
-                                Boolean(editingId) ||
-                                hasActiveRemoteEnvironmentUpdate
+                            !host.lastValidatedAt ||
+                            !remoteEnvironment?.value ||
+                            !updateApiAvailable ||
+                            (preparationMethod === 'remote-download' &&
+                              !directDownloadActionAvailable) ||
+                            Boolean(remoteEnvironment?.loading) ||
+                            Boolean(busyHostId) ||
+                            Boolean(editingId) ||
+                            hasActiveRemoteEnvironmentUpdate
                           }
                           onClick={() => {
-                            if (hostEnvironmentUpdate) {
-                              void cancelRemoteEnvironmentUpdate(
-                                host.id
-                              )
-                            } else {
-                              void updateRemoteEnvironment(host)
-                            }
+                            void updateRemoteEnvironment(
+                              host,
+                              preparationMethod
+                            )
                           }}
                           type="button"
                         >
-                          {hostEnvironmentUpdate?.cancelling ? (
-                            <LoaderCircle
-                              aria-hidden="true"
-                              className="ssh-host-environment__spinner"
-                              size={13}
-                            />
-                          ) : hostEnvironmentUpdate ? (
-                            <X aria-hidden="true" size={13} />
-                          ) : (
-                            <Download aria-hidden="true" size={13} />
+                          <Download aria-hidden="true" size={13} />
+                          {t(
+                            `sshHosts.environment.actions.${environmentAction}`
                           )}
-                          {hostEnvironmentUpdate?.cancelling
-                            ? t('sshHosts.environment.cancelling')
-                            : hostEnvironmentUpdate
-                              ? t('sshHosts.environment.cancelUpdate')
-                              : t('sshHosts.environment.update')}
-                        </button>
-                        <button
-                          aria-label={t(
-                            'sshHosts.environment.refreshNamed',
-                            { name: host.name }
-                          )}
-                          className="secondary-button"
-                          disabled={
-                            remoteEnvironment?.loading ||
-                            Boolean(hostEnvironmentUpdate)
-                          }
-                          onClick={() =>
-                            void requestRemoteEnvironment(host.id)
-                          }
-                          type="button"
-                        >
-                          {remoteEnvironment?.loading ? (
-                            <LoaderCircle
-                              aria-hidden="true"
-                              className="ssh-host-environment__spinner"
-                              size={13}
-                            />
-                          ) : (
-                            <RefreshCw aria-hidden="true" size={13} />
-                          )}
-                          {t('sshHosts.environment.refresh')}
                         </button>
                       </div>
-                    </div>
+                    )}
+
+                    {remoteDownload &&
+                      !remoteDownload.available && (
+                        <div className="ssh-host-environment__availability">
+                          {t(
+                            `sshHosts.environment.remoteDownloadUnavailable.${remoteDownload.reason}`,
+                            {
+                              source: remoteDownload.source
+                                ? t(
+                                    `sshHosts.environment.sources.${remoteDownload.source}`
+                                  )
+                                : undefined
+                            }
+                          )}
+                          {remoteDownload.packageSize && (
+                            <small>
+                              {t(
+                                'sshHosts.environment.remoteDownloadPackageSize',
+                                {
+                                  size: formatPackageSize(
+                                    remoteDownload.packageSize
+                                  )
+                                }
+                              )}
+                            </small>
+                          )}
+                        </div>
+                      )}
 
                     {hostEnvironmentUpdate && (
                       <div
-                        className="ssh-host-environment__loading"
+                        className="ssh-host-environment__loading ssh-host-environment__loading--update"
                         role="status"
                       >
                         <LoaderCircle
@@ -823,13 +920,53 @@ export function SshHostsSettingsSection({
                           className="ssh-host-environment__spinner"
                           size={16}
                         />
-                        {t(
-                          hostEnvironmentUpdate.cancelling
-                            ? 'sshHosts.environment.progress.cancelling'
-                            : hostEnvironmentUpdate.phase
-                              ? `sshHosts.environment.progress.${hostEnvironmentUpdate.phase}`
-                              : 'sshHosts.environment.progress.preparing'
-                        )}
+                        <span>
+                          {!hostEnvironmentUpdate.cancelling && (
+                            <strong>
+                              {t(
+                                `sshHosts.environment.methods.${hostEnvironmentUpdate.resolvedMethod ?? hostEnvironmentUpdate.requestedMethod}`
+                              )}
+                            </strong>
+                          )}
+                          <span>
+                            {t(
+                              hostEnvironmentUpdate.cancelling
+                                ? 'sshHosts.environment.progress.cancelling'
+                                : hostEnvironmentUpdate.phase
+                                  ? `sshHosts.environment.progress.${hostEnvironmentUpdate.phase}`
+                                  : 'sshHosts.environment.progress.preparing'
+                            )}
+                          </span>
+                        </span>
+                        <button
+                          aria-label={t(
+                            'sshHosts.environment.cancelUpdateNamed',
+                            { name: host.name }
+                          )}
+                          className="secondary-button"
+                          disabled={
+                            hostEnvironmentUpdate.cancelling ||
+                            hostEnvironmentUpdate.phase === 'finalizing' ||
+                            hostEnvironmentUpdate.phase === 'complete'
+                          }
+                          onClick={() =>
+                            void cancelRemoteEnvironmentUpdate(host.id)
+                          }
+                          type="button"
+                        >
+                          {hostEnvironmentUpdate.cancelling ? (
+                            <LoaderCircle
+                              aria-hidden="true"
+                              className="ssh-host-environment__spinner"
+                              size={13}
+                            />
+                          ) : (
+                            <X aria-hidden="true" size={13} />
+                          )}
+                          {hostEnvironmentUpdate.cancelling
+                            ? t('sshHosts.environment.cancelling')
+                            : t('sshHosts.environment.cancelUpdate')}
+                        </button>
                       </div>
                     )}
 
@@ -838,7 +975,14 @@ export function SshHostsSettingsSection({
                         className="ssh-host-environment__error"
                         role="alert"
                       >
-                        {remoteEnvironmentUpdateError}
+                        {remoteEnvironmentUpdateError.reinstallAttempt && (
+                          <strong>
+                            {t(
+                              'sshHosts.environment.errors.reinstallFailedSummary'
+                            )}
+                          </strong>
+                        )}
+                        <span>{remoteEnvironmentUpdateError.detail}</span>
                       </div>
                     )}
 
@@ -897,7 +1041,11 @@ export function SshHostsSettingsSection({
                         />
                         {t('sshHosts.environment.loading')}
                       </div>
-                    ) : null}
+                    ) : (
+                      <div className="ssh-host-environment__availability">
+                        {t('sshHosts.environment.notChecked')}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -910,9 +1058,31 @@ export function SshHostsSettingsSection({
                     disabled={
                       deleting || Boolean(hostEnvironmentUpdate)
                     }
-                    message={t('sshHosts.removeMessage', {
-                      name: host.name
-                    })}
+                    message={
+                      confirmingDeleteId === host.id ? (
+                        <div className="ssh-host-remove-confirmation">
+                          <p>
+                            {t('sshHosts.removeMessage', {
+                              name: host.name
+                            })}
+                          </p>
+                          {relatedProjects.length > 0 && (
+                            <>
+                              <strong>
+                                {t('sshHosts.removeProjectsHeading')}
+                              </strong>
+                              <ul>
+                                {relatedProjects.map((project) => (
+                                  <li key={project.id}>
+                                    {project.name}
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                        </div>
+                      ) : null
+                    }
                     onCancel={() =>
                       setConfirmingDeleteId(undefined)
                     }
@@ -964,6 +1134,11 @@ function isCancellationError(reason: unknown): boolean {
     name === 'AbortError' ||
     /\b(?:cancelled|canceled)\b|取消/iu.test(message)
   )
+}
+
+function formatPackageSize(bytes: number): string {
+  const mebibytes = bytes / (1024 * 1024)
+  return `${mebibytes >= 10 ? Math.round(mebibytes) : mebibytes.toFixed(1)} MiB`
 }
 
 function EnvironmentVersionCard({

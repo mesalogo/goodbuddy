@@ -650,6 +650,16 @@ describe('SshHostService', () => {
     expect(onHostEdited.mock.calls[0]).toEqual([host.id])
     expect(onHostRemoved).not.toHaveBeenCalled()
 
+    await expect(
+      harness.service.remove(host.id, async () => {
+        throw new Error('project cleanup failed')
+      })
+    ).rejects.toThrow('project cleanup failed')
+    await expect(harness.service.getSnapshot()).resolves.toMatchObject({
+      hosts: [expect.objectContaining({ id: host.id })]
+    })
+    expect(onHostRemoved).not.toHaveBeenCalled()
+
     await harness.service.remove(host.id)
 
     expect(onHostRemoved).toHaveBeenCalledWith(host.id)

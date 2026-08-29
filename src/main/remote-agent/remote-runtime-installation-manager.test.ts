@@ -32,12 +32,12 @@ import type {
   SshConnectionLease,
   SshConnectionPoolTarget
 } from '../ssh/ssh-connection-pool'
+import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
 import {
-  RemoteRuntimeBundleResourcesUnavailableError,
-  RemoteRuntimeInstallationError,
   RemoteRuntimeInstallationManager,
-  type VerifiedRemoteRuntimeInstallationBundle
+  type RemoteRuntimeActivator
 } from './remote-runtime-installation-manager'
+import type { VerifiedRemoteRuntimeResourceBundle } from './remote-runtime-resource-loader'
 
 type RemoteEntry = {
   type: 'file' | 'directory' | 'symbolic-link'
@@ -80,6 +80,10 @@ class MemorySftp implements StagedSftp {
       atime: 1,
       mtime: 1
     }
+  }
+
+  async uploadFile(): Promise<void> {
+    throw new Error('uploadFile is unused in this fixture')
   }
 
   async mkdir(path: string): Promise<void> {
@@ -310,7 +314,7 @@ function target(
 }
 
 async function bundleFixture(): Promise<
-  VerifiedRemoteRuntimeInstallationBundle
+  VerifiedRemoteRuntimeResourceBundle
 > {
   const directory = await mkdtemp(
     join(tmpdir(), 'runtime-manager-')
@@ -409,79 +413,6 @@ async function bundleFixture(): Promise<
   }
 }
 
-async function harness(options: {
-  sftp?: MemorySftp
-  resolverTargets?: SshConnectionPoolTarget[]
-  bootstrapGate?: Promise<void>
-  maximumConcurrentHosts?: number
-} = {}) {
-  const bundle = await bundleFixture()
-  const sftp = options.sftp ?? new MemorySftp()
-  const release = vi.fn()
-  const activate = vi.fn(async () => undefined)
-  const lease = {
-    identity: {
-      hostId: 'host-1',
-      hostRevision: 1,
-      hostKeyGeneration: 1,
-      authenticationIdentity: 'b'.repeat(64)
-    },
-    isUsable: () => true,
-    runAgentBootstrapProbe: vi.fn(
-      async (signal?: AbortSignal) => {
-        if (options.bootstrapGate) {
-          await waitForGate(options.bootstrapGate, signal)
-        }
-        return {
-          ready: true,
-          platform: 'linux',
-          architecture: 'x64',
-          canonicalHomeDirectory: home,
-          uid,
-          shell: '/bin/bash',
-          procfs: 'ready'
-        } as const
-      }
-    ),
-    openStagedSftp: vi.fn(async () => sftp),
-    release
-  } as unknown as SshConnectionLease
-  let resolveCount = 0
-  const targets = options.resolverTargets ?? [target()]
-  const resolver = {
-    resolve: vi.fn(async () =>
-      targets[
-        Math.min(resolveCount++, targets.length - 1)
-      ]!
-    )
-  }
-  const sshPool = {
-    acquire: vi.fn(async () => lease)
-  }
-  const manager = new RemoteRuntimeInstallationManager({
-    resolver,
-    sshPool,
-    loadVerifiedBundle: async () => bundle,
-    activate,
-    maximumConcurrentHosts: options.maximumConcurrentHosts
-  })
-  const destination =
-    `.goodbuddy/runtimes/opencode/${
-      bundle.manifest.bundleDigest.slice('sha256:'.length)
-    }`
-  return {
-    manager,
-    bundle,
-    sftp,
-    release,
-    activate,
-    lease,
-    resolver,
-    sshPool,
-    destination
-  }
-}
-
 async function waitForGate(
   gate: Promise<void>,
   signal?: AbortSignal
@@ -512,54 +443,18 @@ async function waitForGate(
   })
 }
 
-function populateBundle(
-  fixture: Awaited<ReturnType<typeof harness>>
-): void {
-  fixture.sftp.add(fixture.destination, {
-    type: 'directory',
-    mode: 0o700,
-    uid
-  })
-  fixture.sftp.add(`${fixture.destination}/bin`, {
-    type: 'directory',
-    mode: 0o700,
-    uid
-  })
-  fixture.sftp.add(`${fixture.destination}/licenses`, {
-    type: 'directory',
-    mode: 0o700,
-    uid
-  })
-  fixture.sftp.add(`${fixture.destination}/bin/opencode`, {
-    type: 'file',
-    mode: 0o755,
-    uid,
-    contents: Buffer.from('opencode')
-  })
-  fixture.sftp.add(`${fixture.destination}/licenses/LICENSE`, {
-    type: 'file',
-    mode: 0o644,
-    uid,
-    contents: Buffer.from('license')
-  })
-  fixture.sftp.add(`${fixture.destination}/manifest.json`, {
-    type: 'file',
-    mode: 0o644,
-    uid,
-    contents: canonical(fixture.bundle.manifest)
-  })
-  fixture.sftp.add(`${fixture.destination}/manifest.sig`, {
-    type: 'file',
-    mode: 0o644,
-    uid,
-    contents: Buffer.alloc(64, 7)
-  })
-}
-
 async function metadataOnlyHarness(options: {
   corruptPath?: string
   remoteReleaseKeyBytes?: Buffer
+  remoteRuntimeLockBytes?: Buffer
+  remoteReleaseKeysAbsent?: boolean
+  remoteRuntimeLockAbsent?: boolean
   resolverTargets?: SshConnectionPoolTarget[]
+  runtimeRegistryBytes?: Buffer
+  runtimeRegistryAbsent?: boolean
+  activationFailure?: boolean
+  activationMutatesRegistry?: boolean
+  bootstrapGate?: Promise<void>
 } = {}) {
   const baseBundle = await bundleFixture()
   const keyPair = generateKeyPairSync('ed25519')
@@ -585,7 +480,7 @@ async function metadataOnlyHarness(options: {
   )
   const releaseKeyRegistryBytes = canonical(signedRegistry)
   const remoteRuntimeLockBytes = canonical(runtimeLock)
-  const bundle: VerifiedRemoteRuntimeInstallationBundle = {
+  const bundle: VerifiedRemoteRuntimeResourceBundle = {
     bundleDirectory: baseBundle.bundleDirectory,
     manifest: baseBundle.manifest,
     manifestDigest: baseBundle.manifestDigest,
@@ -625,26 +520,33 @@ async function metadataOnlyHarness(options: {
         bundle.manifest.acpCapabilitiesDigest
     }]
   })
-  for (const [path, contents] of [
-    [
-      '.goodbuddy/runtimes/registry.json',
-      runtimeRegistryBytes
-    ],
-    [
-      '.goodbuddy/runtimes/release-keys.json',
-      options.remoteReleaseKeyBytes ??
-        releaseKeyRegistryBytes
-    ],
-    [
-      '.goodbuddy/runtimes/remote-runtime-lock.json',
-      remoteRuntimeLockBytes
-    ]
-  ] as const) {
-    sftp.add(path, {
+  if (!options.remoteReleaseKeysAbsent) {
+    sftp.add('.goodbuddy/runtimes/release-keys.json', {
       type: 'file',
       mode: 0o600,
       uid,
-      contents
+      contents:
+        options.remoteReleaseKeyBytes ??
+        releaseKeyRegistryBytes
+    })
+  }
+  if (!options.remoteRuntimeLockAbsent) {
+    sftp.add('.goodbuddy/runtimes/remote-runtime-lock.json', {
+      type: 'file',
+      mode: 0o600,
+      uid,
+      contents:
+        options.remoteRuntimeLockBytes ??
+        remoteRuntimeLockBytes
+    })
+  }
+  if (!options.runtimeRegistryAbsent) {
+    sftp.add('.goodbuddy/runtimes/registry.json', {
+      type: 'file',
+      mode: 0o600,
+      uid,
+      contents:
+        options.runtimeRegistryBytes ?? runtimeRegistryBytes
     })
   }
   for (const file of bundle.manifest.files) {
@@ -678,8 +580,17 @@ async function metadataOnlyHarness(options: {
   })
 
   const release = vi.fn()
-  const activate = vi.fn(async () => {
+  const activate = vi.fn<RemoteRuntimeActivator>(async () => {
+    if (options.activationMutatesRegistry) {
+      sftp.add('.goodbuddy/runtimes/registry.json', {
+        type: 'file',
+        mode: 0o600,
+        uid,
+        contents: Buffer.from('changed registry bytes\n')
+      })
+    }
     if (
+      options.activationFailure ||
       options.corruptPath !== undefined &&
       options.corruptPath !== 'manifest.sig'
     ) {
@@ -694,7 +605,11 @@ async function metadataOnlyHarness(options: {
       authenticationIdentity: 'b'.repeat(64)
     },
     isUsable: () => true,
-    runAgentBootstrapProbe: vi.fn(async () => ({
+    runAgentBootstrapProbe: vi.fn(async (signal?: AbortSignal) => {
+      if (options.bootstrapGate) {
+        await waitForGate(options.bootstrapGate, signal)
+      }
+      return {
       ready: true,
       platform: 'linux',
       architecture: 'x64',
@@ -702,7 +617,8 @@ async function metadataOnlyHarness(options: {
       uid,
       shell: '/bin/bash',
       procfs: 'ready'
-    }) as const),
+      } as const
+    }),
     openStagedSftp: vi.fn(async () => sftp),
     release
   } as unknown as SshConnectionLease
@@ -716,9 +632,6 @@ async function metadataOnlyHarness(options: {
   const manager = new RemoteRuntimeInstallationManager({
     resolver,
     sshPool: { acquire: vi.fn(async () => lease) },
-    loadVerifiedBundle: async () => {
-      throw new RemoteRuntimeBundleResourcesUnavailableError()
-    },
     loadVerificationMetadata: async () => ({
       releaseKeyRegistry: signedRegistry,
       runtimeLock,
@@ -732,6 +645,18 @@ async function metadataOnlyHarness(options: {
   return {
     manager,
     bundle,
+    publishedIdentity: {
+      runtimeId: 'opencode' as const,
+      runtimeVersion: bundle.manifest.runtimeVersion,
+      bundleDigest: bundle.manifest.bundleDigest,
+      manifestDigest: bundle.manifestDigest,
+      runtimeAdapterDigest: bundle.manifest.adapterDigest,
+      acpCapabilitiesDigest:
+        bundle.manifest.acpCapabilitiesDigest,
+      platform: 'linux' as const,
+      architecture: bundle.manifest.architecture,
+      protocol: { ...bundle.manifest.protocol }
+    },
     activate,
     destination,
     release,
@@ -743,9 +668,13 @@ async function metadataOnlyHarness(options: {
 describe('RemoteRuntimeInstallationManager', () => {
   it('cryptographically reuses an exact current Host Runtime when bundle resources are absent', async () => {
     const fixture = await metadataOnlyHarness()
+    const agentInstallationId =
+      verifyAgentInstallationId('agent-current')
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1', {
+        agentInstallationId
+      })
     ).resolves.toMatchObject({
       runtimeId: 'opencode',
       runtimeVersion: fixture.bundle.manifest.runtimeVersion,
@@ -753,12 +682,274 @@ describe('RemoteRuntimeInstallationManager', () => {
       architecture: 'x64'
     })
     expect(fixture.activate).toHaveBeenCalledOnce()
+    expect(fixture.activate.mock.calls[0]?.[4]).toBe(
+      agentInstallationId
+    )
     expect(
       fixture.sftp.operations.some((operation) =>
         operation.startsWith('write:')
       )
     ).toBe(false)
     expect(fixture.release).toHaveBeenCalledOnce()
+  })
+
+  it('reuses the current Runtime identity until the Host is invalidated', async () => {
+    const fixture = await metadataOnlyHarness()
+    const agentInstallationId =
+      verifyAgentInstallationId('agent-current')
+
+    const first = await fixture.manager.activateInstalled('host-1', {
+      agentInstallationId
+    })
+    await expect(
+      fixture.manager.activateInstalled('host-1', {
+        agentInstallationId
+      })
+    ).resolves.toEqual(first)
+    expect(fixture.activate).toHaveBeenCalledOnce()
+    expect(fixture.release).toHaveBeenCalledOnce()
+
+    fixture.manager.invalidateHost('host-1')
+    await expect(
+      fixture.manager.activateInstalled('host-1', {
+        agentInstallationId
+      })
+    ).resolves.toEqual(first)
+    expect(fixture.activate).toHaveBeenCalledTimes(2)
+    expect(fixture.release).toHaveBeenCalledTimes(2)
+  })
+
+  it('activates an exact installed Runtime without loading or publishing installable payloads', async () => {
+    const fixture = await metadataOnlyHarness()
+
+    await expect(
+      fixture.manager.activateInstalled('host-1')
+    ).resolves.toMatchObject({
+      runtimeId: 'opencode',
+      bundleDigest: fixture.bundle.manifest.bundleDigest,
+      architecture: 'x64'
+    })
+
+    expect(fixture.activate).toHaveBeenCalledOnce()
+    expect(
+      fixture.sftp.operations.filter((operation) =>
+        /^(?:mkdir|write|chmod|rename|replace|unlink|rmdir):/u
+          .test(operation)
+      )
+    ).toEqual([])
+  })
+
+  it('adopts the exact package-published Runtime without loading or mutating payloads', async () => {
+    const fixture = await metadataOnlyHarness()
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toEqual({
+      runtimeId: 'opencode',
+      runtimeVersion: fixture.bundle.manifest.runtimeVersion,
+      bundleDigest: fixture.bundle.manifest.bundleDigest,
+      manifestDigest: fixture.bundle.manifestDigest,
+      runtimeAdapterDigest:
+        fixture.bundle.manifest.adapterDigest,
+      acpCapabilitiesDigest:
+        fixture.bundle.manifest.acpCapabilitiesDigest,
+      platform: 'linux',
+      architecture: 'x64'
+    })
+
+    expect(fixture.activate).toHaveBeenCalledOnce()
+    expect(
+      fixture.sftp.operations.filter((operation) =>
+        /^(?:mkdir|write|chmod|rename|replace|unlink|rmdir):/u
+          .test(operation)
+      )
+    ).toEqual([])
+  })
+
+  it('adopts a package-published Runtime when all global Runtime metadata is absent', async () => {
+    const fixture = await metadataOnlyHarness({
+      remoteReleaseKeysAbsent: true,
+      remoteRuntimeLockAbsent: true,
+      runtimeRegistryAbsent: true
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toMatchObject({
+      runtimeId: 'opencode',
+      bundleDigest: fixture.bundle.manifest.bundleDigest
+    })
+
+    expect(fixture.activate).toHaveBeenCalledOnce()
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/runtimes/release-keys.json`
+      )
+    ).toBe(true)
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/runtimes/remote-runtime-lock.json`
+      )
+    ).toBe(true)
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/runtimes/registry.json`
+      )
+    ).toBe(false)
+  })
+
+  it('verifies a published Runtime with packaged trust instead of stale Host metadata', async () => {
+    const fixture = await metadataOnlyHarness({
+      remoteReleaseKeyBytes: canonical({
+        formatVersion: 1,
+        keys: [],
+        revocations: []
+      }),
+      remoteRuntimeLockBytes: Buffer.from(
+        '{ "legacy": "runtime lock" }\n'
+      )
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toMatchObject({
+      runtimeId: 'opencode'
+    })
+    expect(fixture.activate).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a package-published Runtime identity mismatch before activation', async () => {
+    const fixture = await metadataOnlyHarness()
+
+    await expect(
+      fixture.manager.activatePublished('host-1', {
+        ...fixture.publishedIdentity,
+        runtimeAdapterDigest: `sha256:${'f'.repeat(64)}`
+      })
+    ).rejects.toMatchObject({ reason: 'corrupt' })
+
+    expect(fixture.activate).not.toHaveBeenCalled()
+  })
+
+  it('does not transfer installer-verified Runtime payloads back through SFTP', async () => {
+    const fixture = await metadataOnlyHarness()
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).resolves.toMatchObject({
+      bundleDigest: fixture.bundle.manifest.bundleDigest
+    })
+
+    expect(fixture.activate).toHaveBeenCalledOnce()
+    for (const file of fixture.bundle.manifest.files) {
+      expect(fixture.sftp.operations).not.toContain(
+        `read:${fixture.destination}/${file.path}`
+      )
+    }
+  })
+
+  it('rejects package-published Runtime adoption after Host identity changes', async () => {
+    const fixture = await metadataOnlyHarness({
+      resolverTargets: [target(), target(2)]
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).rejects.toMatchObject({
+      reason: 'host-identity-changed'
+    })
+
+    expect(fixture.activate).not.toHaveBeenCalled()
+  })
+
+  it('restores exact Runtime registry bytes when published activation fails', async () => {
+    const oldRegistry = Buffer.from(
+      '{ "legacy": true, "spacing": "preserved" }\n'
+    )
+    const oldReleaseKeys = Buffer.from(
+      '{ "legacy": "release keys" }\n'
+    )
+    const oldRuntimeLock = Buffer.from(
+      '{ "legacy": "runtime lock" }\n'
+    )
+    const fixture = await metadataOnlyHarness({
+      runtimeRegistryBytes: oldRegistry,
+      remoteReleaseKeyBytes: oldReleaseKeys,
+      remoteRuntimeLockBytes: oldRuntimeLock,
+      activationFailure: true,
+      activationMutatesRegistry: true
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).rejects.toMatchObject({ reason: 'activation' })
+
+    expect(
+      fixture.sftp.entries.get(
+        `${home}/.goodbuddy/runtimes/registry.json`
+      )?.contents
+    ).toEqual(oldRegistry)
+    expect(
+      fixture.sftp.entries.get(
+        `${home}/.goodbuddy/runtimes/release-keys.json`
+      )?.contents
+    ).toEqual(oldReleaseKeys)
+    expect(
+      fixture.sftp.entries.get(
+        `${home}/.goodbuddy/runtimes/remote-runtime-lock.json`
+      )?.contents
+    ).toEqual(oldRuntimeLock)
+  })
+
+  it('restores absent Runtime metadata when published activation fails', async () => {
+    const fixture = await metadataOnlyHarness({
+      runtimeRegistryAbsent: true,
+      remoteReleaseKeysAbsent: true,
+      remoteRuntimeLockAbsent: true,
+      activationFailure: true,
+      activationMutatesRegistry: true
+    })
+
+    await expect(
+      fixture.manager.activatePublished(
+        'host-1',
+        fixture.publishedIdentity
+      )
+    ).rejects.toMatchObject({ reason: 'activation' })
+
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/runtimes/registry.json`
+      )
+    ).toBe(false)
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/runtimes/release-keys.json`
+      )
+    ).toBe(false)
+    expect(
+      fixture.sftp.entries.has(
+        `${home}/.goodbuddy/runtimes/remote-runtime-lock.json`
+      )
+    ).toBe(false)
   })
 
   it('rejects metadata-only Runtime reuse when trust metadata differs', async () => {
@@ -771,7 +962,7 @@ describe('RemoteRuntimeInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({ reason: 'corrupt' })
     expect(fixture.activate).not.toHaveBeenCalled()
   })
@@ -782,7 +973,7 @@ describe('RemoteRuntimeInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({ reason: 'corrupt' })
     expect(fixture.activate).not.toHaveBeenCalled()
   })
@@ -793,7 +984,7 @@ describe('RemoteRuntimeInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({ reason: 'activation' })
     expect(fixture.activate).toHaveBeenCalledOnce()
   })
@@ -804,242 +995,68 @@ describe('RemoteRuntimeInstallationManager', () => {
     })
 
     await expect(
-      fixture.manager.ensureInstalled('host-1')
+      fixture.manager.activateInstalled('host-1')
     ).rejects.toMatchObject({
       reason: 'host-identity-changed'
     })
     expect(fixture.activate).not.toHaveBeenCalled()
   })
 
-  it('installs, atomically publishes, then activates OpenCode', async () => {
-    const fixture = await harness()
-    const identity = await fixture.manager.ensureInstalled('host-1')
-
-    expect(identity).toEqual({
-      runtimeId: 'opencode',
-      runtimeVersion: fixture.bundle.manifest.runtimeVersion,
-      bundleDigest: fixture.bundle.manifest.bundleDigest,
-      manifestDigest: fixture.bundle.manifestDigest,
-      runtimeAdapterDigest:
-        fixture.bundle.manifest.adapterDigest,
-      acpCapabilitiesDigest:
-        fixture.bundle.manifest.acpCapabilitiesDigest,
-      platform: 'linux',
-      architecture: 'x64'
-    })
-    expect(
-      fixture.sftp.entries.has(`${home}/${fixture.destination}`)
-    ).toBe(true)
-    expect(
-      fixture.sftp.operations.filter((entry) =>
-        entry.startsWith('replace:.goodbuddy/runtimes/')
-      )
-    ).toHaveLength(2)
-    const publishIndex = fixture.sftp.operations.findIndex(
-      (entry) =>
-        entry.startsWith(
-          'rename:.goodbuddy/runtimes/staging/op-'
-        )
-    )
-    expect(publishIndex).toBeGreaterThan(-1)
-    expect(fixture.activate).toHaveBeenCalledOnce()
-    expect(fixture.activate).toHaveBeenCalledWith(
-      fixture.lease,
-      'opencode',
-      fixture.bundle.manifest.bundleDigest,
-      'x64',
-      expect.any(AbortSignal)
-    )
-    expect(fixture.release).toHaveBeenCalledOnce()
-  })
-
-  it('fully verifies and reuses an existing digest destination', async () => {
-    const fixture = await harness()
-    populateBundle(fixture)
-
-    const identity =
-      await fixture.manager.ensureInstalled('host-1')
-
-    expect(identity).toEqual({
-      runtimeId: 'opencode',
-      runtimeVersion: fixture.bundle.manifest.runtimeVersion,
-      bundleDigest: fixture.bundle.manifest.bundleDigest,
-      manifestDigest: fixture.bundle.manifestDigest,
-      runtimeAdapterDigest:
-        fixture.bundle.manifest.adapterDigest,
-      acpCapabilitiesDigest:
-        fixture.bundle.manifest.acpCapabilitiesDigest,
-      platform: 'linux',
-      architecture: 'x64'
-    })
-    expect(
-      fixture.sftp.operations.some((entry) =>
-        entry.startsWith(
-          'rename:.goodbuddy/runtimes/staging/op-'
-        )
-      )
-    ).toBe(false)
-    expect(fixture.activate).toHaveBeenCalledOnce()
-  })
-
-  it('rejects mutated remote readback, cleans staging, and never activates', async () => {
-    const fixture = await harness()
-    fixture.sftp.mutateRead = (path, contents) =>
-      path.endsWith('/bin/opencode')
-        ? Buffer.from('mutated')
-        : contents
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toMatchObject({
-      reason: 'corrupt'
-    })
-    expect(fixture.activate).not.toHaveBeenCalled()
-    expect(
-      [...fixture.sftp.entries.keys()].some((path) =>
-        path.includes('/runtimes/staging/op-')
-      )
-    ).toBe(false)
-  })
-
-  it('rejects an identity race before publication and activation', async () => {
-    const fixture = await harness({
-      resolverTargets: [target(1), target(2)]
-    })
-
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toMatchObject({
-      reason: 'host-identity-changed'
-    })
-    expect(fixture.activate).not.toHaveBeenCalled()
-    expect(
-      [...fixture.sftp.entries.keys()].some((path) =>
-        path.includes('/runtimes/staging/op-')
-      )
-    ).toBe(false)
-  })
-
-  it('cancels the shared operation when its final waiter leaves and cleans up', async () => {
-    const sftp = new MemorySftp()
-    let payloadStarted!: () => void
-    const started = new Promise<void>((resolve) => {
-      payloadStarted = resolve
-    })
-    const originalWrite = sftp.writeFile.bind(sftp)
-    sftp.writeFile = vi.fn(async (
-      path: string,
-      contents: Buffer,
-      signal?: AbortSignal
-    ) => {
-      await originalWrite(path, contents)
-      if (path.endsWith('/bin/opencode')) {
-        payloadStarted()
-        await waitForGate(
-          new Promise<void>(() => undefined),
-          signal
-        )
-      }
-    })
-    const fixture = await harness({ sftp })
-    const controller = new AbortController()
-    const installation = fixture.manager.ensureInstalled('host-1', {
-      signal: controller.signal
-    })
-    await started
-    controller.abort()
-
-    await expect(installation).rejects.toMatchObject({
-      name: 'AbortError'
-    })
-    await vi.waitFor(() =>
-      expect(fixture.release).toHaveBeenCalledOnce()
-    )
-    expect(
-      [...sftp.entries.keys()].some((path) =>
-        path.includes('/runtimes/staging/op-')
-      )
-    ).toBe(false)
-  })
-
-  it('deduplicates one host and enforces concurrent host capacity', async () => {
+  it('deduplicates installed activation and lets one waiter cancel', async () => {
     let releaseGate!: () => void
     const gate = new Promise<void>((resolve) => {
       releaseGate = resolve
     })
-    const fixture = await harness({
-      bootstrapGate: gate,
-      maximumConcurrentHosts: 1,
-      resolverTargets: [
-        target(),
-        target(),
-        target(1, 'host-2'),
-        target()
-      ]
+    const fixture = await metadataOnlyHarness({ bootstrapGate: gate })
+    const controller = new AbortController()
+    const canceled = fixture.manager.activateInstalled('host-1', {
+      signal: controller.signal
     })
-    const first = fixture.manager.ensureInstalled('host-1')
-    const second = fixture.manager.ensureInstalled('host-1', {
-      force: true
+    const survivor = fixture.manager.activateInstalled('host-1')
+    await vi.waitFor(() =>
+      expect(fixture.resolver.resolve).toHaveBeenCalledTimes(2)
+    )
+
+    controller.abort()
+    await expect(canceled).rejects.toMatchObject({ name: 'AbortError' })
+    releaseGate()
+    await expect(survivor).resolves.toMatchObject({ runtimeId: 'opencode' })
+    expect(fixture.activate).toHaveBeenCalledOnce()
+    expect(fixture.release).toHaveBeenCalledOnce()
+  })
+
+  it('cancels installed activation when its final waiter leaves', async () => {
+    const fixture = await metadataOnlyHarness({
+      bootstrapGate: new Promise<void>(() => undefined)
+    })
+    const controller = new AbortController()
+    const activation = fixture.manager.activateInstalled('host-1', {
+      signal: controller.signal
     })
     await vi.waitFor(() =>
-      expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
+      expect(fixture.resolver.resolve).toHaveBeenCalledOnce()
     )
 
-    await expect(
-      fixture.manager.ensureInstalled('host-2')
-    ).rejects.toMatchObject({
-      reason: 'capacity'
+    controller.abort()
+    await expect(activation).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(fixture.release).toHaveBeenCalledOnce())
+  })
+
+  it('dispose aborts active activation and rejects future calls', async () => {
+    const fixture = await metadataOnlyHarness({
+      bootstrapGate: new Promise<void>(() => undefined)
     })
-    releaseGate()
-    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
-    expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
-  })
-
-  it('reuses a successful Runtime installation for the same Host identity', async () => {
-    const fixture = await harness()
-    const first = await fixture.manager.ensureInstalled('host-1')
-    const phases: string[] = []
-    const second = await fixture.manager.ensureInstalled('host-1', {
-      onProgress: (phase) => phases.push(phase)
-    })
-
-    expect(second).toEqual(first)
-    expect(fixture.sshPool.acquire).toHaveBeenCalledOnce()
-    expect(fixture.activate).toHaveBeenCalledOnce()
-    expect(phases).toEqual(['inspecting-host', 'complete'])
-  })
-
-  it('force bypasses the settled Runtime cache and refreshes it after verification', async () => {
-    const fixture = await harness()
-    const first = await fixture.manager.ensureInstalled('host-1')
-
-    const refreshed = await fixture.manager.ensureInstalled(
-      'host-1',
-      { force: true }
-    )
-    const cached = await fixture.manager.ensureInstalled('host-1')
-
-    expect(refreshed).toEqual(first)
-    expect(cached).toEqual(refreshed)
-    expect(fixture.sshPool.acquire).toHaveBeenCalledTimes(2)
-    expect(fixture.activate).toHaveBeenCalledTimes(2)
-  })
-
-  it('reports activation errors distinctly after verified publication', async () => {
-    const fixture = await harness()
-    fixture.activate.mockRejectedValueOnce(
-      new Error('fixed activation command failed')
+    const activation = fixture.manager.activateInstalled('host-1')
+    await vi.waitFor(() =>
+      expect(fixture.resolver.resolve).toHaveBeenCalledOnce()
     )
 
+    const first = fixture.manager.dispose()
+    expect(fixture.manager.dispose()).toBe(first)
+    await expect(activation).rejects.toMatchObject({ name: 'AbortError' })
+    await first
     await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).rejects.toBeInstanceOf(RemoteRuntimeInstallationError)
-    await expect(
-      fixture.manager.ensureInstalled('host-1')
-    ).resolves.toMatchObject({ runtimeId: 'opencode' })
-    expect(
-      fixture.sftp.entries.has(`${home}/${fixture.destination}`)
-    ).toBe(true)
-    expect(fixture.activate).toHaveBeenCalledTimes(2)
+      fixture.manager.activateInstalled('host-1')
+    ).rejects.toThrow('Remote Runtime installation manager is disposed')
   })
 })

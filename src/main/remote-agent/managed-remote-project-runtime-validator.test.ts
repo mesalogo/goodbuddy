@@ -8,9 +8,12 @@ import { ManagedRemoteProjectRuntimeValidator } from './managed-remote-project-r
 import type { RemoteProjectRuntimeValidationInput } from './remote-project-save-service'
 import type { RemoteRuntimeInstallationIdentity } from './remote-runtime-installation-manager'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
+import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
 
 const digest = (character: string): string =>
   `sha256:${character.repeat(64)}`
+const agentInstallationId =
+  verifyAgentInstallationId('agent-installation')
 
 const installation: RemoteRuntimeInstallationIdentity = {
   runtimeId: 'opencode',
@@ -60,7 +63,6 @@ function advertisedCapabilities(): DaemonCapabilities {
 
 function harness(options: {
   selection?: RemoteProjectRuntimeValidationInput['selection']
-  workMode?: 'ask' | 'execute'
   architecture?: 'x64' | 'arm64'
   installed?: RemoteRuntimeInstallationIdentity
   refreshed?: DaemonCapabilities
@@ -72,7 +74,6 @@ function harness(options: {
     ({
       provider: 'opencode'
     } as const)
-  const workMode = options.workMode ?? 'ask'
   const architecture = options.architecture ?? 'x64'
   const installed = options.installed ?? installation
   let state: RemoteAgentConnection['state'] = 'ready'
@@ -85,7 +86,7 @@ function harness(options: {
   }
   const status: DaemonStatus = {
     state: 'ready',
-    installationId: 'agent-installation',
+    installationId: agentInstallationId,
     binaryDigest: digest('a'),
     daemonBootId: 'daemon-boot',
     agentVersion: '2.0.0',
@@ -127,8 +128,8 @@ function harness(options: {
     reconnect: vi.fn(),
     release: vi.fn()
   } as unknown as RemoteAgentConnection
-  const ensureInstalled = vi.fn(async () => {
-    calls.push('install')
+  const activateInstalled = vi.fn(async () => {
+    calls.push('activate')
     return installed
   })
   const resolveModelProfile = vi.fn(async () => {
@@ -138,19 +139,12 @@ function harness(options: {
       : options.modelProfile ?? modelProfile
   })
   const validator = new ManagedRemoteProjectRuntimeValidator({
-    installationManager: { ensureInstalled },
-    resolveModelProfile,
-    now: () => new Date('2030-01-01T00:00:00.000Z')
+    installationManager: { activateInstalled },
+    resolveModelProfile
   })
   const signal = new AbortController().signal
   const input: RemoteProjectRuntimeValidationInput = {
     selection,
-    runtimeSelectionKey: `${selection.provider}:${
-      'profileId' in selection
-        ? selection.profileId ?? 'platform'
-        : 'default'
-    }`,
-    workMode,
     host: {
       hostId: 'host-1',
       hostRevision: 3,
@@ -158,19 +152,11 @@ function harness(options: {
       remoteUsername: 'builder'
     },
     agent: {
-      installationId: status.installationId,
+      installationId: agentInstallationId,
       binaryDigest: status.binaryDigest,
       version: status.agentVersion,
       architecture,
       protocolMajor: 1
-    },
-    workspace: {
-      canonicalRemoteRoot: '/srv/project',
-      workspaceIdentity: 'workspace-identity',
-      workspaceId: 'workspace-id',
-      generation: 1,
-      access: 'read-only',
-      capabilities: ['read-text']
     },
     connection,
     signal
@@ -180,7 +166,7 @@ function harness(options: {
     input,
     connection,
     calls,
-    ensureInstalled,
+    activateInstalled,
     refreshCapabilities,
     resolveModelProfile,
     setCapabilities: (value: DaemonCapabilities) => {
@@ -193,21 +179,14 @@ function harness(options: {
 }
 
 describe('ManagedRemoteProjectRuntimeValidator', () => {
-  it('installs, refreshes, and leases exact Ask Runtime evidence', async () => {
+  it('installs, refreshes, and leases the current Runtime', async () => {
     const test = harness()
     const lease = await test.validator.validate(test.input)
 
-    expect(test.calls).toEqual(['model', 'install', 'refresh'])
-    expect(test.ensureInstalled).toHaveBeenCalledWith('host-1', {
+    expect(test.calls).toEqual(['model', 'activate', 'refresh'])
+    expect(test.activateInstalled).toHaveBeenCalledWith('host-1', {
+      agentInstallationId,
       signal: test.input.signal
-    })
-    expect(lease.evidence).toEqual({
-      runtimeSelectionKey: 'opencode:default',
-      runtimeBundleDigest: installation.bundleDigest,
-      runtimeAdapterDigest: installation.runtimeAdapterDigest,
-      agentInstallationIdAtValidation: 'agent-installation',
-      validatedAt: '2030-01-01T00:00:00.000Z',
-      workMode: 'ask'
     })
     expect(() => lease.assertCurrent()).not.toThrow()
 
@@ -221,13 +200,10 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
     expect(() => lease.assertCurrent()).toThrow(/released/iu)
   })
 
-  it('validates Execute without a second authorization tier', async () => {
-    const test = harness({ workMode: 'execute' })
+  it('fails the live lease when the connection goes offline', async () => {
+    const test = harness()
     const lease = await test.validator.validate(test.input)
 
-    expect(lease.evidence).toMatchObject({
-      workMode: 'execute'
-    })
     test.setState('offline')
     expect(() => lease.assertCurrent()).toThrow(/not ready/iu)
   })
@@ -243,7 +219,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
     await expect(test.validator.validate(test.input)).rejects.toThrow(
       /OpenCode Runtime/iu
     )
-    expect(test.ensureInstalled).not.toHaveBeenCalled()
+    expect(test.activateInstalled).not.toHaveBeenCalled()
     expect(test.refreshCapabilities).not.toHaveBeenCalled()
   })
 
@@ -263,7 +239,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
       /model profile/iu
     )
     expect(test.resolveModelProfile).toHaveBeenCalledOnce()
-    expect(test.ensureInstalled).not.toHaveBeenCalled()
+    expect(test.activateInstalled).not.toHaveBeenCalled()
     expect(test.refreshCapabilities).not.toHaveBeenCalled()
   })
 

@@ -567,21 +567,6 @@ export const app = {
     brandingSaved: 'Branding saved',
     updateAvailable:
       'GoodBuddy {{version}} is available. View it in About & Updates.',
-    remoteProjectActivated:
-      'The remote project Agent and Runtime are ready',
-    remoteProjectActivationFailed:
-      'Remote project update failed: {{message}}. Check the Host and try again.',
-    remoteProjectActivationUnknownError: 'Unknown error',
-    remoteProjectReactivating:
-      'The remote project is reconnecting. Try again shortly.',
-    remoteProjectReconnectRequired:
-      'The remote project must reconnect. Select the current project again before sending.',
-    remoteProjectActivationCancelled:
-      'Remote project connection cancelled',
-    remoteProjectActivationCancelFailed:
-      'Could not cancel the remote project connection: {{message}}',
-    remoteProjectActivationCancelUnknownError:
-      'Could not cancel the remote project connection. Try again.',
     channelConversationAutomatic:
       'Channel conversations are created automatically when the client receives a new message',
     deleteConversationCancelFailed:

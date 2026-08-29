@@ -22,7 +22,8 @@ export const workspace = {
       remoteDetail: '{{channel}} · Remote channel · {{path}}',
       remoteChannel: 'Remote channel',
       create: 'New project',
-      settings: 'Project settings'
+      settings: 'Project settings',
+      settingsNamed: 'Manage project {{name}}'
     },
     dialog: {
       createTitle: 'New project',
@@ -85,6 +86,23 @@ export const workspace = {
       noHosts: 'No saved SSH hosts',
       hostHelp:
         'Host credentials remain centrally managed in Settings and are not copied into the project.',
+      readiness: {
+        loading: 'Reading the Host validation record…',
+        ready:
+          'This Host is validated. Saving connects and checks the Agent, workspace, and Runtime.',
+        unready:
+          'This Host has not completed Host Key and connection validation. Validate it under Settings > SSH Hosts first.',
+        error:
+          'Could not read this Host’s local validation record. Check it under Settings > SSH Hosts.',
+        saveBlocked:
+          'The selected Host has not been validated. Validate its connection under Settings > SSH Hosts first.',
+        options: {
+          loading: 'Reading',
+          ready: 'Validated',
+          unready: 'Validation required',
+          error: 'Record unavailable'
+        }
+      },
       rootHelp:
         'Enter or choose a canonical absolute path beginning with /.',
       directoryPicker: {
@@ -108,13 +126,9 @@ export const workspace = {
         save: 'Save remote project',
         saving: 'Saving remote project…'
       },
-      activation: {
-        title: 'Connecting to remote project “{{project}}”',
-        progressLabel: 'Remote project connection progress',
-        stepsLabel: 'Remote project connection stages',
-        cancel: 'Cancel connection',
-        cancelling: 'Cancelling the remote connection…',
-        cancellingAction: 'Cancelling…'
+      progress: {
+        progressLabel: 'Remote project save progress',
+        stepsLabel: 'Remote project save stages'
       },
       phaseStatus: 'Current phase: {{phase}}',
       phases: {

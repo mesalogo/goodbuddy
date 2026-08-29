@@ -372,7 +372,7 @@ export function DestructiveConfirmActions({
   confirming: boolean
   disabled?: boolean
   icon?: ReactNode
-  message?: string
+  message?: ReactNode
   onCancel: () => void
   onConfirm: () => void
   onRequestConfirm: () => void

@@ -15,6 +15,11 @@ describe('Electron Vite configuration', () => {
         name: 'embedding-inference-bootstrap'
       })
     ).toBe('embedding-inference-bootstrap.js')
+    expect(
+      stableMainEntryFileName({
+        name: 'remote-package-installer'
+      })
+    ).toBe('remote-package-installer.mjs')
     expect(stableMainEntryFileName({ name: 'index' })).toBe(
       '[name].js'
     )

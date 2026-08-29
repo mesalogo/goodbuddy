@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
-import { RemoteEnvironmentUpdateService } from './remote-environment-update-service'
+import type { RemoteEnvironmentUpdateProgress } from '../../shared/ssh-host-contracts'
+import {
+  RemoteEnvironmentUpdateService,
+  type RemoteEnvironmentPreparer
+} from './remote-environment-update-service'
 
 const HOST_ID = '00000000-0000-4000-8000-000000000101'
-const OTHER_HOST_ID = '00000000-0000-4000-8000-000000000102'
 
-function createOwner() {
+function createOwner(id = 1) {
   let destroyed = false
   const listeners = new Set<() => void>()
   return {
-    id: 1,
+    id,
     isDestroyed: vi.fn(() => destroyed),
     on: vi.fn((_event: 'destroyed', listener: () => void) => {
       listeners.add(listener)
@@ -20,15 +23,17 @@ function createOwner() {
     ),
     destroy() {
       destroyed = true
-      for (const listener of [...listeners]) {
-        listener()
-      }
+      for (const listener of [...listeners]) listener()
     }
   }
 }
 
 function abortablePending(signal: AbortSignal): Promise<never> {
   return new Promise((_, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason)
+      return
+    }
     signal.addEventListener('abort', () => reject(signal.reason), {
       once: true
     })
@@ -36,222 +41,243 @@ function abortablePending(signal: AbortSignal): Promise<never> {
 }
 
 describe('RemoteEnvironmentUpdateService', () => {
-  it('force-updates Agent then locked Runtime with one signal before finalizing', async () => {
-    const sequence: string[] = []
-    const signals: AbortSignal[] = []
-    const agent = {
-      ensureInstalled: vi.fn(
-        async (
-          _hostId: string,
-          options: { force?: boolean; signal?: AbortSignal }
-        ) => {
-          sequence.push('agent')
-          expect(options.force).toBe(true)
-          signals.push(options.signal!)
-          return {}
-        }
-      )
-    }
-    const runtime = {
-      ensureInstalled: vi.fn(
-        async (
-          _hostId: string,
-          options: { force?: boolean; signal?: AbortSignal }
-        ) => {
-          sequence.push('runtime')
-          expect(options.force).toBe(true)
-          signals.push(options.signal!)
-          return {}
-        }
-      )
-    }
-    const afterUpdate = vi.fn(async () => {
-      sequence.push('finalizing')
-    })
-    const service = new RemoteEnvironmentUpdateService(
-      agent as never,
-      runtime as never,
-      afterUpdate
-    )
-    const progress: string[] = []
-
-    await expect(
-      service.update(createOwner(), HOST_ID, (event) => {
-        progress.push(event.phase)
-      })
-    ).resolves.toBeUndefined()
-
-    expect(agent.ensureInstalled).toHaveBeenCalledWith(HOST_ID, {
-      force: true,
-      signal: expect.any(AbortSignal)
-    })
-    expect(runtime.ensureInstalled).toHaveBeenCalledWith(HOST_ID, {
-      force: true,
-      signal: expect.any(AbortSignal)
-    })
-    expect(signals[0]).toBe(signals[1])
-    expect(sequence).toEqual(['agent', 'runtime', 'finalizing'])
-    expect(progress).toEqual(['agent', 'runtime', 'finalizing'])
-    expect(afterUpdate).toHaveBeenCalledWith(HOST_ID)
-  })
-
-  it('does not run the Runtime or finalizer after an Agent error', async () => {
-    const failure = new Error('agent failed')
-    const agent = {
-      ensureInstalled: vi.fn(async () => {
-        throw failure
-      })
-    }
-    const runtime = { ensureInstalled: vi.fn() }
-    const afterUpdate = vi.fn()
-    const service = new RemoteEnvironmentUpdateService(
-      agent as never,
-      runtime as never,
-      afterUpdate
-    )
-
-    await expect(
-      service.update(createOwner(), HOST_ID)
-    ).rejects.toBe(failure)
-    expect(runtime.ensureInstalled).not.toHaveBeenCalled()
-    expect(afterUpdate).not.toHaveBeenCalled()
-  })
-
-  it('joins duplicate updates and rejects a different Host for the same owner', async () => {
+  it('deduplicates the same Host and method across owners and fans out progress', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const agent = {
-      ensureInstalled: vi.fn(async () => {
+    let emit:
+      | ((progress: RemoteEnvironmentUpdateProgress) => void)
+      | undefined
+    const preparer: RemoteEnvironmentPreparer = {
+      prepare: vi.fn(async (_hostId, method, observer) => {
+        expect(method).toBe('remote-download')
+        emit = observer
         await gate
-        return {}
       })
     }
-    const runtime = {
-      ensureInstalled: vi.fn(async () => ({}))
-    }
-    const owner = createOwner()
-    const service = new RemoteEnvironmentUpdateService(
-      agent as never,
-      runtime as never
-    )
+    const service = new RemoteEnvironmentUpdateService(preparer)
+    const firstProgress: string[] = []
+    const secondProgress: string[] = []
 
-    const first = service.update(owner, HOST_ID)
-    expect(service.update(owner, HOST_ID)).toBe(first)
-    await expect(
-      service.update(owner, OTHER_HOST_ID)
-    ).rejects.toThrow('another Host')
+    const first = service.update(
+      createOwner(1),
+      { hostId: HOST_ID, method: 'remote-download' },
+      (progress) => firstProgress.push(progress.phase)
+    )
+    const second = service.update(
+      createOwner(2),
+      { hostId: HOST_ID, method: 'remote-download' },
+      (progress) => secondProgress.push(progress.phase)
+    )
+    await vi.waitFor(() => expect(emit).toBeTypeOf('function'))
+    emit?.({
+      hostId: HOST_ID,
+      method: 'remote-download',
+      phase: 'downloading'
+    })
     release()
-    await first
+
+    await Promise.all([first, second])
+    expect(preparer.prepare).toHaveBeenCalledOnce()
+    expect(firstProgress).toEqual([
+      'downloading',
+      'finalizing',
+      'complete'
+    ])
+    expect(secondProgress).toEqual(firstProgress)
   })
 
-  it('aborts on explicit cancellation and owner destruction', async () => {
-    for (const cancel of ['explicit', 'destroyed'] as const) {
-      let signal: AbortSignal | undefined
-      const agent = {
-        ensureInstalled: vi.fn(
-          async (
-            _hostId: string,
-            options: { signal?: AbortSignal }
-          ) => {
-            signal = options.signal
-            return abortablePending(options.signal!)
-          }
-        )
-      }
-      const runtime = { ensureInstalled: vi.fn() }
-      const owner = createOwner()
-      const service = new RemoteEnvironmentUpdateService(
-        agent as never,
-        runtime as never
-      )
-      const update = service.update(owner, HOST_ID)
-      await vi.waitFor(() =>
-        expect(signal).toBeInstanceOf(AbortSignal)
-      )
-
-      if (cancel === 'explicit') {
-        service.cancel(owner, HOST_ID)
-      } else {
-        owner.destroy()
-      }
-
-      await expect(update).rejects.toMatchObject({
-        name: 'AbortError'
-      })
-      expect(signal?.aborted).toBe(true)
-      expect(runtime.ensureInstalled).not.toHaveBeenCalled()
-    }
-  })
-
-  it('aborts active work and settles cleanly on disposal', async () => {
+  it('rejects a different method while the same Host has active work', async () => {
     let signal: AbortSignal | undefined
-    const agent = {
-      ensureInstalled: vi.fn(
-        async (
-          _hostId: string,
-          options: { signal?: AbortSignal }
-        ) => {
-          signal = options.signal
-          return abortablePending(options.signal!)
-        }
-      )
+    const preparer: RemoteEnvironmentPreparer = {
+      prepare: vi.fn(async (
+        _hostId,
+        _method,
+        _observer,
+        operationSignal
+      ) => {
+        signal = operationSignal
+        return abortablePending(operationSignal)
+      })
     }
-    const service = new RemoteEnvironmentUpdateService(
-      agent as never,
-      { ensureInstalled: vi.fn() } as never
+    const service = new RemoteEnvironmentUpdateService(preparer)
+    const owner = createOwner()
+    const active = service.update(
+      owner,
+      { hostId: HOST_ID, method: 'auto' }
     )
-    const update = service.update(createOwner(), HOST_ID)
+
+    await expect(service.update(
+      createOwner(2),
+      { hostId: HOST_ID, method: 'goodbuddy-transfer' }
+    )).rejects.toThrow('conflicting')
+    owner.destroy()
+    await expect(active).rejects.toMatchObject({ name: 'AbortError' })
+    expect(signal?.aborted).toBe(true)
+  })
+
+  it('cancels only one waiter and aborts underlying work when the last owner is destroyed', async () => {
+    let signal: AbortSignal | undefined
+    const preparer: RemoteEnvironmentPreparer = {
+      prepare: vi.fn(async (
+        _hostId,
+        _method,
+        _observer,
+        operationSignal
+      ) => {
+        signal = operationSignal
+        return abortablePending(operationSignal)
+      })
+    }
+    const service = new RemoteEnvironmentUpdateService(preparer)
+    const firstOwner = createOwner(1)
+    const secondOwner = createOwner(2)
+    const first = service.update(
+      firstOwner,
+      { hostId: HOST_ID, method: 'remote-download' }
+    )
+    const second = service.update(
+      secondOwner,
+      { hostId: HOST_ID, method: 'remote-download' }
+    )
     await vi.waitFor(() =>
       expect(signal).toBeInstanceOf(AbortSignal)
     )
 
-    await expect(service.dispose()).resolves.toBeUndefined()
-    await expect(update).rejects.toMatchObject({ name: 'AbortError' })
+    service.cancel(firstOwner, HOST_ID)
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    expect(signal?.aborted).toBe(false)
+
+    secondOwner.destroy()
+    await expect(second).rejects.toMatchObject({ name: 'AbortError' })
     expect(signal?.aborted).toBe(true)
-    expect(() =>
-      service.update(createOwner(), HOST_ID)
-    ).toThrow('disposed')
+    expect(firstOwner.removeListener).toHaveBeenCalledOnce()
+    expect(secondOwner.removeListener).toHaveBeenCalledOnce()
   })
 
-  it('bounds disposal when an installation ignores cancellation', async () => {
+  it('aborts active work and bounds disposal when the preparer ignores cancellation', async () => {
     vi.useFakeTimers()
     try {
-      let started = false
-      const service = new RemoteEnvironmentUpdateService(
-        {
-          ensureInstalled: vi.fn(async () => {
-            started = true
-            await new Promise(() => undefined)
-          })
-        } as never,
-        { ensureInstalled: vi.fn() } as never
-      )
-      void service.update(createOwner(), HOST_ID)
-      await vi.waitFor(() => expect(started).toBe(true))
+      let signal: AbortSignal | undefined
+      const preparer: RemoteEnvironmentPreparer = {
+        prepare: vi.fn(async (
+          _hostId,
+          _method,
+          _observer,
+          operationSignal
+        ) => {
+          signal = operationSignal
+          await new Promise(() => undefined)
+        })
+      }
+      const service = new RemoteEnvironmentUpdateService(preparer)
+      void service.update(
+        createOwner(),
+        { hostId: HOST_ID, method: 'remote-download' }
+      ).catch(() => undefined)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(signal).toBeInstanceOf(AbortSignal)
 
       const disposal = service.dispose()
       await vi.advanceTimersByTimeAsync(5_000)
       await expect(disposal).resolves.toBeUndefined()
+      expect(signal?.aborted).toBe(true)
+      expect(() => service.update(
+        createOwner(2),
+        { hostId: HOST_ID, method: 'remote-download' }
+      )).toThrow('disposed')
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('isolates progress observer errors from the update outcome', async () => {
-    const afterUpdate = vi.fn()
+  it('isolates observers and preserves an auto-resolved method through finalizing and complete', async () => {
+    const afterUpdate = vi.fn(async () => undefined)
+    const preparer: RemoteEnvironmentPreparer = {
+      prepare: vi.fn(async (hostId, method, observer, signal) => {
+        expect(hostId).toBe(HOST_ID)
+        expect(method).toBe('auto')
+        expect(signal.aborted).toBe(false)
+        observer?.({
+          hostId,
+          method: 'remote-download',
+          phase: 'downloading'
+        })
+      })
+    }
     const service = new RemoteEnvironmentUpdateService(
-      { ensureInstalled: vi.fn(async () => ({})) } as never,
-      { ensureInstalled: vi.fn(async () => ({})) } as never,
+      preparer,
       afterUpdate
     )
+    const observed: RemoteEnvironmentUpdateProgress[] = []
+    const throwingObserver = vi.fn(() => {
+      throw new Error('observer failed')
+    })
+    const first = service.update(
+      createOwner(1),
+      { hostId: HOST_ID, method: 'auto' },
+      throwingObserver
+    )
+    const second = service.update(
+      createOwner(2),
+      { hostId: HOST_ID, method: 'auto' },
+      (event) => observed.push(event)
+    )
 
-    await expect(
-      service.update(createOwner(), HOST_ID, () => {
-        throw new Error('observer failed')
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      undefined,
+      undefined
+    ])
+    expect(afterUpdate).toHaveBeenCalledWith(HOST_ID)
+    expect(throwingObserver).toHaveBeenCalledTimes(3)
+    expect(observed).toEqual([
+      {
+        hostId: HOST_ID,
+        method: 'remote-download',
+        phase: 'downloading'
+      },
+      {
+        hostId: HOST_ID,
+        method: 'remote-download',
+        phase: 'finalizing'
+      },
+      {
+        hostId: HOST_ID,
+        method: 'remote-download',
+        phase: 'complete'
+      }
+    ])
+  })
+
+  it('does not let preparer-emitted terminal phases bypass finalization', async () => {
+    const order: string[] = []
+    const preparer: RemoteEnvironmentPreparer = {
+      prepare: vi.fn(async (hostId, method, observer) => {
+        observer?.({ hostId, method, phase: 'finalizing' })
+        observer?.({ hostId, method, phase: 'complete' })
+        order.push('prepared')
       })
-    ).resolves.toBeUndefined()
-    expect(afterUpdate).toHaveBeenCalledOnce()
+    }
+    const service = new RemoteEnvironmentUpdateService(
+      preparer,
+      async () => {
+        order.push('after')
+      }
+    )
+
+    await service.update(
+      createOwner(),
+      { hostId: HOST_ID, method: 'goodbuddy-transfer' },
+      (event) => order.push(event.phase)
+    )
+
+    expect(order).toEqual([
+      'prepared',
+      'finalizing',
+      'after',
+      'complete'
+    ])
   })
 })

@@ -1,7 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantProject } from '../../shared/assistant-contracts'
-import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import type { SshConnectionTarget } from '../ssh/ssh-host-store'
 import { verifyAgentInstallationId } from '../ssh/ssh-agent-command'
@@ -26,12 +25,15 @@ afterEach(async () => {
 
 class Owner extends EventEmitter implements RemoteProjectSaveOwner {
   destroyed = false
+
   constructor(readonly id: number) {
     super()
   }
+
   isDestroyed(): boolean {
     return this.destroyed
   }
+
   destroy(): void {
     this.destroyed = true
     this.emit('destroyed')
@@ -45,6 +47,39 @@ const draft = {
   runtimeSelection: { provider: 'opencode' as const },
   hostId,
   remoteRootPath: root
+}
+
+const installation: AgentInstallationIdentity = {
+  installationId: verifyAgentInstallationId('agent-installation'),
+  binaryDigest: digest,
+  agentVersion: '1.2.3',
+  protocol: { major: 1, minor: 0 },
+  platform: 'linux',
+  architecture: 'x64',
+  supervisor: 'detached-on-demand'
+}
+
+function project(
+  overrides: Partial<AssistantProject> = {}
+): AssistantProject {
+  return {
+    id: projectId,
+    name: draft.name,
+    description: draft.description,
+    rootPath: root,
+    defaultWorkMode: draft.defaultWorkMode,
+    runtimeSelection: draft.runtimeSelection,
+    kind: 'user',
+    executionSpace: {
+      kind: 'ssh',
+      hostId,
+      remoteRootPath: root
+    },
+    status: 'active',
+    createdAt: '2030-01-01T00:00:00.000Z',
+    updatedAt: '2030-01-01T00:00:00.000Z',
+    ...overrides
+  }
 }
 
 function target(): SshConnectionTarget {
@@ -69,40 +104,19 @@ function target(): SshConnectionTarget {
   }
 }
 
-const installation: AgentInstallationIdentity = {
-  installationId: verifyAgentInstallationId('agent-installation'),
-  binaryDigest: digest,
-  agentVersion: '1.2.3',
-  protocol: { major: 1, minor: 0 },
-  platform: 'linux',
-  architecture: 'x64',
-  supervisor: 'detached-on-demand'
-}
-
-function project(): AssistantProject {
-  return {
-    id: projectId,
-    ...draft,
-    rootPath: root,
-    kind: 'user',
-    executionSpace: { kind: 'ssh', hostId, remoteRootPath: root },
-    status: 'active',
-    createdAt: '2030-01-01T00:00:00.000Z',
-    updatedAt: '2030-01-01T00:00:00.000Z'
-  }
-}
-
-function harness(options: {
-  ensureInstalled?: (signal: AbortSignal) => Promise<AgentInstallationIdentity>
-  validateWorkspace?: () => unknown
-  create?: () => AssistantProject
+type HarnessOptions = {
   getProject?: () => AssistantProject
+  validateWorkspace?: (signal?: AbortSignal) => unknown | Promise<unknown>
+  create?: () => AssistantProject
+  update?: () => AssistantProject
   resolveRuntimeSelection?: (
     selection: AgentRuntimeSelection
   ) => Promise<AgentRuntimeSelection>
-} = {}) {
+}
+
+function harness(options: HarnessOptions = {}) {
   const calls: string[] = []
-  const currentTarget = target()
+  const progress: string[] = []
   const workspace = {
     workspaceId: 'workspace-id',
     workspaceIdentity: 'workspace-identity',
@@ -119,25 +133,31 @@ function harness(options: {
     ],
     generation: 1
   }
-  const connectionRelease = vi.fn(() => calls.push('connection-release'))
-  const request = vi.fn(async (method: string) => {
-    calls.push(method)
-    if (method === 'workspace/validate') {
-      return (
-        options.validateWorkspace?.() ?? {
-          handle: workspace,
-          validatedAt: '2030-01-01T00:00:01.000Z'
-        }
-      )
-    }
-    if (method === 'workspace/close') {
-      return {
-        workspaceId: workspace.workspaceId,
-        generation: workspace.generation,
-        closed: true
+  const request = vi.fn(
+    async (method: string, _params: unknown, requestOptions?: {
+      signal?: AbortSignal
+    }) => {
+      calls.push(method)
+      if (method === 'workspace/validate') {
+        return options.validateWorkspace
+          ? await options.validateWorkspace(requestOptions?.signal)
+          : {
+              handle: workspace,
+              validatedAt: '2030-01-01T00:00:01.000Z'
+            }
       }
+      if (method === 'workspace/close') {
+        return {
+          workspaceId: workspace.workspaceId,
+          generation: workspace.generation,
+          closed: true
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
     }
-    throw new Error(`Unexpected method: ${method}`)
+  )
+  const connectionRelease = vi.fn(() => {
+    calls.push('connection-release')
   })
   const connection = {
     identity: {
@@ -156,7 +176,7 @@ function harness(options: {
       installationId: installation.installationId,
       binaryDigest: digest,
       daemonBootId: 'boot',
-      agentVersion: '1.2.3',
+      agentVersion: installation.agentVersion,
       protocol: { major: 1, minor: 0 },
       platform: 'linux',
       architecture: 'x64',
@@ -167,7 +187,13 @@ function harness(options: {
     capabilities: {
       generation: 1,
       capabilities: [
-        { name: 'workspace/read', version: 1, critical: true }
+        { name: 'workspace/read', version: 1, critical: true },
+        { name: 'runtime/acp', version: 3, critical: true },
+        {
+          name: 'runtime/model-bridge',
+          version: 1,
+          critical: true
+        }
       ],
       runtimes: []
     },
@@ -175,68 +201,57 @@ function harness(options: {
     state: 'ready',
     release: connectionRelease
   } as unknown as RemoteAgentConnection
-  const runtimeRelease = vi.fn(() => calls.push('runtime-release'))
+  const runtimeRelease = vi.fn(() => {
+    calls.push('runtime-release')
+  })
   const runtimeLease: RemoteProjectRuntimeValidationLease = {
-    evidence: {
-      runtimeSelectionKey: agentRuntimeSelectionKey(
-        draft.runtimeSelection
-      ),
-      runtimeBundleDigest: digest,
-      runtimeAdapterDigest: `sha256:${'b'.repeat(64)}`,
-      agentInstallationIdAtValidation: installation.installationId,
-      validatedAt: '2030-01-01T00:00:02.000Z',
-      workMode: 'ask'
-    },
     assertCurrent: vi.fn(() => calls.push('runtime-current')),
     release: runtimeRelease
   }
-  const assertWrite = (write: Parameters<
-    RemoteProjectSaveServiceOptions['database']['createValidatedSshProject']
-  >[0]) => {
-    write.assertSshHostCurrent({
-      hostId,
-      hostRevision: 3,
-      hostKeyGeneration: 2,
-      remoteUsername: 'builder',
-      remoteRootPath: root,
-      workspaceIdentity: workspace.workspaceIdentity,
-      agentProtocolMajor: 1,
-      agentInstallationId: installation.installationId,
-      agentBinaryDigest: digest,
-      agentVersion: '1.2.3',
-      agentArchitecture: 'x64'
-    })
+  const writes: Array<
+    Parameters<
+      RemoteProjectSaveServiceOptions['database']['createSshProject']
+    >[0]
+  > = []
+  const persist = (
+    operation: 'database-create' | 'database-update',
+    write: (typeof writes)[number],
+    result: AssistantProject
+  ): AssistantProject => {
+    calls.push(operation)
+    writes.push(write)
+    write.assertCurrent()
+    return result
   }
-  const createProject = vi.fn((write) => {
-    calls.push('database-create')
-    assertWrite(write)
-    return options.create?.() ?? project()
-  })
-  const updateProject = vi.fn((_id, _updatedAt, write) => {
-    calls.push('database-update')
-    assertWrite(write)
-    return project()
-  })
-  const progress: string[] = []
+  const createProject = vi.fn((write: (typeof writes)[number]) =>
+    persist('database-create', write, options.create?.() ?? project())
+  )
+  const updateProject = vi.fn(
+    (
+      _id: string,
+      _updatedAt: string,
+      write: (typeof writes)[number]
+    ) => persist('database-update', write, options.update?.() ?? project())
+  )
   const service = new RemoteProjectSaveService({
     database: {
       getProject: vi.fn(() => options.getProject?.() ?? project()),
-      createValidatedSshProject: createProject,
-      updateValidatedSshProject: updateProject
+      createSshProject: createProject,
+      updateSshProject: updateProject
     },
     sshHosts: {
       resolveConnectionTarget: vi.fn(async () => {
         calls.push('host')
-        return structuredClone(currentTarget)
+        return target()
       }),
-      assertConnectionTargetCurrent: vi.fn(() => calls.push('host-current'))
+      assertConnectionTargetCurrent: vi.fn(() =>
+        calls.push('host-current')
+      )
     },
     installationManager: {
-      ensureInstalled: vi.fn(async (_hostId, requestOptions) => {
-        calls.push('install')
-        return options.ensureInstalled
-          ? options.ensureInstalled(requestOptions.signal!)
-          : installation
+      activateInstalled: vi.fn(async () => {
+        calls.push('activate')
+        return installation
       })
     },
     connectionManager: {
@@ -249,15 +264,9 @@ function harness(options: {
       options.resolveRuntimeSelection ??
       (async (selection) => selection),
     runtimeValidator: {
-      validate: vi.fn(async (input) => {
+      validate: vi.fn(async () => {
         calls.push('runtime')
-        return {
-          ...runtimeLease,
-          evidence: {
-            ...runtimeLease.evidence,
-            runtimeSelectionKey: input.runtimeSelectionKey
-          }
-        }
+        return runtimeLease
       })
     },
     notify: (_owner, value) => progress.push(value.phase)
@@ -266,20 +275,24 @@ function harness(options: {
   return {
     service,
     calls,
+    progress,
+    writes,
     createProject,
     updateProject,
-    runtimeRelease,
+    request,
     connectionRelease,
-    progress
+    runtimeRelease
   }
 }
 
-describe('RemoteProjectSaveService awaited save', () => {
-  it('validates and creates in one awaited request, then cleans up in reverse order', async () => {
+describe('RemoteProjectSaveService', () => {
+  it('prepares the current Host and creates one stable project record', async () => {
     const value = harness()
+
     await expect(
       value.service.save(new Owner(1), { intent: 'create', draft })
     ).resolves.toMatchObject({ id: projectId })
+
     expect(value.progress).toEqual([
       'host',
       'agent',
@@ -287,50 +300,58 @@ describe('RemoteProjectSaveService awaited save', () => {
       'runtime',
       'saving'
     ])
-    expect(value.createProject).toHaveBeenCalledOnce()
-    expect(value.calls.slice(-3)).toEqual([
+    expect(value.writes[0]).toMatchObject({
+      project: {
+        rootPath: root,
+        runtimeSelection: { provider: 'opencode' }
+      },
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: root
+      }
+    })
+    expect(value.calls).toEqual([
+      'host',
+      'activate',
+      'attach',
+      'workspace/validate',
+      'runtime',
+      'runtime-current',
+      'database-create',
+      'host-current',
+      'runtime-current',
       'runtime-release',
       'workspace/close',
       'connection-release'
     ])
   })
 
-  it('accepts a readable non-Git remote workspace', async () => {
+  it('persists the resolved Runtime selection', async () => {
+    const selection = {
+      provider: 'opencode' as const,
+      profileId: '00000000-0000-4000-8000-000000000099'
+    }
     const value = harness({
-      validateWorkspace: () => ({
-        handle: {
-          workspaceId: 'workspace-id',
-          workspaceIdentity: 'workspace-identity',
-          canonicalDisplayPath: root,
-          access: 'read-only' as const,
-          git: 'not-a-repository' as const,
-          capabilities: [
-            'list',
-            'stat',
-            'read-text',
-            'search'
-          ] as const,
-          generation: 1
-        },
-        validatedAt: '2030-01-01T00:00:01.000Z'
-      })
+      resolveRuntimeSelection: vi.fn(async () => selection)
     })
 
-    await expect(
-      value.service.save(new Owner(1), {
-        intent: 'create',
-        draft
-      })
-    ).resolves.toMatchObject({ id: projectId })
-    expect(value.createProject).toHaveBeenCalledOnce()
+    await value.service.save(new Owner(2), {
+      intent: 'create',
+      draft
+    })
+
+    expect(value.writes[0]?.project.runtimeSelection).toEqual(selection)
   })
 
-  it('updates using the project revision captured before remote validation', async () => {
+  it('uses the preflight project revision for updates', async () => {
     const value = harness()
-    await value.service.save(new Owner(1), {
+
+    await value.service.save(new Owner(3), {
       intent: 'update',
-      draft: { projectId, ...draft }
+      draft: { ...draft, projectId }
     })
+
     expect(value.updateProject).toHaveBeenCalledWith(
       projectId,
       '2030-01-01T00:00:00.000Z',
@@ -338,173 +359,68 @@ describe('RemoteProjectSaveService awaited save', () => {
     )
   })
 
-  it('validates and persists the configured Runtime profile selection', async () => {
-    const configuredSelection = {
-      provider: 'opencode' as const,
-      profileId: '00000000-0000-4000-8000-000000000003'
-    }
-    const value = harness({
-      resolveRuntimeSelection: vi.fn(async () => configuredSelection)
-    })
-
-    await value.service.save(new Owner(1), {
-      intent: 'create',
-      draft
-    })
-
-    expect(value.createProject).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project: expect.objectContaining({
-          runtimeSelection: configuredSelection
-        })
-      })
-    )
-  })
-
-  it('activates a persisted SSH project through the full update pipeline', async () => {
-    const value = harness()
-
-    await expect(
-      value.service.activate(new Owner(1), projectId)
-    ).resolves.toMatchObject({ id: projectId })
-
-    expect(value.updateProject).toHaveBeenCalledWith(
-      projectId,
-      '2030-01-01T00:00:00.000Z',
-      expect.objectContaining({
-        project: expect.objectContaining({
-          name: draft.name,
-          description: draft.description,
-          defaultWorkMode: draft.defaultWorkMode,
-          runtimeSelection: draft.runtimeSelection
-        }),
-        executionSpace: expect.objectContaining({
-          hostId,
-          remoteRootPath: root
-        })
-      })
-    )
-    expect(value.calls).toEqual(expect.arrayContaining([
-      'host',
-      'install',
-      'attach',
-      'workspace/validate',
-      'runtime',
-      'database-update'
-    ]))
-  })
-
-  it('coalesces repeated activation for the same owner and project', async () => {
-    let releaseInstallation!: () => void
-    const installationGate = new Promise<void>((resolve) => {
-      releaseInstallation = resolve
-    })
-    const value = harness({
-      ensureInstalled: async () => {
-        await installationGate
-        return installation
-      }
-    })
-    const owner = new Owner(1)
-
-    const first = value.service.activate(owner, projectId)
-    await vi.waitFor(() => expect(value.calls).toContain('install'))
-    const second = value.service.activate(owner, projectId)
-    await expect(
-      value.service.save(owner, { intent: 'create', draft })
-    ).rejects.toThrow('already in progress')
-
-    expect(
-      value.calls.filter((call) => call === 'install')
-    ).toHaveLength(1)
-    releaseInstallation()
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      expect.objectContaining({ id: projectId }),
-      expect.objectContaining({ id: projectId })
-    ])
-    expect(value.updateProject).toHaveBeenCalledOnce()
-  })
-
-  it('rejects activation for a local project before remote work starts', async () => {
-    const value = harness({
-      getProject: () => ({
-        ...project(),
-        rootPath: 'C:\\workspace',
-        executionSpace: {
-          kind: 'local',
-          rootPath: 'C:\\workspace'
-        }
-      })
-    })
-
-    await expect(
-      value.service.activate(new Owner(1), projectId)
-    ).rejects.toThrow('active managed SSH projects')
-    expect(value.calls).toEqual([])
-    expect(value.updateProject).not.toHaveBeenCalled()
-  })
-
   it('does not write when workspace validation fails', async () => {
     const value = harness({
       validateWorkspace: () => {
-        throw new Error('workspace unavailable')
+        throw new Error('workspace denied')
       }
     })
+
     await expect(
-      value.service.save(new Owner(1), { intent: 'create', draft })
-    ).rejects.toThrow('workspace unavailable')
+      value.service.save(new Owner(7), { intent: 'create', draft })
+    ).rejects.toThrow('workspace denied')
     expect(value.createProject).not.toHaveBeenCalled()
     expect(value.connectionRelease).toHaveBeenCalledOnce()
   })
 
-  it('cancels the current owner save without an operation id', async () => {
+  it('cancels the active owner request', async () => {
     const value = harness({
-      ensureInstalled: (signal) =>
-        new Promise((_, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason), {
-            once: true
-          })
+      validateWorkspace: async (signal) =>
+        await new Promise((_, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(signal.reason),
+            { once: true }
+          )
         })
     })
-    const owner = new Owner(1)
-    const saving = value.service.save(owner, { intent: 'create', draft })
-    await vi.waitFor(() => expect(value.calls).toContain('install'))
+    const owner = new Owner(8)
+    const pending = value.service.save(owner, {
+      intent: 'create',
+      draft
+    })
+    await vi.waitFor(() => {
+      expect(value.calls).toContain('workspace/validate')
+    })
+
     value.service.cancelCurrent(owner)
-    await expect(saving).rejects.toMatchObject({ name: 'AbortError' })
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     expect(value.createProject).not.toHaveBeenCalled()
   })
 
-  it('cancels when the renderer owner is destroyed', async () => {
+  it('cancels when the owner is destroyed', async () => {
     const value = harness({
-      ensureInstalled: (signal) =>
-        new Promise((_, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason), {
-            once: true
-          })
+      validateWorkspace: async (signal) =>
+        await new Promise((_, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(signal.reason),
+            { once: true }
+          )
         })
     })
-    const owner = new Owner(1)
-    const saving = value.service.save(owner, { intent: 'create', draft })
-    await vi.waitFor(() => expect(value.calls).toContain('install'))
-    owner.destroy()
-    await expect(saving).rejects.toMatchObject({ name: 'AbortError' })
-  })
-
-  it('surfaces transactional conflicts and permits a later retry', async () => {
-    const value = harness({
-      create: () => {
-        throw new Error('project conflict')
-      }
+    const owner = new Owner(9)
+    const pending = value.service.save(owner, {
+      intent: 'create',
+      draft
     })
-    const owner = new Owner(1)
-    await expect(
-      value.service.save(owner, { intent: 'create', draft })
-    ).rejects.toThrow('project conflict')
-    await expect(
-      value.service.save(owner, {
-        intent: 'update',
-        draft: { projectId, ...draft }
-      })
-    ).resolves.toMatchObject({ id: projectId })
+    await vi.waitFor(() => {
+      expect(value.calls).toContain('workspace/validate')
+    })
+
+    owner.destroy()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
   })
 })

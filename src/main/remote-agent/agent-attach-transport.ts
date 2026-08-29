@@ -523,15 +523,19 @@ async function readWelcome(
     }
     const onAbort = (): void => fail(signal.reason)
     const onError = (error: Error): void => fail(error)
-    const onClose = (): void =>
+    const onClose = (): void => {
+      const diagnostic = handshakeFailureDiagnostic(stderr)
       fail(
         new AgentAttachTransportError(
           stderr.byteLength > 0
             ? 'Agent attach closed during handshake with diagnostic output'
             : 'Agent attach closed during handshake',
-          'closed'
+          'closed',
+          undefined,
+          diagnostic
         )
       )
+    }
     const onStderr = (chunk: Buffer | string): void => {
       const bytes = Buffer.from(chunk)
       if (stderr.byteLength + bytes.byteLength > MAXIMUM_STDERR_BYTES) {
@@ -631,6 +635,20 @@ async function readWelcome(
       }
     })
   })
+}
+
+function handshakeFailureDiagnostic(
+  stderr: Uint8Array
+): string | undefined {
+  const text = Buffer.from(stderr).toString('utf8')
+  if (
+    /(?:unknown signing key|signature verification|manifest .*mismatch|manifest does not match|authorized registry role|payload (?:size|hash|mode) mismatch)/iu.test(
+      text
+    )
+  ) {
+    return 'installation-repair-required'
+  }
+  return protocolFailureDiagnostic(stderr)
 }
 
 function encodedFrameLength(frame: AgentFrame): number {

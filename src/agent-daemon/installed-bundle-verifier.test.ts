@@ -23,6 +23,7 @@ import {
 import {
   canonicalInstalledAgentManifestBytes,
   installedAgentManifestSignaturePayload,
+  loadRegisteredAgentBundle,
   verifyInstalledAgentBundle
 } from './installed-bundle-verifier'
 
@@ -131,6 +132,60 @@ describe('installed Agent bundle verifier', () => {
       'signature verification failed'
     )
 
+  })
+
+  it('loads Host-managed registry evidence without repeating signature or payload verification', async () => {
+    writeBundle()
+    const manifestBytes = readFileSync(
+      join(installationDirectory, 'manifest.json')
+    )
+    const manifestSha256 = createHash('sha256')
+      .update(manifestBytes)
+      .digest('hex')
+    writeFileSync(
+      join(installationDirectory, 'manifest.sig'),
+      'not-used-during-attach\n',
+      { mode: 0o644 }
+    )
+
+    await expect(
+      loadRegisteredAgentBundle(installationDirectory, {
+        installationId: 'install-10',
+        architecture: 'x64',
+        registered: {
+          installationId: 'install-10',
+          agentVersion: '0.11.0',
+          manifestSha256,
+          arch: 'x64'
+        },
+        enforceFilesystemMode: process.platform !== 'win32'
+      })
+    ).resolves.toMatchObject({
+      installationId: 'install-10',
+      manifestSha256,
+      binaryDigest: `sha256:${manifestSha256}`,
+      manifest: {
+        agentVersion: '0.11.0',
+        protocol: { major: 1, minor: 0 }
+      }
+    })
+
+    writeFileSync(
+      join(installationDirectory, 'manifest.json'),
+      Buffer.concat([manifestBytes, Buffer.from(' ')])
+    )
+    await expect(
+      loadRegisteredAgentBundle(installationDirectory, {
+        installationId: 'install-10',
+        architecture: 'x64',
+        registered: {
+          installationId: 'install-10',
+          agentVersion: '0.11.0',
+          manifestSha256,
+          arch: 'x64'
+        }
+      })
+    ).rejects.toThrow('Host-managed registry')
   })
 })
 

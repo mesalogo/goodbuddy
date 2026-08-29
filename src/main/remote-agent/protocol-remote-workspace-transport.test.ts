@@ -89,16 +89,7 @@ const digest = `sha256:${'a'.repeat(64)}`
 const timestamp = '2026-08-21T00:00:00.000Z'
 const binding: RemoteWorkspaceProjectBinding = {
   hostId: 'host-1',
-  hostRevision: 2,
-  hostKeyGeneration: 3,
-  remoteUsername: 'builder',
-  remoteRootPath: '/srv/project',
-  workspaceIdentity: 'workspace-identity',
-  agentInstallationId: 'installation-test',
-  agentBinaryDigest: digest,
-  agentVersion: '0.11.0',
-  agentArchitecture: 'x64',
-  agentProtocolMajor: AGENT_PROTOCOL_VERSION.major
+  remoteRootPath: '/srv/project'
 }
 const installation: RemoteAgentInstallationIdentity = {
   installationId: verifyAgentInstallationId('installation-test'),
@@ -111,7 +102,7 @@ const installation: RemoteAgentInstallationIdentity = {
 }
 const handle: RemoteWorkspaceHandle = {
   workspaceId: 'workspace-1',
-  workspaceIdentity: binding.workspaceIdentity,
+  workspaceIdentity: 'workspace-identity',
   canonicalDisplayPath: binding.remoteRootPath,
   access: 'read-only',
   git: 'available',
@@ -139,16 +130,9 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
       methods: workspaceMethods(calls)
     })
     const durableBinding = transportBinding(test, 1)
-    test.resolution.durableWorkspaceValidation = {
-      binding: durableBinding,
-      workspaceIdentity: binding.workspaceIdentity,
-      handle,
-      validatedAt: timestamp
-    }
     const lease = await test.transport.acquireLease(binding)
 
     expect(lease.binding).toEqual(durableBinding)
-    expect(lease.resumableHandle).toEqual(handle)
     await expect(
       lease.validateWorkspace({
         remoteRootPath: binding.remoteRootPath,
@@ -156,19 +140,6 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
         requiredCapabilities: [...handle.capabilities]
       })
     ).resolves.toEqual({ handle, validatedAt: timestamp })
-    await expect(
-      lease.openWorkspace({
-        workspaceIdentity: binding.workspaceIdentity,
-        requestedAccess: 'read-only'
-      })
-    ).resolves.toEqual(handle)
-    await expect(
-      lease.resumeWorkspace({
-        workspaceId: handle.workspaceId,
-        generation: handle.generation,
-        workspaceIdentity: binding.workspaceIdentity
-      })
-    ).resolves.toEqual({ resumed: true, handle })
     await expect(
       lease.listWorkspace({
         workspaceId: handle.workspaceId,
@@ -244,8 +215,6 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
 
     expect(calls).toEqual([
       'workspace/validate',
-      'workspace/open',
-      'workspace/resume',
       'workspace/list',
       'workspace/stat',
       'workspace/readText',
@@ -259,38 +228,49 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
     test.close()
   })
 
-  it('accepts a durable non-Git handle for read operations', async () => {
-    const nonGitHandle: RemoteWorkspaceHandle = {
-      ...handle,
-      git: 'not-a-repository',
-      capabilities: ['list', 'stat', 'read-text', 'search']
-    }
-    const test = createHarness()
-    test.resolution.durableWorkspaceValidation = {
-      binding: transportBinding(test, 1),
-      workspaceIdentity: binding.workspaceIdentity,
-      handle: nonGitHandle,
-      validatedAt: timestamp
-    }
+  it('uses the current Host-management transport identity for workspace access', async () => {
+    const test = createHarness({
+      identity: {
+        hostRevision: 99,
+        hostKeyGeneration: 100,
+        remoteUsername: 'current-user'
+      }
+    })
 
     const lease = await test.transport.acquireLease(binding)
+    expect(test.release).not.toHaveBeenCalled()
+    lease.release()
+    expect(test.release).toHaveBeenCalledOnce()
+    test.close()
+  })
 
-    expect(lease.resumableHandle).toEqual(nonGitHandle)
+  it('accepts an older compatible Agent protocol minor', async () => {
+    const test = createHarness({
+      installation: {
+        ...installation,
+        protocol: {
+          major: AGENT_PROTOCOL_VERSION.major,
+          minor: AGENT_PROTOCOL_VERSION.minor + 1
+        }
+      },
+      identity: {
+        protocolMinor: AGENT_PROTOCOL_VERSION.minor
+      },
+      connectionStatus: {
+        protocol: {
+          major: AGENT_PROTOCOL_VERSION.major,
+          minor: AGENT_PROTOCOL_VERSION.minor
+        }
+      }
+    })
+
+    const lease = await test.transport.acquireLease(binding)
     lease.release()
     expect(test.release).toHaveBeenCalledOnce()
     test.close()
   })
 
   it('fails closed for project, installation, status, and capability mismatches', async () => {
-    const hostMismatch = createHarness({
-      identity: { hostRevision: 99 }
-    })
-    await expect(
-      hostMismatch.transport.acquireLease(binding)
-    ).rejects.toMatchObject({ reason: 'binding-mismatch' })
-    expect(hostMismatch.release).toHaveBeenCalledOnce()
-    hostMismatch.close()
-
     const installationMismatch = createHarness({
       installation: {
         ...installation,
@@ -301,7 +281,8 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
     await expect(
       installationMismatch.transport.acquireLease(binding)
     ).rejects.toMatchObject({ reason: 'binding-mismatch' })
-    expect(installationMismatch.acquire).not.toHaveBeenCalled()
+    expect(installationMismatch.acquire).toHaveBeenCalledOnce()
+    expect(installationMismatch.release).toHaveBeenCalledOnce()
     installationMismatch.close()
 
     const statusMismatch = createHarness({
@@ -333,7 +314,8 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
       await expect(
         identityMismatch.transport.acquireLease(binding)
       ).rejects.toMatchObject({ reason: 'binding-mismatch' })
-      expect(identityMismatch.acquire).not.toHaveBeenCalled()
+      expect(identityMismatch.acquire).toHaveBeenCalledOnce()
+      expect(identityMismatch.release).toHaveBeenCalledOnce()
       identityMismatch.close()
     }
 
@@ -421,24 +403,6 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
     test.close()
   })
 
-  it('only exposes resumable state with a complete durable identity match', async () => {
-    const test = createHarness()
-    test.resolution.durableWorkspaceValidation = {
-      binding: {
-        ...transportBinding(test, 1),
-        capabilityGeneration: 2
-      },
-      workspaceIdentity: binding.workspaceIdentity,
-      handle,
-      validatedAt: timestamp
-    }
-    const lease = await test.transport.acquireLease(binding)
-
-    expect(lease.resumableHandle).toBeUndefined()
-    lease.release()
-    test.close()
-  })
-
   it('keeps one connection reference per lease and makes close and release idempotent', async () => {
     const closeHandler = vi.fn(
       workspaceMethods()['workspace/close']
@@ -491,7 +455,7 @@ function createHarness(options: HarnessOptions = {}) {
   const events = new EventJournal(resolve(root, 'events.sqlite'))
   const status = {
     state: 'ready' as const,
-    installationId: binding.agentInstallationId,
+    installationId: installation.installationId,
     binaryDigest: digest,
     daemonBootId: 'boot-test',
     agentVersion: '0.11.0',
@@ -544,10 +508,10 @@ function createHarness(options: HarnessOptions = {}) {
       identity: {
         cacheKey: 'connection-cache',
         hostId: binding.hostId,
-        hostRevision: binding.hostRevision,
-        hostKeyGeneration: binding.hostKeyGeneration,
-        remoteUsername: binding.remoteUsername,
-        installationId: binding.agentInstallationId,
+        hostRevision: 2,
+        hostKeyGeneration: 3,
+        remoteUsername: 'builder',
+        installationId: installation.installationId,
         binaryDigest: digest,
         protocolMajor: AGENT_PROTOCOL_VERSION.major,
         protocolMinor: AGENT_PROTOCOL_VERSION.minor,
@@ -572,12 +536,7 @@ function createHarness(options: HarnessOptions = {}) {
     } satisfies RemoteAgentConnection
   })
   const resolution = {
-    installation: options.installation ?? installation,
-    durableWorkspaceValidation: undefined
-  } as {
-    installation: RemoteAgentInstallationIdentity
-    durableWorkspaceValidation?:
-      import('./protocol-remote-workspace-transport').DurableRemoteWorkspaceValidation
+    installation: options.installation ?? installation
   }
   const resolver: RemoteWorkspaceInstallationIdentityResolver = {
     resolve: vi.fn(async () => resolution)
@@ -697,14 +656,14 @@ function transportBinding(
 ): RemoteWorkspaceTransportBinding {
   return {
     hostId: binding.hostId,
-    hostRevision: binding.hostRevision,
-    hostKeyGeneration: binding.hostKeyGeneration,
-    remoteUsername: binding.remoteUsername,
-    agentInstallationId: binding.agentInstallationId,
-    agentBinaryDigest: binding.agentBinaryDigest,
-    agentVersion: binding.agentVersion,
-    agentArchitecture: binding.agentArchitecture,
-    agentProtocolMajor: binding.agentProtocolMajor,
+    hostRevision: 2,
+    hostKeyGeneration: 3,
+    remoteUsername: 'builder',
+    agentInstallationId: installation.installationId,
+    agentBinaryDigest: installation.binaryDigest,
+    agentVersion: '0.11.0',
+    agentArchitecture: installation.architecture,
+    agentProtocolMajor: AGENT_PROTOCOL_VERSION.major,
     capabilityGeneration
   }
 }
@@ -762,7 +721,7 @@ class MemoryAgentTransport {
       protocol: AGENT_PROTOCOL_VERSION,
       connectionId: controller.connectionId,
       generation: controller.generation,
-      installationId: binding.agentInstallationId,
+      installationId: installation.installationId,
       binaryDigest: digest,
       daemonBootId: 'boot-test',
       serverNonce: 'server-test'

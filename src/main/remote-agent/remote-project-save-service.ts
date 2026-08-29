@@ -1,10 +1,4 @@
-import { isDeepStrictEqual } from 'node:util'
-import type {
-  AssistantProject,
-  ProjectRuntimeValidation,
-  SshExecutionValidation
-} from '../../shared/assistant-contracts'
-import { projectRuntimeValidationSchema } from '../../shared/assistant-contracts'
+import type { AssistantProject } from '../../shared/assistant-contracts'
 import {
   remoteProjectSaveRequestSchema,
   type RemoteProjectSavePhase,
@@ -17,27 +11,26 @@ import {
   remoteWorkspaceValidateResultSchema,
   type RemoteWorkspaceHandle
 } from '../../shared/remote-agent-contracts'
-import {
-  agentRuntimeSelectionKey,
-  type AgentRuntimeSelection
-} from '../../shared/runtime-selection-contracts'
+import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import type {
   AssistantDatabase,
-  ValidatedSshHostPrecondition,
-  ValidatedSshProjectWrite
+  SshProjectWrite
 } from '../assistant/assistant-database'
 import type {
-  CurrentSshConnectionTarget,
   SshConnectionTarget,
   SshHostStore
 } from '../ssh/ssh-host-store'
+import {
+  assertValidSshConnectionTarget,
+  toCurrentSshConnectionTarget
+} from '../ssh/ssh-connection-target'
 import type {
   AgentInstallationIdentity,
   AgentInstallationManager
 } from './agent-installation-manager'
-import type {
-  RemoteAgentConnection,
-  RemoteAgentConnectionManager
+import {
+  type RemoteAgentConnection,
+  type RemoteAgentConnectionManager
 } from './remote-agent-connection-manager'
 
 const CLEANUP_TIMEOUT_MS = 5_000
@@ -56,8 +49,6 @@ export interface RemoteProjectSaveOwner {
 
 export type RemoteProjectRuntimeValidationInput = Readonly<{
   selection: AgentRuntimeSelection
-  runtimeSelectionKey: string
-  workMode: 'ask' | 'execute'
   host: Readonly<{
     hostId: string
     hostRevision: number
@@ -65,29 +56,17 @@ export type RemoteProjectRuntimeValidationInput = Readonly<{
     remoteUsername: string
   }>
   agent: Readonly<{
-    installationId: string
+    installationId: AgentInstallationIdentity['installationId']
     binaryDigest: string
     version: string
     architecture: 'x64' | 'arm64'
     protocolMajor: number
   }>
-  workspace: Readonly<{
-    canonicalRemoteRoot: string
-    workspaceIdentity: string
-    workspaceId: string
-    generation: number
-    access: 'read-only'
-    capabilities: readonly string[]
-  }>
   connection: RemoteAgentConnection
   signal: AbortSignal
 }>
 
-export type RemoteProjectRuntimeValidationEvidence =
-  ProjectRuntimeValidation
-
 export interface RemoteProjectRuntimeValidationLease {
-  readonly evidence: RemoteProjectRuntimeValidationEvidence
   assertCurrent(): void
   release(): void
 }
@@ -111,24 +90,38 @@ type ActiveSave = {
   done: Promise<void>
   resolveDone: () => void
   destroyedListener: () => void
-  installation?: AgentInstallationIdentity
   connection?: RemoteAgentConnection
   workspace?: RemoteWorkspaceHandle
   runtimeLease?: RemoteProjectRuntimeValidationLease
 }
 
+type RemoteProjectPreparationDraft = Readonly<{
+  hostId: string
+  remoteRootPath: string
+  runtimeSelection: AgentRuntimeSelection
+}>
+
+type PreparedRemoteProject = Readonly<{
+  runtimeSelection: AgentRuntimeSelection
+  target: SshConnectionTarget
+  installation: AgentInstallationIdentity
+  connection: RemoteAgentConnection
+  workspace: RemoteWorkspaceHandle
+  runtimeLease: RemoteProjectRuntimeValidationLease
+}>
+
 export type RemoteProjectSaveServiceOptions = {
   database: Pick<
     AssistantDatabase,
     | 'getProject'
-    | 'createValidatedSshProject'
-    | 'updateValidatedSshProject'
+    | 'createSshProject'
+    | 'updateSshProject'
   >
   sshHosts: Pick<
     SshHostStore,
     'resolveConnectionTarget' | 'assertConnectionTargetCurrent'
   >
-  installationManager: Pick<AgentInstallationManager, 'ensureInstalled'>
+  installationManager: Pick<AgentInstallationManager, 'activateInstalled'>
   connectionManager: Pick<RemoteAgentConnectionManager, 'acquire'>
   resolveRuntimeSelection(
     selection: AgentRuntimeSelection
@@ -151,10 +144,6 @@ export class RemoteProjectSaveService {
   readonly #notify?: RemoteProjectSaveServiceOptions['notify']
   readonly #cleanupTimeoutMs: number
   readonly #active = new Map<RemoteProjectSaveOwner, ActiveSave>()
-  readonly #activations = new Map<
-    RemoteProjectSaveOwner,
-    { projectId: string; promise: Promise<AssistantProject> }
-  >()
   #disposed = false
 
   constructor(options: RemoteProjectSaveServiceOptions) {
@@ -186,75 +175,12 @@ export class RemoteProjectSaveService {
       throw new Error('A remote project save is already in progress')
     }
     const request = remoteProjectSaveRequestSchema.parse(input)
-    let resolveDone!: () => void
-    const active: ActiveSave = {
-      controller: new AbortController(),
-      done: new Promise<void>((resolve) => {
-        resolveDone = resolve
-      }),
-      resolveDone,
-      destroyedListener: () => {
-        active.controller.abort(
-          new DOMException('Remote project owner was destroyed', 'AbortError')
-        )
-      }
-    }
-    this.#active.set(owner, active)
-    owner.on('destroyed', active.destroyedListener)
+    const active = this.#start(owner)
 
     try {
       return await this.#performSave(owner, active, request)
     } finally {
-      await this.#cleanup(active)
-      owner.removeListener('destroyed', active.destroyedListener)
-      if (this.#active.get(owner) === active) {
-        this.#active.delete(owner)
-      }
-      active.resolveDone()
-    }
-  }
-
-  async activate(
-    owner: RemoteProjectSaveOwner,
-    projectId: string
-  ): Promise<AssistantProject> {
-    this.#assertOwnerAvailable(owner)
-    const existing = this.#activations.get(owner)
-    if (existing) {
-      if (existing.projectId === projectId) {
-        return await existing.promise
-      }
-      throw new Error('A remote project save is already in progress')
-    }
-    const project = this.#database.getProject(projectId)
-    if (
-      project.kind !== 'user' ||
-      project.channel !== undefined ||
-      project.status !== 'active' ||
-      project.executionSpace.kind !== 'ssh' ||
-      project.runtimeSelection === undefined
-    ) {
-      throw new Error('Only active managed SSH projects can be activated')
-    }
-    const promise = this.save(owner, {
-      intent: 'update',
-      draft: {
-        projectId: project.id,
-        name: project.name,
-        description: project.description,
-        defaultWorkMode: project.defaultWorkMode,
-        runtimeSelection: project.runtimeSelection,
-        hostId: project.executionSpace.hostId,
-        remoteRootPath: project.executionSpace.remoteRootPath
-      }
-    })
-    this.#activations.set(owner, { projectId, promise })
-    try {
-      return await promise
-    } finally {
-      if (this.#activations.get(owner)?.promise === promise) {
-        this.#activations.delete(owner)
-      }
+      await this.#finish(owner, active)
     }
   }
 
@@ -281,33 +207,60 @@ export class RemoteProjectSaveService {
     active: ActiveSave,
     request: RemoteProjectSaveRequest
   ): Promise<AssistantProject> {
-    const { signal } = active.controller
     const expectedUpdatedAt =
       request.intent === 'update'
         ? this.#readUpdateRevision(request)
         : undefined
+    const prepared = await this.#prepare(
+      owner,
+      active,
+      request.draft
+    )
+
+    this.#progress(owner, 'saving')
+    active.controller.signal.throwIfAborted()
+    const write = this.#projectWrite(request, prepared)
+    return request.intent === 'create'
+      ? this.#database.createSshProject(write)
+      : this.#database.updateSshProject(
+          request.draft.projectId,
+          expectedUpdatedAt!,
+          write
+        )
+  }
+
+  async #prepare(
+    owner: RemoteProjectSaveOwner,
+    active: ActiveSave,
+    draft: RemoteProjectPreparationDraft
+  ): Promise<PreparedRemoteProject> {
+    const { signal } = active.controller
     const runtimeSelection = await this.#resolveRuntimeSelection(
-      request.draft.runtimeSelection
+      draft.runtimeSelection
     )
     signal.throwIfAborted()
 
     this.#progress(owner, 'host')
     const target = await this.#sshHosts.resolveConnectionTarget(
-      request.draft.hostId
+      draft.hostId
     )
     signal.throwIfAborted()
-    assertTarget(request.draft.hostId, target)
+    assertValidSshConnectionTarget(
+      draft.hostId,
+      target,
+      'SSH Host binding is unavailable'
+    )
 
     this.#progress(owner, 'agent')
-    const installation = await this.#installationManager.ensureInstalled(
-      request.draft.hostId,
-      { signal }
-    )
+    const installation =
+      await this.#installationManager.activateInstalled(
+        draft.hostId,
+        { signal }
+      )
     signal.throwIfAborted()
     assertInstallation(installation)
-    active.installation = installation
     const connection = await this.#connectionManager.acquire(
-      request.draft.hostId,
+      draft.hostId,
       {
         ...installation,
         requiredCapabilities: [WORKSPACE_READ_CAPABILITY]
@@ -323,9 +276,11 @@ export class RemoteProjectSaveService {
       await connection.client.request(
         'workspace/validate',
         {
-          remoteRootPath: request.draft.remoteRootPath,
+          remoteRootPath: draft.remoteRootPath,
           requestedAccess: 'read-only',
-          requiredCapabilities: [...REMOTE_WORKSPACE_READ_CAPABILITIES]
+          requiredCapabilities: [
+            ...REMOTE_WORKSPACE_READ_CAPABILITIES
+          ]
         },
         { signal }
       )
@@ -334,21 +289,15 @@ export class RemoteProjectSaveService {
     signal.throwIfAborted()
     assertWorkspace(validated.handle)
     if (
-      validated.handle.canonicalDisplayPath !==
-      request.draft.remoteRootPath
+      validated.handle.canonicalDisplayPath !== draft.remoteRootPath
     ) {
       throw new Error('Remote workspace path changed during validation')
     }
     assertCriticalWorkspaceRead(connection)
 
     this.#progress(owner, 'runtime')
-    const selectionKey = agentRuntimeSelectionKey(
-      runtimeSelection
-    )
     const runtimeLease = await this.#runtimeValidator.validate({
       selection: runtimeSelection,
-      runtimeSelectionKey: selectionKey,
-      workMode: request.draft.defaultWorkMode,
       host: {
         hostId: target.host.id,
         hostRevision: target.hostRevision,
@@ -362,49 +311,20 @@ export class RemoteProjectSaveService {
         architecture: installation.architecture,
         protocolMajor: installation.protocol.major
       },
-      workspace: {
-        canonicalRemoteRoot: validated.handle.canonicalDisplayPath,
-        workspaceIdentity: validated.handle.workspaceIdentity,
-        workspaceId: validated.handle.workspaceId,
-        generation: validated.handle.generation,
-        access: 'read-only',
-        capabilities: validated.handle.capabilities
-      },
       connection,
       signal
     })
     active.runtimeLease = runtimeLease
     signal.throwIfAborted()
-    const runtimeEvidence = projectRuntimeValidationSchema.parse(
-      runtimeLease.evidence
-    )
-    assertRuntimeEvidence(
-      runtimeEvidence,
-      selectionKey,
-      installation.installationId,
-      request.draft.defaultWorkMode
-    )
-
-    this.#progress(owner, 'saving')
-    signal.throwIfAborted()
-    const write = this.#validatedWrite(
-      request,
+    runtimeLease.assertCurrent()
+    return {
       runtimeSelection,
       target,
       installation,
       connection,
-      validated.handle,
-      runtimeLease,
-      runtimeEvidence,
-      validated.validatedAt
-    )
-    return request.intent === 'create'
-      ? this.#database.createValidatedSshProject(write)
-      : this.#database.updateValidatedSshProject(
-          request.draft.projectId,
-          expectedUpdatedAt!,
-          write
-        )
+      workspace: validated.handle,
+      runtimeLease
+    }
   }
 
   #readUpdateRevision(
@@ -426,29 +346,18 @@ export class RemoteProjectSaveService {
     return project.updatedAt
   }
 
-  #validatedWrite(
+  #projectWrite(
     request: RemoteProjectSaveRequest,
-    runtimeSelection: AgentRuntimeSelection,
-    target: SshConnectionTarget,
-    installation: AgentInstallationIdentity,
-    connection: RemoteAgentConnection,
-    workspace: RemoteWorkspaceHandle,
-    runtimeLease: RemoteProjectRuntimeValidationLease,
-    runtime: ProjectRuntimeValidation,
-    validatedAt: string
-  ): ValidatedSshProjectWrite {
-    const executionValidation: SshExecutionValidation = {
-      hostRevision: target.hostRevision,
-      hostKeyGeneration: target.hostKeyGeneration,
-      remoteUsername: target.host.username,
-      workspaceIdentity: workspace.workspaceIdentity,
-      agentProtocolMajor: installation.protocol.major,
-      agentInstallationIdAtValidation: installation.installationId,
-      agentBinaryDigestAtValidation: installation.binaryDigest,
-      agentVersionAtValidation: installation.agentVersion,
-      agentArchitectureAtValidation: installation.architecture,
-      validatedAt
-    }
+    prepared: PreparedRemoteProject
+  ): SshProjectWrite {
+    const {
+      runtimeSelection,
+      target,
+      installation,
+      connection,
+      workspace,
+      runtimeLease
+    } = prepared
     return {
       project: {
         name: request.draft.name,
@@ -460,32 +369,54 @@ export class RemoteProjectSaveService {
       executionSpace: {
         kind: 'ssh',
         hostId: target.host.id,
-        remoteRootPath: workspace.canonicalDisplayPath,
-        validation: executionValidation
+        remoteRootPath: workspace.canonicalDisplayPath
       },
-      runtimeValidation: structuredClone(runtime),
-      assertSshHostCurrent: (expected) => {
-        assertPrecondition(
-          expected,
-          target,
-          installation,
-          workspace
-        )
+      assertCurrent: () => {
         this.#sshHosts.assertConnectionTargetCurrent(
-          currentTargetEvidence(target)
+          toCurrentSshConnectionTarget(target)
         )
         assertConnectionIdentity(target, installation, connection)
         assertCriticalWorkspaceRead(connection)
         runtimeLease.assertCurrent()
-        if (
-          !isDeepStrictEqual(
-            projectRuntimeValidationSchema.parse(runtimeLease.evidence),
-            runtime
-          )
-        ) {
-          throw new Error('Remote Runtime validation changed before save')
-        }
       }
+    }
+  }
+
+  #start(owner: RemoteProjectSaveOwner): ActiveSave {
+    const controller = new AbortController()
+    let resolveDone!: () => void
+    const active: ActiveSave = {
+      controller,
+      done: new Promise<void>((resolve) => {
+        resolveDone = resolve
+      }),
+      resolveDone,
+      destroyedListener: () => {
+        controller.abort(
+          new DOMException(
+            'Remote project owner was destroyed',
+            'AbortError'
+          )
+        )
+      }
+    }
+    this.#active.set(owner, active)
+    owner.on('destroyed', active.destroyedListener)
+    return active
+  }
+
+  async #finish(
+    owner: RemoteProjectSaveOwner,
+    active: ActiveSave
+  ): Promise<void> {
+    try {
+      await this.#cleanup(active)
+    } finally {
+      owner.removeListener('destroyed', active.destroyedListener)
+      if (this.#active.get(owner) === active) {
+        this.#active.delete(owner)
+      }
+      active.resolveDone()
     }
   }
 
@@ -545,18 +476,6 @@ export class RemoteProjectSaveService {
   }
 }
 
-function assertTarget(hostId: string, target: SshConnectionTarget): void {
-  if (
-    target.host.id !== hostId ||
-    !target.host.hostKey ||
-    target.host.hostKey.generation !== target.hostKeyGeneration ||
-    target.hostRevision < 1 ||
-    target.hostKeyGeneration < 1
-  ) {
-    throw new Error('SSH Host binding is unavailable')
-  }
-}
-
 function assertInstallation(
   installation: AgentInstallationIdentity
 ): void {
@@ -575,7 +494,10 @@ function assertInstallation(
 
 function assertConnectionIdentity(
   target: SshConnectionTarget,
-  installation: AgentInstallationIdentity,
+  installation: Pick<
+    AgentInstallationIdentity,
+    'installationId' | 'binaryDigest'
+  >,
   connection: RemoteAgentConnection
 ): void {
   if (
@@ -620,54 +542,5 @@ function assertWorkspace(handle: RemoteWorkspaceHandle): void {
     handle.capabilities.includes('apply-change-set')
   ) {
     throw new Error('Remote workspace validation is incompatible')
-  }
-}
-
-function assertRuntimeEvidence(
-  evidence: ProjectRuntimeValidation,
-  selectionKey: string,
-  installationId: string,
-  workMode: 'ask' | 'execute'
-): void {
-  if (
-    evidence.runtimeSelectionKey !== selectionKey ||
-    evidence.agentInstallationIdAtValidation !== installationId ||
-    evidence.workMode !== workMode
-  ) {
-    throw new Error('Remote Runtime validation does not match the project')
-  }
-}
-
-function assertPrecondition(
-  expected: ValidatedSshHostPrecondition,
-  target: SshConnectionTarget,
-  installation: AgentInstallationIdentity,
-  workspace: RemoteWorkspaceHandle
-): void {
-  if (
-    expected.hostId !== target.host.id ||
-    expected.hostRevision !== target.hostRevision ||
-    expected.hostKeyGeneration !== target.hostKeyGeneration ||
-    expected.remoteUsername !== target.host.username ||
-    expected.remoteRootPath !== workspace.canonicalDisplayPath ||
-    expected.workspaceIdentity !== workspace.workspaceIdentity ||
-    expected.agentProtocolMajor !== installation.protocol.major ||
-    expected.agentInstallationId !== installation.installationId ||
-    expected.agentBinaryDigest !== installation.binaryDigest ||
-    expected.agentVersion !== installation.agentVersion ||
-    expected.agentArchitecture !== installation.architecture
-  ) {
-    throw new Error('Validated SSH project precondition changed')
-  }
-}
-
-function currentTargetEvidence(
-  target: SshConnectionTarget
-): CurrentSshConnectionTarget {
-  return {
-    hostId: target.host.id,
-    hostRevision: target.hostRevision,
-    hostKeyGeneration: target.hostKeyGeneration,
-    username: target.host.username
   }
 }

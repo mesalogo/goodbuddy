@@ -86,26 +86,6 @@ function descriptor(): SshExecutionSpaceDescriptor {
     kind: 'ssh',
     hostId: 'host-1',
     remoteRootPath: '/srv/project',
-    validation: {
-      hostRevision: 2,
-      hostKeyGeneration: 3,
-      remoteUsername: 'alice',
-      workspaceIdentity: 'workspace-1',
-      agentProtocolMajor: 1,
-      agentInstallationIdAtValidation: 'agent-1',
-      agentBinaryDigestAtValidation: digest('a'),
-      agentVersionAtValidation: '1.0.0',
-      agentArchitectureAtValidation: 'x64',
-      validatedAt: '2030-01-01T00:00:00.000Z'
-    },
-    runtimeValidation: {
-      runtimeSelectionKey: 'opencode:default',
-      runtimeBundleDigest: digest('b'),
-      runtimeAdapterDigest: digest('c'),
-      agentInstallationIdAtValidation: 'agent-1',
-      validatedAt: '2030-01-01T00:00:00.000Z',
-      workMode: 'ask'
-    },
     cacheIdentity: 'cache-1',
     routeIdentity: 'route-1',
     workspaceAccess: {
@@ -127,10 +107,25 @@ function harness(
   remoteHarness.instances.length = 0
   remoteHarness.runGate = undefined
   const releaseConnection = vi.fn()
-  const workspaceAccesses: Array<{
-    getIdentity: ReturnType<typeof vi.fn>
-    dispose: ReturnType<typeof vi.fn>
-  }> = []
+  const workspaceValidate = vi.fn(async () => ({
+    handle: {
+      workspaceId: 'workspace-id',
+      workspaceIdentity: 'workspace-1',
+      canonicalDisplayPath: '/srv/project',
+      access: 'read-only' as const,
+      git: 'available' as const,
+      capabilities: ['list', 'stat', 'read-text', 'search'],
+      generation: 1
+    },
+    validatedAt: '2030-01-01T00:00:00.000Z'
+  }))
+  const workspaceClose = vi.fn(async (params: {
+    workspaceId: string
+    generation: number
+  }) => ({
+    ...params,
+    closed: true as const
+  }))
   const connection = {
     identity: {
       cacheKey: 'connection-cache',
@@ -156,7 +151,23 @@ function harness(
       supervisor: 'detached-on-demand'
     },
     capabilities: capabilities(),
-    client: { generation: 5 },
+    client: {
+      generation: 5,
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method === 'workspace/validate') {
+          return await workspaceValidate()
+        }
+        if (method === 'workspace/close') {
+          return await workspaceClose(
+            params as {
+              workspaceId: string
+              generation: number
+            }
+          )
+        }
+        throw new Error(`Unexpected method: ${method}`)
+      })
+    },
     state: 'ready',
     refreshCapabilities: vi.fn(async () => capabilities()),
     reconnect: vi.fn(async () => undefined),
@@ -166,61 +177,35 @@ function harness(
     executionSpace: descriptor(),
     selection: { provider: 'opencode' as const },
     agentServices: {
-      installationManager: {
-        ensureInstalled: vi.fn(async () => ({
-          installationId: 'agent-1',
-          binaryDigest: digest('a'),
-          agentVersion: '1.0.0',
-          protocol: { major: 1, minor: 0 },
-          platform: 'linux' as const,
-          architecture: 'x64' as const,
-          supervisor: 'detached-on-demand' as const
-        }))
-      },
       connectionManager: {
         acquire: vi.fn(async () => connection)
       },
       controllerState: {
         getControllerId: vi.fn(async () => 'controller-1')
+      },
+      installationManager: {
+        activateInstalled: vi.fn(async () => ({
+          installationId: 'agent-1',
+          binaryDigest: digest('a'),
+          agentVersion: '1.0.0',
+          protocol: { major: 1, minor: 0 },
+          platform: 'linux',
+          architecture: 'x64',
+          supervisor: 'detached-on-demand'
+        }))
       }
     },
     runtimeInstallationManager: {
-      ensureInstalled: vi.fn(async () => ({
+      activateInstalled: vi.fn(async () => ({
         runtimeId: 'opencode',
         runtimeVersion: '1.18.9',
         bundleDigest: digest('b'),
-        manifestDigest: digest('e'),
+        manifestDigest: digest('d'),
         runtimeAdapterDigest: digest('c'),
         acpCapabilitiesDigest: digest('f'),
-        platform: 'linux' as const,
-        architecture: 'x64' as const
+        platform: 'linux',
+        architecture: 'x64'
       }))
-    },
-    workspaceAccessFactory: {
-      create: vi.fn(() => {
-        const access = {
-          getIdentity: vi.fn(async () => ({
-            kind: 'remote' as const,
-            id: 'host-1:workspace-1',
-            canonicalDisplayPath: '/srv/project',
-            capabilities: {
-              read: true,
-              write: true,
-              search: true,
-              changes: true
-            }
-          })),
-          listDirectory: vi.fn(),
-          stat: vi.fn(),
-          readText: vi.fn(),
-          writeTextAtomic: vi.fn(),
-          search: vi.fn(),
-          getChanges: vi.fn(),
-          dispose: vi.fn(async () => undefined)
-        }
-        workspaceAccesses.push(access)
-        return access
-      })
     },
     bindingStore: new MemoryRuntimeSessionBindingStore(),
     modelBridge: {
@@ -243,7 +228,8 @@ function harness(
     options,
     connection,
     releaseConnection,
-    workspaceAccesses
+    workspaceValidate,
+    workspaceClose
   }
 }
 
@@ -274,19 +260,13 @@ describe('createManagedRemoteAcpRuntime', () => {
 
     await expect(
       createManagedRemoteAcpRuntime(fixture.options)
-    ).rejects.toThrow(/validated OpenCode project evidence/iu)
-    expect(
-      fixture.options.agentServices.installationManager.ensureInstalled
-    ).not.toHaveBeenCalled()
-    expect(
-      fixture.options.runtimeInstallationManager.ensureInstalled
-    ).not.toHaveBeenCalled()
+    ).rejects.toThrow(/OpenCode Runtime/iu)
     expect(
       fixture.options.agentServices.connectionManager.acquire
     ).not.toHaveBeenCalled()
   })
 
-  it('binds exact persisted evidence and owns its trust and connection leases', async () => {
+  it('binds the current Agent and Runtime and owns its connection lease', async () => {
     const fixture = harness()
     const runtime = await createManagedRemoteAcpRuntime(
       fixture.options
@@ -296,9 +276,15 @@ describe('createManagedRemoteAcpRuntime', () => {
       id: 'opencode',
       available: true
     })
+    expect(fixture.workspaceValidate).toHaveBeenCalledOnce()
     expect(
-      fixture.options.workspaceAccessFactory.create
-    ).not.toHaveBeenCalled()
+      fixture.connection.refreshCapabilities
+    ).toHaveBeenCalledOnce()
+    expect(
+      fixture.options.runtimeInstallationManager.activateInstalled
+    ).toHaveBeenCalledWith('host-1', {
+      agentInstallationId: 'agent-1'
+    })
     expect(
       fixture.options.agentServices.connectionManager.acquire
     ).toHaveBeenCalledWith('host-1', expect.objectContaining({
@@ -317,6 +303,23 @@ describe('createManagedRemoteAcpRuntime', () => {
     expect(fixture.releaseConnection).toHaveBeenCalledOnce()
   })
 
+  it('uses the current Host-management transport identity after Host edits', async () => {
+    const fixture = harness()
+    fixture.connection.identity.hostRevision = 9
+    fixture.connection.identity.hostKeyGeneration = 10
+    fixture.connection.identity.remoteUsername = 'current-user'
+
+    const runtime = await createManagedRemoteAcpRuntime(
+      fixture.options
+    )
+
+    expect(remoteHarness.instances[0]!.options.identity).toMatchObject({
+      hostRevision: 9,
+      hostKeyGeneration: 10
+    })
+    await runtime.dispose()
+  })
+
   it('recreates the Runtime and reopens the Workspace after reconnect identity changes', async () => {
     const fixture = harness()
     const runtime = await createManagedRemoteAcpRuntime(
@@ -329,7 +332,7 @@ describe('createManagedRemoteAcpRuntime', () => {
       controllerGeneration: 5,
       daemonBootIdAtOpen: 'boot-1'
     })
-    expect(fixture.workspaceAccesses).toHaveLength(1)
+    expect(fixture.workspaceValidate).toHaveBeenCalledTimes(1)
 
     fixture.connection.state = 'offline'
     vi.mocked(fixture.connection.reconnect).mockImplementationOnce(async () => {
@@ -347,13 +350,11 @@ describe('createManagedRemoteAcpRuntime', () => {
       controllerGeneration: 6,
       daemonBootIdAtOpen: 'boot-2'
     })
-    expect(fixture.workspaceAccesses).toHaveLength(2)
-    expect(
-      fixture.workspaceAccesses[0]!.dispose
-    ).toHaveBeenCalledOnce()
+    expect(fixture.workspaceValidate).toHaveBeenCalledTimes(2)
+    expect(fixture.workspaceClose).toHaveBeenCalledTimes(1)
 
     await runtime.dispose()
-    expect(fixture.workspaceAccesses[1]!.dispose).toHaveBeenCalledOnce()
+    expect(fixture.workspaceClose).toHaveBeenCalledTimes(2)
     expect(fixture.releaseConnection).toHaveBeenCalledOnce()
   })
 
@@ -371,7 +372,7 @@ describe('createManagedRemoteAcpRuntime', () => {
     await expect(staleFactory('binding-1')).rejects.toThrow(
       /transport lease is stale/iu
     )
-    expect(fixture.workspaceAccesses).toHaveLength(1)
+    expect(fixture.workspaceValidate).toHaveBeenCalledTimes(2)
     await runtime.dispose()
   })
 
@@ -390,7 +391,7 @@ describe('createManagedRemoteAcpRuntime', () => {
       controllerGeneration: 5,
       daemonBootIdAtOpen: 'boot-2'
     })
-    expect(fixture.workspaceAccesses).toHaveLength(2)
+    expect(fixture.workspaceValidate).toHaveBeenCalledTimes(2)
     await runtime.dispose()
   })
 
@@ -428,27 +429,24 @@ describe('createManagedRemoteAcpRuntime', () => {
     await runtime.dispose()
   })
 
-  it('releases exact trust without connecting when Runtime evidence changed', async () => {
+  it('rejects capabilities that differ from the current Runtime', async () => {
     const fixture = harness()
     vi.mocked(
-      fixture.options.runtimeInstallationManager.ensureInstalled
+      fixture.connection.refreshCapabilities
     ).mockResolvedValueOnce({
-      runtimeId: 'opencode',
-      runtimeVersion: '1.18.9',
-      bundleDigest: digest('9'),
-      manifestDigest: digest('e'),
-      runtimeAdapterDigest: digest('c'),
-      acpCapabilitiesDigest: digest('f'),
-      platform: 'linux',
-      architecture: 'x64'
+      ...capabilities(),
+      runtimes: [
+        {
+          ...capabilities().runtimes[0]!,
+          bundleDigest: digest('9')
+        }
+      ]
     })
 
     await expect(
       createManagedRemoteAcpRuntime(fixture.options)
-    ).rejects.toThrow(/does not match project validation/iu)
-    expect(
-      fixture.options.agentServices.connectionManager.acquire
-    ).not.toHaveBeenCalled()
+    ).rejects.toThrow(/current OpenCode Runtime/iu)
+    expect(fixture.releaseConnection).toHaveBeenCalledOnce()
   })
 
   it('releases both leases when the live Agent identity is stale', async () => {
@@ -457,7 +455,7 @@ describe('createManagedRemoteAcpRuntime', () => {
 
     await expect(
       createManagedRemoteAcpRuntime(fixture.options)
-    ).rejects.toThrow(/connection does not match/iu)
+    ).rejects.toThrow(/connection is not current/iu)
     expect(fixture.releaseConnection).toHaveBeenCalledOnce()
   })
 

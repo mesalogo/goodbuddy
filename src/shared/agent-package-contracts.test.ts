@@ -62,6 +62,17 @@ describe('Agent package contracts', () => {
     ).toThrow()
   })
 
+  it('rejects unknown catalog entry metadata', () => {
+    expect(() =>
+      agentPackageCatalogEntrySchema.parse({
+        ...catalogEntry(),
+        bootstrapCapability: {
+          version: 1
+        }
+      })
+    ).toThrow()
+  })
+
   it('requires one local inventory entry per architecture', () => {
     const entry = {
       platform: 'linux',

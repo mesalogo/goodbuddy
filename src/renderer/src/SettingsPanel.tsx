@@ -211,7 +211,7 @@ type SettingsPanelProps = {
   initialCategory?: SettingsCategoryId
   initialChannel?: ProjectChannel
   onClose: () => void
-  onSshHostUpdated?: (hostId: string) => void
+  onProjectsDeleted?: (projectIds: string[]) => void
   onSaved: (settings: RuntimeSettings) => void
   onNotify?: (notification: AppNotificationInput) => void
   onUpdateProject: (
@@ -585,7 +585,7 @@ export function SettingsPanel({
   initialCategory,
   initialChannel,
   onClose,
-  onSshHostUpdated = () => {},
+  onProjectsDeleted = () => {},
   onSaved,
   onNotify = () => {},
   onUpdateProject,
@@ -3759,8 +3759,8 @@ export function SettingsPanel({
           {remoteProjectsEnabled && activeTab === 'ssh-hosts' && (
             <SshHostsSettingsSection
               onDirtyChange={setSshHostsDirty}
-              onHostUpdated={onSshHostUpdated}
               onNotify={onNotify}
+              onProjectsDeleted={onProjectsDeleted}
             />
           )}
 

@@ -227,9 +227,11 @@ import {
   sshHostDraftInspectionRequestSchema,
   sshHostRequestSchema,
   remoteEnvironmentUpdateProgressSchema,
+  remoteEnvironmentUpdateRequestSchema,
   sshHostRemoteEnvironmentSchema,
   sshHostValidationRequestSchema,
-  type RemoteEnvironmentUpdateProgress
+  type RemoteEnvironmentUpdateProgress,
+  type SshHostProjectReference
 } from '../shared/ssh-host-contracts'
 import type { SshHostService } from './ssh/ssh-host-service'
 import type { SshHostDirectoryBrowser } from './ssh/ssh-host-directory-browser'
@@ -241,9 +243,9 @@ import {
   remoteProjectSaveRequestSchema,
   type RemoteProjectSaveProgress
 } from '../shared/remote-project-candidate-contracts'
-import type {
-  RemoteProjectSaveOwner,
-  RemoteProjectSaveService
+import {
+  type RemoteProjectSaveOwner,
+  type RemoteProjectSaveService
 } from './remote-agent/remote-project-save-service'
 import type {
   RemoteEnvironmentUpdateOwner,
@@ -326,7 +328,6 @@ import {
   ExecutionSpaceResolver,
   REMOTE_EXECUTION_SPACE_UNAVAILABLE
 } from './execution-space'
-import { assertRemoteRuntimeRequestValidated } from './execution-space/remote-runtime-request-validation'
 
 const requestIdSchema = z.string().uuid()
 const BACKGROUND_QUESTION_REJECTION_TIMEOUT_MS = 1_000
@@ -1132,9 +1133,6 @@ export function registerIpcHandlers(
         await settingsStore.getResolvedSettings(),
         selection
       )
-    }
-    if (executionSpace?.kind === 'ssh') {
-      assertRemoteRuntimeRequestValidated(executionSpace)
     }
     return selectedRuntimes.getRuntime(selection, executionSpace)
   }
@@ -4112,7 +4110,24 @@ export function registerIpcHandlers(
     if (!sshHostService) {
       throw new Error('SSH 主机设置服务不可用')
     }
-    return sshHostService.getSnapshot()
+    const snapshot = await sshHostService.getSnapshot()
+    const projectReferences: Record<
+      string,
+      SshHostProjectReference[]
+    > = {}
+    for (const reference of
+      assistantDatabase.listSshHostProjectReferences()) {
+      const projects = projectReferences[reference.hostId] ?? []
+      projects.push({
+        id: reference.id,
+        name: reference.name
+      })
+      projectReferences[reference.hostId] = projects
+    }
+    return {
+      ...snapshot,
+      projectReferences
+    }
   })
 
   registerHandler(
@@ -4222,12 +4237,15 @@ export function registerIpcHandlers(
         throw new Error('SSH 主机设置服务不可用')
       }
       const hostId = sshHostRequestSchema.parse(input).hostId
-      const referencingProjectIds =
-        assistantDatabase.listProjectIdsReferencingSshHost(hostId)
-      if (referencingProjectIds.length > 0) {
-        throw new Error('SSH 主机仍被项目引用，无法删除')
+      const deletedProjects = await sshHostService.remove(
+        hostId,
+        () =>
+          assistantDatabase.deleteProjectsReferencingSshHost(hostId)
+      )
+      return {
+        hostId,
+        deletedProjects
       }
-      return sshHostService.remove(hostId)
     }
   )
 
@@ -4296,10 +4314,11 @@ export function registerIpcHandlers(
       if (!remoteEnvironmentUpdateService) {
         throw new Error('SSH 远端运行环境更新服务不可用')
       }
-      const hostId = sshHostRequestSchema.parse(input).hostId
+      const request =
+        remoteEnvironmentUpdateRequestSchema.parse(input)
       await remoteEnvironmentUpdateService.update(
         event.sender,
-        hostId,
+        request,
         (progress) =>
           sendRemoteEnvironmentUpdateProgress(
             event.sender,
@@ -5176,22 +5195,6 @@ export function registerIpcHandlers(
   )
 
   registerHandler(
-    ipcChannels.remoteProjectActivate,
-    async (event, input: unknown) => {
-      assertTrustedSender(event, window)
-      await requireRemoteProjectsEnabled()
-      if (!remoteProjectSaveService) {
-        throw new Error('远程项目验证服务不可用')
-      }
-      const result = await remoteProjectSaveService.activate(
-        event.sender,
-        assistantIdSchema.parse(input)
-      )
-      return result
-    }
-  )
-
-  registerHandler(
     ipcChannels.remoteProjectSave,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
@@ -5262,7 +5265,10 @@ export function registerIpcHandlers(
       }
       assistantDatabase.deleteProject(
         value.projectId,
-        value.confirmation
+        value.confirmation,
+        {
+          allowActiveTasks: project.executionSpace?.kind === 'ssh'
+        }
       )
       await selectedRuntimes?.reset?.()
     }

@@ -2,14 +2,28 @@
 
 ## 状态
 
-本文记录当前代码实现，不定义额外的信任框架。Windows 到 Linux x64 的安装、Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback 路径 capability 后，当前源码 lock 已转为正式 Agent `0.11.5`。失败的 `agent-v0.11.3` 保持不可变且未发布。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64 复合包和签名累计目录。
+本文记录截至 2026-08-28 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
+详细事务与验收边界见
+[SSH Host 远程环境准备与直连下载设计](./remote-host-environment-provisioning-design.md)；
+控制面直连源码可直接使用既有 package format v1 包，不等待携带 installer 的新 Agent
+包，也不通过额外目录元数据判断 bootstrap 能力；公开能力仍等待 GitHub/北京镜像、
+Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
+Windows 到 Linux x64 的既有安装、
+Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实
+Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与
+OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback
+路径 capability 后，当前源码 lock 已更新为待发布 Agent `0.11.6`。失败的 `agent-v0.11.3`
+保持不可变且未发布。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry
+已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64
+复合包和签名累计目录。
 
 ## 产品语义
 
 远程 Host 与项目能力是默认关闭的技术预览。用户在“设置 > 平台功能”的独立
 “远程项目（技术预览）”页签启用开关后，Renderer 才显示 SSH Host 管理、托管 SSH 项目创建和已保存
 远程项目；Main 在 IPC 边界执行同一开关校验，避免隐藏界面被绕过。关闭开关不删除 Host、
-项目或凭据；进行中的激活允许取消，当前远程项目切回第一个普通本地项目。应用启动仍固定
+项目或凭据；当前远程项目切回第一个普通本地项目。应用启动仍固定
 选择普通本地项目，不会因为保存了远程项目而自动连接 Host。
 
 远程项目只有两种工作模式：
@@ -28,7 +42,7 @@ Main
   -> SSH Host 与 Host Key 管理
   -> SSH connection pool
   -> 签名 Agent / Runtime 安装
-  -> 远程项目验证与 SQLite 事务
+  -> 远程项目当前环境准备与稳定配置 SQLite 事务
   -> Main-owned model bridge
 SSH attach
   -> 远端私有 Unix socket
@@ -46,7 +60,7 @@ Detached GoodBuddy Agent
 - Main 在认证前取得 Host Key，展示算法与 SHA-256 指纹，并保存完整 key blob。
 - 首次连接需要用户确认。Host Key 变化展示旧/新值并要求显式替换。
 - 密码使用 Electron `safeStorage`；系统 SSH Agent 认证不启用 Agent forwarding。
-- Host 地址、用户或 Host Key generation 变化时关闭旧连接，并定向退役依赖旧 Host identity 的 Workspace 和 Runtime 会话。保存开始后，所有引用该 Host 的项目保持“需要重新激活”状态；当前项目立即执行完整激活并原子刷新 Host revision 等验证结果，其他项目在下次选择时刷新。激活失败或取消不会恢复发送能力，Composer 和来自 Main 持久队列的用户消息都要等待后续成功激活；排队消息会退回原队列，并在成功后通过既有 queue-ready 流程继续。用户重新选择当前 SSH 项目也会显式触发相同验证，而不是复用旧项目快照。
+- Host 地址、用户或 Host Key generation 变化时关闭旧连接，并定向退役依赖旧 Host identity 的 Workspace 和 Runtime 会话。下一次选择使用 Host 管理的当前连接记录解析 current Agent/Runtime，不读取项目中的旧 revision 或组件 identity；当前 registry、连接或 capability 无效时才要求显式修复。
 
 ## Agent 安装与生命周期
 
@@ -56,22 +70,82 @@ Detached GoodBuddy Agent
   manifest、registry identity、owner/mode/size 和 Node digest 都可验证，且候选
   manifest 声明完全相同的 Node，安装器直接在新的 side-by-side 目录中复用该 Node；
   否则正常上传候选 Node。Agent 不匹配不会阻止升级，也不会覆盖旧安装。
-- 桌面包只携带版本 lock 与 production 公钥，不携带远端 payload。用户必须先在设置中显式下载最新兼容的目标架构复合包，或导入离线 `.gbagent`；项目激活不会联网下载。每个复合包绑定 Agent、固定 Node 与桌面维护的 OpenCode Runtime 精确工件。应用重启固定进入第一个普通本地项目，不自动连接上次远程项目；用户主动切换托管 SSH 项目时，Main 从本地验证缓存选择 Host 架构工件，Host 尚未安装该 identity 时上传并启动。相同 Renderer 对同一项目的并发激活共享一个 Main 操作。
-- Agent、Workspace 和 Runtime 全部验证成功后，Main 才在同一 SQLite 事务中刷新项目保存的 Agent/Runtime evidence，然后把项目设为当前项目。上传、启动、验证或事务失败时，项目继续绑定旧 identity，不能用未提交的新 identity 绕过持久化绑定校验。
+- 桌面包只携带版本 lock 与 production 公钥，不携带远端 payload。Host 卡片只有一个按
+  版本事实显示“安装远程环境”“更新远程环境”或“重新安装”的主按钮；次级
+  SegmentedControl 选择“自动”“Host 下载”或“GoodBuddy 传输”，默认“自动”且不持久化。
+  每个复合包绑定 Agent、固定 Node 与桌面维护的 OpenCode Runtime 精确工件。添加或重新
+  验证 Host 只保存并探测，不自动传输完整包。
+- Host 管理独占 Agent/Runtime 的包准备、更新和完整 payload 验证。已有项目的打开和切换
+  只更新本地项目选择。Workspace 和执行路径按需通过安装管理器解析 Host current identity，
+  执行固定 `attach-or-bootstrap` 并复用当前 Agent 连接；同一进程内复用已确认 identity。
+  它们不取得安装包、不发布组件，也不通过 SFTP 重读或哈希 payload。
+- Agent 的固定 attach/按需启动命令只读取 Host 管理已提交的 installation registry 和
+  与其 digest 匹配的有界 manifest 元数据，不在每次项目切换时重新验签或哈希完整 payload。
+  完整验签、payload 扫描和 registry 写入仍只发生在显式 Host 准备/更新流程。
+- 项目切换不执行远程核对，立即选择本地项目配置。Workspace 或 Runtime 首次实际使用时
+  才通过当前 Agent 连接核对所需能力；失败只影响该操作。新建或显式保存项目仍执行完整
+  准备，并只事务写入 Host、路径、Runtime 选择和工作模式。
 - SSH 连接先尝试 attach；Agent 不存在或未运行时执行幂等 bootstrap，然后重新 attach。
 - Agent 是按需启动的 detached process，不注册开机服务，不依赖 systemd、D-Bus 或 Linger。
 - 每个模型桥 helper 都为 loopback HTTP 入口生成一次性随机路径 capability；只有写入当前 OpenCode 子进程配置的 URL 可以访问该入口，其他本机用户即使发现临时端口也不能提交模型请求。
 - Agent 监听当前用户拥有的私有 Unix socket。SSH 中断只关闭 relay，不拥有 Agent 和活动 Runtime 的生命周期。
-- SSH Host 设置通过固定探针和有界 SFTP 显示 Host 已登记的 Agent/OpenCode 版本，并与当前 GoodBuddy 所需版本比较；打开设置或“刷新版本”只读取状态，不安装或切换远端组件。
+- SSH Host 设置通过固定探针和有界 SFTP 显示 Host 已登记的 Agent/OpenCode 版本，并与当前
+  GoodBuddy 所需版本比较。进入或切回该设置页只读取本地 Host 列表，不连接任何 Host；
+  用户点击“刷新版本”后才探测对应 Host，探测不安装或切换远端组件。项目切换与此按钮
+  解耦且不建立连接；实际远程操作才建立或复用 SSH/Agent 连接。
 - “平台功能 > 远程项目”中的本地 Agent 包清单与 Host 状态分离。Main 对用户数据目录中
   Linux x64/arm64 `.gbagent` 分别执行外层可信签名、桌面/协议兼容性、内部 Agent/Runtime
   签名、架构与完整 payload 校验；首次打开和手动刷新还会读取“关于与更新”所选来源的
   小型签名目录。Renderer 只得到本地/在线版本、是否有更新、架构、远端 Runtime 版本、
   协议和本地状态，不得到缓存路径、key ID 或 digest。目录检查不下载 `.gbagent`，在线
   包下载只由用户点击带目标版本的操作触发；离线导入/导出通过 Main 管理的文件对话框完成。
-- 当任一组件缺失或不是当前版本时，用户可显式选择“更新版本”。Main 使用同一个取消信号依次强制执行 Agent、Runtime 安装器，并把 Agent、Runtime、Finalizing 阶段只发送给发起更新的 Renderer。更新启动仍受技术预览开关和可信 Sender 校验约束；取消不受开关约束，确保操作开始后即使关闭功能也能停止。
-- 更新成功后才定向清理该 Host 的 Agent 连接和 Runtime 选择缓存，并让当前引用项目重新激活；失败或取消保留 Host 配置、凭据、项目、Workspace 和可继续验证的旧组件，Renderer 刷新实际版本并允许重试。同一 Renderer 同时只更新一个 Host，窗口销毁或 Main 退出会取消活动更新并执行有界收尾。
+- “自动”只在 operation/prepare 前用 Host capability probe 选择 acquisition：直连明确
+  可用才选 Host 下载，否则选 GoodBuddy 传输；显式选择不被改写。prepare、commit 或
+  adoption 失败后都不跨 acquisition 自动 fallback。
+- Host 下载由桌面控制面通过固定 SSH prepare channel 和结构化 stdin 发送候选信息，
+  Host 取得 compound `.gbagent` 并核对大小与 SHA-256。GoodBuddy 传输在本地缺少精确
+  候选时，于同一次操作下载、验 SHA-256 与签名、缓存并取得 lease，再以有界流式 SFTP
+  上传一个 compound archive 和归档中已验证的 bootstrap Node；约 294 MiB 完整包不会
+  一次读入 Main `Buffer`，Host 仍再次校验完整包。
+- 两种 acquisition 交付到固定 operation staging 后，完全共用 control-plane
+  `prepare → commit → Agent activate/health → Runtime activate → finalize → cleanup`。
+  commit 终态持久化；通道丢失只用 `commit-status` 只读恢复，不重放 commit。prepare
+  完成后、commit 前快照 Agent/Runtime 五个 metadata 文件，任一组件 adoption 失败都恢复其原字节或原缺失
+  状态；已经发布的 side-by-side payload 可以保留但不能成为 current。确认 adoption 后
+  才显式 cleanup。首次 bootstrap 不依赖既有 Agent daemon，也不要求 format v1 归档携带
+  `agent/lib/package-installer.cjs`。
+- 即使版本号均为当前版本，Host 卡片仍提供同版本“重新安装”，用于修复 registry、签名
+  或安装 identity 异常。GoodBuddy-owned 同 digest 目录损坏时先隔离后替换，并在发布或
+  激活失败时恢复；不要求删除 Host、凭据或引用项目。
+- Host 卡片的“版本匹配”badge 只表达版本事实，不代表 Agent 正在运行或环境健康。重新安装
+  失败时明确显示本次操作未完成，并以随后重新检查的版本卡片表达当前事实；提交结果
+  不确定时不声称旧版本未被替换。
+- 更新成功后才定向清理该 Host 的 Agent 连接和 Runtime 选择缓存。引用项目再次打开时
+  解析新的 current registry 并建立当前连接，无需刷新项目记录；当前环境无效时要求用户
+  显式修复，但不在项目切换中下载或安装。失败或取消保留 Host 配置、凭据、项目、
+  Workspace 和旧组件。
 - 显式 stop、升级、身份冲突或进程退出时清理 GoodBuddy 自己的 socket、状态和子进程；不得删除或覆盖无关 Host 文件。
+
+### Host 级环境生命周期
+
+- Agent、Node 和 Runtime 是 Host/SSH 账号级共享环境。新增或重新验证 Host 后先保存 Host
+  并只读探测，不自动安装；用户随后在 Host 卡片明确选择安装或更新方式，失败保留 Host
+  并允许重试。
+- Host 可以按签名目录固定的 URL、大小和 SHA-256 直接从当前 GitHub/北京镜像来源下载
+  完整 `.gbagent`，也可使用 GoodBuddy 本机下载、流式 SFTP 传输和离线导入。自动模式只在
+  操作开始时择一；执行失败不会在同一次操作中切换 acquisition。
+- 项目只保存 Host ID、远端路径、Runtime 选择和默认模式。创建或保存时验证 Host current
+  环境；打开或切换只读取本地配置。Workspace/Runtime 实际使用时从 Host current registry
+  和当前 Agent 连接取得 live identity，不再扫描、下载、上传或发布 Agent/Runtime。完整
+  事务、兼容边界和验收要求以
+  [Host 环境准备设计](./remote-host-environment-provisioning-design.md) 为准。
+- 打开新建/项目设置弹窗只读取本地 Host 验证记录，不并发检查所有 Host；目录浏览或保存
+  才连接所选 Host。
+- 项目选择器中的管理操作默认浮动隐藏，在悬停、键盘焦点或触屏环境显示。管理任意已保存
+  项目不先激活项目，因此 Host 不可达或远端目录已不存在时仍可删除其本地记录。
+- 删除 Host 时确认框列出所有引用它的本地项目记录，包括归档项目。确认后只删除本机
+  Host、凭据、项目及其关联记录，不连接 Host、不删除远端目录或内容；Host 设置写入或
+  项目事务失败时恢复另一侧，避免只删掉其中一类本地记录。
 
 ## Workspace
 
@@ -132,7 +206,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
   调度、跨 channel 超车、批发送或第二套拥塞控制。
 - Agent 在把 Main 输入交给 Runtime 前、以及把 Runtime 输出交给 Main 前，先把 ACP frame 写入本机 journal。ACK 只推进 cursor 并裁剪已确认 frame，不表示 channel 已终止。
 - Main 持久化 binding identity 和单调 cursor；保留中的 connection lease 即使处于 offline/reconnecting，也可以先把新 cursor 落盘。重连提交不能覆盖 resume 过程中并发落盘的更新。
-- 同一 detached Agent 存活时，短暂 SSH 断线依次执行 `controller/resume`、`runtime/resumeAcpChannel` 和 `runtime/replayAcpChannel`，从 Main 已确认的 cursor 后只重放 Agent 到 Main 的已记录输出。重复 frame 会被确认但不会再次交给上层。
+- 同一 detached Agent 存活时，短暂 SSH 断线依次执行 `controller/resume`、`runtime/resumeAcpChannel` 和 `runtime/replayAcpChannel`，从 Main 已确认的 cursor 后只重放 Agent 到 Main 的已记录输出。重复 frame 会被确认但不会再次交给上层。若上一代连接只留下没有活动请求的 detached binding，完成精确 controller takeover 后会先有界停止并核对遗留 Runtime process，再用新 channel epoch 重新打开同一 binding 并恢复已有 ACP session；其他 controller、未证明 takeover 或仍有活动请求的 binding 仍被拒绝。
 - Main 到 Runtime 的 ACP 输入、模型请求、工具请求和 blob 不自动重放。
 - 无法确认外部 Provider 是否已处理的模型调用保持结果未知，避免重复计费或重复副作用。
 - 只有远端返回 identity 匹配且 `closed: true` 时，Main 才删除持久化 binding；传输失败或未确认 close 会保留 recovery identity。
@@ -170,7 +244,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。当前源码 lock 是正式版本 `0.11.5`，需要由新的复合包发布流程另行验证。
+  的双架构验收。当前源码 lock 是待发布版本 `0.11.6`，需要由新的复合包发布流程另行验证。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
@@ -182,31 +256,36 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 ## 项目保存
 
-远程项目持久化稳定配置和当前验证结果：
+远程项目只持久化稳定配置：
 
-- Host ID、Host revision 与 Host Key generation；
-- 远端工作目录和 Workspace identity；
-- Agent installation identity；
-- Runtime selection、bundle digest、adapter digest；
-- `ask | execute`。
+- Host ID；
+- 规范远端工作目录；
+- Runtime selection；
+- `ask | execute` 默认模式。
 
-打开托管 SSH 项目会从这些已保存字段重建验证输入，不接受 Renderer 回传的旧项目草稿。桌面更新后，用户先显式准备兼容复合包，第一次打开才可安装对应 Agent/Runtime 并原子刷新以上字段，同时保留项目名称、说明、Host、远端工作目录、Runtime selection 和默认工作模式。
+Agent installation、Host revision/Host Key generation、Workspace identity、Runtime
+bundle/adapter digest 和 capability generation 都属于 live connection/lease，不进入项目
+domain object 或 SQLite。打开托管 SSH 项目不接受 Renderer 回传的旧项目草稿，而是从 Host
+store 解析当前连接目标，通过 Agent/Runtime 安装管理器的 current/activate 读取路径取得
+registry identity，再用同一个 Agent 连接验证 Workspace 路径和 Runtime capability。该流程
+不会扫描完整 payload、取得安装包或发布组件。
 
-请求前置校验只要求 Workspace 验证与 Runtime 验证来自同一个当前 Agent
-installation。它不比较激活时保存的模型 profile 或默认工作模式与当前会话选择，
-因为这些不是签名远端 Runtime 的身份；切换当前模型配置或 Ask/Execute 不需要重新激活
-项目。实时 Runtime 创建仍只接受 OpenCode，使用当前解析后的模型 profile 建立 Main-only
-模型桥，并再次精确核对 Agent identity、Runtime bundle/adapter digest、架构、capability
-和连接身份。Ask/Execute 权限继续由每次 Prompt 的 ACP Runtime 边界执行。
+实时 Runtime 创建只接受 OpenCode，使用当前解析后的模型 profile 建立 Main-only 模型桥，
+从当前 Agent 连接和 Runtime registry 取得会话 identity，并在该连接上打开 Workspace 和
+ACP channel。Host 编辑或环境更新会定向失效 Agent 连接与 Runtime 缓存，下一次请求自然
+重新取得 current 环境；无需修改项目。Ask/Execute 权限继续由每次 Prompt 的 ACP Runtime
+边界执行。
 
-Renderer 在用户主动打开托管 SSH 项目时订阅同一次 Main 保存操作的进度，依次显示
-Host、Agent、Workspace、Runtime 和 Saving。操作完成、失败或取消后会清除阻塞进度；
-进行中可显式取消，并禁用会产生冲突的项目切换、创建和设置入口。远端 RPC 拒绝只向
+Renderer 在用户主动打开已有托管 SSH 项目时立即切换，不显示远程激活状态。Host、Agent、
+Workspace、Runtime 和 Saving 进度仅用于新建或显式保存项目；进行中可显式取消并禁用会
+产生冲突的项目创建和设置入口。远端 RPC 拒绝只向
 Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转发 Host 私有错误详情。
 `runtime/preparePrompt` 在远端明确拒绝且尚未接受 Prompt 时会关闭对应 Main binding，
 不会把确定性失败错误保留为 `outcome-unknown`。
 
-不持久化 T2/T3、consent、approval bridge 或 confinement 证明。数据库迁移可以保留旧列以安全读取历史数据库，但新 domain object 不再暴露这些字段。
+不持久化 T2/T3、consent、approval bridge、confinement 或组件验证结果。数据库 schema
+v31 保留项目及关联用户数据，但重建执行空间表为 `project_id/kind/root_path/ssh_host_id`
+四列，并删除旧 Runtime 验证表。
 
 ## 资源与发布
 

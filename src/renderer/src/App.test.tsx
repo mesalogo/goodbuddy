@@ -395,8 +395,6 @@ const api: DesktopApi = {
     setArchived: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     remote: {
-      activate:
-        vi.fn<DesktopApi['projects']['remote']['activate']>(),
       save: vi.fn<DesktopApi['projects']['remote']['save']>(),
       cancelCurrent:
         vi.fn<DesktopApi['projects']['remote']['cancelCurrent']>(),
@@ -983,7 +981,6 @@ describe('App', () => {
     vi.mocked(api.conversations.onChanged)
       .mockReset()
       .mockReturnValue(() => undefined)
-    vi.mocked(api.projects.remote.activate).mockReset()
     vi.mocked(api.projects.remote.cancelCurrent)
       .mockReset()
       .mockResolvedValue()
@@ -5809,7 +5806,6 @@ describe('App', () => {
     expect(
       await screen.findByRole('button', { name: '当前项目' })
     ).toHaveTextContent(project.name)
-    expect(api.projects.remote.activate).not.toHaveBeenCalled()
     await waitFor(() =>
       expect(
         localStorage.getItem('goodbuddy.active-project.v1')
@@ -5817,7 +5813,7 @@ describe('App', () => {
     )
   })
 
-  it('shows only supported OpenCode choices in a managed SSH conversation', async () => {
+  it('switches immediately to a managed SSH project and shows only supported OpenCode choices', async () => {
     installRemoteProjectsSetting(true)
     const remoteProject = {
       ...project,
@@ -5836,9 +5832,6 @@ describe('App', () => {
       project,
       remoteProject
     ])
-    vi.mocked(api.projects.remote.activate).mockResolvedValueOnce(
-      remoteProject
-    )
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: '00000000-0000-4000-8000-000000000319',
@@ -5872,6 +5865,9 @@ describe('App', () => {
         screen.getByRole('button', { name: '当前项目' })
       ).toHaveTextContent(remoteProject.name)
     )
+    expect(
+      screen.queryByRole('progressbar')
+    ).not.toBeInTheDocument()
 
     const runtimeButton = await screen.findByRole('button', {
       name: /OpenCode · 默认模型/u
@@ -5914,6 +5910,57 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('switches between projects on one Host without a connection phase', async () => {
+    installRemoteProjectsSetting(true)
+    const first = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000126',
+      name: 'Host 项目一',
+      rootPath: '/srv/one',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000226',
+        remoteRootPath: '/srv/one'
+      },
+      builtInDefault: false
+    }
+    const second = {
+      ...first,
+      id: '00000000-0000-4000-8000-000000000127',
+      name: 'Host 项目二',
+      rootPath: '/srv/two',
+      executionSpace: {
+        ...first.executionSpace,
+        remoteRootPath: '/srv/two'
+      }
+    }
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      first,
+      second
+    ])
+
+    render(<App />)
+    await screen.findByRole('button', { name: '当前项目' })
+    vi.mocked(
+      api.runtimeCustomization.getNativeSnapshot
+    ).mockClear()
+
+    for (const remoteProject of [first, second, first]) {
+      selectProjectOption(remoteProject.name)
+      expect(
+        screen.getByRole('button', { name: '当前项目' })
+      ).toHaveTextContent(remoteProject.name)
+      expect(
+        screen.queryByRole('progressbar')
+      ).not.toBeInTheDocument()
+    }
+    expect(
+      api.runtimeCustomization.getNativeSnapshot
+    ).not.toHaveBeenCalled()
+  })
+
   it('keeps saved remote projects hidden while the preview is disabled', async () => {
     installRemoteProjectsSetting(false)
     const remoteProject = {
@@ -5944,7 +5991,6 @@ describe('App', () => {
     expect(
       within(menu).queryByText(remoteProject.name)
     ).not.toBeInTheDocument()
-    expect(api.projects.remote.activate).not.toHaveBeenCalled()
   })
 
   it('falls back to a local project when the remote preview is disabled', async () => {
@@ -5966,9 +6012,6 @@ describe('App', () => {
       project,
       remoteProject
     ])
-    vi.mocked(api.projects.remote.activate).mockResolvedValueOnce(
-      remoteProject
-    )
 
     render(<App />)
     await screen.findByRole('button', { name: '当前项目' })
@@ -6014,79 +6057,18 @@ describe('App', () => {
     expect(api.projects.delete).not.toHaveBeenCalled()
   })
 
-  it('cancels pending remote activation when the preview is disabled', async () => {
-    const { updateSettings } = installRemoteProjectsSetting(true)
-    const remoteProject = {
-      ...project,
-      id: '00000000-0000-4000-8000-000000000118',
-      name: '连接中的远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
-      executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000218',
-        remoteRootPath: '/srv/project'
-      },
-      builtInDefault: false
-    }
-    const activation = deferred<typeof remoteProject>()
-    vi.mocked(api.projects.list).mockResolvedValueOnce([
-      project,
-      remoteProject
-    ])
-    vi.mocked(api.projects.remote.activate).mockReturnValueOnce(
-      activation.promise
-    )
-
-    render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(remoteProject.name)
-    await screen.findByRole('progressbar', {
-      name: '远程项目连接进度'
-    })
-
-    fireEvent.click(screen.getByText('本地工作区'))
-    fireEvent.click(
-      await screen.findByRole('tab', { name: '平台功能' })
-    )
-    fireEvent.click(
-      await screen.findByRole('tab', {
-        name: '远程项目（技术预览）'
-      })
-    )
-    fireEvent.click(
-      await screen.findByRole('switch', {
-        name: '远程项目（技术预览）'
-      })
-    )
-
-    await waitFor(() =>
-      expect(updateSettings).toHaveBeenCalledWith({
-        remoteProjectsEnabled: false
-      })
-    )
-    expect(api.projects.remote.cancelCurrent).toHaveBeenCalledOnce()
-    await act(async () => {
-      activation.resolve(remoteProject)
-      await activation.promise
-    })
-    expect(
-      screen.getByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
-  })
-
-  it('keeps the current project active when remote activation fails', async () => {
+  it('deletes an unreachable non-active remote project without connecting', async () => {
     installRemoteProjectsSetting(true)
     const remoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000104',
-      name: '失效远程项目',
-      rootPath: '/srv/project',
+      id: '00000000-0000-4000-8000-000000000125',
+      name: '目录已丢失的远程项目',
+      rootPath: '/srv/missing',
       runtimeSelection: { provider: 'opencode' as const },
       executionSpace: {
         kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000204',
-        remoteRootPath: '/srv/project'
+        hostId: '00000000-0000-4000-8000-000000000225',
+        remoteRootPath: '/srv/missing'
       },
       builtInDefault: false
     }
@@ -6094,489 +6076,40 @@ describe('App', () => {
       project,
       remoteProject
     ])
-    vi.mocked(api.projects.remote.activate).mockRejectedValueOnce(
-      new Error(
-        "Error invoking remote method 'projects:remote:activate': AgentInstallationError: Agent upload failed"
-      )
-    )
-    render(<App />)
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: '当前项目' })
-      ).toHaveTextContent(project.name)
-    )
-
-    selectProjectOption(remoteProject.name)
-
-    expect(
-      await screen.findByText(
-        '远程项目更新失败：Agent upload failed。请检查 Host 后重试'
-      )
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
-  })
-
-  it('revalidates the current SSH project when it is selected again', async () => {
-    installRemoteProjectsSetting(true)
-    const remoteProject = {
-      ...project,
-      id: '00000000-0000-4000-8000-000000000114',
-      name: '可重新连接的远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
-      executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000214',
-        remoteRootPath: '/srv/project'
-      },
-      builtInDefault: false
-    }
-    vi.mocked(api.projects.list).mockResolvedValueOnce([
-      project,
-      remoteProject
-    ])
-    vi.mocked(api.projects.remote.activate).mockResolvedValue(
-      remoteProject
-    )
     render(<App />)
     await screen.findByRole('button', { name: '当前项目' })
 
-    selectProjectOption(remoteProject.name)
-    await waitFor(() =>
-      expect(api.projects.remote.activate).toHaveBeenCalledTimes(1)
-    )
-    expect(
-      screen.getByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(remoteProject.name)
-
-    selectProjectOption(remoteProject.name)
-
-    await waitFor(() =>
-      expect(api.projects.remote.activate).toHaveBeenCalledTimes(2)
-    )
-    expect(api.projects.remote.activate).toHaveBeenLastCalledWith(
-      remoteProject.id
-    )
-  })
-
-  it('keeps Host-stale projects blocked and preserves queued dispatches until reactivation succeeds', async () => {
-    installRemoteProjectsSetting(true)
-    const hostId = '00000000-0000-4000-8000-000000000215'
-    const candidateId =
-      '00000000-0000-4000-8000-000000000315'
-    const remoteConversationId =
-      '00000000-0000-4000-8000-000000000415'
-    const fingerprint = `SHA256:${'A'.repeat(43)}`
-    const host = {
-      id: hostId,
-      name: 'Build host',
-      hostname: '192.168.0.23',
-      port: 22,
-      username: 'root',
-      authentication: 'system-agent' as const,
-      credentialConfigured: true,
-      credentialSource: 'system-agent' as const,
-      hostKey: {
-        state: 'verified' as const,
-        algorithm: 'ecdsa-sha2-nistp256',
-        fingerprintSha256: fingerprint,
-        generation: 1
-      },
-      lastValidatedAt: '2026-08-24T00:00:00.000Z',
-      createdAt: '2026-08-24T00:00:00.000Z',
-      updatedAt: '2026-08-24T00:00:00.000Z'
-    }
-    const updatedHost = {
-      ...host,
-      hostname: '10.7.0.23',
-      hostKey: { ...host.hostKey, generation: 2 },
-      updatedAt: '2026-08-24T00:01:00.000Z'
-    }
-    const remoteProject = {
-      ...project,
-      id: '00000000-0000-4000-8000-000000000115',
-      name: 'Host 一致性项目',
-      rootPath: '/root',
-      runtimeSelection: { provider: 'opencode' as const },
-      executionSpace: {
-        kind: 'ssh' as const,
-        hostId,
-        remoteRootPath: '/root'
-      },
-      builtInDefault: false
-    }
-    const sshHosts: NonNullable<DesktopApi['sshHosts']> = {
-      getSnapshot: vi.fn(async () => ({
-        hosts: [host],
-        secureStorageAvailable: true
-      })),
-      getAgentPackageInventory: vi.fn(async () => ({
-        checkedAt: '2026-08-24T00:00:00.000Z',
-        catalog: {
-          state: 'available' as const,
-          checkedAt: '2026-08-24T00:00:00.000Z',
-          error: null
-        },
-        entries: [
-          {
-            platform: 'linux' as const,
-            architecture: 'x64' as const,
-            state: 'verified' as const,
-            version: '0.11.2',
-            latestVersion: '0.11.4',
-            updateAvailable: true,
-            agentProtocol: { major: 2, minor: 0 },
-            remoteRuntimeVersion: '1.18.9'
-          },
-          {
-            platform: 'linux' as const,
-            architecture: 'arm64' as const,
-            state: 'not-downloaded' as const,
-            version: null,
-            latestVersion: '0.11.4',
-            updateAvailable: false,
-            agentProtocol: null,
-            remoteRuntimeVersion: null
-          }
-        ]
-      })),
-      downloadAgentPackage: vi.fn(),
-      importAgentPackage: vi.fn(),
-      exportAgentPackage: vi.fn(async () => {}),
-      onAgentPackageProgress: vi.fn(() => () => {}),
-      remove: vi.fn(async () => undefined),
-      inspectDraftHostKey: vi.fn(async () => ({
-        candidateId,
-        hostId,
-        state: 'verified' as const,
-        algorithm: 'ecdsa-sha2-nistp256',
-        fingerprintSha256: fingerprint
-      })),
-      discardCandidate: vi.fn(async () => undefined),
-      validateAndSave: vi.fn(async () => ({
-        host: updatedHost,
-        connection: {
-          hostId,
-          connected: true as const,
-          latencyMs: 12,
-          platform: 'linux' as const,
-          architecture: 'x64' as const,
-          shell: '/bin/bash',
-          homeDirectory: '/root',
-          detail: 'SSH 已连接，远端系统为 linux/x64'
-        }
-      })),
-      getRemoteEnvironment: vi.fn(async () => ({
-        hostId,
-        checkedAt: '2026-08-24T00:00:00.000Z',
-        architecture: 'x64' as const,
-        agent: {
-          state: 'current' as const,
-          expected: {
-            version: '0.11.2-e2e.8',
-            architecture: 'x64' as const
-          },
-          installed: {
-            version: '0.11.2-e2e.8',
-            architecture: 'x64' as const
-          }
-        },
-        runtimes: [{
-          runtimeId: 'opencode' as const,
-          provider: 'opencode' as const,
-          state: 'current' as const,
-          expected: {
-            version: '1.18.9',
-            architecture: 'x64' as const
-          },
-          installed: {
-            version: '1.18.9',
-            architecture: 'x64' as const
-          }
-        }]
-      })),
-      updateRemoteEnvironment: vi.fn(async () => undefined),
-      cancelRemoteEnvironmentUpdate: vi.fn(async () => undefined),
-      onRemoteEnvironmentUpdateProgress: vi.fn(() => () => undefined),
-      browseDirectories: vi.fn(async () => ({
-        path: '/root',
-        homeDirectory: '/root',
-        parentPath: '/',
-        entries: [],
-        truncated: false
-      })),
-      cancelDirectoryBrowse: vi.fn(async () => undefined)
-    }
-    vi.mocked(api.projects.list).mockResolvedValueOnce([
-      project,
-      remoteProject
-    ])
-    vi.mocked(api.conversations.list).mockResolvedValueOnce([
-      {
-        id: remoteConversationId,
-        projectId: remoteProject.id,
-        title: 'Host 一致性对话',
-        updatedAt: Date.now(),
-        messages: []
-      }
-    ])
-    const hostReactivation = deferred<typeof remoteProject>()
-    vi.mocked(api.projects.remote.activate)
-      .mockResolvedValueOnce(remoteProject)
-      .mockReturnValueOnce(hostReactivation.promise)
-      .mockResolvedValueOnce(remoteProject)
-    Object.defineProperty(window, 'goodbuddy', {
-      configurable: true,
-      value: { ...api, sshHosts }
-    })
-    render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(remoteProject.name)
-    await waitFor(() =>
-      expect(api.projects.remote.activate).toHaveBeenCalledTimes(1)
-    )
-
-    fireEvent.click(await screen.findByText('本地工作区'))
-    await screen.findByRole('heading', { name: '设置中心' })
+    fireEvent.click(screen.getByLabelText('当前项目'))
     fireEvent.click(
-      screen.getByRole('tab', { name: '主机与远程执行' })
-    )
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: '编辑 Build host'
+      screen.getByRole('menuitem', {
+        name: `管理项目 ${remoteProject.name}`
       })
     )
-    fireEvent.change(screen.getByLabelText('主机地址'), {
-      target: { value: '10.7.0.23' }
-    })
+    const dialog = screen.getByRole('dialog', { name: '项目设置' })
     fireEvent.click(
-      screen.getByRole('button', { name: '检查 Host Key' })
+      within(dialog).getByRole('button', { name: '删除项目' })
+    )
+    fireEvent.change(
+      within(dialog).getByLabelText(
+        `输入“${remoteProject.name}”确认删除`
+      ),
+      { target: { value: remoteProject.name } }
     )
     fireEvent.click(
-      await screen.findByRole('button', {
-        name: '确认身份并继续'
+      within(dialog).getByRole('button', {
+        name: '永久删除项目'
       })
     )
-    fireEvent.click(
-      screen.getByRole('button', { name: '验证并保存' })
-    )
 
     await waitFor(() =>
-      expect(sshHosts.validateAndSave).toHaveBeenCalledOnce()
-    )
-    await waitFor(() =>
-      expect(api.projects.remote.activate).toHaveBeenCalledTimes(2)
-    )
-    expect(api.projects.remote.activate).toHaveBeenLastCalledWith(
-      remoteProject.id
-    )
-
-    const queuedDispatch: ConversationQueueDispatch = {
-      item: {
-        id: '00000000-0000-4000-8000-000000000515',
-        conversationId: remoteConversationId,
-        source: 'user',
-        label: '等待 Host 恢复的消息',
-        createdAt: '2026-08-24T00:02:00.000Z'
-      },
-      input: {
-        conversationId: remoteConversationId,
-        projectId: remoteProject.id,
-        runtimeSelection: { provider: 'opencode' },
-        workMode: 'ask',
-        includeMemoryContext: true,
-        prompt: '等待 Host 恢复的消息',
-        attachments: [],
-        knowledgeLibraryIds: [],
-        knowledgeRetrievalMode: 'auto'
-      }
-    }
-    act(() => {
-      conversationQueueDispatchListener?.(queuedDispatch)
-    })
-    await waitFor(() =>
-      expect(api.conversationQueue.releaseUser).toHaveBeenCalledWith(
-        queuedDispatch.item.id
+      expect(api.projects.delete).toHaveBeenCalledWith(
+        remoteProject.id,
+        remoteProject.name
       )
     )
-    expect(run).not.toHaveBeenCalled()
-
-    await act(async () => {
-      hostReactivation.reject(new Error('Host reconnect failed'))
-      await hostReactivation.promise.catch(() => undefined)
-    })
-    expect(
-      await screen.findByText(
-        '远程项目更新失败：Host reconnect failed。请检查 Host 后重试'
-      )
-    ).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '对话' }))
-    const composer = await screen.findByLabelText('向 GoodBuddy 提问')
-    fireEvent.change(composer, {
-      target: { value: '前台消息也必须等待重新连接' }
-    })
-    const send = screen.getByLabelText('发送')
-    expect(send).toBeDisabled()
-    expect(send).toHaveAttribute(
-      'title',
-      '远程项目需要重新连接，请重新选择当前项目后再发送'
-    )
-
-    selectProjectOption(remoteProject.name)
-    await waitFor(() =>
-      expect(api.projects.remote.activate).toHaveBeenCalledTimes(3)
-    )
-    await waitFor(() => expect(send).toBeEnabled())
-    await waitFor(() =>
-      expect(api.conversationQueue.ready).toHaveBeenCalledWith(
-        remoteConversationId
-      )
-    )
-
-    act(() => {
-      conversationQueueDispatchListener?.(queuedDispatch)
-    })
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    expect(run.mock.calls[0]![0]).toMatchObject({
-      queueItemId: queuedDispatch.item.id,
-      projectId: remoteProject.id,
-      prompt: queuedDispatch.input.prompt
-    })
-    expect(api.conversationQueue.releaseUser).toHaveBeenCalledOnce()
-  })
-
-  it('shows every direct remote activation phase and blocks conflicting project actions', async () => {
-    installRemoteProjectsSetting(true)
-    const remoteProject = {
-      ...project,
-      id: '00000000-0000-4000-8000-000000000105',
-      name: '阶段远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
-      executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000205',
-        remoteRootPath: '/srv/project'
-      },
-      builtInDefault: false
-    }
-    const activation = deferred<typeof remoteProject>()
-    vi.mocked(api.projects.list).mockResolvedValueOnce([
-      project,
-      remoteProject
-    ])
-    vi.mocked(api.projects.remote.activate).mockReturnValueOnce(
-      activation.promise
-    )
-    render(<App />)
-    expect(
-      await screen.findByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
-
-    selectProjectOption(remoteProject.name)
-
-    const progress = await screen.findByRole('progressbar', {
-      name: '远程项目连接进度'
-    })
-    expect(progress).toHaveAttribute('max', '5')
-    expect(progress).toHaveAttribute('value', '1')
-    expect(
-      screen.getByText('正在连接远程项目“阶段远程项目”')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: '当前项目' })
-    ).toBeDisabled()
-    expect(screen.getByLabelText('新建项目')).toBeDisabled()
-    expect(screen.getByLabelText('项目设置')).toBeDisabled()
-
-    act(() => {
-      remoteProjectSaveProgressListener?.({ phase: 'workspace' })
-    })
-    expect(progress).toHaveAttribute('value', '3')
-    expect(
-      screen.getByText('当前阶段：远端工作区')
-    ).toBeInTheDocument()
-    const stages = screen.getByRole('list', {
-      name: '远程项目连接阶段'
-    })
-    expect(within(stages).getAllByRole('listitem')).toHaveLength(5)
-    expect(
-      within(stages).getByText('远端工作区').closest('li')
-    ).toHaveAttribute('aria-current', 'step')
-
-    await act(async () => {
-      activation.resolve(remoteProject)
-      await activation.promise
-    })
-    await waitFor(() =>
-      expect(
-        screen.queryByRole('progressbar', {
-          name: '远程项目连接进度'
-        })
-      ).not.toBeInTheDocument()
-    )
-    expect(
-      screen.getByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(remoteProject.name)
-  })
-
-  it('cancels direct remote activation without switching projects', async () => {
-    installRemoteProjectsSetting(true)
-    const remoteProject = {
-      ...project,
-      id: '00000000-0000-4000-8000-000000000106',
-      name: '可取消远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
-      executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000206',
-        remoteRootPath: '/srv/project'
-      },
-      builtInDefault: false
-    }
-    const activation = deferred<typeof remoteProject>()
-    vi.mocked(api.projects.list).mockResolvedValueOnce([
-      project,
-      remoteProject
-    ])
-    vi.mocked(api.projects.remote.activate).mockReturnValueOnce(
-      activation.promise
-    )
-    render(<App />)
-    expect(
-      await screen.findByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
-    selectProjectOption(remoteProject.name)
-
-    fireEvent.click(
-      await screen.findByRole('button', { name: '取消连接' })
-    )
-    expect(api.projects.remote.cancelCurrent).toHaveBeenCalledOnce()
-    expect(
-      screen.getByRole('button', { name: '取消中…' })
-    ).toBeDisabled()
-    await act(async () => {
-      activation.reject(
-        new DOMException('Remote project save cancelled', 'AbortError')
-      )
-      await activation.promise.catch(() => undefined)
-    })
-
-    expect(
-      await screen.findByText('已取消远程项目连接')
-    ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: '当前项目' })
     ).toHaveTextContent(project.name)
-    expect(
-      screen.queryByRole('progressbar', {
-        name: '远程项目连接进度'
-      })
-    ).not.toBeInTheDocument()
   })
 
   it('shows grouped project details and keeps the rich menu keyboard accessible', async () => {
@@ -6610,15 +6143,16 @@ describe('App', () => {
     const selectedProject = within(menu)
       .getByText(project.name, { selector: 'b' })
       .closest<HTMLButtonElement>('[role="menuitemradio"]')
-    const remoteProject = within(menu)
-      .getByText(channelProject.name, { selector: 'b' })
-      .closest<HTMLButtonElement>('[role="menuitemradio"]')
+    const remoteProjectSettings = within(menu).getByRole(
+      'menuitem',
+      { name: `管理项目 ${channelProject.name}` }
+    )
     expect(selectedProject).toHaveAttribute('aria-checked', 'true')
     await waitFor(() => expect(selectedProject).toHaveFocus())
 
     fireEvent.keyDown(selectedProject!, { key: 'End' })
-    expect(remoteProject).toHaveFocus()
-    fireEvent.keyDown(remoteProject!, { key: 'Escape' })
+    expect(remoteProjectSettings).toHaveFocus()
+    fireEvent.keyDown(remoteProjectSettings, { key: 'Escape' })
     expect(trigger).toHaveFocus()
     expect(
       screen.queryByRole('menu', { name: '当前项目' })

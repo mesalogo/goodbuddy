@@ -673,6 +673,55 @@ describe('AgentProtocolServer connection bounds', () => {
     harness.close()
   })
 
+  it('marks method context only after exact controller takeover', async () => {
+    const takeoverStates: Array<boolean | undefined> = []
+    const harness = createHarness({
+      reconnect: true,
+      methods: {
+        'runtime/openAcpChannel': (_params, context) => {
+          takeoverStates.push(context.controllerTakeoverProven)
+          return null
+        }
+      }
+    })
+    const previous = harness.previousController!
+    harness.socket.receive(
+      controlFrame(harness.controller, 'before-resume', '1', 1, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'runtime/openAcpChannel',
+        params: {}
+      })
+    )
+    await waitFor(() => harness.socket.writes.length === 2)
+    harness.socket.receive(
+      controlFrame(harness.controller, 'resume', '1', 1, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'controller/resume',
+        params: {
+          previousGeneration: previous.generation,
+          previousConnectionId: previous.connectionId,
+          daemonBootId: daemonStatus.daemonBootId,
+          capabilityGeneration: previous.capabilityGeneration
+        }
+      })
+    )
+    await waitFor(() => harness.socket.writes.length === 4)
+    harness.socket.receive(
+      controlFrame(harness.controller, 'after-resume', '1', 1, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'runtime/openAcpChannel',
+        params: {}
+      })
+    )
+    await waitFor(() => harness.socket.writes.length === 6)
+
+    expect(takeoverStates).toEqual([false, true])
+    harness.close()
+  })
+
   it.each([
     ['previous connection', { previousConnectionId: 'connection-wrong' }],
     ['capability generation', { capabilityGeneration: 2 }],

@@ -206,6 +206,17 @@ export type SshHost = {
 export type SshHostsSnapshot = {
   hosts: SshHost[]
   secureStorageAvailable: boolean
+  projectReferences?: Record<string, SshHostProjectReference[]>
+}
+
+export type SshHostProjectReference = {
+  id: string
+  name: string
+}
+
+export type SshHostRemovalResult = {
+  hostId: string
+  deletedProjects: SshHostProjectReference[]
 }
 
 export type SshHostKeyInspection = {
@@ -249,6 +260,16 @@ export const sshHostRemoteEnvironmentStateSchema = z.enum([
   'not-installed'
 ])
 
+export const remoteEnvironmentDownloadUnavailableReasonSchema =
+  z.enum([
+    'package-unavailable',
+    'missing-tools',
+    'home-unwritable',
+    'insufficient-disk-space',
+    'source-unreachable',
+    'probe-failed'
+  ])
+
 export const sshHostRemoteEnvironmentSchema = z
   .object({
     hostId: sshHostIdSchema,
@@ -274,7 +295,31 @@ export const sshHostRemoteEnvironmentSchema = z
           })
           .strict()
       )
-      .max(16)
+      .max(16),
+    remoteDownload: z
+      .discriminatedUnion('available', [
+        z
+          .object({
+            available: z.literal(true),
+            source: z.enum(['github', 'mirror']),
+            packageSize: z.number().int().positive().safe()
+          })
+          .strict(),
+        z
+          .object({
+            available: z.literal(false),
+            source: z.enum(['github', 'mirror']).nullable(),
+            packageSize: z
+              .number()
+              .int()
+              .positive()
+              .safe()
+              .nullable(),
+            reason:
+              remoteEnvironmentDownloadUnavailableReasonSchema
+          })
+          .strict()
+      ])
   })
   .strict()
 
@@ -282,10 +327,37 @@ export type SshHostRemoteEnvironment = z.infer<
   typeof sshHostRemoteEnvironmentSchema
 >
 
+export const remoteEnvironmentPreparationMethodSchema = z.enum([
+  'auto',
+  'remote-download',
+  'goodbuddy-transfer'
+])
+
+export type RemoteEnvironmentPreparationMethod = z.infer<
+  typeof remoteEnvironmentPreparationMethodSchema
+>
+
+export const remoteEnvironmentUpdateRequestSchema = z
+  .object({
+    hostId: sshHostIdSchema,
+    method: remoteEnvironmentPreparationMethodSchema
+  })
+  .strict()
+
+export type RemoteEnvironmentUpdateRequest = z.infer<
+  typeof remoteEnvironmentUpdateRequestSchema
+>
+
 export const remoteEnvironmentUpdatePhaseSchema = z.enum([
-  'agent',
-  'runtime',
-  'finalizing'
+  'probing',
+  'downloading',
+  'verifying',
+  'applying',
+  'installing-agent',
+  'installing-runtime',
+  'checking-health',
+  'finalizing',
+  'complete'
 ])
 
 export type RemoteEnvironmentUpdatePhase = z.infer<
@@ -295,6 +367,7 @@ export type RemoteEnvironmentUpdatePhase = z.infer<
 export const remoteEnvironmentUpdateProgressSchema = z
   .object({
     hostId: sshHostIdSchema,
+    method: remoteEnvironmentPreparationMethodSchema,
     phase: remoteEnvironmentUpdatePhaseSchema
   })
   .strict()

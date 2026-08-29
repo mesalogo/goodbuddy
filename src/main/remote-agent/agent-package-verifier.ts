@@ -45,20 +45,14 @@ import {
   parseAgentReleaseKeyRegistry,
   parseAgentReleaseKeyRegistryBytes,
   verifyAgentBundleDirectory,
-  type AgentVerificationEnvironment,
-  type VerifiedAgentBundle
+  type AgentVerificationEnvironment
 } from './agent-bundle-verifier'
 import {
-  loadVerifiedRemoteRuntimeResourceBundle,
-  loadRemoteRuntimeVerificationMetadata,
-  type RemoteRuntimeVerificationMetadata
+  loadVerifiedRemoteRuntimeResourceBundle
 } from './remote-runtime-resource-loader'
 import type {
   BundledRemoteRuntimeResourcePaths
 } from './bundled-remote-runtime-resources'
-import type {
-  VerifiedRemoteRuntimeInstallationBundle
-} from './remote-runtime-installation-manager'
 
 const DESCRIPTOR_NAME = 'agent-package.json'
 const SIGNATURE_NAME = 'agent-package.sig'
@@ -76,9 +70,6 @@ const SIGNATURE_DOMAIN = Buffer.from(
 export type VerifiedAgentPackage = {
   rootDirectory: string
   descriptor: AgentPackageDescriptor
-  agentBundle: VerifiedAgentBundle
-  runtimeBundle: VerifiedRemoteRuntimeInstallationBundle
-  runtimeMetadata: RemoteRuntimeVerificationMetadata
 }
 
 export async function extractAndVerifyAgentPackage(options: {
@@ -239,8 +230,6 @@ export async function verifyExtractedAgentPackage(options: {
           options.verificationEnvironment ?? 'production'
       }
     )
-  const runtimeMetadata =
-    await loadRemoteRuntimeVerificationMetadata(runtimePaths)
   if (
     runtimeBundle.manifest.runtimeVersion !==
       descriptor.remoteRuntime.version ||
@@ -258,9 +247,6 @@ export async function verifyExtractedAgentPackage(options: {
   return {
     rootDirectory,
     descriptor,
-    agentBundle,
-    runtimeBundle,
-    runtimeMetadata
   }
 }
 

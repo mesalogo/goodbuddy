@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import {
   AGENT_PROTOCOL_VERSION,
   agentCapabilitySchema,
@@ -18,7 +19,10 @@ import {
   type VerifiedAgentInstallationId
 } from '../ssh/ssh-agent-command'
 import { defaultSystemAgent } from '../ssh/ssh-transport'
-import { AgentAttachTransport } from './agent-attach-transport'
+import {
+  AgentAttachTransport,
+  AgentAttachTransportError
+} from './agent-attach-transport'
 import {
   AgentProtocolClient,
   type AgentProtocolClientError
@@ -141,6 +145,7 @@ type ConnectionEntry = {
   controller: AbortController
   connectPromise: Promise<ActiveConnection>
   reconnectPromise?: Promise<void>
+  capabilityRefreshPromise?: Promise<DaemonCapabilities>
   connection?: ActiveConnection
   connectionState: RemoteAgentConnectionState
   failure?: RemoteAgentConnectionError
@@ -283,8 +288,12 @@ export class RemoteAgentConnectionManager {
           'network'
         )
       }
+      this.#validateCallerCapabilities(
+        installation,
+        entry.connection!.capabilities
+      )
       entry.refs += 1
-      return this.#lease(entry)
+      return this.#lease(entry, installation)
     } finally {
       entry.waiters -= 1
       if (entry.waiters === 0 && entry.refs === 0) {
@@ -595,11 +604,22 @@ export class RemoteAgentConnectionManager {
         'installation'
       )
     }
+    if (capabilities.generation < 1) {
+      throw terminalError(
+        'GoodBuddy Agent capability state is invalid',
+        'capability'
+      )
+    }
+  }
+
+  #validateCallerCapabilities(
+    installation: RemoteAgentInstallationIdentity,
+    capabilities: DaemonCapabilities
+  ): void {
     if (
-      capabilities.generation < 1 ||
       !requiredCapabilitiesPresent(
         capabilities,
-        expected.requiredCapabilities ?? []
+        installation.requiredCapabilities ?? []
       )
     ) {
       throw terminalError(
@@ -609,7 +629,10 @@ export class RemoteAgentConnectionManager {
     }
   }
 
-  #lease(entry: ConnectionEntry): RemoteAgentConnection {
+  #lease(
+    entry: ConnectionEntry,
+    installation: RemoteAgentInstallationIdentity
+  ): RemoteAgentConnection {
     let released = false
     const assertRetained = (): void => {
       if (
@@ -650,50 +673,16 @@ export class RemoteAgentConnectionManager {
         return released ? 'disposed' : entry.connectionState
       },
       refreshCapabilities: async (signal) => {
-        const active = assertActive()
-        const client = active.client
-        const generation = client.generation
-        const previousCapabilities = active.capabilities
-        const capabilities = daemonCapabilitiesSchema.parse(
-          await client.request(
-            'agent/capabilities',
-            {},
-            { signal }
-          )
+        assertActive()
+        const capabilities = await waitForShared(
+          this.#refreshCapabilities(entry),
+          signal
         )
-        signal?.throwIfAborted()
-        const current = assertActive()
-        if (
-          this.#entries.get(entry.key) !== entry ||
-          current !== active ||
-          current.client !== client ||
-          client.generation !== generation ||
-          current.capabilities !== previousCapabilities
-        ) {
-          throw new RemoteAgentConnectionError(
-            'Remote Agent capability refresh became stale',
-            'transient',
-            'network'
-          )
-        }
-        this.#validateDaemon(
-          entry,
-          active.transport,
-          active.status,
+        assertRetained()
+        this.#validateCallerCapabilities(
+          installation,
           capabilities
         )
-        active.capabilities = capabilities
-        try {
-          await this.#persistConnection(
-            entry,
-            active,
-            await this.#controllerState.getConnection(entry.stateKey),
-            true
-          )
-        } catch (error) {
-          active.capabilities = previousCapabilities
-          throw error
-        }
         return capabilities
       },
       reconnect: async (signal) => {
@@ -732,6 +721,84 @@ export class RemoteAgentConnectionManager {
         }
       }
     }
+  }
+
+  #refreshCapabilities(
+    entry: ConnectionEntry
+  ): Promise<DaemonCapabilities> {
+    if (entry.capabilityRefreshPromise !== undefined) {
+      return entry.capabilityRefreshPromise
+    }
+    const refresh = (async () => {
+      const active = entry.connection
+      if (
+        active === undefined ||
+        entry.connectionState !== 'ready'
+      ) {
+        throw (
+          entry.failure ??
+          new RemoteAgentConnectionError(
+            'Remote Agent connection is offline',
+            'transient',
+            'network'
+          )
+        )
+      }
+      const client = active.client
+      const generation = client.generation
+      const previousCapabilities = active.capabilities
+      const capabilities = daemonCapabilitiesSchema.parse(
+        await client.request(
+          'agent/capabilities',
+          {},
+          { signal: entry.controller.signal }
+        )
+      )
+      const current = entry.connection
+      if (
+        this.#entries.get(entry.key) !== entry ||
+        current !== active ||
+        entry.connectionState !== 'ready' ||
+        current.client !== client ||
+        client.generation !== generation ||
+        current.capabilities !== previousCapabilities
+      ) {
+        throw new RemoteAgentConnectionError(
+          'Remote Agent capability refresh became stale',
+          'transient',
+          'network'
+        )
+      }
+      this.#validateDaemon(
+        entry,
+        active.transport,
+        active.status,
+        capabilities
+      )
+      if (isDeepStrictEqual(capabilities, previousCapabilities)) {
+        return previousCapabilities
+      }
+      active.capabilities = capabilities
+      try {
+        await this.#persistConnection(
+          entry,
+          active,
+          await this.#controllerState.getConnection(entry.stateKey),
+          true
+        )
+      } catch (error) {
+        active.capabilities = previousCapabilities
+        throw error
+      }
+      return capabilities
+    })()
+    const shared = refresh.finally(() => {
+      if (entry.capabilityRefreshPromise === shared) {
+        entry.capabilityRefreshPromise = undefined
+      }
+    })
+    entry.capabilityRefreshPromise = shared
+    return shared
   }
 
   async #reconnect(
@@ -1033,6 +1100,16 @@ function requiredCapabilitiesPresent(
 function classifyConnectionError(error: unknown): RemoteAgentConnectionError {
   if (error instanceof RemoteAgentConnectionError) {
     return error
+  }
+  if (
+    error instanceof AgentAttachTransportError &&
+    error.diagnostic === 'installation-repair-required'
+  ) {
+    return terminalError(
+      'GoodBuddy Agent installation needs repair',
+      'protocol',
+      error
+    )
   }
   const message = error instanceof Error ? error.message : String(error)
   if (

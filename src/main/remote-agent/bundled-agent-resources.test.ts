@@ -2,7 +2,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   getBundledAgentDirectory,
-  resolveBundledAgentResourcePaths
+  resolveBundledAgentResourcePaths,
+  resolveControlPlanePackageInstallerPath
 } from './bundled-agent-resources'
 
 describe('bundled Agent resource paths', () => {
@@ -54,6 +55,24 @@ describe('bundled Agent resource paths', () => {
     )
     expect(paths.runtimeLockPath).toBe(
       join('installed', 'resources', 'agent-runtime-lock.json')
+    )
+    expect(
+      resolveControlPlanePackageInstallerPath({
+        appPath: join(
+          'installed',
+          'resources',
+          'app.asar'
+        )
+      })
+    ).toBe(
+      join(
+        'installed',
+        'resources',
+        'app.asar',
+        'out',
+        'main',
+        'remote-package-installer.mjs'
+      )
     )
     expect(getBundledAgentDirectory(paths, 'x64')).toBe(
       join('installed', 'resources', 'agents', 'linux-x64')

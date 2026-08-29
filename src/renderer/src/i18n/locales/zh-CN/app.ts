@@ -532,18 +532,6 @@ export const app = {
   notices: {
     brandingSaved: '品牌设置已保存',
     updateAvailable: '发现 GoodBuddy {{version}}，可在“关于与更新”中查看',
-    remoteProjectActivated: '远程项目 Agent 和 Runtime 已就绪',
-    remoteProjectActivationFailed:
-      '远程项目更新失败：{{message}}。请检查 Host 后重试',
-    remoteProjectActivationUnknownError: '未知错误',
-    remoteProjectReactivating: '远程项目正在重新连接，请稍候',
-    remoteProjectReconnectRequired:
-      '远程项目需要重新连接，请重新选择当前项目后再发送',
-    remoteProjectActivationCancelled: '已取消远程项目连接',
-    remoteProjectActivationCancelFailed:
-      '取消远程项目连接失败：{{message}}',
-    remoteProjectActivationCancelUnknownError:
-      '取消远程项目连接失败，请重试',
     channelConversationAutomatic:
       '通道项目的会话由客户端收到新消息后自动创建',
     deleteConversationCancelFailed:

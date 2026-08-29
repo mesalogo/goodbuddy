@@ -129,7 +129,6 @@ export const ipcChannels = {
   projectsUpdate: 'projects:update',
   projectsSetArchived: 'projects:set-archived',
   projectsDelete: 'projects:delete',
-  remoteProjectActivate: 'projects:remote:activate',
   remoteProjectSave: 'projects:remote:save',
   remoteProjectCancelCurrent: 'projects:remote:cancel-current',
   remoteProjectSaveProgress: 'projects:remote:save-progress',

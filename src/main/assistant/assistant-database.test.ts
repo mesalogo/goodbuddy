@@ -41,26 +41,20 @@ async function createDatabase(
 
 const validatedSshHostId =
   '00000000-0000-4000-8000-000000000321'
-const validatedSshAgentId = 'agent-installation-1'
-const validatedSshDigest = `sha256:${'b'.repeat(64)}`
 
 function validatedSshProjectWrite(
   overrides: {
     rootPath?: string
     hostId?: string
-    agentInstallationId?: string
-    runtimeSelectionKey?: string
-    assertSshHostCurrent?: Parameters<
-      AssistantDatabase['createValidatedSshProject']
-    >[0]['assertSshHostCurrent']
+    assertCurrent?: Parameters<
+      AssistantDatabase['createSshProject']
+    >[0]['assertCurrent']
   } = {}
 ): Parameters<
-  AssistantDatabase['createValidatedSshProject']
+  AssistantDatabase['createSshProject']
 >[0] {
   const rootPath = overrides.rootPath ?? '/srv/goodbuddy'
   const hostId = overrides.hostId ?? validatedSshHostId
-  const agentInstallationId =
-    overrides.agentInstallationId ?? validatedSshAgentId
   return {
     project: {
       name: '远程项目',
@@ -72,31 +66,9 @@ function validatedSshProjectWrite(
     executionSpace: {
       kind: 'ssh',
       hostId,
-      remoteRootPath: rootPath,
-      validation: {
-        hostRevision: 2,
-        hostKeyGeneration: 3,
-        remoteUsername: 'builder',
-        workspaceIdentity: 'workspace-identity',
-        agentProtocolMajor: 1,
-        agentInstallationIdAtValidation: agentInstallationId,
-        agentBinaryDigestAtValidation: validatedSshDigest,
-        agentVersionAtValidation: '0.11.0',
-        agentArchitectureAtValidation: 'x64',
-        validatedAt: '2026-08-21T00:00:00.000Z'
-      }
+      remoteRootPath: rootPath
     },
-    runtimeValidation: {
-      runtimeSelectionKey:
-        overrides.runtimeSelectionKey ?? 'opencode:default',
-      runtimeBundleDigest: `sha256:${'c'.repeat(64)}`,
-      runtimeAdapterDigest: `sha256:${'d'.repeat(64)}`,
-      agentInstallationIdAtValidation: agentInstallationId,
-      validatedAt: '2026-08-21T00:01:00.000Z',
-      workMode: 'execute'
-    },
-    assertSshHostCurrent:
-      overrides.assertSshHostCurrent ?? (() => {})
+    assertCurrent: overrides.assertCurrent ?? (() => {})
   }
 }
 
@@ -230,7 +202,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 30', async () => {
+  it('migrates existing databases to schema version 31', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -259,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(30)
+    ).toBe(31)
     expect(
       current
         .prepare(
@@ -391,7 +363,6 @@ describe('AssistantDatabase', () => {
       .prepare('SELECT * FROM projects ORDER BY rowid')
       .all()
     legacy.exec(`
-      DROP TABLE project_runtime_validations;
       DROP TABLE project_execution_spaces;
       PRAGMA user_version = 26;
     `)
@@ -422,7 +393,7 @@ describe('AssistantDatabase', () => {
       enableForeignKeyConstraints: true
     })
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 30
+      user_version: 31
     })
     expect(
       inspected.prepare('SELECT * FROM projects ORDER BY rowid').all()
@@ -430,15 +401,7 @@ describe('AssistantDatabase', () => {
     expect(
       inspected
         .prepare(
-          `SELECT project_id, kind, root_path, ssh_host_id,
-                  host_revision, host_key_generation, remote_username,
-                  workspace_identity,
-                  agent_installation_id_at_validation,
-                  agent_binary_digest_at_validation,
-                  agent_version_at_validation,
-                  agent_architecture_at_validation,
-                  agent_protocol_major, trust_attestation_revision,
-                  validated_at
+          `SELECT project_id, kind, root_path, ssh_host_id
            FROM project_execution_spaces
            ORDER BY project_id`
         )
@@ -448,35 +411,13 @@ describe('AssistantDatabase', () => {
         project_id: blankRootProject.id,
         kind: 'local',
         root_path: '',
-        ssh_host_id: null,
-        host_revision: null,
-        host_key_generation: null,
-        remote_username: null,
-        workspace_identity: null,
-        agent_installation_id_at_validation: null,
-        agent_binary_digest_at_validation: null,
-        agent_version_at_validation: null,
-        agent_architecture_at_validation: null,
-        agent_protocol_major: null,
-        trust_attestation_revision: null,
-        validated_at: null
+        ssh_host_id: null
       },
       {
         project_id: project.id,
         kind: 'local',
         root_path: 'D:\\Migration',
-        ssh_host_id: null,
-        host_revision: null,
-        host_key_generation: null,
-        remote_username: null,
-        workspace_identity: null,
-        agent_installation_id_at_validation: null,
-        agent_binary_digest_at_validation: null,
-        agent_version_at_validation: null,
-        agent_architecture_at_validation: null,
-        agent_protocol_major: null,
-        trust_attestation_revision: null,
-        validated_at: null
+        ssh_host_id: null
       }
     ].sort((left, right) =>
       left.project_id.localeCompare(right.project_id)
@@ -493,27 +434,6 @@ describe('AssistantDatabase', () => {
         on_delete: 'CASCADE'
       })
     ])
-    expect(
-      inspected
-        .prepare('PRAGMA foreign_key_list(project_runtime_validations)')
-        .all()
-    ).toEqual([
-      expect.objectContaining({
-        table: 'projects',
-        from: 'project_id',
-        to: 'id',
-        on_delete: 'CASCADE'
-      })
-    ])
-    expect(
-      inspected
-        .prepare('PRAGMA index_list(project_runtime_validations)')
-        .all()
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ origin: 'pk', unique: 1 })
-      ])
-    )
     expect(() =>
       inspected
         .prepare(
@@ -526,47 +446,10 @@ describe('AssistantDatabase', () => {
           blankRootProject.id
         )
     ).toThrow()
-    const insertRuntimeValidation = inspected.prepare(
-      `INSERT INTO project_runtime_validations
-        (project_id, runtime_selection_key, runtime_bundle_digest,
-         runtime_adapter_digest, confinement_policy_digest,
-         approval_bridge_version,
-         agent_installation_id_at_validation, validated_at, work_mode,
-         trust_tier, trust_attestation_revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    insertRuntimeValidation.run(
-      project.id,
-      'continue',
-      `sha256:${'c'.repeat(64)}`,
-      `sha256:${'d'.repeat(64)}`,
-      `sha256:${'d'.repeat(64)}`,
-      'unused',
-      'agent-installation',
-      '2026-08-21T00:00:00.000Z',
-      'execute',
-      null,
-      null
-    )
-    expect(() =>
-      insertRuntimeValidation.run(
-        project.id,
-        'opencode',
-        `sha256:${'f'.repeat(64)}`,
-        `sha256:${'1'.repeat(64)}`,
-        `sha256:${'1'.repeat(64)}`,
-        'unused',
-        'other-agent-installation',
-        '2026-08-21T00:01:00.000Z',
-        'execute',
-        null,
-        null
-      )
-    ).toThrow()
     inspected.close()
   })
 
-  it('preserves v27 SSH rows but fails closed until live Agent identity is revalidated', async () => {
+  it('preserves SSH project locations when removing legacy evidence', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-v27-ssh-migration-')
     )
@@ -574,93 +457,23 @@ describe('AssistantDatabase', () => {
     const databasePath = join(directory, 'assistant.sqlite')
     const initial = new AssistantDatabase(databasePath)
     initial.initialize('C:\\Workspace')
-    const project = initial.createProject({
-      name: '旧远程项目',
-      description: '',
-      rootPath: '/srv/legacy',
-      defaultWorkMode: 'execute',
-      runtimeSelection: { provider: 'opencode' }
-    })
-    initial.close()
-
-    const legacy = new DatabaseSync(databasePath)
-    legacy.exec(`
-      DROP TRIGGER project_execution_spaces_validate_insert;
-      DROP TRIGGER project_execution_spaces_validate_update;
-      ALTER TABLE project_execution_spaces
-        DROP COLUMN agent_binary_digest_at_validation;
-      ALTER TABLE project_execution_spaces
-        DROP COLUMN agent_version_at_validation;
-      ALTER TABLE project_execution_spaces
-        DROP COLUMN agent_architecture_at_validation;
-    `)
-    legacy
-      .prepare(
-        `UPDATE project_execution_spaces
-         SET kind = 'ssh', ssh_host_id = ?, host_revision = 2,
-             host_key_generation = 3, remote_username = 'builder',
-             workspace_identity = 'workspace-legacy',
-             agent_installation_id_at_validation = 'agent-legacy',
-             agent_protocol_major = 1,
-             trust_attestation_revision = 4,
-             validated_at = '2026-08-20T00:00:00.000Z'
-         WHERE project_id = ?`
-      )
-      .run(validatedSshHostId, project.id)
-    legacy.exec('PRAGMA user_version = 27;')
-    legacy.close()
-
-    const migrated = new AssistantDatabase(databasePath)
-    migrated.initialize('C:\\Workspace')
-    expect(() => migrated.getProject(project.id)).toThrow(
-      '执行空间配置无效'
-    )
-    migrated.close()
-
-    const inspected = new DatabaseSync(databasePath)
-    expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 30
-    })
-    expect(
-      inspected
-        .prepare(
-          `SELECT agent_binary_digest_at_validation,
-                  agent_version_at_validation,
-                  agent_architecture_at_validation
-           FROM project_execution_spaces
-           WHERE project_id = ?`
-        )
-        .get(project.id)
-    ).toEqual({
-      agent_binary_digest_at_validation: null,
-      agent_version_at_validation: null,
-      agent_architecture_at_validation: null
-    })
-    inspected.close()
-  })
-
-  it('migrates v28 Runtime rows without inventing trust evidence', async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), 'goodbuddy-v28-runtime-migration-')
-    )
-    temporaryDirectories.push(directory)
-    const databasePath = join(directory, 'assistant.sqlite')
-    const initial = new AssistantDatabase(databasePath)
-    initial.initialize('C:\\Workspace')
-    const project = initial.createValidatedSshProject(
-      validatedSshProjectWrite()
+    const project = initial.createSshProject(
+      validatedSshProjectWrite({ rootPath: '/srv/legacy' })
     )
     initial.close()
 
     const legacy = new DatabaseSync(databasePath)
     legacy.exec(`
-      DROP TRIGGER project_runtime_validations_validate_insert;
-      DROP TRIGGER project_runtime_validations_validate_update;
-      ALTER TABLE project_runtime_validations DROP COLUMN work_mode;
-      ALTER TABLE project_runtime_validations DROP COLUMN trust_tier;
-      ALTER TABLE project_runtime_validations
-        DROP COLUMN trust_attestation_revision;
-      PRAGMA user_version = 28;
+      ALTER TABLE project_execution_spaces
+        ADD COLUMN workspace_identity TEXT;
+      UPDATE project_execution_spaces
+      SET workspace_identity = 'workspace-legacy'
+      WHERE project_id = '${project.id}';
+      CREATE TABLE project_runtime_validations (
+        project_id TEXT PRIMARY KEY,
+        runtime_bundle_digest TEXT NOT NULL
+      );
+      PRAGMA user_version = 30;
     `)
     legacy.close()
 
@@ -668,56 +481,116 @@ describe('AssistantDatabase', () => {
     migrated.initialize('C:\\Workspace')
     expect(migrated.getProject(project.id)).toMatchObject({
       id: project.id,
-      defaultWorkMode: 'execute'
+      executionSpace: {
+        kind: 'ssh',
+        hostId: validatedSshHostId,
+        remoteRootPath: '/srv/legacy'
+      }
     })
-    expect(
-      migrated.getProject(project.id).runtimeValidation
-    ).toBeUndefined()
+    migrated.close()
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 30
+      user_version: 31
     })
     expect(
       inspected
         .prepare(
-          `SELECT work_mode, confinement_policy_digest,
-                  approval_bridge_version, runtime_adapter_digest,
-                  trust_tier, trust_attestation_revision
-           FROM project_runtime_validations
-           WHERE project_id = ?`
+          `SELECT project_id, kind, root_path, ssh_host_id
+           FROM project_execution_spaces WHERE project_id = ?`
         )
         .get(project.id)
     ).toEqual({
-      work_mode: null,
-      confinement_policy_digest: `sha256:${'d'.repeat(64)}`,
-      approval_bridge_version: 'unused',
-      runtime_adapter_digest: `sha256:${'d'.repeat(64)}`,
-      trust_tier: null,
-      trust_attestation_revision: null
+      project_id: project.id,
+      kind: 'ssh',
+      root_path: '/srv/legacy',
+      ssh_host_id: validatedSshHostId
     })
-    inspected
-      .prepare(
-        `UPDATE project_runtime_validations
-         SET work_mode = 'execute'
-         WHERE project_id = ?`
-      )
-      .run(project.id)
-    expect(() =>
-      inspected
-        .prepare(
-          `UPDATE project_runtime_validations
-           SET work_mode = 'ask', trust_tier = 'T3',
-               trust_attestation_revision = 5
-           WHERE project_id = ?`
-        )
-        .run(project.id)
-    ).toThrow('invalid project runtime validation')
     inspected.close()
+  })
 
-    expect(migrated.getProject(project.id).runtimeValidation).toMatchObject({
+  it('migrates v30 projects while deleting installation evidence', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-v30-evidence-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const project = initial.createSshProject(
+      validatedSshProjectWrite()
+    )
+    const taskId = '00000000-0000-4000-8000-000000000399'
+    initial.createTask({
+      id: taskId,
+      projectId: project.id,
+      title: '保留任务',
+      instructions: '迁移后仍应存在',
       workMode: 'execute'
     })
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      ALTER TABLE project_execution_spaces
+        ADD COLUMN agent_installation_id_at_validation TEXT;
+      UPDATE project_execution_spaces
+      SET agent_installation_id_at_validation = 'old-agent'
+      WHERE project_id = '${project.id}';
+      CREATE TABLE project_runtime_validations (
+        project_id TEXT PRIMARY KEY,
+        runtime_bundle_digest TEXT NOT NULL
+      );
+      INSERT INTO project_runtime_validations
+        (project_id, runtime_bundle_digest)
+      VALUES ('${project.id}', 'sha256:${'d'.repeat(64)}');
+      PRAGMA user_version = 30;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    expect(migrated.getProject(project.id)).toMatchObject({
+      id: project.id,
+      defaultWorkMode: 'execute',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: validatedSshHostId,
+        remoteRootPath: '/srv/goodbuddy'
+      }
+    })
+    expect(
+      migrated.listTasks().find((task) => task.id === taskId)
+    ).toMatchObject({
+      id: taskId,
+      projectId: project.id
+    })
+
+    const inspected = new DatabaseSync(databasePath)
+    expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
+      user_version: 31
+    })
+    expect(
+      inspected
+        .prepare('PRAGMA table_info(project_execution_spaces)')
+        .all()
+        .map((column) => column.name)
+    ).toEqual([
+      'project_id',
+      'kind',
+      'root_path',
+      'ssh_host_id'
+    ])
+    expect(
+      inspected
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table'
+             AND name = 'project_runtime_validations'`
+        )
+        .get()
+    ).toBeUndefined()
+    inspected.close()
     migrated.close()
   })
 
@@ -945,7 +818,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(30)
+    ).toBe(31)
     expect(
       current
         .prepare(
@@ -1083,7 +956,7 @@ describe('AssistantDatabase', () => {
     const inspected = new DatabaseSync(databasePath)
     expect(
       inspected.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 30 })
+    ).toEqual({ user_version: 31 })
     expect(
       inspected
         .prepare(
@@ -1373,62 +1246,21 @@ describe('AssistantDatabase', () => {
       name: '远程项目',
       description: '',
       rootPath: 'C:\\LegacyProjection',
-      defaultWorkMode: 'ask'
+      defaultWorkMode: 'ask',
+      runtimeSelection: { provider: 'opencode' }
     })
     const hostId = '00000000-0000-4000-8000-000000000311'
     const raw = new DatabaseSync(databasePath)
     raw
       .prepare(
         `UPDATE project_execution_spaces
-         SET kind = 'ssh', root_path = ?, ssh_host_id = ?,
-             host_revision = ?, host_key_generation = ?,
-             remote_username = ?, workspace_identity = ?,
-             agent_installation_id_at_validation = ?,
-             agent_binary_digest_at_validation = ?,
-             agent_version_at_validation = ?,
-             agent_architecture_at_validation = ?,
-             agent_protocol_major = ?,
-             trust_attestation_revision = ?, validated_at = ?
+         SET kind = 'ssh', root_path = ?, ssh_host_id = ?
          WHERE project_id = ?`
       )
       .run(
         '/srv/goodbuddy',
         hostId,
-        2,
-        3,
-        'builder',
-        'workspace-identity',
-        'agent-installation',
-        `sha256:${'a'.repeat(64)}`,
-        '0.11.0',
-        'x64',
-        1,
-        0,
-        '2026-08-21T00:00:00.000Z',
         project.id
-      )
-    raw
-      .prepare(
-        `INSERT INTO project_runtime_validations
-          (project_id, runtime_selection_key, runtime_bundle_digest,
-           runtime_adapter_digest, confinement_policy_digest,
-           approval_bridge_version,
-           agent_installation_id_at_validation, validated_at, work_mode,
-           trust_tier, trust_attestation_revision)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        project.id,
-        'opencode:profile',
-        `sha256:${'b'.repeat(64)}`,
-        `sha256:${'c'.repeat(64)}`,
-        `sha256:${'c'.repeat(64)}`,
-        'unused',
-        'agent-installation',
-        '2026-08-21T00:01:00.000Z',
-        'ask',
-        null,
-        null
       )
     raw.close()
 
@@ -1439,43 +1271,93 @@ describe('AssistantDatabase', () => {
       executionSpace: {
         kind: 'ssh',
         hostId,
-        remoteRootPath: '/srv/goodbuddy',
-        validation: {
-          hostRevision: 2,
-          hostKeyGeneration: 3,
-          remoteUsername: 'builder',
-          workspaceIdentity: 'workspace-identity',
-          agentProtocolMajor: 1,
-          agentInstallationIdAtValidation: 'agent-installation',
-          agentBinaryDigestAtValidation: `sha256:${'a'.repeat(64)}`,
-          agentVersionAtValidation: '0.11.0',
-          agentArchitectureAtValidation: 'x64',
-          validatedAt: '2026-08-21T00:00:00.000Z'
-        }
-      },
-      runtimeValidation: {
-        runtimeSelectionKey: 'opencode:profile',
-        runtimeBundleDigest: `sha256:${'b'.repeat(64)}`,
-        runtimeAdapterDigest: `sha256:${'c'.repeat(64)}`,
-        agentInstallationIdAtValidation: 'agent-installation',
-        validatedAt: '2026-08-21T00:01:00.000Z',
-        workMode: 'ask'
+        remoteRootPath: '/srv/goodbuddy'
       }
     })
-    expect(database.listProjectIdsReferencingSshHost(hostId)).toEqual([
-      project.id
+    database.setProjectArchived(project.id, true)
+    const taskId = '00000000-0000-4000-8000-000000000313'
+    database.createTask({
+      id: taskId,
+      projectId: project.id,
+      title: '无法连接的远程任务',
+      instructions: '本地清理不应等待远端任务停止',
+      workMode: 'execute'
+    })
+    expect(database.listProjectsReferencingSshHost(hostId)).toEqual([
+      { id: project.id, name: project.name }
+    ])
+    expect(database.listSshHostProjectReferences()).toEqual([
+      { hostId, id: project.id, name: project.name }
     ])
     expect(
-      database.listProjectIdsReferencingSshHost(
+      database.listProjectsReferencingSshHost(
         '00000000-0000-4000-8000-000000000312'
       )
     ).toEqual([])
+    expect(
+      database.deleteProjectsReferencingSshHost(hostId)
+    ).toEqual([{ id: project.id, name: project.name }])
+    expect(
+      database.listProjects(true).some(
+        (candidate) => candidate.id === project.id
+      )
+    ).toBe(false)
+    expect(
+      database.listTasks().some((task) => task.id === taskId)
+    ).toBe(false)
+    expect(database.listProjects()).toHaveLength(1)
     database.close()
   })
 
-  it('fails closed on malformed persisted validation timestamps', async () => {
+  it('keeps the final active project when deleting its Host', async () => {
+    const database = await createDatabase()
+    const localProject = database.listProjects()[0]!
+    const remoteProject = database.createSshProject(
+      validatedSshProjectWrite()
+    )
+    database.setProjectArchived(localProject.id, true)
+
+    expect(() =>
+      database.deleteProjectsReferencingSshHost(
+        validatedSshHostId
+      )
+    ).toThrow('至少需要保留一个可用项目')
+    expect(database.getProject(remoteProject.id)).toMatchObject({
+      id: remoteProject.id,
+      status: 'active'
+    })
+    database.close()
+  })
+
+  it('requires a local fallback before deleting an active remote project', async () => {
+    const database = await createDatabase()
+    const localProject = database.listProjects()[0]!
+    const remoteProject = database.createSshProject(
+      validatedSshProjectWrite()
+    )
+    database.createSshProject(
+      validatedSshProjectWrite({
+        rootPath: '/srv/other-project'
+      })
+    )
+    database.setProjectArchived(localProject.id, true)
+
+    expect(() =>
+      database.deleteProject(
+        remoteProject.id,
+        remoteProject.name,
+        { allowActiveTasks: true }
+      )
+    ).toThrow('至少需要保留一个可用项目')
+    expect(database.getProject(remoteProject.id).id).toBe(
+      remoteProject.id
+    )
+    database.close()
+  })
+
+  it('fails closed when an SSH project lacks a Runtime selection', async () => {
     const directory = await mkdtemp(
-      join(tmpdir(), 'goodbuddy-invalid-execution-trust-')
+      join(tmpdir(), 'goodbuddy-invalid-ssh-project-')
     )
     temporaryDirectories.push(directory)
     const databasePath = join(directory, 'assistant.sqlite')
@@ -1486,71 +1368,18 @@ describe('AssistantDatabase', () => {
     raw
       .prepare(
         `UPDATE project_execution_spaces
-         SET kind = 'ssh', root_path = ?, ssh_host_id = ?,
-             host_revision = ?, host_key_generation = ?,
-             remote_username = ?, workspace_identity = ?,
-             agent_installation_id_at_validation = ?,
-             agent_binary_digest_at_validation = ?,
-             agent_version_at_validation = ?,
-             agent_architecture_at_validation = ?,
-             agent_protocol_major = ?,
-             trust_attestation_revision = ?, validated_at = ?
+         SET kind = 'ssh', root_path = ?, ssh_host_id = ?
          WHERE project_id = ?`
       )
       .run(
         '/srv/goodbuddy',
         '00000000-0000-4000-8000-000000000313',
-        1,
-        1,
-        'builder',
-        'workspace-identity',
-        'agent-installation',
-        `sha256:${'a'.repeat(64)}`,
-        '0.11.0',
-        'arm64',
-        1,
-        0,
-        'not-a-timestamp',
         project.id
-      )
-
-    expect(() => database.getProject(project.id)).toThrow(
-      '执行空间配置无效'
-    )
-    raw
-      .prepare(
-        `UPDATE project_execution_spaces
-         SET validated_at = ?
-         WHERE project_id = ?`
-      )
-      .run('2026-08-21T00:00:00.000Z', project.id)
-    raw
-      .prepare(
-        `INSERT INTO project_runtime_validations
-          (project_id, runtime_selection_key, runtime_bundle_digest,
-           runtime_adapter_digest, confinement_policy_digest,
-           approval_bridge_version,
-           agent_installation_id_at_validation, validated_at, work_mode,
-           trust_tier, trust_attestation_revision)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        project.id,
-        'opencode',
-        `sha256:${'b'.repeat(64)}`,
-        `sha256:${'c'.repeat(64)}`,
-        `sha256:${'c'.repeat(64)}`,
-        'unused',
-        'agent-installation',
-        'not-a-timestamp',
-        'ask',
-        null,
-        null
       )
     raw.close()
 
     expect(() => database.getProject(project.id)).toThrow(
-      'Runtime 验证配置无效'
+      '缺少远程 Runtime 选择'
     )
     database.close()
   })
@@ -1564,25 +1393,13 @@ describe('AssistantDatabase', () => {
     const database = new AssistantDatabase(databasePath)
     database.initialize('C:\\Workspace')
     const precondition = vi.fn()
-    const project = database.createValidatedSshProject(
+    const project = database.createSshProject(
       validatedSshProjectWrite({
-        assertSshHostCurrent: precondition
+        assertCurrent: precondition
       })
     )
 
-    expect(precondition).toHaveBeenCalledWith({
-      hostId: validatedSshHostId,
-      hostRevision: 2,
-      hostKeyGeneration: 3,
-      remoteUsername: 'builder',
-      remoteRootPath: '/srv/goodbuddy',
-      workspaceIdentity: 'workspace-identity',
-      agentProtocolMajor: 1,
-      agentInstallationId: validatedSshAgentId,
-      agentBinaryDigest: validatedSshDigest,
-      agentVersion: '0.11.0',
-      agentArchitecture: 'x64'
-    })
+    expect(precondition).toHaveBeenCalledWith()
     expect(project).toMatchObject({
       name: '远程项目',
       rootPath: '/srv/goodbuddy',
@@ -1590,17 +1407,7 @@ describe('AssistantDatabase', () => {
       executionSpace: {
         kind: 'ssh',
         hostId: validatedSshHostId,
-        remoteRootPath: '/srv/goodbuddy',
-        validation: {
-          agentInstallationIdAtValidation: validatedSshAgentId,
-          agentBinaryDigestAtValidation: validatedSshDigest,
-          agentVersionAtValidation: '0.11.0',
-          agentArchitectureAtValidation: 'x64'
-        }
-      },
-      runtimeValidation: {
-        runtimeSelectionKey: 'opencode:default',
-        agentInstallationIdAtValidation: validatedSshAgentId
+        remoteRootPath: '/srv/goodbuddy'
       }
     })
     expect(project).toEqual(database.getProject(project.id))
@@ -1611,15 +1418,12 @@ describe('AssistantDatabase', () => {
           `SELECT
              (SELECT COUNT(*) FROM projects WHERE id = ?) AS projects,
              (SELECT COUNT(*) FROM project_execution_spaces
-                WHERE project_id = ?) AS execution_spaces,
-             (SELECT COUNT(*) FROM project_runtime_validations
-                WHERE project_id = ?) AS runtime_validations`
+                WHERE project_id = ?) AS execution_spaces`
         )
-        .get(project.id, project.id, project.id)
+        .get(project.id, project.id)
     ).toEqual({
       projects: 1,
-      execution_spaces: 1,
-      runtime_validations: 1
+      execution_spaces: 1
     })
     raw.close()
     database.close()
@@ -1638,34 +1442,19 @@ describe('AssistantDatabase', () => {
     const rootMismatch = validatedSshProjectWrite()
     rootMismatch.executionSpace.remoteRootPath = '/srv/other'
     expect(() =>
-      database.createValidatedSshProject(rootMismatch)
+      database.createSshProject(rootMismatch)
     ).toThrow('目录不匹配')
 
+    const missingRuntime = validatedSshProjectWrite()
+    delete missingRuntime.project.runtimeSelection
     expect(() =>
-      database.createValidatedSshProject(
+      database.createSshProject(missingRuntime)
+    ).toThrow('必须选择 Runtime')
+
+    expect(() =>
+      database.createSshProject(
         validatedSshProjectWrite({
-          runtimeSelectionKey: 'continue:platform'
-        })
-      )
-    ).toThrow('Runtime 验证与项目 Runtime 选择不匹配')
-
-    const modeMismatch = validatedSshProjectWrite()
-    modeMismatch.project.defaultWorkMode = 'ask'
-    expect(() =>
-      database.createValidatedSshProject(modeMismatch)
-    ).toThrow('Runtime 验证与项目默认工作模式不匹配')
-
-    const identityMismatch = validatedSshProjectWrite()
-    identityMismatch.runtimeValidation.agentInstallationIdAtValidation =
-      'other-agent'
-    expect(() =>
-      database.createValidatedSshProject(identityMismatch)
-    ).toThrow('Agent 身份不匹配')
-
-    expect(() =>
-      database.createValidatedSshProject(
-        validatedSshProjectWrite({
-          assertSshHostCurrent: () => {
+          assertCurrent: () => {
             throw new Error('SSH Host 已变化')
           }
         })
@@ -1673,13 +1462,6 @@ describe('AssistantDatabase', () => {
     ).toThrow('SSH Host 已变化')
 
     expect(database.listProjects()).toHaveLength(baseline)
-    const raw = new DatabaseSync(databasePath)
-    expect(
-      raw
-        .prepare('SELECT COUNT(*) AS count FROM project_runtime_validations')
-        .get()
-    ).toEqual({ count: 0 })
-    raw.close()
     database.close()
   })
 
@@ -1687,39 +1469,36 @@ describe('AssistantDatabase', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-21T01:00:00.000Z'))
     const database = await createDatabase()
-    const created = database.createValidatedSshProject(
+    const created = database.createSshProject(
       validatedSshProjectWrite()
     )
     const write = validatedSshProjectWrite()
     write.project.name = '已重新验证'
     write.project.description = '更新后的配置'
-    write.executionSpace.validation.validatedAt =
-      '2026-08-21T01:01:00.000Z'
-    write.runtimeValidation.validatedAt =
-      '2026-08-21T01:01:01.000Z'
 
-    const updated = database.updateValidatedSshProject(
+    const updated = database.updateSshProject(
       created.id,
       created.updatedAt,
       write
     )
     expect(updated.name).toBe('已重新验证')
     expect(updated.updatedAt).not.toBe(created.updatedAt)
-    expect(
-      updated.executionSpace.kind === 'ssh' &&
-        updated.executionSpace.validation?.validatedAt
-    ).toBe('2026-08-21T01:01:00.000Z')
+    expect(updated.executionSpace).toEqual({
+      kind: 'ssh',
+      hostId: validatedSshHostId,
+      remoteRootPath: '/srv/goodbuddy'
+    })
     expect(updated).toEqual(database.getProject(created.id))
 
     const beforeRejectedPrecondition = database.getProject(created.id)
     const rejectedWrite = validatedSshProjectWrite({
-      assertSshHostCurrent: () => {
+      assertCurrent: () => {
         throw new Error('SSH Host 已变化')
       }
     })
     rejectedWrite.project.name = '不应保存'
     expect(() =>
-      database.updateValidatedSshProject(
+      database.updateSshProject(
         created.id,
         updated.updatedAt,
         rejectedWrite
@@ -1730,7 +1509,7 @@ describe('AssistantDatabase', () => {
     )
 
     expect(() =>
-      database.updateValidatedSshProject(
+      database.updateSshProject(
         created.id,
         created.updatedAt,
         write
@@ -1741,7 +1520,7 @@ describe('AssistantDatabase', () => {
       rootPath: '/srv/moved'
     })
     expect(() =>
-      database.updateValidatedSshProject(
+      database.updateSshProject(
         created.id,
         updated.updatedAt,
         moved
@@ -1752,7 +1531,7 @@ describe('AssistantDatabase', () => {
       hostId: '00000000-0000-4000-8000-000000000322'
     })
     expect(() =>
-      database.updateValidatedSshProject(
+      database.updateSshProject(
         created.id,
         updated.updatedAt,
         otherHost
@@ -1766,7 +1545,7 @@ describe('AssistantDatabase', () => {
       defaultWorkMode: 'ask'
     })
     expect(() =>
-      database.updateValidatedSshProject(
+      database.updateSshProject(
         localProject.id,
         localProject.updatedAt,
         validatedSshProjectWrite()
@@ -1777,7 +1556,7 @@ describe('AssistantDatabase', () => {
       channelDefaultProfileId
     )
     expect(() =>
-      database.updateValidatedSshProject(
+      database.updateSshProject(
         channelProject!.id,
         channelProject!.updatedAt,
         validatedSshProjectWrite()
@@ -1796,11 +1575,11 @@ describe('AssistantDatabase', () => {
     database.initialize('C:\\Workspace')
     const raw = new DatabaseSync(databasePath)
     raw.exec(`
-      CREATE TRIGGER corrupt_created_runtime_validation
-      AFTER INSERT ON project_runtime_validations
+      CREATE TRIGGER corrupt_created_execution_space
+      AFTER INSERT ON project_execution_spaces
+      WHEN NEW.kind = 'ssh'
       BEGIN
-        UPDATE project_runtime_validations
-        SET validated_at = 'not-a-timestamp'
+        DELETE FROM project_execution_spaces
         WHERE project_id = NEW.project_id;
       END;
     `)
@@ -1808,24 +1587,24 @@ describe('AssistantDatabase', () => {
     const projectsBefore = database.listProjects().length
 
     expect(() =>
-      database.createValidatedSshProject(validatedSshProjectWrite())
-    ).toThrow('Runtime 验证配置无效')
+      database.createSshProject(validatedSshProjectWrite())
+    ).toThrow('缺少执行空间配置')
     expect(database.listProjects()).toHaveLength(projectsBefore)
 
     const setup = new DatabaseSync(databasePath)
-    setup.exec('DROP TRIGGER corrupt_created_runtime_validation')
+    setup.exec('DROP TRIGGER corrupt_created_execution_space')
     setup.close()
-    const created = database.createValidatedSshProject(
+    const created = database.createSshProject(
       validatedSshProjectWrite()
     )
     const persistedBeforeUpdate = database.getProject(created.id)
     const updateTrigger = new DatabaseSync(databasePath)
     updateTrigger.exec(`
-      CREATE TRIGGER corrupt_updated_runtime_validation
-      AFTER UPDATE ON project_runtime_validations
+      CREATE TRIGGER corrupt_updated_execution_space
+      AFTER UPDATE ON project_execution_spaces
+      WHEN NEW.kind = 'ssh'
       BEGIN
-        UPDATE project_runtime_validations
-        SET validated_at = 'not-a-timestamp'
+        DELETE FROM project_execution_spaces
         WHERE project_id = NEW.project_id;
       END;
     `)
@@ -1834,12 +1613,12 @@ describe('AssistantDatabase', () => {
     write.project.name = '不应提交的项目名'
 
     expect(() =>
-      database.updateValidatedSshProject(
+      database.updateSshProject(
         created.id,
         created.updatedAt,
         write
       )
-    ).toThrow('Runtime 验证配置无效')
+    ).toThrow('缺少执行空间配置')
     expect(database.getProject(created.id)).toEqual(
       persistedBeforeUpdate
     )
@@ -1857,18 +1636,19 @@ describe('AssistantDatabase', () => {
     database.initialize('C:\\Workspace')
     const raw = new DatabaseSync(databasePath)
     raw.exec(`
-      CREATE TRIGGER reject_runtime_validation
-      BEFORE INSERT ON project_runtime_validations
+      CREATE TRIGGER reject_ssh_execution_space
+      BEFORE INSERT ON project_execution_spaces
+      WHEN NEW.kind = 'ssh'
       BEGIN
-        SELECT RAISE(ABORT, 'test runtime rejection');
+        SELECT RAISE(ABORT, 'test SSH rejection');
       END;
     `)
     raw.close()
     const projectsBefore = database.listProjects().length
 
     expect(() =>
-      database.createValidatedSshProject(validatedSshProjectWrite())
-    ).toThrow('test runtime rejection')
+      database.createSshProject(validatedSshProjectWrite())
+    ).toThrow('test SSH rejection')
 
     const inspected = new DatabaseSync(databasePath)
     expect(
@@ -1881,11 +1661,6 @@ describe('AssistantDatabase', () => {
            FROM project_execution_spaces
            WHERE kind = 'ssh'`
         )
-        .get()
-    ).toEqual({ count: 0 })
-    expect(
-      inspected
-        .prepare('SELECT COUNT(*) AS count FROM project_runtime_validations')
         .get()
     ).toEqual({ count: 0 })
     inspected.close()

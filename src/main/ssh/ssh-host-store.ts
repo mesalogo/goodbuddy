@@ -366,19 +366,43 @@ export class SshHostStore {
     })
   }
 
-  remove(hostId: string): Promise<void> {
+  remove(hostId: string): Promise<void>
+  remove<T>(hostId: string, commitLocalDeletion: () => T): Promise<T>
+  remove<T>(
+    hostId: string,
+    commitLocalDeletion?: () => T
+  ): Promise<T | void> {
     return this.queue(async () => {
-      const settings = cloneSettings(await this.load())
-      const index = settings.hosts.findIndex(
+      const previousSettings = cloneSettings(await this.load())
+      const nextSettings = cloneSettings(previousSettings)
+      const index = nextSettings.hosts.findIndex(
         (host) => host.id === hostId
       )
       if (index === -1) {
         throw new Error('SSH 主机不存在')
       }
-      settings.hosts.splice(index, 1)
-      await this.persist(settings)
-      this.settings = settings
-      this.credentialSourceCache.delete(hostId)
+      nextSettings.hosts.splice(index, 1)
+      await this.persist(nextSettings)
+      try {
+        const result = await commitLocalDeletion?.()
+        this.settings = nextSettings
+        this.credentialSourceCache.delete(hostId)
+        return result
+      } catch (error) {
+        try {
+          await this.persist(previousSettings)
+        } catch (rollbackError) {
+          this.settings = undefined
+          this.settingsLoad = undefined
+          this.credentialSourceCache.clear()
+          throw new AggregateError(
+            [error, rollbackError],
+            'SSH 主机删除失败，且主机设置恢复失败',
+            { cause: rollbackError }
+          )
+        }
+        throw error
+      }
     })
   }
 

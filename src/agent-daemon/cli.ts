@@ -28,7 +28,9 @@ import {
 } from './private-endpoint'
 import { createLinuxPeerIdentityProvider } from './peer-identity-provider'
 import {
+  loadRegisteredAgentBundle,
   readManagedAgentReleaseKeyRegistry,
+  RegisteredAgentBundleError,
   verifyInstalledAgentBundle,
   type VerifiedInstalledAgentBundle
 } from './installed-bundle-verifier'
@@ -79,6 +81,7 @@ export type AgentCliDependencies = {
       releaseKeyRegistry: AgentReleaseKeyRegistry
     }
   ) => Promise<VerifiedInstalledAgentBundle>
+  loadRegisteredInstallation?: typeof loadRegisteredAgentBundle
   runtimePaths?: (
     installationId: string,
     runtimeId: 'opencode',
@@ -124,8 +127,8 @@ export async function runAgentCli(
     output: process.stdout,
     error: process.stderr
   }
+  const [command, ...rest] = argv
   try {
-    const [command, ...rest] = argv
     switch (command) {
       case 'daemon':
         await runDaemon(rest, dependencies)
@@ -151,9 +154,18 @@ export async function runAgentCli(
         )
     }
   } catch (error) {
-    io.error.write(
-      `${error instanceof Error ? error.message : String(error)}\n`
-    )
+    if (
+      error instanceof RegisteredAgentBundleError &&
+      (command === 'daemon' || command === 'attach-or-bootstrap')
+    ) {
+      io.error.write(
+        `${AGENT_PROTOCOL_FAILURE_STDERR_PREFIX}installation-repair-required\n`
+      )
+    } else {
+      io.error.write(
+        `${error instanceof Error ? error.message : String(error)}\n`
+      )
+    }
     return error instanceof AgentUnsupportedError ? 3 : 2
   }
 }
@@ -294,12 +306,11 @@ async function runDaemon(
     options['installation-id']!
   )
   const paths = resolveInstallationPaths(installationId, dependencies)
-  const { verified, registry } = await verifyManagedInstallation(
+  const { verified } = await loadManagedInstallation(
     installationId,
     paths,
     dependencies
   )
-  registry.assertVerifiedRole(verified, ['current', 'candidate'])
   prepareManagedSocketDirectory(paths)
   const daemonOptions: ConstructorParameters<typeof AgentDaemon>[0] = {
     installationId,
@@ -340,7 +351,8 @@ async function runDaemon(
     await createDetachedLifecycle(
       installationId,
       paths,
-      dependencies
+      dependencies,
+      'registered'
     ).recordCurrentDaemonReady(daemon.status().daemonBootId)
     await (dependencies.waitForShutdown?.() ?? waitForShutdownSignal())
   } finally {
@@ -362,12 +374,11 @@ async function runAttach(
     installationId,
     dependencies
   )
-  const { verified, registry } = await verifyManagedInstallation(
+  await loadManagedInstallation(
     installationId,
     paths,
     dependencies
   )
-  registry.assertVerifiedRole(verified, ['current', 'candidate'])
   prepareManagedSocketDirectory(paths)
   const stateDirectory = paths.stateDirectory
   ensurePrivateDirectory(stateDirectory, { create: false })
@@ -387,7 +398,8 @@ async function runAttach(
       await createDetachedLifecycle(
         installationId,
         paths,
-        dependencies
+        dependencies,
+        'registered'
       ).bootstrap()
     }
   })
@@ -518,7 +530,8 @@ async function runLifecycle(
 function createDetachedLifecycle(
   installationId: string,
   paths: ManagedInstallationPaths,
-  dependencies: AgentCliDependencies
+  dependencies: AgentCliDependencies,
+  identitySource: 'verified' | 'registered' = 'verified'
 ): DetachedAgentLifecycle {
   const options: DetachedAgentLifecycleOptions = {
     installationId,
@@ -526,12 +539,25 @@ function createDetachedLifecycle(
     stateDirectory: paths.stateDirectory,
     socketPath: paths.socketPath,
     verifyInstallation: async () => {
-      const { verified, registry } = await verifyManagedInstallation(
-        installationId,
-        paths,
-        dependencies
-      )
-      registry.assertVerifiedRole(verified, ['current', 'candidate'])
+      if (identitySource === 'registered') {
+        return (
+          await loadManagedInstallation(
+            installationId,
+            paths,
+            dependencies
+          )
+        ).verified
+      }
+      const { verified, registry } =
+        await verifyManagedInstallation(
+          installationId,
+          paths,
+          dependencies
+        )
+      registry.assertVerifiedRole(verified, [
+        'current',
+        'candidate'
+      ])
       return verified
     },
     probeEndpoint: async (verified) =>
@@ -595,6 +621,36 @@ async function verifyManagedInstallation(
     releaseKeyRegistry
   })
   return { verified, registry, releaseKeyRegistry }
+}
+
+async function loadManagedInstallation(
+  installationId: string,
+  paths: ManagedInstallationPaths,
+  dependencies: AgentCliDependencies
+): Promise<{
+  verified: VerifiedInstalledAgentBundle
+  registry: InstallationRegistry
+}> {
+  const architecture = currentAgentArchitecture()
+  const agentRoot = dirname(dirname(dirname(paths.executablePath)))
+  const registry =
+    dependencies.installationRegistry ??
+    new InstallationRegistry({
+      storagePath: resolve(agentRoot, 'registry.json')
+    })
+  const registered = registry.assertRegisteredRole(
+    installationId,
+    ['current', 'candidate']
+  )
+  const verified = await (
+    dependencies.loadRegisteredInstallation ??
+    loadRegisteredAgentBundle
+  )(dirname(paths.executablePath), {
+    installationId,
+    architecture,
+    registered
+  })
+  return { verified, registry }
 }
 
 export function deriveManagedInstallationPaths(

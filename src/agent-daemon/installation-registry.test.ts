@@ -62,6 +62,18 @@ describe('Agent installation registry', () => {
     expect(() =>
       registry.assertVerifiedRole(current, ['current'])
     ).not.toThrow()
+    expect(
+      registry.assertRegisteredRole('install-a', ['current'])
+    ).toMatchObject({
+      installationId: 'install-a',
+      manifestSha256: 'a'.repeat(64)
+    })
+    expect(() =>
+      registry.assertRegisteredRole('missing', [
+        'current',
+        'candidate'
+      ])
+    ).toThrow('authorized registry role')
   })
 
   it('replaces a stale candidate with the requested signed identity', () => {

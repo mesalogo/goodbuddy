@@ -1,10 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
-import { projectRuntimeValidationSchema } from '../../shared/assistant-contracts'
-import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type { RemoteAgentConnection } from './remote-agent-connection-manager'
 import type {
-  RemoteProjectRuntimeValidationEvidence,
   RemoteProjectRuntimeValidationInput,
   RemoteProjectRuntimeValidationLease,
   RemoteProjectRuntimeValidator
@@ -24,9 +21,8 @@ export class ManagedRemoteProjectRuntimeValidator
 {
   readonly #installationManager: Pick<
     RemoteRuntimeInstallationManager,
-    'ensureInstalled'
+    'activateInstalled'
   >
-  readonly #now: () => Date
   readonly #resolveModelProfile: (
     selection: RemoteProjectRuntimeValidationInput['selection']
   ) => Promise<ResolvedModelProfile | undefined>
@@ -34,16 +30,14 @@ export class ManagedRemoteProjectRuntimeValidator
   constructor(options: {
     installationManager: Pick<
       RemoteRuntimeInstallationManager,
-      'ensureInstalled'
+      'activateInstalled'
     >
     resolveModelProfile(
       selection: RemoteProjectRuntimeValidationInput['selection']
     ): Promise<ResolvedModelProfile | undefined>
-    now?: () => Date
   }) {
     this.#installationManager = options.installationManager
     this.#resolveModelProfile = options.resolveModelProfile
-    this.#now = options.now ?? (() => new Date())
   }
 
   async validate(
@@ -51,9 +45,7 @@ export class ManagedRemoteProjectRuntimeValidator
   ): Promise<RemoteProjectRuntimeValidationLease> {
     input.signal.throwIfAborted()
     if (
-      input.selection.provider !== 'opencode' ||
-      input.runtimeSelectionKey !==
-        agentRuntimeSelectionKey(input.selection)
+      input.selection.provider !== 'opencode'
     ) {
       throw new Error(
         'Managed remote projects require the OpenCode Runtime'
@@ -75,9 +67,12 @@ export class ManagedRemoteProjectRuntimeValidator
       )
     }
     const installation =
-      await this.#installationManager.ensureInstalled(
+      await this.#installationManager.activateInstalled(
         input.host.hostId,
-        { signal: input.signal }
+        {
+          signal: input.signal,
+          agentInstallationId: input.agent.installationId
+        }
       )
     input.signal.throwIfAborted()
     assertInstallationIdentity(input, installation)
@@ -96,19 +91,9 @@ export class ManagedRemoteProjectRuntimeValidator
     }
     assertRuntimeCapability(refreshed, installation)
 
-    const validated = projectRuntimeValidationSchema.parse({
-      runtimeSelectionKey: input.runtimeSelectionKey,
-      runtimeBundleDigest: installation.bundleDigest,
-      runtimeAdapterDigest: installation.runtimeAdapterDigest,
-      agentInstallationIdAtValidation: input.agent.installationId,
-      validatedAt: this.#now().toISOString(),
-      workMode: input.workMode
-    })
-    const evidence: RemoteProjectRuntimeValidationEvidence = validated
     const capabilitySnapshot = structuredClone(refreshed)
     let released = false
     return {
-      evidence,
       assertCurrent: (): void => {
         if (released) {
           throw new Error(

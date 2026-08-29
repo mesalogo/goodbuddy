@@ -66,31 +66,73 @@ export const settingsSections = {
       description:
         '更新 Host 可能替换 Agent 和 Runtime，并中断正在进行的远程工作；Host 配置和项目文件会保留。',
       loading: '正在读取 Agent 和 Runtime 版本…',
-      update: '更新版本',
-      updateNamed: '更新 {{name}} 的远程运行环境版本',
+      notChecked:
+        '尚未检查版本。本页面不会自动连接主机；点击“刷新版本”可检查版本。',
+      methodLabel: '安装方式',
+      methodSelectorNamed: '{{name}} 的远程环境安装方式',
+      actions: {
+        install: '安装远程环境',
+        installNamed: '为 {{name}} 安装远程环境',
+        update: '更新远程环境',
+        updateNamed: '为 {{name}} 更新远程环境',
+        reinstall: '重新安装',
+        reinstallNamed: '为 {{name}} 重新安装远程环境'
+      },
       cancelUpdate: '取消更新',
       cancelUpdateNamed: '取消 {{name}} 的远程运行环境更新',
       cancelling: '正在取消…',
       refresh: '刷新版本',
       refreshNamed: '刷新 {{name}} 的远程运行环境版本',
       progress: {
-        preparing: '正在准备更新…',
-        agent: '正在更新 GoodBuddy Agent…',
-        runtime: '正在更新 Runtime…',
+        preparing: '正在准备安装…',
+        probing: '正在检查远程主机环境…',
+        downloading: '正在传输运行环境包…',
+        verifying: '正在校验运行环境包…',
+        applying: '正在应用远程运行环境…',
+        'installing-agent': '正在安装 GoodBuddy Agent…',
+        'installing-runtime': '正在安装 Runtime…',
+        'checking-health': '正在检查远程运行环境…',
         finalizing: '正在完成远程运行环境更新…',
+        complete: '远程运行环境安装完成',
         cancelling: '正在取消远程运行环境更新…'
       },
+      methods: {
+        auto: '自动',
+        'remote-download': 'Host 下载',
+        'goodbuddy-transfer': 'GoodBuddy 传输'
+      },
+      sources: {
+        github: 'GitHub',
+        mirror: '镜像节点'
+      },
+      remoteDownloadUnavailable: {
+        'package-unavailable':
+          '当前下载源没有适用于此主机的安装包。仍可通过 GoodBuddy 安装。',
+        'missing-tools':
+          '远程主机缺少直接下载或解包所需的系统工具。仍可通过 GoodBuddy 安装。',
+        'home-unwritable':
+          '远程主机的用户目录不可写，无法直接下载安装。请修复权限后刷新，或通过 GoodBuddy 安装。',
+        'insufficient-disk-space':
+          '远程主机没有足够的可用空间下载安装包。请释放空间后刷新，或通过 GoodBuddy 安装。',
+        'source-unreachable':
+          '远程主机无法连接所选下载源（{{source}}）。请检查网络后刷新，或通过 GoodBuddy 安装。',
+        'probe-failed':
+          '无法完成远程主机直连能力检查。可直接重试由远程主机安装、刷新检查，或通过 GoodBuddy 重新安装。'
+      },
+      remoteDownloadPackageSize: '安装包大小：{{size}}',
       errors: {
         updateFailed: '更新远程运行环境失败，请重试',
         cancelled: '远程运行环境更新已取消，可重试',
-        cancelFailed: '取消远程运行环境更新失败'
+        cancelFailed: '取消远程运行环境更新失败',
+        reinstallFailedSummary:
+          '本次重新安装未完成；正在重新检查当前版本。'
       },
       installed: 'Host 已安装',
       expected: 'GoodBuddy 所需',
       notInstalled: '尚未安装',
       versionDetail: 'Linux · {{architecture}}',
       states: {
-        current: '当前版本',
+        current: '版本匹配',
         'update-available': '待更新',
         'not-installed': '未安装'
       }
@@ -137,7 +179,8 @@ export const settingsSections = {
       }
     },
     removeMessage:
-      '删除“{{name}}”会清除本机保存的连接信息和加密凭据，不会删除远端文件。',
+      '删除“{{name}}”会清除本机保存的连接信息和加密凭据。关联项目只删除本地记录，不会连接主机，也不会删除远端目录或内容。',
+    removeProjectsHeading: '同时删除以下关联项目记录：',
     actions: {
       add: '添加主机',
       edit: '编辑',
