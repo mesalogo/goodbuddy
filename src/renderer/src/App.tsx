@@ -120,6 +120,7 @@ import type {
   WorkspaceChanges
 } from '../../shared/assistant-contracts'
 import {
+  assistantIdSchema,
   conversationAttachmentSchema,
   conversationBranchSchema,
   conversationContextCompressionMarkerSchema,
@@ -1182,6 +1183,8 @@ function isConversation(value: unknown): value is Conversation {
       const entry = message as Record<string, unknown>
       return (
         typeof entry.id === 'string' &&
+        (entry.queueItemId === undefined ||
+          assistantIdSchema.safeParse(entry.queueItemId).success) &&
         (entry.role === 'user' || entry.role === 'assistant') &&
         typeof entry.content === 'string' &&
         entry.content.length <= 1_000_000 &&
@@ -1262,6 +1265,7 @@ function toConversationSnapshots(
 function toConversationMessage(message: Message): ConversationMessage {
   return {
     id: message.id,
+    queueItemId: message.queueItemId,
     role: message.role,
     content: message.content,
     reasoning: message.reasoning,
@@ -6519,6 +6523,7 @@ function App(): React.JSX.Element {
     setConversationActivity(conversationId, true)
     const userMessage: Message = {
       id: crypto.randomUUID(),
+      queueItemId: queuedDispatch.item.id,
       role: 'user',
       content: prompt,
       createdAt: Date.now(),

@@ -226,6 +226,7 @@ export type ConversationContextCompressionMarker = z.infer<
 export const conversationMessageSchema = z
   .object({
     id: assistantIdSchema,
+    queueItemId: assistantIdSchema.optional(),
     role: z.enum(['user', 'assistant']),
     content: z.string().max(1_000_000),
     reasoning: z.string().optional(),

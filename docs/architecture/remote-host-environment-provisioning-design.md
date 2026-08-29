@@ -140,10 +140,11 @@ daemon 参与。两种 acquisition 的差别只在于如何把同一个签名 co
 
 - **Host 下载**：控制面通过固定 SSH prepare channel 发送签名目录绑定的 URL、大小和
   SHA-256；Host 有界下载并校验完整归档。
-- **GoodBuddy 传输**：若本地缺少精确候选，同一次用户操作先下载、验证 SHA-256 和签名、
-  写入缓存并取得 lease；随后以有界流式 SFTP 上传一个 compound archive，以及从该归档中
-  已验证的 bootstrap Node。约 294 MiB 的完整包不会一次读入 Main `Buffer`，Host 收到后
-  仍再次校验完整包。
+- **GoodBuddy 传输**：显式选择时，在线目录不可用或本地已验证包版本不低于在线候选，
+  则优先使用本地包，包括版本更高的离线导入；线上存在更新且可用时仍取得线上新包。
+  需要下载时，同一次用户操作会验证 SHA-256 和签名、写入缓存并取得 lease。随后以有界
+  流式 SFTP 上传一个 compound archive，以及从该归档中已验证的 bootstrap Node。约
+  294 MiB 的完整包不会一次读入 Main `Buffer`，Host 收到后仍再次校验完整包。
 
 交付后两种 acquisition 完全共用一个 control-plane 事务：
 

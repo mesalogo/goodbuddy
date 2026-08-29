@@ -208,6 +208,7 @@ type MagicTodoRow = {
 
 type MessageMetadata = {
   createdAt?: number
+  queueItemId?: string
   status?: string
   reasoning?: ConversationSnapshot['messages'][number]['reasoning']
   blocks?: ConversationSnapshot['messages'][number]['blocks']
@@ -998,6 +999,7 @@ function toConversationSnapshot(
       const interrupted = message.state === 'streaming'
       return {
         id: message.id,
+        queueItemId: metadata.queueItemId,
         role: message.role,
         content: message.content,
         reasoning: metadata.reasoning,
@@ -1031,6 +1033,7 @@ function serializeConversationMessageMetadata(
 ): string {
   return JSON.stringify({
     createdAt: message.createdAt,
+    queueItemId: message.queueItemId,
     status: message.status,
     reasoning: message.reasoning,
     blocks: message.blocks,
@@ -1338,6 +1341,23 @@ export class AssistantDatabase {
             `UPDATE conversation_queue_items
              SET status = 'pending'
              WHERE status = 'dispatching'`
+          )
+          .run()
+        database
+          .prepare(
+            `DELETE FROM conversation_queue_items
+             WHERE source = 'user'
+               AND EXISTS (
+                 SELECT 1
+                 FROM messages
+                 WHERE messages.conversation_id =
+                       conversation_queue_items.conversation_id
+                   AND messages.role = 'user'
+                   AND json_extract(
+                     messages.metadata_json,
+                     '$.queueItemId'
+                   ) = conversation_queue_items.id
+               )`
           )
           .run()
         database.exec(`
@@ -2496,7 +2516,8 @@ export class AssistantDatabase {
                     metadata_json,
                     '$.artifactIds',
                     '$.subagents',
-                    '$.task'
+                    '$.task',
+                    '$.queueItemId'
                   ),
                   created_at
            FROM messages

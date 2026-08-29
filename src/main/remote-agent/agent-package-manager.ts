@@ -540,26 +540,43 @@ export class AgentPackageManager {
         options.signal?.throwIfAborted()
         const source = await this.#getUpdateSource()
         options.signal?.throwIfAborted()
-        let entry: AgentPackageCatalogEntry | undefined
+        const record = await this.#loadInstalled(architecture)
+        const leaseRecord = async (
+          installed: InstalledRecord
+        ): Promise<AgentPackageArchiveLease> => {
+          const status = await lstat(installed.archivePath)
+          return this.#archiveLease(
+            installed,
+            candidateFromVerifiedRecord(
+              installed,
+              source,
+              status.size
+            )
+          )
+        }
+        if (
+          record &&
+          this.#catalogState?.state !== 'available'
+        ) {
+          return leaseRecord(record)
+        }
+        let entry: AgentPackageCatalogEntry
         if (this.#catalogState?.state === 'available') {
           entry = selectLatestCompatibleEntry(
             this.#catalogState.catalog,
             architecture,
             this.#desktopVersion
           )
-        } else {
-          const record = await this.#loadInstalled(architecture)
-          if (record) {
-            const status = await lstat(record.archivePath)
-            return this.#archiveLease(
-              record,
-              candidateFromVerifiedRecord(
-                record,
-                source,
-                status.size
-              )
-            )
+          if (
+            record &&
+            compareSemanticVersions(
+              record.verified.descriptor.version,
+              entry.version
+            ) >= 0
+          ) {
+            return leaseRecord(record)
           }
+        } else {
           if (this.#catalogState?.state === 'unavailable') {
             throw new Error(this.#catalogState.error)
           }
@@ -577,14 +594,14 @@ export class AgentPackageManager {
           entry,
           source
         )
-        const record = await this.#ensureInstalledCandidate(
+        const installed = await this.#ensureInstalledCandidate(
           architecture,
           entry,
           source,
           options.onProgress,
           options.signal
         )
-        return this.#archiveLease(record, candidate)
+        return this.#archiveLease(installed, candidate)
       }
     )
   }

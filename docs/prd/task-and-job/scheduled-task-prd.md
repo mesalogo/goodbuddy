@@ -363,7 +363,8 @@ Task Center 显示 Scheduled Task 的范围、关联 Conversation、状态、模
 - [x] 手动运行不改变下次计划时间。
 - [x] Scheduled Task 与普通消息共用 Conversation 级队列，不并发写入同一时间线。
 - [x] 当前回复期间可以继续发送普通消息，并在 Composer 上沿查看、删除或提升待发送项。
-- [x] 应用重启恢复尚未执行的队列项和有界附件上下文。
+- [x] 应用重启恢复尚未执行的队列项和有界附件上下文；已写入 Conversation 的用户输入
+  通过队列项身份完成恢复对账，不会再次进入待发送队列。
 - [x] 文本结果只写入 Conversation，独立交付物才进入成果。
 - [ ] Task Center 和桌面通知可以打开正确 Conversation 并定位 Task。
 - [ ] 应用重启不自动重放结果未知的副作用。

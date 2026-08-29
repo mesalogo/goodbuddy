@@ -13,7 +13,7 @@ Windows 到 Linux x64 的既有安装、
 Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实
 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与
 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback
-路径 capability 后，当前源码 lock 已更新为待发布 Agent `0.11.6`。失败的 `agent-v0.11.3`
+路径 capability 后，当前源码 lock 已更新为待发布 Agent `0.11.7`。失败的 `agent-v0.11.3`
 保持不可变且未发布。远程 OpenCode 功能仍处于发布前验证阶段；公开签名 key registry
 已供应，当前发布门槛是通过独立 Agent workflow 正式发布并公开验证 Linux x64/arm64
 复合包和签名累计目录。
@@ -103,10 +103,11 @@ Detached GoodBuddy Agent
   可用才选 Host 下载，否则选 GoodBuddy 传输；显式选择不被改写。prepare、commit 或
   adoption 失败后都不跨 acquisition 自动 fallback。
 - Host 下载由桌面控制面通过固定 SSH prepare channel 和结构化 stdin 发送候选信息，
-  Host 取得 compound `.gbagent` 并核对大小与 SHA-256。GoodBuddy 传输在本地缺少精确
-  候选时，于同一次操作下载、验 SHA-256 与签名、缓存并取得 lease，再以有界流式 SFTP
-  上传一个 compound archive 和归档中已验证的 bootstrap Node；约 294 MiB 完整包不会
-  一次读入 Main `Buffer`，Host 仍再次校验完整包。
+  Host 取得 compound `.gbagent` 并核对大小与 SHA-256。显式 GoodBuddy 传输在在线目录
+  不可用，或本地已验证包版本不低于在线候选时优先租用本地包，包括更高版本离线导入；
+  线上存在更新且可用时仍取得线上新包。需要下载时，同一次操作会验 SHA-256 与签名、
+  缓存并取得 lease，再以有界流式 SFTP 上传一个 compound archive 和归档中已验证的
+  bootstrap Node；约 294 MiB 完整包不会一次读入 Main `Buffer`，Host 仍再次校验完整包。
 - 两种 acquisition 交付到固定 operation staging 后，完全共用 control-plane
   `prepare → commit → Agent activate/health → Runtime activate → finalize → cleanup`。
   commit 终态持久化；通道丢失只用 `commit-status` 只读恢复，不重放 commit。prepare
@@ -244,7 +245,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。当前源码 lock 是待发布版本 `0.11.6`，需要由新的复合包发布流程另行验证。
+  的双架构验收。当前源码 lock 是待发布版本 `0.11.7`，需要由新的复合包发布流程另行验证。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生

@@ -41,6 +41,7 @@ export type KnowledgeRetrievalStatus = Omit<
 
 export type Message = {
   id: string
+  queueItemId?: ConversationMessage['queueItemId']
   role: 'user' | 'assistant'
   content: string
   reasoning?: string

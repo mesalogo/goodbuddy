@@ -73,9 +73,12 @@ vi.mock('./agent-package-verifier', async (importOriginal) => {
         const { readFile: readFixture } =
           await import('node:fs/promises')
         const archive = await readFixture(options.archivePath)
-        const version = archive.toString('utf8') === '2.1.0'
-          ? '2.1.0'
-          : '2.0.0'
+        const archiveVersion = archive.toString('utf8')
+        const version =
+          archiveVersion === '1.9.0' ||
+          archiveVersion === '2.1.0'
+            ? archiveVersion
+            : '2.0.0'
         await mkdir(join(options.destinationDirectory, 'agent'), {
           recursive: true
         })
@@ -489,6 +492,107 @@ describe('AgentPackageManager remote install candidates', () => {
       urls: []
     })
     await expect(readFile(lease.path)).resolves.toEqual(archiveBytes)
+    lease.release()
+  })
+
+  it('prefers a verified local package over an older available online catalog for GoodBuddy transfer', async () => {
+    const fixture = await createFixture('mirror')
+    const transport = vi.fn<typeof fetch>(async (input) => {
+      const url = input.toString()
+      if (url.endsWith('latest.json')) {
+        return response(fixture.pointer)
+      }
+      if (url.endsWith('agent-catalog.json')) {
+        return response(fixture.catalogBytes)
+      }
+      if (url.endsWith('agent-catalog.sig')) {
+        return response(fixture.signature)
+      }
+      throw new Error(`Archive must not be requested: ${url}`)
+    })
+    const importDirectory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-agent-local-newer-')
+    )
+    temporaryDirectories.push(importDirectory)
+    const localArchive = join(
+      importDirectory,
+      'goodbuddy-agent-2.1.0-linux-x64.gbagent'
+    )
+    await writeFile(localArchive, '2.1.0')
+
+    const manager = fixture.manager(transport)
+    await manager.importArchive(localArchive)
+    await manager.getSnapshot()
+    const lease = await manager.acquireGoodBuddyInstallArchive('x64')
+
+    expect(lease.candidate).toMatchObject({
+      architecture: 'x64',
+      version: '2.1.0',
+      urls: []
+    })
+    expect(
+      transport.mock.calls.some(([input]) =>
+        input.toString().endsWith(fixture.archive)
+      )
+    ).toBe(false)
+    await expect(readFile(lease.path)).resolves.toEqual(
+      Buffer.from('2.1.0')
+    )
+    lease.release()
+  })
+
+  it('downloads a newer online package instead of transferring a stale local package', async () => {
+    const onlineArchive = Buffer.from('online-2.0.0')
+    const fixture = await createFixture(
+      'mirror',
+      undefined,
+      onlineArchive
+    )
+    const entry = fixture.catalog.entries[0]!
+    let archiveRequests = 0
+    const transport = vi.fn<typeof fetch>(async (input) => {
+      const url = input.toString()
+      if (url.endsWith('latest.json')) {
+        return response(fixture.pointer)
+      }
+      if (url.endsWith('agent-catalog.json')) {
+        return response(fixture.catalogBytes)
+      }
+      if (url.endsWith('agent-catalog.sig')) {
+        return response(fixture.signature)
+      }
+      if (url.endsWith(entry.archive)) {
+        archiveRequests += 1
+        return response(onlineArchive, {
+          headers: {
+            'content-length': String(onlineArchive.byteLength)
+          }
+        })
+      }
+      throw new Error(`Unexpected URL ${url}`)
+    })
+    const importDirectory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-agent-local-stale-')
+    )
+    temporaryDirectories.push(importDirectory)
+    const localArchive = join(
+      importDirectory,
+      'goodbuddy-agent-1.9.0-linux-x64.gbagent'
+    )
+    await writeFile(localArchive, '1.9.0')
+
+    const manager = fixture.manager(transport)
+    await manager.importArchive(localArchive)
+    await manager.getSnapshot()
+    const lease = await manager.acquireGoodBuddyInstallArchive('x64')
+
+    expect(lease.candidate).toMatchObject({
+      architecture: 'x64',
+      version: '2.0.0',
+      sha256: entry.sha256
+    })
+    expect(archiveRequests).toBe(1)
+    await expect(readFile(lease.path)).resolves.toEqual(onlineArchive)
     lease.release()
   })
 

@@ -4802,6 +4802,45 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('persists the claimed queue identity with a dispatched user message', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '只发送一次' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request?.queueItemId) {
+      throw new Error('Missing queued request')
+    }
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'error',
+        status: 'failed',
+        message: 'Remote Runtime failed'
+      })
+    })
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.conversations.saveLocal).mock.calls.some(
+          ([batch]) =>
+            batch.some((conversation) =>
+              conversation.messages.some(
+                (message) =>
+                  message.role === 'user' &&
+                  message.content === '只发送一次' &&
+                  message.queueItemId === request.queueItemId
+              )
+            )
+        )
+      ).toBe(true)
+    )
+  })
+
   it('keeps sent documents and images in conversation history', async () => {
     const documentAttachment = {
       id: '00000000-0000-4000-8000-000000000301',

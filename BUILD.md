@@ -161,9 +161,11 @@ JSON。签名目录、包描述符、manifest、签名和 payload 的原始字�
   有界重定向链和固定 SSH prepare channel。GoodBuddy 桌面控制面通过该通道发送有界
   one-shot installer；Host 校验目录绑定的归档大小和 SHA-256 后，由包内固定 Node 解码
   并运行 installer。
-- “GoodBuddy 传输”在本地缺少精确候选时，于同一次用户操作下载、校验 SHA-256 与签名、
-  缓存并取得 lease，再以有界流式 SFTP 上传一个 compound archive 和归档内已验证的
-  bootstrap Node；约 294 MiB 的整包不会一次读入 Main `Buffer`，Host 仍再次校验。
+- 显式“GoodBuddy 传输”在在线目录不可用，或本地已验证包版本不低于在线候选时优先使用
+  本地包，包括版本更高的离线导入；线上存在更新且可用时仍取得线上新包。需要下载时，
+  同一次用户操作会校验 SHA-256 与签名、缓存并取得 lease，再以有界流式 SFTP 上传一个
+  compound archive 和归档内已验证的 bootstrap Node；约 294 MiB 的整包不会一次读入
+  Main `Buffer`，Host 仍再次校验。
 - “自动”只在 operation/prepare 前执行 Host capability probe；直连明确可用才选择
   Host 下载，否则选择 GoodBuddy 传输。显式选择保持有效，prepare、commit 或 adoption
   失败后不跨 acquisition 自动 fallback。

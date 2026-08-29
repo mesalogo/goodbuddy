@@ -2690,6 +2690,92 @@ describe('AssistantDatabase', () => {
     recovered.close()
   })
 
+  it('does not replay a dispatched user queue item whose message was already persisted', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-conversation-queue-recovery-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const project = initial.listProjects()[0]!
+    const conversationId =
+      '00000000-0000-4000-8000-000000000911'
+    const userMessageId =
+      '00000000-0000-4000-8000-000000000912'
+    const assistantMessageId =
+      '00000000-0000-4000-8000-000000000913'
+    initial.replaceConversations([
+      {
+        id: conversationId,
+        projectId: project.id,
+        title: '崩溃恢复对话',
+        updatedAt: 1,
+        messages: []
+      }
+    ])
+    const queued = initial.enqueueConversationUserInput({
+      conversationId,
+      label: '只发送一次',
+      payloadJson: JSON.stringify({ prompt: '只发送一次' })
+    })
+    expect(
+      initial.claimConversationQueueItem(conversationId, queued.id)
+    ).toMatchObject({
+      source: 'user',
+      item: { id: queued.id }
+    })
+    initial.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          projectId: project.id,
+          title: '崩溃恢复对话',
+          updatedAt: 2
+        },
+        messages: [
+          {
+            id: userMessageId,
+            queueItemId: queued.id,
+            role: 'user',
+            content: '只发送一次',
+            createdAt: 2,
+            state: 'complete'
+          },
+          {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '',
+            createdAt: 3,
+            state: 'streaming'
+          }
+        ]
+      }
+    ])
+    initial.close()
+
+    const recovered = new AssistantDatabase(databasePath)
+    recovered.initialize('C:\\Workspace')
+    expect(
+      recovered.listConversationQueueItems(conversationId)
+    ).toEqual([])
+    expect(recovered.getConversation(conversationId).messages).toEqual([
+      expect.objectContaining({
+        id: userMessageId,
+        queueItemId: queued.id,
+        role: 'user',
+        content: '只发送一次'
+      }),
+      expect.objectContaining({
+        id: assistantMessageId,
+        role: 'assistant',
+        state: 'error',
+        status: '上次运行意外中断，可以重新发送问题'
+      })
+    ])
+    recovered.close()
+  })
+
   it('materializes due and manual schedule runs in the conversation queue', async () => {
     const database = await createDatabase()
     const schedule = database.createSchedule({
@@ -3408,6 +3494,8 @@ describe('AssistantDatabase', () => {
         messages: [
           {
             id: sourceMessageIds[0]!,
+            queueItemId:
+              '00000000-0000-4000-8000-000000000551',
             role: 'user',
             content: '比较两个发布方案',
             createdAt: 1_775_000_000_000,
@@ -3516,6 +3604,7 @@ describe('AssistantDatabase', () => {
     expect(branch.messages[0]?.attachments).toEqual(
       sourceBefore.messages[0]?.attachments
     )
+    expect(branch.messages[0]?.queueItemId).toBeUndefined()
     expect(branch.messages[1]?.task).toBeUndefined()
     expect(branch.messages[1]?.artifactIds).toBeUndefined()
     expect(database.getConversation(sourceConversationId)).toEqual(
@@ -3549,6 +3638,16 @@ describe('AssistantDatabase', () => {
     expect(branchMetadata).not.toHaveProperty('artifactIds')
     expect(branchMetadata).not.toHaveProperty('subagents')
     expect(branchMetadata).not.toHaveProperty('task')
+    const branchUserMetadataRow = durable
+      .prepare(
+        `SELECT metadata_json
+         FROM messages
+         WHERE conversation_id = ? AND sequence = 0`
+      )
+      .get(branch.id) as { metadata_json: string }
+    expect(
+      JSON.parse(branchUserMetadataRow.metadata_json)
+    ).not.toHaveProperty('queueItemId')
     durable.close()
 
     database.saveLocalConversations([

@@ -62,7 +62,7 @@ describe('sandboxed preload', () => {
     )
     const embeddings =
       source.match(
-        /embeddings: \{(?<body>[\s\S]*?)\n {2}\},\n {2}documentParsing:/u
+        /embeddings: \{(?<body>[\s\S]*?)\r?\n {2}\},\r?\n {2}documentParsing:/u
       )?.groups?.body ?? ''
     expect(embeddings).toContain('getSnapshot:')
     expect(embeddings).toContain('getModelProgress:')
@@ -82,8 +82,8 @@ describe('sandboxed preload', () => {
     expect(source).toContain(
       'test: (purpose: DocumentParsingTestPurpose)'
     )
-    expect(source).toContain(
-      'ipcChannels.documentParsingTest,\n        { purpose }'
+    expect(source).toMatch(
+      /ipcChannels\.documentParsingTest,\r?\n {8}\{ purpose \}/u
     )
   })
 
@@ -125,7 +125,7 @@ describe('sandboxed preload', () => {
     )
     const feedback =
       source.match(
-        /feedback: \{(?<body>[\s\S]*?)\n {2}\},\n {2}shortcuts:/u
+        /feedback: \{(?<body>[\s\S]*?)\r?\n {2}\},\r?\n {2}shortcuts:/u
       )?.groups?.body ?? ''
     expect(feedback).toContain('submit: (input: FeedbackSubmitInput)')
     expect(feedback).toContain('ipcChannels.feedbackSubmit')
