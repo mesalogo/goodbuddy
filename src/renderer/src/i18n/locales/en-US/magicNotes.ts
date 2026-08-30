@@ -82,6 +82,7 @@ export const magicNotes = {
     noPreview: 'No entries yet',
     entryCountOne: '{{count}} entry',
     entryCountOther: '{{count}} entries',
+    updatedAt: 'Updated {{date}}',
     emptySelectionTitle: 'No note selected',
     emptySelectionDescription:
       'Select a note on the left, or create a note to start writing.',

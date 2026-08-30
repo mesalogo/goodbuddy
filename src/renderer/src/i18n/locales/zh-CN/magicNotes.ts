@@ -77,6 +77,7 @@ export const magicNotes = {
     noPreview: '还没有记录',
     entryCountOne: '{{count}} 条记录',
     entryCountOther: '{{count}} 条记录',
+    updatedAt: '更新于 {{date}}',
     emptySelectionTitle: '还没有选择笔记',
     emptySelectionDescription: '从左侧选择笔记，或新建一篇笔记开始记录。',
     newEntryLabel: '新记录内容',

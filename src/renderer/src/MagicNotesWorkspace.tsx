@@ -1657,12 +1657,21 @@ export function MagicNotesWorkspace({
                     {note.preview || t('notes.noPreview')}
                   </span>
                   <span className="magic-note-list-item__meta">
-                    {t(
-                      note.entryCount === 1
-                        ? 'notes.entryCountOne'
-                        : 'notes.entryCountOther',
-                      { count: note.entryCount }
-                    )}
+                    <span>
+                      {t(
+                        note.entryCount === 1
+                          ? 'notes.entryCountOne'
+                          : 'notes.entryCountOther',
+                        { count: note.entryCount }
+                      )}
+                    </span>
+                    <time dateTime={note.updatedAt}>
+                      {t('notes.updatedAt', {
+                        date: dateFormatter.format(
+                          new Date(note.updatedAt)
+                        )
+                      })}
+                    </time>
                   </span>
                 </button>
               ))

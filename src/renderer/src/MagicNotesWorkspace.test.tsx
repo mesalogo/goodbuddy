@@ -399,6 +399,11 @@ describe('MagicNotesWorkspace', () => {
     expect(
       screen.getByRole('button', { name: /发布笔记/ })
     ).toHaveAttribute('aria-pressed', 'true')
+    const updatedTime = screen
+      .getByRole('button', { name: /发布笔记/ })
+      .querySelector('time')
+    expect(updatedTime).toHaveAttribute('datetime', detail.updatedAt)
+    expect(updatedTime).toHaveTextContent('更新于')
     fireEvent.click(screen.getByRole('tab', { name: '待办' }))
     expect(screen.getByText('准备演示')).toBeInTheDocument()
     const selectedTodoButton = screen
