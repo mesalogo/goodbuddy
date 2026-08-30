@@ -681,7 +681,7 @@ export const settings = {
       incompatible: '不兼容',
       incompatibleImageProtocol: '不兼容（不支持图像生成协议）',
       incompatibleHarnessProtocol:
-        '不兼容（需 Chat Completions、API Key 和安全地址）',
+        '不兼容（需 Chat Completions、API Key 和 HTTP/HTTPS 地址）',
       secureStorageWarning:
         '当前系统密钥服务不可用。为了避免明文落盘，请使用环境变量提供 API Key。'
     },

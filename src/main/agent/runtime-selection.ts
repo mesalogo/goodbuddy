@@ -139,7 +139,7 @@ export function applyRuntimeSelection(
       !isDeepSeekHarnessModelProfile(selectedProfile)
     ) {
       throw new Error(
-        'DeepSeek Harness 仅支持使用 API Key 的安全 OpenAI 兼容 Chat Completions 连接'
+        'DeepSeek Harness 仅支持使用 API Key 的 OpenAI 兼容 Chat Completions 连接'
       )
     }
     return {

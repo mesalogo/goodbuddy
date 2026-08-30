@@ -231,7 +231,7 @@ describe('ChannelSettingsStore', () => {
     const bound = await store.saveWeixinBinding({
       accountId: 'account-123456',
       userId: 'user-654321',
-      baseUrl: 'https://ilinkai.weixin.qq.com',
+      baseUrl: 'http://ilinkai.weixin.qq.com',
       token: 'weixin-private-token'
     })
     expect(bound.weixin).toMatchObject({

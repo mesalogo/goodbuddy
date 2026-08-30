@@ -9,9 +9,14 @@ describe('DeepSeek Harness model compatibility', () => {
     'https://api.deepseek.com',
     'https://gateway.example/openai/v1',
     'https://gateway.example:8443/v1',
+    'http://gateway.example/v1',
+    'http://192.168.1.50:11434/v1',
     'http://127.0.0.1:11434/v1',
     'http://localhost:1234/v1',
-    'http://[::1]:8080/v1'
+    'http://[::1]:8080/v1',
+    'https://gateway.example/v1?api-version=2025-01-01',
+    'https://gateway.example/v1#chat',
+    'http://user:password@gateway.example/v1'
   ])('accepts OpenAI-compatible base URL %s', (baseUrl) => {
     expect(isDeepSeekHarnessCompatibleBaseUrl(baseUrl)).toBe(true)
     expect(
@@ -24,12 +29,10 @@ describe('DeepSeek Harness model compatibility', () => {
   })
 
   it.each([
-    'http://gateway.example/v1',
     'file:///private/config',
-    'https://user:secret@gateway.example/v1',
-    'https://gateway.example/v1?api-version=2025-01-01',
-    'https://gateway.example/v1#chat'
-  ])('rejects unsafe or unsupported base URL %s', (baseUrl) => {
+    'ftp://gateway.example/v1',
+    'not-a-url'
+  ])('rejects unsupported base URL %s', (baseUrl) => {
     expect(isDeepSeekHarnessCompatibleBaseUrl(baseUrl)).toBe(false)
   })
 

@@ -742,7 +742,7 @@ export const settings = {
       incompatibleImageProtocol:
         'Incompatible (image generation protocol is unsupported)',
       incompatibleHarnessProtocol:
-        'Incompatible (requires Chat Completions, an API key, and a secure endpoint)',
+        'Incompatible (requires Chat Completions, an API key, and an HTTP/HTTPS endpoint)',
       secureStorageWarning:
         'Secure system key storage is unavailable. Use an environment variable to avoid storing an API Key in plaintext.'
     },

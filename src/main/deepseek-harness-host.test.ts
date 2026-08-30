@@ -39,7 +39,7 @@ describe('controlled DeepSeek Harness host', () => {
         dshHome: 'C:\\controlled-dsh-home',
         skillPackages: []
       })
-    ).rejects.toThrow('secure OpenAI-compatible')
+    ).rejects.toThrow('HTTP or HTTPS OpenAI-compatible')
   })
 
   it('suppresses console payloads instead of contaminating stdout', () => {

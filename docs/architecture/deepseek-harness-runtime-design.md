@@ -163,7 +163,7 @@ Electron utilityProcess
        ├─ 本地 Shell / Filesystem Provider
        ├─ 最小工具集与 Main 代理 MCP
        └─ Main 明确启用的第三方 Cordis 插件
-             │ HTTPS
+             │ HTTP/HTTPS
              ▼
         用户选择的 OpenAI 兼容模型连接
 ```
@@ -426,8 +426,7 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 
 - 协议必须是 `openai-chat-completions`。
 - 认证必须是 API Key。
-- 公网服务地址必须使用 HTTPS；`localhost`、`127.0.0.1` 和 `::1` 回环地址可以使用 HTTP。
-- 服务地址可以使用自定义主机、端口和部署路径，但不得包含用户名、密码、查询参数或片段。
+- 服务地址支持 HTTP 和 HTTPS，不根据主机位置、端口、凭据、查询参数或片段增加额外限制。
 - 模型名称不限制为 DeepSeek 品牌，由所选 OpenAI 兼容服务决定。
 - 模型名称和服务地址由 Main 传入受控 Host。
 - 图片能力只读取所选 GoodBuddy 模型连接的 `supportsImageInput`；Main、Utility 启动配置、ACP 能力和 Pi-AI 模型输入模态必须使用同一个布尔值。

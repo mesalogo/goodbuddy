@@ -300,9 +300,13 @@ const weixinBindingSchema = z
       .string()
       .url()
       .max(2_048)
-      .refine((value) => new URL(value).protocol === 'https:', {
-        message: '微信服务地址必须使用 HTTPS'
-      }),
+      .refine(
+        (value) =>
+          ['http:', 'https:'].includes(new URL(value).protocol),
+        {
+          message: '微信服务地址必须使用 HTTP 或 HTTPS'
+        }
+      ),
     token: z
       .string()
       .trim()

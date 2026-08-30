@@ -190,7 +190,7 @@ export function createAgentRuntime(
     const profile = settings?.deepseekHarnessModelProfile
     if (!profile || !isDeepSeekHarnessModelProfile(profile)) {
       throw new Error(
-        'DeepSeek Harness 需要使用 API Key 的安全 OpenAI 兼容 Chat Completions 模型连接'
+        'DeepSeek Harness 需要使用 API Key 的 OpenAI 兼容 Chat Completions 模型连接'
       )
     }
     if (!profile.apiKey) {

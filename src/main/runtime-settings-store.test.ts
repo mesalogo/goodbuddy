@@ -458,7 +458,7 @@ describe('RuntimeSettingsStore', () => {
     const { store } = await createStore({
       GOODBUDDY_MODEL_API_KEY: apiKey,
       GOODBUDDY_MODEL_BASE_URL:
-        'https://gateway.example/openai/v1',
+        'http://gateway.example/openai/v1?api-version=1',
       GOODBUDDY_MODEL_NAME: 'qwen-plus'
     })
 
@@ -467,7 +467,7 @@ describe('RuntimeSettingsStore', () => {
       deepseekHarnessModelProfile: {
         id: 'goodbuddy-platform-harness',
         name: '管理员预置模型',
-        baseUrl: 'https://gateway.example/openai/v1',
+        baseUrl: 'http://gateway.example/openai/v1?api-version=1',
         modelName: 'qwen-plus',
         protocol: 'openai-chat-completions',
         authentication: 'api-key',
@@ -486,28 +486,11 @@ describe('RuntimeSettingsStore', () => {
 
   it.each([
     [
-      'an insecure public endpoint',
-      {
-        GOODBUDDY_MODEL_API_KEY: 'platform-key',
-        GOODBUDDY_MODEL_BASE_URL: 'http://gateway.example/v1',
-        GOODBUDDY_MODEL_NAME: 'qwen-plus'
-      }
-    ],
-    [
-      'an endpoint with embedded credentials',
+      'an unsupported endpoint protocol',
       {
         GOODBUDDY_MODEL_API_KEY: 'platform-key',
         GOODBUDDY_MODEL_BASE_URL:
-          'https://user:secret@gateway.example/v1',
-        GOODBUDDY_MODEL_NAME: 'qwen-plus'
-      }
-    ],
-    [
-      'an endpoint with a query string',
-      {
-        GOODBUDDY_MODEL_API_KEY: 'platform-key',
-        GOODBUDDY_MODEL_BASE_URL:
-          'https://gateway.example/v1?api-version=1',
+          'ftp://gateway.example/v1',
         GOODBUDDY_MODEL_NAME: 'qwen-plus'
       }
     ],

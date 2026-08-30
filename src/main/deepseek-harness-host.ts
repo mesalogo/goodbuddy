@@ -93,7 +93,7 @@ function validateHostConfig(
     !isDeepSeekHarnessCompatibleBaseUrl(config.baseUrl)
   ) {
     throw new Error(
-      'Controlled Harness requires a secure OpenAI-compatible Chat Completions endpoint'
+      'Controlled Harness requires an HTTP or HTTPS OpenAI-compatible Chat Completions endpoint'
     )
   }
   if (!config.credentialRefs.length) {

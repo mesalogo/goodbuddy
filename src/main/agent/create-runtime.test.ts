@@ -100,7 +100,7 @@ describe('createAgentRuntime model compatibility', () => {
         { deepseekHarnessLauncher: vi.fn() }
       )
     ).toThrow(
-      'DeepSeek Harness 需要使用 API Key 的安全 OpenAI 兼容 Chat Completions 模型连接'
+      'DeepSeek Harness 需要使用 API Key 的 OpenAI 兼容 Chat Completions 模型连接'
     )
   })
 

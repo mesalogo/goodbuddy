@@ -149,7 +149,7 @@ export function createDeepSeekHarnessUtilityLauncher(
     }
     if (!isDeepSeekHarnessCompatibleBaseUrl(options.baseUrl)) {
       throw new Error(
-        'DeepSeek Harness 模型地址必须使用 HTTPS 或本机回环 HTTP，且不得包含凭据、查询参数或片段'
+        'DeepSeek Harness 模型地址必须使用 HTTP 或 HTTPS'
       )
     }
     if (
