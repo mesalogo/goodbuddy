@@ -91,6 +91,7 @@ function dependencies(
   spawnMock: ReturnType<typeof vi.fn>
   detectBinary: ReturnType<typeof vi.fn>
   createClient: ReturnType<typeof vi.fn>
+  checkServerHealth: ReturnType<typeof vi.fn>
 } {
   const spawnMock = vi.fn(() => child)
   const detectBinary = vi.fn().mockResolvedValue({
@@ -98,18 +99,21 @@ function dependencies(
     detail: 'OpenCode CLI 已就绪'
   })
   const createClient = vi.fn(() => fakeClient())
+  const checkServerHealth = vi.fn().mockResolvedValue(true)
   return {
     deps: {
       spawn: spawnMock as unknown as typeof spawn,
       detectBinary,
       createClient: createClient as unknown as typeof createOpencodeClient,
+      checkServerHealth,
       platform: 'linux',
       startupTimeoutMs: 100,
       ...overrides
     },
     spawnMock,
     detectBinary,
-    createClient
+    createClient,
+    checkServerHealth
   }
 }
 
@@ -301,6 +305,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       detail: 'OpenCode CLI 已就绪'
     })
     const createClient = vi.fn(() => fakeClient())
+    const checkServerHealth = vi.fn().mockResolvedValue(true)
     const spawnMock = vi.fn((command: string) => {
       if (command === 'taskkill.exe') {
         queueMicrotask(() => {
@@ -308,11 +313,6 @@ describe('OpenCodeRuntime embedded launcher', () => {
         })
         return killerChild
       }
-      setTimeout(() => {
-        stdoutOf(serverChild).write(
-          'opencode server listening securely on http://127.0.0.1:43210\n'
-        )
-      }, 0)
       return serverChild
     })
     const configPath = './private/opencode.json'
@@ -325,6 +325,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
         spawn: spawnMock as unknown as typeof spawn,
         detectBinary,
         createClient: createClient as unknown as typeof createOpencodeClient,
+        checkServerHealth,
         platform: 'win32'
       }
     )
@@ -357,6 +358,14 @@ describe('OpenCodeRuntime embedded launcher', () => {
         })
       })
     )
+    const firstSpawn = spawnMock.mock.calls[0] as unknown as
+      | [string, string[]]
+      | undefined
+    const serverPort = firstSpawn?.[1]
+      ?.find((argument) => argument.startsWith('--port='))
+      ?.slice('--port='.length)
+    expect(serverPort).toMatch(/^\d+$/u)
+    const serverUrl = `http://127.0.0.1:${serverPort}`
     const clientOptions = (
       createClient.mock.calls as unknown as Array<
         [
@@ -375,12 +384,17 @@ describe('OpenCodeRuntime embedded launcher', () => {
         }
       | undefined
     expect(clientOptions).toMatchObject({
-      baseUrl: 'http://127.0.0.1:43210',
+      baseUrl: serverUrl,
       directory: process.cwd(),
       headers: {
         Authorization: expect.stringMatching(/^Basic /u)
       }
     })
+    expect(checkServerHealth).toHaveBeenCalledWith(
+      serverUrl,
+      clientOptions?.headers?.Authorization,
+      expect.any(AbortSignal)
+    )
     const spawnOptions = (
       spawnMock.mock.calls as unknown as Array<
         [string, string[], { env?: NodeJS.ProcessEnv }]
@@ -960,36 +974,39 @@ describe('OpenCodeRuntime embedded launcher', () => {
     }
   })
 
-  it.each([
-    'https://127.0.0.1:4321',
-    'http://0.0.0.0:4321',
-    'http://example.com:4321',
-    'http://127.0.0.1',
-    'http://127.0.0.1:4321/admin'
-  ])('rejects an unsafe listening URL: %s', async (url) => {
+  it('polls the known loopback URL without waiting for stdout', async () => {
     const child = fakeChild()
-    const { deps, createClient } = dependencies(child, {
-      spawn: vi.fn(() => {
-        queueMicrotask(() => {
-          stdoutOf(child).write(`opencode server listening on ${url}\n`)
-          closeChild(child, 7)
-        })
-        return child
-      }) as unknown as typeof spawn
+    const { deps, checkServerHealth, createClient } = dependencies(child, {
+      startupTimeoutMs: 1_000
     })
+    checkServerHealth
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
     const runtime = new OpenCodeRuntime(options(), deps)
 
     await expect(runtime.getStatus()).resolves.toMatchObject({
-      available: false,
-      detail: 'OpenCode Server 启动前退出（code 7）'
+      available: true
     })
-    expect(createClient).not.toHaveBeenCalled()
+    expect(checkServerHealth).toHaveBeenCalledTimes(2)
+    const [url, authorization, signal] =
+      checkServerHealth.mock.calls[0] ?? []
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+    expect(authorization).toMatch(/^Basic /)
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(createClient).toHaveBeenCalledWith({
+      baseUrl: url,
+      directory: process.cwd(),
+      headers: { Authorization: authorization }
+    })
   })
 
   it('times out, terminates the process tree, and does not expose stderr', async () => {
     const child = fakeChild()
     const secret = 'private-config-token'
-    const { deps } = dependencies(child, { startupTimeoutMs: 5 })
+    const { deps } = dependencies(child, {
+      startupTimeoutMs: 5,
+      checkServerHealth: vi.fn().mockResolvedValue(false)
+    })
     stderrOf(child).write(secret)
     const runtime = new OpenCodeRuntime(options(), deps)
 
@@ -997,7 +1014,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
 
     expect(status).toMatchObject({
       available: false,
-      detail: 'OpenCode Server 启动超时（30 秒）'
+      detail: 'OpenCode Server 启动超时（10 秒）'
     })
     expect(status.detail).not.toContain(secret)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')

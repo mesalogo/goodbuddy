@@ -61,8 +61,9 @@ import {
   waitForProcessExit
 } from './child-process-termination'
 
-const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
-const STARTUP_TIMEOUT_MS = 30_000
+const STARTUP_TIMEOUT_MS = 10_000
+const STARTUP_POLL_INTERVAL_MS = 100
+const STARTUP_PROBE_TIMEOUT_MS = 500
 const MAX_PERMISSION_NAME_LENGTH = 128
 const MAX_PERMISSION_PATTERNS = 32
 const MAX_PERMISSION_PATTERN_LENGTH = 1_024
@@ -458,6 +459,11 @@ export type OpenCodeRuntimeDependencies = {
     bundledPath?: string
   ) => Promise<{ path?: string; detail: string }>
   createClient: typeof createOpencodeClient
+  checkServerHealth: (
+    url: string,
+    authorization: string,
+    signal: AbortSignal
+  ) => Promise<boolean>
   platform: NodeJS.Platform
   startupTimeoutMs: number
   executionTimeoutMs: number
@@ -667,41 +673,17 @@ async function defaultDetectBinary(
   })
 }
 
-function parseListeningUrl(output: string): string | undefined {
-  for (const line of output.split(/\r?\n/)) {
-    const match = line.match(
-      /^opencode server listening\b.*\bon\s+(http:\/\/\S+)\s*$/
-    )
-    const candidate = match?.[1]
-    if (!candidate) {
-      continue
-    }
-
-    try {
-      const url = new URL(candidate)
-      const hostname = url.hostname.toLowerCase()
-      const port = Number(url.port)
-      if (
-        url.protocol !== 'http:' ||
-        !['127.0.0.1', '[::1]'].includes(hostname) ||
-        !/^\d+$/.test(url.port) ||
-        !Number.isInteger(port) ||
-        port < 1 ||
-        port > 65_535 ||
-        url.username ||
-        url.password ||
-        url.search ||
-        url.hash ||
-        (url.pathname !== '' && url.pathname !== '/')
-      ) {
-        continue
-      }
-      return url.origin
-    } catch {
-      continue
-    }
-  }
-  return undefined
+async function defaultCheckServerHealth(
+  url: string,
+  authorization: string,
+  signal: AbortSignal
+): Promise<boolean> {
+  const client = createOpencodeClient({
+    baseUrl: url,
+    headers: { Authorization: authorization }
+  })
+  const response = await client.global.health({ signal })
+  return response.error === undefined && response.data?.healthy === true
 }
 
 export class OpenCodeRuntime implements AgentRuntime {
@@ -738,6 +720,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       spawn,
       detectBinary: defaultDetectBinary,
       createClient: createOpencodeClient,
+      checkServerHealth: defaultCheckServerHealth,
       platform: process.platform,
       startupTimeoutMs: STARTUP_TIMEOUT_MS,
       executionTimeoutMs: MAX_EXECUTION_MILLISECONDS,
@@ -987,16 +970,21 @@ export class OpenCodeRuntime implements AgentRuntime {
         )
         this.startingChild = child
         const { stdout, stderr } = child
-        let stdoutText = ''
-        let stdoutBytes = 0
-        let stderrBytes = 0
         let settled = false
+        let pollTimer: NodeJS.Timeout | undefined
+        const probeController = new AbortController()
+        const probeSignal = signal
+          ? AbortSignal.any([signal, probeController.signal])
+          : probeController.signal
+        const url = `http://127.0.0.1:${port}`
 
         const cleanupStartupListeners = (): void => {
           clearTimeout(timeout)
+          if (pollTimer) {
+            clearTimeout(pollTimer)
+          }
+          probeController.abort()
           signal?.removeEventListener('abort', abort)
-          stdout?.removeListener('data', onStdout)
-          stderr?.removeListener('data', onStderr)
           child.removeListener('error', onError)
           child.removeListener('close', onClose)
         }
@@ -1048,27 +1036,6 @@ export class OpenCodeRuntime implements AgentRuntime {
             }
           })
         }
-        const onStdout = (chunk: string | Buffer): void => {
-          const text = chunk.toString()
-          stdoutBytes += Buffer.isBuffer(chunk)
-            ? chunk.byteLength
-            : Buffer.byteLength(chunk)
-          if (stdoutBytes > MAX_STARTUP_OUTPUT_BYTES) {
-            fail('OpenCode Server stdout 超过 64KB 安全限制')
-            return
-          }
-          stdoutText += text
-          const url = parseListeningUrl(stdoutText)
-          if (url) {
-            succeed(url)
-          }
-        }
-        const onStderr = (chunk: string | Buffer): void => {
-          stderrBytes += Buffer.byteLength(chunk)
-          if (stderrBytes > MAX_STARTUP_OUTPUT_BYTES) {
-            fail('OpenCode Server stderr 超过 64KB 安全限制')
-          }
-        }
         const onError = (): void => {
           fail('OpenCode Server 启动失败')
         }
@@ -1078,22 +1045,50 @@ export class OpenCodeRuntime implements AgentRuntime {
         const abort = (): void => {
           fail('OpenCode Server 启动已取消')
         }
+        const probe = async (): Promise<void> => {
+          try {
+            const attemptSignal = AbortSignal.any([
+              probeSignal,
+              AbortSignal.timeout(STARTUP_PROBE_TIMEOUT_MS)
+            ])
+            if (
+              await this.dependencies.checkServerHealth(
+                url,
+                authorization,
+                attemptSignal
+              )
+            ) {
+              succeed(url)
+              return
+            }
+          } catch {
+            // The server is not ready yet.
+          }
+          if (!settled) {
+            pollTimer = setTimeout(
+              () => void probe(),
+              STARTUP_POLL_INTERVAL_MS
+            )
+          }
+        }
         const timeout = setTimeout(() => {
-          fail('OpenCode Server 启动超时（30 秒）')
+          fail('OpenCode Server 启动超时（10 秒）')
         }, this.dependencies.startupTimeoutMs)
 
         if (!stdout || !stderr) {
           fail('OpenCode Server 管道初始化失败')
           return
         }
-        stdout.on('data', onStdout)
-        stderr.on('data', onStderr)
+        stdout.resume()
+        stderr.resume()
         child.once('error', onError)
         child.once('close', onClose)
         signal?.addEventListener('abort', abort, { once: true })
         if (signal?.aborted) {
           abort()
+          return
         }
+        void probe()
       })
     } catch (error) {
       await rm(registration.root, {
