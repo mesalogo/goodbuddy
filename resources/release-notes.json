@@ -2,6 +2,38 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.12",
+      "releasedAt": "2026-08-30",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**魔法笔记更新时间。** 魔法笔记列表现在显示每篇笔记的最后更新时间，便于快速判断最近修改过的内容。"
+          ],
+          "fixes": [
+            "**远程会话中断后可以继续输入。** 修复托管 SSH 请求结果不确定后，同一会话的每条后续输入都会重复显示“恢复状态不确定”的问题。未确认的旧请求仍不会自动重放；用户再次明确发送时，GoodBuddy 会建立新的 ACP session 并继续当前会话。",
+            "**Ask 模式远程 Runtime 可以稳定启动。** 修复 Linux Host 上 `bwrap` 启动身份检查存在竞态，导致 Ask 模式可能在模型调用前被拒绝的问题。Agent 现在会验证从固定沙箱启动器到预期签名可执行文件的受限转换。"
+          ],
+          "notices": [
+            "**远程项目技术预览与 Agent 要求。** 远程项目仍默认关闭且为技术预览。Host 需要更新到单独发布的 Agent `0.11.10` 才能获得 Ask 模式启动修复；提供 Linux x64 和 arm64，桌面包不内置 Agent 或远程 Runtime。本次不构建 LoongArch 预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Magic Notes update times.** The Magic Notes list now shows when each note was last updated, making recently edited content easier to identify."
+          ],
+          "fixes": [
+            "**Remote conversations continue after interruptions.** Fixed every later message in a managed SSH conversation repeatedly failing with an uncertain-recovery error after a prompt outcome could not be confirmed. The uncertain prompt is still never replayed automatically; when the user explicitly sends again, GoodBuddy starts a new ACP session and continues the current conversation.",
+            "**Reliable Ask-mode Remote Runtime startup.** Fixed a race in Linux Host `bwrap` launch identity verification that could reject Ask-mode requests before the model was called. The Agent now verifies the bounded transition from the fixed sandbox launcher to the expected signed executable."
+          ],
+          "notices": [
+            "**Remote Projects technical preview and Agent requirement.** Remote Projects remain disabled by default and in technical preview. Hosts must update to the separately published Agent `0.11.10` to receive the Ask-mode startup fix. Linux x64 and arm64 are provided; desktop packages do not embed the Agent or Remote Runtime. This release does not include a LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.11",
       "releasedAt": "2026-08-30",
       "notes": {
