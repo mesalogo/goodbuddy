@@ -154,7 +154,16 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
   async getStatus(
     selection: AgentRuntimeSelection
   ): Promise<AgentRuntimeStatus> {
-    return (await this.getRuntime(selection)).getStatus()
+    if (this.disposed) {
+      throw new Error('Agent Runtime 正在关闭')
+    }
+    const operation = this.runStatusProbe(selection)
+    this.tests.add(operation)
+    try {
+      return await operation
+    } finally {
+      this.tests.delete(operation)
+    }
   }
 
   async testStatus(
@@ -271,6 +280,20 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
         (await runtime.testConnection?.()) ??
         (await runtime.getStatus())
       )
+    } finally {
+      await runtime.dispose()
+    }
+  }
+
+  private async runStatusProbe(
+    selection: AgentRuntimeSelection
+  ): Promise<AgentRuntimeStatus> {
+    const runtime = await this.createRuntime(selection)
+    try {
+      if (this.disposed) {
+        throw new Error('Agent Runtime 正在关闭')
+      }
+      return await runtime.getStatus()
     } finally {
       await runtime.dispose()
     }

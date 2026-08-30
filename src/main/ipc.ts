@@ -2837,12 +2837,18 @@ export function registerIpcHandlers(
     return tracked
   }, false)
 
-  registerHandler(ipcChannels.agentStatus, (event, input: unknown) => {
+  registerHandler(ipcChannels.agentStatus, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const selection = agentRuntimeSelectionSchema.optional().parse(input)
-    return selection && selectedRuntimes
-      ? selectedRuntimes.getStatus(selection)
-      : runtime.getStatus()
+    if (!selectedRuntimes) {
+      return runtime.getStatus()
+    }
+    const effectiveSelection =
+      selection ??
+      getDefaultRuntimeSelection(
+        await settingsStore.getResolvedSettings()
+      )
+    return selectedRuntimes.getStatus(effectiveSelection)
   })
 
   registerHandler(ipcChannels.browserStop, async (event, input: unknown) => {

@@ -265,6 +265,29 @@ describe('SelectedRuntimeManager', () => {
     await manager.dispose()
   })
 
+  it('disposes a status-probe runtime without caching it', async () => {
+    const probed = runtime()
+    const cached = runtime()
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(probed.value)
+      .mockResolvedValueOnce(cached.value)
+    const manager = new SelectedRuntimeManager(create)
+    const selection = { provider: 'opencode' as const }
+
+    await expect(manager.getStatus(selection)).resolves.toMatchObject({
+      available: true
+    })
+    expect(probed.value.getStatus).toHaveBeenCalledOnce()
+    expect(probed.testConnection).not.toHaveBeenCalled()
+    expect(probed.dispose).toHaveBeenCalledOnce()
+
+    await manager.getRuntime(selection)
+    expect(create).toHaveBeenCalledTimes(2)
+    await manager.dispose()
+    expect(cached.dispose).toHaveBeenCalledOnce()
+  })
+
   it('disposes a native-inventory runtime without caching it', async () => {
     const inspected = runtime()
     const cached = runtime()

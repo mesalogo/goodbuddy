@@ -6277,6 +6277,23 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(selectedRuntimes.getStatus).toHaveBeenCalledWith(
       secondSelection
     )
+    harness.getResolvedSettings.mockResolvedValueOnce({
+      provider: 'opencode',
+      defaultModelProfileId: firstProfileId,
+      opencodeBaseUrl: '',
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: 'platform' },
+      continueModelSource: { kind: 'platform' }
+    })
+    await expect(
+      harness.statusHandler?.(event)
+    ).resolves.toEqual(
+      expect.objectContaining({ label: 'model-two' })
+    )
+    expect(selectedRuntimes.getStatus).toHaveBeenLastCalledWith({
+      provider: 'opencode'
+    })
+    expect(fallbackRuntime.getStatus).not.toHaveBeenCalled()
 
     await Promise.all([
       harness.handler?.(event, {
