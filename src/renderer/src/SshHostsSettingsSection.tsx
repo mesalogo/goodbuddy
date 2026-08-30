@@ -32,6 +32,11 @@ import { SettingsCategoryHeader } from './SettingsPrimitives'
 import { displayErrorMessage } from './error-message'
 import { SshHostDialog } from './SshHostDialog'
 import {
+  getCachedSshHostRemoteEnvironments,
+  removeCachedSshHostRemoteEnvironment,
+  setCachedSshHostRemoteEnvironment
+} from './ssh-host-remote-environment-cache'
+import {
   DestructiveConfirmActions,
   EmptyState,
   SegmentedControl
@@ -112,7 +117,16 @@ export function SshHostsSettingsSection({
   >({})
   const [remoteEnvironments, setRemoteEnvironments] = useState<
     Record<string, RemoteEnvironmentLoadState>
-  >({})
+  >(() =>
+    Object.fromEntries(
+      Object.entries(getCachedSshHostRemoteEnvironments()).map(
+        ([hostId, value]) => [
+          hostId,
+          { loading: false, value }
+        ]
+      )
+    )
+  )
   const [
     remoteEnvironmentPreparationMethods,
     setRemoteEnvironmentPreparationMethods
@@ -252,6 +266,7 @@ export function SshHostsSettingsSection({
           ...current,
           [hostId]: { loading: false, value }
         }))
+        setCachedSshHostRemoteEnvironment(value)
       } catch (reason) {
         if (
           !mounted.current ||
@@ -285,6 +300,7 @@ export function SshHostsSettingsSection({
     ) {
       return
     }
+    removeCachedSshHostRemoteEnvironment(host.id)
     const requestId = remoteEnvironmentUpdateRequestId.current + 1
     remoteEnvironmentUpdateRequestId.current = requestId
     const activeUpdate: ActiveRemoteEnvironmentUpdate = {
@@ -474,6 +490,7 @@ export function SshHostsSettingsSection({
 
   const handleSaved = (result: SshHostValidationResult): void => {
     const edited = hosts.some((host) => host.id === result.host.id)
+    removeCachedSshHostRemoteEnvironment(result.host.id)
     setHosts((current) => upsertHost(current, result.host))
     setTestResults((current) => ({
       ...current,
@@ -500,6 +517,7 @@ export function SshHostsSettingsSection({
         result.deletedProjects.map((project) => project.id)
       )
       setConfirmingDeleteId(undefined)
+      removeCachedSshHostRemoteEnvironment(host.id)
       setHosts((current) =>
         current.filter((candidate) => candidate.id !== host.id)
       )

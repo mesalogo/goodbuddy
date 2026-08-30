@@ -749,6 +749,23 @@ describe('SshHostsSettingsSection', () => {
     ).not.toBeNull()
   })
 
+  it('keeps the last successful version check when the settings page remounts', async () => {
+    getSnapshot.mockResolvedValue(verifiedSnapshot)
+    const first = render(<SshHostsSettingsSection />)
+
+    await refreshHostEnvironment()
+    expect(getRemoteEnvironment).toHaveBeenCalledOnce()
+    first.unmount()
+
+    render(<SshHostsSettingsSection />)
+    const host = await screen.findByRole('region', {
+      name: 'Build host'
+    })
+
+    expect(within(host).getByText('GoodBuddy Agent')).toBeInTheDocument()
+    expect(getRemoteEnvironment).toHaveBeenCalledOnce()
+  })
+
   it('does not contact any verified Host when the section opens', async () => {
     getSnapshot.mockResolvedValue({
       hosts: [
