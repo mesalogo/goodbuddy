@@ -80,8 +80,10 @@ export const magicNotes = {
     emptySelectionTitle: '还没有选择笔记',
     emptySelectionDescription: '从左侧选择笔记，或新建一篇笔记开始记录。',
     newEntryLabel: '新记录内容',
-    composerImmediateHint: '停止输入 5 秒后自动评论',
-    composerRichTextHint: '支持富文本，可粘贴或拖入本地图片、视频和附件',
+    composerImmediateHint:
+      '输入 -、1.、[ ] 或 [x] 后按空格可创建列表；停止输入 5 秒后自动评论',
+    composerRichTextHint:
+      '输入 -、1.、[ ] 或 [x] 后按空格可创建列表；也可粘贴或拖入本地文件',
     emptyEntries: '还没有记录，在上方写下第一条内容。',
     editEntryLabel: '编辑记录内容',
     entryAt: '{{date}} 的记录'

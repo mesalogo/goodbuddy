@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import Quill from 'quill'
 import { describe, expect, it, vi } from 'vitest'
 import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
 import { MagicNoteEditor } from './MagicNoteEditor'
@@ -44,6 +45,46 @@ describe('MagicNoteEditor', () => {
       screen.getByRole('button', { name: '上传视频或附件' })
     ).toBeInTheDocument()
   })
+
+  it.each([
+    ['-', 'bullet'],
+    ['*', 'bullet'],
+    ['1.', 'ordered'],
+    ['[ ]', 'unchecked'],
+    ['[x]', 'checked']
+  ])(
+    'keeps the native Quill %s list shortcut enabled',
+    async (marker, expectedList) => {
+      const onChange = vi.fn<(content: MagicNoteRichContent) => void>()
+      const { container } = render(
+        <MagicNoteEditor
+          ariaLabel="笔记正文"
+          onChange={onChange}
+          onError={vi.fn()}
+        />
+      )
+      const editor = container.querySelector<HTMLElement>('.ql-editor')
+      const quillContainer = container.querySelector<HTMLElement>(
+        '.magic-note-editor__content'
+      )
+      expect(editor).not.toBeNull()
+      expect(quillContainer).not.toBeNull()
+
+      const quill = Quill.find(quillContainer!) as Quill
+      quill.setText(marker, 'user')
+      quill.setSelection(marker.length, 0, 'silent')
+      fireEvent.keyDown(editor!, { key: ' ' })
+
+      await waitFor(() => {
+        const content = onChange.mock.calls.at(-1)?.[0]
+        expect(
+          content?.ops.some(
+            (operation) => operation.attributes?.list === expectedList
+          )
+        ).toBe(true)
+      })
+    }
+  )
 
   it('intercepts a pasted image before Quill and inserts it once', async () => {
     const onChange = vi.fn<(content: MagicNoteRichContent) => void>()

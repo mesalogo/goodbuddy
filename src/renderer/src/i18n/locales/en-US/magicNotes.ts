@@ -86,9 +86,10 @@ export const magicNotes = {
     emptySelectionDescription:
       'Select a note on the left, or create a note to start writing.',
     newEntryLabel: 'New entry content',
-    composerImmediateHint: 'AI comments after you stop typing for 5 seconds',
+    composerImmediateHint:
+      'Type -, 1., [ ], or [x] then Space to start a list; AI comments after 5 seconds of inactivity',
     composerRichTextHint:
-      'Supports rich text and pasting or dropping local images, videos, and attachments',
+      'Type -, 1., [ ], or [x] then Space to start a list; you can also paste or drop local files',
     emptyEntries: 'No entries yet. Write the first entry above.',
     editEntryLabel: 'Edit entry content',
     entryAt: '{{date}} entry'
