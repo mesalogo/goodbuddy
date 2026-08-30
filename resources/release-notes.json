@@ -2,6 +2,30 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.11",
+      "releasedAt": "2026-08-30",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**远程会话完整保存。** 修复托管 SSH 远程项目的工具结果较长时，会话持久化失败并可能让已完成回复仍显示为生成中的问题。Runtime 已返回的工具输入、输出、错误和摘要现在会完整保存到本地会话，不再受额外的会话字段长度限制。",
+            "**魔法笔记列表快捷输入更易发现。** 编辑区现在提示输入 `-`、`1.`、`[ ]` 或 `[x]` 后按空格即可创建项目符号、编号或待办清单，并增加行为覆盖以防快捷输入回退。"
+          ],
+          "notices": []
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Complete remote conversation saves.** Fixed conversation persistence failing for managed SSH Remote Projects when tool results were long, which could leave a completed reply displayed as still generating. Tool input, output, errors, and summaries already returned by the Runtime are now saved completely without additional conversation-field length limits.",
+            "**Discoverable Magic Notes list shortcuts.** The editor now explains that typing `-`, `1.`, `[ ]`, or `[x]` followed by Space creates a bullet, numbered, or checklist item, with behavior coverage to prevent regressions."
+          ],
+          "notices": []
+        }
+      }
+    },
+    {
       "version": "0.11.10",
       "releasedAt": "2026-08-29",
       "notes": {
