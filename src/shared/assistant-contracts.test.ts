@@ -242,4 +242,49 @@ describe('conversation persistence contracts', () => {
 
     expect(localConversationSaveBatchSchema.parse(batch)).toEqual(batch)
   })
+
+  it('accepts persisted native OpenCode subagent activity', () => {
+    const batch = [
+      {
+        header: {
+          id: '00000000-0000-4000-8000-000000000311',
+          title: 'OpenCode 子 Agent',
+          updatedAt: 1
+        },
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000312',
+            role: 'assistant',
+            content: '',
+            createdAt: 1,
+            state: 'complete',
+            blocks: [
+              {
+                id: '00000000-0000-4000-8000-000000000315',
+                type: 'subagent',
+                childTaskId:
+                  '00000000-0000-4000-8000-000000000313'
+              }
+            ],
+            subagents: [
+              {
+                childTaskId:
+                  '00000000-0000-4000-8000-000000000313',
+                expertId:
+                  '00000000-0000-4000-8000-000000000314',
+                expertName: 'explorer',
+                routingMode: 'native',
+                runtimeCallId: 'call-task-1',
+                state: 'completed',
+                reason: 'Review application architecture',
+                output: 'Architecture review complete.'
+              }
+            ]
+          }
+        ]
+      }
+    ]
+
+    expect(localConversationSaveBatchSchema.parse(batch)).toEqual(batch)
+  })
 })

@@ -6706,6 +6706,62 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('does not fail a completed native subagent for its provisional Task tool', async () => {
+    const runtime = {
+      capability: 'chat',
+      requiresToolApproval: false,
+      supportsToolExecution: true,
+      getStatus: vi.fn(),
+      dispose: vi.fn(),
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'tool',
+          callId: 'call-task-1',
+          name: 'task',
+          state: 'running',
+          summary: 'OpenCode 工具：task'
+        }
+        yield {
+          requestId: request.requestId,
+          type: 'subagent',
+          childTaskId: '00000000-0000-4000-8000-000000000601',
+          expertId: '00000000-0000-4000-8000-000000000701',
+          expertName: 'explore',
+          routingMode: 'native',
+          runtimeCallId: 'call-task-1',
+          state: 'completed',
+          output: 'Desktop files inspected.'
+        }
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const harness = createHarness(runtime)
+    const requestId = '3f496642-f47d-4e0a-8944-a32c77b0d6ef'
+
+    harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'conversation-1',
+      prompt: 'inspect the desktop',
+      workMode: 'execute'
+    })
+
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).not.toHaveBeenCalledWith(
+      requestId,
+      'failed',
+      expect.any(String)
+    )
+    await harness.dispose()
+  })
+
   it.each(['opencode', 'continue'] as const)(
     'preserves read-only Ask mode at the %s Runtime boundary',
     async (runtimeId) => {

@@ -15,6 +15,9 @@ import {
   modelBridgePolicySchema
 } from './model-bridge-contracts'
 
+export const UNBOUNDED_REMOTE_PROMPT_DEADLINE =
+  '9999-12-31T23:59:59.999Z'
+
 export const runtimeSessionBindingStateSchema = z.enum([
   'opening',
   'ready',

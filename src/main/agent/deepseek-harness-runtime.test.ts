@@ -44,6 +44,7 @@ function setup(
     nativeTools?: Array<Record<string, unknown>>
     toolsSupported?: boolean
     promptTimeoutMs?: number
+    useProductionPromptTimeout?: boolean
     maxEventCharacters?: number
     maxRequestOutputCharacters?: number
     supportsImageInput?: boolean
@@ -51,6 +52,7 @@ function setup(
     initializationTimeoutMs?: number
     useDefaultInitializationTimeout?: boolean
     launchDelayMs?: number
+    prepare?: () => Promise<Record<string, unknown>>
     extensionPackages?: Array<{
       id: string
       entrypoint: string
@@ -170,7 +172,7 @@ function setup(
           }
         }
         if (method === 'goodbuddy/session/prepare') {
-          return { prepared: true }
+          return options.prepare?.() ?? { prepared: true }
         }
         if (method === 'goodbuddy/session/release') {
           return { released: true }
@@ -253,7 +255,9 @@ function setup(
           initializationTimeoutMs:
             options.initializationTimeoutMs ?? 100
         }),
-    promptTimeoutMs: options.promptTimeoutMs ?? 100,
+    ...(options.useProductionPromptTimeout
+      ? {}
+      : { promptTimeoutMs: options.promptTimeoutMs ?? 100 }),
     shutdownTimeoutMs: 10,
     maxStderrBytes: 16,
     maxEventCharacters: options.maxEventCharacters,
@@ -1347,6 +1351,62 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
+  it('does not submit a prompt after cancellation during preparation', async () => {
+    const prepare = deferred<Record<string, unknown>>()
+    const harness = setup({ prepare: () => prepare.promise })
+    const controller = new AbortController()
+    const running = collect(
+      harness.runtime.run(
+        request('cancel-during-prepare'),
+        controller.signal
+      )
+    )
+    await vi.waitFor(() =>
+      expect(
+        harness.requests.some(
+          ({ method }) => method === 'goodbuddy/session/prepare'
+        )
+      ).toBe(true)
+    )
+
+    controller.abort(new Error('cancelled during preparation'))
+    prepare.resolve({ prepared: true })
+
+    await expect(running).rejects.toThrow(
+      'cancelled during preparation'
+    )
+    expect(harness.agent.prompt).not.toHaveBeenCalled()
+    expect(harness.notifications).toContainEqual({
+      method: 'session/cancel',
+      params: { sessionId: 'session-1' }
+    })
+    await harness.runtime.dispose()
+  })
+
+  it('bounds cancellation when the harness prompt never settles', async () => {
+    const harness = setup({ useProductionPromptTimeout: true })
+    const controller = new AbortController()
+    const running = collect(
+      harness.runtime.run(
+        request('uncooperative-cancel'),
+        controller.signal
+      )
+    )
+    await vi.waitFor(() =>
+      expect(harness.promptGates).toHaveLength(1)
+    )
+
+    controller.abort(new Error('cancelled by user'))
+
+    await expect(running).rejects.toThrow('cancelled by user')
+    expect(harness.notifications).toContainEqual({
+      method: 'session/cancel',
+      params: { sessionId: 'session-1' }
+    })
+    expect(harness.child.terminate).toHaveBeenCalled()
+    await harness.runtime.dispose()
+  })
+
   it('fails on bounded stderr overflow without exposing stderr text', async () => {
     const harness = setup()
     const running = collect(
@@ -1419,5 +1479,33 @@ describe('DeepSeekHarnessRuntime', () => {
       params: { sessionId: 'session-1' }
     })
     await expect(harness.runtime.dispose()).resolves.toBeUndefined()
+  })
+
+  it('does not impose a default wall-clock deadline on prompts', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = setup({ useProductionPromptTimeout: true })
+      const running = collect(
+        harness.runtime.run(
+          request('long-running'),
+          new AbortController().signal
+        )
+      )
+      await vi.waitFor(() =>
+        expect(harness.promptGates).toHaveLength(1)
+      )
+      await vi.advanceTimersByTimeAsync(25 * 60 * 60_000)
+      expect(harness.notifications).not.toContainEqual({
+        method: 'session/cancel',
+        params: { sessionId: 'session-1' }
+      })
+      harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
+      await expect(running).resolves.toEqual([
+        expect.objectContaining({ type: 'status' }),
+        expect.objectContaining({ type: 'done' })
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

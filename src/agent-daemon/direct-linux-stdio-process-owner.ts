@@ -9,6 +9,9 @@ import {
 } from '../shared/agent-protocol/contracts'
 import { canonicalJson } from '../shared/agent-protocol/canonical'
 import {
+  UNBOUNDED_REMOTE_PROMPT_DEADLINE
+} from '../shared/remote-agent-contracts'
+import {
   remoteRuntimeBundleManifestSchema,
   type RemoteRuntimeBundleManifest
 } from '../shared/remote-runtime-launch-contracts'
@@ -511,6 +514,10 @@ export class DirectLinuxStdioProcessOwner {
   }
 
   #scheduleDeadline(deadlineAt: string): void {
+    if (deadlineAt === UNBOUNDED_REMOTE_PROMPT_DEADLINE) {
+      this.#clearDeadline()
+      return
+    }
     const remaining = remainingMilliseconds(deadlineAt, this.#now())
     this.#clearDeadline()
     const generation = this.#promptGeneration
@@ -551,7 +558,10 @@ export async function launchDirectLinuxStdioProcessOwner(
     now(),
     limits.maximumPromptRuntimeMilliseconds
   )
-  const timeoutMs = remainingMilliseconds(effectiveDeadlineAt, now())
+  const timeoutMs =
+    effectiveDeadlineAt === UNBOUNDED_REMOTE_PROMPT_DEADLINE
+      ? DEFAULT_LAUNCH_IDENTITY_TIMEOUT_MS
+      : remainingMilliseconds(effectiveDeadlineAt, now())
   const baseProfile = resolveProfile(options, manifest)
   const ownerToken = (options.randomOwnerToken ?? (() => randomBytes(16).toString('hex')))()
   if (!/^[a-f0-9]{32}$/u.test(ownerToken)) {
@@ -1097,6 +1107,9 @@ function boundedPromptDeadline(
   now: number,
   maximumRuntimeMilliseconds: number
 ): string {
+  if (requestedDeadlineAt === UNBOUNDED_REMOTE_PROMPT_DEADLINE) {
+    return requestedDeadlineAt
+  }
   const requested = Date.parse(requestedDeadlineAt)
   if (!Number.isFinite(requested) || requested <= now) {
     throw new DirectLinuxStdioProcessOwnerError(

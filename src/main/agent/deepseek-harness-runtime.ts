@@ -38,7 +38,6 @@ import { deepSeekHarnessStartupBudget } from './deepseek-harness-control-protoco
 
 const ACP_PACKAGE_NAME = '@agentclientprotocol/sdk'
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000
-const DEFAULT_PROMPT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024
 const DEFAULT_MAX_EVENT_CHARACTERS = 64 * 1024
@@ -486,8 +485,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     )
   }
 
-  private get promptTimeoutMs(): number {
-    return this.options.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS
+  private get promptTimeoutMs(): number | undefined {
+    return this.options.promptTimeoutMs
   }
 
   private get shutdownTimeoutMs(): number {
@@ -1435,6 +1434,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
       } else {
         toolNames.delete(callId)
       }
+      const input = safeStringify(update.rawInput)
+      const output = safeStringify(update.rawOutput)
       return {
         requestId,
         type: 'tool',
@@ -1442,12 +1443,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         name,
         state,
         summary: `DeepSeek Harness 工具：${name}`,
-        ...(safeStringify(update.rawInput)
-          ? { input: safeStringify(update.rawInput) }
-          : {}),
-        ...(safeStringify(update.rawOutput)
-          ? { output: safeStringify(update.rawOutput) }
-          : {})
+        ...(input ? { input } : {}),
+        ...(output ? { output } : {})
       }
     }
     return undefined
@@ -1505,8 +1502,10 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         | { stopReason?: string }
         | undefined
       let promptError: unknown
-      const promptController = new AbortController()
       const cancel = (): void => {
+        run!.closed = true
+        run!.wake?.()
+        run!.wake = undefined
         void state!.agent
           .cancel({
             sessionId: sessionId!
@@ -1514,33 +1513,47 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           .catch(() => undefined)
       }
       signal.addEventListener('abort', cancel, { once: true })
-      await withTimeout(
-        state.agent.extMethod(GOODBUDDY_PREPARE, {
-          sessionId,
-          requestId: request.requestId,
-          mode:
-            request.workMode === 'execute' ? 'execute' : 'ask'
-        }),
-        this.initializationTimeoutMs,
-        '请求准备'
-      )
-      const prompt = withTimeout(
-        state.agent.prompt({
-          sessionId,
-          prompt: [
-            {
-              type: 'text',
-              text: flattenPrompt(request)
-            },
-            ...(request.images ?? []).map((image) => ({
-              type: 'image' as const,
-              data: image.data,
-              mimeType: image.mediaType
-            }))
-          ]
-        }),
-        this.promptTimeoutMs,
-        '请求'
+      if (signal.aborted) {
+        cancel()
+      }
+      try {
+        await withTimeout(
+          state.agent.extMethod(GOODBUDDY_PREPARE, {
+            sessionId,
+            requestId: request.requestId,
+            mode:
+              request.workMode === 'execute' ? 'execute' : 'ask'
+          }),
+          this.initializationTimeoutMs,
+          '请求准备'
+        )
+        signal.throwIfAborted()
+      } catch (error) {
+        signal.removeEventListener('abort', cancel)
+        throw error
+      }
+      const promptOperation = state.agent.prompt({
+        sessionId,
+        prompt: [
+          {
+            type: 'text',
+            text: flattenPrompt(request)
+          },
+          ...(request.images ?? []).map((image) => ({
+            type: 'image' as const,
+            data: image.data,
+            mimeType: image.mediaType
+          }))
+        ]
+      })
+      const prompt = (
+        this.promptTimeoutMs === undefined
+          ? promptOperation
+          : withTimeout(
+              promptOperation,
+              this.promptTimeoutMs,
+              '请求'
+            )
       )
         .then((value) => {
           response = value
@@ -1555,8 +1568,14 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         })
       try {
         while (!completed || run.updates.length > 0) {
+          signal.throwIfAborted()
           if (this.fatalError) {
             throw this.fatalError
+          }
+          if (run.closed && !completed) {
+            throw new Error(
+              'DeepSeek Harness 请求在完成前已关闭'
+            )
           }
           if (run.updates.length === 0) {
             await this.waitForUpdate(run)
@@ -1588,11 +1607,21 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           sessionId
         }
       } finally {
-        promptController.abort(
-          new Error('DeepSeek Harness 流式消费已结束')
-        )
+        if (!completed) {
+          cancel()
+        }
         signal.removeEventListener('abort', cancel)
-        await prompt
+        if (completed) {
+          await prompt
+        } else {
+          await withTimeout(
+            prompt,
+            this.shutdownTimeoutMs,
+            '取消请求'
+          ).catch(async () => {
+            await this.terminate(state!.child)
+          })
+        }
       }
     } finally {
       signal.removeEventListener('abort', abortTools)

@@ -259,10 +259,9 @@ function runtime(
     assertHostCurrent: () => {},
     cancellationGraceMs,
     operationTimeoutMs: overrides.operationTimeoutMs ?? 100,
-    promptTimeoutMs:
-      overrides.promptTimeoutMs ??
-      overrides.operationTimeoutMs ??
-      100,
+    ...(overrides.promptTimeoutMs === undefined
+      ? {}
+      : { promptTimeoutMs: overrides.promptTimeoutMs }),
     usage: {
       runtime: 'opencode',
       provider: 'test',
@@ -287,10 +286,9 @@ function factoryRuntime(
     assertHostCurrent: () => {},
     cancellationGraceMs: 5,
     operationTimeoutMs: overrides.operationTimeoutMs ?? 100,
-    promptTimeoutMs:
-      overrides.promptTimeoutMs ??
-      overrides.operationTimeoutMs ??
-      100,
+    ...(overrides.promptTimeoutMs === undefined
+      ? {}
+      : { promptTimeoutMs: overrides.promptTimeoutMs }),
     usage: {
       runtime: 'opencode',
       provider: 'test',
@@ -1258,6 +1256,233 @@ describe('AcpRemoteRuntime', () => {
     ])
   })
 
+  it('merges incremental OpenCode Task input into native subagent events', async () => {
+    const client: { value?: AgentSideConnection } = {}
+    const server = fakeServer({
+      prompt: async ({ sessionId }) => {
+        await client.value!.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'task-1',
+            title: 'Review application architecture',
+            kind: 'other',
+            status: 'in_progress',
+            rawInput: {}
+          }
+        })
+        await client.value!.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'task-1',
+            status: 'in_progress',
+            rawInput: {
+              subagent_type: 'explorer',
+              description: 'Review application architecture',
+              prompt: 'Inspect the complete source tree.'
+            }
+          }
+        })
+        await client.value!.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'task-1',
+            status: 'in_progress',
+            rawInput: {
+              subagent_type: 'explorer',
+              description: 'Review application architecture',
+              prompt: 'Inspect the complete source tree.'
+            }
+          }
+        })
+        await client.value!.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'task-1',
+            status: 'completed',
+            rawOutput: 'Architecture review complete.'
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
+    })
+    client.value = server.client
+
+    const events = await collect(
+      runtime(server).run(
+        request,
+        new AbortController().signal,
+        async () => 'once'
+      )
+    )
+
+    expect(events.map((event) => event.type)).toEqual([
+      'status',
+      'tool',
+      'subagent',
+      'subagent',
+      'done'
+    ])
+    expect(events[2]).toMatchObject({
+      expertName: 'explorer',
+      routingMode: 'native',
+      runtimeCallId: 'task-1',
+      state: 'running'
+    })
+    expect(events[3]).toMatchObject({
+      state: 'completed',
+      output: 'Architecture review complete.'
+    })
+  })
+
+  it('bounds native subagent output per event and per request', async () => {
+    const client: { value?: AgentSideConnection } = {}
+    const server = fakeServer({
+      prompt: async ({ sessionId }) => {
+        await client.value!.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'task-bounded',
+            title: 'Bounded task',
+            kind: 'other',
+            status: 'completed',
+            rawInput: {
+              subagent_type: 'explorer',
+              prompt: 'Inspect the complete source tree.'
+            },
+            rawOutput: 'x'.repeat(100)
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
+    })
+    client.value = server.client
+
+    const events = await collect(
+      runtime(server, undefined, 5, {
+        maxEventCharacters: 10,
+        maxRequestOutputBytes: 1_000
+      }).run(
+        request,
+        new AbortController().signal,
+        async () => 'once'
+      )
+    )
+    expect(
+      events.find((event) => event.type === 'subagent')
+    ).toMatchObject({
+      state: 'completed',
+      output: 'xxxxx…'
+    })
+
+    const overBudgetServer = fakeServer({
+      prompt: async ({ sessionId }) => {
+        await client.value!.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'task-over-budget',
+            title: 'Over-budget task',
+            kind: 'other',
+            status: 'completed',
+            rawInput: {
+              subagent_type: 'explorer',
+              prompt: 'Inspect the complete source tree.'
+            },
+            rawOutput: 'x'.repeat(100)
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
+    })
+    client.value = overBudgetServer.client
+    await expect(
+      collect(
+        runtime(overBudgetServer, undefined, 5, {
+          maxEventCharacters: 1_000,
+          maxRequestOutputBytes: 80
+        }).run(
+          {
+            ...request,
+            requestId: 'b5b07fa5-f722-4bbc-ad19-33a6435817f1'
+          },
+          new AbortController().signal,
+          async () => 'once'
+        )
+      )
+    ).rejects.toThrow('远端 Runtime 请求输出超过安全上限')
+  })
+
+  it('rejects more than 100 distinct remote tool calls', async () => {
+    const client: { value?: AgentSideConnection } = {}
+    const server = fakeServer({
+      prompt: async ({ sessionId }) => {
+        for (let index = 0; index <= 100; index += 1) {
+          await client.value!.sessionUpdate({
+            sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: `call-${index}`,
+              title: 'tool',
+              status: 'in_progress'
+            }
+          })
+        }
+        return { stopReason: 'end_turn' }
+      }
+    })
+    client.value = server.client
+
+    await expect(
+      collect(
+        runtime(server).run(
+          request,
+          new AbortController().signal,
+          async () => 'once'
+        )
+      )
+    ).rejects.toThrow(
+      '远端 Runtime 单次运行的工具调用超过 100 个'
+    )
+  })
+
+  it('does not impose a default wall-clock deadline on remote prompts', async () => {
+    vi.useFakeTimers()
+    try {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const server = fakeServer({
+        prompt: async () => {
+          await gate
+          return { stopReason: 'end_turn' }
+        }
+      })
+      const running = collect(
+        runtime(server).run(
+          request,
+          new AbortController().signal,
+          async () => 'once'
+        )
+      )
+      await vi.waitFor(() => expect(server.prepare).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(25 * 60 * 60_000)
+      expect(server.escalate).not.toHaveBeenCalled()
+      release()
+      await expect(running).resolves.toEqual([
+        expect.objectContaining({ type: 'status' }),
+        expect.objectContaining({ type: 'done' })
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('routes Execute permission through the authorizer and denies mutating Ask permission', async () => {
     const client: { value?: AgentSideConnection } = {}
     const outcomes: string[] = []
@@ -1727,7 +1952,8 @@ describe('AcpRemoteRuntime', () => {
       })
     })
     const instance = runtime(server, store, 5, {
-      operationTimeoutMs: 20
+      operationTimeoutMs: 20,
+      promptTimeoutMs: 20
     })
 
     await expect(

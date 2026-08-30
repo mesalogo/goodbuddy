@@ -128,6 +128,7 @@ import {
   conversationMessageBlocksSchema,
   conversationSubagentActivitySchema,
   interactiveWorkModes,
+  maximumConversationSubagentActivities,
   normalizeInteractiveWorkMode,
   projectChannelLabels
 } from '../../shared/assistant-contracts'
@@ -619,9 +620,57 @@ function upsertMessageToolBlock(
   ]
 }
 
+function upsertMessageSubagentBlock(
+  blocks: ConversationMessageBlock[] | undefined,
+  childTaskId: string,
+  runtimeCallId?: string
+): ConversationMessageBlock[] | undefined {
+  if (!blocks) {
+    return blocks
+  }
+  if (
+    blocks.some(
+      (block) =>
+        block.type === 'subagent' &&
+        block.childTaskId === childTaskId
+    )
+  ) {
+    return blocks
+  }
+  const provisionalIndex = runtimeCallId
+    ? blocks.findIndex(
+        (block) =>
+          block.type === 'tool' &&
+          block.tool.callId === runtimeCallId
+      )
+    : -1
+  if (provisionalIndex >= 0) {
+    return blocks.map((block, index) =>
+      index === provisionalIndex
+        ? {
+            id: block.id,
+            type: 'subagent' as const,
+            childTaskId
+          }
+        : block
+    )
+  }
+  if (blocks.length >= maxMessageBlocks) {
+    return blocks
+  }
+  return [
+    ...blocks,
+    {
+      id: crypto.randomUUID(),
+      type: 'subagent',
+      childTaskId
+    }
+  ]
+}
+
 function terminalizeMessageToolBlocks(
   blocks: ConversationMessageBlock[] | undefined,
-  state: 'failed' | 'cancelled'
+  state: 'failed' | 'cancelled' | 'interrupted'
 ): ConversationMessageBlock[] | undefined {
   return blocks?.map((block) =>
     block.type === 'tool' &&
@@ -1212,7 +1261,8 @@ function isConversation(value: unknown): value is Conversation {
             ))) &&
         (entry.subagents === undefined ||
           (Array.isArray(entry.subagents) &&
-            entry.subagents.length <= 3 &&
+            entry.subagents.length <=
+              maximumConversationSubagentActivities &&
             entry.subagents.every(
               (subagent) =>
                 conversationSubagentActivitySchema.safeParse(subagent)
@@ -4183,7 +4233,10 @@ function App(): React.JSX.Element {
             conversationId: run.conversationId,
             parentTaskId: event.requestId,
             expertId: event.expertId,
-            routingMode: event.routingMode,
+            routingMode:
+              event.routingMode === 'native'
+                ? undefined
+                : event.routingMode,
             title: event.expertName,
             instructions:
               event.reason ??
@@ -4205,8 +4258,23 @@ function App(): React.JSX.Element {
             ? current.map((task) =>
                 task.id === event.childTaskId ? childTask : task
               )
-            : [...current, childTask].slice(0, 100)
+            : [...current, childTask].slice(
+                0,
+                maximumConversationSubagentActivities
+              )
         })
+        if (event.runtimeCallId) {
+          setActivityRecords((current) =>
+            current.filter(
+              (record) =>
+                !(
+                  record.requestId === event.requestId &&
+                  record.kind === 'tool' &&
+                  record.callId === event.runtimeCallId
+                )
+            )
+          )
+        }
         recordActivity({
           conversationId: run.conversationId,
           requestId: event.requestId,
@@ -4216,7 +4284,9 @@ function App(): React.JSX.Element {
           detail: [
             event.routingMode === 'smart'
               ? tRef.current('chat.subagents.smart')
-              : tRef.current('chat.subagents.manual'),
+              : event.routingMode === 'native'
+                ? tRef.current('chat.subagents.native')
+                : tRef.current('chat.subagents.manual'),
             event.reason,
             event.error
           ]
@@ -4239,6 +4309,7 @@ function App(): React.JSX.Element {
             expertId: event.expertId,
             expertName: event.expertName,
             routingMode: event.routingMode,
+            runtimeCallId: event.runtimeCallId,
             state: event.state,
             reason: event.reason,
             output: event.output,
@@ -4246,10 +4317,27 @@ function App(): React.JSX.Element {
           }
           if (index >= 0) {
             subagents[index] = subagent
-          } else if (subagents.length < 3) {
+          } else if (
+            subagents.length <
+            maximumConversationSubagentActivities
+          ) {
             subagents.push(subagent)
           }
-          return { ...message, subagents }
+          const runtimeCallId = event.runtimeCallId
+          return {
+            ...message,
+            subagents,
+            tools: runtimeCallId
+              ? message.tools?.filter(
+                  (tool) => tool.callId !== runtimeCallId
+                )
+              : message.tools,
+            blocks: upsertMessageSubagentBlock(
+              message.blocks,
+              event.childTaskId,
+              runtimeCallId
+            )
+          }
         })
       } else if (event.type === 'approval') {
         recordActivity({
@@ -4342,6 +4430,12 @@ function App(): React.JSX.Element {
               ? 'cancelled'
               : 'failed'
             : 'completed'
+        const incompleteSubagentError = tRef.current(
+          'chat.subagents.incomplete'
+        )
+        const incompleteActivityDetail = tRef.current(
+          'chat.status.activityIncomplete'
+        )
         updateRequestActivity(
           event.requestId,
           terminalStatus,
@@ -4349,25 +4443,27 @@ function App(): React.JSX.Element {
             ? event.message
             : tRef.current('chat.status.taskCompleted')
         )
-        if (event.type === 'error') {
-          setActivityRecords((current) =>
-            current.map((record) =>
-              record.requestId === event.requestId &&
-              record.kind !== 'request' &&
-              (record.status === 'pending' ||
-                record.status === 'running')
-                ? {
-                    ...record,
-                    status: terminalStatus,
-                    detail: `${record.detail}\n${event.message}`.slice(
-                      0,
-                      4_000
-                    )
-                  }
-                : record
-            )
+        setActivityRecords((current) =>
+          current.map((record) =>
+            record.requestId === event.requestId &&
+            record.kind !== 'request' &&
+            (record.status === 'pending' ||
+              record.status === 'running')
+              ? {
+                  ...record,
+                  status:
+                    event.type === 'done'
+                      ? 'interrupted'
+                      : terminalStatus,
+                  detail: `${record.detail}\n${
+                    event.type === 'done'
+                      ? incompleteActivityDetail
+                      : event.message
+                  }`.slice(0, 4_000)
+                }
+              : record
           )
-        }
+        )
         recordActivity({
           conversationId: run.conversationId,
           requestId: event.requestId,
@@ -4382,6 +4478,25 @@ function App(): React.JSX.Element {
               : tRef.current('chat.status.runtimeCompleted'),
           status: terminalStatus
         })
+        setAssistantTasks((current) =>
+          current.map((task) =>
+            task.parentTaskId === event.requestId &&
+            (task.status === 'queued' || task.status === 'running')
+              ? {
+                  ...task,
+                  status:
+                    event.type === 'done'
+                      ? 'failed'
+                      : terminalStatus,
+                  completedAt: new Date().toISOString(),
+                  error:
+                    event.type === 'error'
+                      ? event.message
+                      : incompleteSubagentError
+                }
+              : task
+          )
+        )
         updateMessage(run.conversationId, run.messageId, (message) => {
           const representedToolError =
             event.type === 'error' &&
@@ -4394,7 +4509,7 @@ function App(): React.JSX.Element {
               ? event.status === 'cancelled'
                 ? ('cancelled' as const)
                 : ('failed' as const)
-              : undefined
+              : ('interrupted' as const)
           const fallbackError =
             event.type === 'error' &&
             !representedToolError &&
@@ -4436,6 +4551,26 @@ function App(): React.JSX.Element {
                     : tool
                 )
               : message.tools,
+            subagents: message.subagents?.map((subagent) =>
+              subagent.state === 'queued' ||
+              subagent.state === 'running'
+                ? {
+                    ...subagent,
+                    state:
+                      event.type === 'error'
+                        ? event.status === 'cancelled'
+                          ? ('cancelled' as const)
+                          : ('failed' as const)
+                        : ('failed' as const),
+                    ...(event.type === 'error' &&
+                    event.status !== 'cancelled'
+                      ? { error: event.message.slice(0, 1_000) }
+                      : event.type === 'done'
+                        ? { error: incompleteSubagentError }
+                        : {})
+                  }
+                : subagent
+            ),
             blocks: toolTerminalState
               ? terminalizeMessageToolBlocks(
                   appendMessageContentBlock(

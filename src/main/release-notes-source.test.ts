@@ -11,8 +11,15 @@ describe('packaged release notes', () => {
         'utf8'
       )
     ) as unknown
+    const packageSource = JSON.parse(
+      await readFile(join(process.cwd(), 'package.json'), 'utf8')
+    ) as { version?: unknown }
     const parsed = releaseNotesFileSchema.parse(source)
 
+    expect(typeof packageSource.version).toBe('string')
+    expect(parsed.releases).toContainEqual(
+      expect.objectContaining({ version: packageSource.version })
+    )
     expect(parsed.releases).toContainEqual(
       expect.objectContaining({ version: '0.8.19' })
     )

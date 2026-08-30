@@ -2,6 +2,46 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.13",
+      "releasedAt": "2026-08-30",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.11.13 将本地与托管 SSH 项目中的 OpenCode 原生 Task 显示为独立子 Agent，并移除 GoodBuddy 固定的 Prompt 总时限，让 Runtime 决定长任务生命周期。"
+          ],
+          "features": [
+            "**OpenCode 原生子 Agent。** OpenCode Task 调用现在以独立子 Agent 卡片显示，持续呈现任务、运行状态、输出和错误，不再同时重复为普通工具。"
+          ],
+          "fixes": [
+            "**长任务不再被固定时限中止。** 移除本地 OpenCode、Continue、DeepSeek Harness 和托管 SSH Prompt 的 2/10 分钟外层总时限。任务可持续数小时或更久，直到正常完成或用户取消；Runtime 自身超时仍然生效。",
+            "**OpenCode 启动更可靠。** 改用本机健康接口检测启动完成，不再依赖固定日志格式，并为较慢设备保留更充足的冷启动时间，减少已启动却误报超时。",
+            "**HTTP 服务地址配置更灵活。** 模型连接、DeepSeek Harness 与微信绑定可使用用户明确配置的合法 HTTP 或 HTTPS 地址，包括局域网与公网服务；仍保留协议和 API Key 校验。"
+          ],
+          "notices": [
+            "用户仍可随时停止任务；启动、控制请求、断线恢复、取消收敛、清理和输出大小仍有独立边界。",
+            "托管 SSH Host 需要单独发布的 Agent `0.11.13`。提供 Linux x64 和 arm64；桌面包不内置 Agent 或远程 Runtime。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.11.13 presents native OpenCode Tasks as dedicated subagents in local and managed SSH projects, and removes GoodBuddy's fixed Prompt deadline so the Runtime owns long-task lifetime."
+          ],
+          "features": [
+            "**Native OpenCode subagents.** OpenCode Task calls now appear as dedicated subagent cards with the task, running state, output, and errors, without a duplicate generic-tool entry."
+          ],
+          "fixes": [
+            "**Long tasks are no longer stopped by a fixed limit.** Removed the outer 2/10-minute total deadline from local OpenCode, Continue, DeepSeek Harness, and managed SSH Prompts. Tasks can run for hours or longer until completion or user cancellation; Runtime-owned timeouts still apply.",
+            "**More reliable OpenCode startup.** GoodBuddy now detects readiness through the local health endpoint instead of a fixed log format and allows more cold-start time on slower devices, avoiding false startup timeouts.",
+            "**More flexible HTTP service endpoints.** Model connections, DeepSeek Harness, and Weixin binding can use explicitly configured valid HTTP or HTTPS endpoints, including LAN and public services, while retaining protocol and API-key validation."
+          ],
+          "notices": [
+            "Users can still stop tasks at any time. Startup, control requests, reconnection recovery, cancellation settlement, cleanup, and output sizes retain independent bounds.",
+            "Managed SSH Hosts require the separately published Agent `0.11.13`. Linux x64 and arm64 are provided; desktop packages do not embed the Agent or Remote Runtime."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.12",
       "releasedAt": "2026-08-30",
       "notes": {

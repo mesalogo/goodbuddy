@@ -16,10 +16,14 @@ import type {
   AgentRuntimeStatus
 } from '../../shared/contracts'
 import {
+  maximumConversationToolActivities
+} from '../../shared/assistant-contracts'
+import {
   assertRemotePromptAcceptanceMatchesPreparation,
   remotePromptOperationAcceptanceSchema,
   remotePromptOperationPreparationSchema,
   runtimeSessionBindingSchema,
+  UNBOUNDED_REMOTE_PROMPT_DEADLINE,
   type RemotePromptOperationAcceptance,
   type RemotePromptOperationPreparation,
   type RuntimeSessionBinding
@@ -48,6 +52,10 @@ import {
   type RemoteRuntimeChannel
 } from './remote-runtime-channel'
 import type { RuntimeSessionBindingStore } from './runtime-session-binding-store'
+import {
+  parseOpenCodeSubagentInput,
+  toOpenCodeSubagentEvent
+} from './opencode-subagent'
 
 type BindingIdentity = Pick<
   RuntimeSessionBinding,
@@ -98,6 +106,7 @@ export type AcpRemoteRuntimeOptions = {
   maxRequestOutputBytes?: number
   cancellationGraceMs?: number
   operationTimeoutMs?: number
+  /** Optional test/operator override. Production prompts are Runtime-controlled. */
   promptTimeoutMs?: number
   maxPendingUpdates?: number
   maxPendingUpdateBytes?: number
@@ -120,6 +129,16 @@ type ActivePrompt = {
   pendingUpdateBytes: number
   inboundPaused: boolean
   outputCharacters: number
+  toolCalls: Map<
+    string,
+    {
+      title?: string
+      kind?: string
+      status?: 'pending' | 'in_progress' | 'completed' | 'failed'
+      rawInput?: unknown
+      rawOutput?: unknown
+    }
+  >
   open: boolean
   completed: boolean
   interruption?: Error
@@ -162,7 +181,6 @@ type ChannelContext = {
 const DEFAULT_MAX_EVENT_CHARACTERS = 100_000
 const DEFAULT_MAX_REQUEST_OUTPUT_BYTES = 1_000_000
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
-const DEFAULT_PROMPT_TIMEOUT_MS = 120_000
 const DEFAULT_CANCELLATION_GRACE_MS = 1_500
 const DEFAULT_MAX_PENDING_UPDATES = 1_000
 const DEFAULT_MAX_PENDING_UPDATE_BYTES = 4 * 1024 * 1024
@@ -186,6 +204,42 @@ function safeStringify(value: unknown, maximum: number): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function boundedRetainedValue(
+  value: unknown,
+  maximum: number
+): unknown {
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value === 'string') {
+    return value.length > maximum
+      ? `${value.slice(0, maximum)}…`
+      : value
+  }
+  try {
+    const serialized = JSON.stringify(value)
+    if (serialized === undefined) {
+      return undefined
+    }
+    if (serialized.length > maximum) {
+      return `${serialized.slice(0, maximum)}…`
+    }
+    return JSON.parse(serialized) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function boundedRetainedToolInput(
+  value: unknown,
+  maximum: number
+): unknown {
+  return (
+    parseOpenCodeSubagentInput(value) ??
+    boundedRetainedValue(value, maximum)
+  )
 }
 
 class RemoteOperationTimeoutError extends Error {
@@ -459,9 +513,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
       DEFAULT_OPERATION_TIMEOUT_MS
   }
 
-  private get promptTimeoutMs(): number {
-    return this.options.promptTimeoutMs ??
-      DEFAULT_PROMPT_TIMEOUT_MS
+  private get promptTimeoutMs(): number | undefined {
+    return this.options.promptTimeoutMs
   }
 
   private async awaitOperation<T>(
@@ -982,9 +1035,10 @@ export class AcpRemoteRuntime implements AgentRuntime {
     modelBridge?: RemoteModelBridgeSession
   ): RemotePromptOperationPreparation {
     const workMode = request.workMode === 'execute' ? 'execute' : 'ask'
-    const deadlineAt = new Date(
-      Date.now() + this.promptTimeoutMs
-    ).toISOString()
+    const deadlineAt =
+      this.promptTimeoutMs === undefined
+        ? UNBOUNDED_REMOTE_PROMPT_DEADLINE
+        : new Date(Date.now() + this.promptTimeoutMs).toISOString()
     const budget = {
       // The Agent applies this to the complete ACP stdin stream, not only
       // user content. The signed Runtime manifest supplies the effective
@@ -1771,6 +1825,21 @@ export class AcpRemoteRuntime implements AgentRuntime {
         (event.input?.length ?? 0) +
         (event.output?.length ?? 0) +
         (event.error?.length ?? 0)
+    } else if (event.type === 'subagent') {
+      const fieldMaximum = Math.max(1, Math.floor(maximum / 2))
+      const bounded = (value: string | undefined): string | undefined =>
+        value && value.length > fieldMaximum
+          ? `${value.slice(0, fieldMaximum)}…`
+          : value
+      event = {
+        ...event,
+        output: bounded(event.output),
+        error: bounded(event.error)
+      }
+      characters =
+        (event.reason?.length ?? 0) +
+        (event.output?.length ?? 0) +
+        (event.error?.length ?? 0)
     } else if (event.type === 'status') {
       if (event.message.length > maximum) {
         event = {
@@ -1814,22 +1883,87 @@ export class AcpRemoteRuntime implements AgentRuntime {
       update.sessionUpdate === 'tool_call' ||
       update.sessionUpdate === 'tool_call_update'
     ) {
+      const callId = update.toolCallId.slice(0, 256)
+      const previous = prompt.toolCalls.get(callId)
+      if (
+        !previous &&
+        prompt.toolCalls.size >=
+          maximumConversationToolActivities
+      ) {
+        throw new Error(
+          '远端 Runtime 单次运行的工具调用超过 100 个'
+        )
+      }
+      const retainedMaximum =
+        this.options.maxEventCharacters ??
+        DEFAULT_MAX_EVENT_CHARACTERS
+      const toolCall = {
+        title:
+          update.title === null
+            ? undefined
+            : update.title?.slice(0, 200) ?? previous?.title,
+        kind:
+          update.kind === null
+            ? undefined
+            : update.kind?.slice(0, 200) ?? previous?.kind,
+        status:
+          update.status === null
+            ? undefined
+            : update.status ?? previous?.status,
+        rawInput:
+          update.rawInput === undefined
+            ? previous?.rawInput
+            : boundedRetainedToolInput(
+                update.rawInput,
+                retainedMaximum
+              ),
+        rawOutput:
+          update.rawOutput === undefined
+            ? previous?.rawOutput
+            : boundedRetainedValue(
+                update.rawOutput,
+                retainedMaximum
+              )
+      }
+      if (previous && isDeepStrictEqual(previous, toolCall)) {
+        return undefined
+      }
+      prompt.toolCalls.set(callId, toolCall)
       const name = (
-        update.title ??
-        update.kind ??
+        toolCall.title ??
+        toolCall.kind ??
         '远端 Runtime 工具'
       ).slice(0, 200)
-      const input = safeStringify(update.rawInput, 100_000)
-      const output = safeStringify(update.rawOutput, 100_000)
+      const subagent =
+        this.options.runtimeId === 'opencode'
+          ? toOpenCodeSubagentEvent({
+              requestId: prompt.requestId,
+              callId,
+              state: toolCall.status ?? 'pending',
+              input: toolCall.rawInput,
+              output: toolCall.rawOutput
+            })
+          : undefined
+      if (subagent) {
+        return subagent
+      }
+      const input = safeStringify(
+        toolCall.rawInput,
+        retainedMaximum
+      )
+      const output = safeStringify(
+        toolCall.rawOutput,
+        retainedMaximum
+      )
       return {
         requestId: prompt.requestId,
         type: 'tool',
-        callId: update.toolCallId.slice(0, 256),
+        callId,
         name,
         state:
-          update.status === 'in_progress'
+          toolCall.status === 'in_progress'
             ? 'running'
-            : update.status ?? 'pending',
+            : toolCall.status ?? 'pending',
         summary: `远端 Runtime 工具：${name}`,
         ...(input ? { input } : {}),
         ...(output ? { output } : {})
@@ -1925,6 +2059,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       pendingUpdateBytes: 0,
       inboundPaused: false,
       outputCharacters: 0,
+      toolCalls: new Map(),
       open: true,
       completed: false,
       context
@@ -1993,10 +2128,12 @@ export class AcpRemoteRuntime implements AgentRuntime {
           prompt.wake?.()
           prompt.wake = undefined
         })
-      promptTimeout = setTimeout(
-        () => interrupt(new RemoteOperationTimeoutError('执行请求')),
-        this.promptTimeoutMs
-      )
+      if (this.promptTimeoutMs !== undefined) {
+        promptTimeout = setTimeout(
+          () => interrupt(new RemoteOperationTimeoutError('执行请求')),
+          this.promptTimeoutMs
+        )
+      }
       yield {
         requestId: request.requestId,
         type: 'status',

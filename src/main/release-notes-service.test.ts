@@ -88,6 +88,16 @@ describe('ReleaseNotesService', () => {
     })
   })
 
+  it('does not present older notes as a missing current release', async () => {
+    const { service, settingsStore } = await createService('0.8.19')
+    await settingsStore.setLastSeenReleaseNotesVersion('0.8.11')
+
+    await expect(service.getPending()).resolves.toEqual({
+      currentVersion: '0.8.19',
+      releases: []
+    })
+  })
+
   it('persists acknowledgement and does not show the release again', async () => {
     const { service, settingsStore } = await createService('0.8.18')
 

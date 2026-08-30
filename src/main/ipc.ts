@@ -3488,6 +3488,13 @@ export function registerIpcHandlers(
           if (publicEvent.type === 'tool') {
             toolStates.set(publicEvent.callId, publicEvent)
           }
+          if (
+            publicEvent.type === 'subagent' &&
+            publicEvent.routingMode === 'native' &&
+            publicEvent.runtimeCallId
+          ) {
+            toolStates.delete(publicEvent.runtimeCallId)
+          }
           if (publicEvent.type === 'question') {
             pendingAgentQuestions.set(publicEvent.questionId, {
               requestId: request.requestId,

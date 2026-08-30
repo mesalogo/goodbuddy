@@ -308,6 +308,7 @@ export const app = {
       taskCompleted: '任务执行完成',
       taskFailed: '任务执行失败',
       runtimeCompleted: 'Agent Runtime 已完成响应',
+      activityIncomplete: '父请求已结束，但该活动未报告完成状态',
       answerSubmitted: '回答已提交，OpenCode 正在继续执行',
       questionSkipped: '已跳过问题'
     },
@@ -330,13 +331,17 @@ export const app = {
       }
     },
     subagents: {
-      region: '子专家状态',
-      smart: '智能路由',
-      manual: '手动指定',
+      region: '子代理状态',
+      badge: '子代理',
+      smart: 'GoodBuddy 智能路由',
+      manual: 'GoodBuddy 指定专家',
+      native: 'OpenCode 原生',
       fallbackTask: '{{name}} 子专家任务',
-      output: '专家输出',
+      task: '任务',
+      output: '子代理输出',
       error: '执行说明',
-      noOutput: '该专家暂时没有可显示的输出。',
+      noOutput: '子代理暂时没有可显示的输出。',
+      incomplete: '父请求已结束，但子 Agent 未报告完成状态。',
       states: {
         queued: '等待中',
         running: '进行中',

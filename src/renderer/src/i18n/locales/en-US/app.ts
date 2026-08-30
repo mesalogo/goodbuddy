@@ -322,6 +322,8 @@ export const app = {
       taskCompleted: 'Task completed',
       taskFailed: 'Task failed',
       runtimeCompleted: 'Agent Runtime completed its response',
+      activityIncomplete:
+        'The parent request ended before this activity reported completion',
       answerSubmitted: 'Answer submitted; OpenCode is continuing',
       questionSkipped: 'Question skipped'
     },
@@ -345,12 +347,17 @@ export const app = {
     },
     subagents: {
       region: 'Subagent status',
-      smart: 'Smart routing',
-      manual: 'Selected manually',
+      badge: 'Subagent',
+      smart: 'GoodBuddy smart routing',
+      manual: 'GoodBuddy selected expert',
+      native: 'Native OpenCode',
       fallbackTask: '{{name}} subagent task',
-      output: 'Expert output',
+      task: 'Task',
+      output: 'Subagent output',
       error: 'Execution details',
-      noOutput: 'This expert has no output to display yet.',
+      noOutput: 'This subagent has no output to display yet.',
+      incomplete:
+        'The parent request ended before the subagent reported completion.',
       states: {
         queued: 'Queued',
         running: 'Running',

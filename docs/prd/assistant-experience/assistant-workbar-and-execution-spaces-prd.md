@@ -806,8 +806,9 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - 通用 Artifact Event。
 - HTML 工作区和成果的静态即时预览。
 - Runtime Inspector Snapshot 与事件。
-- OpenCode 会话、子会话、Todo、工具、用量和取消。
-- 直连模型及现有 GoodBuddy Subagent 的统一展示。
+- OpenCode 会话、子会话、Todo、工具、用量和取消；本地与托管 SSH 的原生 Task 调用在
+  Conversation 中统一显示为可追踪的 Subagent 状态，而不是普通工具参数卡。
+- 直连模型、OpenCode 原生 Subagent 及现有 GoodBuddy Subagent 的统一展示。
 
 ### 阶段 2：监督、终端与受管进程
 

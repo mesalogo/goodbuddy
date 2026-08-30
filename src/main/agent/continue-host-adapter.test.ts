@@ -357,6 +357,9 @@ describe('ContinueHostAdapter', () => {
   })
 
   it('launches the prepared host through the injected launcher', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    environmentRestorations.push(() => nowSpy.mockRestore())
     const distribution = await createDistribution()
     const skillDirectory = join(
       distribution.cacheRoot,
@@ -445,11 +448,14 @@ describe('ContinueHostAdapter', () => {
         const url = String(input)
         if (url.endsWith('/state')) {
           stateRequests += 1
+          if (stateRequests === 2) {
+            now += 25 * 60 * 60_000
+          }
           return new Response(
             JSON.stringify({
               session: {
                 history:
-                  stateRequests === 1
+                  stateRequests <= 2
                     ? []
                     : [
                         {
@@ -460,7 +466,7 @@ describe('ContinueHostAdapter', () => {
                         }
                       ],
                 usage:
-                  stateRequests === 1
+                  stateRequests <= 2
                     ? {
                         promptTokens: 20,
                         completionTokens: 10,
@@ -478,7 +484,7 @@ describe('ContinueHostAdapter', () => {
                         }
                       }
               },
-              isProcessing: false,
+              isProcessing: stateRequests === 2,
               messageQueueLength: 0,
               pendingPermission: null
             })
@@ -603,6 +609,90 @@ describe('ContinueHostAdapter', () => {
     expect(generatedConfig).not.toContain('private-key')
     expect(launch?.env.ANTHROPIC_API_KEY).toBe('private-key')
     expect(existsSync(generatedConfigPath)).toBe(false)
+  })
+
+  it('bounds each host control request without bounding the full run', async () => {
+    const distribution = await createDistribution()
+    let killed = false
+    const launchHost: ContinueHostLauncher = () => ({
+      exitCode: null,
+      get killed() {
+        return killed
+      },
+      stderr: null,
+      once: () => undefined,
+      kill: () => {
+        killed = true
+        return true
+      }
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (
+          input: string | URL | Request,
+          init?: RequestInit
+        ): Promise<Response> => {
+          if (String(input).endsWith('/state')) {
+            return Response.json({
+              session: { history: [] },
+              isProcessing: false,
+              messageQueueLength: 0,
+              pendingPermission: null
+            })
+          }
+          if (String(input).endsWith('/message')) {
+            return await new Promise<Response>((_resolve, reject) => {
+              const rejectOnAbort = (): void =>
+                reject(init?.signal?.reason)
+              init?.signal?.addEventListener(
+                'abort',
+                rejectOnAbort,
+                { once: true }
+              )
+              if (init?.signal?.aborted) {
+                rejectOnAbort()
+              }
+            })
+          }
+          return Response.json({})
+        }
+      )
+    )
+    const adapter = new ContinueHostAdapter(
+      {
+        binaryPath: distribution.entryPath,
+        configPath: '',
+        workspace: process.cwd(),
+        cacheRoot: distribution.cacheRoot,
+        trustedBundleHashes: [distribution.sourceHash],
+        launchHost,
+        modelProfile: {
+          id: '00000000-0000-4000-8000-000000000012',
+          name: '独立模型',
+          baseUrl: 'https://model.example',
+          modelName: 'private-model',
+          protocol: 'anthropic-messages',
+          authentication: 'api-key',
+          apiKey: 'private-key'
+        }
+      },
+      {
+        controlRequestTimeoutMs: 5,
+        terminateProcessTree: vi.fn(async (child) => {
+          child.kill()
+        })
+      }
+    )
+
+    await expect(
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        async () => 'deny'
+      )
+    ).rejects.toThrow('Continue 宿主请求超时（/message）')
+    expect(killed).toBe(true)
   })
 
   it('injects scoped knowledge into a temporary copy of a JSONC config', async () => {

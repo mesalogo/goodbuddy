@@ -172,6 +172,13 @@ export const conversationMessageBlockSchema = z.discriminatedUnion('type', [
       type: z.literal('tool'),
       tool: conversationToolActivitySchema
     })
+    .strict(),
+  z
+    .object({
+      id: assistantIdSchema,
+      type: z.literal('subagent'),
+      childTaskId: assistantIdSchema
+    })
     .strict()
 ])
 
@@ -186,12 +193,16 @@ export type ConversationMessageBlock = z.infer<
   typeof conversationMessageBlockSchema
 >
 
+export const maximumConversationToolActivities = 100
+export const maximumConversationSubagentActivities = 100
+
 export const conversationSubagentActivitySchema = z
   .object({
     childTaskId: assistantIdSchema,
     expertId: assistantIdSchema,
     expertName: z.string().trim().min(1).max(80),
-    routingMode: z.enum(['manual', 'smart']),
+    routingMode: z.enum(['manual', 'smart', 'native']),
+    runtimeCallId: z.string().trim().min(1).max(256).optional(),
     state: z.enum([
       'queued',
       'running',
@@ -240,10 +251,13 @@ export const conversationMessageSchema = z
       .array(conversationContextCompressionMarkerSchema)
       .max(2)
       .optional(),
-    tools: z.array(conversationToolActivitySchema).max(100).optional(),
+    tools: z
+      .array(conversationToolActivitySchema)
+      .max(maximumConversationToolActivities)
+      .optional(),
     subagents: z
       .array(conversationSubagentActivitySchema)
-      .max(3)
+      .max(maximumConversationSubagentActivities)
       .optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
     sourceReferences: z

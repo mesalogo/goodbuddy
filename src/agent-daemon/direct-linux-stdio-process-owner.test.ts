@@ -6,6 +6,9 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteRuntimeBundleManifest } from '../shared/remote-runtime-launch-contracts'
 import {
+  UNBOUNDED_REMOTE_PROMPT_DEADLINE
+} from '../shared/remote-agent-contracts'
+import {
   launchDirectLinuxStdioProcessOwner,
   reconcileOrphanedDirectLinuxStdioProcesses,
   type DirectLinuxStdioChild,
@@ -247,6 +250,48 @@ describe('direct Linux stdio Runtime ownership', () => {
     ])
     expect(registry.get(owner.ownerId)).toBeUndefined()
     registry.close()
+  })
+
+  it('does not stop an active prompt at the unbounded Runtime deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const registry = createRegistry()
+      const child = fakeChild()
+      const launched = identity()
+      const sendSignal = vi.fn<typeof process.kill>(() => true)
+      const owner = await launchDirectLinuxStdioProcessOwner({
+        manifest: manifest(),
+        profile: profile(),
+        identity: { launchId: 'launch-long', processId: 'process-long' },
+        installationId: 'installation-1',
+        registry,
+        deadlineAt: UNBOUNDED_REMOTE_PROMPT_DEADLINE,
+        maximumInputBytes: 1024,
+        platform: 'linux',
+        spawn: () => {
+          queueMicrotask(() => child.emit('spawn'))
+          return child
+        },
+        randomOwnerToken: () => 'a'.repeat(32),
+        readProcessIdentity: async () => launched,
+        listPidNamespaceMembers: async () => [],
+        sendSignal
+      })
+
+      await vi.advanceTimersByTimeAsync(25 * 60 * 60_000)
+      expect(sendSignal).not.toHaveBeenCalled()
+      expect(await owner.reconcile()).toMatchObject({
+        state: 'running',
+        processTree: 'running'
+      })
+      await owner.stop({
+        reason: 'user-cancelled',
+        deadlineAt: new Date(Date.now() + 10_000).toISOString()
+      })
+      registry.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('startup reconciles only owners from the current installation', async () => {

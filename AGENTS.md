@@ -265,6 +265,39 @@ possible, and report the exact call count. This standing authorization does
 not cover bulk, high-cost, destructive, publishing, messaging, purchasing, or
 other consequential external actions.
 
+### GoodBuddy Agent development validation
+
+Every source change that can alter the deployed GoodBuddy Agent or the
+desktop-to-Agent production path must be validated on the shared Linux x64 test
+Host while the change is being developed. This includes Agent daemon and
+protocol changes, packaging and installation, attach/update behavior, Runtime
+launch and process ownership, workspaces, model bridges, and lifecycle or
+recovery behavior. Unit tests, mocks, fixtures, CI, and waiting for release
+validation are not substitutes for this development-time check.
+
+- Reach the shared Host at `192.168.0.23` on the LAN when available, otherwise
+  use `10.7.0.23` over VPN. These are two routes to the same physical machine,
+  not two independent test targets or architecture results.
+- Exercise the current source or package under development, not only the
+  previously published Agent. Run the affected production path as soon as it is
+  runnable and repeat the relevant scenario after the final change.
+- Select the real-Host scenario from the changed surface: attach/bootstrap or
+  update for installation changes; Ask/Execute and a bounded real model request
+  for Runtime or model-bridge changes; and the applicable disconnect, restart,
+  cancellation, or reconnection sequence for lifecycle and recovery changes.
+- Use the existing pinned Host identity and GoodBuddy credential storage. Never
+  add credentials to source, documentation, commands, logs, or test output, and
+  never hard-code these test addresses into product behavior or defaults.
+- Keep all artifacts in GoodBuddy-owned test directories. Before stopping or
+  changing a remote process, verify that it belongs to the test run; never
+  modify unrelated Host files or processes.
+- If neither route is reachable, report the real-Host validation as blocked and
+  do not present the Agent work as complete or defer its first real validation
+  to release time.
+
+The detailed scenario rules are documented in
+[`docs/architecture/remote-host-and-goodbuddy-agent-design.md`](./docs/architecture/remote-host-and-goodbuddy-agent-design.md).
+
 Before committing or pushing, inspect `git status`, `git diff`, and
 `git diff --cached`. Do not commit secrets, local databases, logs, generated
 credentials, or private user artifacts.

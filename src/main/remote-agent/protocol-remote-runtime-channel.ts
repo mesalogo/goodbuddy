@@ -22,7 +22,8 @@ import { AgentFrameError } from '../../shared/agent-protocol/frame'
 import {
   assertRemotePromptAcceptanceMatchesPreparation,
   remotePromptOperationAcceptanceSchema,
-  remotePromptOperationPreparationSchema
+  remotePromptOperationPreparationSchema,
+  UNBOUNDED_REMOTE_PROMPT_DEADLINE
 } from '../../shared/remote-agent-contracts'
 import {
   modelBridgePolicySchema
@@ -66,6 +67,9 @@ const RUNTIME_MODEL_BRIDGE_CAPABILITY = 'runtime/model-bridge'
 const RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION = 1
 const DEFAULT_CONTROL_TIMEOUT_MS = 15_000
 const DEFAULT_MAXIMUM_PENDING_CONTROL_REQUESTS = 32
+const UNBOUNDED_REMOTE_PROMPT_DEADLINE_MS = Date.parse(
+  UNBOUNDED_REMOTE_PROMPT_DEADLINE
+)
 const MAXIMUM_PENDING_OUTPUT_WRITES = 256
 const MAXIMUM_OUTPUT_WRITE_BYTES =
   AGENT_PROTOCOL_LIMITS.maximumBufferedProtocolBytes
@@ -1038,11 +1042,16 @@ export class ProtocolRemoteRuntimeChannel
     ].some(
       (bridge) => bridge.providerDeliveryMayBeUncertain
     )
+    const recoveryDeadlineExpired =
+      this.#recoveryDeadlineAt !== undefined &&
+      this.#recoveryDeadlineAt !==
+        UNBOUNDED_REMOTE_PROMPT_DEADLINE_MS &&
+      Date.now() >= this.#recoveryDeadlineAt
     if (
       this.#recoveryDeadlineAt === undefined ||
       this.#recoverySignal === undefined ||
       this.#recoverySignal.aborted ||
-      Date.now() >= this.#recoveryDeadlineAt ||
+      recoveryDeadlineExpired ||
       this.#activeBinarySends > 0 ||
       this.#pendingControlRequests > 0 ||
       providerDeliveryMayBeUncertain ||
@@ -1090,11 +1099,13 @@ export class ProtocolRemoteRuntimeChannel
     await this.#flushRecoveryPersistence()
     const deadlineAt = this.#recoveryDeadlineAt!
     const callerSignal = this.#recoverySignal!
-    const remaining = deadlineAt - Date.now()
-    if (remaining <= 0) {
+    if (
+      deadlineAt !== UNBOUNDED_REMOTE_PROMPT_DEADLINE_MS &&
+      Date.now() >= deadlineAt
+    ) {
       throw new ProtocolRemoteRuntimeChannelError(
         'Remote Runtime recovery deadline expired',
-        'aborted'
+        'transport'
       )
     }
     const recoveryController = new AbortController()
@@ -1108,6 +1119,13 @@ export class ProtocolRemoteRuntimeChannel
       )
     }
     callerSignal.addEventListener('abort', abort, { once: true })
+    const recoveryTimeoutMs =
+      deadlineAt === UNBOUNDED_REMOTE_PROMPT_DEADLINE_MS
+        ? this.#state.controlTimeoutMs
+        : Math.min(
+            this.#state.controlTimeoutMs,
+            Math.max(0, deadlineAt - Date.now())
+          )
     const timeout = setTimeout(() => {
       recoveryController.abort(
         new DOMException(
@@ -1115,7 +1133,7 @@ export class ProtocolRemoteRuntimeChannel
           'TimeoutError'
         )
       )
-    }, remaining)
+    }, recoveryTimeoutMs)
     try {
       await this.#state.connection.reconnect!(
         recoveryController.signal
@@ -1151,10 +1169,7 @@ export class ProtocolRemoteRuntimeChannel
             channelId: this.#state.openResult.channelId,
             channelEpoch: this.#state.openResult.channelEpoch
           },
-          Math.min(
-            this.#state.controlTimeoutMs,
-            Math.max(1, deadlineAt - Date.now())
-          ),
+          this.#state.controlTimeoutMs,
           recoveryController.signal
         ),
         'Remote Runtime resume response is invalid'
@@ -1205,10 +1220,7 @@ export class ProtocolRemoteRuntimeChannel
             acknowledgedSequence:
               resume.cursors.lastMainAckSequence
           },
-          Math.min(
-            this.#state.controlTimeoutMs,
-            Math.max(1, deadlineAt - Date.now())
-          ),
+          this.#state.controlTimeoutMs,
           recoveryController.signal
         ),
         'Remote Runtime replay response is invalid'

@@ -21,6 +21,7 @@ import {
   conversationAttachmentSchema,
   conversationHistoryMessageSchema,
   conversationContextCompressionStateSchema,
+  conversationSubagentActivitySchema,
   legacyWorkModeSchema,
   maximumConversationHistoryCharacters,
   maximumConversationHistoryMessages,
@@ -1171,24 +1172,11 @@ export const approvalDecisionSchema = z.enum([
 
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 
-export const subagentEventSchema = z
-  .object({
+export const subagentEventSchema =
+  conversationSubagentActivitySchema
+  .extend({
     requestId: z.string().uuid(),
-    type: z.literal('subagent'),
-    childTaskId: z.string().uuid(),
-    expertId: z.string().uuid(),
-    expertName: z.string().trim().min(1).max(80),
-    routingMode: z.enum(['manual', 'smart']),
-    state: z.enum([
-      'queued',
-      'running',
-      'completed',
-      'failed',
-      'cancelled'
-    ]),
-    reason: z.string().trim().min(1).max(240).optional(),
-    output: z.string().optional(),
-    error: z.string().trim().min(1).max(1_000).optional()
+    type: z.literal('subagent')
   })
   .strict()
 

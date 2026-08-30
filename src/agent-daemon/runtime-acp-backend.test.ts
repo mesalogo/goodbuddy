@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   type AcpJournalCursor,
-  type RemotePromptOperationPreparation
+  type RemotePromptOperationPreparation,
+  UNBOUNDED_REMOTE_PROMPT_DEADLINE
 } from '../shared/remote-agent-contracts'
 import type { RemoteRuntimeBundleManifest } from '../shared/remote-runtime-launch-contracts'
 import type { ControllerLease } from './controller-registry'
@@ -811,6 +812,28 @@ describe('RuntimeAcpBackend', () => {
         })
       )
     ).rejects.toMatchObject({ code: 'deadline' })
+  })
+
+  it('keeps an unbounded Runtime prompt alive without a wall-clock timer', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = harness()
+      await open(fixture)
+      await invoke(
+        fixture,
+        'runtime/preparePrompt',
+        fixture.preparation({
+          deadlineAt: UNBOUNDED_REMOTE_PROMPT_DEADLINE
+        })
+      )
+
+      await vi.advanceTimersByTimeAsync(30 * 24 * 60 * 60_000)
+      expect(fixture.process.stops).toEqual([])
+      await fixture.process.emit('stdout', 'still-running')
+      expect(fixture.outputFrames).toEqual(['still-running'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('stops the process when its output quota is exceeded', async () => {

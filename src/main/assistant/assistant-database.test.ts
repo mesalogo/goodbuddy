@@ -3308,6 +3308,20 @@ describe('AssistantDatabase', () => {
                 output: '远程输出'.repeat(10_000)
               }
             ],
+            subagents: [
+              {
+                childTaskId:
+                  '00000000-0000-4000-8000-000000000513',
+                expertId:
+                  '00000000-0000-4000-8000-000000000514',
+                expertName: 'explorer',
+                routingMode: 'native' as const,
+                runtimeCallId: 'call-task-1',
+                state: 'completed' as const,
+                reason: 'Review application architecture',
+                output: 'Architecture review complete.'
+              }
+            ],
             contextCompressions: [
               {
                 state: 'completed' as const,
@@ -3366,6 +3380,20 @@ describe('AssistantDatabase', () => {
               state: 'completed',
               summary: '完整远程工具结果',
               output: '远程输出'.repeat(10_000)
+            }
+          ],
+          subagents: [
+            {
+              childTaskId:
+                '00000000-0000-4000-8000-000000000513',
+              expertId:
+                '00000000-0000-4000-8000-000000000514',
+              expertName: 'explorer',
+              routingMode: 'native',
+              runtimeCallId: 'call-task-1',
+              state: 'completed',
+              reason: 'Review application architecture',
+              output: 'Architecture review complete.'
             }
           ],
           contextCompressions: [
@@ -4278,7 +4306,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('durably interrupts active tool metadata during startup recovery', async () => {
+  it('durably interrupts active tool and subagent metadata during startup recovery', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-conversation-recovery-')
     )
@@ -4289,6 +4317,8 @@ describe('AssistantDatabase', () => {
     const messageId = '00000000-0000-4000-8000-000000000218'
     const cancelledMessageId =
       '00000000-0000-4000-8000-000000000219'
+    const subagentMessageId =
+      '00000000-0000-4000-8000-000000000220'
     const initial = new AssistantDatabase(databasePath)
     initial.initialize('C:\\Workspace')
     initial.replaceConversations([
@@ -4342,6 +4372,38 @@ describe('AssistantDatabase', () => {
                 error: 'runtime parser detail'
               }
             ]
+          },
+          {
+            id: subagentMessageId,
+            role: 'assistant',
+            content: '父请求已完成',
+            createdAt: 1_775_000_003_000,
+            state: 'complete',
+            status: '已完成',
+            subagents: [
+              {
+                childTaskId:
+                  '00000000-0000-4000-8000-000000000221',
+                expertId:
+                  '00000000-0000-4000-8000-000000000222',
+                expertName: 'explorer',
+                routingMode: 'native',
+                runtimeCallId: 'task-1',
+                state: 'running',
+                reason: '检查项目'
+              },
+              {
+                childTaskId:
+                  '00000000-0000-4000-8000-000000000223',
+                expertId:
+                  '00000000-0000-4000-8000-000000000224',
+                expertName: 'worker',
+                routingMode: 'native',
+                runtimeCallId: 'task-2',
+                state: 'completed',
+                output: '已完成'
+              }
+            ]
           }
         ]
       }
@@ -4368,6 +4430,21 @@ describe('AssistantDatabase', () => {
           state: 'completed'
         }),
         expect.objectContaining({ name: 'failed-tool', state: 'failed' })
+      ]
+    })
+    expect(recovered.listConversations()[0]?.messages[2]).toMatchObject({
+      id: subagentMessageId,
+      state: 'complete',
+      status: '已完成',
+      subagents: [
+        expect.objectContaining({
+          runtimeCallId: 'task-1',
+          state: 'cancelled'
+        }),
+        expect.objectContaining({
+          runtimeCallId: 'task-2',
+          state: 'completed'
+        })
       ]
     })
     expect(recovered.listConversations()[0]?.messages[1]).toMatchObject({

@@ -58,10 +58,6 @@ function fakeClient() {
   } as unknown as ReturnType<typeof createOpencodeClient>
 }
 
-function stdoutOf(child: SpawnedProcess): PassThrough {
-  return child.stdout as PassThrough
-}
-
 function stderrOf(child: SpawnedProcess): PassThrough {
   return child.stderr as PassThrough
 }
@@ -261,19 +257,16 @@ function embeddedRuntime(
   client: ReturnType<typeof createOpencodeClient>,
   overrides: Partial<
     ConstructorParameters<typeof OpenCodeRuntime>[0]
-  > = {}
+  > = {},
+  dependencyOverrides: Partial<OpenCodeRuntimeDependencies> = {}
 ): OpenCodeRuntime {
   const child = fakeChild()
   const { deps } = dependencies(child, {
+    ...dependencyOverrides,
     createClient: vi.fn(
       () => client
     ) as unknown as typeof createOpencodeClient
   })
-  setTimeout(() => {
-    stdoutOf(child).write(
-      'opencode server listening on http://127.0.0.1:4010\n'
-    )
-  }, 0)
   return new OpenCodeRuntime(options(overrides), deps)
 }
 
@@ -459,11 +452,6 @@ describe('OpenCodeRuntime embedded launcher', () => {
     )
     const child = fakeChild()
     const { deps, spawnMock } = dependencies(child)
-    setTimeout(() => {
-      stdoutOf(child).write(
-        'opencode server listening on http://127.0.0.1:3012\n'
-      )
-    }, 0)
     const runtime = new OpenCodeRuntime(
       options({
         skillPackages: [
@@ -537,11 +525,6 @@ describe('OpenCodeRuntime embedded launcher', () => {
   it('injects an independent model profile without persisting its key', async () => {
     const child = fakeChild()
     const { deps, spawnMock } = dependencies(child)
-    setTimeout(() => {
-      stdoutOf(child).write(
-        'opencode server listening on http://127.0.0.1:3011\n'
-      )
-    }, 0)
     const runtime = new OpenCodeRuntime(
       options({
         modelProfile: {
@@ -615,11 +598,6 @@ describe('OpenCodeRuntime embedded launcher', () => {
       ])
     )
     Object.assign(process.env, inheritedCredentials)
-    setTimeout(() => {
-      stdoutOf(child).write(
-        'opencode server listening on http://127.0.0.1:3013\n'
-      )
-    }, 0)
     const runtime = new OpenCodeRuntime(
       options({
         modelProfile: {
@@ -744,7 +722,8 @@ describe('OpenCodeRuntime embedded launcher', () => {
             authentication: 'api-key',
             apiKey: 'local-probe-key'
           }
-        })
+        }),
+        { startupTimeoutMs: 20_000 }
       )
       const controller = new AbortController()
       const timeout = setTimeout(
@@ -822,11 +801,6 @@ describe('OpenCodeRuntime embedded launcher', () => {
     }) => {
       const child = fakeChild()
       const { deps, spawnMock } = dependencies(child)
-      setTimeout(() => {
-        stdoutOf(child).write(
-          'opencode server listening on http://127.0.0.1:3012\n'
-        )
-      }, 0)
       const runtime = new OpenCodeRuntime(
         options({
           modelProfile: {
@@ -913,11 +887,6 @@ describe('OpenCodeRuntime embedded launcher', () => {
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT =
       'https://telemetry.invalid'
     try {
-      setTimeout(() => {
-        stdoutOf(child).write(
-          'opencode server listening on http://127.0.0.1:3010\n'
-        )
-      }, 0)
       const runtime = new OpenCodeRuntime(options(), deps)
       await expect(runtime.getStatus()).resolves.toMatchObject({
         available: true
@@ -1055,7 +1024,9 @@ describe('OpenCodeRuntime embedded launcher', () => {
 
   it('terminates startup when the request is aborted', async () => {
     const child = fakeChild()
-    const { deps, spawnMock } = dependencies(child)
+    const { deps, spawnMock } = dependencies(child, {
+      checkServerHealth: vi.fn().mockResolvedValue(false)
+    })
     const runtime = new OpenCodeRuntime(options(), deps)
     const controller = new AbortController()
     const stream = runtime.run(
@@ -1073,6 +1044,25 @@ describe('OpenCodeRuntime embedded launcher', () => {
 
     await expect(pending).rejects.toThrow('OpenCode Server 启动已取消')
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('bounds session setup without imposing a full-run deadline', async () => {
+    const harness = runClient([])
+    ;(
+      harness.session.create as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation(
+      () => new Promise(() => undefined)
+    )
+    const runtime = embeddedRuntime(
+      harness.client,
+      {},
+      { controlRequestTimeoutMs: 5 }
+    )
+
+    await expect(collectRun(runtime)).rejects.toThrow(
+      'OpenCode 创建会话超时'
+    )
+    await runtime.dispose()
   })
 
   it('keeps external baseUrl mode free of binary detection and spawning', async () => {
@@ -1538,11 +1528,14 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         ? questionEvent.value.questionId
         : ''
     await runtime.respondToQuestion(questionId, [['先写测试']])
-    expect(setup.questionReply).toHaveBeenCalledWith({
-      requestID: 'question-1',
-      directory: process.cwd(),
-      answers: [['先写测试']]
-    })
+    expect(setup.questionReply).toHaveBeenCalledWith(
+      {
+        requestID: 'question-1',
+        directory: process.cwd(),
+        answers: [['先写测试']]
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     await expect(stream.next()).resolves.toMatchObject({
       value: { type: 'done' }
     })
@@ -1631,18 +1624,210 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       runtime.respondToQuestion(secondId, [['second answer']])
     ])
     expect(setup.questionReply).toHaveBeenCalledTimes(2)
-    expect(setup.questionReply).toHaveBeenNthCalledWith(1, {
-      requestID: 'shared-question',
-      directory: process.cwd(),
-      answers: [['first answer']]
-    })
-    expect(setup.questionReply).toHaveBeenNthCalledWith(2, {
-      requestID: 'shared-question',
-      directory: process.cwd(),
-      answers: [['second answer']]
-    })
+    expect(setup.questionReply).toHaveBeenNthCalledWith(
+      1,
+      {
+        requestID: 'shared-question',
+        directory: process.cwd(),
+        answers: [['first answer']]
+      },
+      { signal: expect.any(AbortSignal) }
+    )
+    expect(setup.questionReply).toHaveBeenNthCalledWith(
+      2,
+      {
+        requestID: 'shared-question',
+        directory: process.cwd(),
+        answers: [['second answer']]
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     await Promise.all([first.next(), second.next()])
     await runtime.dispose()
+  })
+
+  it('emits native Task calls as subagents instead of generic tools', async () => {
+    const taskInput = {
+      subagent_type: 'explorer',
+      description: 'Review application architecture',
+      prompt: 'Inspect the complete source tree.'
+    }
+    const setup = runClient([
+      {
+        id: 'task-running',
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'session-1',
+          part: {
+            id: 'part-task-1',
+            callID: 'call-task-1',
+            type: 'tool',
+            tool: 'task',
+            state: {
+              status: 'running',
+              input: taskInput,
+              time: { start: 1 }
+            }
+          }
+        }
+      },
+      {
+        id: 'task-completed',
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'session-1',
+          part: {
+            id: 'part-task-1',
+            callID: 'call-task-1',
+            type: 'tool',
+            tool: 'task',
+            state: {
+              status: 'completed',
+              input: taskInput,
+              output: 'Architecture review complete.',
+              title: 'Review application architecture',
+              metadata: {},
+              time: { start: 1, end: 2 }
+            }
+          }
+        }
+      },
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(setup.client)
+
+    const events = await collectRun(runtime)
+    const subagents = events.filter(
+      (event) => event.type === 'subagent'
+    )
+
+    expect(subagents).toHaveLength(2)
+    expect(subagents[0]).toMatchObject({
+      expertName: 'explorer',
+      routingMode: 'native',
+      runtimeCallId: 'call-task-1',
+      state: 'running',
+      reason: 'Review application architecture'
+    })
+    expect(subagents[1]).toMatchObject({
+      childTaskId:
+        subagents[0]?.type === 'subagent'
+          ? subagents[0].childTaskId
+          : undefined,
+      state: 'completed',
+      output: 'Architecture review complete.'
+    })
+    expect(events.some((event) => event.type === 'tool')).toBe(false)
+    await runtime.dispose()
+  })
+
+  it('keeps non-Task tools with Task-shaped input as generic tools', async () => {
+    const setup = runClient([
+      {
+        id: 'custom-tool-completed',
+        type: 'message.part.updated',
+        properties: {
+          sessionID: 'session-1',
+          part: {
+            id: 'part-custom-1',
+            callID: 'call-custom-1',
+            type: 'tool',
+            tool: 'custom_delegate',
+            state: {
+              status: 'completed',
+              input: {
+                subagent_type: 'explorer',
+                prompt: 'Inspect the complete source tree.'
+              },
+              output: 'Custom tool result.',
+              title: 'Custom delegate',
+              metadata: {},
+              time: { start: 1, end: 2 }
+            }
+          }
+        }
+      },
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(setup.client)
+
+    const events = await collectRun(runtime)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-custom-1',
+        name: 'custom_delegate',
+        state: 'completed'
+      })
+    )
+    expect(events.some((event) => event.type === 'subagent')).toBe(false)
+    await runtime.dispose()
+  })
+
+  it('does not impose a default wall-clock deadline on OpenCode runs', async () => {
+    vi.useFakeTimers()
+    try {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const setup = runClient([])
+      ;(
+        setup.event.subscribe as unknown as ReturnType<typeof vi.fn>
+      ).mockResolvedValue({
+        stream: (async function* () {
+          await gate
+          yield {
+            id: 'idle',
+            type: 'session.idle',
+            properties: { sessionID: 'session-1' }
+          }
+        })()
+      })
+      const runtime = new OpenCodeRuntime(
+        options({
+          baseUrl: 'http://127.0.0.1:4096',
+          embedded: false
+        }),
+        dependencies(fakeChild(), {
+          createClient: vi.fn(
+            () => setup.client
+          ) as unknown as typeof createOpencodeClient
+        }).deps
+      )
+      const stream = runtime.run(
+        {
+          requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+          conversationId: 'conversation-1',
+          prompt: 'work for more than a day',
+          workMode: 'execute'
+        },
+        new AbortController().signal
+      )
+
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { type: 'status' }
+      })
+      const pending = stream.next()
+      await vi.advanceTimersByTimeAsync(25 * 60 * 60_000)
+      expect(setup.session.abort).not.toHaveBeenCalled()
+      release()
+      await expect(pending).resolves.toMatchObject({
+        value: { type: 'done' }
+      })
+      await runtime.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('aborts an OpenCode run at its total execution deadline', async () => {
@@ -1722,11 +1907,6 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         executionTimeoutMs: 20
       }).deps
     )
-    setTimeout(() => {
-      stdoutOf(child).write(
-        'opencode server listening on http://127.0.0.1:4010\n'
-      )
-    }, 0)
     const stream = runtime.run(
       {
         requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
@@ -1903,11 +2083,6 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         () => setup.client
       ) as unknown as typeof createOpencodeClient
     })
-    setTimeout(() => {
-      stdoutOf(child).write(
-        'opencode server listening on http://127.0.0.1:4010\n'
-      )
-    }, 0)
     const runtime = new OpenCodeRuntime(
       options({ knowledgeGateway: gateway }),
       deps
@@ -2004,11 +2179,6 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         () => setup.client
       ) as unknown as typeof createOpencodeClient
     })
-    setTimeout(() => {
-      stdoutOf(child).write(
-        'opencode server listening on http://127.0.0.1:4010\n'
-      )
-    }, 0)
     const runtime = new OpenCodeRuntime(
       options({
         knowledgeGateway: {
@@ -2107,11 +2277,6 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         () => setup.client
       ) as unknown as typeof createOpencodeClient
     })
-    setTimeout(() => {
-      stdoutOf(child).write(
-        'opencode server listening on http://127.0.0.1:4010\n'
-      )
-    }, 0)
     const runtime = new OpenCodeRuntime(
       options({
         knowledgeGateway: {
@@ -2357,11 +2522,14 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       { signal: expect.any(AbortSignal) }
     )
     expect(permissionReply).toHaveBeenCalledOnce()
-    expect(permissionReply).toHaveBeenCalledWith({
-      requestID: 'permission-1',
-      directory: process.cwd(),
-      reply: 'once'
-    })
+    expect(permissionReply).toHaveBeenCalledWith(
+      {
+        requestID: 'permission-1',
+        directory: process.cwd(),
+        reply: 'once'
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'reasoning',
@@ -2453,14 +2621,16 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
           requestID: 'permission-1',
           directory: process.cwd(),
           reply: 'once'
-        }
+        },
+        { signal: expect.any(AbortSignal) }
       ],
       [
         {
           requestID: 'permission-2',
           directory: process.cwd(),
           reply: 'once'
-        }
+        },
+        { signal: expect.any(AbortSignal) }
       ]
     ])
     await runtime.dispose()
@@ -2626,10 +2796,13 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await collectRun(runtime)
     await runtime.releaseConversation('conversation-1')
 
-    expect(session.delete).toHaveBeenCalledWith({
-      sessionID: 'session-1',
-      directory: process.cwd()
-    })
+    expect(session.delete).toHaveBeenCalledWith(
+      {
+        sessionID: 'session-1',
+        directory: process.cwd()
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     await runtime.dispose()
   })
 
@@ -2649,11 +2822,14 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await collectRun(runtime, 'execute')
 
     expect(permissionReply).toHaveBeenCalledOnce()
-    expect(permissionReply).toHaveBeenCalledWith({
-      requestID: 'permission-1',
-      directory: process.cwd(),
-      reply: 'reject'
-    })
+    expect(permissionReply).toHaveBeenCalledWith(
+      {
+        requestID: 'permission-1',
+        directory: process.cwd(),
+        reply: 'reject'
+      },
+      { signal: expect.any(AbortSignal) }
+    )
     await runtime.dispose()
   })
 

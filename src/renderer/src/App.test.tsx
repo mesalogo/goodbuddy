@@ -8515,7 +8515,7 @@ describe('App', () => {
     )
   })
 
-  it('shows bounded Subagent states and records child expert activity', async () => {
+  it('shows Subagent states and records child expert activity', async () => {
     render(<App />)
     fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
       target: { value: '分析复杂问题' }
@@ -8568,19 +8568,26 @@ describe('App', () => {
       }
     })
 
-    const statusRegion = await screen.findByLabelText('子专家状态')
+    const statusRegion = await screen.findByLabelText('子代理状态')
     expect(within(statusRegion).getByText('研究专家')).toBeInTheDocument()
     expect(within(statusRegion).getByText('等待中')).toBeInTheDocument()
     expect(within(statusRegion).getByText('代码专家')).toBeInTheDocument()
     expect(within(statusRegion).getByText('进行中')).toBeInTheDocument()
     expect(within(statusRegion).getByText('安全专家')).toBeInTheDocument()
     expect(within(statusRegion).getByText('失败')).toBeInTheDocument()
+    const subagentCards = within(statusRegion).getAllByRole('group')
+    fireEvent.click(
+      within(subagentCards[2]!).getByText('安全专家', {
+        selector: 'strong'
+      })
+    )
+    fireEvent(subagentCards[2]!, new Event('toggle'))
     expect(
       within(statusRegion).getByText('无法读取必要上下文')
     ).toBeInTheDocument()
     expect(
-      within(statusRegion).queryByText('第四位专家')
-    ).not.toBeInTheDocument()
+      within(statusRegion).getByText('第四位专家')
+    ).toBeInTheDocument()
 
     act(() => {
       agentListener?.({
@@ -8599,9 +8606,20 @@ describe('App', () => {
         output: '代码专家的部分结论'
       })
     })
-    expect(within(statusRegion).getByText('已完成')).toBeInTheDocument()
+    expect(within(statusRegion).getAllByText('已完成')).toHaveLength(2)
     expect(within(statusRegion).getByText('已取消')).toBeInTheDocument()
     expect(within(statusRegion).getByText('父任务已停止')).toBeInTheDocument()
+    for (const [index, expertName] of [
+      '研究专家',
+      '代码专家'
+    ].entries()) {
+      fireEvent.click(
+        within(subagentCards[index]!).getByText(expertName, {
+          selector: 'strong'
+        })
+      )
+      fireEvent(subagentCards[index]!, new Event('toggle'))
+    }
     expect(
       within(statusRegion).getByText('研究专家的独立结论')
     ).toBeInTheDocument()
@@ -8627,13 +8645,151 @@ describe('App', () => {
     fireEvent.click(screen.getByText('运行记录'))
     expect(await screen.findAllByText('子专家')).toHaveLength(4)
     expect(screen.getAllByText(/智能路由/u).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/手动指定/u).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/指定专家/u).length).toBeGreaterThan(0)
     expect(
       screen.getByText(/研究专家的独立结论/u)
     ).toBeInTheDocument()
     expect(
       screen.getByText(/代码专家的部分结论/u)
     ).toBeInTheDocument()
+  })
+
+  it('replaces an incremental OpenCode Task tool with a native subagent card', async () => {
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '检查架构' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'tool',
+        callId: 'call-task-1',
+        name: 'Review application architecture',
+        state: 'running',
+        summary: '远端 Runtime 工具：Review application architecture'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'reasoning',
+        delta: '等待子代理结果'
+      })
+    })
+    expect(await screen.findByText('等待子代理结果')).toBeInTheDocument()
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'subagent',
+        childTaskId: '00000000-0000-4000-8000-000000000611',
+        expertId: '00000000-0000-4000-8000-000000000711',
+        expertName: 'explorer',
+        routingMode: 'native',
+        runtimeCallId: 'call-task-1',
+        state: 'running',
+        reason: 'Review application architecture'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'text',
+        delta: '父 Agent 最终回复'
+      })
+    })
+
+    const region = await screen.findByLabelText('子代理状态')
+    expect(within(region).getByText('explorer')).toBeInTheDocument()
+    expect(within(region).getByText('OpenCode 原生'))
+      .toBeInTheDocument()
+    expect(
+      screen.queryByRole('region', {
+        name: '工具执行，共 1 项'
+      })
+    ).not.toBeInTheDocument()
+    const assistantArticle = screen
+      .getByText('父 Agent 最终回复')
+      .closest('article')
+    const orderedBlocks = [
+      ...assistantArticle!.querySelectorAll('.message-blocks > *')
+    ].map((element) => element.textContent)
+    expect(orderedBlocks).toEqual([
+      expect.stringContaining('Review application architecture'),
+      expect.stringContaining('等待子代理结果'),
+      expect.stringContaining('父 Agent 最终回复')
+    ])
+    fireEvent.click(screen.getByText('运行记录'))
+    expect(await screen.findAllByText('子专家')).toHaveLength(1)
+    expect(
+      screen.queryByText(
+        '远端 Runtime 工具：Review application architecture'
+      )
+    ).not.toBeInTheDocument()
+  })
+
+  it('fails an unterminated subagent when the parent reports done', async () => {
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '检查未完成子任务' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'subagent',
+        childTaskId: '00000000-0000-4000-8000-000000000612',
+        expertId: '00000000-0000-4000-8000-000000000712',
+        expertName: 'explorer',
+        routingMode: 'native',
+        runtimeCallId: 'call-task-2',
+        state: 'running',
+        reason: '检查未完成路径'
+      })
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'done'
+      })
+    })
+
+    const region = await screen.findByLabelText('子代理状态')
+    expect(within(region).getByText('失败')).toBeInTheDocument()
+    const subagentCard = within(region).getByRole('group')
+    fireEvent.click(
+      within(subagentCard).getByText('explorer', {
+        selector: 'strong'
+      })
+    )
+    fireEvent(subagentCard, new Event('toggle'))
+    expect(
+      within(region).getByText(
+        '父请求已结束，但子 Agent 未报告完成状态。'
+      )
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      const persistedMessages = vi
+        .mocked(api.conversations.saveLocal)
+        .mock.calls.flatMap(([batch]) =>
+          batch.flatMap((conversation) => conversation.messages)
+        )
+      expect(
+        persistedMessages.some(
+          (message) =>
+            message.subagents?.[0]?.state === 'failed' &&
+            message.subagents[0].error ===
+              '父请求已结束，但子 Agent 未报告完成状态。'
+        )
+      ).toBe(true)
+    })
   })
 
   it('offers once, session, permanent, and deny for a tool call', async () => {

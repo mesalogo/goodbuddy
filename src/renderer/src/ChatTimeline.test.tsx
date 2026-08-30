@@ -246,26 +246,110 @@ describe('ChatTimeline', () => {
       />
     )
 
-    const region = screen.getByLabelText('子专家状态')
+    const region = screen.getByLabelText('子代理状态')
     const summary = screen.getByText('综合结果').parentElement
     const messageBody = region.parentElement
     expect(summary?.parentElement).toBe(messageBody)
     expect(
       Array.from(messageBody?.children ?? []).indexOf(region)
-    ).toBeLessThan(
+    ).toBeGreaterThan(
       Array.from(messageBody?.children ?? []).indexOf(summary!)
     )
     const cards = within(region).getAllByRole('group')
     expect(cards).toHaveLength(3)
+    const experts = ['研究专家', '代码专家', '安全专家']
     for (const [index, output] of [
       '研究专家的独立结论',
       '代码专家的独立结论',
       '安全专家的独立结论'
     ].entries()) {
-      expect(within(cards[index]!).getByText(output)).toBeInTheDocument()
+      expect(
+        within(cards[index]!).queryByText(output)
+      ).not.toBeInTheDocument()
       expect(cards[index]).not.toHaveAttribute('open')
-      fireEvent.click(within(cards[index]!).getByText(/专家$/u))
+      fireEvent.click(
+        within(cards[index]!).getByText(experts[index]!, {
+          selector: 'strong'
+        })
+      )
+      fireEvent(cards[index]!, new Event('toggle'))
       expect(cards[index]).toHaveAttribute('open')
+      expect(within(cards[index]!).getByText(output)).toBeInTheDocument()
     }
+  })
+
+  it('labels native OpenCode subagents and shows their task description', () => {
+    const messages: Message[] = [
+      {
+        id: 'assistant-message',
+        role: 'assistant',
+        content: '',
+        createdAt: 1_775_000_000_000,
+        state: 'streaming',
+        blocks: [
+          {
+            id: '00000000-0000-4000-8000-000000000121',
+            type: 'reasoning',
+            content: '先分析桌面目录'
+          },
+          {
+            id: '00000000-0000-4000-8000-000000000122',
+            type: 'subagent',
+            childTaskId:
+              '00000000-0000-4000-8000-000000000111'
+          },
+          {
+            id: '00000000-0000-4000-8000-000000000123',
+            type: 'text',
+            content: '父 Agent 最终回复'
+          }
+        ],
+        subagents: [
+          {
+            childTaskId: '00000000-0000-4000-8000-000000000111',
+            expertId: '00000000-0000-4000-8000-000000000211',
+            expertName: 'explorer',
+            routingMode: 'native',
+            runtimeCallId: 'call-task-1',
+            state: 'running',
+            reason: 'Review application architecture'
+          }
+        ]
+      }
+    ]
+
+    render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="zh-CN"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    expect(screen.getByText('子代理')).toBeInTheDocument()
+    expect(screen.getByText('OpenCode 原生')).toBeInTheDocument()
+    expect(screen.getByText('任务')).toBeInTheDocument()
+    expect(screen.getByText('进行中')).toBeInTheDocument()
+    expect(
+      screen.getByText('Review application architecture')
+    ).toBeInTheDocument()
+    const assistantArticle = screen
+      .getByText('父 Agent 最终回复')
+      .closest('article')
+    const orderedBlocks = [
+      ...assistantArticle!.querySelectorAll('.message-blocks > *')
+    ].map((element) => element.textContent)
+    expect(orderedBlocks).toEqual([
+      expect.stringContaining('先分析桌面目录'),
+      expect.stringContaining('Review application architecture'),
+      expect.stringContaining('父 Agent 最终回复')
+    ])
   })
 })

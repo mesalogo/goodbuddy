@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录截至 2026-08-29 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+本文记录截至 2026-08-30 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
 Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
 详细事务与验收边界见
 [SSH Host 远程环境准备与直连下载设计](./remote-host-environment-provisioning-design.md)；
@@ -13,8 +13,9 @@ Windows 到 Linux x64 的既有安装、
 Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实
 Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与
 OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback
-路径 capability 后，Agent `0.11.9` 已通过独立 workflow 发布 Linux x64/arm64 复合包和
-签名累计目录；当前桌面源码准备 `0.11.10`，修复 Host 更新并消除重复 payload 验证。失败的
+路径 capability 后，Agent `0.11.10` 已通过独立 workflow 发布 Linux x64/arm64 复合包和
+签名累计目录；当前桌面源码准备 `0.11.13`，显示本地与远端 OpenCode 原生 Task，并取消
+GoodBuddy 对生产 Prompt 的固定墙钟总时限。失败的
 `agent-v0.11.3` 保持不可变且未发布。
 
 ## 产品语义
@@ -193,7 +194,13 @@ Execute 不经过 Ask 的 bubblewrap profile：
 - 继承 SSH 账号的正常环境、文件系统、进程和网络能力；
 - 不进行 T2/T3、confinement attestation、approval bridge 或逐工具批准。
 
-两种模式都保留请求 deadline、输入/输出字节上限、取消和进程组清理。
+两种模式都保留输入/输出字节上限、用户取消和进程组清理。生产 Prompt 不设置固定墙钟
+总时限；只要 Runtime 尚未按自身协议结束，Main 和 Agent 就允许其持续运行。启动、握手、
+单个控制 RPC、重连尝试和关闭清理仍使用独立的有界超时，测试可以显式注入短 Prompt
+时限验证取消升级，但该覆盖值不是生产默认。无界 Prompt 继续复用已发布的必填
+`deadlineAt` 字段，以 year-9999 哨兵表达；Main 与 Agent 必须同时理解该哨兵，Agent
+`0.11.10` 及更早版本仍会按其 manifest 上限夹紧，因此桌面启用这一语义前必须配套更新
+到 Agent `0.11.13` 或更高版本。
 
 ## ACP 与断线
 
@@ -207,13 +214,21 @@ Execute 不经过 Ask 的 bubblewrap profile：
   调度、跨 channel 超车、批发送或第二套拥塞控制。
 - Agent 在把 Main 输入交给 Runtime 前、以及把 Runtime 输出交给 Main 前，先把 ACP frame 写入本机 journal。ACK 只推进 cursor 并裁剪已确认 frame，不表示 channel 已终止。
 - Main 持久化 binding identity 和单调 cursor；保留中的 connection lease 即使处于 offline/reconnecting，也可以先把新 cursor 落盘。重连提交不能覆盖 resume 过程中并发落盘的更新。
-- Runtime 事件进入桌面会话后，Renderer 和 Main 将完整工具详情保存到本地 SQLite，不再对已接受的工具输入、输出、错误或摘要施加额外的会话字段长度限制。
+- Runtime 事件先经过单事件、单请求输出和每次 Prompt 最多 100 个不同工具调用的边界；
+  通过边界后，Renderer 和 Main 将已接受的工具详情保存到本地 SQLite，不再额外缩短其
+  输入、输出、错误或摘要。
+- OpenCode 原生 Task 工具按 `subagent_type`、`description`、`prompt` 和稳定 tool call ID
+  解析为子 Agent 事件。本地 OpenCode SDK 与远端 ACP 增量工具事件复用同一转换；ACP
+  首帧缺少参数时可以先显示普通工具活动，后续参数确认其为 Task 后必须替换为子 Agent
+  状态卡，并持久化任务说明、终态与输出。
 - 同一 detached Agent 存活时，短暂 SSH 断线依次执行 `controller/resume`、`runtime/resumeAcpChannel` 和 `runtime/replayAcpChannel`，从 Main 已确认的 cursor 后只重放 Agent 到 Main 的已记录输出。重复 frame 会被确认但不会再次交给上层。若上一代连接只留下没有活动请求的 detached binding，完成精确 controller takeover 后会先有界停止并核对遗留 Runtime process，再用新 channel epoch 重新打开同一 binding 并恢复已有 ACP session；其他 controller、未证明 takeover 或仍有活动请求的 binding 仍被拒绝。
 - Main 到 Runtime 的 ACP 输入、模型请求、工具请求和 blob 不自动重放。
 - 无法确认外部 Provider 是否已处理的模型调用保持结果未知，避免重复计费或重复副作用。
 - 只有远端返回 identity 匹配且 `closed: true` 时，Main 才删除持久化 binding；传输失败或未确认 close 会保留 recovery identity。
 - 终态 close 由 Agent 在一个事务中为两个方向记录 sequence high-water tombstone，删除剩余 frame 和 active channel，并归零对应 journal quota。tombstone 用于拒绝迟到的旧 epoch frame，因此当前不会按时间自动裁剪。
-- 断线不主动终止正在运行的 Runtime。用户取消、deadline、显式关闭或 Agent shutdown 才触发停止。
+- 断线不主动终止正在运行的 Runtime。用户取消、显式关闭、输出边界或 Agent shutdown
+  才触发停止；连接恢复只受当前用户取消信号和单次重连控制超时约束，不把 Prompt 已运行
+  时长当作停止条件。
 - Agent 失联期间继续把 Runtime 输出写入本机 journal；重新连接只校验 controller
   identity、恢复 binding，并从 Main 最后确认的 cursor 后同步缺失数据。已接受的
   指令和结果不确定的 Provider 请求都不自动重放。
@@ -224,8 +239,8 @@ Execute 不经过 Ask 的 bubblewrap profile：
 - 远端 OpenCode 通过 GoodBuddy Agent helper 和每次 Prompt 的私有 Unix socket 使用模型桥。
 - Main 校验固定模型 profile、协议、请求路径和有界传输格式，并记录 Provider
   返回的实际 usage；不限制 Prompt 内的模型调用轮数、工具调用次数、累计 Token
-  或单次模型输出 Token。取消、Runtime deadline、请求/响应字节上限和结果不确定时
-  禁止自动重放仍然保留。
+  或单次模型输出 Token。取消、请求/响应字节上限和结果不确定时禁止自动重放仍然保留；
+  模型桥不会为整个 Runtime Prompt 另设墙钟总时限。
 - helper 可以接收同一 Prompt 内并发到达的模型桥请求；它在单一稳定模型桥上按到达
   顺序等待并交付，不返回本地 `bridge-busy`，每个响应只有在 HTTP 完整 flush 后才
   发送 delivery ACK。
@@ -242,12 +257,55 @@ Execute 不经过 Ask 的 bubblewrap profile：
   不修改既有 React state 对象。这样开发环境 StrictMode 重复调用 state updater 时，
   block metadata 与 canonical 消息正文保持一致。
 
+## Agent 开发期间的真实 Host 验证
+
+任何会改变已部署 GoodBuddy Agent 或桌面到 Agent 生产链路的源码改动，都必须在开发期间
+使用共享 Linux x64 真实测试 Host 验证。适用范围包括 Agent daemon、Agent protocol
+及共享 contract、Agent 组包与安装、attach/update、Runtime 启动与进程归属、Workspace、
+model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture、CI 或正式发布前回归
+都不能替代这一步；不得等到准备发布时才首次运行受影响的真实链路。
+
+测试 Host 有两个网络入口：
+
+- `192.168.0.23`：局域网入口，在本地网络可达时优先使用；
+- `10.7.0.23`：VPN 入口，局域网入口不可达时使用。
+
+两者指向同一台物理 Host，只代表两条访问路由，不能计为两个独立 Host、两种架构或两份
+覆盖结果。测试只使用已固定的 Host identity 和 GoodBuddy 已有凭据存储；地址不得写入
+产品行为或默认配置，用户名、密码、私钥等凭据不得写入源码、文档、命令、日志或测试输出。
+
+开发时应在改动链路达到可运行状态后尽早执行真实 Host 验证，并在最终相关改动后重复受
+影响的场景。必须使用当前源码构建或当前候选包，不能只验证 Host 上已经发布的旧 Agent。
+按改动范围至少选择以下场景：
+
+1. Agent 组包、安装或升级：验证当前候选的 attach-or-bootstrap、安装/更新、版本切换及
+   随后的连接。
+2. Runtime profile、进程启动/归属或 Ask/Execute 边界：通过桌面生产入口启动真实 Runtime，
+   验证受影响模式；Ask 权限改动必须验证只读边界，Execute 权限改动必须验证所需写入、
+   进程和网络能力。
+3. Agent protocol、RPC、stream、model bridge 或模型消息链路：执行最小有界真实模型调用，
+   禁用非必要工具和附件，并记录实际调用次数；大消息或工具链路改动还应覆盖对应的真实
+   payload/工具场景。
+4. 会话、owner、取消、超时、断线或恢复逻辑：执行与改动直接相关的中断、取消、Agent/
+   Runtime 重启、SSH 断开或重连序列，并确认不会错误重放结果未知的操作。
+5. Workspace 或 Host 文件路径：只在 GoodBuddy 专用测试目录操作，验证真实路径和权限，
+   不得读取、覆盖或删除无关 Host 文件。
+
+停止或修改远端进程前必须先核对其启动身份、PID/进程组和 GoodBuddy 归属。若两个入口均
+不可达，应立即把真实 Host 验证报告为开发阻塞，保持该验证未完成，不能把 Agent 改动表述
+为已完成，也不能把首次真实验证推迟到发布阶段。
+
 ## 已完成的 E2E 验收记录
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
-  的双架构验收。Agent `0.11.9` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 固定为 `0.11.9`。
+  的双架构验收。Agent `0.11.10` 后续已由原生 workflow 发布并公开验证双架构工件；
+  当前源码 lock 固定为候选 `0.11.13`。
+- 2026-08-30 在共享 Linux x64 Host 的隔离测试 HOME 中验证当前 `0.11.13` 源码候选：
+  签名 Runtime 清单的测试墙钟上限为 1 秒，模型桥首轮故意延迟 2.515 秒后 Prompt 仍在
+  5.770 秒正常完成；随后 OpenCode 原生 Task 依次产生 `running`、`completed` 子 Agent
+  事件并完成父请求。测试结束后隔离 Agent、Runtime、socket 和 Workspace 已全部清理，
+  Host current Agent 仍为 `0.11.10`。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
@@ -319,7 +377,10 @@ v31 保留项目及关联用户数据，但重建执行空间表为 `project_id/
   信任条件。上传到 Host 前重新序列化为确定性 LF JSON。签名目录、描述符、manifest 和
   payload 仍按原始签名字节及 SHA-256 验证。
 
-## 发布前验证
+## 发布前完整回归（不能替代开发验证）
+
+以下清单只用于复核开发期间已经在真实 Host 上通过的链路，不得作为 Agent 改动的首次
+真实 Host 验证：
 
 1. `npm test`
 2. `npm run typecheck`

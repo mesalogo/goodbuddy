@@ -4907,7 +4907,8 @@ button > svg {
 }
 
 .message-blocks .message-reasoning,
-.message-blocks .tool-execution-list {
+.message-blocks .tool-execution-list,
+.message-blocks .subagent-status-list {
   margin: 0;
 }
 
@@ -5259,25 +5260,25 @@ button > svg {
 
 .subagent-status-list {
   display: grid;
-  margin-top: var(--space-2);
+  margin: var(--space-2) 0 var(--space-4);
   gap: var(--space-2);
 }
 
 .subagent-status-card {
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
   color: var(--text-secondary);
   overflow: hidden;
 }
 
 .subagent-status-card > summary {
   display: grid;
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
+  align-items: start;
+  padding: var(--space-3) var(--space-4);
   cursor: pointer;
-  gap: var(--space-2);
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr) auto auto;
   list-style: none;
 }
 
@@ -5294,38 +5295,130 @@ button > svg {
   outline-offset: -2px;
 }
 
+.subagent-status-card--queued {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
 .subagent-status-card--running {
-  border-color: var(--accent-selected);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.subagent-status-card--completed {
+  box-shadow: inset 3px 0 0 var(--success);
 }
 
 .subagent-status-card--failed,
 .subagent-status-card--cancelled {
   border-color: var(--danger-border);
   background: var(--danger-subtle);
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 
 .subagent-status-card__identity {
   display: grid;
   min-width: 0;
+  gap: var(--space-2);
+}
+
+.subagent-status-card__heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.subagent-status-card__badge {
+  display: inline-flex;
+  min-height: 22px;
+  padding: 2px var(--space-2);
+  align-items: center;
+  border: 1px solid var(--accent-selected);
+  border-radius: var(--radius-control);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: var(--font-caption);
+  font-weight: 700;
   gap: var(--space-1);
 }
 
-.subagent-status-card summary strong,
-.subagent-status-card summary > span:last-child {
+.subagent-status-card__heading > strong {
   color: var(--text-primary);
-  font-size: var(--font-body);
+  font-size: var(--font-section-title);
+  overflow-wrap: anywhere;
 }
 
-.subagent-status-card summary small {
+.subagent-status-card__task {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.subagent-status-card__task > small,
+.subagent-status-card__source {
   color: var(--text-muted);
   font-size: var(--font-caption);
 }
 
+.subagent-status-card__task > span {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.subagent-status-card__status {
+  display: inline-flex;
+  min-height: 24px;
+  padding: 2px var(--space-2);
+  align-items: center;
+  border-radius: var(--radius-control);
+  font-size: var(--font-caption);
+  font-weight: 700;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.subagent-status-card__status--queued {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.subagent-status-card__status--running {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.subagent-status-card__status--completed {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.subagent-status-card__status--failed,
+.subagent-status-card__status--cancelled {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.subagent-status-card__status--running > svg {
+  animation: subagent-status-spin 900ms linear infinite;
+}
+
+.subagent-status-card__chevron {
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  transition: transform var(--motion-fast) ease-out;
+}
+
+.subagent-status-card[open] .subagent-status-card__chevron {
+  transform: rotate(90deg);
+}
+
 .subagent-status-card__details {
   display: grid;
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
   border-top: 1px solid var(--border-subtle);
-  background: var(--surface-raised);
+  background: var(--surface-subtle);
   gap: var(--space-3);
 }
 
@@ -5347,6 +5440,12 @@ button > svg {
 .subagent-status-card__error,
 .subagent-status-card__error p {
   color: var(--danger);
+}
+
+@keyframes subagent-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .approval-card {

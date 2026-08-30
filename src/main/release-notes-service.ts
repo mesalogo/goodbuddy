@@ -57,6 +57,12 @@ export class ReleaseNotesService {
   async getPending(): Promise<ReleaseNotesSnapshot> {
     const releases = await this.loadReleases()
     const currentVersion = this.dependencies.currentVersion
+    if (!releases.some((release) => release.version === currentVersion)) {
+      return {
+        currentVersion,
+        releases: []
+      }
+    }
     const lastSeenVersion =
       await this.dependencies.settingsStore.getLastSeenReleaseNotesVersion()
     const pending = releases.filter((release) => {

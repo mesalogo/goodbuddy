@@ -25,6 +25,7 @@ import {
   acpJournalCursorSchema,
   remotePromptOperationAcceptanceSchema,
   remotePromptOperationPreparationSchema,
+  UNBOUNDED_REMOTE_PROMPT_DEADLINE,
   type AcpJournalCursor,
   type RemotePromptOperationAcceptance,
   type RemotePromptOperationPreparation
@@ -1676,6 +1677,10 @@ export class RuntimeAcpBackend {
   #scheduleDeadline(binding: BindingState, deadlineAt: string): void {
     if (binding.deadlineTimer !== undefined) {
       clearTimeout(binding.deadlineTimer)
+      binding.deadlineTimer = undefined
+    }
+    if (deadlineAt === UNBOUNDED_REMOTE_PROMPT_DEADLINE) {
+      return
     }
     const delay = Math.max(
       1,

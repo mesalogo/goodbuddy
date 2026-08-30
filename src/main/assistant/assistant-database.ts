@@ -215,6 +215,7 @@ type MessageMetadata = {
   contextCompression?: ConversationSnapshot['messages'][number]['contextCompression']
   contextCompressions?: ConversationSnapshot['messages'][number]['contextCompressions']
   tools?: ConversationSnapshot['messages'][number]['tools']
+  subagents?: ConversationSnapshot['messages'][number]['subagents']
   sources?: string[]
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
   knowledgeRetrieval?: ConversationSnapshot['messages'][number]['knowledgeRetrieval']
@@ -903,6 +904,16 @@ function interruptActiveTools(
   )
 }
 
+function interruptActiveSubagents(
+  subagents: MessageMetadata['subagents']
+): MessageMetadata['subagents'] {
+  return subagents?.map((subagent) =>
+    subagent.state === 'queued' || subagent.state === 'running'
+      ? { ...subagent, state: 'cancelled' as const }
+      : subagent
+  )
+}
+
 function interruptActiveToolBlocks(
   blocks: MessageMetadata['blocks']
 ): MessageMetadata['blocks'] {
@@ -1017,6 +1028,9 @@ function toConversationSnapshot(
         tools: interrupted
           ? interruptActiveTools(metadata.tools)
           : metadata.tools,
+        subagents: interrupted
+          ? interruptActiveSubagents(metadata.subagents)
+          : metadata.subagents,
         sources: metadata.sources,
         sourceReferences: metadata.sourceReferences,
         knowledgeRetrieval: metadata.knowledgeRetrieval,
@@ -1040,6 +1054,7 @@ function serializeConversationMessageMetadata(
     contextCompression: message.contextCompression,
     contextCompressions: message.contextCompressions,
     tools: message.tools,
+    subagents: message.subagents,
     sources: message.sources,
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
@@ -1417,7 +1432,7 @@ export class AssistantDatabase {
           const metadata = JSON.parse(
             message.metadata_json
           ) as MessageMetadata
-          const hasActiveTool = Boolean(
+          const hasActiveActivity = Boolean(
             metadata.tools?.some(
               (tool) =>
                 tool.state === 'pending' || tool.state === 'running'
@@ -1427,9 +1442,17 @@ export class AssistantDatabase {
                   block.type === 'tool' &&
                   (block.tool.state === 'pending' ||
                     block.tool.state === 'running')
+              ) ||
+              metadata.subagents?.some(
+                (subagent) =>
+                  subagent.state === 'queued' ||
+                  subagent.state === 'running'
               )
           )
-          if (message.state !== 'streaming' && !hasActiveTool) {
+          if (
+            message.state !== 'streaming' &&
+            !hasActiveActivity
+          ) {
             continue
           }
           updateMessage.run(
@@ -1441,7 +1464,10 @@ export class AssistantDatabase {
                   ? interruptedMessageStatus
                   : metadata.status,
               tools: interruptActiveTools(metadata.tools),
-              blocks: interruptActiveToolBlocks(metadata.blocks)
+              blocks: interruptActiveToolBlocks(metadata.blocks),
+              subagents: interruptActiveSubagents(
+                metadata.subagents
+              )
             }),
             message.id
           )

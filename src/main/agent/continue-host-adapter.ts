@@ -27,6 +27,9 @@ import type {
   RuntimeSettings
 } from '../../shared/contracts'
 import {
+  maximumConversationToolActivities
+} from '../../shared/assistant-contracts'
+import {
   continueConfigurationPresetSchema,
   runtimeNativeInventoryLimits,
   type ContinueConfigurationPreset
@@ -66,8 +69,8 @@ const maximumConfiguredRules = runtimeNativeInventoryLimits.rules
 const maximumConfiguredPrompts = runtimeNativeInventoryLimits.prompts
 const maximumStreamEvents = 5_000
 const maximumStreamEventBytes = 2 * 1024 * 1024
-const maximumToolCalls = 100
-const maximumExecutionMilliseconds = 10 * 60_000
+const maximumToolCalls = maximumConversationToolActivities
+const defaultControlRequestTimeoutMs = 30_000
 const knowledgeMcpName = 'goodbuddy-knowledge'
 const customMcpName = 'goodbuddy-custom-mcp'
 export const continueConfigurationRequiredMessage =
@@ -246,6 +249,7 @@ export type ContinueHostAdapterDependencies = {
   maximumStreamEvents: number
   maximumStreamEventBytes: number
   maximumToolCalls: number
+  controlRequestTimeoutMs: number
 }
 
 export type ContinueHostRunOptions = {
@@ -830,6 +834,7 @@ export class ContinueHostAdapter {
       maximumStreamEvents,
       maximumStreamEventBytes,
       maximumToolCalls,
+      controlRequestTimeoutMs: defaultControlRequestTimeoutMs,
       ...dependencies
     }
   }
@@ -1140,16 +1145,32 @@ export class ContinueHostAdapter {
     path: string,
     init: RequestInit = {}
   ): Promise<unknown> {
-    const response = await fetch(`${origin}${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-        ...init.headers
-      },
-      redirect: 'error',
-      signal: init.signal
-    })
+    const timeoutSignal = AbortSignal.timeout(
+      Math.max(1, this.dependencies.controlRequestTimeoutMs)
+    )
+    const requestSignal = init.signal
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : timeoutSignal
+    let response: Response
+    try {
+      response = await fetch(`${origin}${path}`, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          ...init.headers
+        },
+        redirect: 'error',
+        signal: requestSignal
+      })
+    } catch (error) {
+      if (timeoutSignal.aborted && !init.signal?.aborted) {
+        throw new Error(`Continue 宿主请求超时（${path}）`, {
+          cause: error
+        })
+      }
+      throw error
+    }
     const body = await readBoundedResponseText(response, {
       maxBytes: maximumStateBytes,
       tooLargeMessage: 'Continue 宿主响应超过安全大小限制'
@@ -1559,7 +1580,6 @@ export class ContinueHostAdapter {
     let streamEventCount = 0
     let streamEventBytes = 0
     const observedToolCallIds = new Set<string>()
-    let executionTimeoutSignal: AbortSignal | undefined
     try {
       const initialState = await this.waitForStartup(
         child,
@@ -1569,13 +1589,7 @@ export class ContinueHostAdapter {
         signal
       )
       const startIndex = initialState.session.history.length
-      executionTimeoutSignal = AbortSignal.timeout(
-        maximumExecutionMilliseconds
-      )
-      const executionSignal = AbortSignal.any([
-        signal,
-        executionTimeoutSignal
-      ])
+      const executionSignal = signal
       const message =
         runOptions.images && runOptions.images.length > 0
           ? [
@@ -1598,9 +1612,8 @@ export class ContinueHostAdapter {
         signal: executionSignal
       })
 
-      const expiresAt = Date.now() + maximumExecutionMilliseconds
       const handledPermissionIds = new Set<string>()
-      while (Date.now() < expiresAt) {
+      while (true) {
         executionSignal.throwIfAborted()
         if (childFailure) {
           throw childFailure
@@ -1817,20 +1830,15 @@ export class ContinueHostAdapter {
         }
         await delay(150, executionSignal)
       }
-      throw new Error('Continue 宿主执行超时')
     } catch (error) {
       if (error instanceof ContinueHostRunError) {
         throw error
       }
-      const normalizedError =
-        executionTimeoutSignal?.aborted && !signal.aborted
-          ? new Error('Continue 宿主执行超时', { cause: error })
-          : error
       throw new ContinueHostRunError(
-        normalizedError instanceof Error
-          ? normalizedError.message
+        error instanceof Error
+          ? error.message
           : 'Continue 宿主执行失败',
-        { cause: normalizedError, tools: observedTools }
+        { cause: error, tools: observedTools }
       )
     } finally {
       signal.removeEventListener('abort', abort)

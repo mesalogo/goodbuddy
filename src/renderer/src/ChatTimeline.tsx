@@ -1,14 +1,19 @@
 import {
   Bot,
+  CheckCircle2,
+  ChevronRight,
+  Clock3,
   Download,
   FileText,
   Library,
   ClockFading,
+  LoaderCircle,
   ShieldCheck,
   TerminalSquare,
-  UserRound
+  UserRound,
+  XCircle
 } from 'lucide-react'
-import { memo, useEffect, useRef } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   ApprovalDecision,
@@ -78,12 +83,20 @@ export type ImageViewerItem = {
 type MessageBlockRenderItem =
   | {
       kind: 'block'
-      block: Exclude<ConversationMessageBlock, { type: 'tool' }>
+      block: Extract<
+        ConversationMessageBlock,
+        { type: 'text' | 'reasoning' }
+      >
     }
   | {
       kind: 'tools'
       id: string
       tools: ToolActivity[]
+    }
+  | {
+      kind: 'subagents'
+      id: string
+      childTaskIds: string[]
     }
 
 function groupMessageBlocks(
@@ -91,6 +104,19 @@ function groupMessageBlocks(
 ): MessageBlockRenderItem[] {
   const items: MessageBlockRenderItem[] = []
   for (const block of blocks) {
+    if (block.type === 'subagent') {
+      const previous = items.at(-1)
+      if (previous?.kind === 'subagents') {
+        previous.childTaskIds.push(block.childTaskId)
+      } else {
+        items.push({
+          kind: 'subagents',
+          id: block.id,
+          childTaskIds: [block.childTaskId]
+        })
+      }
+      continue
+    }
     if (block.type !== 'tool') {
       items.push({ kind: 'block', block })
       continue
@@ -219,6 +245,90 @@ function ToolExecutionList({
   )
 }
 
+const SubagentStatusCard = memo(function SubagentStatusCard({
+  subagent
+}: {
+  subagent: SubagentActivity
+}): React.JSX.Element {
+  const { t } = useTranslation('app')
+  const [expanded, setExpanded] = useState(false)
+  const StateIcon =
+    subagent.state === 'completed'
+      ? CheckCircle2
+      : subagent.state === 'running'
+        ? LoaderCircle
+        : subagent.state === 'queued'
+          ? Clock3
+          : XCircle
+  const source =
+    subagent.routingMode === 'smart'
+      ? t('chat.subagents.smart')
+      : subagent.routingMode === 'native'
+        ? t('chat.subagents.native')
+        : t('chat.subagents.manual')
+
+  return (
+    <details
+      className={`subagent-status-card subagent-status-card--${subagent.state}`}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary>
+        <span className="subagent-status-card__identity">
+          <span className="subagent-status-card__heading">
+            <span className="subagent-status-card__badge">
+              <Bot aria-hidden="true" size={13} />
+              {t('chat.subagents.badge')}
+            </span>
+            <strong>{subagent.expertName}</strong>
+          </span>
+          {subagent.reason && (
+            <span className="subagent-status-card__task">
+              <small>{t('chat.subagents.task')}</small>
+              <span>{subagent.reason}</span>
+            </span>
+          )}
+          <small className="subagent-status-card__source">
+            {source}
+          </small>
+        </span>
+        <span
+          className={`subagent-status-card__status subagent-status-card__status--${subagent.state}`}
+        >
+          <StateIcon aria-hidden="true" size={14} />
+          {t(`chat.subagents.states.${subagent.state}`)}
+        </span>
+        <ChevronRight
+          aria-hidden="true"
+          className="subagent-status-card__chevron"
+          size={15}
+        />
+      </summary>
+      {expanded && (
+        <div className="subagent-status-card__details">
+          {subagent.output ? (
+            <section>
+              <strong>{t('chat.subagents.output')}</strong>
+              <div className="markdown-content">
+                <MarkdownRenderer>{subagent.output}</MarkdownRenderer>
+              </div>
+            </section>
+          ) : (
+            <p>{t('chat.subagents.noOutput')}</p>
+          )}
+          {subagent.error &&
+            (subagent.state === 'failed' ||
+              subagent.state === 'cancelled') && (
+              <section className="subagent-status-card__error">
+                <strong>{t('chat.subagents.error')}</strong>
+                <p>{subagent.error}</p>
+              </section>
+            )}
+        </div>
+      )}
+    </details>
+  )
+})
+
 function SubagentStatusList({
   subagents
 }: {
@@ -231,44 +341,11 @@ function SubagentStatusList({
       aria-label={t('chat.subagents.region')}
       className="subagent-status-list"
     >
-      {subagents.slice(0, 3).map((subagent) => (
-        <details
-          className={`subagent-status-card subagent-status-card--${subagent.state}`}
+      {subagents.map((subagent) => (
+        <SubagentStatusCard
           key={subagent.childTaskId}
-        >
-          <summary>
-            <Bot aria-hidden="true" size={15} />
-            <span className="subagent-status-card__identity">
-              <strong>{subagent.expertName}</strong>
-              <small>
-                {subagent.routingMode === 'smart'
-                  ? t('chat.subagents.smart')
-                  : t('chat.subagents.manual')}
-              </small>
-            </span>
-            <span>{t(`chat.subagents.states.${subagent.state}`)}</span>
-          </summary>
-          <div className="subagent-status-card__details">
-            {subagent.output ? (
-              <section>
-                <strong>{t('chat.subagents.output')}</strong>
-                <div className="markdown-content">
-                  <MarkdownRenderer>{subagent.output}</MarkdownRenderer>
-                </div>
-              </section>
-            ) : (
-              <p>{t('chat.subagents.noOutput')}</p>
-            )}
-            {(subagent.error || subagent.reason) &&
-              (subagent.state === 'failed' ||
-                subagent.state === 'cancelled') && (
-                <section className="subagent-status-card__error">
-                  <strong>{t('chat.subagents.error')}</strong>
-                  <p>{subagent.error ?? subagent.reason}</p>
-                </section>
-              )}
-          </div>
-        </details>
+          subagent={subagent}
+        />
       ))}
     </section>
   )
@@ -327,6 +404,20 @@ function ChatMessageRowView({
   const compressionMarkers =
     message.contextCompressions ??
     (message.contextCompression ? [message.contextCompression] : [])
+  const subagentsById = new Map(
+    (message.subagents ?? []).map((subagent) => [
+      subagent.childTaskId,
+      subagent
+    ])
+  )
+  const orderedSubagentIds = new Set(
+    message.blocks
+      ?.filter((block) => block.type === 'subagent')
+      .map((block) => block.childTaskId)
+  )
+  const unorderedSubagents = message.subagents?.filter(
+    (subagent) => !orderedSubagentIds.has(subagent.childTaskId)
+  )
   const compressionLabel = (
     compression: ConversationContextCompressionMarker
   ): string =>
@@ -468,14 +559,19 @@ function ChatMessageRowView({
             })}
           </div>
         )}
-        {message.subagents && message.subagents.length > 0 && (
-          <SubagentStatusList subagents={message.subagents} />
-        )}
         {message.blocks && message.blocks.length > 0 ? (
           <div className="message-blocks">
             {groupMessageBlocks(message.blocks).map((item) =>
               item.kind === 'tools' ? (
                 <ToolExecutionList key={item.id} tools={item.tools} />
+              ) : item.kind === 'subagents' ? (
+                <SubagentStatusList
+                  key={item.id}
+                  subagents={item.childTaskIds.flatMap((childTaskId) => {
+                    const subagent = subagentsById.get(childTaskId)
+                    return subagent ? [subagent] : []
+                  })}
+                />
               ) : item.block.type === 'reasoning' ? (
                 <MessageReasoning
                   content={item.block.content}
@@ -509,6 +605,9 @@ function ChatMessageRowView({
               </div>
             )}
           </>
+        )}
+        {unorderedSubagents && unorderedSubagents.length > 0 && (
+          <SubagentStatusList subagents={unorderedSubagents} />
         )}
         {message.artifactIds?.map((artifactId) => {
           const candidate = artifactById.get(artifactId)
