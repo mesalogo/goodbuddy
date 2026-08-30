@@ -266,7 +266,7 @@ export function createOpenCodeLaunchProfile(input: {
 
   return {
     executable: OPENCODE_BWRAP_EXECUTABLE,
-    processExecutable: OPENCODE_BWRAP_EXECUTABLE,
+    processExecutable: runtimeCommand.executable,
     args,
     cwd: scratchDirectory,
     env: {

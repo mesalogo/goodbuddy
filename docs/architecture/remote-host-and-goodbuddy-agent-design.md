@@ -284,7 +284,12 @@ Workspace、Runtime 和 Saving 进度仅用于新建或显式保存项目；进�
 产生冲突的项目创建和设置入口。远端 RPC 拒绝只向
 Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转发 Host 私有错误详情。
 `runtime/preparePrompt` 在远端明确拒绝且尚未接受 Prompt 时会关闭对应 Main binding，
-不会把确定性失败错误保留为 `outcome-unknown`。
+不会把确定性失败错误保留为 `outcome-unknown`。未确认终态的 Prompt 仍不会自动重放；
+用户之后显式发送的新 Prompt 会关闭旧的非就绪 Main binding，并以新的 ACP session
+继续当前 Conversation，避免一次恢复不确定永久阻塞后续输入。
+Ask 模式的 Linux Runtime 进程由 `bwrap` 启动后 `exec` 到已签名 Runtime 或 Agent
+model bridge helper；监督器只接受同一 PID/进程组从固定 `bwrap` 路径到预期最终可执行文件
+的有界转换，再登记为运行中进程。
 
 不持久化 T2/T3、consent、approval bridge、confinement 或组件验证结果。数据库 schema
 v31 保留项目及关联用户数据，但重建执行空间表为 `project_id/kind/root_path/ssh_host_id`

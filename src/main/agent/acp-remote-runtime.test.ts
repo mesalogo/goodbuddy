@@ -599,7 +599,7 @@ describe('AcpRemoteRuntime', () => {
   })
 
   it.each(['prompt-running', 'outcome-unknown'] as const)(
-    'does not replace a %s binding after identity changes',
+    'retires a %s binding before starting an explicit later prompt',
     async (state) => {
       const store = new MemoryRuntimeSessionBindingStore()
       const active = {
@@ -625,7 +625,13 @@ describe('AcpRemoteRuntime', () => {
         lastMainAckSequence: '0'
       }
       await store.put(active)
-      const factory = vi.fn(async () => fakeServer().channel)
+      const replacement = fakeServer()
+      const factory = vi.fn(
+        async (bindingId: string) => {
+          expect(bindingId).not.toBe(active.bindingId)
+          return replacement.channel
+        }
+      )
       const instance = factoryRuntime(factory, store, {
         identity: {
           ...identity,
@@ -633,22 +639,28 @@ describe('AcpRemoteRuntime', () => {
         }
       })
 
-      await expect(
-        collect(
-          instance.run(
-            { ...request, requestId: 'prompt-2' },
-            new AbortController().signal
-          )
+      await collect(
+        instance.run(
+          { ...request, requestId: 'prompt-2' },
+          new AbortController().signal
         )
-      ).rejects.toThrow('不会自动重放')
+      )
 
-      expect(factory).not.toHaveBeenCalled()
+      expect(factory).toHaveBeenCalledOnce()
+      expect(factory).not.toHaveBeenCalledWith(active.bindingId)
+      await expect(
+        store.getById(active.bindingId)
+      ).resolves.toMatchObject({
+        bindingId: active.bindingId,
+        state: 'closed',
+        activePromptOperationId: undefined
+      })
       await expect(
         store.getByConversation(request.conversationId)
       ).resolves.toMatchObject({
-        bindingId: active.bindingId,
-        state: 'outcome-unknown',
-        activePromptOperationId: request.requestId
+        bindingId: factory.mock.calls[0]![0],
+        state: 'ready',
+        activePromptOperationId: undefined
       })
       await instance.dispose()
     }

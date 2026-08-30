@@ -241,6 +241,9 @@ describe('OpenCode bubblewrap launch profile', () => {
       '--opencode-entrypoint',
       resolve(fixture.bundleDirectory, 'bin', 'opencode')
     ])
+    expect(profile.processExecutable).toBe(
+      resolve(agentInstallationDirectory, 'node')
+    )
     expect(profile.args.join('\0')).not.toMatch(
       /api[-_]?key|authorization|bearer|(?:^|\0)--token(?:\0|$)/iu
     )

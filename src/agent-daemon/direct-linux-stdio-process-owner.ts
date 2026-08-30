@@ -31,6 +31,7 @@ const DEFAULT_MAXIMUM_STDIN_WRITE_BYTES = 1024 * 1024
 const DEFAULT_MAXIMUM_OUTPUT_QUEUE_CHUNKS = 128
 const DEFAULT_MAXIMUM_LISTENERS = 8
 const DEFAULT_STOP_TIMEOUT_MS = 10_000
+const DEFAULT_LAUNCH_IDENTITY_TIMEOUT_MS = 5_000
 const TERM_GRACE_MS = 2_000
 const POLL_INTERVAL_MS = 25
 const OWNER_TOKEN_ENVIRONMENT_NAME = 'GOODBUDDY_RUNTIME_OWNER_TOKEN'
@@ -603,8 +604,18 @@ export async function launchDirectLinuxStdioProcessOwner(
     await waitForSpawn(child, options.signal, timeoutMs)
     if (child.pid === undefined) throw new Error('Runtime spawn did not return a PID')
     const readIdentity = options.readProcessIdentity ?? readLinuxRuntimeProcessIdentity
-    const processIdentity = await readIdentity(child.pid)
-    assertLaunchedIdentity(processIdentity, profile)
+    const processIdentity = await waitForLaunchedIdentity({
+      child,
+      pid: child.pid,
+      profile,
+      readIdentity,
+      signal: options.signal,
+      deadline: Math.min(
+        Date.parse(effectiveDeadlineAt),
+        now() + DEFAULT_LAUNCH_IDENTITY_TIMEOUT_MS
+      ),
+      now
+    })
     const supervisorIdentityDigest = supervisorDigest({
       installationId,
       ownerId,
@@ -871,15 +882,72 @@ function validateProfile(profile: OpenCodeLaunchProfile): OpenCodeLaunchProfile 
   }
 }
 
-function assertLaunchedIdentity(
-  identity: LinuxRuntimeProcessIdentity,
+async function waitForLaunchedIdentity(input: {
+  child: DirectLinuxStdioChild
+  pid: number
   profile: OpenCodeLaunchProfile
-): void {
-  if (
-    identity.executablePath !== profile.processExecutable ||
-    identity.processGroupId !== identity.pid
-  ) {
-    throw identityError('Spawned Runtime does not match the launch identity')
+  readIdentity: typeof readLinuxRuntimeProcessIdentity
+  signal?: AbortSignal
+  deadline: number
+  now: () => number
+}): Promise<LinuxRuntimeProcessIdentity> {
+  for (;;) {
+    input.signal?.throwIfAborted()
+    if (
+      input.child.exitCode !== null ||
+      input.child.signalCode !== null
+    ) {
+      throw new DirectLinuxStdioProcessOwnerError(
+        'Runtime process exited during launch',
+        'process'
+      )
+    }
+    let identity: LinuxRuntimeProcessIdentity
+    try {
+      identity = await input.readIdentity(input.pid)
+    } catch (error) {
+      if (!isMissingProcess(error)) {
+        throw error
+      }
+      if (input.now() >= input.deadline) {
+        throw new DirectLinuxStdioProcessOwnerError(
+          'Runtime launch identity was not observed',
+          'process'
+        )
+      }
+      await delay(
+        Math.min(
+          POLL_INTERVAL_MS,
+          Math.max(1, input.deadline - input.now())
+        )
+      )
+      continue
+    }
+    if (identity.processGroupId !== identity.pid) {
+      throw identityError(
+        'Spawned Runtime does not match the launch identity'
+      )
+    }
+    if (identity.executablePath === input.profile.processExecutable) {
+      return identity
+    }
+    if (identity.executablePath !== input.profile.executable) {
+      throw identityError(
+        'Spawned Runtime does not match the launch identity'
+      )
+    }
+    if (input.now() >= input.deadline) {
+      throw new DirectLinuxStdioProcessOwnerError(
+        'Runtime launch did not reach its supervised executable',
+        'process'
+      )
+    }
+    await delay(
+      Math.min(
+        POLL_INTERVAL_MS,
+        Math.max(1, input.deadline - input.now())
+      )
+    )
   }
 }
 

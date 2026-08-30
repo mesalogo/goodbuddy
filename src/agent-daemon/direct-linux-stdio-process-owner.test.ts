@@ -119,6 +119,47 @@ describe('direct Linux stdio Runtime ownership', () => {
     registry.close()
   })
 
+  it('waits for bubblewrap to exec the supervised bridge helper', async () => {
+    const registry = createRegistry()
+    const child = fakeChild()
+    const bwrapIdentity = identity()
+    const helperIdentity = {
+      ...bwrapIdentity,
+      executablePath: '/agent/node'
+    }
+    const spawn: DirectLinuxStdioSpawn = () => {
+      queueMicrotask(() => child.emit('spawn'))
+      return child
+    }
+    const readProcessIdentity = vi
+      .fn()
+      .mockResolvedValueOnce(bwrapIdentity)
+      .mockResolvedValue(helperIdentity)
+
+    const owner = await launchDirectLinuxStdioProcessOwner({
+      manifest: manifest(),
+      profile: {
+        ...profile(),
+        processExecutable: '/agent/node'
+      },
+      identity: { launchId: 'launch-1', processId: 'process-1' },
+      installationId: 'installation-1',
+      registry,
+      deadlineAt: '2030-01-01T00:00:00.000Z',
+      maximumInputBytes: 1024,
+      platform: 'linux',
+      spawn,
+      randomOwnerToken: () => 'a'.repeat(32),
+      readProcessIdentity
+    })
+
+    expect(readProcessIdentity).toHaveBeenCalledTimes(2)
+    expect(owner.processIdentity).toEqual(helperIdentity)
+    child.exitCode = 0
+    child.emit('close', 0, null)
+    registry.close()
+  })
+
   it('rejects PID reuse before sending any signal', async () => {
     const registry = createRegistry()
     const child = fakeChild()

@@ -833,7 +833,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     return interrupted
   }
 
-  private async persistRejectedPrompt(
+  private async persistClosedBinding(
     binding: RuntimeSessionBinding
   ): Promise<RuntimeSessionBinding> {
     const closed = runtimeSessionBindingSchema.parse({
@@ -1198,24 +1198,19 @@ export class AcpRemoteRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     signal: AbortSignal
   ): Promise<SessionRecord> {
-    const old = await this.awaitLocalOperation(
+    let binding = await this.awaitLocalOperation(
       '读取会话绑定',
       this.options.bindingStore.getByConversation(conversationId),
       signal
     )
     if (
-      old &&
-      old.state !== 'closed' &&
-      old.state !== 'ready'
+      binding &&
+      binding.state !== 'closed' &&
+      binding.state !== 'ready'
     ) {
-      await this.persistInterrupted(old)
-      throw new Error(
-        old.state === 'prompt-running'
-          ? '远端 ACP 会话存在未确认的活动请求，结果未知且不会自动重放'
-          : '远端 ACP 会话恢复状态不确定，已中断且不会自动重放'
-      )
+      await this.persistClosedBinding(binding)
+      binding = undefined
     }
-    let binding = old
     let bindingId = binding?.bindingId ?? randomUUID()
     if (
       binding?.state === 'ready' &&
@@ -1437,7 +1432,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
             error,
             'runtime/preparePrompt'
           )
-            ? this.persistRejectedPrompt(binding)
+            ? this.persistClosedBinding(binding)
             : this.persistInterrupted(binding)
         await persist.catch(() => undefined)
       }
@@ -1483,7 +1478,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
             error,
             'runtime/preparePrompt'
           )
-            ? this.persistRejectedPrompt(current.binding)
+            ? this.persistClosedBinding(current.binding)
             : this.persistInterrupted(current.binding)
         current.binding = await persist.catch(() => current.binding)
         this.sessions.delete(conversationId)
