@@ -62,7 +62,7 @@ import {
 } from './child-process-termination'
 
 const MAX_STARTUP_OUTPUT_BYTES = 64 * 1024
-const STARTUP_TIMEOUT_MS = 10_000
+const STARTUP_TIMEOUT_MS = 30_000
 const MAX_PERMISSION_NAME_LENGTH = 128
 const MAX_PERMISSION_PATTERNS = 32
 const MAX_PERMISSION_PATTERN_LENGTH = 1_024
@@ -1079,7 +1079,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           fail('OpenCode Server 启动已取消')
         }
         const timeout = setTimeout(() => {
-          fail('OpenCode Server 启动超时（10 秒）')
+          fail('OpenCode Server 启动超时（30 秒）')
         }, this.dependencies.startupTimeoutMs)
 
         if (!stdout || !stderr) {

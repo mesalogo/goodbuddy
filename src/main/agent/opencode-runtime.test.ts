@@ -997,7 +997,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
 
     expect(status).toMatchObject({
       available: false,
-      detail: 'OpenCode Server 启动超时（10 秒）'
+      detail: 'OpenCode Server 启动超时（30 秒）'
     })
     expect(status.detail).not.toContain(secret)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
