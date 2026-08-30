@@ -3917,7 +3917,16 @@ describe('registerIpcHandlers local conversation persistence', () => {
             role: 'assistant' as const,
             content: '增量内容',
             createdAt: 1,
-            state: 'streaming' as const
+            state: 'streaming' as const,
+            tools: [
+              {
+                callId: 'remote-tool-call',
+                name: '远程工具',
+                state: 'completed' as const,
+                summary: '完整远程工具结果',
+                output: '远程输出'.repeat(10_000)
+              }
+            ]
           }
         ]
       }

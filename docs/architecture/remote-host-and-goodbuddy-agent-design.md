@@ -207,6 +207,7 @@ Execute 不经过 Ask 的 bubblewrap profile：
   调度、跨 channel 超车、批发送或第二套拥塞控制。
 - Agent 在把 Main 输入交给 Runtime 前、以及把 Runtime 输出交给 Main 前，先把 ACP frame 写入本机 journal。ACK 只推进 cursor 并裁剪已确认 frame，不表示 channel 已终止。
 - Main 持久化 binding identity 和单调 cursor；保留中的 connection lease 即使处于 offline/reconnecting，也可以先把新 cursor 落盘。重连提交不能覆盖 resume 过程中并发落盘的更新。
+- Runtime 事件进入桌面会话后，Renderer 和 Main 将完整工具详情保存到本地 SQLite，不再对已接受的工具输入、输出、错误或摘要施加额外的会话字段长度限制。
 - 同一 detached Agent 存活时，短暂 SSH 断线依次执行 `controller/resume`、`runtime/resumeAcpChannel` 和 `runtime/replayAcpChannel`，从 Main 已确认的 cursor 后只重放 Agent 到 Main 的已记录输出。重复 frame 会被确认但不会再次交给上层。若上一代连接只留下没有活动请求的 detached binding，完成精确 controller takeover 后会先有界停止并核对遗留 Runtime process，再用新 channel epoch 重新打开同一 binding 并恢复已有 ACP session；其他 controller、未证明 takeover 或仍有活动请求的 binding 仍被拒绝。
 - Main 到 Runtime 的 ACP 输入、模型请求、工具请求和 blob 不自动重放。
 - 无法确认外部 Provider 是否已处理的模型调用保持结果未知，避免重复计费或重复副作用。

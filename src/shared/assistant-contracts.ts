@@ -133,8 +133,8 @@ export type ConversationQueueItem = z.infer<
 
 export const conversationToolActivitySchema = z
   .object({
-    callId: z.string().max(256).optional(),
-    name: z.string().max(200),
+    callId: z.string().optional(),
+    name: z.string(),
     state: z.enum([
       'pending',
       'running',
@@ -144,10 +144,10 @@ export const conversationToolActivitySchema = z
       'cancelled',
       'interrupted'
     ]),
-    summary: z.string().max(2_000),
-    input: z.string().max(4_000).optional(),
-    output: z.string().max(16_000).optional(),
-    error: z.string().max(2_000).optional()
+    summary: z.string(),
+    input: z.string().optional(),
+    output: z.string().optional(),
+    error: z.string().optional()
   })
   .strict()
 

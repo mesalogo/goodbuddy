@@ -6,6 +6,7 @@ import {
   conversationBranchInputSchema,
   conversationSnapshotSchema,
   isUntouchedBuiltInDefaultProject,
+  localConversationSaveBatchSchema,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
   projectExecutionSpaceSchema,
@@ -201,5 +202,44 @@ describe('conversation branch contracts', () => {
         messages: []
       }).success
     ).toBe(true)
+  })
+})
+
+describe('conversation persistence contracts', () => {
+  it('preserves complete tool details without persistence length limits', () => {
+    const input = 'input'.repeat(10_000)
+    const output = 'output'.repeat(20_000)
+    const error = 'error'.repeat(10_000)
+    const batch = [
+      {
+        header: {
+          id: '00000000-0000-4000-8000-000000000301',
+          title: '远程工具会话',
+          updatedAt: 1
+        },
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000302',
+            role: 'assistant',
+            content: '',
+            createdAt: 1,
+            state: 'complete',
+            tools: [
+              {
+                callId: 'remote-tool-call',
+                name: '远程工具',
+                state: 'completed',
+                summary: '完整远程工具结果',
+                input,
+                output,
+                error
+              }
+            ]
+          }
+        ]
+      }
+    ]
+
+    expect(localConversationSaveBatchSchema.parse(batch)).toEqual(batch)
   })
 })

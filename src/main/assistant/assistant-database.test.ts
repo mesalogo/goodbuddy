@@ -3299,6 +3299,15 @@ describe('AssistantDatabase', () => {
             createdAt: 1_775_000_000_001,
             state: 'complete' as const,
             status: '已完成',
+            tools: [
+              {
+                callId: 'remote-tool-call',
+                name: '远程工具',
+                state: 'completed' as const,
+                summary: '完整远程工具结果',
+                output: '远程输出'.repeat(10_000)
+              }
+            ],
             contextCompressions: [
               {
                 state: 'completed' as const,
@@ -3350,6 +3359,15 @@ describe('AssistantDatabase', () => {
           content: '生成完成',
           state: 'complete',
           status: '已完成',
+          tools: [
+            {
+              callId: 'remote-tool-call',
+              name: '远程工具',
+              state: 'completed',
+              summary: '完整远程工具结果',
+              output: '远程输出'.repeat(10_000)
+            }
+          ],
           contextCompressions: [
             {
               state: 'completed',
