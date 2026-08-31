@@ -344,7 +344,7 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
   的双架构验收。Agent `0.11.10` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 固定为未发布候选 `0.11.14`。
+  当前源码 lock 固定为 `0.11.14`；正式发布状态以独立 Agent Release 与签名 catalog 为准。
 - 2026-08-30 在共享 Linux x64 Host 的隔离测试 HOME 中验证当前 `0.11.13` 源码候选：
   签名 Runtime 清单的测试墙钟上限为 1 秒，模型桥首轮故意延迟 2.515 秒后 Prompt 仍在
   5.770 秒正常完成；随后 OpenCode 原生 Task 依次产生 `running`、`completed` 子 Agent

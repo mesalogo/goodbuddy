@@ -2,6 +2,56 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.11.14",
+      "releasedAt": "2026-08-31",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.11.14 让托管 SSH 任务在桌面退出或网络中断后继续在 Host 上运行并恢复到原会话，同时新增默认保存在本地的有界诊断，以及更清晰、可恢复的桌面反馈。"
+          ],
+          "features": [
+            "**托管 SSH 任务在 Host 上继续运行。** Agent 接受 OpenCode 任务后，不再依赖桌面或 SSH relay 持续在线。重新连接会把结果同步到原会话，不会重发 Prompt、模型调用或工具。项目选择器现按 Host 分组，并显示实时 Agent 连接状态和逐项目恢复进度。",
+            "**有界诊断与可选反馈附件。** Desktop 与 Agent 分别轮转保存固定阶段和错误码；Agent 诊断可通过只读 `goodbuddy-agent diagnostics --installation-id <id>` 导出为 JSONL。应用内反馈仅在用户勾选时附加小型桌面诊断摘要，且不会附加远端 Agent 日志。"
+          ],
+          "fixes": [
+            "**Runtime 状态检查不再残留服务。** 应用启动和切换 Runtime 后会立即回收仅用于状态检查的 OpenCode 探测实例；实际执行 Runtime 仍按项目复用。",
+            "**Host 版本状态无需重复刷新。** 成功读取的 Agent 与 Runtime 版本会在切换设置分类和重启应用后保留，直到用户刷新、编辑或删除 Host，或开始更新远程环境。",
+            "**较慢设备上的 OpenCode 启动更可靠。** Linux ARM 与 QEMU 环境的本地 OpenCode 健康检查现在最多等待 30 秒，减少服务已就绪却误报超时。",
+            "**更新控制相互独立。** 关闭自动检查不再禁用更新源切换或手动检查；启动检查和打开下载页失败时会明确提示。",
+            "**状态、错误与无障碍反馈更清晰。** 聊天顶部区分 Runtime 连接中、就绪与不可用；Ask/Execute 说明与真实权限一致；最近会话、Host、工作区预览、智能心跳和知识库的加载失败提供明确状态与重试，审批和长任务阶段也会通过辅助技术播报。"
+          ],
+          "notices": [
+            "**远程项目技术预览。** 该能力仍默认关闭。Host 必须安装单独发布的 Agent `0.11.14`（Linux x64/arm64）才能使用新的 Agent-owned 恢复；桌面包不内置 Agent 或远程 Runtime。",
+            "**离线执行与恢复边界。** Agent 接受任务后，桌面离线期间仍可能继续模型和工具轮次并产生服务商用量，直到任务完成、恢复连接后被取消，或 Host 侧 Runtime 停止。若 Host、Agent 或 Runtime 重启，内存中的进行中任务无法继续，将报告结果未知且不会自动重放。",
+            "**诊断默认仅保存在本地。** 诊断不记录对话、Prompt、凭据、文件内容、路径、环境变量、SSH 参数或 Provider 原始响应；只有用户明确勾选时才将有界桌面摘要附加到反馈，Agent 日志不会自动上传。",
+            "**发布平台。** Desktop 使用标准 Windows、macOS、Linux 的 x64/arm64 发布矩阵；本次不构建实验性 LoongArch 预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.11.14 keeps managed SSH tasks running on the Host when the Desktop exits or the network disconnects, restores them into the original conversation, and adds bounded local-by-default diagnostics plus clearer, recoverable desktop feedback."
+          ],
+          "features": [
+            "**Managed SSH tasks continue on the Host.** After the Agent accepts an OpenCode task, it no longer depends on the Desktop or SSH relay staying online. Reconnection synchronizes results into the original conversation without replaying the prompt, model calls, or tools. The project selector now groups projects by Host and shows live Agent connectivity and per-project recovery progress.",
+            "**Bounded diagnostics and optional feedback attachment.** Desktop and Agent keep separate rotating local records of fixed stages and error codes. Agent diagnostics are available as read-only JSONL through `goodbuddy-agent diagnostics --installation-id <id>`. In-app feedback attaches a small Desktop diagnostic summary only when selected, and never includes remote Agent logs."
+          ],
+          "fixes": [
+            "**Runtime status checks no longer leave services running.** GoodBuddy now releases OpenCode probes used only for status checks after startup and Runtime switching. Execution Runtimes remain reusable per project.",
+            "**Host version status no longer needs repeated refreshes.** Successful Agent and Runtime version results persist across settings-category changes and app restarts until the user refreshes, edits or removes the Host, or starts a remote-environment update.",
+            "**More reliable OpenCode startup on slower systems.** Local OpenCode health checks now wait up to 30 seconds on Linux ARM and QEMU environments, reducing false timeout reports after the service becomes ready.",
+            "**Independent update controls.** Turning off automatic checks no longer disables update-source selection or manual checks. Startup-check and download-page failures are now shown explicitly.",
+            "**Clearer status, recovery, and accessibility feedback.** The chat header distinguishes Runtime Connecting, Ready, and Unavailable states; Ask/Execute guidance matches actual permissions; load failures for recent conversations, Hosts, workspace previews, Smart Heartbeat, and Knowledge provide explicit states and retries; approval and long-task stages are also announced to assistive technologies."
+          ],
+          "notices": [
+            "**Remote Projects technical preview.** This capability remains off by default. Hosts require the separately published Agent `0.11.14` for Linux x64 or arm64 to use the new Agent-owned recovery. Desktop packages do not embed the Agent or Remote Runtime.",
+            "**Offline execution and recovery boundary.** After the Agent accepts a task, model and tool rounds may continue while the Desktop is offline and may continue provider usage until the task completes, is cancelled after reconnection, or the Host-side Runtime stops. If the Host, Agent, or Runtime restarts, in-memory work cannot continue; it reports an unknown outcome and is not replayed automatically.",
+            "**Diagnostics remain local by default.** Diagnostics do not record conversations, prompts, credentials, file contents, paths, environment variables, SSH arguments, or raw provider responses. A bounded Desktop summary is attached to feedback only when explicitly selected, and Agent logs are never uploaded automatically.",
+            "**Release platforms.** Desktop uses the standard Windows, macOS, and Linux x64/arm64 matrix. This release does not build an experimental LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.13",
       "releasedAt": "2026-08-30",
       "notes": {
