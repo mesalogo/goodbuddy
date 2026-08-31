@@ -152,6 +152,10 @@ import type {
   RuntimeSettings,
   RuntimeSettingsInput
 } from '../shared/contracts'
+import {
+  DesktopDiagnostics,
+  type DesktopDiagnosticFailureObserver
+} from './desktop-diagnostics'
 
 const legacyDefaultShortcut =
   defaultGlobalShortcutSettings.accelerator
@@ -163,6 +167,14 @@ const portableUserDataPath = resolvePortableUserDataPath({
 })
 if (portableUserDataPath) {
   app.setPath('userData', portableUserDataPath)
+}
+const desktopDiagnostics = new DesktopDiagnostics(
+  join(app.getPath('userData'), 'diagnostics')
+)
+const observeDesktopFailure: DesktopDiagnosticFailureObserver = (
+  failure
+) => {
+  void desktopDiagnostics.recordFailure(failure).catch(() => undefined)
 }
 const installedWindowsBuild = isInstalledWindowsBuild({
   packaged: app.isPackaged,
@@ -677,7 +689,8 @@ if (hasSingleInstanceLock) {
       appPath: app.getAppPath(),
       resourcesPath: process.resourcesPath,
       packaged: app.isPackaged,
-      controlPlanePackageInstaller
+      controlPlanePackageInstaller,
+      observeFailure: observeDesktopFailure
     })
     remoteAgentServices = startupRemoteAgentServices
     const startupManagedRemoteExecutionServices =
@@ -776,7 +789,8 @@ if (hasSingleInstanceLock) {
       client: new StrictFeedbackHttpClient({
         appVersion: app.getVersion(),
         dispatcher: createStrictFeedbackDispatcher()
-      })
+      }),
+      diagnosticsProvider: desktopDiagnostics
     })
     feedbackService = startupFeedbackService
     const startupEmbeddingModelManager = new EmbeddingModelManager({
@@ -1078,9 +1092,16 @@ if (hasSingleInstanceLock) {
         initialResolvedSettings
       )
     )
-    runtime = new AgentRuntimeController(configuredRuntime)
+    runtime = new AgentRuntimeController(
+      configuredRuntime,
+      undefined,
+      observeDesktopFailure
+    )
     selectedRuntimeManager = new SelectedRuntimeManager(
-      createSelectedRuntime
+      createSelectedRuntime,
+      undefined,
+      undefined,
+      observeDesktopFailure
     )
     const contextManager = new ContextManager({
       parseDocument: documentParsingService.parse
@@ -1394,6 +1415,12 @@ if (hasSingleInstanceLock) {
       }
     })
   }).catch((error: unknown) => {
+    void desktopDiagnostics.recordFailure({
+      component: 'desktop',
+      stage: 'startup',
+      code: 'desktop.startup.failed',
+      error
+    }).catch(() => undefined)
     console.error(
       'GoodBuddy startup failed',
       createStartupFailureDiagnostic(error)
@@ -1449,7 +1476,8 @@ app.on('before-quit', (event) => {
         [() => managedRemoteExecutionServices?.dispose()],
         [() => remoteAgentServices?.dispose()],
         [() => knowledgeGateway?.dispose()],
-        [() => knowledgeService?.dispose()]
+        [() => knowledgeService?.dispose()],
+        [() => desktopDiagnostics.dispose()]
       ])
       globalShortcut.unregisterAll()
       tray?.destroy()

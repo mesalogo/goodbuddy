@@ -36,6 +36,7 @@ import { AgentUnsupportedError } from './errors'
 import { WorkspaceGitService } from './workspace-git-service'
 import { createWorkspaceProtocolMethods } from './workspace-protocol-methods'
 import { WorkspaceRegistry } from './workspace-registry'
+import { AgentDiagnosticLog } from './diagnostic-log'
 
 export type AgentDaemonOptions = {
   installationId: string
@@ -67,6 +68,7 @@ export type AgentDaemonOptions = {
   runtimeFactory?: (context: {
     events: EventJournal
     workspaces: WorkspaceRegistry
+    diagnostics: AgentDiagnosticLog
     outputSink: (
       frame: AgentFrame,
       context: {
@@ -109,6 +111,7 @@ export class AgentDaemon {
   readonly #runtimeProtocol?: AgentDaemonOptions['runtimeProtocol']
   readonly #runtimeFactory?: AgentDaemonOptions['runtimeFactory']
   readonly #reportError: (message: string, error: unknown) => void
+  readonly #diagnostics: AgentDiagnosticLog
   #state: 'starting' | 'ready' | 'stopped' = 'stopped'
   #endpoint?: PrivateEndpoint
   #events?: EventJournal
@@ -136,8 +139,11 @@ export class AgentDaemon {
     )
     this.#stateDirectory = resolve(options.stateDirectory)
     this.#socketPath = resolve(options.socketPath)
-    this.#peerIdentityProvider = options.peerIdentityProvider
     this.#now = options.now ?? Date.now
+    this.#diagnostics = new AgentDiagnosticLog(this.#stateDirectory, {
+      now: this.#now
+    })
+    this.#peerIdentityProvider = options.peerIdentityProvider
     this.#gitExecutable = options.gitExecutable
     this.#workspaceRequestTimeoutMs = options.workspaceRequestTimeoutMs
     this.#runtimeProtocol = options.runtimeProtocol
@@ -186,6 +192,9 @@ export class AgentDaemon {
     this.#state = 'starting'
     try {
       ensurePrivateDirectory(this.#stateDirectory)
+      this.#diagnostics.tryRecord('daemon.starting', {
+        daemonBootId: this.#bootId
+      })
       ensurePrivateDirectoryTree(
         resolve(this.#stateDirectory, 'journal'),
         this.#stateDirectory
@@ -234,6 +243,7 @@ export class AgentDaemon {
         await this.#runtimeFactory?.({
           events: this.#events,
           workspaces: this.#workspaces,
+          diagnostics: this.#diagnostics,
           outputSink: async (frame) => {
             if (protocolBox.current === undefined) {
               throw new Error(
@@ -277,6 +287,10 @@ export class AgentDaemon {
           connectionId,
           category
         }) => {
+          this.#diagnostics.tryRecord('connection.failed', {
+            daemonBootId: this.#bootId,
+            reason: category
+          })
           try {
             writePrivateFileAtomic(
               resolve(
@@ -299,6 +313,20 @@ export class AgentDaemon {
             )
           }
         },
+        onConnectionClose: ({ category }) => {
+          if (category === undefined) {
+            this.#diagnostics.tryRecord('connection.closed', {
+              daemonBootId: this.#bootId,
+              reason: 'peer-closed'
+            })
+          }
+        },
+        onRecovery: ({ outcome, reason }) => {
+          this.#diagnostics.tryRecord(`recovery.${outcome}`, {
+            daemonBootId: this.#bootId,
+            ...(reason === undefined ? {} : { reason })
+          })
+        },
         methods: mergeProtocolMethods(
           workspaceMethods,
           this.#activeRuntimeProtocol?.methods
@@ -317,18 +345,40 @@ export class AgentDaemon {
         daemonBootId: this.#bootId,
         protocol: this.#protocol,
         onAttach: ({ socket, controller }) => {
+          this.#diagnostics.tryRecord('connection.attached', {
+            daemonBootId: this.#bootId
+          })
           protocol.accept(socket, controller)
+        },
+        onConnectionFailure: (error) => {
+          this.#diagnostics.tryRecord('connection.failed', {
+            daemonBootId: this.#bootId,
+            reason: 'authentication',
+            error
+          })
         }
       })
       await this.#endpoint.listen()
       this.#state = 'ready'
+      this.#diagnostics.tryRecord('daemon.ready', {
+        daemonBootId: this.#bootId
+      })
     } catch (error) {
+      this.#diagnostics.tryRecord('daemon.start.failed', {
+        daemonBootId: this.#bootId,
+        error
+      })
       await this.stop()
       throw error
     }
   }
 
   async stop(): Promise<void> {
+    if (this.#state !== 'stopped') {
+      this.#diagnostics.tryRecord('daemon.stopping', {
+        daemonBootId: this.#bootId
+      })
+    }
     const endpoint = this.#endpoint
     const events = this.#events
     const workspaces = this.#workspaces
@@ -337,10 +387,14 @@ export class AgentDaemon {
     this.#events = undefined
     this.#workspaces = undefined
     this.#activeRuntimeProtocol = undefined
+    let stopError: unknown
     try {
       if (endpoint !== undefined) {
         await endpoint.close()
       }
+    } catch (error) {
+      stopError = error
+      throw error
     } finally {
       if (runtimeProtocol?.dispose !== undefined) {
         await Promise.resolve(runtimeProtocol.dispose()).catch(
@@ -352,10 +406,25 @@ export class AgentDaemon {
       workspaces?.closeAll()
       events?.close()
       this.#state = 'stopped'
+      this.#diagnostics.tryRecord(
+        stopError === undefined
+          ? 'daemon.stopped'
+          : 'daemon.stop.failed',
+        {
+          daemonBootId: this.#bootId,
+          ...(stopError === undefined ? {} : { error: stopError })
+        }
+      )
+      await this.#diagnostics.dispose()
     }
   }
 
   #reportRuntimeShutdownError(error: unknown): void {
+    this.#diagnostics.tryRecord('daemon.stop.failed', {
+      daemonBootId: this.#bootId,
+      reason: 'runtime-dispose',
+      error
+    })
     try {
       this.#reportError('Agent Runtime shutdown failed', error)
     } catch (reportError) {

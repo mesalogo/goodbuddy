@@ -13,6 +13,9 @@ import type {
 } from './runtime'
 import { AgentRuntimeController } from './runtime-controller'
 import type { ExecutionSpaceDescriptor } from '../execution-space'
+import type {
+  DesktopDiagnosticFailureObserver
+} from '../desktop-diagnostics'
 
 export type SelectedRuntimeResolver = {
   getRuntime(
@@ -70,7 +73,9 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     private readonly maximumCachedRuntimes =
       DEFAULT_MAXIMUM_CACHED_RUNTIMES,
     private readonly maximumRetainedRuntimes =
-      DEFAULT_MAXIMUM_RETAINED_RUNTIMES
+      DEFAULT_MAXIMUM_RETAINED_RUNTIMES,
+    private readonly observeFailure?:
+      DesktopDiagnosticFailureObserver
   ) {
     if (
       !Number.isSafeInteger(maximumCachedRuntimes) ||
@@ -129,7 +134,11 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
           await runtime.dispose()
           throw new Error('Runtime 设置已更改，请重新选择')
         }
-        const controller = new AgentRuntimeController(runtime)
+        const controller = new AgentRuntimeController(
+          runtime,
+          undefined,
+          this.observeFailure
+        )
         entry.controller = controller
         return controller
       }
@@ -148,6 +157,7 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
       if (this.entries.get(key) === entry) {
         this.entries.delete(key)
       }
+      this.reportFailure('create', error)
       throw error
     }
   }
@@ -162,6 +172,9 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     this.tests.add(operation)
     try {
       return await operation
+    } catch (error) {
+      this.reportFailure('status', error)
+      throw error
     } finally {
       this.tests.delete(operation)
     }
@@ -177,6 +190,9 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     this.tests.add(operation)
     try {
       return await operation
+    } catch (error) {
+      this.reportFailure('connection-test', error)
+      throw error
     } finally {
       this.tests.delete(operation)
     }
@@ -196,6 +212,9 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     this.snapshots.add(operation)
     try {
       return await operation
+    } catch (error) {
+      this.reportFailure('native-snapshot', error)
+      throw error
     } finally {
       this.snapshots.delete(operation)
     }
@@ -419,6 +438,19 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
       }
       this.entries.delete(key)
       void this.startRetiring(entry, false)
+    }
+  }
+
+  private reportFailure(stage: string, error: unknown): void {
+    try {
+      this.observeFailure?.({
+        component: 'runtime',
+        stage,
+        code: 'runtime.operation.failed',
+        error
+      })
+    } catch {
+      // Diagnostics must not alter Runtime behavior.
     }
   }
 }

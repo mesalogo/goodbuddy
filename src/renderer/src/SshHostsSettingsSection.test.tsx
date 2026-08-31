@@ -345,6 +345,36 @@ describe('SshHostsSettingsSection', () => {
     expect(getSnapshot).toHaveBeenCalledOnce()
   })
 
+  it('separates a failed Host read from an empty list and retries it', async () => {
+    getSnapshot
+      .mockRejectedValueOnce(new Error('Host database unavailable'))
+      .mockResolvedValueOnce(emptySnapshot)
+    render(<SshHostsSettingsSection />)
+
+    expect(
+      await screen.findByText('SSH 主机加载失败')
+    ).toBeInTheDocument()
+    expect(screen.getByText('Host database unavailable')).toBeInTheDocument()
+    expect(
+      screen.queryByText('尚未配置 SSH 主机')
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    expect(await screen.findByText('尚未配置 SSH 主机'))
+      .toBeInTheDocument()
+    expect(getSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the shared live busy state while Hosts load', () => {
+    getSnapshot.mockReturnValue(new Promise(() => {}))
+    render(<SshHostsSettingsSection />)
+
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveAttribute('aria-busy', 'true')
+  })
+
   it('keeps failed authentication editable and retries without saving a failed host', async () => {
     getSnapshot
       .mockResolvedValueOnce(emptySnapshot)

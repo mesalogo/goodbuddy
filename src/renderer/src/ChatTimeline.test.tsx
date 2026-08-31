@@ -352,4 +352,143 @@ describe('ChatTimeline', () => {
       expect.stringContaining('父 Agent 最终回复')
     ])
   })
+
+  it('uses one live source per event without announcing historical tool rows', () => {
+    const messages: Message[] = [
+      {
+        id: 'working',
+        role: 'assistant',
+        content: 'streamed reply body',
+        createdAt: 1_775_000_000_000,
+        state: 'streaming',
+        status: 'Preparing tools'
+      },
+      {
+        id: 'approval',
+        role: 'assistant',
+        content: '',
+        createdAt: 1_775_000_000_001,
+        state: 'complete',
+        approval: {
+          id: 'approval-1',
+          title: 'Write workspace file',
+          description: 'Update release.md',
+          toolName: 'write_file'
+        }
+      },
+      {
+        id: 'failed',
+        role: 'assistant',
+        content: 'bounded failure context',
+        createdAt: 1_775_000_000_002,
+        state: 'error',
+        status: 'Runtime connection failed'
+      },
+      {
+        id: 'tool-history',
+        role: 'assistant',
+        content: '',
+        createdAt: 1_775_000_000_003,
+        state: 'complete',
+        tools: [
+          {
+            callId: 'tool-1',
+            name: 'read_file',
+            summary: 'Read the file',
+            state: 'completed'
+          }
+        ],
+        subagents: [
+          {
+            childTaskId: 'subagent-1',
+            expertId: 'expert-1',
+            expertName: 'reviewer',
+            routingMode: 'manual',
+            state: 'completed'
+          }
+        ]
+      },
+      {
+        id: 'retrieval',
+        role: 'assistant',
+        content: '',
+        createdAt: 1_775_000_000_004,
+        state: 'complete',
+        status: 'Knowledge search complete',
+        knowledgeRetrieval: {
+          mode: 'always',
+          state: 'succeeded',
+          libraryCount: 1,
+          resultCount: 2,
+          durationMs: 20,
+          usedChannels: ['fts'],
+          warnings: []
+        }
+      },
+      {
+        id: 'compression',
+        role: 'assistant',
+        content: '',
+        createdAt: 1_775_000_000_005,
+        state: 'complete',
+        status: 'Context compression complete',
+        contextCompression: {
+          state: 'completed',
+          estimatedBeforeTokens: 20_000,
+          estimatedAfterTokens: 8_000
+        }
+      }
+    ]
+
+    const { container } = render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="en-US"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    expect(
+      screen.getByRole('status', { name: 'Preparing tools' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('status', {
+        name: '等待审批：write_file'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('alert', {
+        name: 'Runtime connection failed'
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('streamed reply body')
+    ).not.toHaveAttribute('aria-live')
+    expect(screen.getByLabelText('已完成', { selector: 'small' }))
+      .not.toHaveAttribute('aria-live')
+    expect(
+      screen.getByLabelText('已完成', {
+        selector: '.subagent-status-card__status'
+      })
+    ).not.toHaveAttribute('aria-live')
+    expect(
+      screen.getByLabelText('Knowledge search complete')
+    ).not.toHaveAttribute('aria-live')
+    expect(
+      screen.getByLabelText('Context compression complete')
+    ).not.toHaveAttribute('aria-live')
+    expect(
+      container.querySelectorAll('.approval-card [aria-live="polite"]')
+    ).toHaveLength(1)
+    expect(
+      container.querySelectorAll('.message-retrieval-status[aria-live]')
+    ).toHaveLength(1)
+  })
 })

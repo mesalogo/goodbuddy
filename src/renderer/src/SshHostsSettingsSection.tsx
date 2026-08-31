@@ -107,6 +107,7 @@ export function SshHostsSettingsSection({
   const [projectReferences, setProjectReferences] =
     useState<SshHostsSnapshot['projectReferences']>()
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string>()
   const [error, setError] = useState<string>()
   const [editingId, setEditingId] = useState<string | 'new'>()
   const [busyHostId, setBusyHostId] = useState<string>()
@@ -202,34 +203,51 @@ export function SshHostsSettingsSection({
       setHosts(snapshot.hosts)
       setSecureStorageAvailable(snapshot.secureStorageAvailable)
       setProjectReferences(snapshot.projectReferences)
-      setError(undefined)
+      setLoadError(undefined)
     },
     []
   )
 
+  const loadSnapshot = useCallback(async (): Promise<void> => {
+    setLoading(true)
+    setLoadError(undefined)
+    try {
+      applySnapshot(await requestSnapshot())
+    } catch (reason) {
+      setLoadError(
+        displayErrorMessage(
+          reason,
+          t('sshHosts.errors.readFailed')
+        )
+      )
+    } finally {
+      setLoading(false)
+    }
+  }, [applySnapshot, requestSnapshot, t])
+
   useEffect(() => {
     let active = true
-    void requestSnapshot()
-      .then((snapshot) => {
+    setLoading(true)
+    setLoadError(undefined)
+    void requestSnapshot().then(
+      (snapshot) => {
         if (active) {
           applySnapshot(snapshot)
+          setLoading(false)
         }
-      })
-      .catch((reason: unknown) => {
+      },
+      (reason: unknown) => {
         if (active) {
-          setError(
+          setLoadError(
             displayErrorMessage(
               reason,
               t('sshHosts.errors.readFailed')
             )
           )
-        }
-      })
-      .finally(() => {
-        if (active) {
           setLoading(false)
         }
-      })
+      }
+    )
     return () => {
       active = false
     }
@@ -620,7 +638,28 @@ export function SshHostsSettingsSection({
       )}
 
       {loading ? (
-        <div className="settings-empty">{t('sshHosts.loading')}</div>
+        <EmptyState
+          description={t('sshHosts.loading')}
+          icon={<LoaderCircle size={22} />}
+          title={t('sshHosts.loading')}
+          variant="loading"
+        />
+      ) : loadError ? (
+        <EmptyState
+          action={
+            <button
+              className="secondary-button"
+              onClick={() => void loadSnapshot()}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={14} />
+              {t('sshHosts.actions.retry')}
+            </button>
+          }
+          description={loadError}
+          icon={<Server size={22} />}
+          title={t('sshHosts.loadFailedTitle')}
+        />
       ) : hosts.length === 0 ? (
         <EmptyState
           action={

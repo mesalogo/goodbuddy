@@ -273,6 +273,7 @@ function harness(input: {
     dispatch: ReturnType<typeof vi.fn>
     finalizePrompt: ReturnType<typeof vi.fn>
   }
+  launchError?: Error
 } = {}) {
   const workMode = input.workMode ?? 'ask'
   let now = input.now ?? 1_000
@@ -284,6 +285,9 @@ function harness(input: {
     scratch: string
   }> = []
   const lifecycle: string[] = []
+  const diagnostics = {
+    tryRecord: vi.fn()
+  }
   const bridgeCloses = vi.fn(async () => {
     if (input.bridgeCloseError) {
       throw new Error('broker close failed')
@@ -315,6 +319,9 @@ function harness(input: {
     })),
     launchProcess: vi.fn(async (launch) => {
       lifecycle.push('launch')
+      if (input.launchError !== undefined) {
+        throw input.launchError
+      }
       launchModelBridges.push(launch.modelBridge)
       launches.push({
         workMode: launch.workMode,
@@ -325,6 +332,7 @@ function harness(input: {
         : process
     }),
     now: () => now,
+    diagnostics,
     outputSink: vi.fn(async (frame) => {
       await input.outputGate
       outputFrames.push(Buffer.from(frame.payload).toString())
@@ -366,6 +374,7 @@ function harness(input: {
     process,
     launches,
     lifecycle,
+    diagnostics,
     bridgeCloses,
     blobSink,
     get bridgeDispatch() {
@@ -876,6 +885,56 @@ describe('RuntimeAcpBackend', () => {
       )
     )
     expect(fixture.bridgeCloses).toHaveBeenCalledOnce()
+    await vi.waitFor(() =>
+      expect(fixture.diagnostics.tryRecord).toHaveBeenCalledWith(
+        'runtime.exited',
+        {
+          runtimeId: 'opencode',
+          workMode: 'ask',
+          outcome: 'failed'
+        }
+      )
+    )
+    expect(fixture.diagnostics.tryRecord).toHaveBeenCalledWith(
+      'runtime.starting',
+      {
+        runtimeId: 'opencode',
+        workMode: 'ask'
+      }
+    )
+    expect(fixture.diagnostics.tryRecord).toHaveBeenCalledWith(
+      'runtime.started',
+      {
+        runtimeId: 'opencode',
+        workMode: 'ask'
+      }
+    )
+    await fixture.backend.dispose()
+  })
+
+  it('records a redacted Runtime launch failure at the unified preparation point', async () => {
+    const launchError = new Error(
+      'accepted Prompt and API key must never be persisted'
+    )
+    const fixture = harness({ launchError })
+    await open(fixture)
+
+    await expect(
+      invoke(
+        fixture,
+        'runtime/preparePrompt',
+        fixture.preparation()
+      )
+    ).rejects.toThrow('Runtime process launch failed')
+
+    expect(fixture.diagnostics.tryRecord).toHaveBeenCalledWith(
+      'runtime.start.failed',
+      {
+        runtimeId: 'opencode',
+        workMode: 'ask',
+        error: launchError
+      }
+    )
     await fixture.backend.dispose()
   })
 

@@ -106,7 +106,12 @@ describe('AgentRuntimeController', () => {
   it('fails retired runtime requests and disposes them after exit', async () => {
     const previous = new TestRuntime(true, true)
     const next = new TestRuntime()
-    const controller = new AgentRuntimeController(previous)
+    const observeFailure = vi.fn()
+    const controller = new AgentRuntimeController(
+      previous,
+      undefined,
+      observeFailure
+    )
     const authorize = vi.fn(async () => 'once' as const)
     const approvedStream = controller.run(
       {
@@ -137,6 +142,7 @@ describe('AgentRuntimeController', () => {
     await expect(controller.getStatus()).resolves.toMatchObject({
       label: 'Test'
     })
+    expect(observeFailure).not.toHaveBeenCalled()
   })
 
   it('keeps a retiring runtime alive until its status probe finishes', async () => {
@@ -449,6 +455,132 @@ describe('AgentRuntimeController', () => {
       expect(authorize).not.toHaveBeenCalled()
   })
 
+  it('does not report cancellation, AbortError, or tool denial', async () => {
+    const observeFailure = vi.fn()
+    const canceledRuntime = new TestRuntime()
+    canceledRuntime.run = async function* (
+      _request,
+      signal
+    ): AsyncGenerator<AgentEvent, void, void> {
+      yield* []
+      signal.throwIfAborted()
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => reject(signal.reason),
+          { once: true }
+        )
+      })
+    }
+    const canceledController = new AgentRuntimeController(
+      canceledRuntime,
+      undefined,
+      observeFailure
+    )
+    const abortController = new AbortController()
+    const canceled = canceledController.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b18',
+        conversationId: 'conversation-canceled',
+        prompt: 'test',
+        workMode: 'ask'
+      },
+      abortController.signal
+    )
+    const pending = canceled.next()
+    abortController.abort()
+    await expect(pending).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    await canceledController.dispose()
+
+    const abortErrorRuntime = new TestRuntime()
+    abortErrorRuntime.run = async function* (): AsyncGenerator<
+      AgentEvent,
+      void,
+      void
+    > {
+      yield* []
+      throw new DOMException('aborted', 'AbortError')
+    }
+    const abortErrorController = new AgentRuntimeController(
+      abortErrorRuntime,
+      undefined,
+      observeFailure
+    )
+    const aborted = abortErrorController.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b19',
+        conversationId: 'conversation-abort-error',
+        prompt: 'test',
+        workMode: 'ask'
+      },
+      new AbortController().signal
+    )
+    await expect(aborted.next()).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    await abortErrorController.dispose()
+
+    const deniedRuntime = new TestRuntime(false, false, true)
+    const deniedController = new AgentRuntimeController(
+      deniedRuntime,
+      undefined,
+      observeFailure
+    )
+    const denied = deniedController.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b20',
+        conversationId: 'conversation-tool-denied',
+        prompt: 'test',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'deny'
+    )
+    await expect(denied.next()).rejects.toThrow('tool denied')
+    await deniedController.dispose()
+
+    expect(observeFailure).not.toHaveBeenCalled()
+  })
+
+  it('reports genuine Runtime run failures', async () => {
+    const runtime = new TestRuntime()
+    const failure = new Error('provider failed')
+    runtime.run = async function* (): AsyncGenerator<
+      AgentEvent,
+      void,
+      void
+    > {
+      yield* []
+      throw failure
+    }
+    const observeFailure = vi.fn()
+    const controller = new AgentRuntimeController(
+      runtime,
+      undefined,
+      observeFailure
+    )
+    const stream = controller.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b21',
+        conversationId: 'conversation-run-failed',
+        prompt: 'test',
+        workMode: 'ask'
+      },
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).rejects.toBe(failure)
+    expect(observeFailure).toHaveBeenCalledWith({
+      component: 'runtime',
+      stage: 'run',
+      code: 'runtime.run.failed',
+      error: failure
+    })
+    await controller.dispose()
+  })
+
   it('forwards per-tool authorization without adding a whole-run gate', async () => {
     const runtime = new TestRuntime(false, false, true)
     const controller = new AgentRuntimeController(runtime)
@@ -489,5 +621,27 @@ describe('AgentRuntimeController', () => {
     await expect(stream.next()).rejects.toThrow(
       '当前 Runtime 不支持工具执行'
     )
+  })
+
+  it('reports Runtime boundary failures without request content', async () => {
+    const runtime = new TestRuntime()
+    const failure = new Error('provider raw response: secret prompt')
+    runtime.getStatus = vi.fn(async () => {
+      throw failure
+    })
+    const observeFailure = vi.fn()
+    const controller = new AgentRuntimeController(
+      runtime,
+      undefined,
+      observeFailure
+    )
+
+    await expect(controller.getStatus()).rejects.toBe(failure)
+    expect(observeFailure).toHaveBeenCalledWith({
+      component: 'runtime',
+      stage: 'status',
+      code: 'runtime.operation.failed',
+      error: failure
+    })
   })
 })

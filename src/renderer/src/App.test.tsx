@@ -1358,6 +1358,19 @@ describe('App', () => {
     await screen.findByRole('heading', {
       name: '今天想一起完成什么？'
     })
+    const runtimeStatus = document.querySelector<HTMLElement>(
+      '.runtime-status'
+    )
+    expect(runtimeStatus).not.toBeNull()
+    expect(
+      within(runtimeStatus!).getByText('就绪')
+    ).toBeInTheDocument()
+    expect(runtimeStatus).toHaveAttribute(
+      'aria-describedby',
+      'topbar-runtime-detail'
+    )
+    expect(screen.getByText('Ready', { selector: '.sr-only' }))
+      .toHaveAttribute('id', 'topbar-runtime-detail')
     expect(
       screen.getByText(
         /你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件/u
@@ -2049,6 +2062,25 @@ describe('App', () => {
         within(conversationList).queryByText('其他项目里的 Alpha')
       ).not.toBeInTheDocument()
     })
+
+    fireEvent.change(search, { target: { value: 'missing topic' } })
+    expect(
+      await within(conversationList).findByText('没有匹配的对话')
+    ).toBeInTheDocument()
+    expect(
+      within(conversationList).getByText(
+        '请修改搜索关键词，或清除搜索后查看全部会话。'
+      )
+    ).toBeInTheDocument()
+    fireEvent.click(
+      within(conversationList).getByRole('button', {
+        name: '清除搜索'
+      })
+    )
+    expect(search).toHaveValue('')
+    expect(
+      await within(conversationList).findByText('标题里的 Alpha')
+    ).toBeInTheDocument()
   })
 
   it('keeps Settings open when the interface language changes', async () => {
@@ -2235,7 +2267,7 @@ describe('App', () => {
     }
   })
 
-  it('does not disturb startup when updates are current or offline', async () => {
+  it('keeps current-version checks quiet and reports startup check failures', async () => {
     const currentResult = {
       updateAvailable: false,
       currentVersion: '0.8.4',
@@ -2252,7 +2284,11 @@ describe('App', () => {
     const check = vi
       .fn()
       .mockResolvedValueOnce(currentResult)
-      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(
+        new Error(
+          "Error invoking remote method 'application:update:check': TypeError: fetch failed"
+        )
+      )
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
@@ -2289,11 +2325,37 @@ describe('App', () => {
       render(<App />)
       await waitFor(() => expect(check).toHaveBeenCalledTimes(2))
       expect(
-        screen.queryByText(/发现 GoodBuddy|版本检查失败/u)
-      ).not.toBeInTheDocument()
+        await screen.findByRole('alert')
+      ).toHaveTextContent(
+        '启动更新检查失败（GitHub）：无法连接更新源，请检查网络或代理后重试'
+      )
     } finally {
       delete api.updates
     }
+  })
+
+  it('shows a recoverable recent-conversation load failure', async () => {
+    vi.mocked(api.projects.list)
+      .mockRejectedValueOnce(new Error('database busy'))
+      .mockResolvedValueOnce([project])
+
+    render(<App />)
+
+    const loadError = await screen.findByRole('alert')
+    expect(loadError).toHaveTextContent('最近会话加载失败')
+    expect(loadError).toHaveTextContent('database busy')
+    fireEvent.click(
+      within(loadError).getByRole('button', {
+        name: '重新读取会话'
+      })
+    )
+    await waitFor(() =>
+      expect(api.projects.list).toHaveBeenCalledTimes(2)
+    )
+    await waitFor(() =>
+      expect(screen.queryByText('最近会话加载失败'))
+        .not.toBeInTheDocument()
+    )
   })
 
   it('keeps rendering when an older preload has no browser bridge', async () => {
@@ -4134,9 +4196,10 @@ describe('App', () => {
     fireEvent.change(await screen.findByLabelText('默认工作区目录'), {
       target: { value: 'C:\\Unsaved from App' }
     })
-    fireEvent.click(
-      screen.getByRole('button', { name: '知识库' })
-    )
+    const knowledgeNavigation = screen.getByRole('button', {
+      name: '知识库'
+    })
+    fireEvent.click(knowledgeNavigation)
 
     expect(
       screen.getByRole('heading', { name: '设置中心' })
@@ -4150,6 +4213,43 @@ describe('App', () => {
     expect(
       await screen.findByRole('heading', { name: '知识库' })
     ).toBeVisible()
+    await waitFor(() => expect(knowledgeNavigation).toHaveFocus())
+  })
+
+  it('restores focus outside Settings after closing the page', async () => {
+    render(<App />)
+
+    await screen.findByLabelText('向 GoodBuddy 提问')
+    const settingsTrigger = screen.getByRole('button', {
+      name: /本地工作区/u
+    })
+    fireEvent.click(settingsTrigger)
+    await screen.findByRole('heading', { name: '设置中心' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '关闭设置' })
+    )
+
+    await waitFor(() => expect(settingsTrigger).toHaveFocus())
+  })
+
+  it('focuses the Composer after closing automatically opened Settings', async () => {
+    vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
+      id: 'setup',
+      label: '未配置',
+      available: false,
+      supportsToolExecution: false,
+      detail: '尚未配置 Runtime'
+    })
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '设置中心' })
+    const composer = screen.getByLabelText('向 GoodBuddy 提问')
+    fireEvent.click(
+      screen.getByRole('button', { name: '关闭设置' })
+    )
+
+    await waitFor(() => expect(composer).toHaveFocus())
   })
 
   it('updates and removes the composer shortcut hint immediately after saving Settings', async () => {
@@ -5043,6 +5143,32 @@ describe('App', () => {
     })
   })
 
+  it('associates attachment errors with the Composer controls', async () => {
+    vi.mocked(api.context.selectFiles).mockRejectedValueOnce(
+      new Error('文件解析失败，请重新选择')
+    )
+    render(<App />)
+
+    const addButton = await screen.findByLabelText('添加附件')
+    const input = screen.getByLabelText('向 GoodBuddy 提问')
+    fireEvent.click(addButton)
+
+    const error = await screen.findByRole('alert', {
+      name: '文件解析失败，请重新选择'
+    })
+    expect(error).toHaveAttribute('id', 'composer-context-error')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAttribute(
+      'aria-describedby',
+      'composer-context-error'
+    )
+    expect(addButton).toHaveAttribute('aria-invalid', 'true')
+    expect(addButton).toHaveAttribute(
+      'aria-describedby',
+      'composer-context-error'
+    )
+  })
+
   it('sends and renders five selected images together', async () => {
     const imageAttachments = Array.from({ length: 5 }, (_, index) => ({
       id: `00000000-0000-4000-8000-00000000031${index}`,
@@ -5279,11 +5405,13 @@ describe('App', () => {
       newConversationListener?.()
     })
 
-    expect(
-      screen.getAllByRole('button', {
-        name: /^更多会话操作/u
-      })
-    ).toHaveLength(2)
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('button', {
+          name: /^更多会话操作/u
+        })
+      ).toHaveLength(2)
+    )
   })
 
   it('opens a workspace Markdown file in the right-side preview', async () => {

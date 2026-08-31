@@ -122,11 +122,12 @@ describe('UpdateSettingsSection', () => {
         checkUpdatesOnStartup: false
       })
     )
-    expect(source).toBeDisabled()
+    expect(source).toBeEnabled()
 
     fireEvent.click(
       screen.getByRole('button', { name: '立即检查更新' })
     )
+    expect(source).toHaveValue('mirror')
     expect(await screen.findByText('发现新版本 0.9.0'))
       .toBeInTheDocument()
     expect(
@@ -144,7 +145,7 @@ describe('UpdateSettingsSection', () => {
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(screen.getByLabelText('反馈类型')).toHaveFocus()
     expect(
-      screen.getByText(/不会自动发送对话、日志、文件/)
+      screen.getByText(/不会发送对话、Prompt、凭据、文件内容/)
     ).toBeInTheDocument()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(
@@ -202,6 +203,55 @@ describe('UpdateSettingsSection', () => {
       '版本检查失败：无法连接更新源“GitHub”，请检查网络或代理后重试'
     )
     expect(alert).not.toHaveTextContent('Error invoking remote method')
+  })
+
+  it('routes download-page failures through app notifications', async () => {
+    const onNotify = vi.fn()
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        app: {
+          getInfo: vi.fn(async () => ({
+            name: 'GoodBuddy',
+            version: '0.8.1',
+            platform: 'win32',
+            arch: 'x64',
+            shortcut: 'Ctrl+Shift+Space'
+          }))
+        },
+        updates: {
+          getSettings: vi.fn(async () => ({
+            checkUpdatesOnStartup: false,
+            updateSource: 'mirror',
+            magicNotesEnabled: true,
+            magicNoteCommentMode: 'immediate',
+            magicNoteCommentFormat: 'combined'
+          })),
+          updateSettings: vi.fn(),
+          check: vi.fn(),
+          openReleasePage: vi.fn(async () => {
+            throw new Error('Shell refused the release URL')
+          }),
+          onResult: vi.fn(() => () => {})
+        }
+      } as unknown as DesktopApi
+    })
+
+    render(<UpdateSettingsSection onNotify={onNotify} />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: '打开下载页' })
+    )
+
+    await waitFor(() =>
+      expect(onNotify).toHaveBeenCalledWith({
+        dedupeKey: 'open-update-download-page-failed',
+        message: 'Shell refused the release URL',
+        tone: 'error'
+      })
+    )
+    expect(
+      screen.queryByText('Shell refused the release URL')
+    ).not.toBeInTheDocument()
   })
 
   it('keeps feedback available when update settings are unavailable', async () => {

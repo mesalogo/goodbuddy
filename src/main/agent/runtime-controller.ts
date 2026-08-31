@@ -11,6 +11,9 @@ import type {
   RuntimeConversationCompactOutcome,
   RuntimeEvent
 } from './runtime'
+import type {
+  DesktopDiagnosticFailureObserver
+} from '../desktop-diagnostics'
 
 type RuntimeSlot = {
   runtime: AgentRuntime
@@ -80,7 +83,9 @@ export class AgentRuntimeController implements AgentRuntime {
 
   constructor(
     runtime: AgentRuntime,
-    private readonly shutdownGraceMs = 2_000
+    private readonly shutdownGraceMs = 2_000,
+    private readonly observeFailure?:
+      DesktopDiagnosticFailureObserver
   ) {
     this.current = {
       runtime,
@@ -201,18 +206,22 @@ export class AgentRuntimeController implements AgentRuntime {
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
-    return this.probeStatus((runtime) => runtime.getStatus())
+    return this.probeStatus(
+      'status',
+      (runtime) => runtime.getStatus()
+    )
   }
 
   async testConnection(): Promise<AgentRuntimeStatus> {
     return this.probeStatus(
+      'connection-test',
       (runtime) =>
         runtime.testConnection?.() ?? runtime.getStatus()
     )
   }
 
   async getNativeSnapshot(): Promise<RuntimeNativeSnapshot> {
-    return this.invoke((runtime) => {
+    return this.invoke('native-snapshot', (runtime) => {
       if (!runtime.getNativeSnapshot) {
         throw new Error('当前 Runtime 不支持原生能力清单')
       }
@@ -225,18 +234,23 @@ export class AgentRuntimeController implements AgentRuntime {
     signal: AbortSignal
   ): Promise<RuntimeConversationCompactOutcome> {
     this.ownedConversationIds.add(request.conversationId)
-    return this.invoke((runtime) => {
-      if (!runtime.compactConversation) {
-        throw new Error('当前 Runtime 不支持手动压缩')
-      }
-      return runtime.compactConversation(request, signal)
-    })
+    return this.invoke(
+      'compact',
+      (runtime) => {
+        if (!runtime.compactConversation) {
+          throw new Error('当前 Runtime 不支持手动压缩')
+        }
+        return runtime.compactConversation(request, signal)
+      },
+      signal
+    )
   }
 
   private async probeStatus(
+    stage: string,
     operation: (runtime: AgentRuntime) => Promise<AgentRuntimeStatus>
   ): Promise<AgentRuntimeStatus> {
-    const status = await this.invoke(operation)
+    const status = await this.invoke(stage, operation)
     return {
       ...status,
       supportsToolExecution: this.current.runtime.supportsToolExecution
@@ -244,7 +258,9 @@ export class AgentRuntimeController implements AgentRuntime {
   }
 
   private async invoke<T>(
-    operation: (runtime: AgentRuntime) => Promise<T>
+    stage: string,
+    operation: (runtime: AgentRuntime) => Promise<T>,
+    signal?: AbortSignal
   ): Promise<T> {
     if (this.closing) {
       throw new Error('Agent Runtime 正在关闭')
@@ -257,6 +273,15 @@ export class AgentRuntimeController implements AgentRuntime {
         throw new Error('Runtime 已切换，请重试')
       }
       return status
+    } catch (error) {
+      if (
+        slot === this.current &&
+        !signal?.aborted &&
+        !isAbortError(error)
+      ) {
+        this.reportFailure(stage, 'runtime.operation.failed', error)
+      }
+      throw error
     } finally {
       slot.activeRequests -= 1
       if (
@@ -280,9 +305,21 @@ export class AgentRuntimeController implements AgentRuntime {
     const slot = this.current
     this.ownedConversationIds.add(request.conversationId)
     const toolsAllowed = request.workMode === 'execute'
+    let toolDenied = false
     const effectiveAuthorize: RuntimeAuthorizer | undefined = toolsAllowed
-      ? authorize
-      : async () => 'deny'
+      ? authorize === undefined
+        ? undefined
+        : async (authorizationRequest) => {
+            const decision = await authorize(authorizationRequest)
+            if (decision === 'deny') {
+              toolDenied = true
+            }
+            return decision
+          }
+      : async () => {
+          toolDenied = true
+          return 'deny'
+        }
     slot.activeRequests += 1
     try {
       if (toolsAllowed && !slot.runtime.supportsToolExecution) {
@@ -304,18 +341,31 @@ export class AgentRuntimeController implements AgentRuntime {
           throw new Error('用户拒绝了 Agent 工具执行')
         }
       }
-      for await (const event of slot.runtime.run(
-        request,
-        signal,
-        effectiveAuthorize
-      )) {
+      try {
+        for await (const event of slot.runtime.run(
+          request,
+          signal,
+          effectiveAuthorize
+        )) {
+          if (slot !== this.current && !slot.drainable) {
+            throw new Error('Runtime 已切换，当前请求已中断')
+          }
+          toolDenied = false
+          yield event
+        }
         if (slot !== this.current && !slot.drainable) {
           throw new Error('Runtime 已切换，当前请求已中断')
         }
-        yield event
-      }
-      if (slot !== this.current && !slot.drainable) {
-        throw new Error('Runtime 已切换，当前请求已中断')
+      } catch (error) {
+        if (
+          !signal.aborted &&
+          !toolDenied &&
+          !isAbortError(error) &&
+          (slot === this.current || slot.drainable)
+        ) {
+          this.reportFailure('run', 'runtime.run.failed', error)
+        }
+        throw error
       }
     } finally {
       slot.activeRequests -= 1
@@ -326,6 +376,23 @@ export class AgentRuntimeController implements AgentRuntime {
       ) {
         await this.disposeSlot(slot)
       }
+    }
+  }
+
+  private reportFailure(
+    stage: string,
+    code: string,
+    error: unknown
+  ): void {
+    try {
+      this.observeFailure?.({
+        component: 'runtime',
+        stage,
+        code,
+        error
+      })
+    } catch {
+      // Diagnostics must not alter Runtime behavior.
     }
   }
 
@@ -546,6 +613,17 @@ export class AgentRuntimeController implements AgentRuntime {
     slot.resolveDisposal = undefined
     this.retired.delete(slot)
     resolve?.()
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false
+  }
+  try {
+    return 'name' in error && error.name === 'AbortError'
+  } catch {
+    return false
   }
 }
 

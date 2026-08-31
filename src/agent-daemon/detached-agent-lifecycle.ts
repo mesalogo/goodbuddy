@@ -23,6 +23,7 @@ import {
   writePrivateFileAtomic
 } from './managed-paths'
 import type { AttachWelcome } from '../shared/agent-protocol'
+import { AgentDiagnosticLog } from './diagnostic-log'
 
 const DEFAULT_READINESS_TIMEOUT_MS = 15_000
 const DEFAULT_STOP_TIMEOUT_MS = 5_000
@@ -140,6 +141,7 @@ export class DetachedAgentLifecycle {
   readonly #retireLegacyInstallation?: (
     verified: VerifiedInstalledAgentBundle
   ) => void | Promise<void>
+  readonly #diagnostics: AgentDiagnosticLog
 
   constructor(options: DetachedAgentLifecycleOptions) {
     this.#installationId = validateInstallationId(options.installationId)
@@ -156,6 +158,10 @@ export class DetachedAgentLifecycle {
     this.#spawnDetached = options.spawnDetached ?? spawnDetachedProcess
     this.#currentPid = positivePid(options.currentPid ?? process.pid)
     this.#now = options.now ?? Date.now
+    this.#diagnostics = new AgentDiagnosticLog(this.#stateDirectory, {
+      now: this.#now,
+      pid: this.#currentPid
+    })
     this.#sleep =
       options.sleep ??
       (async (milliseconds) =>
@@ -215,6 +221,7 @@ export class DetachedAgentLifecycle {
 
       const launchArgv = ['daemon', '--installation-id', this.#installationId]
       const runtimePath = expectedRuntimePath(verified)
+      this.#diagnostics.tryRecord('detached.launching')
       const child = this.#spawnDetached(this.#executablePath, launchArgv, {
         env: detachedEnvironment(this.#environment),
         detached: true,
@@ -226,6 +233,7 @@ export class DetachedAgentLifecycle {
         throw new Error('Detached Agent spawn did not return a process ID')
       }
       child.unref()
+      this.#diagnostics.tryRecord('detached.spawned')
       const processIdentity = await this.#waitForProcessIdentity(
         child.pid,
         runtimePath
@@ -246,8 +254,18 @@ export class DetachedAgentLifecycle {
         throw new Error('Detached Agent readiness timed out')
       }
       return ready
+    } catch (error) {
+      this.#diagnostics.tryRecord('recovery.failed', {
+        reason: 'bootstrap',
+        error
+      })
+      throw error
     } finally {
-      releaseLock()
+      try {
+        releaseLock()
+      } finally {
+        await this.#diagnostics.flush()
+      }
     }
   }
 

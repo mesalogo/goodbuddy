@@ -3,12 +3,15 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { WorkspaceFilePreview } from '../../shared/assistant-contracts'
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
+  type PendingSidebarApproval,
   type SidebarArtifact
 } from './RightAssistantSidebar'
 
@@ -23,20 +26,44 @@ beforeEach(() => {
 
 function renderSidebar({
   tab = 'tasks',
+  approvals = [],
   artifacts = [],
+  onListWorkspaceDirectory = vi.fn(async (path: string) => ({
+    path,
+    entries: [],
+    truncated: false
+  })),
   onLoadArtifact = vi.fn(async () => undefined),
+  onLoadWorkspaceFile = vi.fn(),
+  workspaceProjectId,
   restoreFocusRef
 }: {
   tab?: AssistantSidebarTab
+  approvals?: PendingSidebarApproval[]
   artifacts?: SidebarArtifact[]
+  onListWorkspaceDirectory?: (
+    path: string
+  ) => Promise<{
+    path: string
+    entries: {
+      name: string
+      path: string
+      type: 'file' | 'directory'
+    }[]
+    truncated: boolean
+  }>
   onLoadArtifact?: (artifactId: string) => Promise<void>
+  onLoadWorkspaceFile?: (
+    path: string
+  ) => Promise<WorkspaceFilePreview>
+  workspaceProjectId?: string
   restoreFocusRef?: { current: HTMLElement | null }
 } = {}): HTMLElement {
   render(
     <div>
       <main className="workspace" />
       <RightAssistantSidebar
-        approvals={[]}
+        approvals={approvals}
         artifacts={artifacts}
         schedules={[]}
         tasks={[]}
@@ -44,13 +71,9 @@ function renderSidebar({
         projectNames={new Map()}
         onCreateCustomTask={vi.fn()}
         onImportArtifacts={vi.fn(async () => undefined)}
-        onListWorkspaceDirectory={vi.fn(async (path: string) => ({
-          path,
-          entries: [],
-          truncated: false
-        }))}
+        onListWorkspaceDirectory={onListWorkspaceDirectory}
         onLoadArtifact={onLoadArtifact}
-        onLoadWorkspaceFile={vi.fn()}
+        onLoadWorkspaceFile={onLoadWorkspaceFile}
         onOpenWorkspaceEntry={vi.fn(async () => undefined)}
         onInteractBrowser={vi.fn(async () => undefined)}
         onRefreshChanges={vi.fn(async () => undefined)}
@@ -64,6 +87,7 @@ function renderSidebar({
         open
         restoreFocusRef={restoreFocusRef}
         tab={tab}
+        workspaceProjectId={workspaceProjectId}
       />
     </div>
   )
@@ -263,6 +287,91 @@ describe('RightAssistantSidebar resizing', () => {
     ).toBeInTheDocument()
     expect(screen.queryByLabelText('定时任务标题')).not.toBeInTheDocument()
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
+  })
+
+  it('labels approval counts and cards without duplicate live regions', () => {
+    renderSidebar({
+      approvals: [
+        {
+          conversationId: 'conversation-1',
+          messageId: 'message-1',
+          approvalId: 'approval-1',
+          title: '写入工作区',
+          description: '更新 release.md',
+          toolName: 'write_file'
+        }
+      ]
+    })
+
+    expect(
+      screen.getByLabelText('等待审批: 1')
+    ).not.toHaveAttribute('aria-live')
+    expect(
+      screen.getByLabelText('等待审批: write_file')
+    ).not.toHaveAttribute('aria-live')
+    expect(
+      screen.queryByRole('status', { name: /等待审批/u })
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed workspace preview in place and retries it', async () => {
+    let rejectPreview: ((reason: unknown) => void) | undefined
+    const onLoadWorkspaceFile = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectPreview = reject
+          })
+      )
+      .mockResolvedValueOnce({
+        path: 'README.md',
+        name: 'README.md',
+        content: 'Recovered preview',
+        mimeType: 'text/plain',
+        size: 17
+      })
+    renderSidebar({
+      tab: 'workspace',
+      workspaceProjectId: 'project-1',
+      onListWorkspaceDirectory: vi.fn(async (path: string) => ({
+        path,
+        entries: [
+          {
+            name: 'README.md',
+            path: 'README.md',
+            type: 'file' as const
+          }
+        ],
+        truncated: false
+      })),
+      onLoadWorkspaceFile
+    })
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'README.md' })
+    )
+    const loading = screen.getByRole('status', {
+      name: '正在读取文件…'
+    })
+    expect(loading).toHaveAttribute('aria-live', 'polite')
+    expect(loading.closest('section')).toHaveAttribute(
+      'aria-busy',
+      'true'
+    )
+
+    rejectPreview?.(new Error('临时网络错误'))
+    const error = await screen.findByRole('alert')
+    expect(error).toHaveTextContent('临时网络错误')
+    expect(screen.getByText('README.md')).toBeInTheDocument()
+    fireEvent.click(
+      within(error).getByRole('button', { name: '刷新' })
+    )
+
+    expect(await screen.findByText('Recovered preview'))
+      .toBeInTheDocument()
+    expect(onLoadWorkspaceFile).toHaveBeenCalledTimes(2)
+    expect(onLoadWorkspaceFile).toHaveBeenNthCalledWith(2, 'README.md')
   })
 
   it('previews a result without switching to a separate tab', () => {

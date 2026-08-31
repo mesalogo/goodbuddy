@@ -764,6 +764,8 @@ export function SettingsPanel({
   >()
   const runtimeCustomizationRef =
     useRef<RuntimeCustomizationSectionHandle>(null)
+  const keepEditingRef = useRef<HTMLButtonElement>(null)
+  const leaveTriggerRef = useRef<HTMLElement | undefined>(undefined)
   const handleRuntimeCustomizationDirtyChange = useCallback(
     (dirty: boolean): void => {
       setRuntimeCustomizationDirty(dirty)
@@ -976,12 +978,18 @@ export function SettingsPanel({
   }, [hasUnsavedDrafts, open])
 
   const requestTabChange = (
-    category: SettingsCategoryId
+    category: SettingsCategoryId,
+    trigger?: HTMLElement
   ): boolean => {
     if (category === activeTab) {
       return true
     }
     if (navigationWouldLoseDraft) {
+      leaveTriggerRef.current =
+        trigger ??
+        (document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : undefined)
       setPendingLeave({ kind: 'navigate', category })
       return false
     }
@@ -1018,7 +1026,7 @@ export function SettingsPanel({
     }
     event.preventDefault()
     const nextTab = settingsTabs[nextIndex]!
-    if (!requestTabChange(nextTab)) {
+    if (!requestTabChange(nextTab, event.currentTarget)) {
       return
     }
     event.currentTarget.parentElement
@@ -1174,8 +1182,13 @@ export function SettingsPanel({
       return normalizedContextCompression
     }
 
-  const close = (): void => {
+  const close = (trigger?: HTMLElement): void => {
     if (hasUnsavedDrafts) {
+      leaveTriggerRef.current =
+        trigger ??
+        (document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : undefined)
       setPendingLeave({ kind: 'close' })
       return
     }
@@ -1240,6 +1253,11 @@ export function SettingsPanel({
     setError(undefined)
     if (leave?.kind === 'navigate') {
       setActiveTab(leave.category)
+      requestAnimationFrame(() =>
+        document
+          .getElementById(`settings-tab-${leave.category}`)
+          ?.focus()
+      )
       return
     }
     if (leave?.kind === 'external') {
@@ -1252,9 +1270,34 @@ export function SettingsPanel({
     }
   }
 
+  const keepEditing = (): void => {
+    const trigger = leaveTriggerRef.current
+    setPendingLeave(undefined)
+    setError(undefined)
+    requestAnimationFrame(() => {
+      if (trigger?.isConnected) {
+        trigger.focus()
+      }
+    })
+  }
+
+  useLayoutEffect(() => {
+    if (!pendingLeave) {
+      return
+    }
+    if (settingsBodyRef.current) {
+      settingsBodyRef.current.scrollTop = 0
+    }
+    keepEditingRef.current?.focus()
+  }, [pendingLeave])
+
   useLayoutEffect(() => {
     const requestLeave: SettingsLeaveRequester = (proceed) => {
       if (hasUnsavedDrafts) {
+        leaveTriggerRef.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : undefined
         setPendingLeave({ kind: 'external', proceed })
         return
       }
@@ -1902,7 +1945,7 @@ export function SettingsPanel({
                 <button
                   aria-label={t('center.close')}
                   className="icon-button"
-                  onClick={close}
+                  onClick={(event) => close(event.currentTarget)}
                   type="button"
                 >
                   <X aria-hidden="true" size={19} />
@@ -1931,8 +1974,8 @@ export function SettingsPanel({
                 aria-selected={activeTab === category.id}
                 id={`settings-tab-${category.id}`}
                 key={category.id}
-                onClick={() => {
-                  requestTabChange(category.id)
+                onClick={(event) => {
+                  requestTabChange(category.id, event.currentTarget)
                 }}
                 onKeyDown={(event) =>
                   handleTabKeyDown(event, category.id)
@@ -1973,10 +2016,8 @@ export function SettingsPanel({
               <div className="update-settings__actions">
                 <button
                   className="secondary-button"
-                  onClick={() => {
-                    setPendingLeave(undefined)
-                    setError(undefined)
-                  }}
+                  onClick={keepEditing}
+                  ref={keepEditingRef}
                   type="button"
                 >
                   {t('unsaved.keepEditing')}
@@ -3895,7 +3936,9 @@ export function SettingsPanel({
               magicNotesEnabled={magicNotesEnabled}
             />
           )}
-          {activeTab === 'about' && <UpdateSettingsSection />}
+          {activeTab === 'about' && (
+            <UpdateSettingsSection onNotify={onNotify} />
+          )}
           </div>
         </div>
       </section>

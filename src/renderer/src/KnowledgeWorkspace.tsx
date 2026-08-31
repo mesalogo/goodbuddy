@@ -4404,6 +4404,7 @@ export function KnowledgeWorkspace({
             icon={<LoaderCircle size={28} />}
             level="page"
             title={t('loading.title')}
+            variant="loading"
           />
         ) : loadError && libraries.length === 0 ? (
           <EmptyState

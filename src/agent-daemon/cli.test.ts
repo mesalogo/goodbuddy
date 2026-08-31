@@ -33,6 +33,7 @@ import {
 import { RuntimeBundleRegistry } from './runtime-bundle-registry'
 import type { VerifiedRuntimeBundle } from './runtime-bundle-verifier'
 import type { RemoteRuntimeLock } from '../shared/remote-runtime-launch-contracts'
+import { AgentDiagnosticLog } from './diagnostic-log'
 
 const temporaryPaths: string[] = []
 
@@ -244,6 +245,58 @@ describe('Agent CLI fixed command contract', () => {
     ).toBe(0)
     expect(verifyInstallation).toHaveBeenCalledOnce()
     expect(bootstrap).toHaveBeenCalledTimes(2)
+  })
+
+  it('exports only bounded diagnostics for a fixed installation ID as JSONL', async () => {
+    const root = privateTemporaryDirectory()
+    const stateDirectory = resolve(root, 'state', 'install-1')
+    mkdirSync(stateDirectory, { recursive: true, mode: 0o700 })
+    if (process.platform !== 'win32') {
+      chmodSync(resolve(root, 'state'), 0o700)
+      chmodSync(stateDirectory, 0o700)
+    }
+    const log = new AgentDiagnosticLog(stateDirectory, {
+      pid: 42
+    })
+    log.record('daemon.ready', {
+      daemonBootId: 'boot-1'
+    })
+    log.record('runtime.start.failed', {
+      runtimeId: 'opencode',
+      error: new Error('private Prompt and /private/path')
+    })
+    await log.flush()
+    const io = cliIo()
+
+    const result = await runAgentCli(
+      ['diagnostics', '--installation-id', 'install-1'],
+      {
+        installationPaths: () => ({
+          executablePath: resolve(root, 'agent', 'goodbuddy-agent'),
+          stateDirectory,
+          socketPath: resolve(root, 'run', 'agent.sock')
+        }),
+        io
+      }
+    )
+
+    expect(result, io.error.read()?.toString()).toBe(0)
+    const output = io.output.read()!.toString()
+    expect(output).not.toContain('private Prompt')
+    expect(output).not.toContain('/private/path')
+    expect(
+      output.trimEnd().split('\n').map((line) => JSON.parse(line))
+    ).toEqual([
+      expect.objectContaining({
+        event: 'daemon.ready',
+        daemonBootId: 'boot-1'
+      }),
+      expect.objectContaining({
+        event: 'runtime.start.failed',
+        runtimeId: 'opencode',
+        error: { name: 'Error' }
+      })
+    ])
   })
 
   it('dispatches generated attach argv using only derived managed paths', async () => {

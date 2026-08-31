@@ -601,7 +601,10 @@ export function RightAssistantSidebar({
           >
             {item.label}
             {item.id === 'tasks' && approvals.length > 0 && (
-              <span className="assistant-sidebar__badge">
+              <span
+                aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${approvals.length}`}
+                className="assistant-sidebar__badge"
+              >
                 {approvals.length}
               </span>
             )}
@@ -633,6 +636,9 @@ export function RightAssistantSidebar({
             ) : (
               approvals.map((approval) => (
                 <article
+                  aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${
+                    approval.toolName ?? approval.title
+                  }`}
                   className="assistant-sidebar__approval"
                   key={approval.approvalId}
                 >
@@ -808,7 +814,10 @@ export function RightAssistantSidebar({
 
         {tab === 'workspace' && (
           currentWorkspacePreview ? (
-            <section className="assistant-sidebar__preview">
+            <section
+              aria-busy={currentWorkspacePreview.state === 'loading'}
+              className="assistant-sidebar__preview"
+            >
               <header>
                 <button
                   aria-label={t('sidebar.workspace.back')}
@@ -838,13 +847,28 @@ export function RightAssistantSidebar({
                 </span>
               </header>
               {currentWorkspacePreview.state === 'loading' ? (
-                <p className="assistant-sidebar__empty">
+                <p
+                  aria-label={t('sidebar.workspace.reading')}
+                  aria-live="polite"
+                  className="assistant-sidebar__empty"
+                  role="status"
+                >
                   {t('sidebar.workspace.reading')}
                 </p>
               ) : currentWorkspacePreview.state === 'error' ? (
-                <p className="assistant-sidebar__empty" role="alert">
-                  {currentWorkspacePreview.error}
-                </p>
+                <div className="assistant-sidebar__empty" role="alert">
+                  <p>{currentWorkspacePreview.error}</p>
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      openWorkspaceFile(currentWorkspacePreview.path)
+                    }
+                    type="button"
+                  >
+                    <RefreshCw aria-hidden="true" size={13} />
+                    {t('sidebar.workspace.refresh')}
+                  </button>
+                </div>
               ) : (
                 <div className="markdown-body markdown-content">
                   {currentWorkspacePreview.file.mimeType ===
@@ -1070,9 +1094,15 @@ export function RightAssistantSidebar({
             ) : (
               <>
                 <div
-                  aria-live="polite"
+                  aria-live={
+                    browserState.status === 'failed'
+                      ? 'assertive'
+                      : 'polite'
+                  }
                   className={`assistant-sidebar__browser-status assistant-sidebar__browser-status--${browserState.status}`}
-                  role="status"
+                  role={
+                    browserState.status === 'failed' ? 'alert' : 'status'
+                  }
                 >
                   {browserState.status === 'creating'
                     ? t('sidebar.browser.statuses.creating')

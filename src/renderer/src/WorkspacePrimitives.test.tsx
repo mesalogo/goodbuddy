@@ -611,6 +611,20 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('announces shared loading empty states consistently', () => {
+    render(
+      <EmptyState
+        description="正在读取内容。"
+        title="正在加载"
+        variant="loading"
+      />
+    )
+
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveAttribute('aria-busy', 'true')
+  })
+
   it('uses the shared destructive confirmation flow', () => {
     const onRequestConfirm = vi.fn()
     const onConfirm = vi.fn()

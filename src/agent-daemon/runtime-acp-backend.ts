@@ -22,6 +22,10 @@ import {
   type AgentFrame
 } from '../shared/agent-protocol'
 import { canonicalJson } from '../shared/agent-protocol/canonical'
+import type {
+  AgentDiagnosticLog,
+  AgentDiagnosticRecord
+} from './diagnostic-log'
 import {
   acpJournalCursorSchema,
   remoteOwnedPromptAttachRequestSchema,
@@ -279,6 +283,7 @@ export type RuntimeAcpBackendOptions = {
   }) => ModelBridgeBrokerServer
   semanticPrompts?: SemanticPromptStore
   modelGateway?: AgentModelGateway
+  diagnostics?: Pick<AgentDiagnosticLog, 'tryRecord'>
   now?: () => number
   limits?: Partial<RuntimeAcpBackendLimits>
 }
@@ -1106,6 +1111,10 @@ export class RuntimeAcpBackend {
 
     if (binding.process === undefined) {
       let process: RuntimeAcpProcessOwner
+      this.#options.diagnostics?.tryRecord('runtime.starting', {
+        runtimeId: verified.manifest.runtimeId,
+        workMode: preparation.workMode
+      })
       try {
         process = await this.#options.launchProcess({
           manifest: verified.manifest,
@@ -1126,7 +1135,12 @@ export class RuntimeAcpBackend {
               })
         })
         assertProcessIdentity(process.identity)
-      } catch {
+      } catch (error) {
+        this.#options.diagnostics?.tryRecord('runtime.start.failed', {
+          runtimeId: verified.manifest.runtimeId,
+          workMode: preparation.workMode,
+          error
+        })
         await this.#closeModelBridge(binding, false).catch(
           () => undefined
         )
@@ -1199,6 +1213,10 @@ export class RuntimeAcpBackend {
           'process'
         )
       }
+      this.#options.diagnostics?.tryRecord('runtime.started', {
+        runtimeId: verified.manifest.runtimeId,
+        workMode: preparation.workMode
+      })
     } else {
       try {
         await binding.process.beginPrompt({
@@ -2162,6 +2180,8 @@ export class RuntimeAcpBackend {
     )
     let state: 'completed' | 'failed' | 'cancelled' | 'interrupted' =
       'interrupted'
+    let diagnosticOutcome: AgentDiagnosticRecord['outcome'] =
+      'interrupted'
     try {
       const reconciliation = await binding.process.reconcile()
       if (
@@ -2172,10 +2192,29 @@ export class RuntimeAcpBackend {
         reconciliation.processTree === 'empty'
       ) {
         state = terminalState(reconciliation.state)
+        diagnosticOutcome = state
       }
-    } catch {
+    } catch (error) {
       binding.state = 'outcome-unknown'
+      diagnosticOutcome = 'outcome-unknown'
+      this.#options.diagnostics?.tryRecord('runtime.exited', {
+        runtimeId: binding.resolvedBundle.entry.runtimeId,
+        ...(binding.workMode === undefined
+          ? {}
+          : { workMode: binding.workMode }),
+        outcome: diagnosticOutcome,
+        error
+      })
+      this.#finishBinding(binding, state)
+      return
     }
+    this.#options.diagnostics?.tryRecord('runtime.exited', {
+      runtimeId: binding.resolvedBundle.entry.runtimeId,
+      ...(binding.workMode === undefined
+        ? {}
+        : { workMode: binding.workMode }),
+      outcome: diagnosticOutcome
+    })
     this.#finishBinding(binding, state)
   }
 

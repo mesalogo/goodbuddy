@@ -53,6 +53,7 @@ import {
   DetachedAgentLifecycle,
   type DetachedAgentLifecycleOptions
 } from './detached-agent-lifecycle'
+import { readAgentDiagnostics } from './diagnostic-log'
 
 type CliIo = {
   input: Readable
@@ -141,6 +142,9 @@ export async function runAgentCli(
       case 'doctor':
         await runDoctor(rest, dependencies, io)
         return 0
+      case 'diagnostics':
+        runDiagnostics(rest, dependencies, io)
+        return 0
       case 'runtime':
         await runRuntime(rest, dependencies, io)
         return 0
@@ -152,7 +156,7 @@ export async function runAgentCli(
           return 0
         }
         throw new Error(
-          'Expected daemon, attach-or-bootstrap, doctor, a lifecycle action, runtime, or model-bridge-helper'
+          'Expected daemon, attach-or-bootstrap, doctor, diagnostics, a lifecycle action, runtime, or model-bridge-helper'
         )
     }
   } catch (error) {
@@ -353,6 +357,7 @@ async function runDaemon(
     runtimeFactory: async ({
       events,
       workspaces,
+      diagnostics,
       outputSink,
       blobSink
     }) =>
@@ -367,6 +372,7 @@ async function runDaemon(
         workspaces,
         outputSink,
         blobSink,
+        diagnostics,
         agentExecutablePath: paths.executablePath,
         installationId
       })
@@ -499,6 +505,22 @@ async function runDoctor(
     supervisor: 'detached-on-demand',
     lifecycle: status
   })}\n`)
+}
+
+function runDiagnostics(
+  argv: readonly string[],
+  dependencies: AgentCliDependencies,
+  io: CliIo
+): void {
+  const options = parseOptions(argv, ['installation-id'])
+  requireOptions(options, ['installation-id'])
+  const installationId = validateInstallationId(
+    options['installation-id']!
+  )
+  const paths = resolveInstallationPaths(installationId, dependencies)
+  for (const record of readAgentDiagnostics(paths.stateDirectory)) {
+    io.output.write(`${JSON.stringify(record)}\n`)
+  }
 }
 
 async function runLifecycle(

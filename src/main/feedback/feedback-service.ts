@@ -1,10 +1,15 @@
 import {
+  feedbackLimits,
   feedbackPublicPayloadSchema,
   feedbackSubmitInputSchema,
   type FeedbackPublicPayload,
   type FeedbackSubmitInput,
   type FeedbackSubmitResult
 } from '../../shared/feedback-contracts'
+import {
+  normalizeDesktopDiagnosticRecord,
+  type DesktopDiagnosticRecord
+} from '../desktop-diagnostics'
 import { FeedbackIdentityStore } from './feedback-identity-store'
 import {
   FeedbackClientError,
@@ -14,6 +19,57 @@ import {
   FeedbackScreenshotError,
   normalizeFeedbackScreenshot
 } from './feedback-screenshot'
+
+const diagnosticsBeginMarker =
+  '[GOODBUDDY_DESKTOP_DIAGNOSTICS_V1_BEGIN]'
+const diagnosticsEndMarker =
+  '[GOODBUDDY_DESKTOP_DIAGNOSTICS_V1_END]'
+export type FeedbackDiagnosticsProvider = {
+  readRecent: (
+    limit: number
+  ) => Promise<readonly DesktopDiagnosticRecord[]>
+}
+
+function formatDiagnosticsSummary(
+  records: readonly DesktopDiagnosticRecord[]
+): string {
+  const lines = records
+    .map(normalizeDesktopDiagnosticRecord)
+    .filter(
+      (record): record is DesktopDiagnosticRecord =>
+        record !== undefined
+    )
+    .map((record) => JSON.stringify(record))
+  if (lines.length === 0) {
+    return [
+      diagnosticsBeginMarker,
+      JSON.stringify({ status: 'no-recent-diagnostics' }),
+      diagnosticsEndMarker
+    ].join('\n')
+  }
+
+  const included: string[] = []
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const candidate = [lines[index]!, ...included]
+    const summary = [
+      diagnosticsBeginMarker,
+      ...candidate,
+      diagnosticsEndMarker
+    ].join('\n')
+    if (
+      summary.length >
+      feedbackLimits.maximumDiagnosticsSummaryCharacters
+    ) {
+      break
+    }
+    included.unshift(lines[index]!)
+  }
+  return [
+    diagnosticsBeginMarker,
+    ...included,
+    diagnosticsEndMarker
+  ].join('\n')
+}
 
 function mapPlatform(
   platform: NodeJS.Platform
@@ -56,6 +112,7 @@ export class FeedbackService {
       architecture: string
       identityStore: FeedbackIdentityStore
       client: StrictFeedbackHttpClient
+      diagnosticsProvider: FeedbackDiagnosticsProvider
     }
   ) {}
 
@@ -143,6 +200,23 @@ export class FeedbackService {
     signal: AbortSignal
   ): Promise<FeedbackSubmitResult> {
     try {
+      let description = input.description
+      if (input.includeDiagnostics) {
+        try {
+          const records =
+            await this.options.diagnosticsProvider.readRecent(
+              feedbackLimits.maximumDiagnosticRecords
+            )
+          description = `${description}\n\n${formatDiagnosticsSummary(
+            records
+          )}`
+        } catch {
+          return {
+            ok: false,
+            error: 'diagnostics-unavailable'
+          }
+        }
+      }
       const installationId =
         await this.options.identityStore.getInstallationId()
       const payload = feedbackPublicPayloadSchema.parse({
@@ -150,7 +224,7 @@ export class FeedbackService {
         productKey: 'goodbuddy',
         category: input.category,
         title: input.title,
-        description: input.description,
+        description,
         ...(input.contactEmail
           ? { contactEmail: input.contactEmail }
           : {}),

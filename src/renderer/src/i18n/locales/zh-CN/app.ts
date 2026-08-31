@@ -76,7 +76,13 @@ export const app = {
     unread: '未读',
     unreadRemote: '未读远程消息',
     noRemote: '尚无远程会话',
+    empty: '还没有最近会话',
+    emptyDescription: '新建对话后，会话会显示在这里。',
     noMatches: '没有匹配的对话',
+    noMatchesDescription: '请修改搜索关键词，或清除搜索后查看全部会话。',
+    clearSearch: '清除搜索',
+    loadFailed: '最近会话加载失败',
+    retryLoad: '重新读取会话',
     renameAria: '重命名会话 {{title}}',
     saveName: '保存会话名称',
     cancelRename: '取消重命名',
@@ -148,8 +154,9 @@ export const app = {
       runtime: 'Runtime',
       workspace: '工作目录',
       tools: '工具与审批',
-      executeApproval: '使用已授权工具；高风险操作仍需审批',
-      askReadOnly: '只读运行，不允许执行变更',
+      executeApproval:
+        '使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动',
+      askReadOnly: '保持只读边界，仅问答和检索，不执行任何变更',
       noWorkspace: '未设置工作目录'
     },
     errors: {
@@ -193,6 +200,11 @@ export const app = {
       readStatus: 'Agent Runtime 状态读取失败',
       readSettings: 'Runtime 设置读取失败',
       switch: 'Runtime 切换失败'
+    },
+    state: {
+      ready: '就绪',
+      connecting: '连接中',
+      unavailable: '不可用'
     }
   },
   chat: {
@@ -351,6 +363,7 @@ export const app = {
       }
     },
     approval: {
+      waiting: '等待审批：{{tool}}',
       deny: '拒绝',
       once: '仅此次',
       session: '此会话',
@@ -455,11 +468,12 @@ export const app = {
     modes: {
       ask: {
         label: 'Ask · 只读问答',
-        description: '只读问答，不修改文件'
+        description: '保持只读边界，仅问答和检索，不执行任何变更'
       },
       execute: {
         label: 'Execute · 完全权限',
-        description: '使用当前账号的完整权限执行工具操作'
+        description:
+          '使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动'
       }
     },
     voice: {
@@ -521,11 +535,12 @@ export const app = {
       imageGeneration:
         '图像生成模型：输入画面描述后，生成结果会直接显示并保存到成果。',
       agentAsk:
-        '{{runtime}} Ask 模式：只允许搜索当前启用的知识库，不会修改文件。',
+        '{{runtime}} Ask 模式：保持只读边界，仅问答和检索，不执行任何变更。',
       agentExecute:
-        '{{runtime}} Execute 模式：工具调用不会弹出 GoodBuddy 审批，并会记录到活动。',
-      ask: 'Ask 模式：只读问答，不会调用工具或修改文件。',
-      execute: 'Execute 模式：已启用工具自动授权，调用仍会记录到活动。'
+        '{{runtime}} Execute 模式：使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动。',
+      ask: 'Ask 模式：保持只读边界，仅问答和检索，不执行任何变更。',
+      execute:
+        'Execute 模式：使用当前账号可用的全部工具、进程、网络和可写路径；调用记录到活动。'
     },
     errors: {
       pasteImageType: '仅支持粘贴 JPEG、PNG 或 WebP 图片',
@@ -537,6 +552,14 @@ export const app = {
   notices: {
     brandingSaved: '品牌设置已保存',
     updateAvailable: '发现 GoodBuddy {{version}}，可在“关于与更新”中查看',
+    startupUpdateCheckFailed:
+      '启动更新检查失败（{{source}}）：{{error}}',
+    updateCheckFailed: '版本检查失败',
+    updateCheckNetwork: '无法连接更新源，请检查网络或代理后重试',
+    updateSources: {
+      github: 'GitHub',
+      mirror: '镜像节点'
+    },
     channelConversationAutomatic:
       '通道项目的会话由客户端收到新消息后自动创建',
     deleteConversationCancelFailed:

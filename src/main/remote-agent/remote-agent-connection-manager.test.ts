@@ -26,6 +26,9 @@ import {
   RemoteAgentConnectionManager,
   type RemoteAgentSshPool
 } from './remote-agent-connection-manager'
+import type {
+  DesktopDiagnosticFailureObserver
+} from '../desktop-diagnostics'
 
 class MemoryStateFile implements ControllerStateFile {
   value?: unknown
@@ -158,7 +161,8 @@ const installation = {
 function harness(
   connectGate?: Promise<void>,
   reconnectResumeGate?: Promise<void>,
-  idleTimeoutMs = 0
+  idleTimeoutMs = 0,
+  observeFailure?: DesktopDiagnosticFailureObserver
 ) {
   let currentTarget = target()
   const release = vi.fn()
@@ -206,6 +210,7 @@ function harness(
     controllerState: new ControllerStateStore(stateFile),
     goodBuddyVersion: '0.11.0',
     idleTimeoutMs,
+    observeFailure,
     connectTransport,
     createProtocolClient: () => {
       const client = new FakeProtocolClient(clients.length)
@@ -482,6 +487,27 @@ describe('RemoteAgentConnectionManager', () => {
     await test.manager.dispose()
   })
 
+  it('does not report acquisition canceled by its caller', async () => {
+    const observeFailure = vi.fn()
+    const test = harness(undefined, undefined, 0, observeFailure)
+    const controller = new AbortController()
+    const cancellation = new Error('caller canceled')
+    test.resolver.resolve.mockImplementationOnce(async () => {
+      controller.abort(cancellation)
+      throw cancellation
+    })
+
+    await expect(
+      test.manager.acquire(
+        'host-1',
+        installation,
+        controller.signal
+      )
+    ).rejects.toBe(cancellation)
+    expect(observeFailure).not.toHaveBeenCalled()
+    await test.manager.dispose()
+  })
+
   it('invalidates every connection for a Host without stopping its daemon', async () => {
     const test = harness()
     const lease = await test.manager.acquire('host-1', installation)
@@ -497,7 +523,8 @@ describe('RemoteAgentConnectionManager', () => {
     const gate = new Promise<void>((resolve) => {
       finishTransport = resolve
     })
-    const test = harness(gate)
+    const observeFailure = vi.fn()
+    const test = harness(gate, undefined, 0, observeFailure)
     const acquiring = test.manager.acquire('host-1', installation)
     await vi.waitFor(() =>
       expect(test.connectTransport).toHaveBeenCalledOnce()
@@ -512,6 +539,7 @@ describe('RemoteAgentConnectionManager', () => {
     })
     expect(test.clients[0]?.disposed).toBe(true)
     expect(test.release).toHaveBeenCalledOnce()
+    expect(observeFailure).not.toHaveBeenCalled()
     await test.manager.dispose()
   })
 
@@ -833,5 +861,47 @@ describe('RemoteAgentConnectionManager', () => {
     await expect(
       test.manager.acquire('host-1', installation)
     ).rejects.toMatchObject({ reason: 'shutdown' })
+  })
+
+  it('reports classified connect and disconnect failures once', async () => {
+    const observeFailure = vi.fn()
+    const failed = harness(undefined, undefined, 0, observeFailure)
+    failed.connectTransport.mockRejectedValueOnce(
+      new Error('provider unavailable')
+    )
+
+    await expect(
+      failed.manager.acquire('host-1', installation)
+    ).rejects.toThrow()
+    expect(observeFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: 'remote-agent',
+        stage: 'connect',
+        code: 'remote.connection.network'
+      })
+    )
+    await failed.manager.dispose()
+
+    observeFailure.mockClear()
+    const connected = harness(
+      undefined,
+      undefined,
+      0,
+      observeFailure
+    )
+    const lease = await connected.manager.acquire(
+      'host-1',
+      installation
+    )
+    connected.clients[0]!.transportClose()
+    expect(observeFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: 'remote-agent',
+        stage: 'disconnect',
+        code: 'remote.connection.lost'
+      })
+    )
+    lease.release()
+    await connected.manager.dispose()
   })
 })

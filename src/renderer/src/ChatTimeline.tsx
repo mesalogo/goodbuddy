@@ -213,7 +213,11 @@ function ToolExecutionList({
                     <strong>{tool.name}</strong>
                     <span>{tool.summary}</span>
                   </span>
-                  <small>{t(`chat.tools.states.${tool.state}`)}</small>
+                  <small
+                    aria-label={t(`chat.tools.states.${tool.state}`)}
+                  >
+                    {t(`chat.tools.states.${tool.state}`)}
+                  </small>
                 </summary>
                 <div className="tool-execution__details">
                   {tool.input && (
@@ -292,6 +296,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
           </small>
         </span>
         <span
+          aria-label={t(`chat.subagents.states.${subagent.state}`)}
           className={`subagent-status-card__status subagent-status-card__status--${subagent.state}`}
         >
           <StateIcon aria-hidden="true" size={14} />
@@ -678,8 +683,17 @@ function ChatMessageRowView({
         })}
         {message.knowledgeRetrieval && (
           <section
-            aria-live="polite"
+            aria-live={
+              message.knowledgeRetrieval.state === 'failed'
+                ? 'assertive'
+                : 'polite'
+            }
             className={`message-retrieval-status message-retrieval-status--${message.knowledgeRetrieval.state}`}
+            role={
+              message.knowledgeRetrieval.state === 'failed'
+                ? 'alert'
+                : 'status'
+            }
           >
             <Library aria-hidden="true" size={14} />
             <div>
@@ -804,6 +818,19 @@ function ChatMessageRowView({
           )}
         {message.approval && (
           <div className="approval-card">
+            <span
+              aria-atomic="true"
+              aria-label={t('chat.approval.waiting', {
+                tool: message.approval.toolName ?? message.approval.title
+              })}
+              aria-live="polite"
+              className="sr-only"
+              role="status"
+            >
+              {t('chat.approval.waiting', {
+                tool: message.approval.toolName ?? message.approval.title
+              })}
+            </span>
             <ShieldCheck size={18} />
             <div>
               <strong>{message.approval.title}</strong>
@@ -895,10 +922,26 @@ function ChatMessageRowView({
         )}
         {message.status && (
           <div
+            aria-atomic="true"
+            aria-label={message.status}
+            aria-live={
+              message.knowledgeRetrieval || compressionMarkers.length > 0
+                ? undefined
+                : message.state === 'error'
+                  ? 'assertive'
+                  : 'polite'
+            }
             className={
               message.state === 'error'
                 ? 'message__status message__status--error'
                 : 'message__status'
+            }
+            role={
+              message.knowledgeRetrieval || compressionMarkers.length > 0
+                ? undefined
+                : message.state === 'error'
+                  ? 'alert'
+                  : 'status'
             }
           >
             <span
@@ -930,10 +973,12 @@ function ChatMessageRowView({
       {message.role === 'assistant' &&
         compressionMarkers.map((compression, index) => (
           <div
-            aria-live="polite"
+            aria-live={
+              compression.state === 'failed' ? 'assertive' : 'polite'
+            }
             className={`context-compression-event context-compression-event--${compression.state}`}
             key={`${compression.scope ?? 'conversation'}:${index}`}
-            role="status"
+            role={compression.state === 'failed' ? 'alert' : 'status'}
           >
             <span className="context-compression-event__line" />
             <span className="context-compression-event__label">

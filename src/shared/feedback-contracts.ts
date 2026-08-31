@@ -7,10 +7,20 @@ export const feedbackCategories = [
   'other'
 ] as const
 
+const maximumDescriptionCharacters = 5_000
+const maximumDiagnosticsSummaryCharacters = 1_600
+const diagnosticsDescriptionSeparatorCharacters = '\n\n'.length
+
 export const feedbackLimits = {
   maximumTitleCharacters: 120,
   minimumDescriptionCharacters: 10,
-  maximumDescriptionCharacters: 5_000,
+  maximumDescriptionCharacters,
+  maximumDiagnosticsSummaryCharacters,
+  maximumDiagnosticRecords: 20,
+  maximumDescriptionCharactersWithDiagnostics:
+    maximumDescriptionCharacters -
+    maximumDiagnosticsSummaryCharacters -
+    diagnosticsDescriptionSeparatorCharacters,
   maximumEmailCharacters: 254,
   maximumScreenshotBytes: 5 * 1_024 * 1_024,
   maximumScreenshotDimension: 8_192,
@@ -61,11 +71,30 @@ const feedbackContentSchema = z
 
 export const feedbackSubmitInputSchema = feedbackContentSchema
   .extend({
+    includeDiagnostics: z.boolean(),
     locale: feedbackLocaleSchema,
     clientRequestId: z.uuid(),
     screenshot: feedbackScreenshotInputSchema.optional()
   })
   .strict()
+  .superRefine((input, context) => {
+    if (
+      input.includeDiagnostics &&
+      input.description.length >
+        feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+    ) {
+      context.addIssue({
+        code: 'too_big',
+        maximum:
+          feedbackLimits.maximumDescriptionCharactersWithDiagnostics,
+        origin: 'string',
+        inclusive: true,
+        path: ['description'],
+        message:
+          'Description exceeds the limit when diagnostics are included'
+      })
+    }
+  })
 
 export const feedbackEnvironmentSchema = z
   .object({
@@ -103,7 +132,8 @@ export const feedbackSubmissionErrorCodes = [
   'service-error',
   'network',
   'timeout',
-  'invalid-response'
+  'invalid-response',
+  'diagnostics-unavailable'
 ] as const
 
 export const feedbackSubmitResultSchema = z.discriminatedUnion('ok', [

@@ -34,6 +34,7 @@
 - [x] **多协议模型配置**：支持 Anthropic Messages、OpenAI Responses、OpenAI Chat Completions、OpenAI Images 和无认证本机模型；新用户默认连接为本机 Ollama 兼容地址，不预置第三方云模型服务。升级时只替换从未配置凭据且仍完全等于旧内置值的历史默认连接，用户显式保存或加密凭据的连接保持不变；已有部署仅使用兼容环境变量提供凭据时继续沿用对应的历史连接参数，通用模型环境变量仍优先。“保存并测试模型”会发送有界的真实文本或图片生成请求并校验生成结果，而不是只检查 HTTP 连通性，因此可能产生少量服务商用量费用。
 - [x] **上下文用量与自动压缩**：直连模型按每次成功调用更新供应商用量，图片与工具轮次使用同一口径，供应商缺失 usage 时才回退估算；界面明确区分“本次模型调用”和“压缩后对话估算”，压缩线始终根据当前设置与所选模型窗口即时计算，不在每个对话中保存旧配置；压缩标识的前后值使用同一估算口径，运行记录仍保留各次模型调用的供应商 usage。对话与多轮工具 Agent 可在已完成调用越过阈值后自动重复压缩，规划时先为固定提示、工具定义和摘要预留预算；同一回复会分别保留 Agent 工具上下文与对话历史的压缩标识，并在应用重启或较早消息滚出本地历史窗口后继续复用摘要。
 - [x] **持久凭据保护**：API Key 由 Main 使用系统安全存储加密且不暴露给 Renderer。托管 SSH accepted Prompt 只把当前 profile 与密钥放入 Agent 内存，不写入 SSH 参数、远端环境或磁盘；其他路径仍在 Main 内使用。密钥随对应模型连接保存，修改服务地址或临时切换为无需认证不会要求重新输入；只有用户显式清除凭据或删除连接时才移除。
+- [x] **有界故障诊断**：Desktop 在用户数据目录中轮转保存启动、Runtime 和远程连接的固定阶段失败，最多 4 个 256 KiB 文件；GoodBuddy Agent 在各 installation 的私有 state 目录中轮转保存 daemon、连接、恢复和 Runtime 生命周期，最多 3 个 64 KiB 文件，并可通过固定 `diagnostics --installation-id` 命令读取。两端都只记录白名单阶段、稳定错误码/类型和固定短消息，不保存 Prompt、凭据、文件内容、路径、环境、SSH 参数或 Provider 原始响应；诊断写入失败不改变正常运行。
 - [x] **OpenCode Runtime 定制**：GoodBuddy 管理的内置 OpenCode 可发现原生 Agents、Tools、Commands、LSP、Formatters、MCP、Skills、Prompts 与 Resources；Tools 单独显示读取、文件修改、命令、网络、Agent 编排等类型、来源及 Ask/Execute 可用性，并隐藏 OpenCode 内部 `invalid` 与 GoodBuddy 临时 MCP 工具。支持保存默认 Agent、每次请求覆盖 Agent、通过原生 SDK 执行 Command、显示上下文用量并调用有总时限的原生 Compact；并发外部 Server 对话的提问使用请求级公开 ID 映射，回答不会串到其他会话。外部 OpenCode Server 只报告连接状态，不宣称原生清单可读。任意插件安装、Session Share、自动 Worktree 和 OpenCode 原生会话持久化仍不开放。
 - [x] **Continue Runtime 定制**：提供静态配置中的原生 Rules、Prompt 模板与 MCP 清单，以及可编辑的 GoodBuddy Rules/Prompt 配置预设；聊天可按请求选择预设和填入可继续编辑的 Prompt。当前 Continue Host 没有可信的静态原生 Tool 发现接口，且使用隔离的 `CONTINUE_GLOBAL_DIR`，因此界面明确标记 Tools 不支持静态发现，也不把 Host 实际不会加载的工作区或用户 Skills 冒充原生能力；GoodBuddy 分配的 Skills 仍按请求暂存执行。Continue 临时 Host 不复用原生会话压缩，手动压缩由 GoodBuddy 摘要模型完成并验证持久化摘要覆盖范围；Agent 交互提问转换为统一问答卡片。Resources、Hooks、后台 Job 和 Continue 原生会话管理继续暂缓。
 - [x] **Runtime 原生清单语义**：原生能力以 Agents、Tools、Commands、Skills、MCP、Rules、Prompts、Resources、LSP、Formatters 和上下文 11 个页签展示；清单状态独立于 Runtime 连通性，区分完整、部分、不可用、仅连接和不支持。DeepSeek Harness 通过 Host Registry 枚举有界的内置/插件 Tools 与 Skills，显示真实 Ask/Execute 边界，并排除 GoodBuddy 按请求分配的 Skills、Web/MCP 代理。
@@ -82,7 +83,7 @@
 - [x] **可选本地语音模型管理**：应用不内置模型权重；提供校验下载、进度与取消、来源链接、ZIP 或本地目录导入、切换和删除。
 - [x] **本地录音与离线转写**：采集麦克风音频并使用已选择的本地模型离线转写，支持停止、取消、状态反馈和资源释放。
 - [x] **版本检查与镜像节点**：在“关于与更新”中选择 GitHub（默认）或镜像节点；手动检查、启动时检查和下载页使用同一选择，并只读取固定可信的发布索引，不自动下载或安装。
-- [x] **应用内反馈**：在“关于与更新”中直接提交问题、建议或体验反馈，支持可选邮箱和单张截图；失败后保留草稿并按同一请求编号重试，不自动附加对话、日志、文件、配置或凭据。
+- [x] **应用内反馈**：在“关于与更新”中直接提交问题、建议或体验反馈，支持可选邮箱和单张截图；默认不上传诊断，用户可主动附加有界的最近桌面诊断摘要。失败后保留草稿、诊断选择和同一请求编号；不会附加对话、Prompt、凭据、文件内容、路径、Provider 原始响应或远端 Agent 日志。
 - [x] **内网兼容模式**：默认开启；允许应用内 HTTP 与无效、自签名或过期的 HTTPS 证书，关闭后恢复严格地址和证书校验。
 
 ### 开源、构建与发布

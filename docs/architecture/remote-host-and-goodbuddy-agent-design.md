@@ -52,6 +52,7 @@ Detached GoodBuddy Agent
   -> Agent-owned OpenCode ACP Prompt Promise
   -> Prompt-scoped Provider gateway / model-call ledger
   -> 有界语义 transcript / page / ACK
+  -> 有界私有诊断记录
   -> 直接拥有的 Runtime 进程
 ```
 
@@ -369,6 +370,16 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
   终态，语义 `latest=ACK=29`，清理计数同样为 0。最终补充验证共 3 次真实文本模型调用。
   采证后已按 PID/starttime/executable 停止精确隔离 daemon 并删除隔离 Host 测试根目录；
   `/root/.goodbuddy` 下的共享 Agent 安装和进程未被修改。
+- 2026-08-31 使用当前工作树短期测试签名 Linux x64 候选，在全新隔离 HOME 和 installation
+  中验证有界诊断：bootstrap、detached daemon、attach、relay 断开与同 controller 重连、
+  `controller/resume`、Runtime candidate 激活和 OpenCode ACP 进程启动均通过；新
+  `diagnostics --installation-id` 命令在 daemon 重启后读取到 23 条完整 JSONL。诊断目录
+  为 `0700`、文件为 `0600`，单文件 3719 bytes，未超过 64 KiB。六类测试哨兵覆盖 Prompt、
+  密钥、环境、SSH 参数、用户文件内容和原始错误消息，CLI 输出与磁盘均未出现哨兵。把隔离
+  diagnostics 目录临时设为不可写后，Attach 和 `agent/status` 仍正常；随后已恢复权限。
+  本次未注入模型凭据或执行 Prompt，真实文本模型调用 0 次；三文件轮转继续由聚焦测试覆盖。
+  测试结束前按 PID、UID、starttime、executable 和唯一 installation 核对并停止所有本次
+  daemon，本地及 Host 临时目录均已清理，共享 current Agent 和 `/root/.goodbuddy` 未修改。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
@@ -419,6 +430,31 @@ model bridge helper；监督器只接受同一 PID/进程组从固定 `bwrap` �
 v32 保留项目及关联用户数据，并加入 remote-recoverable Task/message/provenance/cursor；
 执行空间表保持 `project_id/kind/root_path/ssh_host_id`
 四列，并删除旧 Runtime 验证表。
+
+## Agent 有界诊断
+
+Detached Agent 不依赖 stdio 留存故障证据。每个 installation 在固定私有目录
+`~/.goodbuddy/state/<installationId>/diagnostics/` 中维护
+`agent-diagnostics.jsonl`、`.1` 和 `.2`，每个文件不超过 64 KiB，目录权限为 `0700`，
+文件权限为 `0600`。记录覆盖 daemon 启停、detached 启动、连接、恢复和 Runtime
+启动/退出；每条只包含固定事件、时间、PID、可选工作模式、固定原因和白名单错误码。
+
+诊断写入使用最多 64 条的有界异步队列。连接、恢复和 Runtime 回调只把已经归一化的固定
+记录入队，不等待磁盘；原始 `Error` 不进入队列。队列满、目录不可写或轮转失败只丢弃诊断，
+不得改变 Attach、协议、Runtime 或退出结果。daemon 停止和 bootstrap 生命周期结束时执行
+有界 flush。多个 Agent 进程通过 GoodBuddy 私有短期锁协调 append 和轮转，不把长期锁作为
+运行前提。
+
+已安装 Agent 提供只读固定命令：
+
+```text
+goodbuddy-agent diagnostics --installation-id <installationId>
+```
+
+该命令只能从 installation 对应的固定 state 目录读取上述有界文件，并逐行输出已验证 JSONL；
+不接受任意路径，也不扩展 Agent protocol。诊断不得包含 accepted Prompt、模型输入输出、
+模型密钥、完整配置、环境变量、SSH 参数、用户文件内容、路径或原始错误消息。应用内反馈的
+“附加最近桌面诊断记录”只读取 Desktop 诊断，不会自动取得或上传这些远端 Agent 记录。
 
 ## 资源与发布
 

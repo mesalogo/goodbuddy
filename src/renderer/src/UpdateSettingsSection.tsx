@@ -11,11 +11,15 @@ import type {
   VersionCheckResult
 } from '../../shared/application-settings-contracts'
 import type { AppInfo } from '../../shared/contracts'
+import type { AppNotificationInput } from './notifications'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
-import { displayErrorMessage } from './error-message'
+import {
+  displayErrorMessage,
+  displayNetworkAwareErrorMessage
+} from './error-message'
 import { FeedbackDialog } from './FeedbackDialog'
 
 function formatBytes(bytes: number): string {
@@ -25,19 +29,11 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function updateErrorMessage(
-  reason: unknown,
-  fallback: string,
-  networkMessage: string
-): string {
-  const message = displayErrorMessage(reason, fallback)
-  if (/fetch failed/i.test(message)) {
-    return networkMessage
-  }
-  return message
-}
-
-export function UpdateSettingsSection(): React.JSX.Element {
+export function UpdateSettingsSection({
+  onNotify
+}: {
+  onNotify?: (notification: AppNotificationInput) => void
+}): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
   const [settings, setSettings] = useState<ApplicationSettings>()
   const [appInfo, setAppInfo] = useState<AppInfo>()
@@ -79,7 +75,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
         if (active) {
           const fallback = t('updates.errors.readSettingsFailed')
           setError(
-            updateErrorMessage(
+            displayNetworkAwareErrorMessage(
               reason,
               fallback,
               t('updates.errors.network', { fallback })
@@ -108,7 +104,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
     } catch (reason) {
       const fallback = t('updates.errors.saveSettingsFailed')
       setError(
-        updateErrorMessage(
+        displayNetworkAwareErrorMessage(
           reason,
           fallback,
           t('updates.errors.network', { fallback })
@@ -134,7 +130,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
     } catch (reason) {
       const fallback = t('updates.errors.saveSourceFailed')
       setError(
-        updateErrorMessage(
+        displayNetworkAwareErrorMessage(
           reason,
           fallback,
           t('updates.errors.network', {
@@ -159,7 +155,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
     } catch (reason) {
       const fallback = t('updates.errors.checkFailed')
       setError(
-        updateErrorMessage(
+        displayNetworkAwareErrorMessage(
           reason,
           fallback,
           t('updates.errors.sourceNetwork', {
@@ -172,6 +168,30 @@ export function UpdateSettingsSection(): React.JSX.Element {
       )
     } finally {
       setChecking(false)
+    }
+  }
+
+  const openReleasePage = async (): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates) {
+      onNotify?.({
+        dedupeKey: 'open-update-download-page-failed',
+        message: t('updates.errors.serviceUnavailable'),
+        tone: 'error'
+      })
+      return
+    }
+    try {
+      await updates.openReleasePage()
+    } catch (reason) {
+      onNotify?.({
+        dedupeKey: 'open-update-download-page-failed',
+        message: displayErrorMessage(
+          reason,
+          t('updates.errors.openReleasePageFailed')
+        ),
+        tone: 'error'
+      })
     }
   }
 
@@ -219,7 +239,6 @@ export function UpdateSettingsSection(): React.JSX.Element {
             aria-label={t('updates.source.label')}
             disabled={
               !settings ||
-              !settings.checkUpdatesOnStartup ||
               saving ||
               checking
             }
@@ -254,9 +273,7 @@ export function UpdateSettingsSection(): React.JSX.Element {
           </button>
           <button
             className="secondary-button"
-            onClick={() =>
-              void window.goodbuddy.updates?.openReleasePage()
-            }
+            onClick={() => void openReleasePage()}
             type="button"
           >
             <ExternalLink aria-hidden="true" size={13} />

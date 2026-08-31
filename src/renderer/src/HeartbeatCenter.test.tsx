@@ -542,6 +542,10 @@ describe('HeartbeatCenter', () => {
     )
 
     expect(screen.getByText('正在加载智能心跳')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveAttribute(
+      'aria-busy',
+      'true'
+    )
     expect(
       screen.queryByRole('button', { name: '配置智能心跳' })
     ).not.toBeInTheDocument()

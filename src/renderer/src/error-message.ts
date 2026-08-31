@@ -22,3 +22,16 @@ export function displayErrorMessage(
     .trim()
   return message || fallback
 }
+
+export function displayNetworkAwareErrorMessage(
+  reason: unknown,
+  fallback: string,
+  networkMessage: string
+): string {
+  const message = displayErrorMessage(reason, fallback)
+  return /(?:fetch failed|failed to fetch|networkerror|network request failed)/iu.test(
+    message
+  )
+    ? networkMessage
+    : message
+}

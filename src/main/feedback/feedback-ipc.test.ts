@@ -50,6 +50,7 @@ describe('feedback IPC', () => {
       category: 'bug',
       title: '  Feedback title  ',
       description: 'A useful feedback description.',
+      includeDiagnostics: false,
       locale: 'zh-CN',
       clientRequestId:
         '00000000-0000-4000-8000-000000000501'
@@ -76,6 +77,12 @@ describe('feedback IPC', () => {
       handler(event, {
         ...input,
         endpoint: 'https://attacker.example/api/v1/feedback'
+      })
+    ).toThrow()
+    expect(() =>
+      handler(event, {
+        ...input,
+        diagnostics: [{ message: 'renderer supplied content' }]
       })
     ).toThrow()
     expect(submit).toHaveBeenCalledOnce()

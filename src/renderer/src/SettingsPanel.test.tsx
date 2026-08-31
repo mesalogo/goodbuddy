@@ -2322,14 +2322,28 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByRole('tab', { name: '外观' })
     ).toHaveAttribute('aria-selected', 'true')
-    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+    const content = screen.getByRole('tabpanel')
+    content.scrollTop = 320
+    const closeButton = screen.getByRole('button', {
+      name: '关闭设置'
+    })
+    fireEvent.click(closeButton)
     expect(onClose).not.toHaveBeenCalled()
     expect(
       screen.getByRole('alert')
     ).toHaveTextContent('当前设置有未保存更改')
+    expect(
+      screen.getByRole('button', { name: '继续编辑' })
+    ).toHaveFocus()
+    expect(content).toHaveProperty('scrollTop', 0)
 
     fireEvent.click(
       screen.getByRole('button', { name: '继续编辑' })
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: '关闭设置' })
+      ).toHaveFocus()
     )
     fireEvent.click(runtimeTab)
     expect(await screen.findByLabelText('默认工作区目录')).toHaveValue(
@@ -2343,6 +2357,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('button', { name: '放弃更改并关闭' })
     )
     expect(onClose).toHaveBeenCalledOnce()
+    expect(closeButton).not.toHaveFocus()
   })
 
   it('routes external leave requests through the existing dirty confirmation', async () => {
@@ -2420,6 +2435,7 @@ describe('SettingsPanel runtime files', () => {
       screen.getByRole('button', { name: '放弃更改并切换' })
     )
     expect(appearanceTab).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(appearanceTab).toHaveFocus())
 
     fireEvent.click(
       screen.getByRole('tab', { name: '主机与远程执行' })

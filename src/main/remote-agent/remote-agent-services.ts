@@ -14,6 +14,9 @@ import {
   RemoteAgentConnectionManager,
   type RemoteAgentTargetResolver
 } from './remote-agent-connection-manager'
+import type {
+  DesktopDiagnosticFailureObserver
+} from '../desktop-diagnostics'
 
 const CONTROLLER_STATE_FILE_NAME = 'remote-agent-controller-state.json'
 
@@ -34,6 +37,7 @@ type RemoteAgentServiceFactories = {
     sshPool: SshConnectionPool
     controllerState: ControllerStateStore
     goodBuddyVersion: string
+    observeFailure?: DesktopDiagnosticFailureObserver
   }) => RemoteAgentConnectionManager
 }
 
@@ -45,6 +49,7 @@ export type RemoteAgentServicesOptions = {
   resourcesPath: string
   packaged: boolean
   controlPlanePackageInstaller: Buffer | string
+  observeFailure?: DesktopDiagnosticFailureObserver
   factories?: Partial<RemoteAgentServiceFactories>
 }
 
@@ -103,7 +108,8 @@ export class RemoteAgentServices {
       resolver: this.targetResolver,
       sshPool: this.sshPool,
       controllerState: this.controllerState,
-      goodBuddyVersion: options.goodBuddyVersion
+      goodBuddyVersion: options.goodBuddyVersion,
+      observeFailure: options.observeFailure
     })
   }
 

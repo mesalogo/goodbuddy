@@ -122,6 +122,15 @@ export class AgentProtocolServer {
     connectionId: string
     category: AgentProtocolFailureCategory
   }) => void
+  readonly #onConnectionClose?: (input: {
+    connectionId: string
+    category?: AgentProtocolFailureCategory
+  }) => void
+  readonly #onRecovery?: (input: {
+    connectionId: string
+    outcome: 'started' | 'succeeded' | 'failed'
+    reason?: 'invalid-request' | 'identity-mismatch' | 'takeover-rejected'
+  }) => void
   readonly #connections = new Map<string, ProtocolConnection>()
 
   constructor(options: {
@@ -148,6 +157,15 @@ export class AgentProtocolServer {
       connectionId: string
       category: AgentProtocolFailureCategory
     }) => void
+    onConnectionClose?: (input: {
+      connectionId: string
+      category?: AgentProtocolFailureCategory
+    }) => void
+    onRecovery?: (input: {
+      connectionId: string
+      outcome: 'started' | 'succeeded' | 'failed'
+      reason?: 'invalid-request' | 'identity-mismatch' | 'takeover-rejected'
+    }) => void
     incomingQueueLimits?: Partial<IncomingQueueLimits>
   }) {
     this.#controllers = options.controllers
@@ -159,6 +177,8 @@ export class AgentProtocolServer {
     this.#onBlobFrame = options.onBlobFrame
     this.#authorizeBlobFrame = options.authorizeBlobFrame
     this.#onProtocolFailure = options.onProtocolFailure
+    this.#onConnectionClose = options.onConnectionClose
+    this.#onRecovery = options.onRecovery
     this.#incomingQueueLimits = incomingQueueLimits(
       options.incomingQueueLimits
     )
@@ -239,12 +259,33 @@ export class AgentProtocolServer {
           })
         },
         'controller/resume': async (params) => {
-          const request = controllerResumeRequestSchema.parse(params)
+          this.#onRecovery?.({
+            connectionId: controller.connectionId,
+            outcome: 'started'
+          })
+          let request: ReturnType<
+            typeof controllerResumeRequestSchema.parse
+          >
+          try {
+            request = controllerResumeRequestSchema.parse(params)
+          } catch (error) {
+            this.#onRecovery?.({
+              connectionId: controller.connectionId,
+              outcome: 'failed',
+              reason: 'invalid-request'
+            })
+            throw error
+          }
           const status = daemonStatusSchema.parse(await this.#status())
           if (
             request.daemonBootId !== status.daemonBootId ||
             request.previousGeneration >= controller.generation
           ) {
+            this.#onRecovery?.({
+              connectionId: controller.connectionId,
+              outcome: 'failed',
+              reason: 'identity-mismatch'
+            })
             return controllerResumeResultSchema.parse({
               resumed: false,
               generation: controller.generation,
@@ -263,6 +304,11 @@ export class AgentProtocolServer {
               request
             )
           } catch {
+            this.#onRecovery?.({
+              connectionId: controller.connectionId,
+              outcome: 'failed',
+              reason: 'takeover-rejected'
+            })
             return controllerResumeResultSchema.parse({
               resumed: false,
               generation: controller.generation,
@@ -276,6 +322,10 @@ export class AgentProtocolServer {
           this.#connections
             .get(request.previousConnectionId)
             ?.fence()
+          this.#onRecovery?.({
+            connectionId: controller.connectionId,
+            outcome: 'succeeded'
+          })
           return controllerResumeResultSchema.parse({
             resumed: true,
             generation: resumed.generation,
@@ -293,6 +343,10 @@ export class AgentProtocolServer {
       onBlobFrame: this.#onBlobFrame,
       incomingQueueLimits: this.#incomingQueueLimits,
       onClose: (category) => {
+        this.#onConnectionClose?.({
+          connectionId: controller.connectionId,
+          ...(category === undefined ? {} : { category })
+        })
         if (category !== undefined) {
           this.#onProtocolFailure?.({
             connectionId: controller.connectionId,

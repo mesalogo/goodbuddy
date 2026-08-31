@@ -91,6 +91,11 @@ describe('FeedbackDialog', () => {
         value: '打开平台功能后，魔法笔记页签没有显示。'
       }
     })
+    const diagnostics = screen.getByRole('checkbox', {
+      name: '附加最近桌面诊断记录'
+    })
+    expect(diagnostics).not.toBeChecked()
+    fireEvent.click(diagnostics)
     const submitButton = screen.getByRole('button', {
       name: '提交反馈'
     })
@@ -120,6 +125,53 @@ describe('FeedbackDialog', () => {
     expect(submit.mock.calls[1]![0].clientRequestId).toBe(
       firstRequestId
     )
+    expect(submit.mock.calls[0]![0].includeDiagnostics).toBe(true)
+    expect(submit.mock.calls[1]![0].includeDiagnostics).toBe(true)
+  })
+
+  it('keeps an over-budget diagnostics draft and shows a field error', () => {
+    installApi(
+      vi.fn<DesktopApi['feedback']['submit']>(async () => ({
+        ok: true,
+        reference: 'GOODBUDDY-000016',
+        duplicate: false
+      }))
+    )
+    render(
+      <FeedbackDialog
+        appInfo={{
+          name: 'GoodBuddy',
+          version: '0.11.0',
+          platform: 'win32',
+          arch: 'x64',
+          shortcut: 'Ctrl+Shift+Space'
+        }}
+        onClose={vi.fn()}
+      />
+    )
+    const description = 'x'.repeat(3_399)
+    fireEvent.change(screen.getByLabelText('标题'), {
+      target: { value: 'Diagnostics budget' }
+    })
+    fireEvent.change(screen.getByLabelText('详细描述'), {
+      target: { value: description }
+    })
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: '附加最近桌面诊断记录'
+      })
+    )
+    expect(screen.getByLabelText('详细描述')).toHaveValue(
+      description
+    )
+    expect(
+      screen.getByText(
+        '附加桌面诊断时，详细描述不能超过 3398 个字符；草稿已保留，请缩短后重试。'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '提交反馈' })
+    ).toBeDisabled()
   })
 
   it('validates fields, traps focus, and closes with Escape', () => {

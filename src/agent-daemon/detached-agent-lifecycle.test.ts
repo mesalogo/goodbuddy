@@ -25,6 +25,7 @@ import {
 } from './linux-process-identity'
 import { writePrivateFileAtomic } from './managed-paths'
 import type { VerifiedInstalledAgentBundle } from './installed-bundle-verifier'
+import { readAgentDiagnostics } from './diagnostic-log'
 
 const parentPid = 1101
 const childPid = 2202
@@ -73,6 +74,16 @@ describe('detached Agent lifecycle', () => {
     )
     expect(harness.unref).toHaveBeenCalledOnce()
     expect(harness.probe).toHaveBeenCalled()
+    expect(
+      readAgentDiagnostics(harness.stateDirectory).map(
+        (record) => record.event
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        'detached.launching',
+        'detached.spawned'
+      ])
+    )
   })
 
   it('creates the managed state parent before bootstrapping', async () => {

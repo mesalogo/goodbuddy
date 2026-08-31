@@ -27,6 +27,9 @@ import {
   AgentProtocolClient,
   type AgentProtocolClientError
 } from './agent-protocol-client'
+import type {
+  DesktopDiagnosticFailureObserver
+} from '../desktop-diagnostics'
 import {
   ControllerStateStore,
   type ControllerAcpRecoveryBinding,
@@ -170,6 +173,9 @@ export class RemoteAgentConnectionManager {
   readonly #goodBuddyVersion: string
   readonly #idleTimeoutMs: number
   readonly #attachTimeoutMs: number
+  readonly #observeFailure:
+    | DesktopDiagnosticFailureObserver
+    | undefined
   readonly #identityKey = randomBytes(32)
   readonly #entries = new Map<string, ConnectionEntry>()
   readonly #hostConnectionStates = new Map<
@@ -192,6 +198,7 @@ export class RemoteAgentConnectionManager {
     createProtocolClient?: (
       transport: AgentAttachTransport
     ) => AgentProtocolClient
+    observeFailure?: DesktopDiagnosticFailureObserver
   }) {
     this.#resolver = options.resolver
     this.#sshPool = options.sshPool
@@ -206,6 +213,7 @@ export class RemoteAgentConnectionManager {
       options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.#attachTimeoutMs =
       options.attachTimeoutMs ?? DEFAULT_ATTACH_TIMEOUT_MS
+    this.#observeFailure = options.observeFailure
     if (
       this.#goodBuddyVersion.length < 1 ||
       Buffer.byteLength(this.#goodBuddyVersion, 'utf8') > 64
@@ -236,16 +244,30 @@ export class RemoteAgentConnectionManager {
     }
     signal?.throwIfAborted()
     const installation = validateInstallation(installationInput)
-    // One atomic resolver call supplies the complete current host target.
-    const target = await this.#resolver.resolve(hostId)
-    signal?.throwIfAborted()
-    if (target.host.id !== hostId) {
-      throw terminalError(
-        'Resolved SSH Host identity does not match the request',
-        'host-identity'
-      )
+    let target: SshConnectionPoolTarget
+    let identity: RemoteAgentConnectionIdentity
+    try {
+      // One atomic resolver call supplies the complete current host target.
+      target = await this.#resolver.resolve(hostId)
+      signal?.throwIfAborted()
+      if (target.host.id !== hostId) {
+        throw terminalError(
+          'Resolved SSH Host identity does not match the request',
+          'host-identity'
+        )
+      }
+      identity = this.#identity(target, installation)
+    } catch (error) {
+      const classified = classifyConnectionError(error)
+      if (!signal?.aborted) {
+        this.#reportFailure(
+          'connect',
+          `remote.connection.${classified.reason}`,
+          classified
+        )
+      }
+      throw error
     }
-    const identity = this.#identity(target, installation)
     let entry = this.#entries.get(identity.cacheKey)
     if (entry === undefined) {
       if (this.#entries.size >= MAXIMUM_CONNECTIONS) {
@@ -515,6 +537,13 @@ export class RemoteAgentConnectionManager {
       transport?.dispose()
       sshLease?.release()
       const classified = classifyConnectionError(error)
+      if (!isAbortCancellation(entry.controller.signal)) {
+        this.#reportFailure(
+          'connect',
+          `remote.connection.${classified.reason}`,
+          classified
+        )
+      }
       if (
         this.#entries.get(entry.key) === entry &&
         entry.connectionState !== 'disposed'
@@ -914,11 +943,33 @@ export class RemoteAgentConnectionManager {
       error
     )
     entry.connectionState = 'offline'
+    this.#reportFailure(
+      'disconnect',
+      'remote.connection.lost',
+      entry.failure
+    )
     this.#syncHostConnectionState(entry.hostId)
     active?.unsubscribeClose()
     active?.sshLease.release()
     if (entry.refs === 0 && entry.waiters === 0) {
       this.#scheduleIdle(entry)
+    }
+  }
+
+  #reportFailure(
+    stage: string,
+    code: string,
+    error: unknown
+  ): void {
+    try {
+      this.#observeFailure?.({
+        component: 'remote-agent',
+        stage,
+        code,
+        error
+      })
+    } catch {
+      // Diagnostics must not alter remote connection behavior.
     }
   }
 
@@ -1067,6 +1118,21 @@ export class RemoteAgentConnectionManager {
         // One observer cannot interrupt connection ownership.
       }
     }
+  }
+}
+
+function isAbortCancellation(signal: AbortSignal): boolean {
+  if (!signal.aborted) {
+    return false
+  }
+  const reason: unknown = signal.reason
+  if (typeof reason !== 'object' || reason === null) {
+    return true
+  }
+  try {
+    return !('name' in reason) || reason.name === 'AbortError'
+  } catch {
+    return true
   }
 }
 

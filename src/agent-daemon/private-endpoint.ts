@@ -76,6 +76,7 @@ export class PrivateEndpoint {
   readonly #challenge: InstallationChallengeVerifier
   readonly #controllers: ControllerRegistry
   readonly #onAttach: (attach: AuthenticatedAttach) => void | Promise<void>
+  readonly #onConnectionFailure?: (error: unknown) => void
   readonly #installationId: string
   readonly #binaryDigest: string
   readonly #daemonBootId: string
@@ -92,6 +93,7 @@ export class PrivateEndpoint {
     challenge: InstallationChallengeVerifier
     controllers: ControllerRegistry
     onAttach: (attach: AuthenticatedAttach) => void | Promise<void>
+    onConnectionFailure?: (error: unknown) => void
     installationId: string
     binaryDigest: string
     daemonBootId: string
@@ -103,6 +105,7 @@ export class PrivateEndpoint {
     this.#challenge = options.challenge
     this.#controllers = options.controllers
     this.#onAttach = options.onAttach
+    this.#onConnectionFailure = options.onConnectionFailure
     this.#installationId = agentIdentifierSchema.parse(options.installationId)
     this.#binaryDigest = sha256DigestSchema.parse(options.binaryDigest)
     this.#daemonBootId = agentIdentifierSchema.parse(options.daemonBootId)
@@ -141,7 +144,10 @@ export class PrivateEndpoint {
       socket.once('close', () => {
         this.#sockets.delete(socket)
       })
-      void this.#authenticate(socket).catch(() => socket.destroy())
+      void this.#authenticate(socket).catch((error: unknown) => {
+        this.#onConnectionFailure?.(error)
+        socket.destroy()
+      })
     })
     await new Promise<void>((resolve, reject) => {
       const server = this.#server

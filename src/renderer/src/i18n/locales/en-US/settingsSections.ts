@@ -10,6 +10,7 @@ export const settingsSections = {
   },
   sshHosts: {
     loading: 'Loading SSH hosts…',
+    loadFailedTitle: 'Could not load SSH hosts',
     listLabel: 'SSH host list',
     securityNotice:
       'When a host is added or edited, GoodBuddy inspects its host key before sending credentials and running a bounded system probe. The host and encrypted password are saved only after every step succeeds.',
@@ -191,6 +192,7 @@ export const settingsSections = {
     removeProjectsHeading: 'Also remove these related project records:',
     actions: {
       add: 'Add host',
+      retry: 'Retry',
       edit: 'Edit and revalidate',
       validate: 'Validate and save',
       editNamed: 'Edit {{name}}',
@@ -757,6 +759,11 @@ export const settingsSections = {
         'Used only if we need to contact you for more information.',
       characterCount: '{{count}} / {{maximum}} characters'
     },
+    diagnostics: {
+      label: 'Attach recent desktop diagnostics',
+      description:
+        'Off by default. When selected, this adds only timestamps, components, stages, stable error codes, error types, and fixed short messages from recent desktop diagnostics. It does not include conversations, prompts, credentials, file contents, paths, raw provider responses, or remote Agent logs.'
+    },
     screenshot: {
       title: 'Screenshot (optional)',
       help:
@@ -783,11 +790,15 @@ export const settingsSections = {
       }
     },
     privacy:
-      'GoodBuddy will send the feedback type, title, description, optional email, app version, operating system, architecture, interface language, and any screenshot you add. Conversations, logs, files, project paths, model settings, and credentials are never attached automatically.',
+      'GoodBuddy will send the feedback type, title, description, optional email, app version, operating system, architecture, interface language, and any screenshot you add. Desktop diagnostics are not uploaded by default; a bounded summary is appended to the description only when selected. Conversations, prompts, credentials, file contents, paths, raw provider responses, and remote Agent logs are not sent.',
     validation: {
       titleRequired: 'Enter a feedback title.',
       descriptionMinimum:
         'The detailed description must contain at least 10 characters.',
+      descriptionMaximum:
+        'The detailed description must be {{maximum}} characters or fewer. Your draft is preserved; shorten it and try again.',
+      descriptionMaximumWithDiagnostics:
+        'When desktop diagnostics are attached, the detailed description must be {{maximum}} characters or fewer. Your draft is preserved; shorten it and try again.',
       emailInvalid: 'Enter a valid contact email or leave it blank.'
     },
     actions: {
@@ -830,7 +841,9 @@ export const settingsSections = {
       timeout:
         'The feedback service connection timed out. Check your network and try again.',
       'invalid-response':
-        'The feedback service returned an invalid result. Try again later.'
+        'The feedback service returned an invalid result. Try again later.',
+      'diagnostics-unavailable':
+        'The selected desktop diagnostics could not be read, so no feedback was sent. Your draft and selection are preserved; retry or clear the diagnostics checkbox before submitting.'
     }
   },
   updates: {
@@ -842,6 +855,7 @@ export const settingsSections = {
       saveSettingsFailed: 'Could not save update settings',
       saveSourceFailed: 'Could not save the update source',
       checkFailed: 'Version check failed',
+      openReleasePageFailed: 'Could not open the download page',
       network: '{{fallback}}. Check the system status and try again.',
       sourceNetwork:
         '{{fallback}}: Could not connect to update source "{{source}}". Check your network or proxy and try again.'

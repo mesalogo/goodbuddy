@@ -61,6 +61,7 @@ export function FeedbackDialog({
       : 'zh-CN'
   const titleId = useId()
   const descriptionId = useId()
+  const diagnosticsDescriptionId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
   const categoryRef = useRef<HTMLSelectElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
@@ -73,6 +74,8 @@ export function FeedbackDialog({
   const [category, setCategory] = useState<FeedbackCategory>('bug')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [includeDiagnostics, setIncludeDiagnostics] =
+    useState(false)
   const [contactEmail, setContactEmail] = useState('')
   const [screenshot, setScreenshot] = useState<ScreenshotDraft>()
   const [screenshotProcessing, setScreenshotProcessing] =
@@ -214,6 +217,19 @@ export function FeedbackDialog({
         'feedback.validation.descriptionMinimum'
       )
     }
+    const maximumDescriptionCharacters = includeDiagnostics
+      ? feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+      : feedbackLimits.maximumDescriptionCharacters
+    if (
+      description.trim().length > maximumDescriptionCharacters
+    ) {
+      errors.description = t(
+        includeDiagnostics
+          ? 'feedback.validation.descriptionMaximumWithDiagnostics'
+          : 'feedback.validation.descriptionMaximum',
+        { maximum: maximumDescriptionCharacters }
+      )
+    }
     if (
       contactEmail.trim() &&
       !feedbackContactEmailSchema.safeParse(contactEmail.trim())
@@ -228,6 +244,10 @@ export function FeedbackDialog({
     title.trim().length > 0 &&
     description.trim().length >=
       feedbackLimits.minimumDescriptionCharacters &&
+    description.trim().length <=
+      (includeDiagnostics
+        ? feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+        : feedbackLimits.maximumDescriptionCharacters) &&
     (!contactEmail.trim() ||
       feedbackContactEmailSchema.safeParse(contactEmail.trim())
         .success) &&
@@ -260,6 +280,7 @@ export function FeedbackDialog({
         category,
         title,
         description,
+        includeDiagnostics,
         ...(contactEmail.trim()
           ? { contactEmail: contactEmail.trim() }
           : {}),
@@ -451,16 +472,27 @@ export function FeedbackDialog({
                   aria-label={t('feedback.fields.description')}
                   aria-invalid={Boolean(fieldErrors.description)}
                   disabled={submitting}
-                  maxLength={
-                    feedbackLimits.maximumDescriptionCharacters
-                  }
                   onBlur={() =>
                     setFieldErrors((current) => ({
                       ...current,
                       description:
                         description.trim().length >=
-                        feedbackLimits.minimumDescriptionCharacters
-                          ? undefined
+                          feedbackLimits.minimumDescriptionCharacters
+                          ? description.trim().length <=
+                            (includeDiagnostics
+                              ? feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+                              : feedbackLimits.maximumDescriptionCharacters)
+                            ? undefined
+                            : t(
+                                includeDiagnostics
+                                  ? 'feedback.validation.descriptionMaximumWithDiagnostics'
+                                  : 'feedback.validation.descriptionMaximum',
+                                {
+                                  maximum: includeDiagnostics
+                                    ? feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+                                    : feedbackLimits.maximumDescriptionCharacters
+                                }
+                              )
                           : t(
                               'feedback.validation.descriptionMinimum'
                             )
@@ -485,7 +517,9 @@ export function FeedbackDialog({
                   {t('feedback.fields.characterCount', {
                     count: description.length,
                     maximum:
-                      feedbackLimits.maximumDescriptionCharacters
+                      includeDiagnostics
+                        ? feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+                        : feedbackLimits.maximumDescriptionCharacters
                   })}
                 </small>
                 {fieldErrors.description && (
@@ -493,6 +527,48 @@ export function FeedbackDialog({
                     {fieldErrors.description}
                   </small>
                 )}
+              </label>
+
+              <label className="feedback-diagnostics-option">
+                <input
+                  aria-label={t('feedback.diagnostics.label')}
+                  checked={includeDiagnostics}
+                  disabled={submitting}
+                  onChange={(event) => {
+                    const selected = event.target.checked
+                    setIncludeDiagnostics(selected)
+                    const maximum = selected
+                      ? feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+                      : feedbackLimits.maximumDescriptionCharacters
+                    setFieldErrors((current) => ({
+                      ...current,
+                      description:
+                        description.trim().length <
+                        feedbackLimits.minimumDescriptionCharacters
+                          ? t(
+                              'feedback.validation.descriptionMinimum'
+                            )
+                          : description.trim().length > maximum
+                          ? t(
+                              selected
+                                ? 'feedback.validation.descriptionMaximumWithDiagnostics'
+                                : 'feedback.validation.descriptionMaximum',
+                              { maximum }
+                            )
+                          : undefined
+                    }))
+                  }}
+                  type="checkbox"
+                  aria-describedby={diagnosticsDescriptionId}
+                />
+                <span>
+                  <strong>
+                    {t('feedback.diagnostics.label')}
+                  </strong>
+                  <small id={diagnosticsDescriptionId}>
+                    {t('feedback.diagnostics.description')}
+                  </small>
+                </span>
               </label>
 
               <label className="field">

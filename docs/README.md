@@ -38,6 +38,7 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 - [SSH Host 远程环境准备与控制面直连设计](./architecture/remote-host-environment-provisioning-design.md)
 - [跨平台助手产品设计](./design/cross-platform-assistant-product-design.md)
 - [长期助手路线图](./roadmap/long-term-assistant-roadmap.md)
+- [产品、性能与体验综合改进计划](./roadmap/product-performance-experience-improvement-plan.md)
 - [电脑控制实施状态](./status/computer-control-implementation-status.md)
 - [知识检索评估](./quality/knowledge-retrieval-evaluation.md)
 - [GoodBuddy 龙芯（LoongArch）预览版构建与功能列表](./development/loongarch-preview-build.md)

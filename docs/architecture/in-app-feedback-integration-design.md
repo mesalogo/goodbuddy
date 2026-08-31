@@ -45,8 +45,9 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
    以此保证幂等；创建另一条反馈时才生成新 ID。
 10. GoodBuddy 使用单独的随机安装 UUID 做服务端限流。该 UUID 不得复用 Agent
     installation ID、硬件 ID、机器名、用户名、项目 ID 或任何设备指纹。
-11. 默认不发送对话、提示词、模型回复、日志、文件、项目或工作区路径、知识库、模型配置、
-    Runtime 配置、API Key、Token、Cookie、SSH 信息、剪贴板或屏幕内容。
+11. 默认不发送对话、提示词、模型回复、诊断、日志、文件、项目或工作区路径、知识库、模型
+    配置、Runtime 配置、API Key、Token、Cookie、SSH 信息、剪贴板或屏幕内容。用户可通过
+    默认关闭的 Checkbox 主动附加有界的最近桌面诊断摘要。
 12. 反馈提交失败时保留全部表单内容和截图，成功后显示可复制的服务端反馈编号。
 13. 首版不提供反馈历史、状态查询、编辑、撤回、自动日志收集或服务端管理入口。
 14. 生产接口固定为 `https://imp.mesalogo.com/api/v1/feedback`。域名健康检查、
@@ -79,7 +80,8 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
 - GitHub Issue 创建、GitHub Token 或 GitHub 网页附件上传。
 - GoodBuddy 内的管理员后台、处理状态修改或内部备注。
 - 用户账户、登录、反馈列表、远程状态查询或推送通知。
-- 自动附加当前对话、日志、错误堆栈、项目、文件、模型或 Runtime 信息。
+- 自动附加当前对话、桌面诊断、日志、错误堆栈、项目、文件、模型或 Runtime 信息。
+- 远端 Agent 日志或通用日志、诊断包和附件框架。
 - 自动截取全屏、当前窗口、浏览器、远程桌面或其他应用窗口。
 - 多截图、视频、录屏、任意文件附件或压缩包。
 - 离线队列、后台自动重试、指数退避、跨重启草稿或发送历史。
@@ -113,16 +115,23 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
    - 使用体验：`experience`
    - 其他：`other`
 2. **标题**，必填，1 至 120 字符。
-3. **详细描述**，必填，去除首尾空白后 10 至 5,000 字符。
-4. **联系邮箱**，可选，最多 254 字符。
-5. **截图**，可选，最多一张，支持选择 PNG/JPEG/WebP 或在对话框中粘贴图片。
-6. **将发送的信息**，只读显示应用版本、系统、架构和界面语言。
-7. **隐私说明**，紧邻提交操作。
+3. **详细描述**，必填，去除首尾空白后 10 至 5,000 字符；选择桌面诊断时为摘要预留空间，
+   用户描述上限为 3,398 字符。
+4. **附加最近桌面诊断记录**，可选的原生 Checkbox，默认关闭。
+5. **联系邮箱**，可选，最多 254 字符。
+6. **截图**，可选，最多一张，支持选择 PNG/JPEG/WebP 或在对话框中粘贴图片。
+7. **将发送的信息**，只读显示应用版本、系统、架构和界面语言。
+8. **隐私说明**，紧邻提交操作。
 
 隐私说明使用明确文案：
 
 > 将发送反馈类型、标题、描述、可选邮箱、GoodBuddy 版本、操作系统、架构、界面语言，
-> 以及你主动添加的截图。不会自动发送对话、日志、文件、项目路径、模型配置或凭据。
+> 以及你主动添加的截图。默认不上传桌面诊断；只有勾选后才会把有界诊断摘要追加到描述。
+> 不会发送对话、Prompt、凭据、文件内容、路径、Provider 原始响应或远端 Agent 日志。
+
+Checkbox 下方持续说明：诊断摘要只含时间、组件、阶段、稳定错误码、错误类型和固定短消息。
+Renderer 不预览、不读取也不接收诊断内容或路径。勾选后详细描述上限为 3,398 字符，为附加
+摘要预留 1,600 字符以及分隔换行；超长草稿保留在表单中并显示字段错误，不静默截断。
 
 截图区域必须包含：
 
@@ -167,7 +176,7 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
 | `productKey` | Main 常量 `goodbuddy` | 服务端产品路由 |
 | `category` | 用户选择 | 分流反馈 |
 | `title` | 用户输入 | 摘要 |
-| `description` | 用户输入 | 问题和建议详情 |
+| `description` | 用户输入；勾选时由 Main 追加桌面诊断摘要 | 问题、建议和主动提供的有界诊断详情 |
 | `contactEmail` | 用户可选输入 | 必要时联系用户 |
 | `environment.appVersion` | `app.getVersion()` | 判断受影响版本 |
 | `environment.platform` | `process.platform` 映射 | 判断受影响平台 |
@@ -197,8 +206,9 @@ Main 进程职责、公共 API 对接、失败处理和验收方法。反馈平�
 - 剪贴板、屏幕、摄像头、麦克风或其他应用内容。
 - Remote Agent installation ID、Runtime ID、Conversation ID、Task ID 或 Project ID。
 
-未来若增加日志、诊断包或其他附件，必须单独设计字段、预览、大小限制、用户选择和服务端
-保留策略，不能复用截图字段静默上传。
+除上述用户主动选择、追加到描述且有界的桌面诊断摘要外，未来若增加日志、诊断包或其他
+附件，必须单独设计字段、预览、大小限制、用户选择和服务端保留策略，不能复用截图字段
+静默上传。
 
 ### 4.3 本地数据生命周期
 
@@ -289,6 +299,7 @@ HTTP 201 表示首次创建，HTTP 200 表示相同 `clientRequestId` 的幂等�
 | 500–599 | 提示服务暂时异常，保留草稿 |
 | 超时 / DNS / TLS / 离线 | 提示无法连接反馈服务，保留草稿 |
 | 响应格式错误 | 提示服务返回无效结果，不能猜测成功 |
+| 本地诊断读取失败 | 不发送反馈，保留草稿、勾选状态和请求 ID，提示重试或取消勾选 |
 
 首版不自动重试。自动重试容易让用户无法判断是否已经发送，也会在服务持续异常时制造额外
 流量。用户点击“重试”时复用同一个 `clientRequestId`。
@@ -330,6 +341,7 @@ type FeedbackSubmitInput = {
   category: 'bug' | 'feature' | 'experience' | 'other'
   title: string
   description: string
+  includeDiagnostics: boolean
   contactEmail?: string
   locale: 'zh-CN' | 'en-US'
   clientRequestId: string
@@ -341,7 +353,7 @@ type FeedbackSubmitInput = {
 ```
 
 Renderer 不能传入 `productKey`、`appVersion`、`platform`、`architecture` 或
-`installationId`。这些字段由 Main 从受信运行环境生成。
+`installationId`，也不能传入诊断内容或路径。这些字段由 Main 从受信运行环境生成。
 
 ### 6.3 IPC 与 Preload
 
@@ -402,6 +414,12 @@ Main-only `FeedbackService` 负责：
 - 映射应用版本、平台和架构。
 - 验证并标准化可选截图。
 - 组装严格的公共 payload。
+- 仅在 `includeDiagnostics: true` 时通过注入的 DesktopDiagnostics provider 读取最多 20 条
+  最近记录；默认提交完全不调用诊断 provider。
+- 将诊断格式化为带
+  `[GOODBUDDY_DESKTOP_DIAGNOSTICS_V1_BEGIN]` /
+  `[GOODBUDDY_DESKTOP_DIAGNOSTICS_V1_END]` 明确分隔、最多 1,600 字符且只保留完整 JSON
+  行的摘要。无记录时写入固定 `{"status":"no-recent-diagnostics"}` 事实。
 - 调用 HTTP Client。
 - 维持单次提交的 AbortController，并在 dispose / 清除本地数据时取消。
 
@@ -415,6 +433,11 @@ Main-only `FeedbackService` 负责：
 | 其他 | `unknown` |
 
 架构只保留 `x64` 和 `arm64`，其他值映射为 `unknown`。
+
+公共 API 继续使用 `schemaVersion: 1` 和原有固定字段。`includeDiagnostics` 只属于客户端
+IPC 输入，不进入公共 payload，也不新增 multipart 字段；Main 把摘要追加到
+`payload.description`。默认未勾选时，公共 payload 与既有实现逐字段一致。诊断读取失败时
+不得发送部分摘要或声称已附加，必须返回可本地化的 `diagnostics-unavailable` 错误。
 
 ### 6.6 严格 HTTPS Client
 
@@ -618,7 +641,8 @@ Endpoint 的健康检查和无副作用 schema 探针也必须在发布前通过
 - 普通文本粘贴不被图片处理拦截。
 - 截图选择、预览、替换、移除和 Object URL 清理。
 - 并发截图读取按最新选择生效，关闭对话框后不会留下待处理 Object URL。
-- 失败保留字段，重试使用原 `clientRequestId`。
+- 失败保留字段、诊断勾选状态，重试使用原 `clientRequestId`。
+- 默认提交不读取诊断且公共 payload 不变；主动附加、描述预算、无记录和读取失败均有覆盖。
 - 成功显示真实编号并清空后续新草稿。
 - Dialog role、初始焦点、Tab 循环、Escape 和焦点恢复。
 - 浅色、深色、窄窗口和 reduced motion。
@@ -666,8 +690,9 @@ npm run build
 - Endpoint 域名变化属于客户端发布变更，不能依赖 301/302 迁移。
 - 入口发布与 `goodbuddy` 产品启用状态、生产 TLS 和 v1 契约保持同一发布门槛。
 - 此功能不迁移现有用户数据；只新增可重置的随机反馈安装身份。
-- 发布说明应明确：用户现在可以在“关于与更新”内直接提交反馈，邮箱和截图可选，应用不会
-  自动附加对话、日志、文件或凭据。
+- 发布说明应明确：用户现在可以在“关于与更新”内直接提交反馈，邮箱和截图可选；桌面诊断
+  默认不上传，只有用户勾选后才附加有界摘要，并且不会发送对话、Prompt、凭据、文件内容、
+  路径、Provider 原始响应或远端 Agent 日志。
 
 ---
 

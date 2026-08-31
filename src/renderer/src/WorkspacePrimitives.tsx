@@ -330,16 +330,23 @@ export function EmptyState({
   description,
   icon,
   level = 'section',
-  title
+  title,
+  variant = 'default'
 }: {
   action?: ReactNode
   description: ReactNode
   icon?: ReactNode
   level?: 'page' | 'section' | 'table'
   title?: string
+  variant?: 'default' | 'loading'
 }): React.JSX.Element {
   return (
-    <div className={`empty-state empty-state--${level}`}>
+    <div
+      aria-busy={variant === 'loading' ? 'true' : undefined}
+      aria-live={variant === 'loading' ? 'polite' : undefined}
+      className={`empty-state empty-state--${level}`}
+      role={variant === 'loading' ? 'status' : undefined}
+    >
       {icon && (
         <span aria-hidden="true" className="empty-state__icon">
           {icon}

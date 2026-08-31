@@ -17,6 +17,7 @@ describe('feedback contracts', () => {
         category,
         title: '  Feedback title  ',
         description: '  A useful feedback description.  ',
+        includeDiagnostics: false,
         locale: 'zh-CN',
         clientRequestId
       })
@@ -33,6 +34,7 @@ describe('feedback contracts', () => {
         category: 'bug',
         title: 'Feedback title',
         description: 'A useful feedback description.',
+        includeDiagnostics: false,
         locale: 'zh-CN',
         clientRequestId,
         endpoint: 'https://attacker.example'
@@ -43,6 +45,7 @@ describe('feedback contracts', () => {
         category: 'bug',
         title: 'Feedback title',
         description: 'A useful feedback description.',
+        includeDiagnostics: false,
         contactEmail: 'not-an-email',
         locale: 'zh-CN',
         clientRequestId
@@ -53,6 +56,7 @@ describe('feedback contracts', () => {
         category: 'bug',
         title: 'Feedback title',
         description: 'A useful feedback description.',
+        includeDiagnostics: false,
         locale: 'zh-CN',
         clientRequestId,
         screenshot: {
@@ -63,6 +67,39 @@ describe('feedback contracts', () => {
         }
       })
     ).toThrow()
+  })
+
+  it('reserves description space only when diagnostics are selected', () => {
+    expect(
+      feedbackLimits.maximumDescriptionCharactersWithDiagnostics
+    ).toBe(
+      feedbackLimits.maximumDescriptionCharacters -
+        feedbackLimits.maximumDiagnosticsSummaryCharacters -
+        '\n\n'.length
+    )
+    const description = 'x'.repeat(
+      feedbackLimits.maximumDescriptionCharactersWithDiagnostics + 1
+    )
+    expect(() =>
+      feedbackSubmitInputSchema.parse({
+        category: 'bug',
+        title: 'Feedback title',
+        description,
+        includeDiagnostics: true,
+        locale: 'zh-CN',
+        clientRequestId
+      })
+    ).toThrow()
+    expect(
+      feedbackSubmitInputSchema.parse({
+        category: 'bug',
+        title: 'Feedback title',
+        description,
+        includeDiagnostics: false,
+        locale: 'zh-CN',
+        clientRequestId
+      }).description
+    ).toBe(description)
   })
 
   it('matches the deployed version 1 public payload and response', () => {
@@ -87,6 +124,24 @@ describe('feedback contracts', () => {
       schemaVersion: 1,
       productKey: 'goodbuddy'
     })
+    expect(() =>
+      feedbackPublicPayloadSchema.parse({
+        schemaVersion: 1,
+        productKey: 'goodbuddy',
+        category: 'experience',
+        title: 'Feedback title',
+        description: 'A useful feedback description.',
+        includeDiagnostics: true,
+        environment: {
+          appVersion: '0.11.0',
+          platform: 'windows',
+          architecture: 'x64',
+          locale: 'en-US'
+        },
+        installationId,
+        clientRequestId
+      })
+    ).toThrow()
     expect(
       feedbackPublicResponseSchema.parse({
         reference: 'GOODBUDDY-1000000',

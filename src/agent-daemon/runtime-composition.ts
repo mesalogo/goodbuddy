@@ -44,6 +44,7 @@ import {
   AgentModelCallLedger,
   AgentModelGateway
 } from './agent-model-gateway'
+import type { AgentDiagnosticLog } from './diagnostic-log'
 
 const BWRAP_EXECUTABLE = '/usr/bin/bwrap'
 
@@ -93,6 +94,7 @@ export type ProductionRuntimeCompositionOptions = {
   verificationEnvironment?: 'production' | 'test'
   filesystemPlatform?: NodeJS.Platform
   reportError?: (message: string, error: unknown) => void
+  diagnostics?: Pick<AgentDiagnosticLog, 'tryRecord'>
 }
 
 export async function createProductionRuntimeProtocol(
@@ -304,6 +306,7 @@ export async function createProductionRuntimeProtocol(
       outputSink: options.outputSink,
       semanticPrompts,
       modelGateway,
+      diagnostics: options.diagnostics,
       ...(options.blobSink === undefined
         ? {}
         : { blobSink: options.blobSink })

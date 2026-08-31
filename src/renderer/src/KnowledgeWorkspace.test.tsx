@@ -1887,6 +1887,10 @@ describe('KnowledgeWorkspace', () => {
     )
 
     expect(screen.getByText('正在加载知识库')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveAttribute(
+      'aria-busy',
+      'true'
+    )
     expect(
       screen.queryByText('建立第一个知识库')
     ).not.toBeInTheDocument()

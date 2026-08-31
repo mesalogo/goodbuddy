@@ -222,7 +222,10 @@ import {
   type KeepAliveCacheEntry
 } from './keep-alive-cache'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
-import { displayErrorMessage } from './error-message'
+import {
+  displayErrorMessage,
+  displayNetworkAwareErrorMessage
+} from './error-message'
 import { getProjectDisplayText } from './project-display'
 
 const knowledgeWorkspaceRoute = createPreloadableComponent(
@@ -2304,6 +2307,12 @@ function App(): React.JSX.Element {
     Record<string, BrowserLiveState>
   >({})
   const [view, setViewState] = useState<WorkspaceView>('chat')
+  const settingsEntryFocusRef = useRef<HTMLElement | undefined>(
+    undefined
+  )
+  const settingsExitFocusRef = useRef<HTMLElement | undefined>(
+    undefined
+  )
   const settingsLeaveRequesterRef = useRef<
     SettingsLeaveRequester | undefined
   >(undefined)
@@ -2319,6 +2328,7 @@ function App(): React.JSX.Element {
   )
   const commitView = useCallback(
     (next: WorkspaceView): void => {
+      const previous = viewRef.current
       const now = Date.now()
       const runningConversationIds = new Set(
         [...activeRuns.current.values()].map((run) => run.conversationId)
@@ -2355,6 +2365,25 @@ function App(): React.JSX.Element {
         })
       )
       setViewState(next)
+      if (previous === 'settings' && next !== 'settings') {
+        const preferred = settingsExitFocusRef.current
+        const returnTarget = settingsEntryFocusRef.current
+        settingsExitFocusRef.current = undefined
+        settingsEntryFocusRef.current = undefined
+        requestAnimationFrame(() => {
+          const target =
+            preferred?.isConnected
+              ? preferred
+              : returnTarget?.isConnected
+                ? returnTarget
+                : next === 'chat'
+                  ? inputRef.current
+                  : document.querySelector<HTMLElement>(
+                      `.primary-nav [aria-current="page"]`
+                    )
+          target?.focus()
+        })
+      }
     },
     []
   )
@@ -2364,6 +2393,19 @@ function App(): React.JSX.Element {
         typeof update === 'function'
           ? update(viewRef.current)
           : update
+      if (
+        viewRef.current !== 'settings' &&
+        next === 'settings' &&
+        !settingsEntryFocusRef.current?.isConnected
+      ) {
+        const activeElement = document.activeElement
+        settingsEntryFocusRef.current =
+          activeElement instanceof HTMLElement &&
+          activeElement !== document.body &&
+          activeElement.isConnected
+            ? activeElement
+            : undefined
+      }
       if (viewRef.current === 'settings' && next !== 'settings') {
         const requestLeave = settingsLeaveRequesterRef.current
         if (requestLeave) {
@@ -2442,6 +2484,9 @@ function App(): React.JSX.Element {
   const deferredSearchQuery = useDeferredValue(searchQuery)
   const [searchConversationSnapshot, setSearchConversationSnapshot] =
     useState(conversations)
+  const [conversationLoadError, setConversationLoadError] =
+    useState<string>()
+  const [conversationLoadRetry, setConversationLoadRetry] = useState(0)
   const [conversationActionsId, setConversationActionsId] = useState('')
   const [confirmingConversationId, setConfirmingConversationId] =
     useState('')
@@ -2629,7 +2674,15 @@ function App(): React.JSX.Element {
     requestAnimationFrame(() => sidebarToggleRef.current?.focus())
   }, [])
   const navigateFromSidebar = useCallback(
-    (nextView: WorkspaceView): void => {
+    (nextView: WorkspaceView, trigger: HTMLElement): void => {
+      if (viewRef.current !== 'settings' && nextView === 'settings') {
+        settingsEntryFocusRef.current = trigger
+      } else if (
+        viewRef.current === 'settings' &&
+        nextView !== 'settings'
+      ) {
+        settingsExitFocusRef.current = trigger
+      }
       setView(nextView)
       if (narrowWindow) {
         closeNarrowSidebar()
@@ -2849,6 +2902,7 @@ function App(): React.JSX.Element {
       return
     }
     startupUpdateCheckStartedRef.current = true
+    let updateCheckSource: 'github' | 'mirror' | undefined
     void updates
       .getSettings()
       .then(async (settings) => {
@@ -2865,6 +2919,7 @@ function App(): React.JSX.Element {
         if (!settings.checkUpdatesOnStartup) {
           return
         }
+        updateCheckSource = settings.updateSource
         const result = await updates.check()
         if (result.updateAvailable) {
           notify({
@@ -2877,7 +2932,27 @@ function App(): React.JSX.Element {
           })
         }
       })
-      .catch(() => undefined)
+      .catch((reason: unknown) => {
+        if (!updateCheckSource) {
+          return
+        }
+        notify({
+          tone: 'error',
+          message: i18n.t('notices.startupUpdateCheckFailed', {
+            ns: 'app',
+            source: i18n.t(
+              `notices.updateSources.${updateCheckSource}`,
+              { ns: 'app' }
+            ),
+            error: displayNetworkAwareErrorMessage(
+              reason,
+              i18n.t('notices.updateCheckFailed', { ns: 'app' }),
+              i18n.t('notices.updateCheckNetwork', { ns: 'app' })
+            )
+          }),
+          dedupeKey: 'startup-update-check'
+        })
+      })
   }, [i18n, setView])
 
   useEffect(() => {
@@ -4588,7 +4663,9 @@ function App(): React.JSX.Element {
             status:
               event.type === 'error' && !representedToolError
                 ? event.message
-                : undefined,
+                : event.type === 'done'
+                  ? tRef.current('chat.status.taskCompleted')
+                  : undefined,
             contextCompression:
               event.type === 'error' &&
               message.contextCompression?.state === 'compressing'
@@ -5346,19 +5423,18 @@ function App(): React.JSX.Element {
     )
     void initialization.catch((reason: unknown) => {
         if (active) {
-          notify({
-            tone: 'error',
-            message:
-              reason instanceof Error
-                ? reason.message
-                : tRef.current('notices.projectReadFailed')
-          })
+          setConversationLoadError(
+            displayErrorMessage(
+              reason,
+              tRef.current('notices.projectReadFailed')
+            )
+          )
         }
       })
     return () => {
       active = false
     }
-  }, [notify, setActiveId])
+  }, [conversationLoadRetry, setActiveId])
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -7958,6 +8034,23 @@ function App(): React.JSX.Element {
 
   const mainSidebarOpen = narrowWindow && sidebarOpen
   const backgroundIsolated = mainSidebarOpen
+  const runtimeState =
+    runtimeSwitching ||
+    !runtime ||
+    runtimeStatusKey !== activeRuntimeSelectionKey
+      ? 'connecting'
+      : runtime.available
+        ? 'ready'
+        : 'unavailable'
+  const runtimeDetailId = 'topbar-runtime-detail'
+  const runtimeDetail =
+    runtimeState === 'connecting'
+      ? t('runtime.connecting')
+      : runtime?.detail ||
+        (runtimeState === 'unavailable'
+          ? t('runtime.unavailable')
+          : t('runtime.state.ready'))
+  const composerContextErrorId = 'composer-context-error'
 
   return (
     <div className="app-shell">
@@ -8037,7 +8130,9 @@ function App(): React.JSX.Element {
             className={
               view === 'chat' ? 'nav-item nav-item--active' : 'nav-item'
             }
-            onClick={() => navigateFromSidebar('chat')}
+            onClick={(event) =>
+              navigateFromSidebar('chat', event.currentTarget)
+            }
             type="button"
           >
             <MessageSquare aria-hidden="true" size={17} />
@@ -8052,7 +8147,9 @@ function App(): React.JSX.Element {
                   : 'nav-item'
               }
               onFocus={() => preloadWorkspaceRouteOnIntent('magic-notes')}
-              onClick={() => navigateFromSidebar('magic-notes')}
+              onClick={(event) =>
+                navigateFromSidebar('magic-notes', event.currentTarget)
+              }
               onPointerEnter={() =>
                 preloadWorkspaceRouteOnIntent('magic-notes')
               }
@@ -8083,7 +8180,9 @@ function App(): React.JSX.Element {
                 : 'nav-item'
             }
             onFocus={() => preloadWorkspaceRouteOnIntent('knowledge')}
-            onClick={() => navigateFromSidebar('knowledge')}
+            onClick={(event) =>
+              navigateFromSidebar('knowledge', event.currentTarget)
+            }
             onPointerEnter={() =>
               preloadWorkspaceRouteOnIntent('knowledge')
             }
@@ -8099,7 +8198,9 @@ function App(): React.JSX.Element {
                 ? 'nav-item nav-item--active'
                 : 'nav-item'
             }
-            onClick={() => navigateFromSidebar('heartbeat')}
+            onClick={(event) =>
+              navigateFromSidebar('heartbeat', event.currentTarget)
+            }
             type="button"
           >
             <HeartPulse aria-hidden="true" size={17} />
@@ -8123,7 +8224,9 @@ function App(): React.JSX.Element {
                 : 'nav-item'
             }
             onFocus={() => preloadWorkspaceRouteOnIntent('activity')}
-            onClick={() => navigateFromSidebar('activity')}
+            onClick={(event) =>
+              navigateFromSidebar('activity', event.currentTarget)
+            }
             onPointerEnter={() =>
               preloadWorkspaceRouteOnIntent('activity')
             }
@@ -8136,7 +8239,8 @@ function App(): React.JSX.Element {
 
         <div className="conversation-list">
           <p className="section-label">{t('sidebar.recent')}</p>
-          {filteredConversations.map((conversation) => {
+          {!conversationLoadError &&
+          filteredConversations.map((conversation) => {
             const conversationTasks =
               tasksByConversation.get(conversation.id) ?? []
             const tasksExpanded =
@@ -8577,14 +8681,55 @@ function App(): React.JSX.Element {
             </div>
             )
           })}
-          {filteredConversations.length === 0 && (
-            <p className="conversation-empty">
-              {activeProject?.kind === 'channel' &&
-              !deferredSearchQuery.trim()
-                ? t('conversation.noRemote')
-                : t('conversation.noMatches')}
-            </p>
-          )}
+          {conversationLoadError ? (
+            <div className="conversation-empty" role="alert">
+              <strong>{t('conversation.loadFailed')}</strong>
+              <span>{conversationLoadError}</span>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  setConversationLoadError(undefined)
+                  setConversationLoadRetry((current) => current + 1)
+                }}
+                type="button"
+              >
+                <RefreshCw aria-hidden="true" size={13} />
+                {t('conversation.retryLoad')}
+              </button>
+            </div>
+          ) : filteredConversations.length === 0 ? (
+            deferredSearchQuery.trim() ? (
+              <div className="conversation-empty">
+                <strong>{t('conversation.noMatches')}</strong>
+                <span>{t('conversation.noMatchesDescription')}</span>
+                <button
+                  className="secondary-button"
+                  onClick={() => setSearchQuery('')}
+                  type="button"
+                >
+                  {t('conversation.clearSearch')}
+                </button>
+              </div>
+            ) : activeProject?.kind === 'channel' ? (
+              <div className="conversation-empty">
+                <strong>{t('conversation.noRemote')}</strong>
+                <span>{t('chat.remote.waiting')}</span>
+              </div>
+            ) : (
+              <div className="conversation-empty">
+                <strong>{t('conversation.empty')}</strong>
+                <span>{t('conversation.emptyDescription')}</span>
+                <button
+                  className="secondary-button"
+                  onClick={newConversation}
+                  type="button"
+                >
+                  <MessageSquarePlus aria-hidden="true" size={13} />
+                  {t('sidebar.newConversation')}
+                </button>
+              </div>
+            )
+          ) : null}
         </div>
 
         <div className="sidebar-footer">
@@ -8592,7 +8737,9 @@ function App(): React.JSX.Element {
             className="user-card"
             type="button"
             onFocus={() => preloadWorkspaceRouteOnIntent('settings')}
-            onClick={() => navigateFromSidebar('settings')}
+            onClick={(event) =>
+              navigateFromSidebar('settings', event.currentTarget)
+            }
             onPointerEnter={() =>
               preloadWorkspaceRouteOnIntent('settings')
             }
@@ -8684,22 +8831,29 @@ function App(): React.JSX.Element {
           )}
           <div className="topbar__actions">
             <span
+              aria-describedby={runtimeDetailId}
               className={
-                runtime?.available
+                runtimeState === 'ready'
                   ? 'runtime-status runtime-status--online'
                   : 'runtime-status'
               }
-              title={runtime?.detail}
+              title={runtimeDetail}
             >
               <span className="runtime-status__dot" />
               <span className="runtime-status__label">
                 {runtime?.label ?? t('runtime.detecting')}
+              </span>
+              <span className="runtime-status__state">
+                {t(`runtime.state.${runtimeState}`)}
               </span>
               {runtime?.capability === 'image-generation' && (
                 <span className="runtime-capability-badge">
                   {t('runtime.imageGeneration')}
                 </span>
               )}
+            </span>
+            <span className="sr-only" id={runtimeDetailId}>
+              {runtimeDetail}
             </span>
             <button
               aria-label={
@@ -8886,6 +9040,10 @@ function App(): React.JSX.Element {
             {(attachments.length > 0 || selectingContextFiles) && (
               <div
                 aria-busy={selectingContextFiles}
+                aria-describedby={
+                  contextError ? composerContextErrorId : undefined
+                }
+                aria-invalid={contextError ? true : undefined}
                 className="context-list"
               >
                 {attachments.map((attachment) => (
@@ -8979,6 +9137,10 @@ function App(): React.JSX.Element {
             )}
             <div className="composer__input">
               <textarea
+                aria-describedby={
+                  contextError ? composerContextErrorId : undefined
+                }
+                aria-invalid={contextError ? true : undefined}
                 aria-label={t('composer.inputLabel')}
                 placeholder={`${
                   runtime?.capability === 'image-generation'
@@ -9050,11 +9212,15 @@ function App(): React.JSX.Element {
                   role="group"
                 >
                   <button
-                    type="button"
                     aria-label={t('composer.addAttachment')}
+                    aria-describedby={
+                      contextError ? composerContextErrorId : undefined
+                    }
+                    aria-invalid={contextError ? true : undefined}
                     disabled={selectingContextFiles}
                     onClick={() => void selectContextFiles()}
                     title={t('composer.addAttachment')}
+                    type="button"
                   >
                     <Paperclip aria-hidden="true" size={18} />
                   </button>
@@ -9527,6 +9693,11 @@ function App(): React.JSX.Element {
                 </button>
                 )}
                 <button
+                  aria-describedby={
+                    runtimeState !== 'ready'
+                      ? runtimeDetailId
+                      : undefined
+                  }
                   className="send-button"
                   type="button"
                   aria-label={
@@ -9773,7 +9944,12 @@ function App(): React.JSX.Element {
               </div>
             )}
             {contextError && (
-              <span className="composer-meta__error">
+              <span
+                aria-label={contextError}
+                className="composer-meta__error"
+                id={composerContextErrorId}
+                role="alert"
+              >
                 {contextError}
               </span>
             )}

@@ -433,6 +433,7 @@ export function HeartbeatCenter({
           icon={<RefreshCw size={24} />}
           level="page"
           title={t('center.loading.title')}
+          variant="loading"
         />
       ) : loadError && !hasHeartbeatData ? (
         <EmptyState

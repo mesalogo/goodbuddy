@@ -5,6 +5,7 @@ export const settingsSections = {
   },
   sshHosts: {
     loading: '正在读取 SSH 主机…',
+    loadFailedTitle: 'SSH 主机加载失败',
     listLabel: 'SSH 主机列表',
     securityNotice:
       '添加或编辑主机时，GoodBuddy 会先检查 Host Key，再发送认证凭据并执行有界系统探测。只有全部成功后才会保存主机和加密密码。',
@@ -183,6 +184,7 @@ export const settingsSections = {
     removeProjectsHeading: '同时删除以下关联项目记录：',
     actions: {
       add: '添加主机',
+      retry: '重试',
       edit: '编辑',
       validate: '验证并保存',
       editNamed: '编辑 {{name}}',
@@ -710,6 +712,11 @@ export const settingsSections = {
       emailHelp: '仅在需要进一步了解情况时用于联系你。',
       characterCount: '已输入 {{count}} / {{maximum}} 个字符'
     },
+    diagnostics: {
+      label: '附加最近桌面诊断记录',
+      description:
+        '默认关闭。选中后仅附加最近桌面诊断的时间、组件、阶段、稳定错误码、错误类型和固定短消息；不包含对话、Prompt、凭据、文件内容、路径、Provider 原始响应或远端 Agent 日志。'
+    },
     screenshot: {
       title: '截图（可选）',
       help: '选择或粘贴一张 PNG、JPEG 或 WebP 图片，最大 5 MB。',
@@ -734,10 +741,14 @@ export const settingsSections = {
       }
     },
     privacy:
-      '将发送反馈类型、标题、描述、可选邮箱、GoodBuddy 版本、操作系统、架构、界面语言，以及你主动添加的截图。不会自动发送对话、日志、文件、项目路径、模型配置或凭据。',
+      '将发送反馈类型、标题、描述、可选邮箱、GoodBuddy 版本、操作系统、架构、界面语言，以及你主动添加的截图。默认不会上传桌面诊断；只有勾选后才会把有界诊断摘要追加到描述。不会发送对话、Prompt、凭据、文件内容、路径、Provider 原始响应或远端 Agent 日志。',
     validation: {
       titleRequired: '请输入反馈标题。',
       descriptionMinimum: '详细描述至少需要 10 个字符。',
+      descriptionMaximum:
+        '详细描述不能超过 {{maximum}} 个字符；草稿已保留，请缩短后重试。',
+      descriptionMaximumWithDiagnostics:
+        '附加桌面诊断时，详细描述不能超过 {{maximum}} 个字符；草稿已保留，请缩短后重试。',
       emailInvalid: '请输入有效的联系邮箱，或将其留空。'
     },
     actions: {
@@ -774,7 +785,9 @@ export const settingsSections = {
       network: '无法连接反馈服务，请检查网络后重试。',
       timeout: '连接反馈服务超时，请检查网络后重试。',
       'invalid-response':
-        '反馈服务返回了无效结果，请稍后重试。'
+        '反馈服务返回了无效结果，请稍后重试。',
+      'diagnostics-unavailable':
+        '无法读取所选的桌面诊断记录，本次没有发送反馈。草稿和选择已保留，请重试或取消附加诊断后提交。'
     }
   },
   updates: {
@@ -785,6 +798,7 @@ export const settingsSections = {
       saveSettingsFailed: '保存更新设置失败',
       saveSourceFailed: '保存检查更新源失败',
       checkFailed: '版本检查失败',
+      openReleasePageFailed: '打开下载页失败',
       network: '{{fallback}}：请检查系统状态后重试',
       sourceNetwork:
         '{{fallback}}：无法连接更新源“{{source}}”，请检查网络或代理后重试'

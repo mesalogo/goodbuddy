@@ -79,7 +79,15 @@ export const app = {
     unread: 'Unread',
     unreadRemote: 'Unread remote message',
     noRemote: 'No remote conversations yet',
+    empty: 'No recent conversations yet',
+    emptyDescription:
+      'Start a conversation and it will appear here.',
     noMatches: 'No matching conversations',
+    noMatchesDescription:
+      'Change your search terms or clear the search to view all conversations.',
+    clearSearch: 'Clear search',
+    loadFailed: 'Could not load recent conversations',
+    retryLoad: 'Reload conversations',
     renameAria: 'Rename conversation {{title}}',
     saveName: 'Save conversation name',
     cancelRename: 'Cancel rename',
@@ -159,8 +167,9 @@ export const app = {
       workspace: 'Workspace',
       tools: 'Tools and approval',
       executeApproval:
-        'Use authorized tools; high-risk actions still require approval',
-      askReadOnly: 'Read-only run with no changes allowed',
+        'Use all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity',
+      askReadOnly:
+        'Stay within the read-only boundary for answers and retrieval; make no changes',
       noWorkspace: 'No workspace configured'
     },
     errors: {
@@ -204,6 +213,11 @@ export const app = {
       readStatus: 'Failed to read Agent Runtime status',
       readSettings: 'Failed to read Runtime settings',
       switch: 'Failed to switch Runtime'
+    },
+    state: {
+      ready: 'Ready',
+      connecting: 'Connecting',
+      unavailable: 'Unavailable'
     }
   },
   chat: {
@@ -367,6 +381,7 @@ export const app = {
       }
     },
     approval: {
+      waiting: 'Awaiting approval: {{tool}}',
       deny: 'Deny',
       once: 'Allow once',
       session: 'Allow for conversation',
@@ -476,11 +491,13 @@ export const app = {
     modes: {
       ask: {
         label: 'Ask · Read only',
-        description: 'Read-only answers without modifying files'
+        description:
+          'Stay within the read-only boundary for answers and retrieval; make no changes'
       },
       execute: {
         label: 'Execute · Full access',
-        description: 'Run tools with the account’s full permissions'
+        description:
+          'Use all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity'
       }
     },
     voice: {
@@ -556,12 +573,13 @@ export const app = {
       imageGeneration:
         'Image model: describe a scene to generate an image that will appear here and be saved to Results.',
       agentAsk:
-        '{{runtime}} Ask mode: can only search enabled knowledge bases and cannot modify files.',
+        '{{runtime}} Ask mode: stays within the read-only boundary for answers and retrieval and makes no changes.',
       agentExecute:
-        '{{runtime}} Execute mode: tool calls do not show GoodBuddy approvals and are recorded in Activity.',
-      ask: 'Ask mode: read-only answers without tool calls or file changes.',
+        '{{runtime}} Execute mode: uses all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity.',
+      ask:
+        'Ask mode: stays within the read-only boundary for answers and retrieval and makes no changes.',
       execute:
-        'Execute mode: tools are automatically authorized and calls are still recorded in Activity.'
+        'Execute mode: uses all tools, processes, network access, and writable paths available to the current account; calls are recorded in Activity.'
     },
     errors: {
       pasteImageType: 'Only JPEG, PNG, or WebP images can be pasted',
@@ -574,6 +592,15 @@ export const app = {
     brandingSaved: 'Branding saved',
     updateAvailable:
       'GoodBuddy {{version}} is available. View it in About & Updates.',
+    startupUpdateCheckFailed:
+      'Startup update check failed ({{source}}): {{error}}',
+    updateCheckFailed: 'Version check failed',
+    updateCheckNetwork:
+      'Could not connect to the update source. Check your network or proxy and try again.',
+    updateSources: {
+      github: 'GitHub',
+      mirror: 'Mirror node'
+    },
     channelConversationAutomatic:
       'Channel conversations are created automatically when the client receives a new message',
     deleteConversationCancelFailed:
