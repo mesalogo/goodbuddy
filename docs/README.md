@@ -31,6 +31,7 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 - [自动化平台架构](./architecture/automation-platform-architecture.md)
 - [平台功能页签与模型下载源设计](./architecture/model-download-source-design.md)
 - [本地文本向量模型与连接设计](./architecture/local-text-embedding-model-design.md)
+- [本机工具环境设计与实施计划](./architecture/local-tool-environment-design.md)
 - [全双工实时语音交互设计](./architecture/full-duplex-voice-design.md)
 - [DeepSeek Harness Runtime 设计](./architecture/deepseek-harness-runtime-design.md)
 - [应用内反馈系统设计与对接](./architecture/in-app-feedback-integration-design.md)

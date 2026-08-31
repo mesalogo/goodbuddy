@@ -2197,7 +2197,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows the SSH Hosts category only while Remote Projects is enabled', () => {
+  it('shows the SSH Hosts category and its local capability boundary only while Remote Projects is enabled', () => {
     const commonProps = {
       ...heartbeatSettingsProps,
       open: true,
@@ -2225,6 +2225,14 @@ describe('SettingsPanel runtime files', () => {
 
     expect(
       screen.getByRole('tab', { name: '主机与远程执行' })
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('tab', { name: '主机与远程执行' })
+    )
+    expect(
+      screen.getByText(
+        '管理 SSH 主机、固定主机密钥并验证远端执行环境；本机配置的 Skills 和 MCP 不会应用于远程主机'
+      )
     ).toBeInTheDocument()
   })
 

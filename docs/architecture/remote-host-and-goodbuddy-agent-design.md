@@ -174,6 +174,9 @@ Main 传入已规范化的绝对 POSIX root。Agent 返回 Workspace identity、
 托管 SSH 项目的 Composer Runtime 菜单只显示当前配置的 OpenCode 和管理入口，不显示
 直连模型、Continue 或 DeepSeek Harness。激活旧远程会话时，若其保存了其他 Runtime
 selection，Renderer 会恢复为当前 OpenCode 配置；Main 的远程请求校验仍是最终边界。
+本机配置的 SKILL 包和 stdio MCP Server 不上传或分配给远程 Runtime；远程 ACP Session
+继续使用空 MCP Server 列表。Node.js、Python 等本机工具环境同样不修改或同步到 Host，
+完整边界见[本机工具环境设计与实施计划](./local-tool-environment-design.md)。
 
 ### Ask
 

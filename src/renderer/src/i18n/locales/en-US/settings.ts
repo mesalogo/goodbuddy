@@ -55,7 +55,7 @@ export const settings = {
       navigationDescription:
         'SSH hosts, identity verification, and connection probes',
       description:
-        'Manage SSH hosts, pin host keys, and verify remote execution environments'
+        'Manage SSH hosts, pin host keys, and verify remote execution environments. Locally configured Skills and MCP servers do not apply to remote hosts.'
     },
     security: {
       label: 'Security and data',

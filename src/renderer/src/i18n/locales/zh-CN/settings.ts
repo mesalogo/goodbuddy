@@ -44,7 +44,8 @@ export const settings = {
     sshHosts: {
       label: '主机与远程执行',
       navigationDescription: 'SSH 主机、身份验证与连接探测',
-      description: '管理 SSH 主机、固定主机密钥并验证远端执行环境'
+      description:
+        '管理 SSH 主机、固定主机密钥并验证远端执行环境；本机配置的 Skills 和 MCP 不会应用于远程主机'
     },
     security: {
       label: '安全与数据',
