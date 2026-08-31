@@ -185,6 +185,95 @@ export const workspace = {
       results: {
         label: '成果',
         description: '查看生成或手动导入的独立成果'
+      },
+      terminal: {
+        label: '终端',
+        description: '打开当前项目的用户终端'
+      }
+    },
+    workbar: {
+      ariaLabel: '工作栏应用',
+      tablist: '已打开的工作栏应用',
+      add: '打开工作栏应用',
+      close: '关闭{{title}}',
+      catalogTitle: '新建工作栏应用',
+      catalogDescription: '选择要在工作栏中打开的应用。',
+      cancel: '取消',
+      targetError: '无法确定当前项目的终端目标，请重试。',
+      catalog: '工作栏应用目录',
+      existing: '已打开，选择后切换到现有实例',
+      multiple: '可打开多个实例',
+      single: '单实例应用',
+      resolve: '前往处理',
+      limit: '最多可打开 {{count}} 个实例。',
+      emptyTitle: '还没有打开的工作栏应用',
+      emptyDescription: '打开应用后，可以在这里快速切换和处理内容。',
+      open: '打开应用'
+    },
+    terminal: {
+      loading: '正在加载终端…',
+      ariaLabel: '用户终端：{{title}}',
+      location: {
+        local: '本机',
+        target: '目标'
+      },
+      states: {
+        starting: '正在连接',
+        running: '已连接',
+        exited: 'Shell 已退出',
+        interrupted: '连接已中断',
+        closing: '正在关闭',
+        failed: '连接失败',
+        creating: '正在创建'
+      },
+      toolbar: {
+        ariaLabel: '终端操作',
+        search: '搜索终端',
+        copy: '复制选中内容',
+        paste: '粘贴',
+        selectAll: '全选',
+        selectAllAriaLabel: '全选终端内容',
+        clear: '清屏',
+        rename: '重命名终端'
+      },
+      reopen: {
+        interrupted: '重新连接并新建 Shell',
+        default: '重新打开'
+      },
+      search: {
+        label: '搜索终端内容',
+        next: '查找下一个'
+      },
+      rename: {
+        label: '终端名称',
+        save: '保存名称',
+        cancel: '取消'
+      },
+      status: {
+        emulatorAriaLabel: '终端输入与输出',
+        ariaLabel: '终端状态',
+        readingDirectory: '正在读取目录',
+        readingShell: '正在读取 Shell',
+        exitCode: '（退出码 {{code}}）'
+      },
+      errors: {
+        ack: '无法确认终端输出，请重试。',
+        write: '无法向终端写入输入。',
+        snapshot: '无法读取终端会话，请重新打开。',
+        create: '无法创建终端，请重试。',
+        resize: '无法同步终端窗口尺寸。',
+        copy: '无法复制终端选区。',
+        paste: '无法粘贴到终端。',
+        closePrevious: '无法关闭原终端，请重试。'
+      },
+      closeDialog: {
+        ariaLabel: '关闭终端',
+        title: '关闭终端？',
+        description: '关闭此 Tab 将结束 Shell 及其子进程。',
+        cancel: '取消',
+        closing: '正在关闭…',
+        confirm: '关闭终端',
+        error: '无法关闭终端，请重试。'
       }
     },
     tasks: {

@@ -198,6 +198,7 @@ const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async (
 const onNotify = vi.fn()
 
 beforeEach(() => {
+  localStorage.clear()
   analysisEventListener = undefined
   getApplicationSettings.mockResolvedValue({
     checkUpdatesOnStartup: false,
@@ -526,6 +527,155 @@ describe('MagicNotesWorkspace', () => {
       screen.getByRole('button', { name: '显示 AI 评论' })
     )
     expect(pane).toBeVisible()
+  })
+
+  it('hides, restores, and remembers the left list pane', async () => {
+    const firstRender = render(
+      <MagicNotesWorkspace onNotify={onNotify} />
+    )
+
+    const pane = await screen.findByLabelText('笔记列表')
+    const hideButton = screen.getByRole('button', {
+      name: '隐藏左侧列表'
+    })
+    expect(hideButton).toHaveAttribute('aria-expanded', 'true')
+    expect(pane).toBeVisible()
+
+    fireEvent.click(hideButton)
+    expect(pane).not.toBeVisible()
+    expect(
+      screen.queryByRole('separator', {
+        name: '调整笔记列表与编辑区宽度'
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      JSON.parse(
+        localStorage.getItem('goodbuddy.magic-notes-layout.v1') ?? '{}'
+      )
+    ).toMatchObject({ listPaneOpen: false })
+
+    firstRender.unmount()
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    const restoredPane = await screen.findByLabelText('笔记列表')
+    expect(restoredPane).not.toBeVisible()
+
+    const showButton = screen.getByRole('button', {
+      name: '显示左侧列表'
+    })
+    expect(showButton).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(showButton)
+    expect(restoredPane).toBeVisible()
+    expect(
+      screen.getByRole('separator', {
+        name: '调整笔记列表与编辑区宽度'
+      })
+    ).toBeInTheDocument()
+  })
+
+  it('resizes the left list pane with pointer and keyboard controls', async () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1200
+    })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    try {
+      await screen.findByText('记录正文')
+      const separator = screen.getByRole('separator', {
+        name: '调整笔记列表与编辑区宽度'
+      })
+      const layout =
+        separator.closest('.magic-notes-layout') as HTMLElement
+      const setPointerCapture = vi.fn()
+      const releasePointerCapture = vi.fn()
+      Object.defineProperties(separator, {
+        setPointerCapture: { value: setPointerCapture },
+        hasPointerCapture: { value: () => true },
+        releasePointerCapture: { value: releasePointerCapture }
+      })
+
+      expect(separator).toHaveAttribute('aria-valuenow', '220')
+      expect(separator).toHaveAttribute('aria-valuemin', '180')
+      expect(separator).toHaveAttribute('aria-valuemax', '360')
+
+      fireEvent.pointerDown(separator, {
+        button: 0,
+        clientX: 220,
+        pointerId: 13
+      })
+      fireEvent.pointerMove(separator, {
+        clientX: 350,
+        pointerId: 13
+      })
+
+      expect(setPointerCapture).toHaveBeenCalledWith(13)
+      expect(layout).toHaveClass('magic-notes-layout--resizing')
+      expect(layout).toHaveClass('magic-notes-layout--list-resizing')
+      expect(
+        layout.style.getPropertyValue('--magic-notes-list-width')
+      ).toBe('350px')
+
+      fireEvent.pointerUp(separator, { pointerId: 13 })
+      expect(releasePointerCapture).toHaveBeenCalledWith(13)
+      expect(layout).not.toHaveClass('magic-notes-layout--resizing')
+      expect(
+        JSON.parse(
+          localStorage.getItem(
+            'goodbuddy.magic-notes-layout.v1'
+          ) ?? '{}'
+        )
+      ).toMatchObject({ listPaneWidth: 350 })
+
+      fireEvent.keyDown(separator, { key: 'Home' })
+      expect(
+        layout.style.getPropertyValue('--magic-notes-list-width')
+      ).toBe('180px')
+
+      fireEvent.keyDown(separator, { key: 'ArrowRight' })
+      expect(
+        layout.style.getPropertyValue('--magic-notes-list-width')
+      ).toBe('196px')
+
+      fireEvent.keyDown(separator, { key: 'End' })
+      expect(
+        layout.style.getPropertyValue('--magic-notes-list-width')
+      ).toBe('360px')
+      expect(separator).toHaveAttribute('aria-valuenow', '360')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth
+      })
+    }
+  })
+
+  it('disables horizontal pane resizing in the narrow stacked layout', async () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 700
+    })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+
+    try {
+      await screen.findByText('记录正文')
+      const listSeparator = screen.getByRole('separator', {
+        name: '调整笔记列表与编辑区宽度'
+      })
+      expect(listSeparator).toHaveAttribute('aria-disabled', 'true')
+      expect(listSeparator).toHaveAttribute('tabindex', '-1')
+      const aiSeparator = screen.getByRole('separator', {
+        name: '调整编辑区与 AI 评论宽度'
+      })
+      expect(aiSeparator).toHaveAttribute('aria-disabled', 'true')
+      expect(aiSeparator).toHaveAttribute('tabindex', '-1')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth
+      })
+    }
   })
 
   it('shows a concise empty state before a note has AI comments', async () => {

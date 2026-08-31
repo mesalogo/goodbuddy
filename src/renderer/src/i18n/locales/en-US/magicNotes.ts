@@ -27,6 +27,8 @@ export const magicNotes = {
     analyzeAgain: 'Analyze again',
     analyzing: 'Analyzing…',
     openSourceNote: 'Open source note',
+    hideListPane: 'Hide left list',
+    showListPane: 'Show left list',
     hideAiComments: 'Hide AI comments',
     showAiComments: 'Show AI comments',
     pinNote: 'Pin note',
@@ -161,6 +163,8 @@ export const magicNotes = {
       'Choose “Analyze with AI” on an entry to show comments here.'
   },
   accessibility: {
+    resizeListPane: 'Resize the note list and editor panes',
+    listPaneWidth: 'Left list, {{width}} pixels',
     resizeAiPane: 'Resize the editor and AI comments panes',
     aiPaneWidth: 'AI comments pane, {{width}} pixels'
   },

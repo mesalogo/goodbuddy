@@ -191,6 +191,97 @@ export const workspace = {
       results: {
         label: 'Results',
         description: 'View generated or imported standalone results'
+      },
+      terminal: {
+        label: 'Terminal',
+        description: 'Open a user terminal for the current project'
+      }
+    },
+    workbar: {
+      ariaLabel: 'Workbar applications',
+      tablist: 'Open workbar applications',
+      add: 'Open workbar application',
+      close: 'Close {{title}}',
+      catalogTitle: 'New workbar application',
+      catalogDescription: 'Choose an application to open in the workbar.',
+      cancel: 'Cancel',
+      targetError:
+        'Could not resolve the current project terminal target. Try again.',
+      catalog: 'Workbar application catalog',
+      existing: 'Already open. Selecting switches to the existing instance.',
+      multiple: 'Multiple instances supported',
+      single: 'Single-instance application',
+      resolve: 'Resolve',
+      limit: 'You can open up to {{count}} instances.',
+      emptyTitle: 'No workbar applications are open',
+      emptyDescription: 'Open an application to switch to it here.',
+      open: 'Open application'
+    },
+    terminal: {
+      loading: 'Loading terminal…',
+      ariaLabel: 'User terminal: {{title}}',
+      location: {
+        local: 'Local',
+        target: 'Target'
+      },
+      states: {
+        starting: 'Connecting',
+        running: 'Connected',
+        exited: 'Shell exited',
+        interrupted: 'Connection interrupted',
+        closing: 'Closing',
+        failed: 'Connection failed',
+        creating: 'Creating'
+      },
+      toolbar: {
+        ariaLabel: 'Terminal actions',
+        search: 'Search terminal',
+        copy: 'Copy selection',
+        paste: 'Paste',
+        selectAll: 'Select all',
+        selectAllAriaLabel: 'Select all terminal content',
+        clear: 'Clear terminal',
+        rename: 'Rename terminal'
+      },
+      reopen: {
+        interrupted: 'Reconnect with a new shell',
+        default: 'Reopen'
+      },
+      search: {
+        label: 'Search terminal content',
+        next: 'Find next'
+      },
+      rename: {
+        label: 'Terminal name',
+        save: 'Save name',
+        cancel: 'Cancel'
+      },
+      status: {
+        emulatorAriaLabel: 'Terminal input and output',
+        ariaLabel: 'Terminal status',
+        readingDirectory: 'Reading directory',
+        readingShell: 'Reading shell',
+        exitCode: '(exit code {{code}})'
+      },
+      errors: {
+        ack: 'Could not acknowledge terminal output. Try again.',
+        write: 'Could not write input to the terminal.',
+        snapshot: 'Could not read the terminal session. Reopen it.',
+        create: 'Could not create the terminal. Try again.',
+        resize: 'Could not synchronize the terminal size.',
+        copy: 'Could not copy the terminal selection.',
+        paste: 'Could not paste into the terminal.',
+        closePrevious: 'Could not close the previous terminal. Try again.'
+      },
+      closeDialog: {
+        ariaLabel: 'Close terminal',
+        title: 'Close terminal?',
+        description:
+          'Closing this tab ends the shell and its child processes.',
+        cancel: 'Cancel',
+        closing: 'Closing…',
+        confirm: 'Close terminal',
+        error: 'Could not close the terminal. Try again.'
       }
     },
     tasks: {

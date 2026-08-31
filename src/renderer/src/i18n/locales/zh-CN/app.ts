@@ -59,7 +59,9 @@ export const app = {
     localWorkspace: '本地工作区',
     loading: '加载中',
     close: '关闭侧栏',
-    toggle: '切换侧栏'
+    toggle: '切换侧栏',
+    resizeAriaLabel: '调整主侧栏宽度',
+    resizeValue: '主侧栏 {{width}} 像素'
   },
   topbar: {
     toggleAssistantSidebar: '切换助手工作栏',

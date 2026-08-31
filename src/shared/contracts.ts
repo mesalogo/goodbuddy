@@ -150,6 +150,16 @@ import type {
   FeedbackSubmitInput,
   FeedbackSubmitResult
 } from './feedback-contracts'
+import type {
+  TerminalAckRequest,
+  TerminalCloseRequest,
+  TerminalCreateRequest,
+  TerminalEvent,
+  TerminalResizeRequest,
+  TerminalSnapshot,
+  TerminalSnapshotRequest,
+  TerminalWriteRequest
+} from './terminal-contracts'
 export type {
   KnowledgeTaskError,
   KnowledgeTaskItem,
@@ -1547,6 +1557,17 @@ export type DesktopApi = {
     interact: (conversationId: string) => Promise<void>
     stop: (conversationId: string) => Promise<void>
     onState: (listener: (state: BrowserLiveState) => void) => () => void
+  }
+  terminal: {
+    create: (request: TerminalCreateRequest) => Promise<TerminalSnapshot>
+    write: (request: TerminalWriteRequest) => Promise<void>
+    resize: (request: TerminalResizeRequest) => Promise<void>
+    close: (request: TerminalCloseRequest) => Promise<TerminalSnapshot>
+    getSnapshot: (
+      request: TerminalSnapshotRequest
+    ) => Promise<TerminalSnapshot>
+    ack: (request: TerminalAckRequest) => Promise<void>
+    onEvent: (listener: (event: TerminalEvent) => void) => () => void
   }
   settings: {
     getRuntime: () => Promise<RuntimeSettings>

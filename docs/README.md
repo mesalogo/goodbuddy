@@ -10,6 +10,7 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 | Task 与 Job | [Task 与 Job 总览](./prd/task-and-job/README.md) |
 | Smart Heartbeat | [智能心跳 PRD](./prd/smart-heartbeat/smart-heartbeat-prd.md) |
 | 助手工作栏 | [通用助手工作栏与执行空间 PRD](./prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md) |
+| 工作栏终端 | [助手工作栏多终端页签 PRD](./prd/assistant-experience/workbar-terminal-tabs-prd.md) |
 | 会话监督 | [会话监督 PRD](./prd/supervision/conversation-supervision-prd.md) |
 | 记忆 | [分区记忆 PRD](./prd/memory/partitioned-memory-prd.md) |
 | 并行实验 | [并行实验工作台 PRD](./prd/experiments/parallel-experiments-prd.md) |
@@ -35,9 +36,8 @@ GoodBuddy 文档按“文档类型 → 功能域”组织。新增文档应先�
 - [全双工实时语音交互设计](./architecture/full-duplex-voice-design.md)
 - [DeepSeek Harness Runtime 设计](./architecture/deepseek-harness-runtime-design.md)
 - [应用内反馈系统设计与对接](./architecture/in-app-feedback-integration-design.md)
-- [SSH 远程主机与 GoodBuddy Agent 稳定终态设计](./architecture/remote-host-and-goodbuddy-agent-design.md)
+- [SSH 远程主机与 GoodBuddy Agent 实现说明](./architecture/remote-host-and-goodbuddy-agent-design.md)
 - [SSH Host 远程环境准备与控制面直连设计](./architecture/remote-host-environment-provisioning-design.md)
-- [跨平台助手产品设计](./design/cross-platform-assistant-product-design.md)
 - [长期助手路线图](./roadmap/long-term-assistant-roadmap.md)
 - [产品、性能与体验综合改进计划](./roadmap/product-performance-experience-improvement-plan.md)
 - [电脑控制实施状态](./status/computer-control-implementation-status.md)

@@ -65,9 +65,20 @@ export type AgentDiagnosticResult = {
   stderr: string;
 };
 
+export type SshTerminalShellOptions = {
+  cols: number;
+  rows: number;
+  term?: string;
+};
+
 export interface AuthenticatedSshConnection {
   readonly identity: SshPoolConnectionIdentity;
   isUsable(): boolean;
+  onDisconnect(listener: (error?: Error) => void): () => void;
+  openTerminalShell(
+    options: SshTerminalShellOptions,
+    signal?: AbortSignal,
+  ): Promise<ClientChannel>;
   openAgentAttach(
     installationId: VerifiedAgentInstallationId,
     signal?: AbortSignal,
@@ -128,10 +139,20 @@ export interface AuthenticatedSshConnection {
 export interface SshConnectionLease extends Omit<
   AuthenticatedSshConnection,
   | "dispose"
+  | "onDisconnect"
+  | "openTerminalShell"
   | "createRemotePackageUploadStaging"
   | "prepareUploadedRemotePackageBootstrap"
 > {
   release(): void;
+}
+
+export interface SshTerminalConnectionLease extends SshConnectionLease {
+  onDisconnect(listener: (error?: Error) => void): () => void;
+  openTerminalShell(
+    options: SshTerminalShellOptions,
+    signal?: AbortSignal,
+  ): Promise<ClientChannel>;
 }
 
 export interface SshRemotePackageBootstrapLease extends SshRemotePackageBootstrapExecutor {
@@ -140,7 +161,7 @@ export interface SshRemotePackageBootstrapLease extends SshRemotePackageBootstra
   release(): void;
 }
 
-type InternalSshConnectionLease = SshConnectionLease &
+type InternalSshConnectionLease = SshTerminalConnectionLease &
   Pick<
     AuthenticatedSshConnection,
     | "createRemotePackageUploadStaging"
@@ -149,7 +170,7 @@ type InternalSshConnectionLease = SshConnectionLease &
 
 type ClientLike = Pick<
   Client,
-  "connect" | "end" | "destroy" | "exec" | "sftp" | "on" | "once"
+  "connect" | "end" | "destroy" | "exec" | "shell" | "sftp" | "on" | "once"
 >;
 
 type SshConnectionDependencies = {
@@ -285,19 +306,26 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
   private usable = true;
   private disposed = false;
   private agentBootstrapProbe: AgentBootstrapProbeResult | undefined;
+  private readonly disconnectListeners = new Set<(error?: Error) => void>();
 
   private constructor(
     readonly identity: SshPoolConnectionIdentity,
     private readonly client: ClientLike,
     private readonly controlPlanePackageInstaller: Buffer,
   ) {
-    const disconnected = (): void => {
+    const disconnected = (error?: Error): void => {
+      if (!this.usable) {
+        return;
+      }
       this.usable = false;
       this.agentBootstrapProbe = undefined;
+      for (const listener of [...this.disconnectListeners]) {
+        listener(error);
+      }
     };
     this.client.on("close", disconnected);
     this.client.on("end", disconnected);
-    this.client.on("error", disconnected);
+    this.client.on("error", (error: Error) => disconnected(error));
   }
 
   static connect(
@@ -388,6 +416,70 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
 
   isUsable(): boolean {
     return this.usable;
+  }
+
+  onDisconnect(listener: (error?: Error) => void): () => void {
+    if (!this.usable) {
+      queueMicrotask(() => listener());
+      return () => undefined;
+    }
+    this.disconnectListeners.add(listener);
+    return () => {
+      this.disconnectListeners.delete(listener);
+    };
+  }
+
+  openTerminalShell(
+    options: SshTerminalShellOptions,
+    signal?: AbortSignal,
+  ): Promise<ClientChannel> {
+    this.assertUsable();
+    if (
+      !Number.isSafeInteger(options.cols) ||
+      options.cols <= 0 ||
+      !Number.isSafeInteger(options.rows) ||
+      options.rows <= 0
+    ) {
+      return Promise.reject(new Error("SSH PTY 尺寸无效"));
+    }
+    if (signal?.aborted) {
+      return Promise.reject(createAbortError(signal));
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown, channel?: ClientChannel): void => {
+        if (settled) {
+          channel?.destroy();
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
+        if (error || !channel) {
+          reject(error ?? new Error("无法打开 SSH 终端通道"));
+        } else {
+          resolve(channel);
+        }
+      };
+      const abort = (): void => {
+        finish(createAbortError(signal));
+      };
+      const timeout = setTimeout(() => {
+        finish(new Error("SSH 终端通道打开超时"));
+      }, CHANNEL_OPEN_TIMEOUT_MS);
+      signal?.addEventListener("abort", abort, { once: true });
+      this.client.shell(
+        {
+          term: options.term ?? "xterm-256color",
+          cols: options.cols,
+          rows: options.rows,
+          width: 0,
+          height: 0,
+        },
+        { env: {}, x11: false },
+        (error, channel) => finish(error, channel),
+      );
+    });
   }
 
   async openAgentAttach(
@@ -584,6 +676,10 @@ export class Ssh2AuthenticatedConnection implements AuthenticatedSshConnection {
     this.disposed = true;
     this.usable = false;
     this.agentBootstrapProbe = undefined;
+    for (const listener of [...this.disconnectListeners]) {
+      listener();
+    }
+    this.disconnectListeners.clear();
     this.client.end();
     this.client.destroy();
   }
@@ -881,6 +977,13 @@ export class SshConnectionPool {
     };
   }
 
+  async acquireTerminal(
+    target: SshConnectionPoolTarget,
+    signal?: AbortSignal,
+  ): Promise<SshTerminalConnectionLease> {
+    return (await this.acquire(target, signal)) as SshTerminalConnectionLease;
+  }
+
   disposeHost(hostId: string): void {
     for (const entry of this.entries.values()) {
       if (entry.identity.hostId === hostId) {
@@ -912,6 +1015,14 @@ export class SshConnectionPool {
     const lease: InternalSshConnectionLease = {
       identity: connection.identity,
       isUsable: () => !released && connection.isUsable(),
+      onDisconnect: (listener) => {
+        assertActive();
+        return connection.onDisconnect(listener);
+      },
+      openTerminalShell: (options, signal) => {
+        assertActive();
+        return connection.openTerminalShell(options, signal);
+      },
       openAgentAttach: (installationId, signal) => {
         assertActive();
         return connection.openAgentAttach(installationId, signal);

@@ -23,6 +23,8 @@ export const magicNotes = {
     analyzeAgain: '重新分析',
     analyzing: '分析中…',
     openSourceNote: '打开原笔记修改',
+    hideListPane: '隐藏左侧列表',
+    showListPane: '显示左侧列表',
     hideAiComments: '隐藏 AI 评论',
     showAiComments: '显示 AI 评论',
     pinNote: '置顶笔记',
@@ -149,6 +151,8 @@ export const magicNotes = {
     manualHint: '在记录上点击“AI 分析”，评论会显示在这里。'
   },
   accessibility: {
+    resizeListPane: '调整笔记列表与编辑区宽度',
+    listPaneWidth: '左侧列表 {{width}} 像素',
     resizeAiPane: '调整编辑区与 AI 评论宽度',
     aiPaneWidth: 'AI 评论栏 {{width}} 像素'
   },

@@ -156,6 +156,7 @@ import {
   DesktopDiagnostics,
   type DesktopDiagnosticFailureObserver
 } from './desktop-diagnostics'
+import { TerminalSessionManager } from './terminal/terminal-session-manager'
 
 const legacyDefaultShortcut =
   defaultGlobalShortcutSettings.accelerator
@@ -215,6 +216,7 @@ const embeddingBrokers = new Set<EmbeddingInferenceBroker>()
 let stopRuntimeReconfiguration: (() => Promise<void>) | undefined
 let dshExtensionInstaller: DshNpmExtensionInstaller | undefined
 let remoteAgentServices: RemoteAgentServices | undefined
+let terminalSessionManager: TerminalSessionManager | undefined
 let managedRemoteExecutionServices:
   | ManagedRemoteExecutionServices
   | undefined
@@ -1302,6 +1304,25 @@ if (hasSingleInstanceLock) {
           await Promise.all(invalidations)
         }
       )
+    terminalSessionManager = new TerminalSessionManager({
+      database: startupAssistantDatabase,
+      executionSpaceResolver,
+      targetResolver: startupRemoteAgentServices.targetResolver,
+      sshPool: startupRemoteAgentServices.sshPool,
+      remoteEnabled: async () =>
+        (await applicationSettingsStore.get()).remoteProjectsEnabled,
+      deliverEvent: (ownerWebContentsId, event) => {
+        const targetWindow = mainWindow
+        if (
+          targetWindow &&
+          !targetWindow.isDestroyed() &&
+          targetWindow.webContents.id === ownerWebContentsId &&
+          !targetWindow.webContents.isDestroyed()
+        ) {
+          targetWindow.webContents.send(ipcChannels.terminalEvent, event)
+        }
+      }
+    })
     removeIpcHandlers = registerIpcHandlers(
       mainWindow,
       runtime,
@@ -1359,7 +1380,8 @@ if (hasSingleInstanceLock) {
       setCurrentEmbeddingConnection,
       remoteEnvironmentUpdateService,
       agentPackageManager,
-      startupRemoteAgentServices.connectionManager
+      startupRemoteAgentServices.connectionManager,
+      terminalSessionManager
     )
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,
@@ -1473,6 +1495,7 @@ app.on('before-quit', (event) => {
           () => documentOcrModelManager?.dispose(),
           () => documentOcrBroker?.dispose()
         ],
+        [() => terminalSessionManager?.dispose()],
         [() => managedRemoteExecutionServices?.dispose()],
         [() => remoteAgentServices?.dispose()],
         [() => knowledgeGateway?.dispose()],

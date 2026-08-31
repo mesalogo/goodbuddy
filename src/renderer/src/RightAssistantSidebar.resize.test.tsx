@@ -18,6 +18,7 @@ import {
 afterEach(cleanup)
 
 beforeEach(() => {
+  localStorage.clear()
   Object.defineProperty(window, 'innerWidth', {
     configurable: true,
     value: 1400

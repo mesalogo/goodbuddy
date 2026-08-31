@@ -8,6 +8,8 @@ import {
   FolderTree,
   Lightbulb,
   ListTodo,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Pin,
@@ -73,23 +75,107 @@ type DraftSwitchTarget =
 const defaultAiPaneWidth = 280
 const minimumAiPaneWidth = 240
 const maximumAiPaneWidth = 520
-const magicNotesListPaneWidth = 220
+const defaultMagicNotesListPaneWidth = 220
+const minimumMagicNotesListPaneWidth = 180
+const maximumMagicNotesListPaneWidth = 360
 const minimumMagicNotesEditorWidth = 300
 const magicNotesResizeHandleWidth = 9
-const aiPaneKeyboardResizeStep = 16
+const magicNotesPaneKeyboardResizeStep = 16
+const magicNotesLayoutStorageKey =
+  'goodbuddy.magic-notes-layout.v1'
 
-function getAiPaneWidthLimits(layoutWidth: number): {
+type MagicNotesLayoutPreferences = {
+  listPaneOpen: boolean
+  listPaneWidth: number
+  aiPaneOpen: boolean
+  aiPaneWidth: number
+}
+
+function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
+  const defaults = {
+    listPaneOpen: true,
+    listPaneWidth: defaultMagicNotesListPaneWidth,
+    aiPaneOpen: true,
+    aiPaneWidth: defaultAiPaneWidth
+  }
+  try {
+    const value = localStorage.getItem(magicNotesLayoutStorageKey)
+    if (!value || value.length > 10_000) {
+      return defaults
+    }
+    const parsed = JSON.parse(value) as Partial<
+      MagicNotesLayoutPreferences
+    >
+    return {
+      listPaneOpen: parsed.listPaneOpen !== false,
+      listPaneWidth:
+        typeof parsed.listPaneWidth === 'number' &&
+        Number.isFinite(parsed.listPaneWidth)
+          ? Math.min(
+              maximumMagicNotesListPaneWidth,
+              Math.max(
+                minimumMagicNotesListPaneWidth,
+                parsed.listPaneWidth
+              )
+            )
+          : defaults.listPaneWidth,
+      aiPaneOpen: parsed.aiPaneOpen !== false,
+      aiPaneWidth:
+        typeof parsed.aiPaneWidth === 'number' &&
+        Number.isFinite(parsed.aiPaneWidth)
+          ? Math.min(
+              maximumAiPaneWidth,
+              Math.max(minimumAiPaneWidth, parsed.aiPaneWidth)
+            )
+          : defaults.aiPaneWidth
+    }
+  } catch {
+    return defaults
+  }
+}
+
+function persistMagicNotesLayoutPreferences(
+  preferences: MagicNotesLayoutPreferences
+): void {
+  try {
+    localStorage.setItem(
+      magicNotesLayoutStorageKey,
+      JSON.stringify(preferences)
+    )
+  } catch {
+    // The in-memory layout remains usable when browser storage is unavailable.
+  }
+}
+
+type MagicNotesPaneWidthLimits = {
   minimum: number
   maximum: number
-} {
+}
+
+function getMagicNotesPaneWidthLimits({
+  adjacentPaneOpen,
+  adjacentPaneWidth,
+  layoutWidth,
+  maximum,
+  minimum
+}: {
+  adjacentPaneOpen: boolean
+  adjacentPaneWidth: number
+  layoutWidth: number
+  maximum: number
+  minimum: number
+}): MagicNotesPaneWidthLimits {
+  const reservedAdjacentWidth = adjacentPaneOpen
+    ? adjacentPaneWidth + magicNotesResizeHandleWidth
+    : 0
   return {
-    minimum: minimumAiPaneWidth,
+    minimum,
     maximum: Math.max(
-      minimumAiPaneWidth,
+      minimum,
       Math.min(
-        maximumAiPaneWidth,
+        maximum,
         layoutWidth -
-          magicNotesListPaneWidth -
+          reservedAdjacentWidth -
           minimumMagicNotesEditorWidth -
           magicNotesResizeHandleWidth
       )
@@ -97,9 +183,73 @@ function getAiPaneWidthLimits(layoutWidth: number): {
   }
 }
 
-function clampAiPaneWidth(width: number, layoutWidth: number): number {
-  const limits = getAiPaneWidthLimits(layoutWidth)
-  return Math.min(limits.maximum, Math.max(limits.minimum, width))
+function clampMagicNotesPaneWidth(
+  width: number,
+  limits: MagicNotesPaneWidthLimits
+): number {
+  return Math.round(
+    Math.min(limits.maximum, Math.max(limits.minimum, width))
+  )
+}
+
+function getAiPaneWidthLimits(
+  layoutWidth: number,
+  listPaneWidth: number,
+  listPaneOpen: boolean
+): MagicNotesPaneWidthLimits {
+  return getMagicNotesPaneWidthLimits({
+    adjacentPaneOpen: listPaneOpen,
+    adjacentPaneWidth: listPaneWidth,
+    layoutWidth,
+    maximum: maximumAiPaneWidth,
+    minimum: minimumAiPaneWidth
+  })
+}
+
+function clampAiPaneWidth(
+  width: number,
+  layoutWidth: number,
+  listPaneWidth: number,
+  listPaneOpen: boolean
+): number {
+  return clampMagicNotesPaneWidth(
+    width,
+    getAiPaneWidthLimits(
+      layoutWidth,
+      listPaneWidth,
+      listPaneOpen
+    )
+  )
+}
+
+function getListPaneWidthLimits(
+  layoutWidth: number,
+  aiPaneWidth: number,
+  aiPaneOpen: boolean
+): MagicNotesPaneWidthLimits {
+  return getMagicNotesPaneWidthLimits({
+    adjacentPaneOpen: aiPaneOpen,
+    adjacentPaneWidth: aiPaneWidth,
+    layoutWidth,
+    maximum: maximumMagicNotesListPaneWidth,
+    minimum: minimumMagicNotesListPaneWidth
+  })
+}
+
+function clampListPaneWidth(
+  width: number,
+  layoutWidth: number,
+  aiPaneWidth: number,
+  aiPaneOpen: boolean
+): number {
+  return clampMagicNotesPaneWidth(
+    width,
+    getListPaneWidthLimits(
+      layoutWidth,
+      aiPaneWidth,
+      aiPaneOpen
+    )
+  )
 }
 
 function noteSummary(note: MagicNoteDetail): MagicNoteSummary {
@@ -349,8 +499,23 @@ export function MagicNotesWorkspace({
   const [composerKey, setComposerKey] = useState(0)
   const [editingEntry, setEditingEntry] = useState<MagicNoteEntry>()
   const [deletingEntryId, setDeletingEntryId] = useState('')
-  const [aiPaneOpen, setAiPaneOpen] = useState(true)
-  const [aiPaneWidth, setAiPaneWidth] = useState(defaultAiPaneWidth)
+  const initialLayoutPreferences = useMemo(
+    () => loadMagicNotesLayoutPreferences(),
+    []
+  )
+  const [listPaneOpen, setListPaneOpen] = useState(
+    initialLayoutPreferences.listPaneOpen
+  )
+  const [listPaneWidth, setListPaneWidth] = useState(
+    initialLayoutPreferences.listPaneWidth
+  )
+  const [listPaneResizing, setListPaneResizing] = useState(false)
+  const [aiPaneOpen, setAiPaneOpen] = useState(
+    initialLayoutPreferences.aiPaneOpen
+  )
+  const [aiPaneWidth, setAiPaneWidth] = useState(
+    initialLayoutPreferences.aiPaneWidth
+  )
   const [aiPaneResizing, setAiPaneResizing] = useState(false)
   const [magicNotesLayoutWidth, setMagicNotesLayoutWidth] = useState(
     window.innerWidth
@@ -392,7 +557,9 @@ export function MagicNotesWorkspace({
   const draftAnalysisContextRef = useRef(0)
   const lastDraftAnalysisStartedAtRef = useRef(0)
   const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
-  const liveAiPaneWidthRef = useRef(defaultAiPaneWidth)
+  const liveListPaneWidthRef = useRef(listPaneWidth)
+  const listResizePointerIdRef = useRef<number | undefined>(undefined)
+  const liveAiPaneWidthRef = useRef(aiPaneWidth)
   const aiResizePointerIdRef = useRef<number | undefined>(undefined)
   const composerRef = useRef<HTMLDivElement>(null)
   const continueEditingRef = useRef<HTMLButtonElement>(null)
@@ -426,12 +593,14 @@ export function MagicNotesWorkspace({
   )
 
   const getLayoutBounds = useCallback((): {
+    left: number
     width: number
     right: number
   } => {
     const bounds = magicNotesLayoutRef.current?.getBoundingClientRect()
     const width = bounds?.width || window.innerWidth
     return {
+      left: bounds?.left ?? 0,
       width,
       right: bounds?.right || width
     }
@@ -442,7 +611,9 @@ export function MagicNotesWorkspace({
       const bounds = getLayoutBounds()
       const width = clampAiPaneWidth(
         bounds.right - clientX,
-        bounds.width
+        bounds.width,
+        liveListPaneWidthRef.current,
+        listPaneOpen
       )
       liveAiPaneWidthRef.current = width
       if (commit) {
@@ -454,7 +625,7 @@ export function MagicNotesWorkspace({
         `${width}px`
       )
     },
-    [getLayoutBounds]
+    [getLayoutBounds, listPaneOpen]
   )
 
   const finishAiPaneResize = useCallback(
@@ -475,26 +646,106 @@ export function MagicNotesWorkspace({
   const resizeAiPaneWithKeyboard = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>): void => {
       const bounds = getLayoutBounds()
-      const limits = getAiPaneWidthLimits(bounds.width)
+      const limits = getAiPaneWidthLimits(
+        bounds.width,
+        listPaneWidth,
+        listPaneOpen
+      )
       const nextWidth =
         event.key === 'Home'
           ? limits.minimum
           : event.key === 'End'
             ? limits.maximum
             : event.key === 'ArrowLeft'
-              ? aiPaneWidth + aiPaneKeyboardResizeStep
+              ? aiPaneWidth + magicNotesPaneKeyboardResizeStep
               : event.key === 'ArrowRight'
-                ? aiPaneWidth - aiPaneKeyboardResizeStep
+                ? aiPaneWidth - magicNotesPaneKeyboardResizeStep
                 : undefined
       if (nextWidth === undefined) {
         return
       }
       event.preventDefault()
-      const width = clampAiPaneWidth(nextWidth, bounds.width)
+      const width = clampAiPaneWidth(
+        nextWidth,
+        bounds.width,
+        listPaneWidth,
+        listPaneOpen
+      )
       liveAiPaneWidthRef.current = width
       setAiPaneWidth(width)
     },
-    [aiPaneWidth, getLayoutBounds]
+    [aiPaneWidth, getLayoutBounds, listPaneOpen, listPaneWidth]
+  )
+
+  const resizeListPaneFromClientX = useCallback(
+    (clientX: number, commit: boolean): void => {
+      const bounds = getLayoutBounds()
+      const width = clampListPaneWidth(
+        clientX - bounds.left,
+        bounds.width,
+        liveAiPaneWidthRef.current,
+        aiPaneOpen
+      )
+      liveListPaneWidthRef.current = width
+      if (commit) {
+        setListPaneWidth(width)
+        return
+      }
+      magicNotesLayoutRef.current?.style.setProperty(
+        '--magic-notes-list-width',
+        `${width}px`
+      )
+    },
+    [aiPaneOpen, getLayoutBounds]
+  )
+
+  const finishListPaneResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (listResizePointerIdRef.current !== event.pointerId) {
+        return
+      }
+      listResizePointerIdRef.current = undefined
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      setListPaneWidth(liveListPaneWidthRef.current)
+      setListPaneResizing(false)
+    },
+    []
+  )
+
+  const resizeListPaneWithKeyboard = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      const bounds = getLayoutBounds()
+      const limits = getListPaneWidthLimits(
+        bounds.width,
+        aiPaneWidth,
+        aiPaneOpen
+      )
+      const nextWidth =
+        event.key === 'Home'
+          ? limits.minimum
+          : event.key === 'End'
+            ? limits.maximum
+            : event.key === 'ArrowLeft'
+              ? listPaneWidth - magicNotesPaneKeyboardResizeStep
+              : event.key === 'ArrowRight'
+                ? listPaneWidth + magicNotesPaneKeyboardResizeStep
+                : undefined
+      if (nextWidth === undefined) {
+        return
+      }
+      event.preventDefault()
+      const width = clampListPaneWidth(
+        nextWidth,
+        bounds.width,
+        aiPaneWidth,
+        aiPaneOpen
+      )
+      liveListPaneWidthRef.current = width
+      setListPaneWidth(width)
+    },
+    [aiPaneOpen, aiPaneWidth, getLayoutBounds, listPaneWidth]
   )
 
   useEffect(
@@ -513,32 +764,61 @@ export function MagicNotesWorkspace({
   )
 
   useEffect(() => {
+    persistMagicNotesLayoutPreferences({
+      listPaneOpen,
+      listPaneWidth,
+      aiPaneOpen,
+      aiPaneWidth
+    })
+  }, [aiPaneOpen, aiPaneWidth, listPaneOpen, listPaneWidth])
+
+  useEffect(() => {
     const layout = magicNotesLayoutRef.current
     const updateLayoutWidth = (): void => {
       const width = layout?.getBoundingClientRect().width || window.innerWidth
       setMagicNotesLayoutWidth(width)
+      if (width > 720) {
+        setListPaneWidth((current) => {
+          const next = clampListPaneWidth(
+            current,
+            width,
+            liveAiPaneWidthRef.current,
+            aiPaneOpen
+          )
+          liveListPaneWidthRef.current = next
+          return next
+        })
+      }
       if (width > 800) {
         setAiPaneWidth((current) => {
-          const next = clampAiPaneWidth(current, width)
+          const next = clampAiPaneWidth(
+            current,
+            width,
+            liveListPaneWidthRef.current,
+            listPaneOpen
+          )
           liveAiPaneWidthRef.current = next
           return next
         })
       }
     }
     updateLayoutWidth()
-    window.addEventListener('resize', updateLayoutWidth)
     const observer =
       layout && typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(updateLayoutWidth)
         : undefined
     if (layout && observer) {
       observer.observe(layout)
+    } else {
+      window.addEventListener('resize', updateLayoutWidth)
     }
     return () => {
-      window.removeEventListener('resize', updateLayoutWidth)
+      if (!observer) {
+        window.removeEventListener('resize', updateLayoutWidth)
+      }
       observer?.disconnect()
     }
-  }, [])
+  }, [aiPaneOpen, listPaneOpen])
 
   const notifyError = useCallback(
     (error: unknown): void =>
@@ -1136,8 +1416,24 @@ export function MagicNotesWorkspace({
         .reverse(),
     [detail]
   )
-  const aiPaneWidthLimits = getAiPaneWidthLimits(magicNotesLayoutWidth)
-  const canResizeAiPane = aiPaneOpen && magicNotesLayoutWidth > 800
+  const listPaneWidthLimits = getListPaneWidthLimits(
+    magicNotesLayoutWidth,
+    aiPaneWidth,
+    aiPaneOpen
+  )
+  const aiPaneWidthLimits = getAiPaneWidthLimits(
+    magicNotesLayoutWidth,
+    listPaneWidth,
+    listPaneOpen
+  )
+  const canResizeListPane =
+    listPaneOpen &&
+    magicNotesLayoutWidth > 720 &&
+    listPaneWidthLimits.maximum > listPaneWidthLimits.minimum
+  const canResizeAiPane =
+    aiPaneOpen &&
+    magicNotesLayoutWidth > 800 &&
+    aiPaneWidthLimits.maximum > aiPaneWidthLimits.minimum
 
   const submitCreateNote = async (): Promise<void> => {
     const title = newTitle.trim()
@@ -1420,6 +1716,24 @@ export function MagicNotesWorkspace({
         actions={
           <>
             <button
+              aria-controls="magic-notes-list-pane"
+              aria-expanded={listPaneOpen}
+              className="secondary-button"
+              onClick={() => setListPaneOpen((current) => !current)}
+              type="button"
+            >
+              {listPaneOpen ? (
+                <PanelLeftClose aria-hidden="true" size={15} />
+              ) : (
+                <PanelLeftOpen aria-hidden="true" size={15} />
+              )}
+              {t(
+                listPaneOpen
+                  ? 'actions.hideListPane'
+                  : 'actions.showListPane'
+              )}
+            </button>
+            <button
               aria-controls="magic-notes-ai-pane"
               aria-expanded={aiPaneOpen}
               className="secondary-button"
@@ -1497,14 +1811,26 @@ export function MagicNotesWorkspace({
         ref={magicNotesLayoutRef}
         aria-busy={Boolean(busy)}
         className={`magic-notes-layout${
+          listPaneOpen ? '' : ' magic-notes-layout--list-hidden'
+        }${
           aiPaneOpen ? '' : ' magic-notes-layout--ai-hidden'
         }${
-          aiPaneResizing && canResizeAiPane
+          (listPaneResizing && canResizeListPane) ||
+          (aiPaneResizing && canResizeAiPane)
             ? ' magic-notes-layout--resizing'
+            : ''
+        }${
+          listPaneResizing && canResizeListPane
+            ? ' magic-notes-layout--list-resizing'
+            : ''
+        }${
+          aiPaneResizing && canResizeAiPane
+            ? ' magic-notes-layout--ai-resizing'
             : ''
         }`}
         style={
           {
+            '--magic-notes-list-width': `${listPaneWidth}px`,
             '--magic-notes-ai-width': `${aiPaneWidth}px`
           } as React.CSSProperties
         }
@@ -1516,6 +1842,8 @@ export function MagicNotesWorkspace({
               : 'todos.listLabel'
           )}
           className="magic-notes-list-pane"
+          hidden={!listPaneOpen}
+          id="magic-notes-list-pane"
         >
           <PageTabs
             ariaLabel={t('page.contentLabel')}
@@ -1771,6 +2099,59 @@ export function MagicNotesWorkspace({
             </div>
           )}
         </aside>
+
+        {listPaneOpen && (
+          <div
+            aria-controls="magic-notes-list-pane"
+            aria-disabled={!canResizeListPane}
+            aria-label={t('accessibility.resizeListPane')}
+            aria-orientation="vertical"
+            aria-valuemax={listPaneWidthLimits.maximum}
+            aria-valuemin={listPaneWidthLimits.minimum}
+            aria-valuenow={listPaneWidth}
+            aria-valuetext={t('accessibility.listPaneWidth', {
+              width: listPaneWidth
+            })}
+            className="magic-notes-list-resize-handle"
+            onKeyDown={resizeListPaneWithKeyboard}
+            onLostPointerCapture={(event) => {
+              if (
+                listResizePointerIdRef.current === event.pointerId
+              ) {
+                listResizePointerIdRef.current = undefined
+                setListPaneWidth(liveListPaneWidthRef.current)
+                setListPaneResizing(false)
+              }
+            }}
+            onPointerCancel={finishListPaneResize}
+            onPointerDown={(event) => {
+              if (event.button !== 0 || !canResizeListPane) {
+                return
+              }
+              event.preventDefault()
+              listResizePointerIdRef.current = event.pointerId
+              event.currentTarget.setPointerCapture(event.pointerId)
+              resizeListPaneFromClientX(event.clientX, true)
+              setListPaneResizing(true)
+            }}
+            onPointerMove={(event) => {
+              if (
+                listResizePointerIdRef.current !== event.pointerId
+              ) {
+                return
+              }
+              if (!canResizeListPane) {
+                finishListPaneResize(event)
+                return
+              }
+              event.preventDefault()
+              resizeListPaneFromClientX(event.clientX, false)
+            }}
+            onPointerUp={finishListPaneResize}
+            role="separator"
+            tabIndex={canResizeListPane ? 0 : -1}
+          />
+        )}
 
         <section
           aria-label={t(

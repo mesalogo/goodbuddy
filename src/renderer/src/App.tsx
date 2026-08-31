@@ -558,8 +558,65 @@ const storageKey = 'goodbuddy.conversations.v1'
 
 const activeProjectStorageKey = 'goodbuddy.active-project.v1'
 
+const primarySidebarWidthStorageKey =
+  'goodbuddy.primary-sidebar-width.v1'
+const defaultPrimarySidebarWidth = 278
+const compactPrimarySidebarWidth = 236
+const minimumPrimarySidebarWidth = 220
+const maximumPrimarySidebarWidth = 420
+const minimumPrimaryWorkspaceWidth = 480
+const primarySidebarKeyboardResizeStep = 16
+
 const maxMessageContentLength = 1_000_000
 const maxMessageBlocks = 500
+
+function getPrimarySidebarWidthLimits(viewportWidth: number): {
+  minimum: number
+  maximum: number
+} {
+  const availableWidth = Math.max(0, Math.floor(viewportWidth))
+  return {
+    minimum: minimumPrimarySidebarWidth,
+    maximum: Math.max(
+      minimumPrimarySidebarWidth,
+      Math.min(
+        maximumPrimarySidebarWidth,
+        availableWidth - minimumPrimaryWorkspaceWidth
+      )
+    )
+  }
+}
+
+function clampPrimarySidebarWidth(
+  width: number,
+  viewportWidth: number
+): number {
+  const limits = getPrimarySidebarWidthLimits(viewportWidth)
+  return Math.min(
+    limits.maximum,
+    Math.max(limits.minimum, Math.round(width))
+  )
+}
+
+function loadPrimarySidebarWidth(): number {
+  const fallback =
+    window.innerWidth <= 1020
+      ? compactPrimarySidebarWidth
+      : defaultPrimarySidebarWidth
+  try {
+    const persistedWidth = Number(
+      localStorage.getItem(primarySidebarWidthStorageKey)
+    )
+    return clampPrimarySidebarWidth(
+      Number.isFinite(persistedWidth) && persistedWidth > 0
+        ? persistedWidth
+        : fallback,
+      window.innerWidth
+    )
+  } catch {
+    return clampPrimarySidebarWidth(fallback, window.innerWidth)
+  }
+}
 
 function appendMessageContentBlock(
   blocks: ConversationMessageBlock[] | undefined,
@@ -2298,6 +2355,11 @@ function App(): React.JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(
     () => window.innerWidth >= 900
   )
+  const [primarySidebarWidth, setPrimarySidebarWidth] = useState(
+    loadPrimarySidebarWidth
+  )
+  const [primarySidebarResizing, setPrimarySidebarResizing] =
+    useState(false)
   const [assistantSidebarOpen, setAssistantSidebarOpen] = useState(
     () => window.innerWidth >= 1280
   )
@@ -2647,6 +2709,10 @@ function App(): React.JSX.Element {
   >({})
   const sidebarRef = useRef<HTMLElement>(null)
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
+  const livePrimarySidebarWidthRef = useRef(primarySidebarWidth)
+  const primarySidebarResizePointerIdRef = useRef<number | undefined>(
+    undefined
+  )
   const assistantSidebarToggleRef = useRef<HTMLButtonElement>(null)
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>()
@@ -2673,6 +2739,71 @@ function App(): React.JSX.Element {
     setSidebarOpen(false)
     requestAnimationFrame(() => sidebarToggleRef.current?.focus())
   }, [])
+  const resizePrimarySidebarFromClientX = useCallback(
+    (clientX: number, commit: boolean): void => {
+      const width = clampPrimarySidebarWidth(
+        clientX,
+        window.innerWidth
+      )
+      livePrimarySidebarWidthRef.current = width
+      if (commit) {
+        setPrimarySidebarWidth(width)
+        return
+      }
+      sidebarRef.current?.style.setProperty(
+        '--primary-sidebar-width',
+        `${width}px`
+      )
+    },
+    []
+  )
+  const finishPrimarySidebarResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (
+        primarySidebarResizePointerIdRef.current !== event.pointerId
+      ) {
+        return
+      }
+      primarySidebarResizePointerIdRef.current = undefined
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      setPrimarySidebarWidth(livePrimarySidebarWidthRef.current)
+      setPrimarySidebarResizing(false)
+    },
+    []
+  )
+  const resizePrimarySidebarWithKeyboard = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      if (narrowWindow || !sidebarOpen) {
+        return
+      }
+      const limits = getPrimarySidebarWidthLimits(window.innerWidth)
+      const nextWidth =
+        event.key === 'Home'
+          ? limits.minimum
+          : event.key === 'End'
+            ? limits.maximum
+            : event.key === 'ArrowLeft'
+              ? primarySidebarWidth -
+                primarySidebarKeyboardResizeStep
+              : event.key === 'ArrowRight'
+                ? primarySidebarWidth +
+                  primarySidebarKeyboardResizeStep
+                : undefined
+      if (nextWidth === undefined) {
+        return
+      }
+      event.preventDefault()
+      const width = clampPrimarySidebarWidth(
+        nextWidth,
+        window.innerWidth
+      )
+      livePrimarySidebarWidthRef.current = width
+      setPrimarySidebarWidth(width)
+    },
+    [narrowWindow, primarySidebarWidth, sidebarOpen]
+  )
   const navigateFromSidebar = useCallback(
     (nextView: WorkspaceView, trigger: HTMLElement): void => {
       if (viewRef.current !== 'settings' && nextView === 'settings') {
@@ -2789,11 +2920,29 @@ function App(): React.JSX.Element {
   }, [activeId, assistantTasks, knowledgeOperationCount, view])
 
   useEffect(() => {
+    livePrimarySidebarWidthRef.current = primarySidebarWidth
+    try {
+      localStorage.setItem(
+        primarySidebarWidthStorageKey,
+        String(primarySidebarWidth)
+      )
+    } catch {
+      // The current width remains usable when browser storage is unavailable.
+    }
+  }, [primarySidebarWidth])
+
+  useEffect(() => {
     const collapseSidebarAtNarrowWidth = (): void => {
       const narrow = window.innerWidth < 900
       setNarrowWindow(narrow)
       if (narrow) {
         setSidebarOpen(false)
+        setPrimarySidebarResizing(false)
+        primarySidebarResizePointerIdRef.current = undefined
+      } else {
+        setPrimarySidebarWidth((current) =>
+          clampPrimarySidebarWidth(current, window.innerWidth)
+        )
       }
     }
     window.addEventListener('resize', collapseSidebarAtNarrowWidth)
@@ -8033,6 +8182,9 @@ function App(): React.JSX.Element {
   ])
 
   const mainSidebarOpen = narrowWindow && sidebarOpen
+  const canResizePrimarySidebar = sidebarOpen && !narrowWindow
+  const primarySidebarWidthLimits =
+    getPrimarySidebarWidthLimits(window.innerWidth)
   const backgroundIsolated = mainSidebarOpen
   const runtimeState =
     runtimeSwitching ||
@@ -8060,7 +8212,17 @@ function App(): React.JSX.Element {
         }
         aria-hidden={!sidebarOpen}
         aria-modal={narrowWindow && sidebarOpen ? 'true' : undefined}
-        className={sidebarOpen ? 'sidebar' : 'sidebar sidebar--closed'}
+        className={
+          sidebarOpen
+            ? `sidebar${
+                primarySidebarResizing &&
+                canResizePrimarySidebar
+                  ? ' sidebar--resizing'
+                  : ''
+              }`
+            : 'sidebar sidebar--closed'
+        }
+        id="primary-sidebar"
         inert={!sidebarOpen}
         onKeyDown={(event) => {
           if (mainSidebarOpen) {
@@ -8069,6 +8231,11 @@ function App(): React.JSX.Element {
         }}
         ref={sidebarRef}
         role={narrowWindow && sidebarOpen ? 'dialog' : undefined}
+        style={
+          {
+            '--primary-sidebar-width': `${primarySidebarWidth}px`
+          } as React.CSSProperties
+        }
       >
         <BrandLockup
           className="brand"
@@ -8758,6 +8925,65 @@ function App(): React.JSX.Element {
         </div>
       </aside>
       {sidebarOpen && (
+        <div
+          aria-controls="primary-sidebar"
+          aria-disabled={!canResizePrimarySidebar}
+          aria-label={t('sidebar.resizeAriaLabel')}
+          aria-orientation="vertical"
+          aria-valuemax={primarySidebarWidthLimits.maximum}
+          aria-valuemin={primarySidebarWidthLimits.minimum}
+          aria-valuenow={primarySidebarWidth}
+          aria-valuetext={t('sidebar.resizeValue', {
+            width: primarySidebarWidth
+          })}
+          className="primary-sidebar-resize-handle"
+          onKeyDown={resizePrimarySidebarWithKeyboard}
+          onLostPointerCapture={(event) => {
+            if (
+              primarySidebarResizePointerIdRef.current ===
+              event.pointerId
+            ) {
+              primarySidebarResizePointerIdRef.current = undefined
+              setPrimarySidebarWidth(
+                livePrimarySidebarWidthRef.current
+              )
+              setPrimarySidebarResizing(false)
+            }
+          }}
+          onPointerCancel={finishPrimarySidebarResize}
+          onPointerDown={(event) => {
+            if (
+              event.button !== 0 ||
+              !canResizePrimarySidebar
+            ) {
+              return
+            }
+            event.preventDefault()
+            primarySidebarResizePointerIdRef.current = event.pointerId
+            event.currentTarget.setPointerCapture(event.pointerId)
+            resizePrimarySidebarFromClientX(event.clientX, true)
+            setPrimarySidebarResizing(true)
+          }}
+          onPointerMove={(event) => {
+            if (
+              primarySidebarResizePointerIdRef.current !==
+              event.pointerId
+            ) {
+              return
+            }
+            if (!canResizePrimarySidebar) {
+              finishPrimarySidebarResize(event)
+              return
+            }
+            event.preventDefault()
+            resizePrimarySidebarFromClientX(event.clientX, false)
+          }}
+          onPointerUp={finishPrimarySidebarResize}
+          role="separator"
+          tabIndex={canResizePrimarySidebar ? 0 : -1}
+        />
+      )}
+      {sidebarOpen && (
         <button
           aria-label={t('sidebar.close')}
           className="sidebar-backdrop"
@@ -8882,26 +9108,24 @@ function App(): React.JSX.Element {
         </header>
 
         <div className="app-content">
-          {view === 'chat' && (
-            <button
-              aria-controls="assistant-sidebar"
-              aria-expanded={assistantSidebarOpen}
-              aria-label={t('topbar.toggleAssistantSidebar')}
-              className="icon-button assistant-sidebar-toggle"
-              onClick={() =>
-                setAssistantSidebarOpen((current) => !current)
-              }
-              ref={assistantSidebarToggleRef}
-              title={t('topbar.toggleAssistantSidebar')}
-              type="button"
-            >
-              {assistantSidebarOpen ? (
-                <PanelRightClose aria-hidden="true" size={18} />
-              ) : (
-                <PanelRightOpen aria-hidden="true" size={18} />
-              )}
-            </button>
-          )}
+          <button
+            aria-controls="assistant-sidebar"
+            aria-expanded={assistantSidebarOpen}
+            aria-label={t('topbar.toggleAssistantSidebar')}
+            className="icon-button assistant-sidebar-toggle"
+            onClick={() =>
+              setAssistantSidebarOpen((current) => !current)
+            }
+            ref={assistantSidebarToggleRef}
+            title={t('topbar.toggleAssistantSidebar')}
+            type="button"
+          >
+            {assistantSidebarOpen ? (
+              <PanelRightClose aria-hidden="true" size={18} />
+            ) : (
+              <PanelRightOpen aria-hidden="true" size={18} />
+            )}
+          </button>
 
           <main
             aria-hidden={backgroundIsolated ? 'true' : undefined}
@@ -10602,6 +10826,7 @@ function App(): React.JSX.Element {
         artifacts={sidebarArtifacts}
         browserState={browserStates[activeId]}
         conversationTitles={conversationTitles}
+        currentProject={activeProject}
         onCreateCustomTask={() => openCustomTaskDialog('current')}
         schedules={assistantSchedules}
         selectedTaskId={selectedAssistantTaskId}
@@ -10682,9 +10907,7 @@ function App(): React.JSX.Element {
         onOpenWorkspaceEntry={openWorkspaceEntry}
         onRefreshChanges={refreshWorkspaceChanges}
         onTabChange={setAssistantSidebarTab}
-        open={
-          assistantSidebarOpen && view === 'chat'
-        }
+        open={assistantSidebarOpen}
         restoreFocusRef={assistantSidebarToggleRef}
         tab={assistantSidebarTab}
         workspaceChanges={workspaceChanges}

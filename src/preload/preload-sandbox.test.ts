@@ -228,6 +228,28 @@ describe('sandboxed preload', () => {
     )
   })
 
+  it('exposes only bounded terminal session operations', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    const terminal =
+      source.match(
+        /terminal: \{(?<body>[\s\S]*?)\r?\n {2}\},\r?\n {2}settings:/u
+      )?.groups?.body ?? ''
+    expect(terminal).toContain('create:')
+    expect(terminal).toContain('write:')
+    expect(terminal).toContain('resize:')
+    expect(terminal).toContain('close:')
+    expect(terminal).toContain('getSnapshot:')
+    expect(terminal).toContain('ack:')
+    expect(terminal).toContain('onEvent:')
+    expect(terminal).toContain('ipcRenderer.removeListener(')
+    expect(terminal).not.toMatch(
+      /\b(?:shell|cwd|command|environment|password|privateKey|pid)\b/u
+    )
+  })
+
   it('exposes narrow awaited remote project activation and save operations', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),

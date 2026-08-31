@@ -12,11 +12,20 @@ import {
   ShieldAlert,
   Upload
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantSchedule,
   AssistantTask,
+  AssistantProject,
   WorkspaceChanges,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview
@@ -32,6 +41,28 @@ import {
   findTaskSchedule,
   TaskScheduleActions
 } from './TaskScheduleActions'
+import type {
+  TerminalSnapshot
+} from '../../shared/terminal-contracts'
+import {
+  WORKBAR_APP_DEFINITIONS,
+  workbarLayoutPreferencesSchema,
+  type WorkbarAppDefinition,
+  type WorkbarTabInstance,
+  type WorkbarTargetRef
+} from '../../shared/workbar-contracts'
+import {
+  DEFAULT_WORKBAR_INSTANCES,
+  WorkbarShell,
+  type WorkbarInstanceCreateRequest
+} from './WorkbarShell'
+import type { TerminalAdapter } from './TerminalPanel'
+import './terminal-panel.css'
+
+const TerminalPanel = lazy(async () => {
+  const module = await import('./TerminalPanel')
+  return { default: module.TerminalPanel }
+})
 
 export type AssistantSidebarTab =
   | 'tasks'
@@ -69,6 +100,7 @@ type RightAssistantSidebarProps = {
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
   browserState?: BrowserLiveState
+  currentProject?: AssistantProject
   restoreFocusRef?: { current: HTMLElement | null }
   onInteractBrowser: () => Promise<void>
   onStopBrowser: () => Promise<void>
@@ -108,6 +140,45 @@ const emptyChangedFiles: WorkspaceChanges['files'] = []
 const defaultSidebarRatio = 0.3
 const minimumPaneWidth = 300
 const keyboardResizeStep = 16
+const workbarStorageKey = 'goodbuddy.workbar-layout.v1'
+
+function loadPersistedWorkbarLayout(): ReturnType<
+  typeof workbarLayoutPreferencesSchema.parse
+> | undefined {
+  try {
+    const value = localStorage.getItem(workbarStorageKey)
+    if (!value || value.length > 100_000) {
+      return undefined
+    }
+    return workbarLayoutPreferencesSchema.parse(JSON.parse(value))
+  } catch {
+    return undefined
+  }
+}
+
+function persistWorkbarLayout(
+  instances: readonly WorkbarTabInstance[],
+  activeInstanceId: string | null,
+  expanded: boolean,
+  widthRatio: number
+): void {
+  try {
+    localStorage.setItem(
+      workbarStorageKey,
+      JSON.stringify(
+        workbarLayoutPreferencesSchema.parse({
+          instances,
+          activeInstanceId,
+          expanded,
+          dock: 'right',
+          widthRatio
+        })
+      )
+    )
+  } catch {
+    // The in-memory workbar remains usable when browser storage is unavailable.
+  }
+}
 
 function getSidebarWidthLimits(layoutWidth: number): {
   minimum: number
@@ -170,6 +241,7 @@ export function RightAssistantSidebar({
   workspaceChanges,
   workspaceProjectId,
   browserState,
+  currentProject,
   restoreFocusRef,
   onInteractBrowser,
   onStopBrowser,
@@ -206,10 +278,68 @@ export function RightAssistantSidebar({
       })),
     [t]
   )
+  const initialLayout = useMemo(
+    () => loadPersistedWorkbarLayout(),
+    []
+  )
+  const localizedAppDefinitions = useMemo(
+    () =>
+      WORKBAR_APP_DEFINITIONS.map((definition) => {
+        const tabDefinition = tabs.find(
+          (item) => item.id === definition.id
+        )
+        return {
+          ...definition,
+          label:
+            tabDefinition?.label ??
+            t('sidebar.tabs.terminal.label'),
+          description:
+            tabDefinition?.description ??
+            t('sidebar.tabs.terminal.description')
+        } satisfies WorkbarAppDefinition
+      }),
+    [t, tabs]
+  )
+  const defaultInstances = useMemo(
+    () =>
+      DEFAULT_WORKBAR_INSTANCES.map((instance) => ({
+        ...instance,
+        title:
+          localizedAppDefinitions.find(
+            (definition) => definition.id === instance.appId
+          )?.label ?? instance.title
+      })),
+    [localizedAppDefinitions]
+  )
+  const [workbarInstances, setWorkbarInstances] = useState<
+    WorkbarTabInstance[]
+  >(() =>
+    (initialLayout?.instances ?? defaultInstances).map((instance) =>
+      instance.appId === 'terminal'
+        ? instance
+        : {
+            ...instance,
+            title:
+              localizedAppDefinitions.find(
+                (definition) => definition.id === instance.appId
+              )?.label ?? instance.title
+          }
+    )
+  )
+  const [activeWorkbarInstanceId, setActiveWorkbarInstanceId] =
+    useState<string | null>(
+      () =>
+        initialLayout?.activeInstanceId ??
+        defaultInstances.find((instance) => instance.appId === tab)?.id ??
+        defaultInstances[0]?.id ??
+        null
+    )
   const [splitLayoutWidth, setSplitLayoutWidth] = useState(
     window.innerWidth
   )
-  const [sidebarRatio, setSidebarRatio] = useState(defaultSidebarRatio)
+  const [sidebarRatio, setSidebarRatio] = useState(
+    initialLayout?.widthRatio ?? defaultSidebarRatio
+  )
   const [isResizing, setIsResizing] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
   const wasOpen = useRef(false)
@@ -249,12 +379,41 @@ export function RightAssistantSidebar({
     'attention' | 'active' | 'paused' | 'finished'
   >('active')
   const [actionError, setActionError] = useState('')
+  const [terminalSessionIds, setTerminalSessionIds] = useState<
+    Record<string, string>
+  >({})
+  const [terminalSnapshots, setTerminalSnapshots] = useState<
+    Record<string, TerminalSnapshot>
+  >({})
+  const [terminalCloseConfirmation, setTerminalCloseConfirmation] =
+    useState<{
+      instance: WorkbarTabInstance
+      resolve: (accepted: boolean) => void
+      closing: boolean
+      error?: string
+    }>()
+  const terminalCloseCancelRef = useRef<HTMLButtonElement>(null)
+  const lastExternalTabRef = useRef(tab)
   const artifactPreview =
     artifacts.find((artifact) => artifact.id === selectedArtifactId)
   const currentWorkspacePreview =
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
       : undefined
+  const terminalAdapter = useMemo<TerminalAdapter>(
+    () => ({
+      create: (request) => window.goodbuddy.terminal.create(request),
+      write: (request) => window.goodbuddy.terminal.write(request),
+      resize: (request) => window.goodbuddy.terminal.resize(request),
+      close: (request) => window.goodbuddy.terminal.close(request),
+      getSnapshot: (request) =>
+        window.goodbuddy.terminal.getSnapshot(request),
+      ack: (request) => window.goodbuddy.terminal.ack(request),
+      subscribe: (listener) =>
+        window.goodbuddy.terminal.onEvent(listener)
+    }),
+    []
+  )
   const sidebarWidthLimits = getSidebarWidthLimits(splitLayoutWidth)
   const canResize =
     open &&
@@ -287,6 +446,209 @@ export function RightAssistantSidebar({
       }),
     [taskFilter, topLevelTasks]
   )
+
+  useEffect(() => {
+    if (lastExternalTabRef.current === tab) {
+      return
+    }
+    lastExternalTabRef.current = tab
+    const requested = workbarInstances.find(
+      (instance) => instance.appId === tab
+    )
+    if (requested) {
+      // This effect intentionally mirrors the legacy external tab prop into
+      // the dynamic workbar only when that prop actually changes.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveWorkbarInstanceId(requested.id)
+    }
+  }, [tab, workbarInstances])
+
+  useEffect(() => {
+    persistWorkbarLayout(
+      workbarInstances,
+      activeWorkbarInstanceId,
+      open,
+      sidebarRatio
+    )
+  }, [
+    activeWorkbarInstanceId,
+    open,
+    sidebarRatio,
+    workbarInstances
+  ])
+
+  useEffect(() => {
+    if (terminalCloseConfirmation && !terminalCloseConfirmation.closing) {
+      terminalCloseCancelRef.current?.focus()
+    }
+  }, [terminalCloseConfirmation])
+
+  const resolveTerminalTarget = useCallback(
+    (): WorkbarTargetRef =>
+      currentProject
+        ? { type: 'project', projectId: currentProject.id }
+        : { type: 'local' },
+    [currentProject]
+  )
+
+  const updateActiveWorkbarInstance = useCallback(
+    (instanceId: string): void => {
+      setActiveWorkbarInstanceId(instanceId)
+      const instance = workbarInstances.find(
+        (candidate) => candidate.id === instanceId
+      )
+      if (
+        instance &&
+        instance.appId !== 'terminal'
+      ) {
+        onTabChange(instance.appId)
+      }
+    },
+    [onTabChange, workbarInstances]
+  )
+
+  const createWorkbarInstance = useCallback(
+    (request: WorkbarInstanceCreateRequest): void => {
+      const definition = localizedAppDefinitions.find(
+        (candidate) => candidate.id === request.appId
+      )
+      if (!definition) {
+        return
+      }
+      const sameTargetTerminals = workbarInstances.filter(
+        (instance) =>
+          instance.appId === 'terminal' &&
+          JSON.stringify(instance.targetRef) ===
+            JSON.stringify(request.targetRef)
+      ).length
+      const instance: WorkbarTabInstance = {
+        id: crypto.randomUUID(),
+        appId: request.appId,
+        title:
+          request.appId === 'terminal'
+            ? `${definition.label} ${sameTargetTerminals + 1}`
+            : definition.label,
+        ...(request.targetRef
+          ? { targetRef: request.targetRef }
+          : {})
+      }
+      setWorkbarInstances((current) => {
+        const afterIndex = request.insertAfterInstanceId
+          ? current.findIndex(
+              (candidate) =>
+                candidate.id === request.insertAfterInstanceId
+            )
+          : -1
+        const next = [...current]
+        next.splice(afterIndex >= 0 ? afterIndex + 1 : next.length, 0, instance)
+        return next
+      })
+      setActiveWorkbarInstanceId(instance.id)
+    },
+    [localizedAppDefinitions, workbarInstances]
+  )
+
+  const removeWorkbarInstance = useCallback(
+    (instanceId: string): void => {
+      setWorkbarInstances((current) =>
+        current.filter((instance) => instance.id !== instanceId)
+      )
+      setTerminalSessionIds((current) => {
+        const next = { ...current }
+        delete next[instanceId]
+        return next
+      })
+      setTerminalSnapshots((current) => {
+        const next = { ...current }
+        delete next[instanceId]
+        return next
+      })
+    },
+    []
+  )
+
+  const requestCloseWorkbarInstance = useCallback(
+    async (instance: WorkbarTabInstance): Promise<boolean> => {
+      if (instance.appId !== 'terminal') {
+        removeWorkbarInstance(instance.id)
+        return true
+      }
+      const sessionId = terminalSessionIds[instance.id]
+      const snapshot = terminalSnapshots[instance.id]
+      if (
+        sessionId &&
+        (!snapshot ||
+          snapshot.state === 'starting' ||
+          snapshot.state === 'running' ||
+          snapshot.state === 'closing')
+      ) {
+        return new Promise<boolean>((resolve) => {
+          setTerminalCloseConfirmation({
+            instance,
+            resolve,
+            closing: false
+          })
+        })
+      }
+      if (sessionId) {
+        try {
+          await terminalAdapter.close({ sessionId })
+        } catch {
+          // An already-ended session can still be removed from the workbar.
+        }
+      }
+      removeWorkbarInstance(instance.id)
+      return true
+    },
+    [
+      removeWorkbarInstance,
+      terminalAdapter,
+      terminalSessionIds,
+      terminalSnapshots
+    ]
+  )
+
+  const confirmTerminalClose = useCallback(async (): Promise<void> => {
+    const confirmation = terminalCloseConfirmation
+    if (!confirmation || confirmation.closing) {
+      return
+    }
+    const sessionId = terminalSessionIds[confirmation.instance.id]
+    setTerminalCloseConfirmation({
+      ...confirmation,
+      closing: true,
+      error: undefined
+    })
+    try {
+      if (sessionId) {
+        await terminalAdapter.close({ sessionId })
+      }
+      removeWorkbarInstance(confirmation.instance.id)
+      setTerminalCloseConfirmation(undefined)
+      confirmation.resolve(true)
+    } catch (reason) {
+      setTerminalCloseConfirmation({
+        ...confirmation,
+        closing: false,
+        error:
+          reason instanceof Error
+            ? reason.message
+            : t('sidebar.terminal.closeDialog.error')
+      })
+    }
+  }, [
+    removeWorkbarInstance,
+    terminalAdapter,
+    terminalCloseConfirmation,
+    terminalSessionIds,
+    t
+  ])
+
+  const cancelTerminalClose = useCallback((): void => {
+    const confirmation = terminalCloseConfirmation
+    setTerminalCloseConfirmation(undefined)
+    confirmation?.resolve(false)
+  }, [terminalCloseConfirmation])
 
   useEffect(() => {
     const sidebar = sidebarRef.current
@@ -470,36 +832,6 @@ export function RightAssistantSidebar({
       })
   }
 
-  const moveTabFocus = (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    tabId: AssistantSidebarTab
-  ): void => {
-    const index = tabs.findIndex((item) => item.id === tabId)
-    const targetIndex =
-      event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? tabs.length - 1
-          : event.key === 'ArrowLeft'
-            ? (index - 1 + tabs.length) % tabs.length
-            : event.key === 'ArrowRight'
-              ? (index + 1) % tabs.length
-              : -1
-    if (targetIndex < 0) {
-      return
-    }
-    event.preventDefault()
-    const target = tabs[targetIndex]
-    if (!target) {
-      return
-    }
-    setActionError('')
-    onTabChange(target.id)
-    requestAnimationFrame(() => {
-      document.getElementById(`assistant-sidebar-tab-${target.id}`)?.focus()
-    })
-  }
-
   return (
     <aside
       ref={sidebarRef}
@@ -573,57 +905,75 @@ export function RightAssistantSidebar({
         role="separator"
         tabIndex={canResize ? 0 : -1}
       />
-      <nav
-        aria-label={t('sidebar.categoriesAriaLabel')}
-        className="assistant-sidebar__tabs"
-        role="tablist"
-      >
-        {tabs.map((item) => (
-          <button
-            aria-controls="assistant-sidebar-panel"
-            aria-selected={tab === item.id}
-            className={
-              tab === item.id
-                ? 'assistant-sidebar__tab assistant-sidebar__tab--active'
-                : 'assistant-sidebar__tab'
-            }
-            id={`assistant-sidebar-tab-${item.id}`}
-            key={item.id}
-            onClick={() => {
-              setActionError('')
-              onTabChange(item.id)
-            }}
-            onKeyDown={(event) => moveTabFocus(event, item.id)}
-            role="tab"
-            tabIndex={tab === item.id ? 0 : -1}
-            title={item.description}
-            type="button"
-          >
-            {item.label}
-            {item.id === 'tasks' && approvals.length > 0 && (
-              <span
-                aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${approvals.length}`}
-                className="assistant-sidebar__badge"
-              >
-                {approvals.length}
-              </span>
-            )}
-          </button>
-        ))}
-      </nav>
-
-      <div
-        aria-labelledby={`assistant-sidebar-tab-${tab}`}
-        className="assistant-sidebar__body"
-        id="assistant-sidebar-panel"
-        role="tabpanel"
-      >
+      <WorkbarShell
+        activeInstanceId={activeWorkbarInstanceId}
+        appDefinitions={localizedAppDefinitions}
+        instances={workbarInstances}
+        onActiveInstanceChange={updateActiveWorkbarInstance}
+        onCloseInstance={requestCloseWorkbarInstance}
+        onCreateInstance={createWorkbarInstance}
+        onResolveTerminalTarget={resolveTerminalTarget}
+        renderTabAdornment={(instance) =>
+          instance.appId === 'tasks' && approvals.length > 0 ? (
+            <span
+              aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${approvals.length}`}
+              className="assistant-sidebar__badge"
+            >
+              {approvals.length}
+            </span>
+          ) : null
+        }
+        renderPanel={(instance) => (
+          <div className="assistant-sidebar__body">
         {actionError ? (
           <p className="settings-error" role="alert">
             {actionError}
           </p>
         ) : null}
-        {tab === 'tasks' && (
+        {instance.appId === 'terminal' && instance.targetRef ? (
+          <Suspense
+            fallback={
+              <section
+                aria-busy="true"
+                aria-label={t('sidebar.terminal.loading')}
+                className="terminal-panel terminal-panel--loading"
+              >
+                <span>{t('sidebar.terminal.loading')}</span>
+              </section>
+            }
+          >
+            <TerminalPanel
+              adapter={terminalAdapter}
+              onRename={(title) =>
+                setWorkbarInstances((current) =>
+                  current.map((candidate) =>
+                    candidate.id === instance.id
+                      ? { ...candidate, title }
+                      : candidate
+                  )
+                )
+              }
+              onSessionChange={(snapshot) => {
+                setTerminalSessionIds((current) =>
+                  current[instance.id] === snapshot.sessionId
+                    ? current
+                    : {
+                        ...current,
+                        [instance.id]: snapshot.sessionId
+                      }
+                )
+                setTerminalSnapshots((current) => ({
+                  ...current,
+                  [instance.id]: snapshot
+                }))
+              }}
+              sessionId={terminalSessionIds[instance.id]}
+              target={instance.targetRef}
+              title={instance.title}
+            />
+          </Suspense>
+        ) : null}
+        {instance.appId === 'tasks' && (
           <section className="assistant-sidebar__section">
             <h3>
               <ShieldAlert size={15} />
@@ -812,7 +1162,7 @@ export function RightAssistantSidebar({
           </section>
         )}
 
-        {tab === 'workspace' && (
+        {instance.appId === 'workspace' && (
           currentWorkspacePreview ? (
             <section
               aria-busy={currentWorkspacePreview.state === 'loading'}
@@ -934,7 +1284,7 @@ export function RightAssistantSidebar({
           )
         )}
 
-        {tab === 'results' && (
+        {instance.appId === 'results' && (
           artifactPreview ? (
             <section className="assistant-sidebar__preview">
               <header>
@@ -1043,7 +1393,7 @@ export function RightAssistantSidebar({
           )
         )}
 
-        {tab === 'browser' && (
+        {instance.appId === 'browser' && (
           <section className="assistant-sidebar__browser">
             <header>
               <span>
@@ -1149,7 +1499,54 @@ export function RightAssistantSidebar({
             )}
           </section>
         )}
-      </div>
+          </div>
+        )}
+      />
+      {terminalCloseConfirmation ? (
+        <div className="assistant-sidebar__overlay">
+          <section
+            aria-label={t('sidebar.terminal.closeDialog.ariaLabel')}
+            className="assistant-sidebar__terminal-close"
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Escape' &&
+                !terminalCloseConfirmation.closing
+              ) {
+                event.preventDefault()
+                cancelTerminalClose()
+              }
+            }}
+            role="alertdialog"
+          >
+            <h2>{t('sidebar.terminal.closeDialog.title')}</h2>
+            <p>{t('sidebar.terminal.closeDialog.description')}</p>
+            {terminalCloseConfirmation.error ? (
+              <p role="alert">{terminalCloseConfirmation.error}</p>
+            ) : null}
+            <div>
+              <button
+                className="secondary-button"
+                disabled={terminalCloseConfirmation.closing}
+                onClick={cancelTerminalClose}
+                ref={terminalCloseCancelRef}
+                type="button"
+              >
+                {t('sidebar.terminal.closeDialog.cancel')}
+              </button>
+              <button
+                className="danger-button"
+                disabled={terminalCloseConfirmation.closing}
+                onClick={() => void confirmTerminalClose()}
+                type="button"
+              >
+                {terminalCloseConfirmation.closing
+                  ? t('sidebar.terminal.closeDialog.closing')
+                  : t('sidebar.terminal.closeDialog.confirm')}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </aside>
   )
 }

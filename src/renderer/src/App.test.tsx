@@ -18,6 +18,9 @@ import type {
 } from '../../shared/contracts'
 import type { ApplicationSettings } from '../../shared/application-settings-contracts'
 import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
+import type {
+  TerminalSnapshot
+} from '../../shared/terminal-contracts'
 import {
   loadBrandingPreferences,
   saveBrandingPreferences
@@ -99,6 +102,12 @@ vi.mock('./ActivityPanel', async (importOriginal) => {
   return importOriginal<typeof import('./ActivityPanel')>()
 })
 
+vi.mock('./TerminalPanel', () => ({
+  TerminalPanel: ({ title }: { title?: string }) => (
+    <section aria-label={`用户终端：${title ?? '终端'}`} />
+  )
+}))
+
 import App from './App'
 import { loadActivityRecords } from './activity-store'
 import { changeUiLocale } from './i18n'
@@ -153,6 +162,20 @@ const project = {
   status: 'active' as const,
   createdAt: '2026-07-31T00:00:00.000Z',
   updatedAt: '2026-07-31T00:00:00.000Z'
+}
+
+const terminalSnapshot: TerminalSnapshot = {
+  sessionId: '00000000-0000-4000-8000-000000000901',
+  target: { type: 'local' },
+  targetLabel: '本机',
+  title: '终端 1',
+  state: 'running',
+  shell: 'PowerShell 7',
+  workingDirectory: 'C:\\Users\\test',
+  size: { cols: 80, rows: 24 },
+  lastSequence: 0,
+  exit: null,
+  error: null
 }
 
 const api: DesktopApi = {
@@ -230,6 +253,23 @@ const api: DesktopApi = {
         browserListener = undefined
       }
     })
+  },
+  terminal: {
+    create: vi.fn(async (request) => ({
+      ...terminalSnapshot,
+      target: request.target,
+      size: { cols: request.cols, rows: request.rows }
+    })),
+    write: vi.fn(async () => undefined),
+    resize: vi.fn(async () => undefined),
+    close: vi.fn(async () => ({
+      ...terminalSnapshot,
+      state: 'exited' as const,
+      exit: { exitCode: 0, signal: null }
+    })),
+    getSnapshot: vi.fn(async () => terminalSnapshot),
+    ack: vi.fn(async () => undefined),
+    onEvent: vi.fn(() => () => {})
   },
   speech: {
     transcribe: vi.fn(async () => ({ text: '本地语音结果' })),
@@ -5462,6 +5502,35 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('opens multiple current-project terminals without a second target picker', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    const add = await screen.findByRole('button', {
+      name: '打开工作栏应用'
+    })
+    for (let count = 1; count <= 2; count += 1) {
+      fireEvent.click(add)
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: /打开当前项目的用户终端/u
+        })
+      )
+      expect(
+        await screen.findByRole('tab', {
+          name: `终端 ${count}`
+        })
+      ).toHaveAttribute('aria-selected', 'true')
+    }
+
+    expect(
+      screen.getByRole('button', { name: '打开工作栏应用' })
+    ).toBeVisible()
+    expect(
+      screen.getAllByRole('tab', { name: /^终端 \d+$/u })
+    ).toHaveLength(2)
+  })
+
   it('opens workspace entries from their row actions', async () => {
     vi.mocked(api.workspace.listDirectory).mockResolvedValue({
       path: '',
@@ -5683,7 +5752,7 @@ describe('App', () => {
     ).not.toBeInTheDocument()
     expect(
       screen.queryByLabelText('切换助手工作栏')
-    ).not.toBeInTheDocument()
+    ).toBeInTheDocument()
     await waitFor(() =>
       expect(api.usage.getTokenSummary).toHaveBeenCalledOnce()
     )
@@ -9567,7 +9636,7 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(
       screen.queryByLabelText('切换助手工作栏')
-    ).not.toBeInTheDocument()
+    ).toBeInTheDocument()
   })
 
   it('excludes ignored heartbeat suggestions from the navigation badge', async () => {
@@ -9907,6 +9976,88 @@ describe('App', () => {
     }
   })
 
+  it('resizes and remembers the docked primary sidebar width', () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1200
+    })
+    const { container, unmount } = render(<App />)
+
+    try {
+      const sidebar =
+        container.querySelector<HTMLElement>('.sidebar')
+      const separator = screen.getByRole('separator', {
+        name: '调整主侧栏宽度'
+      })
+      const setPointerCapture = vi.fn()
+      const releasePointerCapture = vi.fn()
+      Object.defineProperties(separator, {
+        setPointerCapture: { value: setPointerCapture },
+        hasPointerCapture: { value: () => true },
+        releasePointerCapture: { value: releasePointerCapture }
+      })
+
+      expect(
+        sidebar?.style.getPropertyValue('--primary-sidebar-width')
+      ).toBe('278px')
+      expect(separator).toHaveAttribute('aria-valuemin', '220')
+      expect(separator).toHaveAttribute('aria-valuemax', '420')
+
+      fireEvent.pointerDown(separator, {
+        button: 0,
+        clientX: 320,
+        pointerId: 17
+      })
+      fireEvent.pointerMove(separator, {
+        clientX: 400,
+        pointerId: 17
+      })
+
+      expect(setPointerCapture).toHaveBeenCalledWith(17)
+      expect(sidebar).toHaveClass('sidebar--resizing')
+      expect(
+        sidebar?.style.getPropertyValue('--primary-sidebar-width')
+      ).toBe('400px')
+
+      fireEvent.pointerUp(separator, { pointerId: 17 })
+      expect(releasePointerCapture).toHaveBeenCalledWith(17)
+      expect(sidebar).not.toHaveClass('sidebar--resizing')
+      expect(
+        localStorage.getItem('goodbuddy.primary-sidebar-width.v1')
+      ).toBe('400')
+
+      fireEvent.keyDown(separator, { key: 'Home' })
+      expect(
+        sidebar?.style.getPropertyValue('--primary-sidebar-width')
+      ).toBe('220px')
+
+      fireEvent.keyDown(separator, { key: 'ArrowRight' })
+      expect(
+        sidebar?.style.getPropertyValue('--primary-sidebar-width')
+      ).toBe('236px')
+
+      fireEvent.keyDown(separator, { key: 'End' })
+      expect(
+        sidebar?.style.getPropertyValue('--primary-sidebar-width')
+      ).toBe('420px')
+      expect(separator).toHaveAttribute('aria-valuenow', '420')
+
+      unmount()
+      const persistedRender = render(<App />)
+      expect(
+        persistedRender.container
+          .querySelector<HTMLElement>('.sidebar')
+          ?.style.getPropertyValue('--primary-sidebar-width')
+      ).toBe('420px')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalWidth
+      })
+    }
+  })
+
   it('docks the assistant workbar without obscuring a narrow workspace', async () => {
     const originalWidth = window.innerWidth
     const { container } = render(<App />)
@@ -9994,7 +10145,7 @@ describe('App', () => {
       )
       expect(
         screen.queryByLabelText('切换助手工作栏')
-      ).not.toBeInTheDocument()
+      ).toBeInTheDocument()
     } finally {
       delete api.updates
     }
@@ -10206,7 +10357,7 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(
       screen.queryByLabelText('切换助手工作栏')
-    ).not.toBeInTheDocument()
+    ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /^专家角色：/u })
     ).not.toBeInTheDocument()

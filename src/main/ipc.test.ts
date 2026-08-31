@@ -55,6 +55,196 @@ describe('embedding IPC boundary', () => {
   })
 })
 
+describe('terminal IPC boundary', () => {
+  afterEach(() => {
+    electronMocks.handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  it('validates terminal requests and routes them through the trusted renderer owner', async () => {
+    const webContents = {
+      id: 73,
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn()
+    }
+    const window = {
+      webContents,
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+    const snapshot = {
+      sessionId: '00000000-0000-4000-8000-000000000073',
+      target: { type: 'local' as const },
+      title: 'PowerShell',
+      state: 'running' as const,
+      cwd: 'C:\\Workspace',
+      cols: 120,
+      rows: 36,
+      lastSequence: 0
+    }
+    const terminalSessionManager = {
+      create: vi.fn(async () => snapshot),
+      enableEventDelivery: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      snapshot: vi.fn(() => snapshot),
+      acknowledge: vi.fn(),
+      close: vi.fn(async () => ({
+        ...snapshot,
+        state: 'closed' as const
+      })),
+      closeOwner: vi.fn(async () => undefined)
+    }
+    const args: Parameters<typeof registerIpcHandlers> = [
+      window as never,
+      { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space',
+      {} as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      {
+        queueDueSchedules: vi.fn(() => []),
+        listConversationQueueItems: vi.fn(() => []),
+        listPendingConversationQueueIds: vi.fn(() => [])
+      } as never,
+      { clear: vi.fn() } as never,
+      {} as never,
+      vi.fn(async () => {}),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      terminalSessionManager as never
+    ]
+    const dispose = registerIpcHandlers(...args)
+    const event = {
+      sender: webContents,
+      senderFrame: webContents.mainFrame
+    }
+
+    await expect(
+      electronMocks.handlers.get(ipcChannels.terminalCreate)?.(event, {
+        target: { type: 'local' },
+        cols: 120,
+        rows: 36
+      })
+    ).resolves.toEqual(snapshot)
+    expect(terminalSessionManager.create).toHaveBeenCalledWith(73, {
+      target: { type: 'local' },
+      cols: 120,
+      rows: 36
+    })
+    await vi.waitFor(() =>
+      expect(
+        terminalSessionManager.enableEventDelivery
+      ).toHaveBeenCalledWith(73, snapshot.sessionId)
+    )
+
+    electronMocks.handlers.get(ipcChannels.terminalWrite)?.(event, {
+      sessionId: snapshot.sessionId,
+      data: 'echo ready\r'
+    })
+    electronMocks.handlers.get(ipcChannels.terminalResize)?.(event, {
+      sessionId: snapshot.sessionId,
+      cols: 100,
+      rows: 28
+    })
+    electronMocks.handlers.get(ipcChannels.terminalAck)?.(event, {
+      sessionId: snapshot.sessionId,
+      sequence: 4
+    })
+    expect(
+      electronMocks.handlers.get(ipcChannels.terminalSnapshot)?.(
+        event,
+        { sessionId: snapshot.sessionId }
+      )
+    ).toEqual(snapshot)
+    await expect(
+      electronMocks.handlers.get(ipcChannels.terminalClose)?.(event, {
+        sessionId: snapshot.sessionId
+      })
+    ).resolves.toMatchObject({ state: 'closed' })
+
+    expect(terminalSessionManager.write).toHaveBeenCalledWith(
+      73,
+      snapshot.sessionId,
+      'echo ready\r'
+    )
+    expect(terminalSessionManager.resize).toHaveBeenCalledWith(
+      73,
+      snapshot.sessionId,
+      { cols: 100, rows: 28 }
+    )
+    expect(terminalSessionManager.acknowledge).toHaveBeenCalledWith(
+      73,
+      snapshot.sessionId,
+      4
+    )
+    expect(terminalSessionManager.snapshot).toHaveBeenCalledWith(
+      73,
+      snapshot.sessionId
+    )
+    expect(terminalSessionManager.close).toHaveBeenCalledWith(
+      73,
+      snapshot.sessionId
+    )
+
+    expect(() =>
+      electronMocks.handlers.get(ipcChannels.terminalWrite)?.(
+        {
+          sender: { ...webContents, id: 99 },
+          senderFrame: webContents.mainFrame
+        },
+        {
+          sessionId: snapshot.sessionId,
+          data: 'untrusted'
+        }
+      )
+    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+    expect(() =>
+      electronMocks.handlers.get(ipcChannels.terminalResize)?.(event, {
+        sessionId: snapshot.sessionId,
+        cols: 0,
+        rows: 28
+      })
+    ).toThrow()
+
+    await dispose()
+    expect(terminalSessionManager.closeOwner).toHaveBeenCalledWith(73)
+  })
+})
+
 type InvokeHandler = (event: unknown, input?: unknown) => unknown
 type KnowledgeGrantMock = (
   requestId: string,

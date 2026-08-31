@@ -59,6 +59,8 @@ function createConnection(identity: SshPoolConnectionIdentity) {
   return {
     identity,
     isUsable: vi.fn(() => true),
+    onDisconnect: vi.fn(() => () => undefined),
+    openTerminalShell: vi.fn(),
     openAgentAttach: vi.fn(),
     runAgentDoctor: vi.fn(),
     runAgentBootstrapProbe: vi.fn(),
@@ -403,6 +405,13 @@ describe("authenticated ssh2 connection", () => {
           callback(undefined, channel);
         },
       ),
+      shell: vi.fn(
+        (
+          _window: unknown,
+          _options: unknown,
+          callback: (error: Error | undefined, stream: typeof channel) => void,
+        ) => callback(undefined, channel),
+      ),
       sftp: vi.fn(),
     });
     const target = createTarget();
@@ -425,6 +434,7 @@ describe("authenticated ssh2 connection", () => {
     );
 
     await connection.openAgentAttach(verifyAgentInstallationId("agent-v1"));
+    await connection.openTerminalShell({ cols: 132, rows: 43 });
     await expect(
       connection.probeRemotePackageBootstrap({
         operationId: "00000000-0000-4000-8000-000000000301",
@@ -470,6 +480,17 @@ describe("authenticated ssh2 connection", () => {
       },
       expect.any(Function),
     );
+    expect(client.shell).toHaveBeenCalledWith(
+      {
+        term: "xterm-256color",
+        cols: 132,
+        rows: 43,
+        width: 0,
+        height: 0,
+      },
+      { env: {}, x11: false },
+      expect.any(Function),
+    );
     expect(connection).not.toHaveProperty("exec");
   });
 
@@ -496,6 +517,7 @@ describe("authenticated ssh2 connection", () => {
       end: vi.fn(),
       destroy: vi.fn(),
       exec: vi.fn(),
+      shell: vi.fn(),
       sftp: vi.fn(),
     });
     const target = createTarget();
@@ -530,6 +552,7 @@ describe("authenticated ssh2 connection", () => {
       end: vi.fn(),
       destroy: vi.fn(),
       exec: vi.fn(),
+      shell: vi.fn(),
       sftp: vi.fn(),
     });
     const controller = new AbortController();
@@ -569,6 +592,7 @@ describe("authenticated ssh2 connection", () => {
           }, 0);
         },
       ),
+      shell: vi.fn(),
       sftp: vi.fn(),
     });
     const target = createTarget();
@@ -616,6 +640,7 @@ describe("authenticated ssh2 connection", () => {
           }, 0);
         },
       ),
+      shell: vi.fn(),
       sftp: vi.fn(),
     });
     const target = createTarget();
@@ -673,6 +698,7 @@ describe("authenticated ssh2 connection", () => {
           }, 0);
         },
       ),
+      shell: vi.fn(),
       sftp: vi.fn(),
     });
     const target = createTarget();
@@ -747,6 +773,7 @@ describe("authenticated ssh2 connection", () => {
           }, 0);
         },
       ),
+      shell: vi.fn(),
       sftp: vi.fn(),
     });
     const target = createTarget();

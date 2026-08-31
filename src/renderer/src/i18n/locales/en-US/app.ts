@@ -62,7 +62,9 @@ export const app = {
     localWorkspace: 'Local workspace',
     loading: 'Loading',
     close: 'Close sidebar',
-    toggle: 'Toggle sidebar'
+    toggle: 'Toggle sidebar',
+    resizeAriaLabel: 'Resize main sidebar',
+    resizeValue: 'Main sidebar, {{width}} pixels'
   },
   topbar: {
     toggleAssistantSidebar: 'Toggle assistant workspace',

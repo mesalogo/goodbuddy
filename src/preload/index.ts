@@ -166,6 +166,16 @@ import type {
   RemoteProjectRecoverySnapshot,
   RemoteProjectRecoveryState
 } from '../shared/remote-project-recovery-contracts'
+import type {
+  TerminalAckRequest,
+  TerminalCloseRequest,
+  TerminalCreateRequest,
+  TerminalEvent,
+  TerminalResizeRequest,
+  TerminalSnapshot,
+  TerminalSnapshotRequest,
+  TerminalWriteRequest
+} from '../shared/terminal-contracts'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -300,6 +310,41 @@ const desktopApi: DesktopApi = {
       ipcRenderer.on(ipcChannels.browserState, handler)
       return () =>
         ipcRenderer.removeListener(ipcChannels.browserState, handler)
+    }
+  },
+  terminal: {
+    create: (request: TerminalCreateRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.terminalCreate,
+        request
+      ) as Promise<TerminalSnapshot>,
+    write: async (request: TerminalWriteRequest) => {
+      await ipcRenderer.invoke(ipcChannels.terminalWrite, request)
+    },
+    resize: async (request: TerminalResizeRequest) => {
+      await ipcRenderer.invoke(ipcChannels.terminalResize, request)
+    },
+    close: (request: TerminalCloseRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.terminalClose,
+        request
+      ) as Promise<TerminalSnapshot>,
+    getSnapshot: (request: TerminalSnapshotRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.terminalSnapshot,
+        request
+      ) as Promise<TerminalSnapshot>,
+    ack: async (request: TerminalAckRequest) => {
+      await ipcRenderer.invoke(ipcChannels.terminalAck, request)
+    },
+    onEvent: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        payload: TerminalEvent
+      ): void => listener(payload)
+      ipcRenderer.on(ipcChannels.terminalEvent, handler)
+      return () =>
+        ipcRenderer.removeListener(ipcChannels.terminalEvent, handler)
     }
   },
   settings: {
