@@ -75,11 +75,11 @@ export interface RuntimeSessionBindingStore {
     acpSessionId: string
   ): Promise<RuntimeSessionBinding>
   /**
-   * Atomically moves an idle durable ACP session onto a newly opened
-   * transport epoch. Prompt identity and ACP session ownership remain fixed;
-   * transport cursors restart at zero for the new epoch.
+   * Atomically moves an idle or actively recovering ACP session onto a newly
+   * opened transport epoch. Prompt identity and ACP session ownership remain
+   * fixed; transport cursors restart at zero for the new epoch.
    */
-  rotateReadyTransport(
+  rotateTransport(
     bindingId: string,
     expected: RuntimeSessionTransportIdentity,
     next: RuntimeSessionTransportIdentity
@@ -251,7 +251,7 @@ function assertBindingUpdateAllowed(
   }
 }
 
-function rotateReadyBinding(
+function rotateBindingTransport(
   current: RuntimeSessionBinding,
   bindingId: string,
   expected: RuntimeSessionTransportIdentity,
@@ -259,11 +259,19 @@ function rotateReadyBinding(
 ): RuntimeSessionBinding {
   if (
     current.bindingId !== bindingId ||
-    current.state !== 'ready' ||
-    current.activePromptOperationId !== undefined
+    !(
+      (
+        current.state === 'ready' &&
+        current.activePromptOperationId === undefined
+      ) ||
+      (
+        current.state === 'prompt-running' &&
+        current.activePromptOperationId !== undefined
+      )
+    )
   ) {
     throw new RuntimeSessionBindingConflictError(
-      'Only an idle ready Runtime binding can rotate transport'
+      'Only an idle or actively recovering Runtime binding can rotate transport'
     )
   }
   if (
@@ -481,7 +489,7 @@ export class SqliteRuntimeSessionBindingStore
     return structuredClone(result)
   }
 
-  async rotateReadyTransport(
+  async rotateTransport(
     bindingId: string,
     expected: RuntimeSessionTransportIdentity,
     next: RuntimeSessionTransportIdentity
@@ -495,7 +503,7 @@ export class SqliteRuntimeSessionBindingStore
           'Cannot rotate transport for an unknown Runtime binding'
         )
       }
-      const rotated = rotateReadyBinding(
+      const rotated = rotateBindingTransport(
         this.decode(row),
         bindingId,
         expected,
@@ -812,7 +820,7 @@ export class MemoryRuntimeSessionBindingStore
     return structuredClone(claimed)
   }
 
-  async rotateReadyTransport(
+  async rotateTransport(
     bindingId: string,
     expected: RuntimeSessionTransportIdentity,
     next: RuntimeSessionTransportIdentity
@@ -823,7 +831,7 @@ export class MemoryRuntimeSessionBindingStore
         'Cannot rotate transport for an unknown Runtime binding'
       )
     }
-    const rotated = rotateReadyBinding(
+    const rotated = rotateBindingTransport(
       current,
       bindingId,
       expected,

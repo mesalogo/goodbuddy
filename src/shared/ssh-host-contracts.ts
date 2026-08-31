@@ -203,10 +203,36 @@ export type SshHost = {
   updatedAt: string
 }
 
+export const sshHostAgentConnectionStateSchema = z.enum([
+  'disconnected',
+  'connecting',
+  'ready',
+  'error'
+])
+
+export type SshHostAgentConnectionState = z.infer<
+  typeof sshHostAgentConnectionStateSchema
+>
+
+export const sshHostAgentConnectionStatusSchema = z
+  .object({
+    hostId: sshHostIdSchema,
+    state: sshHostAgentConnectionStateSchema
+  })
+  .strict()
+
+export type SshHostAgentConnectionStatus = z.infer<
+  typeof sshHostAgentConnectionStatusSchema
+>
+
 export type SshHostsSnapshot = {
   hosts: SshHost[]
   secureStorageAvailable: boolean
   projectReferences?: Record<string, SshHostProjectReference[]>
+  agentConnectionStatusByHostId?: Record<
+    string,
+    SshHostAgentConnectionState
+  >
 }
 
 export type SshHostProjectReference = {

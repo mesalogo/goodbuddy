@@ -5,6 +5,7 @@ import {
   sshDirectoryBrowseRequestSchema,
   sshDirectoryBrowseResultSchema,
   sshHostCreateInputSchema,
+  sshHostAgentConnectionStatusSchema,
   sshHostDraftInspectionRequestSchema,
   remoteEnvironmentUpdateProgressSchema,
   remoteEnvironmentUpdateRequestSchema,
@@ -13,6 +14,22 @@ import {
 } from './ssh-host-contracts'
 
 describe('SSH host contracts', () => {
+  it('accepts only bounded Host Agent connection states', () => {
+    const status = {
+      hostId: '00000000-0000-4000-8000-000000000101',
+      state: 'ready'
+    } as const
+    expect(
+      sshHostAgentConnectionStatusSchema.parse(status)
+    ).toEqual(status)
+    expect(() =>
+      sshHostAgentConnectionStatusSchema.parse({
+        ...status,
+        state: 'unknown'
+      })
+    ).toThrow()
+  })
+
   it('normalizes bounded display fields and preserves password bytes', () => {
     expect(
       sshHostCreateInputSchema.parse({

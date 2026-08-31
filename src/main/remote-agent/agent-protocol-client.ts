@@ -36,6 +36,13 @@ import {
 import {
   remotePromptOperationAcceptanceSchema,
   remotePromptOperationPreparationSchema,
+  remoteOwnedPromptAttachRequestSchema,
+  remoteOwnedPromptStartRequestSchema,
+  remoteOwnedPromptStartResultSchema,
+  remoteSemanticTranscriptAckRequestSchema,
+  remoteSemanticTranscriptAckResultSchema,
+  remoteSemanticTranscriptPageRequestSchema,
+  remoteSemanticTranscriptPageResultSchema,
   remoteGitDiffRequestSchema,
   remoteGitDiffResultSchema,
   remoteGitStatusRequestSchema,
@@ -165,6 +172,22 @@ export const AGENT_PROTOCOL_METHODS = {
   'runtime/preparePrompt': {
     params: remotePromptOperationPreparationSchema,
     result: remotePromptOperationAcceptanceSchema
+  },
+  'runtime/startPrompt': {
+    params: remoteOwnedPromptStartRequestSchema,
+    result: remoteOwnedPromptStartResultSchema
+  },
+  'runtime/attachPrompt': {
+    params: remoteOwnedPromptAttachRequestSchema,
+    result: remoteOwnedPromptStartResultSchema
+  },
+  'runtime/pagePromptTranscript': {
+    params: remoteSemanticTranscriptPageRequestSchema,
+    result: remoteSemanticTranscriptPageResultSchema
+  },
+  'runtime/ackPromptTranscript': {
+    params: remoteSemanticTranscriptAckRequestSchema,
+    result: remoteSemanticTranscriptAckResultSchema
   },
   'runtime/completePrompt': {
     params: acpCompletePromptRequestSchema,

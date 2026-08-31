@@ -203,6 +203,9 @@ import type {
   AppNotificationTone
 } from './notifications'
 import type { ReleaseNotesSnapshot } from '../../shared/release-notes-contracts'
+import type {
+  RemoteProjectRecoveryState
+} from '../../shared/remote-project-recovery-contracts'
 import { ReleaseNotesDialog } from './ReleaseNotesDialog'
 import { scheduleIdleRoutePreload } from './idle-route-preload'
 import { createPreloadableComponent } from './preloadable-component'
@@ -1432,19 +1435,23 @@ function mergePersistedConversations(
     const localMessageById = new Map(
       local.messages.map((message) => [message.id, message])
     )
+    const localIsNewer = local.updatedAt > conversation.updatedAt
     const serverMessageIds = new Set(
       conversation.messages.map((message) => message.id)
     )
     const messages = [
       ...conversation.messages.map(
-        (message) => localMessageById.get(message.id) ?? message
+        (message) =>
+          localIsNewer
+            ? localMessageById.get(message.id) ?? message
+            : message
       ),
       ...local.messages.filter(
         (message) => !serverMessageIds.has(message.id)
       )
     ].slice(-500)
     const next =
-      local.updatedAt > conversation.updatedAt
+      localIsNewer
         ? { ...local, messages }
         : { ...conversation, messages }
     persistedLocal.set(conversation.id, conversation)
@@ -1486,6 +1493,33 @@ function isManagedSshProject(
     project?.kind === 'user' &&
     project.executionSpace.kind === 'ssh'
   )
+}
+
+function isProjectRecoveryUnsettled(
+  state: RemoteProjectRecoveryState | undefined
+): boolean {
+  return Boolean(
+    state &&
+      state.stage !== 'completed'
+  )
+}
+
+function remoteRecoveryStageOrder(
+  stage: RemoteProjectRecoveryState['stage']
+): number {
+  switch (stage) {
+    case 'network':
+      return 0
+    case 'agent':
+      return 1
+    case 'runtime':
+      return 2
+    case 'cursor':
+      return 3
+    case 'completed':
+    case 'failed':
+      return 4
+  }
 }
 
 function isOrdinaryLocalProject(
@@ -1989,6 +2023,15 @@ function App(): React.JSX.Element {
   const migrationConversations = useRef(conversations)
   const [projects, setProjects] = useState<AssistantProject[]>([])
   const projectsRef = useRef(projects)
+  const [projectRecoveryByProjectId, setProjectRecoveryByProjectId] =
+    useState<Record<string, RemoteProjectRecoveryState>>({})
+  const [projectRecoverySnapshotReady, setProjectRecoverySnapshotReady] =
+    useState(false)
+  const projectRecoverySnapshotReadyRef = useRef(false)
+  const projectRecoveryByProjectIdRef = useRef<
+    Record<string, RemoteProjectRecoveryState>
+  >({})
+  const retryingRecoveryProjectIdsRef = useRef(new Set<string>())
   const [assistantTasks, setAssistantTasks] = useState<AssistantTask[]>([])
   const assistantTasksRef = useRef(assistantTasks)
   const [tokenUsage, setTokenUsage] =
@@ -2596,13 +2639,23 @@ function App(): React.JSX.Element {
   )
 
   useEffect(() => {
-    if (!conversationStoreReady) {
+    if (!conversationStoreReady || !projectRecoverySnapshotReady) {
       return
     }
     const conversationIds = [
       ...new Set(
         conversationsRef.current
-          .filter((conversation) => !conversation.remote)
+          .filter(
+            (conversation) =>
+              !conversation.remote &&
+              !isProjectRecoveryUnsettled(
+                conversation.projectId
+                  ? projectRecoveryByProjectIdRef.current[
+                      conversation.projectId
+                    ]
+                  : undefined
+              )
+          )
           .map((conversation) => conversation.id)
       )
     ]
@@ -2619,7 +2672,7 @@ function App(): React.JSX.Element {
         dedupeKey: 'conversation-queue-resume'
       })
     })
-  }, [conversationStoreReady])
+  }, [conversationStoreReady, projectRecoverySnapshotReady])
 
   useEffect(() => {
     const sweep = (): void => {
@@ -2772,6 +2825,11 @@ function App(): React.JSX.Element {
   useEffect(() => {
     projectsRef.current = projects
   }, [projects])
+
+  useLayoutEffect(() => {
+    projectRecoveryByProjectIdRef.current =
+      projectRecoveryByProjectId
+  }, [projectRecoveryByProjectId])
 
   useEffect(() => {
     assistantTasksRef.current = assistantTasks
@@ -2938,6 +2996,14 @@ function App(): React.JSX.Element {
   )
   const activeProjectUsesManagedSsh =
     isManagedSshProject(activeProject)
+  const activeProjectRecovery =
+    activeProjectUsesManagedSsh && activeProject
+      ? projectRecoveryByProjectId[activeProject.id]
+      : undefined
+  const activeProjectRecoveryBlocked =
+    activeProjectUsesManagedSsh &&
+    (!projectRecoverySnapshotReady ||
+      isProjectRecoveryUnsettled(activeProjectRecovery))
   const cachedWorkspaceViewKeys = useMemo(
     () => new Set(cachedWorkspaceViews.map((entry) => entry.key)),
     [cachedWorkspaceViews]
@@ -4591,6 +4657,20 @@ function App(): React.JSX.Element {
         activeRuns.current.delete(event.requestId)
         setConversationActivity(run.conversationId, false)
         requestAnimationFrame(() => {
+          if (
+            run.projectId &&
+            ((!projectRecoverySnapshotReadyRef.current &&
+              isManagedSshProject(
+                projectsRef.current.find(
+                  (project) => project.id === run.projectId
+                )
+              )) ||
+              isProjectRecoveryUnsettled(
+                projectRecoveryByProjectIdRef.current[run.projectId]
+              ))
+          ) {
+            return
+          }
           void window.goodbuddy.conversationQueue
             .ready(run.conversationId)
             .catch(() => {
@@ -4999,6 +5079,19 @@ function App(): React.JSX.Element {
 
   const resumeProjectConversationQueues = useCallback(
     (projectId: string): void => {
+      if (
+        (!projectRecoverySnapshotReadyRef.current &&
+          isManagedSshProject(
+            projectsRef.current.find(
+              (project) => project.id === projectId
+            )
+          )) ||
+        isProjectRecoveryUnsettled(
+          projectRecoveryByProjectIdRef.current[projectId]
+        )
+      ) {
+        return
+      }
       const conversationIds = conversationsRef.current
         .filter(
           (conversation) =>
@@ -5024,6 +5117,96 @@ function App(): React.JSX.Element {
       })
     },
     [notify]
+  )
+
+  const applyProjectRecoveryState = useCallback(
+    (state: RemoteProjectRecoveryState): void => {
+      const previous =
+        projectRecoveryByProjectIdRef.current[state.projectId]
+      if (previous) {
+        if (previous.requestId !== state.requestId) {
+          if (
+            !['completed', 'failed'].includes(previous.stage) ||
+            state.stage !== 'network'
+          ) {
+            return
+          }
+        } else if (
+          remoteRecoveryStageOrder(state.stage) <
+            remoteRecoveryStageOrder(previous.stage) ||
+          (previous.stage === 'cursor' &&
+            state.stage === 'cursor' &&
+            BigInt(state.current) < BigInt(previous.current)) ||
+          ['completed', 'failed'].includes(previous.stage)
+        ) {
+          return
+        }
+      }
+      const next = {
+        ...projectRecoveryByProjectIdRef.current,
+        [state.projectId]: state
+      }
+      projectRecoveryByProjectIdRef.current = next
+      setProjectRecoveryByProjectId(next)
+      if (
+        state.stage === 'completed' &&
+        previous?.stage !== 'completed'
+      ) {
+        resumeProjectConversationQueues(state.projectId)
+      }
+    },
+    [resumeProjectConversationQueues]
+  )
+
+  useEffect(() => {
+    const recoveryApi = window.goodbuddy.projects.remote
+    let active = true
+    const removeListener = recoveryApi.onRecoveryProgress((state) => {
+      if (active) {
+        applyProjectRecoveryState(state)
+      }
+    })
+    void recoveryApi.getRecoverySnapshot().then(
+      (snapshot) => {
+        if (active) {
+          snapshot.recoveries.forEach(applyProjectRecoveryState)
+          projectRecoverySnapshotReadyRef.current = true
+          setProjectRecoverySnapshotReady(true)
+        }
+      },
+      () => {
+        // Main reports actionable recovery failures as project states.
+        if (active) {
+          projectRecoverySnapshotReadyRef.current = true
+          setProjectRecoverySnapshotReady(true)
+        }
+      }
+    )
+    return () => {
+      active = false
+      removeListener()
+    }
+  }, [applyProjectRecoveryState])
+
+  const retryProjectRecovery = useCallback(
+    async (projectId: string): Promise<void> => {
+      if (retryingRecoveryProjectIdsRef.current.has(projectId)) {
+        return
+      }
+      retryingRecoveryProjectIdsRef.current.add(projectId)
+      try {
+        const state =
+          await window.goodbuddy.projects.remote.retryRecovery(
+            projectId
+          )
+        applyProjectRecoveryState(state)
+      } catch {
+        // Preserve the existing local failure without duplicating a toast.
+      } finally {
+        retryingRecoveryProjectIdsRef.current.delete(projectId)
+      }
+    },
+    [applyProjectRecoveryState]
   )
 
   useEffect(() => {
@@ -5763,7 +5946,13 @@ function App(): React.JSX.Element {
       return
     }
     commitProjectSelection(project)
-    resumeProjectConversationQueues(project.id)
+    if (
+      !isProjectRecoveryUnsettled(
+        projectRecoveryByProjectIdRef.current[project.id]
+      )
+    ) {
+      resumeProjectConversationQueues(project.id)
+    }
   }
 
   const createProject = async (
@@ -5824,7 +6013,13 @@ function App(): React.JSX.Element {
         : [project, ...current]
     )
     commitProjectSelection(project)
-    resumeProjectConversationQueues(project.id)
+    if (
+      !isProjectRecoveryUnsettled(
+        projectRecoveryByProjectIdRef.current[project.id]
+      )
+    ) {
+      resumeProjectConversationQueues(project.id)
+    }
   }
 
   const handleRemoteProjectsEnabledChange = (
@@ -6455,6 +6650,23 @@ function App(): React.JSX.Element {
             conversation.id === queuedInput.conversationId
         )
       : activeConversation
+    const recoveryProjectId =
+      queuedInput?.projectId ?? conversationSnapshot?.projectId
+    if (
+      recoveryProjectId &&
+      (((!projectRecoverySnapshotReadyRef.current &&
+        isManagedSshProject(
+          projectsRef.current.find(
+            (project) => project.id === recoveryProjectId
+          )
+        ))) ||
+        isProjectRecoveryUnsettled(
+          projectRecoveryByProjectIdRef.current[recoveryProjectId]
+        ))
+    ) {
+      await releaseQueuedItem()
+      return
+    }
     const command =
       !queuedInput &&
       activeRuntimeSelection?.provider === 'opencode'
@@ -7781,11 +7993,13 @@ function App(): React.JSX.Element {
 
         <ProjectSwitcher
           activeProjectId={activeProjectId}
+          recoveryByProjectId={projectRecoveryByProjectId}
           runtimeSettings={runtimeSettings}
           onArchive={archiveProject}
           onCreate={createProject}
           onDelete={deleteProject}
           onRemoteCommitted={loadCommittedRemoteProject}
+          onRetryRecovery={retryProjectRecovery}
           onSelect={selectProject}
           onSelectRoot={() =>
             window.goodbuddy.settings.selectWorkspace()
@@ -9331,6 +9545,7 @@ function App(): React.JSX.Element {
                         )
                       )) ||
                     selectingContextFiles ||
+                    activeProjectRecoveryBlocked ||
                     !runtime?.available ||
                     runtimeSwitching ||
                     runtimeStatusKey !== activeRuntimeSelectionKey

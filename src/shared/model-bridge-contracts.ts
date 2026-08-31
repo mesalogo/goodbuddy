@@ -59,6 +59,120 @@ const modelNameSchema = utf8StringSchema(
     'Model name cannot contain control characters'
   )
 
+const modelProfileTextSchema = (label: string) =>
+  utf8StringSchema(512, {
+    minimumBytes: 1,
+    label
+  })
+    .refine(
+      (value) => value.trim() === value,
+      `${label} must not have outer whitespace`
+    )
+    .refine(
+      (value) => !/[\0\r\n]/u.test(value),
+      `${label} cannot contain control characters`
+    )
+
+const modelProviderBaseUrlSchema = utf8StringSchema(4_096, {
+  minimumBytes: 1,
+  label: 'Model provider base URL'
+}).superRefine((value, context) => {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    context.addIssue({
+      code: 'custom',
+      message: 'Model provider base URL is invalid'
+    })
+    return
+  }
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.hash !== ''
+  ) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Model provider base URL must be credential-free HTTP(S)'
+    })
+  }
+})
+
+/**
+ * A bounded prompt-scoped provider snapshot. The API key is deliberately kept
+ * out of ModelBridgePolicy because policy is safe to persist and log, while
+ * this profile must only be retained by the Agent for the active prompt.
+ */
+export const agentPromptModelProfileSchema = z
+  .object({
+    profileId: modelProfileTextSchema('Model profile identifier'),
+    modelProfileDigest: sha256DigestSchema,
+    provider: z.enum(['anthropic', 'openai']),
+    baseUrl: modelProviderBaseUrlSchema,
+    model: modelNameSchema,
+    protocol: modelBridgeModelProtocolSchema,
+    authentication: z.enum(['api-key', 'none']),
+    apiKey: utf8StringSchema(16 * 1_024, {
+      minimumBytes: 1,
+      label: 'Model provider API key'
+    }).optional(),
+    capabilities: z
+      .object({
+        imageInput: z.boolean()
+      })
+      .strict(),
+    limits: z
+      .object({
+        maximumOutputTokens: z.number().int().min(1).max(1_000_000),
+        maximumModelCalls: z.number().int().min(1).max(10_000),
+        maximumTotalOutputTokens: z.number().int().min(1).max(10_000_000),
+        requestTimeoutMilliseconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(300_000)
+      })
+      .strict()
+  })
+  .strict()
+  .superRefine((profile, context) => {
+    if (
+      (profile.authentication === 'api-key') !==
+      (profile.apiKey !== undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['apiKey'],
+        message: 'API-key authentication requires exactly one prompt credential'
+      })
+    }
+    if (
+      profile.provider === 'anthropic' !==
+      (profile.protocol === 'anthropic-messages')
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['provider'],
+        message: 'Model provider does not match its wire protocol'
+      })
+    }
+    if (
+      profile.limits.maximumOutputTokens >
+      profile.limits.maximumTotalOutputTokens
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['limits', 'maximumOutputTokens'],
+        message: 'Per-call output limit exceeds the prompt total'
+      })
+    }
+  })
+export type AgentPromptModelProfile = z.infer<
+  typeof agentPromptModelProfileSchema
+>
+
 export const modelBridgePolicySchema = z
   .object({
     protocol: modelBridgeModelProtocolSchema,

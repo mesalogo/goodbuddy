@@ -98,6 +98,10 @@ class DrainableTestRuntime extends TestRuntime {
   }
 }
 
+class DetachableTestRuntime extends DrainableTestRuntime {
+  readonly detachForApplicationExit = vi.fn(() => undefined)
+}
+
 describe('AgentRuntimeController', () => {
   it('fails retired runtime requests and disposes them after exit', async () => {
     const previous = new TestRuntime(true, true)
@@ -389,6 +393,35 @@ describe('AgentRuntimeController', () => {
 
     await controller.dispose()
     expect(runtime.dispose).toHaveBeenCalledOnce()
+
+    runtime.finish()
+    await expect(pendingEvent).resolves.toMatchObject({
+      value: { type: 'text' }
+    })
+    await stream.return()
+  })
+
+  it('detaches a remote runtime on application exit without draining or disposing it', async () => {
+    const runtime = new DetachableTestRuntime()
+    const controller = new AgentRuntimeController(runtime, 1)
+    const stream = controller.run(
+      {
+        requestId: '1c608898-ecb7-4081-8174-2b6a52f53b17',
+        conversationId: 'conversation-application-exit',
+        prompt: 'keep running remotely',
+        workMode: 'execute'
+      },
+      new AbortController().signal
+    )
+    const pendingEvent = stream.next()
+    await runtime.started
+
+    await controller.detachForApplicationExit()
+
+    expect(runtime.detachForApplicationExit).toHaveBeenCalledOnce()
+    expect(runtime.beginDrain).not.toHaveBeenCalled()
+    expect(runtime.forceShutdown).not.toHaveBeenCalled()
+    expect(runtime.dispose).not.toHaveBeenCalled()
 
     runtime.finish()
     await expect(pendingEvent).resolves.toMatchObject({

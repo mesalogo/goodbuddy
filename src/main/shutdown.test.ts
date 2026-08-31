@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   runCleanupBeforeDeadline,
   settleCleanupPhases,
@@ -10,6 +12,24 @@ afterEach(() => {
 })
 
 describe('waitForCleanup', () => {
+  it('detaches runtime ownership before ordinary runtime disposal on Desktop exit', async () => {
+    const source = await readFile(
+      join(process.cwd(), 'src', 'main', 'index.ts'),
+      'utf8'
+    )
+    const cleanup = source.match(
+      /const cleanup = settleCleanupPhases\(\[[\s\S]*?\]\)\s+globalShortcut/u
+    )?.[0] ?? ''
+
+    expect(cleanup).toContain('runtime?.detachForApplicationExit()')
+    expect(cleanup).toContain(
+      'selectedRuntimeManager?.detachForApplicationExit()'
+    )
+    expect(cleanup.indexOf('runtime?.detachForApplicationExit()')).toBeLessThan(
+      cleanup.indexOf('runtime?.dispose()')
+    )
+  })
+
   it('reports completed and failed cleanup as settled', async () => {
     await expect(
       waitForCleanup(Promise.resolve(), 100)

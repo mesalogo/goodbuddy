@@ -120,6 +120,7 @@ import type {
   RemoteEnvironmentUpdateRequest,
   SshHostRemoteEnvironment,
   SshHostRemovalResult,
+  SshHostAgentConnectionStatus,
   SshHostsSnapshot,
   SshHostValidationRequest,
   SshHostValidationResult
@@ -161,6 +162,10 @@ import type {
   FeedbackSubmitInput,
   FeedbackSubmitResult
 } from '../shared/feedback-contracts'
+import type {
+  RemoteProjectRecoverySnapshot,
+  RemoteProjectRecoveryState
+} from '../shared/remote-project-recovery-contracts'
 
 const desktopApi: DesktopApi = {
   app: {
@@ -342,6 +347,21 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.sshHostsGet
       ) as Promise<SshHostsSnapshot>,
+    onAgentConnectionStatus: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        status: SshHostAgentConnectionStatus
+      ): void => listener(status)
+      ipcRenderer.on(
+        ipcChannels.sshHostsAgentConnectionStatus,
+        handler
+      )
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.sshHostsAgentConnectionStatus,
+          handler
+        )
+    },
     getAgentPackageInventory: (refresh = false) =>
       ipcRenderer.invoke(
         ipcChannels.sshHostsAgentPackageInventory,
@@ -807,6 +827,30 @@ const desktopApi: DesktopApi = {
         return () =>
           ipcRenderer.removeListener(
             ipcChannels.remoteProjectSaveProgress,
+            handler
+          )
+      },
+      getRecoverySnapshot: () =>
+        ipcRenderer.invoke(
+          ipcChannels.remoteProjectRecoveryGet
+        ) as Promise<RemoteProjectRecoverySnapshot>,
+      retryRecovery: (projectId: string) =>
+        ipcRenderer.invoke(
+          ipcChannels.remoteProjectRecoveryRetry,
+          { projectId }
+        ) as Promise<RemoteProjectRecoveryState>,
+      onRecoveryProgress: (listener) => {
+        const handler = (
+          _event: Electron.IpcRendererEvent,
+          state: RemoteProjectRecoveryState
+        ): void => listener(state)
+        ipcRenderer.on(
+          ipcChannels.remoteProjectRecoveryProgress,
+          handler
+        )
+        return () =>
+          ipcRenderer.removeListener(
+            ipcChannels.remoteProjectRecoveryProgress,
             handler
           )
       }

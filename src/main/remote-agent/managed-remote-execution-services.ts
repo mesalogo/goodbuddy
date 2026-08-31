@@ -1,7 +1,5 @@
 import { join } from 'node:path'
 import { SqliteRuntimeSessionBindingStore } from '../agent/runtime-session-binding-store'
-import { ModelCallOperationStore } from '../agent/model-call-operation-store'
-import { RemoteModelGateway } from '../agent/remote-model-gateway'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type { AgentRuntimeSelection } from '../../shared/runtime-selection-contracts'
 import type { SshHostStore } from '../ssh/ssh-host-store'
@@ -22,13 +20,11 @@ import {
   type RemoteRuntimeActivator
 } from './remote-runtime-installation-manager'
 import {
-  createManagedModelBridge,
-  reconcileStartupModelCalls
+  createManagedModelBridge
 } from './managed-model-bridge'
 import { boundedDiagnostic } from './bounded-diagnostic'
 
 const RUNTIME_BINDING_DATABASE_NAME = 'remote-runtime-bindings.sqlite'
-const MODEL_CALL_DATABASE_NAME = 'remote-model-calls-v2.sqlite'
 
 export type ManagedRemoteExecutionServicesOptions = {
   sshHostStore: SshHostStore
@@ -62,8 +58,6 @@ export class ManagedRemoteExecutionServices {
   readonly runtimeValidator: ManagedRemoteProjectRuntimeValidator
   readonly workspaceAccessFactory: ManagedRemoteWorkspaceAccessFactory
   readonly bindingStore: SqliteRuntimeSessionBindingStore
-  readonly modelCallStore: ModelCallOperationStore
-  readonly modelGateway: RemoteModelGateway
 
   #disposePromise?: Promise<void>
   readonly #readiness: Promise<void>
@@ -144,16 +138,7 @@ export class ManagedRemoteExecutionServices {
     this.bindingStore = new SqliteRuntimeSessionBindingStore(
       join(options.userDataPath, RUNTIME_BINDING_DATABASE_NAME)
     )
-    this.modelCallStore = new ModelCallOperationStore(
-      join(options.userDataPath, MODEL_CALL_DATABASE_NAME)
-    )
-    this.modelGateway = new RemoteModelGateway({
-      store: this.modelCallStore
-    })
-    this.#readiness = reconcileStartupModelCalls({
-      gatewayStore: this.modelCallStore,
-      bindingStore: this.bindingStore
-    })
+    this.#readiness = Promise.resolve()
   }
 
   createProjectSaveService(
@@ -192,9 +177,7 @@ export class ManagedRemoteExecutionServices {
   ) {
     await this.#readiness
     const modelBridge = createManagedModelBridge({
-      profile: options.modelProfile,
-      gateway: this.modelGateway,
-      bindingStore: this.bindingStore
+      profile: options.modelProfile
     })
     return createManagedRemoteAcpRuntime({
       ...options,
@@ -228,7 +211,6 @@ export class ManagedRemoteExecutionServices {
     }
     await settle(() => this.runtimeInstallationManager.dispose())
     await settle(() => this.bindingStore.dispose())
-    await settle(() => this.modelCallStore.dispose())
     if (errors.length > 0) {
       throw new AggregateError(
         errors,

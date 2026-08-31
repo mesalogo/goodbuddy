@@ -216,6 +216,14 @@ function writeFixtureBundle(): {
   writeFileSync(join(directory, 'licenses', 'GoodBuddy-0BSD.txt'), '0BSD')
   writeFileSync(join(directory, 'licenses', 'Node.js-MIT.txt'), 'MIT')
   writeFileSync(join(directory, 'licenses', 'zod-MIT.txt'), 'MIT')
+  writeFileSync(
+    join(
+      directory,
+      'licenses',
+      'agent-client-protocol-Apache-2.0.txt'
+    ),
+    'Apache-2.0'
+  )
   writeFileSync(join(directory, 'licenses', 'koffi-MIT.txt'), 'MIT')
   writeFileSync(
     join(directory, 'licenses', 'koffi-native-MIT.txt'),
@@ -233,6 +241,7 @@ function writeFixtureBundle(): {
     'licenses/GoodBuddy-0BSD.txt',
     'licenses/Node.js-MIT.txt',
     'licenses/zod-MIT.txt',
+    'licenses/agent-client-protocol-Apache-2.0.txt',
     'licenses/koffi-MIT.txt',
     'licenses/koffi-native-MIT.txt'
   ]) {
@@ -242,6 +251,7 @@ function writeFixtureBundle(): {
     agentVersion: '0.11.0',
     nodeVersion: '24.19.0',
     zodVersion: '4.4.3',
+    acpSdkVersion: '0.25.1',
     koffiVersion: '3.1.4',
     koffiNativePackage: '@koromix/koffi-linux-x64',
     arch: 'x64',
@@ -304,6 +314,7 @@ describe('deterministic signed Agent manifests', () => {
       agentVersion: '0.11.0',
       nodeVersion: '24.19.0',
       zodVersion: '4.4.3',
+      acpSdkVersion: '0.25.1',
       koffiVersion: '3.1.4',
       koffiNativePackage: '@koromix/koffi-linux-x64',
       arch: 'x64',

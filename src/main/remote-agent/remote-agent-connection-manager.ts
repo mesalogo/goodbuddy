@@ -32,6 +32,10 @@ import {
   type ControllerAcpRecoveryBinding,
   type ControllerConnectionState
 } from './controller-state-store'
+import type {
+  SshHostAgentConnectionState,
+  SshHostAgentConnectionStatus
+} from '../../shared/ssh-host-contracts'
 
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000
 const DEFAULT_ATTACH_TIMEOUT_MS = 10_000
@@ -168,6 +172,13 @@ export class RemoteAgentConnectionManager {
   readonly #attachTimeoutMs: number
   readonly #identityKey = randomBytes(32)
   readonly #entries = new Map<string, ConnectionEntry>()
+  readonly #hostConnectionStates = new Map<
+    string,
+    SshHostAgentConnectionState
+  >()
+  readonly #hostConnectionListeners = new Set<
+    (status: SshHostAgentConnectionStatus) => void
+  >()
   #disposed = false
 
   constructor(options: {
@@ -261,6 +272,7 @@ export class RemoteAgentConnectionManager {
       }
       entry.connectPromise = this.#connect(entry, target, false)
       this.#entries.set(identity.cacheKey, entry)
+      this.#syncHostConnectionState(hostId)
     } else if (
       entry.connectionState === 'terminal' ||
       entry.connectionState === 'disposed'
@@ -306,6 +318,41 @@ export class RemoteAgentConnectionManager {
     }
   }
 
+  getHostConnectionState(
+    hostId: string
+  ): SshHostAgentConnectionState {
+    return this.#hostConnectionStates.get(hostId) ?? 'disconnected'
+  }
+
+  #deriveHostConnectionState(
+    hostId: string,
+    emptyState: SshHostAgentConnectionState = 'disconnected'
+  ): SshHostAgentConnectionState {
+    const states = [...this.#entries.values()]
+      .filter((entry) => entry.hostId === hostId)
+      .map((entry) => entry.connectionState)
+    if (states.includes('ready')) {
+      return 'ready'
+    }
+    if (states.includes('connecting')) {
+      return 'connecting'
+    }
+    if (
+      states.includes('offline') ||
+      states.includes('terminal')
+    ) {
+      return 'error'
+    }
+    return emptyState
+  }
+
+  onHostConnectionStateChange(
+    listener: (status: SshHostAgentConnectionStatus) => void
+  ): () => void {
+    this.#hostConnectionListeners.add(listener)
+    return () => this.#hostConnectionListeners.delete(listener)
+  }
+
   async invalidateHost(hostId: string): Promise<void> {
     for (const entry of [...this.#entries.values()]) {
       if (entry.hostId === hostId) {
@@ -317,6 +364,7 @@ export class RemoteAgentConnectionManager {
         this.#disposeEntry(entry)
       }
     }
+    this.#syncHostConnectionState(hostId)
     this.#sshPool.disposeHost(hostId)
     await this.#controllerState.invalidateHost(hostId)
   }
@@ -333,6 +381,7 @@ export class RemoteAgentConnectionManager {
       )
       this.#disposeEntry(entry)
     }
+    this.#hostConnectionListeners.clear()
     await this.#controllerState.flush()
     this.#controllerState.dispose()
   }
@@ -447,6 +496,7 @@ export class RemoteAgentConnectionManager {
         previous,
         previous !== undefined
       )
+      this.#syncHostConnectionState(entry.hostId)
       for (const listener of entry.clientChangeListeners) {
         try {
           listener()
@@ -477,6 +527,7 @@ export class RemoteAgentConnectionManager {
         if (entry.refs === 0) {
           this.#entries.delete(entry.key)
         }
+        this.#syncHostConnectionState(entry.hostId, 'error')
       }
       throw classified
     } finally {
@@ -834,6 +885,7 @@ export class RemoteAgentConnectionManager {
       }
       entry.controller = new AbortController()
       entry.connectionState = 'connecting'
+      this.#syncHostConnectionState(entry.hostId)
       entry.connectPromise = this.#connect(entry, target, true)
       await entry.connectPromise
     })()
@@ -862,6 +914,7 @@ export class RemoteAgentConnectionManager {
       error
     )
     entry.connectionState = 'offline'
+    this.#syncHostConnectionState(entry.hostId)
     active?.unsubscribeClose()
     active?.sshLease.release()
     if (entry.refs === 0 && entry.waiters === 0) {
@@ -986,6 +1039,34 @@ export class RemoteAgentConnectionManager {
     entry.connection?.sshLease.release()
     entry.connection = undefined
     entry.clientChangeListeners.clear()
+    this.#syncHostConnectionState(entry.hostId)
+  }
+
+  #syncHostConnectionState(
+    hostId: string,
+    emptyState: SshHostAgentConnectionState = 'disconnected'
+  ): void {
+    const previousState = this.getHostConnectionState(hostId)
+    const state = this.#deriveHostConnectionState(
+      hostId,
+      emptyState
+    )
+    if (state === previousState) {
+      return
+    }
+    if (state === 'disconnected') {
+      this.#hostConnectionStates.delete(hostId)
+    } else {
+      this.#hostConnectionStates.set(hostId, state)
+    }
+    const status = { hostId, state }
+    for (const listener of this.#hostConnectionListeners) {
+      try {
+        listener(status)
+      } catch {
+        // One observer cannot interrupt connection ownership.
+      }
+    }
   }
 }
 

@@ -231,6 +231,76 @@ function harness(
 }
 
 describe('RemoteAgentConnectionManager', () => {
+  it('publishes the aggregate live connection state for each Host', async () => {
+    let finishTransport!: () => void
+    const gate = new Promise<void>((resolve) => {
+      finishTransport = resolve
+    })
+    const test = harness(gate, undefined, 1_000)
+    const states: string[] = []
+    const unsubscribe =
+      test.manager.onHostConnectionStateChange(({ state }) => {
+        states.push(state)
+      })
+
+    expect(
+      test.manager.getHostConnectionState('host-1')
+    ).toBe('disconnected')
+    const acquiring = test.manager.acquire('host-1', installation)
+    await vi.waitFor(() =>
+      expect(states).toEqual(['connecting'])
+    )
+    finishTransport()
+    const lease = await acquiring
+    expect(
+      test.manager.getHostConnectionState('host-1')
+    ).toBe('ready')
+
+    test.clients[0]!.transportClose()
+    expect(
+      test.manager.getHostConnectionState('host-1')
+    ).toBe('error')
+    lease.release()
+    await test.manager.dispose()
+
+    expect(states).toEqual([
+      'connecting',
+      'ready',
+      'error',
+      'disconnected'
+    ])
+    unsubscribe()
+  })
+
+  it('clears a retained connection error when its Host is invalidated', async () => {
+    const test = harness()
+    const states: string[] = []
+    test.manager.onHostConnectionStateChange(({ state }) => {
+      states.push(state)
+    })
+    test.connectTransport.mockRejectedValueOnce(
+      new Error('attach failed')
+    )
+
+    await expect(
+      test.manager.acquire('host-1', installation)
+    ).rejects.toThrow()
+    expect(
+      test.manager.getHostConnectionState('host-1')
+    ).toBe('error')
+
+    await test.manager.invalidateHost('host-1')
+    expect(
+      test.manager.getHostConnectionState('host-1')
+    ).toBe('disconnected')
+    expect(states).toEqual([
+      'connecting',
+      'error',
+      'disconnected'
+    ])
+    await test.manager.dispose()
+  })
+
   it('deduplicates concurrent connects and ref-counts the shared connection', async () => {
     const test = harness()
     const [first, second] = await Promise.all([

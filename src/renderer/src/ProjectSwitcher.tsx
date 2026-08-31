@@ -3,8 +3,10 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  CircleAlert,
   Folder,
   FolderOpen,
+  LoaderCircle,
   Plus,
   RadioTower,
   RefreshCw,
@@ -13,6 +15,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -30,8 +33,13 @@ import {
 } from '../../shared/remote-project-candidate-contracts'
 import type {
   SshDirectoryBrowseResult,
+  SshHost,
+  SshHostAgentConnectionState,
   SshHostsSnapshot
 } from '../../shared/ssh-host-contracts'
+import type {
+  RemoteProjectRecoveryState
+} from '../../shared/remote-project-recovery-contracts'
 import { trapTabFocus } from './dialog-focus'
 import {
   getDefaultRuntimeSelection
@@ -57,10 +65,14 @@ type ProjectSwitcherProps = {
   onSelect: (projectId: string) => void
   onSelectRoot: () => Promise<string | undefined>
   onRemoteCommitted: (project: AssistantProject) => Promise<void>
+  onRetryRecovery?: (projectId: string) => Promise<void>
   onUpdate: (
     projectId: string,
     input: ProjectCreateInput
   ) => Promise<AssistantProject>
+  recoveryByProjectId?: Readonly<
+    Record<string, RemoteProjectRecoveryState>
+  >
 }
 
 const remoteProjectPhases: readonly RemoteProjectSavePhase[] = [
@@ -73,6 +85,46 @@ const remoteProjectPhases: readonly RemoteProjectSavePhase[] = [
 type RemoteHostReadiness =
   | { status: 'ready' }
   | { status: 'unready' }
+
+function ProjectRecoveryStatus({
+  state
+}: {
+  state: RemoteProjectRecoveryState
+}): React.JSX.Element {
+  const { t } = useTranslation('workspace')
+  const working =
+    state.stage === 'network' ||
+    state.stage === 'agent' ||
+    state.stage === 'runtime' ||
+    state.stage === 'cursor'
+  const text =
+    state.stage === 'cursor'
+      ? t('projectSwitcher.recovery.stages.cursor', {
+          current: state.current
+        })
+      : state.stage === 'failed'
+        ? t('projectSwitcher.recovery.failed', {
+            message: state.message
+          })
+        : t(`projectSwitcher.recovery.stages.${state.stage}`)
+  return (
+    <span
+      aria-busy={working ? 'true' : undefined}
+      aria-live={state.stage === 'failed' ? 'assertive' : 'polite'}
+      className={`project-recovery-status project-recovery-status--${state.stage}`}
+      role={state.stage === 'failed' ? 'alert' : 'status'}
+    >
+      {working ? (
+        <LoaderCircle aria-hidden="true" size={13} />
+      ) : state.stage === 'completed' ? (
+        <Check aria-hidden="true" size={13} />
+      ) : (
+        <CircleAlert aria-hidden="true" size={13} />
+      )}
+      <span>{text}</span>
+    </span>
+  )
+}
 
 function RemoteProjectProgress({
   phase,
@@ -161,9 +213,11 @@ export function ProjectSwitcher({
   onCreate,
   onDelete,
   onRemoteCommitted,
+  onRetryRecovery,
   onSelect,
   onSelectRoot,
-  onUpdate
+  onUpdate,
+  recoveryByProjectId = {}
 }: ProjectSwitcherProps): React.JSX.Element {
   const { t } = useTranslation('workspace')
   const [dialogMode, setDialogMode] = useState<
@@ -181,6 +235,21 @@ export function ProjectSwitcher({
     'local' | 'ssh'
   >('local')
   const [sshHosts, setSshHosts] = useState<SshHostsSnapshot>()
+  const [
+    agentConnectionStatusByHostId,
+    setAgentConnectionStatusByHostId
+  ] = useState<Record<string, SshHostAgentConnectionState>>({})
+  const agentConnectionStatusRevisionRef = useRef(0)
+  const liveAgentConnectionStatusRef = useRef(
+    new Map<
+      string,
+      {
+        revision: number
+        state: SshHostAgentConnectionState
+      }
+    >()
+  )
+  const pendingSshHostsSnapshotsRef = useRef(0)
   const [loadingSshHosts, setLoadingSshHosts] = useState(false)
   const [remoteHostReadiness, setRemoteHostReadiness] = useState<
     Record<string, RemoteHostReadiness>
@@ -210,6 +279,70 @@ export function ProjectSwitcher({
     'create' | 'settings' | 'picker' | undefined
   >(undefined)
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const [retryingRecoveryProjectId, setRetryingRecoveryProjectId] =
+    useState<string>()
+  const applySshHostsSnapshot = useCallback(
+    (
+      snapshot: SshHostsSnapshot,
+      requestRevision: number
+    ): void => {
+      setSshHosts(snapshot)
+      const next = {
+        ...(snapshot.agentConnectionStatusByHostId ?? {})
+      }
+      for (const [
+        hostId,
+        update
+      ] of liveAgentConnectionStatusRef.current) {
+        if (update.revision <= requestRevision) {
+          continue
+        }
+        if (update.state === 'disconnected') {
+          delete next[hostId]
+        } else {
+          next[hostId] = update.state
+        }
+      }
+      setAgentConnectionStatusByHostId((current) => {
+        const currentKeys = Object.keys(current)
+        const nextKeys = Object.keys(next)
+        return currentKeys.length === nextKeys.length &&
+          nextKeys.every((hostId) => current[hostId] === next[hostId])
+          ? current
+          : next
+      })
+    },
+    []
+  )
+  const beginSshHostsSnapshot = useCallback((): number => {
+    pendingSshHostsSnapshotsRef.current += 1
+    return agentConnectionStatusRevisionRef.current
+  }, [])
+  const finishSshHostsSnapshot = useCallback((): void => {
+    pendingSshHostsSnapshotsRef.current = Math.max(
+      0,
+      pendingSshHostsSnapshotsRef.current - 1
+    )
+    if (pendingSshHostsSnapshotsRef.current === 0) {
+      liveAgentConnectionStatusRef.current.clear()
+    }
+  }, [])
+  const retryRecovery = useCallback(
+    (projectId: string): void => {
+      if (!onRetryRecovery) {
+        return
+      }
+      setRetryingRecoveryProjectId(projectId)
+      void onRetryRecovery(projectId)
+        .catch(() => undefined)
+        .finally(() =>
+          setRetryingRecoveryProjectId((current) =>
+            current === projectId ? undefined : current
+          )
+        )
+    },
+    [onRetryRecovery]
+  )
   const [draft, setDraft] = useState<ProjectCreateInput>({
     name: '',
     description: '',
@@ -222,6 +355,10 @@ export function ProjectSwitcher({
   const activeProjectDisplay = activeProject
     ? getProjectDisplayText(activeProject, t)
     : undefined
+  const activeProjectRecovery =
+    activeProject?.executionSpace.kind === 'ssh'
+      ? recoveryByProjectId[activeProject.id]
+      : undefined
   const settingsProject = projects.find(
     (project) => project.id === settingsProjectId
   )
@@ -235,6 +372,41 @@ export function ProjectSwitcher({
       project.kind === 'user' &&
       project.executionSpace.kind === 'ssh'
   )
+  const sshHostById = new Map(
+    (sshHosts?.hosts ?? []).map((host) => [host.id, host])
+  )
+  const remoteProjectGroups = [
+    ...remoteProjects.reduce(
+      (
+        groups,
+        project
+      ) => {
+        if (project.executionSpace.kind !== 'ssh') {
+          return groups
+        }
+        const hostId = project.executionSpace.hostId
+        const current = groups.get(hostId)
+        if (current) {
+          current.projects.push(project)
+        } else {
+          groups.set(hostId, {
+            hostId,
+            host: sshHostById.get(hostId),
+            projects: [project]
+          })
+        }
+        return groups
+      },
+      new Map<
+        string,
+        {
+          hostId: string
+          host?: SshHost
+          projects: AssistantProject[]
+        }
+      >()
+    ).values()
+  ]
   const channelProjects = projects.filter(
     (project) => project.kind === 'channel'
   )
@@ -273,7 +445,7 @@ export function ProjectSwitcher({
       return
     }
     let active = true
-    const api = window.goodbuddy.sshHosts
+    const api = window.goodbuddy?.sshHosts
     if (!api) {
       queueMicrotask(() => {
         if (active) {
@@ -285,47 +457,123 @@ export function ProjectSwitcher({
       })
       return
     }
-    void api.getSnapshot().then(
-      (snapshot) => {
-        if (!active) {
-          return
-        }
-        setSshHosts(snapshot)
-        const readiness: Record<string, RemoteHostReadiness> =
-          Object.fromEntries(
-            snapshot.hosts.map((host) => [
-              host.id,
-              host.hostKey.state === 'verified' &&
-              host.lastValidatedAt !== undefined
-                ? { status: 'ready' as const }
-                : { status: 'unready' as const }
-            ])
+    const requestRevision = beginSshHostsSnapshot()
+    void api
+      .getSnapshot()
+      .then(
+        (snapshot) => {
+          if (!active) {
+            return
+          }
+          applySshHostsSnapshot(snapshot, requestRevision)
+          const readiness: Record<string, RemoteHostReadiness> =
+            Object.fromEntries(
+              snapshot.hosts.map((host) => [
+                host.id,
+                host.hostKey.state === 'verified' &&
+                host.lastValidatedAt !== undefined
+                  ? { status: 'ready' as const }
+                  : { status: 'unready' as const }
+              ])
+            )
+          setRemoteHostReadiness(readiness)
+          setRemoteHostId((current) =>
+            current &&
+            snapshot.hosts.some((host) => host.id === current)
+              ? current
+              : snapshot.hosts.find(
+                  (host) =>
+                    readiness[host.id]?.status === 'ready'
+                )?.id ??
+                snapshot.hosts[0]?.id ??
+                ''
           )
-        setRemoteHostReadiness(readiness)
-        setRemoteHostId((current) =>
-          current &&
-          snapshot.hosts.some((host) => host.id === current)
-            ? current
-            : snapshot.hosts.find(
-                (host) =>
-                  readiness[host.id]?.status === 'ready'
-              )?.id ??
-              snapshot.hosts[0]?.id ??
-              ''
-        )
-        setLoadingSshHosts(false)
-      },
-      () => {
-        if (active) {
-          setError(t('projectSwitcher.remote.errors.loadHosts'))
           setLoadingSshHosts(false)
+        },
+        () => {
+          if (active) {
+            setError(t('projectSwitcher.remote.errors.loadHosts'))
+            setLoadingSshHosts(false)
+          }
         }
-      }
-    )
+      )
+      .finally(finishSshHostsSnapshot)
     return () => {
       active = false
     }
-  }, [dialogMode, executionSpaceKind, remoteProjectsEnabled, t])
+  }, [
+    applySshHostsSnapshot,
+    beginSshHostsSnapshot,
+    dialogMode,
+    executionSpaceKind,
+    finishSshHostsSnapshot,
+    remoteProjectsEnabled,
+    t
+  ])
+
+  useEffect(() => {
+    if (!remoteProjectsEnabled || !projectMenuOpen) {
+      return
+    }
+    const api = window.goodbuddy?.sshHosts
+    if (!api) {
+      return
+    }
+    let active = true
+    const requestRevision = beginSshHostsSnapshot()
+    void api
+      .getSnapshot()
+      .then(
+        (snapshot) => {
+          if (!active) {
+            return
+          }
+          applySshHostsSnapshot(snapshot, requestRevision)
+        },
+        () => undefined
+      )
+      .finally(finishSshHostsSnapshot)
+    return () => {
+      active = false
+    }
+  }, [
+    applySshHostsSnapshot,
+    beginSshHostsSnapshot,
+    finishSshHostsSnapshot,
+    projectMenuOpen,
+    remoteProjectsEnabled
+  ])
+
+  useEffect(() => {
+    const api = remoteProjectsEnabled
+      ? window.goodbuddy?.sshHosts
+      : undefined
+    if (!api) {
+      return
+    }
+    return api.onAgentConnectionStatus(({ hostId, state }) => {
+      const revision =
+        agentConnectionStatusRevisionRef.current + 1
+      agentConnectionStatusRevisionRef.current = revision
+      liveAgentConnectionStatusRef.current.set(hostId, {
+        revision,
+        state
+      })
+      setAgentConnectionStatusByHostId((current) => {
+        if (state === 'disconnected') {
+          if (!(hostId in current)) {
+            return current
+          }
+          const next = { ...current }
+          delete next[hostId]
+          return next
+        }
+        return current[hostId] === state
+          ? current
+          : { ...current, [hostId]: state }
+      })
+    })
+  }, [remoteProjectsEnabled])
 
   useEffect(() => {
     if (
@@ -763,9 +1011,108 @@ export function ProjectSwitcher({
     }
   }
 
+  const renderProjectMenuItem = (
+    project: AssistantProject,
+    ProjectIcon: LucideIcon
+  ): React.JSX.Element => {
+    const selected = project.id === activeProjectId
+    const projectDisplay = getProjectDisplayText(project, t)
+    const recovery =
+      project.executionSpace.kind === 'ssh'
+        ? recoveryByProjectId[project.id]
+        : undefined
+    const detail =
+      project.kind === 'channel'
+        ? t('projectSwitcher.selector.remoteDetail', {
+            channel: project.channel
+              ? projectChannelLabels[project.channel]
+              : t('projectSwitcher.selector.remoteChannel'),
+            path: project.rootPath
+          })
+        : project.executionSpace.kind === 'ssh'
+          ? t('projectSwitcher.selector.remotePath', {
+              path: project.rootPath
+            })
+          : t('projectSwitcher.selector.localDetail', {
+              path: project.rootPath
+            })
+    return (
+      <div
+        className={`project-switcher__menu-item${
+          recovery?.stage === 'failed' && recovery.retryable
+            ? ' project-switcher__menu-item--with-retry'
+            : ''
+        }`}
+        key={project.id}
+      >
+        <button
+          aria-checked={selected}
+          onClick={() => {
+            if (!selected || project.executionSpace.kind === 'ssh') {
+              onSelect(project.id)
+            }
+            setProjectMenuOpen(false)
+            requestAnimationFrame(() =>
+              projectPickerButtonRef.current?.focus()
+            )
+          }}
+          role="menuitemradio"
+          tabIndex={selected ? 0 : -1}
+          type="button"
+        >
+          <ProjectIcon aria-hidden="true" size={16} />
+          <span>
+            <b>{projectDisplay.name}</b>
+            <small>{detail}</small>
+            {recovery && <ProjectRecoveryStatus state={recovery} />}
+          </span>
+          {selected && <Check aria-hidden="true" size={14} />}
+        </button>
+        {recovery?.stage === 'failed' &&
+          recovery.retryable &&
+          onRetryRecovery && (
+            <button
+              aria-label={t(
+                'projectSwitcher.recovery.retryNamed',
+                { name: projectDisplay.name }
+              )}
+              className="project-switcher__menu-retry"
+              disabled={retryingRecoveryProjectId === project.id}
+              onClick={() => retryRecovery(project.id)}
+              role="menuitem"
+              tabIndex={-1}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={14} />
+            </button>
+          )}
+        <button
+          aria-label={t(
+            'projectSwitcher.selector.settingsNamed',
+            { name: projectDisplay.name }
+          )}
+          className="project-switcher__menu-settings"
+          onClick={() => openProjectSettings(project, 'picker')}
+          role="menuitem"
+          tabIndex={-1}
+          type="button"
+        >
+          <Settings aria-hidden="true" size={14} />
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="project-switcher">
-      <div className="project-switcher__row">
+      <div
+        className={`project-switcher__row${
+          activeProjectRecovery?.stage === 'failed' &&
+          activeProjectRecovery.retryable
+            ? ' project-switcher__row--with-retry'
+            : ''
+        }`}
+      >
         <div
           className="project-switcher__picker"
           ref={projectPickerRef}
@@ -791,9 +1138,14 @@ export function ProjectSwitcher({
             title={activeProjectDisplay?.name}
             type="button"
           >
-            <span>
-              {activeProjectDisplay?.name ??
-                t('projectSwitcher.selector.empty')}
+            <span className="project-switcher__trigger-copy">
+              <span>
+                {activeProjectDisplay?.name ??
+                  t('projectSwitcher.selector.empty')}
+              </span>
+              {activeProjectRecovery && (
+                <ProjectRecoveryStatus state={activeProjectRecovery} />
+              )}
             </span>
             <ChevronDown aria-hidden="true" size={14} />
           </button>
@@ -840,119 +1192,121 @@ export function ProjectSwitcher({
               ref={projectPickerMenuRef}
               role="menu"
             >
-              {[
-                {
-                  projects: localProjects,
-                  label: t('projectSwitcher.selector.userProjects'),
-                  icon: Folder
-                },
-                ...(remoteProjectsEnabled
-                  ? [
-                      {
-                        projects: remoteProjects,
-                        label: t(
-                          'projectSwitcher.selector.remoteProjects'
-                        ),
-                        icon: Server
-                      }
-                    ]
-                  : []),
-                {
-                  projects: channelProjects,
-                  label: t('projectSwitcher.selector.channelProjects'),
-                  icon: RadioTower
-                }
-              ].map((group) =>
-                group.projects.length > 0 ? (
+              {localProjects.length > 0 && (
+                <div
+                  aria-label={t(
+                    'projectSwitcher.selector.userProjects'
+                  )}
+                  className="project-switcher__group"
+                  role="group"
+                >
+                  <strong>
+                    {t('projectSwitcher.selector.userProjects')}
+                  </strong>
+                  {localProjects.map((project) =>
+                    renderProjectMenuItem(project, Folder)
+                  )}
+                </div>
+              )}
+              {remoteProjectsEnabled &&
+                remoteProjectGroups.length > 0 && (
                   <div
-                    aria-label={group.label}
+                    aria-label={t(
+                      'projectSwitcher.selector.remoteProjects'
+                    )}
                     className="project-switcher__group"
-                    key={group.label}
                     role="group"
                   >
-                    <strong>{group.label}</strong>
-                    {group.projects.map((project) => {
-                      const selected = project.id === activeProjectId
-                      const ProjectIcon = group.icon
-                      const projectDisplay = getProjectDisplayText(
-                        project,
-                        t
-                      )
-                      const detail =
-                        project.kind === 'channel'
-                          ? t('projectSwitcher.selector.remoteDetail', {
-                              channel: project.channel
-                                ? projectChannelLabels[project.channel]
-                                : t(
-                                    'projectSwitcher.selector.remoteChannel'
-                                  ),
-                              path: project.rootPath
-                            })
-                          : project.executionSpace.kind === 'ssh'
-                            ? t(
-                                'projectSwitcher.selector.managedSshDetail',
-                                { path: project.rootPath }
-                              )
-                            : t(
-                                'projectSwitcher.selector.localDetail',
-                                { path: project.rootPath }
-                              )
-                      return (
-                        <div
-                          className="project-switcher__menu-item"
-                          key={project.id}
-                        >
-                          <button
-                            aria-checked={selected}
-                            onClick={() => {
-                              if (
-                                !selected ||
-                                project.executionSpace.kind === 'ssh'
-                              ) {
-                                onSelect(project.id)
-                              }
-                              setProjectMenuOpen(false)
-                              requestAnimationFrame(() =>
-                                projectPickerButtonRef.current?.focus()
-                              )
-                            }}
-                            role="menuitemradio"
-                            tabIndex={selected ? 0 : -1}
-                            type="button"
-                          >
-                            <ProjectIcon aria-hidden="true" size={16} />
-                            <span>
-                              <b>{projectDisplay.name}</b>
-                              <small>{detail}</small>
-                            </span>
-                            {selected && (
-                              <Check aria-hidden="true" size={14} />
-                            )}
-                          </button>
-                          <button
+                    <strong>
+                      {t('projectSwitcher.selector.remoteProjects')}
+                    </strong>
+                    {remoteProjectGroups.map(
+                      ({ hostId, host, projects: hostProjects }) => {
+                        const hostName =
+                          host?.name ??
+                          t(
+                            'projectSwitcher.selector.unavailableHost'
+                          )
+                        const state =
+                          agentConnectionStatusByHostId[hostId] ??
+                          'disconnected'
+                        return (
+                          <div
                             aria-label={t(
-                              'projectSwitcher.selector.settingsNamed',
-                              { name: projectDisplay.name }
+                              'projectSwitcher.selector.remoteHostGroup',
+                              { host: hostName }
                             )}
-                            className="project-switcher__menu-settings"
-                            onClick={() =>
-                              openProjectSettings(project, 'picker')
-                            }
-                            role="menuitem"
-                            tabIndex={-1}
-                            type="button"
+                            className="project-switcher__host-group"
+                            key={hostId}
+                            role="group"
                           >
-                            <Settings aria-hidden="true" size={14} />
-                          </button>
-                        </div>
-                      )
-                    })}
+                            <div className="project-switcher__host-heading">
+                              <span
+                                title={
+                                  host
+                                    ? `${host.username}@${host.hostname}:${host.port}`
+                                    : undefined
+                                }
+                              >
+                                <Server aria-hidden="true" size={14} />
+                                <b>{hostName}</b>
+                              </span>
+                              <span
+                                className={`status-badge project-switcher__host-status project-switcher__host-status--${state}`}
+                              >
+                                {t(
+                                  `projectSwitcher.selector.connectionStates.${state}`
+                                )}
+                              </span>
+                            </div>
+                            {hostProjects.map((project) =>
+                              renderProjectMenuItem(project, Folder)
+                            )}
+                          </div>
+                        )
+                      }
+                    )}
                   </div>
-                ) : null
+                )}
+              {channelProjects.length > 0 && (
+                <div
+                  aria-label={t(
+                    'projectSwitcher.selector.channelProjects'
+                  )}
+                  className="project-switcher__group"
+                  role="group"
+                >
+                  <strong>
+                    {t('projectSwitcher.selector.channelProjects')}
+                  </strong>
+                  {channelProjects.map((project) =>
+                    renderProjectMenuItem(project, RadioTower)
+                  )}
+                </div>
               )}
             </div>
           )}
         </div>
+        {activeProject &&
+          activeProjectRecovery?.stage === 'failed' &&
+          activeProjectRecovery.retryable &&
+          onRetryRecovery && (
+            <button
+              aria-label={t(
+                'projectSwitcher.recovery.retryNamed',
+                { name: activeProjectDisplay?.name }
+              )}
+              className="icon-button project-switcher__active-retry"
+              disabled={
+                retryingRecoveryProjectId === activeProject.id
+              }
+              onClick={() => retryRecovery(activeProject.id)}
+              title={t('projectSwitcher.recovery.retry')}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={15} />
+            </button>
+          )}
         <button
           aria-label={t('projectSwitcher.selector.create')}
           className="icon-button"

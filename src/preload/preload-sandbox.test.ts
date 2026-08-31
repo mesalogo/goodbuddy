@@ -152,6 +152,10 @@ describe('sandboxed preload', () => {
     )
     expect(source).toContain('sshHosts: {')
     expect(source).toContain('getSnapshot:')
+    expect(source).toContain('onAgentConnectionStatus:')
+    expect(source).toContain(
+      'ipcChannels.sshHostsAgentConnectionStatus'
+    )
     expect(source).toContain(
       'getAgentPackageInventory: (refresh = false)'
     )
@@ -236,6 +240,24 @@ describe('sandboxed preload', () => {
     expect(source).toContain('RemoteProjectSaveRequest')
     expect(source).not.toContain('commitToken')
     expect(source).toContain('ipcRenderer.removeListener(')
+  })
+
+  it('exposes removable project recovery snapshot, retry, and progress APIs', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    expect(source).toContain('getRecoverySnapshot:')
+    expect(source).toContain('retryRecovery: (projectId: string)')
+    expect(source).toContain('onRecoveryProgress:')
+    expect(source).toContain('ipcChannels.remoteProjectRecoveryGet')
+    expect(source).toContain('ipcChannels.remoteProjectRecoveryRetry')
+    expect(source).toContain(
+      'ipcChannels.remoteProjectRecoveryProgress'
+    )
+    expect(source).toMatch(
+      /remoteProjectRecoveryProgress,[\s\S]*?removeListener\([\s\S]*?remoteProjectRecoveryProgress/u
+    )
   })
 
   it('exposes bounded knowledge task actions', () => {

@@ -14,6 +14,9 @@ import type {
   ConversationQueueItem
 } from '../shared/assistant-contracts'
 import type { AgentEvent, BrowserLiveState } from '../shared/contracts'
+import type {
+  SshHostAgentConnectionStatus
+} from '../shared/ssh-host-contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
 import {
@@ -1167,6 +1170,21 @@ describe('registerIpcHandlers SSH hosts', () => {
     const selectedRuntimes = {
       reset: vi.fn(async () => undefined)
     }
+    let publishAgentConnectionStatus:
+      | ((status: SshHostAgentConnectionStatus) => void)
+      | undefined
+    const removeAgentConnectionStatusListener = vi.fn()
+    const remoteAgentConnectionManager = {
+      getHostConnectionState: vi.fn(() => 'ready' as const),
+      onHostConnectionStateChange: vi.fn(
+        (
+          listener: (status: SshHostAgentConnectionStatus) => void
+        ) => {
+          publishAgentConnectionStatus = listener
+          return removeAgentConnectionStatusListener
+        }
+      )
+    }
     const dispose = registerIpcHandlers(
       window as never,
       { capability: 'text' } as never,
@@ -1215,7 +1233,8 @@ describe('registerIpcHandlers SSH hosts', () => {
       undefined,
       undefined,
       remoteEnvironmentUpdateService as never,
-      agentPackageManager as never
+      agentPackageManager as never,
+      remoteAgentConnectionManager as never
     )
     const event = {
       sender: webContents,
@@ -1234,8 +1253,25 @@ describe('registerIpcHandlers SSH hosts', () => {
       electronMocks.handlers.get(ipcChannels.sshHostsGet)?.(event)
     ).resolves.toEqual({
       ...snapshot,
-      projectReferences: {}
+      projectReferences: {},
+      agentConnectionStatusByHostId: {
+        [hostId]: 'ready'
+      }
     })
+    expect(
+      remoteAgentConnectionManager.getHostConnectionState
+    ).toHaveBeenCalledWith(hostId)
+    publishAgentConnectionStatus?.({
+      hostId,
+      state: 'connecting'
+    })
+    expect(webContents.send).toHaveBeenCalledWith(
+      ipcChannels.sshHostsAgentConnectionStatus,
+      {
+        hostId,
+        state: 'connecting'
+      }
+    )
     await expect(
       electronMocks.handlers.get(
         ipcChannels.sshHostsAgentPackageInventory
@@ -1573,6 +1609,7 @@ describe('registerIpcHandlers SSH hosts', () => {
     ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
 
     await dispose()
+    expect(removeAgentConnectionStatusListener).toHaveBeenCalledOnce()
     expect(remoteProjectSaveService.dispose).toHaveBeenCalledOnce()
     expect(
       remoteEnvironmentUpdateService.dispose
@@ -4409,6 +4446,16 @@ describe('registerIpcHandlers Runtime customization', () => {
 })
 
 describe('registerIpcHandlers agent terminal state', () => {
+  type RemoteTaskEventMockInput = {
+    taskId: string
+    bindingId: string
+    operationId: string
+    semanticSequence: string
+    eventIndex: number
+    kind: string
+    payload: unknown
+  }
+
   afterEach(() => {
     electronMocks.handlers.clear()
     vi.clearAllMocks()
@@ -4430,6 +4477,26 @@ describe('registerIpcHandlers agent terminal state', () => {
     const assistantDatabase = {
       createTask: vi.fn(),
       appendTaskEvent: vi.fn(),
+      appendRemoteTaskEventOnce: vi.fn<
+        (input: RemoteTaskEventMockInput) => boolean
+      >(() => true),
+      appendRemoteConversationTaskEventOnce: vi.fn(() => true),
+      listRecoverableRemoteTasks: vi.fn<
+        () => Array<{
+          taskId: string
+          projectId: string
+          conversationId: string
+          currentUserMessageId: string
+          currentAssistantMessageId: string
+          instructions: string
+          workMode: 'ask' | 'execute'
+          status: 'running' | 'waiting_approval' | 'interrupted'
+        }>
+      >(() => []),
+      getHighestCommittedRemoteTaskEventSequenceForTask: vi.fn(
+        () => '0'
+      ),
+      failRecoverableRemoteTask: vi.fn(),
       updateTaskStatus: vi.fn(),
       createTextArtifact: vi.fn(),
       createImageArtifact: vi.fn(() => ({
@@ -4502,7 +4569,16 @@ describe('registerIpcHandlers agent terminal state', () => {
       clearAssistantData: vi.fn(),
       listExperts: vi.fn<() => Array<Record<string, unknown>>>(() => []),
       getExpert: vi.fn(),
-      getProject: vi.fn((projectId: string) => ({
+      getConversation: vi.fn<
+        (conversationId: string) => Record<string, unknown>
+      >((conversationId) => ({
+        id: conversationId,
+        runtimeSelection: { provider: 'opencode' },
+        messages: []
+      })),
+      getProject: vi.fn<
+        (projectId: string) => Record<string, unknown>
+      >((projectId) => ({
         id: projectId,
         rootPath: 'C:\\ProjectWorkspace'
       }))
@@ -4554,9 +4630,12 @@ describe('registerIpcHandlers agent terminal state', () => {
         subagentSmartRoutingEnabled: smartRoutingEnabled
       })
     )
-    const getApplicationSettings = vi.fn(async () => ({
-      magicNotesEnabled
-    }))
+    const getApplicationSettings = vi.fn(
+      async (): Promise<Record<string, unknown>> => ({
+        magicNotesEnabled,
+        remoteProjectsEnabled: true
+      })
+    )
     const onRuntimeSettingsChanged = vi.fn(async () => {})
     const dispose = registerIpcHandlers(
       window as never,
@@ -4617,6 +4696,12 @@ describe('registerIpcHandlers agent terminal state', () => {
       handler: electronMocks.handlers.get(ipcChannels.agentRun),
       statusHandler: electronMocks.handlers.get(ipcChannels.agentStatus),
       cancelHandler: electronMocks.handlers.get(ipcChannels.agentCancel),
+      recoveryGetHandler: electronMocks.handlers.get(
+        ipcChannels.remoteProjectRecoveryGet
+      ),
+      recoveryRetryHandler: electronMocks.handlers.get(
+        ipcChannels.remoteProjectRecoveryRetry
+      ),
       branchHandler: electronMocks.handlers.get(
         ipcChannels.conversationsBranchLocal
       ),
@@ -4638,6 +4723,52 @@ describe('registerIpcHandlers agent terminal state', () => {
   }) => ({
     sender: webContents,
     senderFrame: webContents.mainFrame
+  })
+
+  function createManagedSshHarness(
+    selectedRuntime: Record<string, unknown>
+  ) {
+    const projectId = '00000000-0000-4000-8000-000000000761'
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => selectedRuntime)
+    }
+    const harness = createHarness(
+      {
+        runtimeId: 'model',
+        capability: 'chat',
+        supportsToolExecution: true,
+        run: vi.fn()
+      },
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    harness.assistantDatabase.getProject.mockReturnValue({
+      id: projectId,
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: '00000000-0000-4000-8000-000000000762',
+        remoteRootPath: '/srv/project'
+      }
+    })
+    return { harness, projectId, selectedRuntimes }
+  }
+
+  const managedSshRequest = (
+    projectId: string,
+    requestId: string,
+    conversationId: string
+  ) => ({
+    requestId,
+    conversationId,
+    projectId,
+    runtimeSelection: { provider: 'opencode' as const },
+    prompt: 'continue on Agent',
+    workMode: 'execute' as const,
+    knowledgeLibraryIds: []
   })
 
   it('defaults custom scheduled Tasks to Execute', async () => {
@@ -5104,6 +5235,813 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(
         harness.assistantDatabase.updateTaskStatus
       ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+    await harness.dispose()
+  })
+
+  it('detaches an accepted managed SSH run without aborting it or waiting for completion', async () => {
+    let finishRun = (): void => undefined
+    let remoteSignal: AbortSignal | undefined
+    let statusConsumed = false
+    const remoteRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(
+        request: { requestId: string },
+        signal: AbortSignal
+      ) {
+        remoteSignal = signal
+        yield {
+          requestId: request.requestId,
+          type: 'status',
+          message: '远端 ACP Runtime 正在处理请求'
+        } as const
+        statusConsumed = true
+        await new Promise<void>((resolve) => {
+          finishRun = resolve
+        })
+        signal.throwIfAborted()
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => remoteRuntime)
+    }
+    const harness = createHarness(
+      remoteRuntime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    const projectId = '00000000-0000-4000-8000-000000000751'
+    harness.assistantDatabase.getProject.mockReturnValue({
+      id: projectId,
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: '00000000-0000-4000-8000-000000000752',
+        remoteRootPath: '/srv/project'
+      }
+    })
+    const requestId = '00000000-0000-4000-8000-000000000753'
+    const run = harness.handler?.(
+      trustedEvent(harness.webContents),
+      {
+        requestId,
+        conversationId: 'managed-ssh-conversation',
+        projectId,
+        runtimeSelection: { provider: 'opencode' },
+        prompt: 'continue on Agent',
+        workMode: 'execute',
+        knowledgeLibraryIds: []
+      }
+    )
+    await run
+    await vi.waitFor(() => expect(statusConsumed).toBe(true))
+
+    const disposal = harness.dispose()
+    await expect(disposal).resolves.toBeUndefined()
+    expect(remoteSignal?.aborted).toBe(false)
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).not.toHaveBeenCalledWith(requestId, 'cancelled', '请求已取消')
+
+    finishRun()
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+  })
+
+  it('durably commits remote text before resume, deduplicates it, and preserves its semantic payload', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000763'
+    const provenance = {
+      source: 'remote-semantic-transcript' as const,
+      bindingId: 'binding-semantic-text',
+      operationId: 'operation-semantic-text',
+      semanticSequence: '1',
+      eventIndex: 0
+    }
+    const taggedDelta = '<think>remote reasoning</think>remote answer'
+    const resumed = vi.fn()
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        const remoteText = {
+          requestId: request.requestId,
+          type: 'text',
+          delta: taggedDelta,
+          remoteProvenance: provenance
+        } as const
+        yield remoteText
+        expect(
+          harness.assistantDatabase.appendRemoteTaskEventOnce
+        ).toHaveBeenCalledWith({
+          taskId: request.requestId,
+          bindingId: provenance.bindingId,
+          operationId: provenance.operationId,
+          semanticSequence: provenance.semanticSequence,
+          eventIndex: provenance.eventIndex,
+          kind: 'text',
+          payload: {
+            requestId: request.requestId,
+            type: 'text',
+            delta: taggedDelta
+          }
+        })
+        resumed('first')
+        yield remoteText
+        resumed('duplicate')
+        yield {
+          requestId: request.requestId,
+          type: 'done',
+          remoteProvenance: {
+            ...provenance,
+            semanticSequence: '2'
+          }
+        } as const
+      }
+    }
+    const fixture = createManagedSshHarness(selectedRuntime)
+    const { harness } = fixture
+    harness.assistantDatabase.appendRemoteTaskEventOnce
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+
+    await harness.handler?.(
+      trustedEvent(harness.webContents),
+      managedSshRequest(
+        fixture.projectId,
+        requestId,
+        'managed-ssh-semantic-text'
+      )
+    )
+    await vi.waitFor(() =>
+      expect(
+        harness?.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+
+    expect(resumed.mock.calls).toEqual([['first'], ['duplicate']])
+    const persistedTextCalls =
+      harness.assistantDatabase.appendRemoteTaskEventOnce.mock.calls.filter(
+        ([input]) => input.kind === 'text'
+      )
+    expect(persistedTextCalls).toHaveLength(2)
+    const publicEvents = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, event]) => event)
+      .filter((event) => event.requestId === requestId)
+    expect(publicEvents).toEqual([
+      {
+        requestId,
+        type: 'text',
+        delta: taggedDelta
+      },
+      {
+        requestId,
+        type: 'done'
+      }
+    ])
+    expect(
+      publicEvents.some((event) => event.type === 'reasoning')
+    ).toBe(false)
+    expect(
+      publicEvents.some((event) => 'remoteProvenance' in event)
+    ).toBe(false)
+    await harness.dispose()
+  })
+
+  it('persists a remote semantic checkpoint without publishing it', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000764'
+    const provenance = {
+      source: 'remote-semantic-transcript' as const,
+      bindingId: 'binding-semantic-checkpoint',
+      operationId: 'operation-semantic-checkpoint',
+      semanticSequence: '1',
+      eventIndex: 0
+    }
+    const resumedAfterCheckpoint = vi.fn()
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'remote-semantic-checkpoint',
+          remoteProvenance: provenance
+        } as const
+        expect(
+          harness.assistantDatabase.appendRemoteTaskEventOnce
+        ).toHaveBeenCalledWith({
+          taskId: request.requestId,
+          bindingId: provenance.bindingId,
+          operationId: provenance.operationId,
+          semanticSequence: provenance.semanticSequence,
+          eventIndex: provenance.eventIndex,
+          kind: 'remote-semantic-checkpoint',
+          payload: {
+            requestId: request.requestId,
+            type: 'remote-semantic-checkpoint'
+          }
+        })
+        resumedAfterCheckpoint()
+        yield {
+          requestId: request.requestId,
+          type: 'done',
+          remoteProvenance: {
+            ...provenance,
+            semanticSequence: '2'
+          }
+        } as const
+      }
+    }
+    const fixture = createManagedSshHarness(selectedRuntime)
+    const { harness } = fixture
+
+    await harness.handler?.(
+      trustedEvent(harness.webContents),
+      managedSshRequest(
+        fixture.projectId,
+        requestId,
+        'managed-ssh-semantic-checkpoint'
+      )
+    )
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+
+    expect(resumedAfterCheckpoint).toHaveBeenCalledOnce()
+    expect(harness.webContents.send).not.toHaveBeenCalledWith(
+      ipcChannels.agentEvent,
+      expect.objectContaining({
+        requestId,
+        type: 'remote-semantic-checkpoint'
+      })
+    )
+    await harness.dispose()
+  })
+
+  it('persists remote done before resuming the generator once for Agent acknowledgement', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000765'
+    const lifecycle: string[] = []
+    const provenance = {
+      source: 'remote-semantic-transcript' as const,
+      bindingId: 'binding-semantic-done',
+      operationId: 'operation-semantic-done',
+      semanticSequence: '1',
+      eventIndex: 0
+    }
+    const resumedAfterDone = vi.fn(() => {
+      lifecycle.push('resume-done')
+    })
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'done',
+          remoteProvenance: provenance
+        } as const
+        resumedAfterDone()
+      }
+    }
+    const { harness, projectId } =
+      createManagedSshHarness(selectedRuntime)
+    harness.assistantDatabase.appendRemoteTaskEventOnce.mockImplementation(
+      (input) => {
+        lifecycle.push(`persist-${input.kind}`)
+        return true
+      }
+    )
+
+    await harness.handler?.(
+      trustedEvent(harness.webContents),
+      managedSshRequest(
+        projectId,
+        requestId,
+        'managed-ssh-semantic-done'
+      )
+    )
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'completed')
+    )
+
+    expect(lifecycle).toEqual(['persist-done', 'resume-done'])
+    expect(resumedAfterDone).toHaveBeenCalledOnce()
+    expect(
+      harness.assistantDatabase.appendTaskEvent
+    ).not.toHaveBeenCalledWith(
+      requestId,
+      'done',
+      expect.anything()
+    )
+    await harness.dispose()
+  })
+
+  it('persists and acknowledges a remote terminal error before failing without duplicate delivery', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000766'
+    const errorMessage = 'remote Agent failed'
+    const lifecycle: string[] = []
+    const provenance = {
+      source: 'remote-semantic-transcript' as const,
+      bindingId: 'binding-semantic-error',
+      operationId: 'operation-semantic-error',
+      semanticSequence: '1',
+      eventIndex: 0
+    }
+    const resumedAfterError = vi.fn(() => {
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).not.toHaveBeenCalledWith(
+        requestId,
+        'failed',
+        expect.any(String)
+      )
+      lifecycle.push('resume-error')
+    })
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'error',
+          status: 'failed',
+          message: errorMessage,
+          remoteProvenance: provenance
+        } as const
+        resumedAfterError()
+      }
+    }
+    const fixture = createManagedSshHarness(selectedRuntime)
+    const { harness } = fixture
+    harness.assistantDatabase.appendRemoteTaskEventOnce.mockImplementation(
+      (input) => {
+        lifecycle.push(`persist-${input.kind}`)
+        return true
+      }
+    )
+
+    await harness.handler?.(
+      trustedEvent(harness.webContents),
+      managedSshRequest(
+        fixture.projectId,
+        requestId,
+        'managed-ssh-semantic-error'
+      )
+    )
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(
+        requestId,
+        'failed',
+        expect.any(String)
+      )
+    )
+
+    expect(lifecycle).toEqual(['persist-error', 'resume-error'])
+    expect(resumedAfterError).toHaveBeenCalledOnce()
+    expect(
+      harness.assistantDatabase.appendTaskEvent
+    ).not.toHaveBeenCalledWith(
+      requestId,
+      'error',
+      expect.anything()
+    )
+    const publicErrors = harness.webContents.send.mock.calls
+      .filter(([channel]) => channel === ipcChannels.agentEvent)
+      .map(([, event]) => event)
+      .filter(
+        (event) =>
+          event.requestId === requestId && event.type === 'error'
+      )
+    expect(publicErrors).toEqual([
+      {
+        requestId,
+        type: 'error',
+        status: 'failed',
+        message: errorMessage
+      }
+    ])
+    await harness.dispose()
+  })
+
+  it('reattaches a recoverable task from its committed cursor and completes project synchronization', async () => {
+    const projectId = '00000000-0000-4000-8000-000000000781'
+    const taskId = '00000000-0000-4000-8000-000000000782'
+    const conversationId =
+      '00000000-0000-4000-8000-000000000783'
+    const userMessageId =
+      '00000000-0000-4000-8000-000000000784'
+    const assistantMessageId =
+      '00000000-0000-4000-8000-000000000785'
+    const consumed: string[] = []
+    const recoveredRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: {
+        requestId: string
+        remoteRecoveryOnly?: boolean
+        remoteSemanticAfterSequence?: string
+        remoteRecoveredTools?: unknown[]
+      }) {
+        expect(request).toMatchObject({
+          requestId: taskId,
+          remoteRecoveryOnly: true,
+          remoteSemanticAfterSequence: '2',
+          remoteRecoveredTools: [
+            expect.objectContaining({
+              callId: 'tool-before-restart',
+              name: 'Read',
+              state: 'failed'
+            })
+          ]
+        })
+        yield {
+          requestId: taskId,
+          type: 'text',
+          delta: 'recovered answer',
+          remoteProvenance: {
+            source: 'remote-semantic-transcript',
+            bindingId: 'binding-recovery',
+            operationId: taskId,
+            semanticSequence: '3',
+            eventIndex: 0
+          }
+        } as const
+        consumed.push('3')
+        yield {
+          requestId: taskId,
+          type: 'remote-semantic-checkpoint',
+          remoteProvenance: {
+            source: 'remote-semantic-transcript',
+            bindingId: 'binding-recovery',
+            operationId: taskId,
+            semanticSequence: '3',
+            eventIndex: 1
+          }
+        } as const
+        yield {
+          requestId: taskId,
+          type: 'done',
+          sessionId: 'session-recovery',
+          remoteProvenance: {
+            source: 'remote-semantic-transcript',
+            bindingId: 'binding-recovery',
+            operationId: taskId,
+            semanticSequence: '4',
+            eventIndex: 0
+          }
+        } as const
+        consumed.push('4')
+        yield {
+          requestId: taskId,
+          type: 'remote-semantic-checkpoint',
+          remoteProvenance: {
+            source: 'remote-semantic-transcript',
+            bindingId: 'binding-recovery',
+            operationId: taskId,
+            semanticSequence: '4',
+            eventIndex: 1
+          }
+        } as const
+      }
+    }
+    const {
+      harness,
+      selectedRuntimes
+    } = createManagedSshHarness(recoveredRuntime)
+    harness.assistantDatabase.getProject.mockReturnValue({
+      id: projectId,
+      runtimeSelection: { provider: 'opencode' },
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: '00000000-0000-4000-8000-000000000786',
+        remoteRootPath: '/srv/project'
+      }
+    })
+    harness.assistantDatabase.getConversation.mockReturnValue({
+      id: conversationId,
+      projectId,
+      runtimeSelection: { provider: 'opencode' },
+      messages: [
+        {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: '',
+          state: 'streaming',
+          createdAt: 1,
+          tools: [
+            {
+              callId: 'tool-before-restart',
+              name: 'Read',
+              state: 'failed',
+              summary: 'Read failed',
+              error: 'missing file'
+            }
+          ]
+        }
+      ]
+    })
+    harness.assistantDatabase.listRecoverableRemoteTasks.mockReturnValue([
+      {
+        taskId,
+        projectId,
+        conversationId,
+        currentUserMessageId: userMessageId,
+        currentAssistantMessageId: assistantMessageId,
+        instructions: 'continue remotely',
+        workMode: 'execute',
+        status: 'running'
+      }
+    ])
+    harness.assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask.mockReturnValue(
+      '2'
+    )
+
+    harness.recoveryGetHandler?.(
+      trustedEvent(harness.webContents)
+    )
+
+    await vi.waitFor(() => expect(consumed).toEqual(['3', '4']))
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.appendRemoteConversationTaskEventOnce
+      ).toHaveBeenCalledTimes(4)
+    )
+    expect(
+      harness.assistantDatabase.appendRemoteConversationTaskEventOnce
+    ).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        taskId,
+        conversationId,
+        assistantMessageId,
+        semanticSequence: '3',
+        event: {
+          requestId: taskId,
+          type: 'text',
+          delta: 'recovered answer'
+        }
+      })
+    )
+    expect(
+      harness.assistantDatabase.appendRemoteConversationTaskEventOnce
+    ).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        taskId,
+        semanticSequence: '4',
+        event: {
+          requestId: taskId,
+          type: 'error',
+          status: 'failed',
+          message: 'Read 工具执行失败：missing file'
+        }
+      })
+    )
+    expect(selectedRuntimes.getRuntime).toHaveBeenCalledOnce()
+    await vi.waitFor(() =>
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.remoteProjectRecoveryProgress,
+        expect.objectContaining({
+          projectId,
+          stage: 'completed'
+        })
+      )
+    )
+    await harness.dispose()
+  })
+
+  it('aborts and drains a local run during Desktop shutdown', async () => {
+    let localSignal: AbortSignal | undefined
+    let finishLocalCleanup = (): void => undefined
+    let markLocalCleanupStarted = (): void => undefined
+    const localCleanupStarted = new Promise<void>((resolve) => {
+      markLocalCleanupStarted = resolve
+    })
+    const localRuntime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      async *run(
+        request: { requestId: string },
+        signal: AbortSignal
+      ) {
+        localSignal = signal
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), {
+            once: true
+          })
+        })
+        await new Promise<void>((resolve) => {
+          finishLocalCleanup = resolve
+          markLocalCleanupStarted()
+        })
+        signal.throwIfAborted()
+        yield { requestId: request.requestId, type: 'done' } as const
+      }
+    }
+    const harness = createHarness(localRuntime)
+    const requestId = '00000000-0000-4000-8000-000000000754'
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'local-shutdown-conversation',
+      prompt: 'local work',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() => expect(localSignal).toBeDefined())
+
+    const event = trustedEvent(harness.webContents)
+    electronMocks.handlers.get(
+      ipcChannels.appRendererPersistenceReady
+    )?.(event)
+    const disposal = harness.dispose()
+    await vi.waitFor(() =>
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.appRendererPersistenceRequest,
+        expect.any(String)
+      )
+    )
+
+    expect(localSignal?.aborted).toBe(true)
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).not.toHaveBeenCalledWith(requestId, 'cancelled', '请求已取消')
+    const persistenceRequestId =
+      harness.webContents.send.mock.calls.find(
+        ([channel]) =>
+          channel === ipcChannels.appRendererPersistenceRequest
+      )?.[1]
+    electronMocks.handlers.get(
+      ipcChannels.appRendererPersistenceComplete
+    )?.(event, persistenceRequestId)
+    await localCleanupStarted
+    finishLocalCleanup()
+    await disposal
+    expect(
+      harness.assistantDatabase.updateTaskStatus
+    ).toHaveBeenCalledWith(requestId, 'cancelled', '请求已取消')
+  })
+
+  it('keeps an accepted managed SSH run recoverable after user Stop', async () => {
+    let remoteSignal: AbortSignal | undefined
+    let statusConsumed = false
+    const remoteRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(
+        request: { requestId: string },
+        signal: AbortSignal
+      ) {
+        remoteSignal = signal
+        yield {
+          requestId: request.requestId,
+          type: 'status',
+          message: '远端 ACP Runtime 正在处理请求'
+        } as const
+        statusConsumed = true
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), {
+            once: true
+          })
+        })
+        signal.throwIfAborted()
+        yield { requestId: request.requestId, type: 'done' } as const
+      }
+    }
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => remoteRuntime)
+    }
+    const harness = createHarness(
+      remoteRuntime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    const projectId = '00000000-0000-4000-8000-000000000755'
+    harness.assistantDatabase.getProject.mockReturnValue({
+      id: projectId,
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: '00000000-0000-4000-8000-000000000756',
+        remoteRootPath: '/srv/project'
+      }
+    })
+    const requestId = '00000000-0000-4000-8000-000000000757'
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'managed-ssh-stop-conversation',
+      projectId,
+      runtimeSelection: { provider: 'opencode' },
+      prompt: 'stop this',
+      workMode: 'execute',
+      knowledgeLibraryIds: [],
+      currentUserMessageId:
+        '00000000-0000-4000-8000-000000000758',
+      currentAssistantMessageId:
+        '00000000-0000-4000-8000-000000000759'
+    })
+    await vi.waitFor(() => expect(statusConsumed).toBe(true))
+
+    harness.cancelHandler?.(
+      trustedEvent(harness.webContents),
+      requestId
+    )
+
+    expect(remoteSignal?.aborted).toBe(true)
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(requestId, 'interrupted', '请求已取消')
+    )
+    await harness.dispose()
+  })
+
+  it('keeps a managed SSH start ambiguity recoverable before its first event', async () => {
+    const remoteRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(): AsyncGenerator<never, void, void> {
+        await Promise.reject(
+          new Error('prompt start response was lost')
+        )
+        yield undefined as never
+      }
+    }
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => remoteRuntime)
+    }
+    const harness = createHarness(
+      remoteRuntime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      selectedRuntimes
+    )
+    const projectId = '00000000-0000-4000-8000-000000000760'
+    harness.assistantDatabase.getProject.mockReturnValue({
+      id: projectId,
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: '00000000-0000-4000-8000-000000000761',
+        remoteRootPath: '/srv/project'
+      }
+    })
+    const requestId = '00000000-0000-4000-8000-000000000762'
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'managed-ssh-start-ambiguity',
+      projectId,
+      runtimeSelection: { provider: 'opencode' },
+      prompt: 'start once',
+      workMode: 'execute',
+      knowledgeLibraryIds: [],
+      currentUserMessageId:
+        '00000000-0000-4000-8000-000000000763',
+      currentAssistantMessageId:
+        '00000000-0000-4000-8000-000000000764'
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(
+        requestId,
+        'interrupted',
+        'prompt start response was lost'
+      )
     )
     await harness.dispose()
   })

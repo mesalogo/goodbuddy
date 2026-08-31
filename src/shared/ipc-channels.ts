@@ -63,6 +63,8 @@ export const ipcChannels = {
     'settings:ssh-hosts:directories:browse',
   sshHostsCancelDirectoryBrowse:
     'settings:ssh-hosts:directories:cancel',
+  sshHostsAgentConnectionStatus:
+    'settings:ssh-hosts:agent-connection-status',
   channelSettingsGet: 'settings:channels:get',
   channelSettingsApply: 'settings:channels:apply',
   channelSettingsTest: 'settings:channels:test',
@@ -132,6 +134,10 @@ export const ipcChannels = {
   remoteProjectSave: 'projects:remote:save',
   remoteProjectCancelCurrent: 'projects:remote:cancel-current',
   remoteProjectSaveProgress: 'projects:remote:save-progress',
+  remoteProjectRecoveryGet: 'projects:remote:recovery:get',
+  remoteProjectRecoveryRetry: 'projects:remote:recovery:retry',
+  remoteProjectRecoveryProgress:
+    'projects:remote:recovery:progress',
   conversationsList: 'conversations:list',
   conversationsReplace: 'conversations:replace',
   conversationsSaveLocal: 'conversations:save-local',

@@ -238,4 +238,88 @@ describe('ControllerStateStore', () => {
       )?.acpBindings[0]?.cursors.lastOutboundJournaledSequence
     ).toBe('12')
   })
+
+  it('preserves advanced cursors when reopening the same recovery channel', async () => {
+    const file = new MemoryStateFile()
+    const store = new ControllerStateStore(file)
+    await store.updateConnection(connection)
+    await store.updateAcpBinding(connection.cacheKey, 'binding-1', {
+      ...connection.acpBindings[0]!,
+      cursors: {
+        lastOutboundJournaledSequence: '12',
+        lastOutboundDeliveredSequence: '11',
+        lastInboundJournaledSequence: '14',
+        lastMainAckSequence: '13'
+      }
+    })
+
+    await store.updateAcpBinding(connection.cacheKey, 'binding-1', {
+      ...connection.acpBindings[0]!,
+      cursors: {
+        lastOutboundJournaledSequence: '0',
+        lastOutboundDeliveredSequence: '0',
+        lastInboundJournaledSequence: '0',
+        lastMainAckSequence: '0'
+      }
+    })
+
+    await expect(
+      store.getConnection(connection.cacheKey)
+    ).resolves.toMatchObject({
+      acpBindings: [
+        {
+          bindingId: 'binding-1',
+          cursors: {
+            lastOutboundJournaledSequence: '12',
+            lastOutboundDeliveredSequence: '11',
+            lastInboundJournaledSequence: '14',
+            lastMainAckSequence: '13'
+          }
+        }
+      ]
+    })
+  })
+
+  it('starts zero cursors when reopening a binding on a new channel epoch', async () => {
+    const file = new MemoryStateFile()
+    const store = new ControllerStateStore(file)
+    await store.updateConnection(connection)
+    await store.updateAcpBinding(connection.cacheKey, 'binding-1', {
+      ...connection.acpBindings[0]!,
+      cursors: {
+        lastOutboundJournaledSequence: '12',
+        lastOutboundDeliveredSequence: '11',
+        lastInboundJournaledSequence: '14',
+        lastMainAckSequence: '13'
+      }
+    })
+
+    await store.updateAcpBinding(connection.cacheKey, 'binding-1', {
+      ...connection.acpBindings[0]!,
+      channelEpoch: '2',
+      cursors: {
+        lastOutboundJournaledSequence: '0',
+        lastOutboundDeliveredSequence: '0',
+        lastInboundJournaledSequence: '0',
+        lastMainAckSequence: '0'
+      }
+    })
+
+    await expect(
+      store.getConnection(connection.cacheKey)
+    ).resolves.toMatchObject({
+      acpBindings: [
+        {
+          bindingId: 'binding-1',
+          channelEpoch: '2',
+          cursors: {
+            lastOutboundJournaledSequence: '0',
+            lastOutboundDeliveredSequence: '0',
+            lastInboundJournaledSequence: '0',
+            lastMainAckSequence: '0'
+          }
+        }
+      ]
+    })
+  })
 })

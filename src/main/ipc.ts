@@ -185,6 +185,8 @@ import {
 import type {
   AgentExecutionRequest,
   AgentRuntime,
+  RemoteSemanticEventProvenance,
+  RemoteSemanticRuntimeEvent,
   RuntimeAuthorizer,
   RuntimeEvent,
   RuntimeGeneratedImageEvent,
@@ -201,6 +203,7 @@ import {
 } from './agent/runtime-selection'
 import { safeToolErrorDetail } from './agent/approval-summary'
 import { ReasoningTagStreamParser } from './agent/reasoning-stream'
+import { RemotePromptRecoveryUnavailableError } from './agent/acp-remote-runtime'
 import {
   bundledContinueVersion,
   bundledDeepSeekHarnessVersion,
@@ -224,6 +227,7 @@ import {
   sshDirectoryBrowseRequestSchema,
   sshDirectoryBrowseResultSchema,
   sshHostCandidateRequestSchema,
+  sshHostAgentConnectionStatusSchema,
   sshHostDraftInspectionRequestSchema,
   sshHostRequestSchema,
   remoteEnvironmentUpdateProgressSchema,
@@ -244,6 +248,12 @@ import {
   type RemoteProjectSaveProgress
 } from '../shared/remote-project-candidate-contracts'
 import {
+  remoteProjectRecoveryRetryRequestSchema,
+  remoteProjectRecoverySnapshotSchema,
+  remoteProjectRecoveryStateSchema,
+  type RemoteProjectRecoveryState
+} from '../shared/remote-project-recovery-contracts'
+import {
   type RemoteProjectSaveOwner,
   type RemoteProjectSaveService
 } from './remote-agent/remote-project-save-service'
@@ -254,6 +264,9 @@ import type {
 import type {
   AgentPackageManager
 } from './remote-agent/agent-package-manager'
+import type {
+  RemoteAgentConnectionManager
+} from './remote-agent/remote-agent-connection-manager'
 import type { ContextManager } from './context-manager'
 import type { KnowledgeService } from './knowledge/knowledge-service'
 import {
@@ -263,7 +276,10 @@ import {
 import type { RuntimeSettingsStore } from './runtime-settings-store'
 import type { ToolApprovalBroker } from './tool-approval-broker'
 import { showWindow } from './window'
-import type { AssistantDatabase } from './assistant/assistant-database'
+import type {
+  AssistantDatabase,
+  RecoverableRemoteTask
+} from './assistant/assistant-database'
 import { RemoteDelegationService } from './assistant/remote-delegation-service'
 import {
   getWorkspaceChanges,
@@ -472,6 +488,55 @@ function safeRuntimeError(error: unknown, fallback: string): string {
   return safeToolErrorDetail(error, 2_000) ?? fallback
 }
 
+function unsuccessfulToolMessage(
+  tools: Iterable<{
+    name: string
+    state:
+      | 'pending'
+      | 'running'
+      | 'completed'
+      | 'failed'
+      | 'recoverable'
+      | 'cancelled'
+      | 'interrupted'
+    error?: string
+  }>
+): string | undefined {
+  for (const tool of tools) {
+    if (
+      tool.state === 'completed' ||
+      tool.state === 'recoverable'
+    ) {
+      continue
+    }
+    return tool.state === 'failed'
+      ? `${tool.name} 工具执行失败${tool.error ? `：${tool.error}` : ''}`
+      : `${tool.name} 工具未完成，任务不能标记为成功`
+  }
+  return undefined
+}
+
+function remoteSemanticProvenance(
+  event: RuntimeEvent
+): RemoteSemanticEventProvenance | undefined {
+  return (
+    event as RuntimeEvent & {
+      remoteProvenance?: RemoteSemanticEventProvenance
+    }
+  ).remoteProvenance
+}
+
+function stripRemoteSemanticProvenance(
+  event: RemoteSemanticRuntimeEvent
+): RuntimeEvent {
+  const publicEvent = {
+    ...event,
+    remoteProvenance: undefined
+  }
+  delete publicEvent.remoteProvenance
+  return publicEvent
+}
+
 async function activateOrRollback<T>(input: {
   previous: T
   persistCandidate(): Promise<T>
@@ -528,6 +593,13 @@ async function* splitTaggedReasoning(
   const parser = new ReasoningTagStreamParser()
   for await (const event of events) {
     if (event.type === 'text') {
+      // Agent-owned transcript events already carry ACP's semantic text or
+      // reasoning classification. Keep the exact event/provenance pair
+      // intact so one durable SQLite row always corresponds to one Agent ACK.
+      if ('remoteProvenance' in event) {
+        yield event
+        continue
+      }
       for (const segment of parser.push(event.delta)) {
         yield {
           requestId: event.requestId,
@@ -1012,11 +1084,17 @@ export function registerIpcHandlers(
     connectionId: string
   ) => Promise<void>,
   remoteEnvironmentUpdateService?: RemoteEnvironmentUpdateService,
-  agentPackageManager?: AgentPackageManager
+  agentPackageManager?: AgentPackageManager,
+  remoteAgentConnectionManager?: Pick<
+    RemoteAgentConnectionManager,
+    'getHostConnectionState' | 'onHostConnectionStateChange'
+  >
 ): () => Promise<void> {
   type ActiveRequestLease = {
     controller: AbortController
     conversationId: string
+    detachOnApplicationExit: boolean
+    release(): void
   }
   const activeRequests = new Map<string, ActiveRequestLease>()
   const activeRequestConversations = new Map<
@@ -1027,18 +1105,23 @@ export function registerIpcHandlers(
     requestId: string,
     conversationId: string,
     controller: AbortController
-  ): (() => void) => {
-    const lease = { controller, conversationId }
-    activeRequests.set(requestId, lease)
-    activeRequestConversations.set(requestId, lease)
-    return (): void => {
-      if (activeRequests.get(requestId) === lease) {
-        activeRequests.delete(requestId)
-      }
-      if (activeRequestConversations.get(requestId) === lease) {
-        activeRequestConversations.delete(requestId)
+  ): ActiveRequestLease => {
+    const lease: ActiveRequestLease = {
+      controller,
+      conversationId,
+      detachOnApplicationExit: false,
+      release: (): void => {
+        if (activeRequests.get(requestId) === lease) {
+          activeRequests.delete(requestId)
+        }
+        if (activeRequestConversations.get(requestId) === lease) {
+          activeRequestConversations.delete(requestId)
+        }
       }
     }
+    activeRequests.set(requestId, lease)
+    activeRequestConversations.set(requestId, lease)
+    return lease
   }
   const activeEventBuffers = new Map<string, { flush(): void }>()
   const pendingAgentQuestions = new Map<
@@ -1066,6 +1149,7 @@ export function registerIpcHandlers(
     return result
   }
   const executionTracker = createPromiseTracker()
+  const detachedRemoteExecutionTracker = createPromiseTracker()
   const maintenanceTracker = createPromiseTracker()
   const trackExecution = executionTracker.track
   const spaceResolver: ExecutionSpaceResolver =
@@ -1149,6 +1233,7 @@ export function registerIpcHandlers(
       channel !== ipcChannels.remoteProjectSaveProgress &&
       channel !==
         ipcChannels.sshHostsRemoteEnvironmentUpdateProgress &&
+      channel !== ipcChannels.sshHostsAgentConnectionStatus &&
       channel !== ipcChannels.conversationsChanged &&
       channel !== ipcChannels.windowMaximizedChanged
   )
@@ -1156,6 +1241,17 @@ export function registerIpcHandlers(
   for (const channel of channels) {
     ipcMain.removeHandler(channel)
   }
+  const removeRemoteAgentConnectionStatusListener =
+    remoteAgentConnectionManager?.onHostConnectionStateChange(
+      (statusInput) => {
+        if (!window.isDestroyed()) {
+          window.webContents.send(
+            ipcChannels.sshHostsAgentConnectionStatus,
+            sshHostAgentConnectionStatusSchema.parse(statusInput)
+          )
+        }
+      }
+    )
 
   const requestRendererPersistence = async (): Promise<void> => {
     if (
@@ -1206,11 +1302,20 @@ export function registerIpcHandlers(
       window.webContents.send(ipcChannels.browserState, state)
     }
   })
-  const abortActiveRequests = (reason: string): void => {
-    for (const lease of activeRequests.values()) {
+  const abortActiveRequests = (
+    reason: string,
+    preserveApplicationExitDetached = false
+  ): void => {
+    for (const [requestId, lease] of activeRequests) {
+      if (
+        preserveApplicationExitDetached &&
+        lease.detachOnApplicationExit
+      ) {
+        continue
+      }
       lease.controller.abort(new Error(reason))
+      activeRequests.delete(requestId)
     }
-    activeRequests.clear()
   }
 
   const flushGoodBuddyConfigReload = (): Promise<void> => {
@@ -1313,6 +1418,49 @@ export function registerIpcHandlers(
       cacheRead: event.cacheReadTokens,
       cacheWrite: event.cacheWriteTokens
     })
+  }
+  const runtimeUsageContextMetrics = (
+    event: RuntimeModelUsageEvent,
+    runtimeSettings: Awaited<
+      ReturnType<RuntimeSettingsStore['getResolvedSettings']>
+    >,
+    runtimeSelection?: AgentRuntimeSelection
+  ): AgentEvent | undefined => {
+    if (event.runtime === 'model') {
+      return undefined
+    }
+    const selectedSettings = runtimeSelection
+      ? applyRuntimeSelection(runtimeSettings, runtimeSelection).settings
+      : runtimeSettings
+    const profile =
+      event.runtime === 'opencode'
+        ? selectedSettings.opencodeModelProfile
+        : event.runtime === 'continue'
+          ? selectedSettings.continueModelProfile
+          : selectedSettings.deepseekHarnessModelProfile
+    const contextWindowTokens = profile?.contextWindowTokens
+    const providerUsesSeparateCacheTokens = /anthropic/iu.test(
+      event.provider
+    )
+    return {
+      requestId: event.requestId,
+      type: 'context-metrics',
+      contextTokens: Math.min(
+        50_000_000,
+        event.inputTokens +
+          (providerUsesSeparateCacheTokens
+            ? event.cacheReadTokens + event.cacheWriteTokens
+            : 0)
+      ),
+      effectiveTriggerTokens:
+        contextWindowTokens ??
+        selectedSettings.contextCompression?.triggerTokens ??
+        defaultRuntimeSettings.contextCompression.triggerTokens,
+      ...(contextWindowTokens ? { contextWindowTokens } : {}),
+      compressionEnabled: false,
+      source: 'provider',
+      basis: 'model-call'
+    }
   }
 
   const publishSubagentEvent = (
@@ -1447,6 +1595,293 @@ export function registerIpcHandlers(
   const publishConversationChange = (): void => {
     if (!window.isDestroyed()) {
       window.webContents.send(ipcChannels.conversationsChanged)
+    }
+  }
+  const remoteProjectRecoveries = new Map<
+    string,
+    RemoteProjectRecoveryState
+  >()
+  const activeRemoteProjectRecoveries = new Map<
+    string,
+    Promise<void>
+  >()
+  const listRecoverableRemoteTasks = (): RecoverableRemoteTask[] =>
+    assistantDatabase.listRecoverableRemoteTasks()
+  const publishRemoteProjectRecovery = (
+    stateInput: RemoteProjectRecoveryState
+  ): RemoteProjectRecoveryState => {
+    const state = remoteProjectRecoveryStateSchema.parse(stateInput)
+    remoteProjectRecoveries.set(state.projectId, state)
+    if (!window.isDestroyed()) {
+      window.webContents.send(
+        ipcChannels.remoteProjectRecoveryProgress,
+        state
+      )
+    }
+    return state
+  }
+  const recoverRemoteTask = async (
+    task: RecoverableRemoteTask,
+    recoveryRequestId: string
+  ): Promise<void> => {
+    const highestCommitted =
+      assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask(
+        task.taskId
+      )
+    const conversation = assistantDatabase.getConversation(
+      task.conversationId
+    )
+    const recoveredAssistantMessage = conversation.messages.find(
+      (message) => message.id === task.currentAssistantMessageId
+    )
+    const recoveredTools =
+      recoveredAssistantMessage?.tools?.filter(
+        (tool): tool is typeof tool & { callId: string } =>
+          Boolean(tool.callId)
+      ) ?? []
+    const recoveredSubagents =
+      recoveredAssistantMessage?.subagents?.filter(
+        (subagent) =>
+          subagent.routingMode === 'native' &&
+          subagent.runtimeCallId
+      ) ?? []
+    const toolStates = new Map(
+      recoveredTools.map((tool) => [tool.callId, tool])
+    )
+    const project = assistantDatabase.getProject(task.projectId)
+    const runtimeSelection =
+      conversation.runtimeSelection ??
+      project.runtimeSelection ??
+      ({ provider: 'auto' } as const)
+    const controller = new AbortController()
+    const lease = leaseActiveRequest(
+      task.taskId,
+      task.conversationId,
+      controller
+    )
+    lease.detachOnApplicationExit = true
+    let sawTerminal = false
+    try {
+      publishRemoteProjectRecovery({
+        projectId: task.projectId,
+        requestId: recoveryRequestId,
+        stage: 'agent'
+      })
+      const recoveredRuntime = await resolveRequestRuntime({
+        projectId: task.projectId,
+        runtimeSelection,
+        workMode: task.workMode
+      })
+      if (!isAgentRuntime(recoveredRuntime)) {
+        throw new RemotePromptRecoveryUnavailableError(
+          '原远程任务的 Agent Runtime 不再可用'
+        )
+      }
+      publishRemoteProjectRecovery({
+        projectId: task.projectId,
+        requestId: recoveryRequestId,
+        stage: 'runtime'
+      })
+      const recoveryRequest: AgentExecutionRequest = {
+        requestId: task.taskId,
+        conversationId: task.conversationId,
+        projectId: task.projectId,
+        runtimeSelection,
+        workMode: task.workMode,
+        prompt: task.instructions,
+        knowledgeLibraryIds: [],
+        knowledgeRetrievalMode: 'auto',
+        currentUserMessageId: task.currentUserMessageId,
+        currentAssistantMessageId: task.currentAssistantMessageId,
+        remoteSemanticAfterSequence: highestCommitted,
+        remoteRecoveryOnly: true,
+        remoteRecoveredTools: recoveredTools,
+        remoteRecoveredSubagents: recoveredSubagents
+      }
+      let recoveryMetricSettings:
+        | Promise<
+            Awaited<
+              ReturnType<RuntimeSettingsStore['getResolvedSettings']>
+            >
+          >
+        | undefined
+      for await (const rawEvent of recoveredRuntime.run(
+        recoveryRequest,
+        controller.signal
+      )) {
+        const provenance = remoteSemanticProvenance(rawEvent)
+        if (provenance === undefined) {
+          if (rawEvent.type !== 'status') {
+            throw new Error('远程恢复收到缺少语义来源的事件')
+          }
+          continue
+        }
+        let event:
+          | AgentEvent
+          | {
+              requestId: string
+              type: 'remote-semantic-checkpoint'
+            }
+        if (rawEvent.type === 'remote-semantic-checkpoint') {
+          event = {
+            requestId: rawEvent.requestId,
+            type: rawEvent.type
+          }
+        } else if (rawEvent.type === 'model-usage') {
+          const usageEvent = stripRemoteSemanticProvenance(
+            rawEvent as RemoteSemanticRuntimeEvent
+          ) as RuntimeModelUsageEvent
+          persistModelUsage(usageEvent)
+          recoveryMetricSettings ??=
+            settingsStore.getResolvedSettings()
+          event =
+            runtimeUsageContextMetrics(
+              usageEvent,
+              await recoveryMetricSettings,
+              runtimeSelection
+            ) ?? {
+              requestId: rawEvent.requestId,
+              type: 'remote-semantic-checkpoint'
+            }
+        } else if (rawEvent.type === 'generated-image') {
+          throw new Error(
+            '远程恢复不支持重新持久化已生成图片'
+          )
+        } else {
+          event = stripRemoteSemanticProvenance(
+            rawEvent as RemoteSemanticRuntimeEvent
+          ) as AgentEvent
+        }
+        if (event.type === 'tool') {
+          toolStates.set(event.callId, event)
+        }
+        if (
+          event.type === 'subagent' &&
+          event.routingMode === 'native' &&
+          event.runtimeCallId
+        ) {
+          toolStates.delete(event.runtimeCallId)
+        }
+        if (event.type === 'done') {
+          const message = unsuccessfulToolMessage(toolStates.values())
+          if (message !== undefined) {
+            event = {
+              requestId: task.taskId,
+              type: 'error',
+              status: 'failed',
+              message
+            }
+          }
+        }
+        assistantDatabase.appendRemoteConversationTaskEventOnce({
+          taskId: task.taskId,
+          conversationId: task.conversationId,
+          assistantMessageId: task.currentAssistantMessageId,
+          bindingId: provenance.bindingId,
+          operationId: provenance.operationId,
+          semanticSequence: provenance.semanticSequence,
+          eventIndex: provenance.eventIndex,
+          event
+        })
+        if (event.type === 'remote-semantic-checkpoint') {
+          publishRemoteProjectRecovery({
+            projectId: task.projectId,
+            requestId: recoveryRequestId,
+            stage: 'cursor',
+            current: provenance.semanticSequence
+          })
+          publishConversationChange()
+        }
+        if (event.type === 'done' || event.type === 'error') {
+          sawTerminal = true
+        }
+      }
+      if (!sawTerminal) {
+        throw new Error('远端 Agent 恢复流未提供任务终态')
+      }
+    } catch (error) {
+      if (sawTerminal) {
+        return
+      }
+      if (error instanceof RemotePromptRecoveryUnavailableError) {
+        assistantDatabase.failRecoverableRemoteTask(
+          task.taskId,
+          error.message
+        )
+        publishConversationChange()
+        return
+      }
+      throw error
+    } finally {
+      lease.release()
+    }
+  }
+  const startRemoteProjectRecovery = (
+    projectId: string,
+    knownTasks?: readonly RecoverableRemoteTask[]
+  ): RemoteProjectRecoveryState => {
+    const active = activeRemoteProjectRecoveries.get(projectId)
+    if (active) {
+      return remoteProjectRecoveries.get(projectId) ??
+        publishRemoteProjectRecovery({
+          projectId,
+          requestId: randomUUID(),
+          stage: 'network'
+        })
+    }
+    const requestId = randomUUID()
+    const initial = publishRemoteProjectRecovery({
+      projectId,
+      requestId,
+      stage: 'network'
+    })
+    const operation = (async () => {
+      // Let the operation enter the map before an empty recovery completes.
+      await Promise.resolve()
+      try {
+        const tasks = (knownTasks ?? listRecoverableRemoteTasks())
+          .filter(
+            (task) =>
+              task.projectId === projectId &&
+              !activeRequests.has(task.taskId)
+          )
+        for (const task of tasks) {
+          await recoverRemoteTask(task, requestId)
+        }
+        publishRemoteProjectRecovery({
+          projectId,
+          requestId,
+          stage: 'completed'
+        })
+      } catch (error) {
+        publishRemoteProjectRecovery({
+          projectId,
+          requestId,
+          stage: 'failed',
+          message: safeRuntimeError(
+            error,
+            '远程项目恢复失败'
+          ).slice(0, 1_000),
+          retryable: true
+        })
+      } finally {
+        activeRemoteProjectRecoveries.delete(projectId)
+      }
+    })()
+    activeRemoteProjectRecoveries.set(projectId, operation)
+    void detachedRemoteExecutionTracker.track(operation)
+    return initial
+  }
+  const startPendingRemoteProjectRecoveries = (): void => {
+    const tasks = listRecoverableRemoteTasks()
+    const tasksByProject = new Map<string, RecoverableRemoteTask[]>()
+    for (const task of tasks) {
+      const projectTasks = tasksByProject.get(task.projectId) ?? []
+      projectTasks.push(task)
+      tasksByProject.set(task.projectId, projectTasks)
+    }
+    for (const [projectId, projectTasks] of tasksByProject) {
+      startRemoteProjectRecovery(projectId, projectTasks)
     }
   }
   const publishConversationQueueChange = (
@@ -1742,7 +2177,7 @@ export function registerIpcHandlers(
         ? input.schedule.conversationId
         : undefined) ??
       `${origin}:${schedule.id}`
-    const releaseActiveRequest = leaseActiveRequest(
+    const activeRequestLease = leaseActiveRequest(
       requestId,
       runtimeConversationId,
       controller
@@ -1915,6 +2350,25 @@ export function registerIpcHandlers(
         controller.signal,
         agentRuntimeSelected ? undefined : authorize
       )) {
+        const provenance = remoteSemanticProvenance(agentEvent)
+        if (provenance !== undefined) {
+          activeRequestLease.detachOnApplicationExit = true
+        }
+        if (agentEvent.type === 'remote-semantic-checkpoint') {
+          assistantDatabase.appendRemoteTaskEventOnce({
+            taskId,
+            bindingId: provenance!.bindingId,
+            operationId: provenance!.operationId,
+            semanticSequence: provenance!.semanticSequence,
+            eventIndex: provenance!.eventIndex,
+            kind: agentEvent.type,
+            payload: {
+              requestId: agentEvent.requestId,
+              type: agentEvent.type
+            }
+          })
+          continue
+        }
         if (agentEvent.type === 'model-usage') {
           persistModelUsage({
             ...agentEvent,
@@ -1924,16 +2378,34 @@ export function registerIpcHandlers(
                 ? `${requestId}:${agentEvent.callId}`
                 : agentEvent.callId
           })
+          if (provenance !== undefined) {
+            assistantDatabase.appendRemoteTaskEventOnce({
+              taskId,
+              bindingId: provenance.bindingId,
+              operationId: provenance.operationId,
+              semanticSequence: provenance.semanticSequence,
+              eventIndex: provenance.eventIndex,
+              kind: 'remote-semantic-checkpoint',
+              payload: {
+                requestId: agentEvent.requestId,
+                type: 'remote-semantic-checkpoint'
+              }
+            })
+          }
           continue
         }
-        const taskEvent =
+        const taskEvent: AgentEvent =
           agentEvent.type === 'generated-image'
             ? persistGeneratedImage(agentEvent, {
                 projectId: schedule.projectId,
-              taskId,
+                taskId,
                 title: schedule.title
               })
-            : agentEvent
+            : provenance === undefined
+              ? agentEvent
+              : (stripRemoteSemanticProvenance(
+                  agentEvent as RemoteSemanticRuntimeEvent
+                ) as AgentEvent)
         if (
           agentEvent.type === 'generated-image' &&
           remoteContext &&
@@ -2000,7 +2472,19 @@ export function registerIpcHandlers(
           controller.abort(error)
           throw error
         }
-        eventBuffer.push(taskEvent)
+        if (provenance === undefined) {
+          eventBuffer.push(taskEvent)
+        } else {
+          assistantDatabase.appendRemoteTaskEventOnce({
+            taskId,
+            bindingId: provenance.bindingId,
+            operationId: provenance.operationId,
+            semanticSequence: provenance.semanticSequence,
+            eventIndex: provenance.eventIndex,
+            kind: taskEvent.type,
+            payload: taskEvent
+          })
+        }
         if (taskEvent.type === 'tool' && remoteContext) {
           publishRemoteActivity({
             requestId,
@@ -2029,10 +2513,11 @@ export function registerIpcHandlers(
         ) {
           throw new Error('只读任务不允许调用工具')
         } else if (taskEvent.type === 'error') {
-          throw new Error(taskEvent.message)
+          if (provenance === undefined) {
+            throw new Error(taskEvent.message)
+          }
         } else if (taskEvent.type === 'done') {
           completed = true
-          break
         }
       }
       if (!completed) {
@@ -2161,7 +2646,7 @@ export function registerIpcHandlers(
       )
       knowledgeGateway?.revoke(knowledgeCapabilityToken)
       goodbuddyConfigService?.revokeRequest(requestId)
-      releaseActiveRequest()
+      activeRequestLease.release()
       await flushGoodBuddyConfigReload().catch(() => undefined)
     }
   }
@@ -3070,6 +3555,21 @@ export function registerIpcHandlers(
     const request: AgentExecutionRequest = knowledgeCapabilityToken
       ? { ...baseRequest, knowledgeCapabilityToken }
       : baseRequest
+    const managedSshExecution =
+      agentRuntimeSelected &&
+      configExecutionSpace?.kind === 'ssh'
+    const remoteConversationRecovery =
+      managedSshExecution &&
+      request.projectId &&
+      request.currentUserMessageId &&
+      request.currentAssistantMessageId
+        ? {
+            recoverable: true as const,
+            currentUserMessageId: request.currentUserMessageId,
+            currentAssistantMessageId:
+              request.currentAssistantMessageId
+          }
+        : undefined
     try {
       assistantDatabase.createTask({
         id: request.requestId,
@@ -3078,13 +3578,16 @@ export function registerIpcHandlers(
         title: parsedRequest.prompt.slice(0, 120),
         instructions: parsedRequest.prompt,
         workMode: request.workMode ?? 'ask',
-        visible: false
+        visible: false,
+        ...(remoteConversationRecovery
+          ? { remoteRecovery: remoteConversationRecovery }
+          : {})
       })
     } catch (error) {
       knowledgeGateway?.revoke(knowledgeCapabilityToken)
       throw error
     }
-    const releaseActiveRequest = leaseActiveRequest(
+    const activeRequestLease = leaseActiveRequest(
       request.requestId,
       request.conversationId,
       controller
@@ -3109,7 +3612,7 @@ export function registerIpcHandlers(
         )
         publishConversationQueueChange(request.conversationId)
       } catch (error) {
-        releaseActiveRequest()
+        activeRequestLease.release()
         assistantDatabase.updateTaskStatus(
           request.requestId,
           'cancelled',
@@ -3120,11 +3623,18 @@ export function registerIpcHandlers(
       }
     }
 
+    let markManagedSshAccepted = (): void => undefined
+    const managedSshAccepted = new Promise<void>((resolve) => {
+      markManagedSshAccepted = resolve
+    })
     const execution = (async () => {
       let completed = false
       let runtimeErrorEvent:
         | Extract<AgentEvent, { type: 'error' }>
         | undefined
+      let runtimeErrorPersistedRemotely = false
+      let managedSshOperationAccepted = false
+      let remoteRecoveryPending = false
       let executionRequest = request
       let preflightReferences: KnowledgeSearchReference[] = []
       let referencesPublished = false
@@ -3151,21 +3661,25 @@ export function registerIpcHandlers(
         }
       })
       let publicStreamType: 'text' | 'reasoning' | undefined
+      const pushPublicEvent = (event: AgentEvent): void => {
+        const streamType =
+          event.type === 'text' || event.type === 'reasoning'
+            ? event.type
+            : undefined
+        const startsStreamSegment =
+          streamType !== undefined && streamType !== publicStreamType
+        publicStreamType = streamType
+        publicEventBuffer.push(event)
+        if (startsStreamSegment) {
+          publicEventBuffer.flush()
+        }
+      }
       const eventBuffer = {
         push: (event: AgentEvent): void => {
-          const streamType =
-            event.type === 'text' || event.type === 'reasoning'
-              ? event.type
-              : undefined
-          const startsStreamSegment =
-            streamType !== undefined && streamType !== publicStreamType
-          publicStreamType = streamType
-          publicEventBuffer.push(event)
-          if (startsStreamSegment) {
-            publicEventBuffer.flush()
-          }
+          pushPublicEvent(event)
           persistedEventBuffer.push(event)
         },
+        pushPublic: pushPublicEvent,
         flush: (): void => {
           publicStreamType = undefined
           publicEventBuffer.flush()
@@ -3175,6 +3689,59 @@ export function registerIpcHandlers(
           publicEventBuffer.close()
           persistedEventBuffer.close()
         }
+      }
+      const persistRemotePublicEvent = (
+        provenance: RemoteSemanticEventProvenance,
+        publicEvent: AgentEvent
+      ): boolean =>
+        remoteConversationRecovery
+          ? assistantDatabase.appendRemoteConversationTaskEventOnce({
+              taskId: request.requestId,
+              conversationId: request.conversationId,
+              assistantMessageId:
+                remoteConversationRecovery.currentAssistantMessageId,
+              bindingId: provenance.bindingId,
+              operationId: provenance.operationId,
+              semanticSequence: provenance.semanticSequence,
+              eventIndex: provenance.eventIndex,
+              event: publicEvent
+            })
+          : assistantDatabase.appendRemoteTaskEventOnce({
+              taskId: request.requestId,
+              bindingId: provenance.bindingId,
+              operationId: provenance.operationId,
+              semanticSequence: provenance.semanticSequence,
+              eventIndex: provenance.eventIndex,
+              kind: publicEvent.type,
+              payload: publicEvent
+            })
+      const persistRemoteCheckpoint = (
+        provenance: RemoteSemanticEventProvenance,
+        requestId: string,
+        type: 'remote-semantic-checkpoint'
+      ): boolean => {
+        const checkpoint = { requestId, type } as const
+        return remoteConversationRecovery
+          ? assistantDatabase.appendRemoteConversationTaskEventOnce({
+              taskId: request.requestId,
+              conversationId: request.conversationId,
+              assistantMessageId:
+                remoteConversationRecovery.currentAssistantMessageId,
+              bindingId: provenance.bindingId,
+              operationId: provenance.operationId,
+              semanticSequence: provenance.semanticSequence,
+              eventIndex: provenance.eventIndex,
+              event: checkpoint
+            })
+          : assistantDatabase.appendRemoteTaskEventOnce({
+              taskId: request.requestId,
+              bindingId: provenance.bindingId,
+              operationId: provenance.operationId,
+              semanticSequence: provenance.semanticSequence,
+              eventIndex: provenance.eventIndex,
+              kind: type,
+              payload: checkpoint
+            })
       }
       activeEventBuffers.set(request.requestId, eventBuffer)
       const toolStates = new Map<
@@ -3377,8 +3944,17 @@ export function registerIpcHandlers(
             )
           }
         }
-        const ordinaryStream = (): AsyncGenerator<RuntimeEvent, void, void> =>
-          selectedRuntime.run(
+        const ordinaryStream = (): AsyncGenerator<
+          RuntimeEvent,
+          void,
+          void
+        > => {
+          if (managedSshExecution) {
+            activeRequestLease.detachOnApplicationExit = true
+            managedSshOperationAccepted = true
+            markManagedSshAccepted()
+          }
+          return selectedRuntime.run(
             modeInstruction
               ? {
                   ...executionRequest,
@@ -3388,6 +3964,7 @@ export function registerIpcHandlers(
             controller.signal,
             agentRuntimeSelected ? undefined : authorize
           )
+        }
         const runSmartRoute = async function* (): AsyncGenerator<
           RuntimeEvent,
           void,
@@ -3433,55 +4010,52 @@ export function registerIpcHandlers(
               )
             : runSmartRoute()
         for await (const agentEvent of splitTaggedReasoning(eventStream)) {
+          const provenance = remoteSemanticProvenance(agentEvent)
+          if (agentEvent.type === 'remote-semantic-checkpoint') {
+            persistRemoteCheckpoint(
+              agentEvent.remoteProvenance,
+              agentEvent.requestId,
+              agentEvent.type
+            )
+            continue
+          }
           if (agentEvent.type === 'model-usage') {
-            persistModelUsage(agentEvent)
+            const usageEvent =
+              provenance === undefined
+                ? agentEvent
+                : stripRemoteSemanticProvenance(
+                    agentEvent as RemoteSemanticRuntimeEvent
+                  )
+            persistModelUsage(usageEvent as RuntimeModelUsageEvent)
             if (agentEvent.runtime !== 'model') {
               runtimeMetricSettings ??=
                 settingsStore.getResolvedSettings()
               const runtimeSettings = await runtimeMetricSettings
-              const selectedSettings = request.runtimeSelection
-                ? applyRuntimeSelection(
-                    runtimeSettings,
-                    request.runtimeSelection
-                  ).settings
-                : runtimeSettings
-              const profile =
-                agentEvent.runtime === 'opencode'
-                  ? selectedSettings.opencodeModelProfile
-                  : agentEvent.runtime === 'continue'
-                    ? selectedSettings.continueModelProfile
-                    : selectedSettings.deepseekHarnessModelProfile
-              const contextWindowTokens =
-                profile?.contextWindowTokens
-              const providerUsesSeparateCacheTokens =
-                /anthropic/iu.test(agentEvent.provider)
-              const contextTokens = Math.min(
-                50_000_000,
-                agentEvent.inputTokens +
-                  (providerUsesSeparateCacheTokens
-                    ? agentEvent.cacheReadTokens +
-                      agentEvent.cacheWriteTokens
-                    : 0)
+              const contextMetricsEvent = runtimeUsageContextMetrics(
+                usageEvent as RuntimeModelUsageEvent,
+                runtimeSettings,
+                request.runtimeSelection
+              )!
+              if (provenance === undefined) {
+                eventBuffer.push(contextMetricsEvent)
+              } else if (
+                persistRemotePublicEvent(
+                  provenance,
+                  contextMetricsEvent
+                )
+              ) {
+                eventBuffer.pushPublic(contextMetricsEvent)
+              }
+            } else if (provenance !== undefined) {
+              persistRemoteCheckpoint(
+                provenance,
+                request.requestId,
+                'remote-semantic-checkpoint'
               )
-              eventBuffer.push({
-                requestId: request.requestId,
-                type: 'context-metrics',
-                contextTokens,
-                effectiveTriggerTokens:
-                  contextWindowTokens ??
-                  selectedSettings.contextCompression?.triggerTokens ??
-                  defaultRuntimeSettings.contextCompression.triggerTokens,
-                ...(contextWindowTokens
-                  ? { contextWindowTokens }
-                  : {}),
-                compressionEnabled: false,
-                source: 'provider',
-                basis: 'model-call'
-              })
             }
             continue
           }
-          const publicEvent: AgentEvent =
+          let publicEvent: AgentEvent =
             agentEvent.type === 'generated-image'
               ? persistGeneratedImage(agentEvent, {
                   projectId: request.projectId,
@@ -3490,7 +4064,11 @@ export function registerIpcHandlers(
                     .split(/\r?\n/u, 1)[0]!
                     .slice(0, 120)
                 })
-              : agentEvent
+              : provenance === undefined
+                ? agentEvent
+                : (stripRemoteSemanticProvenance(
+                    agentEvent as RemoteSemanticRuntimeEvent
+                  ) as AgentEvent)
           if (publicEvent.type === 'tool') {
             toolStates.set(publicEvent.callId, publicEvent)
           }
@@ -3509,50 +4087,74 @@ export function registerIpcHandlers(
           }
           if (publicEvent.type === 'error') {
             runtimeErrorEvent = publicEvent
-            throw new Error(publicEvent.message)
+            if (provenance === undefined) {
+              throw new Error(publicEvent.message)
+            }
           }
           if (publicEvent.type === 'done') {
-            const unsuccessfulTool = [...toolStates.values()].find(
-              (tool) =>
-                tool.state !== 'completed' &&
-                tool.state !== 'recoverable'
+            const message = unsuccessfulToolMessage(
+              toolStates.values()
             )
-            if (unsuccessfulTool) {
-              throw new Error(
-                unsuccessfulTool.state === 'failed'
-                  ? `${unsuccessfulTool.name} 工具执行失败${unsuccessfulTool.error ? `：${unsuccessfulTool.error}` : ''}`
-                  : `${unsuccessfulTool.name} 工具未完成，任务不能标记为成功`
-              )
+            if (message !== undefined) {
+              if (provenance === undefined) {
+                throw new Error(message)
+              }
+              publicEvent = {
+                requestId: request.requestId,
+                type: 'error',
+                status: 'failed',
+                message
+              }
+              runtimeErrorEvent = publicEvent
             }
             publishReferences()
             eventBuffer.flush()
-            assistantDatabase.appendTaskEvent(
-              request.requestId,
-              publicEvent.type,
-              publicEvent
-            )
-          } else {
-            eventBuffer.push(publicEvent)
+          }
+          if (provenance === undefined) {
+            if (publicEvent.type === 'done') {
+              assistantDatabase.appendTaskEvent(
+                request.requestId,
+                publicEvent.type,
+                publicEvent
+              )
+            } else {
+              eventBuffer.push(publicEvent)
+            }
+          } else if (
+            persistRemotePublicEvent(provenance, publicEvent)
+          ) {
+            eventBuffer.pushPublic(publicEvent)
+          }
+          if (
+            provenance !== undefined &&
+            publicEvent.type === 'error'
+          ) {
+            runtimeErrorPersistedRemotely = true
           }
           if (publicEvent.type === 'done') {
             completed = true
-            assistantDatabase.updateTaskStatus(
-              request.requestId,
-              'completed'
-            )
+            if (
+              provenance === undefined ||
+              remoteConversationRecovery === undefined
+            ) {
+              assistantDatabase.updateTaskStatus(
+                request.requestId,
+                'completed'
+              )
+            }
             showDesktopNotificationWhenUnfocused(window, {
               title: 'GoodBuddy 任务已完成',
               body: '回复已生成，可返回会话查看。'
             })
-            if (!window.isDestroyed()) {
+            if (
+              provenance === undefined &&
+              !window.isDestroyed()
+            ) {
               window.webContents.send(
                 ipcChannels.agentEvent,
                 publicEvent
               )
             }
-          }
-          if (completed) {
-            break
           }
         }
         if (!completed) {
@@ -3575,23 +4177,41 @@ export function registerIpcHandlers(
                   : 'failed',
                 message: errorMessage
               }
+        const terminalStatus =
+          controller.signal.aborted ||
+          agentEvent.status === 'cancelled'
+            ? 'cancelled'
+            : 'failed'
+        const shouldRecoverAcceptedRemoteOperation =
+          remoteConversationRecovery !== undefined &&
+          managedSshOperationAccepted &&
+          !runtimeErrorPersistedRemotely
+        remoteRecoveryPending =
+          shouldRecoverAcceptedRemoteOperation
         assistantDatabase.updateTaskStatus(
           request.requestId,
-          controller.signal.aborted ? 'cancelled' : 'failed',
+          shouldRecoverAcceptedRemoteOperation
+            ? 'interrupted'
+            : terminalStatus,
           errorMessage
         )
-        assistantDatabase.appendTaskEvent(
-          request.requestId,
-          agentEvent.type,
-          agentEvent
-        )
+        if (!runtimeErrorPersistedRemotely) {
+          assistantDatabase.appendTaskEvent(
+            request.requestId,
+            agentEvent.type,
+            agentEvent
+          )
+        }
         showDesktopNotificationWhenUnfocused(window, {
           title: controller.signal.aborted
             ? 'GoodBuddy 任务已取消'
             : 'GoodBuddy 任务失败',
           body: '打开任务工作栏查看详情。'
         })
-        if (!window.isDestroyed()) {
+        if (
+          !runtimeErrorPersistedRemotely &&
+          !window.isDestroyed()
+        ) {
           window.webContents.send(ipcChannels.agentEvent, agentEvent)
         }
       } finally {
@@ -3603,7 +4223,10 @@ export function registerIpcHandlers(
           }
         }
         knowledgeGateway?.revoke(request.knowledgeCapabilityToken)
-        releaseActiveRequest()
+        activeRequestLease.release()
+        if (remoteRecoveryPending && request.projectId) {
+          startRemoteProjectRecovery(request.projectId)
+        }
         const configReload =
           goodbuddyConfigService?.takePendingReload(request.requestId) ??
           'none'
@@ -3617,7 +4240,14 @@ export function registerIpcHandlers(
         }
       }
     })()
-    void trackExecution(execution)
+    if (managedSshExecution) {
+      void detachedRemoteExecutionTracker.track(execution)
+      void trackExecution(
+        Promise.race([execution, managedSshAccepted])
+      )
+    } else {
+      void trackExecution(execution)
+    }
     } finally {
       preparingRequestConversations.delete(parsedInput.requestId)
     }
@@ -3731,7 +4361,7 @@ export function registerIpcHandlers(
           ),
         5 * 60_000
       )
-      const releaseActiveRequest = leaseActiveRequest(
+      const activeRequestLease = leaseActiveRequest(
         request.requestId,
         request.conversationId,
         controller
@@ -3819,7 +4449,7 @@ export function registerIpcHandlers(
         throw error
       } finally {
         clearTimeout(timeout)
-        releaseActiveRequest()
+        activeRequestLease.release()
         readyConversationQueues.add(request.conversationId)
         void pumpConversationQueue(request.conversationId)
       }
@@ -4123,6 +4753,9 @@ export function registerIpcHandlers(
     if (!sshHostService) {
       throw new Error('SSH 主机设置服务不可用')
     }
+    if (!remoteAgentConnectionManager) {
+      throw new Error('远端 Agent 连接状态服务不可用')
+    }
     const snapshot = await sshHostService.getSnapshot()
     const projectReferences: Record<
       string,
@@ -4139,7 +4772,15 @@ export function registerIpcHandlers(
     }
     return {
       ...snapshot,
-      projectReferences
+      projectReferences,
+      agentConnectionStatusByHostId: Object.fromEntries(
+        snapshot.hosts.map((host) => [
+          host.id,
+          remoteAgentConnectionManager.getHostConnectionState(
+            host.id
+          )
+        ])
+      )
     }
   })
 
@@ -5186,6 +5827,31 @@ export function registerIpcHandlers(
         return false
       }
       return speechTranscriptionService.cancel(requestIdSchema.parse(input))
+    }
+  )
+
+  registerHandler(
+    ipcChannels.remoteProjectRecoveryGet,
+    (event) => {
+      assertTrustedSender(event, window)
+      startPendingRemoteProjectRecoveries()
+      return remoteProjectRecoverySnapshotSchema.parse({
+        recoveries: [...remoteProjectRecoveries.values()]
+      })
+    }
+  )
+
+  registerHandler(
+    ipcChannels.remoteProjectRecoveryRetry,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request =
+        remoteProjectRecoveryRetryRequestSchema.parse(input)
+      const project = assistantDatabase.getProject(request.projectId)
+      if (project.executionSpace.kind !== 'ssh') {
+        throw new Error('只有 SSH 项目可以重试远程恢复')
+      }
+      return startRemoteProjectRecovery(request.projectId)
     }
   )
 
@@ -7068,6 +7734,7 @@ export function registerIpcHandlers(
   return async () => {
     shuttingDown = true
     removeBrowserStateListener?.()
+    removeRemoteAgentConnectionStatusListener?.()
     clearInterval(scheduleInterval)
     for (const timeout of queueDispatchTimers.values()) {
       clearTimeout(timeout)
@@ -7075,7 +7742,7 @@ export function registerIpcHandlers(
     queueDispatchTimers.clear()
     window.removeListener('maximize', notifyMaximizedChanged)
     window.removeListener('unmaximize', notifyMaximizedChanged)
-    abortActiveRequests('应用正在退出')
+    abortActiveRequests('应用正在退出', true)
     for (const controller of heartbeatControllers) {
       controller.abort(new Error('应用正在退出'))
     }
@@ -7102,8 +7769,8 @@ export function registerIpcHandlers(
     approvalBroker.clear()
     goodbuddyConfigService?.clear()
     pendingGoodBuddyConfigReload = false
-    await waitForRendererQuiescence()
     await requestRendererPersistence()
+    await waitForRendererQuiescence()
     for (const channel of channels) {
       ipcMain.removeHandler(channel)
     }

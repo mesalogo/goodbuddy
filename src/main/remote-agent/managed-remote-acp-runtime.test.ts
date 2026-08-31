@@ -10,6 +10,8 @@ const remoteHarness = vi.hoisted(() => ({
       channelFactory: (bindingId: string) => Promise<unknown>
     }
     dispose: ReturnType<typeof vi.fn>
+    beginDrain: ReturnType<typeof vi.fn>
+    forceShutdown: ReturnType<typeof vi.fn>
     runCalls: number
   }>,
   runGate: undefined as Promise<void> | undefined
@@ -23,6 +25,8 @@ vi.mock('../agent/acp-remote-runtime', () => ({
     readonly runtimeId = 'opencode'
     readonly supportsToolExecution = true
     readonly dispose = vi.fn(async () => undefined)
+    readonly beginDrain = vi.fn(async () => undefined)
+    readonly forceShutdown = vi.fn(async () => undefined)
     runCalls = 0
 
     constructor(
@@ -61,11 +65,7 @@ vi.mock('../agent/acp-remote-runtime', () => ({
     }
 
     async releaseConversation() {}
-    async beginDrain() {}
     async waitForDrain() {}
-    async forceShutdown() {
-      await this.dispose()
-    }
   }
 }))
 
@@ -215,11 +215,21 @@ function harness(
         modelProfileDigest: digest('9'),
         supportsImageInput: false
       },
-      channel: {
-        dispatch: vi.fn(),
-        onDelivered: vi.fn(),
-        finalizePrompt: vi.fn(),
-        poison: vi.fn()
+      profile: {
+        profileId: 'profile-1',
+        modelProfileDigest: digest('9'),
+        provider: 'openai',
+        baseUrl: 'https://provider.example/v1',
+        model: 'private-model',
+        protocol: 'openai-responses',
+        authentication: 'none',
+        capabilities: { imageInput: false },
+        limits: {
+          maximumOutputTokens: 4_096,
+          maximumModelCalls: 100,
+          maximumTotalOutputTokens: 409_600,
+          requestTimeoutMilliseconds: 60_000
+        }
       }
     },
     ...overrides
@@ -289,12 +299,7 @@ describe('createManagedRemoteAcpRuntime', () => {
       fixture.options.agentServices.connectionManager.acquire
     ).toHaveBeenCalledWith('host-1', expect.objectContaining({
       requiredCapabilities: [
-        { name: 'runtime/acp', exactVersion: 3, critical: true },
-        {
-          name: 'runtime/model-bridge',
-          exactVersion: 1,
-          critical: true
-        }
+        { name: 'runtime/acp', exactVersion: 4, critical: true }
       ]
     }))
 
@@ -429,6 +434,36 @@ describe('createManagedRemoteAcpRuntime', () => {
     await runtime.dispose()
   })
 
+  it('abandons connected runtime ownership on application exit without remote cleanup', async () => {
+    const fixture = harness()
+    const runtime = await createManagedRemoteAcpRuntime(
+      fixture.options
+    )
+    let finishRun = (): void => undefined
+    remoteHarness.runGate = new Promise<void>((resolve) => {
+      finishRun = resolve
+    })
+    const stream = runtime.run(
+      request('request-detach'),
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    await runtime.detachForApplicationExit?.()
+    await runtime.dispose()
+
+    expect(remoteHarness.instances[0]!.beginDrain).not.toHaveBeenCalled()
+    expect(remoteHarness.instances[0]!.forceShutdown).not.toHaveBeenCalled()
+    expect(remoteHarness.instances[0]!.dispose).not.toHaveBeenCalled()
+    expect(fixture.workspaceClose).not.toHaveBeenCalled()
+    expect(fixture.releaseConnection).not.toHaveBeenCalled()
+
+    finishRun()
+    await collect(stream)
+  })
+
   it('rejects capabilities that differ from the current Runtime', async () => {
     const fixture = harness()
     vi.mocked(
@@ -481,12 +516,7 @@ function capabilities() {
   return {
     generation: 7,
     capabilities: [
-      { name: 'runtime/acp', version: 3, critical: true },
-      {
-        name: 'runtime/model-bridge',
-        version: 1,
-        critical: true
-      }
+      { name: 'runtime/acp', version: 4, critical: true }
     ],
     runtimes: [
       {

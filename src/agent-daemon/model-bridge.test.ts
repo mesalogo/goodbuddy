@@ -284,6 +284,17 @@ describe('model bridge loopback helper', () => {
       expect(exchange).toHaveBeenCalledOnce()
       expect(exchange.mock.calls[0]![0].headers).toEqual({})
 
+      const acceptedChat = await sendHttp(origin, {
+        path: '/v1/chat/completions',
+        headers: {
+          authorization: `Bearer ${MODEL_BRIDGE_SDK_AUTH_SENTINEL}`
+        },
+        body: '{}'
+      })
+      expect(acceptedChat.status).toBe(201)
+      expect(exchange).toHaveBeenCalledTimes(2)
+      expect(exchange.mock.calls[1]![0].headers).toEqual({})
+
       for (const authorization of [
         'Bearer remote-secret',
         `Basic ${MODEL_BRIDGE_SDK_AUTH_SENTINEL}`
@@ -295,7 +306,7 @@ describe('model bridge loopback helper', () => {
         })
         expect(rejected.status).toBe(400)
       }
-      expect(exchange).toHaveBeenCalledOnce()
+      expect(exchange).toHaveBeenCalledTimes(2)
     } finally {
       await proxy.close()
     }
@@ -437,7 +448,7 @@ describe('model bridge loopback helper', () => {
       protocol: 'openai-chat-completions' as const,
       providerId: 'goodbuddy-openai-chat',
       npm: '@ai-sdk/openai-compatible',
-      requiresSdkAuthSentinel: false
+      requiresSdkAuthSentinel: true
     },
     {
       protocol: 'openai-responses' as const,

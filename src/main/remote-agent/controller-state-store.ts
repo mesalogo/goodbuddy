@@ -241,7 +241,7 @@ export class ControllerStateStore {
   ): Promise<void> {
     assertCacheKey(cacheKey)
     const parsedBindingId = agentIdentifierSchema.parse(bindingId)
-    const parsed =
+    let parsed =
       binding === undefined
         ? undefined
         : acpRecoveryBindingSchema.parse(binding)
@@ -261,28 +261,45 @@ export class ControllerStateStore {
       )
       if (
         parsed !== undefined &&
-        previous !== undefined &&
-        (
-          parsed.channelId !== previous.channelId ||
-          parsed.channelEpoch !== previous.channelEpoch ||
-          Object.keys(parsed.cursors).some(
-            (key) =>
-              BigInt(
-                parsed.cursors[
-                  key as keyof typeof parsed.cursors
-                ]
-              ) <
-              BigInt(
-                previous.cursors[
-                  key as keyof typeof previous.cursors
-                ]
-              )
-          )
-        )
+        previous !== undefined
       ) {
-        throw new Error(
-          'Controller ACP recovery identity or cursors cannot regress'
+        const candidate = parsed
+        const channelChanged =
+          candidate.channelId !== previous.channelId
+        const epochChanged =
+          candidate.channelEpoch !== previous.channelEpoch
+        const isOpenClaim = Object.values(
+          candidate.cursors
+        ).every((value) => value === '0')
+        const cursorsRegress = Object.keys(candidate.cursors).some(
+          (key) =>
+            BigInt(
+              candidate.cursors[
+                key as keyof typeof candidate.cursors
+              ]
+            ) <
+            BigInt(
+              previous.cursors[
+                key as keyof typeof previous.cursors
+              ]
+            )
         )
+        if (
+          channelChanged ||
+          (epochChanged && !isOpenClaim)
+        ) {
+          throw new Error(
+            'Controller ACP recovery identity or cursors cannot regress'
+          )
+        }
+        if (!epochChanged && cursorsRegress) {
+          if (!isOpenClaim) {
+            throw new Error(
+              'Controller ACP recovery identity or cursors cannot regress'
+            )
+          }
+          parsed = previous
+        }
       }
       connection.acpBindings = connection.acpBindings.filter(
         (candidate) => candidate.bindingId !== parsedBindingId

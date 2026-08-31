@@ -499,7 +499,7 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   const providerId = descriptor.id
   const baseURL = `${origin}/v1`
   return {
-    model: `${providerId}/${model}`,
+    model: openCodeModelBridgeModelId(input.protocol, model),
     // GoodBuddy owns conversation titles. A first-prompt title request can
     // race the real ACP prompt, abandon its Provider response, and correctly
     // poison the no-replay ledger before the user request can run.
@@ -535,6 +535,14 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
       }
     }
   }
+}
+
+export function openCodeModelBridgeModelId(
+  protocol: ModelBridgeProtocol,
+  modelInput: string
+): string {
+  const model = boundedMetadataText(modelInput, 'Model name')
+  return `${providerDescriptor(protocol).id}/${model}`
 }
 
 async function parseHttpRequest(
@@ -667,6 +675,15 @@ function isExpectedSdkAuthenticationHeader(
       value === `Bearer ${MODEL_BRIDGE_SDK_AUTH_SENTINEL}`
     )
   }
+  if (
+    path === '/chat/completions' ||
+    path === '/v1/chat/completions'
+  ) {
+    return (
+      name === 'authorization' &&
+      value === `Bearer ${MODEL_BRIDGE_SDK_AUTH_SENTINEL}`
+    )
+  }
   return false
 }
 
@@ -765,7 +782,7 @@ function providerDescriptor(protocol: ModelBridgeProtocol): {
       return {
         id: 'goodbuddy-openai-chat',
         npm: '@ai-sdk/openai-compatible',
-        requiresSdkAuthSentinel: false
+        requiresSdkAuthSentinel: true
       }
     case 'openai-responses':
       return {

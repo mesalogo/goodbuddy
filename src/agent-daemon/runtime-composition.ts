@@ -10,6 +10,9 @@ import type { AgentFrame } from '../shared/agent-protocol'
 import type {
   RuntimeRegistryEntry
 } from '../shared/remote-environment-registry-contracts'
+import type {
+  RemotePromptOperationPreparation
+} from '../shared/remote-agent-contracts'
 import type { RemoteRuntimeLock } from '../shared/remote-runtime-launch-contracts'
 import type { EventJournal } from './event-journal'
 import {
@@ -36,6 +39,11 @@ import {
 } from './direct-linux-stdio-process-owner'
 import { RuntimeOwnerRegistry } from './runtime-owner-registry'
 import type { WorkspaceRegistry } from './workspace-registry'
+import { SemanticPromptStore } from './semantic-prompt-store'
+import {
+  AgentModelCallLedger,
+  AgentModelGateway
+} from './agent-model-gateway'
 
 const BWRAP_EXECUTABLE = '/usr/bin/bwrap'
 
@@ -108,6 +116,15 @@ export async function createProductionRuntimeProtocol(
   const ownerRegistry =
     options.ownerRegistry ??
     new RuntimeOwnerRegistry(join(stateDirectory, 'runtime-owners.sqlite'))
+  const semanticPrompts = new SemanticPromptStore(
+    join(stateDirectory, 'semantic-prompts.sqlite')
+  )
+  const modelCallLedger = new AgentModelCallLedger(
+    join(stateDirectory, 'model-calls.sqlite')
+  )
+  const modelGateway = new AgentModelGateway({
+    ledger: modelCallLedger
+  })
   let registry = options.registry
   const currentRegistry = (): RuntimeBundleRegistry => {
     if (registry === undefined) {
@@ -285,11 +302,15 @@ export async function createProductionRuntimeProtocol(
           maximumInputBytes: launch.budget.maximumInputBytes
         }),
       outputSink: options.outputSink,
+      semanticPrompts,
+      modelGateway,
       ...(options.blobSink === undefined
         ? {}
         : { blobSink: options.blobSink })
     })
   } catch (error) {
+    semanticPrompts.close()
+    modelCallLedger.close()
     if (options.ownerRegistry === undefined) {
       ownerRegistry.close()
     }
@@ -337,6 +358,8 @@ export async function createProductionRuntimeProtocol(
         }),
     dispose: async () => {
       await backend.dispose()
+      semanticPrompts.close()
+      modelCallLedger.close()
       if (options.ownerRegistry === undefined) {
         ownerRegistry.close()
       }
@@ -356,11 +379,14 @@ async function executableAvailable(path: string): Promise<boolean> {
 async function resolveCurrentWorkspace(
   workspaces: WorkspaceRegistry,
   stateDirectory: string,
-  preparation: {
-    bindingId: string
-    runtimeBundleDigest: string
-    workspaceIdentity: string
-  },
+  preparation: Pick<
+    RemotePromptOperationPreparation,
+    | 'bindingId'
+    | 'runtimeBundleDigest'
+    | 'workspaceIdentity'
+    | 'modelBridge'
+    | 'modelProfile'
+  >,
   context: ProtocolMethodContext
 ): Promise<{
   workspaceIdentity: string
@@ -382,7 +408,8 @@ async function resolveCurrentWorkspace(
     }
   )
   const bridgeDirectory =
-    preparation.modelBridge === undefined
+    preparation.modelBridge === undefined &&
+    preparation.modelProfile === undefined
       ? undefined
       : derivePrivateModelBridgeDirectory(
           stateDirectory,

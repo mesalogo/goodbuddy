@@ -481,6 +481,72 @@ export class AgentRuntimeController implements AgentRuntime {
     this.disposal = operation
     return operation
   }
+
+  detachForApplicationExit(): Promise<void> {
+    if (this.disposal !== undefined) {
+      return this.disposal
+    }
+    this.closing = true
+    const operation = this.replacementQueue.then(async () => {
+      const slots = [...new Set([this.current, ...this.retired])]
+      const detachable = slots.filter(
+        (slot) =>
+          typeof slot.runtime.detachForApplicationExit === 'function'
+      )
+      const ordinary = slots.filter(
+        (slot) =>
+          typeof slot.runtime.detachForApplicationExit !== 'function'
+      )
+
+      await Promise.allSettled(
+        detachable.map(async (slot) => {
+          await slot.runtime.detachForApplicationExit?.()
+          this.abandonSlot(slot)
+        })
+      )
+
+      for (const slot of ordinary) {
+        this.retireSlot(slot)
+      }
+      const disposals = ordinary.map(
+        (slot) => slot.disposal ?? Promise.resolve()
+      )
+      await waitWithin(
+        Promise.all(disposals).then(() => undefined),
+        this.shutdownGraceMs
+      )
+      await Promise.all(
+        ordinary.map(async (slot) => {
+          if (!slot.resolveDisposal) {
+            return
+          }
+          if (slot.drainable) {
+            await waitWithin(
+              (
+                slot.runtime as DrainableAgentRuntime
+              ).forceShutdown().catch(() => undefined),
+              this.shutdownGraceMs
+            )
+          }
+          await this.disposeSlot(
+            slot,
+            this.shutdownGraceMs,
+            true
+          )
+        })
+      )
+      await Promise.all(disposals)
+    })
+    this.disposal = operation
+    return operation
+  }
+
+  private abandonSlot(slot: RuntimeSlot): void {
+    const resolve = slot.resolveDisposal
+    slot.resolveDisposal = undefined
+    this.retired.delete(slot)
+    resolve?.()
+  }
 }
 
 async function waitWithin(

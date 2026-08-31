@@ -15,12 +15,32 @@ export const workspace = {
       channelProjects: '远程通道',
       empty: '未选择项目',
       localDetail: '本地目录 · {{path}}',
-      managedSshDetail: '托管 SSH · {{path}}',
+      remotePath: '{{path}}',
+      remoteHostGroup: 'SSH 主机：{{host}}',
+      unavailableHost: '主机不可用',
+      connectionStates: {
+        disconnected: '未连接',
+        connecting: '连接中',
+        ready: '就绪',
+        error: '异常'
+      },
       remoteDetail: '{{channel}} · 远程通道 · {{path}}',
       remoteChannel: '远程通道',
       create: '新建项目',
       settings: '项目设置',
       settingsNamed: '管理项目 {{name}}'
+    },
+    recovery: {
+      stages: {
+        network: '正在恢复网络连接…',
+        agent: '正在恢复远端 Agent…',
+        runtime: '正在恢复 OpenCode Runtime…',
+        cursor: '正在恢复对话，已同步到事件 {{current}}',
+        completed: '恢复完成'
+      },
+      failed: '恢复失败：{{message}}',
+      retry: '重试恢复',
+      retryNamed: '重试恢复项目 {{name}}'
     },
     dialog: {
       createTitle: '新建项目',

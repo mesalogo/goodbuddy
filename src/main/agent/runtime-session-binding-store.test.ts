@@ -141,7 +141,7 @@ describe('MemoryRuntimeSessionBindingStore', () => {
     ).rejects.toThrow('modelBridgeVersion is immutable')
   })
 
-  it('atomically rotates only an idle ready transport and resets its cursors', async () => {
+  it('atomically rotates an idle or actively recovering transport and resets its cursors', async () => {
     const store = new MemoryRuntimeSessionBindingStore()
     const ready = {
       ...binding('binding-1', 'conversation-1'),
@@ -155,7 +155,7 @@ describe('MemoryRuntimeSessionBindingStore', () => {
     await store.put(ready)
 
     await expect(
-      store.rotateReadyTransport(
+      store.rotateTransport(
         ready.bindingId,
         {
           controllerGeneration: 1,
@@ -178,8 +178,36 @@ describe('MemoryRuntimeSessionBindingStore', () => {
       lastInboundJournaledSequence: '0',
       lastMainAckSequence: '0'
     })
+    const running = {
+      ...binding('binding-2', 'conversation-2'),
+      state: 'prompt-running' as const,
+      activePromptOperationId: 'operation-2',
+      acpSessionId: 'session-2'
+    }
+    await store.put(running)
     await expect(
-      store.rotateReadyTransport(
+      store.rotateTransport(
+        running.bindingId,
+        {
+          controllerGeneration: 1,
+          daemonBootIdAtOpen: 'boot-1',
+          channelEpoch: '1'
+        },
+        {
+          controllerGeneration: 2,
+          daemonBootIdAtOpen: 'boot-2',
+          channelEpoch: '2'
+        }
+      )
+    ).resolves.toMatchObject({
+      state: 'prompt-running',
+      activePromptOperationId: 'operation-2',
+      acpSessionId: 'session-2',
+      controllerGeneration: 2,
+      channelEpoch: '2'
+    })
+    await expect(
+      store.rotateTransport(
         ready.bindingId,
         {
           controllerGeneration: 1,
@@ -290,7 +318,7 @@ describe('SqliteRuntimeSessionBindingStore', () => {
       lastMainAckSequence: '5'
     }
     await store.put(ready)
-    await store.rotateReadyTransport(
+    await store.rotateTransport(
       ready.bindingId,
       {
         controllerGeneration: 1,

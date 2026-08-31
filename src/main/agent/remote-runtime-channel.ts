@@ -7,9 +7,17 @@ import type {
   AcpReconcilePromptResult
 } from '../../shared/agent-protocol'
 import type {
+  RemoteOwnedPromptStartRequest,
+  RemoteOwnedPromptStartResult,
   RemotePromptOperationAcceptance,
   RemotePromptOperationPreparation,
+  remoteOwnedPromptAttachRequestSchema,
+  remoteSemanticTranscriptAckRequestSchema,
+  remoteSemanticTranscriptAckResultSchema,
+  remoteSemanticTranscriptPageRequestSchema,
+  remoteSemanticTranscriptPageResultSchema,
 } from '../../shared/remote-agent-contracts'
+import type { z } from 'zod'
 import type {
   ModelBridgePolicy
 } from '../../shared/model-bridge-contracts'
@@ -17,8 +25,25 @@ import type {
 export type RemoteRuntimeChannelCapabilities = {
   cancellationEscalation: boolean
   promptOperationReconciliation: boolean
+  ownedPrompt?: boolean
   modelBridge?: boolean
 }
+
+export type RemoteOwnedPromptAttachRequest = z.infer<
+  typeof remoteOwnedPromptAttachRequestSchema
+>
+export type RemoteSemanticTranscriptPageRequest = z.infer<
+  typeof remoteSemanticTranscriptPageRequestSchema
+>
+export type RemoteSemanticTranscriptPageResult = z.infer<
+  typeof remoteSemanticTranscriptPageResultSchema
+>
+export type RemoteSemanticTranscriptAckRequest = z.infer<
+  typeof remoteSemanticTranscriptAckRequestSchema
+>
+export type RemoteSemanticTranscriptAckResult = z.infer<
+  typeof remoteSemanticTranscriptAckResultSchema
+>
 
 export type RuntimeSessionBindingCursors = AcpBindingCursors
 
@@ -86,6 +111,20 @@ export interface RemoteRuntimeChannel {
   preparePrompt(
     preparation: RemotePromptOperationPreparation
   ): Promise<RemotePromptOperationAcceptance>
+  /** Starts an Agent-owned ACP prompt exactly once for its stable operation. */
+  startOwnedPrompt?(
+    request: RemoteOwnedPromptStartRequest
+  ): Promise<RemoteOwnedPromptStartResult>
+  /** Reattaches to an already accepted Agent-owned prompt without replaying it. */
+  attachOwnedPrompt?(
+    request: RemoteOwnedPromptAttachRequest
+  ): Promise<RemoteOwnedPromptStartResult>
+  pageOwnedPromptTranscript?(
+    request: RemoteSemanticTranscriptPageRequest
+  ): Promise<RemoteSemanticTranscriptPageResult>
+  ackOwnedPromptTranscript?(
+    request: RemoteSemanticTranscriptAckRequest
+  ): Promise<RemoteSemanticTranscriptAckResult>
   /**
    * Bounds same-daemon stream recovery to the signed prompt lifetime and
    * caller cancellation. Implementations that cannot recover may omit it.

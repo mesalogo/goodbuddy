@@ -6,6 +6,7 @@ import {
 } from '../shared/remote-agent-contracts'
 import type { RemoteRuntimeBundleManifest } from '../shared/remote-runtime-launch-contracts'
 import type { ControllerLease } from './controller-registry'
+import { AgentModelGatewayError } from './agent-model-gateway'
 import type { ProtocolMethodContext } from './protocol-server'
 import type {
   ModelBridgeBrokerDispatch,
@@ -168,6 +169,9 @@ class FakeProcess implements RuntimeAcpProcessOwner {
   #listener?: (
     output: RuntimeAcpProcessOutput
   ) => void | Promise<void>
+  readonly #exitListeners = new Set<
+    () => void | Promise<void>
+  >()
 
   constructor(identity = '1') {
     this.identity = {
@@ -226,6 +230,11 @@ class FakeProcess implements RuntimeAcpProcessOwner {
     }
   }
 
+  subscribeExit(listener: () => void | Promise<void>): () => void {
+    this.#exitListeners.add(listener)
+    return () => this.#exitListeners.delete(listener)
+  }
+
   async emit(
     stream: 'stdout' | 'stderr',
     value: string
@@ -234,6 +243,19 @@ class FakeProcess implements RuntimeAcpProcessOwner {
       stream,
       data: Buffer.from(value)
     })
+  }
+
+  async emitExit(
+    state: RuntimeAcpProcessReconciliation['state'] = 'failed'
+  ): Promise<void> {
+    this.reconciliation = {
+      identity: this.identity,
+      state,
+      processTree: 'empty'
+    }
+    for (const listener of [...this.#exitListeners]) {
+      await listener()
+    }
   }
 }
 
@@ -246,6 +268,11 @@ function harness(input: {
   bridgeCloseError?: boolean
   uniqueProcesses?: boolean
   outputGate?: Promise<void>
+  agentOwned?: boolean
+  modelGateway?: {
+    dispatch: ReturnType<typeof vi.fn>
+    finalizePrompt: ReturnType<typeof vi.fn>
+  }
 } = {}) {
   const workMode = input.workMode ?? 'ask'
   let now = input.now ?? 1_000
@@ -266,6 +293,16 @@ function harness(input: {
   let bridgeDispatch: ModelBridgeBrokerDispatch | undefined
   const launchModelBridges: unknown[] = []
   const resolved = resolvedBundle()
+  const semanticPrompts = input.agentOwned
+    ? {
+        prepare: vi.fn(() => ({ created: true })),
+        append: vi.fn(),
+        findStarted: vi.fn(),
+        attach: vi.fn(),
+        page: vi.fn(),
+        acknowledge: vi.fn()
+      }
+    : undefined
   const backend = new RuntimeAcpBackend({
     journal,
     resolveRuntimeBundle: vi.fn(async () => resolved),
@@ -302,7 +339,17 @@ function harness(input: {
         }),
         close: bridgeCloses
       } as unknown as ModelBridgeBrokerServer
-    }
+    },
+    ...(semanticPrompts
+      ? {
+          semanticPrompts: semanticPrompts as never,
+          modelGateway:
+            (input.modelGateway ?? {
+              dispatch: vi.fn(),
+              finalizePrompt: vi.fn()
+            }) as never
+        }
+      : {})
   })
   const context = protocolContext()
   const openRequest = {
@@ -326,6 +373,7 @@ function harness(input: {
     },
     launchModelBridges,
     outputFrames,
+    semanticPrompts,
     openRequest,
     preparation: (
       overrides: Partial<RemotePromptOperationPreparation> = {}
@@ -346,6 +394,24 @@ function harness(input: {
       runtimeId: openRequest.runtimeId,
       runtimeBundleDigest: openRequest.runtimeBundleDigest,
       runtimeAdapterDigest: digest('2'),
+      modelProfile: {
+        profileId: 'profile-1',
+        modelProfileDigest: digest('3'),
+        provider: 'openai',
+        baseUrl: 'https://model.example/v1',
+        model: 'test-model',
+        protocol: 'openai-responses',
+        authentication: 'api-key',
+        apiKey: 'test-api-key',
+        capabilities: { imageInput: false },
+        limits: {
+          maximumOutputTokens: 4_096,
+          maximumModelCalls: 100,
+          maximumTotalOutputTokens: 409_600,
+          requestTimeoutMilliseconds: 60_000
+        }
+      },
+      promptSequence: 0,
       deadlineAt: new Date(now + 60_000).toISOString(),
       budget: {
         maximumInputBytes: 1_024,
@@ -428,6 +494,42 @@ describe('RuntimeAcpBackend', () => {
       requestId: 'request-1'
     })
     expect(fixture.bridgeCloses).toHaveBeenCalledOnce()
+  })
+
+  it('starts the Agent-local model bridge from a prompt profile without a Main blob channel', async () => {
+    const fixture = harness({ agentOwned: true })
+    await invoke(
+      fixture,
+      'runtime/openAcpChannel',
+      fixture.openRequest
+    )
+    const preparation = fixture.preparation()
+
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      preparation
+    )
+
+    expect(fixture.lifecycle).toEqual([
+      'bridge-listen',
+      'launch'
+    ])
+    expect(fixture.launchModelBridges).toEqual([
+      {
+        socketPath: '/bridge/model-bridge.sock',
+        policy: {
+          protocol: preparation.modelProfile!.protocol,
+          model: preparation.modelProfile!.model,
+          modelProfileDigest:
+            preparation.modelProfile!.modelProfileDigest,
+          supportsImageInput:
+            preparation.modelProfile!.capabilities.imageInput
+        }
+      }
+    ])
+    expect(fixture.bridgeDispatch).toEqual(expect.any(Function))
+    expect(fixture.blobSink).not.toHaveBeenCalled()
   })
 
   it('runs open, prepare, ACP delivery, durable output, cursors, and close', async () => {
@@ -691,6 +793,171 @@ describe('RuntimeAcpBackend', () => {
       bindingId: 'binding-1',
       channelEpoch: '1000'
     })
+  })
+
+  it('reattaches a detached Agent-owned operation without replacing its process or raw output channel', async () => {
+    const fixture = harness({ agentOwned: true })
+    await open(fixture)
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      fixture.preparation()
+    )
+    await fixture.process.emit('stdout', 'semantic-only-output')
+    expect(fixture.outputFrames).toEqual([])
+
+    fixture.context.abort.abort()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const replacement = protocolContext({
+      generation: 2,
+      connectionId: 'connection-2'
+    })
+    replacement.controllerTakeoverProven = true
+    const reopened = await fixture.backend.methods[
+      'runtime/openAcpChannel'
+    ]!(fixture.openRequest, replacement)
+
+    expect(reopened).toMatchObject({
+      bindingId: 'binding-1',
+      channelEpoch: '1000'
+    })
+    expect(fixture.process.stops).toEqual([])
+    await fixture.backend.dispose()
+  })
+
+  it('revokes an Agent-owned preparation that never starts', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = harness({ agentOwned: true })
+      await open(fixture)
+      await invoke(
+        fixture,
+        'runtime/preparePrompt',
+        fixture.preparation({
+          deadlineAt: UNBOUNDED_REMOTE_PROMPT_DEADLINE
+        })
+      )
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      await vi.waitFor(() =>
+        expect(fixture.semanticPrompts?.append).toHaveBeenCalledWith(
+          expect.objectContaining({
+            terminalState: 'outcome-unknown'
+          })
+        )
+      )
+      expect(fixture.process.stops).toContain('identity-conflict')
+      await fixture.backend.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('records a failed semantic terminal when an owned Runtime exits before a model round', async () => {
+    const fixture = harness({ agentOwned: true })
+    await open(fixture)
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      fixture.preparation()
+    )
+
+    await fixture.process.emitExit('failed')
+    await vi.waitFor(() =>
+      expect(fixture.semanticPrompts?.append).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalState: 'failed',
+          payload: expect.objectContaining({
+            error: expect.objectContaining({
+              name: 'RuntimeExited'
+            })
+          })
+        })
+      )
+    )
+    expect(fixture.bridgeCloses).toHaveBeenCalledOnce()
+    await fixture.backend.dispose()
+  })
+
+  it('records a semantic terminal before stopping an owned prompt at its deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = harness({ agentOwned: true })
+      await open(fixture)
+      await invoke(
+        fixture,
+        'runtime/preparePrompt',
+        fixture.preparation({
+          deadlineAt: new Date(1_100).toISOString()
+        })
+      )
+
+      await vi.advanceTimersByTimeAsync(100)
+      await vi.waitFor(() =>
+        expect(fixture.semanticPrompts?.append).toHaveBeenCalledWith(
+          expect.objectContaining({
+            terminalState: 'failed',
+            payload: expect.objectContaining({
+              error: expect.objectContaining({
+                name: 'PromptDeadlineExceeded'
+              })
+            })
+          })
+        )
+      )
+      expect(fixture.process.stops).toContain('deadline-exceeded')
+      await fixture.backend.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('terminalizes outcome-unknown after an uncertain Agent gateway dispatch', async () => {
+    const modelGateway = {
+      dispatch: vi.fn(async () => {
+        throw new AgentModelGatewayError(
+          'timeout',
+          'Provider dispatch outcome is unknown'
+        )
+      }),
+      finalizePrompt: vi.fn()
+    }
+    const fixture = harness({
+      agentOwned: true,
+      modelGateway
+    })
+    await open(fixture)
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      fixture.preparation()
+    )
+
+    await expect(
+      fixture.bridgeDispatch?.(
+        {
+          method: 'POST',
+          path: '/v1/responses',
+          headers: { 'content-type': 'application/json' },
+          bodyBase64: Buffer.from(
+            JSON.stringify({ model: 'test-model' })
+          ).toString('base64')
+        },
+        {
+          requestId: 'model-request-1',
+          signal: new AbortController().signal
+        }
+      )
+    ).rejects.toMatchObject({ code: 'timeout' })
+    await vi.waitFor(() =>
+      expect(fixture.semanticPrompts?.append).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalState: 'outcome-unknown'
+        })
+      )
+    )
+    expect(fixture.process.stops).toContain('identity-conflict')
+    await fixture.backend.dispose()
   })
 
   it('drains the detached old epoch before replacing an idle binding', async () => {

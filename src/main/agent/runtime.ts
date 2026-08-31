@@ -8,7 +8,11 @@ import type {
   RuntimeConversationCompactResult,
   RuntimeNativeSnapshot
 } from '../../shared/contracts'
-import type { WorkMode } from '../../shared/assistant-contracts'
+import type {
+  ConversationSubagentActivity,
+  ConversationToolActivity,
+  WorkMode
+} from '../../shared/assistant-contracts'
 
 export type RuntimeApprovalRequest = {
   scopeKey: string
@@ -45,10 +49,32 @@ export type RuntimeModelUsageEvent = {
   reportedTotalTokens?: number
 }
 
-export type RuntimeEvent =
+export type RuntimePublicEvent =
   | AgentEvent
   | RuntimeGeneratedImageEvent
   | RuntimeModelUsageEvent
+
+export type RemoteSemanticEventProvenance = {
+  source: 'remote-semantic-transcript'
+  bindingId: string
+  operationId: string
+  semanticSequence: string
+  eventIndex: number
+}
+
+export type RemoteSemanticRuntimeEvent = RuntimePublicEvent & {
+  remoteProvenance: RemoteSemanticEventProvenance
+}
+
+export type RemoteSemanticCheckpointEvent = {
+  requestId: string
+  type: 'remote-semantic-checkpoint'
+  remoteProvenance: RemoteSemanticEventProvenance
+}
+
+export type RuntimeEvent =
+  | RuntimePublicEvent
+  | RemoteSemanticCheckpointEvent
 
 export type RuntimeConversationCompactOutcome = {
   result: RuntimeConversationCompactResult
@@ -79,6 +105,12 @@ export interface AgentRuntime {
     answers?: AgentQuestionAnswer[]
   ): Promise<void>
   releaseConversation?(conversationId: string): Promise<void>
+  /**
+   * Stop Main-process admission during a normal application exit. Runtimes
+   * that implement this hook may intentionally leave remote work owned by
+   * another process running after Desktop disconnects.
+   */
+  detachForApplicationExit?(): void | Promise<void>
   dispose(): Promise<void>
 }
 
@@ -88,6 +120,13 @@ export type AgentImage = {
   data: string
 }
 
+export type RemoteRecoveredTool = ConversationToolActivity & {
+  callId: string
+}
+
+export type RemoteRecoveredSubagent =
+  ConversationSubagentActivity
+
 export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   workMode?: WorkMode
   images?: AgentImage[]
@@ -95,4 +134,15 @@ export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   trustedInstructions?: string
   /** Main-process-only request-scoped authorization for built-in data tools. */
   knowledgeCapabilityToken?: string
+  /**
+   * Main-process recovery cursor for an Agent-owned semantic prompt.
+   * It is never sent as prompt content and is ignored by local runtimes.
+   */
+  remoteSemanticAfterSequence?: string
+  /** Recovery may attach an accepted Agent prompt but must never replay it. */
+  remoteRecoveryOnly?: boolean
+  /** Main-only durable tool state used to merge partial recovery updates. */
+  remoteRecoveredTools?: readonly RemoteRecoveredTool[]
+  /** Main-only durable native subagent state for partial recovery updates. */
+  remoteRecoveredSubagents?: readonly RemoteRecoveredSubagent[]
 }

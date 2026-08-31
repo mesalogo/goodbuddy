@@ -3,8 +3,12 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
+  assistantIdSchema,
+  conversationMessageSchema,
   conversationSnapshotSchema,
   expertCreateSchema,
+  maximumConversationSubagentActivities,
+  maximumConversationToolActivities,
   normalizeInteractiveWorkMode,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
@@ -22,6 +26,9 @@ import type {
   AssistantTask,
   ConversationQueueItem,
   ConversationBranchInput,
+  ConversationMessageBlock,
+  ConversationSubagentActivity,
+  ConversationToolActivity,
   ConversationMessage,
   ConversationSnapshot,
   ExpertCreateInput,
@@ -39,6 +46,7 @@ import type {
   TokenUsageRecord,
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
+import type { AgentEvent } from '../../shared/contracts'
 import type {
   SshHostProjectReference
 } from '../../shared/ssh-host-contracts'
@@ -71,6 +79,11 @@ import {
   type MagicTodoStatus,
   type MagicTodoUpdateInput
 } from '../../shared/magic-notes-contracts'
+import {
+  AGENT_PROTOCOL_LIMITS,
+  agentIdentifierSchema,
+  positiveAgentSequenceSchema
+} from '../../shared/agent-protocol/contracts'
 import type { ComputerControlAuditEvent } from '../computer-control/audit'
 import {
   magicNoteChecklistItems,
@@ -82,7 +95,43 @@ import {
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 31
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 32
+
+export type RemoteTaskEventInput = {
+  taskId: string
+  bindingId: string
+  operationId: string
+  semanticSequence: string
+  eventIndex: number
+  kind: string
+  payload: unknown
+}
+
+export type RemoteConversationTaskEventInput = Omit<
+  RemoteTaskEventInput,
+  'kind' | 'payload'
+> & {
+  conversationId: string
+  assistantMessageId: string
+  event:
+    | AgentEvent
+    | {
+        requestId: string
+        type: 'checkpoint' | 'remote-semantic-checkpoint'
+        remoteProvenance?: unknown
+      }
+}
+
+export type RecoverableRemoteTask = {
+  taskId: string
+  projectId: string
+  conversationId: string
+  currentUserMessageId: string
+  currentAssistantMessageId: string
+  instructions: string
+  workMode: 'ask' | 'execute'
+  status: 'running' | 'waiting_approval' | 'interrupted'
+}
 
 type ProjectRow = {
   id: string
@@ -162,6 +211,7 @@ type MessageRow = {
   state: ConversationSnapshot['messages'][number]['state']
   metadata_json: string
   created_at: string
+  remote_recoverable?: number
 }
 
 type MagicNoteRow = {
@@ -869,6 +919,59 @@ function validateComputerControlEnum<T extends string>(
   return value as T
 }
 
+type ValidatedRemoteTaskEvent = Omit<
+  RemoteTaskEventInput,
+  'kind' | 'payload'
+> & {
+  kind: string
+  payloadJson: string
+}
+
+function validateRemoteTaskEvent(
+  input: RemoteTaskEventInput
+): ValidatedRemoteTaskEvent {
+  const taskId = agentIdentifierSchema.parse(input.taskId)
+  const bindingId = agentIdentifierSchema.parse(input.bindingId)
+  const operationId = agentIdentifierSchema.parse(input.operationId)
+  const semanticSequence = positiveAgentSequenceSchema.parse(
+    input.semanticSequence
+  )
+  if (
+    !Number.isSafeInteger(input.eventIndex) ||
+    input.eventIndex < 0 ||
+    input.eventIndex >= AGENT_PROTOCOL_LIMITS.runPendingEvents
+  ) {
+    throw new RangeError(
+      `eventIndex must be between 0 and ${
+        AGENT_PROTOCOL_LIMITS.runPendingEvents - 1
+      }`
+    )
+  }
+  if (typeof input.kind !== 'string') {
+    throw new TypeError('kind must be a string')
+  }
+  const kind = input.kind.slice(0, 64)
+  const payloadJson = JSON.stringify(input.payload)
+  if (typeof payloadJson !== 'string') {
+    throw new TypeError('Task event payload must be JSON serializable')
+  }
+  if (
+    Buffer.byteLength(payloadJson, 'utf8') >
+    AGENT_PROTOCOL_LIMITS.maximumEventPayloadBytes
+  ) {
+    throw new RangeError('Task event payload exceeds the event size limit')
+  }
+  return {
+    taskId,
+    bindingId,
+    operationId,
+    semanticSequence,
+    eventIndex: input.eventIndex,
+    kind,
+    payloadJson
+  }
+}
+
 function toComputerControlAuditEvent(
   row: ComputerControlActionRow
 ): PersistedComputerControlAuditEvent {
@@ -1007,7 +1110,9 @@ function toConversationSnapshot(
       const metadata = JSON.parse(
         message.metadata_json
       ) as MessageMetadata
-      const interrupted = message.state === 'streaming'
+      const interrupted =
+        message.state === 'streaming' &&
+        message.remote_recoverable !== 1
       return {
         id: message.id,
         queueItemId: metadata.queueItemId,
@@ -1062,6 +1167,392 @@ function serializeConversationMessageMetadata(
     task: message.task,
     attachments: message.attachments
   })
+}
+
+const maximumRecoveredMessageLength = 1_000_000
+const maximumRecoveredMessageBlocks = 500
+
+function appendRecoveredMessageBlock(
+  blocks: ConversationMessageBlock[] | undefined,
+  type: 'text' | 'reasoning',
+  delta: string
+): ConversationMessageBlock[] | undefined {
+  if (!blocks || !delta) {
+    return blocks
+  }
+  const current = [...blocks]
+  const previous = current.at(-1)
+  if (previous?.type === type) {
+    current[current.length - 1] = {
+      ...previous,
+      content: `${previous.content}${delta}`.slice(
+        0,
+        maximumRecoveredMessageLength
+      )
+    }
+  } else if (current.length < maximumRecoveredMessageBlocks) {
+    current.push({
+      id: randomUUID(),
+      type,
+      content: delta.slice(0, maximumRecoveredMessageLength)
+    })
+  }
+  return current
+}
+
+function upsertRecoveredToolBlock(
+  blocks: ConversationMessageBlock[] | undefined,
+  tool: ConversationToolActivity
+): ConversationMessageBlock[] | undefined {
+  if (!blocks) {
+    return blocks
+  }
+  const index = tool.callId
+    ? blocks.findIndex(
+        (block) =>
+          block.type === 'tool' &&
+          block.tool.callId === tool.callId
+      )
+    : -1
+  if (index >= 0) {
+    return blocks.map((block, blockIndex) =>
+      blockIndex === index && block.type === 'tool'
+        ? { ...block, tool }
+        : block
+    )
+  }
+  return blocks.length >= maximumRecoveredMessageBlocks
+    ? blocks
+    : [
+        ...blocks,
+        { id: randomUUID(), type: 'tool' as const, tool }
+      ]
+}
+
+function upsertRecoveredSubagentBlock(
+  blocks: ConversationMessageBlock[] | undefined,
+  childTaskId: string,
+  runtimeCallId?: string
+): ConversationMessageBlock[] | undefined {
+  if (
+    !blocks ||
+    blocks.some(
+      (block) =>
+        block.type === 'subagent' &&
+        block.childTaskId === childTaskId
+    )
+  ) {
+    return blocks
+  }
+  const provisionalIndex = runtimeCallId
+    ? blocks.findIndex(
+        (block) =>
+          block.type === 'tool' &&
+          block.tool.callId === runtimeCallId
+      )
+    : -1
+  if (provisionalIndex >= 0) {
+    return blocks.map((block, index) =>
+      index === provisionalIndex
+        ? {
+            id: block.id,
+            type: 'subagent' as const,
+            childTaskId
+          }
+        : block
+    )
+  }
+  return blocks.length >= maximumRecoveredMessageBlocks
+    ? blocks
+    : [
+        ...blocks,
+        { id: randomUUID(), type: 'subagent' as const, childTaskId }
+      ]
+}
+
+function terminalizeRecoveredToolBlocks(
+  blocks: ConversationMessageBlock[] | undefined,
+  state: 'failed' | 'cancelled' | 'interrupted'
+): ConversationMessageBlock[] | undefined {
+  return blocks?.map((block) =>
+    block.type === 'tool' &&
+    (block.tool.state === 'pending' || block.tool.state === 'running')
+      ? { ...block, tool: { ...block.tool, state } }
+      : block
+  )
+}
+
+function failedToolRepresentsError(
+  tools: ConversationToolActivity[] | undefined,
+  errorMessage: string
+): boolean {
+  return Boolean(
+    tools?.some(
+      (tool) =>
+        tool.state === 'failed' &&
+        ((tool.error && errorMessage.includes(tool.error)) ||
+          (tool.callId && errorMessage.includes(tool.callId)))
+    )
+  )
+}
+
+function reduceRecoveredAgentEvent(
+  message: ConversationMessage,
+  event: RemoteConversationTaskEventInput['event']
+): ConversationMessage {
+  let next: ConversationMessage = message
+  if (event.type === 'text') {
+    const remaining = Math.max(
+      0,
+      maximumRecoveredMessageLength - message.content.length
+    )
+    const delta = event.delta.slice(0, remaining)
+    next = {
+      ...message,
+      content: `${message.content}${delta}`,
+      blocks: appendRecoveredMessageBlock(message.blocks, 'text', delta),
+      status:
+        event.delta.length > remaining
+          ? '回答过长，已在本地截断显示'
+          : undefined
+    }
+  } else if (event.type === 'reasoning') {
+    const reasoning = message.reasoning ?? ''
+    const delta = event.delta.slice(
+      0,
+      Math.max(0, maximumRecoveredMessageLength - reasoning.length)
+    )
+    next = {
+      ...message,
+      reasoning: `${reasoning}${delta}`,
+      blocks: appendRecoveredMessageBlock(
+        message.blocks,
+        'reasoning',
+        delta
+      ),
+      status: undefined
+    }
+  } else if (event.type === 'status') {
+    next = { ...message, status: event.message }
+  } else if (event.type === 'context-compression') {
+    const scope = event.scope ?? 'conversation'
+    const marker = {
+      state:
+        event.state === 'started'
+          ? ('compressing' as const)
+          : event.state,
+      scope,
+      estimatedBeforeTokens: event.estimatedBeforeTokens,
+      estimatedAfterTokens: event.estimatedAfterTokens,
+      compressionCount: event.compressionCount
+    }
+    const current =
+      message.contextCompressions ??
+      (message.contextCompression ? [message.contextCompression] : [])
+    next = {
+      ...message,
+      contextCompression: undefined,
+      contextCompressions: [
+        ...current.filter(
+          (compression) =>
+            (compression.scope ?? 'conversation') !== scope
+        ),
+        marker
+      ].slice(-2)
+    }
+  } else if (event.type === 'tool') {
+    const callId = event.callId.slice(0, 256)
+    const tool: ConversationToolActivity = {
+      callId,
+      name: event.name,
+      state: event.state,
+      summary: event.summary,
+      input: event.input,
+      output: event.output,
+      error: event.error
+    }
+    const tools = [...(message.tools ?? [])]
+    const index = tools.findIndex(
+      (candidate) => candidate.callId === callId
+    )
+    if (index >= 0) {
+      tools[index] = tool
+    } else if (tools.length < maximumConversationToolActivities) {
+      tools.push(tool)
+    }
+    next = {
+      ...message,
+      tools,
+      blocks: upsertRecoveredToolBlock(message.blocks, tool)
+    }
+  } else if (event.type === 'subagent') {
+    const subagent: ConversationSubagentActivity = {
+      childTaskId: event.childTaskId,
+      expertId: event.expertId,
+      expertName: event.expertName,
+      routingMode: event.routingMode,
+      runtimeCallId: event.runtimeCallId,
+      state: event.state,
+      reason: event.reason,
+      output: event.output,
+      error: event.error
+    }
+    const subagents = [...(message.subagents ?? [])]
+    const index = subagents.findIndex(
+      (candidate) => candidate.childTaskId === event.childTaskId
+    )
+    if (index >= 0) {
+      subagents[index] = subagent
+    } else if (
+      subagents.length < maximumConversationSubagentActivities
+    ) {
+      subagents.push(subagent)
+    }
+    next = {
+      ...message,
+      subagents,
+      tools: event.runtimeCallId
+        ? message.tools?.filter(
+            (tool) => tool.callId !== event.runtimeCallId
+          )
+        : message.tools,
+      blocks: upsertRecoveredSubagentBlock(
+        message.blocks,
+        event.childTaskId,
+        event.runtimeCallId
+      )
+    }
+  } else if (event.type === 'artifact') {
+    next = {
+      ...message,
+      artifactIds: [
+        ...new Set([...(message.artifactIds ?? []), event.artifactId])
+      ].slice(-8),
+      status: '图片已生成，正在保存结果'
+    }
+  } else if (event.type === 'knowledge-retrieval') {
+    next = {
+      ...message,
+      knowledgeRetrieval: {
+        mode: event.mode,
+        state: event.state,
+        libraryCount: event.libraryCount,
+        resultCount: event.resultCount,
+        durationMs: event.durationMs,
+        usedChannels: event.usedChannels,
+        warnings: event.warnings
+      },
+      status:
+        event.state === 'searching'
+          ? '正在检索已启用的知识库'
+          : undefined
+    }
+  } else if (event.type === 'source-references') {
+    const key = (
+      reference: (typeof event.references)[number]
+    ): string =>
+      [
+        reference.libraryId,
+        reference.documentId,
+        reference.chunkId ?? '',
+        reference.locator ?? '',
+        reference.snippet
+      ].join('\0')
+    const incoming = [
+      ...new Map(
+        event.references.map((reference) => [key(reference), reference])
+      ).values()
+    ]
+    const incomingKeys = new Set(incoming.map(key))
+    next = {
+      ...message,
+      sourceReferences: [
+        ...incoming,
+        ...(message.sourceReferences ?? []).filter(
+          (reference) => !incomingKeys.has(key(reference))
+        )
+      ].slice(0, 20)
+    }
+  } else if (event.type === 'done' || event.type === 'error') {
+    const represented =
+      event.type === 'error' &&
+      failedToolRepresentsError(message.tools, event.message)
+    const toolState =
+      event.type === 'error'
+        ? event.status === 'cancelled'
+          ? ('cancelled' as const)
+          : ('failed' as const)
+        : ('interrupted' as const)
+    const fallback =
+      event.type === 'error' && !represented && !message.content
+        ? event.message.slice(0, maximumRecoveredMessageLength)
+        : ''
+    next = {
+      ...message,
+      state: event.type === 'error' ? 'error' : 'complete',
+      status:
+        event.type === 'error' && !represented
+          ? event.message
+          : undefined,
+      contextCompression:
+        event.type === 'error' &&
+        message.contextCompression?.state === 'compressing'
+          ? { ...message.contextCompression, state: 'failed' }
+          : message.contextCompression,
+      contextCompressions:
+        event.type === 'error'
+          ? message.contextCompressions?.map((compression) =>
+              compression.state === 'compressing'
+                ? { ...compression, state: 'failed' as const }
+                : compression
+            )
+          : message.contextCompressions,
+      tools: message.tools?.map((tool) =>
+        tool.state === 'pending' || tool.state === 'running'
+          ? { ...tool, state: toolState }
+          : tool
+      ),
+      subagents: message.subagents?.map((subagent) =>
+        subagent.state === 'queued' || subagent.state === 'running'
+          ? {
+              ...subagent,
+              state:
+                event.type === 'error'
+                  ? event.status === 'cancelled'
+                    ? ('cancelled' as const)
+                    : ('failed' as const)
+                  : ('failed' as const),
+              ...(event.type === 'error' &&
+              event.status !== 'cancelled'
+                ? { error: event.message.slice(0, 1_000) }
+                : event.type === 'done'
+                  ? {
+                      error:
+                        '父请求已结束，但子 Agent 未报告完成状态。'
+                    }
+                  : {})
+            }
+          : subagent
+      ),
+      blocks: terminalizeRecoveredToolBlocks(
+        appendRecoveredMessageBlock(message.blocks, 'text', fallback),
+        toolState
+      ),
+      content: fallback || message.content
+    }
+  }
+  return conversationMessageSchema.parse(next)
+}
+
+function stripRemoteEventProvenance(
+  event: RemoteConversationTaskEventInput['event']
+): RemoteConversationTaskEventInput['event'] {
+  if (!('remoteProvenance' in event)) {
+    return event
+  }
+  const publicEvent = { ...event }
+  delete publicEvent.remoteProvenance
+  return publicEvent
 }
 
 type NormalizedSshProjectWrite = Omit<
@@ -1390,7 +1881,8 @@ export class AssistantDatabase {
           .prepare(
             `SELECT id, error
              FROM tasks
-             WHERE status IN ('running', 'waiting_approval')`
+             WHERE status IN ('running', 'waiting_approval')
+               AND remote_recoverable = 0`
           )
           .all() as Array<{ id: string; error: string | null }>
         const updateTask = database.prepare(
@@ -1416,7 +1908,15 @@ export class AssistantDatabase {
         const recoverableMessages = database
           .prepare(
             `SELECT id, state, metadata_json
-             FROM messages`
+             FROM messages
+             WHERE NOT EXISTS (
+               SELECT 1 FROM tasks
+               WHERE tasks.id = messages.request_id
+                 AND tasks.remote_recoverable = 1
+                 AND tasks.status IN (
+                   'running', 'waiting_approval', 'interrupted'
+                 )
+             )`
           )
           .all() as Array<{
           id: string
@@ -2084,10 +2584,18 @@ export class AssistantDatabase {
       .all() as ConversationRow[]
     const messageStatement = database.prepare(
       `SELECT id, conversation_id, role, content, state, metadata_json,
-              created_at
+              created_at, remote_recoverable
        FROM (
          SELECT id, conversation_id, role, content, state, metadata_json,
-                created_at, sequence
+                created_at, sequence,
+                EXISTS(
+                  SELECT 1 FROM tasks
+                  WHERE tasks.id = messages.request_id
+                    AND tasks.remote_recoverable = 1
+                    AND tasks.status IN (
+                      'running', 'waiting_approval', 'interrupted'
+                    )
+                ) AS remote_recoverable
          FROM messages
          WHERE conversation_id = ?
          ORDER BY sequence DESC
@@ -2123,10 +2631,18 @@ export class AssistantDatabase {
     const messages = database
       .prepare(
         `SELECT id, conversation_id, role, content, state, metadata_json,
-                created_at
+                created_at, remote_recoverable
          FROM (
            SELECT id, conversation_id, role, content, state,
-                  metadata_json, created_at, sequence
+                  metadata_json, created_at, sequence,
+                  EXISTS(
+                    SELECT 1 FROM tasks
+                    WHERE tasks.id = messages.request_id
+                      AND tasks.remote_recoverable = 1
+                      AND tasks.status IN (
+                        'running', 'waiting_approval', 'interrupted'
+                      )
+                  ) AS remote_recoverable
            FROM messages
            WHERE conversation_id = ?
            ORDER BY sequence DESC
@@ -2313,7 +2829,12 @@ export class AssistantDatabase {
        WHERE id = ? AND channel IS NULL`
     )
     const findMessage = database.prepare(
-      `SELECT conversation_id, role
+      `SELECT conversation_id, role,
+              EXISTS(
+                SELECT 1 FROM tasks
+                WHERE tasks.id = messages.request_id
+                  AND tasks.remote_recoverable = 1
+              ) AS remote_recoverable
        FROM messages
        WHERE id = ?`
     )
@@ -2398,6 +2919,7 @@ export class AssistantDatabase {
             | {
                 conversation_id: string
                 role: MessageRow['role']
+                remote_recoverable: number
               }
             | undefined
           if (existingMessage) {
@@ -2406,6 +2928,9 @@ export class AssistantDatabase {
             }
             if (existingMessage.role !== message.role) {
               throw new Error('消息角色不能更改')
+            }
+            if (existingMessage.remote_recoverable === 1) {
+              continue
             }
             updateMessage.run(
               message.content,
@@ -2797,7 +3322,12 @@ export class AssistantDatabase {
              WHERE conversation_id = ?
              ORDER BY sequence DESC
              LIMIT -1 OFFSET 500
-           )`
+       )
+         AND NOT EXISTS (
+           SELECT 1 FROM tasks
+           WHERE tasks.id = messages.request_id
+             AND tasks.remote_recoverable = 1
+         )`
         )
         .run(input.conversationId)
       database
@@ -3694,39 +4224,448 @@ export class AssistantDatabase {
     instructions: string
     workMode: 'ask' | 'execute'
     origin?: AssistantTask['origin']
-    status?: 'queued' | 'running'
+    status?: Exclude<AssistantTask['status'], 'idle'>
     visible?: boolean
+    remoteRecovery?: {
+      recoverable: boolean
+      currentUserMessageId?: string
+      currentAssistantMessageId?: string
+    }
   }): AssistantTask {
+    const remoteRecovery = input.remoteRecovery
+    const taskId = remoteRecovery?.recoverable
+      ? assistantIdSchema.parse(input.id)
+      : input.id
+    const currentUserMessageId =
+      remoteRecovery?.currentUserMessageId === undefined
+        ? undefined
+        : assistantIdSchema.parse(remoteRecovery.currentUserMessageId)
+    const currentAssistantMessageId =
+      remoteRecovery?.currentAssistantMessageId === undefined
+        ? undefined
+        : assistantIdSchema.parse(
+            remoteRecovery.currentAssistantMessageId
+          )
+    if (
+      remoteRecovery?.recoverable &&
+      (!input.projectId ||
+        !input.conversationId ||
+        !currentUserMessageId ||
+        !currentAssistantMessageId)
+    ) {
+      throw new Error(
+        '可恢复远程任务必须绑定项目、对话及当前消息'
+      )
+    }
     const now = new Date().toISOString()
     const status = input.status ?? 'running'
-    this.requireDatabase()
-      .prepare(
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      if (remoteRecovery) {
+        const executionSpace = input.projectId
+          ? (database
+              .prepare(
+                `SELECT kind
+                 FROM project_execution_spaces
+                 WHERE project_id = ?`
+              )
+              .get(input.projectId) as
+              | { kind: 'local' | 'ssh' }
+              | undefined)
+          : undefined
+        if (executionSpace?.kind !== 'ssh') {
+          throw new Error('远程恢复元数据仅适用于 SSH 项目')
+        }
+      }
+      database
+        .prepare(
         `INSERT INTO tasks
           (id, project_id, conversation_id, parent_task_id, expert_id,
            routing_mode, title, instructions, origin, status, priority,
-           work_mode, progress, created_at, started_at, visible)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?, ?)`
+           work_mode, progress, created_at, started_at, visible,
+           remote_recoverable, current_user_message_id,
+           current_assistant_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?, ?,
+                 ?, ?, ?)`
+        )
+        .run(
+          taskId,
+          input.projectId ?? null,
+          input.conversationId ?? null,
+          input.parentTaskId ?? null,
+          input.expertId ?? null,
+          input.routingMode ?? null,
+          input.title,
+          input.instructions,
+          input.origin ?? 'user',
+          status,
+          input.workMode,
+          now,
+          status === 'running' ? now : null,
+          Number(input.visible ?? true),
+          Number(remoteRecovery?.recoverable ?? false),
+          remoteRecovery?.recoverable
+            ? currentUserMessageId ?? null
+            : null,
+          remoteRecovery?.recoverable
+            ? currentAssistantMessageId ?? null
+            : null
+        )
+      if (
+        remoteRecovery?.recoverable &&
+        input.projectId &&
+        input.conversationId &&
+        currentUserMessageId &&
+        currentAssistantMessageId
+      ) {
+        const conversation = database
+          .prepare(
+            `SELECT project_id
+             FROM conversations
+             WHERE id = ? AND channel IS NULL AND status = 'active'`
+          )
+          .get(input.conversationId) as
+          | { project_id: string | null }
+          | undefined
+        if (!conversation) {
+          throw new Error('可恢复远程任务的本地对话不存在')
+        }
+        if (conversation.project_id !== input.projectId) {
+          throw new Error('可恢复远程任务的项目与对话不匹配')
+        }
+        const findMessage = database.prepare(
+          `SELECT conversation_id, request_id, role, sequence
+           FROM messages WHERE id = ?`
+        )
+        let user = findMessage.get(currentUserMessageId) as
+          | {
+              conversation_id: string
+              request_id: string | null
+              role: MessageRow['role']
+              sequence: number
+            }
+          | undefined
+        let assistant = findMessage.get(currentAssistantMessageId) as
+          | {
+              conversation_id: string
+              request_id: string | null
+              role: MessageRow['role']
+              sequence: number
+            }
+          | undefined
+        for (const [message, role] of [
+          [user, 'user'],
+          [assistant, 'assistant']
+        ] as const) {
+          if (
+            message &&
+            (message.conversation_id !== input.conversationId ||
+              message.role !== role)
+          ) {
+            throw new Error('可恢复远程任务的消息归属或角色无效')
+          }
+        }
+        if (
+          assistant?.request_id &&
+          assistant.request_id !== taskId
+        ) {
+          throw new Error('助理消息已由其他任务管理')
+        }
+        const maximumSequence = (
+          database
+            .prepare(
+              `SELECT COALESCE(MAX(sequence), -1) AS sequence
+               FROM messages WHERE conversation_id = ?`
+            )
+            .get(input.conversationId) as { sequence: number }
+        ).sequence
+        if (user && assistant) {
+          if (
+            assistant.sequence !== user.sequence + 1 ||
+            assistant.sequence !== maximumSequence
+          ) {
+            throw new Error('可恢复远程任务的当前消息顺序无效')
+          }
+        } else if (user) {
+          if (user.sequence !== maximumSequence) {
+            throw new Error('可恢复远程任务的用户消息不是当前消息')
+          }
+          database
+            .prepare(
+              `INSERT INTO messages
+                (id, conversation_id, request_id, role, content, state,
+                 sequence, metadata_json, created_at)
+               VALUES (?, ?, ?, 'assistant', '', 'streaming', ?, ?, ?)`
+            )
+            .run(
+              currentAssistantMessageId,
+              input.conversationId,
+              taskId,
+              user.sequence + 1,
+              JSON.stringify({ createdAt: Date.parse(now), blocks: [] }),
+              now
+            )
+          assistant = findMessage.get(currentAssistantMessageId) as
+            typeof assistant
+        } else if (assistant) {
+          if (assistant.sequence !== maximumSequence) {
+            throw new Error('可恢复远程任务的助理消息不是当前消息')
+          }
+          database
+            .prepare(
+              `UPDATE messages
+               SET sequence = sequence + 1
+               WHERE conversation_id = ? AND sequence >= ?`
+            )
+            .run(input.conversationId, assistant.sequence)
+          database
+            .prepare(
+              `INSERT INTO messages
+                (id, conversation_id, request_id, role, content, state,
+                 sequence, metadata_json, created_at)
+               VALUES (?, ?, NULL, 'user', ?, 'complete', ?, ?, ?)`
+            )
+            .run(
+              currentUserMessageId,
+              input.conversationId,
+              input.instructions,
+              assistant.sequence,
+              JSON.stringify({ createdAt: Date.parse(now) }),
+              now
+            )
+          user = findMessage.get(currentUserMessageId) as typeof user
+        } else {
+          database
+            .prepare(
+              `INSERT INTO messages
+                (id, conversation_id, request_id, role, content, state,
+                 sequence, metadata_json, created_at)
+               VALUES (?, ?, NULL, 'user', ?, 'complete', ?, ?, ?),
+                      (?, ?, ?, 'assistant', '', 'streaming', ?, ?, ?)`
+            )
+            .run(
+              currentUserMessageId,
+              input.conversationId,
+              input.instructions,
+              maximumSequence + 1,
+              JSON.stringify({ createdAt: Date.parse(now) }),
+              now,
+              currentAssistantMessageId,
+              input.conversationId,
+              taskId,
+              maximumSequence + 2,
+              JSON.stringify({ createdAt: Date.parse(now), blocks: [] }),
+              now
+            )
+        }
+        const claim = database
+          .prepare(
+            `UPDATE messages
+             SET request_id = ?
+             WHERE id = ? AND conversation_id = ? AND role = 'assistant'
+               AND (request_id IS NULL OR request_id = ?)`
+          )
+          .run(
+            taskId,
+            currentAssistantMessageId,
+            input.conversationId,
+            taskId
+          )
+        if (claim.changes !== 1) {
+          throw new Error('无法管理可恢复远程任务的助理消息')
+        }
+        database
+          .prepare(
+            `UPDATE conversations
+             SET updated_at = MAX(updated_at, ?)
+             WHERE id = ?`
+          )
+          .run(now, input.conversationId)
+      }
+      database
+        .prepare(
+          `INSERT INTO task_events
+            (task_id, run_id, kind, payload_json, created_at)
+           VALUES (?, NULL, ?, ?, ?)`
+        )
+        .run(
+          taskId,
+          status,
+          JSON.stringify({ workMode: input.workMode }),
+          now
+        )
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getTask(taskId)
+  }
+
+  listRecoverableRemoteTasks(): RecoverableRemoteTask[] {
+    return this.requireDatabase()
+      .prepare(
+        `SELECT id AS taskId, project_id AS projectId,
+                conversation_id AS conversationId,
+                current_user_message_id AS currentUserMessageId,
+                current_assistant_message_id AS currentAssistantMessageId,
+                instructions, work_mode AS workMode, status
+         FROM tasks
+         WHERE remote_recoverable = 1
+           AND status IN ('running', 'waiting_approval', 'interrupted')
+           AND project_id IS NOT NULL
+           AND conversation_id IS NOT NULL
+           AND current_user_message_id IS NOT NULL
+           AND current_assistant_message_id IS NOT NULL
+         ORDER BY created_at ASC, rowid ASC`
       )
-      .run(
-        input.id,
-        input.projectId ?? null,
-        input.conversationId ?? null,
-        input.parentTaskId ?? null,
-        input.expertId ?? null,
-        input.routingMode ?? null,
-        input.title,
-        input.instructions,
-        input.origin ?? 'user',
-        status,
-        input.workMode,
-        now,
-        status === 'running' ? now : null,
-        Number(input.visible ?? true)
-      )
-    this.appendTaskEvent(input.id, status, {
-      workMode: input.workMode
-    })
-    return this.getTask(input.id)
+      .all()
+      .map((record) => {
+        const candidate = record as RecoverableRemoteTask
+        assistantIdSchema.parse(candidate.taskId)
+        assistantIdSchema.parse(candidate.projectId)
+        assistantIdSchema.parse(candidate.conversationId)
+        assistantIdSchema.parse(candidate.currentUserMessageId)
+        assistantIdSchema.parse(candidate.currentAssistantMessageId)
+        if (
+          !['ask', 'execute'].includes(candidate.workMode) ||
+          !['running', 'waiting_approval', 'interrupted'].includes(
+            candidate.status
+          )
+        ) {
+          throw new Error('可恢复远程任务元数据无效')
+        }
+        return candidate
+      })
+  }
+
+  failRecoverableRemoteTask(taskIdInput: string, messageInput: string): void {
+    const taskId = assistantIdSchema.parse(taskIdInput)
+    const message = messageInput.trim().slice(0, 4_000)
+    if (!message) {
+      throw new Error('远程恢复失败原因不能为空')
+    }
+    const database = this.requireDatabase()
+    const now = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const owner = database
+        .prepare(
+          `SELECT conversation_id, current_assistant_message_id
+           FROM tasks
+           WHERE id = ? AND remote_recoverable = 1
+             AND status IN ('running', 'waiting_approval', 'interrupted')`
+        )
+        .get(taskId) as
+        | {
+            conversation_id: string | null
+            current_assistant_message_id: string | null
+          }
+        | undefined
+      if (
+        !owner?.conversation_id ||
+        !owner.current_assistant_message_id
+      ) {
+        throw new Error('没有可终止的远程恢复任务')
+      }
+      const row = database
+        .prepare(
+          `SELECT id, role, content, state, metadata_json, created_at
+           FROM messages
+           WHERE id = ? AND conversation_id = ? AND request_id = ?`
+        )
+        .get(
+          owner.current_assistant_message_id,
+          owner.conversation_id,
+          taskId
+        ) as
+        | {
+            id: string
+            role: MessageRow['role']
+            content: string
+            state: ConversationMessage['state']
+            metadata_json: string
+            created_at: string
+          }
+        | undefined
+      if (!row || row.role !== 'assistant') {
+        throw new Error('远程恢复任务的助理消息不存在')
+      }
+      const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+      const current = conversationMessageSchema.parse({
+        id: row.id,
+        role: 'assistant',
+        content: row.content,
+        state: row.state,
+        createdAt: metadata.createdAt ?? Date.parse(row.created_at),
+        status: metadata.status,
+        reasoning: metadata.reasoning,
+        blocks: metadata.blocks,
+        contextCompression: metadata.contextCompression,
+        contextCompressions: metadata.contextCompressions,
+        tools: metadata.tools,
+        subagents: metadata.subagents,
+        sources: metadata.sources,
+        sourceReferences: metadata.sourceReferences,
+        knowledgeRetrieval: metadata.knowledgeRetrieval,
+        artifactIds: metadata.artifactIds,
+        task: metadata.task,
+        attachments: metadata.attachments
+      })
+      const failed = reduceRecoveredAgentEvent(current, {
+        requestId: taskId,
+        type: 'error',
+        status: 'failed',
+        message
+      })
+      database
+        .prepare(
+          `UPDATE messages
+           SET content = ?, state = ?, metadata_json = ?
+           WHERE id = ? AND conversation_id = ? AND request_id = ?`
+        )
+        .run(
+          failed.content,
+          failed.state,
+          serializeConversationMessageMetadata(failed),
+          owner.current_assistant_message_id,
+          owner.conversation_id,
+          taskId
+        )
+      database
+        .prepare(
+          `UPDATE tasks
+           SET status = 'failed', error = ?, completed_at = ?
+           WHERE id = ?`
+        )
+        .run(message, now, taskId)
+      database
+        .prepare(
+          `INSERT INTO task_events
+            (task_id, run_id, kind, payload_json, created_at)
+           VALUES (?, NULL, 'error', ?, ?)`
+        )
+        .run(
+          taskId,
+          JSON.stringify({
+            requestId: taskId,
+            type: 'error',
+            status: 'failed',
+            message
+          }),
+          now
+        )
+      database
+        .prepare(
+          `UPDATE conversations SET updated_at = ? WHERE id = ?`
+        )
+        .run(now, owner.conversation_id)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   upsertModelUsageCall(input: ModelUsageCallInput): void {
@@ -3967,6 +4906,445 @@ export class AssistantDatabase {
         JSON.stringify(payload),
         new Date().toISOString()
       )
+  }
+
+  appendRemoteTaskEventOnce(input: RemoteTaskEventInput): boolean {
+    const database = this.requireDatabase()
+    return this.insertRemoteTaskEventOnce(
+      database,
+      validateRemoteTaskEvent(input)
+    )
+  }
+
+  appendRemoteConversationTaskEventOnce(
+    input: RemoteConversationTaskEventInput
+  ): boolean {
+    const conversationId = assistantIdSchema.parse(input.conversationId)
+    const assistantMessageId = assistantIdSchema.parse(
+      input.assistantMessageId
+    )
+    const publicEvent = stripRemoteEventProvenance(input.event)
+    if (publicEvent.requestId !== input.taskId) {
+      throw new Error('远程事件的请求 ID 与任务不匹配')
+    }
+    const event = validateRemoteTaskEvent({
+      taskId: input.taskId,
+      bindingId: input.bindingId,
+      operationId: input.operationId,
+      semanticSequence: input.semanticSequence,
+      eventIndex: input.eventIndex,
+      kind: publicEvent.type,
+      payload: publicEvent
+    })
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const owner = database
+        .prepare(
+          `SELECT project_id, conversation_id,
+                  current_assistant_message_id
+           FROM tasks
+           WHERE id = ? AND remote_recoverable = 1`
+        )
+        .get(event.taskId) as
+        | {
+            project_id: string | null
+            conversation_id: string | null
+            current_assistant_message_id: string | null
+          }
+        | undefined
+      if (
+        !owner ||
+        owner.conversation_id !== conversationId ||
+        owner.current_assistant_message_id !== assistantMessageId
+      ) {
+        throw new Error('远程事件与可恢复任务的消息归属不匹配')
+      }
+      const inserted = this.insertRemoteTaskEventOnce(database, event)
+      if (!inserted) {
+        database.exec('COMMIT')
+        return false
+      }
+      if (publicEvent.type === 'remote-semantic-checkpoint') {
+        this.terminalizeRemoteTaskAtCheckpoint(database, event)
+        database.exec('COMMIT')
+        return true
+      }
+      const row = database
+        .prepare(
+          `SELECT id, role, content, state, metadata_json, created_at
+           FROM messages
+           WHERE id = ? AND conversation_id = ? AND request_id = ?`
+        )
+        .get(
+          assistantMessageId,
+          conversationId,
+          event.taskId
+        ) as
+        | {
+            id: string
+            role: MessageRow['role']
+            content: string
+            state: ConversationMessage['state']
+            metadata_json: string
+            created_at: string
+          }
+        | undefined
+      if (!row || row.role !== 'assistant') {
+        throw new Error('远程事件的助理消息不存在或不受任务管理')
+      }
+      const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+      const message = conversationMessageSchema.parse({
+        id: row.id,
+        role: 'assistant',
+        content: row.content,
+        state: row.state,
+        createdAt:
+          metadata.createdAt ?? Date.parse(row.created_at),
+        status: metadata.status,
+        reasoning: metadata.reasoning,
+        blocks: metadata.blocks,
+        contextCompression: metadata.contextCompression,
+        contextCompressions: metadata.contextCompressions,
+        tools: metadata.tools,
+        subagents: metadata.subagents,
+        sources: metadata.sources,
+        sourceReferences: metadata.sourceReferences,
+        knowledgeRetrieval: metadata.knowledgeRetrieval,
+        artifactIds: metadata.artifactIds,
+        task: metadata.task,
+        attachments: metadata.attachments
+      })
+      const reduced = reduceRecoveredAgentEvent(message, publicEvent)
+      const messageUpdate = database
+        .prepare(
+          `UPDATE messages
+           SET content = ?, state = ?, metadata_json = ?
+           WHERE id = ? AND conversation_id = ? AND request_id = ?`
+        )
+        .run(
+          reduced.content,
+          reduced.state,
+          serializeConversationMessageMetadata(reduced),
+          assistantMessageId,
+          conversationId,
+          event.taskId
+        )
+      if (messageUpdate.changes !== 1) {
+        throw new Error('远程事件的助理消息写入失败')
+      }
+      const conversation = database
+        .prepare(
+          `SELECT runtime_selection_json, context_state_json
+           FROM conversations
+           WHERE id = ?`
+        )
+        .get(conversationId) as
+        | {
+            runtime_selection_json: string | null
+            context_state_json: string | null
+          }
+        | undefined
+      if (!conversation) {
+        throw new Error('远程事件的对话不存在')
+      }
+      let contextState = parseConversationContextState(
+        conversation.context_state_json
+      )
+      if (publicEvent.type === 'context-metrics') {
+        const runtimeSelection = parseRuntimeSelection(
+          conversation.runtime_selection_json
+        )
+        if (!runtimeSelection) {
+          throw new Error('远程事件的对话缺少 Runtime 选择')
+        }
+        contextState = {
+          ...contextState,
+          contextMetrics: {
+            runtimeSelectionKey:
+              agentRuntimeSelectionKey(runtimeSelection),
+            contextTokens: publicEvent.contextTokens,
+            source: publicEvent.source,
+            basis: 'model-call'
+          }
+        }
+      } else if (
+        publicEvent.type === 'context-compression' &&
+        publicEvent.scope !== 'agent-run'
+      ) {
+        const runtimeSelection = parseRuntimeSelection(
+          conversation.runtime_selection_json
+        )
+        const estimatedAfterTokens =
+          publicEvent.estimatedAfterTokens
+        contextState = {
+          ...contextState,
+          ...(publicEvent.conversationState
+            ? {
+                contextCompressionState:
+                  publicEvent.conversationState
+              }
+            : {}),
+          ...(publicEvent.state === 'completed' &&
+          estimatedAfterTokens !== undefined &&
+          runtimeSelection
+            ? {
+                contextMetrics: {
+                  runtimeSelectionKey:
+                    agentRuntimeSelectionKey(runtimeSelection),
+                  contextTokens: estimatedAfterTokens,
+                  source: 'estimated' as const,
+                  basis: 'conversation' as const
+                }
+              }
+            : {})
+        }
+      }
+      database
+        .prepare(
+          `UPDATE conversations
+           SET context_state_json = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          serializeConversationContextState(
+            conversationContextStateSchema.parse(contextState)
+          ),
+          new Date().toISOString(),
+          conversationId
+        )
+      database.exec('COMMIT')
+      return true
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  appendRemoteTaskEventsBatch(
+    events: readonly RemoteTaskEventInput[]
+  ): string {
+    if (
+      events.length < 1 ||
+      events.length > AGENT_PROTOCOL_LIMITS.runPendingEvents
+    ) {
+      throw new RangeError(
+        `Remote task event batch must contain between 1 and ${AGENT_PROTOCOL_LIMITS.runPendingEvents} events`
+      )
+    }
+    const validated = events.map(validateRemoteTaskEvent)
+    const first = validated[0]!
+    let previous = first
+    for (let index = 1; index < validated.length; index += 1) {
+      const current = validated[index]!
+      if (
+        current.taskId !== first.taskId ||
+        current.bindingId !== first.bindingId ||
+        current.operationId !== first.operationId
+      ) {
+        throw new Error(
+          'Remote task event batch must belong to one task operation'
+        )
+      }
+      const sequenceOrder =
+        BigInt(current.semanticSequence) -
+        BigInt(previous.semanticSequence)
+      if (
+        sequenceOrder < 0n ||
+        (sequenceOrder === 0n &&
+          current.eventIndex <= previous.eventIndex)
+      ) {
+        throw new Error(
+          'Remote task event batch must be in semantic sequence order'
+        )
+      }
+      previous = current
+    }
+
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      for (const event of validated) {
+        this.insertRemoteTaskEventOnce(database, event)
+      }
+      const highestCommittedSequence =
+        this.queryHighestCommittedRemoteTaskEventSequence(
+          database,
+          first.bindingId,
+          first.operationId
+        )
+      database.exec('COMMIT')
+      return highestCommittedSequence
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  getHighestCommittedRemoteTaskEventSequence(
+    bindingId: string,
+    operationId: string
+  ): string {
+    const normalizedBindingId = agentIdentifierSchema.parse(bindingId)
+    const normalizedOperationId =
+      agentIdentifierSchema.parse(operationId)
+    return this.queryHighestCommittedRemoteTaskEventSequence(
+      this.requireDatabase(),
+      normalizedBindingId,
+      normalizedOperationId
+    )
+  }
+
+  getHighestCommittedRemoteTaskEventSequenceForTask(
+    taskIdInput: string
+  ): string {
+    const taskId = assistantIdSchema.parse(taskIdInput)
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT MAX(CAST(remote_semantic_sequence AS INTEGER)) AS sequence
+         FROM task_events
+         WHERE task_id = ?
+           AND kind = 'remote-semantic-checkpoint'`
+      )
+      .get(taskId) as { sequence: number | null }
+    return row.sequence === null ? '0' : String(row.sequence)
+  }
+
+  private queryHighestCommittedRemoteTaskEventSequence(
+    database: DatabaseSync,
+    bindingId: string,
+    operationId: string
+  ): string {
+    const row = database
+      .prepare(
+        `SELECT MAX(CAST(remote_semantic_sequence AS INTEGER)) AS sequence
+         FROM task_events
+         WHERE remote_binding_id = ?
+           AND remote_operation_id = ?`
+      )
+      .get(bindingId, operationId) as {
+      sequence: number | null
+    }
+    return row.sequence === null ? '0' : String(row.sequence)
+  }
+
+  private terminalizeRemoteTaskAtCheckpoint(
+    database: DatabaseSync,
+    event: ValidatedRemoteTaskEvent
+  ): void {
+    const terminal = database
+      .prepare(
+        `SELECT kind, payload_json
+         FROM task_events
+         WHERE task_id = ?
+           AND remote_binding_id = ?
+           AND remote_operation_id = ?
+           AND remote_semantic_sequence = ?
+           AND remote_event_index < ?
+           AND kind IN ('done', 'error')
+         ORDER BY remote_event_index DESC
+         LIMIT 1`
+      )
+      .get(
+        event.taskId,
+        event.bindingId,
+        event.operationId,
+        event.semanticSequence,
+        event.eventIndex
+      ) as
+      | { kind: 'done' | 'error'; payload_json: string }
+      | undefined
+    const terminalPayload = terminal
+      ? (JSON.parse(terminal.payload_json) as AgentEvent)
+      : undefined
+    const taskStatus =
+      terminal?.kind === 'done'
+        ? 'completed'
+        : terminalPayload?.type === 'error'
+          ? terminalPayload.status === 'cancelled'
+            ? 'cancelled'
+            : 'failed'
+          : undefined
+    if (taskStatus === undefined) {
+      return
+    }
+    const taskError =
+      terminalPayload?.type === 'error'
+        ? terminalPayload.message.slice(0, 4_000)
+        : null
+    const taskUpdate = database
+      .prepare(
+        `UPDATE tasks
+         SET status = ?, error = ?, completed_at = ?
+         WHERE id = ? AND remote_recoverable = 1`
+      )
+      .run(
+        taskStatus,
+        taskError,
+        new Date().toISOString(),
+        event.taskId
+      )
+    if (taskUpdate.changes !== 1) {
+      throw new Error('远程终态无法更新所属任务')
+    }
+  }
+
+  private insertRemoteTaskEventOnce(
+    database: DatabaseSync,
+    event: ValidatedRemoteTaskEvent
+  ): boolean {
+    const result = database
+      .prepare(
+        `INSERT OR IGNORE INTO task_events
+          (task_id, run_id, kind, payload_json, created_at,
+           remote_binding_id, remote_operation_id,
+           remote_semantic_sequence, remote_event_index)
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        event.taskId,
+        event.kind,
+        event.payloadJson,
+        new Date().toISOString(),
+        event.bindingId,
+        event.operationId,
+        event.semanticSequence,
+        event.eventIndex
+      )
+    if (result.changes === 1) {
+      return true
+    }
+    const existing = database
+      .prepare(
+        `SELECT task_id, kind, payload_json
+         FROM task_events
+         WHERE remote_binding_id = ?
+           AND remote_operation_id = ?
+           AND remote_semantic_sequence = ?
+           AND remote_event_index = ?`
+      )
+      .get(
+        event.bindingId,
+        event.operationId,
+        event.semanticSequence,
+        event.eventIndex
+      ) as
+      | {
+          task_id: string
+          kind: string
+          payload_json: string
+        }
+      | undefined
+    if (
+      existing?.task_id === event.taskId &&
+      existing.kind === event.kind &&
+      existing.payload_json === event.payloadJson
+    ) {
+      return false
+    }
+    throw new Error(
+      'Remote task event provenance conflicts with persisted event'
+    )
   }
 
   persistComputerControlAudit(
@@ -6581,7 +7959,11 @@ export class AssistantDatabase {
         created_at TEXT NOT NULL,
         started_at TEXT,
         completed_at TEXT,
-        error TEXT
+        error TEXT,
+        remote_recoverable INTEGER NOT NULL DEFAULT 0
+          CHECK(remote_recoverable IN (0, 1)),
+        current_user_message_id TEXT,
+        current_assistant_message_id TEXT
       );
       CREATE TABLE runs (
         id TEXT PRIMARY KEY,
@@ -8082,6 +9464,109 @@ export class AssistantDatabase {
             WHERE kind = 'ssh';
 
           PRAGMA user_version = 31;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 32) {
+      const taskColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(tasks)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      const taskEventColumns = new Set(
+        (
+          database.prepare('PRAGMA table_info(task_events)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!taskColumns.has('remote_recoverable')) {
+          database.exec(`
+            ALTER TABLE tasks
+              ADD COLUMN remote_recoverable INTEGER NOT NULL DEFAULT 0
+                CHECK(remote_recoverable IN (0, 1));
+          `)
+        }
+        if (!taskColumns.has('current_user_message_id')) {
+          database.exec(`
+            ALTER TABLE tasks
+              ADD COLUMN current_user_message_id TEXT;
+          `)
+        }
+        if (!taskColumns.has('current_assistant_message_id')) {
+          database.exec(`
+            ALTER TABLE tasks
+              ADD COLUMN current_assistant_message_id TEXT;
+          `)
+        }
+        if (!taskEventColumns.has('remote_binding_id')) {
+          database.exec(`
+            ALTER TABLE task_events
+              ADD COLUMN remote_binding_id TEXT;
+          `)
+        }
+        if (!taskEventColumns.has('remote_operation_id')) {
+          database.exec(`
+            ALTER TABLE task_events
+              ADD COLUMN remote_operation_id TEXT;
+          `)
+        }
+        if (!taskEventColumns.has('remote_semantic_sequence')) {
+          database.exec(`
+            ALTER TABLE task_events
+              ADD COLUMN remote_semantic_sequence TEXT;
+          `)
+        }
+        if (!taskEventColumns.has('remote_event_index')) {
+          database.exec(`
+            ALTER TABLE task_events
+              ADD COLUMN remote_event_index INTEGER
+              CHECK(
+                (
+                  remote_event_index IS NULL AND
+                  remote_binding_id IS NULL AND
+                  remote_operation_id IS NULL AND
+                  remote_semantic_sequence IS NULL
+                ) OR (
+                  typeof(remote_event_index) = 'integer' AND
+                  remote_event_index BETWEEN 0 AND 999 AND
+                  remote_binding_id IS NOT NULL AND
+                  length(remote_binding_id) BETWEEN 1 AND 128 AND
+                  remote_operation_id IS NOT NULL AND
+                  length(remote_operation_id) BETWEEN 1 AND 128 AND
+                  remote_semantic_sequence IS NOT NULL AND
+                  length(remote_semantic_sequence) BETWEEN 1 AND 16 AND
+                  remote_semantic_sequence NOT GLOB '*[^0-9]*' AND
+                  substr(remote_semantic_sequence, 1, 1)
+                    BETWEEN '1' AND '9' AND
+                  CAST(remote_semantic_sequence AS INTEGER)
+                    BETWEEN 1 AND 9007199254740991
+                )
+              );
+          `)
+        }
+        database.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS
+            task_events_remote_provenance_unique
+            ON task_events(
+              remote_binding_id,
+              remote_operation_id,
+              remote_semantic_sequence,
+              remote_event_index
+            )
+            WHERE remote_binding_id IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS tasks_remote_recovery_idx
+            ON tasks(remote_recoverable, status, created_at)
+            WHERE remote_recoverable = 1;
+          PRAGMA user_version = 32;
           COMMIT;
         `)
       } catch (error) {

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { createHash } from 'node:crypto'
 import {
   AGENT_PROTOCOL_LIMITS,
   AGENT_PROTOCOL_VERSION,
@@ -23,6 +24,10 @@ import {
 import { canonicalJson } from '../shared/agent-protocol/canonical'
 import {
   acpJournalCursorSchema,
+  remoteOwnedPromptAttachRequestSchema,
+  remoteOwnedPromptStartRequestSchema,
+  remoteSemanticTranscriptAckRequestSchema,
+  remoteSemanticTranscriptPageRequestSchema,
   remotePromptOperationAcceptanceSchema,
   remotePromptOperationPreparationSchema,
   UNBOUNDED_REMOTE_PROMPT_DEADLINE,
@@ -31,7 +36,11 @@ import {
   type RemotePromptOperationPreparation
 } from '../shared/remote-agent-contracts'
 import type { RemoteRuntimeBundleManifest } from '../shared/remote-runtime-launch-contracts'
-import type { ModelBridgePolicy } from '../shared/model-bridge-contracts'
+import {
+  modelBridgePolicySchema,
+  type AgentPromptModelProfile,
+  type ModelBridgePolicy
+} from '../shared/model-bridge-contracts'
 import {
   ModelBridgeBlobClient,
   ModelBridgeClientError
@@ -44,6 +53,13 @@ import type {
   ProtocolMethodContext,
   ProtocolMethodHandler
 } from './protocol-server'
+import { AgentOwnedAcpPrompt } from './agent-owned-acp-prompt'
+import type { SemanticPromptStore } from './semantic-prompt-store'
+import {
+  AgentModelGatewayError,
+  type AgentModelGateway
+} from './agent-model-gateway'
+import { openCodeModelBridgeModelId } from './model-bridge-helper'
 
 const ZERO_CURSOR = '0'
 const DEFAULT_MAXIMUM_BINDINGS = 128
@@ -60,6 +76,8 @@ const DEFAULT_MAXIMUM_PENDING_OUTPUT_BYTES_GLOBAL =
   AGENT_PROTOCOL_LIMITS.maximumBufferedProtocolBytes
 const DEFAULT_MAXIMUM_OPERATIONS_PER_BINDING = 1_000
 const DEFAULT_DISPOSE_TIMEOUT_MS = 10_000
+const OWNED_PROMPT_CANCEL_GRACE_MS = 1_000
+const OWNED_PROMPT_START_TIMEOUT_MS = 2 * 60_000
 
 export type RuntimeAcpBackendErrorCode =
   | 'capacity'
@@ -259,15 +277,21 @@ export type RuntimeAcpBackendOptions = {
     bridgeDirectory: string
     dispatch: ModelBridgeBrokerDispatch
   }) => ModelBridgeBrokerServer
+  semanticPrompts?: SemanticPromptStore
+  modelGateway?: AgentModelGateway
   now?: () => number
   limits?: Partial<RuntimeAcpBackendLimits>
 }
 
 type PreparedOperation = {
-  canonicalPreparation: string
+  preparationDigest: string
   acceptance: RemotePromptOperationAcceptance
   budget: RemotePromptOperationPreparation['budget']
   completion?: z.infer<typeof acpCompletePromptResultSchema>
+  terminalState?: 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  modelProfile?: AgentPromptModelProfile
+  promptSequence: number
+  ownedPromptStarted?: boolean
 }
 
 type BindingState = {
@@ -297,9 +321,13 @@ type BindingState = {
   inputTail: Promise<void>
   outputTail: Promise<void>
   deadlineTimer?: NodeJS.Timeout
+  ownedPromptStartTimer?: NodeJS.Timeout
   modelBridgePolicy?: ModelBridgePolicy
   modelBridgeClient?: ModelBridgeBlobClient
   modelBridgeBroker?: ModelBridgeBrokerServer
+  ownedAcp?: AgentOwnedAcpPrompt
+  workspaceDirectory?: string
+  nextModelRound: number
   poisoned: boolean
 }
 
@@ -383,6 +411,14 @@ export class RuntimeAcpBackend {
         this.#enqueuePublicControl(() => this.#replay(params, context)),
       'runtime/preparePrompt': (params, context) =>
         this.#enqueuePublicControl(() => this.#prepare(params, context)),
+      'runtime/startPrompt': (params, context) =>
+        this.#enqueuePublicControl(() => this.#startOwnedPrompt(params, context)),
+      'runtime/attachPrompt': (params, context) =>
+        this.#enqueuePublicControl(() => this.#attachOwnedPrompt(params, context)),
+      'runtime/pagePromptTranscript': (params, context) =>
+        this.#enqueuePublicControl(() => this.#pageOwnedPrompt(params, context)),
+      'runtime/ackPromptTranscript': (params, context) =>
+        this.#enqueuePublicControl(() => this.#ackOwnedPrompt(params, context)),
       'runtime/completePrompt': (params, context) =>
         this.#enqueuePublicControl(() => this.#complete(params, context)),
       'runtime/getAcpCursors': (params, context) =>
@@ -638,6 +674,23 @@ export class RuntimeAcpBackend {
           existing.activeOperationId === undefined &&
           (existing.state === 'open' ||
             existing.state === 'running')
+        const canReattachDetachedOwnedPrompt =
+          context.controllerTakeoverProven === true &&
+          context.controller.generation >
+            existing.controllerGeneration &&
+          existing.transportState === 'detached' &&
+          existing.activeOperationId !== undefined &&
+          this.#options.semanticPrompts !== undefined &&
+          existing.operations.get(existing.activeOperationId)
+            ?.modelProfile !== undefined &&
+          existing.state === 'running'
+        if (canReattachDetachedOwnedPrompt) {
+          existing.controllerGeneration = context.controller.generation
+          existing.connectionId = context.controller.connectionId
+          existing.transportState = 'live'
+          this.#bindConnectionLifetime(existing, context.signal)
+          return acpOpenChannelResultSchema.parse(existing.openResult)
+        }
         if (!canReplaceDetachedIdleBinding) {
           this.#assertBindingOwner(existing, context)
         }
@@ -671,6 +724,7 @@ export class RuntimeAcpBackend {
       existing.pendingOutputBytes = 0
       existing.inputTail = Promise.resolve()
       existing.outputTail = Promise.resolve()
+      existing.nextModelRound = 0
       this.#bindConnectionLifetime(existing, context.signal)
       return existing.openResult
     }
@@ -722,6 +776,7 @@ export class RuntimeAcpBackend {
       pendingOutputBytes: 0,
       inputTail: Promise.resolve(),
       outputTail: Promise.resolve(),
+      nextModelRound: 0,
       poisoned: false
     }
     this.#bindings.set(request.bindingId, binding)
@@ -908,10 +963,10 @@ export class RuntimeAcpBackend {
     const binding = this.#bindingForContext(preparation.bindingId, context)
     this.#assertPreparationIdentity(binding, preparation, context)
     this.#assertBeforeDeadline(binding, preparation.deadlineAt)
-    const canonicalPreparation = canonicalJson(preparation)
+    const preparationDigest = digestSecretBearingPreparation(preparation)
     const existing = binding.operations.get(preparation.operationId)
     if (existing !== undefined) {
-      if (existing.canonicalPreparation !== canonicalPreparation) {
+      if (existing.preparationDigest !== preparationDigest) {
         throw new RuntimeAcpBackendError(
           'Prompt operation identity is already bound to different content',
           'conflict'
@@ -983,18 +1038,46 @@ export class RuntimeAcpBackend {
         'process'
       )
     }
+    const agentGatewayPolicy =
+      this.#options.modelGateway !== undefined &&
+      preparation.modelProfile !== undefined
+        ? modelBridgePolicySchema.parse({
+            protocol: preparation.modelProfile.protocol,
+            model: preparation.modelProfile.model,
+            modelProfileDigest:
+              preparation.modelProfile.modelProfileDigest,
+            supportsImageInput:
+              preparation.modelProfile.capabilities.imageInput
+          })
+        : undefined
     if (
+      agentGatewayPolicy !== undefined &&
       preparation.modelBridge !== undefined &&
+      canonicalJson(agentGatewayPolicy) !==
+        canonicalJson(preparation.modelBridge.policy)
+    ) {
+      throw new RuntimeAcpBackendError(
+        'Prompt model profile does not match its persisted policy',
+        'identity'
+      )
+    }
+    const requestedModelBridgePolicy =
+      agentGatewayPolicy ?? preparation.modelBridge?.policy
+    if (
+      requestedModelBridgePolicy !== undefined &&
       binding.modelBridgePolicy !== undefined &&
       canonicalJson(binding.modelBridgePolicy) !==
-        canonicalJson(preparation.modelBridge.policy)
+        canonicalJson(requestedModelBridgePolicy)
     ) {
       throw new RuntimeAcpBackendError(
         'Model bridge policy cannot change within a Runtime binding',
         'conflict'
       )
     }
-    if (preparation.modelBridge !== undefined) {
+    if (
+      preparation.modelBridge !== undefined &&
+      agentGatewayPolicy === undefined
+    ) {
       for (const candidate of this.#bindings.values()) {
         if (
           candidate !== binding &&
@@ -1007,6 +1090,8 @@ export class RuntimeAcpBackend {
           )
         }
       }
+    }
+    if (requestedModelBridgePolicy !== undefined) {
       await this.#startModelBridge(binding, preparation, workspace)
     }
     const acceptedAt = new Date(this.#now()).toISOString()
@@ -1030,13 +1115,13 @@ export class RuntimeAcpBackend {
           workMode: preparation.workMode,
           deadlineAt: preparation.deadlineAt,
           budget: preparation.budget,
-          ...(preparation.modelBridge === undefined ||
+          ...(binding.modelBridgePolicy === undefined ||
           binding.modelBridgeBroker === undefined
             ? {}
             : {
                 modelBridge: {
                   socketPath: binding.modelBridgeBroker.socketPath,
-                  policy: preparation.modelBridge.policy
+                  policy: binding.modelBridgePolicy
                 }
               })
         })
@@ -1073,23 +1158,32 @@ export class RuntimeAcpBackend {
         binding.request.bindingId
       )
       binding.process = process
+      binding.workspaceDirectory = workspace.workspaceDirectory
       binding.workMode = preparation.workMode
       binding.state = 'running'
       binding.operations.set(preparation.operationId, {
-        canonicalPreparation,
+        preparationDigest,
         acceptance,
-        budget: preparation.budget
+        budget: preparation.budget,
+        modelProfile: preparation.modelProfile,
+        promptSequence: preparation.promptSequence
       })
       try {
-        const unsubscribe = process.subscribeOutput((output) =>
-          this.#acceptProcessOutput(binding, output)
-        )
-        if (unsubscribe !== undefined) {
-          binding.unsubscribeOutput = unsubscribe
+        if (
+          preparation.modelProfile === undefined ||
+          this.#options.modelGateway === undefined ||
+          this.#options.semanticPrompts === undefined
+        ) {
+          const unsubscribe = process.subscribeOutput((output) =>
+            this.#acceptProcessOutput(binding, output)
+          )
+          if (unsubscribe !== undefined) {
+            binding.unsubscribeOutput = unsubscribe
+          }
         }
         const unsubscribeExit = process.subscribeExit?.(() => {
           void this.#enqueueControl(async () => {
-            await this.#closeModelBridge(binding, true)
+            await this.#handleProcessExit(binding)
           }).catch(() => undefined)
         })
         if (unsubscribeExit !== undefined) {
@@ -1129,12 +1223,33 @@ export class RuntimeAcpBackend {
     )
     if (!binding.operations.has(preparation.operationId)) {
       binding.operations.set(preparation.operationId, {
-        canonicalPreparation,
+        preparationDigest,
         acceptance,
-        budget: preparation.budget
+        budget: preparation.budget,
+        modelProfile: preparation.modelProfile,
+        promptSequence: preparation.promptSequence
       })
     }
+    this.#options.semanticPrompts?.prepare({
+      bindingId: preparation.bindingId,
+      operationId: preparation.operationId,
+      requestId: preparation.requestId,
+      controllerId: binding.controllerId,
+      preparationDigest,
+      promptSequence: preparation.promptSequence
+    })
     binding.activeOperationId = preparation.operationId
+    binding.nextModelRound = 0
+    if (
+      preparation.modelProfile !== undefined &&
+      this.#options.modelGateway !== undefined &&
+      this.#options.semanticPrompts !== undefined
+    ) {
+      this.#scheduleOwnedPromptStart(
+        binding,
+        preparation.operationId
+      )
+    }
     this.#scheduleDeadline(binding, preparation.deadlineAt)
     return acceptance
   }
@@ -1168,7 +1283,17 @@ export class RuntimeAcpBackend {
         'conflict'
       )
     }
+    if (binding.ownedAcp !== undefined) {
+      throw new RuntimeAcpBackendError(
+        'Agent-owned prompt completion is independent of Desktop ACK',
+        'conflict'
+      )
+    }
     await this.#closeModelBridge(binding, true)
+    this.#options.modelGateway?.finalizePrompt(
+      binding.request.bindingId,
+      operation.operationId
+    )
     if (binding.poisoned) {
       throw new RuntimeAcpBackendError(
         'Model response delivery was not proven before prompt completion',
@@ -1199,7 +1324,242 @@ export class RuntimeAcpBackend {
       clearTimeout(binding.deadlineTimer)
       binding.deadlineTimer = undefined
     }
+    if (binding.ownedPromptStartTimer !== undefined) {
+      clearTimeout(binding.ownedPromptStartTimer)
+      binding.ownedPromptStartTimer = undefined
+    }
     return completion
+  }
+
+  async #startOwnedPrompt(
+    params: unknown,
+    context: ProtocolMethodContext
+  ) {
+    const request = remoteOwnedPromptStartRequestSchema.parse(params)
+    const binding = this.#bindingForContext(request.bindingId, context)
+    const prepared = binding.operations.get(request.operationId)
+    const existing = this.#options.semanticPrompts?.findStarted({
+      bindingId: request.bindingId,
+      operationId: request.operationId,
+      controllerId: context.controller.controllerId,
+      startDigest: `sha256:${createHash('sha256')
+        .update(canonicalJson(request))
+        .digest('hex')}`
+    })
+    if (existing !== undefined) {
+      if (prepared !== undefined) {
+        prepared.ownedPromptStarted = true
+      }
+      if (binding.ownedPromptStartTimer !== undefined) {
+        clearTimeout(binding.ownedPromptStartTimer)
+        binding.ownedPromptStartTimer = undefined
+      }
+      return existing
+    }
+    if (
+      this.#options.semanticPrompts === undefined ||
+      prepared === undefined ||
+      binding.activeOperationId !== request.operationId ||
+      binding.process === undefined ||
+      binding.workspaceDirectory === undefined ||
+      binding.state !== 'running'
+    ) {
+      throw new RuntimeAcpBackendError(
+        'Agent-owned prompt was not prepared',
+        'conflict'
+      )
+    }
+    if (binding.ownedAcp === undefined) {
+      binding.ownedAcp = new AgentOwnedAcpPrompt({
+        bindingId: binding.request.bindingId,
+        controllerId: binding.controllerId,
+        workspaceDirectory: binding.workspaceDirectory,
+        workMode: binding.workMode!,
+        ...(binding.modelBridgePolicy === undefined
+          ? {}
+          : {
+              expectedModel: openCodeModelBridgeModelId(
+                binding.modelBridgePolicy.protocol,
+                binding.modelBridgePolicy.model
+              )
+            }),
+        process: binding.process,
+        transcript: this.#options.semanticPrompts,
+        completePrompt: async (operationId, status) => {
+          await this.#enqueueControl(async () => {
+            await this.#terminalizeOwnedPrompt(
+              binding,
+              operationId,
+              status
+            )
+          })
+        },
+        resolveTerminalState: (status) =>
+          binding.poisoned ? 'outcome-unknown' : status
+      })
+    }
+    const result = await binding.ownedAcp.start(request)
+    prepared.ownedPromptStarted = true
+    if (binding.ownedPromptStartTimer !== undefined) {
+      clearTimeout(binding.ownedPromptStartTimer)
+      binding.ownedPromptStartTimer = undefined
+    }
+    return result
+  }
+
+  #attachOwnedPrompt(
+    params: unknown,
+    context: ProtocolMethodContext
+  ) {
+    const request = remoteOwnedPromptAttachRequestSchema.parse(params)
+    this.#assertControllerLive(context)
+    if (request.operationId !== request.requestId) {
+      throw new RuntimeAcpBackendError(
+        'Prompt attach identity does not match',
+        'identity'
+      )
+    }
+    if (this.#options.semanticPrompts === undefined) {
+      throw new RuntimeAcpBackendError(
+        'Semantic prompt recovery is unavailable',
+        'process'
+      )
+    }
+    const binding = this.#bindings.get(request.bindingId)
+    if (
+      binding === undefined ||
+      binding.controllerId !== context.controller.controllerId
+    ) {
+      throw new RuntimeAcpBackendError(
+        'Prompt attach binding does not exist for this controller',
+        'not-found'
+      )
+    }
+    if (
+      binding.controllerGeneration !== context.controller.generation ||
+      binding.connectionId !== context.controller.connectionId
+    ) {
+      if (
+        context.controllerTakeoverProven !== true ||
+        binding.transportState !== 'detached' ||
+        context.controller.generation <= binding.controllerGeneration
+      ) {
+        throw new RuntimeAcpBackendError(
+          'Prompt attach cannot take over this binding generation',
+          'stale-controller'
+        )
+      }
+      binding.controllerGeneration = context.controller.generation
+      binding.connectionId = context.controller.connectionId
+    }
+    return this.#options.semanticPrompts.attach(
+      request.bindingId,
+      request.operationId,
+      context.controller.controllerId
+    )
+  }
+
+  #pageOwnedPrompt(
+    params: unknown,
+    context: ProtocolMethodContext
+  ) {
+    const request = remoteSemanticTranscriptPageRequestSchema.parse(params)
+    this.#assertControllerLive(context)
+    if (this.#options.semanticPrompts === undefined) {
+      throw new RuntimeAcpBackendError(
+        'Semantic prompt recovery is unavailable',
+        'process'
+      )
+    }
+    return this.#options.semanticPrompts.page({
+      ...request,
+      controllerId: context.controller.controllerId
+    })
+  }
+
+  #ackOwnedPrompt(
+    params: unknown,
+    context: ProtocolMethodContext
+  ) {
+    const request = remoteSemanticTranscriptAckRequestSchema.parse(params)
+    this.#assertControllerLive(context)
+    if (this.#options.semanticPrompts === undefined) {
+      throw new RuntimeAcpBackendError(
+        'Semantic prompt recovery is unavailable',
+        'process'
+      )
+    }
+    return this.#options.semanticPrompts.acknowledge({
+      ...request,
+      controllerId: context.controller.controllerId
+    })
+  }
+
+  async #terminalizeOwnedPrompt(
+    binding: BindingState,
+    operationId: string,
+    status: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown'
+  ): Promise<void> {
+    const prepared = binding.operations.get(operationId)
+    if (
+      prepared === undefined ||
+      binding.activeOperationId !== operationId ||
+      binding.process === undefined
+    ) {
+      return
+    }
+    await this.#closeModelBridge(binding, true)
+    this.#options.modelGateway?.finalizePrompt(
+      binding.request.bindingId,
+      operationId
+    )
+    try {
+      await binding.process.completePrompt()
+    } catch {
+      binding.state = 'outcome-unknown'
+      prepared.modelProfile = undefined
+      throw new RuntimeAcpBackendError(
+        'Runtime prompt completion failed',
+        'process'
+      )
+    }
+    if (binding.poisoned || status === 'outcome-unknown') {
+      binding.state = 'outcome-unknown'
+      prepared.modelProfile = undefined
+      await this.#stopAndReconcile(
+        binding,
+        'identity-conflict'
+      ).catch(() => undefined)
+      return
+    }
+    prepared.terminalState =
+      status === 'cancelled'
+        ? 'cancelled'
+        : status === 'failed'
+          ? 'failed'
+          : 'completed'
+    if (status === 'completed') {
+      prepared.completion = acpCompletePromptResultSchema.parse({
+        bindingId: binding.request.bindingId,
+        operationId,
+        requestId: prepared.acceptance.requestId,
+        status: 'completed',
+        processTree: 'running'
+      })
+    }
+    prepared.modelProfile = undefined
+    binding.activeOperationId = undefined
+    binding.inputBytes = 0
+    binding.outputBytes = 0
+    binding.maximumOutputBytes = undefined
+    if (binding.deadlineTimer !== undefined) {
+      clearTimeout(binding.deadlineTimer)
+      binding.deadlineTimer = undefined
+    }
+    if (binding.ownedPromptStartTimer !== undefined) {
+      clearTimeout(binding.ownedPromptStartTimer)
+      binding.ownedPromptStartTimer = undefined
+    }
   }
 
   async #startModelBridge(
@@ -1208,11 +1568,29 @@ export class RuntimeAcpBackend {
     workspace: RuntimeAcpWorkspace
   ): Promise<void> {
     const bridge = preparation.modelBridge
+    const useAgentGateway =
+      this.#options.modelGateway !== undefined &&
+      preparation.modelProfile !== undefined
+    const policy = useAgentGateway
+      ? modelBridgePolicySchema.parse({
+          protocol: preparation.modelProfile!.protocol,
+          model: preparation.modelProfile!.model,
+          modelProfileDigest:
+            preparation.modelProfile!.modelProfileDigest,
+          supportsImageInput:
+            preparation.modelProfile!.capabilities.imageInput
+        })
+      : bridge?.policy
     if (
-      bridge === undefined ||
-      this.#options.blobSink === undefined ||
       workspace.bridgeDirectory === undefined ||
-      bridge.channelId === binding.request.bindingId
+      policy === undefined ||
+      (
+        !useAgentGateway &&
+        (
+          bridge === undefined ||
+          bridge.channelId === binding.request.bindingId
+        )
+      )
     ) {
       throw new RuntimeAcpBackendError(
         'Managed model bridge composition is unavailable or invalid',
@@ -1228,7 +1606,7 @@ export class RuntimeAcpBackend {
         'conflict'
       )
     }
-    const client = new ModelBridgeBlobClient({
+    const client = useAgentGateway ? undefined : new ModelBridgeBlobClient({
       binding: {
         bindingId: binding.request.bindingId,
         promptOperationId: preparation.operationId,
@@ -1236,11 +1614,11 @@ export class RuntimeAcpBackend {
         controllerGeneration: binding.controllerGeneration,
         connectionId: binding.connectionId,
         acpChannelEpoch: binding.openResult.channelEpoch,
-        channelId: bridge.channelId,
-        channelEpoch: bridge.channelEpoch,
+        channelId: bridge!.channelId,
+        channelEpoch: bridge!.channelEpoch,
         runtimeId: binding.request.runtimeId,
         workspaceIdentity: binding.request.workspaceIdentity,
-        policy: bridge.policy,
+        policy,
         deadlineAt: preparation.deadlineAt
       },
       sendBlobFrame: async (frame) =>
@@ -1261,26 +1639,99 @@ export class RuntimeAcpBackend {
       },
       now: this.#options.now
     })
+    const dispatch: ModelBridgeBrokerDispatch = useAgentGateway
+      ? async (request, context) => {
+          const operation = binding.operations.get(
+            preparation.operationId
+          )
+          const profile =
+            operation?.modelProfile ?? preparation.modelProfile
+          if (
+            profile === undefined ||
+            binding.activeOperationId !== preparation.operationId
+          ) {
+            throw new RuntimeAcpBackendError(
+              'Prompt model credential is no longer active',
+              'closed'
+            )
+          }
+          if (binding.nextModelRound >= profile.limits.maximumModelCalls) {
+            throw new RuntimeAcpBackendError(
+              'Prompt model call limit reached',
+              'capacity'
+            )
+          }
+          const roundIndex = binding.nextModelRound
+          let exchanged
+          try {
+            exchanged = await this.#options.modelGateway!.dispatch(
+              {
+                bindingId: binding.request.bindingId,
+                operationId: preparation.operationId,
+                promptSequence: preparation.promptSequence,
+                roundIndex,
+                profileDigest: policy.modelProfileDigest,
+                profile
+              },
+              request,
+              context.signal
+            )
+          } catch (error) {
+            if (
+              error instanceof AgentModelGatewayError &&
+              ['cancelled', 'outcome-unknown', 'response-too-large', 'timeout']
+                .includes(error.code)
+            ) {
+              binding.poisoned = true
+              binding.state = 'outcome-unknown'
+              void this.#enqueueControl(async () => {
+                await this.#stopAndReconcile(
+                  binding,
+                  'identity-conflict'
+                )
+              }).catch(() => undefined)
+            }
+            throw error
+          }
+          return {
+            response: exchanged.response,
+            acknowledgeDelivery: async () => {
+              try {
+                await exchanged.acknowledgeDelivery()
+                binding.nextModelRound += 1
+              } catch (error) {
+                binding.poisoned = true
+                binding.state = 'outcome-unknown'
+                throw error
+              }
+            },
+            failDelivery: () => {
+              binding.poisoned = true
+              binding.state = 'outcome-unknown'
+              exchanged.failDelivery()
+            }
+          }
+        }
+      : async (request, context) =>
+          await client!.exchange(request, context)
     const broker =
       this.#options.createModelBridgeBroker?.({
         bridgeDirectory: workspace.bridgeDirectory,
-        dispatch: async (request, context) =>
-          await client.exchange(request, context)
+        dispatch
       }) ??
       new ModelBridgeBrokerServer({
         scratchDirectory: workspace.bridgeDirectory,
-        dispatch: async (request, context) =>
-          await client.exchange(request, context)
+        dispatch
       })
     binding.modelBridgeClient = client
     binding.modelBridgeBroker = broker
-    binding.modelBridgePolicy = bridge.policy
+    binding.modelBridgePolicy = policy
     try {
       await broker.listen()
     } catch {
       binding.modelBridgeClient = undefined
       binding.modelBridgeBroker = undefined
-      await client.close({ poisonIfActive: false })
+      await client?.close({ poisonIfActive: false })
       throw new RuntimeAcpBackendError(
         'Managed model bridge broker could not start',
         'process'
@@ -1375,6 +1826,32 @@ export class RuntimeAcpBackend {
         'identity'
       )
     }
+    if (
+      binding.activeOperationId !== undefined &&
+      this.#options.semanticPrompts !== undefined
+    ) {
+      if (binding.ownedAcp !== undefined) {
+        await rejectAfter(
+          binding.ownedAcp.cancel(),
+          OWNED_PROMPT_CANCEL_GRACE_MS,
+          'Runtime prompt cancellation timed out'
+        ).catch(() => undefined)
+      }
+      try {
+        this.#options.semanticPrompts.append({
+          bindingId: binding.request.bindingId,
+          operationId: binding.activeOperationId,
+          kind: 'prompt-terminal',
+          payload: {
+            status: 'cancelled',
+            reason: escalation.reason
+          },
+          terminalState: 'cancelled'
+        })
+      } catch {
+        // A concurrently completed prompt already committed terminal evidence.
+      }
+    }
     await this.#stopAndReconcile(binding, 'user-cancelled')
     return { bindingId: escalation.bindingId, stopped: true }
   }
@@ -1417,6 +1894,14 @@ export class RuntimeAcpBackend {
         status: 'terminal',
         terminalState: 'completed',
         processTree: prepared.completion.processTree
+      }
+    }
+    if (prepared.terminalState !== undefined) {
+      return {
+        status: 'terminal',
+        terminalState: prepared.terminalState,
+        processTree:
+          prepared.terminalState === 'completed' ? 'running' : 'empty'
       }
     }
     if (binding.activeOperationId !== operation.operationId) {
@@ -1581,9 +2066,11 @@ export class RuntimeAcpBackend {
       return
     }
     binding.transportState = 'detached'
-    await this.#closeModelBridge(binding, false, true).catch(
-      () => undefined
-    )
+    if (binding.modelBridgeClient !== undefined) {
+      await this.#closeModelBridge(binding, false, true).catch(
+        () => undefined
+      )
+    }
   }
 
   async #stopAndReconcile(
@@ -1593,6 +2080,26 @@ export class RuntimeAcpBackend {
     if (binding.state === 'closed') {
       return
     }
+    this.#appendAbnormalOwnedPromptTerminal(
+      binding,
+      reason === 'user-cancelled'
+        ? {
+            status: 'cancelled',
+            name: 'PromptCancelled',
+            message: 'Prompt execution was cancelled'
+          }
+        : {
+            status: this.#abnormalOwnedPromptState(binding),
+            name:
+              reason === 'deadline-exceeded'
+                ? 'PromptDeadlineExceeded'
+                : 'RuntimeStopped',
+            message:
+              reason === 'deadline-exceeded'
+                ? 'Prompt execution exceeded its Runtime deadline'
+                : 'Runtime stopped before the prompt reached a terminal state'
+          }
+    )
     await this.#closeModelBridge(binding, true)
     if (binding.process === undefined) {
       this.#finishBinding(binding, 'interrupted')
@@ -1641,6 +2148,91 @@ export class RuntimeAcpBackend {
     this.#finishBinding(binding, terminalState(reconciliation.state))
   }
 
+  async #handleProcessExit(binding: BindingState): Promise<void> {
+    if (binding.process === undefined) {
+      return
+    }
+    this.#appendAbnormalOwnedPromptTerminal(binding, {
+      status: this.#abnormalOwnedPromptState(binding),
+      name: 'RuntimeExited',
+      message: 'Runtime exited before the prompt reached a terminal state'
+    })
+    await this.#closeModelBridge(binding, true).catch(
+      () => undefined
+    )
+    let state: 'completed' | 'failed' | 'cancelled' | 'interrupted' =
+      'interrupted'
+    try {
+      const reconciliation = await binding.process.reconcile()
+      if (
+        sameProcessIdentity(
+          binding.process.identity,
+          reconciliation.identity
+        ) &&
+        reconciliation.processTree === 'empty'
+      ) {
+        state = terminalState(reconciliation.state)
+      }
+    } catch {
+      binding.state = 'outcome-unknown'
+    }
+    this.#finishBinding(binding, state)
+  }
+
+  #abnormalOwnedPromptState(
+    binding: BindingState
+  ): 'failed' | 'outcome-unknown' {
+    return binding.poisoned || binding.nextModelRound > 0
+      ? 'outcome-unknown'
+      : 'failed'
+  }
+
+  #appendAbnormalOwnedPromptTerminal(
+    binding: BindingState,
+    terminal: {
+      status: 'failed' | 'cancelled' | 'outcome-unknown'
+      name: string
+      message: string
+    }
+  ): void {
+    const operationId = binding.activeOperationId
+    const prepared =
+      operationId === undefined
+        ? undefined
+        : binding.operations.get(operationId)
+    if (
+      operationId === undefined ||
+      prepared === undefined ||
+      this.#options.semanticPrompts === undefined ||
+      (
+        prepared.modelProfile === undefined &&
+        binding.ownedAcp === undefined
+      )
+    ) {
+      return
+    }
+    try {
+      this.#options.semanticPrompts.append({
+        bindingId: binding.request.bindingId,
+        operationId,
+        kind: 'prompt-terminal',
+        payload: {
+          status: terminal.status,
+          error: {
+            name: terminal.name,
+            message: terminal.message
+          }
+        },
+        terminalState: terminal.status
+      })
+      if (terminal.status !== 'outcome-unknown') {
+        prepared.terminalState = terminal.status
+      }
+    } catch {
+      // A concurrent Agent-owned terminal transition already won.
+    }
+  }
+
   #finishBinding(
     binding: BindingState,
     state: 'completed' | 'failed' | 'cancelled' | 'interrupted'
@@ -1656,6 +2248,12 @@ export class RuntimeAcpBackend {
   }
 
   #finishProcess(binding: BindingState): void {
+    if (binding.activeOperationId !== undefined) {
+      this.#options.modelGateway?.finalizePrompt(
+        binding.request.bindingId,
+        binding.activeOperationId
+      )
+    }
     if (binding.process !== undefined) {
       this.#processIdentityBindings.delete(
         processIdentityKey(binding.process.identity)
@@ -1666,11 +2264,21 @@ export class RuntimeAcpBackend {
     binding.unsubscribeExit?.()
     binding.unsubscribeExit = undefined
     binding.process = undefined
+    binding.ownedAcp?.close()
+    binding.ownedAcp = undefined
+    binding.workspaceDirectory = undefined
+    for (const operation of binding.operations.values()) {
+      operation.modelProfile = undefined
+    }
     binding.stopRequested = false
     binding.activeOperationId = undefined
     if (binding.deadlineTimer !== undefined) {
       clearTimeout(binding.deadlineTimer)
       binding.deadlineTimer = undefined
+    }
+    if (binding.ownedPromptStartTimer !== undefined) {
+      clearTimeout(binding.ownedPromptStartTimer)
+      binding.ownedPromptStartTimer = undefined
     }
   }
 
@@ -1692,6 +2300,51 @@ export class RuntimeAcpBackend {
       ).catch(() => undefined)
     }, delay)
     binding.deadlineTimer.unref?.()
+  }
+
+  #scheduleOwnedPromptStart(
+    binding: BindingState,
+    operationId: string
+  ): void {
+    if (binding.ownedPromptStartTimer !== undefined) {
+      clearTimeout(binding.ownedPromptStartTimer)
+    }
+    binding.ownedPromptStartTimer = setTimeout(() => {
+      void this.#enqueueControl(async () => {
+        const operation = binding.operations.get(operationId)
+        if (
+          binding.activeOperationId !== operationId ||
+          operation?.ownedPromptStarted === true
+        ) {
+          return
+        }
+        binding.poisoned = true
+        binding.state = 'outcome-unknown'
+        try {
+          this.#options.semanticPrompts?.append({
+            bindingId: binding.request.bindingId,
+            operationId,
+            kind: 'prompt-terminal',
+            payload: {
+              status: 'outcome-unknown',
+              error: {
+                name: 'PromptStartTimeout',
+                message:
+                  'Desktop disconnected after preparation but before prompt start'
+              }
+            },
+            terminalState: 'outcome-unknown'
+          })
+        } catch {
+          // Another terminal transition won the race.
+        }
+        await this.#stopAndReconcile(
+          binding,
+          'identity-conflict'
+        ).catch(() => undefined)
+      }).catch(() => undefined)
+    }, OWNED_PROMPT_START_TIMEOUT_MS)
+    binding.ownedPromptStartTimer.unref?.()
   }
 
   #bindConnectionLifetime(
@@ -2056,6 +2709,14 @@ function processIdentityKey(identity: RuntimeAcpProcessIdentity): string {
     identity.processId,
     identity.supervisorIdentityDigest
   ].join('\0')
+}
+
+function digestSecretBearingPreparation(
+  preparation: RemotePromptOperationPreparation
+): string {
+  return `sha256:${createHash('sha256')
+    .update(canonicalJson(preparation))
+    .digest('hex')}`
 }
 
 function terminalState(

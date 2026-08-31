@@ -1337,7 +1337,8 @@ if (hasSingleInstanceLock) {
       },
       setCurrentEmbeddingConnection,
       remoteEnvironmentUpdateService,
-      agentPackageManager
+      agentPackageManager,
+      startupRemoteAgentServices.connectionManager
     )
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,
@@ -1428,6 +1429,10 @@ app.on('before-quit', (event) => {
           () => removeIpcHandlers?.()
         ],
         [() => stopRuntimeReconfiguration?.()],
+        [
+          () => runtime?.detachForApplicationExit(),
+          () => selectedRuntimeManager?.detachForApplicationExit()
+        ],
         [
           () => runtime?.dispose(),
           () => selectedRuntimeManager?.dispose(),

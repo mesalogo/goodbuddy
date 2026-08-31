@@ -128,7 +128,13 @@ let remoteProjectSaveProgressListener:
       DesktopApi['projects']['remote']['onSaveProgress']
     >[0]
   | undefined
+let remoteProjectRecoveryProgressListener:
+  | Parameters<
+      DesktopApi['projects']['remote']['onRecoveryProgress']
+    >[0]
+  | undefined
 const removeMaximizedChangedListener = vi.fn()
+const removeProjectRecoveryListener = vi.fn()
 const run = vi.fn<DesktopApi['agent']['run']>()
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const projectId = '00000000-0000-4000-8000-000000000101'
@@ -405,6 +411,14 @@ const api: DesktopApi = {
             remoteProjectSaveProgressListener = undefined
           }
         }
+      }),
+      getRecoverySnapshot: vi.fn(async () => ({
+        recoveries: []
+      })),
+      retryRecovery: vi.fn(),
+      onRecoveryProgress: vi.fn((listener) => {
+        remoteProjectRecoveryProgressListener = listener
+        return removeProjectRecoveryListener
       })
     }
   },
@@ -994,6 +1008,18 @@ describe('App', () => {
             remoteProjectSaveProgressListener = undefined
           }
         }
+      })
+    remoteProjectRecoveryProgressListener = undefined
+    removeProjectRecoveryListener.mockReset()
+    vi.mocked(api.projects.remote.getRecoverySnapshot)
+      .mockReset()
+      .mockResolvedValue({ recoveries: [] })
+    vi.mocked(api.projects.remote.retryRecovery).mockReset()
+    vi.mocked(api.projects.remote.onRecoveryProgress)
+      .mockReset()
+      .mockImplementation((listener) => {
+        remoteProjectRecoveryProgressListener = listener
+        return removeProjectRecoveryListener
       })
     conversationQueueChangeListener = undefined
     conversationQueueDispatchListener = undefined
@@ -5947,6 +5973,269 @@ describe('App', () => {
         name: /OpenCode · 默认模型/u
       })
     ).toBeInTheDocument()
+  })
+
+  it('keeps managed SSH histories visible while independently blocking recovery projects', async () => {
+    installRemoteProjectsSetting(true)
+    const first = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000131',
+      name: '恢复项目一',
+      rootPath: '/srv/one',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000231',
+        remoteRootPath: '/srv/one'
+      },
+      builtInDefault: false
+    }
+    const second = {
+      ...first,
+      id: '00000000-0000-4000-8000-000000000132',
+      name: '恢复项目二',
+      rootPath: '/srv/two',
+      executionSpace: {
+        ...first.executionSpace,
+        remoteRootPath: '/srv/two'
+      }
+    }
+    const firstConversationId =
+      '00000000-0000-4000-8000-000000000331'
+    const secondConversationId =
+      '00000000-0000-4000-8000-000000000332'
+    const firstRequestId =
+      '00000000-0000-4000-8000-000000000431'
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      first,
+      second
+    ])
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: firstConversationId,
+        projectId: first.id,
+        runtimeSelection: { provider: 'opencode' },
+        title: '恢复前的会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000531',
+            role: 'assistant',
+            content: '恢复期间仍可查看的历史',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      },
+      {
+        id: secondConversationId,
+        projectId: second.id,
+        runtimeSelection: { provider: 'opencode' },
+        title: '第二个恢复会话',
+        updatedAt: 1_774_000_000_000,
+        messages: []
+      }
+    ])
+    vi.mocked(
+      api.projects.remote.getRecoverySnapshot
+    ).mockResolvedValueOnce({
+      recoveries: [
+        {
+          projectId: first.id,
+          requestId: firstRequestId,
+          stage: 'cursor',
+          current: '125'
+        },
+        {
+          projectId: second.id,
+          requestId:
+            '00000000-0000-4000-8000-000000000432',
+          stage: 'agent'
+        }
+      ]
+    })
+
+    render(<App />)
+    await screen.findByRole('button', { name: '当前项目' })
+    await waitFor(() =>
+      expect(
+        api.projects.remote.getRecoverySnapshot
+      ).toHaveBeenCalledOnce()
+    )
+    vi.mocked(api.conversationQueue.ready).mockClear()
+
+    selectProjectOption(first.name)
+    expect(
+      screen.getByRole('button', { name: '当前项目' })
+    ).toHaveTextContent(first.name)
+    expect(
+      await screen.findByText('恢复期间仍可查看的历史')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('正在恢复对话，已同步到事件 125')
+    ).toBeInTheDocument()
+    expect(api.conversationQueue.ready).not.toHaveBeenCalledWith(
+      firstConversationId
+    )
+
+    const firstComposer = screen.getByLabelText('向 GoodBuddy 提问')
+    fireEvent.change(firstComposer, {
+      target: { value: '恢复完成后发送' }
+    })
+    fireEvent.keyDown(firstComposer, { key: 'Enter' })
+    expect(firstComposer).toHaveValue('恢复完成后发送')
+    expect(api.conversationQueue.enqueueUser).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('发送')).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+    const menu = screen.getByRole('menu', { name: '当前项目' })
+    expect(
+      within(menu).getByText('正在恢复远端 Agent…')
+    ).toBeInTheDocument()
+    fireEvent.click(
+      within(menu).getByText(project.name, { selector: 'b' })
+        .closest('[role="menuitemradio"]')!
+    )
+    const localComposer = screen.getByLabelText('向 GoodBuddy 提问')
+    fireEvent.change(localComposer, {
+      target: { value: '本地项目不受影响' }
+    })
+    await waitFor(() =>
+      expect(screen.getByLabelText('发送')).toBeEnabled()
+    )
+    fireEvent.keyDown(localComposer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledOnce()
+    )
+
+    selectProjectOption(first.name)
+    act(() => {
+      remoteProjectRecoveryProgressListener?.({
+        projectId: first.id,
+        requestId:
+          '00000000-0000-4000-8000-000000000499',
+        stage: 'completed'
+      })
+    })
+    expect(screen.getByLabelText('发送')).toBeDisabled()
+    expect(firstComposer).toHaveValue('恢复完成后发送')
+
+    act(() => {
+      remoteProjectRecoveryProgressListener?.({
+        projectId: first.id,
+        requestId: firstRequestId,
+        stage: 'completed'
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByText('恢复完成')).toBeInTheDocument()
+    )
+    expect(screen.getByLabelText('发送')).toBeEnabled()
+    await waitFor(() =>
+      expect(api.conversationQueue.ready).toHaveBeenCalledWith(
+        firstConversationId
+      )
+    )
+    expect(api.conversationQueue.ready).not.toHaveBeenCalledWith(
+      secondConversationId
+    )
+  })
+
+  it('retries a failed recovery with a new request ID and cleans up its listener', async () => {
+    installRemoteProjectsSetting(true)
+    const remoteProject = {
+      ...project,
+      id: '00000000-0000-4000-8000-000000000133',
+      name: '失败的恢复项目',
+      rootPath: '/srv/failed',
+      runtimeSelection: { provider: 'opencode' as const },
+      executionSpace: {
+        kind: 'ssh' as const,
+        hostId: '00000000-0000-4000-8000-000000000233',
+        remoteRootPath: '/srv/failed'
+      },
+      builtInDefault: false
+    }
+    const oldRequestId =
+      '00000000-0000-4000-8000-000000000433'
+    const newRequestId =
+      '00000000-0000-4000-8000-000000000434'
+    vi.mocked(api.projects.list).mockResolvedValueOnce([
+      project,
+      remoteProject
+    ])
+    vi.mocked(
+      api.projects.remote.getRecoverySnapshot
+    ).mockResolvedValueOnce({
+      recoveries: [
+        {
+          projectId: remoteProject.id,
+          requestId: oldRequestId,
+          stage: 'failed',
+          message: '无法连接 Host',
+          retryable: true
+        }
+      ]
+    })
+    vi.mocked(api.projects.remote.retryRecovery).mockResolvedValueOnce({
+      projectId: remoteProject.id,
+      requestId: newRequestId,
+      stage: 'network'
+    })
+
+    const { unmount } = render(<App />)
+    await screen.findByRole('button', { name: '当前项目' })
+    selectProjectOption(remoteProject.name)
+    expect(
+      await screen.findByRole('alert')
+    ).toHaveTextContent('恢复失败：无法连接 Host')
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `重试恢复项目 ${remoteProject.name}`
+      })
+    )
+    await waitFor(() =>
+      expect(
+        api.projects.remote.retryRecovery
+      ).toHaveBeenCalledWith(remoteProject.id)
+    )
+    expect(
+      await screen.findByText('正在恢复网络连接…')
+    ).toBeInTheDocument()
+
+    act(() => {
+      remoteProjectRecoveryProgressListener?.({
+        projectId: remoteProject.id,
+        requestId: oldRequestId,
+        stage: 'completed'
+      })
+    })
+    expect(screen.getByText('正在恢复网络连接…')).toBeInTheDocument()
+    expect(screen.getByLabelText('发送')).toBeDisabled()
+
+    act(() => {
+      remoteProjectRecoveryProgressListener?.({
+        projectId: remoteProject.id,
+        requestId: newRequestId,
+        stage: 'completed'
+      })
+    })
+    expect(
+      await screen.findByText('恢复完成')
+    ).toBeInTheDocument()
+    act(() => {
+      remoteProjectRecoveryProgressListener?.({
+        projectId: remoteProject.id,
+        requestId: newRequestId,
+        stage: 'network'
+      })
+    })
+    expect(screen.getByText('恢复完成')).toBeInTheDocument()
+
+    unmount()
+    expect(removeProjectRecoveryListener).toHaveBeenCalledOnce()
   })
 
   it('switches between projects on one Host without a connection phase', async () => {

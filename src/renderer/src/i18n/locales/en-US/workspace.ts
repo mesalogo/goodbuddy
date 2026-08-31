@@ -18,12 +18,32 @@ export const workspace = {
       channelProjects: 'Remote channels',
       empty: 'No project selected',
       localDetail: 'Local folder · {{path}}',
-      managedSshDetail: 'Managed SSH · {{path}}',
+      remotePath: '{{path}}',
+      remoteHostGroup: 'SSH host: {{host}}',
+      unavailableHost: 'Host unavailable',
+      connectionStates: {
+        disconnected: 'Disconnected',
+        connecting: 'Connecting',
+        ready: 'Ready',
+        error: 'Error'
+      },
       remoteDetail: '{{channel}} · Remote channel · {{path}}',
       remoteChannel: 'Remote channel',
       create: 'New project',
       settings: 'Project settings',
       settingsNamed: 'Manage project {{name}}'
+    },
+    recovery: {
+      stages: {
+        network: 'Restoring network connection…',
+        agent: 'Restoring remote Agent…',
+        runtime: 'Restoring OpenCode Runtime…',
+        cursor: 'Restoring conversation at event {{current}}',
+        completed: 'Recovery completed'
+      },
+      failed: 'Recovery failed: {{message}}',
+      retry: 'Retry recovery',
+      retryNamed: 'Retry recovery for project {{name}}'
     },
     dialog: {
       createTitle: 'New project',

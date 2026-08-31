@@ -457,6 +457,34 @@ describe('SelectedRuntimeManager', () => {
     await manager.dispose()
   })
 
+  it('routes application exit through cached runtime controllers without ordinary disposal', async () => {
+    const active = runtime()
+    const detachForApplicationExit = vi.fn(() => undefined)
+    const beginDrain = vi.fn(async () => undefined)
+    const forceShutdown = vi.fn(async () => undefined)
+    Object.assign(active.value, {
+      detachForApplicationExit,
+      beginDrain,
+      waitForDrain: vi.fn(async () => undefined),
+      forceShutdown
+    })
+    const manager = new SelectedRuntimeManager(
+      vi.fn(async () => active.value)
+    )
+
+    await manager.getRuntime(
+      { provider: 'opencode' },
+      remoteExecutionSpace('host-one', 'ssh:host-one')
+    )
+    await manager.detachForApplicationExit()
+    await manager.dispose()
+
+    expect(detachForApplicationExit).toHaveBeenCalledOnce()
+    expect(beginDrain).not.toHaveBeenCalled()
+    expect(forceShutdown).not.toHaveBeenCalled()
+    expect(active.dispose).not.toHaveBeenCalled()
+  })
+
   it('evicts only the least-recently-used idle Runtime at the cache bound', async () => {
     const first = runtime()
     const second = runtime()

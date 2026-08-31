@@ -78,6 +78,12 @@ const RUNTIME_ACP_METHODS = [
   'runtime/escalateCancellation',
   'runtime/reconcilePrompt'
 ] as const
+const AUTONOMOUS_PROMPT_METHODS = [
+  'runtime/startPrompt',
+  'runtime/attachPrompt',
+  'runtime/pagePromptTranscript',
+  'runtime/ackPromptTranscript'
+] as const
 
 export type ProtocolMethodContext = {
   controller: ControllerLease
@@ -183,6 +189,11 @@ export class AgentProtocolServer {
             RUNTIME_ACP_METHODS.every(
               (method) => this.#methods[method] !== undefined
             )
+          const autonomousPromptsImplemented =
+            runtimeAcpImplemented &&
+            AUTONOMOUS_PROMPT_METHODS.every(
+              (method) => this.#methods[method] !== undefined
+            )
           const modelBridgeImplemented =
             runtimeAcpImplemented &&
             this.#onBlobFrame !== undefined &&
@@ -209,7 +220,7 @@ export class AgentProtocolServer {
                 ? [
                     {
                       name: 'runtime/acp',
-                      version: 3,
+                      version: autonomousPromptsImplemented ? 4 : 3,
                       critical: true
                     },
                     ...(modelBridgeImplemented

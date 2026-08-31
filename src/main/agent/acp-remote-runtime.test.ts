@@ -664,6 +664,212 @@ describe('AcpRemoteRuntime', () => {
     }
   )
 
+  it('replaces a cancelled outcome-unknown session before an immediate resend', async () => {
+    const store = new MemoryRuntimeSessionBindingStore()
+    const first = fakeServer({
+      prompt: () => new Promise(() => {}),
+      reconcilePromptOperation: async () => ({
+        status: 'outcome-unknown',
+        processTree: 'unknown'
+      })
+    })
+    const replacementPrompt = vi.fn(
+      async () => ({ stopReason: 'end_turn' as const })
+    )
+    const second = fakeServer({
+      newSession: async () => ({ sessionId: 'session-2' }),
+      prompt: replacementPrompt
+    })
+    const servers = [first, second]
+    const factory = vi.fn(async () => servers.shift()!.channel)
+    const instance = factoryRuntime(factory, store)
+    const controller = new AbortController()
+    const cancelled = collect(
+      instance.run(request, controller.signal, async () => 'once')
+    )
+
+    await vi.waitFor(() => {
+      expect(first.prepare).toHaveBeenCalledOnce()
+    })
+    controller.abort(new Error('cancelled'))
+    await expect(cancelled).rejects.toThrow('结果未知')
+
+    const resentRequest = {
+      ...request,
+      requestId: 'f10873fc-c528-48c1-818d-204a75588a48',
+      history: [
+        { role: 'user' as const, content: 'remember marker' },
+        { role: 'assistant' as const, content: 'GB_CANCEL_MARKER' }
+      ],
+      prompt: 'what was the marker?'
+    }
+    await expect(
+      collect(
+        instance.run(
+          resentRequest,
+          new AbortController().signal,
+          async () => 'once'
+        )
+      )
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'done' })
+      ])
+    )
+
+    expect(factory).toHaveBeenCalledTimes(2)
+    expect(first.close).toHaveBeenCalledOnce()
+    expect(replacementPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: [
+          expect.objectContaining({
+            type: 'text',
+            text: expect.stringContaining('GB_CANCEL_MARKER')
+          })
+        ]
+      })
+    )
+    await expect(
+      store.getByConversation(request.conversationId)
+    ).resolves.toMatchObject({
+      acpSessionId: 'session-2',
+      state: 'ready',
+      activePromptOperationId: undefined
+    })
+    await instance.dispose()
+  })
+
+  it('keeps another conversation running while a cancelled one is resent', async () => {
+    const store = new MemoryRuntimeSessionBindingStore()
+    const first = fakeServer({
+      prompt: () => new Promise(() => {}),
+      reconcilePromptOperation: async () => ({
+        status: 'outcome-unknown',
+        processTree: 'unknown'
+      })
+    })
+    let finishOtherPrompt:
+      | ((response: PromptResponse) => void)
+      | undefined
+    const otherPrompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          finishOtherPrompt = resolve
+        })
+    )
+    const other = fakeServer({
+      newSession: async () => ({ sessionId: 'session-other' }),
+      prompt: otherPrompt
+    })
+    const replacement = fakeServer({
+      newSession: async () => ({ sessionId: 'session-replacement' })
+    })
+    const servers = [first, other, replacement]
+    const factory = vi.fn(async () => servers.shift()!.channel)
+    const instance = factoryRuntime(factory, store)
+    const controller = new AbortController()
+    const cancelled = collect(
+      instance.run(request, controller.signal, async () => 'once')
+    )
+    await vi.waitFor(() => {
+      expect(first.prepare).toHaveBeenCalledOnce()
+    })
+
+    const otherRequest = {
+      ...request,
+      requestId: '8c7dcf59-ce69-4900-9f50-6312a2a19ca8',
+      conversationId: 'conversation-2'
+    }
+    const otherRun = collect(
+      instance.run(
+        otherRequest,
+        new AbortController().signal,
+        async () => 'once'
+      )
+    )
+    await vi.waitFor(() => {
+      expect(otherPrompt).toHaveBeenCalledOnce()
+    })
+
+    controller.abort(new Error('cancelled'))
+    await expect(cancelled).rejects.toThrow('结果未知')
+    await expect(
+      collect(
+        instance.run(
+          {
+            ...request,
+            requestId: 'f10873fc-c528-48c1-818d-204a75588a48'
+          },
+          new AbortController().signal,
+          async () => 'once'
+        )
+      )
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'done' })
+      ])
+    )
+
+    expect(other.close).not.toHaveBeenCalled()
+    finishOtherPrompt?.({ stopReason: 'end_turn' })
+    await expect(otherRun).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'done' })
+      ])
+    )
+    await expect(
+      store.getByConversation(otherRequest.conversationId)
+    ).resolves.toMatchObject({
+      acpSessionId: 'session-other',
+      state: 'ready'
+    })
+    expect(factory).toHaveBeenCalledTimes(3)
+    await instance.dispose()
+  })
+
+  it('injects Desktop history only when creating a new ACP session', async () => {
+    const prompt = vi.fn<
+      (request: PromptRequest) => Promise<PromptResponse>
+    >(
+      async () => ({
+        stopReason: 'end_turn' as const
+      })
+    )
+    const instance = runtime(fakeServer({ prompt }))
+    const history = [
+      { role: 'user' as const, content: 'remember marker' },
+      { role: 'assistant' as const, content: 'GB_HISTORY_MARKER' }
+    ]
+
+    await collect(
+      instance.run(
+        { ...request, history },
+        new AbortController().signal,
+        async () => 'once'
+      )
+    )
+    await collect(
+      instance.run(
+        {
+          ...request,
+          requestId: 'f10873fc-c528-48c1-818d-204a75588a48',
+          prompt: 'continue'
+        },
+        new AbortController().signal,
+        async () => 'once'
+      )
+    )
+
+    const firstText = prompt.mock.calls[0]![0].prompt[0]
+    const secondText = prompt.mock.calls[1]![0].prompt[0]
+    expect(firstText).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('GB_HISTORY_MARKER')
+    })
+    expect(secondText).toEqual({ type: 'text', text: 'continue' })
+    await instance.dispose()
+  })
+
   it('persists outcome-unknown and blocks reuse when model delivery is poisoned', async () => {
     const store = new MemoryRuntimeSessionBindingStore()
     const openModelBridge = vi.fn(
@@ -1782,10 +1988,27 @@ describe('AcpRemoteRuntime', () => {
     claim.mockClear()
 
     const loadSession = vi.fn(async () => ({}))
-    const second = fakeServer({ loadSession })
+    const prompt = vi.fn<
+      (request: PromptRequest) => Promise<PromptResponse>
+    >(
+      async () => ({
+        stopReason: 'end_turn' as const
+      })
+    )
+    const second = fakeServer({ loadSession, prompt })
     await collect(
       runtime(second, store).run(
-        request,
+        {
+          ...request,
+          requestId: 'f10873fc-c528-48c1-818d-204a75588a48',
+          history: [
+            {
+              role: 'assistant',
+              content: 'GB_RESUMED_HISTORY_MARKER'
+            }
+          ],
+          prompt: 'continue'
+        },
         new AbortController().signal,
         async () => 'once'
       )
@@ -1796,6 +2019,11 @@ describe('AcpRemoteRuntime', () => {
     expect(claim).toHaveBeenCalledWith(
       expect.any(String),
       'session-1'
+    )
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: [{ type: 'text', text: 'continue' }]
+      })
     )
   })
 
@@ -2259,6 +2487,543 @@ describe('AcpRemoteRuntime', () => {
     ).resolves.toMatchObject({
       state: 'outcome-unknown',
       activePromptOperationId: request.requestId
+    })
+  })
+})
+
+describe('AcpRemoteRuntime Agent-owned prompts', () => {
+  const ownedModelProfile = {
+    profileId: 'profile-owned-1',
+    modelProfileDigest: `sha256:${'e'.repeat(64)}`,
+    provider: 'openai' as const,
+    baseUrl: 'https://provider.example/v1',
+    model: 'owned-model',
+    protocol: 'openai-responses' as const,
+    authentication: 'api-key' as const,
+    apiKey: 'agent-prompt-secret',
+    capabilities: { imageInput: false },
+    limits: {
+      maximumOutputTokens: 4_096,
+      maximumModelCalls: 100,
+      maximumTotalOutputTokens: 409_600,
+      requestTimeoutMilliseconds: 60_000
+    }
+  }
+
+  function ownedChannel(options?: {
+    state?: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown'
+    terminalPayload?: unknown
+    includePermissionCheckpoint?: boolean
+    partialRecoveredTool?: boolean
+    waitForCancellation?: boolean
+    escalateCancellation?: () => Promise<void>
+  }) {
+    const terminalState = options?.state ?? 'completed'
+    const startOwnedPrompt = vi.fn(async (input: {
+      bindingId: string
+      operationId: string
+      requestId: string
+    }) => ({
+      bindingId: input.bindingId,
+      operationId: input.operationId,
+      requestId: input.requestId,
+      sessionId: 'owned-session',
+      state: 'running' as const,
+      latestSemanticSequence: '0'
+    }))
+    const attachOwnedPrompt = vi.fn(async (input: {
+      bindingId: string
+      operationId: string
+      requestId: string
+    }) => ({
+      ...input,
+      sessionId: 'owned-session',
+      state: 'running' as const,
+      latestSemanticSequence: '0'
+    }))
+    const events = [
+      {
+        sequence: '1',
+        kind: 'session-update' as const,
+        payload: {
+          sessionId: 'owned-session',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'first model round' }
+          }
+        },
+        createdAt: 1
+      },
+      ...(options?.includePermissionCheckpoint
+        ? [
+            {
+              sequence: '2',
+              kind: 'permission-decision' as const,
+              payload: {
+                sessionId: 'owned-session',
+                toolCallId: 'approval-1',
+                outcome: { outcome: 'cancelled' }
+              },
+              createdAt: 2
+            }
+          ]
+        : []),
+      {
+        sequence: options?.includePermissionCheckpoint ? '3' : '2',
+        kind: 'session-update' as const,
+        payload: {
+          sessionId: 'owned-session',
+          update: {
+            sessionUpdate: options?.partialRecoveredTool
+              ? 'tool_call_update'
+              : 'tool_call',
+            toolCallId: 'tool-1',
+            ...(options?.partialRecoveredTool
+              ? {}
+              : { title: 'Read' }),
+            status: 'completed',
+            ...(options?.partialRecoveredTool
+              ? {}
+              : { rawOutput: { result: 'one' } })
+          }
+        },
+        createdAt: 3
+      },
+      {
+        sequence: options?.includePermissionCheckpoint ? '4' : '3',
+        kind: 'session-update' as const,
+        payload: {
+          sessionId: 'owned-session',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'tool-2',
+            title: 'Write',
+            status: 'completed',
+            rawOutput: { result: 'two' }
+          }
+        },
+        createdAt: 4
+      },
+      {
+        sequence: options?.includePermissionCheckpoint ? '5' : '4',
+        kind: 'prompt-terminal' as const,
+        payload:
+          options?.terminalPayload ??
+          (terminalState === 'completed'
+            ? {
+                status: 'completed',
+                response: {
+                  stopReason: 'end_turn',
+                  usage: {
+                    inputTokens: 10,
+                    outputTokens: 20,
+                    totalTokens: 30
+                  }
+                }
+              }
+            : terminalState === 'failed'
+              ? {
+                  status: 'failed',
+                  error: { name: 'Error', message: 'owned failure' }
+                }
+              : { status: terminalState }),
+        createdAt: 5
+      }
+    ]
+    const pageOwnedPromptTranscript = vi.fn(async ({
+      bindingId,
+      operationId,
+      afterSequence
+    }: {
+      bindingId: string
+      operationId: string
+      afterSequence: string
+    }) => {
+      if (options?.waitForCancellation === true) {
+        return await new Promise<never>(() => undefined)
+      }
+      return {
+        bindingId,
+        operationId,
+        events: events.filter(
+          (event) => BigInt(event.sequence) > BigInt(afterSequence)
+        ),
+        latestSequence: events.at(-1)!.sequence,
+        acknowledgedSequence: '0',
+        state: terminalState,
+        sessionId: 'owned-session',
+        hasMore: false
+      }
+    })
+    const ackOwnedPromptTranscript = vi.fn(async ({
+      bindingId,
+      operationId,
+      acknowledgedSequence
+    }: {
+      bindingId: string
+      operationId: string
+      acknowledgedSequence: string
+    }) => ({
+      bindingId,
+      operationId,
+      acknowledgedSequence
+    }))
+    const preparePrompt = vi.fn(async (
+      preparation: RemotePromptOperationPreparation
+    ) => acceptPrompt(preparation))
+    const channel: RemoteRuntimeChannel = {
+      input: new ReadableStream<Uint8Array>(),
+      output: new WritableStream<Uint8Array>(),
+      generation: 1,
+      channelEpoch: '1',
+      advertisedAcpCapabilitiesDigest: `sha256:${'f'.repeat(64)}`,
+      capabilities: {
+        cancellationEscalation: true,
+        promptOperationReconciliation: true,
+        ownedPrompt: true,
+        modelBridge: false
+      },
+      closed: new Promise(() => {}),
+      isCurrentGeneration: () => true,
+      getBindingCursors: async () => ({
+        lastOutboundJournaledSequence: '0',
+        lastOutboundDeliveredSequence: '0',
+        lastInboundJournaledSequence: '0',
+        lastMainAckSequence: '0'
+      }),
+      preparePrompt,
+      startOwnedPrompt,
+      attachOwnedPrompt,
+      pageOwnedPromptTranscript:
+        pageOwnedPromptTranscript as unknown as NonNullable<
+          RemoteRuntimeChannel['pageOwnedPromptTranscript']
+        >,
+      ackOwnedPromptTranscript,
+      completePromptOperation: vi.fn(async (value) => ({
+        ...value,
+        status: 'completed' as const,
+        processTree: 'empty' as const
+      })),
+      setInboundPaused: vi.fn(async () => {}),
+      escalateCancellation: vi.fn(
+        options?.escalateCancellation ?? (async () => {})
+      ),
+      reconcilePromptOperation: vi.fn(async () => ({
+        status: 'terminal' as const,
+        terminalState: 'completed' as const,
+        processTree: 'empty' as const
+      })),
+      close: vi.fn(async () => {})
+    }
+    const store = new MemoryRuntimeSessionBindingStore()
+    const instance = factoryRuntime(
+      async () => channel,
+      store,
+      {
+        modelBridgePolicy,
+        modelProfile: ownedModelProfile
+      }
+    )
+    return {
+      instance,
+      store,
+      channel,
+      preparePrompt,
+      startOwnedPrompt,
+      attachOwnedPrompt,
+      pageOwnedPromptTranscript,
+      ackOwnedPromptTranscript,
+      escalateCancellation: channel.escalateCancellation
+    }
+  }
+
+  it('starts once, maps multiple rounds, and ACKs only after consumption', async () => {
+    const fixture = ownedChannel({
+      includePermissionCheckpoint: true
+    })
+    const stream = fixture.instance.run(
+      request,
+      new AbortController().signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    const first = await stream.next()
+    expect(first.value).toMatchObject({
+      type: 'text',
+      delta: 'first model round',
+      remoteProvenance: {
+        semanticSequence: '1',
+        eventIndex: 0
+      }
+    })
+    expect(fixture.ackOwnedPromptTranscript).not.toHaveBeenCalled()
+
+    const checkpoint = await stream.next()
+    expect(checkpoint.value).toMatchObject({
+      type: 'remote-semantic-checkpoint',
+      remoteProvenance: { semanticSequence: '1', eventIndex: 1 }
+    })
+    expect(fixture.ackOwnedPromptTranscript).not.toHaveBeenCalled()
+
+    const rest = await collect(stream)
+    expect(rest.filter((event) => event.type === 'tool')).toHaveLength(2)
+    expect(rest).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'model-usage' }),
+        expect.objectContaining({
+          type: 'done',
+          sessionId: 'owned-session'
+        })
+      ])
+    )
+    expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+    expect(fixture.ackOwnedPromptTranscript.mock.calls.map(
+      ([input]) => input.acknowledgedSequence
+    )).toEqual(['5'])
+    expect(fixture.preparePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptSequence: 0,
+        modelProfile: expect.objectContaining({
+          apiKey: 'agent-prompt-secret'
+        })
+      })
+    )
+    expect(
+      fixture.preparePrompt.mock.calls[0]![0]
+    ).not.toHaveProperty('modelBridge')
+  })
+
+  it('freshly attaches an accepted prompt without resending it', async () => {
+    const fixture = ownedChannel()
+    const first = fixture.instance.run(
+      request,
+      new AbortController().signal
+    )
+    await first.next()
+    await first.return()
+
+    const attached = factoryRuntime(
+      async () => fixture.channel,
+      fixture.store,
+      {
+        modelBridgePolicy,
+        modelProfile: ownedModelProfile
+      }
+    )
+    const events = await collect(
+      attached.run(request, new AbortController().signal)
+    )
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'done' })
+      ])
+    )
+    expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    expect(fixture.attachOwnedPrompt).toHaveBeenCalledOnce()
+    expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+  })
+
+  it('does not abandon an accepted Agent prompt for a later request', async () => {
+    const fixture = ownedChannel({ waitForCancellation: true })
+    const first = fixture.instance.run(
+      request,
+      new AbortController().signal
+    )
+    await first.next()
+    await first.return()
+
+    const restarted = factoryRuntime(
+      async () => fixture.channel,
+      fixture.store,
+      {
+        modelBridgePolicy,
+        modelProfile: ownedModelProfile
+      }
+    )
+    await expect(
+      collect(
+        restarted.run(
+          {
+            ...request,
+            requestId:
+              '1c608898-ecb7-4081-8174-2b6a52f53c02'
+          },
+          new AbortController().signal
+        )
+      )
+    ).rejects.toThrow(/必须先恢复或取消原请求/u)
+    expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+    await restarted.dispose()
+  })
+
+  it('replaces an unrecoverable prompt binding after Agent identity changes', async () => {
+    const fixture = ownedChannel({ waitForCancellation: true })
+    const first = fixture.instance.run(
+      request,
+      new AbortController().signal
+    )
+    await first.next()
+    await first.return()
+    const stale = await fixture.store.getByConversation(
+      request.conversationId
+    )
+    const fresh = ownedChannel()
+    const replacement = factoryRuntime(
+      async () => fresh.channel,
+      fixture.store,
+      {
+        identity: {
+          ...identity,
+          agentInstallationId: 'installation-2'
+        },
+        modelBridgePolicy,
+        modelProfile: ownedModelProfile
+      }
+    )
+
+    await expect(
+      collect(
+        replacement.run(
+          {
+            ...request,
+            requestId:
+              '1c608898-ecb7-4081-8174-2b6a52f53c03'
+          },
+          new AbortController().signal
+        )
+      )
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'done' })
+      ])
+    )
+    await expect(
+      fixture.store.getById(stale!.bindingId)
+    ).resolves.toMatchObject({ state: 'closed' })
+    await Promise.all([
+      replacement.dispose(),
+      fresh.instance.dispose()
+    ])
+  })
+
+  it('merges partial recovery tool updates with durable tool identity', async () => {
+    const fixture = ownedChannel({ partialRecoveredTool: true })
+    const events = await collect(
+      fixture.instance.run(
+        {
+          ...request,
+          remoteRecoveredTools: [
+            {
+              callId: 'tool-1',
+              name: 'Original Read',
+              state: 'running',
+              summary: 'Read the original file',
+              input: '{"path":"/workspace/file.txt"}'
+            }
+          ]
+        },
+        new AbortController().signal
+      )
+    )
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'tool-1',
+        name: 'Original Read',
+        state: 'completed',
+        input: '{"path":"/workspace/file.txt"}'
+      })
+    )
+  })
+
+  it('never starts a replacement prompt for attach-only recovery', async () => {
+    const fixture = ownedChannel()
+    const recoveryRequest = {
+      ...request,
+      remoteRecoveryOnly: true,
+      remoteSemanticAfterSequence: '7'
+    }
+
+    await expect(
+      collect(
+        fixture.instance.run(
+          recoveryRequest,
+          new AbortController().signal
+        )
+      )
+    ).rejects.toThrow(/不会重放任务/iu)
+    expect(fixture.preparePrompt).not.toHaveBeenCalled()
+    expect(fixture.startOwnedPrompt).not.toHaveBeenCalled()
+    expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('waits for the in-flight Agent cancellation before releasing its lease', async () => {
+    let releaseEscalation!: () => void
+    const escalation = new Promise<void>((resolve) => {
+      releaseEscalation = resolve
+    })
+    const fixture = ownedChannel({
+      waitForCancellation: true,
+      escalateCancellation: async () => await escalation
+    })
+    const controller = new AbortController()
+    const stream = fixture.instance.run(request, controller.signal)
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status' }
+    })
+    const pending = stream.next()
+    await vi.waitFor(() =>
+      expect(fixture.pageOwnedPromptTranscript).toHaveBeenCalledOnce()
+    )
+    controller.abort(new Error('cancel owned prompt'))
+    await vi.waitFor(() =>
+      expect(fixture.escalateCancellation).toHaveBeenCalledOnce()
+    )
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+
+    releaseEscalation()
+    await expect(pending).rejects.toThrow('cancel owned prompt')
+  })
+
+  it.each([
+    ['cancelled', /请求已取消/iu],
+    ['failed', /owned failure/iu],
+    ['outcome-unknown', /终态未知/iu]
+  ] as const)('maps the %s terminal exactly', async (state, message) => {
+    const fixture = ownedChannel({ state })
+
+    await expect(
+      collect(
+        fixture.instance.run(
+          request,
+          new AbortController().signal
+        )
+      )
+    ).rejects.toThrow(message)
+    await expect(
+      fixture.store.getByConversation(request.conversationId)
+    ).resolves.toMatchObject({
+      state:
+        state === 'outcome-unknown'
+          ? 'outcome-unknown'
+          : 'ready'
     })
   })
 })

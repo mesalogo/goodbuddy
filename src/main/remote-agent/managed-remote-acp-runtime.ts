@@ -29,12 +29,7 @@ import type {
 
 const RUNTIME_ACP_CAPABILITY = {
   name: 'runtime/acp',
-  exactVersion: 3,
-  critical: true
-} as const
-const RUNTIME_MODEL_BRIDGE_CAPABILITY = {
-  name: 'runtime/model-bridge',
-  exactVersion: 1,
+  exactVersion: 4,
   critical: true
 } as const
 
@@ -106,8 +101,7 @@ export async function createManagedRemoteAcpRuntime(
       {
         ...agent,
         requiredCapabilities: [
-          RUNTIME_ACP_CAPABILITY,
-          RUNTIME_MODEL_BRIDGE_CAPABILITY
+          RUNTIME_ACP_CAPABILITY
         ]
       }
     )
@@ -130,8 +124,7 @@ export async function createManagedRemoteAcpRuntime(
       workspaceBinding,
       agent,
       activeConnection,
-      runtime,
-      options.modelBridge
+      runtime
     )
     const initialTransport =
       await resources.prepareTransport(capabilities)
@@ -160,6 +153,7 @@ export async function createManagedRemoteAcpRuntime(
           resources.openChannel(transport, bindingId),
         bindingStore: options.bindingStore,
         modelBridgePolicy: options.modelBridge.policy,
+        modelProfile: options.modelBridge.profile,
         assertHostCurrent: (identity) => {
           if (
             identity.controllerId !== controllerId ||
@@ -213,6 +207,7 @@ class ManagedRemoteRuntimeResources {
     | undefined
   #workspaceTail: Promise<void> = Promise.resolve()
   #disposePromise?: Promise<void>
+  #detachedForApplicationExit = false
   constructor(
     private readonly workspaceBinding: RemoteWorkspaceProjectBinding,
     private readonly agent: AgentInstallationIdentity,
@@ -223,8 +218,7 @@ class ManagedRemoteRuntimeResources {
         >
       >
     >,
-    private readonly runtime: ManagedRemoteRuntimeIdentity,
-    private readonly modelBridge: ManagedModelBridge
+    private readonly runtime: ManagedRemoteRuntimeIdentity
   ) {}
 
   get workspaceIdentity(): string {
@@ -297,8 +291,7 @@ class ManagedRemoteRuntimeResources {
         runtimeId: 'opencode',
         runtimeBundleDigest: this.runtime.bundleDigest,
         workspaceIdentity: this.workspaceIdentity
-      },
-      modelBridge: this.modelBridge.channel
+      }
     })
     try {
       assertSameTransport(
@@ -388,8 +381,16 @@ class ManagedRemoteRuntimeResources {
   }
 
   dispose(): Promise<void> {
+    if (this.#detachedForApplicationExit) {
+      return Promise.resolve()
+    }
     this.#disposePromise ??= this.#dispose()
     return this.#disposePromise
+  }
+
+  detachForApplicationExit(): void {
+    this.#detachedForApplicationExit = true
+    this.#workspace = undefined
   }
 
   async #dispose(): Promise<void> {
@@ -426,6 +427,7 @@ class ManagedRemoteAcpRuntime implements AgentRuntime {
   #activeRuns = 0
   #draining = false
   #disposed = false
+  #detachedForApplicationExit = false
 
   constructor(
     private remote: AcpRemoteRuntime,
@@ -543,6 +545,9 @@ class ManagedRemoteAcpRuntime implements AgentRuntime {
   }
 
   forceShutdown(): Promise<void> {
+    if (this.#detachedForApplicationExit) {
+      return Promise.resolve()
+    }
     this.#disposed = true
     return this.#transitionTail
       .then(() => this.remote.forceShutdown())
@@ -550,9 +555,19 @@ class ManagedRemoteAcpRuntime implements AgentRuntime {
   }
 
   dispose(): Promise<void> {
+    if (this.#detachedForApplicationExit) {
+      return Promise.resolve()
+    }
     this.#disposed = true
     this.#disposePromise ??= this.#dispose()
     return this.#disposePromise
+  }
+
+  detachForApplicationExit(): void {
+    this.#disposed = true
+    this.#draining = true
+    this.#detachedForApplicationExit = true
+    this.resources.detachForApplicationExit()
   }
 
   async #dispose(): Promise<void> {
@@ -685,9 +700,6 @@ function assertRuntimeAdvertised(
   const capability = capabilities.capabilities.find(
     (entry) => entry.name === RUNTIME_ACP_CAPABILITY.name
   )
-  const modelBridgeCapability = capabilities.capabilities.find(
-    (entry) => entry.name === RUNTIME_MODEL_BRIDGE_CAPABILITY.name
-  )
   const advertised = capabilities.runtimes.filter(
     (entry) => entry.runtimeId === 'opencode'
   )
@@ -696,10 +708,6 @@ function assertRuntimeAdvertised(
     capability.version !==
       RUNTIME_ACP_CAPABILITY.exactVersion ||
     !capability.critical ||
-    modelBridgeCapability === undefined ||
-    modelBridgeCapability.version !==
-      RUNTIME_MODEL_BRIDGE_CAPABILITY.exactVersion ||
-    !modelBridgeCapability.critical ||
     advertised.length !== 1 ||
     advertised[0]!.version !== runtime.runtimeVersion ||
     advertised[0]!.bundleDigest !== runtime.bundleDigest ||

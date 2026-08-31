@@ -128,7 +128,7 @@ describe('production Runtime composition', () => {
     events.close()
   })
 
-  it('composes all ACP v3 methods but advertises no Runtime when prerequisites fail', async () => {
+  it('composes all autonomous ACP methods but advertises no Runtime when prerequisites fail', async () => {
     const root = temporaryDirectory()
     const runtimeRoot = resolve(root, 'runtimes')
     const stateDirectory = resolve(root, 'state')
@@ -161,15 +161,19 @@ describe('production Runtime composition', () => {
     })
 
     expect(Object.keys(protocol!.methods).sort()).toEqual([
+      'runtime/ackPromptTranscript',
+      'runtime/attachPrompt',
       'runtime/closeAcpChannel',
       'runtime/completePrompt',
       'runtime/escalateCancellation',
       'runtime/getAcpCursors',
       'runtime/openAcpChannel',
+      'runtime/pagePromptTranscript',
       'runtime/preparePrompt',
       'runtime/reconcilePrompt',
       'runtime/replayAcpChannel',
-      'runtime/resumeAcpChannel'
+      'runtime/resumeAcpChannel',
+      'runtime/startPrompt'
     ])
     await expect(protocol!.runtimes()).resolves.toEqual([])
     await expect(protocol!.dispose()).resolves.toBeUndefined()

@@ -11,9 +11,11 @@ import {
 } from './agent-protocol/contracts'
 import { digestCanonicalOperation } from './agent-protocol/canonical'
 import {
+  agentPromptModelProfileSchema,
   MODEL_BRIDGE_PROTOCOL,
   modelBridgePolicySchema
 } from './model-bridge-contracts'
+import { jsonValueSchema } from './agent-protocol/control-contracts'
 
 export const UNBOUNDED_REMOTE_PROMPT_DEADLINE =
   '9999-12-31T23:59:59.999Z'
@@ -160,6 +162,13 @@ const remotePromptOperationIdentityFields = {
   runtimeBundleDigest: sha256DigestSchema,
   runtimeAdapterDigest: sha256DigestSchema,
   modelBridge: remotePromptModelBridgeSchema.optional(),
+  modelProfile: agentPromptModelProfileSchema.optional(),
+  promptSequence: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(0),
   deadlineAt: z.string().datetime({ offset: true }),
   budget: remotePromptOperationBudgetSchema
 } as const
@@ -170,6 +179,171 @@ export const remotePromptOperationPreparationSchema = z
 
 export type RemotePromptOperationPreparation = z.infer<
   typeof remotePromptOperationPreparationSchema
+>
+
+export const REMOTE_SEMANTIC_TRANSCRIPT_LIMITS = {
+  maximumEventsPerPage: 256,
+  maximumPageBytes: 768 * 1024,
+  maximumEventsPerPrompt: 10_000,
+  maximumEventBytes: 512 * 1024,
+  maximumTranscriptBytes: 16 * 1024 * 1024,
+  maximumPromptBlocks: 256,
+  maximumPromptBytes: 16 * 1024 * 1024
+} as const
+
+const remotePromptContentBlockSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('text'),
+      text: utf8StringSchema(
+        REMOTE_SEMANTIC_TRANSCRIPT_LIMITS.maximumPromptBytes,
+        { label: 'Remote prompt text' }
+      )
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('image'),
+      data: z
+        .string()
+        .min(1)
+        .max(
+          Math.ceil(
+            REMOTE_SEMANTIC_TRANSCRIPT_LIMITS.maximumPromptBytes / 3
+          ) * 4
+        )
+        .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u),
+      mimeType: z
+        .string()
+        .regex(/^image\/[a-z0-9.+-]+$/u)
+        .max(128)
+    })
+    .strict()
+])
+
+export const remoteOwnedPromptStartRequestSchema = z
+  .object({
+    bindingId: agentIdentifierSchema,
+    operationId: agentIdentifierSchema,
+    requestId: agentIdentifierSchema,
+    acpSessionId: agentIdentifierSchema.optional(),
+    prompt: z
+      .array(remotePromptContentBlockSchema)
+      .min(1)
+      .max(REMOTE_SEMANTIC_TRANSCRIPT_LIMITS.maximumPromptBlocks)
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (request.operationId !== request.requestId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requestId'],
+        message: 'Prompt operation and request identities must match'
+      })
+    }
+    const bytes = utf8ByteLength(JSON.stringify(request.prompt))
+    if (bytes > REMOTE_SEMANTIC_TRANSCRIPT_LIMITS.maximumPromptBytes) {
+      context.addIssue({
+        code: 'custom',
+        path: ['prompt'],
+        message: 'Remote prompt exceeds its total byte limit'
+      })
+    }
+  })
+
+export const remoteOwnedPromptStateSchema = z.enum([
+  'starting',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'outcome-unknown'
+])
+
+export const remoteOwnedPromptStartResultSchema = z
+  .object({
+    bindingId: agentIdentifierSchema,
+    operationId: agentIdentifierSchema,
+    requestId: agentIdentifierSchema,
+    sessionId: agentIdentifierSchema,
+    state: remoteOwnedPromptStateSchema,
+    latestSemanticSequence: agentSequenceSchema
+  })
+  .strict()
+
+export const remoteOwnedPromptAttachRequestSchema = z
+  .object({
+    bindingId: agentIdentifierSchema,
+    operationId: agentIdentifierSchema,
+    requestId: agentIdentifierSchema
+  })
+  .strict()
+
+export const remoteSemanticTranscriptEventSchema = z
+  .object({
+    sequence: positiveAgentSequenceSchema,
+    kind: z.enum([
+      'session-update',
+      'permission-decision',
+      'prompt-terminal'
+    ]),
+    payload: jsonValueSchema,
+    createdAt: z.number().int().nonnegative().safe()
+  })
+  .strict()
+
+export const remoteSemanticTranscriptPageRequestSchema = z
+  .object({
+    bindingId: agentIdentifierSchema,
+    operationId: agentIdentifierSchema,
+    afterSequence: agentSequenceSchema,
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(REMOTE_SEMANTIC_TRANSCRIPT_LIMITS.maximumEventsPerPage)
+  })
+  .strict()
+
+export const remoteSemanticTranscriptPageResultSchema = z
+  .object({
+    bindingId: agentIdentifierSchema,
+    operationId: agentIdentifierSchema,
+    events: z
+      .array(remoteSemanticTranscriptEventSchema)
+      .max(REMOTE_SEMANTIC_TRANSCRIPT_LIMITS.maximumEventsPerPage),
+    latestSequence: agentSequenceSchema,
+    acknowledgedSequence: agentSequenceSchema,
+    state: remoteOwnedPromptStateSchema,
+    sessionId: agentIdentifierSchema.optional(),
+    hasMore: z.boolean()
+  })
+  .strict()
+
+export const remoteSemanticTranscriptAckRequestSchema = z
+  .object({
+    bindingId: agentIdentifierSchema,
+    operationId: agentIdentifierSchema,
+    acknowledgedSequence: agentSequenceSchema
+  })
+  .strict()
+
+export const remoteSemanticTranscriptAckResultSchema = z
+  .object({
+    bindingId: agentIdentifierSchema,
+    operationId: agentIdentifierSchema,
+    acknowledgedSequence: agentSequenceSchema
+  })
+  .strict()
+
+export type RemoteOwnedPromptStartRequest = z.infer<
+  typeof remoteOwnedPromptStartRequestSchema
+>
+export type RemoteOwnedPromptStartResult = z.infer<
+  typeof remoteOwnedPromptStartResultSchema
+>
+export type RemoteSemanticTranscriptEvent = z.infer<
+  typeof remoteSemanticTranscriptEventSchema
 >
 
 export const remotePromptOperationAcceptanceSchema = z

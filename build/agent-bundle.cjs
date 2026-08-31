@@ -328,6 +328,20 @@ function createManifest(bundleDirectory, metadata) {
       spdx: 'MIT',
       path: 'licenses/zod-MIT.txt'
     },
+    ...(files.some(
+      (file) =>
+        file.path ===
+        'licenses/agent-client-protocol-Apache-2.0.txt'
+    )
+      ? [
+          {
+            package: '@agentclientprotocol/sdk',
+            version: metadata.acpSdkVersion,
+            spdx: 'Apache-2.0',
+            path: 'licenses/agent-client-protocol-Apache-2.0.txt'
+          }
+        ]
+      : []),
     {
       package: koffiPackageName,
       version: metadata.koffiVersion,
@@ -924,6 +938,20 @@ function buildAgentBundle(options) {
       join(staging, 'licenses', 'zod-MIT.txt')
     )
     copyLicense(
+      join(
+        projectRoot,
+        'node_modules',
+        '@agentclientprotocol',
+        'sdk',
+        'LICENSE'
+      ),
+      join(
+        staging,
+        'licenses',
+        'agent-client-protocol-Apache-2.0.txt'
+      )
+    )
+    copyLicense(
       join(projectRoot, 'node_modules', 'koffi', 'LICENSE.txt'),
       join(staging, 'licenses', 'koffi-MIT.txt')
     )
@@ -935,10 +963,21 @@ function buildAgentBundle(options) {
       join(projectRoot, 'node_modules', 'zod', 'package.json'),
       'zod package metadata'
     )
+    const acpSdkPackage = readJson(
+      join(
+        projectRoot,
+        'node_modules',
+        '@agentclientprotocol',
+        'sdk',
+        'package.json'
+      ),
+      'ACP SDK package metadata'
+    )
     const manifest = createManifest(staging, {
       agentVersion: lock.agentVersion,
       nodeVersion: lock.node.version,
       zodVersion: zodPackage.version,
+      acpSdkVersion: acpSdkPackage.version,
       koffiVersion: koffi.version,
       koffiNativePackage: koffi.nativePackage,
       arch,

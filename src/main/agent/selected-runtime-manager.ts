@@ -60,6 +60,7 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     Promise<RuntimeNativeSnapshot>
   >()
   private useSequence = 0
+  private applicationExitDetachment?: Promise<void>
 
   constructor(
     private readonly createRuntime: (
@@ -252,6 +253,10 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
   }
 
   async dispose(): Promise<void> {
+    if (this.applicationExitDetachment) {
+      await this.applicationExitDetachment
+      return
+    }
     this.disposed = true
     const entries = [...this.entries.values()]
     this.entries.clear()
@@ -266,6 +271,33 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     await Promise.allSettled([...this.tests])
     await Promise.allSettled([...this.snapshots])
     await Promise.allSettled([...this.retiring])
+  }
+
+  detachForApplicationExit(): Promise<void> {
+    if (this.applicationExitDetachment) {
+      return this.applicationExitDetachment
+    }
+    this.disposed = true
+    const entries = [...this.entries.values()]
+    this.entries.clear()
+    const operation = (async () => {
+      const controllers = await Promise.allSettled(
+        entries.map(({ operation }) => operation)
+      )
+      const current = controllers.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value] : []
+      )
+      await Promise.allSettled(
+        [...new Set([...current, ...this.retiringControllers])].map(
+          (controller) =>
+            controller.detachForApplicationExit()
+        )
+      )
+      await Promise.allSettled([...this.tests])
+      await Promise.allSettled([...this.snapshots])
+    })()
+    this.applicationExitDetachment = operation
+    return operation
   }
 
   private async runConnectionTest(

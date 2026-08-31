@@ -24,6 +24,10 @@ import {
   BoundedResponseTooLargeError,
   readBoundedResponseBytes
 } from './bounded-response'
+import {
+  assertTextModelRequestPolicy,
+  ModelRequestPolicyError
+} from '../../shared/model-request-policy'
 
 const DEFAULT_TIMEOUT_MS = 60_000
 const RESPONSE_HEADER_NAMES = [
@@ -404,17 +408,6 @@ function normalizeProviderRequestBody(
   } catch {
     throw requestPolicyError()
   }
-  if (!isRecord(value) || value.model !== profile.modelName) {
-    throw requestPolicyError()
-  }
-  if (
-    profile.supportsImageInput !== true &&
-    containsImageInput(value)
-  ) {
-    throw requestPolicyError()
-  }
-  const request = { ...value }
-  assertProviderBodyPolicy(profile, request)
   if (
     profile.protocol !== 'anthropic-messages' &&
     profile.protocol !== 'openai-chat-completions' &&
@@ -422,6 +415,22 @@ function normalizeProviderRequestBody(
   ) {
     throw requestPolicyError()
   }
+  try {
+    assertTextModelRequestPolicy(
+      {
+        protocol: profile.protocol,
+        model: profile.modelName,
+        supportsImageInput: profile.supportsImageInput === true
+      },
+      value
+    )
+  } catch (error) {
+    if (!(error instanceof ModelRequestPolicyError)) {
+      throw error
+    }
+    throw requestPolicyError()
+  }
+  const request = { ...value }
   return Buffer.from(JSON.stringify(request), 'utf8')
 }
 
@@ -430,58 +439,6 @@ function requestPolicyError(): RemoteModelGatewayError {
     'request-policy-mismatch',
     'Remote model request does not match the trusted model policy'
   )
-}
-
-function assertProviderBodyPolicy(
-  profile: ResolvedModelProfile,
-  request: Record<string, unknown>
-): void {
-  if (
-    request.background === true ||
-    request.store === true ||
-    request.web_search_options !== undefined ||
-    request.mcp_servers !== undefined ||
-    request.conversation !== undefined ||
-    request.previous_response_id !== undefined ||
-    (request.service_tier !== undefined &&
-      request.service_tier !== 'auto' &&
-      request.service_tier !== 'default') ||
-    (Array.isArray(request.modalities) &&
-      request.modalities.some((value) => value !== 'text'))
-  ) {
-    throw requestPolicyError()
-  }
-  if (
-    Array.isArray(request.include) &&
-    request.include.some(
-      (value) =>
-        typeof value !== 'string' ||
-        /(?:web_search|file_search|computer|code_interpreter|mcp|image_generation)/iu.test(
-          value
-        )
-    )
-  ) {
-    throw requestPolicyError()
-  }
-  if (request.tools === undefined) {
-    return
-  }
-  if (!Array.isArray(request.tools)) {
-    throw requestPolicyError()
-  }
-  for (const tool of request.tools) {
-    if (!isRecord(tool)) {
-      throw requestPolicyError()
-    }
-    const type = tool.type
-    if (profile.protocol === 'anthropic-messages') {
-      if (type !== undefined && type !== 'custom') {
-        throw requestPolicyError()
-      }
-    } else if (type !== 'function') {
-      throw requestPolicyError()
-    }
-  }
 }
 
 function providerUrl(
@@ -651,46 +608,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isRecordArray(value: unknown): value is Record<string, unknown>[] {
   return Array.isArray(value) && value.every(isRecord)
-}
-
-function containsImageInput(value: unknown): boolean {
-  const maximumNodes = 100_000
-  const pending: unknown[] = [value]
-  let visited = 0
-  while (pending.length > 0) {
-    visited += 1
-    if (visited > maximumNodes) {
-      throw requestPolicyError()
-    }
-    const current = pending.pop()
-    if (Array.isArray(current)) {
-      if (visited + pending.length + current.length > maximumNodes) {
-        throw requestPolicyError()
-      }
-      for (const item of current) {
-        pending.push(item)
-      }
-      continue
-    }
-    if (!isRecord(current)) {
-      continue
-    }
-    if (
-      current.type === 'image' ||
-      current.type === 'image_url' ||
-      current.type === 'input_image'
-    ) {
-      return true
-    }
-    const values = Object.values(current)
-    if (visited + pending.length + values.length > maximumNodes) {
-      throw requestPolicyError()
-    }
-    for (const item of values) {
-      pending.push(item)
-    }
-  }
-  return false
 }
 
 function sha256(value: string | Uint8Array): string {

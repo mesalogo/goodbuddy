@@ -21,8 +21,15 @@ import {
 import { AgentFrameError } from '../../shared/agent-protocol/frame'
 import {
   assertRemotePromptAcceptanceMatchesPreparation,
+  remoteOwnedPromptAttachRequestSchema,
+  remoteOwnedPromptStartRequestSchema,
+  remoteOwnedPromptStartResultSchema,
   remotePromptOperationAcceptanceSchema,
   remotePromptOperationPreparationSchema,
+  remoteSemanticTranscriptAckRequestSchema,
+  remoteSemanticTranscriptAckResultSchema,
+  remoteSemanticTranscriptPageRequestSchema,
+  remoteSemanticTranscriptPageResultSchema,
   UNBOUNDED_REMOTE_PROMPT_DEADLINE
 } from '../../shared/remote-agent-contracts'
 import {
@@ -38,9 +45,16 @@ import type {
   RemotePromptOperationReconciliationResult,
   RemoteRuntimeChannel,
   RemoteRuntimeChannelCapabilities,
+  RemoteSemanticTranscriptAckRequest,
+  RemoteSemanticTranscriptAckResult,
+  RemoteSemanticTranscriptPageRequest,
+  RemoteSemanticTranscriptPageResult,
   RuntimeSessionBindingCursors
 } from '../agent/remote-runtime-channel'
-import { StaleRemoteRuntimeGenerationError } from '../agent/remote-runtime-channel'
+import {
+  isDefinitiveRemoteRuntimeRequestRejection,
+  StaleRemoteRuntimeGenerationError
+} from '../agent/remote-runtime-channel'
 import {
   AgentProtocolClientError,
   AgentRpcError,
@@ -62,7 +76,7 @@ import type {
 } from './main-model-bridge-dispatcher'
 
 const RUNTIME_ACP_CAPABILITY = 'runtime/acp'
-const RUNTIME_ACP_CAPABILITY_VERSION = 3
+const RUNTIME_ACP_CAPABILITY_VERSION = 4
 const RUNTIME_MODEL_BRIDGE_CAPABILITY = 'runtime/model-bridge'
 const RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION = 1
 const DEFAULT_CONTROL_TIMEOUT_MS = 15_000
@@ -80,6 +94,11 @@ export type RuntimeProtocolParams<M extends RuntimeProtocolMethod> =
   AgentProtocolParams<M>
 export type RuntimeProtocolResult<M extends RuntimeProtocolMethod> =
   AgentProtocolResult<M>
+type OwnedRuntimeProtocolMethod =
+  | 'runtime/startPrompt'
+  | 'runtime/attachPrompt'
+  | 'runtime/pagePromptTranscript'
+  | 'runtime/ackPromptTranscript'
 
 export type RuntimeProtocolRequestOptions = AgentProtocolRequestOptions
 
@@ -401,6 +420,7 @@ export class ProtocolRemoteRuntimeChannel
   readonly capabilities: RemoteRuntimeChannelCapabilities = {
     cancellationEscalation: true,
     promptOperationReconciliation: true,
+    ownedPrompt: true,
     modelBridge: false
   }
   readonly closed: Promise<void>
@@ -416,6 +436,7 @@ export class ProtocolRemoteRuntimeChannel
   #paused = false
   #pauseWaiters = new Set<() => void>()
   #pendingControlRequests = 0
+  #pendingUnsafeControlRequests = 0
   #activeBinarySends = 0
   #recovering = false
   #recoveryPromise?: Promise<void>
@@ -592,6 +613,126 @@ export class ProtocolRemoteRuntimeChannel
     }
     this.#assertCurrent()
     return acceptance
+  }
+
+  async startOwnedPrompt(
+    request: z.input<typeof remoteOwnedPromptStartRequestSchema>
+  ): Promise<z.infer<typeof remoteOwnedPromptStartResultSchema>> {
+    const parsed = remoteOwnedPromptStartRequestSchema.parse(request)
+    this.#assertOwnedPromptIdentity(parsed)
+    try {
+      return this.#parseOwnedPromptIdentity(
+        parsed,
+        await this.#ownedRequest(
+          'runtime/startPrompt',
+          parsed
+        )
+      )
+    } catch (error) {
+      if (
+        error instanceof ProtocolRemoteRuntimeChannelError &&
+        error.reason === 'transport' &&
+        this.isCurrentGeneration()
+      ) {
+        const identity = remoteOwnedPromptAttachRequestSchema.parse({
+          bindingId: parsed.bindingId,
+          operationId: parsed.operationId,
+          requestId: parsed.requestId
+        })
+        try {
+          return await this.attachOwnedPrompt(identity)
+        } catch (attachError) {
+          if (
+            attachError instanceof ProtocolRemoteRuntimeChannelError &&
+            attachError.remoteServiceCode === 'not-found' &&
+            isDefinitiveRemoteRuntimeRequestRejection(
+              attachError,
+              'runtime/attachPrompt'
+            )
+          ) {
+            return this.#parseOwnedPromptIdentity(
+              parsed,
+              await this.#ownedRequest(
+                'runtime/startPrompt',
+                parsed
+              )
+            )
+          }
+          throw attachError
+        }
+      }
+      throw error
+    }
+  }
+
+  async attachOwnedPrompt(
+    request: z.input<typeof remoteOwnedPromptAttachRequestSchema>
+  ): Promise<z.infer<typeof remoteOwnedPromptStartResultSchema>> {
+    const parsed = remoteOwnedPromptAttachRequestSchema.parse(request)
+    this.#assertOwnedPromptIdentity(parsed)
+    return this.#parseOwnedPromptIdentity(
+      parsed,
+      await this.#ownedIdempotentRequest(
+        'runtime/attachPrompt',
+        parsed
+      )
+    )
+  }
+
+  async pageOwnedPromptTranscript(
+    request: RemoteSemanticTranscriptPageRequest
+  ): Promise<RemoteSemanticTranscriptPageResult> {
+    const parsed = remoteSemanticTranscriptPageRequestSchema.parse(
+      request
+    )
+    this.#assertOwnedPromptIdentity(parsed)
+    const result = parseRemoteResult(
+      remoteSemanticTranscriptPageResultSchema,
+      await this.#ownedIdempotentRequest(
+        'runtime/pagePromptTranscript',
+        parsed
+      ),
+      'Remote Runtime semantic transcript page is invalid'
+    )
+    if (
+      result.bindingId !== parsed.bindingId ||
+      result.operationId !== parsed.operationId
+    ) {
+      throw new ProtocolRemoteRuntimeChannelError(
+        'Remote Runtime semantic transcript identity is invalid',
+        'binding-mismatch'
+      )
+    }
+    return result
+  }
+
+  async ackOwnedPromptTranscript(
+    request: RemoteSemanticTranscriptAckRequest
+  ): Promise<RemoteSemanticTranscriptAckResult> {
+    const parsed = remoteSemanticTranscriptAckRequestSchema.parse(
+      request
+    )
+    this.#assertOwnedPromptIdentity(parsed)
+    const result = parseRemoteResult(
+      remoteSemanticTranscriptAckResultSchema,
+      await this.#ownedIdempotentRequest(
+        'runtime/ackPromptTranscript',
+        parsed
+      ),
+      'Remote Runtime semantic transcript ACK is invalid'
+    )
+    if (
+      result.bindingId !== parsed.bindingId ||
+      result.operationId !== parsed.operationId ||
+      BigInt(result.acknowledgedSequence) <
+        BigInt(parsed.acknowledgedSequence)
+    ) {
+      throw new ProtocolRemoteRuntimeChannelError(
+        'Remote Runtime semantic transcript ACK identity is invalid',
+        'binding-mismatch'
+      )
+    }
+    return result
   }
 
   setRecoveryBoundary(
@@ -906,6 +1047,7 @@ export class ProtocolRemoteRuntimeChannel
       )
     }
     this.#pendingControlRequests += 1
+    this.#pendingUnsafeControlRequests += 1
     try {
       const result = await requestWithTimeout(
         this.#state.client,
@@ -923,6 +1065,71 @@ export class ProtocolRemoteRuntimeChannel
       throw redactProtocolFailure(error, method)
     } finally {
       this.#pendingControlRequests -= 1
+      this.#pendingUnsafeControlRequests -= 1
+    }
+  }
+
+  async #ownedRequest<M extends OwnedRuntimeProtocolMethod>(
+    method: M,
+    params: RuntimeProtocolParams<M>
+  ): Promise<RuntimeProtocolResult<M>> {
+    await this.#waitForRecovery()
+    this.#assertCurrent()
+    if (
+      this.#pendingControlRequests >=
+      this.#state.maximumPendingControlRequests
+    ) {
+      throw new ProtocolRemoteRuntimeChannelError(
+        'Remote Runtime control request limit reached',
+        'capacity'
+      )
+    }
+    this.#pendingControlRequests += 1
+    try {
+      const result = await requestWithTimeout(
+        this.#state.client,
+        method,
+        params,
+        this.#state.controlTimeoutMs,
+        this.#lifetime.signal
+      )
+      this.#assertCurrent()
+      return result
+    } catch (error) {
+      if (error instanceof StaleRemoteRuntimeGenerationError) {
+        throw error
+      }
+      if (
+        !this.#closing &&
+        !this.#lifetime.signal.aborted &&
+        !(error instanceof AgentRpcError)
+      ) {
+        await this.#transportInterrupted().catch(() => undefined)
+        await this.#waitForRecovery().catch(() => undefined)
+      }
+      throw redactProtocolFailure(error, method)
+    } finally {
+      this.#pendingControlRequests -= 1
+    }
+  }
+
+  async #ownedIdempotentRequest<
+    M extends Exclude<OwnedRuntimeProtocolMethod, 'runtime/startPrompt'>
+  >(
+    method: M,
+    params: RuntimeProtocolParams<M>
+  ): Promise<RuntimeProtocolResult<M>> {
+    try {
+      return await this.#ownedRequest(method, params)
+    } catch (error) {
+      if (
+        error instanceof ProtocolRemoteRuntimeChannelError &&
+        error.reason === 'transport' &&
+        this.isCurrentGeneration()
+      ) {
+        return await this.#ownedRequest(method, params)
+      }
+      throw error
     }
   }
 
@@ -968,6 +1175,49 @@ export class ProtocolRemoteRuntimeChannel
         'binding-mismatch'
       )
     }
+  }
+
+  #assertOwnedPromptIdentity(request: {
+    bindingId: string
+    operationId: string
+    requestId?: string
+  }): void {
+    this.#assertBinding(request.bindingId)
+    if (
+      request.requestId !== undefined &&
+      request.operationId !== request.requestId
+    ) {
+      throw new ProtocolRemoteRuntimeChannelError(
+        'Remote Runtime owned prompt operation identity is invalid',
+        'binding-mismatch'
+      )
+    }
+  }
+
+  #parseOwnedPromptIdentity(
+    request: {
+      bindingId: string
+      operationId: string
+      requestId: string
+    },
+    raw: unknown
+  ): z.infer<typeof remoteOwnedPromptStartResultSchema> {
+    const result = parseRemoteResult(
+      remoteOwnedPromptStartResultSchema,
+      raw,
+      'Remote Runtime owned prompt response is invalid'
+    )
+    if (
+      result.bindingId !== request.bindingId ||
+      result.operationId !== request.operationId ||
+      result.requestId !== request.requestId
+    ) {
+      throw new ProtocolRemoteRuntimeChannelError(
+        'Remote Runtime owned prompt response identity is invalid',
+        'binding-mismatch'
+      )
+    }
+    return result
   }
 
   async #waitUntilResumed(): Promise<void> {
@@ -1053,7 +1303,7 @@ export class ProtocolRemoteRuntimeChannel
       this.#recoverySignal.aborted ||
       recoveryDeadlineExpired ||
       this.#activeBinarySends > 0 ||
-      this.#pendingControlRequests > 0 ||
+      this.#pendingUnsafeControlRequests > 0 ||
       providerDeliveryMayBeUncertain ||
       this.#state.connection.reconnect === undefined
     ) {

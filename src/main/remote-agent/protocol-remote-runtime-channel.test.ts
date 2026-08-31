@@ -320,7 +320,7 @@ function validCapabilities(): DaemonCapabilities {
   return {
     generation: 11,
     capabilities: [
-      { name: 'runtime/acp', version: 3, critical: true }
+      { name: 'runtime/acp', version: 4, critical: true }
     ],
     runtimes: [
       {
@@ -406,7 +406,76 @@ function defaultResponse(
       processTree: 'empty'
     }
   }
+  if ((method as string) === 'runtime/startPrompt') {
+    const identity = params as {
+      bindingId: string
+      operationId: string
+      requestId: string
+    }
+    return {
+      bindingId: identity.bindingId,
+      operationId: identity.operationId,
+      requestId: identity.requestId,
+      sessionId: 'session-owned-1',
+      state: 'running',
+      latestSemanticSequence: '0'
+    }
+  }
+  if ((method as string) === 'runtime/attachPrompt') {
+    return {
+      ...(params as Record<string, unknown>),
+      sessionId: 'session-owned-1',
+      state: 'running',
+      latestSemanticSequence: '1'
+    }
+  }
+  if ((method as string) === 'runtime/pagePromptTranscript') {
+    return {
+      bindingId: 'binding-1',
+      operationId: 'operation-1',
+      events: [],
+      latestSequence: '1',
+      acknowledgedSequence: '0',
+      state: 'running',
+      sessionId: 'session-owned-1',
+      hasMore: false
+    }
+  }
+  if ((method as string) === 'runtime/ackPromptTranscript') {
+    return params
+  }
   return params
+}
+
+function promptRecoveryResponse(
+  method: RuntimeProtocolMethod,
+  params: unknown,
+  deadlineAt: string
+): unknown {
+  if (method === 'runtime/resumeAcpChannel') {
+    return {
+      bindingId: 'binding-1',
+      channelId: 'binding-1',
+      channelEpoch: '9',
+      deadlineAt,
+      cursors: {
+        lastOutboundJournaledSequence: '0',
+        lastOutboundDeliveredSequence: '0',
+        lastInboundJournaledSequence: '0',
+        lastMainAckSequence: '0'
+      }
+    }
+  }
+  if (method === 'runtime/replayAcpChannel') {
+    return {
+      bindingId: 'binding-1',
+      channelId: 'binding-1',
+      channelEpoch: '9',
+      replayedThroughSequence: '0',
+      live: true
+    }
+  }
+  return defaultResponse(method, params)
 }
 
 async function openChannel(fixture = connectionFixture()) {
@@ -420,6 +489,177 @@ async function openChannel(fixture = connectionFixture()) {
 }
 
 describe('ProtocolRemoteRuntimeChannel', () => {
+  it('maps the complete Agent-owned prompt RPC set', async () => {
+    const fixture = await openChannel()
+    const identity = {
+      bindingId: 'binding-1',
+      operationId: 'operation-1',
+      requestId: 'operation-1'
+    }
+
+    await expect(
+      fixture.channel.startOwnedPrompt({
+        ...identity,
+        prompt: [{ type: 'text', text: 'hello' }]
+      })
+    ).resolves.toMatchObject({
+      sessionId: 'session-owned-1',
+      state: 'running'
+    })
+    await expect(
+      fixture.channel.attachOwnedPrompt(identity)
+    ).resolves.toMatchObject({
+      latestSemanticSequence: '1'
+    })
+    await expect(
+      fixture.channel.pageOwnedPromptTranscript({
+        bindingId: identity.bindingId,
+        operationId: identity.operationId,
+        afterSequence: '0',
+        limit: 10
+      })
+    ).resolves.toMatchObject({
+      latestSequence: '1',
+      state: 'running'
+    })
+    await expect(
+      fixture.channel.ackOwnedPromptTranscript({
+        bindingId: identity.bindingId,
+        operationId: identity.operationId,
+        acknowledgedSequence: '1'
+      })
+    ).resolves.toMatchObject({
+      acknowledgedSequence: '1'
+    })
+    expect(
+      fixture.client.requests.map((request) => request.method as string)
+    ).toEqual(expect.arrayContaining([
+      'runtime/startPrompt',
+      'runtime/attachPrompt',
+      'runtime/pagePromptTranscript',
+      'runtime/ackPromptTranscript'
+    ]))
+    await fixture.channel.close()
+  })
+
+  it('attaches the exact operation when a prompt start response is lost', async () => {
+    const fixture = await openChannel()
+    const deadlineAt = new Date(Date.now() + 10_000).toISOString()
+    fixture.channel.setRecoveryBoundary(
+      deadlineAt,
+      new AbortController().signal
+    )
+    const resumed = new FakeRuntimeClient(8)
+    resumed.responder = (method, params) =>
+      promptRecoveryResponse(method, params, deadlineAt)
+    fixture.setReconnectClient(resumed)
+    let starts = 0
+    fixture.client.responder = async (method, params) => {
+      if (method === 'runtime/startPrompt' && starts++ === 0) {
+        throw new Error('start response lost')
+      }
+      return defaultResponse(method, params)
+    }
+
+    await expect(
+      fixture.channel.startOwnedPrompt({
+        bindingId: 'binding-1',
+        operationId: 'operation-1',
+        requestId: 'operation-1',
+        prompt: [{ type: 'text', text: 'hello' }]
+      })
+    ).resolves.toMatchObject({
+      operationId: 'operation-1',
+      sessionId: 'session-owned-1'
+    })
+    expect(
+      resumed.requests.map((request) => request.method)
+    ).toContain('runtime/attachPrompt')
+    expect(
+      resumed.requests.find(
+        (request) => request.method === 'runtime/attachPrompt'
+      )?.params
+    ).toEqual({
+      bindingId: 'binding-1',
+      operationId: 'operation-1',
+      requestId: 'operation-1'
+    })
+    await fixture.channel.close()
+  })
+
+  it('reissues one identical start after attach proves the first was not accepted', async () => {
+    const fixture = await openChannel()
+    const deadlineAt = new Date(Date.now() + 10_000).toISOString()
+    fixture.channel.setRecoveryBoundary(
+      deadlineAt,
+      new AbortController().signal
+    )
+    const resumed = new FakeRuntimeClient(8)
+    fixture.setReconnectClient(resumed)
+    let starts = 0
+    fixture.client.responder = async (method, params) => {
+      if (method === 'runtime/startPrompt' && starts++ === 0) {
+        throw new Error('start request not delivered')
+      }
+      return promptRecoveryResponse(method, params, deadlineAt)
+    }
+    resumed.responder = async (method, params) => {
+      if (method === 'runtime/attachPrompt') {
+        throw new AgentRpcError(-32009, 'missing prompt', {
+          code: 'not-found'
+        })
+      }
+      return promptRecoveryResponse(method, params, deadlineAt)
+    }
+    const start = {
+      bindingId: 'binding-1',
+      operationId: 'operation-1',
+      requestId: 'operation-1',
+      prompt: [{ type: 'text' as const, text: 'hello' }]
+    }
+
+    await expect(
+      fixture.channel.startOwnedPrompt(start)
+    ).resolves.toMatchObject({
+      operationId: 'operation-1',
+      sessionId: 'session-owned-1'
+    })
+    const promptStarts = [
+      ...fixture.client.requests,
+      ...resumed.requests
+    ].filter((request) => request.method === 'runtime/startPrompt')
+    expect(promptStarts).toHaveLength(2)
+    expect(promptStarts[0]?.params).toEqual(start)
+    expect(promptStarts[1]?.params).toEqual(start)
+    await fixture.channel.close()
+  })
+
+  it('preserves autonomous RPC rejection identity for recovery decisions', async () => {
+    const fixture = await openChannel()
+    fixture.client.responder = async (method, params) => {
+      if (method === 'runtime/attachPrompt') {
+        throw new AgentRpcError(-32009, 'missing prompt', {
+          code: 'not-found'
+        })
+      }
+      return defaultResponse(method, params)
+    }
+
+    await expect(
+      fixture.channel.attachOwnedPrompt({
+        bindingId: 'binding-1',
+        operationId: 'operation-1',
+        requestId: 'operation-1'
+      })
+    ).rejects.toMatchObject({
+      reason: 'remote',
+      remoteMethod: 'runtime/attachPrompt',
+      remoteServiceCode: 'not-found',
+      remoteRequestOutcome: 'rejected'
+    })
+    await fixture.channel.close()
+  })
+
   it('opens before registering binary and streams bytes in both directions', async () => {
     const fixture = await openChannel()
     expect(fixture.client.events.slice(0, 2)).toEqual([
@@ -478,6 +718,23 @@ describe('ProtocolRemoteRuntimeChannel', () => {
         runtimeId: 'opencode',
         runtimeBundleDigest,
         runtimeAdapterDigest: digest('d'),
+        modelProfile: {
+          profileId: 'profile-1',
+          modelProfileDigest: digest('e'),
+          provider: 'openai',
+          baseUrl: 'https://provider.example/v1',
+          model: 'test-model',
+          protocol: 'openai-responses',
+          authentication: 'none',
+          capabilities: { imageInput: false },
+          limits: {
+            maximumOutputTokens: 4_096,
+            maximumModelCalls: 100,
+            maximumTotalOutputTokens: 409_600,
+            requestTimeoutMilliseconds: 60_000
+          }
+        },
+        promptSequence: 0,
         deadlineAt: new Date(Date.now() + 10_000).toISOString(),
         budget: {
           maximumInputBytes: 1_024,

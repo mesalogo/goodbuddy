@@ -12,7 +12,7 @@ import type {
 } from './remote-runtime-installation-manager'
 
 const RUNTIME_ACP_CAPABILITY = 'runtime/acp'
-const RUNTIME_ACP_CAPABILITY_VERSION = 3
+const RUNTIME_ACP_CAPABILITY_VERSION = 4
 const RUNTIME_MODEL_BRIDGE_CAPABILITY = 'runtime/model-bridge'
 const RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION = 1
 

@@ -202,7 +202,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 31', async () => {
+  it('migrates existing databases to schema version 32', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -231,7 +231,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(31)
+    ).toBe(32)
     expect(
       current
         .prepare(
@@ -393,7 +393,7 @@ describe('AssistantDatabase', () => {
       enableForeignKeyConstraints: true
     })
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 31
+      user_version: 32
     })
     expect(
       inspected.prepare('SELECT * FROM projects ORDER BY rowid').all()
@@ -491,7 +491,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 31
+      user_version: 32
     })
     expect(
       inspected
@@ -568,7 +568,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 31
+      user_version: 32
     })
     expect(
       inspected
@@ -818,7 +818,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(31)
+    ).toBe(32)
     expect(
       current
         .prepare(
@@ -956,7 +956,7 @@ describe('AssistantDatabase', () => {
     const inspected = new DatabaseSync(databasePath)
     expect(
       inspected.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 31 })
+    ).toEqual({ user_version: 32 })
     expect(
       inspected
         .prepare(
@@ -2611,6 +2611,810 @@ describe('AssistantDatabase', () => {
       workMode: 'execute'
     })
     database.close()
+  })
+
+  it('migrates task event provenance without changing ordinary events', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-task-event-migration-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const taskId = '00000000-0000-4000-8000-000000000205'
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.createTask({
+      id: taskId,
+      title: '迁移任务事件',
+      instructions: '保留普通事件',
+      workMode: 'ask',
+      status: 'completed'
+    })
+    initial.appendTaskEvent(taskId, 'output', { text: '原有事件' })
+    initial.close()
+
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      DROP INDEX tasks_remote_recovery_idx;
+      ALTER TABLE tasks DROP COLUMN current_assistant_message_id;
+      ALTER TABLE tasks DROP COLUMN current_user_message_id;
+      ALTER TABLE tasks DROP COLUMN remote_recoverable;
+      DROP INDEX task_events_remote_provenance_unique;
+      ALTER TABLE task_events DROP COLUMN remote_event_index;
+      ALTER TABLE task_events DROP COLUMN remote_semantic_sequence;
+      ALTER TABLE task_events DROP COLUMN remote_operation_id;
+      ALTER TABLE task_events DROP COLUMN remote_binding_id;
+      PRAGMA user_version = 31;
+    `)
+    legacy.close()
+
+    const migrated = new AssistantDatabase(databasePath)
+    migrated.initialize('C:\\Workspace')
+    migrated.close()
+
+    const inspected = new DatabaseSync(databasePath)
+    expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
+      user_version: 32
+    })
+    expect(
+      inspected.prepare('PRAGMA table_info(task_events)').all()
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'remote_binding_id' }),
+        expect.objectContaining({ name: 'remote_operation_id' }),
+        expect.objectContaining({ name: 'remote_semantic_sequence' }),
+        expect.objectContaining({ name: 'remote_event_index' })
+      ])
+    )
+    expect(
+      inspected.prepare('PRAGMA table_info(tasks)').all()
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'remote_recoverable',
+          notnull: 1,
+          dflt_value: '0'
+        }),
+        expect.objectContaining({ name: 'current_user_message_id' }),
+        expect.objectContaining({
+          name: 'current_assistant_message_id'
+        })
+      ])
+    )
+    expect(
+      inspected
+        .prepare(
+          `SELECT kind, payload_json, remote_binding_id,
+                  remote_operation_id, remote_semantic_sequence,
+                  remote_event_index
+           FROM task_events
+           WHERE task_id = ? AND kind = 'output'`
+        )
+        .get(taskId)
+    ).toEqual({
+      kind: 'output',
+      payload_json: '{"text":"原有事件"}',
+      remote_binding_id: null,
+      remote_operation_id: null,
+      remote_semantic_sequence: null,
+      remote_event_index: null
+    })
+    expect(
+      inspected
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'index'
+             AND name = 'task_events_remote_provenance_unique'`
+        )
+        .get()
+    ).toEqual({ name: 'task_events_remote_provenance_unique' })
+    inspected.close()
+  })
+
+  it('persists remote task events idempotently across reopen', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-remote-task-event-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const taskId = '00000000-0000-4000-8000-000000000206'
+    const event = {
+      taskId,
+      bindingId: 'binding-remote-events',
+      operationId: 'operation-remote-events',
+      semanticSequence: '1',
+      eventIndex: 0,
+      kind: 'output',
+      payload: { text: '只保存一次' }
+    }
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.createTask({
+      id: taskId,
+      title: '远程事件任务',
+      instructions: '验证幂等落库',
+      workMode: 'execute',
+      status: 'completed'
+    })
+
+    expect(initial.appendRemoteTaskEventOnce(event)).toBe(true)
+    expect(initial.appendRemoteTaskEventOnce(event)).toBe(false)
+    expect(
+      initial.getHighestCommittedRemoteTaskEventSequence(
+        event.bindingId,
+        event.operationId
+      )
+    ).toBe('1')
+    expect(() =>
+      initial.appendRemoteTaskEventOnce({
+        ...event,
+        payload: { text: '冲突内容' }
+      })
+    ).toThrow('provenance conflicts')
+    initial.close()
+
+    const reopened = new AssistantDatabase(databasePath)
+    reopened.initialize('C:\\Workspace')
+    expect(reopened.appendRemoteTaskEventOnce(event)).toBe(false)
+    expect(
+      reopened.getHighestCommittedRemoteTaskEventSequence(
+        event.bindingId,
+        event.operationId
+      )
+    ).toBe('1')
+    reopened.appendTaskEvent(taskId, 'ordinary', { local: true })
+    reopened.close()
+
+    const inspected = new DatabaseSync(databasePath)
+    expect(
+      inspected
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM task_events
+           WHERE remote_binding_id = ? AND remote_operation_id = ?`
+        )
+        .get(event.bindingId, event.operationId)
+    ).toEqual({ count: 1 })
+    expect(
+      inspected
+        .prepare(
+          `SELECT remote_binding_id, remote_operation_id,
+                  remote_semantic_sequence, remote_event_index
+           FROM task_events
+           WHERE task_id = ? AND kind = 'ordinary'`
+        )
+        .get(taskId)
+    ).toEqual({
+      remote_binding_id: null,
+      remote_operation_id: null,
+      remote_semantic_sequence: null,
+      remote_event_index: null
+    })
+    inspected.close()
+
+    const cleaned = new AssistantDatabase(databasePath)
+    cleaned.initialize('C:\\Workspace')
+    cleaned.clearAssistantData()
+    expect(
+      cleaned.getHighestCommittedRemoteTaskEventSequence(
+        event.bindingId,
+        event.operationId
+      )
+    ).toBe('0')
+    cleaned.close()
+  })
+
+  it('atomically commits ordered remote task event batches', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-remote-task-event-batch-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const taskId = '00000000-0000-4000-8000-000000000207'
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    database.createTask({
+      id: taskId,
+      title: '远程事件批次',
+      instructions: '验证批次事务',
+      workMode: 'execute',
+      status: 'completed'
+    })
+    const provenance = {
+      taskId,
+      bindingId: 'binding-event-batch',
+      operationId: 'operation-event-batch'
+    }
+    const batch = [
+      {
+        ...provenance,
+        semanticSequence: '1',
+        eventIndex: 0,
+        kind: 'reasoning',
+        payload: { text: '分析' }
+      },
+      {
+        ...provenance,
+        semanticSequence: '1',
+        eventIndex: 1,
+        kind: 'output',
+        payload: { text: '第一段' }
+      },
+      {
+        ...provenance,
+        semanticSequence: '2',
+        eventIndex: 0,
+        kind: 'output',
+        payload: { text: '第二段' }
+      }
+    ]
+
+    expect(database.appendRemoteTaskEventsBatch(batch)).toBe('2')
+    expect(database.appendRemoteTaskEventsBatch(batch)).toBe('2')
+    expect(
+      database.getHighestCommittedRemoteTaskEventSequence(
+        provenance.bindingId,
+        provenance.operationId
+      )
+    ).toBe('2')
+    database.appendRemoteTaskEventOnce({
+      ...provenance,
+      semanticSequence: '4',
+      eventIndex: 0,
+      kind: 'output',
+      payload: { text: '已保存的第四段' }
+    })
+    expect(() =>
+      database.appendRemoteTaskEventsBatch([
+        {
+          ...provenance,
+          semanticSequence: '3',
+          eventIndex: 0,
+          kind: 'output',
+          payload: { text: '必须回滚的第三段' }
+        },
+        {
+          ...provenance,
+          semanticSequence: '4',
+          eventIndex: 0,
+          kind: 'output',
+          payload: { text: '冲突的第四段' }
+        }
+      ])
+    ).toThrow('provenance conflicts')
+    expect(() =>
+      database.appendRemoteTaskEventOnce({
+        ...provenance,
+        semanticSequence: '01',
+        eventIndex: 0,
+        kind: 'output',
+        payload: {}
+      })
+    ).toThrow()
+    database.close()
+
+    const inspected = new DatabaseSync(databasePath)
+    expect(
+      inspected
+        .prepare(
+          `SELECT remote_semantic_sequence, remote_event_index
+           FROM task_events
+           WHERE remote_binding_id = ?
+             AND remote_operation_id = ?
+           ORDER BY CAST(remote_semantic_sequence AS INTEGER),
+                    remote_event_index`
+        )
+        .all(provenance.bindingId, provenance.operationId)
+    ).toEqual([
+      { remote_semantic_sequence: '1', remote_event_index: 0 },
+      { remote_semantic_sequence: '1', remote_event_index: 1 },
+      { remote_semantic_sequence: '2', remote_event_index: 0 },
+      { remote_semantic_sequence: '4', remote_event_index: 0 }
+    ])
+    inspected.close()
+  })
+
+  it('creates and recovers a remote-authoritative conversation task', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-remote-conversation-recovery-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const project = database.createSshProject(
+      validatedSshProjectWrite()
+    )
+    const conversationId =
+      '00000000-0000-4000-8000-000000000701'
+    const taskId = '00000000-0000-4000-8000-000000000702'
+    const userMessageId =
+      '00000000-0000-4000-8000-000000000703'
+    const assistantMessageId =
+      '00000000-0000-4000-8000-000000000704'
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          projectId: project.id,
+          runtimeSelection: { provider: 'opencode' },
+          title: '远程恢复对话',
+          updatedAt: Date.now()
+        },
+        messages: []
+      }
+    ])
+
+    database.createTask({
+      id: taskId,
+      projectId: project.id,
+      conversationId,
+      title: '远程恢复',
+      instructions: '恢复这次回答',
+      workMode: 'execute',
+      remoteRecovery: {
+        recoverable: true,
+        currentUserMessageId: userMessageId,
+        currentAssistantMessageId: assistantMessageId
+      }
+    })
+
+    expect(database.getConversation(conversationId).messages).toEqual([
+      expect.objectContaining({
+        id: userMessageId,
+        role: 'user',
+        content: '恢复这次回答',
+        state: 'complete'
+      }),
+      expect.objectContaining({
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        blocks: [],
+        state: 'streaming'
+      })
+    ])
+    expect(database.listRecoverableRemoteTasks()).toEqual([
+      {
+        taskId,
+        projectId: project.id,
+        conversationId,
+        currentUserMessageId: userMessageId,
+        currentAssistantMessageId: assistantMessageId,
+        instructions: '恢复这次回答',
+        workMode: 'execute',
+        status: 'running'
+      }
+    ])
+    const provenance = {
+      taskId,
+      bindingId: 'binding-conversation-recovery',
+      operationId: 'operation-conversation-recovery',
+      conversationId,
+      assistantMessageId
+    }
+    const append = (
+      semanticSequence: string,
+      eventIndex: number,
+      event: Parameters<
+        AssistantDatabase['appendRemoteConversationTaskEventOnce']
+      >[0]['event']
+    ): boolean =>
+      database.appendRemoteConversationTaskEventOnce({
+        ...provenance,
+        semanticSequence,
+        eventIndex,
+        event
+      })
+    const textEvent = {
+      requestId: taskId,
+      type: 'text' as const,
+      delta: '已恢复'
+    }
+    expect(append('1', 0, textEvent)).toBe(true)
+    expect(append('1', 0, textEvent)).toBe(false)
+    expect(
+      database.getConversation(conversationId).messages[1]?.content
+    ).toBe('已恢复')
+    expect(() =>
+      append('1', 0, {
+        requestId: taskId,
+        type: 'text',
+        delta: '冲突'
+      })
+    ).toThrow('provenance conflicts')
+    expect(
+      database.getConversation(conversationId).messages[1]?.content
+    ).toBe('已恢复')
+
+    append('2', 0, {
+      requestId: taskId,
+      type: 'reasoning',
+      delta: '先验证状态'
+    })
+    append('3', 0, {
+      requestId: taskId,
+      type: 'tool',
+      callId: 'call-1',
+      name: 'read',
+      state: 'running',
+      summary: '读取状态'
+    })
+    append('4', 0, {
+      requestId: taskId,
+      type: 'subagent',
+      childTaskId: '00000000-0000-4000-8000-000000000705',
+      expertId: '00000000-0000-4000-8000-000000000706',
+      expertName: '恢复专家',
+      routingMode: 'native',
+      runtimeCallId: 'call-1',
+      state: 'completed',
+      output: '已检查'
+    })
+    append('5', 0, {
+      requestId: taskId,
+      type: 'artifact',
+      artifactId: '00000000-0000-4000-8000-000000000707',
+      kind: 'image',
+      title: '恢复图片'
+    })
+    append('6', 0, {
+      requestId: taskId,
+      type: 'knowledge-retrieval',
+      mode: 'always',
+      state: 'succeeded',
+      libraryCount: 1,
+      resultCount: 1,
+      usedChannels: ['fts'],
+      warnings: []
+    })
+    append('7', 0, {
+      requestId: taskId,
+      type: 'source-references',
+      references: [
+        {
+          libraryId: '00000000-0000-4000-8000-000000000708',
+          libraryName: '恢复知识',
+          documentId: '00000000-0000-4000-8000-000000000709',
+          documentName: '恢复说明.md',
+          sourceName: '恢复目录',
+          snippet: '可以继续恢复。',
+          rank: 1,
+          retrievalChannels: ['fts']
+        }
+      ]
+    })
+    append('8', 0, {
+      requestId: taskId,
+      type: 'done'
+    })
+    append('8', 1, {
+      requestId: taskId,
+      type: 'remote-semantic-checkpoint'
+    })
+    const recoveredMessage =
+      database.getConversation(conversationId).messages[1]
+    expect(
+      database.listTasks().find((task) => task.id === taskId)?.status
+    ).toBe('completed')
+    expect(database.listRecoverableRemoteTasks()).toEqual([])
+    expect(recoveredMessage).toMatchObject({
+      content: '已恢复',
+      reasoning: '先验证状态',
+      state: 'complete',
+      artifactIds: [
+        '00000000-0000-4000-8000-000000000707'
+      ],
+      knowledgeRetrieval: {
+        state: 'succeeded',
+        resultCount: 1
+      },
+      sourceReferences: [
+        expect.objectContaining({ documentName: '恢复说明.md' })
+      ],
+      subagents: [
+        expect.objectContaining({
+          childTaskId: '00000000-0000-4000-8000-000000000705',
+          state: 'completed'
+        })
+      ],
+      blocks: [
+        expect.objectContaining({
+          type: 'text',
+          content: '已恢复'
+        }),
+        expect.objectContaining({
+          type: 'reasoning',
+          content: '先验证状态'
+        }),
+        expect.objectContaining({
+          type: 'subagent',
+          childTaskId: '00000000-0000-4000-8000-000000000705'
+        })
+      ]
+    })
+
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          projectId: project.id,
+          runtimeSelection: { provider: 'opencode' },
+          title: '远程恢复对话',
+          updatedAt: Date.now() + 1
+        },
+        messages: [
+          {
+            id: userMessageId,
+            role: 'user',
+            content: '恢复这次回答',
+            createdAt: Date.now(),
+            state: 'complete',
+            attachments: [
+              {
+                id: '00000000-0000-4000-8000-000000000710',
+                name: '补充.txt',
+                size: 2,
+                preview: '补充',
+                kind: 'text'
+              }
+            ]
+          },
+          {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '过期的渲染进程内容',
+            createdAt: Date.now(),
+            state: 'streaming'
+          }
+        ]
+      }
+    ])
+    expect(database.getConversation(conversationId).messages).toEqual([
+      expect.objectContaining({
+        id: userMessageId,
+        attachments: [
+          expect.objectContaining({ name: '补充.txt' })
+        ]
+      }),
+      expect.objectContaining({
+        id: assistantMessageId,
+        content: '已恢复',
+        state: 'complete'
+      })
+    ])
+    database.updateTaskStatus(taskId, 'running')
+    database.close()
+
+    const reopened = new AssistantDatabase(databasePath)
+    reopened.initialize('C:\\Workspace')
+    expect(reopened.listRecoverableRemoteTasks()).toEqual([
+      expect.objectContaining({ taskId, status: 'running' })
+    ])
+    expect(
+      reopened.getConversation(conversationId).messages[1]
+    ).toMatchObject({
+      id: assistantMessageId,
+      content: '已恢复',
+      state: 'complete'
+    })
+    reopened.failRecoverableRemoteTask(
+      taskId,
+      '远端请求已不存在'
+    )
+    expect(
+      reopened.listTasks().find((task) => task.id === taskId)
+    ).toMatchObject({
+      status: 'failed',
+      error: '远端请求已不存在'
+    })
+    expect(
+      reopened.getConversation(conversationId).messages[1]
+    ).toMatchObject({
+      id: assistantMessageId,
+      content: '已恢复',
+      state: 'error',
+      status: '远端请求已不存在'
+    })
+    expect(reopened.listRecoverableRemoteTasks()).toEqual([])
+    reopened.close()
+  })
+
+  it('returns every recoverable remote task beyond one hundred', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-many-remote-recoveries-')
+    )
+    temporaryDirectories.push(directory)
+    const database = new AssistantDatabase(
+      join(directory, 'assistant.sqlite')
+    )
+    database.initialize('C:\\Workspace')
+    const project = database.createSshProject(
+      validatedSshProjectWrite()
+    )
+    const conversationId =
+      '00000000-0000-4000-8000-000000000801'
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          projectId: project.id,
+          runtimeSelection: { provider: 'opencode' },
+          title: '批量远程恢复',
+          updatedAt: Date.now()
+        },
+        messages: []
+      }
+    ])
+    const id = (value: number): string =>
+      `00000000-0000-4000-8000-${String(value).padStart(12, '0')}`
+    for (let index = 1; index <= 101; index += 1) {
+      database.createTask({
+        id: id(index),
+        projectId: project.id,
+        conversationId,
+        title: `远程恢复 ${index}`,
+        instructions: `恢复回答 ${index}`,
+        workMode: 'execute',
+        remoteRecovery: {
+          recoverable: true,
+          currentUserMessageId: id(index + 200),
+          currentAssistantMessageId: id(index + 400)
+        }
+      })
+    }
+
+    const tasks = database.listRecoverableRemoteTasks()
+    expect(tasks).toHaveLength(101)
+    expect(tasks[0]?.taskId).toBe(id(1))
+    expect(tasks.at(-1)?.taskId).toBe(id(101))
+    database.close()
+  })
+
+  it('rolls back a recovered event when its message update fails', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-remote-event-atomic-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const project = database.createSshProject(
+      validatedSshProjectWrite()
+    )
+    const conversationId =
+      '00000000-0000-4000-8000-000000000711'
+    const taskId = '00000000-0000-4000-8000-000000000712'
+    const assistantMessageId =
+      '00000000-0000-4000-8000-000000000714'
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          projectId: project.id,
+          runtimeSelection: { provider: 'opencode' },
+          title: '原子恢复',
+          updatedAt: Date.now()
+        },
+        messages: []
+      }
+    ])
+    database.createTask({
+      id: taskId,
+      projectId: project.id,
+      conversationId,
+      title: '原子恢复',
+      instructions: '不能半写入',
+      workMode: 'execute',
+      remoteRecovery: {
+        recoverable: true,
+        currentUserMessageId:
+          '00000000-0000-4000-8000-000000000713',
+        currentAssistantMessageId: assistantMessageId
+      }
+    })
+    const raw = new DatabaseSync(databasePath)
+    raw.exec(`
+      CREATE TRIGGER reject_recovered_message_update
+      BEFORE UPDATE ON messages
+      WHEN NEW.id = '${assistantMessageId}'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced recovered message failure');
+      END;
+    `)
+    raw.close()
+    expect(() =>
+      database.appendRemoteConversationTaskEventOnce({
+        taskId,
+        bindingId: 'binding-atomic-recovery',
+        operationId: 'operation-atomic-recovery',
+        semanticSequence: '1',
+        eventIndex: 0,
+        conversationId,
+        assistantMessageId,
+        event: {
+          requestId: taskId,
+          type: 'error',
+          status: 'failed',
+          message: '远程失败'
+        }
+      })
+    ).toThrow('forced recovered message failure')
+    database.close()
+
+    const inspected = new DatabaseSync(databasePath)
+    expect(
+      inspected
+        .prepare(
+          `SELECT COUNT(*) AS count FROM task_events
+           WHERE remote_binding_id = 'binding-atomic-recovery'`
+        )
+        .get()
+    ).toEqual({ count: 0 })
+    expect(
+      inspected
+        .prepare(
+          'SELECT content, state FROM messages WHERE id = ?'
+        )
+        .get(assistantMessageId)
+    ).toEqual({ content: '', state: 'streaming' })
+    inspected.exec('DROP TRIGGER reject_recovered_message_update')
+    inspected.close()
+
+    const recovered = new AssistantDatabase(databasePath)
+    recovered.initialize('C:\\Workspace')
+    expect(
+      recovered.getConversation(conversationId).messages[1]
+    ).toMatchObject({
+      id: assistantMessageId,
+      content: '',
+      state: 'streaming'
+    })
+    expect(
+      recovered.appendRemoteConversationTaskEventOnce({
+        taskId,
+        bindingId: 'binding-atomic-recovery',
+        operationId: 'operation-atomic-recovery',
+        semanticSequence: '1',
+        eventIndex: 0,
+        conversationId,
+        assistantMessageId,
+        event: {
+          requestId: taskId,
+          type: 'error',
+          status: 'failed',
+          message: '远程失败'
+        }
+      })
+    ).toBe(true)
+    expect(
+      recovered.appendRemoteConversationTaskEventOnce({
+        taskId,
+        bindingId: 'binding-atomic-recovery',
+        operationId: 'operation-atomic-recovery',
+        semanticSequence: '1',
+        eventIndex: 1,
+        conversationId,
+        assistantMessageId,
+        event: {
+          requestId: taskId,
+          type: 'remote-semantic-checkpoint'
+        }
+      })
+    ).toBe(true)
+    expect(
+      recovered.getConversation(conversationId).messages[1]
+    ).toMatchObject({
+      content: '远程失败',
+      state: 'error',
+      status: '远程失败'
+    })
+    expect(
+      recovered.listTasks().find((task) => task.id === taskId)
+    ).toMatchObject({
+      status: 'failed',
+      error: '远程失败'
+    })
+    recovered.close()
   })
 
   it('persists and arbitrates a FIFO conversation input queue', async () => {

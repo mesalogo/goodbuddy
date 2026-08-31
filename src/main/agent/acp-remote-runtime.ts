@@ -20,8 +20,12 @@ import {
 } from '../../shared/assistant-contracts'
 import {
   assertRemotePromptAcceptanceMatchesPreparation,
+  REMOTE_SEMANTIC_TRANSCRIPT_LIMITS,
+  remoteOwnedPromptStartResultSchema,
   remotePromptOperationAcceptanceSchema,
   remotePromptOperationPreparationSchema,
+  remoteSemanticTranscriptEventSchema,
+  remoteSemanticTranscriptPageResultSchema,
   runtimeSessionBindingSchema,
   UNBOUNDED_REMOTE_PROMPT_DEADLINE,
   type RemotePromptOperationAcceptance,
@@ -31,8 +35,10 @@ import {
 import { sha256DigestSchema } from '../../shared/agent-protocol'
 import { canonicalJson } from '../../shared/agent-protocol/canonical'
 import {
+  agentPromptModelProfileSchema,
   MODEL_BRIDGE_PROTOCOL,
   modelBridgePolicySchema,
+  type AgentPromptModelProfile,
   type ModelBridgePolicy
 } from '../../shared/model-bridge-contracts'
 import {
@@ -41,9 +47,13 @@ import {
 import type {
   AgentExecutionRequest,
   AgentRuntime,
+  RemoteSemanticCheckpointEvent,
+  RemoteSemanticRuntimeEvent,
   RuntimeAuthorizer,
   RuntimeEvent,
-  RuntimeModelUsageEvent
+  RuntimeModelUsageEvent,
+  RuntimePublicEvent,
+  RemoteRecoveredSubagent
 } from './runtime'
 import {
   assertCurrentRemoteRuntimeGeneration,
@@ -56,6 +66,7 @@ import {
   parseOpenCodeSubagentInput,
   toOpenCodeSubagentEvent
 } from './opencode-subagent'
+import { promptWithUntrustedConversationHistory } from './runtime-conversation-history'
 
 type BindingIdentity = Pick<
   RuntimeSessionBinding,
@@ -116,6 +127,15 @@ export type AcpRemoteRuntimeOptions = {
     model: string
   }
   modelBridgePolicy?: ModelBridgePolicy
+  /** Prompt-scoped production profile transferred only to the Agent. */
+  modelProfile?: AgentPromptModelProfile
+}
+
+export class RemotePromptRecoveryUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'RemotePromptRecoveryUnavailableError'
+  }
 }
 
 type ActivePrompt = {
@@ -137,6 +157,10 @@ type ActivePrompt = {
       status?: 'pending' | 'in_progress' | 'completed' | 'failed'
       rawInput?: unknown
       rawOutput?: unknown
+      retainedInput?: string
+      retainedOutput?: string
+      retainedError?: string
+      retainedSubagent?: RemoteRecoveredSubagent
     }
   >
   open: boolean
@@ -158,6 +182,8 @@ type SessionRecord = {
   sessionId: string
   context: ChannelContext
   modelBridge?: RemoteModelBridgeSession
+  sendHistoryWithNextPrompt: boolean
+  ownedPromptAttached?: boolean
 }
 
 type AcpState = {
@@ -844,6 +870,34 @@ export class AcpRemoteRuntime implements AgentRuntime {
     )
   }
 
+  private async rotateBindingTransport(
+    binding: RuntimeSessionBinding,
+    context: ChannelContext,
+    signal?: AbortSignal
+  ): Promise<RuntimeSessionBinding> {
+    if (this.transportMatches(binding, context)) {
+      return binding
+    }
+    return await this.awaitLocalOperation(
+      '更新恢复会话传输身份',
+      this.options.bindingStore.rotateTransport(
+        binding.bindingId,
+        {
+          controllerGeneration: binding.controllerGeneration,
+          daemonBootIdAtOpen: binding.daemonBootIdAtOpen,
+          channelEpoch: binding.channelEpoch
+        },
+        {
+          controllerGeneration: context.channel.generation,
+          daemonBootIdAtOpen:
+            this.options.identity.daemonBootIdAtOpen,
+          channelEpoch: context.channel.channelEpoch
+        }
+      ),
+      signal
+    )
+  }
+
   private async persist(
     context: ChannelContext,
     binding: RuntimeSessionBinding,
@@ -1049,7 +1103,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         this.options.maxRequestOutputBytes ??
         DEFAULT_MAX_REQUEST_OUTPUT_BYTES
     }
-    return remotePromptOperationPreparationSchema.parse({
+    const preparation = {
       bindingId: binding.bindingId,
       operationId: request.requestId,
       requestId: request.requestId,
@@ -1066,6 +1120,14 @@ export class AcpRemoteRuntime implements AgentRuntime {
       runtimeId: binding.runtimeId,
       runtimeBundleDigest: binding.runtimeBundleDigest,
       runtimeAdapterDigest: binding.runtimeAdapterDigest,
+      ...(this.options.modelProfile === undefined
+        ? {}
+        : {
+            modelProfile: agentPromptModelProfileSchema.parse(
+              this.options.modelProfile
+            )
+          }),
+      promptSequence: binding.promptSequence,
       ...(modelBridge === undefined
         ? {}
         : {
@@ -1078,7 +1140,10 @@ export class AcpRemoteRuntime implements AgentRuntime {
           }),
       deadlineAt,
       budget
-    })
+    }
+    return this.options.modelProfile === undefined
+      ? preparation as RemotePromptOperationPreparation
+      : remotePromptOperationPreparationSchema.parse(preparation)
   }
 
   private async preparePrompt(
@@ -1091,11 +1156,14 @@ export class AcpRemoteRuntime implements AgentRuntime {
     modelBridge?: RemoteModelBridgeSession
   }> {
     this.assertHostCurrent(context, binding)
-    const modelBridge = await this.openModelBridge(
-      context,
-      binding,
-      request
-    )
+    const modelBridge =
+      this.options.modelProfile === undefined
+        ? await this.openModelBridge(
+            context,
+            binding,
+            request
+          )
+        : undefined
     const preparation = this.promptPreparation(
       context,
       binding,
@@ -1217,6 +1285,20 @@ export class AcpRemoteRuntime implements AgentRuntime {
     }
   }
 
+  private assertOwnedPromptChannel(context: ChannelContext): void {
+    if (
+      context.channel.capabilities.ownedPrompt !== true ||
+      context.channel.startOwnedPrompt === undefined ||
+      context.channel.attachOwnedPrompt === undefined ||
+      context.channel.pageOwnedPromptTranscript === undefined ||
+      context.channel.ackOwnedPromptTranscript === undefined
+    ) {
+      throw new Error(
+        '远端 Runtime 缺少 Agent 托管请求与语义记录能力'
+      )
+    }
+  }
+
   private newBinding(
     conversationId: string,
     bindingId: string,
@@ -1258,9 +1340,39 @@ export class AcpRemoteRuntime implements AgentRuntime {
       signal
     )
     if (
+      request.remoteRecoveryOnly === true &&
+      !(
+        binding?.state === 'prompt-running' &&
+        binding.activePromptOperationId === request.requestId
+      )
+    ) {
+      throw new RemotePromptRecoveryUnavailableError(
+        '没有可安全附加的远端 Agent 请求，且恢复不会重放任务'
+      )
+    }
+    if (
+      request.remoteRecoveryOnly !== true &&
+      this.options.modelProfile !== undefined &&
+      binding?.state === 'prompt-running' &&
+      binding.activePromptOperationId !== request.requestId
+    ) {
+      if (this.bindingIdentityMatches(binding)) {
+        throw new Error(
+          '当前对话仍有 Agent 托管请求，必须先恢复或取消原请求'
+        )
+      }
+      await this.persistClosedBinding(binding)
+      binding = undefined
+    }
+    if (
       binding &&
       binding.state !== 'closed' &&
-      binding.state !== 'ready'
+      binding.state !== 'ready' &&
+      !(
+        this.options.modelProfile !== undefined &&
+        binding.state === 'prompt-running' &&
+        binding.activePromptOperationId === request.requestId
+      )
     ) {
       await this.persistClosedBinding(binding)
       binding = undefined
@@ -1274,11 +1386,28 @@ export class AcpRemoteRuntime implements AgentRuntime {
       binding = undefined
       bindingId = randomUUID()
     }
-    let context = await this.createConversationContext(
-      conversationId,
-      bindingId,
-      signal
-    )
+    let context: ChannelContext
+    try {
+      context = await this.createConversationContext(
+        conversationId,
+        bindingId,
+        signal
+      )
+    } catch (error) {
+      if (
+        request.remoteRecoveryOnly === true &&
+        isDefinitiveRemoteRuntimeRequestRejection(
+          error,
+          'runtime/openAcpChannel'
+        )
+      ) {
+        throw new RemotePromptRecoveryUnavailableError(
+          '远端 Agent 已明确拒绝恢复原通道，恢复不会重放任务',
+          { cause: error }
+        )
+      }
+      throw error
+    }
     let pendingModelBridge: RemoteModelBridgeSession | undefined
     try {
       this.assertUsable(context)
@@ -1292,6 +1421,78 @@ export class AcpRemoteRuntime implements AgentRuntime {
       sha256DigestSchema.parse(
         context.channel.advertisedAcpCapabilitiesDigest
       )
+      if (
+        binding?.state === 'prompt-running' &&
+        this.options.modelProfile !== undefined
+      ) {
+        this.assertOwnedPromptChannel(context)
+        binding = await this.rotateBindingTransport(
+          binding,
+          context,
+          signal
+        )
+        if (
+          !this.bindingIdentityMatches(binding) ||
+          binding.activePromptOperationId !== request.requestId
+        ) {
+          throw new Error(
+            '远端 Agent 已有请求与当前恢复身份不匹配'
+          )
+        }
+        let attached: ReturnType<
+          typeof remoteOwnedPromptStartResultSchema.parse
+        >
+        try {
+          attached = remoteOwnedPromptStartResultSchema.parse(
+            await this.awaitOperation(
+              context,
+              '附加远端 Agent 请求',
+              context.channel.attachOwnedPrompt!({
+                bindingId: binding.bindingId,
+                operationId: request.requestId,
+                requestId: request.requestId
+              }),
+              signal,
+              false
+            )
+          )
+        } catch (error) {
+          if (
+            isDefinitiveRemoteRuntimeRequestRejection(
+              error,
+              'runtime/attachPrompt'
+            )
+          ) {
+            throw new RemotePromptRecoveryUnavailableError(
+              '远端 Agent 已明确拒绝附加原请求，恢复不会重放任务',
+              { cause: error }
+            )
+          }
+          throw error
+        }
+        if (
+          attached.bindingId !== binding.bindingId ||
+          attached.operationId !== request.requestId ||
+          attached.requestId !== request.requestId
+        ) {
+          throw new Error('远端 Agent 请求附加身份不匹配')
+        }
+        binding = await this.awaitLocalOperation(
+          '声明 Agent 会话身份',
+          this.options.bindingStore.claimAcpSession(
+            binding.bindingId,
+            attached.sessionId
+          ),
+          signal
+        )
+        return {
+          binding,
+          sessionId: attached.sessionId,
+          context,
+          sendHistoryWithNextPrompt: false,
+          ownedPromptAttached: true
+        }
+      }
       if (
         binding?.state === 'ready' &&
         !this.bindingMatches(binding, context)
@@ -1326,27 +1527,11 @@ export class AcpRemoteRuntime implements AgentRuntime {
         }
       }
       if (binding?.state === 'ready') {
-        if (!this.transportMatches(binding, context)) {
-          binding = await this.awaitLocalOperation(
-            '更新恢复会话传输身份',
-            this.options.bindingStore.rotateReadyTransport(
-              binding.bindingId,
-              {
-                controllerGeneration: binding.controllerGeneration,
-                daemonBootIdAtOpen: binding.daemonBootIdAtOpen,
-                channelEpoch: binding.channelEpoch
-              },
-              {
-                controllerGeneration:
-                  context.channel.generation,
-                daemonBootIdAtOpen:
-                  this.options.identity.daemonBootIdAtOpen,
-                channelEpoch: context.channel.channelEpoch
-              }
-            ),
-            signal
-          )
-        }
+        binding = await this.rotateBindingTransport(
+          binding,
+          context,
+          signal
+        )
         this.assertHostCurrent(context, binding)
         binding = await this.persist(
           context,
@@ -1367,6 +1552,16 @@ export class AcpRemoteRuntime implements AgentRuntime {
           signal
         )
         pendingModelBridge = prepared.modelBridge
+        if (this.options.modelProfile !== undefined) {
+          this.assertOwnedPromptChannel(context)
+          return {
+            binding,
+            sessionId: binding.acpSessionId,
+            context,
+            sendHistoryWithNextPrompt: false,
+            ownedPromptAttached: false
+          }
+        }
         const state = await this.getState(context, signal)
         binding = await this.awaitLocalOperation(
           '声明恢复会话身份',
@@ -1405,7 +1600,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
           binding,
           sessionId: binding.acpSessionId,
           context,
-          modelBridge: prepared.modelBridge
+          modelBridge: prepared.modelBridge,
+          sendHistoryWithNextPrompt: false
         }
         pendingModelBridge = undefined
         return session
@@ -1438,6 +1634,16 @@ export class AcpRemoteRuntime implements AgentRuntime {
         signal
       )
       pendingModelBridge = prepared.modelBridge
+      if (this.options.modelProfile !== undefined) {
+        this.assertOwnedPromptChannel(context)
+        return {
+          binding,
+          sessionId: binding.acpSessionId,
+          context,
+          sendHistoryWithNextPrompt: true,
+          ownedPromptAttached: false
+        }
+      }
       const state = await this.getState(context, signal)
       const response = await this.awaitOperation(
         context,
@@ -1472,7 +1678,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
         binding,
         sessionId: response.sessionId,
         context,
-        modelBridge: prepared.modelBridge
+        modelBridge: prepared.modelBridge,
+        sendHistoryWithNextPrompt: true
       }
       pendingModelBridge = undefined
       return session
@@ -1481,6 +1688,12 @@ export class AcpRemoteRuntime implements AgentRuntime {
         ?.close('session-initialization-failed')
         .catch(() => undefined)
       if (binding) {
+        if (
+          this.options.modelProfile !== undefined &&
+          binding.state === 'prompt-running'
+        ) {
+          throw error
+        }
         const persist =
           isDefinitiveRemoteRuntimeRequestRejection(
             error,
@@ -1499,7 +1712,26 @@ export class AcpRemoteRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     signal: AbortSignal
   ): Promise<SessionRecord> {
-    const current = this.sessions.get(conversationId)
+    let current = this.sessions.get(conversationId)
+    if (
+      current?.binding.activePromptOperationId &&
+      this.options.modelProfile === undefined
+    ) {
+      this.sessions.delete(conversationId)
+      this.contexts.delete(conversationId)
+      await this.awaitLocalOperation(
+        '关闭结果未知会话通道',
+        this.closeContext(current.context),
+        signal
+      ).catch(() => undefined)
+      current = undefined
+    }
+    if (
+      current?.binding.activePromptOperationId === request.requestId &&
+      current.ownedPromptAttached
+    ) {
+      return current
+    }
     if (current) {
       try {
         this.assertHostCurrent(
@@ -1525,6 +1757,9 @@ export class AcpRemoteRuntime implements AgentRuntime {
           signal
         )
         current.modelBridge = prepared.modelBridge
+        if (this.options.modelProfile !== undefined) {
+          current.ownedPromptAttached = false
+        }
         return current
       } catch (error) {
         const persist =
@@ -1797,8 +2032,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
 
   private limitEvent(
     prompt: ActivePrompt,
-    event: RuntimeEvent
-  ): RuntimeEvent {
+    event: RuntimePublicEvent
+  ): RuntimePublicEvent {
     const maximum =
       this.options.maxEventCharacters ??
       DEFAULT_MAX_EVENT_CHARACTERS
@@ -1863,7 +2098,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
   private mapUpdate(
     prompt: ActivePrompt,
     update: SessionUpdate
-  ): RuntimeEvent | undefined {
+  ): RuntimePublicEvent | undefined {
     if (
       (update.sessionUpdate === 'agent_message_chunk' ||
         update.sessionUpdate === 'agent_thought_chunk') &&
@@ -1923,7 +2158,20 @@ export class AcpRemoteRuntime implements AgentRuntime {
             : boundedRetainedValue(
                 update.rawOutput,
                 retainedMaximum
-              )
+              ),
+        retainedInput:
+          update.rawInput === undefined
+            ? previous?.retainedInput
+            : undefined,
+        retainedOutput:
+          update.rawOutput === undefined
+            ? previous?.retainedOutput
+            : undefined,
+        retainedError:
+          update.rawOutput === undefined
+            ? previous?.retainedError
+            : undefined,
+        retainedSubagent: previous?.retainedSubagent
       }
       if (previous && isDeepStrictEqual(previous, toolCall)) {
         return undefined
@@ -1947,14 +2195,46 @@ export class AcpRemoteRuntime implements AgentRuntime {
       if (subagent) {
         return subagent
       }
+      if (toolCall.retainedSubagent) {
+        const retained = toolCall.retainedSubagent
+        const state =
+          toolCall.status === 'pending'
+            ? ('queued' as const)
+            : toolCall.status === 'in_progress'
+              ? ('running' as const)
+              : toolCall.status ?? retained.state
+        const detail = safeStringify(
+          toolCall.rawOutput,
+          retainedMaximum
+        )
+        return {
+          requestId: prompt.requestId,
+          type: 'subagent',
+          ...retained,
+          state,
+          ...(state === 'failed'
+            ? {
+                error:
+                  detail ??
+                  toolCall.retainedError ??
+                  retained.error
+              }
+            : {
+                output:
+                  detail ??
+                  toolCall.retainedOutput ??
+                  retained.output
+              })
+        }
+      }
       const input = safeStringify(
         toolCall.rawInput,
         retainedMaximum
-      )
+      ) ?? toolCall.retainedInput
       const output = safeStringify(
         toolCall.rawOutput,
         retainedMaximum
-      )
+      ) ?? toolCall.retainedOutput
       return {
         requestId: prompt.requestId,
         type: 'tool',
@@ -1966,7 +2246,10 @@ export class AcpRemoteRuntime implements AgentRuntime {
             : toolCall.status ?? 'pending',
         summary: `远端 Runtime 工具：${name}`,
         ...(input ? { input } : {}),
-        ...(output ? { output } : {})
+        ...(output ? { output } : {}),
+        ...(toolCall.retainedError
+          ? { error: toolCall.retainedError }
+          : {})
       }
     }
     if (update.sessionUpdate === 'plan') {
@@ -2015,6 +2298,411 @@ export class AcpRemoteRuntime implements AgentRuntime {
     return undefined
   }
 
+  private withRemoteProvenance(
+    event: RuntimePublicEvent,
+    bindingId: string,
+    operationId: string,
+    semanticSequence: string,
+    eventIndex: number
+  ): RemoteSemanticRuntimeEvent {
+    return {
+      ...event,
+      remoteProvenance: {
+        source: 'remote-semantic-transcript',
+        bindingId,
+        operationId,
+        semanticSequence,
+        eventIndex
+      }
+    }
+  }
+
+  private remoteCheckpoint(
+    requestId: string,
+    bindingId: string,
+    operationId: string,
+    semanticSequence: string,
+    eventIndex = 0
+  ): RemoteSemanticCheckpointEvent {
+    return {
+      requestId,
+      type: 'remote-semantic-checkpoint',
+      remoteProvenance: {
+        source: 'remote-semantic-transcript',
+        bindingId,
+        operationId,
+        semanticSequence,
+        eventIndex
+      }
+    }
+  }
+
+  private async *runOwnedPrompt(
+    request: AgentExecutionRequest,
+    session: SessionRecord,
+    signal: AbortSignal,
+    authorize?: RuntimeAuthorizer
+  ): AsyncGenerator<RuntimeEvent, void, void> {
+    const context = session.context
+    this.assertOwnedPromptChannel(context)
+    let binding = session.binding
+    const operationId = request.requestId
+    const prompt: ActivePrompt = {
+      requestId: request.requestId,
+      operationId,
+      sessionId: session.sessionId,
+      bindingId: binding.bindingId,
+      workMode:
+        request.workMode === 'execute' ? 'execute' : 'ask',
+      authorize:
+        request.workMode === 'execute' ? authorize : undefined,
+      updates: [],
+      pendingUpdateBytes: 0,
+      inboundPaused: false,
+      outputCharacters: 0,
+      toolCalls: new Map(),
+      open: true,
+      completed: false,
+      context
+    }
+    for (const tool of request.remoteRecoveredTools ?? []) {
+      prompt.toolCalls.set(tool.callId.slice(0, 256), {
+        title: tool.name.slice(0, 200),
+        status:
+          tool.state === 'running'
+            ? 'in_progress'
+            : tool.state === 'recoverable'
+              ? 'completed'
+              : tool.state === 'cancelled' ||
+                  tool.state === 'interrupted'
+                ? 'failed'
+                : tool.state,
+        retainedInput: tool.input,
+        retainedOutput: tool.output,
+        retainedError: tool.error
+      })
+    }
+    for (const subagent of request.remoteRecoveredSubagents ?? []) {
+      if (!subagent.runtimeCallId) {
+        continue
+      }
+      prompt.toolCalls.set(subagent.runtimeCallId.slice(0, 256), {
+        title: subagent.expertName.slice(0, 200),
+        status:
+          subagent.state === 'queued'
+            ? 'pending'
+            : subagent.state === 'running'
+              ? 'in_progress'
+              : subagent.state === 'cancelled'
+                ? 'failed'
+                : subagent.state,
+        retainedOutput: subagent.output,
+        retainedError: subagent.error,
+        retainedSubagent: subagent
+      })
+    }
+    this.activePrompts.set(binding.bindingId, prompt)
+    const recoveringOwnedPrompt = session.ownedPromptAttached === true
+    let reachedTerminal = false
+    let cancellationEscalation: Promise<void> | undefined
+    const escalate = (reason: unknown): Promise<void> => {
+      if (!context.channel.capabilities.cancellationEscalation) {
+        return Promise.resolve()
+      }
+      cancellationEscalation ??= this.awaitOperation(
+          context,
+          '升级 Agent 请求取消',
+          context.channel.escalateCancellation({
+            bindingId: binding.bindingId,
+            sessionId: session.sessionId,
+            operationId,
+            requestId: operationId,
+            reason
+          }),
+          undefined,
+          false
+        )
+        .then(() => undefined)
+        .catch(() => undefined)
+      return cancellationEscalation
+    }
+    const cancel = (): void => {
+      void escalate(abortReason(signal))
+    }
+    signal.addEventListener('abort', cancel, { once: true })
+    try {
+      this.assertHostCurrent(context, binding)
+      if (!session.ownedPromptAttached) {
+        const promptText = promptWithUntrustedConversationHistory(
+          request,
+          session.sendHistoryWithNextPrompt
+        )
+        const started = remoteOwnedPromptStartResultSchema.parse(
+          await this.awaitOperation(
+            context,
+            '启动 Agent 托管请求',
+            context.channel.startOwnedPrompt!({
+              bindingId: binding.bindingId,
+              operationId,
+              requestId: operationId,
+              ...(binding.acpSessionId.startsWith('opening-')
+                ? {}
+                : { acpSessionId: binding.acpSessionId }),
+              prompt: [
+                { type: 'text', text: promptText },
+                ...(request.images ?? []).map((image) => ({
+                  type: 'image' as const,
+                  data: image.data,
+                  mimeType: image.mediaType
+                }))
+              ]
+            }),
+            signal,
+            false
+          )
+        )
+        if (
+          started.bindingId !== binding.bindingId ||
+          started.operationId !== operationId ||
+          started.requestId !== operationId
+        ) {
+          throw new Error('远端 Agent 请求启动身份不匹配')
+        }
+        binding = await this.awaitLocalOperation(
+          '声明 Agent 会话身份',
+          this.options.bindingStore.claimAcpSession(
+            binding.bindingId,
+            started.sessionId
+          ),
+          signal
+        )
+        session.binding = binding
+        session.sessionId = started.sessionId
+        session.sendHistoryWithNextPrompt = false
+        session.ownedPromptAttached = true
+        prompt.sessionId = started.sessionId
+      }
+
+      if (!recoveringOwnedPrompt) {
+        yield {
+          requestId: request.requestId,
+          type: 'status',
+          message: '远端 Agent 正在处理请求'
+        }
+      }
+
+      let afterSequence = request.remoteSemanticAfterSequence ?? '0'
+      let transcriptPollDelayMs = 100
+      const acknowledgeThrough = async (
+        acknowledgedSequence: string
+      ): Promise<void> => {
+        const acknowledged =
+          await context.channel.ackOwnedPromptTranscript!({
+            bindingId: binding.bindingId,
+            operationId,
+            acknowledgedSequence
+          })
+        if (
+          acknowledged.bindingId !== binding.bindingId ||
+          acknowledged.operationId !== operationId ||
+          BigInt(acknowledged.acknowledgedSequence) <
+            BigInt(acknowledgedSequence)
+        ) {
+          throw new Error('远端 Agent 语义记录确认身份不匹配')
+        }
+      }
+      for (;;) {
+        const page = remoteSemanticTranscriptPageResultSchema.parse(
+          await this.awaitOperation(
+            context,
+            '读取 Agent 语义记录',
+            context.channel.pageOwnedPromptTranscript!({
+              bindingId: binding.bindingId,
+              operationId,
+              afterSequence,
+              limit:
+                REMOTE_SEMANTIC_TRANSCRIPT_LIMITS.maximumEventsPerPage
+            }),
+            signal,
+            false
+          )
+        )
+        if (
+          page.bindingId !== binding.bindingId ||
+          page.operationId !== operationId
+        ) {
+          throw new Error('远端 Agent 语义记录身份不匹配')
+        }
+        if (page.events.length > 0) {
+          transcriptPollDelayMs = 100
+        }
+        let pageAcknowledgedThrough: string | undefined
+        for (const rawEvent of page.events) {
+          const transcriptEvent =
+            remoteSemanticTranscriptEventSchema.parse(rawEvent)
+          if (
+            BigInt(transcriptEvent.sequence) <=
+            BigInt(afterSequence)
+          ) {
+            continue
+          }
+          const publicEvents: RuntimePublicEvent[] = []
+          if (transcriptEvent.kind === 'session-update') {
+            const notification =
+              transcriptSessionNotification(
+                transcriptEvent.payload,
+                session.sessionId
+              )
+            const mapped = this.mapUpdate(prompt, notification.update)
+            if (mapped !== undefined) {
+              publicEvents.push(this.limitEvent(prompt, mapped))
+            }
+          } else if (transcriptEvent.kind === 'prompt-terminal') {
+            const terminal = transcriptTerminal(
+              transcriptEvent.payload,
+              page.state
+            )
+            if (terminal.usage !== undefined) {
+              const mappedUsage = usageEvent(
+                request.requestId,
+                terminal.usage,
+                this.options.usage,
+                operationId
+              )
+              if (mappedUsage !== undefined) {
+                publicEvents.push(mappedUsage)
+              }
+            }
+            if (terminal.state === 'completed') {
+              publicEvents.push({
+                requestId: request.requestId,
+                type: 'done',
+                sessionId: session.sessionId
+              })
+            } else {
+              publicEvents.push({
+                requestId: request.requestId,
+                type: 'error',
+                status:
+                  terminal.state === 'cancelled'
+                    ? 'cancelled'
+                    : 'failed',
+                message:
+                  terminal.message ??
+                  (terminal.state === 'cancelled'
+                    ? '远端 Runtime 请求已取消'
+                    : terminal.state === 'outcome-unknown'
+                      ? '远端 Runtime 请求终态未知，且不会自动重放'
+                      : '远端 Runtime 请求失败')
+              })
+            }
+          }
+          for (
+            let eventIndex = 0;
+            eventIndex < publicEvents.length;
+            eventIndex += 1
+          ) {
+            yield this.withRemoteProvenance(
+              publicEvents[eventIndex]!,
+              binding.bindingId,
+              operationId,
+              transcriptEvent.sequence,
+              eventIndex
+            )
+          }
+          yield this.remoteCheckpoint(
+            request.requestId,
+            binding.bindingId,
+            operationId,
+            transcriptEvent.sequence,
+            publicEvents.length
+          )
+
+          afterSequence = transcriptEvent.sequence
+          pageAcknowledgedThrough = transcriptEvent.sequence
+
+          if (transcriptEvent.kind === 'prompt-terminal') {
+            await acknowledgeThrough(transcriptEvent.sequence)
+            const terminal = transcriptTerminal(
+              transcriptEvent.payload,
+              page.state
+            )
+            reachedTerminal = true
+            prompt.completed = true
+            binding =
+              terminal.state === 'outcome-unknown'
+                ? runtimeSessionBindingSchema.parse({
+                    ...binding,
+                    state: 'outcome-unknown'
+                  })
+                : runtimeSessionBindingSchema.parse({
+                    ...binding,
+                    state: 'ready',
+                    activePromptOperationId: undefined
+                  })
+            await this.awaitLocalOperation(
+              '保存 Agent 请求终态',
+              this.options.bindingStore.put(binding)
+            )
+            session.binding = binding
+            if (terminal.state === 'cancelled') {
+              throw signal.aborted
+                ? abortReason(signal)
+                : new Error('远端 Runtime 请求已取消')
+            }
+            if (terminal.state === 'failed') {
+              throw new Error(
+                terminal.message === undefined
+                  ? '远端 Runtime 请求失败'
+                  : `远端 Runtime 请求失败：${terminal.message}`
+              )
+            }
+            if (terminal.state === 'outcome-unknown') {
+              throw new Error(
+                '远端 Runtime 请求终态未知，且不会自动重放'
+              )
+            }
+            return
+          }
+        }
+        if (pageAcknowledgedThrough !== undefined) {
+          await acknowledgeThrough(pageAcknowledgedThrough)
+        }
+        if (page.hasMore) {
+          transcriptPollDelayMs = 100
+          continue
+        }
+        if (
+          page.state === 'completed' ||
+          page.state === 'failed' ||
+          page.state === 'cancelled' ||
+          page.state === 'outcome-unknown'
+        ) {
+          throw new Error('远端 Agent 请求缺少终态语义记录')
+        }
+        await delayOwnedTranscriptPoll(
+          signal,
+          transcriptPollDelayMs
+        )
+        transcriptPollDelayMs = Math.min(
+          1_000,
+          transcriptPollDelayMs * 2
+        )
+      }
+    } finally {
+      if (!reachedTerminal) {
+        await escalate(
+          signal.aborted
+            ? abortReason(signal)
+            : new Error('远端 Runtime 事件消费提前结束')
+        )
+      }
+      signal.removeEventListener('abort', cancel)
+      prompt.open = false
+      this.activePrompts.delete(binding.bindingId)
+    }
+  }
+
   async *run(
     request: AgentExecutionRequest,
     signal: AbortSignal,
@@ -2043,6 +2731,20 @@ export class AcpRemoteRuntime implements AgentRuntime {
       throw error
     }
     const context = session.context
+    if (this.options.modelProfile !== undefined) {
+      try {
+        yield* this.runOwnedPrompt(
+          request,
+          session,
+          signal,
+          authorize
+        )
+      } finally {
+        this.sessionReservations.delete(request.conversationId)
+        this.notifyDrain()
+      }
+      return
+    }
     const state = context.state!
     const operationId = request.requestId
     let binding = session.binding
@@ -2104,11 +2806,15 @@ export class AcpRemoteRuntime implements AgentRuntime {
       signal.throwIfAborted()
       this.assertHostCurrent(context, binding)
       promptStarted = true
+      const promptText = promptWithUntrustedConversationHistory(
+        request,
+        session.sendHistoryWithNextPrompt
+      )
       promptPromise = state.agent
         .prompt({
           sessionId: session.sessionId,
           prompt: [
-            { type: 'text', text: request.prompt },
+            { type: 'text', text: promptText },
             ...(request.images ?? []).map((image) => ({
               type: 'image' as const,
               data: image.data,
@@ -2128,6 +2834,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
           prompt.wake?.()
           prompt.wake = undefined
         })
+      session.sendHistoryWithNextPrompt = false
       if (this.promptTimeoutMs !== undefined) {
         promptTimeout = setTimeout(
           () => interrupt(new RemoteOperationTimeoutError('执行请求')),
@@ -2574,4 +3281,115 @@ function nextPromptSequence(current: number): number {
     throw new Error('远端 Runtime 请求序列已耗尽')
   }
   return current + 1
+}
+
+function transcriptSessionNotification(
+  payload: unknown,
+  expectedSessionId: string
+): SessionNotification {
+  if (
+    payload === null ||
+    typeof payload !== 'object' ||
+    !('sessionId' in payload) ||
+    payload.sessionId !== expectedSessionId ||
+    !('update' in payload) ||
+    payload.update === null ||
+    typeof payload.update !== 'object'
+  ) {
+    throw new Error('远端 Agent 会话更新无效')
+  }
+  return payload as SessionNotification
+}
+
+function transcriptTerminal(
+  payload: unknown,
+  pageState:
+    | 'starting'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'outcome-unknown'
+): {
+  state: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown'
+  usage?: Usage
+  message?: string
+} {
+  if (
+    ![
+      'completed',
+      'failed',
+      'cancelled',
+      'outcome-unknown'
+    ].includes(pageState) ||
+    payload === null ||
+    typeof payload !== 'object' ||
+    !('status' in payload) ||
+    payload.status !== pageState
+  ) {
+    throw new Error('远端 Agent 请求终态无效')
+  }
+  let usage: Usage | undefined
+  if (
+    'response' in payload &&
+    payload.response !== null &&
+    typeof payload.response === 'object' &&
+    'usage' in payload.response &&
+    payload.response.usage !== undefined
+  ) {
+    const candidate = payload.response.usage
+    if (
+      candidate === null ||
+      typeof candidate !== 'object' ||
+      !('inputTokens' in candidate) ||
+      typeof candidate.inputTokens !== 'number' ||
+      !('outputTokens' in candidate) ||
+      typeof candidate.outputTokens !== 'number' ||
+      !('totalTokens' in candidate) ||
+      typeof candidate.totalTokens !== 'number'
+    ) {
+      throw new Error('远端 Agent 模型用量无效')
+    }
+    usage = candidate as Usage
+  }
+  const message =
+    'error' in payload &&
+    payload.error !== null &&
+    typeof payload.error === 'object' &&
+    'message' in payload.error &&
+    typeof payload.error.message === 'string'
+      ? payload.error.message.slice(0, 8 * 1024)
+      : undefined
+  const state = pageState as
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'outcome-unknown'
+  return {
+    state,
+    ...(usage === undefined ? {} : { usage }),
+    ...(message === undefined ? {} : { message })
+  }
+}
+
+async function delayOwnedTranscriptPoll(
+  signal: AbortSignal,
+  delayMs: number
+): Promise<void> {
+  signal.throwIfAborted()
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }, delayMs)
+    const abort = (): void => {
+      clearTimeout(timer)
+      reject(abortReason(signal))
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    if (!signal.aborted) {
+      return
+    }
+    abort()
+  })
 }

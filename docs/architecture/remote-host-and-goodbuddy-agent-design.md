@@ -2,21 +2,19 @@
 
 ## 状态
 
-本文记录截至 2026-08-30 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+本文记录截至 2026-08-31 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
 Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
 详细事务与验收边界见
 [SSH Host 远程环境准备与直连下载设计](./remote-host-environment-provisioning-design.md)；
 控制面直连源码可直接使用既有 package format v1 包，不等待携带 installer 的新 Agent
 包，也不通过额外目录元数据判断 bootstrap 能力；公开能力仍等待 GitHub/北京镜像、
 Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
-Windows 到 Linux x64 的既有安装、
-Main-only 模型桥、断线恢复、输出重放、同一 OpenCode Session 续接与终态清理已经在真实
-Host 上完成 provider-free 验证。上一轮 Linux x64 验收使用 Agent `0.11.2-e2e.12` 与
-OpenCode Runtime `1.18.9` 完成了一次有界真实模型工具调用；加入每 helper 随机 loopback
-路径 capability 后，Agent `0.11.10` 已通过独立 workflow 发布 Linux x64/arm64 复合包和
-签名累计目录；当前桌面源码准备 `0.11.13`，显示本地与远端 OpenCode 原生 Task，并取消
-GoodBuddy 对生产 Prompt 的固定墙钟总时限。失败的
-`agent-v0.11.3` 保持不可变且未发布。
+Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
+同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
+`0.11.10` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前未发布
+Agent 源码 lock 为 `0.11.14`，桌面版本仍保持已发布的 `0.11.13`，等待发布审批后再选择
+新版本。现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
+固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
 
 ## 产品语义
 
@@ -31,7 +29,10 @@ GoodBuddy 对生产 Prompt 的固定墙钟总时限。失败的
 - **Ask**：Runtime 在操作系统边界以只读方式访问项目 Workspace。
 - **Execute**：用户已授权使用所选 SSH 账号的完整权限。Runtime 可以使用该账号可访问的文件、进程、网络和工具，不再要求额外 trust tier、consent checklist、逐工具审批或“受控执行”授权。
 
-Execute 不获得 root 或 SSH 账号本身没有的权限。模型 API Key 与 Provider 认证仍保留在 Electron Main，不传给远端 Runtime。
+Execute 不获得 root 或 SSH 账号本身没有的权限。托管 SSH Prompt 会把当前选中的文本模型
+profile 和凭据作为有界、逐 Prompt 的控制消息交给 Agent；该凭据不进入命令参数、环境变量、
+语义日志或模型调用账本，并在 Prompt 终态清除。此行为只适用于用户已明确启用的可信组织
+网络和已认证 SSH Host。
 
 ## 组件
 
@@ -43,12 +44,14 @@ Main
   -> SSH connection pool
   -> 签名 Agent / Runtime 安装
   -> 远程项目当前环境准备与稳定配置 SQLite 事务
-  -> Main-owned model bridge
+  -> 永久项目、对话、Task 与已同步事件 SQLite
 SSH attach
   -> 远端私有 Unix socket
 Detached GoodBuddy Agent
   -> Workspace / Git 协议
-  -> OpenCode ACP channel
+  -> Agent-owned OpenCode ACP Prompt Promise
+  -> Prompt-scoped Provider gateway / model-call ledger
+  -> 有界语义 transcript / page / ACK
   -> 直接拥有的 Runtime 进程
 ```
 
@@ -145,6 +148,9 @@ Detached GoodBuddy Agent
   才连接所选 Host。
 - 项目选择器中的管理操作默认浮动隐藏，在悬停、键盘焦点或触屏环境显示。管理任意已保存
   项目不先激活项目，因此 Host 不可达或远端目录已不存在时仍可删除其本地记录。
+- “远程项目”在选择器中按已保存 SSH Host 轻量分组。Host 标题显示 Main 已持有的真实
+  Agent 连接状态（未连接、连接中、就绪或异常），读取和展示状态本身不连接 Host；
+  项目副标题只显示远端路径，不重复“托管 SSH”类型。
 - 删除 Host 时确认框列出所有引用它的本地项目记录，包括归档项目。确认后只删除本机
   Host、凭据、项目及其关联记录，不连接 Host、不删除远端目录或内容；Host 设置写入或
   项目事务失败时恢复另一侧，避免只删掉其中一类本地记录。
@@ -187,7 +193,7 @@ Ask 使用系统 `bwrap`：
 Execute 不经过 Ask 的 bubblewrap profile：
 
 - 直接启动已签名 Runtime entrypoint；
-- 使用 Main-only 模型桥时，签名 Agent launcher 会 `exec` 候选 manifest 锁定的
+- 使用 Agent 本地模型 gateway 时，签名 Agent launcher 会 `exec` 候选 manifest 锁定的
   Node Runtime；进程 owner 校验最终 Node executable，而不是已经被替换的 shell
   launcher 路径；
 - `cwd` 为项目 Workspace；
@@ -233,23 +239,60 @@ Execute 不经过 Ask 的 bubblewrap profile：
   identity、恢复 binding，并从 Main 最后确认的 cursor 后同步缺失数据。已接受的
   指令和结果不确定的 Provider 请求都不自动重放。
 
-## 模型桥
+### Agent-owned Prompt 与 Desktop 恢复
 
-- Provider URL、API Key 和认证头只存在于 Main。
-- 远端 OpenCode 通过 GoodBuddy Agent helper 和每次 Prompt 的私有 Unix socket 使用模型桥。
-- Main 校验固定模型 profile、协议、请求路径和有界传输格式，并记录 Provider
-  返回的实际 usage；不限制 Prompt 内的模型调用轮数、工具调用次数、累计 Token
-  或单次模型输出 Token。取消、请求/响应字节上限和结果不确定时禁止自动重放仍然保留；
-  模型桥不会为整个 Runtime Prompt 另设墙钟总时限。
+- 托管 SSH 的生产 Prompt 从一开始就由 Agent 持有 ACP `ClientSideConnection`、原始
+  Prompt Promise、Provider 轮次和 Runtime 进程。SSH relay 或 Desktop 进程不属于该
+  Promise 的生命周期，因此正常退出、强制结束 Desktop 或本机网络中断后，Host 仍能继续
+  后续模型/工具轮次。该路径要求 `runtime/acp` capability v4，即 Agent `0.11.14` 或更高。
+- Agent 把 ACP session update、permission decision 和唯一 Prompt 终态写入有界语义
+  transcript。Main 不恢复旧 JSON-RPC Promise，也不重发 `session/prompt`；Fresh Desktop
+  只对同一 controller/binding/operation 执行 takeover、attach 和 ACK-exclusive page。
+- 每个 Agent 语义 sequence 在 Main 映射为零到多个公开事件，最后追加内部 checkpoint。
+  Desktop 在同一 SQLite 事务中去重 provenance、归并原 assistant message，并在 checkpoint
+  时提交 Task 终态；事务成功后生成器才继续并向 Agent ACK。断电发生在同一 sequence
+  中间时会重读该 sequence，已写事件按 `(binding, operation, sequence, eventIndex)` 去重，
+  未写事件继续归并，不会重复 Provider 或工具执行。
+- ACK 后 Agent 删除已确认事件，只保留小型操作终态与游标用于幂等核对；未 ACK 输出继续
+  保留。Main 按 transcript page 的最高连续 sequence ACK，终态仍立即 ACK。单事件、单页、
+  单 Prompt 总字节和事件数都有上限；Agent 始终为唯一终态预留一个事件和最大事件字节，
+  避免配额耗尽后无法记录终态或无法重启。已 ACK 终态操作和已交付模型 ledger 在 daemon
+  运行期间也按固定上限裁剪，不依赖重启。Agent 重启不能重建内存中的 Runtime/Prompt
+  Promise，因此启动时把遗留 nonterminal 记录变为 `outcome-unknown`，Desktop 只同步该
+  终态而不自动重放。
+- prepare 已接受但 start RPC 未到达时，Agent 使用两分钟 prepare-to-start watchdog 清除
+  进程和 Prompt 凭据并记录 `outcome-unknown`，避免无界 Prompt 哨兵造成永久悬挂。
+- Desktop SQLite 仍是永久可见项目/对话数据的权威；Agent transcript 只是尚未同步事件的
+  权威。启动后 Renderer 先订阅恢复进度，再触发每项目恢复。项目选择器依次显示网络、
+  Agent、Runtime、cursor、完成或失败/重试；只阻塞受影响项目的发送和队列，已有历史与
+  其他项目保持可用。
+- 正常应用退出对已接受托管 SSH 请求执行 detach，不等待远端完成；本地请求和尚未接受的
+  请求仍按原行为取消。用户显式“停止”始终发送稳定 operation cancellation，并等待 Agent
+  语义终态。已进入 Agent-owned `run` 但 start/attach 响应仍不确定的请求继续保留为
+  `interrupted + remote_recoverable`，并自动走 exact attach；不会因为尚未收到第一个公开
+  事件而丢失恢复身份。
+
+## Agent 本地模型 gateway
+
+- Main 在 `runtime/preparePrompt` 中发送当前解析后的有界 profile；Agent 只在该 operation
+  的内存状态中持有 Provider URL、API Key 和认证信息。OpenCode 仍通过 Prompt 私有 Unix
+  socket 发出模型请求，但 HTTP Provider dispatch、响应交付和稳定 call ledger 全部位于
+  Agent，因此 Desktop 断电后可以继续下一轮。
+- Agent 校验固定 model、协议和 API path，拒绝 background/store、provider web search、
+  provider MCP、持久 conversation、非文本 modality 和其他可独立计费能力；请求/响应 body
+  各限制 768 KiB，响应同时核对声明长度与短读。每个
+  `(binding, operation, roundIndex)` 只 dispatch 一次；已 dispatch 但未证明完整交付的调用
+  变为 `outcome-unknown`，不会自动重试。
+- Prompt 最多 100 个模型调用，并受单次与累计输出 Token 上限保护；这些是资源边界，不是
+  Prompt 墙钟总时限。Provider 单次请求仍有独立超时。实际 usage 在语义 transcript 中同步
+  回 Desktop 的 usage/task 数据。Agent 在所有进程终止路径统一清除 Prompt token 计数。
 - helper 可以接收同一 Prompt 内并发到达的模型桥请求；它在单一稳定模型桥上按到达
   顺序等待并交付，不返回本地 `bridge-busy`，每个响应只有在 HTTP 完整 flush 后才
   发送 delivery ACK。
 - GoodBuddy 自己管理会话标题，因此传给 OpenCode 的配置禁用 title Agent；一次用户
   Prompt 不会额外触发标题模型请求。
-- 一条模型桥消息编码为一个 canonical JSON blob frame；blob frame 最大 2 MiB，
-  Provider 请求与响应 body 仍各自限制为 768 KiB。每条模型消息只调用一次 SSH
-  write，不再二次分片、等待逐帧 credit 或合并多个协议帧。凭据不进入 Renderer、
-  SSH 命令参数或远端环境。
+- Agent gateway 不再把 Provider 请求往返 Desktop；legacy blob bridge 只保留给旧的
+  非 Agent-owned 测试/兼容路径。凭据不进入 Renderer、SSH 命令参数或远端环境。
 - Unix socket 接收端按 `readableLength` 中已经缓冲的字节增量排空一个声明长度的帧，
   不会在部分大响应到达时反复请求尚未缓冲的完整剩余长度；短读、连接结束、错误和取消
   都会使当前交换失败。原生 Linux 回归覆盖至少 256 KiB 的 broker 响应。
@@ -300,12 +343,32 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
   的双架构验收。Agent `0.11.10` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 固定为候选 `0.11.13`。
+  当前源码 lock 固定为未发布候选 `0.11.14`。
 - 2026-08-30 在共享 Linux x64 Host 的隔离测试 HOME 中验证当前 `0.11.13` 源码候选：
   签名 Runtime 清单的测试墙钟上限为 1 秒，模型桥首轮故意延迟 2.515 秒后 Prompt 仍在
   5.770 秒正常完成；随后 OpenCode 原生 Task 依次产生 `running`、`completed` 子 Agent
   事件并完成父请求。测试结束后隔离 Agent、Runtime、socket 和 Workspace 已全部清理，
   Host current Agent 仍为 `0.11.10`。
+- 2026-08-31 使用隔离 Linux x64 Agent `0.11.14` 候选完成 remote-authoritative 矩阵：
+  15 秒短 smoke、2 分钟正常 detach、5 分钟本机 harness 强制结束、并发对话、SSH relay
+  丢失、显式取消、确定性 Provider 错误、2 秒 Provider 结果未知、Agent `SIGKILL`/重启，
+  以及 reopened Desktop SQLite 恢复。成功工具的 START/END sentinel 都各出现一次；
+  Provider 结果未知与 Agent 重启只提交 `outcome-unknown`，未重放 Prompt、模型调用或工具。
+- 同一矩阵中的 Desktop schema v32 实际恢复保持原 project/conversation/request/
+  assistant-message 身份，在同一事务中提交语义 provenance、消息与 cursor；重新打开
+  `assistant.sqlite` 后消息和 Task 都完整，重复 provenance 返回 false，recoverable Task
+  归零。
+- 最终源码复核后重新构建测试签名 package：
+  SHA-256 `39307fd1dccd638dcb723027591bcd83deab7057d550c99eff6f037e339829f4`，
+  installation `agent-2cad05acfebe853394807e3a11f7befcd9f47215c2cf3a33a03d5f644b45716e`，
+  Runtime `1.18.9` / bundle
+  `sha256:6c7fc975415ef2547d3729bc4772d3e78362c2e76c05d1fc24968a0468fcb7ba`。
+  最终 15 秒 detach/recovery 使用两个模型轮次、一个工具和一个终态，ledger 两轮均
+  `completed + delivered`，语义 `latest=ACK=41`，保留事件、Runtime owner、ACP channel/
+  frame 都为 0，START/END 各一次。最终取消另使用一个模型轮次、一个工具和一个 cancelled
+  终态，语义 `latest=ACK=29`，清理计数同样为 0。最终补充验证共 3 次真实文本模型调用。
+  采证后已按 PID/starttime/executable 停止精确隔离 daemon 并删除隔离 Host 测试根目录；
+  `/root/.goodbuddy` 下的共享 Agent 安装和进程未被修改。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
@@ -331,7 +394,7 @@ store 解析当前连接目标，通过 Agent/Runtime 安装管理器的 current
 registry identity，再用同一个 Agent 连接验证 Workspace 路径和 Runtime capability。该流程
 不会扫描完整 payload、取得安装包或发布组件。
 
-实时 Runtime 创建只接受 OpenCode，使用当前解析后的模型 profile 建立 Main-only 模型桥，
+实时 Runtime 创建只接受 OpenCode，使用当前解析后的模型 profile 准备 Agent 本地 gateway，
 从当前 Agent 连接和 Runtime registry 取得会话 identity，并在该连接上打开 Workspace 和
 ACP channel。Host 编辑或环境更新会定向失效 Agent 连接与 Runtime 缓存，下一次请求自然
 重新取得 current 环境；无需修改项目。Ask/Execute 权限继续由每次 Prompt 的 ACP Runtime
@@ -343,14 +406,18 @@ Workspace、Runtime 和 Saving 进度仅用于新建或显式保存项目；进�
 Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转发 Host 私有错误详情。
 `runtime/preparePrompt` 在远端明确拒绝且尚未接受 Prompt 时会关闭对应 Main binding，
 不会把确定性失败错误保留为 `outcome-unknown`。未确认终态的 Prompt 仍不会自动重放；
-用户之后显式发送的新 Prompt 会关闭旧的非就绪 Main binding，并以新的 ACP session
-继续当前 Conversation，避免一次恢复不确定永久阻塞后续输入。
+同一当前 Agent identity 上的 `prompt-running` binding 会阻止不同的新 operation，直到
+原 operation 恢复或取消，避免遗留 Host 工作与新 Prompt 并行。只有 Host/Agent/Runtime
+identity 已变化且旧 authority 无法恢复，或原 binding 已有 `outcome-unknown` 终态时，显式
+新 Prompt 才替换旧 binding。新 ACP session 的首次 Prompt 会把 Desktop 已持久化的有界
+会话历史作为不可信数据一并发送；成功加载或恢复原 ACP session 时不会重复注入历史。
 Ask 模式的 Linux Runtime 进程由 `bwrap` 启动后 `exec` 到已签名 Runtime 或 Agent
 model bridge helper；监督器只接受同一 PID/进程组从固定 `bwrap` 路径到预期最终可执行文件
 的有界转换，再登记为运行中进程。
 
 不持久化 T2/T3、consent、approval bridge、confinement 或组件验证结果。数据库 schema
-v31 保留项目及关联用户数据，但重建执行空间表为 `project_id/kind/root_path/ssh_host_id`
+v32 保留项目及关联用户数据，并加入 remote-recoverable Task/message/provenance/cursor；
+执行空间表保持 `project_id/kind/root_path/ssh_host_id`
 四列，并删除旧 Runtime 验证表。
 
 ## 资源与发布
@@ -391,5 +458,6 @@ v31 保留项目及关联用户数据，但重建执行空间表为 `project_id/
 6. 在已固定 Host Key 的 Linux x64 测试 Host 上验证 attach-or-bootstrap。
 7. 在 GoodBuddy 专用测试目录验证 Ask 无法修改文件。
 8. 验证 Execute 可以写文件、启动进程和访问网络，同时不触碰无关 Host 文件。
-9. 运行一次有界的真实模型调用，确认凭据只由 Main 使用。
+9. 运行一次有界的真实模型调用，确认凭据不进入 Renderer、SSH 参数、远端环境或磁盘，
+   只在当前 accepted operation 生命周期内进入 Agent 内存。
 10. 中断并恢复 SSH，确认活动 Runtime 不被网络抖动终止。

@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -16,8 +17,14 @@ import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contrac
 import type {
   SshDirectoryBrowseResult,
   SshHost,
-  SshHostRemoteEnvironment
+  SshHostAgentConnectionState,
+  SshHostAgentConnectionStatus,
+  SshHostRemoteEnvironment,
+  SshHostsSnapshot
 } from '../../shared/ssh-host-contracts'
+import type {
+  RemoteProjectRecoveryState
+} from '../../shared/remote-project-recovery-contracts'
 import i18n from './i18n'
 import { ProjectSwitcher } from './ProjectSwitcher'
 
@@ -76,10 +83,15 @@ function renderSwitcher(
   currentProject: AssistantProject = project,
   {
     projects = [currentProject],
-    remoteProjectsEnabled = true
+    remoteProjectsEnabled = true,
+    recoveryByProjectId = {}
   }: {
     projects?: AssistantProject[]
     remoteProjectsEnabled?: boolean
+    recoveryByProjectId?: Record<
+      string,
+      RemoteProjectRecoveryState
+    >
   } = {}
 ): {
   onCreate: ReturnType<typeof vi.fn>
@@ -101,6 +113,7 @@ function renderSwitcher(
   const onSelectRoot = vi.fn(async () => undefined)
   const onDelete = vi.fn(async () => undefined)
   const onSelect = vi.fn()
+  const onRetryRecovery = vi.fn(async () => undefined)
   render(
     <ProjectSwitcher
       activeProjectId={currentProject.id}
@@ -108,10 +121,12 @@ function renderSwitcher(
       onCreate={onCreate}
       onDelete={onDelete}
       onRemoteCommitted={onRemoteCommitted}
+      onRetryRecovery={onRetryRecovery}
       onSelect={onSelect}
       onSelectRoot={onSelectRoot}
       onUpdate={onUpdate}
       projects={projects}
+      recoveryByProjectId={recoveryByProjectId}
       remoteProjectsEnabled={remoteProjectsEnabled}
       runtimeSettings={runtimeSettings}
     />
@@ -145,9 +160,15 @@ function directoryResult(
 }
 
 function installRemoteApi(
-  options: { hostValidated?: boolean } = {}
+  options: {
+    hostValidated?: boolean
+    connectionState?: SshHostAgentConnectionState
+  } = {}
 ) {
   let progress: ((value: { phase: 'host' | 'agent' }) => void) | undefined
+  let connectionStatusListener:
+    | ((status: SshHostAgentConnectionStatus) => void)
+    | undefined
   const savedProject: AssistantProject = {
     ...project,
     id: remoteProjectId,
@@ -194,10 +215,19 @@ function installRemoteApi(
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:00:00.000Z'
   }
-  const getSnapshot = vi.fn(async () => ({
+  const getSnapshot = vi.fn(async (): Promise<SshHostsSnapshot> => ({
     hosts: [host],
-    secureStorageAvailable: true
+    secureStorageAvailable: true,
+    agentConnectionStatusByHostId: {
+      [hostId]: options.connectionState ?? 'disconnected'
+    }
   }))
+  const onAgentConnectionStatus = vi.fn(
+    (listener: (status: SshHostAgentConnectionStatus) => void) => {
+      connectionStatusListener = listener
+      return vi.fn()
+    }
+  )
   const currentVersion = {
     version: '1.0.0',
     architecture: 'x64' as const
@@ -242,6 +272,7 @@ function installRemoteApi(
         browseDirectories,
         cancelDirectoryBrowse,
         getSnapshot,
+        onAgentConnectionStatus,
         getRemoteEnvironment,
         updateRemoteEnvironment
       },
@@ -260,9 +291,19 @@ function installRemoteApi(
     browseDirectories,
     cancelDirectoryBrowse,
     getSnapshot,
+    host,
+    onAgentConnectionStatus,
     getRemoteEnvironment,
     updateRemoteEnvironment,
     onSaveProgress,
+    emitConnectionStatus: (
+      state: SshHostAgentConnectionStatus['state'],
+      requestedHostId = hostId
+    ) =>
+      connectionStatusListener?.({
+        hostId: requestedHostId,
+        state
+      }),
     emit: (phase: 'host' | 'agent') => progress?.({ phase })
   }
 }
@@ -375,6 +416,254 @@ describe('ProjectSwitcher runtime fields', () => {
 })
 
 describe('ProjectSwitcher managed SSH projects', () => {
+  it('groups remote projects by SSH Host and shows live connection status beside the Host', async () => {
+    await i18n.changeLanguage('en-US')
+    const api = installRemoteApi({
+      connectionState: 'connecting'
+    })
+    const secondHostId =
+      '00000000-0000-4000-8000-000000000202'
+    const secondHost: SshHost = {
+      ...api.host,
+      id: secondHostId,
+      name: 'Deploy host',
+      hostname: 'deploy.example.com'
+    }
+    api.getSnapshot.mockResolvedValue({
+      hosts: [api.host, secondHost],
+      secureStorageAvailable: true,
+      agentConnectionStatusByHostId: {
+        [hostId]: 'connecting',
+        [secondHostId]: 'ready'
+      }
+    })
+    const firstRemote: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'API service',
+      rootPath: '/srv/api',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/api'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    const secondRemote: AssistantProject = {
+      ...firstRemote,
+      id: '00000000-0000-4000-8000-000000000204',
+      name: 'Web service',
+      rootPath: '/srv/web',
+      executionSpace: {
+        kind: 'ssh',
+        hostId: secondHostId,
+        remoteRootPath: '/srv/web'
+      }
+    }
+    renderSwitcher(project, {
+      projects: [project, firstRemote, secondRemote]
+    })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Current project' })
+    )
+    const menu = screen.getByRole('menu', {
+      name: 'Current project'
+    })
+    const buildHost = await waitFor(() =>
+      within(menu).getByRole('group', {
+        name: 'SSH host: Build host'
+      })
+    )
+    const deployHost = within(menu).getByRole('group', {
+      name: 'SSH host: Deploy host'
+    })
+    expect(buildHost).toHaveTextContent('Connecting')
+    expect(buildHost).toHaveTextContent('/srv/api')
+    expect(deployHost).toHaveTextContent('Ready')
+    expect(deployHost).toHaveTextContent('/srv/web')
+    expect(within(menu).queryByText(/Managed SSH/u)).not.toBeInTheDocument()
+
+    act(() => api.emitConnectionStatus('ready'))
+    await waitFor(() =>
+      expect(buildHost).toHaveTextContent('Ready')
+    )
+  })
+
+  it('does not let an older Host snapshot overwrite a newer connection event', async () => {
+    await i18n.changeLanguage('en-US')
+    const api = installRemoteApi()
+    let resolveSnapshot:
+      | ((snapshot: SshHostsSnapshot) => void)
+      | undefined
+    api.getSnapshot.mockReturnValueOnce(
+      new Promise<SshHostsSnapshot>((resolve) => {
+        resolveSnapshot = resolve
+      })
+    )
+    const remoteProject: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'API service',
+      rootPath: '/srv/api',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/api'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    renderSwitcher(project, {
+      projects: [project, remoteProject]
+    })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Current project' })
+    )
+    await waitFor(() =>
+      expect(api.getSnapshot).toHaveBeenCalledOnce()
+    )
+    await waitFor(() =>
+      expect(api.onAgentConnectionStatus).toHaveBeenCalledOnce()
+    )
+    act(() => api.emitConnectionStatus('ready'))
+    await waitFor(() =>
+      expect(
+        screen.getByText('Ready', {
+          selector: '.project-switcher__host-status'
+        })
+      ).toBeInTheDocument()
+    )
+    await act(async () => {
+      resolveSnapshot?.({
+        hosts: [api.host],
+        secureStorageAvailable: true,
+        agentConnectionStatusByHostId: {
+          [hostId]: 'disconnected'
+        }
+      })
+      await Promise.resolve()
+    })
+
+    const hostGroup = await screen.findByRole('group', {
+      name: 'SSH host: Build host'
+    })
+    expect(hostGroup).toHaveTextContent('Ready')
+    expect(hostGroup).not.toHaveTextContent('Disconnected')
+  })
+
+  it('shows independent exact recovery stages and decimal cursor progress', async () => {
+    await i18n.changeLanguage('en-US')
+    const first: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'First remote',
+      rootPath: '/srv/first',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/first'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    const second: AssistantProject = {
+      ...first,
+      id: '00000000-0000-4000-8000-000000000204',
+      name: 'Second remote',
+      rootPath: '/srv/second',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/second'
+      }
+    }
+    renderSwitcher(first, {
+      projects: [first, second],
+      recoveryByProjectId: {
+        [first.id]: {
+          projectId: first.id,
+          requestId: '00000000-0000-4000-8000-000000000301',
+          stage: 'agent'
+        },
+        [second.id]: {
+          projectId: second.id,
+          requestId: '00000000-0000-4000-8000-000000000302',
+          stage: 'cursor',
+          current: '15'
+        }
+      }
+    })
+
+    expect(
+      screen.getByRole('button', { name: 'Current project' })
+    ).toHaveTextContent('Restoring remote Agent…')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Current project' })
+    )
+    const menu = screen.getByRole('menu', {
+      name: 'Current project'
+    })
+    expect(
+      within(menu).getByText('Restoring remote Agent…')
+    ).toBeInTheDocument()
+    expect(
+      within(menu).getByText('Restoring conversation at event 15')
+    ).toBeInTheDocument()
+  })
+
+  it('renders an accessible failure and retries only the affected project', async () => {
+    await i18n.changeLanguage('en-US')
+    const remoteProject: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      name: 'Remote project',
+      rootPath: '/srv/project',
+      executionSpace: {
+        kind: 'ssh',
+        hostId,
+        remoteRootPath: '/srv/project'
+      },
+      runtimeSelection: { provider: 'opencode' }
+    }
+    const onRetryRecovery = vi.fn(async () => undefined)
+    render(
+      <ProjectSwitcher
+        activeProjectId={remoteProject.id}
+        onArchive={vi.fn(async () => undefined)}
+        onCreate={vi.fn()}
+        onDelete={vi.fn()}
+        onRemoteCommitted={vi.fn()}
+        onRetryRecovery={onRetryRecovery}
+        onSelect={vi.fn()}
+        onSelectRoot={vi.fn()}
+        onUpdate={vi.fn()}
+        projects={[remoteProject]}
+        recoveryByProjectId={{
+          [remoteProject.id]: {
+            projectId: remoteProject.id,
+            requestId: '00000000-0000-4000-8000-000000000303',
+            stage: 'failed',
+            message: 'Host unreachable',
+            retryable: true
+          }
+        }}
+        remoteProjectsEnabled
+      />
+    )
+
+    expect(screen.getAllByRole('alert')[0]).toHaveTextContent(
+      'Recovery failed: Host unreachable'
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Retry recovery for project Remote project'
+      })
+    )
+    await waitFor(() =>
+      expect(onRetryRecovery).toHaveBeenCalledWith(remoteProject.id)
+    )
+  })
+
   it('hides remote projects and APIs when the feature is disabled', async () => {
     await i18n.changeLanguage('en-US')
     const api = installRemoteApi()

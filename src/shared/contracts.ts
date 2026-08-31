@@ -143,6 +143,10 @@ import type {
   RemoteProjectSaveRequest
 } from './remote-project-candidate-contracts'
 import type {
+  RemoteProjectRecoverySnapshot,
+  RemoteProjectRecoveryState
+} from './remote-project-recovery-contracts'
+import type {
   FeedbackSubmitInput,
   FeedbackSubmitResult
 } from './feedback-contracts'
@@ -161,6 +165,10 @@ export type {
   RemoteProjectSaveRequest,
   RemoteProjectUpdateDraft
 } from './remote-project-candidate-contracts'
+export type {
+  RemoteProjectRecoverySnapshot,
+  RemoteProjectRecoveryState
+} from './remote-project-recovery-contracts'
 import type { WeixinBindingSnapshot } from './weixin-channel-contracts'
 import type { RemoteChannelActivity } from './remote-channel-contracts'
 import type {
@@ -177,6 +185,7 @@ import type {
   RemoteEnvironmentUpdateRequest,
   SshHostRemoteEnvironment,
   SshHostRemovalResult,
+  SshHostAgentConnectionStatus,
   SshHostsSnapshot,
   SshDirectoryBrowseResult,
   SshHostValidationRequest,
@@ -1557,6 +1566,9 @@ export type DesktopApi = {
   }
   sshHosts?: {
     getSnapshot: () => Promise<SshHostsSnapshot>
+    onAgentConnectionStatus: (
+      listener: (status: SshHostAgentConnectionStatus) => void
+    ) => () => void
     getAgentPackageInventory: (
       refresh?: boolean
     ) => Promise<AgentPackageInventory>
@@ -1733,6 +1745,13 @@ export type DesktopApi = {
       cancelCurrent: () => Promise<void>
       onSaveProgress: (
         listener: (progress: RemoteProjectSaveProgress) => void
+      ) => () => void
+      getRecoverySnapshot: () => Promise<RemoteProjectRecoverySnapshot>
+      retryRecovery: (
+        projectId: string
+      ) => Promise<RemoteProjectRecoveryState>
+      onRecoveryProgress: (
+        listener: (state: RemoteProjectRecoveryState) => void
       ) => () => void
     }
   }
