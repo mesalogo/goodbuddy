@@ -67,7 +67,7 @@ import {
 import { toOpenCodeSubagentEvent } from './opencode-subagent'
 import { promptWithUntrustedConversationHistory } from './runtime-conversation-history'
 
-const STARTUP_TIMEOUT_MS = 10_000
+const STARTUP_TIMEOUT_MS = 30_000
 const STARTUP_POLL_INTERVAL_MS = 100
 const STARTUP_PROBE_TIMEOUT_MS = 500
 const CONTROL_REQUEST_TIMEOUT_MS = 30_000
@@ -1079,7 +1079,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           }
         }
         const timeout = setTimeout(() => {
-          fail('OpenCode Server 启动超时（10 秒）')
+          fail('OpenCode Server 启动超时（30 秒）')
         }, this.dependencies.startupTimeoutMs)
 
         if (!stdout || !stderr) {

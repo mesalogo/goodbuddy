@@ -969,6 +969,37 @@ describe('OpenCodeRuntime embedded launcher', () => {
     })
   })
 
+  it('allows ARM-class startup to become healthy after ten seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = fakeChild()
+      let healthy = false
+      const checkServerHealth = vi.fn(async () => healthy)
+      const { deps } = dependencies(child, {
+        checkServerHealth
+      })
+      const runtime = new OpenCodeRuntime(options(), deps)
+      let settled = false
+      const statusPromise = runtime.getStatus().finally(() => {
+        settled = true
+      })
+
+      await vi.advanceTimersByTimeAsync(10_100)
+      expect(settled).toBe(false)
+
+      healthy = true
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(statusPromise).resolves.toMatchObject({
+        available: true
+      })
+      expect(checkServerHealth).toHaveBeenCalled()
+
+      await runtime.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('times out, terminates the process tree, and does not expose stderr', async () => {
     const child = fakeChild()
     const secret = 'private-config-token'
@@ -983,7 +1014,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
 
     expect(status).toMatchObject({
       available: false,
-      detail: 'OpenCode Server 启动超时（10 秒）'
+      detail: 'OpenCode Server 启动超时（30 秒）'
     })
     expect(status.detail).not.toContain(secret)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')

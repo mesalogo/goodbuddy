@@ -212,6 +212,9 @@ package format v1 归档已经包含固定 Agent 和 Node，可直接用于 Host
 
 跨架构打包前，确认目标架构的 OpenCode 资源已经准备完成。不要用其他架构的二进制替代目标资源。
 
+GoodBuddy 管理的本机 OpenCode 启动后会轮询已认证的 loopback health 接口，最多等待
+30 秒。该窗口用于兼容 Linux ARM 等较慢环境；不要改回依赖 stdout 文案或 10 秒固定上限。
+
 ## GoodBuddy Agent 工件
 
 面向用户发布的是按远端 Host 架构区分的复合 `.gbagent`，每个包同时包含签名
