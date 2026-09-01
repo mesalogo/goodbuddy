@@ -11,8 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
-import type { WorkspaceAccess } from '../workspace'
+import {
+  LocalWorkspaceAccess,
+  type WorkspaceAccess
+} from '../workspace'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import type { DirectModelProcessService } from './direct-model-process-service'
 
 const mocks = vi.hoisted(() => {
   const tasks = {
@@ -751,6 +755,122 @@ describe('ModelToolProvider', () => {
       expect.objectContaining({ timeout: expect.any(Number) })
     )
     await provider.dispose()
+  })
+
+  it('provides local process execution only to direct-model Execute requests', async () => {
+    const workspace = await createWorkspace()
+    const processService = {
+      getCapability: vi.fn(async () => ({
+        available: true as const,
+        shell: { kind: 'powershell' as const, label: 'pwsh' }
+      })),
+      execute: vi.fn(async () => ({
+        shell: { kind: 'powershell' as const, label: 'pwsh' },
+        cwd: '.',
+        exitCode: 7,
+        durationMs: 12,
+        stdout: 'out',
+        stderr: 'err',
+        stdoutTruncated: false,
+        stderrTruncated: false
+      })),
+      releaseConversation: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
+    } satisfies DirectModelProcessService
+    const provider = new ModelToolProvider(
+      workspace,
+      [],
+      undefined,
+      undefined,
+      false,
+      { processService }
+    )
+    const identity = await new LocalWorkspaceAccess(
+      workspace
+    ).getIdentity()
+    const executeContext = {
+      conversationId: 'process-execute',
+      workMode: 'execute',
+      runtimeTarget: 'model',
+      executionSpaceIdentity: identity.id,
+      delegationDepth: 0
+    } satisfies ModelToolCallContext
+
+    await expect(
+      provider.listTools(executeContext, new AbortController().signal)
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'process_execute' })
+      ])
+    )
+    await expect(
+      provider.listTools(
+        {
+          ...executeContext,
+          conversationId: 'process-ask',
+          workMode: 'ask'
+        },
+        new AbortController().signal
+      )
+    ).resolves.not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'process_execute' })
+      ])
+    )
+    await expect(
+      provider.callTool(
+        'process_execute',
+        { command: 'exit 7' },
+        new AbortController().signal,
+        executeContext
+      )
+    ).resolves.toMatchObject({
+      parts: [
+        {
+          type: 'text',
+          text: expect.stringContaining('"exitCode":7')
+        }
+      ]
+    })
+    processService.execute.mockResolvedValueOnce({
+      shell: { kind: 'powershell', label: 'pwsh' },
+      cwd: '.',
+      exitCode: 0,
+      durationMs: 12,
+      stdout: '\0'.repeat(96 * 1024),
+      stderr: '\0'.repeat(96 * 1024),
+      stdoutTruncated: false,
+      stderrTruncated: false
+    })
+    const escapedResult = await provider.callTool(
+      'process_execute',
+      { command: 'large escaped output' },
+      new AbortController().signal,
+      executeContext
+    )
+    expect(escapedResult.contextBytes).toBeLessThanOrEqual(256 * 1024)
+    expect(escapedResult.parts[0]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('"stdoutTruncated":true')
+    })
+    await expect(
+      provider.callTool(
+        'process_execute',
+        { command: 'exit 0' },
+        new AbortController().signal,
+        {
+          ...executeContext,
+          workMode: 'ask'
+        }
+      )
+    ).rejects.toThrow('Ask 模式')
+
+    await provider.releaseConversation('process-execute')
+    expect(processService.releaseConversation).toHaveBeenCalledWith(
+      'process-execute'
+    )
+    await provider.dispose()
+    expect(processService.dispose).toHaveBeenCalledOnce()
   })
 
   it('refreshes a dynamic MCP change announced during initial listing', async () => {

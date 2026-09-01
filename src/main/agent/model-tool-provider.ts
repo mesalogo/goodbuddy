@@ -16,7 +16,11 @@ import {
   LocalWorkspaceAccess,
   type WorkspaceAccess
 } from '../workspace'
-import type { RuntimeApprovalRequest } from './runtime'
+import type {
+  RuntimeApprovalRequest,
+  RuntimeAuthorizer,
+  RuntimeEvent
+} from './runtime'
 import {
   BrowserModelTools,
   type BrowserToolService
@@ -29,6 +33,16 @@ import {
   listAllMcpTools,
   normalizeMcpToolSchema
 } from './mcp-tool-utils'
+import {
+  processExecuteInputSchema,
+  type DirectModelProcessService
+} from './direct-model-process-service'
+import {
+  type DirectModelSubagentService,
+  type DirectModelSubagentEvent,
+  type DirectModelSubagentUsageEvent,
+  directModelSubagentInputSchema
+} from '../assistant/direct-model-subagent-service'
 
 const MAX_MODEL_TOOLS = 100
 const MAX_MCP_SERVERS = 16
@@ -66,6 +80,12 @@ const webSearchTool = builtinModelTools.find(
 const webFetchTool = builtinModelTools.find(
   (tool) => tool.name === 'web_fetch'
 )!
+const processExecuteTool = builtinModelTools.find(
+  (tool) => tool.name === 'process_execute'
+)!
+const subagentDelegateTool = builtinModelTools.find(
+  (tool) => tool.name === 'subagent_delegate'
+)!
 const magicNoteWriteToolNameSet = new Set<string>(
   magicNoteWriteToolNames
 )
@@ -78,6 +98,8 @@ const builtinModelToolAccessByName = new Map<string, 'read' | 'write'>(
 )
 const ASK_TOOL_DENIAL_MESSAGE =
   'Ask 模式仅允许调用已声明的只读工具'
+const TOOL_RESULT_TRUNCATION_MARKER =
+  '\n...[GoodBuddy result truncated]...'
 const scopedToolJsonSchemas = new Map(
   [...scopedDataToolByName].map(([name, definition]) => {
     const schema = z.toJSONSchema(
@@ -219,7 +241,34 @@ export type ModelToolResult = {
 export type ModelToolCallContext = {
   conversationId: string
   workMode: 'ask' | 'execute'
+  requestId?: string
+  runtimeTarget?: 'model'
+  executionSpaceIdentity?: string
+  delegationDepth?: 0 | 1
+  subagentBridge?: ModelSubagentBridge
   knowledgeCapabilityToken?: string
+}
+
+export type ModelSubagentRequestContext = {
+  authorize?: RuntimeAuthorizer
+  knowledgeCapabilityToken?: string
+  emitEvent: (event: RuntimeEvent) => void
+}
+
+export type ModelSubagentBridge = {
+  requestContext: ModelSubagentRequestContext
+}
+
+export type ModelToolProviderProgrammingOptions = {
+  processService?: DirectModelProcessService
+  subagentService?: DirectModelSubagentService<ModelSubagentRequestContext>
+}
+
+export function createDirectModelSubagentCallId(
+  childRunId: string,
+  callId: string
+): string {
+  return `subagent:${childRunId}:${callId}`.slice(0, 256)
 }
 
 export class RecoverableModelToolError extends Error {
@@ -297,6 +346,83 @@ function createTextToolResult(text: string): ModelToolResult {
     parts: [{ type: 'text', text }],
     contextBytes
   }
+}
+
+function utf8Prefix(value: string, maximumBytes: number): string {
+  if (maximumBytes <= 0) {
+    return ''
+  }
+  const encoded = Buffer.from(value)
+  if (encoded.byteLength <= maximumBytes) {
+    return value
+  }
+  let end = maximumBytes
+  while (end > 0) {
+    const prefix = encoded.subarray(0, end).toString('utf8')
+    if (!prefix.endsWith('\ufffd')) {
+      return prefix
+    }
+    end -= 1
+  }
+  return ''
+}
+
+function createBoundedJsonObjectToolResult(
+  value: Record<string, unknown>,
+  adjustableFields: readonly string[],
+  errorMessage: string
+): ModelToolResult {
+  const candidate = { ...value }
+  let serialized: string
+  try {
+    serialized = JSON.stringify(candidate)
+  } catch (error) {
+    throw new Error(errorMessage, { cause: error })
+  }
+  if (Buffer.byteLength(serialized) <= MAX_TOOL_RESULT_BYTES) {
+    return createTextToolResult(serialized)
+  }
+  for (const field of adjustableFields) {
+    const original = candidate[field]
+    if (typeof original !== 'string') {
+      continue
+    }
+    let low = 0
+    let high = Buffer.byteLength(original)
+    let best = ''
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2)
+      const prefix = utf8Prefix(original, middle)
+      candidate[field] = `${prefix}${TOOL_RESULT_TRUNCATION_MARKER}`
+      const encoded = JSON.stringify(candidate)
+      if (Buffer.byteLength(encoded) <= MAX_TOOL_RESULT_BYTES) {
+        best = candidate[field] as string
+        low = middle + 1
+      } else {
+        high = middle - 1
+      }
+    }
+    candidate[field] = best || TOOL_RESULT_TRUNCATION_MARKER
+    const flag = `${field}Truncated`
+    if (flag in candidate) {
+      candidate[flag] = true
+    }
+    serialized = JSON.stringify(candidate)
+    if (Buffer.byteLength(serialized) <= MAX_TOOL_RESULT_BYTES) {
+      return createTextToolResult(serialized)
+    }
+  }
+  throw new Error('工具结果超过 256KB 安全限制')
+}
+
+function toModelToolJsonSchema(
+  schema: z.ZodType
+): Record<string, unknown> {
+  const value = z.toJSONSchema(schema, {
+    target: 'draft-7'
+  }) as Record<string, unknown>
+  Reflect.deleteProperty(value, '$schema')
+  return value
 }
 
 function assertToolAuthorizedForWorkMode(
@@ -490,7 +616,9 @@ export class ModelToolProvider implements ModelToolProviderLike {
     private readonly mcpServers: ResolvedMcpServer[] = [],
     private readonly browserService?: BrowserToolService,
     private readonly knowledgeGateway?: KnowledgeMcpGateway,
-    private readonly webSearchEnabled = false
+    private readonly webSearchEnabled = false,
+    private readonly programming:
+      ModelToolProviderProgrammingOptions = {}
   ) {
     this.workspaceAccess =
       typeof workspace === 'string'
@@ -559,6 +687,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
       this.getBuiltinTools().length +
       (this.browserService ? 7 : 0) +
       (this.webSearchEnabled ? 2 : 0) +
+      (this.programming.processService ? 1 : 0) +
+      (this.programming.subagentService ? 1 : 0) +
       (this.knowledgeGateway ? maximumScopedToolCount : 0)
     )
   }
@@ -674,6 +804,72 @@ export class ModelToolProvider implements ModelToolProviderLike {
           required: ['path', 'content'],
           additionalProperties: false
         },
+        source: 'builtin'
+      }
+    ]
+  }
+
+  private async getProcessTool(
+    context: ModelToolCallContext,
+    signal: AbortSignal
+  ): Promise<ModelToolDefinition[]> {
+    if (
+      !this.programming.processService ||
+      context.runtimeTarget !== 'model' ||
+      context.workMode !== 'execute'
+    ) {
+      return []
+    }
+    signal.throwIfAborted()
+    const identity = await this.workspaceAccess.getIdentity()
+    if (
+      identity.kind !== 'local' ||
+      (context.executionSpaceIdentity !== undefined &&
+        context.executionSpaceIdentity !== identity.id)
+    ) {
+      return []
+    }
+    const capability =
+      await this.programming.processService.getCapability()
+    if (!capability.available) {
+      return []
+    }
+    return [
+      {
+        name: processExecuteTool.name,
+        displayName: processExecuteTool.displayName,
+        description:
+          `Run one foreground command in the current workspace with current-user permissions using ${capability.shell.label}. ` +
+          'Returns bounded stdout, stderr, exit status, duration, and truncation state. Non-zero exit codes are command results.',
+        inputSchema: toModelToolJsonSchema(
+          processExecuteInputSchema
+        ),
+        source: 'builtin'
+      }
+    ]
+  }
+
+  private getSubagentTool(
+    context: ModelToolCallContext
+  ): ModelToolDefinition[] {
+    if (
+      !this.programming.subagentService ||
+      !context.subagentBridge ||
+      context.runtimeTarget !== 'model' ||
+      (context.delegationDepth ?? 0) !== 0
+    ) {
+      return []
+    }
+    return [
+      {
+        name: subagentDelegateTool.name,
+        displayName: subagentDelegateTool.displayName,
+        description:
+          'Delegate one focused task to a temporary direct-model Subagent. ' +
+          'The child inherits the current model, workspace, work mode, and enabled tools, cannot delegate again, and returns bounded output to the parent.',
+        inputSchema: toModelToolJsonSchema(
+          directModelSubagentInputSchema
+        ),
         source: 'builtin'
       }
     ]
@@ -933,13 +1129,17 @@ export class ModelToolProvider implements ModelToolProviderLike {
     const webTools = this.webSearchEnabled
       ? this.getWebSearchDefinitions()
       : []
+    const subagentTools = this.getSubagentTool(context)
     if (context.workMode !== 'execute') {
-      return [...webTools, ...scopedTools]
+      return [...webTools, ...subagentTools, ...scopedTools]
     }
+    const processTools = await this.getProcessTool(context, signal)
     const bindings = await this.getMcpBindings(signal, true)
     const browserTools = this.getBrowserTools(context)
     return [
       ...this.getBuiltinTools(),
+      ...processTools,
+      ...subagentTools,
       ...(browserTools?.listTools() ?? []),
       ...webTools,
       ...[...bindings.values()].map((binding) => binding.definition),
@@ -998,6 +1198,28 @@ export class ModelToolProvider implements ModelToolProviderLike {
         title: `允许${tool.displayName}？`,
         description:
           '该只读工具会将查询词或公开网页地址发送给 Exa 托管 MCP。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
+    if (tool.name === 'process_execute') {
+      return {
+        scopeKey: 'model:builtin:process_execute',
+        title: '允许运行项目命令？',
+        description:
+          '该命令会在当前工作区中使用当前用户权限运行，并可访问该账号有权访问的主机资源。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
+    if (tool.name === 'subagent_delegate') {
+      return {
+        scopeKey: 'model:builtin:subagent_delegate',
+        title: '允许委派编程 Subagent？',
+        description:
+          '子级继承当前模型、工作模式、工作区和已启用能力，不能再次委派。',
         toolName: tool.displayName,
         argumentSummary,
         allowPermanent: false
@@ -1373,6 +1595,73 @@ export class ModelToolProvider implements ModelToolProviderLike {
         )
       )
     }
+    if (name === 'process_execute') {
+      if (
+        context.runtimeTarget !== 'model' ||
+        context.workMode !== 'execute' ||
+        !this.programming.processService
+      ) {
+        throw new Error('当前请求不允许进程执行')
+      }
+      const identity = await this.workspaceAccess.getIdentity()
+      if (
+        identity.kind !== 'local' ||
+        (context.executionSpaceIdentity !== undefined &&
+          context.executionSpaceIdentity !== identity.id)
+      ) {
+        throw new Error('进程执行空间与当前工作区不匹配')
+      }
+      return createBoundedJsonObjectToolResult(
+        await this.programming.processService.execute(
+          processExecuteInputSchema.parse(argumentsValue),
+          {
+            conversationId: context.conversationId,
+            workspace: this.workspaceAccess,
+            signal
+          }
+        ),
+        ['stdout', 'stderr'],
+        '进程执行结果无法序列化'
+      )
+    }
+    if (name === 'subagent_delegate') {
+      if (
+        context.runtimeTarget !== 'model' ||
+        (context.delegationDepth ?? 0) !== 0 ||
+        !context.requestId ||
+        !context.executionSpaceIdentity ||
+        !context.subagentBridge ||
+        !this.programming.subagentService
+      ) {
+        throw new Error('当前请求不允许编程 Subagent 委派')
+      }
+      const input = directModelSubagentInputSchema.parse(argumentsValue)
+      const result = await this.programming.subagentService.run({
+        ownerId: context.conversationId,
+        task: input.task,
+        parent: {
+          requestId: context.requestId,
+          workMode: context.workMode,
+          requestContext: context.subagentBridge.requestContext
+        },
+        signal,
+        onEvent: (event) =>
+          emitDirectModelSubagentEvent(
+            event,
+            context.subagentBridge!.requestContext
+          ),
+        onModelUsage: (event) =>
+          emitDirectModelSubagentUsage(
+            event,
+            context.subagentBridge!.requestContext
+          )
+      })
+      return createBoundedJsonObjectToolResult(
+        result,
+        ['output', 'error'],
+        '编程 Subagent 结果无法序列化'
+      )
+    }
 
     const binding = (await this.getMcpBindings(signal)).get(name)
     if (!binding) {
@@ -1435,17 +1724,73 @@ export class ModelToolProvider implements ModelToolProviderLike {
     this.webSearchBindings = undefined
     await Promise.allSettled([
       ...clients.map((client) => client.close()),
+      this.programming.processService?.dispose(),
+      this.programming.subagentService?.dispose(),
       this.workspaceAccess.dispose()
     ])
   }
 
   async releaseConversation(conversationId: string): Promise<void> {
-    if (!this.browserService) {
-      return
-    }
-    await new BrowserModelTools({
-      service: this.browserService,
-      conversationId
-    }).release()
+    await Promise.allSettled([
+      this.browserService
+        ? new BrowserModelTools({
+            service: this.browserService,
+            conversationId
+          }).release()
+        : undefined,
+      this.programming.processService?.releaseConversation(
+        conversationId
+      ),
+      this.programming.subagentService?.releaseOwner(conversationId)
+    ])
   }
+}
+
+function emitDirectModelSubagentEvent(
+  event: DirectModelSubagentEvent,
+  bridge: ModelSubagentRequestContext
+): void {
+  const output =
+    event.output === undefined
+      ? undefined
+      : event.outputTruncated
+        ? `${event.output}${TOOL_RESULT_TRUNCATION_MARKER}`
+        : event.output
+  const error =
+    event.error === undefined
+      ? undefined
+      : event.errorTruncated
+        ? `${event.error}${TOOL_RESULT_TRUNCATION_MARKER}`
+        : event.error
+  bridge.emitEvent({
+    requestId: event.parentRequestId,
+    type: 'subagent',
+    childTaskId: event.childRunId,
+    actor: {
+      kind: 'direct-model',
+      label: '编程 Subagent'
+    },
+    routingMode: 'native',
+    workMode: event.workMode,
+    state: event.state,
+    reason: event.reason,
+    ...(output !== undefined ? { output } : {}),
+    ...(error !== undefined
+      ? { error: error.slice(0, 1_000) }
+      : {})
+  })
+}
+
+function emitDirectModelSubagentUsage(
+  event: DirectModelSubagentUsageEvent,
+  bridge: ModelSubagentRequestContext
+): void {
+  bridge.emitEvent({
+    ...event.usage,
+    requestId: event.parentRequestId,
+    callId: createDirectModelSubagentCallId(
+      event.childRunId,
+      event.usage.callId
+    )
+  })
 }

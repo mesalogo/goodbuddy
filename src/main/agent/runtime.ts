@@ -24,7 +24,8 @@ export type RuntimeApprovalRequest = {
 }
 
 export type RuntimeAuthorizer = (
-  request: RuntimeApprovalRequest
+  request: RuntimeApprovalRequest,
+  signal?: AbortSignal
 ) => Promise<ApprovalDecision>
 
 export type RuntimeGeneratedImageEvent = {
@@ -130,6 +131,8 @@ export type RemoteRecoveredSubagent =
 export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   workMode?: WorkMode
   images?: AgentImage[]
+  /** Main-process-only recursion guard for direct-model programming delegation. */
+  directModelDelegationDepth?: 0 | 1
   /** Main-process-only instructions placed in the model system layer. */
   trustedInstructions?: string
   /** Main-process-only request-scoped authorization for built-in data tools. */

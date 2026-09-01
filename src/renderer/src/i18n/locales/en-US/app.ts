@@ -364,6 +364,8 @@ export const app = {
     subagents: {
       region: 'Subagent status',
       badge: 'Subagent',
+      directModelLabel: 'Programming Subagent',
+      directModel: 'Direct model',
       smart: 'GoodBuddy smart routing',
       manual: 'GoodBuddy selected expert',
       native: 'Native OpenCode',

@@ -34,6 +34,7 @@ import {
   goodbuddyConfigTools
 } from '../../shared/goodbuddy-config-tools'
 import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import { SubagentScheduler } from '../assistant/subagent-scheduler'
 
 const enabled = process.env.GOODBUDDY_RUN_RUNTIME_E2E === '1'
 const apiKey =
@@ -321,6 +322,106 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       }
     },
     120_000
+  )
+
+  it(
+    'uses real direct-model process execution and a programming Subagent to repair and verify code',
+    async () => {
+      const scheduler = new SubagentScheduler({
+        concurrency: 3,
+        queueLimit: 20,
+        timeoutMs: 10 * 60_000
+      })
+      const runtime = new ModelAgentRuntime({
+        apiKey,
+        baseUrl,
+        model: modelName,
+        protocol,
+        authentication: 'api-key',
+        defaultWorkspace: workspace,
+        directModelSubagentScheduler: scheduler
+      })
+      const events: RuntimeEvent[] = []
+
+      try {
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            workMode: 'execute',
+            prompt: [
+              'Complete this verification entirely with GoodBuddy tools.',
+              '1. Use workspace_write_text to create programming-e2e.cjs with an intentional failing Node assertion.',
+              '2. Use process_execute to run `node programming-e2e.cjs` and observe a non-zero exit.',
+              '3. Use workspace_write_text to replace it with a passing program that prints exactly PROGRAMMING_E2E_OK.',
+              '4. Use process_execute again and observe exit code 0 plus PROGRAMMING_E2E_OK.',
+              '5. Use subagent_delegate exactly once. Ask the programming Subagent to independently run the final file with process_execute and verify its output. Do not ask it to delegate.',
+              '6. After the Subagent completes, reply with exactly REAL_PROGRAMMING_E2E_OK.',
+              'Do not skip, reorder, or merely describe any tool step.'
+            ].join('\n')
+          },
+          new AbortController().signal,
+          async () => 'once'
+        )) {
+          events.push(event)
+        }
+
+        const processOutputs = events.flatMap((event) =>
+          event.type === 'tool' &&
+          event.name === '进程执行' &&
+          event.state === 'completed' &&
+          event.output
+            ? [event.output]
+            : []
+        )
+        expect(
+          processOutputs.some((output) =>
+            /"exitCode"\s*:\s*[1-9]\d*/u.test(output)
+          )
+        ).toBe(true)
+        expect(
+          processOutputs.some(
+            (output) =>
+              /"exitCode"\s*:\s*0/u.test(output) &&
+              output.includes('PROGRAMMING_E2E_OK')
+          )
+        ).toBe(true)
+        expect(
+          events.some(
+            (event) =>
+              event.type === 'subagent' &&
+              event.state === 'completed' &&
+              'actor' in event &&
+              event.actor.kind === 'direct-model'
+          )
+        ).toBe(true)
+        expect(
+          events
+            .filter((event) => event.type === 'text')
+            .map((event) => event.delta)
+            .join('')
+            .trim().length
+        ).toBeGreaterThan(0)
+        expect(events.at(-1)).toMatchObject({ type: 'done' })
+        expect(
+          await readFile(
+            join(workspace, 'programming-e2e.cjs'),
+            'utf8'
+          )
+        ).toContain('PROGRAMMING_E2E_OK')
+
+        const modelCalls = events.filter(
+          (event) => event.type === 'model-usage'
+        ).length
+        expect(modelCalls).toBeGreaterThanOrEqual(6)
+        console.info(`REAL_PROGRAMMING_MODEL_CALLS=${modelCalls}`)
+      } finally {
+        await runtime.dispose()
+        scheduler.dispose()
+        await scheduler.waitForIdle()
+      }
+    },
+    10 * 60_000
   )
 
   it(

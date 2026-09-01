@@ -1,10 +1,10 @@
 # GoodBuddy
 
-English | [简体中文](README.md)
+English | [简体中文](./README.md)
 
 A secure, cross-platform, local-first desktop AI assistant and Agent workspace.
 
-![GoodBuddy workspace](docs/screenshots/workspace-overview.png)
+![GoodBuddy workspace](./docs/screenshots/workspace-overview.png)
 
 ## Highlights
 
@@ -20,16 +20,16 @@ A secure, cross-platform, local-first desktop AI assistant and Agent workspace.
 - **Offline speech**: Use local SenseVoice, Paraformer, and Whisper models.
 - **Rich responses**: Render Markdown, LaTeX, and controlled Mermaid diagrams.
 
-![GoodBuddy knowledge workspace](docs/screenshots/knowledge-workspace.png)
+![GoodBuddy knowledge workspace](./docs/screenshots/knowledge-workspace.png)
 
-![GoodBuddy knowledge graph](docs/screenshots/knowledge-graph.png)
+![GoodBuddy knowledge graph](./docs/screenshots/knowledge-graph.png)
 
-![GoodBuddy Magic Notes](docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
+![GoodBuddy Magic Notes](./docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
 
-![GoodBuddy Smart Heartbeat](docs/screenshots/smart-heartbeat.png)
+![GoodBuddy Smart Heartbeat](./docs/screenshots/smart-heartbeat.png)
 
-See [FEATURES.md](FEATURES.md) for the detailed feature matrix and roadmap, and
-the [documentation index](docs/README.md) for product, architecture, design,
+See [FEATURES.md](./FEATURES.md) for the detailed feature matrix and roadmap, and
+the [documentation index](./docs/README.md) for product, architecture, design,
 and quality documents.
 
 ## Install
@@ -59,7 +59,7 @@ npm ci
 npm run dev
 ```
 
-See [BUILD.md](BUILD.md) for build and packaging instructions.
+See [BUILD.md](./BUILD.md) for build and packaging instructions.
 
 ## Privacy and security
 
@@ -72,7 +72,7 @@ See [BUILD.md](BUILD.md) for build and packaging instructions.
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) first, then run:
+Issues and pull requests are welcome. Read [AGENTS.md](./AGENTS.md) first, then run:
 
 ```bash
 npm test
@@ -82,4 +82,4 @@ npm run lint
 
 ## License
 
-Original GoodBuddy code is released under the [0BSD License](LICENSE). You may use, modify, distribute, and commercialize it freely. Third-party components and resources retain their respective licenses.
+Original GoodBuddy code is released under the [0BSD License](./LICENSE). You may use, modify, distribute, and commercialize it freely. Third-party components and resources retain their respective licenses.

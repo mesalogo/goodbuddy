@@ -2386,8 +2386,12 @@ export class AcpRemoteRuntime implements AgentRuntime {
       if (!subagent.runtimeCallId) {
         continue
       }
+      const subagentTitle =
+        'actor' in subagent
+          ? subagent.actor.label
+          : subagent.expertName
       prompt.toolCalls.set(subagent.runtimeCallId.slice(0, 256), {
-        title: subagent.expertName.slice(0, 200),
+        title: subagentTitle.slice(0, 200),
         status:
           subagent.state === 'queued'
             ? 'pending'

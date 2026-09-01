@@ -14,3 +14,8 @@
 
 先阅读统一领域模型。其他功能文档不得重新定义 Task、Conversation、Job、Run 或 Subagent。
 若实现与文档出现冲突，应先修正统一模型，再同步功能 PRD。
+
+## 相关功能
+
+- [直连模型 Agent 能力](../direct-model-agent/README.md) 使用本目录定义的 Subagent 与
+  Job/Subjob 语义，为直连模型提供单层编程委派，但不重新定义产品对象层级。

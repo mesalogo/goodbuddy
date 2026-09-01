@@ -1386,17 +1386,24 @@ function reduceRecoveredAgentEvent(
       blocks: upsertRecoveredToolBlock(message.blocks, tool)
     }
   } else if (event.type === 'subagent') {
-    const subagent: ConversationSubagentActivity = {
+    const commonSubagent = {
       childTaskId: event.childTaskId,
-      expertId: event.expertId,
-      expertName: event.expertName,
       routingMode: event.routingMode,
       runtimeCallId: event.runtimeCallId,
+      workMode: event.workMode,
       state: event.state,
       reason: event.reason,
       output: event.output,
       error: event.error
     }
+    const subagent: ConversationSubagentActivity =
+      'actor' in event
+        ? { ...commonSubagent, actor: event.actor }
+        : {
+            ...commonSubagent,
+            expertId: event.expertId,
+            expertName: event.expertName
+          }
     const subagents = [...(message.subagents ?? [])]
     const index = subagents.findIndex(
       (candidate) => candidate.childTaskId === event.childTaskId

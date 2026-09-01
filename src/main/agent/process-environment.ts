@@ -16,6 +16,35 @@ export const runtimeProviderEnvironmentNames = [
   'COHERE_API_KEY'
 ] as const
 
+const userProcessCredentialEnvironmentNames = new Set<string>([
+  ...runtimeProviderEnvironmentNames,
+  'DEEPSEEK_API_KEY',
+  'DASHSCOPE_API_KEY',
+  'TOGETHER_API_KEY',
+  'FIREWORKS_API_KEY',
+  'PERPLEXITY_API_KEY',
+  'CEREBRAS_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN'
+])
+
+export function buildCredentialFilteredUserEnvironment(
+  source: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {}
+  for (const [name, value] of Object.entries(source)) {
+    const upperName = name.toUpperCase()
+    if (
+      value !== undefined &&
+      !upperName.startsWith('GOODBUDDY_') &&
+      !upperName.startsWith('FACTORY_') &&
+      !userProcessCredentialEnvironmentNames.has(upperName)
+    ) {
+      environment[name] = value
+    }
+  }
+  return environment
+}
+
 const runtimeEnvironmentAllowlist = [
   'PATH',
   'Path',

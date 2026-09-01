@@ -8,6 +8,7 @@ import {
 } from './model-tool-provider'
 import { ModelAgentRuntime } from './model-runtime'
 import type { RuntimeEvent } from './runtime'
+import { SubagentScheduler } from '../assistant/subagent-scheduler'
 
 const toolPng = Buffer.from([
   0x89, 0x50, 0x4e, 0x47,
@@ -2009,10 +2010,10 @@ describe('ModelAgentRuntime', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(toolProvider.listTools).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         conversationId: 'conversation-tools',
         workMode: 'execute'
-      },
+      }),
       expect.any(AbortSignal)
     )
     const firstBody = JSON.parse(
@@ -2058,25 +2059,26 @@ describe('ModelAgentRuntime', () => {
     expect(authorize).toHaveBeenCalledWith(
       expect.objectContaining({
         scopeKey: 'model:builtin:workspace_read_text'
-      })
+      }),
+      expect.any(AbortSignal)
     )
     expect(toolProvider.getApproval).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'workspace_read_text' }),
       { path: 'README.md' },
       expect.any(String),
-      {
+      expect.objectContaining({
         conversationId: 'conversation-tools',
         workMode: 'execute'
-      }
+      })
     )
     expect(toolProvider.callTool).toHaveBeenCalledWith(
       'workspace_read_text',
       { path: 'README.md' },
       expect.any(AbortSignal),
-      {
+      expect.objectContaining({
         conversationId: 'conversation-tools',
         workMode: 'execute'
-      }
+      })
     )
     expect(
       events
@@ -2122,6 +2124,150 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
     expect(toolProvider.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('delegates one programming Subagent that can run a real project command without recursion', async () => {
+    const command =
+      process.platform === 'win32'
+        ? "[Console]::Write('child-ok')"
+        : 'printf child-ok'
+    const responses = [
+      {
+        model: 'qwen3',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call-delegate',
+              type: 'function',
+              function: {
+                name: 'subagent_delegate',
+                arguments: JSON.stringify({
+                  task: '运行一个命令确认子代理执行能力'
+                })
+              }
+            }]
+          }
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 4 }
+      },
+      {
+        model: 'qwen3',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call-child-process',
+              type: 'function',
+              function: {
+                name: 'process_execute',
+                arguments: JSON.stringify({ command })
+              }
+            }]
+          }
+        }],
+        usage: { prompt_tokens: 12, completion_tokens: 5 }
+      },
+      {
+        model: 'qwen3',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: '子代理已验证 child-ok。'
+          }
+        }],
+        usage: { prompt_tokens: 20, completion_tokens: 6 }
+      },
+      {
+        model: 'qwen3',
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: '父模型已综合子代理结果。'
+          }
+        }],
+        usage: { prompt_tokens: 25, completion_tokens: 7 }
+      }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json(responses.shift())
+    )
+    const scheduler = new SubagentScheduler({
+      concurrency: 3,
+      queueLimit: 20,
+      timeoutMs: 10_000
+    })
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      defaultWorkspace: process.cwd(),
+      directModelSubagentScheduler: scheduler
+    })
+    const events: RuntimeEvent[] = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: 'a431666e-5ec8-45e6-beb4-654132eed177',
+        conversationId: 'conversation-direct-subagent',
+        prompt: '委派子代理验证进程能力',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(4)
+    const parentTools = (
+      JSON.parse(
+        fetcher.mock.calls[0]?.[1]?.body as string
+      ) as {
+        tools: Array<{ function: { name: string } }>
+      }
+    ).tools.map((tool) => tool.function.name)
+    const childTools = (
+      JSON.parse(
+        fetcher.mock.calls[1]?.[1]?.body as string
+      ) as {
+        tools: Array<{ function: { name: string } }>
+      }
+    ).tools.map((tool) => tool.function.name)
+    expect(parentTools).toContain('subagent_delegate')
+    expect(parentTools).toContain('process_execute')
+    expect(childTools).toContain('process_execute')
+    expect(childTools).not.toContain('subagent_delegate')
+    expect(
+      events
+        .filter((event) => event.type === 'subagent')
+        .map((event) => event.state)
+    ).toEqual(['queued', 'running', 'completed'])
+    expect(
+      events
+        .flatMap(
+          (event) =>
+            event.type === 'tool' &&
+            event.callId.includes('call-child-process')
+              ? [event.state]
+              : []
+        )
+    ).toEqual(['pending', 'running', 'completed'])
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'text' &&
+          event.delta.includes('父模型已综合')
+      )
+    ).toBe(true)
+
+    await runtime.dispose()
+    scheduler.dispose()
+    await scheduler.waitForIdle()
   })
 
   it('compresses complete earlier tool rounds before a later Agent model call', async () => {
@@ -3045,11 +3191,11 @@ describe('ModelAgentRuntime', () => {
     }
 
     expect(toolProvider.listTools).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         conversationId: 'conversation-knowledge-ask',
         workMode: 'ask',
         knowledgeCapabilityToken: 'main-only-token'
-      },
+      }),
       expect.any(AbortSignal)
     )
     expect(toolProvider.callTool).toHaveBeenCalledWith(

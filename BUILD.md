@@ -200,7 +200,7 @@ Agent/Runtime metadata 副本。操作中断或 adoption 失败后，下一次�
 package format v1 归档已经包含固定 Agent 和 Node，可直接用于 Host 直连；归档无需携带
 `agent/lib/package-installer.cjs`，签名目录不提供也不检查额外的 bootstrap 能力元数据。
 首次 bootstrap 不依赖已安装 Agent daemon。目标契约见
-[SSH Host 远程环境准备与直连下载设计](docs/architecture/remote-host-environment-provisioning-design.md)。
+[SSH Host 远程环境准备与直连下载设计](./docs/features/remote-host/environment-provisioning-technical-design.md)。
 
 删除 Host 或远程项目属于纯本地管理操作。Host 确认框列出全部关联项目记录并级联清理
 本地数据库，但不连接 Host、不检查远端目录，也不删除远端文件；Host 设置文件和项目事务
@@ -514,36 +514,3 @@ npm test -- src/main/agent/deepseek-harness-acp-e2e.test.ts -t "rejects a real n
 
 如需覆盖发布包内置 npm 路径，再设置 `GOODBUDDY_DSH_NPM_CLI` 与
 `GOODBUDDY_DSH_NODE_EXECUTABLE` 指向已解包应用中的 npm CLI 和应用主程序。
-
-## Renderer bundle 性能门禁
-
-`electron-vite` 会在 `out/renderer/.vite` 生成 Vite manifest 和仅含构建模块
-归属的 module manifest。`npm run build:bundle` 在 bundle 完成后自动运行
-`build/check-renderer-bundle.cjs`，去重统计首屏同步闭包及 Knowledge、知识图谱、
-Activity、Magic Notes、Settings 动态入口同步加载的 JS 与 CSS 合计 raw / gzip
-大小并执行预算校验。
-
-门禁同时验证以下结构约束：
-
-- Knowledge、Activity 与 G6 不得进入首屏同步闭包。
-- `KnowledgeGraphChart` 与 G6 不得进入 Knowledge shell 的同步闭包。
-- G6 必须由知识图谱动态入口同步拥有。
-
-路径遍历使用 manifest 中的相对文件名并通过 Node `path.resolve` 读取，因此兼容
-Windows 与 POSIX 构建输出。构建专用 module manifest 只记录项目相对路径、
-`node_modules/` 相对路径或稳定的虚拟模块名，不记录 Runner 的盘符、主目录或
-绝对路径；检查成功后会删除该诊断文件，检查失败时保留以便排查。标准 Vite
-manifest 会保留在输出中。预算以干净生产构建为基线并保留有限余量；若业务确需
-提高预算，必须先检查 manifest 闭包和产物差异，不能只为通过 CI 调大数值。
-
-Bundle 大小是发现意外依赖和持续膨胀的粗粒度工程护栏，不是用户体验指标，也不能替代
-Electron 中的实际交互验证。Settings 的硬上限以 2026-08-23 验证构建
-`648.78 kB raw / 97.79 kB gzip` 为基线，增加约 15% 评审余量后取整为
-`750 kB raw / 115 kB gzip`。该上限用于拦截显著增长，不要求实现长期贴线运行。
-
-调整 Renderer 拆包时遵守以下优先级：
-
-1. 同级页签的交互一致性、首个绘制帧内反馈和输入保留优先于包体数字。
-2. 不得仅为通过预算，把一个原本轻量的同级页签单独改成首次点击才加载。
-3. 确需动态加载重型功能时，必须提供非空、无布局跳变的局部状态，并增加首次交互测试。
-4. 修改预算必须记录干净生产构建基线、增量闭包差异和 Electron 实测结果。

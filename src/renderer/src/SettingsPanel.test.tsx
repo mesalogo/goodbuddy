@@ -4977,6 +4977,17 @@ describe('SettingsPanel runtime files', () => {
     expect(await screen.findByText('文件系统操作')).toBeInTheDocument()
     expect(screen.getByText('内置浏览器')).toBeInTheDocument()
     expect(screen.getByText('联网搜索')).toBeInTheDocument()
+    expect(screen.getByText('编程能力')).toBeInTheDocument()
+    const programmingToggle = screen.getByRole('button', {
+      name: '展开工具组 编程能力'
+    })
+    fireEvent.click(programmingToggle)
+    expect(screen.getByText('进程执行')).toBeInTheDocument()
+    expect(screen.getByText('编程 Subagent')).toBeInTheDocument()
+    expect(
+      within(programmingToggle.closest('article')!)
+        .queryByRole('switch')
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByRole('switch', {
         name: '启用直连模型内置浏览器'

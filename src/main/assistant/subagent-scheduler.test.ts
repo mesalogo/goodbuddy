@@ -49,7 +49,7 @@ describe('SubagentScheduler', () => {
     ).rejects.toThrow('队列已满')
     controller.abort(new Error('cancelled'))
     await expect(queued).rejects.toThrow('cancelled')
-    await expect(blocker).rejects.toThrow('120 秒')
+    await expect(blocker).rejects.toThrow('1 秒')
     scheduler.dispose()
   })
 

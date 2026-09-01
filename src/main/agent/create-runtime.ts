@@ -27,6 +27,7 @@ import type { BundledRuntimePaths } from './bundled-runtimes'
 import type { ContinueHostLauncher } from './continue-host-adapter'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { ModelToolProviderLike } from './model-tool-provider'
+import type { SubagentScheduler } from '../assistant/subagent-scheduler'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { ModelToolProvider } from './model-tool-provider'
 import type { ControlledHarnessExtensionPackage } from './deepseek-harness-extension-loader'
@@ -65,6 +66,7 @@ export type AgentCapabilityContext = {
   webSearchEnabled?: boolean
   executionSpace?: ExecutionSpaceDescriptor
   workspaceAccess?: WorkspaceAccess
+  directModelSubagentScheduler?: SubagentScheduler
 }
 
 function resolveContextCompression(
@@ -344,7 +346,9 @@ export function createAgentRuntime(
       contextCompression: settings
         ? resolveContextCompression(settings, defaultModelProfile)
         : undefined,
-      workspaceAccess: getWorkspaceAccess()
+      workspaceAccess: getWorkspaceAccess(),
+      directModelSubagentScheduler:
+        capabilities.directModelSubagentScheduler
     })
   }
 

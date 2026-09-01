@@ -117,7 +117,11 @@ export class SubagentScheduler {
       controller.abort(abortError(entry.signal))
     entry.signal?.addEventListener('abort', forwardAbort, { once: true })
     const timeout = setTimeout(() => {
-      controller.abort(new Error('子专家任务超过 120 秒超时限制'))
+      controller.abort(
+        new Error(
+          `子专家任务超过 ${Math.ceil(this.timeoutMs / 1_000)} 秒超时限制`
+        )
+      )
     }, this.timeoutMs)
 
     const workPromise = Promise.resolve().then(() => {

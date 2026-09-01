@@ -2325,8 +2325,12 @@ export function registerIpcHandlers(
           : undefined
       const automaticHarnessRuntime =
         requestRuntime.runtimeId === 'deepseek-harness'
-      const authorize: RuntimeAuthorizer = async (approvalRequest) => {
-        controller.signal.throwIfAborted()
+      const authorize: RuntimeAuthorizer = async (
+        approvalRequest,
+        approvalSignal
+      ) => {
+        const activeSignal = approvalSignal ?? controller.signal
+        activeSignal.throwIfAborted()
         if (schedule.workMode !== 'execute') {
           return 'deny'
         }
@@ -2359,7 +2363,7 @@ export function registerIpcHandlers(
                 origin === 'schedule' ? taskId : requestId,
               conversationId: runtimeConversationId
             },
-            controller.signal,
+            activeSignal,
             (approvalEvent) => {
               eventBuffer.flush()
               if (!window.isDestroyed()) {
@@ -2371,7 +2375,10 @@ export function registerIpcHandlers(
             }
           )
         } finally {
-          if (!controller.signal.aborted) {
+          if (
+            !controller.signal.aborted &&
+            !activeSignal.aborted
+          ) {
             assistantDatabase.updateTaskStatus(taskId, 'running')
             if (origin === 'schedule') {
               publishConversationChange()

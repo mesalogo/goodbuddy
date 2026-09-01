@@ -347,6 +347,8 @@ export const app = {
     subagents: {
       region: '子代理状态',
       badge: '子代理',
+      directModelLabel: '编程 Subagent',
+      directModel: '直连模型',
       smart: 'GoodBuddy 智能路由',
       manual: 'GoodBuddy 指定专家',
       native: 'OpenCode 原生',

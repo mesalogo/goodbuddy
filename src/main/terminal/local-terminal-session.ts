@@ -15,7 +15,7 @@ import {
   type TerminalTarget
 } from '../../shared/terminal-contracts'
 import { requestProcessTreeTermination } from '../agent/child-process-termination'
-import { runtimeProviderEnvironmentNames } from '../agent/process-environment'
+import { buildCredentialFilteredUserEnvironment } from '../agent/process-environment'
 
 export type LocalTerminalTarget = Extract<
   TerminalTarget,
@@ -70,26 +70,6 @@ const RESUME_PENDING_EVENT_COUNT = Math.floor(
 const CLOSE_WAIT_MS = 1_500
 const FORCE_WAIT_MS = 250
 
-const credentialEnvironmentNames = new Set([
-  ...runtimeProviderEnvironmentNames,
-  'DEEPSEEK_API_KEY',
-  'DASHSCOPE_API_KEY',
-  'TOGETHER_API_KEY',
-  'FIREWORKS_API_KEY',
-  'PERPLEXITY_API_KEY',
-  'CEREBRAS_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN'
-])
-
-function isCredentialEnvironmentName(name: string): boolean {
-  const upperName = name.toUpperCase()
-  return (
-    upperName.startsWith('GOODBUDDY_') ||
-    upperName.startsWith('FACTORY_') ||
-    credentialEnvironmentNames.has(upperName)
-  )
-}
-
 /**
  * Keep the user's normal interactive environment while removing credentials
  * inherited by Electron Main for GoodBuddy and model-provider operation.
@@ -97,13 +77,7 @@ function isCredentialEnvironmentName(name: string): boolean {
 export function buildLocalTerminalEnvironment(
   source: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = {}
-  for (const [name, value] of Object.entries(source)) {
-    if (value !== undefined && !isCredentialEnvironmentName(name)) {
-      environment[name] = value
-    }
-  }
-  return environment
+  return buildCredentialFilteredUserEnvironment(source)
 }
 
 async function defaultExecutableExists(path: string): Promise<boolean> {

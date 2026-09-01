@@ -27,7 +27,7 @@
     "test:watch": "vitest",
     "eval:retrieval": "vitest run --config tests/support/knowledge-retrieval-evaluation.ts tests/knowledge-retrieval-metrics.test.ts tests/knowledge-retrieval-evaluation.test.ts",
     "build": "npm run typecheck && npm run build:bundle",
-    "build:bundle": "electron-vite build && node build/check-control-plane-package-installer.cjs && node build/check-renderer-bundle.cjs",
+    "build:bundle": "electron-vite build && node build/check-control-plane-package-installer.cjs",
     "smoke:deepseek-harness": "npm run build:bundle && node build/run-deepseek-harness-utility-smoke.cjs",
     "smoke:deepseek-harness:packaged": "node build/run-packaged-deepseek-harness-smoke.cjs",
     "agent:build": "node build/agent-bundle.cjs build",

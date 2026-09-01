@@ -64,6 +64,7 @@ import type { ContinueHostLauncher } from './agent/continue-host-adapter'
 import { resolvePortableUserDataPath } from './portable-user-data'
 import { BrowserService } from './browser/browser-service'
 import { SubagentService } from './assistant/subagent-service'
+import { SubagentScheduler } from './assistant/subagent-scheduler'
 import { ChannelSettingsStore } from './channels/channel-settings-store'
 import type {
   WechatSidecarChild,
@@ -220,6 +221,7 @@ let terminalSessionManager: TerminalSessionManager | undefined
 let managedRemoteExecutionServices:
   | ManagedRemoteExecutionServices
   | undefined
+let directModelSubagentScheduler: SubagentScheduler | undefined
 
 type ManagedEmbeddingProvider = EmbeddingProvider & {
   dispose?: () => void | Promise<void>
@@ -921,6 +923,11 @@ if (hasSingleInstanceLock) {
       }
     )
     assistantDatabase = startupAssistantDatabase
+    directModelSubagentScheduler = new SubagentScheduler({
+      concurrency: 3,
+      queueLimit: 20,
+      timeoutMs: 10 * 60_000
+    })
     const executionSpaceResolver = new ExecutionSpaceResolver(
       startupManagedRemoteExecutionServices.workspaceAccessFactory
     )
@@ -982,7 +989,8 @@ if (hasSingleInstanceLock) {
         knowledgeGateway: startupKnowledgeGateway,
         webSearchEnabled: webSearchCapability?.enabled,
         executionSpace,
-        workspaceAccess: executionSpace?.workspaceAccess
+        workspaceAccess: executionSpace?.workspaceAccess,
+        directModelSubagentScheduler
       })
     }
     const createConfiguredRuntime = async (
@@ -1485,6 +1493,10 @@ app.on('before-quit', (event) => {
         [
           () => runtime?.dispose(),
           () => selectedRuntimeManager?.dispose(),
+          () => {
+            directModelSubagentScheduler?.dispose()
+            return directModelSubagentScheduler?.waitForIdle()
+          },
           () => browserService?.dispose(),
           () => globalTlsPolicy?.dispose(),
           () =>

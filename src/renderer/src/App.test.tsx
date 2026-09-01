@@ -9236,6 +9236,74 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('records direct-model child runs without adding Assistant Tasks', async () => {
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '修复并验证聚焦变更' }
+    })
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+    const childRunId =
+      '00000000-0000-4000-8000-000000000613'
+
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: 'subagent',
+        childTaskId: childRunId,
+        actor: {
+          kind: 'direct-model',
+          label: '编程 Subagent'
+        },
+        routingMode: 'native',
+        workMode: 'execute',
+        state: 'completed',
+        reason: '修复并验证聚焦变更',
+        output: '验证通过'
+      })
+    })
+
+    const region = await screen.findByLabelText('子代理状态')
+    expect(
+      within(region).getByText('编程 Subagent', {
+        selector: 'strong'
+      })
+    ).toBeInTheDocument()
+    expect(within(region).getByText('直连模型 · Execute'))
+      .toBeInTheDocument()
+    await waitFor(() => {
+      const persistedActivities = vi
+        .mocked(api.conversations.saveLocal)
+        .mock.calls.flatMap(([batch]) =>
+          batch.flatMap((conversation) =>
+            conversation.messages.flatMap(
+              (message) => message.subagents ?? []
+            )
+          )
+        )
+      expect(persistedActivities).toContainEqual(
+        expect.objectContaining({
+          childTaskId: childRunId,
+          actor: {
+            kind: 'direct-model',
+            label: '编程 Subagent'
+          },
+          workMode: 'execute',
+          output: '验证通过'
+        })
+      )
+    })
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    expect(
+      await screen.findByText('明确创建的任务会显示在这里。')
+    ).toBeInTheDocument()
+  })
+
   it('fails an unterminated subagent when the parent reports done', async () => {
     render(<App />)
     fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {

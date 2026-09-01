@@ -3,7 +3,7 @@ export type BuiltinModelToolSummary = {
   displayName: string
   description: string
   access: 'read' | 'write'
-  group: 'filesystem' | 'browser' | 'web'
+  group: 'filesystem' | 'browser' | 'web' | 'programming'
 }
 
 export const builtinModelTools = [
@@ -93,6 +93,22 @@ export const builtinModelTools = [
       '通过 Exa 托管 MCP 读取公开 HTTP 或 HTTPS 网页的有界正文。',
     access: 'read',
     group: 'web'
+  },
+  {
+    name: 'process_execute',
+    displayName: '进程执行',
+    description:
+      '使用当前工作区和当前用户权限运行 PowerShell、Bash 或 Sh 命令。',
+    access: 'write',
+    group: 'programming'
+  },
+  {
+    name: 'subagent_delegate',
+    displayName: '编程 Subagent',
+    description:
+      '将聚焦任务委派给同一模型连接；继承当前工作模式和工作区。',
+    access: 'read',
+    group: 'programming'
   }
 ] as const satisfies readonly BuiltinModelToolSummary[]
 
@@ -117,5 +133,12 @@ export const builtinModelToolGroups = [
     description:
       '启用后，直连模型可在 Ask 和 Execute 模式搜索并读取公开网页。',
     tools: builtinModelTools.filter((tool) => tool.group === 'web')
+  },
+  {
+    id: 'programming',
+    name: '编程能力',
+    description:
+      '直连模型可运行项目命令，或将聚焦任务委派给继承当前模式的 Subagent。',
+    tools: builtinModelTools.filter((tool) => tool.group === 'programming')
   }
 ] as const

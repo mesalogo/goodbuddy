@@ -4506,6 +4506,18 @@ function App(): React.JSX.Element {
           }
         })
       } else if (event.type === 'subagent') {
+        const actor =
+          'actor' in event
+            ? event.actor
+            : {
+                kind: 'expert' as const,
+                expertId: event.expertId,
+                expertName: event.expertName
+              }
+        const actorLabel =
+          actor.kind === 'direct-model'
+            ? tRef.current('chat.subagents.directModelLabel')
+            : actor.expertName
         const childStatus = event.state
         const completedAt =
           event.state === 'completed' ||
@@ -4513,46 +4525,48 @@ function App(): React.JSX.Element {
           event.state === 'cancelled'
             ? new Date().toISOString()
             : undefined
-        setAssistantTasks((current) => {
-          const existing = current.find(
-            (task) => task.id === event.childTaskId
-          )
-          const childTask: AssistantTask = {
-            id: event.childTaskId,
-            projectId: run.projectId,
-            conversationId: run.conversationId,
-            parentTaskId: event.requestId,
-            expertId: event.expertId,
-            routingMode:
-              event.routingMode === 'native'
-                ? undefined
-                : event.routingMode,
-            title: event.expertName,
-            instructions:
-              event.reason ??
-              tRef.current('chat.subagents.fallbackTask', {
-                name: event.expertName
-              }),
-            origin: 'subagent',
-            status: childStatus,
-            createdAt:
-              existing?.createdAt ?? new Date().toISOString(),
-            startedAt:
-              event.state === 'running'
-                ? existing?.startedAt ?? new Date().toISOString()
-                : existing?.startedAt,
-            completedAt: completedAt ?? existing?.completedAt,
-            error: event.error
-          }
-          return existing
-            ? current.map((task) =>
-                task.id === event.childTaskId ? childTask : task
-              )
-            : [...current, childTask].slice(
-                0,
-                maximumConversationSubagentActivities
-              )
-        })
+        if (actor.kind === 'expert') {
+          setAssistantTasks((current) => {
+            const existing = current.find(
+              (task) => task.id === event.childTaskId
+            )
+            const childTask: AssistantTask = {
+              id: event.childTaskId,
+              projectId: run.projectId,
+              conversationId: run.conversationId,
+              parentTaskId: event.requestId,
+              expertId: actor.expertId,
+              routingMode:
+                event.routingMode === 'native'
+                  ? undefined
+                  : event.routingMode,
+              title: actor.expertName,
+              instructions:
+                event.reason ??
+                tRef.current('chat.subagents.fallbackTask', {
+                  name: actor.expertName
+                }),
+              origin: 'subagent',
+              status: childStatus,
+              createdAt:
+                existing?.createdAt ?? new Date().toISOString(),
+              startedAt:
+                event.state === 'running'
+                  ? existing?.startedAt ?? new Date().toISOString()
+                  : existing?.startedAt,
+              completedAt: completedAt ?? existing?.completedAt,
+              error: event.error
+            }
+            return existing
+              ? current.map((task) =>
+                  task.id === event.childTaskId ? childTask : task
+                )
+              : [...current, childTask].slice(
+                  0,
+                  maximumConversationSubagentActivities
+                )
+          })
+        }
         if (event.runtimeCallId) {
           setActivityRecords((current) =>
             current.filter(
@@ -4570,13 +4584,20 @@ function App(): React.JSX.Element {
           requestId: event.requestId,
           callId: event.childTaskId,
           kind: 'subagent',
-          title: event.expertName,
+          title: actorLabel,
           detail: [
-            event.routingMode === 'smart'
-              ? tRef.current('chat.subagents.smart')
-              : event.routingMode === 'native'
-                ? tRef.current('chat.subagents.native')
-                : tRef.current('chat.subagents.manual'),
+            actor.kind === 'direct-model'
+              ? tRef.current('chat.subagents.directModel')
+              : event.routingMode === 'smart'
+                ? tRef.current('chat.subagents.smart')
+                : event.routingMode === 'native'
+                  ? tRef.current('chat.subagents.native')
+                  : tRef.current('chat.subagents.manual'),
+            actor.kind === 'direct-model' && event.workMode
+              ? event.workMode === 'execute'
+                ? 'Execute'
+                : 'Ask'
+              : undefined,
             event.reason,
             event.error
           ]
@@ -4594,17 +4615,24 @@ function App(): React.JSX.Element {
             (subagent) =>
               subagent.childTaskId === event.childTaskId
           )
-          const subagent: SubagentActivity = {
+          const commonSubagent = {
             childTaskId: event.childTaskId,
-            expertId: event.expertId,
-            expertName: event.expertName,
             routingMode: event.routingMode,
             runtimeCallId: event.runtimeCallId,
+            workMode: event.workMode,
             state: event.state,
             reason: event.reason,
             output: event.output,
             error: event.error
           }
+          const subagent: SubagentActivity =
+            'actor' in event
+              ? { ...commonSubagent, actor: event.actor }
+              : {
+                  ...commonSubagent,
+                  expertId: event.expertId,
+                  expertName: event.expertName
+                }
           if (index >= 0) {
             subagents[index] = subagent
           } else if (

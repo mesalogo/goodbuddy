@@ -21,7 +21,8 @@ import {
   conversationAttachmentSchema,
   conversationHistoryMessageSchema,
   conversationContextCompressionStateSchema,
-  conversationSubagentActivitySchema,
+  actorConversationSubagentActivitySchema,
+  legacyConversationSubagentActivitySchema,
   legacyWorkModeSchema,
   maximumConversationHistoryCharacters,
   maximumConversationHistoryMessages,
@@ -1191,13 +1192,19 @@ export const approvalDecisionSchema = z.enum([
 
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 
-export const subagentEventSchema =
-  conversationSubagentActivitySchema
-  .extend({
-    requestId: z.string().uuid(),
-    type: z.literal('subagent')
-  })
-  .strict()
+const subagentEventFields = {
+  requestId: z.string().uuid(),
+  type: z.literal('subagent')
+} as const
+
+export const subagentEventSchema = z.union([
+  legacyConversationSubagentActivitySchema
+    .extend(subagentEventFields)
+    .strict(),
+  actorConversationSubagentActivitySchema
+    .extend(subagentEventFields)
+    .strict()
+])
 
 export type SubagentEvent = z.infer<typeof subagentEventSchema>
 

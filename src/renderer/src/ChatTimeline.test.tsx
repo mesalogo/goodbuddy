@@ -353,6 +353,58 @@ describe('ChatTimeline', () => {
     ])
   })
 
+  it('labels direct-model subagents with their inherited work mode', () => {
+    const messages: Message[] = [
+      {
+        id: 'assistant-message',
+        role: 'assistant',
+        content: '',
+        createdAt: 1_775_000_000_000,
+        state: 'streaming',
+        subagents: [
+          {
+            childTaskId: '00000000-0000-4000-8000-000000000131',
+            actor: {
+              kind: 'direct-model',
+              label: '编程 Subagent'
+            },
+            routingMode: 'native',
+            workMode: 'execute',
+            state: 'running',
+            reason: '修复并验证聚焦变更'
+          }
+        ]
+      }
+    ]
+
+    render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="zh-CN"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    const region = screen.getByLabelText('子代理状态')
+    expect(
+      within(region).getByText('编程 Subagent', {
+        selector: 'strong'
+      })
+    ).toBeInTheDocument()
+    expect(within(region).getByText('直连模型 · Execute'))
+      .toBeInTheDocument()
+    expect(
+      within(region).getByText('修复并验证聚焦变更')
+    ).toBeInTheDocument()
+  })
+
   it('uses one live source per event without announcing historical tool rows', () => {
     const messages: Message[] = [
       {

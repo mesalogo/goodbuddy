@@ -4,6 +4,7 @@ import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
   conversationBranchInputSchema,
+  conversationSubagentActivitySchema,
   conversationSnapshotSchema,
   isUntouchedBuiltInDefaultProject,
   localConversationSaveBatchSchema,
@@ -12,6 +13,7 @@ import {
   projectExecutionSpaceSchema,
   projectUpdateSchema
 } from './assistant-contracts'
+import { subagentEventSchema } from './contracts'
 
 const untouchedProject: AssistantProject = {
   id: '00000000-0000-4000-8000-000000000101',
@@ -286,5 +288,53 @@ describe('conversation persistence contracts', () => {
     ]
 
     expect(localConversationSaveBatchSchema.parse(batch)).toEqual(batch)
+  })
+
+  it('keeps legacy expert activities', () => {
+    const legacy = {
+      childTaskId: '00000000-0000-4000-8000-000000000321',
+      expertId: '00000000-0000-4000-8000-000000000322',
+      expertName: '代码专家',
+      routingMode: 'manual',
+      state: 'completed'
+    }
+    expect(conversationSubagentActivitySchema.parse(legacy))
+      .toEqual(legacy)
+  })
+
+  it('stores a direct-model child run in the existing child task slot', () => {
+    const directModel = {
+      childTaskId: '00000000-0000-4000-8000-000000000325',
+      actor: {
+        kind: 'direct-model',
+        label: '编程 Subagent'
+      },
+      routingMode: 'native',
+      workMode: 'execute',
+      state: 'completed',
+      reason: '修复并验证聚焦变更',
+      output: '验证通过'
+    }
+
+    expect(
+      conversationSubagentActivitySchema.parse(directModel)
+    ).toEqual(directModel)
+    expect(
+      conversationSubagentActivitySchema.safeParse({
+        ...directModel,
+        childRunId: directModel.childTaskId
+      }).success
+    ).toBe(false)
+    expect(
+      subagentEventSchema.parse({
+        requestId: '00000000-0000-4000-8000-000000000326',
+        type: 'subagent',
+        ...directModel
+      })
+    ).toEqual({
+      requestId: '00000000-0000-4000-8000-000000000326',
+      type: 'subagent',
+      ...directModel
+    })
   })
 })

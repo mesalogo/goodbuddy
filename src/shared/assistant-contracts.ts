@@ -196,25 +196,51 @@ export type ConversationMessageBlock = z.infer<
 export const maximumConversationToolActivities = 100
 export const maximumConversationSubagentActivities = 100
 
-export const conversationSubagentActivitySchema = z
+export const subagentActorSchema = z
   .object({
-    childTaskId: assistantIdSchema,
-    expertId: assistantIdSchema,
-    expertName: z.string().trim().min(1).max(80),
-    routingMode: z.enum(['manual', 'smart', 'native']),
-    runtimeCallId: z.string().trim().min(1).max(256).optional(),
-    state: z.enum([
-      'queued',
-      'running',
-      'completed',
-      'failed',
-      'cancelled'
-    ]),
-    reason: z.string().trim().min(1).max(240).optional(),
-    output: z.string().optional(),
-    error: z.string().trim().min(1).max(1_000).optional()
+    kind: z.literal('direct-model'),
+    label: z.literal('编程 Subagent')
   })
   .strict()
+
+export type SubagentActor = z.infer<typeof subagentActorSchema>
+
+const conversationSubagentActivityBaseSchema = z.object({
+  childTaskId: assistantIdSchema,
+  routingMode: z.enum(['manual', 'smart', 'native']),
+  runtimeCallId: z.string().trim().min(1).max(256).optional(),
+  workMode: workModeSchema.optional(),
+  state: z.enum([
+    'queued',
+    'running',
+    'completed',
+    'failed',
+    'cancelled'
+  ]),
+  reason: z.string().trim().min(1).max(240).optional(),
+  output: z.string().optional(),
+  error: z.string().trim().min(1).max(1_000).optional()
+})
+
+export const legacyConversationSubagentActivitySchema =
+  conversationSubagentActivityBaseSchema
+    .extend({
+      expertId: assistantIdSchema,
+      expertName: z.string().trim().min(1).max(80)
+    })
+    .strict()
+
+export const actorConversationSubagentActivitySchema =
+  conversationSubagentActivityBaseSchema
+    .extend({
+      actor: subagentActorSchema
+    })
+    .strict()
+
+export const conversationSubagentActivitySchema = z.union([
+  legacyConversationSubagentActivitySchema,
+  actorConversationSubagentActivitySchema
+])
 
 export type ConversationSubagentActivity = z.infer<
   typeof conversationSubagentActivitySchema

@@ -37,7 +37,10 @@ describe('OpenCode native subagent events', () => {
     })
     expect(completed).toMatchObject({
       childTaskId: running?.childTaskId,
-      expertId: running?.expertId,
+      expertId:
+        running && 'expertId' in running
+          ? running.expertId
+          : undefined,
       state: 'completed',
       output: 'Architecture review complete.'
     })

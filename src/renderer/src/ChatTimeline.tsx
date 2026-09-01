@@ -264,12 +264,30 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
         : subagent.state === 'queued'
           ? Clock3
           : XCircle
+  const actor =
+    'actor' in subagent
+      ? subagent.actor
+      : {
+          kind: 'expert' as const,
+          expertId: subagent.expertId,
+          expertName: subagent.expertName
+        }
+  const actorLabel =
+    actor.kind === 'direct-model'
+      ? t('chat.subagents.directModelLabel')
+      : actor.expertName
   const source =
-    subagent.routingMode === 'smart'
+    actor.kind === 'direct-model'
+      ? t('chat.subagents.directModel')
+      : subagent.routingMode === 'smart'
       ? t('chat.subagents.smart')
       : subagent.routingMode === 'native'
         ? t('chat.subagents.native')
         : t('chat.subagents.manual')
+  const sourceAndMode =
+    actor.kind === 'direct-model' && subagent.workMode
+      ? `${source} · ${subagent.workMode === 'execute' ? 'Execute' : 'Ask'}`
+      : source
 
   return (
     <details
@@ -283,7 +301,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
               <Bot aria-hidden="true" size={13} />
               {t('chat.subagents.badge')}
             </span>
-            <strong>{subagent.expertName}</strong>
+            <strong>{actorLabel}</strong>
           </span>
           {subagent.reason && (
             <span className="subagent-status-card__task">
@@ -292,7 +310,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
             </span>
           )}
           <small className="subagent-status-card__source">
-            {source}
+            {sourceAndMode}
           </small>
         </span>
         <span
