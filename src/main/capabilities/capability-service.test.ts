@@ -358,6 +358,54 @@ describe('CapabilityService', () => {
     })
   })
 
+  it('disables product marketing skills by default and preserves explicit enablement', async () => {
+    const { filePath, builtinRoot, importedRoot, service } =
+      await createService()
+    await Promise.all([
+      writeSkill(builtinRoot, 'product-marketing', '产品市场'),
+      writeSkill(builtinRoot, 'product-evidence', '产品证据'),
+      writeSkill(builtinRoot, 'product-presentation', '产品演示'),
+      writeSkill(builtinRoot, 'deai-writing', '中文审校'),
+      writeSkill(builtinRoot, 'longdoc-docx', '长文导出')
+    ])
+
+    const snapshot = await service.getSnapshot()
+    expect(snapshot.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'product-marketing',
+          enabled: false
+        }),
+        expect.objectContaining({
+          id: 'product-evidence',
+          enabled: false
+        }),
+        expect.objectContaining({
+          id: 'product-presentation',
+          enabled: false
+        }),
+        expect.objectContaining({ id: 'deai-writing', enabled: true }),
+        expect.objectContaining({ id: 'longdoc-docx', enabled: true })
+      ])
+    )
+
+    await service.setSkillEnabled('product-marketing', true)
+    const reloaded = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+    await expect(reloaded.getSnapshot()).resolves.toMatchObject({
+      skills: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'product-marketing',
+          enabled: true
+        })
+      ])
+    })
+  })
+
   it('imports and removes a managed SKILL.md package', async () => {
     const { directory, service } = await createService()
     const packageRoot = join(directory, 'source-skill')

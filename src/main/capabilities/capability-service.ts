@@ -78,6 +78,11 @@ const MAX_SKILL_PACKAGE_BYTES = 10 * 1024 * 1024
 const MAX_SKILL_PACKAGE_FILES = 128
 const MAX_SKILL_DEPTH = 6
 const MAX_SKILL_DISCOVERY_DEPTH = 4
+const DEFAULT_DISABLED_BUILTIN_SKILL_IDS = new Set([
+  'product-marketing',
+  'product-evidence',
+  'product-presentation'
+])
 const MAX_SKILL_DISCOVERY_RESULTS = 64
 const MAX_SKILL_INSTRUCTION_CHARACTERS = 262_144
 const SKILL_DISCOVERY_IGNORED_DIRECTORIES = new Set([
@@ -304,9 +309,13 @@ function emptyStoredCapabilities(
   }
 }
 
-function defaultSkillState(): z.infer<typeof skillStateSchema> {
+function defaultSkillState(
+  skill?: Pick<SkillSummary, 'id' | 'source'>
+): z.infer<typeof skillStateSchema> {
   return {
-    enabled: true,
+    enabled:
+      skill?.source !== 'builtin' ||
+      !DEFAULT_DISABLED_BUILTIN_SKILL_IDS.has(skill.id),
     assignments: [
       'model',
       'opencode',
@@ -932,7 +941,7 @@ export class CapabilityService {
       skills: catalog
         .map((skill) => ({
           ...skill,
-          ...(state.skills[skill.id] ?? defaultSkillState())
+          ...(state.skills[skill.id] ?? defaultSkillState(skill))
         }))
         .sort((left, right) =>
           left.source === right.source
@@ -1664,7 +1673,8 @@ export class CapabilityService {
     return this.queue(async () => {
       const id = skillIdSchema.parse(skillId)
       const catalog = await this.getSkillCatalog()
-      if (!catalog.some((skill) => skill.id === id)) {
+      const skill = catalog.find((item) => item.id === id)
+      if (!skill) {
         throw new Error('Skill 不存在')
       }
       const state = await this.load()
@@ -1673,7 +1683,7 @@ export class CapabilityService {
         skills: {
           ...state.skills,
           [id]: {
-            ...(state.skills[id] ?? defaultSkillState()),
+            ...(state.skills[id] ?? defaultSkillState(skill)),
             ...update
           }
         }

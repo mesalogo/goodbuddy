@@ -1,18 +1,7 @@
----
-name: sales-demo-kit
-version: 1.0.0
-description: |
-  生成可执行的产品演示故事线、环境清单、操作脚本、讲解词、失败回退和演练检查表。
-  用于售前 Demo、POC 汇报或验收演示；不负责制作通用产品介绍 PPT。
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-  - Execute
-compatibility: Markdown/JSON；演示自动化需另行使用可用的控制工具
----
-
 # 售前演示套件
+
+生成可执行的产品演示故事线、环境清单、操作脚本、讲解词、失败回退和演练检查表。
+用于售前 Demo、POC 汇报或验收演示；不负责制作通用产品介绍 PPT。
 
 ## 必要输入
 

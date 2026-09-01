@@ -179,6 +179,13 @@ Python、虚拟环境或 Conda 环境时，也不能被 GoodBuddy 静默替换�
   `Skills`、`MCP`、`工具执行环境` 三个水平 Tab。始终默认打开 `Skills`。
 - 三个 Tab 使用共享 `PageTabs`，保留 `tablist`、`tab`、`tabpanel`、方向键和可见焦点。
 - `Skills` 继续承载现有 Skill 启停、导入、状态和 Runtime 分配。
+- 内置 Skill 顶层目录只展示五个独立能力：`deai-writing`、`longdoc-docx`、
+  `product-evidence`、`product-marketing`、`product-presentation`。产品营销的功能目录、
+  一页纸、技术方案、白皮书、招标、演示套件、客户案例和竞品定位作为
+  `product-marketing` 内部工作流，不重复显示为独立 Skill。
+- `deai-writing` 和 `longdoc-docx` 默认启用；`product-evidence`、
+  `product-marketing`、`product-presentation` 默认停用。已保存的用户启停和 Runtime
+  分配始终优先于默认值；导入 Skill 的默认行为保持不变。
 - `MCP` 继续承载现有 MCP 配置、凭据、状态和 Runtime 分配；其现有内部分组页签保持不变。
 - `工具执行环境` 承载工具下载源、Node.js、Python、诊断和生效范围。
 - 合并导航不改写 Skills/MCP 业务数据；未来新增定向入口时必须进入对应水平 Tab。

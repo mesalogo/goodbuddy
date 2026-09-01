@@ -1,40 +1,40 @@
 ---
 name: product-marketing
-version: 1.0.0
+version: 1.1.0
 description: |
   编排产品事实、功能列表、招标参数、产品 PPT、技术方案、一页纸、白皮书、招标响应、
-  演示套件、客户案例和竞品定位等多个独立技能。用于一次请求需要选择或组合多种
-  产品市场产物，并确保它们共享同一事实版本、术语和承诺边界。
+  演示套件、客户案例和竞品定位。用于一次请求需要选择或组合多种产品市场产物，
+  并确保它们共享同一事实版本、术语和承诺边界。
 allowed-tools:
   - Read
   - Grep
   - Glob
   - Execute
-compatibility: 可独立规划；执行节点需要对应子技能可用
+compatibility: 内置九种文档工作流；事实校验和 PPT 构建需要对应独立 Skill
 ---
 
 # 产品市场总编排
 
-本技能只负责需求澄清、路由、依赖、门禁和跨产物一致性。各产物的方法和模板由
-对应独立技能负责，不能在总技能中重新实现一份简化版本。
+本技能负责需求澄清、路由、依赖、门禁和跨产物一致性。九种文档产物的方法与模板
+内置在 `workflows/`；需要哪种产物才读取对应 `WORKFLOW.md`，不要一次加载全部。
 
-## 子技能
+## 内置工作流
 
-| 技能 | 唯一职责 |
-|---|---|
-| `product-evidence` | 冻结产品事实、状态、证据和限制 |
-| `product-feature-catalog` | 功能目录和版本矩阵 |
-| `tender-technical-spec` | 可采购、可验收的招标技术规格 |
-| `product-presentation` | 产品介绍 PPT 与讲稿 |
-| `technical-proposal` | 客户或投标技术方案 |
-| `product-one-pager` | 一页纸产品概览和彩页文案 |
-| `solution-whitepaper` | 原理、架构、证据和边界白皮书 |
-| `tender-response-matrix` | 招标要求逐条响应、缺口和偏离 |
-| `sales-demo-kit` | 可执行演示套件、回退和演练材料 |
-| `customer-case-study` | 经授权且可复核的客户案例 |
-| `competitive-positioning` | 有来源的竞品矩阵和定位 |
+| 路由标识 | 工作流文件 | 唯一职责 |
+|---|---|---|
+| `product-feature-catalog` | `workflows/product-feature-catalog/WORKFLOW.md` | 功能目录和版本矩阵 |
+| `tender-technical-spec` | `workflows/tender-technical-spec/WORKFLOW.md` | 可采购、可验收的招标技术规格 |
+| `technical-proposal` | `workflows/technical-proposal/WORKFLOW.md` | 客户或投标技术方案 |
+| `product-one-pager` | `workflows/product-one-pager/WORKFLOW.md` | 一页纸产品概览和彩页文案 |
+| `solution-whitepaper` | `workflows/solution-whitepaper/WORKFLOW.md` | 原理、架构、证据和边界白皮书 |
+| `tender-response-matrix` | `workflows/tender-response-matrix/WORKFLOW.md` | 招标要求逐条响应、缺口和偏离 |
+| `sales-demo-kit` | `workflows/sales-demo-kit/WORKFLOW.md` | 可执行演示套件、回退和演练材料 |
+| `customer-case-study` | `workflows/customer-case-study/WORKFLOW.md` | 经授权且可复核的客户案例 |
+| `competitive-positioning` | `workflows/competitive-positioning/WORKFLOW.md` | 有来源的竞品矩阵和定位 |
 
-`deai-writing` 和 `longdoc-docx` 是可选质量与导出技能，不承担产品事实判断。
+`product-evidence` 负责冻结产品事实、状态、证据和限制；`product-presentation`
+负责产品 PPT 与讲稿构建。两者保留为独立 Skill，使用前必须确认已启用。
+`deai-writing` 和 `longdoc-docx` 也是独立的质量与导出 Skill，不承担产品事实判断。
 
 ## 第一步：形成任务简报
 
@@ -60,8 +60,9 @@ compatibility: 可独立规划；执行节点需要对应子技能可用
 <python> "<skill-dir>/scripts/validate_route_plan.py" ./route-plan.json
 ```
 
-所有产物必须直接或间接依赖唯一的 `product-evidence` 节点。节点缺少对应技能时
-明确报告缺失，不允许由总技能静默生成低质量替代物。
+所有产物必须直接或间接依赖唯一的 `product-evidence` 节点。路由计划 v1 继续用
+`skill` 字段记录工作流或独立 Skill 标识，避免破坏已有计划。缺少或未启用
+`product-evidence`、`product-presentation` 时明确报告，不允许静默生成替代物。
 
 `depends_on` 表示硬依赖：被依赖节点未 `completed` 时，本节点不能进入 `running`
 或 `completed`。可选输入（例如尚无授权的客户案例）不要写进 `depends_on`，而是
@@ -179,7 +180,7 @@ deliverables/
   internal/     # 仅内部
 ```
 
-各子技能的 `output` 一律指向 `deliverables/<密级>/`，核验产物一律写入
+各工作流的 `output` 一律指向 `deliverables/<密级>/`，核验产物一律写入
 `build/check/`。交付目录内只允许出现 DOCX 与 PPTX。
 
 单文件产物直接放 `build/<产物名>.md`。技术方案、白皮书等需要分章节的长文，改用

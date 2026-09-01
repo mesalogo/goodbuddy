@@ -1,17 +1,7 @@
----
-name: product-one-pager
-version: 1.0.0
-description: |
-  将已核验产品信息压缩为一页纸产品概览、宣传彩页或官网下载页文案。用于首次触达、
-  展会资料和销售跟进；不替代完整功能清单、技术规格或技术方案。
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-compatibility: Markdown/HTML；建议配合 product-evidence
----
-
 # 产品一页纸
+
+将已核验产品信息压缩为一页纸产品概览、宣传彩页或官网下载页文案。用于首次触达、
+展会资料和销售跟进；不替代完整功能清单、技术规格或技术方案。
 
 ## 必要输入
 

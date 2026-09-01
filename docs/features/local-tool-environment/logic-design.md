@@ -78,6 +78,16 @@ stdio MCP 配置的绝对 command 表达用户对该 MCP 的明确覆盖，原�
 分阶段交付期间，未实现的“工具执行环境”不进入 Tab 状态集合。第一阶段状态集合只有
 `skills | mcp`，后续实现完成后才扩展为 `skills | mcp | tool-environment`。
 
+### INV-11 内置 Skill 默认值不覆盖用户状态
+
+只有状态存储中没有对应 Skill 记录时才使用产品默认值。通用文档工具
+`deai-writing`、`longdoc-docx` 默认启用；产品营销类 `product-evidence`、
+`product-marketing`、`product-presentation` 默认停用。用户显式保存的启停状态和
+Runtime 分配优先，升级不得重置。
+
+九种产品营销文档配方属于 `product-marketing` 包内工作流，不是独立能力状态维度，
+不进入顶层 Skill 目录，也不单独注入 Runtime。
+
 ## 3. 状态维度
 
 ### 3.1 来源选择

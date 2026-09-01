@@ -32,6 +32,9 @@
 - [x] 定义设置页结构、状态、文案和无障碍要求。
 - [x] 定义 Main 服务、shim、探测、诊断、PATH 注入和 Python 生命周期。
 - [x] 远程主机设置副标题已说明本机 Skills 和 MCP 不作用于远程主机。
+- [x] 将内置 Skill 顶层目录从 14 个收敛为 5 个，九种产品营销配方改为
+  `product-marketing` 包内按需工作流。
+- [x] 通用文档工具默认启用，三个产品营销 Skill 默认停用，同时保留用户显式保存状态。
 
 ## 待实施
 
@@ -83,9 +86,10 @@
 
 - `npm run typecheck` 通过。
 - `npm run lint` 通过。
+- `npm run build` 通过。
+- `npm test` 通过：`3412` 通过、`50` 跳过。
+- Skill 聚焦测试通过：Capability/Bundled Skills `39/39`，产品营销路由 `10/10`。
 - `npm test -- src/renderer/src/SettingsPanel.test.tsx` 通过：`80/80`。
-- 最近一次 `npm test` 为 `3410` 通过、`50` 跳过、`1` 失败；失败是并行修改中的浏览器
-  控制用例超时，该用例随后单独复跑通过。本功能聚焦测试全部通过。
 - 设置页测试确认左侧不再显示独立 Skills/MCP，统一入口默认打开 Skills，MCP 原内层页签
   保持可用，且不显示工具执行环境占位。
 - 修复能力与工具 Tab 包装层在可滚动设置布局中被 Flexbox 压缩到零高度的问题，并增加与

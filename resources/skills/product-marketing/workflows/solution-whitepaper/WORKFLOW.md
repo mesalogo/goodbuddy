@@ -1,19 +1,8 @@
----
-name: solution-whitepaper
-version: 1.0.0
-description: |
-  编写解释行业问题、技术原理、参考架构、实现方法、测试证据和适用边界的产品或
-  解决方案白皮书。用于技术传播和决策评估；不编制客户项目计划，也不把宣传口号
-  当作技术论证。
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-  - Execute
-compatibility: Markdown；可配合 longdoc-docx 导出 Word（PDF 仅用于核验）
----
-
 # 解决方案白皮书
+
+编写解释行业问题、技术原理、参考架构、实现方法、测试证据和适用边界的产品或
+解决方案白皮书。用于技术传播和决策评估；不编制客户项目计划，也不把宣传口号
+当作技术论证。
 
 ## 必要输入
 

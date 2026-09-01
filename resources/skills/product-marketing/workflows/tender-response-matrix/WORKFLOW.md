@@ -1,17 +1,7 @@
----
-name: tender-response-matrix
-version: 1.0.0
-description: |
-  将招标文件技术要求逐条拆解并生成符合性响应矩阵、缺口清单和方案章节映射。用于
-  投标前要求解析、响应检查和技术偏离管理；不制定采购参数，也不代写整篇方案。
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-compatibility: Markdown/CSV；建议配合 product-evidence
----
-
 # 招标响应矩阵
+
+将招标文件技术要求逐条拆解并生成符合性响应矩阵、缺口清单和方案章节映射。用于
+投标前要求解析、响应检查和技术偏离管理；不制定采购参数，也不代写整篇方案。
 
 ## 必要输入
 

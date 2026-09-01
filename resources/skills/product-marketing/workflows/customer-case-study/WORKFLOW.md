@@ -1,17 +1,7 @@
----
-name: customer-case-study
-version: 1.0.0
-description: |
-  基于客户授权、实施记录和可复核指标生成客户案例、成功故事和案例摘要。用于公开
-  宣传、销售材料或受控投标引用；没有披露授权或历史结果时不得生成可发布案例。
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-compatibility: Markdown；建议配合 product-evidence
----
-
 # 客户案例
+
+基于客户授权、实施记录和可复核指标生成客户案例、成功故事和案例摘要。用于公开
+宣传、销售材料或受控投标引用；没有披露授权或历史结果时不得生成可发布案例。
 
 ## 发布前硬门禁
 

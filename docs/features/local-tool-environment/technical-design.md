@@ -232,6 +232,17 @@ URL 只存在于 Main/构建目录，不进入 Renderer。两个 Target 共用�
 
 SKILL 稳定调用命令名，不接收真实安装路径。
 
+- `resources/skills` 顶层只保留五个带 `SKILL.md` 的独立包：
+  `deai-writing`、`longdoc-docx`、`product-evidence`、`product-marketing`、
+  `product-presentation`。
+- 九种纯 Markdown 产品营销配方位于 `product-marketing/workflows/<route-id>/`，
+  使用 `WORKFLOW.md` 与同目录 `templates/`，不参与顶层 Skill 发现。
+- `CapabilityService` 仅在状态中没有该 ID 时应用默认值。三个产品营销 Skill 默认
+  `enabled: false`；两个通用文档工具和导入 Skill 维持默认启用。显式保存状态不迁移、
+  不覆盖。
+- 默认停用的 Skill 不进入 Runtime 指令和原生 Skill 包列表；用户启用后沿用现有四个
+  Runtime 分配。
+
 stdio MCP：
 
 - 裸 `node`、`npm`、`npx`、`python`、`python3`、`pip` 使用工具 bin。

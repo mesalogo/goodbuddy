@@ -56,27 +56,54 @@ describe('bundled skills', () => {
   it('parses every bundled SKILL.md', async () => {
     const snapshot = await (await createService()).getSnapshot()
 
-    expect(snapshot.skills.length).toBeGreaterThan(0)
+    expect(snapshot.skills.map((skill) => skill.id)).toEqual(
+      expect.arrayContaining([
+        'deai-writing',
+        'longdoc-docx',
+        'product-evidence',
+        'product-marketing',
+        'product-presentation'
+      ])
+    )
+    expect(snapshot.skills).toHaveLength(5)
     expect(snapshot.skills.every((skill) => skill.source === 'builtin')).toBe(
       true
     )
-    expect(snapshot.skills.map((skill) => skill.id)).toContain(
-      'product-marketing'
+    expect(
+      snapshot.skills
+        .filter((skill) => skill.enabled)
+        .map((skill) => skill.id)
+    ).toEqual(
+      expect.arrayContaining(['deai-writing', 'longdoc-docx'])
+    )
+    expect(
+      snapshot.skills
+        .filter((skill) => !skill.enabled)
+        .map((skill) => skill.id)
+    ).toEqual(
+      expect.arrayContaining([
+        'product-evidence',
+        'product-marketing',
+        'product-presentation'
+      ])
     )
     expect(snapshot.skills.map((skill) => skill.id)).not.toContain(
       'web-3d-game'
     )
   })
 
-  it('injects every enabled bundled skill with its resolved directory', async () => {
+  it('injects enabled tools without loading disabled marketing skills', async () => {
     const service = await createService()
     const snapshot = await service.getSnapshot()
 
     const instructions = await service.getSkillInstructions('continue')
 
     expect(instructions).not.toContain('因超出注入上限未加载')
-    for (const skill of snapshot.skills) {
+    for (const skill of snapshot.skills.filter((item) => item.enabled)) {
       expect(instructions).toContain(join(builtinSkillsRoot, skill.id))
+    }
+    for (const skill of snapshot.skills.filter((item) => !item.enabled)) {
+      expect(instructions).not.toContain(join(builtinSkillsRoot, skill.id))
     }
   })
 
@@ -88,8 +115,12 @@ describe('bundled skills', () => {
     ).resolves.toMatchObject({
       packages: expect.arrayContaining([
         {
-          id: 'product-marketing',
-          directory: join(builtinSkillsRoot, 'product-marketing')
+          id: 'deai-writing',
+          directory: join(builtinSkillsRoot, 'deai-writing')
+        },
+        {
+          id: 'longdoc-docx',
+          directory: join(builtinSkillsRoot, 'longdoc-docx')
         }
       ])
     })
