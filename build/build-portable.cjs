@@ -336,7 +336,7 @@ function main() {
   const result = spawnSync(
     process.execPath,
     [
-      join(root, 'node_modules', 'electron-builder', 'cli.js'),
+      join(root, 'build', 'run-electron-builder.cjs'),
       '--dir',
       '--x64',
       `--config.directories.output=${stagingRoot}`,

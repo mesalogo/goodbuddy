@@ -132,6 +132,12 @@ npm run dist:linux:arm64
 
 打包产物位于 `dist`。
 
+所有桌面打包入口通过同一个 `electron-builder` 启动脚本运行。正常日志会隐藏
+`duplicate dependency references` 信息摘要，因为它只表示同一已解析依赖被多条
+生产依赖路径共享，并不要求构建操作者处理；调试日志仍会保留该摘要。Renderer 中
+已由 Vite 打包的 `@antv/g6` 归类为构建期依赖，不会再作为独立 Node 模块复制进桌面
+安装包。
+
 以上 `dist*` 与 `portable` 命令用于普通本地桌面打包。它们会携带
 `agent-runtime-lock.json`、`remote-runtime-lock.json` 与公开的
 `agent-release-keys.json`，但所有桌面构建路径（包括本地 `portable`）都不会嵌入

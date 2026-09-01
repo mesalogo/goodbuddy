@@ -346,7 +346,7 @@ function buildElectronBuilderArguments(options, outputDirectory) {
     )
   )]
   const builderArguments = [
-    join(root, 'node_modules', 'electron-builder', 'cli.js'),
+    join(root, 'build', 'run-electron-builder.cjs'),
     '--config',
     releaseBuilderConfig,
     definition.builderFlag,

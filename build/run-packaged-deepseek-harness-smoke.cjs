@@ -147,7 +147,7 @@ async function main() {
     )
 
     const packageArguments = [
-      resolve('node_modules/electron-builder/cli.js'),
+      resolve('build/run-electron-builder.cjs'),
       '--projectDir',
       project,
       '--win',

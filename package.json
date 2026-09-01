@@ -37,12 +37,12 @@
     "remote-runtime:verify": "node build/remote-runtime-bundle.cjs verify",
     "remote-runtime:import": "node build/remote-runtime-bundle.cjs import",
     "release:notes:verify": "node build/release-notes.cjs",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
-    "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64",
+    "dist": "npm run build && node build/run-electron-builder.cjs",
+    "dist:win": "npm run build && node build/run-electron-builder.cjs --win nsis --x64 --arm64",
+    "dist:mac": "npm run build && node build/run-electron-builder.cjs --mac dmg --x64 --arm64",
     "dist:linux": "npm run dist:linux:x64 && npm run dist:linux:arm64",
-    "dist:linux:x64": "npm run build && electron-builder --linux AppImage deb rpm --x64",
-    "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb rpm --arm64",
+    "dist:linux:x64": "npm run build && node build/run-electron-builder.cjs --linux AppImage deb rpm --x64",
+    "dist:linux:arm64": "npm run build && node build/run-electron-builder.cjs --linux AppImage deb rpm --arm64",
     "icons": "node build/generate-icons.mjs",
     "release:package": "node build/build-release.cjs",
     "portable": "node build/build-portable.cjs"
@@ -259,7 +259,6 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.25.1",
-    "@antv/g6": "^5.1.1",
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
     "@deepseek-ai/dsh-agent-loop": "0.1.0-rc.8",
@@ -324,6 +323,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@antv/g6": "^5.1.1",
     "@continuedev/cli": "1.5.47",
     "@eslint/js": "^10.0.1",
     "@fontsource-variable/inter": "^5.3.0",
