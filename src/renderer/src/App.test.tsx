@@ -9630,16 +9630,39 @@ describe('App', () => {
     expect(address).toHaveValue('https://example.com/start')
 
     fireEvent.change(address, {
-      target: { value: 'https://example.com/enter' }
+      target: { value: 'example.com/enter' }
     })
     fireEvent.keyDown(address, { key: 'Enter' })
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
         expect.any(String),
-        'https://example.com/enter'
+        'http://example.com/enter'
       )
     )
-    expect(api.browser.navigate).toHaveBeenCalledTimes(2)
+    expect(address).toHaveValue('http://example.com/enter')
+
+    fireEvent.change(address, {
+      target: { value: 'mailto:user@example.com' }
+    })
+    fireEvent.keyDown(address, { key: 'Enter' })
+    await waitFor(() =>
+      expect(api.browser.navigate).toHaveBeenLastCalledWith(
+        expect.any(String),
+        'mailto:user@example.com'
+      )
+    )
+
+    fireEvent.change(address, {
+      target: { value: 'localhost:3000/path' }
+    })
+    fireEvent.keyDown(address, { key: 'Enter' })
+    await waitFor(() =>
+      expect(api.browser.navigate).toHaveBeenLastCalledWith(
+        expect.any(String),
+        'http://localhost:3000/path'
+      )
+    )
+    expect(api.browser.navigate).toHaveBeenCalledTimes(4)
   })
 
   it('suppresses duplicate browser actions while keeping stop loading available', async () => {

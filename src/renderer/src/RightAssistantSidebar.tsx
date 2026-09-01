@@ -237,6 +237,18 @@ function measureSplitLayoutWidth(
   return measuredWidth > 0 ? measuredWidth : fallbackWidth
 }
 
+function addDefaultBrowserProtocol(address: string): string {
+  const protocol = /^[a-z][a-z\d+.-]*:/iu.exec(address)?.[0]
+  if (
+    protocol &&
+    (/^https?:$/iu.test(protocol) ||
+      !/^\d+(?:[/?#]|$)/u.test(address.slice(protocol.length)))
+  ) {
+    return address
+  }
+  return `http://${address}`
+}
+
 function BrowserToolbar({
   activeConversationId,
   browserState,
@@ -325,10 +337,12 @@ function BrowserToolbar({
   }
 
   const submitAddress = async (): Promise<void> => {
-    const url = displayedAddress.trim()
-    if (goDisabled || !url) {
+    const address = displayedAddress.trim()
+    if (goDisabled || !address) {
       return
     }
+    const url = addDefaultBrowserProtocol(address)
+    setAddressDraft(url)
     if (await runToolbarAction(() => onNavigate(url))) {
       setDirty(false)
       setEditing(false)
