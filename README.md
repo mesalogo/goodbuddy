@@ -1,64 +1,88 @@
+<div align="center">
+  <img src="./sites/assets/goodbuddy-light.png" width="96" alt="GoodBuddy" />
+
 # GoodBuddy
 
-[English](README.en.md) | 简体中文
+**Desktop access to model chat, coding agents, knowledge, and scheduled work**
 
-GoodBuddy是一个开箱即用的 AI 生产平台，安全、跨平台、本地优先的桌面 AI 助手与 Agent 工作空间。
+**English** | [简体中文](./README.zh-CN.md)
 
-产品官网：https://mesalogo.github.io/goodbuddy/
+[Website](https://mesalogo.github.io/goodbuddy/en.html) ·
+[Download](https://github.com/mesalogo/goodbuddy/releases) ·
+[Feature Matrix](./FEATURES.md) ·
+[Build Guide](./BUILD.md)
 
-五大特点：
-1. 支持国产信创系统和硬件
-2. 免注册，不收集个人信息
-3. 完全开源和免费，友好的OBSD协议
-4. 不需要联网，纯私有网络也可以用
-5. 开放生态，内置主流好用的Agent Runtime，目前支持OpenCode、Continue和DeepSeek Harness，让小白用户也可以快速用起来最前沿的Agent工具
+[![Release](https://img.shields.io/github/v/release/mesalogo/goodbuddy?label=release)](https://github.com/mesalogo/goodbuddy/releases)
+[![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](./LICENSE)
+[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20arm64-0078D4)](https://github.com/mesalogo/goodbuddy/releases)
+[![macOS](https://img.shields.io/badge/macOS-x64%20%7C%20arm64-000000)](https://github.com/mesalogo/goodbuddy/releases)
+[![Linux](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-FCC624)](https://github.com/mesalogo/goodbuddy/releases)
+</div>
 
-![GoodBuddy 工作空间](docs/screenshots/workspace-overview.png)
+![GoodBuddy workspace](./docs/screenshots/workspace-overview.png)
 
-## 核心能力
+GoodBuddy is a desktop application for model chat, coding agents, knowledge
+retrieval, notes, and scheduled tasks. No GoodBuddy account is required.
+Workspace data is stored locally by default. Model endpoints can run on the
+same device, on a private network, or at a provider selected by the user.
 
-- **安全执行**：`Ask` 保持只读；`Execute` 仅运行已启用且受边界约束的工具，并保留活动记录。
-- **本地优先**：会话、任务、成果、记忆、知识库和图谱保存在本地 SQLite；API Key 由系统安全存储加密。
-- **多 Runtime**：支持直连模型、OpenCode、Continue 和预览版 DeepSeek Harness，统一处理取消、超时、输出限制和进程退出；原生能力清单将 Tools 与 Commands、LSP、Formatters 分开，并显示来源及 Ask/Execute 可用性。内置 OpenCode 提供 Agent、Tool、Command 与原生 Compact，Continue 提供 Rules、Prompt 预设、结构化提问与 GoodBuddy 手动摘要压缩，并明确标记当前版本无法静态发现原生 Tools。
-- **开放连接**：支持 OpenAI Responses、OpenAI 兼容 Chat Completions、Anthropic Messages、OpenAI Images、Embeddings、跨 Runtime Skills 与自定义 MCP，以及默认关闭、由用户显式开启的 DeepSeek Harness npm 插件市场。Anthropic 连接可独立配置协议必填的单次最大输出，不再复用上下文窗口；OpenAI 直连请求不额外设置输出 Token 上限。MCP 测试可读取有界 Prompt/Resource 元数据，但不会读取 Resource 内容。
-- **知识工作区**：支持文件、目录和网页导入，以及全文、词组、向量和图谱混合检索。
-- **工作管理**：集中管理 Projects、对话、任务、活动、成果、记忆、魔法笔记和智能心跳；可从稳定的本地会话复制当前聊天内容并创建互不影响的会话分支。
-- **远程通道**：支持微信 ClawBot、企业微信和钉钉，每个发送者使用独立远程会话。
-- **托管 SSH 项目（技术预览）**：远程能力默认关闭且不影响普通桌面使用。添加 Host 只保存并探测，不自动安装；Host 卡片以一个按版本事实命名的主按钮准备环境，次级控件可选默认且不持久化的“自动”、Host 下载或 GoodBuddy 传输。自动模式只在操作开始时择一，失败不跨路径重试；两种方式交付同一签名 compound `.gbagent` 后共用 prepare、commit、Agent/Runtime adoption 与 cleanup。项目创建与切换只使用已经准备好的 Host。GitHub/北京镜像、Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收仍待完成，当前不表示该路径已发布。
-- **桌面上下文**：可选择文件、截图、应用窗口、剪贴板和语音作为上下文。
-- **离线语音**：支持 SenseVoice、Paraformer 和 Whisper 本地模型。
-- **富文本回答**：支持 Markdown、LaTeX 公式和受控 Mermaid 图表。
+## Capabilities
 
-![GoodBuddy 知识工作区](docs/screenshots/knowledge-workspace.png)
+| Area | Available in GoodBuddy |
+| --- | --- |
+| Agent Runtimes | Direct model connections, OpenCode, Continue, and the preview DeepSeek Harness |
+| Data and execution | Local SQLite storage, read-only `Ask`, full-account `Execute`, and recorded tool activity |
+| Knowledge | File, folder, and web imports with full-text, Chinese phrase, vector, and knowledge graph retrieval |
+| Desktop releases | Windows, macOS, and Linux builds for `x64` and `arm64` |
+| Integrations | Local or hosted model endpoints, custom MCP servers, WeChat ClawBot, WeCom, and DingTalk |
 
-![GoodBuddy 知识图谱](docs/screenshots/knowledge-graph.png)
+## Product tour
 
-![GoodBuddy 魔法笔记](docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
+### Knowledge bases and graphs
 
-![GoodBuddy 智能心跳](docs/screenshots/smart-heartbeat.png)
+![GoodBuddy knowledge workspace](./docs/screenshots/knowledge-workspace.png)
 
-完整功能和路线图见 [FEATURES.md](FEATURES.md)，产品功能文档位于
-[`docs/features`](./docs/features/)，维护规范见
-[`docs/features/AGENTS.md`](./docs/features/AGENTS.md)。
+![GoodBuddy knowledge graph](./docs/screenshots/knowledge-graph.png)
 
-## 安装
+### Magic Notes and Smart Heartbeat
 
-从 [GitHub Releases](https://github.com/mesalogo/goodbuddy/releases) 下载：
+![GoodBuddy Magic Notes](./docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
 
-| 系统 | 架构 | 格式 |
+![GoodBuddy Smart Heartbeat](./docs/screenshots/smart-heartbeat.png)
+
+## Agent Runtimes
+
+| Runtime | Functions | Configuration |
 | --- | --- | --- |
-| Windows | `x64`、`arm64` | NSIS、便携 ZIP |
-| macOS | `x64`、`arm64` | DMG、ZIP |
-| Linux | `x64`、`arm64` | AppImage、DEB、RPM |
+| Direct models | Chat, retrieval, image generation, and built-in tools | GoodBuddy model connections |
+| OpenCode | Coding agents, native commands, tools, and skills | GoodBuddy-managed or native OpenCode configuration |
+| Continue | Rules, prompt presets, and coding tasks | GoodBuddy-managed or native Continue configuration |
+| DeepSeek Harness (preview) | A fixed host with optional plugin capabilities | GoodBuddy-managed OpenAI-compatible connection |
 
-桌面安装包不包含远端 Agent payload。仅使用本地项目时无需下载任何
-Agent 包；托管 SSH 用户可在设置中按需管理。
+Each run reports cancellation, timeouts, token usage, tool calls, and history.
+Runtime-specific capabilities and configuration remain separate.
 
-当前尚未配置代码签名和 macOS notarization，系统可能显示安全提示。
+## Download
 
-## 从源码运行
+Download a build from
+[GitHub Releases](https://github.com/mesalogo/goodbuddy/releases):
 
-需要 Node.js 24 和 npm：
+| Platform | Architectures | Formats |
+| --- | --- | --- |
+| Windows | `x64`, `arm64` | NSIS, portable ZIP |
+| macOS | `x64`, `arm64` | DMG, ZIP |
+| Linux | `x64`, `arm64` | AppImage, DEB, RPM |
+
+Desktop installers do not contain remote Agent payloads. Local projects do not
+need an Agent package; managed SSH users download or import one explicitly in
+Settings.
+
+Code signing and macOS notarization are not configured yet, so the operating
+system may display a security warning.
+
+## Run from source
+
+Requires Node.js 24 and npm:
 
 ```bash
 git clone https://github.com/mesalogo/goodbuddy.git
@@ -67,20 +91,35 @@ npm ci
 npm run dev
 ```
 
-构建与打包说明见 [BUILD.md](BUILD.md)。
+See [BUILD.md](./BUILD.md) for build and packaging instructions.
 
-## 隐私与安全
+## Documentation
 
-- 模型请求只发送到用户选择的服务。
-- 本地数据默认保存在系统应用数据目录。
-- Renderer 不接触原始 Electron API 或模型凭据。
-- DeepSeek Harness 插件市场默认关闭；开启并安装第三方插件后，其安装脚本、初始化和 Execute 工具以当前用户权限运行。关闭市场只隐藏目录和管理界面，不会停用或卸载已有插件；安装前会明确确认。Ask 只允许 Host 原生 `read`/`skill` 与 Main 管理的 Web Search/Fetch，不允许调用第三方插件工具，也不能限制插件初始化代码。
-- 远程委派仅在用户配置端点和令牌后启用。
-- 内网兼容模式允许应用内 HTTP 和非标准 HTTPS 证书；微信凭据和媒体端点仍执行严格校验。
+- [Feature matrix and roadmap](./FEATURES.md)
+- [Product feature documentation](./docs/features/)
+- [UI design system](./UI-DESIGN.md)
+- [Build and packaging](./BUILD.md)
+- [Release runbook](./docs/development/release-runbook.md)
 
-## 参与贡献
+## Privacy and execution boundaries
 
-欢迎提交 Issue 和 Pull Request。请先阅读 [AGENTS.md](AGENTS.md)，提交前运行：
+- Model requests are sent only to services selected by the user.
+- Local data stays in the operating system's application data directory by
+  default. API keys are encrypted by secure system storage.
+- The Renderer has no access to raw Electron APIs or model credentials.
+- The DeepSeek Harness plugin marketplace is off by default. Third-party
+  install scripts, initialization code, and Execute tools run with the current
+  user's permissions.
+- Remote delegation is enabled only after the user configures an endpoint and
+  token.
+- Private-network compatibility permits in-app HTTP and non-standard HTTPS
+  certificates. WeChat credential and media endpoints remain strictly
+  validated.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [AGENTS.md](./AGENTS.md) first, then
+run:
 
 ```bash
 npm test
@@ -88,19 +127,8 @@ npm run typecheck
 npm run lint
 ```
 
-## 为什么选择GoodBuddy
+## License
 
-<img width="1024" height="1536" alt="6dd45371542dea9fb2d99474387708f5" src="https://github.com/user-attachments/assets/ca608646-ea48-4039-9177-d862be8396ac" />
-
-
-## 社区交流
-
-目前采用微信群的方式供大家高效交流，大家可以微信扫码进入社区群：
-
-<img width="1250" height="1743" alt="6ae8664c83b2f182aa81ae94afe691fe" src="https://github.com/user-attachments/assets/10bb7ac2-0bc1-41a9-978d-c2862923fcd6" />
-
-
-
-## 开源许可
-
-GoodBuddy 的原创代码采用 [0BSD License](LICENSE)，可自由使用、修改、分发和商用。第三方组件和资源遵循各自许可证。
+Original GoodBuddy code is released under the [0BSD License](./LICENSE). You may
+use, modify, distribute, and commercialize it freely. Third-party components
+and resources retain their respective licenses.

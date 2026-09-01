@@ -24,25 +24,25 @@ export const heartbeat = {
       retry: 'Retry'
     },
     loading: {
-      description: 'Loading heartbeat plans, runs, and growth reports.',
+      description: 'Loading heartbeat plans, runs, and reports.',
       title: 'Loading Smart Heartbeat',
       failedTitle: 'Could not load Smart Heartbeat',
       refreshFailedTitle: 'Could not refresh Smart Heartbeat'
     },
     tabs: {
       ariaLabel: 'Smart Heartbeat views',
-      overview: 'Growth overview',
+      overview: 'Run overview',
       suggestions: 'Pending suggestions',
-      history: 'Heartbeat history',
+      history: 'Reports and runs',
       plans: 'Heartbeat plans'
     },
     currentStatus: {
       title: 'Current status',
       activePlans: 'Active plans: {{formattedCount}}',
       disabled: 'Not enabled',
-      emptyTitle: 'No growth cadence yet',
+      emptyTitle: 'No heartbeat plan',
       emptyDescription:
-        'Create a daily or weekly heartbeat so GoodBuddy can keep reviewing and learning.',
+        'Create a daily or weekly plan to review conversations and tasks in the selected scope and generate suggestions.',
       createPlan: 'Create heartbeat plan'
     },
     recurrence: {
@@ -67,14 +67,14 @@ export const heartbeat = {
       resume: 'Resume'
     },
     metrics: {
-      ariaLabel: 'Smart Heartbeat growth metrics',
+      ariaLabel: 'Smart Heartbeat run metrics',
       health: 'Heartbeat health',
       successfulRuns: '{{completed}}/{{total}} completed successfully',
       healthRateAriaLabel: 'Heartbeat success rate {{percent}}',
-      memory: 'Memory retention',
+      memory: 'Memory confirmation',
       memoryDescription: 'Confirmed memories / heartbeat suggestions',
       memoryRateAriaLabel: 'Memory confirmation rate {{percent}}',
-      insights: 'Insights found',
+      insights: 'Report insights',
       insightReports: 'Heartbeat reports: {{formattedCount}}',
       latestInsights: 'Latest report findings: {{formattedCount}}',
       awaitingFirstRun: 'Waiting for the first heartbeat',
@@ -83,9 +83,9 @@ export const heartbeat = {
       actionRateAriaLabel: 'Suggested task completion rate {{percent}}'
     },
     trend: {
-      title: 'Growth trend',
+      title: 'Report trend',
       empty:
-        'After a heartbeat completes, changes in insights, memories, and suggested actions will appear here.',
+        'After a heartbeat runs, this chart shows changes in insight, memory, and action suggestion counts.',
       insight: 'Insights',
       memory: 'Memories',
       action: 'Actions',
@@ -94,10 +94,10 @@ export const heartbeat = {
     },
     latest: {
       title: 'Latest heartbeat',
-      viewHistory: 'View heartbeat history',
+      viewHistory: 'View reports and runs',
       handleSuggestions: 'Review suggestions ({{formattedCount}})',
       empty:
-        'There are no heartbeat reports yet. Run a heartbeat to see what GoodBuddy learned.'
+        'There are no heartbeat reports yet. Run one to view insight, memory, and action suggestions.'
     },
     suggestions: {
       memoryTitle: 'Memories to confirm',
@@ -117,10 +117,10 @@ export const heartbeat = {
       ignoreSuggestion: 'Ignore suggestion'
     },
     history: {
-      timelineTitle: 'Growth history',
+      timelineTitle: 'Heartbeat reports',
       reportCount: 'Reports: {{formattedCount}}',
       emptyTimeline:
-        'Each completed heartbeat and what it learned will appear here.',
+        'Reports from completed heartbeat runs appear here.',
       reportSummary:
         '{{insights}} insights · {{memories}} memories · {{actions}} actions',
       collapseReport: 'Collapse report',
@@ -204,7 +204,7 @@ export const heartbeat = {
     enableAriaLabel: 'Enable Smart Heartbeat',
     enabling: 'Enabling…',
     enable: 'Enable Smart Heartbeat',
-    defaultName: 'Smart growth review',
+    defaultName: 'Scheduled review',
     empty: 'Smart Heartbeat is not configured for this scope.',
     running: 'Running',
     paused: 'Paused',

@@ -241,9 +241,10 @@ export const app = {
         prompt: 'Analyze this error and suggest likely causes and troubleshooting steps:\n'
       },
       write: {
-        title: 'Draft work content',
-        description: 'Draft an email, update, or proposal',
-        prompt: 'Help me draft clear, professional work content:\n'
+        title: 'Draft an email or update',
+        description: 'Use the notes below for an email, update, or proposal',
+        prompt:
+          'Draft an email, update, or proposal from the following notes. Preserve the facts and relevant details:\n'
       }
     },
     remote: {

@@ -10048,7 +10048,7 @@ describe('App', () => {
       await screen.findByRole('heading', { name: '智能心跳' })
     ).toBeInTheDocument()
     expect(
-      await screen.findByRole('tab', { name: '成长概览' })
+      await screen.findByRole('tab', { name: '运行概览' })
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: '配置智能心跳' })

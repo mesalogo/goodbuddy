@@ -228,9 +228,9 @@ export const app = {
         prompt: '请分析下面的错误信息，给出可能原因和排查步骤：\n'
       },
       write: {
-        title: '编写工作内容',
-        description: '起草邮件、周报或方案',
-        prompt: '请帮我起草一份清晰、专业的工作内容：\n'
+        title: '起草邮件或周报',
+        description: '根据输入信息整理邮件、周报或方案',
+        prompt: '请根据下面的信息起草邮件、周报或方案；保留事实和必要细节：\n'
       }
     },
     remote: {

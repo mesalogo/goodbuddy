@@ -20,25 +20,25 @@ export const heartbeat = {
       retry: '重试'
     },
     loading: {
-      description: '正在读取心跳计划、运行记录和成长报告。',
+      description: '正在读取心跳计划、运行记录和心跳报告。',
       title: '正在加载智能心跳',
       failedTitle: '智能心跳加载失败',
       refreshFailedTitle: '智能心跳刷新失败'
     },
     tabs: {
       ariaLabel: '智能心跳视图',
-      overview: '成长概览',
+      overview: '运行概览',
       suggestions: '待处理建议',
-      history: '心跳轨迹',
+      history: '报告与记录',
       plans: '心跳计划'
     },
     currentStatus: {
       title: '当前状态',
       activePlans: '{{formattedCount}} 个计划运行中',
       disabled: '尚未启用',
-      emptyTitle: '尚未建立成长节奏',
+      emptyTitle: '尚未配置心跳计划',
       emptyDescription:
-        '配置每日或每周心跳，让 GoodBuddy 持续回顾和学习。',
+        '创建每日或每周计划，GoodBuddy 将按范围回顾对话和任务并生成建议。',
       createPlan: '创建心跳计划'
     },
     recurrence: {
@@ -63,14 +63,14 @@ export const heartbeat = {
       resume: '恢复'
     },
     metrics: {
-      ariaLabel: '智能心跳成长维度',
+      ariaLabel: '智能心跳运行统计',
       health: '心跳健康',
       successfulRuns: '{{completed}}/{{total}} 次成功完成',
       healthRateAriaLabel: '心跳成功率 {{percent}}',
-      memory: '记忆沉淀',
+      memory: '记忆确认',
       memoryDescription: '已确认记忆 / 心跳建议',
       memoryRateAriaLabel: '记忆确认率 {{percent}}',
-      insights: '洞察发现',
+      insights: '报告洞察',
       insightReports: '来自 {{formattedCount}} 份心跳报告',
       latestInsights: '最近一次发现 {{formattedCount}} 条',
       awaitingFirstRun: '等待首次心跳',
@@ -79,9 +79,9 @@ export const heartbeat = {
       actionRateAriaLabel: '建议任务完成率 {{percent}}'
     },
     trend: {
-      title: '成长趋势',
+      title: '报告趋势',
       empty:
-        '完成心跳后，这里会显示洞察、记忆与行动建议的变化。',
+        '运行心跳后，这里会显示洞察、记忆和行动建议的数量变化。',
       insight: '洞察',
       memory: '记忆',
       action: '行动',
@@ -90,10 +90,10 @@ export const heartbeat = {
     },
     latest: {
       title: '本次心跳',
-      viewHistory: '查看心跳轨迹',
+      viewHistory: '查看报告与记录',
       handleSuggestions: '处理 {{formattedCount}} 条建议',
       empty:
-        '尚无心跳报告。运行一次心跳后，你会在这里看到本次学到了什么。'
+        '尚无心跳报告。运行一次后，可在这里查看洞察、记忆和行动建议。'
     },
     suggestions: {
       memoryTitle: '待确认记忆',
@@ -113,9 +113,9 @@ export const heartbeat = {
       ignoreSuggestion: '忽略建议'
     },
     history: {
-      timelineTitle: '成长轨迹',
+      timelineTitle: '心跳报告',
       reportCount: '{{formattedCount}} 份报告',
-      emptyTimeline: '完成心跳后，每次学习和变化都会沉淀在这里。',
+      emptyTimeline: '每次运行生成的心跳报告会显示在这里。',
       reportSummary:
         '{{insights}} 条洞察 · {{memories}} 条记忆 · {{actions}} 个行动',
       collapseReport: '收起报告',
@@ -197,7 +197,7 @@ export const heartbeat = {
     enableAriaLabel: '启用智能心跳',
     enabling: '启用中…',
     enable: '启用智能心跳',
-    defaultName: '智能成长回顾',
+    defaultName: '定期回顾',
     empty: '当前范围尚未配置智能心跳。',
     running: '运行中',
     paused: '已暂停',

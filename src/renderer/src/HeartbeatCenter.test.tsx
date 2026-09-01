@@ -28,7 +28,7 @@ const config: AssistantHeartbeatConfig = {
     kind: 'projects',
     projectIds: ['00000000-0000-4000-8000-000000000101']
   },
-  name: '智能成长回顾',
+  name: '定期回顾',
   timezone: 'Asia/Shanghai',
   recurrence: {
     type: 'daily',
@@ -202,7 +202,7 @@ describe('HeartbeatCenter', () => {
     expect(screen.getByLabelText('Default project')).toBeInTheDocument()
   })
 
-  it('shows heartbeat health, growth dimensions, and the latest report', () => {
+  it('shows heartbeat health, run metrics, and the latest report', () => {
     render(<HeartbeatCenter {...createProps()} />)
 
     expect(
@@ -218,9 +218,9 @@ describe('HeartbeatCenter', () => {
       screen.getByText('本次心跳发现用户偏好简洁回复，并建议整理交付计划。')
     ).toBeInTheDocument()
 
-    const dimensions = screen.getByLabelText('智能心跳成长维度')
+    const dimensions = screen.getByLabelText('智能心跳运行统计')
     expect(
-      within(dimensions).getByText('记忆沉淀')
+      within(dimensions).getByText('记忆确认')
     ).toBeInTheDocument()
     expect(
       within(dimensions).getByText('行动转化')
@@ -292,7 +292,7 @@ describe('HeartbeatCenter', () => {
       screen.getByRole('heading', { level: 2, name: '当前状态' })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('heading', { level: 2, name: '成长趋势' })
+      screen.getByRole('heading', { level: 2, name: '报告趋势' })
     ).toBeInTheDocument()
     expect(
       screen.getByRole('heading', { level: 2, name: '本次心跳' })
@@ -311,9 +311,9 @@ describe('HeartbeatCenter', () => {
     expect(screen.queryByText('MEMORY GROWTH')).not.toBeInTheDocument()
     expect(screen.queryByText('NEXT ACTIONS')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: '心跳轨迹' }))
+    fireEvent.click(screen.getByRole('tab', { name: '报告与记录' }))
     expect(
-      screen.getByRole('heading', { level: 2, name: '成长轨迹' })
+      screen.getByRole('heading', { level: 2, name: '心跳报告' })
     ).toBeInTheDocument()
     expect(
       screen.getByRole('heading', { level: 2, name: '运行记录' })
@@ -399,7 +399,7 @@ describe('HeartbeatCenter', () => {
     )
     await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce())
 
-    fireEvent.click(screen.getByRole('tab', { name: '心跳轨迹' }))
+    fireEvent.click(screen.getByRole('tab', { name: '报告与记录' }))
     expect(screen.getByText('模型暂时不可用')).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole('button', { name: '展开完整报告' })
