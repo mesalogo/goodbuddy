@@ -2404,6 +2404,7 @@ textarea:focus-visible {
   min-width: 9px;
   padding: 0;
   margin-left: -5px;
+  margin-right: -4px;
   background: transparent;
   cursor: col-resize;
   touch-action: none;
