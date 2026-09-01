@@ -6,7 +6,7 @@ import type {
   CapabilitySnapshot,
   RuntimeTarget
 } from '../../shared/capability-contracts'
-import { SettingsCategoryHeader } from './SettingsPrimitives'
+import { SettingsSectionHeader } from './SettingsPrimitives'
 
 export function SkillsSettingsSection(): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
@@ -62,7 +62,7 @@ export function SkillsSettingsSection(): React.JSX.Element {
 
   return (
     <>
-      <SettingsCategoryHeader
+      <SettingsSectionHeader
         actions={
           <>
             <button
@@ -93,9 +93,11 @@ export function SkillsSettingsSection(): React.JSX.Element {
             </button>
           </>
         }
-        category="skills"
+        description={t('skills.description')}
         error={error}
+        headingLevel={3}
         headingId="skills-settings-heading"
+        title={t('skills.title')}
       />
       <section
         aria-label={t('skills.listLabel')}

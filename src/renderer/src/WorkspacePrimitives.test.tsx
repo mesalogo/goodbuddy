@@ -100,6 +100,15 @@ describe('WorkspacePrimitives', () => {
     expect(platformFeaturesTabs).toMatch(/flex:\s*0 0 auto;/u)
   })
 
+  it('keeps Capabilities and tools tabs visible in scrollable Settings', () => {
+    const capabilitiesTabs = stylesheet.match(
+      /\.capabilities-settings__tabs\s*\{(?<rules>[^}]*)\}/u
+    )?.groups?.rules
+
+    expect(capabilitiesTabs).toBeDefined()
+    expect(capabilitiesTabs).toMatch(/flex:\s*0 0 auto;/u)
+  })
+
   it('keeps whole-surface dialog scrollbars outside close-button hitboxes', () => {
     expect(stylesheet).toMatch(
       /:is\(\s*\.project-create-card,\s*\.knowledge-citation-dialog__surface,\s*\.channel-qr-dialog,\s*\.document-parsing-diagnostic,\s*\.mcp-editor\s*\)\s*\{[^}]*scrollbar-gutter:\s*stable;/u

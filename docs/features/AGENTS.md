@@ -100,6 +100,18 @@ Do not renumber stable IDs merely for presentation after implementation begins.
 - Reference cross-feature documents rather than copying their definitions.
 - When two features share a global domain model, keep that model in the feature family that owns the domain or in cross-feature architecture if ownership is genuinely global.
 
+## Managed External Artifacts
+
+When a feature downloads external artifacts managed by GoodBuddy:
+
+- Define the exact setting that selects the source and the setting scope.
+- Use immutable artifact targets with expected byte size and SHA-256.
+- Freeze the selected source when an operation starts.
+- Fail explicitly when the selected source is unavailable or invalid. Never silently request another source.
+- Keep download URLs and redirect allowlists out of Renderer-controlled input.
+- State whether the setting affects models, application updates, Agent packages, managed tool runtimes, package-manager registries, or user-configured URLs. Do not imply a broader scope than implemented.
+- When two targets are presented as an upstream/original address and its OSS mirror, require byte-identical content with one shared size and SHA-256. A mirror must not rebuild, recompress, or modify the upstream artifact.
+
 ## Migration Rules
 
 When moving existing documentation:

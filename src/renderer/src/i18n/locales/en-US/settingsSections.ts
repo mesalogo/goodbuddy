@@ -698,6 +698,9 @@ export const settingsSections = {
     }
   },
   skills: {
+    title: 'Skills',
+    description:
+      'Works with direct models, OpenCode, Continue, and DeepSeek Harness',
     runtimeLabels: {
       model: 'Model',
       opencode: 'OpenCode',

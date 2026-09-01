@@ -1,10 +1,12 @@
-# 本机工具环境
+# 工具执行环境
 
-本目录是 GoodBuddy“本机工具环境”功能的唯一文档入口。该功能为本机 SKILL 和本机
+本目录是 GoodBuddy“工具执行环境”功能的唯一文档入口。该功能为本机 SKILL 和本机
 stdio MCP 提供明确、可诊断的 Node.js 与 Python 环境，同时允许专业用户选择自己维护的
 解释器。
 
 本功能不作用于 SSH Host 上的 GoodBuddy Agent、固定 Node、签名 Runtime、SKILL 或 MCP。
+用户从设置中心的“能力与工具”进入，并在 `Skills`、`MCP`、`工具执行环境` 三个水平
+Tab 之间切换。
 
 ## 文档导航
 
@@ -21,9 +23,11 @@ stdio MCP 提供明确、可诊断的 Node.js 与 Python 环境，同时允许�
 
 | 术语 | 定义 |
 | --- | --- |
-| 本机工具环境 | GoodBuddy 在桌面所在设备上向本机 Runtime 和 stdio MCP 提供的工具命令环境 |
+| 能力与工具 | 设置中心中统一承载 Skills、MCP 和工具执行环境的一级分类 |
+| 工具执行环境 | GoodBuddy 在桌面所在设备上向本机 Runtime 和 stdio MCP 提供的工具命令环境 |
 | GoodBuddy 托管 | 由 GoodBuddy 提供、验证并解析的 Node.js 或 Python |
 | 自定义环境 | 用户从检测结果中选择或直接指定的外部解释器 |
+| 工具下载源 | GoodBuddy 固定目录受管工具工件使用的原生地址或 OSS 镜像 |
 | 工具就绪 | 解释器及配套命令通过真实诊断 |
 | 能力依赖就绪 | 某个 SKILL 或 MCP 所需的第三方包和入口通过实际验证 |
 

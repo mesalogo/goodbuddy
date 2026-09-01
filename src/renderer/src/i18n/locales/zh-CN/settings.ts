@@ -62,20 +62,22 @@ export const settings = {
       navigationDescription: '角色、说明与系统提示词',
       description: '角色、说明与系统提示词'
     },
-    skills: {
-      label: 'Skills',
-      navigationDescription: '内置与自定义能力',
-      description: '支持直连模型、OpenCode、Continue 和 DeepSeek Harness'
-    },
-    mcp: {
-      label: 'MCP',
-      navigationDescription: '工具服务与凭据',
-      description: '查看内置工具、内置 MCP，并管理外部 MCP Server'
+    capabilities: {
+      label: '能力与工具',
+      navigationDescription: 'Skills 与 MCP',
+      description: '管理 Skills 和 MCP'
     },
     about: {
       label: '关于与更新',
       navigationDescription: '版本检查与下载页',
       description: '检查所选官方更新源，不自动下载安装'
+    }
+  },
+  capabilities: {
+    tabs: {
+      ariaLabel: '能力与工具设置',
+      skills: 'Skills',
+      mcp: 'MCP'
     }
   },
   actions: {

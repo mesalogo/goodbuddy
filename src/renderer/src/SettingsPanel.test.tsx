@@ -53,6 +53,17 @@ import type { BrandingPreferences } from './branding'
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const nativeImage = globalThis.Image
 
+function openCapabilitySettingsTab(tab: 'Skills' | 'MCP'): void {
+  fireEvent.click(
+    screen.getByRole('tab', { name: '能力与工具' })
+  )
+  fireEvent.click(
+    within(
+      screen.getByRole('tablist', { name: '能力与工具设置' })
+    ).getByRole('tab', { name: tab })
+  )
+}
+
 class DecodableBrandImage {
   naturalWidth = 64
   naturalHeight = 64
@@ -1619,7 +1630,7 @@ describe('SettingsPanel runtime files', () => {
       <Harness />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    openCapabilitySettingsTab('MCP')
     const noteServerToggle = await screen.findByRole('button', {
       name: '展开服务器 笔记'
     })
@@ -1642,7 +1653,7 @@ describe('SettingsPanel runtime files', () => {
       })
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    openCapabilitySettingsTab('MCP')
     await waitFor(() =>
       expect(
         screen
@@ -4802,7 +4813,7 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.queryByText('智能心跳')).not.toBeInTheDocument()
   })
 
-  it('shows Skills and MCP as first-class settings tabs', async () => {
+  it('groups Skills and MCP under Capabilities and tools', async () => {
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -4813,7 +4824,30 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
+    const categoryTabs = screen.getByRole('tablist', {
+      name: '设置分类'
+    })
+    expect(
+      within(categoryTabs).queryByRole('tab', { name: 'Skills' })
+    ).not.toBeInTheDocument()
+    expect(
+      within(categoryTabs).queryByRole('tab', { name: 'MCP' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(
+      within(categoryTabs).getByRole('tab', { name: '能力与工具' })
+    )
+    const capabilityTabs = screen.getByRole('tablist', {
+      name: '能力与工具设置'
+    })
+    expect(
+      within(capabilityTabs)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent)
+    ).toEqual(['Skills', 'MCP'])
+    expect(
+      within(capabilityTabs).getByRole('tab', { name: 'Skills' })
+    ).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByText('文档写作')).toBeInTheDocument()
     expect(
       screen.getByText(
@@ -4848,7 +4882,15 @@ describe('SettingsPanel runtime files', () => {
       )
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    expect(
+      within(capabilityTabs).queryByRole('tab', {
+        name: '工具执行环境'
+      })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(
+      within(capabilityTabs).getByRole('tab', { name: 'MCP' })
+    )
     const mcpTabs = screen.getByRole('tablist', {
       name: 'MCP 设置分类'
     })
@@ -5160,7 +5202,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    openCapabilitySettingsTab('MCP')
     fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const addServer = await screen.findByRole('button', {
       name: '添加 Server'
@@ -5235,22 +5277,24 @@ describe('SettingsPanel runtime files', () => {
   })
 
   it('opens an existing MCP Server in the same modal and returns focus on Escape', async () => {
-    getCapabilitySnapshot.mockResolvedValueOnce({
-      ...capabilitySnapshot,
-      mcpServers: [
-        {
-          id: '00000000-0000-4000-8000-000000000301',
-          name: '团队知识服务',
-          description: '公司内部 MCP',
-          enabled: true,
-          allowDynamicTools: true,
-          assignments: ['model'],
-          secretConfigured: true,
-          transport: 'http',
-          url: 'https://mcp.example.com/mcp'
-        }
-      ]
-    })
+    getCapabilitySnapshot
+      .mockResolvedValueOnce(capabilitySnapshot)
+      .mockResolvedValueOnce({
+        ...capabilitySnapshot,
+        mcpServers: [
+          {
+            id: '00000000-0000-4000-8000-000000000301',
+            name: '团队知识服务',
+            description: '公司内部 MCP',
+            enabled: true,
+            allowDynamicTools: true,
+            assignments: ['model'],
+            secretConfigured: true,
+            transport: 'http',
+            url: 'https://mcp.example.com/mcp'
+          }
+        ]
+      })
     render(
       <SettingsPanel
         {...heartbeatSettingsProps}
@@ -5261,7 +5305,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    openCapabilitySettingsTab('MCP')
     fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const editButton = await screen.findByRole('button', {
       name: '编辑 团队知识服务'
@@ -5287,22 +5331,24 @@ describe('SettingsPanel runtime files', () => {
   })
 
   it('shows custom MCP tools under their expandable server after testing', async () => {
-    getCapabilitySnapshot.mockResolvedValueOnce({
-      ...capabilitySnapshot,
-      mcpServers: [
-        {
-          id: '00000000-0000-4000-8000-000000000302',
-          name: '团队工具服务',
-          description: '公司内部工具',
-          enabled: true,
-          allowDynamicTools: true,
-          assignments: ['model'],
-          secretConfigured: false,
-          transport: 'http',
-          url: 'https://mcp.example.com/mcp'
-        }
-      ]
-    })
+    getCapabilitySnapshot
+      .mockResolvedValueOnce(capabilitySnapshot)
+      .mockResolvedValueOnce({
+        ...capabilitySnapshot,
+        mcpServers: [
+          {
+            id: '00000000-0000-4000-8000-000000000302',
+            name: '团队工具服务',
+            description: '公司内部工具',
+            enabled: true,
+            allowDynamicTools: true,
+            assignments: ['model'],
+            secretConfigured: false,
+            transport: 'http',
+            url: 'https://mcp.example.com/mcp'
+          }
+        ]
+      })
     vi.mocked(
       window.goodbuddy.capabilities.testMcpServer
     ).mockResolvedValueOnce({
@@ -5352,7 +5398,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    openCapabilitySettingsTab('MCP')
     fireEvent.click(screen.getByRole('tab', { name: '自定义 MCP' }))
     const serverToggle = await screen.findByRole('button', {
       name: '展开服务器 团队工具服务'

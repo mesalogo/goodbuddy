@@ -652,6 +652,8 @@ export const settingsSections = {
     }
   },
   skills: {
+    title: 'Skills',
+    description: '支持直连模型、OpenCode、Continue 和 DeepSeek Harness',
     runtimeLabels: {
       model: '模型',
       opencode: 'OpenCode',

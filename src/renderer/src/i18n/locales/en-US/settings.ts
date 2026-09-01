@@ -73,23 +73,23 @@ export const settings = {
       navigationDescription: 'Roles, descriptions, and system prompts',
       description: 'Roles, descriptions, and system prompts'
     },
-    skills: {
-      label: 'Skills',
-      navigationDescription: 'Built-in and custom capabilities',
-      description:
-        'Works with direct models, OpenCode, Continue, and DeepSeek Harness'
-    },
-    mcp: {
-      label: 'MCP',
-      navigationDescription: 'Tool servers and credentials',
-      description:
-        'View built-in tools and MCP servers, and manage external MCP servers'
+    capabilities: {
+      label: 'Capabilities and tools',
+      navigationDescription: 'Skills and MCP',
+      description: 'Manage Skills and MCP'
     },
     about: {
       label: 'About and updates',
       navigationDescription: 'Version checks and downloads',
       description:
         'Checks the selected official update source and never installs automatically'
+    }
+  },
+  capabilities: {
+    tabs: {
+      ariaLabel: 'Capabilities and tools settings',
+      skills: 'Skills',
+      mcp: 'MCP'
     }
   },
   actions: {

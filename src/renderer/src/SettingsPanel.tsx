@@ -41,9 +41,8 @@ import {
   isAgentRuntimeModelProtocol,
   isDeepSeekHarnessModelProfile
 } from '../../shared/contracts'
-import { McpSettingsSection } from './McpSettingsSection'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
-import { SkillsSettingsSection } from './SkillsSettingsSection'
+import { CapabilitiesAndToolsSettingsSection } from './CapabilitiesAndToolsSettingsSection'
 import { ChannelSettingsSection } from './ChannelSettingsSection'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import { PlatformFeaturesSettingsSection } from './PlatformFeaturesSettingsSection'
@@ -842,8 +841,7 @@ export function SettingsPanel({
     activeTab === 'document-parsing' ||
     activeTab === 'ssh-hosts' ||
     activeTab === 'channels' ||
-    activeTab === 'skills' ||
-    activeTab === 'mcp' ||
+    activeTab === 'capabilities' ||
     activeTab === 'about'
 
   const savedConfiguredSettings = settings
@@ -3930,9 +3928,8 @@ export function SettingsPanel({
               />
             </>
           )}
-          {activeTab === 'skills' && <SkillsSettingsSection />}
-          {activeTab === 'mcp' && (
-            <McpSettingsSection
+          {activeTab === 'capabilities' && (
+            <CapabilitiesAndToolsSettingsSection
               magicNotesEnabled={magicNotesEnabled}
             />
           )}

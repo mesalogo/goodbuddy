@@ -7615,7 +7615,7 @@ button > svg {
   min-width: 0;
 }
 
-.settings-category-header__content h2 {
+.settings-category-header__content :is(h2, h3) {
   margin: 0;
   color: var(--text-primary);
   font-size: var(--font-section-title);
@@ -10430,6 +10430,27 @@ details.settings-section > :not(summary) + :not(summary) {
 .capability-list--tools {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.capabilities-settings__tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  flex: 0 0 auto;
+}
+
+.capabilities-settings__tabs > .page-tabs {
+  min-width: max-content;
+}
+
+.capabilities-settings__panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.capabilities-settings__panel[hidden] {
+  display: none;
 }
 
 .mcp-tool-section {

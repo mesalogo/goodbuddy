@@ -47,10 +47,37 @@ export function SettingsCategoryHeader({
 }): React.JSX.Element {
   const definition = settingsCategories[category]
   return (
+    <SettingsSectionHeader
+      actions={actions}
+      description={definition.description}
+      error={error}
+      headingId={headingId}
+      title={definition.label}
+    />
+  )
+}
+
+export function SettingsSectionHeader({
+  actions,
+  description,
+  error,
+  headingLevel = 2,
+  headingId,
+  title
+}: {
+  actions?: ReactNode
+  description: string
+  error?: string
+  headingLevel?: 2 | 3
+  headingId: string
+  title: string
+}): React.JSX.Element {
+  const Heading = headingLevel === 3 ? 'h3' : 'h2'
+  return (
     <header className="settings-category-header">
       <div className="settings-category-header__content">
-        <h2 id={headingId}>{definition.label}</h2>
-        <p>{definition.description}</p>
+        <Heading id={headingId}>{title}</Heading>
+        <p>{description}</p>
       </div>
       {actions && (
         <div className="settings-category-header__actions">

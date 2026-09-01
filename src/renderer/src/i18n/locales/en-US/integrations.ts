@@ -145,6 +145,9 @@ export const integrations = {
     save: 'Save channel settings'
   },
   mcp: {
+    title: 'MCP',
+    description:
+      'View built-in tools and MCP servers, and manage external MCP servers',
     runtimeLabels: {
       model: 'Model',
       opencode: 'OpenCode',

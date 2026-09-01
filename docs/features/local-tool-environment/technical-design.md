@@ -1,4 +1,4 @@
-# 本机工具环境技术设计
+# 工具执行环境技术设计
 
 ## 文档信息
 
@@ -7,8 +7,8 @@
 | 状态 | 计划 |
 | 版本 | 0.1 |
 | 日期 | 2026-09-01 |
-| 关联 PRD | [本机工具环境 PRD](./prd.md) |
-| 功能逻辑 | [本机工具环境功能逻辑设计](./logic-design.md) |
+| 关联 PRD | [工具执行环境 PRD](./prd.md) |
+| 功能逻辑 | [工具执行环境功能逻辑设计](./logic-design.md) |
 | 相关架构 | [DeepSeek Harness Runtime 设计](../deepseek-harness/technical-design.md)、[SSH 远程主机与 GoodBuddy Agent 实现说明](../remote-host/technical-design.md) |
 
 ## 1. 当前基线
@@ -36,6 +36,7 @@ type LocalToolEnvironmentSelection =
 type LocalToolEnvironmentSettings = {
   node: LocalToolEnvironmentSelection
   python: LocalToolEnvironmentSelection
+  artifactDownloadSource: 'native' | 'oss'
 }
 ```
 
@@ -48,6 +49,7 @@ type LocalToolEnvironmentSettings = {
 - 旧设置没有该字段时，Main 按升级前 PATH 分别解析有效 Node 和 Python 3。
 - 有效候选写成 `custom + 规范化绝对路径`。
 - 没有有效候选时写成 `managed`。
+- 新增的 `artifactDownloadSource` 默认迁移为 `native`。
 - 迁移只执行一次，后续 PATH 变化不改变选择。
 
 ## 3. Main 服务
@@ -114,11 +116,40 @@ ELECTRON_RUN_AS_NODE=1 <process.execPath> <arguments...>
 
 - 使用包含 pip、venv、SSL 和标准库的固定 CPython 独立发行包。
 - 每个平台/架构锁定一个版本。
-- 目录包含版本、平台、架构、来源、字节数、SHA-256 和许可证。
-- 下载复用当前官方 GitHub/镜像来源，不增加来源设置。
+- Windows x64 原生工件来自官方 `python` NuGet 包，Windows ARM64 来自官方
+  `pythonarm64` NuGet 包。
+- macOS/Linux 原生工件来自 Astral `python-build-standalone`。
+- 目录包含版本、平台、架构、字节数、SHA-256、许可证、原生 Target 和 OSS Target。
+- OSS 对象直接复制原生工件字节，不重新压缩或转换。
 - 安装包不无条件携带完整 Python。
 
 具体发行包和版本必须在实现前完成六平台工件、许可证、维护状态和 pip/venv 可用性核验。
+
+目录示例：
+
+```ts
+type ManagedToolArtifact = {
+  id: string
+  version: string
+  platform: NodeJS.Platform
+  architecture: string
+  size: number
+  sha256: string
+  downloads: {
+    native: {
+      url: string
+      redirectHosts: string[]
+    }
+    oss: {
+      url: string
+    }
+  }
+  licenseFiles: string[]
+}
+```
+
+URL 只存在于 Main/构建目录，不进入 Renderer。两个 Target 共用顶层 `size` 和 `sha256`，
+从 schema 上禁止声明不同字节。
 
 ### 6.2 安装
 
@@ -211,6 +242,27 @@ stdio MCP：
 
 ## 11. Renderer 状态与 IPC
 
+### 11.1 统一设置分类
+
+- `settingsCategoryList` 用一个 `capabilities` 分类替换现有 `skills`、`mcp` 分类，不增加
+  `sdk` 分类。
+- 新增 `CapabilitiesAndToolsSettingsSection`，在统一分类标题下使用共享 `PageTabs` 渲染
+  第一阶段的 `skills | mcp`。
+- `SkillsSettingsSection` 和 `McpSettingsSection` 继续拥有各自业务状态；嵌入时不重复渲染
+  一级分类标题。MCP 原有内层 `PageTabs` 保持独立。
+- `ToolEnvironmentSettingsSection` 只承载工具下载源、Node.js、Python 和诊断。
+- 当前源码没有 Settings 外部 Skills/MCP 定向入口，第一阶段不增加未使用的
+  `initialCapabilityTab`。未来出现真实定向入口时再增加会话级初始 Tab 参数。
+- 普通进入 `capabilities` 时默认 `skills`。外层选中值只存在于当前 Renderer 会话，不写入
+  Shared 设置。
+- 为避免切换时丢失编辑状态，外层面板首次访问时挂载，之后在本次设置面板会话中保留并用
+  `hidden` 控制可见性；关闭设置面板后按现有生命周期释放。
+- 工具执行环境生产路径完成时，把 `tool-environment` 追加到同一个组件；完成前不注册
+  Tab、不渲染占位面板。
+- 页签直接包装层使用 `flex: 0 0 auto`，并由 CSS 回归测试保证在滚动设置布局中不可收缩。
+
+### 11.2 工具环境状态与 IPC
+
 Renderer 接收：
 
 - 当前选择。
@@ -219,11 +271,24 @@ Renderer 接收：
 - 托管安装状态、版本、占用空间。
 - 工具诊断分项结果。
 - 安装进度和脱敏错误。
+- 受管工具工件下载源选择，以及活动任务实际冻结的来源。
 
 Renderer 不能提交 PATH、环境变量、下载 URL、摘要、安装目录、shim 内容或任意命令参数。
 所有 IPC 输入使用共享 Zod schema，Main 重新验证路径和解释器。
 
-## 12. 权限与远程边界
+## 12. 受管工具工件下载
+
+- 设置值为 `native | oss`，默认 `native`。
+- 下载操作开始时读取并冻结设置。
+- 解析目录中对应 Target；缺失即返回“当前下载源不可用”。
+- 原生 Target 按每个上游声明严格 Host/重定向 allowlist。
+- OSS Target 只允许 GoodBuddy 固定 OSS Host 和不可变对象前缀。
+- 两种来源共用大小和 SHA-256 校验、暂存、取消、发布和清理逻辑。
+- 失败不重试另一来源。
+- 构建/发布流程先下载原生工件、校验，再把原字节同步到 OSS，并复核公开对象。
+- 该设置不传给 pip/npm，不改写其 registry；也不参与模型、应用更新和 Agent 目录选择。
+
+## 13. 权限与远程边界
 
 - Ask/Execute 语义不变。
 - 不新增解释器批准流程。
@@ -232,11 +297,13 @@ Renderer 不能提交 PATH、环境变量、下载 URL、摘要、安装目录�
 - 不把本机 SKILL 或 stdio MCP 传给远程 ACP Session。
 - 远程 Agent 固定 Node 继续只服务 Agent、模型桥和签名 Runtime。
 
-## 13. 实施顺序
+## 14. 实施顺序
 
 ### 阶段 1：契约、迁移、探测和 UI
 
 - Shared schema、设置迁移、IPC。
+- 用“能力与工具”分类合并现有 Skills/MCP 入口，增加三个外层水平 Tab。
+- 增加“工具执行环境”面板及原生/OSS 下载源设置。
 - Node/Python 候选探测和完整诊断。
 - 设置卡片和状态。
 
@@ -263,10 +330,13 @@ Renderer 不能提交 PATH、环境变量、下载 URL、摘要、安装目录�
 这些阶段是开发顺序，不是可长期发布的残缺功能。合并能力前完成普通用户和专业用户的完整
 生产路径。
 
-## 14. 验证
+## 15. 验证
 
 单元测试覆盖设置迁移、探测、版本解析、shim 转义、PATH 顺序、失效路径、下载摘要和暂存
-清理。
+清理，以及原生/OSS 选择冻结、Target 缺失和禁止回退。
+
+Renderer 测试覆盖统一一级分类、三个外层 Tab、默认 Skills、Skills/MCP 定向入口、会话内
+状态保留、MCP 内外层 tablist 隔离、键盘切换和窄屏单行滚动。
 
 集成测试覆盖安装包 Electron Node、npm/npx、托管 Python、三个本机 Runtime 和两类 stdio
 MCP 的实际进程路径。

@@ -32,7 +32,7 @@ import type {
 } from '../../shared/capability-contracts'
 import { trapTabFocus } from './dialog-focus'
 import {
-  SettingsCategoryHeader,
+  SettingsSectionHeader,
   SettingsWarningList
 } from './SettingsPrimitives'
 import { PageTabs } from './WorkspacePrimitives'
@@ -394,7 +394,7 @@ export function McpSettingsSection({
 
   return (
     <>
-      <SettingsCategoryHeader
+      <SettingsSectionHeader
         actions={
           activeTab === 'custom' ? (
             <button
@@ -410,9 +410,11 @@ export function McpSettingsSection({
             </button>
           ) : undefined
         }
-        category="mcp"
+        description={t('mcp.description')}
         error={!editor ? error : undefined}
+        headingLevel={3}
         headingId="mcp-settings-heading"
+        title={t('mcp.title')}
       />
       <SettingsWarningList warnings={snapshot?.warnings} />
       <div className="mcp-settings__tabs">

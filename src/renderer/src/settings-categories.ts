@@ -42,12 +42,8 @@ export const settingsCategoryList = [
     translationKey: 'roles'
   },
   {
-    id: 'skills',
-    translationKey: 'skills'
-  },
-  {
-    id: 'mcp',
-    translationKey: 'mcp'
+    id: 'capabilities',
+    translationKey: 'capabilities'
   },
   {
     id: 'about',

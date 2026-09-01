@@ -134,6 +134,8 @@ export const integrations = {
     save: '保存通道设置'
   },
   mcp: {
+    title: 'MCP',
+    description: '查看内置工具、内置 MCP，并管理外部 MCP Server',
     runtimeLabels: {
       model: '模型',
       opencode: 'OpenCode',
