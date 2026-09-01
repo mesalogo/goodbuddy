@@ -31,6 +31,55 @@ class DeaiScanTests(unittest.TestCase):
         levels = {finding["level"] for finding in findings}
         self.assertEqual(levels, {deai_scan.LEVEL_BLOCK, deai_scan.LEVEL_REVIEW})
 
+    def test_reports_new_reasoning_and_attribution_patterns(self):
+        findings = self.scan(
+            "从本质上看，业内普遍认为该方案有效。\n"
+            "研究表明，核心在于形成闭环。"
+        )
+        categories = {finding["category"] for finding in findings}
+        self.assertTrue({"万能收束", "来源模糊"}.issubset(categories))
+        self.assertTrue({"无来源归因", "分析框架"}.issubset(categories))
+
+    def test_summarizes_findings_by_level_and_category(self):
+        findings = self.scan("综上所述，归根结底，需要复核当前基线。")
+        summary = deai_scan.summarize_findings(findings)
+        self.assertEqual(summary[deai_scan.LEVEL_BLOCK]["套路连接词"], 1)
+        self.assertEqual(summary[deai_scan.LEVEL_BLOCK]["万能收束"], 1)
+        self.assertEqual(summary[deai_scan.LEVEL_REVIEW]["内部审校话语"], 1)
+
+    def test_reports_user_identified_templates_and_metaphors(self):
+        findings = self.scan(
+            "每一次思考都有证据，教师看到的不只是最终分数。\n"
+            "系统做什么、学生做什么、教师看到什么。\n"
+            "设置质量门禁和硬约束，让数据不再喂不够快。\n"
+            "Decode 时需要读取数十亿颗权重。"
+        )
+        categories = {finding["category"] for finding in findings}
+        self.assertIn("对照模板", categories)
+        self.assertTrue(
+            {
+                "角色槽位",
+                "工程黑话",
+                "拟人化技术表达",
+                "绝对化承诺",
+            }.issubset(categories)
+        )
+
+    def test_keeps_concrete_engineering_rules_clean(self):
+        findings = self.scan(
+            "测试失败时禁止合并。延迟超过 200 ms 时停止发布。"
+            "显存占用不得超过 80 GB。"
+        )
+        watched = {
+            "角色槽位",
+            "工程黑话",
+            "拟人化技术表达",
+            "绝对化承诺",
+        }
+        self.assertFalse(
+            any(finding["category"] in watched for finding in findings)
+        )
+
     def test_masks_markdown_code(self):
         findings = self.scan("正文没有问题。\n```text\n综上所述，打造闭环。\n```\n")
         self.assertEqual(findings, [])
@@ -80,6 +129,8 @@ class DeaiScanTests(unittest.TestCase):
             result = subprocess.run(command, check=True, capture_output=True, text=True)
             report = json.loads(result.stdout)
             self.assertGreater(report["block"], 0)
+            self.assertIn("阻断", report["by_category"])
+            self.assertIn("复核", report["by_category"])
 
             failed = subprocess.run(
                 command + ["--fail-on-block"],

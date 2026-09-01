@@ -219,6 +219,19 @@ def collect_files(targets, exts):
     return list(dict.fromkeys(out))
 
 
+def summarize_findings(findings):
+    """Count findings by level and category for CI and agent consumers."""
+    counts = {LEVEL_BLOCK: {}, LEVEL_REVIEW: {}}
+    for finding in findings:
+        level_counts = counts[finding["level"]]
+        category = finding["category"]
+        level_counts[category] = level_counts.get(category, 0) + 1
+    return {
+        level: dict(sorted(category_counts.items()))
+        for level, category_counts in counts.items()
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description="中文正式文档 AI 味扫描")
     ap.add_argument("targets", nargs="+", help="待扫描的文件或目录")
@@ -271,6 +284,7 @@ def main():
 
     n_block = sum(1 for f in all_findings if f["level"] == LEVEL_BLOCK)
     n_review = len(all_findings) - n_block
+    by_category = summarize_findings(all_findings)
 
     if args.json:
         print(json.dumps({
@@ -278,6 +292,7 @@ def main():
             "requested_files": len(files),
             "block": n_block,
             "review": n_review,
+            "by_category": by_category,
             "errors": errors,
             "findings": all_findings,
         }, ensure_ascii=False, indent=2))
