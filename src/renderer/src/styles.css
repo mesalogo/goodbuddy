@@ -4800,20 +4800,79 @@ button > svg {
   gap: var(--space-2);
 }
 
-.assistant-sidebar__browser-actions {
+.assistant-sidebar__browser-toolbar {
   display: flex;
+  min-width: 0;
   align-items: center;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-1);
 }
 
-.assistant-sidebar__browser > header .secondary-button {
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  padding: 4px 8px;
-  flex: none;
-  font-size: 10px;
+.assistant-sidebar__browser-tool-button,
+.assistant-sidebar__browser-go,
+.assistant-sidebar__browser-interact,
+.assistant-sidebar__browser-close {
   gap: var(--space-1);
+}
+
+.assistant-sidebar__browser-tool-button {
+  width: var(--control-height);
+  padding: 0;
+  flex: 0 0 var(--control-height);
+}
+
+.assistant-sidebar__browser-address {
+  min-width: 112px;
+  flex: 1 1 128px;
+}
+
+.assistant-sidebar__browser-address input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  outline: none;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: var(--font-family-ui);
+  font-size: var(--font-caption);
+}
+
+.assistant-sidebar__browser-address input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.assistant-sidebar__browser-go,
+.assistant-sidebar__browser-interact,
+.assistant-sidebar__browser-close {
+  padding: 0 var(--space-2);
+  flex: 0 0 auto;
+}
+
+.assistant-sidebar__browser-tool-button:hover:not(:disabled),
+.assistant-sidebar__browser-go:hover:not(:disabled),
+.assistant-sidebar__browser-interact:hover:not(:disabled) {
+  border-color: var(--accent-selected);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.assistant-sidebar__browser-address input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.assistant-sidebar__browser-toolbar
+  .assistant-sidebar__browser-close {
+  padding: 0 var(--space-2);
+  border-color: var(--danger-border);
+  margin-left: var(--space-1);
+  color: var(--danger);
 }
 
 .assistant-sidebar__browser-status {
@@ -4830,15 +4889,6 @@ button > svg {
   border-color: var(--danger-border);
   background: var(--danger-subtle);
   color: var(--danger);
-}
-
-.assistant-sidebar__browser-url {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .assistant-sidebar__browser-frame,
@@ -15626,10 +15676,8 @@ details.settings-section > :not(summary) + :not(summary) {
 .assistant-sidebar__approval p,
 .assistant-sidebar__approval-actions button,
 .assistant-sidebar__badge,
-.assistant-sidebar__browser > header .secondary-button,
 .assistant-sidebar__browser-placeholder,
 .assistant-sidebar__browser-status,
-.assistant-sidebar__browser-url,
 .assistant-sidebar__diff,
 .assistant-sidebar__empty,
 .assistant-sidebar__import,

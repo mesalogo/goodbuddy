@@ -692,6 +692,63 @@ describe('CdpBrowserDriver', () => {
     driver.dispose()
   })
 
+  it('reloads through CDP with bounded commit and document waits', async () => {
+    const harness = createHarness(async (method, parameters) =>
+      method === 'Page.reload'
+        ? {}
+        : standardCommand(method, parameters)
+    )
+    const driver = new CdpBrowserDriver(harness.webContents)
+    const reload = driver.reload(new AbortController().signal)
+    await vi.waitFor(() =>
+      expect(harness.sendCommand).toHaveBeenCalledWith(
+        'Page.reload',
+        undefined
+      )
+    )
+    harness.setUrl('https://example.com/reloaded')
+    harness.contentEvents.emit(
+      'did-navigate',
+      {},
+      'https://example.com/reloaded'
+    )
+
+    await expect(reload).resolves.toEqual({
+      url: 'https://example.com/reloaded'
+    })
+    expect(harness.sendCommand).toHaveBeenCalledWith(
+      'Runtime.evaluate',
+      expect.objectContaining({ expression: 'document.readyState' })
+    )
+    driver.dispose()
+  })
+
+  it('reports committed URL and actual back availability from history', async () => {
+    const harness = createHarness(standardCommand)
+    const driver = new CdpBrowserDriver(harness.webContents)
+    const historyQuery = vi.spyOn(
+      driver as unknown as {
+        getNavigationHistory(signal: AbortSignal): Promise<unknown>
+      },
+      'getNavigationHistory'
+    )
+
+    await expect(
+      driver.getNavigationMetadata(new AbortController().signal)
+    ).resolves.toEqual({
+      url: 'https://example.com/page',
+      canGoBack: true
+    })
+    await expect(
+      driver.getBackTarget(new AbortController().signal)
+    ).resolves.toEqual({
+      entryId: 4,
+      url: 'https://previous.example/'
+    })
+    expect(historyQuery).toHaveBeenCalledTimes(2)
+    driver.dispose()
+  })
+
   it('bounds hung commands and removes listeners on disposal', async () => {
     const harness = createHarness(async () => new Promise(() => undefined))
     const driver = new CdpBrowserDriver(harness.webContents, { timeoutMs: 5 })

@@ -1,4 +1,6 @@
 import {
+  ArrowLeft,
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -10,7 +12,9 @@ import {
   Plus,
   RefreshCw,
   ShieldAlert,
-  Upload
+  Square,
+  Upload,
+  X
 } from 'lucide-react'
 import {
   lazy,
@@ -99,10 +103,15 @@ type RightAssistantSidebarProps = {
   selectedTaskId?: string
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
+  activeConversationId?: string
   browserState?: BrowserLiveState
   currentProject?: AssistantProject
   restoreFocusRef?: { current: HTMLElement | null }
+  onBackBrowser?: () => Promise<void>
   onInteractBrowser: () => Promise<void>
+  onNavigateBrowser?: (url: string) => Promise<void>
+  onReloadBrowser?: () => Promise<void>
+  onStopLoadingBrowser?: () => Promise<void>
   onStopBrowser: () => Promise<void>
   onCreateCustomTask: () => void
   onImportArtifacts: () => Promise<void>
@@ -228,6 +237,226 @@ function measureSplitLayoutWidth(
   return measuredWidth > 0 ? measuredWidth : fallbackWidth
 }
 
+function BrowserToolbar({
+  activeConversationId,
+  browserState,
+  onBack,
+  onInteract,
+  onNavigate,
+  onReload,
+  onStop,
+  onStopLoading
+}: {
+  activeConversationId?: string
+  browserState?: BrowserLiveState
+  onBack: () => Promise<boolean>
+  onInteract: () => Promise<boolean>
+  onNavigate: (url: string) => Promise<boolean>
+  onReload: () => Promise<boolean>
+  onStop: () => Promise<boolean>
+  onStopLoading: () => Promise<boolean>
+}): React.JSX.Element {
+  const { t } = useTranslation('workspace')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const actionPendingRef = useRef(false)
+  const [addressDraft, setAddressDraft] = useState(
+    browserState?.url ?? ''
+  )
+  const [editing, setEditing] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [actionPending, setActionPending] = useState(false)
+  const authoritativeUrl = browserState?.url ?? ''
+  const hasBrowserState = browserState !== undefined
+  const displayedAddress =
+    hasBrowserState && !editing && !dirty
+      ? authoritativeUrl
+      : addressDraft
+  const sessionActive = browserState?.sessionActive === true
+  const isLoading = browserState?.isLoading === true
+  const status = browserState?.status
+  const isCreating = status === 'creating'
+  const isActing = status === 'acting'
+  const isInteractive = status === 'interactive'
+  const operationBlocked =
+    actionPending ||
+    isCreating ||
+    status === 'loading' ||
+    isActing ||
+    isInteractive
+  const addressDisabled = operationBlocked || isLoading
+  const backDisabled =
+    operationBlocked ||
+    !sessionActive ||
+    browserState?.canGoBack !== true ||
+    addressDisabled
+  const refreshDisabled =
+    operationBlocked ||
+    !sessionActive ||
+    isLoading
+  const interactDisabled =
+    operationBlocked ||
+    !sessionActive ||
+    isLoading ||
+    (status !== 'ready' && status !== 'failed')
+  const closeDisabled =
+    operationBlocked ||
+    !sessionActive ||
+    isLoading
+  const goDisabled =
+    actionPending ||
+    !activeConversationId ||
+    addressDisabled ||
+    displayedAddress.trim().length === 0
+
+  const runToolbarAction = async (
+    action: () => Promise<boolean>
+  ): Promise<boolean> => {
+    if (actionPendingRef.current) {
+      return false
+    }
+    actionPendingRef.current = true
+    setActionPending(true)
+    try {
+      return await action()
+    } finally {
+      actionPendingRef.current = false
+      setActionPending(false)
+    }
+  }
+
+  const submitAddress = async (): Promise<void> => {
+    const url = displayedAddress.trim()
+    if (goDisabled || !url) {
+      return
+    }
+    if (await runToolbarAction(() => onNavigate(url))) {
+      setDirty(false)
+      setEditing(false)
+      inputRef.current?.blur()
+    }
+  }
+
+  const refreshLabel = isLoading
+    ? t('sidebar.browser.toolbar.stopLoading')
+    : t('sidebar.browser.toolbar.refresh')
+
+  return (
+    <form
+      aria-label={t('sidebar.browser.toolbar.ariaLabel')}
+      className="assistant-sidebar__browser-toolbar"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void submitAddress()
+      }}
+    >
+      <button
+        aria-label={t('sidebar.browser.toolbar.back')}
+        className="secondary-button assistant-sidebar__browser-tool-button"
+        disabled={backDisabled}
+        onClick={() => void runToolbarAction(onBack)}
+        title={t('sidebar.browser.toolbar.back')}
+        type="button"
+      >
+        <ArrowLeft aria-hidden="true" size={14} />
+      </button>
+      <button
+        aria-label={refreshLabel}
+        className="secondary-button assistant-sidebar__browser-tool-button"
+        disabled={
+          isLoading
+            ? !sessionActive || isInteractive
+            : refreshDisabled
+        }
+        onClick={() =>
+          void (isLoading
+            ? onStopLoading()
+            : runToolbarAction(onReload))
+        }
+        title={refreshLabel}
+        type="button"
+      >
+        {isLoading ? (
+          <Square aria-hidden="true" size={12} />
+        ) : (
+          <RefreshCw aria-hidden="true" size={14} />
+        )}
+      </button>
+      <label className="assistant-sidebar__browser-address">
+        <span className="sr-only">
+          {t('sidebar.browser.toolbar.address')}
+        </span>
+        <input
+          aria-label={t('sidebar.browser.toolbar.address')}
+          autoComplete="off"
+          disabled={addressDisabled}
+          onChange={(event) => {
+            setAddressDraft(event.target.value)
+            setDirty(true)
+          }}
+          onBlur={() => setEditing(false)}
+          onFocus={() => {
+            setAddressDraft(displayedAddress)
+            setEditing(true)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              void submitAddress()
+              return
+            }
+            if (event.key !== 'Escape') {
+              return
+            }
+            event.preventDefault()
+            setAddressDraft(authoritativeUrl)
+            setDirty(false)
+            setEditing(false)
+            event.currentTarget.blur()
+          }}
+          placeholder={t('sidebar.browser.toolbar.addressPlaceholder')}
+          ref={inputRef}
+          spellCheck={false}
+          title={t('sidebar.browser.toolbar.address')}
+          type="text"
+          value={displayedAddress}
+        />
+      </label>
+      <button
+        aria-label={t('sidebar.browser.toolbar.go')}
+        className="secondary-button assistant-sidebar__browser-go"
+        disabled={goDisabled}
+        title={t('sidebar.browser.toolbar.go')}
+        type="submit"
+      >
+        <ArrowRight aria-hidden="true" size={13} />
+        <span>{t('sidebar.browser.toolbar.go')}</span>
+      </button>
+      <button
+        aria-label={t('sidebar.browser.interact')}
+        className="secondary-button assistant-sidebar__browser-interact"
+        disabled={interactDisabled}
+        onClick={() => void runToolbarAction(onInteract)}
+        title={t('sidebar.browser.interact')}
+        type="button"
+      >
+        <ExternalLink aria-hidden="true" size={12} />
+        <span>{t('sidebar.browser.interact')}</span>
+      </button>
+      <button
+        aria-label={t('sidebar.browser.close')}
+        className="danger-ghost assistant-sidebar__browser-close"
+        disabled={closeDisabled}
+        onClick={() => void runToolbarAction(onStop)}
+        title={t('sidebar.browser.close')}
+        type="button"
+      >
+        <X aria-hidden="true" size={12} />
+        <span>{t('sidebar.browser.close')}</span>
+      </button>
+    </form>
+  )
+}
+
 export function RightAssistantSidebar({
   open,
   tab,
@@ -240,10 +469,15 @@ export function RightAssistantSidebar({
   selectedTaskId,
   workspaceChanges,
   workspaceProjectId,
+  activeConversationId,
   browserState,
   currentProject,
   restoreFocusRef,
+  onBackBrowser = async () => {},
   onInteractBrowser,
+  onNavigateBrowser = async () => {},
+  onReloadBrowser = async () => {},
+  onStopLoadingBrowser = async () => {},
   onStopBrowser,
   onCreateCustomTask,
   onImportArtifacts,
@@ -817,19 +1051,22 @@ export function RightAssistantSidebar({
       })
   }
 
-  const runAction = (
+  const runAction = async (
     action: () => Promise<void>,
     fallback: string,
     onSuccess?: () => void
-  ): void => {
+  ): Promise<boolean> => {
     setActionError('')
-    void action()
-      .then(onSuccess)
-      .catch((reason: unknown) => {
-        setActionError(
-          reason instanceof Error ? reason.message : fallback
-        )
-      })
+    try {
+      await action()
+      onSuccess?.()
+      return true
+    } catch (reason) {
+      setActionError(
+        reason instanceof Error ? reason.message : fallback
+      )
+      return false
+    }
   }
 
   return (
@@ -1243,7 +1480,7 @@ export function RightAssistantSidebar({
                   disabled={!workspaceProjectId}
                   onClick={() => {
                     setWorkspaceRefreshVersion((current) => current + 1)
-                    runAction(
+                    void runAction(
                       onRefreshChanges,
                       t('sidebar.errors.refreshWorkspace')
                     )
@@ -1347,7 +1584,7 @@ export function RightAssistantSidebar({
               <button
                 className="secondary-button assistant-sidebar__import"
                 onClick={() =>
-                  runAction(
+                  void runAction(
                     onImportArtifacts,
                     t('sidebar.errors.importResult')
                   )
@@ -1369,7 +1606,7 @@ export function RightAssistantSidebar({
                     onClick={() => {
                       setSelectedArtifactId(artifact.id)
                       setActionError('')
-                      runAction(
+                      void runAction(
                         () => onLoadArtifact(artifact.id),
                         t('sidebar.errors.loadResult')
                       )
@@ -1394,48 +1631,55 @@ export function RightAssistantSidebar({
         )}
 
         {instance.appId === 'browser' && (
-          <section className="assistant-sidebar__browser">
+          <section
+            className="assistant-sidebar__browser"
+            key={activeConversationId}
+          >
+            <BrowserToolbar
+              activeConversationId={activeConversationId}
+              browserState={browserState}
+              onBack={() =>
+                runAction(
+                  onBackBrowser,
+                  t('sidebar.errors.backBrowser')
+                )
+              }
+              onInteract={() =>
+                runAction(
+                  onInteractBrowser,
+                  t('sidebar.errors.interactBrowser')
+                )
+              }
+              onNavigate={(url) =>
+                runAction(
+                  () => onNavigateBrowser(url),
+                  t('sidebar.errors.navigateBrowser')
+                )
+              }
+              onReload={() =>
+                runAction(
+                  onReloadBrowser,
+                  t('sidebar.errors.reloadBrowser')
+                )
+              }
+              onStop={() =>
+                runAction(
+                  onStopBrowser,
+                  t('sidebar.errors.stopBrowser')
+                )
+              }
+              onStopLoading={() =>
+                runAction(
+                  onStopLoadingBrowser,
+                  t('sidebar.errors.stopLoadingBrowser')
+                )
+              }
+            />
             <header>
               <span>
                 <Monitor size={15} />
                 <strong>{t('sidebar.browser.title')}</strong>
               </span>
-              {browserState &&
-                browserState.status !== 'stopped' && (
-                  <div className="assistant-sidebar__browser-actions">
-                    <button
-                      className="secondary-button"
-                      disabled={
-                        browserState.status === 'creating' ||
-                        browserState.status === 'interactive'
-                      }
-                      onClick={() =>
-                        runAction(
-                          onInteractBrowser,
-                          t('sidebar.errors.interactBrowser')
-                        )
-                      }
-                      type="button"
-                    >
-                      <ExternalLink aria-hidden="true" size={12} />
-                      {browserState.status === 'interactive'
-                        ? t('sidebar.browser.interacting')
-                        : t('sidebar.browser.interact')}
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() =>
-                        runAction(
-                          onStopBrowser,
-                          t('sidebar.errors.stopBrowser')
-                        )
-                      }
-                      type="button"
-                    >
-                      {t('sidebar.browser.stop')}
-                    </button>
-                  </div>
-                )}
             </header>
             {!browserState ? (
               <p className="assistant-sidebar__empty">
@@ -1471,14 +1715,6 @@ export function RightAssistantSidebar({
                               t('sidebar.browser.statuses.failed')
                             : t('sidebar.browser.statuses.stopped')}
                 </div>
-                {browserState.url && (
-                  <div
-                    className="assistant-sidebar__browser-url"
-                    title={browserState.url}
-                  >
-                    {browserState.url}
-                  </div>
-                )}
                 {browserState.frameDataUrl ? (
                   <img
                     alt={t('sidebar.browser.frameAlt')}

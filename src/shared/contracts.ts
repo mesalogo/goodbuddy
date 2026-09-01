@@ -1346,7 +1346,10 @@ export const browserLiveStateSchema = z
       'failed',
       'stopped'
     ]),
-    url: z.string().max(2_048).optional(),
+    sessionActive: z.boolean(),
+    isLoading: z.boolean(),
+    canGoBack: z.boolean(),
+    url: z.string().max(8_192).optional(),
     frameDataUrl: z
       .string()
       .max(400_000)
@@ -1369,6 +1372,16 @@ export const browserStopRequestSchema = z
   .strict()
 
 export const browserInteractRequestSchema = browserStopRequestSchema
+export const browserBackRequestSchema = browserStopRequestSchema
+export const browserReloadRequestSchema = browserStopRequestSchema
+export const browserStopLoadingRequestSchema = browserStopRequestSchema
+
+export const browserNavigateRequestSchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    url: z.string().min(1).max(8_192)
+  })
+  .strict()
 
 export const knowledgeIdSchema = z.string().uuid()
 export const knowledgeCreateSchema = z
@@ -1554,6 +1567,10 @@ export type DesktopApi = {
     onEvent: (listener: (event: AgentEvent) => void) => () => void
   }
   browser: {
+    navigate: (conversationId: string, url: string) => Promise<void>
+    back: (conversationId: string) => Promise<void>
+    reload: (conversationId: string) => Promise<void>
+    stopLoading: (conversationId: string) => Promise<void>
     interact: (conversationId: string) => Promise<void>
     stop: (conversationId: string) => Promise<void>
     onState: (listener: (state: BrowserLiveState) => void) => () => void

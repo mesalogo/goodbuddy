@@ -290,6 +290,27 @@ const desktopApi: DesktopApi = {
     }
   },
   browser: {
+    navigate: async (conversationId: string, url: string) => {
+      await ipcRenderer.invoke(ipcChannels.browserNavigate, {
+        conversationId,
+        url
+      })
+    },
+    back: async (conversationId: string) => {
+      await ipcRenderer.invoke(ipcChannels.browserBack, {
+        conversationId
+      })
+    },
+    reload: async (conversationId: string) => {
+      await ipcRenderer.invoke(ipcChannels.browserReload, {
+        conversationId
+      })
+    },
+    stopLoading: async (conversationId: string) => {
+      await ipcRenderer.invoke(ipcChannels.browserStopLoading, {
+        conversationId
+      })
+    },
     interact: async (conversationId: string) => {
       await ipcRenderer.invoke(
         ipcChannels.browserInteract,

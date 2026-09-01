@@ -8203,6 +8203,25 @@ function App(): React.JSX.Element {
           ? t('runtime.unavailable')
           : t('runtime.state.ready'))
   const composerContextErrorId = 'composer-context-error'
+  const runBrowserCommand = async (
+    command: (
+      browserApi: NonNullable<typeof window.goodbuddy.browser>,
+      conversationId: string
+    ) => Promise<void>
+  ): Promise<void> => {
+    if (!activeId) {
+      return
+    }
+    const browserApi = window.goodbuddy.browser
+    if (!browserApi) {
+      notify({
+        tone: 'error',
+        message: t('notices.browserControlUnavailable')
+      })
+      return
+    }
+    await command(browserApi, activeId)
+  }
 
   return (
     <div className="app-shell">
@@ -10822,6 +10841,7 @@ function App(): React.JSX.Element {
         />
       )}
       <RightAssistantSidebar
+        activeConversationId={activeId}
         approvals={pendingSidebarApprovals}
         artifacts={sidebarArtifacts}
         browserState={browserStates[activeId]}
@@ -10832,41 +10852,36 @@ function App(): React.JSX.Element {
         selectedTaskId={selectedAssistantTaskId}
         tasks={productAssistantTasks}
         projectNames={projectNames}
-        onInteractBrowser={async () => {
-          if (!activeId) {
-            return
-          }
-          const browserApi = window.goodbuddy.browser
-          if (!browserApi) {
-            notify({
-              tone: 'error',
-              message: t('notices.browserControlUnavailable')
-            })
-            return
-          }
-          await browserApi.interact(activeId)
-        }}
-        onStopBrowser={async () => {
-          if (!activeId) {
-            return
-          }
-          const browserApi = window.goodbuddy.browser
-          if (!browserApi) {
-            notify({
-              tone: 'error',
-              message: t('notices.browserControlUnavailable')
-            })
-            return
-          }
-          try {
-            await browserApi.stop(activeId)
-          } catch {
-            notify({
-              tone: 'error',
-              message: t('notices.browserStopFailed')
-            })
-          }
-        }}
+        onBackBrowser={() =>
+          runBrowserCommand((browserApi, conversationId) =>
+            browserApi.back(conversationId)
+          )
+        }
+        onInteractBrowser={() =>
+          runBrowserCommand((browserApi, conversationId) =>
+            browserApi.interact(conversationId)
+          )
+        }
+        onNavigateBrowser={(url) =>
+          runBrowserCommand((browserApi, conversationId) =>
+            browserApi.navigate(conversationId, url)
+          )
+        }
+        onReloadBrowser={() =>
+          runBrowserCommand((browserApi, conversationId) =>
+            browserApi.reload(conversationId)
+          )
+        }
+        onStopLoadingBrowser={() =>
+          runBrowserCommand((browserApi, conversationId) =>
+            browserApi.stopLoading(conversationId)
+          )
+        }
+        onStopBrowser={() =>
+          runBrowserCommand((browserApi, conversationId) =>
+            browserApi.stop(conversationId)
+          )
+        }
         onImportArtifacts={async () => {
           const imported = await window.goodbuddy.artifacts.importFiles(
             activeProjectId || undefined

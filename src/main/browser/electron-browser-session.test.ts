@@ -23,6 +23,7 @@ function createHarness() {
   const partitionEvents = new EventEmitter()
   const windowEvents = new EventEmitter()
   let currentUrl = ''
+  let loadingMainFrame = false
   let openHandler: ((details: { url: string }) => { action: 'deny' }) | undefined
   const sendCommand = vi.fn(async () => ({}))
   const capturedImage = {
@@ -63,6 +64,7 @@ function createHarness() {
     }),
     capturePage: vi.fn(async () => capturedImage),
     getURL: vi.fn(() => currentUrl),
+    isLoadingMainFrame: vi.fn(() => loadingMainFrame),
     stop: vi.fn(),
     destroy: vi.fn(),
     isDestroyed: vi.fn(() => false)
@@ -151,6 +153,9 @@ function createHarness() {
     setCurrentUrl(value: string) {
       currentUrl = value
     },
+    setLoadingMainFrame(value: boolean) {
+      loadingMainFrame = value
+    },
     getOpenHandler: () => openHandler,
     getPermissionCheck: () => permissionCheck,
     getPermissionRequest: () => permissionRequest,
@@ -223,6 +228,8 @@ describe('ElectronBrowserSession', () => {
       mimeType: 'image/jpeg',
       data: '/9j/2Q=='
     })
+    session.stopLoading()
+    expect(harness.webContents.stop).toHaveBeenCalledOnce()
 
     const downloadEvent = { preventDefault: vi.fn() }
     const item = { cancel: vi.fn() }
@@ -290,6 +297,34 @@ describe('ElectronBrowserSession', () => {
       )
     ).resolves.toBeUndefined()
     expect(session.getApprovedOrigin()).toBe('http://10.0.0.25')
+    await session.dispose()
+  })
+
+  it('reports actual main-frame loading changes and detaches subscribers', async () => {
+    const harness = createHarness()
+    harness.setLoadingMainFrame(true)
+    const session = await ElectronBrowserSession.create({
+      policy: harness.policy,
+      createPartition: async () => harness.partition,
+      createWindow: async () => harness.window,
+      createProxy: () => harness.proxy
+    })
+    expect(session.isLoading()).toBe(true)
+    const changes: boolean[] = []
+    const remove = session.onLoadingChange((isLoading) => {
+      changes.push(isLoading)
+    })
+
+    harness.contentEvents.emit('did-start-loading')
+    harness.setLoadingMainFrame(false)
+    harness.contentEvents.emit('did-stop-loading')
+    expect(session.isLoading()).toBe(false)
+    expect(changes).toEqual([false])
+
+    remove()
+    harness.setLoadingMainFrame(true)
+    harness.contentEvents.emit('did-start-loading')
+    expect(changes).toEqual([false])
     await session.dispose()
   })
 

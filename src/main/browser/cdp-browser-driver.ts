@@ -84,6 +84,16 @@ export type BrowserHistoryTarget = {
   url: string
 }
 
+export type BrowserNavigationMetadata = {
+  url: string
+  canGoBack: boolean
+}
+
+type BrowserNavigationHistory = {
+  currentIndex: number
+  entries: Array<{ id?: number; url?: string }>
+}
+
 type RefBinding = {
   backendNodeId: number
   generation: number
@@ -344,6 +354,25 @@ export class CdpBrowserDriver {
     await navigation.promise
     await this.waitForDocument(signal)
     return { url: this.webContents.getURL() || url }
+  }
+
+  async reload(signal: AbortSignal): Promise<{ url: string }> {
+    const currentUrl = this.webContents.getURL()
+    if (!currentUrl) {
+      throw new Error('浏览器当前页面不可重新加载')
+    }
+    this.invalidate()
+    const navigation = this.waitForMainFrameCommit(currentUrl, signal)
+    try {
+      await this.command('Page.reload', undefined, signal)
+    } catch (error) {
+      navigation.cancel(error)
+      await navigation.promise.catch(() => undefined)
+      throw error
+    }
+    await navigation.promise
+    await this.waitForDocument(signal)
+    return { url: this.webContents.getURL() || currentUrl }
   }
 
   private waitForMainFrameCommit(
@@ -813,12 +842,9 @@ export class CdpBrowserDriver {
   }
 
   async getBackTarget(signal: AbortSignal): Promise<BrowserHistoryTarget> {
-    const history = await this.command<{
-      currentIndex?: number
-      entries?: Array<{ id?: number; url?: string }>
-    }>('Page.getNavigationHistory', undefined, signal)
-    const index = history.currentIndex ?? -1
-    const entry = history.entries?.[index - 1]
+    const history = await this.getNavigationHistory(signal)
+    const index = history.currentIndex
+    const entry = history.entries[index - 1]
     if (
       index < 1 ||
       typeof entry?.id !== 'number' ||
@@ -829,6 +855,42 @@ export class CdpBrowserDriver {
       throw new Error('浏览器没有可返回的页面')
     }
     return { entryId: entry.id, url: entry.url }
+  }
+
+  private async getNavigationHistory(
+    signal: AbortSignal
+  ): Promise<BrowserNavigationHistory> {
+    const history = await this.command<{
+      currentIndex?: number
+      entries?: Array<{ id?: number; url?: string }>
+    }>('Page.getNavigationHistory', undefined, signal)
+    return {
+      currentIndex: history.currentIndex ?? -1,
+      entries: history.entries ?? []
+    }
+  }
+
+  async getNavigationMetadata(
+    signal: AbortSignal
+  ): Promise<BrowserNavigationMetadata> {
+    const history = await this.getNavigationHistory(signal)
+    const index = history.currentIndex
+    const entry = history.entries[index]
+    const url =
+      typeof entry?.url === 'string' && entry.url.length > 0
+        ? entry.url
+        : this.webContents.getURL()
+    if (!url || url.length > 8_192) {
+      throw new Error('浏览器当前页面 URL 无效')
+    }
+    const previousUrl = history.entries[index - 1]?.url
+    return {
+      url,
+      canGoBack:
+        index > 0 &&
+        typeof previousUrl === 'string' &&
+        /^https?:\/\//iu.test(previousUrl)
+    }
   }
 
   async backTo(

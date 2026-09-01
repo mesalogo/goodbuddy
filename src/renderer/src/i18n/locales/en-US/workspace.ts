@@ -346,9 +346,18 @@ export const workspace = {
       title: 'Live browser',
       interact: 'Interact',
       interacting: 'Interacting',
-      stop: 'Stop browser',
+      close: 'Close browser',
       empty:
-        'The live view will appear here after the Agent opens a web page.',
+        'Enter an address to open a page. The same live view appears here when the Agent uses the browser.',
+      toolbar: {
+        ariaLabel: 'Browser toolbar',
+        back: 'Back',
+        refresh: 'Refresh',
+        stopLoading: 'Stop loading',
+        address: 'Browser address',
+        addressPlaceholder: 'Enter a web address',
+        go: 'Go'
+      },
       statuses: {
         creating: 'Starting browser…',
         loading: 'Loading page…',
@@ -370,8 +379,12 @@ export const workspace = {
       refreshWorkspace: 'Could not refresh workspace files',
       importResult: 'Could not import results',
       loadResult: 'Could not load the result',
+      navigateBrowser: 'Could not open the web page',
+      backBrowser: 'Could not go back',
+      reloadBrowser: 'Could not refresh the web page',
+      stopLoadingBrowser: 'Could not stop loading the page',
       interactBrowser: 'Could not open the browser interaction window',
-      stopBrowser: 'Could not stop the browser'
+      stopBrowser: 'Could not close the browser'
     }
   },
   task: {

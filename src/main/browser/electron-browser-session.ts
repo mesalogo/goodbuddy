@@ -40,6 +40,7 @@ export type BrowserWebContents = {
   ): void
   capturePage?(): Promise<BrowserCapturedImage>
   getURL(): string
+  isLoadingMainFrame?(): boolean
   stop(): void
   close?(options?: { waitForBeforeUnload?: boolean }): void
   destroy(): void
@@ -230,6 +231,8 @@ export class ElectronBrowserSession {
     resolve(frame?: BrowserScreenshot): void
   }
   private interactionClosing?: Promise<void>
+  private readonly loadingListeners = new Set<(isLoading: boolean) => void>()
+  private loading = false
   private disposed = false
 
   private constructor(
@@ -412,6 +415,13 @@ export class ElectronBrowserSession {
 
   private async initialize(): Promise<void> {
     const contents = this.webContents
+    this.loading = contents.isLoadingMainFrame?.() ?? false
+    this.listen(contents, 'did-start-loading', () => {
+      this.setLoading(true)
+    })
+    this.listen(contents, 'did-stop-loading', () => {
+      this.setLoading(contents.isLoadingMainFrame?.() ?? false)
+    })
     this.listen(
       this.window,
       'close',
@@ -531,6 +541,33 @@ export class ElectronBrowserSession {
     }
   }
 
+  isLoading(): boolean {
+    return this.loading
+  }
+
+  onLoadingChange(listener: (isLoading: boolean) => void): () => void {
+    this.assertOpen()
+    this.loadingListeners.add(listener)
+    return () => {
+      this.loadingListeners.delete(listener)
+    }
+  }
+
+  private setLoading(isLoading: boolean): void {
+    if (this.loading === isLoading) {
+      return
+    }
+    this.loading = isLoading
+    for (const listener of this.loadingListeners) {
+      listener(isLoading)
+    }
+  }
+
+  stopLoading(): void {
+    this.assertOpen()
+    this.webContents.stop()
+  }
+
   async captureScreenshot(
     signal: AbortSignal
   ): Promise<BrowserScreenshot> {
@@ -648,6 +685,7 @@ export class ElectronBrowserSession {
     }
     this.disposed = true
     this.approvedOrigin = undefined
+    this.loadingListeners.clear()
     this.finishInteraction()
     for (const { target, event, listener } of this.listeners.splice(0)) {
       target.off(event, listener)

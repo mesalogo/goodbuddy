@@ -245,6 +245,10 @@ const api: DesktopApi = {
     })
   },
   browser: {
+    navigate: vi.fn(async () => {}),
+    back: vi.fn(async () => {}),
+    reload: vi.fn(async () => {}),
+    stopLoading: vi.fn(async () => {}),
     interact: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     onState: vi.fn((listener) => {
@@ -961,6 +965,21 @@ function deferred<T>(): {
     reject = rejectPromise
   })
   return { promise, resolve, reject }
+}
+
+function createBrowserState(
+  conversationId: string,
+  overrides: Partial<BrowserLiveState> = {}
+): BrowserLiveState {
+  return {
+    conversationId,
+    status: 'ready',
+    sessionActive: true,
+    isLoading: false,
+    canGoBack: false,
+    updatedAt: Date.now(),
+    ...overrides
+  }
 }
 
 function installRemoteProjectsSetting(enabled: boolean): {
@@ -9571,7 +9590,140 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('opens the live browser tab for the active conversation and can stop it', async () => {
+  it('shows the browser toolbar and starts an empty session by address', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
+
+    const toolbar = screen.getByRole('form', {
+      name: '浏览器工具栏'
+    })
+    const address = within(toolbar).getByRole('textbox', {
+      name: '浏览器地址'
+    })
+    const go = within(toolbar).getByRole('button', { name: '前往' })
+    expect(within(toolbar).getByRole('button', { name: '返回' }))
+      .toBeDisabled()
+    expect(within(toolbar).getByRole('button', { name: '刷新' }))
+      .toBeDisabled()
+    expect(within(toolbar).getByRole('button', { name: '交互' }))
+      .toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '关闭浏览器' })
+    ).toBeDisabled()
+    expect(go).toBeDisabled()
+    expect(screen.getByText(/输入地址并前往可打开页面/u))
+      .toBeInTheDocument()
+
+    fireEvent.change(address, {
+      target: { value: 'https://example.com/start' }
+    })
+    expect(go).toBeEnabled()
+    fireEvent.click(go)
+    await waitFor(() =>
+      expect(api.browser.navigate).toHaveBeenLastCalledWith(
+        expect.any(String),
+        'https://example.com/start'
+      )
+    )
+    expect(address).toHaveValue('https://example.com/start')
+
+    fireEvent.change(address, {
+      target: { value: 'https://example.com/enter' }
+    })
+    fireEvent.keyDown(address, { key: 'Enter' })
+    await waitFor(() =>
+      expect(api.browser.navigate).toHaveBeenLastCalledWith(
+        expect.any(String),
+        'https://example.com/enter'
+      )
+    )
+    expect(api.browser.navigate).toHaveBeenCalledTimes(2)
+  })
+
+  it('suppresses duplicate browser actions while keeping stop loading available', async () => {
+    const navigation = deferred<void>()
+    vi.mocked(api.browser.navigate).mockReturnValueOnce(
+      navigation.promise
+    )
+    render(<App />)
+
+    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
+
+    const toolbar = screen.getByRole('form', {
+      name: '浏览器工具栏'
+    })
+    const address = within(toolbar).getByRole('textbox', {
+      name: '浏览器地址'
+    })
+    const go = within(toolbar).getByRole('button', { name: '前往' })
+    fireEvent.change(address, {
+      target: { value: 'https://example.com/pending' }
+    })
+    fireEvent.click(go)
+    fireEvent.click(go)
+    fireEvent.keyDown(address, { key: 'Enter' })
+
+    expect(api.browser.navigate).toHaveBeenCalledOnce()
+    const conversationId =
+      vi.mocked(api.browser.navigate).mock.calls[0]?.[0] ?? ''
+    act(() => {
+      browserListener?.(createBrowserState(conversationId, {
+        status: 'loading',
+        isLoading: true,
+        url: 'https://example.com/pending',
+        updatedAt: Date.now()
+      }))
+    })
+
+    expect(
+      within(toolbar).getByRole('button', { name: '返回' })
+    ).toBeDisabled()
+    expect(address).toBeDisabled()
+    expect(go).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '交互' })
+    ).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '关闭浏览器' })
+    ).toBeDisabled()
+    const stopLoading = within(toolbar).getByRole('button', {
+      name: '停止加载'
+    })
+    expect(stopLoading).toBeEnabled()
+    fireEvent.click(stopLoading)
+    expect(api.browser.stopLoading).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      navigation.resolve()
+      await navigation.promise
+    })
+    const back = within(toolbar).getByRole('button', { name: '返回' })
+    const backNavigation = deferred<void>()
+    vi.mocked(api.browser.back).mockReturnValueOnce(
+      backNavigation.promise
+    )
+    act(() => {
+      browserListener?.(createBrowserState(conversationId, {
+        canGoBack: true,
+        url: 'https://example.com/pending',
+        updatedAt: Date.now() + 1
+      }))
+    })
+    expect(back).toBeEnabled()
+    fireEvent.click(back)
+    fireEvent.click(back)
+    expect(api.browser.back).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      backNavigation.resolve()
+      await backNavigation.promise
+    })
+  })
+
+  it('controls the active live browser without overwriting its address draft', async () => {
     render(<App />)
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
@@ -9583,13 +9735,12 @@ describe('App', () => {
     expect(conversationId).toBeTruthy()
 
     act(() => {
-      browserListener?.({
-        conversationId: conversationId ?? '',
-        status: 'ready',
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        canGoBack: false,
         url: 'https://example.com/',
         frameDataUrl: 'data:image/jpeg;base64,/9j/2Q==',
         updatedAt: Date.now()
-      })
+      }))
     })
 
     expect(screen.getByLabelText('助手工作栏')).toHaveClass(
@@ -9604,14 +9755,191 @@ describe('App', () => {
       'src',
       'data:image/jpeg;base64,/9j/2Q=='
     )
+    const toolbar = screen.getByRole('form', {
+      name: '浏览器工具栏'
+    })
+    const address = within(toolbar).getByRole('textbox', {
+      name: '浏览器地址'
+    })
+    const back = within(toolbar).getByRole('button', { name: '返回' })
+    expect(address).toHaveValue('https://example.com/')
+    expect(back).toBeDisabled()
+
+    fireEvent.focus(address)
+    fireEvent.change(address, {
+      target: { value: 'https://typed.example/draft' }
+    })
+    act(() => {
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        canGoBack: true,
+        url: 'https://example.com/redirected',
+        updatedAt: Date.now() + 1
+      }))
+    })
+    expect(address).toHaveValue('https://typed.example/draft')
+    expect(
+      screen.getByAltText('Agent 实时浏览器画面')
+    ).toHaveAttribute(
+      'src',
+      'data:image/jpeg;base64,/9j/2Q=='
+    )
+
+    fireEvent.keyDown(address, { key: 'Escape' })
+    expect(address).toHaveValue('https://example.com/redirected')
+    expect(address).not.toHaveFocus()
+    expect(back).toBeEnabled()
+    fireEvent.click(back)
+    await waitFor(() =>
+      expect(api.browser.back).toHaveBeenCalledWith(conversationId)
+    )
+
     fireEvent.click(
-      screen.getByRole('button', { name: '交互' })
+      within(toolbar).getByRole('button', { name: '刷新' })
+    )
+    await waitFor(() =>
+      expect(api.browser.reload).toHaveBeenCalledWith(conversationId)
+    )
+    fireEvent.change(address, {
+      target: { value: 'https://example.com/manual' }
+    })
+    fireEvent.click(
+      within(toolbar).getByRole('button', { name: '前往' })
+    )
+    await waitFor(() =>
+      expect(api.browser.navigate).toHaveBeenCalledWith(
+        conversationId,
+        'https://example.com/manual'
+      )
+    )
+    expect(address).toHaveValue('https://example.com/redirected')
+    act(() => {
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        canGoBack: true,
+        url: 'https://example.com/canonical/',
+        updatedAt: Date.now() + 2
+      }))
+    })
+    expect(address).toHaveValue('https://example.com/canonical/')
+    fireEvent.focus(address)
+    fireEvent.change(address, {
+      target: { value: 'https://example.com/canonical' }
+    })
+    fireEvent.click(
+      within(toolbar).getByRole('button', { name: '前往' })
+    )
+    await waitFor(() =>
+      expect(api.browser.navigate).toHaveBeenCalledWith(
+        conversationId,
+        'https://example.com/canonical'
+      )
+    )
+    expect(address).toHaveValue('https://example.com/canonical/')
+    fireEvent.click(
+      within(toolbar).getByRole('button', { name: '交互' })
     )
     await waitFor(() =>
       expect(api.browser.interact).toHaveBeenCalledWith(conversationId)
     )
+
+    act(() => {
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        status: 'loading',
+        isLoading: false,
+        canGoBack: true,
+        url: 'https://example.com/canonical/',
+        updatedAt: Date.now() + 3
+      }))
+    })
+    expect(back).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '刷新' })
+    ).toBeDisabled()
+    expect(address).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '交互' })
+    ).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '关闭浏览器' })
+    ).toBeDisabled()
+
+    act(() => {
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        status: 'acting',
+        canGoBack: true,
+        url: 'https://example.com/canonical/',
+        updatedAt: Date.now() + 4
+      }))
+    })
+    expect(back).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '刷新' })
+    ).toBeDisabled()
+    expect(address).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '前往' })
+    ).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '交互' })
+    ).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '关闭浏览器' })
+    ).toBeDisabled()
+
+    act(() => {
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        status: 'acting',
+        isLoading: true,
+        canGoBack: true,
+        url: 'https://example.com/canonical/',
+        updatedAt: Date.now() + 5
+      }))
+    })
+    expect(
+      within(toolbar).queryByRole('button', { name: '刷新' })
+    ).not.toBeInTheDocument()
+    const stopLoading = within(toolbar).getByRole('button', {
+      name: '停止加载'
+    })
+    expect(stopLoading).toBeEnabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '关闭浏览器' })
+    ).toBeDisabled()
+    fireEvent.click(stopLoading)
+    await waitFor(() =>
+      expect(api.browser.stopLoading).toHaveBeenCalledWith(
+        conversationId
+      )
+    )
+
+    act(() => {
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        status: 'interactive',
+        canGoBack: true,
+        url: 'https://example.com/canonical/',
+        updatedAt: Date.now() + 6
+      }))
+    })
+    expect(back).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '刷新' })
+    ).toBeDisabled()
+    expect(address).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '交互' })
+    ).toBeDisabled()
+    expect(
+      within(toolbar).getByRole('button', { name: '关闭浏览器' })
+    ).toBeDisabled()
+
+    act(() => {
+      browserListener?.(createBrowserState(conversationId ?? '', {
+        canGoBack: true,
+        url: 'https://example.com/canonical/',
+        updatedAt: Date.now() + 7
+      }))
+    })
     fireEvent.click(
-      screen.getByRole('button', { name: '停止浏览器' })
+      within(toolbar).getByRole('button', { name: '关闭浏览器' })
     )
     await waitFor(() =>
       expect(api.browser.stop).toHaveBeenCalledWith(conversationId)

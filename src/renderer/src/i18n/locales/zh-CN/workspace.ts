@@ -336,8 +336,18 @@ export const workspace = {
       title: '实时浏览器',
       interact: '交互',
       interacting: '交互中',
-      stop: '停止浏览器',
-      empty: 'Agent 打开网页后，实时画面会显示在这里。',
+      close: '关闭浏览器',
+      empty:
+        '输入地址并前往可打开页面；Agent 打开网页后，同一会话的实时画面也会显示在这里。',
+      toolbar: {
+        ariaLabel: '浏览器工具栏',
+        back: '返回',
+        refresh: '刷新',
+        stopLoading: '停止加载',
+        address: '浏览器地址',
+        addressPlaceholder: '输入网址',
+        go: '前往'
+      },
       statuses: {
         creating: '正在启动浏览器…',
         loading: '正在加载页面…',
@@ -359,8 +369,12 @@ export const workspace = {
       refreshWorkspace: '刷新工作区文件失败',
       importResult: '导入成果失败',
       loadResult: '加载成果失败',
+      navigateBrowser: '打开网页失败',
+      backBrowser: '返回上一页失败',
+      reloadBrowser: '刷新网页失败',
+      stopLoadingBrowser: '停止加载失败',
       interactBrowser: '打开浏览器交互窗口失败',
-      stopBrowser: '停止浏览器失败'
+      stopBrowser: '关闭浏览器失败'
     }
   },
   task: {

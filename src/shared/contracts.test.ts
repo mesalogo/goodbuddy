@@ -1,10 +1,63 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentRequestSchema,
+  browserLiveStateSchema,
+  browserNavigateRequestSchema,
+  browserStopLoadingRequestSchema,
   builtinEmbeddingConnectionId,
   legacyEmbeddingConnectionId,
   runtimeSettingsInputSchema
 } from './contracts'
+
+describe('browser control contracts', () => {
+  it('requires authoritative toolbar metadata and accepts committed URLs up to 8192 characters', () => {
+    const base = {
+      conversationId: 'conversation',
+      status: 'ready' as const,
+      sessionActive: true,
+      isLoading: false,
+      canGoBack: true,
+      updatedAt: 1
+    }
+    expect(
+      browserLiveStateSchema.safeParse({
+        ...base,
+        url: `https://example.com/${'a'.repeat(8_172)}`
+      }).success
+    ).toBe(true)
+    expect(
+      browserLiveStateSchema.safeParse({
+        conversationId: 'conversation',
+        status: 'ready',
+        updatedAt: 1
+      }).success
+    ).toBe(false)
+  })
+
+  it('keeps browser navigation and stop-loading requests narrow', () => {
+    expect(
+      browserNavigateRequestSchema.parse({
+        conversationId: 'conversation',
+        url: 'https://example.com/'
+      })
+    ).toEqual({
+      conversationId: 'conversation',
+      url: 'https://example.com/'
+    })
+    expect(
+      browserNavigateRequestSchema.safeParse({
+        conversationId: 'conversation',
+        url: 'https://example.com/',
+        rawElectron: true
+      }).success
+    ).toBe(false)
+    expect(
+      browserStopLoadingRequestSchema.safeParse({
+        conversationId: 'conversation'
+      }).success
+    ).toBe(true)
+  })
+})
 
 const baseInput = {
   provider: 'model' as const,

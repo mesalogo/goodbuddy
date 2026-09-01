@@ -19,6 +19,7 @@ import type {
 } from '../shared/ssh-host-contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { BrowserNavigationStoppedError } from './browser/browser-service'
 import {
   registerIpcHandlers,
   sendRemoteEnvironmentUpdateProgress,
@@ -357,6 +358,10 @@ describe('registerIpcHandlers computer capabilities', () => {
       setBuiltinMcpServerEnabled: vi.fn(async () => snapshot),
       setBuiltinMcpServerAssignments: vi.fn(async () => snapshot),
       setComputerCapabilityEnabled: vi.fn(async () => snapshot),
+      getComputerCapabilityStatus: vi.fn(async () => ({
+        enabled: true,
+        supported: true
+      })),
       setWebSearchEnabled: vi.fn(async () => snapshot),
       createBrowserProfile: vi.fn(async () => snapshot),
       diagnoseComputerCapability: vi.fn(async () => ({
@@ -368,6 +373,19 @@ describe('registerIpcHandlers computer capabilities', () => {
     }
     const onRuntimeSettingsChanged = vi.fn(async () => {})
     const interact = vi.fn(async () => {})
+    const navigate = vi.fn(async () => ({
+      url: 'https://example.com/',
+      origin: 'https://example.com'
+    }))
+    const back = vi.fn(async () => ({
+      url: 'https://example.com/previous',
+      origin: 'https://example.com'
+    }))
+    const reload = vi.fn(async () => ({
+      url: 'https://example.com/',
+      origin: 'https://example.com'
+    }))
+    const stopLoading = vi.fn(async () => true)
     const releaseConversation = vi.fn(async () => {})
     const selectFiles = vi.fn(
       async (
@@ -430,6 +448,10 @@ describe('registerIpcHandlers computer capabilities', () => {
       onRuntimeSettingsChanged,
       undefined,
       {
+        navigate,
+        back,
+        reload,
+        stopLoading,
         interact,
         releaseConversation,
         onState: (listener) => {
@@ -573,6 +595,10 @@ describe('registerIpcHandlers computer capabilities', () => {
     browserStateListener?.({
       conversationId: 'browser-conversation',
       status: 'ready',
+      sessionActive: true,
+      isLoading: false,
+      canGoBack: false,
+      frameDataUrl: 'data:image/jpeg;base64,frame',
       updatedAt: 1
     })
     expect(webContents.send).toHaveBeenCalledWith(
@@ -581,6 +607,38 @@ describe('registerIpcHandlers computer capabilities', () => {
         conversationId: 'browser-conversation',
         status: 'ready'
       })
+    )
+    browserStateListener?.({
+      conversationId: 'browser-conversation',
+      status: 'acting',
+      sessionActive: true,
+      isLoading: false,
+      canGoBack: false,
+      frameDataUrl: 'data:image/jpeg;base64,frame',
+      updatedAt: 2
+    })
+    const repeatedFramePayload = webContents.send.mock.calls.at(-1)?.[1]
+    expect(repeatedFramePayload).not.toHaveProperty('frameDataUrl')
+    browserStateListener?.({
+      conversationId: 'browser-conversation',
+      status: 'stopped',
+      sessionActive: false,
+      isLoading: false,
+      canGoBack: false,
+      updatedAt: 3
+    })
+    browserStateListener?.({
+      conversationId: 'browser-conversation',
+      status: 'ready',
+      sessionActive: true,
+      isLoading: false,
+      canGoBack: false,
+      frameDataUrl: 'data:image/jpeg;base64,frame',
+      updatedAt: 4
+    })
+    expect(webContents.send.mock.calls.at(-1)?.[1]).toHaveProperty(
+      'frameDataUrl',
+      'data:image/jpeg;base64,frame'
     )
     await expect(
       electronMocks.handlers.get(ipcChannels.browserStop)?.(event, {
@@ -591,6 +649,42 @@ describe('registerIpcHandlers computer capabilities', () => {
       'browser-conversation'
     )
     await expect(
+      electronMocks.handlers.get(ipcChannels.browserNavigate)?.(event, {
+        conversationId: 'browser-conversation',
+        url: 'https://example.com/'
+      })
+    ).resolves.toBeUndefined()
+    expect(navigate).toHaveBeenCalledWith(
+      'browser-conversation',
+      'https://example.com/',
+      expect.any(AbortSignal)
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserBack)?.(event, {
+        conversationId: 'browser-conversation'
+      })
+    ).resolves.toBeUndefined()
+    expect(back).toHaveBeenCalledWith(
+      'browser-conversation',
+      expect.any(AbortSignal)
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserReload)?.(event, {
+        conversationId: 'browser-conversation'
+      })
+    ).resolves.toBeUndefined()
+    expect(reload).toHaveBeenCalledWith(
+      'browser-conversation',
+      expect.any(AbortSignal)
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserStopLoading)?.(
+        event,
+        { conversationId: 'browser-conversation' }
+      )
+    ).resolves.toBeUndefined()
+    expect(stopLoading).toHaveBeenCalledWith('browser-conversation')
+    await expect(
       electronMocks.handlers.get(ipcChannels.browserInteract)?.(event, {
         conversationId: 'browser-conversation'
       })
@@ -599,6 +693,57 @@ describe('registerIpcHandlers computer capabilities', () => {
       'browser-conversation',
       expect.any(AbortSignal)
     )
+
+    navigate.mockRejectedValueOnce(new BrowserNavigationStoppedError())
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserNavigate)?.(event, {
+        conversationId: 'browser-conversation',
+        url: 'https://example.com/slow'
+      })
+    ).resolves.toBeUndefined()
+    capabilityService.getComputerCapabilityStatus.mockResolvedValueOnce({
+      enabled: false,
+      supported: true
+    })
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserBack)?.(event, {
+        conversationId: 'browser-conversation'
+      })
+    ).rejects.toThrow('尚未启用')
+    capabilityService.getComputerCapabilityStatus.mockResolvedValueOnce({
+      enabled: true,
+      supported: false
+    })
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserReload)?.(event, {
+        conversationId: 'browser-conversation'
+      })
+    ).rejects.toThrow('不支持')
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserNavigate)?.(event, {
+        conversationId: 'browser-conversation',
+        url: 'https://example.com/',
+        debugger: true
+      })
+    ).rejects.toThrow()
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserStopLoading)?.(
+        {
+          sender: {},
+          senderFrame: webContents.mainFrame
+        },
+        { conversationId: 'browser-conversation' }
+      )
+    ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserStopLoading)?.(
+        event,
+        {
+          conversationId: 'browser-conversation',
+          rawElectron: true
+        }
+      )
+    ).rejects.toThrow()
 
     expect(() =>
       electronMocks.handlers.get(

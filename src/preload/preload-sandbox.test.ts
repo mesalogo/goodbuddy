@@ -21,6 +21,31 @@ describe('sandboxed preload', () => {
     expect(source).not.toMatch(/\bfrom\s+['"]zod['"]/u)
   })
 
+  it('exposes only narrow browser-control methods', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    const browser =
+      source.match(
+        /browser: \{(?<body>[\s\S]*?)\r?\n {2}\},\r?\n {2}terminal:/u
+      )?.groups?.body ?? ''
+    for (const method of [
+      'navigate:',
+      'back:',
+      'reload:',
+      'stopLoading:',
+      'interact:',
+      'stop:',
+      'onState:'
+    ]) {
+      expect(browser).toContain(method)
+    }
+    expect(browser).not.toMatch(
+      /\b(?:webContents|debugger|session|partition|cookie)\b/iu
+    )
+  })
+
   it('exposes only explicit computer capability and managed profile IPC methods', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),

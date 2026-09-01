@@ -25,7 +25,11 @@ import {
   approvalDecisionSchema,
   agentQuestionResponseSchema,
   agentRequestSchema,
+  browserBackRequestSchema,
   browserInteractRequestSchema,
+  browserNavigateRequestSchema,
+  browserReloadRequestSchema,
+  browserStopLoadingRequestSchema,
   browserStopRequestSchema,
   conversationQueueUserInputSchema,
   defaultRuntimeSettings,
@@ -127,6 +131,7 @@ import {
   agentPackageInventorySchema
 } from '../shared/agent-package-contracts'
 import { assertTrustedSender } from './trusted-ipc-sender'
+import { BrowserNavigationStoppedError } from './browser/browser-service'
 import type { TerminalSessionManager } from './terminal/terminal-session-manager'
 import { releaseNotesAcknowledgeSchema } from '../shared/release-notes-contracts'
 import {
@@ -1050,6 +1055,20 @@ export function registerIpcHandlers(
   onRuntimeSettingsChanged: () => Promise<void>,
   onBeforeClearLocalData?: () => Promise<void>,
   browserControl?: {
+    navigate(
+      conversationId: string,
+      url: string,
+      signal: AbortSignal
+    ): Promise<{ url: string; origin: string }>
+    back(
+      conversationId: string,
+      signal: AbortSignal
+    ): Promise<{ url: string; origin: string }>
+    reload(
+      conversationId: string,
+      signal: AbortSignal
+    ): Promise<{ url: string; origin: string }>
+    stopLoading(conversationId: string): boolean | Promise<boolean>
     interact(
       conversationId: string,
       signal: AbortSignal
@@ -1314,9 +1333,25 @@ export function registerIpcHandlers(
   }
   window.on('maximize', notifyMaximizedChanged)
   window.on('unmaximize', notifyMaximizedChanged)
+  const lastSentBrowserFrames = new Map<string, string>()
   const removeBrowserStateListener = browserControl?.onState((state) => {
     if (!window.isDestroyed()) {
-      window.webContents.send(ipcChannels.browserState, state)
+      const frame = state.frameDataUrl
+      let payload: BrowserLiveState = state
+      if (
+        frame &&
+        lastSentBrowserFrames.get(state.conversationId) === frame
+      ) {
+        payload = { ...state }
+        delete payload.frameDataUrl
+      }
+      if (frame) {
+        lastSentBrowserFrames.set(state.conversationId, frame)
+      }
+      if (state.status === 'stopped') {
+        lastSentBrowserFrames.delete(state.conversationId)
+      }
+      window.webContents.send(ipcChannels.browserState, payload)
     }
   })
   const abortActiveRequests = (
@@ -3364,6 +3399,93 @@ export function registerIpcHandlers(
     ])
   })
 
+  const requireBrowserControl = async (): Promise<
+    NonNullable<typeof browserControl>
+  > => {
+    if (!browserControl) {
+      throw new Error('浏览器控制当前不可用')
+    }
+    const capability =
+      await capabilityService.getComputerCapabilityStatus(
+        'host-browser-control'
+      )
+    if (!capability.supported) {
+      throw new Error('当前平台不支持浏览器控制')
+    }
+    if (!capability.enabled) {
+      throw new Error('浏览器控制能力尚未启用')
+    }
+    return browserControl
+  }
+
+  const runUiBrowserNavigation = async (
+    operation: (
+      control: NonNullable<typeof browserControl>,
+      signal: AbortSignal
+    ) => Promise<unknown>
+  ): Promise<void> => {
+    try {
+      const control = await requireBrowserControl()
+      await operation(control, new AbortController().signal)
+    } catch (error) {
+      if (!(error instanceof BrowserNavigationStoppedError)) {
+        throw error
+      }
+    }
+  }
+
+  registerHandler(
+    ipcChannels.browserNavigate,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserNavigateRequestSchema.parse(input)
+      await runUiBrowserNavigation((control, signal) =>
+        control.navigate(
+          request.conversationId,
+          request.url,
+          signal
+        )
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.browserBack,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserBackRequestSchema.parse(input)
+      await runUiBrowserNavigation((control, signal) =>
+        control.back(
+          request.conversationId,
+          signal
+        )
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.browserReload,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserReloadRequestSchema.parse(input)
+      await runUiBrowserNavigation((control, signal) =>
+        control.reload(
+          request.conversationId,
+          signal
+        )
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.browserStopLoading,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserStopLoadingRequestSchema.parse(input)
+      await browserControl?.stopLoading(request.conversationId)
+    }
+  )
+
   registerHandler(
     ipcChannels.terminalCreate,
     async (event, input: unknown) => {
@@ -3455,7 +3577,8 @@ export function registerIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const request = browserInteractRequestSchema.parse(input)
-      await browserControl?.interact(
+      const control = await requireBrowserControl()
+      await control.interact(
         request.conversationId,
         new AbortController().signal
       )
@@ -7837,6 +7960,7 @@ export function registerIpcHandlers(
   return async () => {
     shuttingDown = true
     removeBrowserStateListener?.()
+    lastSentBrowserFrames.clear()
     removeRemoteAgentConnectionStatusListener?.()
     clearInterval(scheduleInterval)
     for (const timeout of queueDispatchTimers.values()) {

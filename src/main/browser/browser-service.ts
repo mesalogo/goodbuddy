@@ -2,6 +2,7 @@ import { BrowserUrlPolicy, canonicalizeBrowserUrl } from './browser-url-policy'
 import {
   CdpBrowserDriver,
   type BrowserHistoryTarget,
+  type BrowserNavigationMetadata,
   type BrowserSnapshot
 } from './cdp-browser-driver'
 import type { BrowserScreenshot } from './browser-screenshot'
@@ -15,19 +16,30 @@ import type { BrowserLiveState } from '../../shared/contracts'
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_CLEANUP_TIMEOUT_MS = 5_000
 
+export class BrowserNavigationStoppedError extends Error {
+  constructor() {
+    super('浏览器导航已停止，可继续使用当前页面')
+    this.name = 'BrowserNavigationStoppedError'
+  }
+}
+
 export type BrowserSessionLike = {
   readonly webContents: BrowserWebContents
   approveNavigation(
     target: Awaited<ReturnType<BrowserUrlPolicy['validate']>>
   ): void
   getCurrentOrigin(): string | undefined
+  isLoading(): boolean
+  onLoadingChange(listener: (isLoading: boolean) => void): () => void
   openInteraction(): Promise<BrowserScreenshot | undefined>
+  stopLoading(): void
   captureScreenshot?(signal: AbortSignal): Promise<BrowserScreenshot>
   dispose(): Promise<void>
 }
 
 export type BrowserDriverLike = {
   navigate(url: string, signal: AbortSignal): Promise<{ url: string }>
+  reload(signal: AbortSignal): Promise<{ url: string }>
   snapshot(signal: AbortSignal): Promise<BrowserSnapshot>
   click(ref: string, signal: AbortSignal): Promise<void>
   type(ref: string, text: string, signal: AbortSignal): Promise<void>
@@ -37,6 +49,9 @@ export type BrowserDriverLike = {
     target: BrowserHistoryTarget,
     signal: AbortSignal
   ): Promise<{ url: string }>
+  getNavigationMetadata(
+    signal: AbortSignal
+  ): Promise<BrowserNavigationMetadata>
   screenshot(signal: AbortSignal): Promise<BrowserScreenshot>
   dispose(): void
 }
@@ -61,7 +76,14 @@ type BrowserSlot = {
   driver: BrowserDriverLike
   origin?: string
   tail: Promise<void>
-  active?: AbortController
+  active?: {
+    controller: AbortController
+    stopLoadingAllowed: boolean
+    status: 'loading' | 'acting' | 'interactive'
+  }
+  isLoading: boolean
+  stopLoadingRequested: boolean
+  removeLoadingListener: () => void
   idleTimer?: ReturnType<typeof setTimeout>
   lastUsedAt: number
   released: boolean
@@ -203,13 +225,29 @@ export class BrowserService {
     conversationId: string,
     status: BrowserLiveState['status'],
     update: Partial<
-      Pick<BrowserLiveState, 'url' | 'frameDataUrl' | 'error'>
+      Pick<
+        BrowserLiveState,
+        'url' | 'frameDataUrl' | 'error' | 'canGoBack' | 'isLoading'
+      >
     > = {}
   ): void {
     const previous = this.liveStates.get(conversationId)
+    const slot = this.slots.get(conversationId)
     const state: BrowserLiveState = {
       conversationId,
       status,
+      sessionActive:
+        status !== 'creating' &&
+        status !== 'stopped' &&
+        Boolean(slot && !slot.released),
+      isLoading:
+        update.isLoading ??
+        (status === 'creating'
+          ? true
+          : status === 'stopped'
+            ? false
+            : slot?.isLoading ?? false),
+      canGoBack: update.canGoBack ?? previous?.canGoBack ?? false,
       ...(previous?.url ? { url: previous.url } : {}),
       ...(status !== 'stopped' && previous?.frameDataUrl
         ? { frameDataUrl: previous.frameDataUrl }
@@ -241,6 +279,20 @@ export class BrowserService {
     url?: string,
     screenshot?: BrowserScreenshot
   ): Promise<void> {
+    let committedUrl = url
+    let canGoBack = this.liveStates.get(conversationId)?.canGoBack ?? false
+    try {
+      const metadata = await slot.driver.getNavigationMetadata(signal)
+      const currentTarget = canonicalizeBrowserUrl(metadata.url)
+      if (slot.session.getCurrentOrigin() !== currentTarget.origin) {
+        throw new Error('浏览器当前页面来源不一致')
+      }
+      slot.origin = currentTarget.origin
+      committedUrl = currentTarget.href
+      canGoBack = metadata.canGoBack
+    } catch {
+      signal.throwIfAborted()
+    }
     let frame = screenshot
     if (!frame) {
       if (this.liveFrameDelayMs > 0) {
@@ -304,19 +356,22 @@ export class BrowserService {
         this.liveStates.get(conversationId)?.frameDataUrl
       if (previousFrame) {
         this.emitState(conversationId, 'ready', {
-          ...(url ? { url } : {}),
+          ...(committedUrl ? { url: committedUrl } : {}),
+          canGoBack,
           frameDataUrl: previousFrame
         })
         return
       }
       this.emitState(conversationId, 'failed', {
-        ...(url ? { url } : {}),
+        ...(committedUrl ? { url: committedUrl } : {}),
+        canGoBack,
         error: '页面已就绪，但实时画面捕获失败，请重试浏览器操作'
       })
       return
     }
     this.emitState(conversationId, 'ready', {
-      ...(url ? { url } : {}),
+      ...(committedUrl ? { url: committedUrl } : {}),
+      canGoBack,
       frameDataUrl: `data:${frame.mimeType};base64,${frame.data}`
     })
   }
@@ -340,6 +395,9 @@ export class BrowserService {
     signal: AbortSignal,
     error: unknown
   ): boolean {
+    if (error instanceof BrowserNavigationStoppedError) {
+      return false
+    }
     if (signal.aborted || this.releaseRequests.has(conversationId)) {
       return false
     }
@@ -439,10 +497,30 @@ export class BrowserService {
       session,
       driver,
       tail: Promise.resolve(),
+      isLoading: session.isLoading(),
+      stopLoadingRequested: false,
+      removeLoadingListener: () => undefined,
       lastUsedAt: Date.now(),
       released: false
     }
     this.slots.set(conversationId, slot)
+    slot.removeLoadingListener = session.onLoadingChange((isLoading) => {
+      if (!isLoading) {
+        slot.stopLoadingRequested = false
+      }
+      if (
+        slot.released ||
+        slot.isLoading === isLoading ||
+        this.slots.get(conversationId) !== slot
+      ) {
+        return
+      }
+      slot.isLoading = isLoading
+      const current = this.liveStates.get(conversationId)
+      if (current) {
+        this.emitState(conversationId, current.status, { isLoading })
+      }
+    })
     this.scheduleIdleExpiry(slot)
     return slot
   }
@@ -478,7 +556,8 @@ export class BrowserService {
     slot: BrowserSlot,
     signal: AbortSignal,
     operation: (effectiveSignal: AbortSignal) => Promise<T>,
-    status?: 'loading' | 'acting' | 'interactive'
+    status: 'loading' | 'acting' | 'interactive',
+    stopLoadingAllowed: boolean
   ): Promise<T> {
     signal.throwIfAborted()
     if (slot.released || this.disposed) {
@@ -503,8 +582,13 @@ export class BrowserService {
         clearTimeout(slot.idleTimer)
         slot.idleTimer = undefined
       }
+      slot.stopLoadingRequested = false
       operationController = new AbortController()
-      slot.active = operationController
+      slot.active = {
+        controller: operationController,
+        stopLoadingAllowed,
+        status
+      }
       const effectiveSignal = AbortSignal.any([
         signal,
         this.lifecycle.signal,
@@ -512,7 +596,10 @@ export class BrowserService {
       ])
       return await operation(effectiveSignal)
     } finally {
-      if (operationController && slot.active === operationController) {
+      if (
+        operationController &&
+        slot.active?.controller === operationController
+      ) {
         slot.active = undefined
       }
       releaseGate()
@@ -546,21 +633,32 @@ export class BrowserService {
     conversationId: string,
     signal: AbortSignal,
     status: 'loading' | 'acting' | 'interactive',
+    stopLoadingAllowed: boolean,
     failureStage: string,
     operation: (
       slot: BrowserSlot,
       effectiveSignal: AbortSignal
     ) => Promise<T>
   ): Promise<T> {
+    let slot: BrowserSlot | undefined
     try {
-      const slot = this.requireSlot(conversationId)
+      const requiredSlot = this.requireSlot(conversationId)
+      slot = requiredSlot
       return await this.serialize(
-        slot,
+        requiredSlot,
         signal,
-        (effectiveSignal) => operation(slot, effectiveSignal),
-        status
+        (effectiveSignal) => operation(requiredSlot, effectiveSignal),
+        status,
+        stopLoadingAllowed
       )
     } catch (error) {
+      if (
+        error instanceof BrowserNavigationStoppedError &&
+        slot &&
+        status !== 'loading'
+      ) {
+        this.recoverStoppedNavigation(slot)
+      }
       if (this.shouldEmitFailure(conversationId, signal, error)) {
         this.emitFailure(conversationId, failureStage, error)
       }
@@ -577,41 +675,25 @@ export class BrowserService {
       !this.slots.has(conversationId) &&
       !this.creations.has(conversationId)
     ) {
-      this.emitState(conversationId, 'creating', { url })
+      this.emitState(conversationId, 'creating')
     }
     try {
       const slot = await this.getOrCreateSlot(conversationId, signal)
       return await this.serialize(slot, signal, async (effectiveSignal) => {
         const target = await this.policy.validate(url, effectiveSignal)
         slot.session.approveNavigation(target)
-        try {
-          const result = await slot.driver.navigate(
+        return this.completeNavigation(
+          conversationId,
+          slot,
+          effectiveSignal,
+          () =>
+            slot.driver.navigate(
             target.url.href,
             effectiveSignal
-          )
-          const finalTarget = await this.policy.validateRedirect(
-            result.url,
-            effectiveSignal
-          )
-          if (slot.session.getCurrentOrigin() !== finalTarget.origin) {
-            throw new Error('浏览器导航结果来源不一致')
-          }
-          slot.origin = finalTarget.origin
-          await this.captureFrame(
-            conversationId,
-            slot,
-            effectiveSignal,
-            finalTarget.url.href
-          )
-          return {
-            url: finalTarget.url.href,
-            origin: finalTarget.origin
-          }
-        } catch (error) {
-          await this.releaseSlot(slot).catch(() => undefined)
-          throw error
-        }
-      }, 'loading')
+            ),
+          '浏览器导航结果来源不一致'
+        )
+      }, 'loading', true)
     } catch (error) {
       if (this.shouldEmitFailure(conversationId, signal, error)) {
         this.emitFailure(conversationId, '浏览器导航', error)
@@ -628,6 +710,7 @@ export class BrowserService {
       conversationId,
       signal,
       'acting',
+      false,
       '读取浏览器页面',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
@@ -657,6 +740,7 @@ export class BrowserService {
       conversationId,
       signal,
       'acting',
+      true,
       '浏览器点击',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
@@ -676,6 +760,7 @@ export class BrowserService {
       conversationId,
       signal,
       'acting',
+      false,
       '浏览器输入',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
@@ -695,6 +780,7 @@ export class BrowserService {
       conversationId,
       signal,
       'acting',
+      false,
       '浏览器选择',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
@@ -712,6 +798,7 @@ export class BrowserService {
       conversationId,
       signal,
       'loading',
+      true,
       '浏览器返回',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
@@ -722,33 +809,36 @@ export class BrowserService {
           effectiveSignal
         )
         slot.session.approveNavigation(target)
-        try {
-          const result = await slot.driver.backTo(
-            historyTarget,
-            effectiveSignal
-          )
-          const finalTarget = await this.policy.validateRedirect(
-            result.url,
-            effectiveSignal
-          )
-          if (slot.session.getCurrentOrigin() !== finalTarget.origin) {
-            throw new Error('浏览器返回结果来源不一致')
-          }
-          slot.origin = finalTarget.origin
-          await this.captureFrame(
-            conversationId,
-            slot,
-            effectiveSignal,
-            finalTarget.url.href
-          )
-          return {
-            url: finalTarget.url.href,
-            origin: finalTarget.origin
-          }
-        } catch (error) {
-          await this.releaseSlot(slot).catch(() => undefined)
-          throw error
-        }
+        return this.completeNavigation(
+          conversationId,
+          slot,
+          effectiveSignal,
+          () => slot.driver.backTo(historyTarget, effectiveSignal),
+          '浏览器返回结果来源不一致'
+        )
+      }
+    )
+  }
+
+  async reload(
+    conversationId: string,
+    signal: AbortSignal
+  ): Promise<{ url: string; origin: string }> {
+    return this.runInSession(
+      conversationId,
+      signal,
+      'loading',
+      true,
+      '浏览器刷新',
+      async (slot, effectiveSignal) => {
+        await this.verifyCurrentOriginOrRelease(slot)
+        return this.completeNavigation(
+          conversationId,
+          slot,
+          effectiveSignal,
+          () => slot.driver.reload(effectiveSignal),
+          '浏览器刷新结果来源不一致'
+        )
       }
     )
   }
@@ -761,6 +851,7 @@ export class BrowserService {
       conversationId,
       signal,
       'acting',
+      false,
       '浏览器截图',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
@@ -795,6 +886,7 @@ export class BrowserService {
       conversationId,
       signal,
       'interactive',
+      false,
       '浏览器交互',
       async (slot, effectiveSignal) => {
         await this.verifyCurrentOriginOrRelease(slot)
@@ -815,6 +907,101 @@ export class BrowserService {
         )
       }
     )
+  }
+
+  async stopLoading(conversationId: string): Promise<boolean> {
+    const slot = this.slots.get(conversationId)
+    const active = slot?.active
+    if (!slot || slot.released) {
+      return false
+    }
+    if (slot.stopLoadingRequested) {
+      return false
+    }
+    if (active) {
+      if (
+        !active.stopLoadingAllowed ||
+        active.controller.signal.aborted ||
+        (active.status !== 'loading' &&
+          !slot.isLoading &&
+          !slot.session.isLoading())
+      ) {
+        return false
+      }
+      slot.isLoading = false
+      slot.stopLoadingRequested = true
+      slot.session.stopLoading()
+      active.controller.abort(new BrowserNavigationStoppedError())
+      return true
+    }
+    if (!slot.isLoading && !slot.session.isLoading()) {
+      return false
+    }
+    slot.isLoading = false
+    slot.stopLoadingRequested = true
+    slot.session.stopLoading()
+    this.recoverStoppedNavigation(slot)
+    return true
+  }
+
+  private recoverStoppedNavigation(slot: BrowserSlot): void {
+    if (slot.released || this.slots.get(slot.conversationId) !== slot) {
+      return
+    }
+    slot.isLoading = false
+    const currentUrl = slot.session.webContents.getURL()
+    try {
+      const currentTarget = canonicalizeBrowserUrl(currentUrl)
+      if (slot.session.getCurrentOrigin() !== currentTarget.origin) {
+        throw new Error('浏览器停止导航后的页面来源不一致')
+      }
+      slot.origin = currentTarget.origin
+      this.emitState(slot.conversationId, 'ready', {
+        url: currentTarget.href,
+        isLoading: false
+      })
+    } catch {
+      if (!slot.released && this.slots.get(slot.conversationId) === slot) {
+        this.emitState(slot.conversationId, 'ready', { isLoading: false })
+      }
+    }
+  }
+
+  private async completeNavigation(
+    conversationId: string,
+    slot: BrowserSlot,
+    signal: AbortSignal,
+    operation: () => Promise<{ url: string }>,
+    originMismatchMessage: string
+  ): Promise<{ url: string; origin: string }> {
+    try {
+      const result = await operation()
+      const finalTarget = await this.policy.validateRedirect(
+        result.url,
+        signal
+      )
+      if (slot.session.getCurrentOrigin() !== finalTarget.origin) {
+        throw new Error(originMismatchMessage)
+      }
+      slot.origin = finalTarget.origin
+      await this.captureFrame(
+        conversationId,
+        slot,
+        signal,
+        finalTarget.url.href
+      )
+      return {
+        url: finalTarget.url.href,
+        origin: finalTarget.origin
+      }
+    } catch (error) {
+      if (error instanceof BrowserNavigationStoppedError) {
+        this.recoverStoppedNavigation(slot)
+        throw error
+      }
+      await this.releaseSlot(slot).catch(() => undefined)
+      throw error
+    }
   }
 
   async releaseConversation(conversationId: string): Promise<void> {
@@ -855,7 +1042,8 @@ export class BrowserService {
       clearTimeout(slot.idleTimer)
       slot.idleTimer = undefined
     }
-    slot.active?.abort(new Error('浏览器会话已释放'))
+    slot.removeLoadingListener()
+    slot.active?.controller.abort(new Error('浏览器会话已释放'))
     try {
       slot.driver.dispose()
     } finally {
