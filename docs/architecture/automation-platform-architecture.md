@@ -9,7 +9,7 @@
 | 日期 | 2026-08-19 |
 | 适用产品 | GoodBuddy 桌面端 |
 | 文档角色 | Task/Job、调度、目标、并行实验、会话监督、分区记忆与持续学习的总纲 |
-| 领域模型 | [Task 与 Job 统一领域模型](../prd/task-and-job/task-and-job-model.md) |
+| 领域模型 | [Task 与 Job 统一领域模型](../features/task-and-job/task-and-job-model.md) |
 
 ## 1. 背景
 
@@ -445,7 +445,7 @@ Renderer 只通过显式 IPC 列出、加入、删除、提升、释放和接收
 监督统一进入应用级助手工作栏中固定且始终可访问的“监督”栏目，不再保留“独立可折叠右栏”
 和“动态新增页签”两种实现。栏目默认跟随当前上下文，用户可以固定到其他 Conversation、
 Task 或实验对象；详细范围与交互契约见
-[通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)。
+[通用助手工作栏与执行空间 PRD](../features/assistant-workbar/prd.md)。
 
 ## 13. 安全与隐私
 
@@ -555,15 +555,15 @@ Conversation 关联，旧 child-task 字段可兼容映射到 Job/Subjob；心�
 
 ## 17. 相关文档
 
-- [Task 与 Job 统一领域模型](../prd/task-and-job/task-and-job-model.md)
-- [Task Center PRD](../prd/task-and-job/task-center-prd.md)
-- [Scheduled Task PRD](../prd/task-and-job/scheduled-task-prd.md)
-- [Job 与 Subjob PRD](../prd/task-and-job/job-and-subjob-prd.md)
-- [智能心跳 PRD](../prd/smart-heartbeat/smart-heartbeat-prd.md)
-- [并行实验工作台 PRD](../prd/experiments/parallel-experiments-prd.md)
-- [会话监督 PRD](../prd/supervision/conversation-supervision-prd.md)
-- [分区记忆 PRD](../prd/memory/partitioned-memory-prd.md)
-- [持续学习与评估门 PRD](../prd/learning/continuous-learning-prd.md)
+- [Task 与 Job 统一领域模型](../features/task-and-job/task-and-job-model.md)
+- [Task Center PRD](../features/task-and-job/task-center-prd.md)
+- [Scheduled Task PRD](../features/task-and-job/scheduled-task-prd.md)
+- [Job 与 Subjob PRD](../features/task-and-job/job-and-subjob-prd.md)
+- [智能心跳 PRD](../features/smart-heartbeat/prd.md)
+- [并行实验工作台 PRD](../features/parallel-experiments/prd.md)
+- [会话监督 PRD](../features/conversation-supervision/prd.md)
+- [分区记忆 PRD](../features/memory/prd.md)
+- [持续学习与评估门 PRD](../features/continuous-learning/prd.md)
 - [GoodBuddy 长期助手功能规划](../roadmap/long-term-assistant-roadmap.md)
 - [GoodBuddy 统一界面设计系统](../../UI-DESIGN.md)
 

@@ -9,7 +9,7 @@
 | 版本 | 0.4 |
 | 日期 | 2026-08-22 |
 | 适用产品 | GoodBuddy 桌面端 |
-| 相关设计 | [通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)、[Task 与 Job 统一领域模型](../prd/task-and-job/task-and-job-model.md)、[智能心跳 PRD](../prd/smart-heartbeat/smart-heartbeat-prd.md)、[全双工实时语音交互设计](../architecture/full-duplex-voice-design.md) |
+| 相关设计 | [通用助手工作栏与执行空间 PRD](../features/assistant-workbar/prd.md)、[Task 与 Job 统一领域模型](../features/task-and-job/task-and-job-model.md)、[智能心跳 PRD](../features/smart-heartbeat/prd.md)、[全双工实时语音交互设计](../features/full-duplex-voice/technical-design.md) |
 
 ## 1. 文档目标
 
@@ -58,7 +58,7 @@ GoodBuddy 应能够：
 ### 3.2 右侧工作栏
 
 本节的范围、选择、执行空间与安全契约以
-[通用助手工作栏与执行空间 PRD](../prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md) 为准。
+[通用助手工作栏与执行空间 PRD](../features/assistant-workbar/prd.md) 为准。
 
 #### 任务中心
 
@@ -208,7 +208,7 @@ GoodBuddy 应能够：
 
 - 当前已提供点击开始、再次点击停止或到达 20 秒上限后停止的本地一次性语音听写。
 - 转写结果先进入可编辑输入框，不自动发送。
-- 后续按[全双工实时语音交互设计](../architecture/full-duplex-voice-design.md)增加持续听说、
+- 后续按[全双工实时语音交互设计](../features/full-duplex-voice/technical-design.md)增加持续听说、
   Barge-in、流式文本转语音、本地与云端显式语音引擎。
 - 活动会话冻结引擎、Provider、模型、地域、数据位置和能力；引擎失败时明确停止或重试
   当前选择，不在本地/云端、原生/模块化、语音/文本之间静默降级。

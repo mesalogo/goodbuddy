@@ -151,6 +151,22 @@ additional hardening beyond the actual internal-network threat model:
 - Keep UI accessible with labels, keyboard behavior, semantic roles, and visible
   focus states.
 
+## Product Design Documentation
+
+- Organize feature documentation by product feature under
+  `docs/features/<feature-name>/`, not by document type.
+- Treat each feature directory's `README.md` as its documentation entry point.
+- Follow `docs/features/AGENTS.md` for required document responsibilities,
+  naming, traceability, progress evidence, and migration rules.
+- Keep cross-feature architecture, quality protocols, development procedures,
+  and product-wide roadmaps outside feature directories only when they cannot
+  be owned by one feature.
+- Maintain one authoritative definition for each requirement, state rule, UI
+  behavior, technical contract, and implementation fact. Link to it instead of
+  duplicating it across documents.
+- Update the affected feature documents after functional changes. The
+  implemented and validated production behavior is the final source of truth.
+
 ## UI Consistency
 
 - Treat `UI-DESIGN.md` as the canonical UI design system. Read and follow it
@@ -291,7 +307,7 @@ validation are not substitutes for this development-time check.
   to release time.
 
 The detailed scenario rules are documented in
-[`docs/architecture/remote-host-and-goodbuddy-agent-design.md`](./docs/architecture/remote-host-and-goodbuddy-agent-design.md).
+[`docs/features/remote-host/technical-design.md`](./docs/features/remote-host/technical-design.md).
 
 Before committing or pushing, inspect `git status`, `git diff`, and
 `git diff --cached`. Do not commit secrets, local databases, logs, generated

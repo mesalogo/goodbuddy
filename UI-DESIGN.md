@@ -314,9 +314,9 @@
 
 助手工作栏是应用级右侧工具容器，不归属于聊天页面，也不根据当前页面、项目或 Runtime
 自动增删入口。产品契约见
-[通用助手工作栏与执行空间 PRD](./docs/prd/assistant-experience/assistant-workbar-and-execution-spaces-prd.md)，
+[通用助手工作栏与执行空间 PRD](./docs/features/assistant-workbar/prd.md)，
 动态 Tab、“+”和终端细节见
-[助手工作栏多终端页签 PRD](./docs/prd/assistant-experience/workbar-terminal-tabs-prd.md)。
+[助手工作栏多终端页签 PRD](./docs/features/assistant-workbar/terminal-tabs-prd.md)。
 
 - 升级后默认打开任务中心、工作区、浏览器和成果四个单实例应用，不根据当前页面或 Runtime
   能力自动增删稳定应用目录入口。

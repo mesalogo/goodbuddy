@@ -37,8 +37,9 @@ GoodBuddy是一个开箱即用的 AI 生产平台，安全、跨平台、本地�
 
 ![GoodBuddy 智能心跳](docs/screenshots/smart-heartbeat.png)
 
-完整功能和路线图见 [FEATURES.md](FEATURES.md)，产品、架构、设计与质量文档见
-[文档导航](docs/README.md)。
+完整功能和路线图见 [FEATURES.md](FEATURES.md)，产品功能文档位于
+[`docs/features`](./docs/features/)，维护规范见
+[`docs/features/AGENTS.md`](./docs/features/AGENTS.md)。
 
 ## 安装
 

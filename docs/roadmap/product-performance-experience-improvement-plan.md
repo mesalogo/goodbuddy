@@ -89,7 +89,7 @@
   - 发布说明准确标注已验证架构和仍未验证范围。
 - **外部依赖：** Agent 发布审批、双架构正式产物、真实 Linux arm64 环境。
 - **起始证据：** `package.json`、`agent-runtime-lock.json`、
-  `docs/architecture/remote-host-and-goodbuddy-agent-design.md`。
+  `docs/features/remote-host/technical-design.md`。
 
 ### REL-02 正式 Latest 签名门槛
 
@@ -208,7 +208,7 @@
 - **验收：** 创建、编辑、重启恢复和到期触发均按本地日历执行且不重复。
 - **依赖：** `FUN-01`、`FUN-07`。
 - **起始证据：** `src/shared/assistant-contracts.ts`、
-  `docs/prd/task-and-job/scheduled-task-prd.md`。
+  `docs/features/task-and-job/scheduled-task-prd.md`。
 
 ### FUN-07 时区和错过执行策略
 
@@ -222,7 +222,7 @@
   - 重启或系统恢复后不会形成补跑风暴。
   - 时区和策略可创建、编辑、持久化并在界面复现。
 - **起始证据：** `src/main/assistant/assistant-database.ts`、
-  `docs/prd/task-and-job/scheduled-task-prd.md`。
+  `docs/features/task-and-job/scheduled-task-prd.md`。
 
 ### FUN-08 旧版 Office 文件
 

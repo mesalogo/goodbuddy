@@ -10,7 +10,7 @@
 | 日期 | 2026-08-19 |
 | 适用产品 | GoodBuddy 桌面端 |
 | 目标平台 | Windows、macOS、Linux，x64 与 arm64 |
-| 相关基线 | [统一界面设计系统](../../UI-DESIGN.md)、[文档解析与本地 OCR](../prd/document-processing/document-extraction-and-local-ocr.md)、[本地文本向量模型与连接设计](./local-text-embedding-model-design.md)、[全双工实时语音交互设计](./full-duplex-voice-design.md) |
+| 相关基线 | [统一界面设计系统](../../UI-DESIGN.md)、[文档解析与本地 OCR](../features/document-processing/prd.md)、[本地文本向量模型与连接设计](../features/knowledge-base/local-embedding-technical-design.md)、[全双工实时语音交互设计](../features/full-duplex-voice/technical-design.md) |
 
 本文定义“设置 → 平台功能”的二级页签结构，以及所有 GoodBuddy 托管本地模型共同使用的
 “模型下载源”设置。首期下载源为 ModelScope 和 Hugging Face，默认使用 ModelScope。
