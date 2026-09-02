@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { releaseNotesFileSchema } from '../shared/release-notes-contracts'
 
 describe('packaged release notes', () => {
-  it('contains matching bounded Chinese and English content', async () => {
+  it('contains matching Chinese and English content', async () => {
     const source = JSON.parse(
       await readFile(
         join(process.cwd(), 'resources', 'release-notes.json'),
@@ -35,6 +35,14 @@ describe('packaged release notes', () => {
         )
       }
     }
+    const releaseWithLongScenario = parsed.releases.find(
+      (release) => release.version === '0.12.0'
+    )
+    expect(
+      releaseWithLongScenario?.notes['en-US'].features.some(
+        (item) => item.length > 500
+      )
+    ).toBe(true)
 
     const currentRelease = parsed.releases.find(
       (release) => release.version === '0.10.1'

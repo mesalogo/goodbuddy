@@ -9,7 +9,7 @@
 
 [产品官网](https://mesalogo.github.io/goodbuddy/) ·
 [下载](https://github.com/mesalogo/goodbuddy/releases) ·
-[功能矩阵](./FEATURES.md) ·
+[功能矩阵](./FEATURES.zh-CN.md) ·
 [构建说明](./BUILD.md)
 
 [![Release](https://img.shields.io/github/v/release/mesalogo/goodbuddy?label=release)](https://github.com/mesalogo/goodbuddy/releases)
@@ -89,7 +89,7 @@ npm run dev
 
 ## 文档
 
-- [功能矩阵与路线图](./FEATURES.md)
+- [功能矩阵与路线图](./FEATURES.zh-CN.md)
 - [产品功能文档](./docs/features/)
 - [UI 设计系统](./UI-DESIGN.md)
 - [构建与打包](./BUILD.md)

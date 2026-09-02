@@ -32,8 +32,8 @@ function validateItems(value, label) {
       fail(`${label} contains a non-string item`)
     }
     const normalized = item.trim()
-    if (!normalized || normalized.length > 500) {
-      fail(`${label} contains an empty or oversized item`)
+    if (!normalized) {
+      fail(`${label} contains an empty item`)
     }
     return normalized
   })

@@ -130,7 +130,7 @@ jobs:
             runner: windows-2025
           - platform: windows
             arch: arm64
-            runner: windows-2025
+            runner: windows-11-vs2026-arm
           - platform: macos
             arch: x64
             runner: macos-15-intel
@@ -173,6 +173,14 @@ jobs:
         with:
           name: goodbuddy-production-bundle
           path: out
+
+      - name: Verify native runner architecture
+        run: node -e "if(process.arch !== '${{ matrix.arch }}'){throw new Error('Expected ${{ matrix.arch }} runner, received '+process.arch)}"
+
+      - name: Install and validate managed Python
+        run: npm exec vitest run tests/local-tool-environment-live.test.ts
+        env:
+          GOODBUDDY_RUN_LIVE_TOOL_ENVIRONMENT: '1'
 
       - name: Install RPM packaging tools
         if: matrix.platform == 'linux'

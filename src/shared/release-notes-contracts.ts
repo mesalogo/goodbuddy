@@ -7,7 +7,7 @@ export const releaseVersionSchema = z
     'Release version must be a stable semantic version'
   )
 
-const releaseNoteItemSchema = z.string().trim().min(1).max(500)
+const releaseNoteItemSchema = z.string().trim().min(1)
 
 const localizedReleaseNotesSchema = z.preprocess(
   (value) => {

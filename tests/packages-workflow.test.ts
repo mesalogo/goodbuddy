@@ -93,7 +93,7 @@ describe('desktop packages workflow', () => {
         expect.objectContaining({
           platform: 'windows',
           arch: 'arm64',
-          runner: 'windows-2025'
+          runner: 'windows-11-vs2026-arm'
         }),
         expect.objectContaining({
           platform: 'macos',
@@ -123,6 +123,15 @@ describe('desktop packages workflow', () => {
     ])
     const scripts = jobScripts('package')
     expect(scripts).toContain('npm run release:package')
+    expect(scripts).toContain(
+      "process.arch !== '${{ matrix.arch }}'"
+    )
+    expect(serializedJob('package')).toContain(
+      'GOODBUDDY_RUN_LIVE_TOOL_ENVIRONMENT'
+    )
+    expect(scripts).toContain(
+      'tests/local-tool-environment-live.test.ts'
+    )
     expect(scripts).not.toContain('agent-bundle.cjs import')
     expect(scripts).not.toContain(
       'remote-runtime-bundle.cjs import'

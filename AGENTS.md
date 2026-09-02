@@ -244,14 +244,29 @@ authorization to add product persistence or recovery machinery.
 
 Repository-wide release invariants:
 
+- Write each release-note feature item as two or three clear sentences that
+  identify the user situation, the available action, and the resulting
+  behavior or important boundary. Do not impose an arbitrary per-item
+  character limit; use the detail needed to make the user scenario clear.
+- Before approving the exact release commit and bilingual release notes,
+  inspect the English `FEATURES.md` and Simplified Chinese
+  `FEATURES.zh-CN.md` against the verified changes since the previous stable
+  release. Keep both versions aligned, and update their provided capabilities,
+  roadmap status, current versions, limitations, and remaining release
+  acceptance work as needed. Include any required update in the release
+  candidate; if no change is needed, explicitly confirm that both feature lists
+  were reviewed and remain accurate.
 - Never create or push a release tag before the user approves the exact release
   commit and bilingual release notes.
 - Never move, delete, recreate, or reuse a release tag.
 - Keep desktop and Agent release paths, tags, artifacts, and Latest status
   separate.
-- Native GitHub Actions jobs are the cross-platform packaging authority. Never
-  run local Windows packaging or packaged-app probes unless the user explicitly
-  requests them.
+- GitHub Actions is the release build and cross-platform packaging authority.
+  During release preparation, run local tests, type checks, and lint, but do
+  not run `npm run build`, `npm run build:bundle`, local packaging, or
+  packaged-app probes. Push the approved candidate commit first and require its
+  main-branch CI validation and production build to pass before tagging it,
+  unless the user explicitly requests an additional local build.
 - LoongArch is a separate experimental preview. Build or publish it only when
   the user explicitly requests it for that release.
 - Never commit or publish credentials. Production publication uses the existing
@@ -267,14 +282,16 @@ npm run typecheck
 npm run lint
 ```
 
-Run `npm run build` for production build changes. Use `npm run portable` only
-when a current Windows portable package is requested. The user has granted
-standing authorization in this repository for bounded real text-model calls
-needed to validate changed product paths; do not ask again for each such call.
-Keep each validation call minimal, disable tools and attachments where
-possible, and report the exact call count. This standing authorization does
-not cover bulk, high-cost, destructive, publishing, messaging, purchasing, or
-other consequential external actions.
+Run `npm run build` for production build changes during development, but not
+solely as a release-preparation step; release candidates use the main-branch CI
+production build before tagging. Use `npm run portable` only when a current
+Windows portable package is requested. The user has granted standing
+authorization in this repository for bounded real text-model calls needed to
+validate changed product paths; do not ask again for each such call. Keep each
+validation call minimal, disable tools and attachments where possible, and
+report the exact call count. This standing authorization does not cover bulk,
+high-cost, destructive, publishing, messaging, purchasing, or other
+consequential external actions.
 
 ### GoodBuddy Agent development validation
 

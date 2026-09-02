@@ -2,6 +2,62 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.0",
+      "releasedAt": "2026-09-02",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.12.0 新增多终端助手工作栏、直连模型编程 Agent 和本机工具执行环境，并完善浏览器导航、回复复制、Skills 组织与 DeepSeek Harness 模型选择。"
+          ],
+          "features": [
+            "**助手工作栏与多终端。** 在本机或托管 SSH 项目中开发时，可以从右侧工作栏的“+”同时打开多个终端，分别运行开发服务、测试或其他 Shell 任务。每个终端拥有独立目录、输出和生命周期；关闭页签会结束对应 Shell，应用重启后由用户明确选择是否重连。主侧栏与魔法笔记列表也支持拖拽和键盘调宽，魔法笔记列表可隐藏并记住布局。",
+            "**直连模型编程 Agent。** 使用直连模型处理代码时，现在可以直接要求它在 Execute 模式修改文件、运行平台 Shell 并根据测试结果继续修复。模型还可以把一个聚焦的编程步骤委派给单层 Subagent，再将结果汇总回当前回复。整个过程继续使用当前模型、项目和工作模式，并保留取消与活动记录。",
+            "**本机工具执行环境。** 在新设备缺少 Node.js 或 Python，或者 Skills、stdio MCP 需要固定解释器时，可以在“能力与工具”中选择 GoodBuddy 托管环境或经过验证的自定义解释器。托管 Node.js 随应用提供，托管 Python 在首次需要时按所选原生地址或 OSS 镜像下载，并显示诊断、安装进度、取消和删除操作。该设置只影响新启动的本机 Runtime 与 stdio MCP，不修改系统环境、普通终端或远程 Host。",
+            "**浏览器工作栏导航。** 当 Agent 正在使用内置浏览器调研或操作网页时，可以在工作栏中直接返回、刷新、停止加载或输入新地址，不必结束任务后重新开始。地址栏支持完整 URL、裸域名和带端口的主机地址。用户与 Agent 始终操作同一个按会话隔离的浏览器页面，因此用户导航后的页面会成为 Agent 下一步看到的页面。",
+            "**复制 AI 回复。** 需要把回答放入文档、Issue 或其他工具时，可以从已完成回复底部一键复制干净的 Markdown 原文。复制内容不包含推理过程、工具日志或引用元数据，避免手动清理。复制完整会话时也使用同一条经过 Main 校验的剪贴板路径，修复沙箱环境下可能无法写入的问题。",
+            "**中文“去 AI 味”审校扩展。** 审阅中文报告、方案或产品文案时，内置审校现在可以发现更多分析套话、模糊归因、角色槽位、工程黑话和绝对化承诺。扫描报告按严重级别和问题分类汇总，便于先处理高影响问题，再逐项修改原文。现有跨平台 Python 使用方式保持不变。"
+          ],
+          "fixes": [
+            "**工具环境选择与诊断更准确。** 自定义 Node.js/Python 入口始终可操作，不再隐式采用首个候选；增加 PATH、venv、Conda 和常见安装位置探测，并移除没有实际证据的依赖占位状态。",
+            "**DeepSeek Harness 自动沿用兼容模型。** 没有管理员预置连接时，现在跟随默认或首个兼容模型，无需重复配置。",
+            "**Skills 与 MCP 入口更清晰。** 两者统一到“能力与工具”；内置 Skills 从 14 个顶层入口精简为 5 个，产品营销类默认停用，已保存的用户设置保持不变。",
+            "**界面和产品文案修正。** 修复主侧栏分隔线未对齐，并将官网、README 与智能心跳中的空泛宣传改为直接说明实际能力和运行边界。",
+            "**桌面打包更干净。** 不再显示无需处理的重复依赖引用摘要，也不再把已由 Renderer 打包的 AntV G6 依赖树重复复制到安装包。"
+          ],
+          "notices": [
+            "工具执行环境只作用于本机 Skills 和 stdio MCP，不修改系统环境、普通终端或远程 Host。托管 Python 在首次使用时按需下载。",
+            "远程项目仍为默认关闭的技术预览，继续使用单独发布的 Agent `0.11.14`；Desktop `0.12.0` 不内置 Agent 或远程 Runtime。",
+            "本次使用标准 Windows、macOS、Linux `x64`/`arm64` 发布矩阵，不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.12.0 adds a multi-terminal assistant workbar, direct-model programming agents, and local tool environments, together with improved browser navigation, response copy, Skills organization, and DeepSeek Harness model selection."
+          ],
+          "features": [
+            "**Assistant workbar and multiple terminals.** While developing in a local or managed SSH project, use the “+” in the right workbar to open separate terminals for a development server, tests, or other Shell tasks. Each terminal has its own directory, output, and lifecycle; closing its tab ends that Shell, and an app restart lets the user explicitly choose whether to reconnect. The main sidebar and Magic Notes list also support pointer and keyboard resizing, while the notes list can be hidden and remembers its layout.",
+            "**Direct-model programming agents.** When using a direct model for coding, you can now ask it to edit files, run the platform Shell in Execute mode, and continue fixing the result based on test output. The model can also delegate one focused programming step to a single-level Subagent and synthesize the result into the current response. The process retains the current model, project, and work mode, together with cancellation and activity records.",
+            "**Local tool environments.** On a new device without Node.js or Python, or when a Skill or stdio MCP needs a specific interpreter, choose a GoodBuddy-managed environment or a validated custom interpreter under Capabilities and Tools. Managed Node.js ships with the app; managed Python downloads on first use from the selected native or OSS source and shows diagnostics, installation progress, cancellation, and removal. The setting affects only newly started local Runtimes and stdio MCP processes, not the system environment, ordinary terminals, or remote Hosts.",
+            "**Browser workbar navigation.** While the Agent researches or operates a page in the built-in browser, you can go back, refresh, stop loading, or enter another address in the workbar without ending and restarting the task. The address field accepts full URLs, bare domains, and hosts with ports. The user and Agent always operate the same conversation-isolated page, so the page reached by user navigation is the page the Agent sees next.",
+            "**Copy AI responses.** When moving an answer into documentation, an Issue, or another tool, use the bottom action on a completed response to copy clean Markdown source in one step. The copied text excludes reasoning, tool logs, and citation metadata, avoiding manual cleanup. Full-conversation copy uses the same Main-validated clipboard path and fixes writes that could fail in sandboxed sessions.",
+            "**Expanded Chinese de-AI writing review.** When reviewing a Chinese report, proposal, or product copy, the bundled checker now detects more template analysis phrases, unsupported attribution, role-slot prose, engineering jargon, and absolute promises. Its report groups findings by severity and category so users can address high-impact issues first and then revise each location. Existing cross-platform Python usage remains unchanged."
+          ],
+          "fixes": [
+            "**More accurate tool-environment selection and diagnostics.** Custom Node.js/Python choices remain operable and no longer adopt the first candidate implicitly. Discovery now covers PATH, venv, Conda, and common locations, and unsupported dependency placeholders are hidden.",
+            "**DeepSeek Harness follows a compatible model automatically.** Without an administrator-provided connection, it now uses the default or first compatible model instead of requiring duplicate configuration.",
+            "**Clearer Skills and MCP navigation.** Both now live under Capabilities and Tools. Built-in Skills are reduced from 14 top-level entries to five; product-marketing Skills default to off, while saved user settings remain authoritative.",
+            "**Interface and product-copy corrections.** Fixed the misaligned main-sidebar divider and replaced vague promotional wording on the website, in the README, and in Smart Heartbeat with direct descriptions of actual behavior and boundaries.",
+            "**Cleaner desktop packaging.** Packaging no longer prints non-actionable duplicate dependency summaries or copies the Renderer-bundled AntV G6 dependency graph into desktop packages."
+          ],
+          "notices": [
+            "Tool environments apply only to local Skills and stdio MCP. They do not modify the system environment, ordinary terminals, or remote Hosts. Managed Python is downloaded on demand when first used.",
+            "Remote Projects remain an off-by-default technical preview and continue to use the separately published Agent `0.11.14`; Desktop `0.12.0` does not embed the Agent or Remote Runtime.",
+            "This release uses the standard Windows, macOS, and Linux `x64`/`arm64` matrix and does not build an experimental LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.11.14",
       "releasedAt": "2026-08-31",
       "notes": {

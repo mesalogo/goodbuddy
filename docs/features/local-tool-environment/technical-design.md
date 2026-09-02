@@ -119,11 +119,11 @@ ELECTRON_RUN_AS_NODE=1 <process.execPath> <arguments...>
 - Windows x64 原生工件来自官方 `python` NuGet 包，Windows ARM64 来自官方
   `pythonarm64` NuGet 包。
 - macOS/Linux 原生工件来自 Astral `python-build-standalone`。
-- 目录包含版本、平台、架构、字节数、SHA-256、许可证、原生 Target 和 OSS Target。
+- 目录包含版本、平台、架构、字节数、SHA-256、原生 Target 和 OSS Target。
 - OSS 对象直接复制原生工件字节，不重新压缩或转换。
 - 安装包不无条件携带完整 Python。
 
-具体发行包和版本必须在实现前完成六平台工件、许可证、维护状态和 pip/venv 可用性核验。
+具体发行包和版本必须在实现前完成六平台工件、维护状态和 pip/venv 可用性核验。
 
 目录示例：
 
@@ -144,7 +144,6 @@ type ManagedToolArtifact = {
       url: string
     }
   }
-  licenseFiles: string[]
 }
 ```
 
@@ -342,7 +341,7 @@ Renderer 不能提交 PATH、环境变量、下载 URL、摘要、安装目录�
 - Python SKILL 与 MCP。
 - 自定义解释器。
 - Ask/Execute、重建、取消和退出。
-- 六平台打包和许可证。
+- 六平台打包。
 
 这些阶段是开发顺序，不是可长期发布的残缺功能。合并能力前完成普通用户和专业用户的完整
 生产路径。

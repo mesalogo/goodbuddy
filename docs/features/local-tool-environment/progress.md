@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档类型 | 功能进度 |
-| 状态 | 已实施，跨平台验收中 |
-| 版本 | 0.3 |
+| 状态 | 已实施，发布候选 CI 验收中 |
+| 版本 | 0.4 |
 | 日期 | 2026-09-02 |
 | 关联入口 | [工具执行环境](./README.md) |
 
@@ -17,8 +17,9 @@
 快照应用到新启动的本机 Runtime 与 stdio MCP。Windows x64 已完成真实托管 Node 和原生
 地址托管 Python 安装验证。
 
-该实现尚不能视为六平台发布验收完成：六个 OSS 镜像对象已发布并公开回读验证，但
-Windows ARM64、macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未随包落地。
+六个 OSS 镜像对象已发布并公开回读验证。托管 Python 继续按需下载，Desktop 发行包不额外
+带入许可证文件。标准六平台打包任务已改用目标架构原生 Runner，并在打包前执行托管 Python
+的真实安装、SSL、pip 和 venv 探针；`0.12.0` 候选仍需通过这组 CI 才能完成对应跨平台验收。
 
 ## 已完成
 
@@ -60,8 +61,8 @@ Windows ARM64、macOS 和 Linux 工件仍需原生 CI 验证，第三方许可�
 ## 待完成验收
 
 - [x] 发布六个平台/架构的字节完全相同 OSS 镜像对象并公开回读校验。
-- [ ] 将 CPython、PSF 和 python-build-standalone 适用许可证资源纳入发行包及构建校验。
-- [ ] Windows ARM64、macOS x64/ARM64、Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针。
+- [x] 确认托管 Python 保持按需下载，Desktop 发行包不额外带入许可证文件。
+- [ ] Windows ARM64、macOS x64/ARM64、Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针；工作流已接线，等待 `0.12.0` 候选运行结果。
 - [ ] 最低 Windows/macOS/glibc 支持矩阵和 Windows NuGet 签名核验。
 - [ ] 真实 JavaScript/Python SKILL 成果及 Node/Python stdio MCP 调用。
 - [ ] 自定义 Node/Python 在产品 UI 中的真实选择和任务执行。
@@ -71,11 +72,16 @@ Windows ARM64、macOS 和 Linux 工件仍需原生 CI 验证，第三方许可�
 
 - 当前机器只能原生验证 Windows x64。其余五个平台必须由对应原生 CI 执行，不能用本机
   mock 代替。
-- 许可证文件和来源清单尚未进入 `resources/tool-environment`，发行合规验收未完成。
 
 ## 已验证证据
 
 ### 2026-09-02 完整实现
+
+- 发布准备确认不把按需下载的托管 Python 许可证文件加入 Desktop `extraResources`、解包
+  校验或 Portable ZIP 必需文件，避免该额外资源改变现有编译和打包路径。
+- 六平台打包矩阵在 `npm ci` 后先断言 Runner 架构，再执行
+  `GOODBUDDY_RUN_LIVE_TOOL_ENVIRONMENT=1` 的托管 Python 安装探针；Windows arm64 改用
+  `windows-11-vs2026-arm` 原生 Runner。发行资源与目录聚焦测试 `47/47` 通过。
 
 - `npm run typecheck` 通过。
 - `npm run lint` 通过。

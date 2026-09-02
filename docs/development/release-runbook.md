@@ -12,12 +12,13 @@ below.
 
 ## Release Packaging
 
-- Unless the user explicitly requests a local Windows package, never run local
-  Windows packaging or launch probes as part of release preparation. In
-  particular, do not run `npm run portable`, Windows
-  `npm run release:package`, direct `electron-builder` packaging, or launch a
-  locally packaged Windows app before publishing a release. Source validation
-  and the native GitHub Actions jobs are the release authorities.
+- Unless the user explicitly requests it, never run a local production build,
+  desktop package, or launch probe as part of release preparation. In
+  particular, do not run `npm run build`, `npm run build:bundle`,
+  `npm run portable`, `npm run release:package`, direct `electron-builder`
+  packaging, or launch a locally packaged app before publishing a release.
+  Local tests, type checks, and lint plus the main-branch and native tag GitHub
+  Actions jobs are the release authorities.
 - After a release is published, confirm only that the expected Windows assets
   exist in the public release metadata. Do not locally rebuild or launch the
   Windows package, download or hash published installers, attach browser
@@ -141,23 +142,24 @@ not require release notes.
    is carried forward must not retain a duplicate packaged entry.
 6. Verify that `package.json`, the root `package-lock.json` version, and
    `package-lock.json.packages[""].version` all equal the release version. Run
-   `npm run release:notes:verify`, the required source validators, the
-   production build. The six native CI jobs remain the cross-platform
-   authority; do not add local packaging or packaged-app launch probes unless
-   the user explicitly requests them.
+   `npm run release:notes:verify`, `npm test`, `npm run typecheck`, and
+   `npm run lint`. Do not run a local production build, packaging command, or
+   packaged-app launch probe unless the user explicitly requests one.
    If the user requested a LoongArch preview in step 1, build it separately
    from this exact candidate by following the LoongArch build document, record
    its size and SHA-256, and keep it outside the standard GitHub/OSS release
    asset set unless the user separately authorizes publishing it.
-7. Fetch both remotes immediately before tagging. Inspect any remote branch
-   movement instead of overwriting or silently merging it. Confirm the working
-   tree is clean, the candidate tag is unused locally and remotely, and the
-   exact approved commit has not changed.
-8. Only after all previous steps pass, create an annotated
-   `v${package.version}` tag at the exact approved commit. Push `main` to
-   `origin` and `github`, verify both branch SHAs, then push the tag to both
-   remotes and verify each peeled tag SHA (`refs/tags/<tag>^{}`) equals the
-   release commit.
+7. Commit the approved candidate and confirm the exact release commit with the
+   user. Fetch both remotes, inspect branch movement instead of overwriting or
+   silently merging it, then push that commit to `main` on `origin` and
+   `github`. Require the candidate commit's main-branch GitHub Actions source
+   validation and production build to succeed before tagging.
+8. Fetch both remotes again immediately before tagging. Confirm the working
+   tree is clean, both remote `main` refs still equal the approved commit, the
+   candidate tag is unused locally and remotely, and the exact approved commit
+   has not changed. Only then create the annotated `v${package.version}` tag at
+   that commit, push the tag to both remotes, and verify each peeled tag SHA
+   (`refs/tags/<tag>^{}`) equals the release commit.
 9. Keep both approved language versions as the single source for the GitHub
    Release body and the packaged first-open release-notes modal. The modal
    displays the release notes matching the current interface language and
