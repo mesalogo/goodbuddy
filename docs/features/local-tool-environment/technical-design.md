@@ -176,17 +176,23 @@ URL 只存在于 Main/构建目录，不进入 Renderer。两个 Target 共用�
 
 候选来源：
 
-- 筛选后的 PATH。
-- Windows/macOS/Linux 常见安装目录。
+- GoodBuddy 启动时继承的合并 PATH，其中包含操作系统提供的用户 PATH 和系统 PATH。
+- 当前 `VIRTUAL_ENV`、`CONDA_PREFIX`、`NVM_HOME`/`NVM_BIN` 和 `VOLTA_HOME`。
+- Windows 用户目录和 ProgramData 下的 Conda/Miniconda/Anaconda base 与 `envs`，
+  LocalAppData Python，以及 Program Files/系统盘常见 Node/Python 目录。
+- macOS/Linux 的 `/usr/local/bin`、`/usr/bin`、Homebrew、本地用户 bin、Python
+  Framework、Conda、pyenv 和 nvm 常见目录。
+- `CONDA_ENVS_PATH` 中的有界环境目录。
 - 已保存路径。
 
-每个候选运行分离参数的 `--version`，确认普通文件、可执行、成功退出和可解析版本，并按
-真实路径去重。
+目录枚举有总量和单目录上限，不递归扫描整块磁盘。每个候选使用分离参数启动检查，确认
+普通文件、成功退出、可解析版本和架构，并按真实路径去重。
 
 ### 7.2 Python
 
 - Windows 探测 `python.exe`。
 - macOS/Linux 优先 `python3`，其次为明确的 Python 3 `python`。
+- Conda/venv 候选使用各环境自己的解释器，不依赖环境激活脚本。
 - 拒绝未安装的 Windows Store App Execution Alias。
 - 诊断 Python 3、版本、架构和解释器绝对路径。
 

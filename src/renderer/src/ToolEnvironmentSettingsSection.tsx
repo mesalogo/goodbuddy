@@ -52,6 +52,12 @@ export function ToolEnvironmentSettingsSection({
   const [actionError, setActionError] = useState<string>()
   const [busy, setBusy] = useState<string>()
   const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [customOpen, setCustomOpen] = useState<
+    Record<LocalToolKind, boolean>
+  >({ node: false, python: false })
+  const [runtimeErrors, setRuntimeErrors] = useState<
+    Partial<Record<LocalToolKind, string>>
+  >({})
   const pythonCancellationRequested = useRef(false)
   const toolApi = window.goodbuddy.localToolEnvironment
 
@@ -98,15 +104,22 @@ export function ToolEnvironmentSettingsSection({
 
   const updateSettings = async (
     nextSettings: LocalToolEnvironmentSettings,
-    successMessage: string
-  ): Promise<void> => {
+    successMessage: string,
+    errorKind?: LocalToolKind
+  ): Promise<boolean> => {
     const api = window.goodbuddy.localToolEnvironment
     if (!api || !snapshot) {
-      return
+      return false
     }
     const confirmedSnapshot = snapshot
     setSnapshot({ ...snapshot, settings: nextSettings })
     setActionError(undefined)
+    if (errorKind) {
+      setRuntimeErrors((current) => ({
+        ...current,
+        [errorKind]: undefined
+      }))
+    }
     setBusy('settings')
     try {
       const next = await api.updateSettings(nextSettings)
@@ -116,14 +129,22 @@ export function ToolEnvironmentSettingsSection({
         message: successMessage,
         dedupeKey: 'local-tool-environment-settings'
       })
+      return true
     } catch (reason) {
       setSnapshot(confirmedSnapshot)
-      setActionError(
-        errorMessage(
-          reason,
-          t('toolEnvironment.errors.saveFailed')
-        )
+      const message = errorMessage(
+        reason,
+        t('toolEnvironment.errors.saveFailed')
       )
+      if (errorKind) {
+        setRuntimeErrors((current) => ({
+          ...current,
+          [errorKind]: message
+        }))
+      } else {
+        setActionError(message)
+      }
+      return false
     } finally {
       setBusy(undefined)
     }
@@ -132,16 +153,80 @@ export function ToolEnvironmentSettingsSection({
   const updateRuntime = async (
     kind: LocalToolKind,
     selection: LocalToolRuntimeSelection
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     if (!snapshot) {
-      return
+      return false
     }
-    await updateSettings(
+    return updateSettings(
       { ...snapshot.settings, [kind]: selection },
       t('toolEnvironment.notifications.runtimeChanged', {
         runtime: t(`toolEnvironment.runtimes.${kind}.title`)
-      })
+      }),
+      kind
     )
+  }
+
+  const refreshCustomCandidates = async (
+    kind: LocalToolKind
+  ): Promise<void> => {
+    setBusy(`refresh-${kind}`)
+    setRuntimeErrors((current) => ({ ...current, [kind]: undefined }))
+    try {
+      const api = window.goodbuddy.localToolEnvironment
+      if (!api) return
+      setSnapshot(await api.refreshCandidates())
+    } catch (reason) {
+      setRuntimeErrors((current) => ({
+        ...current,
+        [kind]: errorMessage(
+          reason,
+          t('toolEnvironment.errors.refreshFailed')
+        )
+      }))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const selectCustomExecutable = async (
+    kind: LocalToolKind
+  ): Promise<void> => {
+    const api = window.goodbuddy.localToolEnvironment
+    if (!api || !snapshot) return
+    const previous = snapshot.settings[kind]
+    setBusy(`select-${kind}`)
+    setRuntimeErrors((current) => ({ ...current, [kind]: undefined }))
+    try {
+      const next = await api.selectExecutable(kind)
+      setSnapshot(next)
+      const selected = next.settings[kind]
+      if (
+        selected.source === 'custom' &&
+        (previous.source !== 'custom' ||
+          previous.executablePath !== selected.executablePath)
+      ) {
+        setCustomOpen((current) => ({ ...current, [kind]: true }))
+        onNotify({
+          tone: 'success',
+          message: t('toolEnvironment.notifications.runtimeChanged', {
+            runtime: t(`toolEnvironment.runtimes.${kind}.title`)
+          }),
+          dedupeKey: `local-tool-environment-select-${kind}`
+        })
+      }
+    } catch (reason) {
+      setRuntimeErrors((current) => ({
+        ...current,
+        [kind]: errorMessage(
+          reason,
+          t('toolEnvironment.errors.selectFailed', {
+            runtime: t(`toolEnvironment.runtimes.${kind}.title`)
+          })
+        )
+      }))
+    } finally {
+      setBusy(undefined)
+    }
   }
 
   const runSnapshotAction = async (
@@ -247,7 +332,10 @@ export function ToolEnvironmentSettingsSection({
       selection.source === 'custom'
         ? selection.executablePath
         : undefined
-    const customPath = selectedCustomPath ?? candidates[0]?.executablePath
+    const showCustom =
+      selection.source === 'custom' || customOpen[kind]
+    const customError = runtimeErrors[kind]
+    const customRegionId = `tool-environment-${kind}-custom-options`
 
     return (
       <article className="tool-environment-card">
@@ -286,12 +374,24 @@ export function ToolEnvironmentSettingsSection({
           </legend>
           <label className="tool-environment-option">
             <input
-              checked={selection.source === 'managed'}
+              checked={
+                selection.source === 'managed' && !customOpen[kind]
+              }
               disabled={busy !== undefined}
               name={`${kind}-runtime-source`}
-              onChange={() =>
-                void updateRuntime(kind, { source: 'managed' })
-              }
+              onChange={() => {
+                setCustomOpen((current) => ({
+                  ...current,
+                  [kind]: false
+                }))
+                setRuntimeErrors((current) => ({
+                  ...current,
+                  [kind]: undefined
+                }))
+                if (selection.source !== 'managed') {
+                  void updateRuntime(kind, { source: 'managed' })
+                }
+              }}
               type="radio"
             />
             <span>
@@ -305,16 +405,15 @@ export function ToolEnvironmentSettingsSection({
           </label>
           <label className="tool-environment-option">
             <input
-              checked={selection.source === 'custom'}
-              disabled={busy !== undefined || !customPath}
+              aria-controls={customRegionId}
+              checked={showCustom}
+              disabled={busy !== undefined}
               name={`${kind}-runtime-source`}
               onChange={() => {
-                if (customPath) {
-                  void updateRuntime(kind, {
-                    source: 'custom',
-                    executablePath: customPath
-                  })
-                }
+                setCustomOpen((current) => ({
+                  ...current,
+                  [kind]: true
+                }))
               }}
               type="radio"
             />
@@ -325,90 +424,86 @@ export function ToolEnvironmentSettingsSection({
           </label>
         </fieldset>
 
-        <div className="tool-environment-card__custom">
-          <div className="tool-environment-card__actions">
-            <button
-              className="secondary-button"
-              disabled={busy !== undefined}
-              onClick={() =>
-                void runSnapshotAction(
-                  `refresh-${kind}`,
-                  () => api.refreshCandidates(),
-                  t('toolEnvironment.errors.refreshFailed')
-                )
-              }
-              type="button"
-            >
-              {t('toolEnvironment.actions.refreshCandidates')}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={busy !== undefined}
-              onClick={() =>
-                void runSnapshotAction(
-                  `select-${kind}`,
-                  () => api.selectExecutable(kind),
-                  t('toolEnvironment.errors.selectFailed', {
-                    runtime: t(
-                      `toolEnvironment.runtimes.${kind}.title`
-                    )
-                  }),
-                  t('toolEnvironment.notifications.runtimeChanged', {
-                    runtime: t(
-                      `toolEnvironment.runtimes.${kind}.title`
-                    )
-                  })
-                )
-              }
-              type="button"
-            >
-              {t('toolEnvironment.actions.chooseFile')}
-            </button>
+        {showCustom && (
+          <div
+            className="tool-environment-card__custom"
+            id={customRegionId}
+          >
+            {selection.source !== 'custom' && (
+              <p className="tool-environment-muted">
+                {t('toolEnvironment.chooseCustomPrompt', {
+                  runtime: t(`toolEnvironment.runtimes.${kind}.title`)
+                })}
+              </p>
+            )}
+            <div className="tool-environment-card__actions">
+              <button
+                className="secondary-button"
+                disabled={busy !== undefined}
+                onClick={() => void refreshCustomCandidates(kind)}
+                type="button"
+              >
+                {t('toolEnvironment.actions.refreshCandidates')}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy !== undefined}
+                onClick={() => void selectCustomExecutable(kind)}
+                type="button"
+              >
+                {t('toolEnvironment.actions.chooseFile')}
+              </button>
+            </div>
+            {customError && (
+              <p className="tool-environment__error" role="alert">
+                {customError}
+              </p>
+            )}
+            {selectedCustomPath && (
+              <p className="tool-environment-path">
+                <span>{t('toolEnvironment.selectedPath')}</span>
+                <code>{selectedCustomPath}</code>
+              </p>
+            )}
+            {candidates.length > 0 ? (
+              <ul
+                aria-label={t('toolEnvironment.candidateList', {
+                  runtime: t(`toolEnvironment.runtimes.${kind}.title`)
+                })}
+                className="tool-environment-candidates"
+              >
+                {candidates.map((candidate) => {
+                  return (
+                    <li key={candidate.executablePath}>
+                      <button
+                        aria-pressed={
+                          selectedCustomPath === candidate.executablePath
+                        }
+                        disabled={busy !== undefined}
+                        onClick={() =>
+                          void updateRuntime(kind, {
+                            source: 'custom',
+                            executablePath: candidate.executablePath
+                          })
+                        }
+                        type="button"
+                      >
+                        <code>{candidate.executablePath}</code>
+                        <small>
+                          {candidate.version} · {candidate.architecture}
+                        </small>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="tool-environment-muted">
+                {t('toolEnvironment.noCandidates')}
+              </p>
+            )}
           </div>
-          {selectedCustomPath && (
-            <p className="tool-environment-path">
-              <span>{t('toolEnvironment.selectedPath')}</span>
-              <code>{selectedCustomPath}</code>
-            </p>
-          )}
-          {candidates.length > 0 ? (
-            <ul
-              aria-label={t('toolEnvironment.candidateList', {
-                runtime: t(`toolEnvironment.runtimes.${kind}.title`)
-              })}
-              className="tool-environment-candidates"
-            >
-              {candidates.map((candidate) => {
-                return (
-                  <li key={candidate.executablePath}>
-                    <button
-                      aria-pressed={
-                        selectedCustomPath === candidate.executablePath
-                      }
-                      disabled={busy !== undefined}
-                      onClick={() =>
-                        void updateRuntime(kind, {
-                          source: 'custom',
-                          executablePath: candidate.executablePath
-                        })
-                      }
-                      type="button"
-                    >
-                      <code>{candidate.executablePath}</code>
-                      <small>
-                        {candidate.version} · {candidate.architecture}
-                      </small>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <p className="tool-environment-muted">
-              {t('toolEnvironment.noCandidates')}
-            </p>
-          )}
-        </div>
+        )}
 
         <div className="tool-environment-status">
           <h4>{t('toolEnvironment.toolStatus')}</h4>

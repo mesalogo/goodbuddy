@@ -728,8 +728,10 @@ export const settingsSections = {
     },
     selectedPath: '当前自定义路径',
     candidateList: '{{runtime}} 可执行文件候选',
+    chooseCustomPrompt:
+      '请选择一个已验证的 {{runtime}} 候选，或选择其他可执行文件。完成验证前不会更改当前执行环境。',
     noCandidates:
-      '未发现候选文件。可刷新候选，或从系统文件选择器选择可执行文件。',
+      '未发现有效候选。可扫描用户/系统 PATH、Conda、虚拟环境和常见安装位置，或选择其他可执行文件。',
     toolStatus: '工具状态',
     companionStatus: '工具链/配套工具状态',
     capabilityDependencyStatus: '能力依赖状态',

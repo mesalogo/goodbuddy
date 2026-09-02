@@ -123,6 +123,62 @@ describe('LocalToolEnvironmentService', () => {
     ])
   })
 
+  it('discovers validated virtual-environment and Conda interpreters outside PATH', async () => {
+    const { options } = await fixture()
+    const virtualEnvironment = join(options.managedPythonRoot, 'project-venv')
+    const condaEnvironment = join(options.managedPythonRoot, 'conda-env')
+    const condaEnvironments = join(options.managedPythonRoot, 'conda-envs')
+    const namedCondaEnvironment = join(condaEnvironments, 'analytics')
+    const virtualPython = join(virtualEnvironment, 'python.exe')
+    const condaPython = join(condaEnvironment, 'python.exe')
+    const namedCondaPython = join(namedCondaEnvironment, 'python.exe')
+    await Promise.all([
+      mkdir(virtualEnvironment, { recursive: true }),
+      mkdir(condaEnvironment, { recursive: true }),
+      mkdir(namedCondaEnvironment, { recursive: true })
+    ])
+    await Promise.all([
+      writeFile(virtualPython, ''),
+      writeFile(condaPython, ''),
+      writeFile(namedCondaPython, '')
+    ])
+    const service = new LocalToolEnvironmentService(
+      {
+        ...options,
+        baseEnvironment: {
+          PATH: Array.from(
+            { length: 80 },
+            (_, index) => join(options.managedPythonRoot, `path-${index}`)
+          ).join(';'),
+          VIRTUAL_ENV: virtualEnvironment,
+          CONDA_PREFIX: condaEnvironment,
+          CONDA_ENVS_PATH: condaEnvironments
+        }
+      },
+      {
+        toolEnvironment: {
+          platform: 'win32',
+          spawnProcess: fakeInspectionSpawn()
+        }
+      }
+    )
+
+    const snapshot = await service.refreshCandidates()
+
+    expect(
+      snapshot.candidates.map(({ executablePath }) => executablePath)
+    ).toEqual([virtualPython, condaPython, namedCondaPython])
+    expect(snapshot.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'python',
+          version: '3.12.8',
+          architecture: 'x64'
+        })
+      ])
+    )
+  })
+
   it('persists the complete nested settings object through one store authority', async () => {
     const { service, settingsStore, node } = await fixture()
     const next: LocalToolEnvironmentSettings = {

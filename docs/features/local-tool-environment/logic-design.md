@@ -99,6 +99,21 @@ custom(executablePath)
 
 这是唯一持久状态。
 
+候选选择还具有不持久化的界面状态：
+
+```text
+closed
+choosing
+validating
+failed
+```
+
+- 从 `closed` 进入 `choosing` 不改变当前持久来源。
+- `choosing` 中不得自动采用首个候选；只有用户明确选择候选或文件后才进入 `validating`。
+- 验证成功后一次性保存 `custom(executablePath)`；验证失败回到 `choosing` 并就地显示错误。
+- 文件选择取消回到 `choosing`，不显示错误且不改变当前来源。
+- 没有候选不是禁用“自定义环境”的理由，用户仍可刷新或选择其他可执行文件。
+
 ### 3.2 托管 Python 安装状态
 
 ```text

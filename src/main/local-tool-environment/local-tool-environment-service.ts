@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, realpath, rm, stat } from 'node:fs/promises'
+import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import spawn from 'cross-spawn'
 import type { ApplicationSettingsStore } from '../application-settings-store'
@@ -39,7 +39,8 @@ import {
 } from '../agent/child-process-termination'
 
 const candidateLimit = 40
-const pathDirectoryLimit = 32
+const pathDirectoryLimit = 64
+const discoveredDirectoryLimit = 24
 const validationOutputLimit = 8 * 1024
 const validationTimeoutMs = 15_000
 const validationTerminationWaitMs = 500
@@ -83,14 +84,137 @@ async function existingFile(path: string): Promise<string | undefined> {
   }
 }
 
+async function childDirectories(
+  root: string | undefined,
+  suffix: readonly string[] = []
+): Promise<string[]> {
+  if (!root) return []
+  try {
+    const entries = await readdir(root, { withFileTypes: true })
+    return entries
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+      .slice(0, discoveredDirectoryLimit)
+      .map((entry) => join(root, entry.name, ...suffix))
+  } catch {
+    return []
+  }
+}
+
+async function candidateDirectories(
+  environment: NodeJS.ProcessEnv,
+  platform: PythonArtifactPlatform
+): Promise<string[]> {
+  const directories: string[] = []
+  const seen = new Set<string>()
+  const add = (value: string | undefined): void => {
+    const path = value?.trim()
+    if (!path) return
+    const key = platform === 'win32' ? path.toLowerCase() : path
+    if (!seen.has(key) && directories.length < pathDirectoryLimit) {
+      seen.add(key)
+      directories.push(path)
+    }
+  }
+  const addMany = (values: readonly string[]): void => values.forEach(add)
+  const executableDirectory = (prefix: string | undefined): string | undefined =>
+    prefix
+      ? platform === 'win32'
+        ? prefix
+        : join(prefix, 'bin')
+      : undefined
+
+  const inheritedPath =
+    environment.PATH ?? environment.Path ?? environment.path ?? ''
+  add(executableDirectory(environment.VIRTUAL_ENV))
+  add(executableDirectory(environment.CONDA_PREFIX))
+  add(executableDirectory(environment.NVM_HOME))
+  add(environment.NVM_BIN)
+  add(environment.VOLTA_HOME ? join(environment.VOLTA_HOME, 'bin') : undefined)
+
+  const home = environment.USERPROFILE ?? environment.HOME
+  const localAppData = environment.LOCALAPPDATA
+  const programFiles = environment.ProgramFiles
+  const programData = environment.ProgramData
+
+  if (platform === 'win32') {
+    add(programFiles ? join(programFiles, 'nodejs') : undefined)
+    add(localAppData ? join(localAppData, 'Programs', 'nodejs') : undefined)
+    for (const version of ['314', '313', '312', '311', '310']) {
+      add(environment.SystemDrive ? join(environment.SystemDrive, `Python${version}`) : undefined)
+      add(programFiles ? join(programFiles, `Python${version}`) : undefined)
+    }
+    addMany(
+      await childDirectories(
+        localAppData ? join(localAppData, 'Programs', 'Python') : undefined
+      )
+    )
+    for (const root of [
+      home ? join(home, '.conda', 'envs') : undefined,
+      home ? join(home, 'miniconda3', 'envs') : undefined,
+      home ? join(home, 'anaconda3', 'envs') : undefined,
+      programData ? join(programData, 'miniconda3', 'envs') : undefined,
+      programData ? join(programData, 'anaconda3', 'envs') : undefined,
+      ...((environment.CONDA_ENVS_PATH ?? '')
+        .split(delimiter)
+        .filter(Boolean))
+    ]) {
+      addMany(await childDirectories(root))
+    }
+    add(home ? join(home, 'miniconda3') : undefined)
+    add(home ? join(home, 'anaconda3') : undefined)
+    add(programData ? join(programData, 'miniconda3') : undefined)
+    add(programData ? join(programData, 'anaconda3') : undefined)
+  } else {
+    add('/usr/local/bin')
+    add('/usr/bin')
+    if (platform === 'darwin') {
+      add('/opt/homebrew/bin')
+      addMany(
+        await childDirectories(
+          '/Library/Frameworks/Python.framework/Versions',
+          ['bin']
+        )
+      )
+    }
+    add(home ? join(home, '.local', 'bin') : undefined)
+    for (const root of [
+      home ? join(home, '.conda', 'envs') : undefined,
+      home ? join(home, 'miniconda3', 'envs') : undefined,
+      home ? join(home, 'anaconda3', 'envs') : undefined,
+      ...((environment.CONDA_ENVS_PATH ?? '')
+        .split(delimiter)
+        .filter(Boolean))
+    ]) {
+      addMany(
+        (await childDirectories(root)).map((directory) =>
+          join(directory, 'bin')
+        )
+      )
+    }
+    add(home ? join(home, 'miniconda3', 'bin') : undefined)
+    add(home ? join(home, 'anaconda3', 'bin') : undefined)
+    for (const root of [
+      environment.PYENV_ROOT
+        ? join(environment.PYENV_ROOT, 'versions')
+        : home
+          ? join(home, '.pyenv', 'versions')
+          : undefined,
+      home ? join(home, '.nvm', 'versions', 'node') : undefined
+    ]) {
+      addMany(await childDirectories(root, ['bin']))
+    }
+  }
+  inheritedPath.split(delimiter).forEach(add)
+  return directories
+}
+
 async function discoverCandidates(
   environment: NodeJS.ProcessEnv,
   platform: PythonArtifactPlatform,
   savedSettings: LocalToolEnvironmentSettings,
   dependencies: LocalToolEnvironmentDependencies
 ): Promise<LocalToolEnvironmentSnapshot['candidates']> {
-  const value = environment.PATH ?? environment.Path ?? environment.path ?? ''
-  const directories = value.split(delimiter).filter(Boolean).slice(0, pathDirectoryLimit)
+  const directories = await candidateDirectories(environment, platform)
   const names: Readonly<Record<LocalToolKind, readonly string[]>> =
     platform === 'win32'
       ? { node: ['node.exe'], python: ['python.exe', 'python3.exe'] }
@@ -111,7 +235,7 @@ async function discoverCandidates(
         }
         const path = await existingFile(join(directory, name))
         const key = path
-          ? `${kind}:${platform === 'win32' ? path.toLocaleLowerCase() : path}`
+          ? `${kind}:${platform === 'win32' ? path.toLowerCase() : path}`
           : undefined
         if (path && key && !seen.has(key)) {
           seen.add(key)
@@ -136,7 +260,7 @@ async function discoverCandidates(
     if (!candidate) continue
     const key = `${candidate.kind}:${
       platform === 'win32'
-        ? candidate.executablePath.toLocaleLowerCase()
+        ? candidate.executablePath.toLowerCase()
         : candidate.executablePath
     }`
     if (!canonicalSeen.has(key)) {

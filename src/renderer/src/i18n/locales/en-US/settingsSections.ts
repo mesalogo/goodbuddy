@@ -778,8 +778,10 @@ export const settingsSections = {
     },
     selectedPath: 'Current custom path',
     candidateList: '{{runtime}} executable candidates',
+    chooseCustomPrompt:
+      'Choose a validated {{runtime}} candidate or select another executable. The active environment will not change until validation succeeds.',
     noCandidates:
-      'No candidates were discovered. Refresh candidates or choose an executable with the system file picker.',
+      'No valid candidates were found. Scan user/system PATH, Conda, virtual environments, and common install locations, or choose another executable.',
     toolStatus: 'Tool status',
     companionStatus: 'Toolchain/companion status',
     capabilityDependencyStatus: 'Capability dependency status',

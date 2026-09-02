@@ -17,8 +17,8 @@
 快照应用到新启动的本机 Runtime 与 stdio MCP。Windows x64 已完成真实托管 Node 和原生
 地址托管 Python 安装验证。
 
-该实现尚不能视为六平台发布验收完成：OSS 镜像对象当前公开回读为 404，Windows ARM64、
-macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未随包落地。
+该实现尚不能视为六平台发布验收完成：六个 OSS 镜像对象已发布并公开回读验证，但
+Windows ARM64、macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未随包落地。
 
 ## 已完成
 
@@ -27,8 +27,11 @@ macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未
 - [x] Shared 严格设置、候选、诊断、进度、IPC 和 Preload 契约。
 - [x] Application Settings v10；全新用户默认托管环境和原生地址。
 - [x] v1-v9 分别执行真实 Node/Python 3 探测的一次性迁移；无有效候选时选择托管环境。
-- [x] PATH 和已保存自定义路径候选的规范化、去重、版本及架构诊断。
+- [x] 用户/系统 PATH、活动 venv/Conda、`CONDA_ENVS_PATH`、Conda/pyenv/nvm 和常见安装
+  位置，以及已保存自定义路径候选的规范化、去重、版本及架构诊断。
 - [x] 自定义解释器保存前真实验证；无效新选择不持久化，已保存失效路径不回退。
+- [x] “自定义环境”始终可进入；不隐式采用首个候选，取消文件选择不改设置，验证错误在
+  对应工具卡内显示。
 - [x] “能力与工具”统一入口及三个水平 Tab，MCP 原内层页签保持不变。
 - [x] 工具下载源、Node.js、Python、候选、诊断、安装进度、取消和删除界面。
 - [x] 使用 `PageTabs`、应用通知、就地操作错误、删除确认和具名进度条。
@@ -55,7 +58,7 @@ macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未
 
 ## 待完成验收
 
-- [ ] 发布六个平台/架构的字节完全相同 OSS 镜像对象并公开回读校验。
+- [x] 发布六个平台/架构的字节完全相同 OSS 镜像对象并公开回读校验。
 - [ ] 将 CPython、PSF 和 python-build-standalone 适用许可证资源纳入发行包及构建校验。
 - [ ] Windows ARM64、macOS x64/ARM64、Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针。
 - [ ] 最低 Windows/macOS/glibc 支持矩阵和 Windows NuGet 签名核验。
@@ -65,9 +68,6 @@ macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未
 
 ## 当前阻塞项
 
-- `https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/...` 的 Windows x64 固定对象于
-  2026-09-02 返回 HTTP 404。发布对象需要发行基础设施的短期 OSS 凭据，当前会话没有
-  外部发布授权或凭据，因此 OSS 选项不能标记为生产可用。
 - 当前机器只能原生验证 Windows x64。其余五个平台必须由对应原生 CI 执行，不能用本机
   mock 代替。
 - 许可证文件和来源清单尚未进入 `resources/tool-environment`，发行合规验收未完成。
@@ -89,7 +89,16 @@ macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未
 - 第一次全量测试发现 3 个确定性夹具/兼容失败，修复后聚焦复跑 `25/25` 通过。第二次暴露
   2 个 `App.test.tsx` 设置导航时序问题，修正为按可访问名称点击并等待设置中心。
 - 最终 `npm test` 通过：`3465` 通过、`51` 跳过；完整 `App.test.tsx` 为 `157/157` 通过。
-- 原生地址范围请求返回 HTTP 206；对应 OSS 镜像返回 HTTP 404，已列为外部阻塞。
+- 使用本机受控 Aliyun 凭据将六个已验证上游工件原样上传到
+  `goodbuddy/tool-artifacts/python/3.13.15/<sha256>/<filename>`，总计 `142,251,693`
+  字节。随后从目录中的六个公开 OSS URL 全量下载，逐个验证字节数和 SHA-256，全部一致。
+- 修复无候选时禁用“自定义环境”的死路交互，并扩展 venv/Conda/常见安装位置探测；
+  聚焦 Main/Renderer/Settings 测试 `95/95` 通过，最终 `npm test` 为 `3477` 通过、
+  `51` 跳过，类型检查、功能文件定向 Lint 和生产构建通过。仓库全量 Lint 当前被并行
+  `App.tsx` 的两个 React Compiler memoization 错误阻塞，与工具执行环境文件无关。
+- 隔离 Electron 实机确认“自定义环境”始终可进入，展开和刷新不会保存来源；在 64 项以上
+  PATH 的机器上优先发现活动 `<user>\miniconda3\python.exe`，真实诊断为
+  Python `3.13.13 · amd64`，刷新后持久设置仍为 `managed`。
 
 ### 2026-09-02 菜单阶段
 

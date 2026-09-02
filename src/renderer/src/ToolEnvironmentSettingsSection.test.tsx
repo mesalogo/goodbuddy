@@ -189,6 +189,80 @@ describe('ToolEnvironmentSettingsSection', () => {
     expect(onNotify).not.toHaveBeenCalled()
   })
 
+  it('keeps custom Python operable without implicitly selecting the first candidate', async () => {
+    render(<ToolEnvironmentSettingsSection />)
+
+    const pythonCard = (
+      await screen.findByRole('heading', { name: 'Python' })
+    ).closest('article')!
+    const custom = within(pythonCard).getByRole('radio', {
+      name: /自定义环境/u
+    })
+    expect(custom).toBeEnabled()
+    expect(
+      within(pythonCard).queryByRole('button', {
+        name: /C:\\Python\\python\.exe/u
+      })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(custom)
+
+    expect(custom).toBeChecked()
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(
+      within(pythonCard).getByText(/完成验证前不会更改当前执行环境/u)
+    ).toBeVisible()
+    const candidate = within(pythonCard).getByRole('button', {
+      name: /C:\\Python\\python\.exe/u
+    })
+    expect(candidate).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(candidate)
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        ...baseSnapshot.settings,
+        python: {
+          source: 'custom',
+          executablePath: 'C:\\Python\\python.exe'
+        }
+      })
+    )
+  })
+
+  it('keeps file-picker cancellation quiet and shows validation errors inside the runtime card', async () => {
+    const onNotify = vi.fn()
+    selectExecutable
+      .mockResolvedValueOnce(baseSnapshot)
+      .mockRejectedValueOnce(new Error('Python 3 validation failed'))
+    render(<ToolEnvironmentSettingsSection onNotify={onNotify} />)
+
+    const pythonCard = (
+      await screen.findByRole('heading', { name: 'Python' })
+    ).closest('article')!
+    fireEvent.click(
+      within(pythonCard).getByRole('radio', {
+        name: /自定义环境/u
+      })
+    )
+    const choose = within(pythonCard).getByRole('button', {
+      name: '选择可执行文件'
+    })
+
+    fireEvent.click(choose)
+    await waitFor(() =>
+      expect(selectExecutable).toHaveBeenCalledWith('python')
+    )
+    expect(onNotify).not.toHaveBeenCalled()
+    expect(within(pythonCard).queryByRole('alert')).not.toBeInTheDocument()
+
+    fireEvent.click(choose)
+    expect(
+      await within(pythonCard).findByRole('alert')
+    ).toHaveTextContent('Python 3 validation failed')
+    expect(onNotify).not.toHaveBeenCalled()
+  })
+
   it('uses real diagnose, file selection, managed Python, and progress APIs', async () => {
     const onNotify = vi.fn()
     render(
