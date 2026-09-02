@@ -152,6 +152,31 @@ describe('ModelToolProvider', () => {
     )
   })
 
+  it('passes the launch environment provider to new stdio MCP connections', async () => {
+    const workspace = await createWorkspace()
+    const launchEnvironmentProvider = vi.fn(() =>
+      Object.freeze({ PATH: '/managed-tools:/usr/bin' })
+    )
+    const provider = new ModelToolProvider(
+      workspace,
+      [createMcpServer()],
+      undefined,
+      undefined,
+      false,
+      {},
+      launchEnvironmentProvider
+    )
+
+    await provider.listTools(toolContext, new AbortController().signal)
+
+    expect(mocks.createMcpTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ transport: 'stdio' }),
+      launchEnvironmentProvider
+    )
+    expect(launchEnvironmentProvider).not.toHaveBeenCalled()
+    await provider.dispose()
+  })
+
   it('provides bounded workspace read, list, and atomic write tools', async () => {
     const workspace = await createWorkspace()
     await mkdir(join(workspace, 'docs'))

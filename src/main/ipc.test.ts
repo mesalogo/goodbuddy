@@ -56,6 +56,27 @@ describe('embedding IPC boundary', () => {
   })
 })
 
+describe('local tool environment IPC boundary', () => {
+  it('trust-checks every operation and accepts only shared bounded schemas', async () => {
+    const source = await readFile(
+      join(process.cwd(), 'src', 'main', 'ipc.ts'),
+      'utf8'
+    )
+    const region =
+      source.match(
+        /const requireLocalToolEnvironmentService[\s\S]*?registerHandler\(ipcChannels\.shortcutSettingsGet/u
+      )?.[0] ?? ''
+    expect(region.match(/assertTrustedSender\(event, window\)/gu)).toHaveLength(8)
+    expect(region).toContain('localToolEnvironmentSettingsSchema.parse(input)')
+    expect(region).toContain('localToolKindInputSchema.parse(input)')
+    expect(region).toContain('localToolDiagnoseInputSchema.parse(input)')
+    expect(region.match(/z\.undefined\(\)\.parse\(input\)/gu)).toHaveLength(5)
+    expect(region).not.toMatch(
+      /\b(?:command|args|env|url|hash|installDirectory|shimContents)\b/u
+    )
+  })
+})
+
 describe('terminal IPC boundary', () => {
   afterEach(() => {
     electronMocks.handlers.clear()

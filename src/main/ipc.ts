@@ -125,6 +125,12 @@ import {
 } from '../shared/channel-settings-contracts'
 import { applicationSettingsUpdateSchema } from '../shared/application-settings-contracts'
 import {
+  localToolDiagnoseInputSchema,
+  localToolEnvironmentProgressSchema,
+  localToolEnvironmentSettingsSchema,
+  localToolKindInputSchema
+} from '../shared/local-tool-environment-contracts'
+import {
   agentPackageArchitectureRequestSchema,
   agentPackageDownloadProgressSchema,
   agentPackageInventoryRequestSchema,
@@ -324,6 +330,7 @@ import {
   SqliteChannelOutbox
 } from './channels/sqlite-channel-state'
 import type { ApplicationSettingsStore } from './application-settings-store'
+import type { LocalToolEnvironmentService } from './local-tool-environment'
 import {
   getUpdateDownloadPage,
   type VersionChecker
@@ -1117,7 +1124,8 @@ export function registerIpcHandlers(
     RemoteAgentConnectionManager,
     'getHostConnectionState' | 'onHostConnectionStateChange'
   >,
-  terminalSessionManager?: TerminalSessionManager
+  terminalSessionManager?: TerminalSessionManager,
+  localToolEnvironmentService?: LocalToolEnvironmentService
 ): () => Promise<void> {
   type ActiveRequestLease = {
     controller: AbortController
@@ -1216,6 +1224,17 @@ export function registerIpcHandlers(
         : result
     })
   }
+  const removeLocalToolEnvironmentProgressListener =
+    localToolEnvironmentService?.onProgress((progress) => {
+      if (!window.webContents.isDestroyed()) {
+        sendValidatedProgress(
+          window.webContents,
+          ipcChannels.localToolEnvironmentProgress,
+          localToolEnvironmentProgressSchema,
+          progress
+        )
+      }
+    })
   const resolveRequestRuntime = async (
     request: Pick<
       AgentRequest,
@@ -5367,6 +5386,80 @@ export function registerIpcHandlers(
     }
   )
 
+  const requireLocalToolEnvironmentService =
+    (): LocalToolEnvironmentService => {
+      if (!localToolEnvironmentService) {
+        throw new Error('本地工具环境服务不可用')
+      }
+      return localToolEnvironmentService
+    }
+
+  registerHandler(
+    ipcChannels.localToolEnvironmentGet,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      z.undefined().parse(input)
+      return requireLocalToolEnvironmentService().getSnapshot()
+    }
+  )
+  registerHandler(
+    ipcChannels.localToolEnvironmentUpdate,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      return requireLocalToolEnvironmentService().updateSettings(
+        localToolEnvironmentSettingsSchema.parse(input)
+      )
+    }
+  )
+  registerHandler(
+    ipcChannels.localToolEnvironmentRefresh,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      z.undefined().parse(input)
+      return requireLocalToolEnvironmentService().refreshCandidates()
+    }
+  )
+  registerHandler(
+    ipcChannels.localToolEnvironmentSelectExecutable,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { kind } = localToolKindInputSchema.parse(input)
+      return requireLocalToolEnvironmentService().selectExecutable(kind)
+    }
+  )
+  registerHandler(
+    ipcChannels.localToolEnvironmentDiagnose,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const { kind } = localToolDiagnoseInputSchema.parse(input)
+      return requireLocalToolEnvironmentService().diagnose(kind)
+    }
+  )
+  registerHandler(
+    ipcChannels.localToolEnvironmentInstallPython,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      z.undefined().parse(input)
+      return requireLocalToolEnvironmentService().installPython()
+    }
+  )
+  registerHandler(
+    ipcChannels.localToolEnvironmentCancelPython,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      z.undefined().parse(input)
+      return requireLocalToolEnvironmentService().cancelPython()
+    }
+  )
+  registerHandler(
+    ipcChannels.localToolEnvironmentRemovePython,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      z.undefined().parse(input)
+      return requireLocalToolEnvironmentService().removePython()
+    }
+  )
+
   registerHandler(ipcChannels.shortcutSettingsGet, (event) => {
     assertTrustedSender(event, window)
     if (!shortcutSettingsService) {
@@ -6944,7 +7037,9 @@ export function registerIpcHandlers(
       return testMcpServer(
         await capabilityService.getResolvedMcpServer(
           mcpServerIdSchema.parse(input)
-        )
+        ),
+        undefined,
+        localToolEnvironmentService?.launchEnvironmentProvider
       )
     }
   )
@@ -7966,6 +8061,8 @@ export function registerIpcHandlers(
 
   return async () => {
     shuttingDown = true
+    removeLocalToolEnvironmentProgressListener?.()
+    await localToolEnvironmentService?.dispose()
     removeBrowserStateListener?.()
     lastSentBrowserFrames.clear()
     removeRemoteAgentConnectionStatusListener?.()

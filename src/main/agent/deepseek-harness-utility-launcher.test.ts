@@ -9,7 +9,8 @@ import {
   DEEPSEEK_HARNESS_CONTROL_VERSION,
   DEEPSEEK_HARNESS_CREDENTIAL_REF,
   createDeepSeekHarnessUtilityLauncher,
-  parseHarnessControlMessage
+  parseHarnessControlMessage,
+  type DeepSeekHarnessFork
 } from './deepseek-harness-utility-launcher'
 
 class FakeUtility extends EventEmitter {
@@ -127,6 +128,63 @@ describe('DeepSeek Harness utility launcher', () => {
         stdio: ['ignore', 'ignore', 'pipe']
       })
     )
+  })
+
+  it('refreshes the filtered tool PATH for every Host root', async () => {
+    const { dshHome, hostPath, launchOptions } = await fixture()
+    const utilities = [new FakeUtility(), new FakeUtility()]
+    const fork = vi.fn<DeepSeekHarnessFork>(
+      () => utilities.shift() as never
+    )
+    let generation = 0
+    const launcher = createDeepSeekHarnessUtilityLauncher({
+      bundledHostPath: hostPath,
+      dshHome,
+      environment: {
+        PATH: 'C:\\System'
+      },
+      launchEnvironmentProvider: () =>
+        Object.freeze({
+          PATH: `C:\\GoodBuddy\\tools-${++generation};C:\\System`,
+          OPENAI_API_KEY: 'provider-secret',
+          ELECTRON_RUN_AS_NODE: '1'
+        }),
+      fork
+    })
+
+    for (let index = 0; index < 2; index += 1) {
+      const launching = launcher(launchOptions)
+      await vi.waitFor(() =>
+        expect(fork).toHaveBeenCalledTimes(index + 1)
+      )
+      const launchedUtility = (
+        fork.mock.results[index]?.value
+      ) as unknown as FakeUtility
+      await vi.waitFor(() =>
+        expect(launchedUtility.messages).toHaveLength(1)
+      )
+      launchedUtility.emit('message', {
+        protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
+        version: DEEPSEEK_HARNESS_CONTROL_VERSION,
+        type: 'ready',
+        failedExtensionIds: []
+      })
+      await launching
+    }
+
+    const environments = fork.mock.calls.map(
+      (call) => call[2]?.env as NodeJS.ProcessEnv
+    )
+    expect(environments[0]?.PATH).toBe(
+      'C:\\GoodBuddy\\tools-1;C:\\System'
+    )
+    expect(environments[1]?.PATH).toBe(
+      'C:\\GoodBuddy\\tools-2;C:\\System'
+    )
+    for (const environment of environments) {
+      expect(environment).not.toHaveProperty('OPENAI_API_KEY')
+      expect(environment).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
+    }
   })
 
   it('persists extension startup failures before exposing the child', async () => {

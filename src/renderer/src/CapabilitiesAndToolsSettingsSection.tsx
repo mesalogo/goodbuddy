@@ -3,19 +3,24 @@ import { useTranslation } from 'react-i18next'
 import { McpSettingsSection } from './McpSettingsSection'
 import { SettingsCategoryHeader } from './SettingsPrimitives'
 import { SkillsSettingsSection } from './SkillsSettingsSection'
+import { ToolEnvironmentSettingsSection } from './ToolEnvironmentSettingsSection'
 import { PageTabs } from './WorkspacePrimitives'
+import type { AppNotificationInput } from './notifications'
 
-type CapabilitySettingsTab = 'skills' | 'mcp'
+type CapabilitySettingsTab = 'skills' | 'mcp' | 'tools'
 
 export function CapabilitiesAndToolsSettingsSection({
-  magicNotesEnabled
+  magicNotesEnabled,
+  onNotify
 }: {
   magicNotesEnabled: boolean
+  onNotify?: (notification: AppNotificationInput) => void
 }): React.JSX.Element {
   const { t } = useTranslation('settings')
   const [activeTab, setActiveTab] =
     useState<CapabilitySettingsTab>('skills')
   const [mcpVisited, setMcpVisited] = useState(false)
+  const [toolsVisited, setToolsVisited] = useState(false)
 
   return (
     <>
@@ -32,6 +37,9 @@ export function CapabilitiesAndToolsSettingsSection({
             if (tab === 'mcp') {
               setMcpVisited(true)
             }
+            if (tab === 'tools') {
+              setToolsVisited(true)
+            }
           }}
           tabs={[
             {
@@ -41,6 +49,10 @@ export function CapabilitiesAndToolsSettingsSection({
             {
               id: 'mcp',
               label: t('capabilities.tabs.mcp')
+            },
+            {
+              id: 'tools',
+              label: t('capabilities.tabs.tools')
             }
           ]}
           value={activeTab}
@@ -65,6 +77,17 @@ export function CapabilitiesAndToolsSettingsSection({
       >
         {mcpVisited && (
           <McpSettingsSection magicNotesEnabled={magicNotesEnabled} />
+        )}
+      </section>
+      <section
+        aria-labelledby="capabilities-settings-tab-tools"
+        className="capabilities-settings__panel"
+        hidden={activeTab !== 'tools'}
+        id="capabilities-settings-panel-tools"
+        role="tabpanel"
+      >
+        {toolsVisited && (
+          <ToolEnvironmentSettingsSection onNotify={onNotify} />
         )}
       </section>
     </>

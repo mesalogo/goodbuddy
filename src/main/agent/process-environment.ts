@@ -1,3 +1,5 @@
+import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
+
 export const runtimeProviderEnvironmentNames = [
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
@@ -35,6 +37,7 @@ export function buildCredentialFilteredUserEnvironment(
     const upperName = name.toUpperCase()
     if (
       value !== undefined &&
+      upperName !== 'ELECTRON_RUN_AS_NODE' &&
       !upperName.startsWith('GOODBUDDY_') &&
       !upperName.startsWith('FACTORY_') &&
       !userProcessCredentialEnvironmentNames.has(upperName)
@@ -43,6 +46,39 @@ export function buildCredentialFilteredUserEnvironment(
     }
   }
   return environment
+}
+
+/**
+ * Applies only the PATH prepared by the local tool environment. In
+ * particular, arbitrary values from that snapshot must not bypass the
+ * credential filtering performed by the caller.
+ */
+export function applyLaunchEnvironmentPath(
+  environment: NodeJS.ProcessEnv,
+  provider?: LaunchEnvironmentProvider
+): NodeJS.ProcessEnv {
+  if (!provider) {
+    return environment
+  }
+  const launchEnvironment = provider()
+  const path =
+    launchEnvironment.PATH ??
+    launchEnvironment.Path ??
+    launchEnvironment.path
+  if (path === undefined) {
+    return environment
+  }
+  const result = { ...environment }
+  const existingPathName = Object.keys(environment).find(
+    (name) => name.toLowerCase() === 'path'
+  )
+  for (const name of Object.keys(result)) {
+    if (name.toLowerCase() === 'path') {
+      delete result[name]
+    }
+  }
+  result[existingPathName ?? 'PATH'] = path
+  return result
 }
 
 const runtimeEnvironmentAllowlist = [

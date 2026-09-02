@@ -10,7 +10,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from './i18n'
 import type { DesktopApi } from '../../shared/contracts'
-import type { ApplicationSettings } from '../../shared/application-settings-contracts'
+import {
+  defaultLocalToolEnvironmentSettings,
+  type ApplicationSettings
+} from '../../shared/application-settings-contracts'
 import type {
   MagicNoteDetail,
   MagicNotesSnapshot,
@@ -189,6 +192,7 @@ const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async (
   checkUpdatesOnStartup: false,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
+  localToolEnvironment: defaultLocalToolEnvironmentSettings,
   remoteProjectsEnabled: false,
   magicNotesEnabled: true,
   magicNotesShowIncompleteTodoCount: true,
@@ -204,6 +208,7 @@ beforeEach(() => {
     checkUpdatesOnStartup: false,
     updateSource: 'github',
     modelDownloadSource: 'modelscope',
+    localToolEnvironment: defaultLocalToolEnvironmentSettings,
     remoteProjectsEnabled: false,
     magicNotesEnabled: true,
     magicNotesShowIncompleteTodoCount: true,
@@ -1227,6 +1232,7 @@ describe('MagicNotesWorkspace', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -1261,6 +1267,7 @@ describe('MagicNotesWorkspace', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -1378,6 +1385,7 @@ describe('MagicNotesWorkspace', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,

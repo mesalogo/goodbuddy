@@ -16,7 +16,10 @@ import type {
   ConversationQueueDispatch,
   DesktopApi
 } from '../../shared/contracts'
-import type { ApplicationSettings } from '../../shared/application-settings-contracts'
+import {
+  defaultLocalToolEnvironmentSettings,
+  type ApplicationSettings
+} from '../../shared/application-settings-contracts'
 import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
 import type {
   TerminalSnapshot
@@ -989,6 +992,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
     checkUpdatesOnStartup: false,
     updateSource: 'github',
     modelDownloadSource: 'modelscope',
+    localToolEnvironment: defaultLocalToolEnvironmentSettings,
     remoteProjectsEnabled: enabled,
     magicNotesEnabled: false,
     magicNotesShowIncompleteTodoCount: true,
@@ -2148,6 +2152,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
@@ -2243,6 +2248,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -2253,6 +2259,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -2353,6 +2360,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -2363,6 +2371,7 @@ describe('App', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -4316,6 +4325,7 @@ describe('App', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -10523,6 +10533,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -10533,6 +10544,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -10579,6 +10591,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -10632,6 +10645,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: false,
@@ -10664,6 +10678,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
@@ -10674,6 +10689,7 @@ describe('App', () => {
         checkUpdatesOnStartup: false,
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
@@ -10709,6 +10725,7 @@ describe('App', () => {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -10730,7 +10747,12 @@ describe('App', () => {
     }
     try {
       const { container } = render(<App />)
-      fireEvent.click(await screen.findByText('本地工作区'))
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: /本地工作区/u
+        })
+      )
+      await screen.findByRole('heading', { name: '设置中心' })
       fireEvent.click(
         screen.getByRole('tab', { name: '平台功能' })
       )

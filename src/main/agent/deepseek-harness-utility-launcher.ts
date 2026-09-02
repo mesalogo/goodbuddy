@@ -19,6 +19,8 @@ import {
   parseHarnessControlMessage,
   type DeepSeekHarnessControlMessage as HarnessControlMessage
 } from './deepseek-harness-control-protocol'
+import { applyLaunchEnvironmentPath } from './process-environment'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 
 export {
   controlledHarnessHostConfigSchema,
@@ -49,6 +51,7 @@ export type DeepSeekHarnessUtilityLauncherOptions = {
   bundledHostPath: string
   dshHome: string
   environment: NodeJS.ProcessEnv
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
   fork: DeepSeekHarnessFork
   terminateProcess?: (utility: UtilityProcess) => void
   onExtensionStartupFailures?: (
@@ -162,7 +165,10 @@ export function createDeepSeekHarnessUtilityLauncher(
     options.signal.throwIfAborted()
     const utility = launcherOptions.fork(canonicalHostPath, [], {
       cwd: canonicalWorkspace,
-      env: launcherOptions.environment,
+      env: applyLaunchEnvironmentPath(
+        { ...launcherOptions.environment },
+        launcherOptions.launchEnvironmentProvider
+      ),
       serviceName: 'GoodBuddy DeepSeek Harness Host',
       stdio: ['ignore', 'ignore', 'pipe']
     })

@@ -47,10 +47,12 @@ import { detectRuntimeBinary } from './runtime-discovery'
 import { getAvailableLoopbackPort } from './loopback-port'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 import {
+  applyLaunchEnvironmentPath,
   buildExplicitProfileRuntimeEnvironment,
   buildRuntimeEnvironment,
   runtimePrivacyEnvironment
 } from './process-environment'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 import {
   boundedToolDetail,
   safeToolErrorDetail
@@ -489,6 +491,7 @@ export type OpenCodeRuntimeOptions = {
   knowledgeGateway?: KnowledgeMcpGateway
   mcpServers?: ResolvedMcpServer[]
   customization?: RuntimeCustomizationSettings['opencode']
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
 }
 
 function boundedNativeIdentifier(value: unknown): string | undefined {
@@ -904,7 +907,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         throw new Error('OpenCode Server 启动已取消')
       }
       const profile = this.options.modelProfile
-      const env = profile
+      let env = profile
         ? buildExplicitProfileRuntimeEnvironment(
             runtimePrivacyEnvironment,
             profile.authentication === 'api-key' && profile.apiKey
@@ -918,6 +921,10 @@ export class OpenCodeRuntime implements AgentRuntime {
               : undefined
           )
         : buildRuntimeEnvironment(runtimePrivacyEnvironment)
+      env = applyLaunchEnvironmentPath(
+        env,
+        this.options.launchEnvironmentProvider
+      )
       delete env.OPENCODE_CONFIG
       delete env.OPENCODE_CONFIG_CONTENT
       delete env.OPENCODE_CONFIG_DIR

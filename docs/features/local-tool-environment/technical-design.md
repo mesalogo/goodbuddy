@@ -4,9 +4,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 计划 |
-| 版本 | 0.1 |
-| 日期 | 2026-09-01 |
+| 状态 | 已实施，跨平台验收中 |
+| 版本 | 0.2 |
+| 日期 | 2026-09-02 |
 | 关联 PRD | [工具执行环境 PRD](./prd.md) |
 | 功能逻辑 | [工具执行环境功能逻辑设计](./logic-design.md) |
 | 相关架构 | [DeepSeek Harness Runtime 设计](../deepseek-harness/technical-design.md)、[SSH 远程主机与 GoodBuddy Agent 实现说明](../remote-host/technical-design.md) |

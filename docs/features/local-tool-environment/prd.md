@@ -4,9 +4,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 计划 |
-| 版本 | 0.1 |
-| 日期 | 2026-09-01 |
+| 状态 | 已批准并实施，验收中 |
+| 版本 | 0.2 |
+| 日期 | 2026-09-02 |
 | 适用产品 | GoodBuddy 桌面端 |
 | 目标平台 | Windows、macOS、Linux，x64 与 arm64 |
 | 关联文档 | [功能入口](./README.md)、[User Stories](./user-stories.md)、[功能逻辑](./logic-design.md)、[UI 设计](./ui-design.md)、[技术设计](./technical-design.md)、[功能进度](./progress.md) |

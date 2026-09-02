@@ -397,6 +397,13 @@ describe('ContinueHostAdapter', () => {
     let isolatedGlobalDirectory = ''
     let registeredSkill = ''
     let registeredSkillFile = ''
+    const launchEnvironmentProvider = vi.fn(() =>
+      Object.freeze({
+        PATH: 'C:\\GoodBuddy\\tools;C:\\System',
+        OPENAI_API_KEY: 'must-not-leak',
+        ELECTRON_RUN_AS_NODE: '1'
+      })
+    )
     const launchHost: ContinueHostLauncher = (
       entryPath,
       args,
@@ -500,6 +507,7 @@ describe('ContinueHostAdapter', () => {
       cacheRoot: distribution.cacheRoot,
       trustedBundleHashes: [distribution.sourceHash],
       launchHost,
+      launchEnvironmentProvider,
       mode: 'chat',
       skillPackages: [
         {
@@ -556,6 +564,11 @@ describe('ContinueHostAdapter', () => {
     expect(launch?.env.GOODBUDDY_CONTINUE_HOST_TOKEN).toEqual(
       expect.any(String)
     )
+    expect(launchEnvironmentProvider).toHaveBeenCalledOnce()
+    expect(launch?.env.PATH).toBe(
+      'C:\\GoodBuddy\\tools;C:\\System'
+    )
+    expect(launch?.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
     expect(launch?.env).toMatchObject({
       CONTINUE_CLI_AUTO_UPDATED: '1',
       CONTINUE_CLI_ENABLE_TELEMETRY: '0',

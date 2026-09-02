@@ -46,6 +46,34 @@ describe('sandboxed preload', () => {
     )
   })
 
+  it('exposes bounded local tool environment operations without execution inputs', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    const localTools =
+      source.match(
+        /localToolEnvironment: \{(?<body>[\s\S]*?)\r?\n {2}\},\r?\n {2}feedback:/u
+      )?.groups?.body ?? ''
+    for (const method of [
+      'getSnapshot:',
+      'updateSettings:',
+      'refreshCandidates:',
+      'selectExecutable:',
+      'diagnose:',
+      'installPython:',
+      'cancelPython:',
+      'removePython:',
+      'onProgress:'
+    ]) {
+      expect(localTools).toContain(method)
+    }
+    expect(localTools).not.toMatch(
+      /\b(?:command|env|url|hash|installDirectory|shim)\b/iu
+    )
+    expect(localTools).toContain('ipcRenderer.removeListener(')
+  })
+
   it('exposes only explicit computer capability and managed profile IPC methods', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),

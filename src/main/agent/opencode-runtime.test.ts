@@ -312,7 +312,13 @@ describe('OpenCodeRuntime embedded launcher', () => {
     const runtime = new OpenCodeRuntime(
       options({
         binaryPath: 'C:\\Configured\\opencode.exe',
-        configPath
+        configPath,
+        launchEnvironmentProvider: () =>
+          Object.freeze({
+            PATH: 'C:\\GoodBuddy\\tools;C:\\Windows',
+            OPENAI_API_KEY: 'must-not-leak',
+            ELECTRON_RUN_AS_NODE: '1'
+          })
       }),
       {
         spawn: spawnMock as unknown as typeof spawn,
@@ -399,6 +405,12 @@ describe('OpenCodeRuntime embedded launcher', () => {
       'goodbuddy'
     )
     expect(spawnOptions?.env?.OPENCODE_SERVER_PASSWORD).toBeTruthy()
+    expect(spawnOptions?.env?.PATH).toBe(
+      'C:\\GoodBuddy\\tools;C:\\Windows'
+    )
+    expect(spawnOptions?.env).not.toHaveProperty(
+      'ELECTRON_RUN_AS_NODE'
+    )
     expect(
       Buffer.from(
         clientOptions?.headers?.Authorization?.slice(6) ?? '',

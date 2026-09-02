@@ -98,7 +98,10 @@ import {
   createDeepSeekHarnessUtilityLauncher,
   type DeepSeekHarnessFork
 } from './agent/deepseek-harness-utility-launcher'
-import { buildControlledHarnessEnvironment } from './agent/process-environment'
+import {
+  buildControlledHarnessEnvironment,
+  buildCredentialFilteredUserEnvironment
+} from './agent/process-environment'
 import {
   createStartupFailureDiagnostic,
   formatStartupFailureMessage,
@@ -158,6 +161,10 @@ import {
   type DesktopDiagnosticFailureObserver
 } from './desktop-diagnostics'
 import { TerminalSessionManager } from './terminal/terminal-session-manager'
+import {
+  LocalToolEnvironmentService,
+  resolveNpmCliPaths
+} from './local-tool-environment'
 
 const legacyDefaultShortcut =
   defaultGlobalShortcutSettings.accelerator
@@ -222,6 +229,7 @@ let managedRemoteExecutionServices:
   | ManagedRemoteExecutionServices
   | undefined
 let directModelSubagentScheduler: SubagentScheduler | undefined
+let localToolEnvironmentService: LocalToolEnvironmentService | undefined
 
 type ManagedEmbeddingProvider = EmbeddingProvider & {
   dispose?: () => void | Promise<void>
@@ -665,6 +673,66 @@ if (hasSingleInstanceLock) {
     const applicationSettingsStore = new ApplicationSettingsStore(
       join(app.getPath('userData'), 'application-settings.json')
     )
+    const toolEnvironmentRoot = join(
+      app.getPath('userData'),
+      'tool-environment'
+    )
+    const npmCliPaths = resolveNpmCliPaths({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged
+    })
+    const startupLocalToolEnvironmentService =
+      new LocalToolEnvironmentService({
+        settingsStore: applicationSettingsStore,
+        binDirectory: join(toolEnvironmentRoot, 'bin'),
+        managedPythonRoot: join(
+          toolEnvironmentRoot,
+          'managed-python'
+        ),
+        pythonArtifactCatalogPath: app.isPackaged
+          ? join(
+              process.resourcesPath,
+              'tool-environment',
+              'managed-python-artifacts.json'
+            )
+          : join(
+              app.getAppPath(),
+              'resources',
+              'tool-environment',
+              'managed-python-artifacts.json'
+            ),
+        packagedNpmCliPath: npmCliPaths.npmCliPath,
+        packagedNpxCliPath: npmCliPaths.npxCliPath,
+        electronExecutablePath: process.execPath,
+        selectExecutable: async (kind) => {
+          const result = await dialog.showOpenDialog(mainWindow!, {
+            title:
+              kind === 'python'
+                ? '选择 Python 可执行文件'
+                : '选择 Node.js 可执行文件',
+            properties: ['openFile'],
+            filters:
+              process.platform === 'win32'
+                ? [
+                    {
+                      name:
+                        kind === 'python'
+                          ? 'Python 可执行文件'
+                          : 'Node.js 可执行文件',
+                      extensions: ['exe', 'cmd', 'bat']
+                    },
+                    { name: '所有文件', extensions: ['*'] }
+                  ]
+                : [{ name: '所有文件', extensions: ['*'] }]
+          })
+          return result.canceled ? undefined : result.filePaths[0]
+        },
+        baseEnvironment: buildCredentialFilteredUserEnvironment()
+      })
+    await startupLocalToolEnvironmentService.initialize()
+    localToolEnvironmentService =
+      startupLocalToolEnvironmentService
     const sshHostStore = new SshHostStore(
       join(app.getPath('userData'), 'ssh-hosts.json'),
       secureCipher
@@ -886,6 +954,8 @@ if (hasSingleInstanceLock) {
         environment: buildControlledHarnessEnvironment(
           deepSeekHarnessHome
         ),
+        launchEnvironmentProvider:
+          startupLocalToolEnvironmentService.launchEnvironmentProvider,
         fork: forkDeepSeekHarness,
         terminateProcess: terminateHarnessUtilityProcess,
         onExtensionStartupFailures: (extensionIds) =>
@@ -939,7 +1009,9 @@ if (hasSingleInstanceLock) {
       startupKnowledgeService,
       {
         magicNotesDatabase: startupAssistantDatabase,
-        configService: goodbuddyConfigService
+        configService: goodbuddyConfigService,
+        launchEnvironmentProvider:
+          startupLocalToolEnvironmentService.launchEnvironmentProvider
       }
     )
     knowledgeGateway = startupKnowledgeGateway
@@ -990,7 +1062,9 @@ if (hasSingleInstanceLock) {
         webSearchEnabled: webSearchCapability?.enabled,
         executionSpace,
         workspaceAccess: executionSpace?.workspaceAccess,
-        directModelSubagentScheduler
+        directModelSubagentScheduler,
+        launchEnvironmentProvider:
+          startupLocalToolEnvironmentService.launchEnvironmentProvider
       })
     }
     const createConfiguredRuntime = async (
@@ -1389,7 +1463,8 @@ if (hasSingleInstanceLock) {
       remoteEnvironmentUpdateService,
       agentPackageManager,
       startupRemoteAgentServices.connectionManager,
-      terminalSessionManager
+      terminalSessionManager,
+      startupLocalToolEnvironmentService
     )
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,
@@ -1508,6 +1583,7 @@ app.on('before-quit', (event) => {
           () => documentOcrBroker?.dispose()
         ],
         [() => terminalSessionManager?.dispose()],
+        [() => localToolEnvironmentService?.dispose()],
         [() => managedRemoteExecutionServices?.dispose()],
         [() => remoteAgentServices?.dispose()],
         [() => knowledgeGateway?.dispose()],

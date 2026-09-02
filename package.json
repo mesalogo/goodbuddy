@@ -92,6 +92,10 @@
         "to": "release-notes.json"
       },
       {
+        "from": "resources/tool-environment/managed-python-artifacts.json",
+        "to": "tool-environment/managed-python-artifacts.json"
+      },
+      {
         "from": "agent-runtime-lock.json",
         "to": "agent-runtime-lock.json"
       },

@@ -1,10 +1,17 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { delimiter, extname, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import {
   applicationSettingsSchema,
   applicationSettingsUpdateSchema,
   type ApplicationSettings
 } from '../shared/application-settings-contracts'
+import {
+  defaultLocalToolEnvironmentSettings,
+  localToolExecutablePathSchema,
+  type LocalToolEnvironmentSettings
+} from '../shared/local-tool-environment-contracts'
+import { inspectLocalToolExecutable } from './local-tool-environment/local-tool-environment'
 import { releaseVersionSchema } from '../shared/release-notes-contracts'
 import type { SettingsWarning } from '../shared/settings-warning-contracts'
 import {
@@ -20,7 +27,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 9
+const CURRENT_SETTINGS_VERSION = 10
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -50,6 +57,7 @@ const versionFourStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     updateSource: true,
     modelDownloadSource: true,
+    localToolEnvironment: true,
     remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
@@ -62,6 +70,7 @@ const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     updateSource: true,
     modelDownloadSource: true,
+    localToolEnvironment: true,
     remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
@@ -74,6 +83,7 @@ const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
 const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     modelDownloadSource: true,
+    localToolEnvironment: true,
     remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
@@ -83,26 +93,36 @@ const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
   })
   .strict()
 
-const versionSevenStoredApplicationSettingsSchema =
-  applicationSettingsSchema
-    .omit({
-      remoteProjectsEnabled: true,
-      magicNotesShowIncompleteTodoCount: true
-    })
-    .extend({
-      version: z.literal(7),
-      lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
-    })
-    .strict()
+const versionSevenStoredApplicationSettingsSchema = applicationSettingsSchema
+  .omit({
+    localToolEnvironment: true,
+    remoteProjectsEnabled: true,
+    magicNotesShowIncompleteTodoCount: true
+  })
+  .extend({
+    version: z.literal(7),
+    lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
+  })
+  .strict()
 
-const versionEightStoredApplicationSettingsSchema =
-  applicationSettingsSchema
-    .omit({ remoteProjectsEnabled: true })
-    .extend({
-      version: z.literal(8),
-      lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
-    })
-    .strict()
+const versionEightStoredApplicationSettingsSchema = applicationSettingsSchema
+  .omit({
+    localToolEnvironment: true,
+    remoteProjectsEnabled: true
+  })
+  .extend({
+    version: z.literal(8),
+    lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
+  })
+  .strict()
+
+const versionNineStoredApplicationSettingsSchema = applicationSettingsSchema
+  .omit({ localToolEnvironment: true })
+  .extend({
+    version: z.literal(9),
+    lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
+  })
+  .strict()
 
 const storedApplicationSettingsSchema = applicationSettingsSchema
   .extend({
@@ -111,14 +131,90 @@ const storedApplicationSettingsSchema = applicationSettingsSchema
   })
   .strict()
 
-type StoredApplicationSettings = z.infer<
-  typeof storedApplicationSettingsSchema
->
+type StoredApplicationSettings = z.infer<typeof storedApplicationSettingsSchema>
+
+export type LegacyLocalToolEnvironmentPaths = {
+  nodeExecutablePath?: string
+  pythonExecutablePath?: string
+}
+
+export type LegacyLocalToolEnvironmentResolver =
+  () => Promise<LegacyLocalToolEnvironmentPaths>
+
+async function resolveExecutable(
+  kind: 'node' | 'python',
+  binaryNames: readonly string[]
+): Promise<string | undefined> {
+  const extensions =
+    process.platform === 'win32'
+      ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+          .split(';')
+          .filter((extension) => /^\.[A-Za-z0-9]+$/u.test(extension))
+      : ['']
+  const directories = (
+    process.env.PATH ??
+    process.env.Path ??
+    process.env.path ??
+    ''
+  )
+    .split(delimiter)
+    .map((directory) => directory.trim())
+    .filter(isAbsolute)
+
+  for (const directory of directories) {
+    for (const binaryName of binaryNames) {
+      const names =
+        process.platform === 'win32' && !extname(binaryName)
+          ? extensions.map((extension) => `${binaryName}${extension}`)
+          : [binaryName]
+      for (const name of names) {
+        try {
+          const executablePath = await realpath(join(directory, name))
+          const metadata = await stat(executablePath)
+          if (
+            metadata.isFile() &&
+            localToolExecutablePathSchema.safeParse(executablePath).success
+          ) {
+            const candidate = await inspectLocalToolExecutable(
+              kind,
+              executablePath,
+              { baseEnvironment: process.env }
+            )
+            if (candidate) {
+              return candidate.executablePath
+            }
+          }
+        } catch {
+          // Continue through PATH candidates.
+        }
+      }
+    }
+  }
+  return undefined
+}
+
+export const resolveLegacyLocalToolEnvironmentPaths: LegacyLocalToolEnvironmentResolver =
+  async () => {
+    const [nodeExecutablePath, pythonExecutablePath] = await Promise.all([
+      resolveExecutable('node', ['node']),
+      resolveExecutable(
+        'python',
+        process.platform === 'win32'
+          ? ['python', 'python3']
+          : ['python3', 'python']
+      )
+    ])
+    return {
+      ...(nodeExecutablePath ? { nodeExecutablePath } : {}),
+      ...(pythonExecutablePath ? { pythonExecutablePath } : {})
+    }
+  }
 
 export const defaultApplicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
+  localToolEnvironment: defaultLocalToolEnvironmentSettings,
   remoteProjectsEnabled: false,
   magicNotesEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
@@ -132,7 +228,37 @@ export class ApplicationSettingsStore {
   private warnings: SettingsWarning[] = []
   private updateQueue: Promise<void> = Promise.resolve()
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly legacyLocalToolEnvironmentResolver: LegacyLocalToolEnvironmentResolver = resolveLegacyLocalToolEnvironmentPaths
+  ) {}
+
+  private async migrateLegacy(
+    settings: Omit<
+      StoredApplicationSettings,
+      'localToolEnvironment' | 'version'
+    > & { version: number }
+  ): Promise<StoredApplicationSettings> {
+    const resolved = await this.legacyLocalToolEnvironmentResolver()
+    const selection = (
+      executablePath: string | undefined
+    ): LocalToolEnvironmentSettings['node'] =>
+      executablePath &&
+      localToolExecutablePathSchema.safeParse(executablePath).success
+        ? { source: 'custom', executablePath }
+        : { source: 'managed' }
+    const next: StoredApplicationSettings = {
+      ...settings,
+      version: CURRENT_SETTINGS_VERSION,
+      localToolEnvironment: {
+        node: selection(resolved.nodeExecutablePath),
+        python: selection(resolved.pythonExecutablePath),
+        artifactDownloadSource: 'native'
+      }
+    }
+    await this.persist(next)
+    return next
+  }
 
   private async isolateCorruptFile(): Promise<void> {
     await isolateCorruptSettingsFile(
@@ -177,56 +303,57 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionNineResult =
+          versionNineStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionNineResult.success) {
+          return this.migrateLegacy(versionNineResult.data)
+        }
         const versionEightResult =
           versionEightStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionEightResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             ...versionEightResult.data,
             version: CURRENT_SETTINGS_VERSION,
             remoteProjectsEnabled: false
-          }
-          return this.settings
+          })
         }
         const versionSevenResult =
           versionSevenStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionSevenResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             ...versionSevenResult.data,
             version: CURRENT_SETTINGS_VERSION,
             remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true
-          }
-          return this.settings
+          })
         }
         const versionSixResult =
           versionSixStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionSixResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             ...versionSixResult.data,
             version: CURRENT_SETTINGS_VERSION,
             modelDownloadSource: 'modelscope',
             remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true
-          }
-          return this.settings
+          })
         }
         const versionFiveResult =
           versionFiveStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionFiveResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             ...versionFiveResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
             remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true
-          }
-          return this.settings
+          })
         }
         const versionFourResult =
           versionFourStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionFourResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             ...versionFourResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
@@ -234,13 +361,12 @@ export class ApplicationSettingsStore {
             remoteProjectsEnabled: false,
             magicNotesShowIncompleteTodoCount: true,
             lastSeenReleaseNotesVersion: null
-          }
-          return this.settings
+          })
         }
         const versionThreeResult =
           versionThreeStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionThreeResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             ...versionThreeResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
@@ -249,13 +375,12 @@ export class ApplicationSettingsStore {
             magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
-          }
-          return this.settings
+          })
         }
         const versionTwoResult =
           versionTwoStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionTwoResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             ...versionTwoResult.data,
             version: CURRENT_SETTINGS_VERSION,
             updateSource: 'github',
@@ -265,16 +390,14 @@ export class ApplicationSettingsStore {
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
-          }
-          return this.settings
+          })
         }
         const legacyResult =
           legacyStoredApplicationSettingsSchema.safeParse(parsed)
         if (legacyResult.success) {
-          this.settings = {
+          return this.migrateLegacy({
             version: CURRENT_SETTINGS_VERSION,
-            checkUpdatesOnStartup:
-              legacyResult.data.checkUpdatesOnStartup,
+            checkUpdatesOnStartup: legacyResult.data.checkUpdatesOnStartup,
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
             remoteProjectsEnabled: false,
@@ -283,8 +406,7 @@ export class ApplicationSettingsStore {
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
             lastSeenReleaseNotesVersion: null
-          }
-          return this.settings
+          })
         }
         await this.isolateCorruptFile()
         this.warnings = [{ code: 'application-settings-recovered' }]
@@ -320,15 +442,14 @@ export class ApplicationSettingsStore {
       checkUpdatesOnStartup: stored.checkUpdatesOnStartup,
       updateSource: stored.updateSource,
       modelDownloadSource: stored.modelDownloadSource,
+      localToolEnvironment: stored.localToolEnvironment,
       remoteProjectsEnabled: stored.remoteProjectsEnabled,
       magicNotesEnabled: stored.magicNotesEnabled,
       magicNotesShowIncompleteTodoCount:
         stored.magicNotesShowIncompleteTodoCount,
       magicNoteCommentMode: stored.magicNoteCommentMode,
       magicNoteCommentFormat: stored.magicNoteCommentFormat,
-      ...(this.warnings.length > 0
-        ? { warnings: [...this.warnings] }
-        : {})
+      ...(this.warnings.length > 0 ? { warnings: [...this.warnings] } : {})
     }
   }
 
@@ -356,6 +477,7 @@ export class ApplicationSettingsStore {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
+        localToolEnvironment: next.localToolEnvironment,
         remoteProjectsEnabled: next.remoteProjectsEnabled,
         magicNotesEnabled: next.magicNotesEnabled,
         magicNotesShowIncompleteTodoCount:

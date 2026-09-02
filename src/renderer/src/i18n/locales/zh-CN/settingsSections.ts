@@ -684,6 +684,110 @@ export const settingsSections = {
     assignedTo: '分配给',
     deleteAria: '删除 {{name}}'
   },
+  toolEnvironment: {
+    loading: '正在读取工具执行环境…',
+    scope:
+      '工具执行环境仅用于本机项目的新建本地 Runtime 进程和 stdio MCP Server；不会改变终端环境，也不会应用到远程 Host。',
+    runtimeSourceLegend: '{{runtime}} 执行来源',
+    sources: {
+      managed: 'GoodBuddy 托管',
+      custom: '自定义环境',
+      customDescription: '使用你选择的本机可执行文件。'
+    },
+    runtimes: {
+      node: {
+        title: 'Node.js',
+        description: '用于需要 Node.js、npm 或 npx 的本机工具。',
+        managedDescription:
+          '使用 GoodBuddy 随应用托管的 Node.js；无需单独安装或移除。'
+      },
+      python: {
+        title: 'Python',
+        description: '用于需要 Python 或 pip 的本机工具。',
+        managedDescription:
+          '使用 GoodBuddy 托管的 Python；可按需安装、更新或移除。'
+      }
+    },
+    downloadSource: {
+      title: '工具下载源',
+      description:
+        '只控制 GoodBuddy 托管的工具执行环境制品下载，不影响模型、应用更新、终端或远程 Host。',
+      legend: '选择工具制品下载源',
+      noFallback:
+        'GoodBuddy 只访问所选来源；失败时不会自动回退到另一个来源。',
+      options: {
+        native: {
+          label: '原生地址',
+          description: '使用 GoodBuddy 默认工具制品来源。'
+        },
+        oss: {
+          label: 'OSS 镜像',
+          description: '使用面向内网或镜像网络的 OSS 工具制品来源。'
+        }
+      }
+    },
+    selectedPath: '当前自定义路径',
+    candidateList: '{{runtime}} 可执行文件候选',
+    noCandidates:
+      '未发现候选文件。可刷新候选，或从系统文件选择器选择可执行文件。',
+    toolStatus: '工具状态',
+    companionStatus: '工具链/配套工具状态',
+    capabilityDependencyStatus: '能力依赖状态',
+    capabilityDependenciesUnverified:
+      '尚未获得具体能力的依赖验证证据。',
+    status: '状态',
+    available: '可用',
+    unavailable: '不可用',
+    version: '版本',
+    path: '路径',
+    detail: '详情',
+    notDiagnosed: '尚未诊断',
+    python: {
+      installed: 'GoodBuddy 托管的 Python {{version}} 已安装',
+      notInstalled: 'GoodBuddy 托管的 Python {{version}} 尚未安装',
+      progressLabel: 'Python 安装或更新进度',
+      progressSource: '下载源：{{source}}',
+      removeConfirmation:
+        '移除后，本机 Runtime 和 stdio MCP 将无法使用此受管 Python，直到重新安装。自定义 Python 不受影响。',
+      phases: {
+        downloading: '正在下载',
+        extracting: '正在解压',
+        validating: '正在验证',
+        publishing: '正在安装'
+      }
+    },
+    actions: {
+      retry: '重试',
+      diagnose: '诊断',
+      diagnosing: '诊断中…',
+      diagnoseAll: '诊断全部',
+      refreshCandidates: '刷新候选',
+      chooseFile: '选择可执行文件',
+      installPython: '安装 Python',
+      updatePython: '更新 Python',
+      cancel: '取消',
+      removePython: '移除 Python',
+      confirmRemovePython: '确认移除 Python'
+    },
+    errors: {
+      unavailable: '当前版本未提供工具执行环境服务',
+      readFailed: '读取工具执行环境失败',
+      saveFailed: '保存工具执行环境设置失败；已恢复此前确认的设置',
+      refreshFailed: '刷新可执行文件候选失败',
+      selectFailed: '选择 {{runtime}} 可执行文件失败',
+      diagnoseFailed: '诊断 {{runtime}} 失败',
+      diagnoseAllFailed: '诊断工具执行环境失败',
+      installPythonFailed: '安装或更新 Python 失败',
+      cancelPythonFailed: '取消 Python 操作失败',
+      removePythonFailed: '移除 Python 失败'
+    },
+    notifications: {
+      runtimeChanged: '{{runtime}} 执行来源已更新',
+      downloadSourceChanged: '工具下载源已更新',
+      pythonInstalled: 'GoodBuddy 托管的 Python 已安装或更新',
+      pythonRemoved: 'GoodBuddy 托管的 Python 已移除'
+    }
+  },
   feedback: {
     entry: {
       title: '帮助改进 GoodBuddy',

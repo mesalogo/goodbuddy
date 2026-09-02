@@ -85,6 +85,32 @@ describe('testMcpServer', () => {
     mocks.client.close.mockResolvedValue(undefined)
   })
 
+  it('uses the current launch environment for a new stdio test', async () => {
+    const launchEnvironmentProvider = vi.fn(() =>
+      Object.freeze({ PATH: '/managed-tools:/usr/bin' })
+    )
+
+    await testMcpServer(
+      {
+        ...common,
+        transport: 'stdio',
+        command: 'node',
+        args: ['server.js']
+      },
+      undefined,
+      launchEnvironmentProvider
+    )
+
+    expect(launchEnvironmentProvider).toHaveBeenCalledTimes(1)
+    expect(mocks.StdioClientTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          PATH: '/managed-tools:/usr/bin'
+        })
+      })
+    )
+  })
+
   it('uses separated stdio command arguments and closes the client', async () => {
     const result = await testMcpServer({
       ...common,

@@ -7,16 +7,33 @@ import {
   isCuratedMcpLaunchDescriptor,
   type CuratedMcpLaunchDescriptor
 } from './curated-mcp-launch'
+import {
+  applyLaunchEnvironmentPath,
+  buildCredentialFilteredUserEnvironment
+} from '../agent/process-environment'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 
 export function createMcpTransport(
-  server: ResolvedMcpServer | CuratedMcpLaunchDescriptor
+  server: ResolvedMcpServer | CuratedMcpLaunchDescriptor,
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
 ): Transport {
   if (isCuratedMcpLaunchDescriptor(server)) {
+    const environment = Object.fromEntries(
+      Object.entries(
+        applyLaunchEnvironmentPath(
+          { ...server.env },
+          launchEnvironmentProvider
+        )
+      ).filter(
+        (entry): entry is [string, string] =>
+          entry[1] !== undefined
+      )
+    )
     return new StdioClientTransport({
       command: server.command,
       args: [...server.args],
       cwd: server.cwd,
-      env: { ...server.env },
+      env: environment,
       stderr: 'ignore',
       maxBufferSize: 2 * 1024 * 1024
     })
@@ -27,9 +44,23 @@ export function createMcpTransport(
   }
 
   if (server.transport === 'stdio') {
+    const env = launchEnvironmentProvider
+      ? Object.fromEntries(
+          Object.entries(
+            applyLaunchEnvironmentPath(
+              buildCredentialFilteredUserEnvironment(),
+              launchEnvironmentProvider
+            )
+          ).filter(
+            (entry): entry is [string, string] =>
+              entry[1] !== undefined
+          )
+        )
+      : undefined
     return new StdioClientTransport({
       command: server.command,
       args: server.args,
+      ...(env ? { env } : {}),
       stderr: 'ignore',
       maxBufferSize: 2 * 1024 * 1024
     })

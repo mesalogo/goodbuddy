@@ -425,6 +425,9 @@ describe('createAgentRuntime model compatibility', () => {
 
   it('rejects remote process runtimes before invoking any local launcher', () => {
     const launch = vi.fn()
+    const launchEnvironmentProvider = vi.fn(() =>
+      Object.freeze({ PATH: '/local-tools:/usr/bin' })
+    )
     const workspaceAccess = {
       dispose: vi.fn(async () => undefined)
     } as unknown as WorkspaceAccess
@@ -437,6 +440,7 @@ describe('createAgentRuntime model compatibility', () => {
         }),
         {
           deepseekHarnessLauncher: launch,
+          launchEnvironmentProvider,
           executionSpace: {
             kind: 'ssh',
             hostId: 'host-one',
@@ -449,5 +453,6 @@ describe('createAgentRuntime model compatibility', () => {
       )
     ).toThrow('远程执行空间尚不可用')
     expect(launch).not.toHaveBeenCalled()
+    expect(launchEnvironmentProvider).not.toHaveBeenCalled()
   })
 })

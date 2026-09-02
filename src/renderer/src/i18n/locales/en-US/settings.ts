@@ -75,8 +75,8 @@ export const settings = {
     },
     capabilities: {
       label: 'Capabilities and tools',
-      navigationDescription: 'Skills and MCP',
-      description: 'Manage Skills and MCP'
+      navigationDescription: 'Skills, MCP, and local tool environment',
+      description: 'Manage Skills, MCP, and the local tool environment'
     },
     about: {
       label: 'About and updates',
@@ -89,7 +89,8 @@ export const settings = {
     tabs: {
       ariaLabel: 'Capabilities and tools settings',
       skills: 'Skills',
-      mcp: 'MCP'
+      mcp: 'MCP',
+      tools: 'Tool execution environment'
     }
   },
   actions: {

@@ -6,7 +6,10 @@ import {
   waitFor
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ApplicationSettings } from '../../shared/application-settings-contracts'
+import {
+  defaultLocalToolEnvironmentSettings,
+  type ApplicationSettings
+} from '../../shared/application-settings-contracts'
 import type { DesktopApi } from '../../shared/contracts'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 
@@ -21,6 +24,7 @@ describe('UpdateSettingsSection', () => {
       checkUpdatesOnStartup: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,

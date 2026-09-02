@@ -39,10 +39,12 @@ import type { ResolvedModelProfile } from '../runtime-settings-store'
 import type { RuntimeSkillPackage } from '../capabilities/capability-service'
 import { getAvailableLoopbackPort } from './loopback-port'
 import {
+  applyLaunchEnvironmentPath,
   buildExplicitProfileRuntimeEnvironment,
   buildRuntimeEnvironment,
   runtimePrivacyEnvironment
 } from './process-environment'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 import { createAnthropicApiBaseUrl } from './anthropic-endpoint'
 import { createOpenAIApiBaseUrl } from './openai-endpoint'
 import {
@@ -242,6 +244,7 @@ export type ContinueHostAdapterOptions = {
   launchHost?: ContinueHostLauncher
   modelProfile?: ResolvedModelProfile
   skillPackages?: RuntimeSkillPackage[]
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
 }
 
 export type ContinueHostAdapterDependencies = {
@@ -1511,7 +1514,7 @@ export class ContinueHostAdapter {
       GOODBUDDY_DISABLE_CONTINUE_UPDATES: '1'
     }
     const profile = this.options.modelProfile
-    const environment = profile
+    let environment = profile
       ? buildExplicitProfileRuntimeEnvironment(
           environmentOverrides,
           profile.authentication === 'api-key' && profile.apiKey
@@ -1525,6 +1528,10 @@ export class ContinueHostAdapter {
             : undefined
         )
       : buildRuntimeEnvironment(environmentOverrides)
+    environment = applyLaunchEnvironmentPath(
+      environment,
+      this.options.launchEnvironmentProvider
+    )
     signal.throwIfAborted()
     let child: ContinueHostChild
     try {

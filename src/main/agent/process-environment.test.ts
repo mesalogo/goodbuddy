@@ -1,11 +1,57 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyLaunchEnvironmentPath,
+  buildCredentialFilteredUserEnvironment,
   buildExplicitProfileRuntimeEnvironment,
   buildControlledHarnessEnvironment,
   buildRuntimeEnvironment
 } from './process-environment'
 
 describe('buildRuntimeEnvironment', () => {
+  it('uses a fresh tool PATH snapshot without importing credentials', () => {
+    let generation = 0
+    const provider = () =>
+      Object.freeze({
+        PATH: `/managed-${++generation}:/system`,
+        OPENAI_API_KEY: 'must-not-leak',
+        ELECTRON_RUN_AS_NODE: '1'
+      })
+    const source = {
+      PATH: '/system',
+      OPENAI_API_KEY: 'inherited-secret',
+      ELECTRON_RUN_AS_NODE: '1',
+      HOME: '/home/user'
+    }
+
+    expect(
+      applyLaunchEnvironmentPath(
+        buildCredentialFilteredUserEnvironment(source),
+        provider
+      )
+    ).toEqual({
+      PATH: '/managed-1:/system',
+      HOME: '/home/user'
+    })
+    expect(
+      applyLaunchEnvironmentPath(
+        buildCredentialFilteredUserEnvironment(source),
+        provider
+      ).PATH
+    ).toBe('/managed-2:/system')
+  })
+
+  it('preserves one inherited PATH casing without duplicate keys', () => {
+    expect(
+      applyLaunchEnvironmentPath(
+        { Path: 'C:\\Windows', PATH: 'duplicate', TEMP: 'C:\\Temp' },
+        () => Object.freeze({ PATH: 'C:\\GoodBuddy;C:\\Windows' })
+      )
+    ).toEqual({
+      Path: 'C:\\GoodBuddy;C:\\Windows',
+      TEMP: 'C:\\Temp'
+    })
+  })
+
   it('keeps required runtime values and excludes unrelated parent secrets', () => {
     const environment = buildRuntimeEnvironment(
       {

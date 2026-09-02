@@ -3931,6 +3931,7 @@ export function SettingsPanel({
           {activeTab === 'capabilities' && (
             <CapabilitiesAndToolsSettingsSection
               magicNotesEnabled={magicNotesEnabled}
+              onNotify={onNotify}
             />
           )}
           {activeTab === 'about' && (

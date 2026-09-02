@@ -10453,6 +10453,258 @@ details.settings-section > :not(summary) + :not(summary) {
   display: none;
 }
 
+.tool-environment {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.tool-environment__scope,
+.tool-environment__error,
+.tool-environment__load-error {
+  padding: var(--space-3);
+  margin: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  line-height: 1.55;
+}
+
+.tool-environment__error,
+.tool-environment__load-error {
+  border-color: var(--danger-border);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.tool-environment__load-error p {
+  margin: 0 0 var(--space-3);
+}
+
+.tool-environment-card {
+  display: grid;
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  gap: var(--space-4);
+}
+
+.tool-environment-card__header,
+.tool-environment-card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tool-environment-card__header {
+  justify-content: space-between;
+}
+
+.tool-environment-card__header h3,
+.tool-environment-status h4 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.tool-environment-card__header h3 {
+  font-size: var(--font-section-title);
+}
+
+.tool-environment-card__header p,
+.tool-environment-muted,
+.tool-environment-status p,
+.tool-environment-python p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  line-height: 1.5;
+}
+
+.tool-environment-options {
+  display: grid;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  gap: var(--space-2);
+}
+
+.tool-environment-options legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-body);
+  font-weight: 600;
+}
+
+.tool-environment-option {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  cursor: pointer;
+  gap: var(--space-2);
+}
+
+.tool-environment-option:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.tool-environment-option:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.tool-environment-option input {
+  margin-top: var(--space-1);
+}
+
+.tool-environment-option span,
+.tool-environment-card__custom,
+.tool-environment-status,
+.tool-environment-python,
+.tool-environment-progress {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.tool-environment-option strong,
+.tool-environment-status strong {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+}
+
+.tool-environment-option small,
+.tool-environment-status small,
+.tool-environment-progress > span {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+
+.tool-environment-path {
+  display: grid;
+  min-width: 0;
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  gap: var(--space-1);
+}
+
+.tool-environment-path code,
+.tool-environment-python > code,
+.tool-environment-status code {
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+
+.tool-environment-candidates,
+.tool-environment-status ul {
+  display: grid;
+  padding: 0;
+  margin: var(--space-2) 0 0;
+  list-style: none;
+  gap: var(--space-2);
+}
+
+.tool-environment-candidates button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  text-align: left;
+  gap: var(--space-1);
+}
+
+.tool-environment-candidates button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.tool-environment-candidates code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-caption);
+  overflow-wrap: anywhere;
+}
+
+.tool-environment-candidates small {
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.tool-environment-status {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tool-environment-status h4 {
+  font-size: var(--font-body);
+}
+
+.tool-environment-status dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  gap: var(--space-1) var(--space-3);
+}
+
+.tool-environment-status dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tool-environment-status li {
+  display: grid;
+  grid-template-columns: minmax(60px, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+
+.tool-environment-status li small {
+  grid-column: 1 / -1;
+}
+
+.tool-environment-progress__track {
+  height: var(--space-2);
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.tool-environment-progress__track > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-solid);
+}
+
+@media (max-width: 720px) {
+  .tool-environment-card__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tool-environment-card__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .mcp-tool-section {
   display: flex;
   flex-direction: column;

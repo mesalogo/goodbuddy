@@ -1,8 +1,19 @@
 import { z } from 'zod'
 import { magicNoteCommentFormatSchema } from './magic-notes-contracts'
+import { localToolEnvironmentSettingsSchema } from './local-tool-environment-contracts'
 import { modelDownloadSourceSchema } from './model-download-contracts'
 import { settingsWarningsSchema } from './settings-warning-contracts'
 
+export {
+  artifactDownloadSourceSchema,
+  defaultLocalToolEnvironmentSettings,
+  localToolEnvironmentSettingsSchema,
+  localToolExecutablePathSchema,
+  localToolRuntimeSelectionSchema,
+  type ArtifactDownloadSource,
+  type LocalToolEnvironmentSettings,
+  type LocalToolRuntimeSelection
+} from './local-tool-environment-contracts'
 export {
   modelDownloadSourceSchema,
   type ModelDownloadSource
@@ -14,14 +25,9 @@ export const magicNoteCommentModeSchema = z.enum([
   'after-save-manual'
 ])
 
-export type MagicNoteCommentMode = z.infer<
-  typeof magicNoteCommentModeSchema
->
+export type MagicNoteCommentMode = z.infer<typeof magicNoteCommentModeSchema>
 
-export const updateSourceSchema = z.enum([
-  'github',
-  'mirror'
-])
+export const updateSourceSchema = z.enum(['github', 'mirror'])
 export type UpdateSource = z.infer<typeof updateSourceSchema>
 
 const applicationPreferencesSchema = z
@@ -29,6 +35,7 @@ const applicationPreferencesSchema = z
     checkUpdatesOnStartup: z.boolean(),
     updateSource: updateSourceSchema,
     modelDownloadSource: modelDownloadSourceSchema,
+    localToolEnvironment: localToolEnvironmentSettingsSchema,
     remoteProjectsEnabled: z.boolean(),
     magicNotesEnabled: z.boolean(),
     magicNotesShowIncompleteTodoCount: z.boolean(),
@@ -49,14 +56,11 @@ export const applicationSettingsUpdateSchema = applicationPreferencesSchema
     message: 'At least one application setting is required'
   })
 
-export type ApplicationSettings = z.infer<
-  typeof applicationSettingsSchema
->
+export type ApplicationSettings = z.infer<typeof applicationSettingsSchema>
 
 export type ApplicationSettingsUpdate = z.infer<
   typeof applicationSettingsUpdateSchema
 >
-
 
 export type VersionCheckFile = {
   name: string

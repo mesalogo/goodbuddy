@@ -23,7 +23,10 @@ import type {
   CapabilityAssignments,
   CapabilitySnapshot
 } from '../../shared/capability-contracts'
-import type { ApplicationSettings } from '../../shared/application-settings-contracts'
+import {
+  defaultLocalToolEnvironmentSettings,
+  type ApplicationSettings
+} from '../../shared/application-settings-contracts'
 import type {
   AgentPackageInventory
 } from '../../shared/agent-package-contracts'
@@ -53,7 +56,9 @@ import type { BrandingPreferences } from './branding'
 const modelProfileId = '00000000-0000-4000-8000-000000000001'
 const nativeImage = globalThis.Image
 
-function openCapabilitySettingsTab(tab: 'Skills' | 'MCP'): void {
+function openCapabilitySettingsTab(
+  tab: 'Skills' | 'MCP' | '工具执行环境'
+): void {
   fireEvent.click(
     screen.getByRole('tab', { name: '能力与工具' })
   )
@@ -530,6 +535,7 @@ let applicationSettings: ApplicationSettings = {
   checkUpdatesOnStartup: true,
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
+  localToolEnvironment: defaultLocalToolEnvironmentSettings,
   remoteProjectsEnabled: false,
   magicNotesEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
@@ -585,6 +591,35 @@ const updateApplicationSettings = vi.fn<
   }
   return { ...applicationSettings }
 })
+const localToolEnvironmentSnapshot = {
+  settings: defaultLocalToolEnvironmentSettings,
+  candidates: [
+    {
+      kind: 'node' as const,
+      executablePath: 'C:\\Tools\\node.exe',
+      version: '22.14.0',
+      architecture: 'x64'
+    }
+  ],
+  diagnostics: {},
+  managedPython: {
+    version: '3.12.8',
+    installed: false
+  }
+}
+const getLocalToolEnvironmentSnapshot = vi.fn(
+  async () => localToolEnvironmentSnapshot
+)
+const updateLocalToolEnvironmentSettings = vi.fn<
+  NonNullable<DesktopApi['localToolEnvironment']>['updateSettings']
+>(async (settings) => ({
+  ...localToolEnvironmentSnapshot,
+  settings
+}))
+const diagnoseLocalToolEnvironment = vi.fn(
+  async () => localToolEnvironmentSnapshot
+)
+const onLocalToolEnvironmentProgress = vi.fn(() => () => {})
 let shortcutSettingsSnapshot: GlobalShortcutSettingsSnapshot = {
   settings: {
     enabled: true,
@@ -790,6 +825,7 @@ describe('SettingsPanel runtime files', () => {
       checkUpdatesOnStartup: true,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -950,6 +986,25 @@ describe('SettingsPanel runtime files', () => {
           check: vi.fn(),
           openReleasePage: vi.fn(),
           onResult: vi.fn(() => () => {})
+        },
+        localToolEnvironment: {
+          getSnapshot: getLocalToolEnvironmentSnapshot,
+          updateSettings: updateLocalToolEnvironmentSettings,
+          refreshCandidates: vi.fn(
+            async () => localToolEnvironmentSnapshot
+          ),
+          selectExecutable: vi.fn(
+            async () => localToolEnvironmentSnapshot
+          ),
+          diagnose: diagnoseLocalToolEnvironment,
+          installPython: vi.fn(
+            async () => localToolEnvironmentSnapshot
+          ),
+          cancelPython: vi.fn(async () => true),
+          removePython: vi.fn(
+            async () => localToolEnvironmentSnapshot
+          ),
+          onProgress: onLocalToolEnvironmentProgress
         },
         shortcuts: {
           getSettings: getShortcutSettings,
@@ -4844,7 +4899,7 @@ describe('SettingsPanel runtime files', () => {
       within(capabilityTabs)
         .getAllByRole('tab')
         .map((tab) => tab.textContent)
-    ).toEqual(['Skills', 'MCP'])
+    ).toEqual(['Skills', 'MCP', '工具执行环境'])
     expect(
       within(capabilityTabs).getByRole('tab', { name: 'Skills' })
     ).toHaveAttribute('aria-selected', 'true')
@@ -4881,12 +4936,6 @@ describe('SettingsPanel runtime files', () => {
         false
       )
     )
-
-    expect(
-      within(capabilityTabs).queryByRole('tab', {
-        name: '工具执行环境'
-      })
-    ).not.toBeInTheDocument()
 
     fireEvent.click(
       within(capabilityTabs).getByRole('tab', { name: 'MCP' })
@@ -5200,6 +5249,58 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByRole('dialog', { name: '添加 MCP Server' })
     ).not.toBeInTheDocument()
+  })
+
+  it('lazy mounts and retains the real tool environment tab independently from MCP', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('tab', { name: '能力与工具' })
+    )
+    expect(getLocalToolEnvironmentSnapshot).not.toHaveBeenCalled()
+
+    fireEvent.click(
+      within(
+        screen.getByRole('tablist', { name: '能力与工具设置' })
+      ).getByRole('tab', { name: '工具执行环境' })
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'Node.js' })
+    ).toBeVisible()
+    expect(getLocalToolEnvironmentSnapshot).toHaveBeenCalledOnce()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '诊断全部' })
+    )
+    await waitFor(() =>
+      expect(diagnoseLocalToolEnvironment).toHaveBeenCalledWith('all')
+    )
+
+    fireEvent.click(
+      within(
+        screen.getByRole('tablist', { name: '能力与工具设置' })
+      ).getByRole('tab', { name: 'MCP' })
+    )
+    expect(
+      await screen.findByRole('tablist', { name: 'MCP 设置分类' })
+    ).toBeVisible()
+    fireEvent.click(
+      within(
+        screen.getByRole('tablist', { name: '能力与工具设置' })
+      ).getByRole('tab', { name: '工具执行环境' })
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Node.js' })
+    ).toBeVisible()
+    expect(getLocalToolEnvironmentSnapshot).toHaveBeenCalledOnce()
   })
 
   it('traps MCP editor focus and restores it after saving or backdrop dismissal', async () => {

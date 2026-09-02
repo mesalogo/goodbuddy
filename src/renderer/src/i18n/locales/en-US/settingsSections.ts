@@ -731,6 +731,116 @@ export const settingsSections = {
     assignedTo: 'Assigned to',
     deleteAria: 'Delete {{name}}'
   },
+  toolEnvironment: {
+    loading: 'Loading the local tool environment…',
+    scope:
+      'Applies only to newly started local Runtime processes and stdio MCP servers for local projects. It does not change terminals or remote Hosts.',
+    runtimeSourceLegend: '{{runtime}} execution source',
+    sources: {
+      managed: 'GoodBuddy managed',
+      custom: 'Custom environment',
+      customDescription: 'Use a local executable that you select.'
+    },
+    runtimes: {
+      node: {
+        title: 'Node.js',
+        description:
+          'Used by local tools that require Node.js, npm, or npx.',
+        managedDescription:
+          'Use the Node.js managed with GoodBuddy. There are no separate install or remove actions.'
+      },
+      python: {
+        title: 'Python',
+        description: 'Used by local tools that require Python or pip.',
+        managedDescription:
+          'Use GoodBuddy-managed Python, which can be installed, updated, or removed as needed.'
+      }
+    },
+    downloadSource: {
+      title: 'Tool download source',
+      description:
+        'Controls only downloads for GoodBuddy-managed local tool artifacts. Models, app updates, terminals, and remote Hosts are unaffected.',
+      legend: 'Choose the tool artifact download source',
+      noFallback:
+        'GoodBuddy accesses only the selected source and does not automatically fall back to the other source.',
+      options: {
+        native: {
+          label: 'Native endpoint',
+          description:
+            'Use the default GoodBuddy tool artifact source.'
+        },
+        oss: {
+          label: 'OSS mirror',
+          description:
+            'Use the OSS tool artifact source for intranet or mirror networks.'
+        }
+      }
+    },
+    selectedPath: 'Current custom path',
+    candidateList: '{{runtime}} executable candidates',
+    noCandidates:
+      'No candidates were discovered. Refresh candidates or choose an executable with the system file picker.',
+    toolStatus: 'Tool status',
+    companionStatus: 'Toolchain/companion status',
+    capabilityDependencyStatus: 'Capability dependency status',
+    capabilityDependenciesUnverified:
+      'Capability dependencies are unverified because no capability evidence is available.',
+    status: 'Status',
+    available: 'Available',
+    unavailable: 'Unavailable',
+    version: 'Version',
+    path: 'Path',
+    detail: 'Details',
+    notDiagnosed: 'Not diagnosed',
+    python: {
+      installed: 'GoodBuddy-managed Python {{version}} is installed',
+      notInstalled:
+        'GoodBuddy-managed Python {{version}} is not installed',
+      progressLabel: 'Python installation or update progress',
+      progressSource: 'Download source: {{source}}',
+      removeConfirmation:
+        'After removal, local Runtimes and stdio MCP servers cannot use this managed Python until it is installed again. Custom Python is unaffected.',
+      phases: {
+        downloading: 'Downloading',
+        extracting: 'Extracting',
+        validating: 'Validating',
+        publishing: 'Installing'
+      }
+    },
+    actions: {
+      retry: 'Retry',
+      diagnose: 'Diagnose',
+      diagnosing: 'Diagnosing…',
+      diagnoseAll: 'Diagnose all',
+      refreshCandidates: 'Refresh candidates',
+      chooseFile: 'Choose executable',
+      installPython: 'Install Python',
+      updatePython: 'Update Python',
+      cancel: 'Cancel',
+      removePython: 'Remove Python',
+      confirmRemovePython: 'Confirm removal of Python'
+    },
+    errors: {
+      unavailable:
+        'The local tool environment service is unavailable in this version',
+      readFailed: 'Could not load the local tool environment',
+      saveFailed:
+        'Could not save the tool environment settings. The last confirmed settings were restored.',
+      refreshFailed: 'Could not refresh executable candidates',
+      selectFailed: 'Could not select the {{runtime}} executable',
+      diagnoseFailed: 'Could not diagnose {{runtime}}',
+      diagnoseAllFailed: 'Could not diagnose the local tool environment',
+      installPythonFailed: 'Could not install or update Python',
+      cancelPythonFailed: 'Could not cancel the Python operation',
+      removePythonFailed: 'Could not remove Python'
+    },
+    notifications: {
+      runtimeChanged: '{{runtime}} execution source updated',
+      downloadSourceChanged: 'Tool download source updated',
+      pythonInstalled: 'GoodBuddy-managed Python installed or updated',
+      pythonRemoved: 'GoodBuddy-managed Python removed'
+    }
+  },
   feedback: {
     entry: {
       title: 'Help improve GoodBuddy',

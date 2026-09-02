@@ -14,6 +14,7 @@ import {
   goodbuddyConfigToolByName,
   goodbuddyConfigTools
 } from './goodbuddy-config-tools'
+import { defaultLocalToolEnvironmentSettings } from './local-tool-environment-contracts'
 
 describe('GoodBuddy configuration contracts', () => {
   it('publishes one valid generated example for every operation', () => {
@@ -135,6 +136,7 @@ describe('GoodBuddy configuration contracts', () => {
         checkUpdatesOnStartup: true,
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
+        localToolEnvironment: defaultLocalToolEnvironmentSettings,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,

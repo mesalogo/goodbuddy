@@ -78,6 +78,13 @@ import type {
   ModelDownloadSource,
   VersionCheckResult
 } from '../shared/application-settings-contracts'
+import type {
+  LocalToolDiagnoseTarget,
+  LocalToolEnvironmentProgress,
+  LocalToolEnvironmentSettings,
+  LocalToolEnvironmentSnapshot,
+  LocalToolKind
+} from '../shared/local-tool-environment-contracts'
 import type { ReleaseNotesSnapshot } from '../shared/release-notes-contracts'
 import type {
   SpeechModelSnapshot,
@@ -613,6 +620,55 @@ const desktopApi: DesktopApi = {
       ipcRenderer.on(ipcChannels.versionCheckResult, handler)
       return () =>
         ipcRenderer.removeListener(ipcChannels.versionCheckResult, handler)
+    }
+  },
+  localToolEnvironment: {
+    getSnapshot: () =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentGet
+      ) as Promise<LocalToolEnvironmentSnapshot>,
+    updateSettings: (settings: LocalToolEnvironmentSettings) =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentUpdate,
+        settings
+      ) as Promise<LocalToolEnvironmentSnapshot>,
+    refreshCandidates: () =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentRefresh
+      ) as Promise<LocalToolEnvironmentSnapshot>,
+    selectExecutable: (kind: LocalToolKind) =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentSelectExecutable,
+        { kind }
+      ) as Promise<LocalToolEnvironmentSnapshot>,
+    diagnose: (kind: LocalToolDiagnoseTarget) =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentDiagnose,
+        { kind }
+      ) as Promise<LocalToolEnvironmentSnapshot>,
+    installPython: () =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentInstallPython
+      ) as Promise<LocalToolEnvironmentSnapshot>,
+    cancelPython: () =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentCancelPython
+      ) as Promise<boolean>,
+    removePython: () =>
+      ipcRenderer.invoke(
+        ipcChannels.localToolEnvironmentRemovePython
+      ) as Promise<LocalToolEnvironmentSnapshot>,
+    onProgress: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        progress: LocalToolEnvironmentProgress
+      ): void => listener(progress)
+      ipcRenderer.on(ipcChannels.localToolEnvironmentProgress, handler)
+      return () =>
+        ipcRenderer.removeListener(
+          ipcChannels.localToolEnvironmentProgress,
+          handler
+        )
     }
   },
   feedback: {

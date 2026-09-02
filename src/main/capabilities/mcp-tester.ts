@@ -2,19 +2,24 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { McpServerTestResult } from '../../shared/capability-contracts'
 import type { ResolvedMcpServer } from './capability-service'
 import { createMcpTransport } from './mcp-client-transport'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment'
 
 const MCP_TEST_TOTAL_TIMEOUT_MS = 12_000
 const MCP_TEST_INACTIVITY_TIMEOUT_MS = 8_000
 
 export async function testMcpServer(
   server: ResolvedMcpServer,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
 ): Promise<McpServerTestResult> {
   const client = new Client({
     name: 'goodbuddy',
     version: '0.1.0'
   })
-  const transport = createMcpTransport(server)
+  const transport = createMcpTransport(
+    server,
+    launchEnvironmentProvider
+  )
   const controller = new AbortController()
   let timedOut = false
   const abortFromCaller = (): void => {

@@ -5,107 +5,96 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档类型 | 功能进度 |
-| 状态 | 计划中 |
-| 版本 | 0.1 |
-| 日期 | 2026-09-01 |
+| 状态 | 已实施，跨平台验收中 |
+| 版本 | 0.3 |
+| 日期 | 2026-09-02 |
 | 关联入口 | [工具执行环境](./README.md) |
 
 ## 当前结论
 
-设置菜单结构第一阶段已经进入源码：原 Skills/MCP 一级分类合并为“能力与工具”，内部
-显示两个水平 Tab。工具执行环境、Node/Python 和下载源尚未实施。
+本机工具执行环境的生产链路已经进入源码。“能力与工具”现在显示 `Skills`、`MCP`、
+`工具执行环境` 三个真实 Tab；Main 统一解析托管或自定义 Node/Python，并把不可变 PATH
+快照应用到新启动的本机 Runtime 与 stdio MCP。Windows x64 已完成真实托管 Node 和原生
+地址托管 Python 安装验证。
+
+该实现尚不能视为六平台发布验收完成：OSS 镜像对象当前公开回读为 404，Windows ARM64、
+macOS 和 Linux 工件仍需原生 CI 验证，第三方许可证资源也尚未随包落地。
 
 ## 已完成
 
-- [x] 明确功能只服务本机 SKILL 和本机 stdio MCP。
-- [x] 明确远程 Host 不接收工具执行环境、SKILL 或 MCP。
-- [x] 将来源收敛为“GoodBuddy 托管”和“自定义环境”。
-- [x] 明确 Node、npm、npx 同源，Python、python3、pip 同源。
-- [x] 区分工具环境就绪与能力依赖就绪。
-- [x] 定义现有用户解释器的一次性兼容迁移。
-- [x] 定义状态机、来源和命令决策表、失败恢复与生效时机。
-- [x] 定义受管工具外部工件的原生地址/OSS 镜像规则。
-- [x] 将 Skills、MCP、工具执行环境收敛到“能力与工具”一级分类和三个水平 Tab。
-- [x] 实现“能力与工具”一级菜单及 `Skills`、`MCP` 两个水平 Tab。
-- [x] 移除原 Skills/MCP 一级入口，并保留原有业务功能和 MCP 内层页签。
-- [x] 未提前显示“工具执行环境”禁用项或占位页。
-- [x] 定义设置页结构、状态、文案和无障碍要求。
-- [x] 定义 Main 服务、shim、探测、诊断、PATH 注入和 Python 生命周期。
-- [x] 远程主机设置副标题已说明本机 Skills 和 MCP 不作用于远程主机。
-- [x] 将内置 Skill 顶层目录从 14 个收敛为 5 个，九种产品营销配方改为
-  `product-marketing` 包内按需工作流。
-- [x] 通用文档工具默认启用，三个产品营销 Skill 默认停用，同时保留用户显式保存状态。
+### 设置、迁移和界面
 
-## 待实施
+- [x] Shared 严格设置、候选、诊断、进度、IPC 和 Preload 契约。
+- [x] Application Settings v10；全新用户默认托管环境和原生地址。
+- [x] v1-v9 分别执行真实 Node/Python 3 探测的一次性迁移；无有效候选时选择托管环境。
+- [x] PATH 和已保存自定义路径候选的规范化、去重、版本及架构诊断。
+- [x] 自定义解释器保存前真实验证；无效新选择不持久化，已保存失效路径不回退。
+- [x] “能力与工具”统一入口及三个水平 Tab，MCP 原内层页签保持不变。
+- [x] 工具下载源、Node.js、Python、候选、诊断、安装进度、取消和删除界面。
+- [x] 使用 `PageTabs`、应用通知、就地操作错误、删除确认和具名进度条。
 
-### 阶段 1：设置、探测和界面
+### 托管 Node 与进程注入
 
-- [ ] Shared 设置、状态、操作和 IPC schema。
-- [ ] 旧用户迁移。
-- [ ] Node/Python 候选探测。
-- [ ] 完整环境诊断。
-- [x] “能力与工具”统一设置分类及 Skills/MCP 水平 Tab。
-- [ ] 工具执行环境完成后追加第三个水平 Tab。
-- [ ] 工具下载源、Node.js、Python 和诊断卡片。
+- [x] 使用 Electron-as-Node 提供 `node`，使用同一 Node 和打包 CLI 提供 `npm`、`npx`。
+- [x] 自定义 Node 只使用同安装位置且验证成功的 npm/npx，不与托管 CLI 混用。
+- [x] 每次配置生成不可变 shim 目录；已有进程继续持有原 PATH，新进程读取新快照。
+- [x] OpenCode、Continue、DeepSeek Harness 和本机通用/精选 stdio MCP 接收工具 PATH。
+- [x] 工具 PATH 不修改 `process.env`，不进入普通终端或远程 Host。
+- [x] 解释器探针使用过滤后的环境，不接收模型凭据、GoodBuddy 或 Factory 内部变量。
 
-### 阶段 2：托管 Node
+### 托管 Python
 
-- [ ] 提取并复用 DSH Node shim。
-- [ ] 提供 node/npm/npx。
-- [ ] 注入 OpenCode、Continue、DeepSeek Harness。
-- [ ] 注入 Main 和 Runtime 的 stdio MCP。
-- [ ] 安装包真实 Node、npm、npx smoke。
+- [x] 锁定 CPython 3.13.15 的 Windows/macOS/Linux x64/ARM64 六平台目录、大小和 SHA-256。
+- [x] 用户选择的原生地址或 OSS 镜像在任务开始时冻结，同一次任务不回退。
+- [x] HTTPS、重定向 Host、大小、SHA-256、取消和部分文件清理。
+- [x] NuGet ZIP 与 Astral TAR 的 payload 限定、路径穿越防护、展开上限和安全链接处理。
+- [x] GoodBuddy-owned 暂存安装、发布、失败清理、更新保留和删除。
+- [x] `python`、`python3`、`pip` 同源，`pip` 固定使用所选 Python 的 `-m pip`。
+- [x] 发布前真实验证 Python 3.13.15、架构、标准库、SSL、pip，并创建和执行临时 venv。
+- [x] 取消恢复原状态且不显示为安装失败；退出时取消并等待安装清理。
 
-### 阶段 3：托管 Python
+## 待完成验收
 
-- [ ] 选型并锁定六平台 CPython 工件。
-- [ ] 完成许可证和下载目录。
-- [ ] 为每个平台工件固定原生 Target 和字节相同的 OSS Target。
-- [ ] 下载、校验、安装、更新、取消和删除。
-- [ ] 提供 python/python3/pip。
-- [ ] Python 标准库、SSL、pip、venv 真实诊断。
-
-### 阶段 4：端到端验收
-
-- [ ] Node SKILL 实际成果。
-- [ ] Python SKILL 实际成果。
-- [ ] Node stdio MCP 实际调用。
-- [ ] Python stdio MCP 实际调用。
-- [ ] 自定义 Node/Python 路径。
-- [ ] Ask/Execute、Runtime 重建、取消、退出。
-- [ ] 六平台 CI、许可证和生产构建。
+- [ ] 发布六个平台/架构的字节完全相同 OSS 镜像对象并公开回读校验。
+- [ ] 将 CPython、PSF 和 python-build-standalone 适用许可证资源纳入发行包及构建校验。
+- [ ] Windows ARM64、macOS x64/ARM64、Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针。
+- [ ] 最低 Windows/macOS/glibc 支持矩阵和 Windows NuGet 签名核验。
+- [ ] 真实 JavaScript/Python SKILL 成果及 Node/Python stdio MCP 调用。
+- [ ] 自定义 Node/Python 在产品 UI 中的真实选择和任务执行。
+- [ ] 更新或删除托管 Python 时，使用现有本机 Runtime/MCP 生命周期协调受影响进程。
 
 ## 当前阻塞项
 
-- 尚未完成六平台可再分发 CPython 工件选型，因此托管 Python 版本、体积和下载摘要未锁定。
-- 工具执行环境的 Node/Python、下载源、诊断和进程注入尚未开始源码接入。
+- `https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/...` 的 Windows x64 固定对象于
+  2026-09-02 返回 HTTP 404。发布对象需要发行基础设施的短期 OSS 凭据，当前会话没有
+  外部发布授权或凭据，因此 OSS 选项不能标记为生产可用。
+- 当前机器只能原生验证 Windows x64。其余五个平台必须由对应原生 CI 执行，不能用本机
+  mock 代替。
+- 许可证文件和来源清单尚未进入 `resources/tool-environment`，发行合规验收未完成。
 
 ## 已验证证据
 
-### 2026-09-02
+### 2026-09-02 完整实现
 
 - `npm run typecheck` 通过。
 - `npm run lint` 通过。
-- `npm run build` 通过。
-- `npm test` 通过：`3412` 通过、`50` 跳过。
-- Skill 聚焦测试通过：Capability/Bundled Skills `39/39`，产品营销路由 `10/10`。
-- `npm test -- src/renderer/src/SettingsPanel.test.tsx` 通过：`80/80`。
-- 设置页测试确认左侧不再显示独立 Skills/MCP，统一入口默认打开 Skills，MCP 原内层页签
-  保持可用，且不显示工具执行环境占位。
-- 修复能力与工具 Tab 包装层在可滚动设置布局中被 Flexbox 压缩到零高度的问题，并增加与
-  平台功能相同的 `flex: 0 0 auto` CSS 回归测试；聚焦测试 `110/110` 通过。
-- Electron 自动化检查被本机已运行正式版的单实例锁和隔离开发版原生启动错误阻塞；未停止
-  或修改正式版进程，已清理本次隔离进程和临时用户数据。
+- `npm run build` 通过，Main、Preload 和 Renderer 生产 bundle 成功。
+- 工具环境聚焦测试通过：契约、设置迁移、解析/shim、服务、下载、解压、安装、IPC、
+  Preload、Runtime/MCP 注入、Renderer 和发行资源校验。
+- Windows x64 真实托管 Node：Electron Node `24.18.0`、npm `11.19.0`、npx `11.19.0`。
+- `GOODBUDDY_RUN_LIVE_TOOL_ENVIRONMENT=1` 真实下载官方 NuGet、校验摘要、解压、安装并
+  验证 CPython `3.13.15`、SSL、pip 和 venv，`1/1` 通过；临时安装已清理。
+- 隔离 Electron 生产 bundle 自动化确认三个 Tab 均可见；“诊断全部”显示托管 Node
+  `24.18.0`、npm/npx `11.19.0`。隔离进程和用户数据已清理。
+- 第一次全量测试发现 3 个确定性夹具/兼容失败，修复后聚焦复跑 `25/25` 通过。第二次暴露
+  2 个 `App.test.tsx` 设置导航时序问题，修正为按可访问名称点击并等待设置中心。
+- 最终 `npm test` 通过：`3465` 通过、`51` 跳过；完整 `App.test.tsx` 为 `157/157` 通过。
+- 原生地址范围请求返回 HTTP 206；对应 OSS 镜像返回 HTTP 404，已列为外部阻塞。
 
-### 2026-08-31
+### 2026-09-02 菜单阶段
 
-- 确认安装包携带 Electron Node 能力和锁定 npm CLI，但未向通用 SKILL/MCP 提供 `node`
-  命令。
-- 确认 DSH 插件安装器已有 `ELECTRON_RUN_AS_NODE=1` shim，可作为复用基线。
-- 确认远程 Agent ACP Session 使用空 MCP Server 列表，本机 SKILL/MCP 不进入远程路径。
-- 远程主机设置文案聚焦测试通过：`80/80`。
-- 当时完整类型检查通过；完整测试和 Lint 被并行开发中的 `RightAssistantSidebar` 变更
-  阻塞，不作为本功能实现验证。
+- 完成“能力与工具”一级菜单及 Skills/MCP Tab，并修复可滚动 Flex 布局将页签压缩为零
+  高度的问题；加入 `flex: 0 0 auto` 回归约束。
 
 ## 进度维护要求
 

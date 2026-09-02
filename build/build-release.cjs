@@ -88,9 +88,11 @@ const portableRequiredFiles = [
   'resources/release-notes.json',
   'resources/icon.ico',
   'resources/tray-icon.png',
+  'resources/tool-environment/managed-python-artifacts.json',
   'resources/runtimes/opencode/opencode.exe',
   'resources/runtimes/continue/package.json',
   'resources/runtimes/npm/bin/npm-cli.js',
+  'resources/runtimes/npm/bin/npx-cli.js',
   'resources/runtimes/npm/package.json',
   'resources/runtimes/npm/node_modules/graceful-fs/package.json'
 ]
@@ -894,6 +896,10 @@ function verifyHarnessPackage(
     join(npmRoot, 'bin', 'npm-cli.js'),
     'DSH 插件安装 npm CLI'
   )
+  assertFile(
+    join(npmRoot, 'bin', 'npx-cli.js'),
+    'DSH 插件安装 npx CLI'
+  )
   if (
     !Array.isArray(npmManifest.bundleDependencies) ||
     npmManifest.bundleDependencies.length === 0
@@ -1054,6 +1060,14 @@ function verifyUnpackedOutput(directory, options) {
   assertFile(join(resources, 'app.asar'), '应用 ASAR')
   assertFile(join(resources, 'release-notes.json'), '版本更新说明')
   assertFile(
+    join(
+      resources,
+      'tool-environment',
+      'managed-python-artifacts.json'
+    ),
+    '托管 Python 产物目录'
+  )
+  assertFile(
     join(resources, 'agent-release-keys.json'),
     'Agent 受信任签名密钥'
   )
@@ -1079,6 +1093,16 @@ function verifyUnpackedOutput(directory, options) {
       'npm-cli.js'
     ),
     'DSH 插件安装 npm Runtime'
+  )
+  assertFile(
+    join(
+      resources,
+      'runtimes',
+      'npm',
+      'bin',
+      'npx-cli.js'
+    ),
+    'DSH 插件安装 npx Runtime'
   )
   verifyHarnessPackage(resources, options)
   for (const [filePath, label] of [

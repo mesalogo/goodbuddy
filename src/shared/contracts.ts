@@ -85,6 +85,13 @@ import type {
   VersionCheckResult
 } from './application-settings-contracts'
 import type {
+  LocalToolDiagnoseTarget,
+  LocalToolEnvironmentProgress,
+  LocalToolEnvironmentSettings,
+  LocalToolEnvironmentSnapshot,
+  LocalToolKind
+} from './local-tool-environment-contracts'
+import type {
   GlobalShortcutRegistrationStatus,
   GlobalShortcutSettings,
   GlobalShortcutSettingsSnapshot,
@@ -1680,6 +1687,25 @@ export type DesktopApi = {
     openReleasePage: () => Promise<void>
     onResult: (
       listener: (result: VersionCheckResult) => void
+    ) => () => void
+  }
+  localToolEnvironment?: {
+    getSnapshot: () => Promise<LocalToolEnvironmentSnapshot>
+    updateSettings: (
+      settings: LocalToolEnvironmentSettings
+    ) => Promise<LocalToolEnvironmentSnapshot>
+    refreshCandidates: () => Promise<LocalToolEnvironmentSnapshot>
+    selectExecutable: (
+      kind: LocalToolKind
+    ) => Promise<LocalToolEnvironmentSnapshot>
+    diagnose: (
+      kind: LocalToolDiagnoseTarget
+    ) => Promise<LocalToolEnvironmentSnapshot>
+    installPython: () => Promise<LocalToolEnvironmentSnapshot>
+    cancelPython: () => Promise<boolean>
+    removePython: () => Promise<LocalToolEnvironmentSnapshot>
+    onProgress: (
+      listener: (progress: LocalToolEnvironmentProgress) => void
     ) => () => void
   }
   feedback: {

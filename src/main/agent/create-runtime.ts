@@ -24,7 +24,10 @@ import type {
   RuntimeSkillPackage
 } from '../capabilities/capability-service'
 import type { BundledRuntimePaths } from './bundled-runtimes'
-import type { ContinueHostLauncher } from './continue-host-adapter'
+import {
+  ContinueHostAdapter,
+  type ContinueHostLauncher
+} from './continue-host-adapter'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { ModelToolProviderLike } from './model-tool-provider'
 import type { SubagentScheduler } from '../assistant/subagent-scheduler'
@@ -39,6 +42,7 @@ import {
   REMOTE_EXECUTION_SPACE_UNAVAILABLE,
   type ExecutionSpaceDescriptor
 } from '../execution-space'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 
 const noSubagentTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -67,6 +71,7 @@ export type AgentCapabilityContext = {
   executionSpace?: ExecutionSpaceDescriptor
   workspaceAccess?: WorkspaceAccess
   directModelSubagentScheduler?: SubagentScheduler
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
 }
 
 function resolveContextCompression(
@@ -217,7 +222,9 @@ export function createAgentRuntime(
         capabilities.mcpServers,
         undefined,
         capabilities.knowledgeGateway,
-        capabilities.webSearchEnabled === true
+        capabilities.webSearchEnabled === true,
+        {},
+        capabilities.launchEnvironmentProvider
       )
     })
   }
@@ -253,6 +260,14 @@ export function createAgentRuntime(
         process.env.GOODBUDDY_CONTINUE_HOST_CACHE?.trim() ??
         '',
       launchHost: capabilities.continueHostLauncher,
+      createHostAdapter: capabilities.launchEnvironmentProvider
+        ? (options) =>
+            new ContinueHostAdapter({
+              ...options,
+              launchEnvironmentProvider:
+                capabilities.launchEnvironmentProvider
+            })
+        : undefined,
       knowledgeGateway: capabilities.knowledgeGateway,
       mcpServers: capabilities.mcpServers,
       customization: settings?.runtimeCustomization.continue
@@ -288,7 +303,9 @@ export function createAgentRuntime(
       defaultWorkspace: workspace,
       knowledgeGateway: capabilities.knowledgeGateway,
       mcpServers: capabilities.mcpServers,
-      customization: settings?.runtimeCustomization.opencode
+      customization: settings?.runtimeCustomization.opencode,
+      launchEnvironmentProvider:
+        capabilities.launchEnvironmentProvider
     })
   }
 
@@ -348,7 +365,9 @@ export function createAgentRuntime(
         : undefined,
       workspaceAccess: getWorkspaceAccess(),
       directModelSubagentScheduler:
-        capabilities.directModelSubagentScheduler
+        capabilities.directModelSubagentScheduler,
+      launchEnvironmentProvider:
+        capabilities.launchEnvironmentProvider
     })
   }
 

@@ -11,6 +11,7 @@ import type {
 import { defaultAnthropicMaximumOutputTokens } from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment'
 import {
   LocalWorkspaceAccess,
   type WorkspaceAccess
@@ -250,6 +251,7 @@ export type ModelRuntimeOptions = {
   }
   maximumOutputTokens?: number
   directModelSubagentScheduler?: SubagentScheduler
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
 }
 
 function getErrorMessage(value: unknown): string | undefined {
@@ -1585,7 +1587,8 @@ export class ModelAgentRuntime implements AgentRuntime {
         {
           processService: new LocalDirectModelProcessService(),
           subagentService: directModelSubagentService
-        }
+        },
+        options.launchEnvironmentProvider
       )
     }
   }

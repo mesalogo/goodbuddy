@@ -244,6 +244,10 @@ function portableDirectory(parent: string): string {
     { recursive: true }
   )
   mkdirSync(
+    join(directory, 'resources', 'tool-environment'),
+    { recursive: true }
+  )
+  mkdirSync(
     join(
       directory,
       'resources',
@@ -270,10 +274,18 @@ function portableDirectory(parent: string): string {
     ['resources/release-notes.json', '{}'],
     ['resources/icon.ico', 'icon'],
     ['resources/tray-icon.png', 'tray'],
+    [
+      'resources/tool-environment/managed-python-artifacts.json',
+      '{"artifacts":[]}'
+    ],
     ['resources/runtimes/opencode/opencode.exe', 'MZ'],
     ['resources/runtimes/continue/package.json', '{}'],
     [
       'resources/runtimes/npm/bin/npm-cli.js',
+      'require("../lib/cli.js")'
+    ],
+    [
+      'resources/runtimes/npm/bin/npx-cli.js',
       'require("../lib/cli.js")'
     ],
     [
@@ -787,10 +799,20 @@ describe('release build arguments', () => {
     ])
     expect(resourceSources).toContain('resources/skills')
     expect(packageJson.build.extraResources).toContainEqual({
+      from: 'resources/tool-environment/managed-python-artifacts.json',
+      to: 'tool-environment/managed-python-artifacts.json'
+    })
+    expect(packageJson.build.extraResources).toContainEqual({
       from: 'node_modules',
       to: 'runtimes',
       filter: ['npm{,/**/*}']
     })
+    expect(
+      existsSync(join('node_modules', 'npm', 'bin', 'npm-cli.js'))
+    ).toBe(true)
+    expect(
+      existsSync(join('node_modules', 'npm', 'bin', 'npx-cli.js'))
+    ).toBe(true)
     expect(resourceSources).toContain(
       'resources/agent-release-keys.json'
     )

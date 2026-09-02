@@ -77,6 +77,85 @@ describe('curated MCP launches', () => {
     })
   })
 
+  it('injects a fresh filtered tool environment into generic stdio', () => {
+    const previousKey = process.env.OPENAI_API_KEY
+    const previousElectronRunAsNode =
+      process.env.ELECTRON_RUN_AS_NODE
+    process.env.OPENAI_API_KEY = 'parent-secret'
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    let generation = 0
+    try {
+      const server = {
+        transport: 'stdio',
+        command: 'custom-mcp',
+        args: ['--serve']
+      } as ResolvedMcpServer
+      const provider = () =>
+        Object.freeze({
+          PATH: `/managed-${++generation}:/system`,
+          OPENAI_API_KEY: 'provider-secret',
+          ELECTRON_RUN_AS_NODE: '1'
+        })
+
+      createMcpTransport(server, provider)
+      createMcpTransport(server, provider)
+
+      const calls = transportMocks.stdio.mock.calls.slice(-2) as Array<
+        [{ env: NodeJS.ProcessEnv }]
+      >
+      expect(calls[0]?.[0]).toMatchObject({
+        env: { PATH: '/managed-1:/system' }
+      })
+      expect(calls[1]?.[0]).toMatchObject({
+        env: { PATH: '/managed-2:/system' }
+      })
+      expect(calls[0]?.[0].env).not.toHaveProperty('OPENAI_API_KEY')
+      expect(calls[0]?.[0].env).not.toHaveProperty(
+        'ELECTRON_RUN_AS_NODE'
+      )
+    } finally {
+      if (previousKey === undefined) {
+        delete process.env.OPENAI_API_KEY
+      } else {
+        process.env.OPENAI_API_KEY = previousKey
+      }
+      if (previousElectronRunAsNode === undefined) {
+        delete process.env.ELECTRON_RUN_AS_NODE
+      } else {
+        process.env.ELECTRON_RUN_AS_NODE =
+          previousElectronRunAsNode
+      }
+    }
+  })
+
+  it('keeps curated explicit env authoritative with a provider', async () => {
+    const descriptor = await createCuratedMcpLaunch(
+      {
+        executable,
+        args: ['--stdio'],
+        cwd,
+        ownedRoots: [root],
+        ownerUid: 1000,
+        allowedEnvironmentNames: ['LANG'],
+        environment: { LANG: 'zh_CN.UTF-8' }
+      },
+      { fileSystem: fileSystem() }
+    )
+
+    createMcpTransport(descriptor, () =>
+      Object.freeze({ PATH: '/managed:/system' })
+    )
+
+    expect(transportMocks.stdio).toHaveBeenLastCalledWith({
+      command: executable,
+      args: ['--stdio'],
+      cwd,
+      env: { LANG: 'zh_CN.UTF-8', PATH: '/managed:/system' },
+      stderr: 'ignore',
+      maxBufferSize: 2 * 1024 * 1024
+    })
+  })
+
   it('passes only validated values from an opaque curated descriptor', async () => {
     const validateLinuxDesktopEnvironment = vi.fn(async () => ({
       DISPLAY: ':1',

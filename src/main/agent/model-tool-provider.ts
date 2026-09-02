@@ -43,6 +43,7 @@ import {
   type DirectModelSubagentUsageEvent,
   directModelSubagentInputSchema
 } from '../assistant/direct-model-subagent-service'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment'
 
 const MAX_MODEL_TOOLS = 100
 const MAX_MCP_SERVERS = 16
@@ -618,7 +619,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
     private readonly knowledgeGateway?: KnowledgeMcpGateway,
     private readonly webSearchEnabled = false,
     private readonly programming:
-      ModelToolProviderProgrammingOptions = {}
+      ModelToolProviderProgrammingOptions = {},
+    private readonly launchEnvironmentProvider?: LaunchEnvironmentProvider
   ) {
     this.workspaceAccess =
       typeof workspace === 'string'
@@ -909,10 +911,13 @@ export class ModelToolProvider implements ModelToolProviderLike {
     this.clients.add(client)
     clientScope.add(client)
     try {
-      await client.connect(createMcpTransport(server), {
+      await client.connect(
+        createMcpTransport(server, this.launchEnvironmentProvider),
+        {
         timeout: MCP_TIMEOUT_MS,
         signal
-      })
+        }
+      )
       const listedAtChangeVersion = dynamicToolsChangeVersion
       const tools = await listAllMcpTools(
         client,

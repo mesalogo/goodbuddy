@@ -64,8 +64,8 @@ export const settings = {
     },
     capabilities: {
       label: '能力与工具',
-      navigationDescription: 'Skills 与 MCP',
-      description: '管理 Skills 和 MCP'
+      navigationDescription: 'Skills、MCP 与本机工具环境',
+      description: '管理 Skills、MCP 和本机工具执行环境'
     },
     about: {
       label: '关于与更新',
@@ -77,7 +77,8 @@ export const settings = {
     tabs: {
       ariaLabel: '能力与工具设置',
       skills: 'Skills',
-      mcp: 'MCP'
+      mcp: 'MCP',
+      tools: '工具执行环境'
     }
   },
   actions: {

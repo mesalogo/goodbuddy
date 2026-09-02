@@ -63,6 +63,7 @@ import {
   listAllMcpTools,
   normalizeMcpToolSchema
 } from './mcp-tool-utils'
+import type { LaunchEnvironmentProvider } from '../local-tool-environment'
 
 const MAX_REQUEST_BODY_BYTES = 64 * 1024
 const MAX_RESULT_BYTES = 128 * 1024
@@ -215,6 +216,7 @@ export type KnowledgeMcpGatewayOptions = {
   now?: () => number
   magicNotesDatabase?: MagicNotesDatabase
   configService?: GoodBuddyConfigService
+  launchEnvironmentProvider?: LaunchEnvironmentProvider
 }
 
 function toMagicNoteToolSummary(
@@ -339,6 +341,7 @@ export class KnowledgeMcpGateway {
   private readonly maximumBodyBytes: number
   private readonly magicNotesDatabase?: MagicNotesDatabase
   private readonly configService?: GoodBuddyConfigService
+  private readonly launchEnvironmentProvider?: LaunchEnvironmentProvider
   private server?: Server
   private endpoint?: string
 
@@ -360,6 +363,7 @@ export class KnowledgeMcpGateway {
     this.now = options.now ?? Date.now
     this.magicNotesDatabase = options.magicNotesDatabase
     this.configService = options.configService
+    this.launchEnvironmentProvider = options.launchEnvironmentProvider
   }
 
   async start(): Promise<void> {
@@ -888,10 +892,13 @@ export class KnowledgeMcpGateway {
       capability.brokerController.signal
     ])
     try {
-      await client.connect(createMcpTransport(server), {
+      await client.connect(
+        createMcpTransport(server, this.launchEnvironmentProvider),
+        {
         timeout: CUSTOM_MCP_TIMEOUT_MS,
         signal
-      })
+        }
+      )
       const listedAtChangeVersion = dynamicToolsChangeVersion
       const tools = await this.listAllCustomMcpTools(
         client,

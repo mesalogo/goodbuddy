@@ -89,6 +89,19 @@ export const ipcChannels = {
   remoteChannelActivity: 'channels:remote-activity',
   applicationSettingsGet: 'settings:application:get',
   applicationSettingsUpdate: 'settings:application:update',
+  localToolEnvironmentGet: 'settings:local-tools:get',
+  localToolEnvironmentUpdate: 'settings:local-tools:update',
+  localToolEnvironmentRefresh: 'settings:local-tools:refresh',
+  localToolEnvironmentSelectExecutable:
+    'settings:local-tools:select-executable',
+  localToolEnvironmentDiagnose: 'settings:local-tools:diagnose',
+  localToolEnvironmentInstallPython:
+    'settings:local-tools:python:install',
+  localToolEnvironmentCancelPython:
+    'settings:local-tools:python:cancel',
+  localToolEnvironmentRemovePython:
+    'settings:local-tools:python:remove',
+  localToolEnvironmentProgress: 'settings:local-tools:progress',
   shortcutSettingsGet: 'settings:shortcut:get',
   shortcutSettingsUpdate: 'settings:shortcut:update',
   versionCheck: 'application:update:check',

@@ -1,0 +1,72 @@
+{
+  "formatVersion": 1,
+  "pythonVersion": "3.13.15",
+  "artifacts": [
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "archiveFormat": "nuget-zip",
+      "payloadRoot": "tools",
+      "fileName": "python.3.13.15.nupkg",
+      "size": 14391248,
+      "sha256": "05357887df50d3153efc681bdf432c321d3e2f9ce5788f99f4515b27e8fda0ac",
+      "nativeUrl": "https://api.nuget.org/v3-flatcontainer/python/3.13.15/python.3.13.15.nupkg",
+      "ossUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/python/3.13.15/05357887df50d3153efc681bdf432c321d3e2f9ce5788f99f4515b27e8fda0ac/python.3.13.15.nupkg"
+    },
+    {
+      "platform": "win32",
+      "arch": "arm64",
+      "archiveFormat": "nuget-zip",
+      "payloadRoot": "tools",
+      "fileName": "pythonarm64.3.13.15.nupkg",
+      "size": 13762836,
+      "sha256": "3c1b1fdf56adc14634165df922d447520aefdc4a8411a34c34d8a062a4edf494",
+      "nativeUrl": "https://api.nuget.org/v3-flatcontainer/pythonarm64/3.13.15/pythonarm64.3.13.15.nupkg",
+      "ossUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/python/3.13.15/3c1b1fdf56adc14634165df922d447520aefdc4a8411a34c34d8a062a4edf494/pythonarm64.3.13.15.nupkg"
+    },
+    {
+      "platform": "darwin",
+      "arch": "x64",
+      "archiveFormat": "tar.gz",
+      "payloadRoot": "python",
+      "fileName": "cpython-3.13.15+20260825-x86_64-apple-darwin-install_only_stripped.tar.gz",
+      "size": 24921256,
+      "sha256": "d33d61f7f4982c94216e14a43599c75657b7d0839277fc72bc6dbac53e8229bc",
+      "nativeUrl": "https://github.com/astral-sh/python-build-standalone/releases/download/20260825/cpython-3.13.15%2B20260825-x86_64-apple-darwin-install_only_stripped.tar.gz",
+      "ossUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/python/3.13.15/d33d61f7f4982c94216e14a43599c75657b7d0839277fc72bc6dbac53e8229bc/cpython-3.13.15%2B20260825-x86_64-apple-darwin-install_only_stripped.tar.gz"
+    },
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "archiveFormat": "tar.gz",
+      "payloadRoot": "python",
+      "fileName": "cpython-3.13.15+20260825-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "size": 25140257,
+      "sha256": "149038dd0c194c25d4616d7e42a35f67f2edee96412788f74115819b6a4c8548",
+      "nativeUrl": "https://github.com/astral-sh/python-build-standalone/releases/download/20260825/cpython-3.13.15%2B20260825-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "ossUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/python/3.13.15/149038dd0c194c25d4616d7e42a35f67f2edee96412788f74115819b6a4c8548/cpython-3.13.15%2B20260825-aarch64-apple-darwin-install_only_stripped.tar.gz"
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "archiveFormat": "tar.gz",
+      "payloadRoot": "python",
+      "fileName": "cpython-3.13.15+20260825-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "size": 34813635,
+      "sha256": "8af9a8214c71b2dd698005e39fab87aad02a994330508857da4e6d1ba7e6ddb6",
+      "nativeUrl": "https://github.com/astral-sh/python-build-standalone/releases/download/20260825/cpython-3.13.15%2B20260825-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "ossUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/python/3.13.15/8af9a8214c71b2dd698005e39fab87aad02a994330508857da4e6d1ba7e6ddb6/cpython-3.13.15%2B20260825-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    },
+    {
+      "platform": "linux",
+      "arch": "arm64",
+      "archiveFormat": "tar.gz",
+      "payloadRoot": "python",
+      "fileName": "cpython-3.13.15+20260825-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "size": 29222461,
+      "sha256": "e5d0df1a6070a8614d808496e5ea28c727480e40ffcce1a94697a067f1690aa8",
+      "nativeUrl": "https://github.com/astral-sh/python-build-standalone/releases/download/20260825/cpython-3.13.15%2B20260825-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "ossUrl": "https://goodbuddy.oss-cn-beijing.aliyuncs.com/tool-artifacts/python/3.13.15/e5d0df1a6070a8614d808496e5ea28c727480e40ffcce1a94697a067f1690aa8/cpython-3.13.15%2B20260825-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    }
+  ]
+}
