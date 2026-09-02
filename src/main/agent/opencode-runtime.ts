@@ -678,6 +678,7 @@ async function defaultDetectBinary(
   return detectRuntimeBinary({
     binaryPath: configuredPath,
     bundledPath,
+    validation: 'path-only',
     binaryNames: [runtime],
     label: 'OpenCode CLI'
   })

@@ -233,7 +233,7 @@ export async function verifyPublishedRuntimeBundle(
 /**
  * Reconstructs a Runtime identity that was fully verified when it was
  * registered. Normal capabilities and prompt launches use this bounded
- * metadata path instead of hashing the complete Runtime payload again.
+ * metadata path instead of re-verifying or executing the Runtime binary.
  */
 export async function loadRegisteredRuntimeBundle(
   bundleDirectoryInput: string,
@@ -242,12 +242,50 @@ export async function loadRegisteredRuntimeBundle(
   const registered = runtimeRegistryEntrySchema.parse(
     options.registered
   )
-  const verified = await verifyPublishedRuntimeBundle(
-    bundleDirectoryInput,
+  const bundleDirectory = assertAbsoluteManagedPath(
+    resolve(bundleDirectoryInput)
+  )
+  const rootStat = await lstat(bundleDirectory)
+  assertOwnedDirectory(
+    rootStat,
+    'Runtime bundle directory',
+    options.uid
+  )
+  if (
+    shouldEnforceMode(options) &&
+    modeString(rootStat.mode) !== '0700'
+  ) {
+    throw new Error('Runtime bundle directory permissions must be 0700')
+  }
+  const manifestBytes = await readMetadataFile(
+    join(bundleDirectory, MANIFEST_FILE_NAME),
+    'Runtime manifest',
     options
   )
-  const { manifest, manifestDigest } = verified
+  let value: unknown
+  try {
+    value = JSON.parse(manifestBytes.toString('utf8'))
+  } catch (error) {
+    throw new Error('Runtime manifest is invalid JSON', {
+      cause: error
+    })
+  }
+  const manifest = remoteRuntimeBundleManifestSchema.parse(value)
+  if (!canonicalRuntimeManifestBytes(manifest).equals(manifestBytes)) {
+    throw new Error(
+      'Runtime manifest is not in canonical deterministic form'
+    )
+  }
+  assertRuntimeManifestMatchesLock(
+    manifest,
+    remoteRuntimeLockSchema.parse(options.runtimeLock),
+    options.architecture
+  )
+  const manifestDigest =
+    await digestRemoteRuntimeBundleManifest(manifest)
   if (
+    basename(bundleDirectory) !==
+      registered.bundleDigest.slice('sha256:'.length) ||
     manifest.runtimeId !== registered.runtimeId ||
     manifest.runtimeVersion !== registered.runtimeVersion ||
     manifest.architecture !== registered.architecture ||
@@ -265,7 +303,15 @@ export async function loadRegisteredRuntimeBundle(
     )
   }
 
-  return verified
+  return {
+    bundleDirectory,
+    executablePath: join(
+      bundleDirectory,
+      ...manifest.entrypoint.path.split('/')
+    ),
+    manifest,
+    manifestDigest
+  }
 }
 
 export function canonicalRuntimeManifestBytes(

@@ -213,11 +213,8 @@ describe('Remote Runtime bundle verifier', () => {
         Buffer.from('changed')
       ])
     )
-    await expect(capabilities()).resolves.toEqual([])
-    expect(reportError).toHaveBeenCalledWith(
-      'Verified Runtime unavailable: opencode',
-      expect.any(Error)
-    )
+    await expect(capabilities()).resolves.toHaveLength(1)
+    expect(reportError).not.toHaveBeenCalled()
   })
 
   it('adopts signed published metadata without rehashing unrelated payload', async () => {

@@ -25,6 +25,7 @@ const VERSION_TERMINATION_WAIT_MS = 500
 export type RuntimeBinaryDiscoveryInput = {
   binaryPath: string
   bundledPath?: string
+  validation?: 'execute' | 'canonical-file' | 'path-only'
   bundledValidation?: 'execute' | 'canonical-file'
   bundledVersion?: string
   allowAutomaticDiscovery?: boolean
@@ -333,11 +334,24 @@ export async function detectRuntimeBinary(
     if (!bundledPath) {
       return undefined
     }
+    if (input.validation === 'path-only') {
+      return isAbsolute(bundledPath)
+        ? availableDetection(
+            input.label,
+            normalize(bundledPath),
+            input.bundledVersion,
+            'bundled'
+          )
+        : undefined
+    }
     const canonicalPath = await canonicalFile(bundledPath)
     if (!canonicalPath) {
       return undefined
     }
-    if (input.bundledValidation === 'canonical-file') {
+    if (
+      (input.bundledValidation ?? input.validation) ===
+      'canonical-file'
+    ) {
       return availableDetection(
         input.label,
         canonicalPath,
@@ -359,10 +373,24 @@ export async function detectRuntimeBinary(
   if (configuredPath) {
     if (!isAbsolute(configuredPath)) {
       configuredPathProblem = 'relative'
+    } else if (input.validation === 'path-only') {
+      return availableDetection(
+        input.label,
+        normalize(configuredPath),
+        undefined,
+        'configured'
+      )
     } else {
       const canonicalPath = await canonicalFile(configuredPath)
       if (!canonicalPath) {
         configuredPathProblem = 'invalid'
+      } else if (input.validation === 'canonical-file') {
+        return availableDetection(
+          input.label,
+          canonicalPath,
+          undefined,
+          'configured'
+        )
       } else {
         const validation = await validateRuntimeVersion(canonicalPath)
         if (validation.valid) {
@@ -391,6 +419,15 @@ export async function detectRuntimeBinary(
         continue
       }
       foundAutomaticCandidate = true
+      if (
+        input.validation === 'canonical-file' ||
+        input.validation === 'path-only'
+      ) {
+        return availableDetection(
+          input.label,
+          canonicalPath
+        )
+      }
       const validation = await validateRuntimeVersion(canonicalPath)
       if (validation.valid) {
         return availableDetection(

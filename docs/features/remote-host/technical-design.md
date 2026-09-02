@@ -81,7 +81,9 @@ Detached GoodBuddy Agent
 - Host 管理独占 Agent/Runtime 的包准备、更新和完整 payload 验证。已有项目的打开和切换
   只更新本地项目选择。Workspace 和执行路径按需读取 Host current registry，
   执行固定 `attach-or-bootstrap` 并复用当前 Agent 连接；同一进程内复用已确认 identity。
-  它们不取得安装包、不发布组件，也不通过 SFTP 重读或哈希 payload。
+  它们不取得安装包、不发布组件，也不通过 SFTP 重读或哈希 payload；已登记 Runtime
+  的能力读取和 Prompt 启动只核对 registry 与 manifest 元数据，不再次执行、读取或检查
+  OpenCode 二进制。
 - Agent 的固定 attach/按需启动命令只读取 Host 管理已提交的 installation registry 和
   与其 digest 匹配的有界 manifest 元数据，不在每次项目切换时重新验签或哈希完整 payload。
   完整验签、payload 扫描和 registry 写入仍只发生在显式 Host 准备/更新流程。

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { realpath } from 'node:fs/promises'
-import { basename, dirname } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -91,6 +91,29 @@ describe('runtime discovery', () => {
       source: 'configured'
     })
     expect(detection.version).toMatch(/^\d+\.\d+\.\d+/u)
+  })
+
+  it('trusts a configured execution path without reading or launching it', async () => {
+    process.env.PATH = ''
+    process.env.Path = ''
+    const candidate = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      'runtime-that-does-not-exist'
+    )
+
+    const detection = await detectRuntimeBinary({
+      binaryPath: candidate,
+      validation: 'path-only',
+      binaryNames: ['binary-that-does-not-exist'],
+      label: 'Managed Runtime'
+    })
+
+    expect(detection).toEqual({
+      available: true,
+      path: candidate,
+      source: 'configured',
+      detail: 'Managed Runtime 已就绪'
+    })
   })
 
   it('rejects relative configured paths without resolving them from cwd', async () => {
