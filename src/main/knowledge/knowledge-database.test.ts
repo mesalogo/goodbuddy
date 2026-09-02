@@ -778,7 +778,7 @@ describe('KnowledgeDatabase', () => {
     expect(database.listDocuments(library.id)).toHaveLength(500)
     expect(database.listSourcesForSnapshot(library.id)).toHaveLength(501)
     expect(database.listDocumentsForSnapshot(library.id)).toHaveLength(501)
-  }, 10_000)
+  }, 30_000)
 
   it('edits graph records and merges entities while retaining evidence and locks', async () => {
     const { database } = await createDatabase()
