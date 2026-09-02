@@ -382,6 +382,12 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
   为 `0700`、文件为 `0600`，单文件 3719 bytes，未超过 64 KiB。六类测试哨兵覆盖 Prompt、
   密钥、环境、SSH 参数、用户文件内容和原始错误消息，CLI 输出与磁盘均未出现哨兵。把隔离
   diagnostics 目录临时设为不可写后，Attach 和 `agent/status` 仍正常；随后已恢复权限。
+- 2026-09-02 使用当前源码 Agent bundle 在共享 Linux x64 Host 的唯一
+  `/tmp/goodbuddy-e2e-no-reverify-*` 隔离 HOME 验证已登记 Runtime 的快速激活路径。测试
+  复制 Host current Runtime registry 与 bundle，在副本 OpenCode 二进制追加哨兵字节后，
+  `runtime activate` 仍依据匹配的 registry 与 canonical manifest 成功返回
+  `activated=true`，确认普通激活不重新哈希 payload 或执行 OpenCode 版本探测。本次没有
+  模型调用；harness 成功后已删除整个隔离目录，未修改共享 Agent/Runtime 安装或进程。
   本次未注入模型凭据或执行 Prompt，真实文本模型调用 0 次；三文件轮转继续由聚焦测试覆盖。
   测试结束前按 PID、UID、starttime、executable 和唯一 installation 核对并停止所有本次
   daemon，本地及 Host 临时目录均已清理，共享 current Agent 和 `/root/.goodbuddy` 未修改。

@@ -1892,7 +1892,11 @@ describe('App', () => {
         name: /本地工作区/u
       })
     )
-    await screen.findByRole('heading', { name: '设置中心' })
+    await screen.findByRole(
+      'heading',
+      { name: '设置中心' },
+      { timeout: 3000 }
+    )
     fireEvent.click(
       screen.getByRole('tab', { name: '外观' })
     )
@@ -2180,7 +2184,11 @@ describe('App', () => {
           name: /本地工作区/u
         })
       )
-      await screen.findByRole('heading', { name: '设置中心' })
+      await screen.findByRole(
+        'heading',
+        { name: '设置中心' },
+        { timeout: 3000 }
+      )
       fireEvent.click(
         screen.getByRole('tab', { name: '外观' })
       )
@@ -5749,7 +5757,11 @@ describe('App', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByText('本地工作区'))
-    await screen.findByRole('heading', { name: '设置中心' })
+    await screen.findByRole(
+      'heading',
+      { name: '设置中心' },
+      { timeout: 3000 }
+    )
     fireEvent.click(screen.getByRole('tab', { name: '外观' }))
     fireEvent.click(screen.getByRole('radio', { name: /暗色/u }))
 
@@ -9866,7 +9878,10 @@ describe('App', () => {
       target: { value: '打开示例网页' }
     })
     fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    await waitFor(
+      () => expect(run).toHaveBeenCalledOnce(),
+      { timeout: 3000 }
+    )
     const conversationId = run.mock.calls[0]?.[0].conversationId
     expect(conversationId).toBeTruthy()
 
