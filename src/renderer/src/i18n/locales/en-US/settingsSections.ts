@@ -784,9 +784,6 @@ export const settingsSections = {
       'No valid candidates were found. Scan user/system PATH, Conda, virtual environments, and common install locations, or choose another executable.',
     toolStatus: 'Tool status',
     companionStatus: 'Toolchain/companion status',
-    capabilityDependencyStatus: 'Capability dependency status',
-    capabilityDependenciesUnverified:
-      'Capability dependencies are unverified because no capability evidence is available.',
     status: 'Status',
     available: 'Available',
     unavailable: 'Unavailable',

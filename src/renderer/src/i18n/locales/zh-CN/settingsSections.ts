@@ -734,9 +734,6 @@ export const settingsSections = {
       '未发现有效候选。可扫描用户/系统 PATH、Conda、虚拟环境和常见安装位置，或选择其他可执行文件。',
     toolStatus: '工具状态',
     companionStatus: '工具链/配套工具状态',
-    capabilityDependencyStatus: '能力依赖状态',
-    capabilityDependenciesUnverified:
-      '尚未获得具体能力的依赖验证证据。',
     status: '状态',
     available: '可用',
     unavailable: '不可用',

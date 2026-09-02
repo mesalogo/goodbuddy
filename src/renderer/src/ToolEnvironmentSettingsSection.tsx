@@ -564,11 +564,6 @@ export function ToolEnvironmentSettingsSection({
           )}
         </div>
 
-        <div className="tool-environment-status">
-          <h4>{t('toolEnvironment.capabilityDependencyStatus')}</h4>
-          <p>{t('toolEnvironment.capabilityDependenciesUnverified')}</p>
-        </div>
-
         {kind === 'python' && selection.source === 'managed' && (
           <div className="tool-environment-python">
             <p>

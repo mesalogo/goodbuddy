@@ -139,7 +139,7 @@ describe('ToolEnvironmentSettingsSection', () => {
     ).toBeVisible()
     expect(screen.getAllByText('工具状态')).toHaveLength(2)
     expect(screen.getAllByText('工具链/配套工具状态')).toHaveLength(2)
-    expect(screen.getAllByText('能力依赖状态')).toHaveLength(2)
+    expect(screen.queryByText('能力依赖状态')).not.toBeInTheDocument()
     expect(
       screen.getByRole('button', {
         name: /C:\\Tools\\node\.exe/u
