@@ -1892,8 +1892,9 @@ describe('App', () => {
         name: /本地工作区/u
       })
     )
+    await screen.findByRole('heading', { name: '设置中心' })
     fireEvent.click(
-      await screen.findByRole('tab', { name: '外观' })
+      screen.getByRole('tab', { name: '外观' })
     )
     fireEvent.change(screen.getByLabelText('品牌名称'), {
       target: { value: '研发伙伴' }
@@ -2179,8 +2180,9 @@ describe('App', () => {
           name: /本地工作区/u
         })
       )
+      await screen.findByRole('heading', { name: '设置中心' })
       fireEvent.click(
-        await screen.findByRole('tab', { name: '外观' })
+        screen.getByRole('tab', { name: '外观' })
       )
       const projectsList = vi.mocked(api.projects.list)
       const expertsList = vi.mocked(api.experts.list)
@@ -5747,6 +5749,7 @@ describe('App', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByText('本地工作区'))
+    await screen.findByRole('heading', { name: '设置中心' })
     fireEvent.click(screen.getByRole('tab', { name: '外观' }))
     fireEvent.click(screen.getByRole('radio', { name: /暗色/u }))
 
