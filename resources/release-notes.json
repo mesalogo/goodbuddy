@@ -23,7 +23,7 @@
             "**Skills 与 MCP 入口更清晰。** 两者统一到“能力与工具”；内置 Skills 从 14 个顶层入口精简为 5 个，产品营销类默认停用，已保存的用户设置保持不变。",
             "**界面和产品文案修正。** 修复主侧栏分隔线未对齐，并将官网、README 与智能心跳中的空泛宣传改为直接说明实际能力和运行边界。",
             "**桌面打包更干净。** 不再显示无需处理的重复依赖引用摘要，也不再把已由 Renderer 打包的 AntV G6 依赖树重复复制到安装包。",
-            "**Linux ARM OpenCode 启动更快。** 在 Linux ARM Host 切换项目或冷启动已安装的 OpenCode 时，GoodBuddy 不再重复执行版本探测或检查已登记的二进制。安装或更新阶段已验证的路径、registry 和 manifest 仍作为运行依据。"
+            "**OpenCode 启动路径不再重复验证。** 启动本机 OpenCode 时，GoodBuddy 现在直接使用已选择的绝对路径，不再预先检查文件或运行 `--version`；若路径失效，实际启动会返回错误。托管 Linux ARM Host 激活已登记 Runtime 时也继续依据安装或更新阶段验证的 registry 与 manifest，不重新哈希或检查完整二进制。"
           ],
           "notices": [
             "工具执行环境只作用于本机 Skills 和 stdio MCP，不修改系统环境、普通终端或远程 Host。托管 Python 在首次使用时按需下载。",
@@ -49,7 +49,7 @@
             "**Clearer Skills and MCP navigation.** Both now live under Capabilities and Tools. Built-in Skills are reduced from 14 top-level entries to five; product-marketing Skills default to off, while saved user settings remain authoritative.",
             "**Interface and product-copy corrections.** Fixed the misaligned main-sidebar divider and replaced vague promotional wording on the website, in the README, and in Smart Heartbeat with direct descriptions of actual behavior and boundaries.",
             "**Cleaner desktop packaging.** Packaging no longer prints non-actionable duplicate dependency summaries or copies the Renderer-bundled AntV G6 dependency graph into desktop packages.",
-            "**Faster OpenCode startup on Linux ARM.** When switching projects or cold-starting an installed OpenCode Runtime on a Linux ARM Host, GoodBuddy no longer repeats a version probe or rechecks the registered binary. The path, registry, and manifest verified during installation or update remain the execution authority."
+            "**OpenCode startup paths are no longer revalidated.** Local OpenCode now uses the selected absolute path directly without checking the file or running `--version` first; an invalid path fails at the actual launch. Registered Runtime activation on managed Linux ARM Hosts also continues to rely on the registry and manifest verified during installation or update without rehashing or rechecking the complete binary."
           ],
           "notices": [
             "Tool environments apply only to local Skills and stdio MCP. They do not modify the system environment, ordinary terminals, or remote Hosts. Managed Python is downloaded on demand when first used.",

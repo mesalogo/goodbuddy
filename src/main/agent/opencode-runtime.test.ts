@@ -720,9 +720,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
             'node_modules',
             'opencode-ai',
             'bin',
-            process.platform === 'win32'
-              ? 'opencode.exe'
-              : 'opencode'
+            'opencode.exe'
           ),
           defaultWorkspace: root,
           modelProfile: {

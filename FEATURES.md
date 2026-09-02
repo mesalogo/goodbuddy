@@ -82,10 +82,11 @@ otherwise.
   parallel. Interactive questions are answered only by foreground
   conversations; scheduled tasks, remote channels, delegated work, and other
   background runs fail immediately with guidance to rerun in the foreground
-  instead of waiting indefinitely. On managed Linux ARM Hosts, project
-  switching and cold startup reuse the Runtime path, registry, and manifest
-  verified during setup instead of repeating an OpenCode version probe or
-  binary check.
+  instead of waiting indefinitely. Local OpenCode startup uses the selected
+  absolute path directly without checking the file or running `--version`
+  first; invalid paths fail at actual launch. On managed Linux ARM Hosts,
+  Runtime activation reuses the registry and manifest verified during setup
+  instead of rehashing or rechecking the complete OpenCode binary.
 - [x] **Managed SSH OpenCode loop (technical preview)**: Controlled by the
   separate Remote Projects (Technical Preview) tab under Settings / Platform
   Features and disabled by default. Disabling it does not affect local
