@@ -395,12 +395,12 @@ export const settings = {
       description:
         'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Ask can call native read/skill plus enabled Web Search/Fetch, while Execute can use every enabled tool and DSH plugin capability. Cancellation and workspace boundaries remain in place.',
       managedSource:
-        'Administrator-provided OpenAI-compatible connection',
+        'Automatic: prefer the administrator connection, otherwise follow a compatible current model',
       connection: 'OpenAI-compatible model connection',
       connectionPlaceholder:
-        'Select an OpenAI-compatible model connection',
+        'Automatically select a compatible model connection',
       connectionDescription:
-        'Choose a GoodBuddy model connection. It must use OpenAI Chat Completions with API-key authentication.',
+        'Optionally select a GoodBuddy model connection. Otherwise GoodBuddy uses the administrator connection, the compatible current default, or the first compatible connection. It must use OpenAI Chat Completions with API-key authentication.',
       advancedDescription:
         'This Runtime always uses GoodBuddy’s bundled, version-pinned Host and does not load user profiles or custom Hosts. GoodBuddy manages enabled marketplace plugins and loads them with the Host.',
       marketplace: {

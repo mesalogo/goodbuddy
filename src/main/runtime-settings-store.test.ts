@@ -408,6 +408,78 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
+  it('uses a compatible GoodBuddy model for Harness when no platform model is configured', async () => {
+    const profileId = '00000000-0000-4000-8000-000000000044'
+    const { store } = await createStore()
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'OpenAI-compatible gateway',
+            baseUrl: 'https://gateway.example/openai/v1',
+            modelName: 'qwen-plus',
+            protocol: 'openai-chat-completions',
+            authentication: 'api-key',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'replace', value: 'deepseek-secret' }
+          }
+        ],
+        defaultModelProfileId: profileId
+      })
+    )
+
+    await expect(store.getPublicSettings()).resolves.toMatchObject({
+      deepseekHarnessModelSource: { kind: 'profile', profileId },
+      configured: {
+        deepseekHarnessModelSource: { kind: 'platform' }
+      }
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      deepseekHarnessModelProfile: {
+        id: profileId,
+        apiKey: 'deepseek-secret'
+      }
+    })
+  })
+
+  it('uses the first compatible Harness model when the default model is incompatible', async () => {
+    const defaultId = '00000000-0000-4000-8000-000000000043'
+    const harnessId = '00000000-0000-4000-8000-000000000044'
+    const { store } = await createStore()
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: defaultId,
+            name: 'Anthropic model',
+            baseUrl: 'https://anthropic.example',
+            modelName: 'claude',
+            protocol: 'anthropic-messages',
+            authentication: 'api-key',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'replace', value: 'anthropic-secret' }
+          },
+          {
+            id: harnessId,
+            name: 'OpenAI-compatible gateway',
+            baseUrl: 'https://gateway.example/openai/v1',
+            modelName: 'qwen-plus',
+            protocol: 'openai-chat-completions',
+            authentication: 'api-key',
+            imageGenerationQuality: 'auto',
+            apiKey: { action: 'replace', value: 'deepseek-secret' }
+          }
+        ],
+        defaultModelProfileId: defaultId
+      })
+    )
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      deepseekHarnessModelProfile: { id: harnessId }
+    })
+  })
+
   it('migrates DeepSeek Harness to controlled platform mode and stores a compatible profile', async () => {
     const { filePath, store } = await createStore()
     await store.update(settings())

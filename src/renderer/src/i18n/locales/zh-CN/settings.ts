@@ -362,11 +362,12 @@ export const settings = {
       previewDescription: '开发者预览 · OpenAI 兼容',
       description:
         '由 GoodBuddy 内部维护固定 Host 与控制协议，复用锁定的 Harness 底层库；Ask 可调用 Harness 原生 read/skill 与已启用的网页搜索/抓取，Execute 可调用全部已启用工具及 DSH 插件能力，并保留取消和工作区边界。',
-      managedSource: '管理员预置的 OpenAI 兼容连接',
+      managedSource:
+        '自动选择：优先使用管理员预置连接，否则跟随当前兼容模型',
       connection: 'OpenAI 兼容模型连接',
-      connectionPlaceholder: '选择 OpenAI 兼容模型连接',
+      connectionPlaceholder: '自动选择兼容模型连接',
       connectionDescription:
-        '从 GoodBuddy 模型连接中选择；协议必须为 OpenAI Chat Completions，并使用 API Key。',
+        '可从 GoodBuddy 模型连接中显式指定；未指定时自动使用管理员预置连接、当前默认兼容连接或首个兼容连接。协议必须为 OpenAI Chat Completions，并使用 API Key。',
       advancedDescription:
         '该 Runtime 始终使用 GoodBuddy 内置并固定版本的 Host，不加载用户 profile 或自定义 Host；已启用的市场插件由 GoodBuddy 托管并随 Host 启动。',
       marketplace: {

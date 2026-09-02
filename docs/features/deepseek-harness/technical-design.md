@@ -433,6 +433,7 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 - 图片能力只读取所选 GoodBuddy 模型连接的 `supportsImageInput`；Main、Utility 启动配置、ACP 能力和 Pi-AI 模型输入模态必须使用同一个布尔值。
 - API Key 继续保存在 GoodBuddy 加密设置中。
 - 启动环境提供的部署连接只由 Main 自动解析，不在 Renderer 中显示为可选来源。
+- 未显式指定 Harness 模型且没有可用的管理员预置连接时，Main 优先使用当前默认的兼容 GoodBuddy 模型连接；默认连接不兼容时使用首个兼容连接。只有不存在任何兼容连接时才提示用户前往模型或 Runtime 设置。
 
 不允许选择 Harness 自有的用户配置文件或自定义 Host。Runtime 始终使用随当前 GoodBuddy 版本发布的内置 Host，并通过完整内部能力握手。
 

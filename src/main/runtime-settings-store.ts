@@ -1423,6 +1423,30 @@ export class RuntimeSettingsStore {
     }
   }
 
+  private resolveDeepSeekHarnessModelProfile(
+    settings: StoredSettings,
+    modelProfiles: readonly ResolvedModelProfile[]
+  ): ResolvedModelProfile | undefined {
+    const source = settings.deepseekHarnessModelSource
+    if (source.kind === 'profile') {
+      return modelProfiles.find(
+        (profile) => profile.id === source.profileId
+      )
+    }
+    const platformProfile = this.resolvePlatformHarnessProfile()
+    if (platformProfile) {
+      return platformProfile
+    }
+    return (
+      modelProfiles.find(
+        (profile) =>
+          profile.id === settings.defaultModelProfileId &&
+          isDeepSeekHarnessModelProfile(profile)
+      ) ??
+      modelProfiles.find(isDeepSeekHarnessModelProfile)
+    )
+  }
+
   private resolveModelCredentials(
     settings: StoredSettings
   ): Map<string, ResolvedModelCredential> {
@@ -1692,6 +1716,20 @@ export class RuntimeSettingsStore {
         credentialSource: credential.source
       }
     })
+    const deepseekHarnessModelProfile =
+      this.resolveDeepSeekHarnessModelProfile(
+        settings,
+        resolvedModelProfiles
+      )
+    const deepseekHarnessModelSource =
+      settings.deepseekHarnessModelSource.kind === 'platform' &&
+      deepseekHarnessModelProfile &&
+      resolvedProfilesById.has(deepseekHarnessModelProfile.id)
+        ? {
+            kind: 'profile' as const,
+            profileId: deepseekHarnessModelProfile.id
+          }
+        : settings.deepseekHarnessModelSource
     const embeddingEnvironmentApiKey =
       this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim()
     const embeddingStoredApiKey = embeddingEnvironmentApiKey
@@ -1797,8 +1835,7 @@ export class RuntimeSettingsStore {
         ? { kind: 'platform' }
         : settings.opencodeModelSource,
       continueModelSource: settings.continueModelSource,
-      deepseekHarnessModelSource:
-        settings.deepseekHarnessModelSource,
+      deepseekHarnessModelSource,
       secureStorageAvailable: this.cipher.isAvailable(),
       toolApproval: settings.toolApproval,
       configured: {
@@ -1892,11 +1929,7 @@ export class RuntimeSettingsStore {
         ? profilesById.get(settings.continueModelSource.profileId)
         : undefined
     const deepseekHarnessModelProfile =
-      settings.deepseekHarnessModelSource.kind === 'profile'
-        ? profilesById.get(
-            settings.deepseekHarnessModelSource.profileId
-          )
-        : this.resolvePlatformHarnessProfile()
+      this.resolveDeepSeekHarnessModelProfile(settings, modelProfiles)
     const embeddingConnections =
       this.resolveEmbeddingConnections(settings)
     const activeEmbeddingConnection =

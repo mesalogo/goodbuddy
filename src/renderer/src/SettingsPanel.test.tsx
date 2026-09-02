@@ -3057,7 +3057,9 @@ describe('SettingsPanel runtime files', () => {
     )
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
     expect(
-      screen.getByText('管理员预置的 OpenAI 兼容连接')
+      screen.getByText(
+        '自动选择：优先使用管理员预置连接，否则跟随当前兼容模型'
+      )
     ).toBeInTheDocument()
     const source = screen.getByLabelText(
       'DeepSeek Harness OpenAI 兼容模型连接'
