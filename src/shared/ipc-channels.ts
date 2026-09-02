@@ -11,6 +11,7 @@ export const ipcChannels = {
   appRendererPersistenceRequest: 'app:renderer-persistence-request',
   appRendererPersistenceComplete: 'app:renderer-persistence-complete',
   appClearLocalData: 'app:clear-local-data',
+  clipboardWriteText: 'clipboard:write-text',
   conversationNew: 'conversation:new',
   settingsOpen: 'settings:open',
   agentStatus: 'agent:get-status',

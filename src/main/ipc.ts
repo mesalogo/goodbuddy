@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   shell
@@ -31,6 +32,7 @@ import {
   browserReloadRequestSchema,
   browserStopLoadingRequestSchema,
   browserStopRequestSchema,
+  clipboardTextSchema,
   conversationQueueUserInputSchema,
   defaultRuntimeSettings,
   knowledgeCreateSchema,
@@ -3296,6 +3298,11 @@ export function registerIpcHandlers(
         ? { shortcutStatus: shortcutSnapshot.status }
         : {})
     }
+  })
+
+  registerHandler(ipcChannels.clipboardWriteText, (event, input) => {
+    assertTrustedSender(event, window)
+    clipboard.writeText(clipboardTextSchema.parse(input))
   })
 
   registerHandler(

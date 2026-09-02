@@ -1116,6 +1116,8 @@ export type ContextFileSelectionProgress = {
 
 export const maximumPastedImageBytes = 12 * 1024 * 1024
 
+export const clipboardTextSchema = z.string()
+
 export const pastedImageInputSchema = z
   .object({
     data: z
@@ -1560,6 +1562,9 @@ export type DesktopApi = {
     clearLocalData: () => Promise<void>
     onNewConversation: (listener: () => void) => () => void
     onOpenSettings: (listener: () => void) => () => void
+  }
+  clipboard: {
+    writeText: (text: string) => Promise<void>
   }
   agent: {
     getStatus: (

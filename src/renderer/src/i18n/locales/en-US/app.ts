@@ -331,6 +331,7 @@ export const app = {
       }
     },
     retry: 'Edit and send again',
+    copyMessage: 'Copy this response',
     loadEarlierMessages: 'Load earlier messages ({{count}} remaining)',
     scrollToBottom: 'Scroll to bottom',
     status: {
@@ -615,6 +616,7 @@ export const app = {
     deletedConversationBrowserCloseFailed:
       'Failed to close the browser for the deleted conversation',
     conversationCopied: 'Conversation copied to the clipboard',
+    messageCopied: 'Response copied to the clipboard',
     clipboardUnavailable:
       'Cannot access the clipboard. Check your system permissions.',
     conversationExported: 'Conversation exported',

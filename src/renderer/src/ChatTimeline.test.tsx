@@ -22,6 +22,7 @@ vi.mock('./MarkdownRenderer', () => ({
 
 const callbacks = {
   onArticleRef: vi.fn(),
+  onCopyMessage: vi.fn(async () => undefined),
   onDownloadImage: vi.fn(),
   onOpenCitationContext: vi.fn(async () => undefined),
   onOpenCitationSource: vi.fn(async () => undefined),
@@ -193,6 +194,63 @@ describe('ChatTimeline', () => {
     expect(
       screen.getByLabelText('任务结果：每日状态')
     ).toHaveTextContent('每日状态')
+  })
+
+  it('copies a completed assistant reply from its bottom action', () => {
+    const messages: Message[] = [
+      {
+        id: 'assistant-message',
+        role: 'assistant',
+        content: '## Answer\n\nKeep the Markdown source.',
+        reasoning: 'private reasoning',
+        createdAt: 1_775_000_000_000,
+        state: 'complete'
+      },
+      {
+        id: 'streaming-message',
+        role: 'assistant',
+        content: 'Partial answer',
+        createdAt: 1_775_000_001_000,
+        state: 'streaming'
+      },
+      {
+        id: 'user-message',
+        role: 'user',
+        content: 'User content',
+        createdAt: 1_775_000_002_000,
+        state: 'complete'
+      }
+    ]
+
+    render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="zh-CN"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    const copyButton = screen.getByRole('button', {
+      name: '复制此回复'
+    })
+    expect(copyButton).toHaveAttribute('title', '复制此回复')
+    expect(
+      screen.getAllByRole('button', { name: '复制此回复' })
+    ).toHaveLength(1)
+
+    fireEvent.click(copyButton)
+
+    expect(callbacks.onCopyMessage).toHaveBeenCalledOnce()
+    expect(callbacks.onCopyMessage).toHaveBeenCalledWith(
+      '## Answer\n\nKeep the Markdown source.'
+    )
   })
 
   it('shows every parallel expert output in its own expandable card', () => {

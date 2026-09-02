@@ -242,6 +242,29 @@ describe('terminal IPC boundary', () => {
       snapshot.sessionId
     )
 
+    electronMocks.handlers.get(ipcChannels.clipboardWriteText)?.(
+      event,
+      '## Copied response'
+    )
+    expect(electronMocks.writeClipboardText).toHaveBeenCalledWith(
+      '## Copied response'
+    )
+    expect(() =>
+      electronMocks.handlers.get(ipcChannels.clipboardWriteText)?.(
+        event,
+        { text: 'invalid' }
+      )
+    ).toThrow()
+    expect(() =>
+      electronMocks.handlers.get(ipcChannels.clipboardWriteText)?.(
+        {
+          sender: { ...webContents, id: 99 },
+          senderFrame: webContents.mainFrame
+        },
+        'untrusted'
+      )
+    ).toThrow('拒绝来自未知窗口的 IPC 请求')
+
     expect(() =>
       electronMocks.handlers.get(ipcChannels.terminalWrite)?.(
         {
@@ -295,7 +318,8 @@ const electronMocks = vi.hoisted(() => {
     })),
     openPath: vi.fn(async () => ''),
     showItemInFolder: vi.fn(),
-    openExternal: vi.fn(async () => undefined)
+    openExternal: vi.fn(async () => undefined),
+    writeClipboardText: vi.fn()
   }
 })
 
@@ -1106,6 +1130,9 @@ vi.mock('electron', () => ({
     getVersion: vi.fn(() => '0.1.0')
   },
   BrowserWindow: class {},
+  clipboard: {
+    writeText: electronMocks.writeClipboardText
+  },
   dialog: {
     showOpenDialog: electronMocks.showOpenDialog,
     showSaveDialog: electronMocks.showSaveDialog

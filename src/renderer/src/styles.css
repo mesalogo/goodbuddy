@@ -5363,6 +5363,11 @@ button > svg {
   justify-content: flex-end;
 }
 
+.message__actions {
+  display: flex;
+  margin-top: var(--space-2);
+}
+
 .message-attachments {
   display: flex;
   max-width: 100%;

@@ -254,6 +254,11 @@ const desktopApi: DesktopApi = {
       return () => ipcRenderer.removeListener(ipcChannels.settingsOpen, handler)
     }
   },
+  clipboard: {
+    writeText: async (text: string) => {
+      await ipcRenderer.invoke(ipcChannels.clipboardWriteText, text)
+    }
+  },
   agent: {
     getStatus: (selection) =>
       ipcRenderer.invoke(

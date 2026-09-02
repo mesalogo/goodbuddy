@@ -21,6 +21,20 @@ describe('sandboxed preload', () => {
     expect(source).not.toMatch(/\bfrom\s+['"]zod['"]/u)
   })
 
+  it('exposes only explicit clipboard text writing', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'preload', 'index.ts'),
+      'utf8'
+    )
+    const clipboard =
+      source.match(
+        /clipboard: \{(?<body>[\s\S]*?)\r?\n {2}\},\r?\n {2}agent:/u
+      )?.groups?.body ?? ''
+    expect(clipboard).toContain('writeText: async (text: string)')
+    expect(clipboard).toContain('ipcChannels.clipboardWriteText')
+    expect(clipboard).not.toMatch(/\b(?:read|image|html|rtf|bookmark)\b/iu)
+  })
+
   it('exposes only narrow browser-control methods', () => {
     const source = readFileSync(
       join(process.cwd(), 'src', 'preload', 'index.ts'),

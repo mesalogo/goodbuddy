@@ -857,6 +857,7 @@ function ChatHistoryPane({
   artifactById,
   conversation,
   locale,
+  onCopyMessage,
   onDownloadImage,
   onOpenCitationContext,
   onOpenCitationSource,
@@ -876,6 +877,7 @@ function ChatHistoryPane({
   artifactById: ReadonlyMap<string, AssistantArtifact>
   conversation: Conversation
   locale: TimeFormatLocale
+  onCopyMessage: (content: string) => Promise<void>
   onDownloadImage: (item: ImageViewerItem) => void
   onOpenCitationContext: (
     reference: KnowledgeSearchReference
@@ -1167,6 +1169,7 @@ function ChatHistoryPane({
               messageArticleRefs.current.delete(messageId)
             }
           }}
+          onCopyMessage={onCopyMessage}
           onDownloadImage={onDownloadImage}
           onOpenCitationContext={onOpenCitationContext}
           onOpenCitationSource={onOpenCitationSource}
@@ -6702,6 +6705,27 @@ function App(): React.JSX.Element {
     focusConversationActions(conversationId)
   }
 
+  const writeClipboardText = useCallback(
+    async (
+      content: string,
+      successMessage: string
+    ): Promise<void> => {
+      try {
+        await window.goodbuddy.clipboard.writeText(content)
+        notify({
+          tone: 'success',
+          message: successMessage
+        })
+      } catch {
+        notify({
+          tone: 'error',
+          message: t('notices.clipboardUnavailable')
+        })
+      }
+    },
+    [t]
+  )
+
   const copyConversation = async (
     conversation: ConversationSnapshot
   ): Promise<void> => {
@@ -6718,19 +6742,17 @@ function App(): React.JSX.Element {
           })
       )
       .join('\n\n')
-    try {
-      await navigator.clipboard.writeText(transcript)
-      notify({
-        tone: 'success',
-        message: t('notices.conversationCopied')
-      })
-    } catch {
-      notify({
-        tone: 'error',
-        message: t('notices.clipboardUnavailable')
-      })
-    }
+    await writeClipboardText(
+      transcript,
+      t('notices.conversationCopied')
+    )
   }
+
+  const copyMessage = useCallback(
+    (content: string): Promise<void> =>
+      writeClipboardText(content, t('notices.messageCopied')),
+    [t, writeClipboardText]
+  )
 
   const exportConversation = (
     conversation: ConversationSnapshot
@@ -9195,6 +9217,7 @@ function App(): React.JSX.Element {
                     conversation={conversation}
                     key={conversation.id}
                     locale={locale}
+                    onCopyMessage={copyMessage}
                     onDownloadImage={downloadImage}
                     onOpenCitationContext={openCitationContext}
                     onOpenCitationSource={openCitationSource}

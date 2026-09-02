@@ -5,9 +5,22 @@ import {
   browserNavigateRequestSchema,
   browserStopLoadingRequestSchema,
   builtinEmbeddingConnectionId,
+  clipboardTextSchema,
   legacyEmbeddingConnectionId,
   runtimeSettingsInputSchema
 } from './contracts'
+
+describe('clipboard text contract', () => {
+  it('accepts text and rejects non-text input', () => {
+    expect(clipboardTextSchema.parse('Markdown response')).toBe(
+      'Markdown response'
+    )
+    expect(clipboardTextSchema.parse('')).toBe('')
+    expect(clipboardTextSchema.safeParse({ text: 'no' }).success).toBe(
+      false
+    )
+  })
+})
 
 describe('browser control contracts', () => {
   it('requires authoritative toolbar metadata and accepts committed URLs up to 8192 characters', () => {

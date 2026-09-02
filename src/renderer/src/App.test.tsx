@@ -215,6 +215,9 @@ const api: DesktopApi = {
     }),
     onOpenSettings: vi.fn(() => () => {})
   },
+  clipboard: {
+    writeText: vi.fn(async () => {})
+  },
   feedback: {
     submit: vi.fn<DesktopApi['feedback']['submit']>(async () => ({
       ok: true,
@@ -2513,11 +2516,6 @@ describe('App', () => {
   })
 
   it('keeps conversation actions in the conversation list', async () => {
-    const writeText = vi.fn(async () => {})
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText }
-    })
     const { container } = render(<App />)
     const topbar = container.querySelector<HTMLElement>('.topbar')
     const conversationList =
@@ -2595,8 +2593,42 @@ describe('App', () => {
         name: '复制完整会话'
       })
     )
-    await waitFor(() => expect(writeText).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(api.clipboard.writeText).toHaveBeenCalledOnce()
+    )
     expect(await screen.findByRole('status')).toBeVisible()
+  })
+
+  it('copies a completed assistant reply through the desktop bridge', async () => {
+    render(<App />)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '复制此回复' })
+    )
+
+    await waitFor(() =>
+      expect(api.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining('你好，我是 GoodBuddy')
+      )
+    )
+    expect(
+      await screen.findByText('回复已复制到剪贴板')
+    ).toBeVisible()
+  })
+
+  it('reports a desktop clipboard write failure', async () => {
+    vi.mocked(api.clipboard.writeText).mockRejectedValueOnce(
+      new Error('clipboard unavailable')
+    )
+    render(<App />)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '复制此回复' })
+    )
+
+    expect(
+      await screen.findByRole('alert')
+    ).toHaveTextContent('无法访问剪贴板，请检查系统权限')
   })
 
   it('flushes and opens an independent conversation branch with provenance badges', async () => {

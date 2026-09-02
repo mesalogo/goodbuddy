@@ -314,6 +314,7 @@ export const app = {
       }
     },
     retry: '重新编辑并发送',
+    copyMessage: '复制此回复',
     loadEarlierMessages: '加载更早的消息（还剩 {{count}} 条）',
     scrollToBottom: '到底部',
     status: {
@@ -572,6 +573,7 @@ export const app = {
       '删除本地会话失败，已保留当前对话',
     deletedConversationBrowserCloseFailed: '关闭已删除对话的浏览器失败',
     conversationCopied: '对话已复制到剪贴板',
+    messageCopied: '回复已复制到剪贴板',
     clipboardUnavailable: '无法访问剪贴板，请检查系统权限',
     conversationExported: '对话已导出',
     conversationBranched: '已创建并打开分支会话',

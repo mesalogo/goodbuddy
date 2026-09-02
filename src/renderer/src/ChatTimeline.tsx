@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Copy,
   Download,
   FileText,
   Library,
@@ -382,6 +383,7 @@ type ChatMessageRowProps = {
   locale: TimeFormatLocale
   message: Message
   onArticleRef: (messageId: string, element: HTMLElement | null) => void
+  onCopyMessage: (content: string) => Promise<void>
   onDownloadImage: (item: ImageViewerItem) => void
   onOpenCitationContext: (
     reference: KnowledgeSearchReference
@@ -414,6 +416,7 @@ function ChatMessageRowView({
   locale,
   message,
   onArticleRef,
+  onCopyMessage,
   onDownloadImage,
   onOpenCitationContext,
   onOpenCitationSource,
@@ -986,6 +989,27 @@ function ChatMessageRowView({
             {t('chat.retry')}
           </button>
         )}
+        {message.role === 'assistant' &&
+          message.state !== 'streaming' &&
+          Boolean(message.content.trim()) && (
+            <div className="message__actions">
+              <button
+                aria-label={t('chat.copyMessage')}
+                className="icon-button"
+                onClick={() =>
+                  void onCopyMessage(
+                    greeting
+                      ? t('conversation.greeting')
+                      : message.content
+                  )
+                }
+                title={t('chat.copyMessage')}
+                type="button"
+              >
+                <Copy aria-hidden="true" size={15} />
+              </button>
+            </div>
+          )}
       </div>
     </article>
       {message.role === 'assistant' &&
@@ -1028,6 +1052,7 @@ type ChatTimelineProps = {
   messageStartIndex: number
   messages: Message[]
   onArticleRef: (messageId: string, element: HTMLElement | null) => void
+  onCopyMessage: (content: string) => Promise<void>
   onDownloadImage: (item: ImageViewerItem) => void
   onOpenCitationContext: (
     reference: KnowledgeSearchReference
@@ -1063,6 +1088,7 @@ export function ChatTimeline({
   messageStartIndex,
   messages,
   onArticleRef,
+  onCopyMessage,
   onDownloadImage,
   onOpenCitationContext,
   onOpenCitationSource,
@@ -1104,6 +1130,7 @@ export function ChatTimeline({
             locale={locale}
             message={message}
             onArticleRef={onArticleRef}
+            onCopyMessage={onCopyMessage}
             onDownloadImage={onDownloadImage}
             onOpenCitationContext={onOpenCitationContext}
             onOpenCitationSource={onOpenCitationSource}
