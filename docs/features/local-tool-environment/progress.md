@@ -6,8 +6,8 @@
 | --- | --- |
 | 文档类型 | 功能进度 |
 | 状态 | 已实施，发布候选 CI 验收中 |
-| 版本 | 0.4 |
-| 日期 | 2026-09-02 |
+| 版本 | 0.5 |
+| 日期 | 2026-09-03 |
 | 关联入口 | [工具执行环境](./README.md) |
 
 ## 当前结论
@@ -19,7 +19,9 @@
 
 六个 OSS 镜像对象已发布并公开回读验证。托管 Python 继续按需下载，Desktop 发行包不额外
 带入许可证文件。标准六平台打包任务已改用目标架构原生 Runner，并在打包前执行托管 Python
-的真实安装、SSL、pip 和 venv 探针；`0.12.0` 候选仍需通过这组 CI 才能完成对应跨平台验收。
+的真实安装、SSL、pip 和 venv 探针。不可变的 `v0.12.0` 尝试已通过 Windows 与 macOS，
+但 Linux x64/ARM64 在发布前暴露 TAR 大小写冲突误判；修正后的 `0.12.1` 候选仍需通过
+全部六个目标才能完成对应跨平台验收。
 
 ## 已完成
 
@@ -53,6 +55,8 @@
 - [x] 用户选择的原生地址或 OSS 镜像在任务开始时冻结，同一次任务不回退。
 - [x] HTTPS、重定向 Host、大小、SHA-256、取消和部分文件清理。
 - [x] NuGet ZIP 与 Astral TAR 的 payload 限定、路径穿越防护、展开上限和安全链接处理。
+- [x] 归档路径唯一性遵循目标文件系统；Linux 保留大小写不同的合法 TAR 条目，所有目标
+  仍拒绝完全重复路径，Windows/macOS 仍拒绝大小写冲突。
 - [x] GoodBuddy-owned 暂存安装、发布、失败清理、更新保留和删除。
 - [x] `python`、`python3`、`pip` 同源，`pip` 固定使用所选 Python 的 `-m pip`。
 - [x] 发布前真实验证 Python 3.13.15、架构、标准库、SSL、pip，并创建和执行临时 venv。
@@ -62,7 +66,9 @@
 
 - [x] 发布六个平台/架构的字节完全相同 OSS 镜像对象并公开回读校验。
 - [x] 确认托管 Python 保持按需下载，Desktop 发行包不额外带入许可证文件。
-- [ ] Windows ARM64、macOS x64/ARM64、Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针；工作流已接线，等待 `0.12.0` 候选运行结果。
+- [x] Windows ARM64、macOS x64/ARM64 原生 CI 安装、SSL、pip、venv 探针。
+- [ ] Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针；`v0.12.0` 因 TAR 大小写
+  冲突误判失败，等待 `0.12.1` 修正候选运行结果。
 - [ ] 最低 Windows/macOS/glibc 支持矩阵和 Windows NuGet 签名核验。
 - [ ] 真实 JavaScript/Python SKILL 成果及 Node/Python stdio MCP 调用。
 - [ ] 自定义 Node/Python 在产品 UI 中的真实选择和任务执行。
@@ -74,6 +80,20 @@
   mock 代替。
 
 ## 已验证证据
+
+### 2026-09-03 `v0.12.0` 失败标签恢复
+
+- 不可变标签工作流 `33704483505` 的 Windows x64/ARM64 与 macOS x64/ARM64 托管 Python
+  安装、SSL、pip、venv 探针和打包成功；Linux x64/ARM64 在实际官方 Astral TAR 中发现
+  `share/terminfo/2/2621A` 与 `share/terminfo/2/2621a` 后被大小写无关去重误判为冲突。
+- 最终 GitHub/OSS 发布任务跳过，GitHub 未创建 `v0.12.0` Release，Latest 仍为
+  `v0.11.14`；恢复版本按不可变标签规则提升为 `0.12.1`。
+- 提取器改为按工件目标平台判断路径唯一性，并继续保留完全重复路径、路径穿越、安全链接
+  和展开上限校验。锁定的 Linux x64 上游工件重新下载后大小与 SHA-256 匹配目录，并确认
+  冲突项确为大小写不同的两个合法 symlink；临时审计工件已清理。
+- Release Notes 校验通过；工具环境、工作流和 Release Notes 聚焦测试 `40/40` 通过，
+  live 安装项按本地发布规则未启用。最终 `npm test` 为 `3478` 通过、`51` 跳过，
+  typecheck 与 lint 通过；未运行本地 production build、package 或安装探针。
 
 ### 2026-09-02 完整实现
 

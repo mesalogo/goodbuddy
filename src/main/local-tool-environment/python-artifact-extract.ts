@@ -88,14 +88,19 @@ function ensureSafeSymlink(relative: string, target: string): void {
   }
 }
 
-function verifyEntrySet(entries: SafeEntry[]): void {
+function verifyEntrySet(
+  entries: SafeEntry[],
+  platform: PythonArtifact['platform']
+): void {
   if (entries.length === 0 || entries.length > MAX_ENTRIES) {
     throw new Error('Archive has an invalid number of payload entries')
   }
   let expanded = 0
   const seen = new Set<string>()
   for (const entry of entries) {
-    const key = entry.outputPath.toLowerCase()
+    const key = platform === 'linux'
+      ? entry.outputPath
+      : entry.outputPath.toLowerCase()
     if (seen.has(key)) {
       throw new Error(`Archive contains duplicate path: ${entry.outputPath}`)
     }
@@ -107,7 +112,11 @@ function verifyEntrySet(entries: SafeEntry[]): void {
   }
 }
 
-function readZipEntries(data: Buffer, root: string): SafeEntry[] {
+function readZipEntries(
+  data: Buffer,
+  root: string,
+  platform: PythonArtifact['platform']
+): SafeEntry[] {
   const entries: SafeEntry[] = []
   for (let offset = 0; offset + 46 <= data.length;) {
     if (data.readUInt32LE(offset) !== zipSignature) {
@@ -146,7 +155,7 @@ function readZipEntries(data: Buffer, root: string): SafeEntry[] {
     }
     offset = end
   }
-  verifyEntrySet(entries)
+  verifyEntrySet(entries, platform)
   return entries
 }
 
@@ -154,11 +163,12 @@ async function extractNuget(
   archivePath: string,
   destination: string,
   root: string,
+  platform: PythonArtifact['platform'],
   signal?: AbortSignal
 ): Promise<void> {
   ensureNotAborted(signal)
   const data = await readFile(archivePath)
-  const entries = readZipEntries(data, root)
+  const entries = readZipEntries(data, root, platform)
   const payloadPaths = new Set(entries.map((entry) => entry.archivePath))
   const unzipped = unzipSync(data, {
     filter: ({ name }) => payloadPaths.has(name)
@@ -217,6 +227,7 @@ async function extractTar(
   archivePath: string,
   destination: string,
   root: string,
+  platform: PythonArtifact['platform'],
   signal?: AbortSignal
 ): Promise<void> {
   const entries: SafeEntry[] = []
@@ -243,7 +254,7 @@ async function extractTar(
   if (validationError) {
     throw validationError
   }
-  verifyEntrySet(entries)
+  verifyEntrySet(entries, platform)
   const allowed = new Map(entries.map((entry) => [entry.archivePath, entry]))
   await extract({
     file: archivePath,
@@ -278,7 +289,10 @@ async function extractTar(
 }
 
 export async function extractPythonArtifact(options: {
-  artifact: Pick<PythonArtifact, 'archiveFormat' | 'payloadRoot'>
+  artifact: Pick<
+    PythonArtifact,
+    'platform' | 'archiveFormat' | 'payloadRoot'
+  >
   archivePath: string
   destinationDirectory: string
   signal?: AbortSignal
@@ -289,6 +303,7 @@ export async function extractPythonArtifact(options: {
       options.archivePath,
       options.destinationDirectory,
       options.artifact.payloadRoot,
+      options.artifact.platform,
       options.signal
     )
   } else {
@@ -296,6 +311,7 @@ export async function extractPythonArtifact(options: {
       options.archivePath,
       options.destinationDirectory,
       options.artifact.payloadRoot,
+      options.artifact.platform,
       options.signal
     )
   }

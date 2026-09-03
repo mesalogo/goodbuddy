@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 已实施，跨平台验收中 |
-| 版本 | 0.2 |
-| 日期 | 2026-09-02 |
+| 版本 | 0.3 |
+| 日期 | 2026-09-03 |
 | 关联 PRD | [工具执行环境 PRD](./prd.md) |
 | 功能逻辑 | [工具执行环境功能逻辑设计](./logic-design.md) |
 | 相关架构 | [DeepSeek Harness Runtime 设计](../deepseek-harness/technical-design.md)、[SSH 远程主机与 GoodBuddy Agent 实现说明](../remote-host/technical-design.md) |
@@ -122,6 +122,8 @@ ELECTRON_RUN_AS_NODE=1 <process.execPath> <arguments...>
 - 目录包含版本、平台、架构、字节数、SHA-256、原生 Target 和 OSS Target。
 - OSS 对象直接复制原生工件字节，不重新压缩或转换。
 - 安装包不无条件携带完整 Python。
+- 归档条目唯一性按目标文件系统判断：Linux TAR 区分大小写，Windows 与 macOS 拒绝
+  大小写冲突，所有目标都拒绝完全相同的重复路径。
 
 具体发行包和版本必须在实现前完成六平台工件、维护状态和 pip/venv 可用性核验。
 
@@ -349,7 +351,7 @@ Renderer 不能提交 PATH、环境变量、下载 URL、摘要、安装目录�
 ## 15. 验证
 
 单元测试覆盖设置迁移、探测、版本解析、shim 转义、PATH 顺序、失效路径、下载摘要和暂存
-清理，以及原生/OSS 选择冻结、Target 缺失和禁止回退。
+清理，以及原生/OSS 选择冻结、Target 缺失、禁止回退和目标文件系统的归档大小写语义。
 
 Renderer 测试覆盖统一一级分类、三个外层 Tab、默认 Skills、Skills/MCP 定向入口、会话内
 状态保留、MCP 内外层 tablist 隔离、键盘切换和窄屏单行滚动。

@@ -129,7 +129,7 @@ otherwise.
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current source lock and
   Agent source lock is `0.11.14`, while the current Desktop release candidate
-  is `0.12.0`; formal publication status follows the separate Agent and Desktop
+  is `0.12.1`; formal publication status follows the separate Agent and Desktop
   release channels.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
@@ -289,14 +289,18 @@ otherwise.
   removal. New local Runtimes and stdio MCP processes receive immutable PATH
   snapshots without changing ordinary terminals, the system environment, or
   remote Hosts. Managed Node and native-source Python have passed real
-  installation validation on Windows x64.
+  installation validation on Windows x64. Managed Python archive validation
+  follows the target filesystem: Linux preserves valid case-distinct paths,
+  while every target still rejects exact duplicates and unsafe entries.
 - [ ] **Local tool-execution environment release acceptance**: All six
   platform/architecture OSS mirror objects have passed public byte, size, and
   SHA-256 verification. Managed Python remains an on-demand download and does
   not add license files to the Desktop package. Each standard package job uses
   a native target-architecture Runner and performs a real managed-Python
-  install, SSL, pip, and venv probe before packaging; the `0.12.0` candidate
-  must pass that matrix. Real Skill/MCP execution, custom interpreter
+  install, SSL, pip, and venv probe before packaging. The immutable `v0.12.0`
+  attempt passed Windows and macOS but exposed Linux TAR case handling before
+  publication; the corrected `0.12.1` candidate must pass all six targets.
+  Real Skill/MCP execution, custom interpreter
   execution, and coordination with affected running processes remain
   acceptance work. Six-platform release acceptance must not be claimed before
   the applicable checks pass.

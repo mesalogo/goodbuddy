@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gzipSync, zipSync } from 'fflate'
@@ -29,7 +29,7 @@ function tarField(value: string | number, length: number): Buffer {
 
 function tarArchive(entries: {
   path: string
-  type?: '0' | '2'
+  type?: '0' | '2' | '5'
   content?: string
   linkPath?: string
   mode?: number
@@ -77,7 +77,11 @@ describe('Managed Python archive extraction', () => {
     }))
     const destinationDirectory = join(directory, 'install')
     await extractPythonArtifact({
-      artifact: { archiveFormat: 'nuget-zip', payloadRoot: 'tools' },
+      artifact: {
+        platform: 'win32',
+        archiveFormat: 'nuget-zip',
+        payloadRoot: 'tools'
+      },
       archivePath,
       destinationDirectory
     })
@@ -98,7 +102,11 @@ describe('Managed Python archive extraction', () => {
       'tools/../escaped': Buffer.from('bad')
     }))
     await expect(extractPythonArtifact({
-      artifact: { archiveFormat: 'nuget-zip', payloadRoot: 'tools' },
+      artifact: {
+        platform: 'win32',
+        archiveFormat: 'nuget-zip',
+        payloadRoot: 'tools'
+      },
       archivePath,
       destinationDirectory: join(directory, 'install')
     })).rejects.toThrow(/Unsafe archive path/u)
@@ -121,12 +129,68 @@ describe('Managed Python archive extraction', () => {
     }, ['python'])
     const destinationDirectory = join(directory, 'install')
     await extractPythonArtifact({
-      artifact: { archiveFormat: 'tar.gz', payloadRoot: 'python' },
+      artifact: {
+        platform: 'linux',
+        archiveFormat: 'tar.gz',
+        payloadRoot: 'python'
+      },
       archivePath,
       destinationDirectory
     })
     expect(await readFile(join(destinationDirectory, 'bin/python3'), 'utf8'))
       .toBe('python')
+  })
+
+  it('uses target filesystem case semantics for TAR paths', async () => {
+    const directory = await temporaryDirectory()
+    const archivePath = join(directory, 'case-sensitive.tar.gz')
+    await writeFile(archivePath, gzipSync(tarArchive([
+      { path: 'python/share/terminfo/2/2621A', type: '5' },
+      { path: 'python/share/terminfo/2/2621a', type: '5' }
+    ])))
+    const destinationDirectory = join(directory, 'linux-install')
+    await extractPythonArtifact({
+      artifact: {
+        platform: 'linux',
+        archiveFormat: 'tar.gz',
+        payloadRoot: 'python'
+      },
+      archivePath,
+      destinationDirectory
+    })
+    expect(
+      (await lstat(join(destinationDirectory, 'share/terminfo/2/2621A')))
+        .isDirectory()
+    ).toBe(true)
+    expect(
+      (await lstat(join(destinationDirectory, 'share/terminfo/2/2621a')))
+        .isDirectory()
+    ).toBe(true)
+
+    await expect(extractPythonArtifact({
+      artifact: {
+        platform: 'darwin',
+        archiveFormat: 'tar.gz',
+        payloadRoot: 'python'
+      },
+      archivePath,
+      destinationDirectory: join(directory, 'darwin-install')
+    })).rejects.toThrow(/duplicate path/u)
+
+    const duplicateArchivePath = join(directory, 'duplicate.tar.gz')
+    await writeFile(duplicateArchivePath, gzipSync(tarArchive([
+      { path: 'python/lib/duplicate', content: 'first' },
+      { path: 'python/lib/duplicate', content: 'second' }
+    ])))
+    await expect(extractPythonArtifact({
+      artifact: {
+        platform: 'linux',
+        archiveFormat: 'tar.gz',
+        payloadRoot: 'python'
+      },
+      archivePath: duplicateArchivePath,
+      destinationDirectory: join(directory, 'duplicate-install')
+    })).rejects.toThrow(/duplicate path/u)
   })
 
   it('validates relative symlinks and rejects escaping links', async () => {
@@ -143,7 +207,11 @@ describe('Managed Python archive extraction', () => {
       ])))
       const destinationDirectory = join(directory, 'safe-install')
       await extractPythonArtifact({
-        artifact: { archiveFormat: 'tar.gz', payloadRoot: 'python' },
+        artifact: {
+          platform: 'linux',
+          archiveFormat: 'tar.gz',
+          payloadRoot: 'python'
+        },
         archivePath: safeArchive,
         destinationDirectory
       })
@@ -160,7 +228,11 @@ describe('Managed Python archive extraction', () => {
       }
     ])))
     await expect(extractPythonArtifact({
-      artifact: { archiveFormat: 'tar.gz', payloadRoot: 'python' },
+      artifact: {
+        platform: 'linux',
+        archiveFormat: 'tar.gz',
+        payloadRoot: 'python'
+      },
       archivePath: unsafeArchive,
       destinationDirectory: join(directory, 'unsafe-install')
     })).rejects.toThrow(/escapes payload root/u)

@@ -36,7 +36,7 @@ describe('packaged release notes', () => {
       }
     }
     const releaseWithLongScenario = parsed.releases.find(
-      (release) => release.version === '0.12.0'
+      (release) => release.version === packageSource.version
     )
     expect(
       releaseWithLongScenario?.notes['en-US'].features.some(
