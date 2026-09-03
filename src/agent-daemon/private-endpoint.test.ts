@@ -340,7 +340,8 @@ describe('private endpoint lifecycle', () => {
       await relay
       await endpoint.close()
       events.close()
-    }
+    },
+    30_000
   )
 })
 

@@ -378,6 +378,28 @@ ZIP，以及 Linux 的 AppImage、DEB 与 RPM。Linux 原生 Runner 必须安装
 打包矩阵，避免随后推送版本标签时对同一提交重复完整打包。手动触发会运行
 验证和六平台打包，并保留 30 天 Actions artifacts，但不会创建 Release。
 
+### Desktop 发布顺序（强制）
+
+Desktop 正式发布必须把候选分支推送与标签推送拆成两个阶段，不能在同一批操作中先后
+推送 `main` 和标签：
+
+1. 完成源码、版本、双语 Release Notes 与相关文档修改，运行 Release Notes 校验、
+   `npm test`、`npm run typecheck` 和 `npm run lint`。常规发布准备不在本机运行
+   production build、打包或安装包探针。
+2. 提交候选，确认用户批准的准确 commit SHA 与双语 Release Notes，fetch 两个远端后，
+   将该候选分别推送到 `origin/main` 和 `github/main`。
+3. 等待这个准确 SHA 的 `main` 分支 `Cross-platform packages` workflow 完成。只有
+   `Run validators` 和 `Build production bundle` 都成功，候选才具备打标签条件。
+4. 如果 `main` workflow 失败，不得创建标签。修复必须形成新的 commit，重新完成本地
+   校验、双远端 `main` 推送，并等待新 SHA 的 `main` workflow 成功；旧 SHA 的成功结果
+   不能替代新 SHA 的验证。
+5. `main` 成功后再次 fetch 两个远端，确认工作区干净、两个远端 `main` 都等于获批 SHA、
+   目标标签在本地和远端均未使用。此时才可在该 SHA 创建 annotated tag，并把标签分别
+   推送到两个远端，随后等待六平台打包和正式发布完成。
+
+不可移动、删除、重建或复用失败的发布标签。完整审批、恢复和发布后检查以
+[发布 Runbook](./docs/development/release-runbook.md) 为准。
+
 推送 `v${package.version}` 标签时，工作流运行验证和六平台打包。只有在
 全部目标成功后，才会严格校验并聚合所有平台产物，生成按平台重命名的
 manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流通过
