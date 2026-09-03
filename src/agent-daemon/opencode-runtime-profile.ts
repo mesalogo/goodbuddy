@@ -16,11 +16,8 @@ import {
   type ModelBridgePolicy
 } from '../shared/model-bridge-contracts'
 import {
-  assertAbsoluteManagedPath,
-  ensurePrivateDirectoryTree
+  assertAbsoluteManagedPath
 } from './managed-paths'
-
-export const OPENCODE_BWRAP_EXECUTABLE = '/usr/bin/bwrap'
 
 export type OpenCodeLaunchProfile = {
   executable: string
@@ -35,7 +32,6 @@ export function createOpenCodeLaunchProfile(input: {
   manifest: RemoteRuntimeBundleManifest
   bundleDirectory: string
   workspaceDirectory: string
-  scratchDirectory: string
   workMode: 'ask' | 'execute'
   modelBridge?: {
     agentExecutablePath: string
@@ -113,22 +109,6 @@ export function createOpenCodeLaunchProfile(input: {
       'Model bridge socket or Agent executable escapes its managed directory'
     )
   }
-  const managedPaths = [
-    ['Runtime bundle', bundleDirectory],
-    ['Workspace', workspaceDirectory],
-    ...(modelBridge === undefined
-      ? []
-      : [
-          [
-            'Agent installation',
-            modelBridge.agentInstallationDirectory
-          ] as const,
-          [
-            'Model bridge',
-            modelBridge.bridgeDirectory
-          ] as const
-        ])
-  ] as const
   const executablePath = resolve(
     bundleDirectory,
     ...manifest.entrypoint.path.split('/')
@@ -168,112 +148,12 @@ export function createOpenCodeLaunchProfile(input: {
           ]
         }
 
-  if (input.workMode === 'execute') {
-    return {
-      ...runtimeCommand,
-      processExecutable: runtimeCommand.executable,
-      cwd: workspaceDirectory,
-      env: executeEnvironment(process.env, workspaceDirectory),
-      workMode: 'execute'
-    }
-  }
-
-  const scratchDirectory = assertAbsoluteManagedPath(
-    resolve(input.scratchDirectory)
-  )
-  assertDisjointPaths([
-    ...managedPaths,
-    ['Runtime scratch', scratchDirectory]
-  ])
-  const scratchPaths = {
-    home: join(scratchDirectory, 'home'),
-    temporary: join(scratchDirectory, 'tmp'),
-    cache: join(scratchDirectory, 'xdg-cache'),
-    config: join(scratchDirectory, 'xdg-config'),
-    data: join(scratchDirectory, 'xdg-data'),
-    state: join(scratchDirectory, 'xdg-state')
-  }
-  for (const path of Object.values(scratchPaths)) {
-    ensurePrivateDirectoryTree(path, scratchDirectory)
-  }
-
-  const environment: Readonly<Record<
-    (typeof OPENCODE_REMOTE_RUNTIME_ENVIRONMENT_NAMES)[number],
-    string
-  >> = {
-    HOME: scratchPaths.home,
-    LANG: 'C.UTF-8',
-    LC_ALL: 'C.UTF-8',
-    PATH: '/usr/bin:/bin',
-    TMPDIR: scratchPaths.temporary,
-    XDG_CACHE_HOME: scratchPaths.cache,
-    XDG_CONFIG_HOME: scratchPaths.config,
-    XDG_DATA_HOME: scratchPaths.data,
-    XDG_STATE_HOME: scratchPaths.state
-  }
-  const args = [
-    '--new-session',
-    '--unshare-all',
-    '--clearenv',
-    '--proc',
-    '/proc',
-    '--dev',
-    '/dev',
-    '--tmpfs',
-    '/run',
-    '--ro-bind',
-    '/usr',
-    '/usr',
-    '--ro-bind-try',
-    '/bin',
-    '/bin',
-    '--ro-bind-try',
-    '/lib',
-    '/lib',
-    '--ro-bind-try',
-    '/lib64',
-    '/lib64',
-    '--ro-bind',
-    bundleDirectory,
-    bundleDirectory,
-    '--ro-bind',
-    workspaceDirectory,
-    workspaceDirectory,
-    '--bind',
-    scratchDirectory,
-    scratchDirectory,
-    ...Object.entries(environment).flatMap(([name, value]) => [
-      '--setenv',
-      name,
-      value
-    ]),
-    '--chdir',
-    workspaceDirectory,
-    ...(modelBridge === undefined
-      ? []
-      : [
-          '--ro-bind',
-          modelBridge.agentInstallationDirectory,
-          modelBridge.agentInstallationDirectory,
-          '--ro-bind',
-          modelBridge.bridgeDirectory,
-          modelBridge.bridgeDirectory
-        ]),
-    '--',
-    runtimeCommand.executable,
-    ...runtimeCommand.args
-  ] as const
-
   return {
-    executable: OPENCODE_BWRAP_EXECUTABLE,
+    ...runtimeCommand,
     processExecutable: runtimeCommand.executable,
-    args,
-    cwd: scratchDirectory,
-    env: {
-      PATH: '/usr/bin:/bin',
-      LANG: 'C.UTF-8'
-    },
-    workMode: 'ask'
+    cwd: workspaceDirectory,
+    env: executeEnvironment(process.env, workspaceDirectory),
+    workMode: input.workMode
   }
 }
 
@@ -319,26 +199,6 @@ function usableEnvironmentValue(
   value: string | undefined
 ): value is string {
   return value !== undefined && value.length > 0 && !value.includes('\0')
-}
-
-function assertDisjointPaths(
-  paths: readonly (readonly [label: string, path: string])[]
-): void {
-  for (let left = 0; left < paths.length; left += 1) {
-    for (let right = left + 1; right < paths.length; right += 1) {
-      const leftEntry = paths[left]!
-      const rightEntry = paths[right]!
-      if (
-        leftEntry[1] === rightEntry[1] ||
-        isStrictDescendant(leftEntry[1], rightEntry[1]) ||
-        isStrictDescendant(rightEntry[1], leftEntry[1])
-      ) {
-        throw new Error(
-          `${leftEntry[0]} and ${rightEntry[0]} paths must not overlap`
-        )
-      }
-    }
-  }
 }
 
 function isStrictDescendant(parent: string, candidate: string): boolean {

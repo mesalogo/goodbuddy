@@ -12,7 +12,6 @@ import {
   type RemoteRuntimeBundleManifest
 } from '../shared/remote-runtime-launch-contracts'
 import {
-  OPENCODE_BWRAP_EXECUTABLE,
   createOpenCodeLaunchProfile
 } from './opencode-runtime-profile'
 
@@ -24,28 +23,25 @@ afterEach(() => {
   }
 })
 
-describe('OpenCode bubblewrap launch profile', () => {
-  it('uses a read-only Workspace bind for Ask', () => {
+describe('OpenCode direct launch profile', () => {
+  it('runs Ask directly in the Workspace', () => {
     const fixture = createFixture()
     const profile = createOpenCodeLaunchProfile({
       ...fixture,
       workMode: 'ask'
     })
 
-    expect(profile.executable).toBe(OPENCODE_BWRAP_EXECUTABLE)
-    expect(profile.cwd).toBe(fixture.scratchDirectory)
-    expect(profile.args).toContain('--unshare-all')
-    expect(profile.args).toContain('--clearenv')
-    expectArgumentSequence(profile.args, [
-      '--ro-bind',
-      fixture.workspaceDirectory,
-      fixture.workspaceDirectory
-    ])
-    expectArgumentSequence(profile.args, [
-      '--',
-      resolve(fixture.bundleDirectory, 'bin', 'opencode'),
-      'acp'
-    ])
+    expect(profile.executable).toBe(
+      resolve(fixture.bundleDirectory, 'bin', 'opencode')
+    )
+    expect(profile.processExecutable).toBe(profile.executable)
+    expect(profile.args).toEqual(['acp'])
+    expect(profile.cwd).toBe(fixture.workspaceDirectory)
+    expect(profile.env).toMatchObject({
+      HOME:
+        process.env.HOME ?? fixture.workspaceDirectory,
+      PATH: process.env.PATH || '/usr/bin:/bin'
+    })
   })
 
   it('runs Execute directly with the SSH account environment', () => {
@@ -98,29 +94,12 @@ describe('OpenCode bubblewrap launch profile', () => {
     expect(execute.args).not.toContain('--unshare-all')
   })
 
-  it('sets only the fixed environment and rejects a changed profile', () => {
+  it('keeps Runtime arguments credential-free and rejects a changed manifest', () => {
     const fixture = createFixture()
     const profile = createOpenCodeLaunchProfile({
       ...fixture,
       workMode: 'ask'
     })
-    const setEnvironmentNames = profile.args.flatMap(
-      (argument, index) =>
-        argument === '--setenv'
-          ? [profile.args[index + 1]]
-          : []
-    )
-    expect(setEnvironmentNames).toEqual([
-      'HOME',
-      'LANG',
-      'LC_ALL',
-      'PATH',
-      'TMPDIR',
-      'XDG_CACHE_HOME',
-      'XDG_CONFIG_HOME',
-      'XDG_DATA_HOME',
-      'XDG_STATE_HOME'
-    ])
     expect(profile.args.join('\0')).not.toContain('ANTHROPIC_API_KEY')
 
     expect(() =>
@@ -142,18 +121,9 @@ describe('OpenCode bubblewrap launch profile', () => {
     ).toThrow(/normalized absolute/iu)
   })
 
-  it('rejects overlapping bundle, Workspace, and scratch mounts', () => {
+  it('does not impose mount-layout constraints on direct launches', () => {
     const fixture = createFixture()
     for (const conflict of [
-      {
-        scratchDirectory: fixture.workspaceDirectory
-      },
-      {
-        scratchDirectory: resolve(
-          fixture.workspaceDirectory,
-          'scratch'
-        )
-      },
       {
         workspaceDirectory: resolve(
           fixture.bundleDirectory,
@@ -167,13 +137,13 @@ describe('OpenCode bubblewrap launch profile', () => {
         )
       }
     ]) {
-      expect(() =>
+      expect(
         createOpenCodeLaunchProfile({
           ...fixture,
           ...conflict,
           workMode: 'ask'
         })
-      ).toThrow(/must not overlap/iu)
+      ).toMatchObject({ workMode: 'ask' })
     }
   })
 
@@ -215,19 +185,10 @@ describe('OpenCode bubblewrap launch profile', () => {
       }
     })
 
-    expectArgumentSequence(profile.args, [
-      '--ro-bind',
-      agentInstallationDirectory,
-      agentInstallationDirectory
-    ])
-    expectArgumentSequence(profile.args, [
-      '--ro-bind',
-      bridgeDirectory,
-      bridgeDirectory
-    ])
-    expectArgumentSequence(profile.args, [
-      '--',
-      resolve(agentInstallationDirectory, 'node'),
+    expect(profile.executable).toBe(
+      resolve(agentInstallationDirectory, 'node')
+    )
+    expect(profile.args).toEqual([
       resolve(agentInstallationDirectory, 'lib', 'agent.cjs'),
       'model-bridge-helper',
       '--socket-path',
@@ -286,11 +247,6 @@ describe('OpenCode bubblewrap launch profile', () => {
       'runtimes',
       'opencode'
     )
-    const scratchDirectory = resolve(
-      managedRoot,
-      'scratch',
-      'prompt'
-    )
     const agentInstallationDirectory = resolve(
       managedRoot,
       'agent',
@@ -324,7 +280,6 @@ describe('OpenCode bubblewrap launch profile', () => {
         manifest: fixture.manifest,
         bundleDirectory,
         workspaceDirectory,
-        scratchDirectory,
         workMode: 'execute',
         modelBridge
       })
@@ -332,16 +287,18 @@ describe('OpenCode bubblewrap launch profile', () => {
       cwd: workspaceDirectory,
       workMode: 'execute'
     })
-    expect(() =>
+    expect(
       createOpenCodeLaunchProfile({
         manifest: fixture.manifest,
         bundleDirectory,
         workspaceDirectory,
-        scratchDirectory,
         workMode: 'ask',
         modelBridge
       })
-    ).toThrow(/paths must not overlap/iu)
+    ).toMatchObject({
+      cwd: workspaceDirectory,
+      workMode: 'ask'
+    })
   })
 })
 
@@ -349,7 +306,6 @@ function createFixture(): {
   manifest: RemoteRuntimeBundleManifest
   bundleDirectory: string
   workspaceDirectory: string
-  scratchDirectory: string
 } {
   const root = resolve(
     mkdtempSync(join(tmpdir(), 'goodbuddy-opencode-profile-'))
@@ -357,7 +313,6 @@ function createFixture(): {
   temporaryPaths.push(root)
   const bundleDirectory = resolve(root, 'bundle')
   const workspaceDirectory = resolve(root, 'workspace')
-  const scratchDirectory = resolve(root, 'scratch')
   for (const directory of [root, bundleDirectory, workspaceDirectory]) {
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     if (process.platform !== 'win32') {
@@ -367,7 +322,6 @@ function createFixture(): {
   return {
     bundleDirectory,
     workspaceDirectory,
-    scratchDirectory,
     manifest: remoteRuntimeBundleManifestSchema.parse({
       formatVersion: 2,
       product: 'GoodBuddy',
@@ -432,18 +386,4 @@ function createFixture(): {
       }
     })
   }
-}
-
-function expectArgumentSequence(
-  args: readonly string[],
-  sequence: readonly string[]
-): void {
-  const start = args.findIndex(
-    (value, index) =>
-      value === sequence[0] &&
-      sequence.every(
-        (candidate, offset) => args[index + offset] === candidate
-      )
-  )
-  expect(start).toBeGreaterThanOrEqual(0)
 }

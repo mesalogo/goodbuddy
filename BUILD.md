@@ -305,10 +305,10 @@ integrity，以 `--ignore-scripts` 从官方 npm registry 获取归档；bundle 
 再次验证归档 SHA-512、包名、版本和 ELF 架构。
 
 源码已经实现 Runtime bundle build/import/verify、Daemon 侧
-manifest/Ed25519/payload/ELF/lock 校验、digest registry、ACP v3、直接进程 ownership、
-Ask 的固定 `bwrap` 只读 profile 和 `runtime/model-bridge` v1。Agent 通过私有 Unix socket
-按需 detached 启动，不依赖 systemd、D-Bus 或 Linger。Execute 直接以所选 SSH 账号权限
-启动签名 Runtime；Ask 才使用只读 bubblewrap。
+manifest/Ed25519/payload/ELF/lock 校验、digest registry、ACP v3、直接进程 ownership 和
+`runtime/model-bridge` v1。Agent 通过私有 Unix socket 按需 detached 启动，不依赖
+systemd、D-Bus、Linger 或 bubblewrap。Ask 与 Execute 都直接启动签名 Runtime；两者的
+差异由 Agent 工具权限分发边界执行。
 
 OpenCode 通过已签名 Agent helper 和每次 Prompt 的私有 Unix socket 使用 Main-only 模型
 网关；Provider URL、API Key 和真实 Provider 认证头不进入远端。helper 的 loopback
@@ -317,7 +317,7 @@ HTTP 入口使用每个进程随机生成的路径 capability，Anthropic/OpenAI
 配置必须禁用 title Agent；工具循环只使用 build Agent 的模型轮次。
 
 Ask 模式的 ACP 权限中介只可为原生 `read` 选择 `allow_once`；其他工具种类和
-`allow_always` 请求必须拒绝，Workspace 的真正只读边界仍由 `bwrap` 执行。Unix 模型桥
+`allow_always` 请求必须拒绝。Unix 模型桥
 broker 必须按 socket 当前已缓冲字节增量读取长度帧，不能等待 `read(remaining)` 一次返回
 完整大响应。Agent 传输或权限实现变化后，除了普通测试，还要在原生 Linux 上运行包含
 至少 256 KiB 响应的模型桥回归。

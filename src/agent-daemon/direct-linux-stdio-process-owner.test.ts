@@ -24,24 +24,25 @@ afterEach(() => {
 })
 
 describe('direct Linux stdio Runtime ownership', () => {
-  it('spawns exact bubblewrap argv without systemd using detached fixed stdio', async () => {
+  it('spawns Ask directly without systemd using detached fixed stdio', async () => {
     const registry = createRegistry()
     const child = fakeChild()
     let launchedIdentity!: LinuxRuntimeProcessIdentity
     const spawn = vi.fn<DirectLinuxStdioSpawn>((executable, args, options) => {
-      expect(executable).toBe('/usr/bin/bwrap')
-      expect(args).not.toContain('--die-with-parent')
-      expect(args).toContain('--unshare-all')
-      expect(args).toContain('--new-session')
-      expect(args).toContain('GOODBUDDY_RUNTIME_OWNER_TOKEN')
+      expect(executable).toBe('/bundle/bin/opencode')
+      expect(args).toEqual(['acp'])
       expect(args.join('\0')).not.toMatch(/systemd-run|systemctl|DBUS/iu)
       expect(options).toEqual({
         shell: false,
         detached: true,
         windowsHide: true,
-        cwd: '/state/scratch',
+        cwd: '/workspace',
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }
+        env: {
+          PATH: '/usr/bin:/bin',
+          LANG: 'C.UTF-8',
+          GOODBUDDY_RUNTIME_OWNER_TOKEN: 'a'.repeat(32)
+        }
       })
       launchedIdentity = identity()
       queueMicrotask(() => child.emit('spawn'))
@@ -117,47 +118,6 @@ describe('direct Linux stdio Runtime ownership', () => {
       state: 'running',
       processIdentity
     })
-    child.exitCode = 0
-    child.emit('close', 0, null)
-    registry.close()
-  })
-
-  it('waits for bubblewrap to exec the supervised bridge helper', async () => {
-    const registry = createRegistry()
-    const child = fakeChild()
-    const bwrapIdentity = identity()
-    const helperIdentity = {
-      ...bwrapIdentity,
-      executablePath: '/agent/node'
-    }
-    const spawn: DirectLinuxStdioSpawn = () => {
-      queueMicrotask(() => child.emit('spawn'))
-      return child
-    }
-    const readProcessIdentity = vi
-      .fn()
-      .mockResolvedValueOnce(bwrapIdentity)
-      .mockResolvedValue(helperIdentity)
-
-    const owner = await launchDirectLinuxStdioProcessOwner({
-      manifest: manifest(),
-      profile: {
-        ...profile(),
-        processExecutable: '/agent/node'
-      },
-      identity: { launchId: 'launch-1', processId: 'process-1' },
-      installationId: 'installation-1',
-      registry,
-      deadlineAt: '2030-01-01T00:00:00.000Z',
-      maximumInputBytes: 1024,
-      platform: 'linux',
-      spawn,
-      randomOwnerToken: () => 'a'.repeat(32),
-      readProcessIdentity
-    })
-
-    expect(readProcessIdentity).toHaveBeenCalledTimes(2)
-    expect(owner.processIdentity).toEqual(helperIdentity)
     child.exitCode = 0
     child.emit('close', 0, null)
     registry.close()
@@ -350,24 +310,12 @@ function fakeChild(): DirectLinuxStdioChild & EventEmitter {
 
 function profile() {
   return {
-    executable: '/usr/bin/bwrap' as const,
-    processExecutable: '/usr/bin/bwrap' as const,
-    cwd: '/state/scratch',
+    executable: '/bundle/bin/opencode' as const,
+    processExecutable: '/bundle/bin/opencode' as const,
+    cwd: '/workspace',
     env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
     workMode: 'ask' as const,
-    args: [
-      '--new-session',
-      '--unshare-all',
-      '--clearenv',
-      '--proc',
-      '/proc',
-      '--ro-bind',
-      '/workspace',
-      '/workspace',
-      '--',
-      '/bundle/bin/opencode',
-      'acp'
-    ]
+    args: ['acp']
   }
 }
 
@@ -377,7 +325,7 @@ function identity(): LinuxRuntimeProcessIdentity {
     pid: 42,
     startTimeTicks: 100n,
     processGroupId: 42,
-    executablePath: '/usr/bin/bwrap'
+    executablePath: '/bundle/bin/opencode'
   }
 }
 

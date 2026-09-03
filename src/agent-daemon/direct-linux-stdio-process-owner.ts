@@ -18,7 +18,6 @@ import {
 import type { ModelBridgePolicy } from '../shared/model-bridge-contracts'
 import {
   createOpenCodeLaunchProfile,
-  OPENCODE_BWRAP_EXECUTABLE,
   type OpenCodeLaunchProfile
 } from './opencode-runtime-profile'
 import {
@@ -102,7 +101,6 @@ export type DirectLinuxStdioProcessOwnerOptions = {
   profileInput?: {
     bundleDirectory: string
     workspaceDirectory: string
-    scratchDirectory: string
     workMode: 'ask' | 'execute'
     modelBridge?: {
       agentExecutablePath: string
@@ -771,26 +769,12 @@ export function bindDirectOwnerToken(
   ) {
     throw identityError('Runtime owner token marker is invalid or duplicated')
   }
-  if (profile.workMode === 'execute') {
-    return {
-      ...profile,
-      env: {
-        ...profile.env,
-        [OWNER_TOKEN_ENVIRONMENT_NAME]: ownerToken
-      }
-    }
-  }
-  const separator = profile.args.indexOf('--')
   return {
     ...profile,
-    args: [
-      ...profile.args.slice(0, separator),
-      '--setenv',
-      OWNER_TOKEN_ENVIRONMENT_NAME,
-      ownerToken,
-      ...profile.args.slice(separator)
-    ],
-    env: { ...profile.env }
+    env: {
+      ...profile.env,
+      [OWNER_TOKEN_ENVIRONMENT_NAME]: ownerToken
+    }
   }
 }
 
@@ -856,31 +840,8 @@ function validateProfile(profile: OpenCodeLaunchProfile): OpenCodeLaunchProfile 
   ) {
     throw identityError('Runtime launch profile is malformed')
   }
-  if (
-    profile.workMode === 'ask' &&
-    (
-      profile.executable !== OPENCODE_BWRAP_EXECUTABLE ||
-      profile.args.includes(['--die', 'with-parent'].join('-')) ||
-      !profile.args.includes('--unshare-all') ||
-      !profile.args.includes('--new-session') ||
-      !profile.args.includes('--clearenv') ||
-      !profile.args.includes('--ro-bind') ||
-      profile.args.filter((argument) => argument === '--').length !== 1
-    )
-  ) {
-    throw identityError('Ask Runtime launch profile is not read-only')
-  }
-  if (
-    profile.workMode === 'execute' &&
-    (
-      profile.executable === OPENCODE_BWRAP_EXECUTABLE ||
-      profile.args.includes('--unshare-all') ||
-      profile.args.includes('--clearenv') ||
-      profile.args.includes('--ro-bind') ||
-      profile.args.includes('--bind')
-    )
-  ) {
-    throw identityError('Execute Runtime launch profile must run directly')
+  if (profile.processExecutable !== profile.executable) {
+    throw identityError('Runtime launch profile must run directly')
   }
   return {
     executable: profile.executable,

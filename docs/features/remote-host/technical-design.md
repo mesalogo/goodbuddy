@@ -182,22 +182,17 @@ selection，Renderer 会恢复为当前 OpenCode 配置；Main 的远程请求�
 
 ### Ask
 
-Ask 使用系统 `bwrap`：
+Ask 与 Execute 一样直接启动已签名 Runtime，不要求 Host 安装额外的进程隔离命令：
 
-- Workspace 和 Runtime bundle 只读 bind；
-- 独立可写 scratch HOME、TMPDIR 和 XDG 目录；
-- 固定环境名和固定 Runtime argv；
-- 通过只读边界阻止 Workspace 修改。
+- `cwd` 为项目 Workspace，并继承 SSH 账号的正常环境；
 - ACP 权限请求只有在工具种类为原生 `read` 且 Runtime 提供 `allow_once` 选项时才允许；
   search、edit、execute、未知工具以及只提供持久授权的请求全部拒绝。
-
-`allow_once` 只解决 OpenCode 发起原生读取前的 ACP 协商，真正的文件系统边界仍是只读
-`bwrap` bind。Host 缺少 `bwrap` 时 Ask 启动失败，但不影响 Runtime 能力声明或 Execute
-直接启动。
+- Ask 的只读语义由 Agent 持有的工具权限分发边界执行，不对 Runtime 进程增加文件系统
+  confinement。未来审批模式也在同一工具边界决定是否放行，不改变 Runtime 启动方式。
 
 ### Execute
 
-Execute 不经过 Ask 的 bubblewrap profile：
+Execute 直接启动已签名 Runtime：
 
 - 直接启动已签名 Runtime entrypoint；
 - 使用 Agent 本地模型 gateway 时，签名 Agent launcher 会 `exec` 候选 manifest 锁定的
@@ -227,9 +222,9 @@ Execute 不经过 Ask 的 bubblewrap profile：
   调度、跨 channel 超车、批发送或第二套拥塞控制。
 - Agent 在把 Main 输入交给 Runtime 前、以及把 Runtime 输出交给 Main 前，先把 ACP frame 写入本机 journal。ACK 只推进 cursor 并裁剪已确认 frame，不表示 channel 已终止。
 - Main 持久化 binding identity 和单调 cursor；保留中的 connection lease 即使处于 offline/reconnecting，也可以先把新 cursor 落盘。重连提交不能覆盖 resume 过程中并发落盘的更新。
-- Runtime 事件先经过单事件、单请求输出和每次 Prompt 最多 100 个不同工具调用的边界；
-  通过边界后，Renderer 和 Main 将已接受的工具详情保存到本地 SQLite，不再额外缩短其
-  输入、输出、错误或摘要。
+- Runtime 事件仍经过单事件和单请求输出字节边界，但不按固定工具调用数中止 Prompt；
+  Renderer 和 Main 将已接受的全部工具活动保存到本地 SQLite，不再按活动数静默截断，
+  单项输入、输出、错误和摘要继续使用各自已有的有界字段。
 - OpenCode 原生 Task 工具按 `subagent_type`、`description`、`prompt` 和稳定 tool call ID
   解析为子 Agent 事件。本地 OpenCode SDK 与远端 ACP 增量工具事件复用同一转换；ACP
   首帧缺少参数时可以先显示普通工具活动，后续参数确认其为 Task 后必须替换为子 Agent
@@ -400,9 +395,11 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
   也未在本地运行 production build、package 或安装探针。
 - 2026-09-03 使用包含当前 Runtime capability 修复的源码 harness，在共享 Linux x64 Host
   的唯一 `/tmp/goodbuddy-e2e-runtime-capability-*` 隔离 HOME 中读取签名 Runtime 副本。
-  Agent 成功报告已登记 OpenCode Runtime，Execute 随后直接启动 OpenCode 而未经过
-  `bwrap`；Runtime owner 和隔离目录均已清理，未修改 Host current Agent/Runtime。
-  本次只验证能力声明和真实进程启动，没有发送 Prompt，真实文本模型调用 0 次。
+  Agent 成功报告已登记 OpenCode Runtime；最终源码又在唯一
+  `/tmp/goodbuddy-e2e-direct-modes-*` 隔离 HOME 中分别直接启动 Ask 与 Execute，两个模式
+  都未经过外部进程隔离命令。Runtime owner 和隔离目录均已清理，未修改 Host current
+  Agent/Runtime。本次只验证能力声明和真实进程启动，没有发送 Prompt，真实文本模型调用
+  0 次。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
@@ -445,9 +442,8 @@ Renderer 暴露固定方法名、数字 RPC code 和有界 service code，不转
 identity 已变化且旧 authority 无法恢复，或原 binding 已有 `outcome-unknown` 终态时，显式
 新 Prompt 才替换旧 binding。新 ACP session 的首次 Prompt 会把 Desktop 已持久化的有界
 会话历史作为不可信数据一并发送；成功加载或恢复原 ACP session 时不会重复注入历史。
-Ask 模式的 Linux Runtime 进程由 `bwrap` 启动后 `exec` 到已签名 Runtime 或 Agent
-model bridge helper；监督器只接受同一 PID/进程组从固定 `bwrap` 路径到预期最终可执行文件
-的有界转换，再登记为运行中进程。
+Ask 和 Execute 的 Linux Runtime 进程都直接启动已签名 Runtime 或 Agent model bridge
+helper；监督器核对启动后的最终 executable，再登记为运行中进程。
 
 不持久化 T2/T3、consent、approval bridge、confinement 或组件验证结果。数据库 schema
 v32 保留项目及关联用户数据，并加入 remote-recoverable Task/message/provenance/cursor；
