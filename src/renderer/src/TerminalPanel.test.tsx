@@ -1,4 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   TerminalEvent,
@@ -8,6 +10,7 @@ import {
   TerminalPanel,
   resolveTerminalFontFamily,
   type TerminalAdapter,
+  type TerminalClipboardAdapter,
   type TerminalEmulator,
   type TerminalFactory
 } from './TerminalPanel'
@@ -19,6 +22,16 @@ vi.mock('@xterm/addon-search', () => ({
 }))
 
 const sessionId = '00000000-0000-4000-8000-000000000201'
+const terminalStylesheet = readFileSync(
+  join(
+    process.cwd(),
+    'src',
+    'renderer',
+    'src',
+    'terminal-panel.css'
+  ),
+  'utf8'
+)
 
 function snapshot(
   overrides: Partial<TerminalSnapshot> = {}
@@ -156,6 +169,50 @@ afterEach(() => {
 })
 
 describe('TerminalPanel', () => {
+  it('uses the Main-process clipboard bridge for copy and paste', async () => {
+    const backend = adapterHarness()
+    const emulator = emulatorHarness()
+    const clipboardAdapter: TerminalClipboardAdapter = {
+      readText: vi.fn(async () => 'Get-Location\r'),
+      writeText: vi.fn(async () => undefined)
+    }
+    render(
+      <TerminalPanel
+        adapter={backend.adapter}
+        clipboardAdapter={clipboardAdapter}
+        sessionId={sessionId}
+        target={{ type: 'local' }}
+        terminalFactory={emulator.factory}
+      />
+    )
+    await screen.findByText('PowerShell 7')
+
+    fireEvent.click(screen.getByRole('button', { name: '复制选中内容' }))
+    await waitFor(() =>
+      expect(clipboardAdapter.writeText).toHaveBeenCalledWith(
+        'selected output'
+      )
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '粘贴' }))
+    await waitFor(() =>
+      expect(backend.adapter.write).toHaveBeenCalledWith({
+        sessionId,
+        data: 'Get-Location\r'
+      })
+    )
+    expect(clipboardAdapter.readText).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the terminal panel and toolbar controls square', () => {
+    expect(terminalStylesheet).toMatch(
+      /\.terminal-panel\s*\{[^}]*border-radius:\s*0;/u
+    )
+    expect(terminalStylesheet).toMatch(
+      /\.terminal-panel__toolbar button\s*\{[^}]*border-radius:\s*0;/u
+    )
+  })
+
   it('creates only after the first valid fitted size and forwards input', async () => {
     const backend = adapterHarness()
     const emulator = emulatorHarness()

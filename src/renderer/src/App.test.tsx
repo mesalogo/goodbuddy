@@ -216,6 +216,7 @@ const api: DesktopApi = {
     onOpenSettings: vi.fn(() => () => {})
   },
   clipboard: {
+    readText: vi.fn(async () => ''),
     writeText: vi.fn(async () => {})
   },
   feedback: {

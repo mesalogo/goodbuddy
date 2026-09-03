@@ -3300,6 +3300,11 @@ export function registerIpcHandlers(
     }
   })
 
+  registerHandler(ipcChannels.clipboardReadText, (event) => {
+    assertTrustedSender(event, window)
+    return clipboardTextSchema.parse(clipboard.readText())
+  })
+
   registerHandler(ipcChannels.clipboardWriteText, (event, input) => {
     assertTrustedSender(event, window)
     clipboard.writeText(clipboardTextSchema.parse(input))

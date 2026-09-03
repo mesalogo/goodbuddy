@@ -6,6 +6,8 @@ import {
   waitFor,
   within
 } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   useState,
   type ReactNode
@@ -29,6 +31,10 @@ const terminalOne: WorkbarTabInstance = {
   title: '终端 · 本机 1',
   targetRef: { type: 'local' }
 }
+const stylesheet = readFileSync(
+  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
+  'utf8'
+)
 
 function ControlledShell({
   initialInstances = DEFAULT_WORKBAR_INSTANCES,
@@ -66,6 +72,15 @@ function ControlledShell({
 }
 
 describe('WorkbarShell', () => {
+  it('keeps tabs and their controls square', () => {
+    expect(stylesheet).toMatch(
+      /\.workbar-shell__tab-item\s*\{[^}]*border-radius:\s*0;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.workbar-shell__tab-close,\s*\n\.workbar-shell__add\s*\{[^}]*border-radius:\s*0;/u
+    )
+  })
+
   it('provides four default single-instance tabs and keeps add outside the tablist', () => {
     render(<ControlledShell />)
 

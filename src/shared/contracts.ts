@@ -1564,6 +1564,7 @@ export type DesktopApi = {
     onOpenSettings: (listener: () => void) => () => void
   }
   clipboard: {
+    readText: () => Promise<string>
     writeText: (text: string) => Promise<void>
   }
   agent: {

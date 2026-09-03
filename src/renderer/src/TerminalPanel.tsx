@@ -33,6 +33,8 @@ export type TerminalAdapter = Omit<DesktopApi['terminal'], 'onEvent'> & {
   subscribe: DesktopApi['terminal']['onEvent']
 }
 
+export type TerminalClipboardAdapter = DesktopApi['clipboard']
+
 type Disposable = { dispose: () => void }
 
 export type TerminalEmulator = {
@@ -67,6 +69,7 @@ export type TerminalFactory = () => TerminalFactoryResult
 
 export type TerminalPanelProps = {
   adapter: TerminalAdapter
+  clipboardAdapter?: TerminalClipboardAdapter
   target: TerminalTarget
   sessionId?: TerminalSessionId
   title?: string
@@ -149,6 +152,7 @@ function isValidSize(
 
 export function TerminalPanel({
   adapter,
+  clipboardAdapter,
   target,
   sessionId,
   title,
@@ -484,7 +488,7 @@ export function TerminalPanel({
       return
     }
     try {
-      await navigator.clipboard.writeText(value)
+      await (clipboardAdapter ?? window.goodbuddy.clipboard).writeText(value)
     } catch (reason) {
       setError(
         failureMessage(
@@ -501,7 +505,9 @@ export function TerminalPanel({
       return
     }
     try {
-      const data = await navigator.clipboard.readText()
+      const data = await (
+        clipboardAdapter ?? window.goodbuddy.clipboard
+      ).readText()
       if (data) {
         await adapter.write({ sessionId: current.sessionId, data })
       }

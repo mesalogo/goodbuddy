@@ -255,6 +255,8 @@ const desktopApi: DesktopApi = {
     }
   },
   clipboard: {
+    readText: () =>
+      ipcRenderer.invoke(ipcChannels.clipboardReadText) as Promise<string>,
     writeText: async (text: string) => {
       await ipcRenderer.invoke(ipcChannels.clipboardWriteText, text)
     }

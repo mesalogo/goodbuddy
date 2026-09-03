@@ -8,7 +8,7 @@
   color: var(--text-primary);
   background: var(--surface-raised);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
+  border-radius: 0;
 }
 
 .terminal-panel--loading {
@@ -45,6 +45,10 @@
   border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   cursor: pointer;
+}
+
+.terminal-panel__toolbar button {
+  border-radius: 0;
 }
 
 .terminal-panel__toolbar button:hover:not(:disabled),
