@@ -222,9 +222,9 @@ Execute 直接启动已签名 Runtime：
   调度、跨 channel 超车、批发送或第二套拥塞控制。
 - Agent 在把 Main 输入交给 Runtime 前、以及把 Runtime 输出交给 Main 前，先把 ACP frame 写入本机 journal。ACK 只推进 cursor 并裁剪已确认 frame，不表示 channel 已终止。
 - Main 持久化 binding identity 和单调 cursor；保留中的 connection lease 即使处于 offline/reconnecting，也可以先把新 cursor 落盘。重连提交不能覆盖 resume 过程中并发落盘的更新。
-- Runtime 事件仍经过单事件和单请求输出字节边界，但不按固定工具调用数中止 Prompt；
-  Renderer 和 Main 将已接受的全部工具活动保存到本地 SQLite，不再按活动数静默截断，
-  单项输入、输出、错误和摘要继续使用各自已有的有界字段。
+- Runtime 事件仍对单项展示字段做有界截断，但不按固定工具调用数或 Desktop 累计展示量
+  中止 Prompt；待消费事件达到阈值时通过 ACP 入站暂停施加背压，不取消原生 Runtime。
+  Renderer 和 Main 将已接受的全部工具活动保存到本地 SQLite，不再按活动数静默截断。
 - OpenCode 原生 Task 工具按 `subagent_type`、`description`、`prompt` 和稳定 tool call ID
   解析为子 Agent 事件。本地 OpenCode SDK 与远端 ACP 增量工具事件复用同一转换；ACP
   首帧缺少参数时可以先显示普通工具活动，后续参数确认其为 Task 后必须替换为子 Agent
