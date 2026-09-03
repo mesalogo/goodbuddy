@@ -6,8 +6,8 @@
 | --- | --- |
 | 文档类型 | 功能进度 |
 | 状态 | 已实施，本机验收完成 |
-| 版本 | 0.2 |
-| 日期 | 2026-09-02 |
+| 版本 | 0.3 |
+| 日期 | 2026-09-03 |
 | 关联入口 | [直连模型 Agent 能力](./README.md) |
 
 ## 当前结论
@@ -55,6 +55,8 @@
 - [x] Ask/Execute、Runtime target 和本机执行空间双重检查。
 - [x] DeepSeek Harness、OpenCode 和 Continue 隔离。
 - [x] 通用工具活动和“设置 > MCP > 直连模型”编程能力目录。
+- [x] 普通问答、工具轮次和上下文摘要的瞬时网络错误及请求超时最多自动重试 3 次。
+- [x] 递增退避、重试状态、取消传播和已显示输出不重放。
 
 ### 阶段 3：编程 Subagent
 
@@ -104,7 +106,19 @@
   0、委派编程 Subagent 再次运行最终程序并综合结果；最终源码成功验收运行包含 8 次真实
   模型调用。
 - BigToken 连接的首次验收在 TLS 建立前被 `ECONNRESET` 中断，未进入模型工具路径；切换
-  到仓库已有的 DeepSeek 连接后完成验证。
+  到仓库已有的 DeepSeek 连接后完成验证。2026-09-03 已针对该故障补充统一模型请求重试。
+
+## 2026-09-03 模型请求重试验证证据
+
+- `ModelAgentRuntime` 对普通问答、工具轮次和上下文摘要统一处理瞬时 Node/Undici 网络错误
+  与请求超时；首次失败后最多重试 3 次，退避为 500 ms、1 s、2 s。
+- 聚焦测试覆盖嵌套 `fetch failed` → `ECONNRESET` 恢复、工具轮次恢复、四次尝试后终止、
+  退避取消，以及已显示部分流式输出时不重放。
+- `npm test -- --run src/main/agent/model-runtime.test.ts`：
+  `72 passed, 1 skipped`。
+- 全量 `npm test`：`3484 passed, 51 skipped`。
+- `npm run typecheck`、`npm run lint` 和 `npm run build`：通过。
+- 最小真实直连文本模型验证：`1 passed, 13 skipped`，实际模型调用 1 次。
 
 - 全量 `npm test`：`3410 passed, 50 skipped`。
 - `npm run typecheck`：通过。

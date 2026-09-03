@@ -188,6 +188,24 @@ const maxStreamBlockBytes = 1024 * 1024
 const maxToolArgumentBytes = 128 * 1024
 const maxToolContextBytes = 1024 * 1024
 const defaultModelRequestTimeoutMs = 10 * 60_000
+const modelRequestRetryDelaysMs = [500, 1_000, 2_000] as const
+const retryableModelNetworkErrorCodes = new Set([
+  'EAI_AGAIN',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTDOWN',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ENETRESET',
+  'ENETUNREACH',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET'
+])
 
 const noModelTools: ModelToolProviderLike = {
   listTools: async () => [],
@@ -571,6 +589,72 @@ function normalizeRequestError(
     throw new Error('模型接口请求超时', { cause: error })
   }
   throw error
+}
+
+function isRetryableModelRequestError(error: unknown): boolean {
+  const seen = new Set<unknown>()
+  let current = error
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (
+      current === null ||
+      (typeof current !== 'object' &&
+        typeof current !== 'function') ||
+      seen.has(current)
+    ) {
+      break
+    }
+    seen.add(current)
+    const record = current as Record<string, unknown>
+    if (
+      typeof record.code === 'string' &&
+      retryableModelNetworkErrorCodes.has(
+        record.code.toLocaleUpperCase()
+      )
+    ) {
+      return true
+    }
+    if (typeof record.message === 'string') {
+      if (
+        record.message === '模型接口请求超时' ||
+        /(?:fetch failed|failed to fetch|network(?: request)? (?:error|failed)|socket disconnected|connection (?:closed|reset)|\bECONNRESET\b|\bETIMEDOUT\b)/iu.test(
+          record.message
+        )
+      ) {
+        return true
+      }
+    }
+    current = record.cause
+  }
+  return false
+}
+
+function waitForModelRetry(
+  delayMs: number,
+  signal: AbortSignal
+): Promise<void> {
+  signal.throwIfAborted()
+  return new Promise<void>((resolve, reject) => {
+    let settled = false
+    const finish = (callback: () => void): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timeout)
+      signal.removeEventListener('abort', abort)
+      callback()
+    }
+    const abort = (): void => {
+      finish(() => reject(signal.reason))
+    }
+    const timeout = setTimeout(() => {
+      finish(resolve)
+    }, delayMs)
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) {
+      abort()
+    }
+  })
 }
 
 function parseGeneratedImage(value: unknown): {
@@ -1734,6 +1818,71 @@ export class ModelAgentRuntime implements AgentRuntime {
     }
   }
 
+  private async *retryModelStream<T>(
+    createAttempt: () => AsyncGenerator<RuntimeEvent, T, void>,
+    signal: AbortSignal,
+    requestId: string
+  ): AsyncGenerator<RuntimeEvent, T, void> {
+    for (
+      let retryCount = 0;
+      retryCount <= modelRequestRetryDelaysMs.length;
+      retryCount += 1
+    ) {
+      signal.throwIfAborted()
+      const attempt = createAttempt()
+      let step: IteratorResult<RuntimeEvent, T> | undefined
+      let outputPublished = false
+      let failed = false
+      let failure: unknown
+      try {
+        step = await attempt.next()
+        while (!step.done) {
+          if (
+            step.value.type === 'text' ||
+            step.value.type === 'reasoning'
+          ) {
+            outputPublished = true
+          }
+          yield step.value
+          step = await attempt.next()
+        }
+      } catch (error) {
+        failed = true
+        failure = error
+      } finally {
+        if (!step?.done) {
+          await attempt.return(undefined as T).catch(() => undefined)
+        }
+      }
+      if (!failed) {
+        if (!step?.done) {
+          throw new Error('模型请求流未返回最终结果')
+        }
+        return step.value
+      }
+      if (
+        outputPublished ||
+        signal.aborted ||
+        retryCount >= modelRequestRetryDelaysMs.length ||
+        !isRetryableModelRequestError(failure)
+      ) {
+        throw failure
+      }
+      yield {
+        requestId,
+        type: 'status',
+        message:
+          `模型网络请求失败，正在重试（${retryCount + 1}/` +
+          `${modelRequestRetryDelaysMs.length}）`
+      }
+      await waitForModelRetry(
+        modelRequestRetryDelaysMs[retryCount]!,
+        signal
+      )
+    }
+    throw new Error('模型请求重试状态无效')
+  }
+
   async getStatus(): Promise<AgentRuntimeStatus> {
     const imageGeneration = this.capability === 'image-generation'
     return {
@@ -2578,6 +2727,29 @@ export class ModelAgentRuntime implements AgentRuntime {
     signal: AbortSignal,
     requestId: string
   ): AsyncGenerator<RuntimeEvent, ModelToolResponse, void> {
+    return yield* this.retryModelStream(
+      () =>
+        this.requestToolModelOnce(
+          messages,
+          tools,
+          system,
+          anthropic,
+          signal,
+          requestId
+        ),
+      signal,
+      requestId
+    )
+  }
+
+  private async *requestToolModelOnce(
+    messages: Array<Record<string, unknown>>,
+    tools: ModelToolDefinition[],
+    system: string,
+    anthropic: boolean,
+    signal: AbortSignal,
+    requestId: string
+  ): AsyncGenerator<RuntimeEvent, ModelToolResponse, void> {
     const responses = this.options.protocol === 'openai-responses'
     const streamOpenAIChat = !responses && !anthropic
     const providerTools = responses
@@ -2865,6 +3037,141 @@ export class ModelAgentRuntime implements AgentRuntime {
     } finally {
       request.clear()
     }
+  }
+
+  private async *requestTextModelOnce(
+    request: AgentExecutionRequest,
+    signal: AbortSignal,
+    system: string,
+    messages:
+      | AnthropicApiMessage[]
+      | Array<Record<string, unknown>>
+  ): AsyncGenerator<
+    RuntimeEvent,
+    { answer: string; usage: ModelUsageAccumulator },
+    void
+  > {
+    const anthropic = this.options.protocol === 'anthropic-messages'
+    const responses = this.options.protocol === 'openai-responses'
+    const modelRequest = await this.fetchWithTimeout(
+      this.getEndpoint(),
+      {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(
+          responses
+            ? {
+                model: this.options.model,
+                stream: true,
+                instructions: system,
+                input: messages
+              }
+            : anthropic
+              ? {
+                  model: this.options.model,
+                  max_tokens: this.anthropicProtocolMaximumTokens,
+                  stream: true,
+                  system,
+                  messages
+                }
+              : {
+                  model: this.options.model,
+                  stream: true,
+                  stream_options: {
+                    include_usage: true
+                  },
+                  messages
+                }
+        )
+      },
+      signal
+    )
+    const response = modelRequest.response
+    let answer = ''
+    const usage = {
+      reported: false
+    } satisfies ModelUsageAccumulator
+    try {
+      if (!response.ok) {
+        const responseText = await readBoundedResponseText(response, {
+          maxBytes: 128 * 1024,
+          missingBodyMessage: '模型接口未返回响应内容',
+          tooLargeMessage: '模型接口响应超过安全限制'
+        })
+        let detail: string | undefined
+        try {
+          detail = getErrorMessage(
+            responseText.trim()
+              ? JSON.parse(responseText)
+              : undefined
+          )
+        } catch {
+          detail = undefined
+        }
+        throw new Error(
+          detail ?? `模型接口请求失败（HTTP ${response.status}）`
+        )
+      }
+
+      let receivedStop = false
+      for await (const block of readBoundedSseBlocks(response)) {
+        const parsed = parseStreamBlock(block, this.options.protocol)
+        if (parsed.usage) {
+          applyUsageUpdate(usage, parsed.usage)
+        }
+        if (parsed.reasoningDelta) {
+          yield {
+            requestId: request.requestId,
+            type: 'reasoning',
+            delta: parsed.reasoningDelta
+          }
+        }
+        const { delta } = parsed
+        if (delta) {
+          answer += delta
+          yield {
+            requestId: request.requestId,
+            type: 'text',
+            delta
+          }
+        }
+        if (parsed.stopped) {
+          receivedStop = true
+          break
+        }
+      }
+      if (!receivedStop) {
+        throw new Error('模型接口流式响应意外中断')
+      }
+      if (!answer) {
+        throw new Error('模型接口返回了空内容')
+      }
+      return { answer, usage }
+    } catch (error) {
+      return normalizeRequestError(error, modelRequest.timedOut())
+    } finally {
+      modelRequest.clear()
+    }
+  }
+
+  private async *requestTextModel(
+    request: AgentExecutionRequest,
+    signal: AbortSignal,
+    system: string,
+    messages:
+      | AnthropicApiMessage[]
+      | Array<Record<string, unknown>>
+  ): AsyncGenerator<
+    RuntimeEvent,
+    { answer: string; usage: ModelUsageAccumulator },
+    void
+  > {
+    return yield* this.retryModelStream(
+      () =>
+        this.requestTextModelOnce(request, signal, system, messages),
+      signal,
+      request.requestId
+    )
   }
 
   private async *compactAgentRunContext(
@@ -3700,152 +4007,57 @@ export class ModelAgentRuntime implements AgentRuntime {
       [],
       anthropic || responses ? system : ''
     )
-    const modelRequest = await this.fetchWithTimeout(
-      this.getEndpoint(),
+    const modelResponse = yield* this.requestTextModel(
+      request,
+      signal,
+      system,
+      messages
+    )
+    const { answer, usage } = modelResponse
+    const completedHistory = [
+      ...(identifiedRequest.history ??
+        this.conversations.get(request.conversationId) ??
+        []),
       {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(
-          responses
-            ? {
-                model: this.options.model,
-                stream: true,
-                instructions: system,
-                input: messages
-              }
-            : anthropic
-              ? {
-                  model: this.options.model,
-                  max_tokens: this.anthropicProtocolMaximumTokens,
-                  stream: true,
-                  system,
-                  messages
-                }
-              : {
-                  model: this.options.model,
-                  stream: true,
-                  stream_options: {
-                    include_usage: true
-                  },
-                  messages
-                }
-        )
+        id: request.currentUserMessageId,
+        role: 'user',
+        content: request.prompt
       },
+      {
+        id: request.currentAssistantMessageId,
+        role: 'assistant',
+        content: answer
+      }
+    ] satisfies ConversationMessage[]
+    this.saveConversation(request.conversationId, completedHistory)
+
+    const usageEvent = createUsageEvent(
+      request.requestId,
+      anthropic ? 'anthropic' : 'openai',
+      this.options.model,
+      usage
+    )
+    const contextMetricsEvent = this.createContextMetricsEvent(
+      request.requestId,
+      usage,
+      estimatedRequestTokens + estimateTextTokens(answer)
+    )
+    if (contextMetricsEvent) {
+      yield contextMetricsEvent
+    }
+    if (usageEvent) {
+      yield usageEvent
+    }
+    yield* this.finalizeConversationContext(
+      identifiedRequest,
+      completedHistory,
+      contextMetricsEvent?.contextTokens ??
+        estimatedRequestTokens + estimateTextTokens(answer),
       signal
     )
-    const response = modelRequest.response
-    let answer = ''
-    const usage = {
-      reported: false
-    } satisfies ModelUsageAccumulator
-    try {
-      if (!response.ok) {
-        const responseText = await readBoundedResponseText(response, {
-          maxBytes: 128 * 1024,
-          missingBodyMessage: '模型接口未返回响应内容',
-          tooLargeMessage: '模型接口响应超过安全限制'
-        })
-        let detail: string | undefined
-        try {
-          detail = getErrorMessage(
-            responseText.trim()
-              ? JSON.parse(responseText)
-              : undefined
-          )
-        } catch {
-          detail = undefined
-        }
-        throw new Error(
-          detail ?? `模型接口请求失败（HTTP ${response.status}）`
-        )
-      }
-
-      let receivedStop = false
-
-      for await (const block of readBoundedSseBlocks(response)) {
-        const parsed = parseStreamBlock(block, this.options.protocol)
-        if (parsed.usage) {
-          applyUsageUpdate(usage, parsed.usage)
-        }
-        if (parsed.reasoningDelta) {
-          yield {
-            requestId: request.requestId,
-            type: 'reasoning',
-            delta: parsed.reasoningDelta
-          }
-        }
-        const { delta } = parsed
-        if (delta) {
-          answer += delta
-          yield {
-            requestId: request.requestId,
-            type: 'text',
-            delta
-          }
-        }
-
-        if (parsed.stopped) {
-          receivedStop = true
-          break
-        }
-      }
-
-      if (!receivedStop) {
-        throw new Error('模型接口流式响应意外中断')
-      }
-      if (!answer) {
-        throw new Error('模型接口返回了空内容')
-      }
-
-      const completedHistory = [
-        ...(identifiedRequest.history ??
-          this.conversations.get(request.conversationId) ??
-          []),
-        {
-          id: request.currentUserMessageId,
-          role: 'user',
-          content: request.prompt
-        },
-        {
-          id: request.currentAssistantMessageId,
-          role: 'assistant',
-          content: answer
-        }
-      ] satisfies ConversationMessage[]
-      this.saveConversation(request.conversationId, completedHistory)
-
-      const usageEvent = createUsageEvent(
-        request.requestId,
-        anthropic ? 'anthropic' : 'openai',
-        this.options.model,
-        usage
-      )
-      const contextMetricsEvent = this.createContextMetricsEvent(
-        request.requestId,
-        usage,
-        estimatedRequestTokens + estimateTextTokens(answer)
-      )
-      if (contextMetricsEvent) {
-        yield contextMetricsEvent
-      }
-      if (usageEvent) {
-        yield usageEvent
-      }
-      yield* this.finalizeConversationContext(
-        identifiedRequest,
-        completedHistory,
-        contextMetricsEvent?.contextTokens ??
-          estimatedRequestTokens + estimateTextTokens(answer),
-        signal
-      )
-      yield {
-        requestId: request.requestId,
-        type: 'done'
-      }
-    } catch (error) {
-      return normalizeRequestError(error, modelRequest.timedOut())
-    } finally {
-      modelRequest.clear()
+    yield {
+      requestId: request.requestId,
+      type: 'done'
     }
   }
 

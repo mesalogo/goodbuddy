@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 已实施 |
-| 版本 | 0.2 |
-| 日期 | 2026-09-01 |
+| 版本 | 0.3 |
+| 日期 | 2026-09-03 |
 | 关联 PRD | [PRD](./prd.md) |
 | 关联故事 | [User Stories](./user-stories.md) |
 
@@ -22,6 +22,8 @@
 8. 子任务是父请求内部 Job/Subjob，不创建顶层 Task 或独立 Conversation。
 9. 父请求取消、Runtime 释放或应用退出会传播到全部活动子级和进程。
 10. OpenCode、Continue 和 DeepSeek Harness 的原生能力不被本功能替换或包装。
+11. 直连模型只在尚未显示文本或推理内容时自动重试瞬时网络错误或请求超时，最多重试
+    3 次；用户取消和已显示的部分输出禁止重放。
 
 ## 2. 状态维度
 
@@ -33,6 +35,7 @@
 | 本机 Shell | `available`、`unavailable` |
 | Subagent 深度 | `0`、`1` |
 | 父请求 | `active`、`cancelling`、`terminal` |
+| 模型请求重试 | `initial`、`retry 1..3`、`terminal` |
 
 ## 3. 工具可见性决策表
 
@@ -158,7 +161,26 @@ type SubagentDelegateResult = {
 已经提交的正常终态不被稍后到达的取消覆盖。父请求进入终态后，迟到的子级文本和工具事件
 只用于资源清理，不再写入会话。
 
-## 11. 逻辑完整性评估
+## 11. 模型请求重试
+
+```text
+attempt
+  ├─ success → completed
+  ├─ cancel → cancelled
+  ├─ non-retryable failure → failed
+  ├─ transient failure after visible output → failed_with_partial_output
+  └─ transient failure before visible output
+       ├─ retry count < 3 → backoff → attempt
+       └─ retry count = 3 → failed
+```
+
+- 瞬时失败包括常见连接重置、连接/网络不可达、DNS 临时失败、连接管道中断和请求超时。
+- 三次重试分别等待 500 ms、1 s 和 2 s；每次尝试重新建立请求并使用独立请求超时。
+- 普通问答、工具模型轮次和上下文摘要使用同一规则。
+- 重试不重复已经执行的工具；工具只会在模型完整返回一轮工具调用后开始执行。
+- 退避等待绑定父请求取消信号，取消优先于启动下一次尝试。
+
+## 12. 逻辑完整性评估
 
 | 领域 | 结论 |
 | --- | --- |
@@ -167,6 +189,7 @@ type SubagentDelegateResult = {
 | 本机三平台 | 完整，统一契约和平台 Shell 决策已定义 |
 | Subagent 递归 | 完整，深度固定为 1 |
 | 取消与失败 | 完整，父子和进程传播及优先级已定义 |
+| 模型网络恢复 | 完整，有限重试、输出重放和取消边界已定义 |
 | 产品对象 | 完整，遵循 Task/Job 权威模型 |
 | SSH 远端执行 | 明确不在首版；未来必须增加 Agent 后端后才能开放 |
 

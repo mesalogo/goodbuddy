@@ -1367,6 +1367,179 @@ describe('ModelAgentRuntime', () => {
     await expect(stream.next()).rejects.toThrow('upstream unavailable')
   })
 
+  it('retries a nested ECONNRESET before streaming output', async () => {
+    vi.useFakeTimers()
+    try {
+      const connectionReset = Object.assign(
+        new Error(
+          'Client network socket disconnected before secure TLS connection was established'
+        ),
+        { code: 'ECONNRESET', port: 443 }
+      )
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockRejectedValueOnce(
+          new TypeError('fetch failed', { cause: connectionReset })
+        )
+        .mockResolvedValueOnce(
+          new Response(createEventStream('重试后成功'), {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          })
+        )
+      const runtime = new ModelAgentRuntime({
+        apiKey: 'test-key',
+        baseUrl: 'https://bigtoken.ai',
+        model: 'sonnet-5',
+        protocol: 'anthropic-messages',
+        authentication: 'api-key',
+        fetcher
+      })
+      const events: RuntimeEvent[] = []
+      const consume = async (): Promise<void> => {
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            prompt: 'test'
+          },
+          new AbortController().signal
+        )) {
+          events.push(event)
+        }
+      }
+      const completed = consume()
+
+      await vi.runAllTimersAsync()
+      await completed
+
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'status',
+          message: '模型网络请求失败，正在重试（1/3）'
+        })
+      )
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'text',
+          delta: '重试后成功'
+        })
+      )
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retry a transient stream failure after publishing output', async () => {
+    const connectionReset = Object.assign(
+      new Error('socket disconnected'),
+      { code: 'ECONNRESET' }
+    )
+    let sentOutput = false
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sentOutput) {
+          controller.error(connectionReset)
+          return
+        }
+        sentOutput = true
+        controller.enqueue(
+          new TextEncoder().encode(
+            [
+              'event: content_block_delta',
+              'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"已经显示"}}',
+              '',
+              ''
+            ].join('\n')
+          )
+        )
+      }
+    })
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher
+    })
+    const events: RuntimeEvent[] = []
+    const consume = async (): Promise<void> => {
+      for await (const event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'test'
+        },
+        new AbortController().signal
+      )) {
+        events.push(event)
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('socket disconnected')
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        delta: '已经显示'
+      })
+    )
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining('正在重试')
+      })
+    )
+  })
+
+  it('cancels immediately during model retry backoff', async () => {
+    const controller = new AbortController()
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      throw Object.assign(new Error('socket disconnected'), {
+        code: 'ECONNRESET'
+      })
+    })
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher
+    })
+    const stream = runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'test'
+      },
+      controller.signal
+    )
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { type: 'status', message: 'sonnet-5 正在思考' }
+    })
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        type: 'status',
+        message: '模型网络请求失败，正在重试（1/3）'
+      }
+    })
+    const pendingRetry = stream.next()
+    controller.abort(new Error('用户取消'))
+
+    await expect(pendingRetry).rejects.toThrow('用户取消')
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
   it('parses CRLF event separators split across response chunks', async () => {
     const payload = createEventStream('split CRLF').replaceAll('\n', '\r\n')
     const splitAt = payload.indexOf('\r\n\r\n') + 3
@@ -1418,6 +1591,16 @@ describe('ModelAgentRuntime', () => {
   it('aborts a model request that exceeds the runtime timeout', async () => {
     vi.useFakeTimers()
     try {
+      const fetcher = vi.fn<typeof fetch>(
+        async (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => reject(init.signal?.reason),
+              { once: true }
+            )
+          })
+      )
       const runtime = new ModelAgentRuntime({
         apiKey: 'test-key',
         baseUrl: 'https://bigtoken.ai',
@@ -1425,35 +1608,27 @@ describe('ModelAgentRuntime', () => {
         protocol: 'anthropic-messages',
         authentication: 'api-key',
         requestTimeoutMs: 50,
-        fetcher: vi.fn<typeof fetch>(
-          async (_input, init) =>
-            new Promise<Response>((_resolve, reject) => {
-              init?.signal?.addEventListener(
-                'abort',
-                () => reject(init.signal?.reason),
-                { once: true }
-              )
-            })
-        )
+        fetcher
       })
-      const stream = runtime.run(
-        {
-          requestId: crypto.randomUUID(),
-          conversationId: crypto.randomUUID(),
-          prompt: 'test'
-        },
-        new AbortController().signal
-      )
-      await expect(stream.next()).resolves.toMatchObject({
-        value: { type: 'status' }
-      })
-      const result = stream.next()
-      const assertion = expect(result).rejects.toThrow(
+      const consume = async (): Promise<void> => {
+        for await (const _event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            prompt: 'test'
+          },
+          new AbortController().signal
+        )) {
+          void _event
+        }
+      }
+      const assertion = expect(consume()).rejects.toThrow(
         '模型接口请求超时'
       )
 
-      await vi.advanceTimersByTimeAsync(50)
+      await vi.runAllTimersAsync()
       await assertion
+      expect(fetcher).toHaveBeenCalledTimes(4)
     } finally {
       vi.useRealTimers()
     }
@@ -1489,23 +1664,23 @@ describe('ModelAgentRuntime', () => {
           )
         })
       })
-      const stream = runtime.run(
-        {
-          requestId: crypto.randomUUID(),
-          conversationId: crypto.randomUUID(),
-          prompt: 'test'
-        },
-        new AbortController().signal
-      )
-      await expect(stream.next()).resolves.toMatchObject({
-        value: { type: 'status' }
-      })
-      const result = stream.next()
-      const assertion = expect(result).rejects.toThrow(
+      const consume = async (): Promise<void> => {
+        for await (const _event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            prompt: 'test'
+          },
+          new AbortController().signal
+        )) {
+          void _event
+        }
+      }
+      const assertion = expect(consume()).rejects.toThrow(
         '模型接口请求超时'
       )
 
-      await vi.advanceTimersByTimeAsync(50)
+      await vi.runAllTimersAsync()
       await assertion
       expect(responseSignal?.aborted).toBe(true)
     } finally {
@@ -1691,6 +1866,75 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-2)).toMatchObject({ type: 'model-usage' })
     expect(events.at(-1)).toMatchObject({ type: 'done' })
     expect(toolProvider.listTools).not.toHaveBeenCalled()
+  })
+
+  it('retries transient network failures for direct-model tool rounds', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockRejectedValueOnce(
+          Object.assign(new Error('connect timeout'), {
+            code: 'UND_ERR_CONNECT_TIMEOUT'
+          })
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            choices: [
+              {
+                message: {
+                  role: 'assistant',
+                  content: '工具轮次重试成功'
+                }
+              }
+            ]
+          })
+        )
+      const runtime = new ModelAgentRuntime({
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none',
+        fetcher,
+        toolProvider: createToolProvider()
+      })
+      const events: RuntimeEvent[] = []
+      const consume = async (): Promise<void> => {
+        for await (const event of runtime.run(
+          {
+            requestId: crypto.randomUUID(),
+            conversationId: crypto.randomUUID(),
+            prompt: '使用工具能力回答',
+            workMode: 'execute'
+          },
+          new AbortController().signal,
+          async () => 'once'
+        )) {
+          events.push(event)
+        }
+      }
+      const completed = consume()
+
+      await vi.runAllTimersAsync()
+      await completed
+
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'status',
+          message: '模型网络请求失败，正在重试（1/3）'
+        })
+      )
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'text',
+          delta: '工具轮次重试成功'
+        })
+      )
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('streams OpenAI-compatible reasoning deltas before the answer', async () => {

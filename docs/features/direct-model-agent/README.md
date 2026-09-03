@@ -33,6 +33,8 @@ Task、Job、Subjob、Run 和 Subagent 的对象关系以
 ## 功能边界
 
 - `process_execute` 和 `subagent_delegate` 是 GoodBuddy 直连模型内置工具，不是外部 MCP。
+- 直连文本模型的普通问答、工具轮次和上下文摘要会在尚无可见输出时，对瞬时网络错误或
+  单次请求超时最多自动重试 3 次。
 - OpenCode、Continue 和 DeepSeek Harness 继续使用各自原生执行与委派能力。
 - Ask 不允许进程执行；Subagent 若在 Ask 中使用，只能继承 Ask 的只读能力。
 - Execute 表示用户授权当前执行空间账号的完整能力，不增加第二套工具审批或权限档位。
