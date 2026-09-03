@@ -5061,12 +5061,16 @@ button > svg {
   background: var(--text-muted);
 }
 
-.runtime-status--online {
-  color: var(--success);
+.runtime-status--ready .runtime-status__dot {
+  background: var(--success);
 }
 
-.runtime-status--online .runtime-status__dot {
-  background: var(--success);
+.runtime-status--connecting .runtime-status__dot {
+  background: var(--warning);
+}
+
+.runtime-status--unavailable .runtime-status__dot {
+  background: var(--text-muted);
 }
 
 .chat-scroll-region {

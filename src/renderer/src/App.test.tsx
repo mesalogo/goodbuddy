@@ -1429,7 +1429,11 @@ describe('App', () => {
     )
     expect(runtimeStatus).not.toBeNull()
     expect(
-      within(runtimeStatus!).getByText('就绪')
+      within(runtimeStatus!).queryByText('就绪')
+    ).not.toBeInTheDocument()
+    expect(runtimeStatus).toHaveClass('runtime-status--ready')
+    expect(
+      runtimeStatus?.querySelector('.runtime-status__dot')
     ).toBeInTheDocument()
     expect(runtimeStatus).toHaveAttribute(
       'aria-describedby',
@@ -1447,6 +1451,16 @@ describe('App', () => {
     expect(
       document.querySelector('.composer__runtime-toolbar')
     ).not.toBeInTheDocument()
+  })
+
+  it('uses a compact color indicator while connecting to a Runtime', () => {
+    render(<App />)
+    const connectingStatus = document.querySelector<HTMLElement>(
+      '.runtime-status'
+    )
+    expect(connectingStatus).toHaveClass('runtime-status--connecting')
+    expect(within(connectingStatus!).queryByText('连接中'))
+      .not.toBeInTheDocument()
   })
 
   it('loads customized branding into the primary sidebar', async () => {

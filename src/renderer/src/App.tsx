@@ -9127,19 +9127,12 @@ function App(): React.JSX.Element {
           <div className="topbar__actions">
             <span
               aria-describedby={runtimeDetailId}
-              className={
-                runtimeState === 'ready'
-                  ? 'runtime-status runtime-status--online'
-                  : 'runtime-status'
-              }
+              className={`runtime-status runtime-status--${runtimeState}`}
               title={runtimeDetail}
             >
               <span className="runtime-status__dot" />
               <span className="runtime-status__label">
                 {runtime?.label ?? t('runtime.detecting')}
-              </span>
-              <span className="runtime-status__state">
-                {t(`runtime.state.${runtimeState}`)}
               </span>
               {runtime?.capability === 'image-generation' && (
                 <span className="runtime-capability-badge">

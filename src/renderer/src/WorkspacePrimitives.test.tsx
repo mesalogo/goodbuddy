@@ -80,6 +80,18 @@ describe('WorkspacePrimitives', () => {
     cleanup()
   })
 
+  it('uses semantic colors for compact Runtime status dots', () => {
+    expect(stylesheet).toMatch(
+      /\.runtime-status--ready \.runtime-status__dot\s*\{[^}]*background:\s*var\(--success\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.runtime-status--connecting \.runtime-status__dot\s*\{[^}]*background:\s*var\(--warning\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.runtime-status--unavailable \.runtime-status__dot\s*\{[^}]*background:\s*var\(--text-muted\);/u
+    )
+  })
+
   it('keeps shared switch rows aligned without standalone dividers', () => {
     const toggleRowStyles = stylesheet.match(
       /\.toggle-row\s*\{(?<rules>[^}]*)\}/u
