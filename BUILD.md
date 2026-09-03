@@ -426,6 +426,13 @@ git tag -a "$agent_tag" -m "GoodBuddy Agent $(node -p "require('./agent-runtime-
 OSS 签名目录指针。生产发布需要 `agent-signing` 与 `aliyun-oss-release` 两个受保护
 Environment；普通分支/PR 的 `agents.yml` 不使用其中任何 Secret。
 
+Agent 标签也必须遵循与 Desktop 相同的 pre-tag 顺序。更新 Agent 生产源码或
+`agentVersion` 后，先把候选提交推送到两个 `main`，等待该准确 SHA 的
+`GoodBuddy Agents` main workflow 全部成功，再次 fetch 并确认两个远端 `main`、干净
+工作区和未使用标签，最后才可创建和推送 annotated `agent-v<version>`。不得把 Agent
+标签与候选 `main` 放在同一批推送中；任何修正 commit 都必须重新等待新 SHA 的 Agent
+main workflow，旧 SHA 的成功结果不能复用。
+
 中英文发布说明统一维护在 `resources/release-notes.json`。新版本按“本次
 亮点 / Highlights”“功能更新 / Features”“问题修复 / Bug Fixes”“使用前
 请留意 / Before You Start”四段组织，应用首次启动弹窗与 GitHub Release

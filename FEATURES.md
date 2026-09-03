@@ -128,8 +128,8 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current source lock and
-  Agent source lock is `0.11.14`, while the current Desktop release candidate
-  is `0.12.1`; formal publication status follows the separate Agent and Desktop
+  Agent source lock is `0.11.15`, while the current Desktop release candidate
+  is `0.12.2`; formal publication status follows the separate Agent and Desktop
   release channels.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
@@ -299,8 +299,9 @@ otherwise.
   a native target-architecture Runner and performs a real managed-Python
   install, SSL, pip, and venv probe before packaging. The immutable `v0.12.0`
   attempt passed Windows and macOS but exposed Linux TAR case handling before
-  publication; the corrected `0.12.1` candidate must pass all six targets.
-  Real Skill/MCP execution, custom interpreter
+  publication. The immutable `v0.12.1` attempt was cancelled before native
+  packaging while synchronizing the Agent release; the corrected `0.12.2`
+  candidate must pass all six targets. Real Skill/MCP execution, custom interpreter
   execution, and coordination with affected running processes remain
   acceptance work. Six-platform release acceptance must not be claimed before
   the applicable checks pass.

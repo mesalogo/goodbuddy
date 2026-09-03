@@ -20,8 +20,8 @@
 六个 OSS 镜像对象已发布并公开回读验证。托管 Python 继续按需下载，Desktop 发行包不额外
 带入许可证文件。标准六平台打包任务已改用目标架构原生 Runner，并在打包前执行托管 Python
 的真实安装、SSL、pip 和 venv 探针。不可变的 `v0.12.0` 尝试已通过 Windows 与 macOS，
-但 Linux x64/ARM64 在发布前暴露 TAR 大小写冲突误判；修正后的 `0.12.1` 候选仍需通过
-全部六个目标才能完成对应跨平台验收。
+但 Linux x64/ARM64 在发布前暴露 TAR 大小写冲突误判；`v0.12.1` 在同步 Agent 发布时
+于原生打包前取消。修正后的 `0.12.2` 候选仍需通过全部六个目标才能完成对应跨平台验收。
 
 ## 已完成
 
@@ -68,7 +68,7 @@
 - [x] 确认托管 Python 保持按需下载，Desktop 发行包不额外带入许可证文件。
 - [x] Windows ARM64、macOS x64/ARM64 原生 CI 安装、SSL、pip、venv 探针。
 - [ ] Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针；`v0.12.0` 因 TAR 大小写
-  冲突误判失败，等待 `0.12.1` 修正候选运行结果。
+  冲突误判失败，`v0.12.1` 未进入原生矩阵，等待 `0.12.2` 修正候选运行结果。
 - [ ] 最低 Windows/macOS/glibc 支持矩阵和 Windows NuGet 签名核验。
 - [ ] 真实 JavaScript/Python SKILL 成果及 Node/Python stdio MCP 调用。
 - [ ] 自定义 Node/Python 在产品 UI 中的真实选择和任务执行。
@@ -87,13 +87,19 @@
   安装、SSL、pip、venv 探针和打包成功；Linux x64/ARM64 在实际官方 Astral TAR 中发现
   `share/terminfo/2/2621A` 与 `share/terminfo/2/2621a` 后被大小写无关去重误判为冲突。
 - 最终 GitHub/OSS 发布任务跳过，GitHub 未创建 `v0.12.0` Release，Latest 仍为
-  `v0.11.14`；恢复版本按不可变标签规则提升为 `0.12.1`。
+  `v0.11.14`；首次恢复版本按不可变标签规则提升为 `0.12.1`。
 - 提取器改为按工件目标平台判断路径唯一性，并继续保留完全重复路径、路径穿越、安全链接
   和展开上限校验。锁定的 Linux x64 上游工件重新下载后大小与 SHA-256 匹配目录，并确认
   冲突项确为大小写不同的两个合法 symlink；临时审计工件已清理。
 - Release Notes 校验通过；工具环境、工作流和 Release Notes 聚焦测试 `40/40` 通过，
   live 安装项按本地发布规则未启用。最终 `npm test` 为 `3478` 通过、`51` 跳过，
   typecheck 与 lint 通过；未运行本地 production build、package 或安装探针。
+- `v0.12.1` 的 main validators 与 production bundle 已通过，但标签工作流在同步新
+  Agent 版本前主动取消；未进入六目标原生矩阵，未创建 GitHub Release 或切换 OSS
+  latest。Desktop 恢复版本继续提升为 `0.12.2`。
+- `0.12.2` 协调候选的 Release Notes 校验通过；Agent/Desktop 发布链路聚焦测试
+  `106/106` 通过、1 项平台用例跳过。最终 `npm test` 为 `3478` 通过、`51` 跳过，
+  typecheck 与 lint 通过；仍未运行本地 production build、package 或安装探针。
 
 ### 2026-09-02 完整实现
 

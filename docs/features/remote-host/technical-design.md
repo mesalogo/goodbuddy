@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录截至 2026-08-31 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+本文记录截至 2026-09-03 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
 Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
 详细事务与验收边界见
 [SSH Host 远程环境准备与直连下载设计](./environment-provisioning-technical-design.md)；
@@ -11,9 +11,9 @@ Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Ho
 Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
-`0.11.10` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前未发布
-Agent 源码 lock 为 `0.11.14`，桌面版本仍保持已发布的 `0.11.13`，等待发布审批后再选择
-新版本。现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
+`0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前未发布
+Agent 源码 lock 为 `0.11.15`，Desktop 恢复候选为 `0.12.2`，等待各自独立发布审批。
+现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
 
 ## 产品语义
@@ -349,7 +349,7 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
   的双架构验收。Agent `0.11.10` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 固定为 `0.11.14`；正式发布状态以独立 Agent Release 与签名 catalog 为准。
+  当前源码 lock 固定为 `0.11.15`；正式发布状态以独立 Agent Release 与签名 catalog 为准。
 - 2026-08-30 在共享 Linux x64 Host 的隔离测试 HOME 中验证当前 `0.11.13` 源码候选：
   签名 Runtime 清单的测试墙钟上限为 1 秒，模型桥首轮故意延迟 2.515 秒后 Prompt 仍在
   5.770 秒正常完成；随后 OpenCode 原生 Task 依次产生 `running`、`completed` 子 Agent
@@ -382,7 +382,7 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
   为 `0700`、文件为 `0600`，单文件 3719 bytes，未超过 64 KiB。六类测试哨兵覆盖 Prompt、
   密钥、环境、SSH 参数、用户文件内容和原始错误消息，CLI 输出与磁盘均未出现哨兵。把隔离
   diagnostics 目录临时设为不可写后，Attach 和 `agent/status` 仍正常；随后已恢复权限。
-- 2026-09-02 使用当前源码 Agent bundle 在共享 Linux x64 Host 的唯一
+- 2026-09-02 使用后续锁定为 `0.11.15` 的当前源码 Agent bundle 在共享 Linux x64 Host 的唯一
   `/tmp/goodbuddy-e2e-no-reverify-*` 隔离 HOME 验证已登记 Runtime 的快速激活路径。测试
   复制 Host current Runtime registry 与 bundle，在副本 OpenCode 二进制追加哨兵字节后，
   `runtime activate` 仍依据匹配的 registry 与 canonical manifest 成功返回
@@ -391,6 +391,12 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
   本次未注入模型凭据或执行 Prompt，真实文本模型调用 0 次；三文件轮转继续由聚焦测试覆盖。
   测试结束前按 PID、UID、starttime、executable 和唯一 installation 核对并停止所有本次
   daemon，本地及 Host 临时目录均已清理，共享 current Agent 和 `/root/.goodbuddy` 未修改。
+- 2026-09-03 协调发布候选将上述已验证源码锁定为 Agent `0.11.15`，并将 Desktop 最低
+  版本同步为 `0.12.2`；Agent protocol `2.0`、固定 Node 与 OpenCode Runtime lock 均未
+  改变。Agent bundle/package/catalog/workflow、Runtime 注册加载、Desktop package
+  workflow 与 Release Notes 聚焦测试 `106/106` 通过、1 项平台用例跳过；全量
+  `npm test` 为 `3478` 通过、`51` 跳过，typecheck 与 lint 通过。本轮没有新增模型调用，
+  也未在本地运行 production build、package 或安装探针。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
