@@ -250,6 +250,8 @@ for (const breakpoint of ["1199px", "959px", "719px"]) {
 const requiredCopy = [
   "免注册",
   "支持信创软硬件的",
+  "产品亮点",
+  "本地工作空间，统一 Runtime，也支持信创环境",
   "桌面版本覆盖国产 x64、ARM64 和龙芯 LoongArch",
   "龙芯 LoongArch 独立编译预览版",
   "龙芯 LoongArch（实验预览）",
@@ -275,9 +277,11 @@ for (const copy of requiredCopy) {
 
 const requiredEnglishCopy = [
   "No account required.",
+  "Product highlights",
   "Model chat and coding agents",
   "on your desktop.",
   "Windows, macOS, and Linux",
+  "separate experimental LoongArch preview",
   "Agent Runtimes in one desktop interface",
   "Direct models",
   "OpenCode",
