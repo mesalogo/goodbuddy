@@ -159,6 +159,43 @@ describe('AssistantDatabase', () => {
     unchanged.close()
   })
 
+  it('persists more than 100 tool activities in one message', async () => {
+    const database = await createDatabase()
+    const conversationId = '00000000-0000-4000-8000-000000000901'
+    const messageId = '00000000-0000-4000-8000-000000000902'
+    const tools = Array.from({ length: 101 }, (_, index) => ({
+      callId: `call-${index + 1}`,
+      name: 'read',
+      state: 'completed' as const,
+      summary: `Tool ${index + 1}`
+    }))
+
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          title: '长工具链',
+          updatedAt: 1
+        },
+        messages: [
+          {
+            id: messageId,
+            role: 'assistant',
+            content: '',
+            createdAt: 1,
+            state: 'complete',
+            tools
+          }
+        ]
+      }
+    ])
+
+    expect(
+      database.getConversation(conversationId)?.messages[0]?.tools
+    ).toHaveLength(101)
+    database.close()
+  })
+
   it('lists projects by creation time with newer projects last', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-07T00:00:00.000Z'))

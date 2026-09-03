@@ -126,8 +126,6 @@ export const agentPromptModelProfileSchema = z
     limits: z
       .object({
         maximumOutputTokens: z.number().int().min(1).max(1_000_000),
-        maximumModelCalls: z.number().int().min(1).max(10_000),
-        maximumTotalOutputTokens: z.number().int().min(1).max(10_000_000),
         requestTimeoutMilliseconds: z
           .number()
           .int()
@@ -158,16 +156,6 @@ export const agentPromptModelProfileSchema = z
         message: 'Model provider does not match its wire protocol'
       })
     }
-    if (
-      profile.limits.maximumOutputTokens >
-      profile.limits.maximumTotalOutputTokens
-    ) {
-      context.addIssue({
-        code: 'custom',
-        path: ['limits', 'maximumOutputTokens'],
-        message: 'Per-call output limit exceeds the prompt total'
-      })
-    }
   })
 export type AgentPromptModelProfile = z.infer<
   typeof agentPromptModelProfileSchema
@@ -178,11 +166,6 @@ export const modelBridgePolicySchema = z
     protocol: modelBridgeModelProtocolSchema,
     model: modelNameSchema,
     modelProfileDigest: sha256DigestSchema,
-    // Accepted only so persisted pre-removal bindings can be read and
-    // retired normally. Current code neither emits nor enforces these fields.
-    maximumOutputTokens: z.number().int().min(1).optional(),
-    maximumModelCalls: z.number().int().min(1).optional(),
-    maximumTotalOutputTokens: z.number().int().min(1).optional(),
     supportsImageInput: z.boolean()
   })
   .strict()

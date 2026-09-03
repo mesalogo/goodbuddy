@@ -182,9 +182,9 @@ export const conversationMessageBlockSchema = z.discriminatedUnion('type', [
     .strict()
 ])
 
-export const conversationMessageBlocksSchema = z
-  .array(conversationMessageBlockSchema)
-  .max(500)
+export const conversationMessageBlocksSchema = z.array(
+  conversationMessageBlockSchema
+)
 
 export type ConversationToolActivity = z.infer<
   typeof conversationToolActivitySchema
@@ -192,9 +192,6 @@ export type ConversationToolActivity = z.infer<
 export type ConversationMessageBlock = z.infer<
   typeof conversationMessageBlockSchema
 >
-
-export const maximumConversationToolActivities = 100
-export const maximumConversationSubagentActivities = 100
 
 export const subagentActorSchema = z
   .object({
@@ -277,14 +274,8 @@ export const conversationMessageSchema = z
       .array(conversationContextCompressionMarkerSchema)
       .max(2)
       .optional(),
-    tools: z
-      .array(conversationToolActivitySchema)
-      .max(maximumConversationToolActivities)
-      .optional(),
-    subagents: z
-      .array(conversationSubagentActivitySchema)
-      .max(maximumConversationSubagentActivities)
-      .optional(),
+    tools: z.array(conversationToolActivitySchema).optional(),
+    subagents: z.array(conversationSubagentActivitySchema).optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
     sourceReferences: z
       .array(

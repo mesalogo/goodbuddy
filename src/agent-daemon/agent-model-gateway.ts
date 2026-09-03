@@ -313,7 +313,6 @@ export type AgentModelGatewayContext = {
 export class AgentModelGateway {
   readonly #ledger: AgentModelCallLedger
   readonly #fetch: typeof fetch
-  readonly #promptOutputTokens = new Map<string, number>()
 
   constructor(options: {
     ledger: AgentModelCallLedger
@@ -334,24 +333,10 @@ export class AgentModelGateway {
   }> {
     signal.throwIfAborted()
     const request = remoteModelGatewayRequestSchema.parse(requestInput)
-    const promptKey = `${context.bindingId}\0${context.operationId}`
-    const usedOutputTokens = this.#promptOutputTokens.get(promptKey) ?? 0
-    const remainingOutputTokens =
-      context.profile.limits.maximumTotalOutputTokens - usedOutputTokens
-    if (remainingOutputTokens < 1) {
-      throw new AgentModelGatewayError(
-        'policy',
-        'Prompt total output token limit is exhausted'
-      )
-    }
-    const reservedOutputTokens = Math.min(
-      context.profile.limits.maximumOutputTokens,
-      remainingOutputTokens
-    )
     const prepared = prepareProviderRequest(
       context.profile,
       request,
-      reservedOutputTokens
+      context.profile.limits.maximumOutputTokens
     )
     const requestDigest = sha256(prepared.canonicalRequest)
     const callId = createAgentModelCallId(context)
@@ -444,14 +429,6 @@ export class AgentModelGateway {
       headers,
       bodyBase64: Buffer.from(bytes).toString('base64')
     })
-    this.#promptOutputTokens.set(
-      promptKey,
-      usedOutputTokens +
-        Math.min(
-          reservedOutputTokens,
-          responseOutputTokens(bytes) ?? reservedOutputTokens
-        )
-    )
     this.#ledger.complete(callId)
     let finalized = false
     return {
@@ -474,9 +451,6 @@ export class AgentModelGateway {
     }
   }
 
-  finalizePrompt(bindingId: string, operationId: string): void {
-    this.#promptOutputTokens.delete(`${bindingId}\0${operationId}`)
-  }
 }
 
 export function createAgentModelCallId(
@@ -596,29 +570,6 @@ function prepareProviderRequest(
       }
     })
   }
-}
-
-function responseOutputTokens(body: Uint8Array): number | undefined {
-  let value: unknown
-  try {
-    value = JSON.parse(new TextDecoder().decode(body))
-  } catch {
-    return undefined
-  }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined
-  }
-  const usage = (value as { usage?: unknown }).usage
-  if (usage === null || typeof usage !== 'object' || Array.isArray(usage)) {
-    return undefined
-  }
-  const record = usage as Record<string, unknown>
-  const tokens = record.output_tokens ?? record.completion_tokens
-  return typeof tokens === 'number' &&
-    Number.isSafeInteger(tokens) &&
-    tokens >= 0
-    ? tokens
-    : undefined
 }
 
 function providerUrl(profile: AgentPromptModelProfile): URL {

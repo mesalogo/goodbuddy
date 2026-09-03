@@ -60,12 +60,7 @@ export const prepareModelCallSchema = z
   .object({
     identity: modelCallIdentitySchema,
     requestDigest: modelCallDigestSchema,
-    modelProfileDigest: modelCallDigestSchema,
-    // Legacy ledger fields are accepted during migration but no longer
-    // constrain dispatch.
-    maximumOutputTokens: positiveCountSchema.optional(),
-    maximumModelCalls: positiveCountSchema.optional(),
-    maximumTotalOutputTokens: positiveCountSchema.optional()
+    modelProfileDigest: modelCallDigestSchema
   })
   .strict()
 export type PrepareModelCall = z.infer<typeof prepareModelCallSchema>
@@ -164,9 +159,6 @@ export const modelCallRecordSchema = z
     identity: modelCallIdentitySchema,
     requestDigest: modelCallDigestSchema,
     modelProfileDigest: modelCallDigestSchema,
-    maximumOutputTokens: positiveCountSchema.optional(),
-    maximumModelCalls: positiveCountSchema.optional(),
-    maximumTotalOutputTokens: positiveCountSchema.optional(),
     status: modelCallStatusSchema,
     dispatchMetadata: modelCallDispatchMetadataSchema.optional(),
     terminalEvidence: modelCallTerminalEvidenceSchema.optional(),

@@ -191,14 +191,14 @@ describe('model bridge contracts and codec', () => {
         apiKey: 'must-not-cross'
       })
     ).toThrow()
-    expect(
+    expect(() =>
       modelBridgePolicySchema.parse({
         ...policy,
         maximumOutputTokens: 65_537,
         maximumModelCalls: 8,
         maximumTotalOutputTokens: 32_768
       })
-    ).toMatchObject(policy)
+    ).toThrow()
     await expect(
       createModelBridgeRequestMessage({
         identity,

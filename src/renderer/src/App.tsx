@@ -128,7 +128,6 @@ import {
   conversationMessageBlocksSchema,
   conversationSubagentActivitySchema,
   interactiveWorkModes,
-  maximumConversationSubagentActivities,
   normalizeInteractiveWorkMode,
   projectChannelLabels
 } from '../../shared/assistant-contracts'
@@ -568,7 +567,6 @@ const minimumPrimaryWorkspaceWidth = 480
 const primarySidebarKeyboardResizeStep = 16
 
 const maxMessageContentLength = 1_000_000
-const maxMessageBlocks = 500
 
 function getPrimarySidebarWidthLimits(viewportWidth: number): {
   minimum: number
@@ -638,9 +636,6 @@ function appendMessageContentBlock(
     }
     return current
   }
-  if (current.length >= maxMessageBlocks) {
-    return current
-  }
   current.push({
     id: crypto.randomUUID(),
     type,
@@ -669,9 +664,6 @@ function upsertMessageToolBlock(
         ? { ...block, tool }
         : block
     )
-  }
-  if (blocks.length >= maxMessageBlocks) {
-    return blocks
   }
   return [
     ...blocks,
@@ -717,9 +709,6 @@ function upsertMessageSubagentBlock(
           }
         : block
     )
-  }
-  if (blocks.length >= maxMessageBlocks) {
-    return blocks
   }
   return [
     ...blocks,
@@ -1327,8 +1316,6 @@ function isConversation(value: unknown): value is Conversation {
             ))) &&
         (entry.subagents === undefined ||
           (Array.isArray(entry.subagents) &&
-            entry.subagents.length <=
-              maximumConversationSubagentActivities &&
             entry.subagents.every(
               (subagent) =>
                 conversationSubagentActivitySchema.safeParse(subagent)
@@ -4564,10 +4551,7 @@ function App(): React.JSX.Element {
               ? current.map((task) =>
                   task.id === event.childTaskId ? childTask : task
                 )
-              : [...current, childTask].slice(
-                  0,
-                  maximumConversationSubagentActivities
-                )
+              : [...current, childTask]
           })
         }
         if (event.runtimeCallId) {
@@ -4638,10 +4622,7 @@ function App(): React.JSX.Element {
                 }
           if (index >= 0) {
             subagents[index] = subagent
-          } else if (
-            subagents.length <
-            maximumConversationSubagentActivities
-          ) {
+          } else {
             subagents.push(subagent)
           }
           const runtimeCallId = event.runtimeCallId

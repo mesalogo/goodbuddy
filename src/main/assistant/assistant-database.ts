@@ -7,8 +7,6 @@ import {
   conversationMessageSchema,
   conversationSnapshotSchema,
   expertCreateSchema,
-  maximumConversationSubagentActivities,
-  maximumConversationToolActivities,
   normalizeInteractiveWorkMode,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
@@ -1170,7 +1168,6 @@ function serializeConversationMessageMetadata(
 }
 
 const maximumRecoveredMessageLength = 1_000_000
-const maximumRecoveredMessageBlocks = 500
 
 function appendRecoveredMessageBlock(
   blocks: ConversationMessageBlock[] | undefined,
@@ -1190,7 +1187,7 @@ function appendRecoveredMessageBlock(
         maximumRecoveredMessageLength
       )
     }
-  } else if (current.length < maximumRecoveredMessageBlocks) {
+  } else {
     current.push({
       id: randomUUID(),
       type,
@@ -1221,12 +1218,10 @@ function upsertRecoveredToolBlock(
         : block
     )
   }
-  return blocks.length >= maximumRecoveredMessageBlocks
-    ? blocks
-    : [
-        ...blocks,
-        { id: randomUUID(), type: 'tool' as const, tool }
-      ]
+  return [
+    ...blocks,
+    { id: randomUUID(), type: 'tool' as const, tool }
+  ]
 }
 
 function upsertRecoveredSubagentBlock(
@@ -1262,12 +1257,10 @@ function upsertRecoveredSubagentBlock(
         : block
     )
   }
-  return blocks.length >= maximumRecoveredMessageBlocks
-    ? blocks
-    : [
-        ...blocks,
-        { id: randomUUID(), type: 'subagent' as const, childTaskId }
-      ]
+  return [
+    ...blocks,
+    { id: randomUUID(), type: 'subagent' as const, childTaskId }
+  ]
 }
 
 function terminalizeRecoveredToolBlocks(
@@ -1377,7 +1370,7 @@ function reduceRecoveredAgentEvent(
     )
     if (index >= 0) {
       tools[index] = tool
-    } else if (tools.length < maximumConversationToolActivities) {
+    } else {
       tools.push(tool)
     }
     next = {
@@ -1410,9 +1403,7 @@ function reduceRecoveredAgentEvent(
     )
     if (index >= 0) {
       subagents[index] = subagent
-    } else if (
-      subagents.length < maximumConversationSubagentActivities
-    ) {
+    } else {
       subagents.push(subagent)
     }
     next = {

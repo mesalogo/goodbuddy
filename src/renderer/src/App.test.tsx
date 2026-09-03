@@ -3694,6 +3694,37 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
+  it('keeps more than 100 tool activities in one response', async () => {
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+      target: { value: '执行长工具链' }
+    })
+    fireEvent.click(await screen.findByLabelText('发送'))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    const request = run.mock.calls[0]?.[0]
+    if (!request) {
+      throw new Error('Missing request')
+    }
+
+    act(() => {
+      for (let index = 0; index < 101; index += 1) {
+        agentListener?.({
+          requestId: request.requestId,
+          type: 'tool',
+          callId: `call-${index + 1}`,
+          name: 'read',
+          state: 'completed',
+          summary: `OpenCode 工具：read ${index + 1}`
+        })
+      }
+    })
+
+    expect(
+      screen.getByRole('region', { name: '工具执行，共 101 项' })
+    ).toBeInTheDocument()
+  })
+
   it('keeps adjacent streamed text blocks exact in StrictMode', async () => {
     render(
       <StrictMode>

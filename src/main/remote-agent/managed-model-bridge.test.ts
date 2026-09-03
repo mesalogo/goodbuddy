@@ -15,7 +15,7 @@ const profile: ResolvedModelProfile = {
 }
 
 describe('managed Agent prompt model setup', () => {
-  it('validates and clones a bounded Agent prompt profile', () => {
+  it('validates and clones an Agent prompt profile without prompt-wide quotas', () => {
     const setup = createManagedModelBridge({ profile })
 
     expect(setup.profile).toEqual({
@@ -32,8 +32,6 @@ describe('managed Agent prompt model setup', () => {
       capabilities: { imageInput: true },
       limits: {
         maximumOutputTokens: 8_192,
-        maximumModelCalls: 100,
-        maximumTotalOutputTokens: 819_200,
         requestTimeoutMilliseconds: 60_000
       }
     })

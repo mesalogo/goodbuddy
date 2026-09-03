@@ -1544,7 +1544,7 @@ describe('AcpRemoteRuntime', () => {
     })
   })
 
-  it('bounds native subagent output per event and per request', async () => {
+  it('bounds native subagent output per event without a request-wide stop', async () => {
     const client: { value?: AgentSideConnection } = {}
     const server = fakeServer({
       prompt: async ({ sessionId }) => {
@@ -1620,10 +1620,12 @@ describe('AcpRemoteRuntime', () => {
           async () => 'once'
         )
       )
-    ).rejects.toThrow('远端 Runtime 请求输出超过安全上限')
+    ).resolves.toContainEqual(
+      expect.objectContaining({ type: 'done' })
+    )
   })
 
-  it('rejects more than 100 distinct remote tool calls', async () => {
+  it('accepts more than 100 distinct remote tool calls', async () => {
     const client: { value?: AgentSideConnection } = {}
     const server = fakeServer({
       prompt: async ({ sessionId }) => {
@@ -1634,7 +1636,7 @@ describe('AcpRemoteRuntime', () => {
               sessionUpdate: 'tool_call',
               toolCallId: `call-${index}`,
               title: 'tool',
-              status: 'in_progress'
+              status: 'completed'
             }
           })
         }
@@ -1643,17 +1645,18 @@ describe('AcpRemoteRuntime', () => {
     })
     client.value = server.client
 
-    await expect(
-      collect(
-        runtime(server).run(
-          request,
-          new AbortController().signal,
-          async () => 'once'
-        )
+    const events = await collect(
+      runtime(server).run(
+        request,
+        new AbortController().signal,
+        async () => 'once'
       )
-    ).rejects.toThrow(
-      '远端 Runtime 单次运行的工具调用超过 100 个'
     )
+
+    expect(
+      events.filter((event) => event.type === 'tool')
+    ).toHaveLength(101)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
   it('does not impose a default wall-clock deadline on remote prompts', async () => {
@@ -2235,7 +2238,7 @@ describe('AcpRemoteRuntime', () => {
     ])
   })
 
-  it('cancels and truncates a flood when the consumer is slow', async () => {
+  it('backpressures a flood without cancelling the Runtime', async () => {
     const store = new MemoryRuntimeSessionBindingStore()
     const client: { value?: AgentSideConnection } = {}
     const cancel = vi.fn(async () => {})
@@ -2276,15 +2279,26 @@ describe('AcpRemoteRuntime', () => {
       done: false
     })
     await new Promise((resolve) => setTimeout(resolve, 10))
-    await expect(stream.next()).rejects.toThrow('输出已截断')
+    const events = []
+    while (true) {
+      const next = await stream.next()
+      if (next.done) {
+        break
+      }
+      events.push(next.value)
+    }
+    expect(
+      events.filter((event) => event.type === 'text')
+    ).toHaveLength(20)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
     expect(server.setInboundPaused).toHaveBeenCalledWith(true)
-    expect(server.setInboundPaused).not.toHaveBeenCalledWith(false)
-    expect(cancel).toHaveBeenCalledOnce()
+    expect(server.setInboundPaused).toHaveBeenCalledWith(false)
+    expect(cancel).not.toHaveBeenCalled()
     await expect(
       store.getByConversation(request.conversationId)
     ).resolves.toMatchObject({
-      state: 'outcome-unknown',
-      activePromptOperationId: request.requestId
+      state: 'ready',
+      activePromptOperationId: undefined
     })
   })
 
@@ -2504,8 +2518,6 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     capabilities: { imageInput: false },
     limits: {
       maximumOutputTokens: 4_096,
-      maximumModelCalls: 100,
-      maximumTotalOutputTokens: 409_600,
       requestTimeoutMilliseconds: 60_000
     }
   }

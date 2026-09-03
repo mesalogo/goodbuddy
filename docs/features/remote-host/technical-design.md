@@ -202,10 +202,11 @@ Execute 直接启动已签名 Runtime：
 - 继承 SSH 账号的正常环境、文件系统、进程和网络能力；
 - 不进行 T2/T3、confinement attestation、approval bridge 或逐工具批准。
 
-两种模式都保留输入/输出字节上限、用户取消和进程组清理。生产 Prompt 不设置固定墙钟
-总时限；只要 Runtime 尚未按自身协议结束，Main 和 Agent 就允许其持续运行。启动、握手、
-单个控制 RPC、重连尝试和关闭清理仍使用独立的有界超时，测试可以显式注入短 Prompt
-时限验证取消升级，但该覆盖值不是生产默认。无界 Prompt 继续复用已发布的必填
+两种模式都保留输入字节上限、用户取消和进程组清理；输出只用有界内存队列与 journal
+配合背压，不按 Prompt 累计输出量停止 Runtime。生产 Prompt 不设置固定墙钟总时限；
+只要 Runtime 尚未按自身协议结束，Main 和 Agent 就允许其持续运行。启动、握手、单个
+控制 RPC、重连尝试和关闭清理仍使用独立的有界超时，测试可以显式注入短 Prompt 时限
+验证取消升级，但该覆盖值不是生产默认。无界 Prompt 继续复用已发布的必填
 `deadlineAt` 字段，以 year-9999 哨兵表达；Main 与 Agent 必须同时理解该哨兵，Agent
 `0.11.10` 及更早版本仍会按其 manifest 上限夹紧，因此桌面启用这一语义前必须配套更新
 到 Agent `0.11.13` 或更高版本。
@@ -234,8 +235,9 @@ Execute 直接启动已签名 Runtime：
 - 无法确认外部 Provider 是否已处理的模型调用保持结果未知，避免重复计费或重复副作用。
 - 只有远端返回 identity 匹配且 `closed: true` 时，Main 才删除持久化 binding；传输失败或未确认 close 会保留 recovery identity。
 - 终态 close 由 Agent 在一个事务中为两个方向记录 sequence high-water tombstone，删除剩余 frame 和 active channel，并归零对应 journal quota。tombstone 用于拒绝迟到的旧 epoch frame，因此当前不会按时间自动裁剪。
-- 断线不主动终止正在运行的 Runtime。用户取消、显式关闭、输出边界或 Agent shutdown
-  才触发停止；连接恢复只受当前用户取消信号和单次重连控制超时约束，不把 Prompt 已运行
+- 断线不主动终止正在运行的 Runtime。用户取消、显式关闭或 Agent shutdown 才触发停止；
+  输出队列和 journal 达到容量时暂停读取并等待 ACK 释放容量，不把展示或传输容量转换为
+  Runtime 取消。连接恢复只受当前用户取消信号和单次重连控制超时约束，不把 Prompt 已运行
   时长当作停止条件。
 - Agent 失联期间继续把 Runtime 输出写入本机 journal；重新连接只校验 controller
   identity、恢复 binding，并从 Main 最后确认的 cursor 后同步缺失数据。已接受的
@@ -285,9 +287,10 @@ Execute 直接启动已签名 Runtime：
   各限制 768 KiB，响应同时核对声明长度与短读。每个
   `(binding, operation, roundIndex)` 只 dispatch 一次；已 dispatch 但未证明完整交付的调用
   变为 `outcome-unknown`，不会自动重试。
-- Prompt 最多 100 个模型调用，并受单次与累计输出 Token 上限保护；这些是资源边界，不是
-  Prompt 墙钟总时限。Provider 单次请求仍有独立超时。实际 usage 在语义 transcript 中同步
-  回 Desktop 的 usage/task 数据。Agent 在所有进程终止路径统一清除 Prompt token 计数。
+- Agent 不按固定模型调用次数或 Prompt 累计输出 Token 数停止 Runtime；每次 Provider
+  请求仍遵循所选模型 profile 的单次输出设置和独立请求超时。模型桥协议不包含 Prompt
+  调用次数或累计 Token 配额字段。实际 usage 在语义 transcript 中同步回 Desktop 的
+  usage/task 数据。
 - helper 可以接收同一 Prompt 内并发到达的模型桥请求；它在单一稳定模型桥上按到达
   顺序等待并交付，不返回本地 `bridge-busy`，每个响应只有在 HTTP 完整 flush 后才
   发送 delivery ACK。
@@ -400,6 +403,10 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
   都未经过外部进程隔离命令。Runtime owner 和隔离目录均已清理，未修改 Host current
   Agent/Runtime。本次只验证能力声明和真实进程启动，没有发送 Prompt，真实文本模型调用
   0 次。
+- 2026-09-03 使用包含本次模型轮次与输出背压修复的当前源码 Agent，在共享 Linux x64
+  Host 的唯一 `/tmp/goodbuddy-e2e-*` 目录完成 Runtime 激活和 Agent 本机模型 gateway
+  验证。模型 gateway 通过所选 Anthropic 连接返回预期随机哨兵，HTTP 状态为 200，实际
+  文本模型调用恰好 1 次；Host 临时目录随后删除，共享 Agent/Runtime 安装和进程未修改。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生

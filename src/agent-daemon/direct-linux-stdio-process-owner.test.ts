@@ -254,6 +254,56 @@ describe('direct Linux stdio Runtime ownership', () => {
     }
   })
 
+  it('uses stdout backpressure instead of stopping when output queues fill', async () => {
+    const registry = createRegistry()
+    const child = fakeChild()
+    const launched = identity()
+    const sendSignal = vi.fn<typeof process.kill>(() => true)
+    let releaseFirst!: () => void
+    const firstConsumed = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const owner = await launchDirectLinuxStdioProcessOwner({
+      manifest: manifest(),
+      profile: profile(),
+      identity: { launchId: 'launch-output', processId: 'process-output' },
+      installationId: 'installation-1',
+      registry,
+      deadlineAt: UNBOUNDED_REMOTE_PROMPT_DEADLINE,
+      maximumInputBytes: 1024,
+      maximumOutputQueueChunks: 1,
+      platform: 'linux',
+      spawn: () => {
+        queueMicrotask(() => child.emit('spawn'))
+        return child
+      },
+      randomOwnerToken: () => 'a'.repeat(32),
+      readProcessIdentity: async () => launched,
+      sendSignal
+    })
+    const pause = vi.spyOn(child.stdout, 'pause')
+    const resume = vi.spyOn(child.stdout, 'resume')
+    const received: string[] = []
+    owner.subscribeOutput(async ({ data }) => {
+      received.push(Buffer.from(data).toString())
+      if (received.length === 1) {
+        await firstConsumed
+      }
+    })
+
+    child.stdout.write('one')
+    await vi.waitFor(() => expect(pause).toHaveBeenCalled())
+    child.stdout.write('two')
+    releaseFirst()
+    await vi.waitFor(() => expect(received).toEqual(['one', 'two']))
+
+    expect(resume).toHaveBeenCalled()
+    expect(sendSignal).not.toHaveBeenCalled()
+    child.exitCode = 0
+    child.emit('close', 0, null)
+    registry.close()
+  })
+
   it('startup reconciles only owners from the current installation', async () => {
     const registry = createRegistry()
     const reservation = {

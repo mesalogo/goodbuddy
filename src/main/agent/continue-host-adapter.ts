@@ -27,9 +27,6 @@ import type {
   RuntimeSettings
 } from '../../shared/contracts'
 import {
-  maximumConversationToolActivities
-} from '../../shared/assistant-contracts'
-import {
   continueConfigurationPresetSchema,
   runtimeNativeInventoryLimits,
   type ContinueConfigurationPreset
@@ -69,9 +66,7 @@ const maximumConfiguredMcpServers =
   runtimeNativeInventoryLimits.mcpServers
 const maximumConfiguredRules = runtimeNativeInventoryLimits.rules
 const maximumConfiguredPrompts = runtimeNativeInventoryLimits.prompts
-const maximumStreamEvents = 5_000
 const maximumStreamEventBytes = 2 * 1024 * 1024
-const maximumToolCalls = maximumConversationToolActivities
 const defaultControlRequestTimeoutMs = 30_000
 const knowledgeMcpName = 'goodbuddy-knowledge'
 const customMcpName = 'goodbuddy-custom-mcp'
@@ -142,7 +137,7 @@ const continueHostQuestionSchema = z
 
 const stateSchema = z.object({
   session: z.object({
-    history: z.array(z.unknown()).max(5_000),
+    history: z.array(z.unknown()),
     usage: sessionUsageSchema.optional()
   }),
   isProcessing: z.boolean(),
@@ -152,12 +147,11 @@ const stateSchema = z.object({
       toolName: z.string().min(1).max(128),
       toolArgs: z.record(z.string(), z.unknown()),
       requestId: z.string().min(1).max(256),
-      toolCallPreview: z.array(z.unknown()).max(100).optional()
+      toolCallPreview: z.array(z.unknown()).optional()
     })
     .nullable(),
   goodbuddyEvents: z
     .array(continueHostStreamEventSchema)
-    .max(maximumStreamEvents)
     .optional(),
   goodbuddyEventsOverflow: z.boolean().optional(),
   goodbuddyQuestion: continueHostQuestionSchema.nullable().optional()
@@ -199,6 +193,7 @@ export type ContinueHostTool = {
 export type ContinueHostRunResult = {
   text: string
   streamedText?: true
+  streamTruncated?: true
   usage?: ContinueHostUsage
   tools?: ContinueHostTool[]
 }
@@ -249,9 +244,7 @@ export type ContinueHostAdapterOptions = {
 
 export type ContinueHostAdapterDependencies = {
   terminateProcessTree: typeof terminateProcessTreeAndWait
-  maximumStreamEvents: number
   maximumStreamEventBytes: number
-  maximumToolCalls: number
   controlRequestTimeoutMs: number
 }
 
@@ -713,9 +706,6 @@ function extractContinueTools(
       if (!callId || typeof name !== 'string' || !name.trim()) {
         continue
       }
-      if (!tools.has(callId) && tools.size >= 100) {
-        throw new Error('Continue 单次运行的工具调用超过 100 个')
-      }
       const status = state.status
       const normalizedState =
         status === 'done' || status === 'completed'
@@ -834,9 +824,7 @@ export class ContinueHostAdapter {
   ) {
     this.dependencies = {
       terminateProcessTree: terminateProcessTreeAndWait,
-      maximumStreamEvents,
       maximumStreamEventBytes,
-      maximumToolCalls,
       controlRequestTimeoutMs: defaultControlRequestTimeoutMs,
       ...dependencies
     }
@@ -985,7 +973,7 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       streamCallbacksMarker,
-      'a={onContent:u=>{if(!u)return;let l=String(u);e.goodbuddyEventsBytes+=Buffer.byteLength(l);l.length<=1e5&&e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push({type:"text",delta:l}):e.goodbuddyEventsOverflow=!0},onContentComplete:u=>{},onToolStart:(u,l,c)=>{if(!c)return;let d={type:"tool",callId:c,name:u,state:"running",input:(()=>{try{return JSON.stringify(l).slice(0,4e3)}catch{return"[无法序列化]"}})()};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(d));e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(d):e.goodbuddyEventsOverflow=!0},onToolResult:(u,l,c,d)=>{if(!d)return;let p={type:"tool",callId:d,name:l,state:c==="done"?"completed":"failed",output:String(u).slice(0,16e3)};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(p));e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(p):e.goodbuddyEventsOverflow=!0},onToolError:(u,l,c)=>{if(!c)return;let d={type:"tool",callId:c,name:l??"unknown",state:"failed",error:String(u).slice(0,1e3)};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(d));e.goodbuddyEvents.length<5e3&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(d):e.goodbuddyEventsOverflow=!0},onToolPermissionRequest:'
+      'a={onContent:u=>{if(!u)return;let l=String(u);e.goodbuddyEventsBytes+=Buffer.byteLength(l);l.length<=1e5&&e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push({type:"text",delta:l}):e.goodbuddyEventsOverflow=!0},onContentComplete:u=>{},onToolStart:(u,l,c)=>{if(!c)return;let d={type:"tool",callId:c,name:u,state:"running",input:(()=>{try{return JSON.stringify(l).slice(0,4e3)}catch{return"[无法序列化]"}})()};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(d));e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(d):e.goodbuddyEventsOverflow=!0},onToolResult:(u,l,c,d)=>{if(!d)return;let p={type:"tool",callId:d,name:l,state:c==="done"?"completed":"failed",output:String(u).slice(0,16e3)};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(p));e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(p):e.goodbuddyEventsOverflow=!0},onToolError:(u,l,c)=>{if(!c)return;let d={type:"tool",callId:c,name:l??"unknown",state:"failed",error:String(u).slice(0,1e3)};e.goodbuddyEventsBytes+=Buffer.byteLength(JSON.stringify(d));e.goodbuddyEventsBytes<=2097152?e.goodbuddyEvents.push(d):e.goodbuddyEventsOverflow=!0},onToolPermissionRequest:'
     )
     patched = replaceExactly(
       patched,
@@ -1584,7 +1572,7 @@ export class ContinueHostAdapter {
     let observedTools: ContinueHostTool[] = []
     const reportedQuestionIds = new Set<string>()
     let streamedText = false
-    let streamEventCount = 0
+    let streamTruncated = false
     let streamEventBytes = 0
     const observedToolCallIds = new Set<string>()
     try {
@@ -1635,38 +1623,28 @@ export class ContinueHostAdapter {
             signal: executionSignal
           })
         )
-        if (state.goodbuddyEventsOverflow) {
-          throw new Error('Continue 宿主流式事件超过安全限制')
-        }
-        const streamEvents = state.goodbuddyEvents ?? []
+        streamTruncated ||= state.goodbuddyEventsOverflow === true
+        let streamEvents = state.goodbuddyEvents ?? []
         const batchStreamEventBytes = Buffer.byteLength(
           JSON.stringify(streamEvents)
         )
-        const nextStreamEventCount =
-          streamEventCount + streamEvents.length
         const nextStreamEventBytes =
           streamEventBytes + batchStreamEventBytes
+        if (
+          nextStreamEventBytes >
+          this.dependencies.maximumStreamEventBytes
+        ) {
+          streamTruncated = true
+          streamEvents = []
+        } else {
+          streamEventBytes = nextStreamEventBytes
+        }
         const nextToolCallIds = new Set(observedToolCallIds)
         for (const event of streamEvents) {
           if (event.type === 'tool') {
             nextToolCallIds.add(event.callId)
           }
         }
-        if (
-          nextStreamEventCount >
-            this.dependencies.maximumStreamEvents ||
-          nextStreamEventBytes >
-            this.dependencies.maximumStreamEventBytes
-        ) {
-          throw new Error('Continue 宿主流式事件超过安全限制')
-        }
-        if (
-          nextToolCallIds.size > this.dependencies.maximumToolCalls
-        ) {
-          throw new Error('Continue 单次运行的工具调用超过 100 个')
-        }
-        streamEventCount = nextStreamEventCount
-        streamEventBytes = nextStreamEventBytes
         for (const callId of nextToolCallIds) {
           observedToolCallIds.add(callId)
         }
@@ -1676,11 +1654,6 @@ export class ContinueHostAdapter {
         )
         for (const tool of historyTools) {
           observedToolCallIds.add(tool.callId)
-        }
-        if (
-          observedToolCallIds.size > this.dependencies.maximumToolCalls
-        ) {
-          throw new Error('Continue 单次运行的工具调用超过 100 个')
         }
         observedTools = mergeContinueTools(
           observedTools,
@@ -1744,12 +1717,6 @@ export class ContinueHostAdapter {
         }
         const pending = state.pendingPermission
         if (pending && !handledPermissionIds.has(pending.requestId)) {
-          if (
-            handledPermissionIds.size >=
-            this.dependencies.maximumToolCalls
-          ) {
-            throw new Error('Continue 单次运行的工具调用超过 100 个')
-          }
           handledPermissionIds.add(pending.requestId)
           const pendingCallId =
             observedTools.find(
@@ -1761,13 +1728,6 @@ export class ContinueHostAdapter {
           if (
             !observedTools.some((tool) => tool.callId === pendingCallId)
           ) {
-            if (
-              !observedToolCallIds.has(pendingCallId) &&
-              observedToolCallIds.size >=
-                this.dependencies.maximumToolCalls
-            ) {
-              throw new Error('Continue 单次运行的工具调用超过 100 个')
-            }
             observedToolCallIds.add(pendingCallId)
             observedTools = [
               ...observedTools,
@@ -1829,6 +1789,9 @@ export class ContinueHostAdapter {
           return {
             text,
             ...(streamedText ? { streamedText: true as const } : {}),
+            ...(streamTruncated
+              ? { streamTruncated: true as const }
+              : {}),
             ...(usage ? { usage } : {}),
             ...(observedTools.length > 0
               ? { tools: observedTools }

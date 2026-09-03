@@ -4,6 +4,7 @@ import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
   conversationBranchInputSchema,
+  conversationMessageSchema,
   conversationSubagentActivitySchema,
   conversationSnapshotSchema,
   isUntouchedBuiltInDefaultProject,
@@ -169,6 +170,52 @@ describe('project execution space contracts', () => {
     }
     expect(projectCreateSchema.safeParse(input).success).toBe(false)
     expect(projectUpdateSchema.safeParse(input).success).toBe(false)
+  })
+})
+
+describe('conversation activity contracts', () => {
+  it('accepts more than 100 tool and subagent activities', () => {
+    const tools = Array.from({ length: 101 }, (_, index) => ({
+      callId: `call-${index + 1}`,
+      name: 'read',
+      state: 'completed' as const,
+      summary: `Tool ${index + 1}`
+    }))
+    const subagents = Array.from({ length: 101 }, (_, index) => ({
+      childTaskId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      routingMode: 'native' as const,
+      actor: {
+        kind: 'direct-model' as const,
+        label: '编程 Subagent' as const
+      },
+      state: 'completed' as const
+    }))
+
+    expect(
+      conversationMessageSchema.parse({
+        id: '00000000-0000-4000-8000-000000000999',
+        role: 'assistant',
+        content: '',
+        blocks: tools.map((tool, index) => ({
+          id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+          type: 'tool',
+          tool
+        })),
+        createdAt: 1,
+        state: 'complete',
+        tools,
+        subagents
+      })
+    ).toMatchObject({
+      tools: expect.arrayContaining([
+        expect.objectContaining({ callId: 'call-101' })
+      ]),
+      subagents: expect.arrayContaining([
+        expect.objectContaining({
+          childTaskId: '00000000-0000-4000-8000-000000000101'
+        })
+      ])
+    })
   })
 })
 

@@ -226,8 +226,6 @@ function harness(
         capabilities: { imageInput: false },
         limits: {
           maximumOutputTokens: 4_096,
-          maximumModelCalls: 100,
-          maximumTotalOutputTokens: 409_600,
           requestTimeoutMilliseconds: 60_000
         }
       }

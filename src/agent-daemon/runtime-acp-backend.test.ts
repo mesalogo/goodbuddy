@@ -7,6 +7,7 @@ import {
 import type { RemoteRuntimeBundleManifest } from '../shared/remote-runtime-launch-contracts'
 import type { ControllerLease } from './controller-registry'
 import { AgentModelGatewayError } from './agent-model-gateway'
+import { EventJournalCapacityError } from './event-journal'
 import type { ProtocolMethodContext } from './protocol-server'
 import type {
   ModelBridgeBrokerDispatch,
@@ -43,8 +44,16 @@ class MemoryAcpJournal implements RuntimeAcpJournal {
   }> = []
   mainAckSequence = '0'
   failAppend = false
+  capacityBlocked = false
 
   appendAcpFrame(input: (typeof this.frames)[number]): { created: boolean } {
+    if (this.capacityBlocked) {
+      throw new EventJournalCapacityError(
+        'journal capacity',
+        'stream',
+        false
+      )
+    }
     if (this.failAppend) {
       throw new Error('journal capacity')
     }
@@ -415,8 +424,6 @@ function harness(input: {
         capabilities: { imageInput: false },
         limits: {
           maximumOutputTokens: 4_096,
-          maximumModelCalls: 100,
-          maximumTotalOutputTokens: 409_600,
           requestTimeoutMilliseconds: 60_000
         }
       },
@@ -539,6 +546,52 @@ describe('RuntimeAcpBackend', () => {
     ])
     expect(fixture.bridgeDispatch).toEqual(expect.any(Function))
     expect(fixture.blobSink).not.toHaveBeenCalled()
+  })
+
+  it('allows more than 100 Agent-local model calls in one prompt', async () => {
+    const dispatch = vi.fn(async () => ({
+      response: {
+        status: 200,
+        headers: {},
+        bodyBase64: Buffer.from('{}').toString('base64')
+      },
+      acknowledgeDelivery: vi.fn(async () => undefined),
+      failDelivery: vi.fn()
+    }))
+    const fixture = harness({
+      agentOwned: true,
+      modelGateway: {
+        dispatch,
+        finalizePrompt: vi.fn()
+      }
+    })
+    await open(fixture)
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      fixture.preparation()
+    )
+
+    for (let index = 0; index < 101; index += 1) {
+      const exchange = await fixture.bridgeDispatch!(
+        {
+          method: 'POST',
+          path: '/v1/responses',
+          headers: { 'content-type': 'application/json' },
+          bodyBase64: Buffer.from('{}').toString('base64')
+        },
+        {
+          requestId: `provider-request-${index}`,
+          signal: new AbortController().signal
+        }
+      )
+      if (!('acknowledgeDelivery' in exchange)) {
+        throw new Error('Expected an acknowledged model exchange')
+      }
+      await exchange.acknowledgeDelivery()
+    }
+
+    expect(dispatch).toHaveBeenCalledTimes(101)
   })
 
   it('runs open, prepare, ACP delivery, durable output, cursors, and close', async () => {
@@ -1162,7 +1215,7 @@ describe('RuntimeAcpBackend', () => {
     }
   })
 
-  it('stops the process when its output quota is exceeded', async () => {
+  it('does not stop the process when cumulative output exceeds the display budget', async () => {
     const fixture = harness({ maximumOutputBytes: 3 })
     await open(fixture)
     await invoke(
@@ -1172,9 +1225,30 @@ describe('RuntimeAcpBackend', () => {
     )
     await expect(
       fixture.process.emit('stdout', 'four')
-    ).rejects.toMatchObject({ code: 'output-quota' })
-    expect(fixture.process.stops).toEqual(['output-quota'])
+    ).resolves.toBeUndefined()
+    expect(fixture.process.stops).toEqual([])
+    expect(fixture.outputFrames).toEqual(['four'])
+  })
+
+  it('waits for durable journal capacity instead of stopping Runtime output', async () => {
+    const fixture = harness()
+    await open(fixture)
+    await invoke(
+      fixture,
+      'runtime/preparePrompt',
+      fixture.preparation()
+    )
+    fixture.journal.capacityBlocked = true
+    const output = fixture.process.emit('stdout', 'later')
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    expect(fixture.process.stops).toEqual([])
     expect(fixture.outputFrames).toEqual([])
+
+    fixture.journal.capacityBlocked = false
+    await output
+
+    expect(fixture.process.stops).toEqual([])
+    expect(fixture.outputFrames).toEqual(['later'])
   })
 
   it('stops with output quota when the detached durable journal is exhausted', async () => {

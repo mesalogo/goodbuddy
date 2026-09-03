@@ -1256,6 +1256,11 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             )
             .join('')
         ).toContain('Prism Relay')
+        const modelCalls = events.filter(
+          (event) => event.type === 'model-usage'
+        ).length
+        expect(modelCalls).toBe(2)
+        console.info(`REAL_OPENCODE_MCP_MODEL_CALLS=${modelCalls}`)
       } finally {
         await runtime.dispose()
         await gateway.dispose()

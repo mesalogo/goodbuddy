@@ -128,6 +128,9 @@ otherwise.
   Workspace/Runtime is first used, then reused by other projects in the same
   process. Managed SSH conversations expose only supported OpenCode choices.
   Multiple projects and conversations can run concurrently on one Host;
+  Agent-owned prompts are not stopped at a fixed model-call count or
+  prompt-wide output-token total, and Runtime output uses transport
+  backpressure instead of cancellation when GoodBuddy buffers fill;
   recovery separately reports network, Agent, Runtime, committed-event cursor,
   completion, or failure/retry and blocks only the affected project. A real
   Linux x64 Host has covered short and long detach, forced local harness exit,

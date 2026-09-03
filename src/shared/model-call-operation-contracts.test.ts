@@ -116,20 +116,20 @@ describe('model call operation contracts', () => {
     ).toThrow()
   })
 
-  it('accepts legacy quota fields without requiring them', () => {
+  it('rejects prompt-wide quota fields', () => {
     const request = {
       identity,
       requestDigest: `sha256:${'a'.repeat(64)}`,
       ...policy
     }
     expect(prepareModelCallSchema.parse(request)).toEqual(request)
-    expect(
+    expect(() =>
       prepareModelCallSchema.parse({
         ...request,
         maximumOutputTokens: 65_537,
         maximumModelCalls: 100_000,
         maximumTotalOutputTokens: 1_000_000_000
       })
-    ).toMatchObject(request)
+    ).toThrow()
   })
 })

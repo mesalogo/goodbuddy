@@ -64,7 +64,6 @@ export type ContinueRuntimeOptions = {
 // The prompt reaches the Continue host through a local HTTP POST body, so no
 // platform command-line limit applies to it.
 const MAX_CONTINUE_PROMPT_CHARACTERS = 128_000
-const MAX_QUEUED_STREAM_EVENTS = 1_000
 const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
 
 function continueToolFailureMessage(tool: ContinueHostTool): string {
@@ -548,6 +547,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
     }
     let result: ContinueHostRunResult
     const emittedTools = new Map<string, ContinueHostTool>()
+    let emittedText = ''
     const requestQuestionIds = new Set<string>()
     try {
       const host = this.getHostAdapter(
@@ -574,9 +574,6 @@ export class ContinueAgentRuntime implements AgentRuntime {
       const hostController = new AbortController()
       const hostSignal = AbortSignal.any([signal, hostController.signal])
       const onEvent = (event: ContinueHostStreamEvent): void => {
-        if (queuedEvents.length >= MAX_QUEUED_STREAM_EVENTS) {
-          throw new Error('Continue 流式事件积压超过安全限制')
-        }
         queuedEvents.push(event)
         wakeStream?.()
         wakeStream = undefined
@@ -623,6 +620,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
             emittedTools.set(event.tool.callId, event.tool)
           }
           if (event.type === 'text') {
+            emittedText += event.delta
             yield {
               requestId: request.requestId,
               type: 'text',
@@ -742,11 +740,25 @@ export class ContinueAgentRuntime implements AgentRuntime {
         yield finalEvent
       }
     }
-    if (!result.streamedText) {
+    if (result.streamTruncated) {
       yield {
         requestId: request.requestId,
-        type: 'text',
-        delta: result.text
+        type: 'status',
+        message:
+          'Continue 输出较长，已截断部分流式展示；任务已继续完成'
+      }
+    }
+    if (!result.streamedText || result.streamTruncated) {
+      const remainingText =
+        result.streamTruncated && result.text.startsWith(emittedText)
+          ? result.text.slice(emittedText.length)
+          : result.text
+      if (remainingText) {
+        yield {
+          requestId: request.requestId,
+          type: 'text',
+          delta: remainingText
+        }
       }
     }
     if (result.usage) {

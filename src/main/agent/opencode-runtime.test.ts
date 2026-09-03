@@ -2035,7 +2035,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it('fails before emitting text that exceeds the aggregate output budget', async () => {
+  it('truncates oversized text display without stopping the run', async () => {
     const setup = runClient([
       {
         id: 'first-text',
@@ -2056,29 +2056,50 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
           field: 'text',
           delta: 'b'.repeat(600_000)
         }
+      },
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
       }
     ])
     const runtime = embeddedRuntime(setup.client)
-    const stream = runtime.run(
-      {
-        requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
-        conversationId: 'conversation-1',
-        prompt: 'test',
-        workMode: 'execute'
-      },
-      new AbortController().signal
-    )
+    const events = await collectRun(runtime, 'execute')
+    const text = events
+      .flatMap((event) => event.type === 'text' ? [event.delta] : [])
+      .join('')
 
-    await stream.next()
-    const firstText = await stream.next()
-    expect(firstText.value).toMatchObject({
-      type: 'text',
-      delta: expect.stringMatching(/^a+$/u)
+    expect(Buffer.byteLength(text)).toBe(1024 * 1024)
+    expect(events).toContainEqual({
+      requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef',
+      type: 'status',
+      message:
+        'OpenCode 输出较长，已停止继续展示文本；任务仍在继续'
     })
-    await expect(stream.next()).rejects.toThrow(
-      '文本与推理输出超过 1 MB 安全限制'
-    )
-    expect(setup.session.abort).toHaveBeenCalled()
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+    expect(setup.session.abort).not.toHaveBeenCalled()
+    await runtime.dispose()
+  })
+
+  it('completes more than 100 distinct tool calls in one run', async () => {
+    const setup = runClient([
+      ...Array.from({ length: 101 }, (_, index) =>
+        completedToolEvent(`call-${index + 1}`)
+      ),
+      {
+        id: 'idle',
+        type: 'session.idle',
+        properties: { sessionID: 'session-1' }
+      }
+    ])
+    const runtime = embeddedRuntime(setup.client)
+
+    const events = await collectRun(runtime, 'execute')
+
+    expect(
+      events.filter((event) => event.type === 'tool')
+    ).toHaveLength(101)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
     await runtime.dispose()
   })
 
@@ -2184,6 +2205,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
           read: false,
           write: false,
           bash: false,
+          'goodbuddy-data-*': false,
+          'goodbuddy-custom-*': false,
           [knowledgeToolId]: true
         }
       }),
@@ -2264,7 +2287,7 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
     await runtime.dispose()
   })
 
-  it('serializes overlapping embedded MCP registration and discovery', async () => {
+  it('runs embedded conversations concurrently with request-scoped MCP registrations', async () => {
     const setup = runClient([
       {
         id: 'idle',
@@ -2357,13 +2380,19 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
       'conversation-two',
       'second-token'
     )
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(mcpAdd).toHaveBeenCalledTimes(1)
-
-    resolveFirstAdd()
-    await first
-    await vi.waitFor(() => expect(mcpAdd).toHaveBeenCalledTimes(2))
-    await second
+    try {
+      await vi.waitFor(
+        () => expect(mcpAdd).toHaveBeenCalledTimes(2),
+        { timeout: 500 }
+      )
+      await vi.waitFor(
+        () => expect(setup.session.promptAsync).toHaveBeenCalledOnce(),
+        { timeout: 500 }
+      )
+    } finally {
+      resolveFirstAdd()
+    }
+    await Promise.all([first, second])
     expect(
       mcpAdd.mock.calls.map(
         ([input]) =>
@@ -2483,6 +2512,8 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
             write: false,
             bash: false,
             task: false,
+            'goodbuddy-data-*': false,
+            'goodbuddy-custom-*': false,
             skill: true
           }
         }),
@@ -2557,10 +2588,29 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
         title: 'GoodBuddy 对话',
         directory: process.cwd(),
         permission: [
-          { permission: '*', pattern: '*', action: 'allow' }
+          { permission: '*', pattern: '*', action: 'allow' },
+          {
+            permission: 'goodbuddy-data-*',
+            pattern: '*',
+            action: 'deny'
+          },
+          {
+            permission: 'goodbuddy-custom-*',
+            pattern: '*',
+            action: 'deny'
+          }
         ]
       },
       { signal: expect.any(AbortSignal) }
+    )
+    expect(session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: {
+          'goodbuddy-data-*': false,
+          'goodbuddy-custom-*': false
+        }
+      }),
+      expect.anything()
     )
     expect(permissionReply).toHaveBeenCalledOnce()
     expect(permissionReply).toHaveBeenCalledWith(
@@ -2926,7 +2976,9 @@ describe('OpenCodeRuntime embedded permission mediation', () => {
             read: false,
             write: false,
             bash: false,
-            task: false
+            task: false,
+            'goodbuddy-data-*': false,
+            'goodbuddy-custom-*': false
           }
         }),
         expect.anything()

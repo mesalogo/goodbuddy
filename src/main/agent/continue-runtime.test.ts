@@ -1134,7 +1134,7 @@ describe('ContinueAgentRuntime', () => {
     ).rejects.toThrow('已失效或不存在')
   })
 
-  it('fails instead of silently dropping an overflowing stream queue', async () => {
+  it('drains more than 1,000 queued stream events without stopping the run', async () => {
     mocks.runHost.mockImplementation(
       async (
         _prompt,
@@ -1160,11 +1160,15 @@ describe('ContinueAgentRuntime', () => {
       new AbortController().signal
     )
 
-    await expect(async () => {
-      for await (const _event of stream) {
-        void _event
-      }
-    }).rejects.toThrow('流式事件积压超过安全限制')
+    const events: RuntimeEvent[] = []
+    for await (const event of stream) {
+      events.push(event)
+    }
+
+    expect(
+      events.filter((event) => event.type === 'text')
+    ).toHaveLength(1_001)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
   it('aborts the host run when stream consumption ends early', async () => {

@@ -8,7 +8,6 @@ import { createResolvedModelProfileDigest } from '../agent/remote-model-gateway'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 
 const DEFAULT_MAXIMUM_OUTPUT_TOKENS = 32_000
-const MAXIMUM_MODEL_CALLS_PER_PROMPT = 100
 const MODEL_REQUEST_TIMEOUT_MILLISECONDS = 60_000
 
 /**
@@ -61,11 +60,6 @@ export function createManagedModelBridge(options: {
     },
     limits: {
       maximumOutputTokens,
-      maximumModelCalls: MAXIMUM_MODEL_CALLS_PER_PROMPT,
-      maximumTotalOutputTokens: Math.min(
-        10_000_000,
-        maximumOutputTokens * MAXIMUM_MODEL_CALLS_PER_PROMPT
-      ),
       requestTimeoutMilliseconds:
         MODEL_REQUEST_TIMEOUT_MILLISECONDS
     }

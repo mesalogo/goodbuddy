@@ -23,9 +23,6 @@ import type {
   SubagentEvent
 } from '../../shared/contracts'
 import {
-  maximumConversationToolActivities
-} from '../../shared/assistant-contracts'
-import {
   boundedRuntimeIdentifierSchema,
   runtimeNativeInventoryLimits,
   type RuntimeConversationCompactInput,
@@ -78,7 +75,6 @@ const MAX_PERMISSION_PATTERNS = 32
 const MAX_PERMISSION_PATTERN_LENGTH = 1_024
 const MAX_PERMISSION_PATTERNS_BYTES = 8 * 1_024
 const MAX_PERMISSION_METADATA_BYTES = 8 * 1_024
-const MAX_TOOL_CALLS_PER_RUN = maximumConversationToolActivities
 const MAX_EXECUTION_OUTPUT_BYTES = 1024 * 1024
 const MAX_QUESTION_REQUEST_BYTES = 32 * 1_024
 const MAX_QUESTIONS_PER_REQUEST = 4
@@ -99,6 +95,15 @@ const TEMPORARY_MCP_PREFIXES = [
   'goodbuddy-data-',
   'goodbuddy-custom-'
 ] as const
+const temporaryMcpToolOverrides = Object.fromEntries(
+  TEMPORARY_MCP_PREFIXES.map((prefix) => [`${prefix}*`, false])
+)
+const temporaryMcpDenyRules: PermissionRuleset =
+  TEMPORARY_MCP_PREFIXES.map((prefix) => ({
+    permission: `${prefix}*`,
+    pattern: '*',
+    action: 'deny'
+  }))
 const OPENCODE_INTERNAL_TOOL_IDS = new Set(['invalid'])
 const OPENCODE_BUILTIN_TOOL_KINDS: Readonly<
   Partial<Record<string, RuntimeNativeTool['kind']>>
@@ -719,7 +724,6 @@ export class OpenCodeRuntime implements AgentRuntime {
       upstreamQuestionId: string
     }
   >()
-  private embeddedRunTail: Promise<void> = Promise.resolve()
   private readonly conversationRunTails = new Map<string, Promise<void>>()
   private readonly dependencies: OpenCodeRuntimeDependencies
 
@@ -749,36 +753,6 @@ export class OpenCodeRuntime implements AgentRuntime {
 
   get supportsScopedDataTools(): boolean {
     return this.usesEmbeddedPermissionMediation()
-  }
-
-  private async acquireEmbeddedRun(
-    signal: AbortSignal
-  ): Promise<() => void> {
-    signal.throwIfAborted()
-    const previous = this.embeddedRunTail
-    let release!: () => void
-    const current = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    this.embeddedRunTail = previous.then(
-      () => current,
-      () => current
-    )
-    let abort!: () => void
-    const aborted = new Promise<never>((_resolve, reject) => {
-      abort = () => reject(signal.reason)
-    })
-    signal.addEventListener('abort', abort, { once: true })
-    try {
-      await Promise.race([previous, aborted])
-      signal.throwIfAborted()
-      return release
-    } catch (error) {
-      release()
-      throw error
-    } finally {
-      signal.removeEventListener('abort', abort)
-    }
   }
 
   private async acquireConversationRun(
@@ -1835,12 +1809,8 @@ export class OpenCodeRuntime implements AgentRuntime {
     const executionSignal = deadline
       ? AbortSignal.any([signal, deadline.signal])
       : signal
-    let releaseEmbedded: (() => void) | undefined
     let releaseConversation: (() => void) | undefined
     try {
-      releaseEmbedded = this.usesEmbeddedPermissionMediation()
-        ? await this.acquireEmbeddedRun(executionSignal)
-        : undefined
       releaseConversation = await this.acquireConversationRun(
         request.conversationId,
         executionSignal
@@ -1856,7 +1826,6 @@ export class OpenCodeRuntime implements AgentRuntime {
         clearTimeout(deadlineTimer)
       }
       releaseConversation?.()
-      releaseEmbedded?.()
     }
   }
 
@@ -2054,6 +2023,9 @@ export class OpenCodeRuntime implements AgentRuntime {
         request.workMode === 'execute'
           ? [
               ...executePermissionRules,
+              ...(this.usesEmbeddedPermissionMediation()
+                ? temporaryMcpDenyRules
+                : []),
               ...nativeSkillPermissionRules,
               ...knowledgeToolIds.map((toolId) => ({
                 permission: toolId,
@@ -2075,7 +2047,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                 ...readOnlyPermissionRules,
                 ...nativeSkillPermissionRules
               ]
-      let disabledTools: Record<string, boolean> | undefined
+      let toolOverrides: Record<string, boolean> | undefined
       if (request.workMode !== 'execute') {
         const tools = await this.controlRequest(
           '读取工具清单',
@@ -2089,14 +2061,22 @@ export class OpenCodeRuntime implements AgentRuntime {
         if (tools.error || !tools.data) {
           throw new Error('OpenCode 无法确认工具已禁用，已阻止只读请求')
         }
-        disabledTools = {
+        toolOverrides = {
           ...Object.fromEntries(
             tools.data.map((toolId) => [toolId, false])
           ),
+          ...temporaryMcpToolOverrides,
           ...Object.fromEntries(
             knowledgeToolIds.map((toolId) => [toolId, true])
           ),
           ...(nativeSkillIds.length > 0 ? { skill: true } : {})
+        }
+      } else if (this.usesEmbeddedPermissionMediation()) {
+        toolOverrides = {
+          ...temporaryMcpToolOverrides,
+          ...Object.fromEntries(
+            knowledgeToolIds.map((toolId) => [toolId, true])
+          )
         }
       }
       const session = await this.getSessionId(
@@ -2165,12 +2145,28 @@ export class OpenCodeRuntime implements AgentRuntime {
     const reasoningPartIds = new Set<string>()
     const reportedQuestionIds = new Map<string, string>()
     let aggregateOutputBytes = 0
-    const consumeOutputBudget = (delta: string): void => {
-      aggregateOutputBytes += Buffer.byteLength(delta)
-      if (aggregateOutputBytes > MAX_EXECUTION_OUTPUT_BYTES) {
-        throw new Error(
-          'OpenCode 单次运行的文本与推理输出超过 1 MB 安全限制'
-        )
+    let outputTruncated = false
+    const retainOutputDelta = (
+      delta: string
+    ): { delta: string; truncated: boolean } => {
+      if (outputTruncated) {
+        return { delta: '', truncated: false }
+      }
+      const bytes = Buffer.from(delta)
+      const remaining =
+        MAX_EXECUTION_OUTPUT_BYTES - aggregateOutputBytes
+      if (bytes.byteLength <= remaining) {
+        aggregateOutputBytes += bytes.byteLength
+        return { delta, truncated: false }
+      }
+      outputTruncated = true
+      aggregateOutputBytes = MAX_EXECUTION_OUTPUT_BYTES
+      return {
+        delta: bytes
+          .subarray(0, Math.max(0, remaining))
+          .toString('utf8')
+          .replace(/\uFFFD+$/u, ''),
+        truncated: true
       }
     }
     let hasResponseTextAfterFailure = false
@@ -2228,8 +2224,8 @@ export class OpenCodeRuntime implements AgentRuntime {
                     nativeSkillIds.length > 0
                       ? undefined
                       : this.options.skillInstructions || undefined,
-                  ...(disabledTools
-                    ? { tools: disabledTools }
+                  ...(toolOverrides
+                    ? { tools: toolOverrides }
                     : {}),
                   parts: [
                     { type: 'text' as const, text: promptText },
@@ -2276,7 +2272,6 @@ export class OpenCodeRuntime implements AgentRuntime {
               'thinking'
             ].includes(event.properties.field)
           if (reasoning || event.properties.field === 'text') {
-            consumeOutputBudget(event.properties.delta)
             if (
               !reasoning &&
               /\S/u.test(event.properties.delta) &&
@@ -2286,10 +2281,21 @@ export class OpenCodeRuntime implements AgentRuntime {
             ) {
               hasResponseTextAfterFailure = true
             }
-            yield {
-              requestId: request.requestId,
-              type: reasoning ? 'reasoning' : 'text',
-              delta: event.properties.delta
+            const retained = retainOutputDelta(event.properties.delta)
+            if (retained.delta) {
+              yield {
+                requestId: request.requestId,
+                type: reasoning ? 'reasoning' : 'text',
+                delta: retained.delta
+              }
+            }
+            if (retained.truncated) {
+              yield {
+                requestId: request.requestId,
+                type: 'status',
+                message:
+                  'OpenCode 输出较长，已停止继续展示文本；任务仍在继续'
+              }
             }
           }
         }
@@ -2307,12 +2313,6 @@ export class OpenCodeRuntime implements AgentRuntime {
               throw new Error('OpenCode 工具调用 ID 格式无效')
             }
             const toolName = part.tool.slice(0, 200)
-            if (
-              !toolStates.has(callId) &&
-              toolStates.size >= MAX_TOOL_CALLS_PER_RUN
-            ) {
-              throw new Error('OpenCode 单次运行的工具调用超过 100 个')
-            }
             const state =
               part.state.status === 'error' ? 'failed' : part.state.status
             if (state === 'failed') {
@@ -2372,11 +2372,21 @@ export class OpenCodeRuntime implements AgentRuntime {
           event.properties.sessionID === sessionId &&
           event.properties.delta
         ) {
-          consumeOutputBudget(event.properties.delta)
-          yield {
-            requestId: request.requestId,
-            type: 'reasoning',
-            delta: event.properties.delta
+          const retained = retainOutputDelta(event.properties.delta)
+          if (retained.delta) {
+            yield {
+              requestId: request.requestId,
+              type: 'reasoning',
+              delta: retained.delta
+            }
+          }
+          if (retained.truncated) {
+            yield {
+              requestId: request.requestId,
+              type: 'status',
+              message:
+                'OpenCode 输出较长，已停止继续展示文本；任务仍在继续'
+            }
           }
         }
 
@@ -2469,14 +2479,6 @@ export class OpenCodeRuntime implements AgentRuntime {
               properties.id.length <= MAX_PERMISSION_NAME_LENGTH &&
               !repliedPermissionIds.has(properties.id)
             ) {
-              if (
-                repliedPermissionIds.size >= MAX_TOOL_CALLS_PER_RUN
-              ) {
-                throw new Error(
-                  'OpenCode 单次运行的权限请求超过 100 个',
-                  { cause: error }
-                )
-              }
               const permissionId = properties.id
               repliedPermissionIds.add(properties.id)
               const rejection = await this.controlRequest(
@@ -2505,21 +2507,12 @@ export class OpenCodeRuntime implements AgentRuntime {
           if (repliedPermissionIds.has(permissionRequest.id)) {
             continue
           }
-          if (repliedPermissionIds.size >= MAX_TOOL_CALLS_PER_RUN) {
-            throw new Error('OpenCode 单次运行的权限请求超过 100 个')
-          }
           repliedPermissionIds.add(permissionRequest.id)
 
           const callId = (
             permissionRequest.tool?.callID ?? permissionRequest.id
           )
           const toolName = permissionRequest.permission.slice(0, 200)
-          if (
-            !toolStates.has(callId) &&
-            toolStates.size >= MAX_TOOL_CALLS_PER_RUN
-          ) {
-            throw new Error('OpenCode 单次运行的工具调用超过 100 个')
-          }
           toolStates.set(callId, { name: toolName, state: 'pending' })
           yield {
             requestId: request.requestId,
@@ -2772,10 +2765,8 @@ export class OpenCodeRuntime implements AgentRuntime {
     const executionSignal = deadline
       ? AbortSignal.any([signal, deadline.signal])
       : signal
-    let releaseEmbedded: (() => void) | undefined
     let releaseConversation: (() => void) | undefined
     try {
-      releaseEmbedded = await this.acquireEmbeddedRun(executionSignal)
       releaseConversation = await this.acquireConversationRun(
         request.conversationId,
         executionSignal
@@ -2932,7 +2923,6 @@ export class OpenCodeRuntime implements AgentRuntime {
         clearTimeout(deadlineTimer)
       }
       releaseConversation?.()
-      releaseEmbedded?.()
     }
   }
 

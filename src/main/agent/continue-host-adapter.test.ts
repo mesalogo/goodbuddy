@@ -1176,7 +1176,7 @@ describe('ContinueHostAdapter', () => {
     expect(killed).toBe(true)
   })
 
-  it('fails when the patched host reports dropped stream events', async () => {
+  it('completes from final history when the patched stream is truncated', async () => {
     const distribution = await createDistribution()
     let stateRequests = 0
     vi.stubGlobal(
@@ -1185,11 +1185,23 @@ describe('ContinueHostAdapter', () => {
         if (String(input).endsWith('/state')) {
           stateRequests += 1
           return Response.json({
-            session: { history: [] },
-            isProcessing: stateRequests > 1,
+            session: {
+              history:
+                stateRequests === 1
+                  ? []
+                  : [
+                      {
+                        message: {
+                          role: 'assistant',
+                          content: 'CONTINUE_OK'
+                        }
+                      }
+                    ]
+            },
+            isProcessing: false,
             messageQueueLength: 0,
             pendingPermission: null,
-            goodbuddyEventsOverflow: stateRequests > 1
+            goodbuddyEventsOverflow: stateRequests === 2
           })
         }
         return Response.json({})
@@ -1224,27 +1236,15 @@ describe('ContinueHostAdapter', () => {
         new AbortController().signal,
         async () => 'deny'
       )
-    ).rejects.toThrow('流式事件超过安全限制')
+    ).resolves.toMatchObject({
+      text: 'CONTINUE_OK',
+      streamTruncated: true
+    })
   })
 
-  it.each([
-    {
-      label: 'event count',
-      limits: {
-        maximumStreamEvents: 1,
-        maximumStreamEventBytes: 10_000
-      }
-    },
-    {
-      label: 'event bytes',
-      limits: {
-        maximumStreamEvents: 10,
-        maximumStreamEventBytes: 60
-      }
-    }
-  ])(
-    'enforces cumulative streamed $label across state polls',
-    async ({ limits }) => {
+  it(
+    'truncates cumulative streamed bytes without stopping the run',
+    async () => {
       const distribution = await createDistribution()
       let stateRequests = 0
       vi.stubGlobal(
@@ -1253,8 +1253,20 @@ describe('ContinueHostAdapter', () => {
           if (String(input).endsWith('/state')) {
             stateRequests += 1
             return Response.json({
-              session: { history: [] },
-              isProcessing: stateRequests > 1,
+              session: {
+                history:
+                  stateRequests < 3
+                    ? []
+                    : [
+                        {
+                          message: {
+                            role: 'assistant',
+                            content: '1234567890CONTINUE_OK'
+                          }
+                        }
+                      ]
+              },
+              isProcessing: stateRequests === 2,
               messageQueueLength: 0,
               pendingPermission: null,
               goodbuddyEvents:
@@ -1291,8 +1303,7 @@ describe('ContinueHostAdapter', () => {
           }
         },
         {
-          ...limits,
-          maximumToolCalls: 100,
+          maximumStreamEventBytes: 60,
           terminateProcessTree: vi.fn().mockResolvedValue(undefined)
         }
       )
@@ -1308,14 +1319,18 @@ describe('ContinueHostAdapter', () => {
             }
           }
         )
-      ).rejects.toThrow('流式事件超过安全限制')
+      ).resolves.toMatchObject({
+        text: '1234567890CONTINUE_OK',
+        streamedText: true,
+        streamTruncated: true
+      })
       expect(forwarded).toEqual([
         { type: 'text', delta: '1234567890' }
       ])
     }
   )
 
-  it('enforces cumulative unique tool calls before forwarding a later batch', async () => {
+  it('forwards more than 100 unique tool calls', async () => {
     const distribution = await createDistribution()
     let stateRequests = 0
     vi.stubGlobal(
@@ -1324,20 +1339,30 @@ describe('ContinueHostAdapter', () => {
         if (String(input).endsWith('/state')) {
           stateRequests += 1
           return Response.json({
-            session: { history: [] },
-            isProcessing: stateRequests > 1,
+            session: {
+              history:
+                stateRequests === 1
+                  ? []
+                  : [
+                      {
+                        message: {
+                          role: 'assistant',
+                          content: 'TOOLS_OK'
+                        }
+                      }
+                    ]
+            },
+            isProcessing: false,
             messageQueueLength: 0,
             pendingPermission: null,
             goodbuddyEvents:
-              stateRequests > 1
-                ? [
-                    {
-                      type: 'tool',
-                      callId: `call-${stateRequests}`,
-                      name: 'Bash',
-                      state: 'running'
-                    }
-                  ]
+              stateRequests === 2
+                ? Array.from({ length: 101 }, (_, index) => ({
+                    type: 'tool',
+                    callId: `call-${index + 1}`,
+                    name: 'Bash',
+                    state: 'completed'
+                  }))
                 : []
           })
         }
@@ -1369,9 +1394,7 @@ describe('ContinueHostAdapter', () => {
         }
       },
       {
-        maximumStreamEvents: 10,
-        maximumStreamEventBytes: 10_000,
-        maximumToolCalls: 1,
+        maximumStreamEventBytes: 1_000_000,
         terminateProcessTree: vi.fn().mockResolvedValue(undefined)
       }
     )
@@ -1387,11 +1410,11 @@ describe('ContinueHostAdapter', () => {
           }
         }
       )
-    ).rejects.toThrow('工具调用超过 100 个')
-    expect(forwarded).toHaveLength(1)
-    expect(forwarded[0]).toMatchObject({
+    ).resolves.toMatchObject({ text: 'TOOLS_OK' })
+    expect(forwarded).toHaveLength(101)
+    expect(forwarded.at(-1)).toMatchObject({
       type: 'tool',
-      tool: { callId: 'call-2' }
+      tool: { callId: 'call-101' }
     })
   })
 
@@ -1461,9 +1484,7 @@ describe('ContinueHostAdapter', () => {
         }
       },
       {
-        maximumStreamEvents: 10,
         maximumStreamEventBytes: 10_000,
-        maximumToolCalls: 10,
         terminateProcessTree
       }
     )

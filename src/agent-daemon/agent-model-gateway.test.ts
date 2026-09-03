@@ -36,8 +36,6 @@ const profile: AgentPromptModelProfile = {
   capabilities: { imageInput: false },
   limits: {
     maximumOutputTokens: 4_096,
-    maximumModelCalls: 8,
-    maximumTotalOutputTokens: 32_768,
     requestTimeoutMilliseconds: 5_000
   }
 }
@@ -121,6 +119,34 @@ describe('AgentModelGateway', () => {
     )
     await result.acknowledgeDelivery()
     expect(fetcher).toHaveBeenCalledOnce()
+    ledger.close()
+  })
+
+  it('does not impose prompt-wide model-call or output-token quotas', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(
+        JSON.stringify({
+          id: 'response',
+          usage: { output_tokens: 4_096 }
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        }
+      )
+    )
+    const { gateway, ledger } = setup(fetcher)
+
+    for (let roundIndex = 0; roundIndex < 101; roundIndex += 1) {
+      const result = await gateway.dispatch(
+        { ...context, roundIndex },
+        request,
+        new AbortController().signal
+      )
+      await result.acknowledgeDelivery()
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(101)
     ledger.close()
   })
 

@@ -170,13 +170,13 @@ export class DirectLinuxStdioProcessOwner {
   #maximumPendingStdinBytes: number
   #inputBytes = 0
   #pendingInputBytes = 0
-  #outputBytes = 0
   #queuedOutputBytes = 0
   #writeTail: Promise<void> = Promise.resolve()
   #deadlineTimer?: NodeJS.Timeout
   #promptGeneration = 1
   #promptActive = true
   #draining = false
+  #outputPaused = false
   #closed = false
   #stdinClosed = false
   #stopPromise?: Promise<void>
@@ -280,7 +280,6 @@ export class DirectLinuxStdioProcessOwner {
     this.#maximumPendingStdinBytes = this.#maximumInputBytes
     this.#inputBytes = 0
     this.#pendingInputBytes = 0
-    this.#outputBytes = 0
     this.#promptActive = true
     this.#promptGeneration += 1
     this.#scheduleDeadline(
@@ -449,24 +448,17 @@ export class DirectLinuxStdioProcessOwner {
 
   #acceptOutput(chunk: Buffer | Uint8Array): void {
     if (this.#closed || chunk.byteLength === 0) return
-    if (
-      this.#outputBytes + chunk.byteLength > this.#maximumOutputBytes ||
-      this.#outputQueue.length >= this.#maximumOutputQueueChunks ||
-      this.#queuedOutputBytes + chunk.byteLength > this.#maximumOutputBytes
-    ) {
-      this.#child.stdout.pause()
-      this.#outputQueue.splice(0)
-      this.#queuedOutputBytes = 0
-      void this.stop({
-        reason: 'output-quota',
-        deadlineAt: new Date(this.#now() + DEFAULT_STOP_TIMEOUT_MS).toISOString()
-      }).catch(() => undefined)
-      return
-    }
     const copy = Uint8Array.from(chunk)
-    this.#outputBytes += copy.byteLength
     this.#queuedOutputBytes += copy.byteLength
     this.#outputQueue.push(copy)
+    if (
+      this.#outputQueue.length >= this.#maximumOutputQueueChunks ||
+      (this.#maximumOutputBytes > 0 &&
+        this.#queuedOutputBytes >= this.#maximumOutputBytes)
+    ) {
+      this.#child.stdout.pause()
+      this.#outputPaused = true
+    }
     this.#scheduleDrain()
   }
 
@@ -483,6 +475,15 @@ export class DirectLinuxStdioProcessOwner {
         this.#queuedOutputBytes -= data.byteLength
         for (const listener of [...this.#outputListeners]) {
           await listener({ stream: 'stdout', data: data.slice() })
+        }
+        if (
+          this.#outputPaused &&
+          this.#outputQueue.length < this.#maximumOutputQueueChunks &&
+          (this.#maximumOutputBytes === 0 ||
+            this.#queuedOutputBytes < this.#maximumOutputBytes)
+        ) {
+          this.#outputPaused = false
+          this.#child.stdout.resume()
         }
       }
     } catch {

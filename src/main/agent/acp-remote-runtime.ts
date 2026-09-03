@@ -16,9 +16,6 @@ import type {
   AgentRuntimeStatus
 } from '../../shared/contracts'
 import {
-  maximumConversationToolActivities
-} from '../../shared/assistant-contracts'
-import {
   assertRemotePromptAcceptanceMatchesPreparation,
   REMOTE_SEMANTIC_TRANSCRIPT_LIMITS,
   remoteOwnedPromptStartResultSchema,
@@ -148,7 +145,6 @@ type ActivePrompt = {
   updates: QueuedSessionUpdate[]
   pendingUpdateBytes: number
   inboundPaused: boolean
-  outputCharacters: number
   toolCalls: Map<
     string,
     {
@@ -1846,19 +1842,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
       this.options.maxPendingUpdateBytes ??
         DEFAULT_MAX_PENDING_UPDATE_BYTES
     )
-    if (
-      prompt.updates.length >= maximumItems ||
-      prompt.pendingUpdateBytes + bytes > maximumBytes
-    ) {
-      const overflow = new Error(
-        '远端 Runtime 待消费事件超过安全上限，输出已截断且请求状态未知'
-      )
-      prompt.interruption = overflow
-      prompt.interrupt?.(overflow)
-      prompt.wake?.()
-      prompt.wake = undefined
-      throw overflow
-    }
     let consume: (() => void) | undefined
     const consumed = new Promise<void>((resolve) => {
       consume = resolve
@@ -2030,19 +2013,13 @@ export class AcpRemoteRuntime implements AgentRuntime {
     })
   }
 
-  private limitEvent(
-    prompt: ActivePrompt,
-    event: RuntimePublicEvent
-  ): RuntimePublicEvent {
+  private limitEvent(event: RuntimePublicEvent): RuntimePublicEvent {
     const maximum =
       this.options.maxEventCharacters ??
       DEFAULT_MAX_EVENT_CHARACTERS
-    let characters = 0
     if (event.type === 'text' || event.type === 'reasoning') {
-      characters = event.delta.length
-      if (characters > maximum) {
+      if (event.delta.length > maximum) {
         event = { ...event, delta: `${event.delta.slice(0, maximum)}…` }
-        characters = maximum + 1
       }
     } else if (event.type === 'tool') {
       const fieldMaximum = Math.max(1, Math.floor(maximum / 3))
@@ -2056,10 +2033,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
         output: bounded(event.output),
         error: bounded(event.error)
       }
-      characters =
-        (event.input?.length ?? 0) +
-        (event.output?.length ?? 0) +
-        (event.error?.length ?? 0)
     } else if (event.type === 'subagent') {
       const fieldMaximum = Math.max(1, Math.floor(maximum / 2))
       const bounded = (value: string | undefined): string | undefined =>
@@ -2071,10 +2044,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
         output: bounded(event.output),
         error: bounded(event.error)
       }
-      characters =
-        (event.reason?.length ?? 0) +
-        (event.output?.length ?? 0) +
-        (event.error?.length ?? 0)
     } else if (event.type === 'status') {
       if (event.message.length > maximum) {
         event = {
@@ -2082,15 +2051,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
           message: `${event.message.slice(0, maximum)}…`
         }
       }
-      characters = event.message.length
-    }
-    prompt.outputCharacters += characters
-    if (
-      prompt.outputCharacters >
-      (this.options.maxRequestOutputBytes ??
-        DEFAULT_MAX_REQUEST_OUTPUT_BYTES)
-    ) {
-      throw new Error('远端 Runtime 请求输出超过安全上限')
     }
     return event
   }
@@ -2120,15 +2080,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
     ) {
       const callId = update.toolCallId.slice(0, 256)
       const previous = prompt.toolCalls.get(callId)
-      if (
-        !previous &&
-        prompt.toolCalls.size >=
-          maximumConversationToolActivities
-      ) {
-        throw new Error(
-          '远端 Runtime 单次运行的工具调用超过 100 个'
-        )
-      }
       const retainedMaximum =
         this.options.maxEventCharacters ??
         DEFAULT_MAX_EVENT_CHARACTERS
@@ -2359,7 +2310,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
       updates: [],
       pendingUpdateBytes: 0,
       inboundPaused: false,
-      outputCharacters: 0,
       toolCalls: new Map(),
       open: true,
       completed: false,
@@ -2559,7 +2509,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
               )
             const mapped = this.mapUpdate(prompt, notification.update)
             if (mapped !== undefined) {
-              publicEvents.push(this.limitEvent(prompt, mapped))
+              publicEvents.push(this.limitEvent(mapped))
             }
           } else if (transcriptEvent.kind === 'prompt-terminal') {
             const terminal = transcriptTerminal(
@@ -2764,7 +2714,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
       updates: [],
       pendingUpdateBytes: 0,
       inboundPaused: false,
-      outputCharacters: 0,
       toolCalls: new Map(),
       open: true,
       completed: false,
@@ -2867,7 +2816,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         }
         const event = this.mapUpdate(prompt, update)
         if (event) {
-          yield this.limitEvent(prompt, event)
+          yield this.limitEvent(event)
         }
       }
       await this.awaitOperation(

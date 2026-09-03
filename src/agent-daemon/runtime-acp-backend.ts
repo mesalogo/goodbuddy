@@ -64,6 +64,7 @@ import {
   type AgentModelGateway
 } from './agent-model-gateway'
 import { openCodeModelBridgeModelId } from './model-bridge-helper'
+import { EventJournalCapacityError } from './event-journal'
 
 const ZERO_CURSOR = '0'
 const DEFAULT_MAXIMUM_BINDINGS = 128
@@ -82,6 +83,7 @@ const DEFAULT_MAXIMUM_OPERATIONS_PER_BINDING = 1_000
 const DEFAULT_DISPOSE_TIMEOUT_MS = 10_000
 const OWNED_PROMPT_CANCEL_GRACE_MS = 1_000
 const OWNED_PROMPT_START_TIMEOUT_MS = 2 * 60_000
+const ACP_JOURNAL_RETRY_MILLISECONDS = 25
 
 export type RuntimeAcpBackendErrorCode =
   | 'capacity'
@@ -317,8 +319,6 @@ type BindingState = {
   activeOperationId?: string
   terminalState?: 'completed' | 'failed' | 'cancelled' | 'interrupted'
   inputBytes: number
-  outputBytes: number
-  maximumOutputBytes?: number
   nextOutputSequence: bigint
   pendingInput: number
   pendingOutput: number
@@ -721,8 +721,6 @@ export class RuntimeAcpBackend {
       existing.stopRequested = false
       existing.terminalState = undefined
       existing.inputBytes = 0
-      existing.outputBytes = 0
-      existing.maximumOutputBytes = undefined
       existing.nextOutputSequence = 1n
       existing.pendingInput = 0
       existing.pendingOutput = 0
@@ -774,7 +772,6 @@ export class RuntimeAcpBackend {
       stopRequested: false,
       operations: new Map(),
       inputBytes: 0,
-      outputBytes: 0,
       nextOutputSequence: 1n,
       pendingInput: 0,
       pendingOutput: 0,
@@ -1234,11 +1231,6 @@ export class RuntimeAcpBackend {
       }
     }
     binding.inputBytes = 0
-    binding.outputBytes = 0
-    binding.maximumOutputBytes = Math.min(
-      preparation.budget.maximumOutputBytes,
-      verified.manifest.limits.maximumPromptOutputBytes
-    )
     if (!binding.operations.has(preparation.operationId)) {
       binding.operations.set(preparation.operationId, {
         preparationDigest,
@@ -1308,10 +1300,6 @@ export class RuntimeAcpBackend {
       )
     }
     await this.#closeModelBridge(binding, true)
-    this.#options.modelGateway?.finalizePrompt(
-      binding.request.bindingId,
-      operation.operationId
-    )
     if (binding.poisoned) {
       throw new RuntimeAcpBackendError(
         'Model response delivery was not proven before prompt completion',
@@ -1336,8 +1324,6 @@ export class RuntimeAcpBackend {
     prepared.completion = completion
     binding.activeOperationId = undefined
     binding.inputBytes = 0
-    binding.outputBytes = 0
-    binding.maximumOutputBytes = undefined
     if (binding.deadlineTimer !== undefined) {
       clearTimeout(binding.deadlineTimer)
       binding.deadlineTimer = undefined
@@ -1527,10 +1513,6 @@ export class RuntimeAcpBackend {
       return
     }
     await this.#closeModelBridge(binding, true)
-    this.#options.modelGateway?.finalizePrompt(
-      binding.request.bindingId,
-      operationId
-    )
     try {
       await binding.process.completePrompt()
     } catch {
@@ -1568,8 +1550,6 @@ export class RuntimeAcpBackend {
     prepared.modelProfile = undefined
     binding.activeOperationId = undefined
     binding.inputBytes = 0
-    binding.outputBytes = 0
-    binding.maximumOutputBytes = undefined
     if (binding.deadlineTimer !== undefined) {
       clearTimeout(binding.deadlineTimer)
       binding.deadlineTimer = undefined
@@ -1671,12 +1651,6 @@ export class RuntimeAcpBackend {
             throw new RuntimeAcpBackendError(
               'Prompt model credential is no longer active',
               'closed'
-            )
-          }
-          if (binding.nextModelRound >= profile.limits.maximumModelCalls) {
-            throw new RuntimeAcpBackendError(
-              'Prompt model call limit reached',
-              'capacity'
             )
           }
           const roundIndex = binding.nextModelRound
@@ -1990,21 +1964,6 @@ export class RuntimeAcpBackend {
       )
     }
     this.#assertBeforeDeadline(binding)
-    const budget = this.#activeBudget(binding)
-    const maximumOutputBytes = Math.min(
-      budget.maximumOutputBytes,
-      binding.maximumOutputBytes ?? budget.maximumOutputBytes
-    )
-    if (binding.outputBytes + output.data.byteLength > maximumOutputBytes) {
-      await this.#stopAndReconcile(binding, 'output-quota').catch(
-        () => undefined
-      )
-      throw new RuntimeAcpBackendError(
-        'Runtime output quota reached',
-        'output-quota'
-      )
-    }
-    binding.outputBytes += output.data.byteLength
     for (
       let offset = 0;
       offset < output.data.byteLength;
@@ -2017,14 +1976,31 @@ export class RuntimeAcpBackend {
       try {
         await this.#enqueueOutput(binding, payload, async () => {
           const sequence = binding.nextOutputSequence.toString()
-          this.#options.journal.appendAcpFrame({
-            controllerId: binding.controllerId,
-            bindingId: binding.request.bindingId,
-            channelEpoch: binding.openResult.channelEpoch,
-            direction: 'runtime-to-main',
-            sequence,
-            payload
-          })
+          while (true) {
+            try {
+              this.#options.journal.appendAcpFrame({
+                controllerId: binding.controllerId,
+                bindingId: binding.request.bindingId,
+                channelEpoch: binding.openResult.channelEpoch,
+                direction: 'runtime-to-main',
+                sequence,
+                payload
+              })
+              break
+            } catch (error) {
+              if (!(error instanceof EventJournalCapacityError)) {
+                throw error
+              }
+              if (binding.state !== 'running') {
+                throw new RuntimeAcpBackendError(
+                  'Runtime output arrived after the binding stopped',
+                  'closed'
+                )
+              }
+              this.#assertBeforeDeadline(binding)
+              await delay(ACP_JOURNAL_RETRY_MILLISECONDS)
+            }
+          }
           binding.nextOutputSequence += 1n
           if (binding.transportState === 'live') {
             try {
@@ -2287,12 +2263,6 @@ export class RuntimeAcpBackend {
   }
 
   #finishProcess(binding: BindingState): void {
-    if (binding.activeOperationId !== undefined) {
-      this.#options.modelGateway?.finalizePrompt(
-        binding.request.bindingId,
-        binding.activeOperationId
-      )
-    }
     if (binding.process !== undefined) {
       this.#processIdentityBindings.delete(
         processIdentityKey(binding.process.identity)
@@ -2748,6 +2718,13 @@ function processIdentityKey(identity: RuntimeAcpProcessIdentity): string {
     identity.processId,
     identity.supervisorIdentityDigest
   ].join('\0')
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, milliseconds)
+    timer.unref?.()
+  })
 }
 
 function digestSecretBearingPreparation(
