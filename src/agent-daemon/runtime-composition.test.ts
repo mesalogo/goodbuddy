@@ -37,7 +37,7 @@ afterEach(() => {
 })
 
 describe('production Runtime composition', () => {
-  it('loads metadata installed after startup and caches the registered Runtime identity', async () => {
+  it('loads Runtime metadata independently of Ask-only Host prerequisites', async () => {
     const fixture = await createRuntimeBundleTestFixture()
     const root = fixture.root
     temporaryPaths.push(root)
@@ -62,7 +62,6 @@ describe('production Runtime composition', () => {
       blobSink: async () => {},
       agentExecutablePath,
       reportError,
-      prerequisitesAvailable: async () => true,
       verificationEnvironment: 'test',
       filesystemPlatform: 'win32'
     })
@@ -128,7 +127,7 @@ describe('production Runtime composition', () => {
     events.close()
   })
 
-  it('composes all autonomous ACP methods but advertises no Runtime when prerequisites fail', async () => {
+  it('composes all autonomous ACP methods when no Runtime is installed', async () => {
     const root = temporaryDirectory()
     const runtimeRoot = resolve(root, 'runtimes')
     const stateDirectory = resolve(root, 'state')
@@ -155,7 +154,6 @@ describe('production Runtime composition', () => {
       releaseKeyRegistry,
       runtimeLock: {} as RemoteRuntimeLock,
       registry,
-      prerequisitesAvailable: async () => false,
       verificationEnvironment: 'test',
       filesystemPlatform: 'win32'
     })

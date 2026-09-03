@@ -46,8 +46,6 @@ import {
 } from './agent-model-gateway'
 import type { AgentDiagnosticLog } from './diagnostic-log'
 
-const BWRAP_EXECUTABLE = '/usr/bin/bwrap'
-
 export type ProductionRuntimeProtocol = {
   runtimes: ReturnType<typeof createVerifiedRuntimeCapabilitySource>
   methods: RuntimeAcpBackend['methods']
@@ -85,7 +83,6 @@ export type ProductionRuntimeCompositionOptions = {
   releaseKeyRegistry?: AgentReleaseKeyRegistry
   runtimeLock?: RemoteRuntimeLock
   registry?: RuntimeBundleRegistry
-  prerequisitesAvailable?: () => boolean | Promise<boolean>
   launchProcess?: typeof launchDirectLinuxStdioProcessOwner
   reconcileOrphanedProcesses?: (
     installationId: string
@@ -222,9 +219,6 @@ export async function createProductionRuntimeProtocol(
     })
     return await source()
   }
-  const prerequisites =
-    options.prerequisitesAvailable ??
-    productionRuntimePrerequisitesAvailable
   const launchProcess =
     options.launchProcess ?? launchDirectLinuxStdioProcessOwner
   let backend: RuntimeAcpBackend
@@ -328,8 +322,7 @@ export async function createProductionRuntimeProtocol(
           options.agentExecutablePath === undefined ||
           !(await executableAvailable(
             resolve(options.agentExecutablePath)
-          )) ||
-          !(await prerequisites())
+          ))
         ) {
           return []
         }
@@ -539,13 +532,4 @@ function bindingDirectoryDigest(
       binding.workspaceIdentity
     ]))
     .digest('hex')
-}
-
-async function productionRuntimePrerequisitesAvailable(): Promise<boolean> {
-  try {
-    await access(BWRAP_EXECUTABLE, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
 }
