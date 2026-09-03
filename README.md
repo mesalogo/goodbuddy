@@ -127,6 +127,14 @@ npm run typecheck
 npm run lint
 ```
 
+## Community communication
+
+Scan the QR code to join the GoodBuddy WeChat group:
+
+<img width="1250" height="1194" alt="9627ce196b0de42f123c33dd9dea1568" src="https://github.com/user-attachments/assets/e806543f-6d8a-4c5c-ba44-19e74dac9a78" />
+
+
+
 ## License
 
 Original GoodBuddy code is released under the [0BSD License](./LICENSE). You may
