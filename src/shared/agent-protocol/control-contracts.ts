@@ -145,6 +145,12 @@ export const attachWelcomeSchema = z
 export type AttachPreface = z.infer<typeof attachPrefaceSchema>
 export type AttachWelcome = z.infer<typeof attachWelcomeSchema>
 
+export const RUNTIME_ACP_CAPABILITY_NAME = 'runtime/acp'
+export const RUNTIME_ACP_CAPABILITY_VERSION = 5
+export const RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME =
+  'runtime/model-bridge'
+export const RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION = 1
+
 export const agentCapabilitySchema = z
   .object({
     name: z

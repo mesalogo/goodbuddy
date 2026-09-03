@@ -114,6 +114,8 @@ describe('createAgentRuntime model compatibility', () => {
       authentication: 'api-key' as const,
       supportsImageInput: true,
       imageGenerationQuality: 'auto' as const,
+      requestHeaders: { 'x-tenant-id': 'harness-tenant' },
+      requestBody: { temperature: 0.2 },
       apiKey: 'gateway-key'
     }
     const deepseekHarnessLauncher = vi
@@ -135,8 +137,14 @@ describe('createAgentRuntime model compatibility', () => {
       available: false
     })
     expect(deepseekHarnessLauncher).toHaveBeenCalledWith(
-      expect.objectContaining({ supportsImageInput: true })
+      expect.objectContaining({
+        supportsImageInput: true,
+        requestHeaders: { 'x-tenant-id': 'harness-tenant' }
+      })
     )
+    expect(
+      deepseekHarnessLauncher.mock.calls[0]?.[0]
+    ).not.toHaveProperty('requestBody')
     await runtime.dispose()
   })
 

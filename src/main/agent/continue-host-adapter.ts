@@ -1375,6 +1375,22 @@ export class ContinueHostAdapter {
         ? '${{ secrets.ANTHROPIC_API_KEY }}'
         : '${{ secrets.OPENAI_API_KEY }}'
     }
+    const requestHeaders =
+      this.options.modelProfile.requestHeaders ?? {}
+    const requestBody = this.options.modelProfile.requestBody ?? {}
+    if (
+      Object.keys(requestHeaders).length > 0 ||
+      Object.keys(requestBody).length > 0
+    ) {
+      modelConfig.requestOptions = {
+        ...(Object.keys(requestHeaders).length > 0
+          ? { headers: requestHeaders }
+          : {}),
+        ...(Object.keys(requestBody).length > 0
+          ? { extraBodyProperties: requestBody }
+          : {})
+      }
+    }
     const configured = this.options.configPath.trim()
       ? await loadContinueConfig(this.options.configPath.trim())
       : {}

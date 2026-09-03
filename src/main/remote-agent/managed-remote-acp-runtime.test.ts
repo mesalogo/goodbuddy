@@ -297,7 +297,7 @@ describe('createManagedRemoteAcpRuntime', () => {
       fixture.options.agentServices.connectionManager.acquire
     ).toHaveBeenCalledWith('host-1', expect.objectContaining({
       requiredCapabilities: [
-        { name: 'runtime/acp', exactVersion: 4, critical: true }
+        { name: 'runtime/acp', exactVersion: 5, critical: true }
       ]
     }))
 
@@ -514,7 +514,7 @@ function capabilities() {
   return {
     generation: 7,
     capabilities: [
-      { name: 'runtime/acp', version: 4, critical: true }
+      { name: 'runtime/acp', version: 5, critical: true }
     ],
     runtimes: [
       {

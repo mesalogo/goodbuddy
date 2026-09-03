@@ -26,10 +26,14 @@ import type {
   RemoteRuntimeInstallationIdentity,
   RemoteRuntimeInstallationManager
 } from './remote-runtime-installation-manager'
+import {
+  RUNTIME_ACP_CAPABILITY_NAME,
+  RUNTIME_ACP_CAPABILITY_VERSION
+} from '../../shared/agent-protocol'
 
 const RUNTIME_ACP_CAPABILITY = {
-  name: 'runtime/acp',
-  exactVersion: 4,
+  name: RUNTIME_ACP_CAPABILITY_NAME,
+  exactVersion: RUNTIME_ACP_CAPABILITY_VERSION,
   critical: true
 } as const
 

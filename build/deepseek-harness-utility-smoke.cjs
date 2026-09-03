@@ -17,7 +17,7 @@ const {
 const { app, utilityProcess } = require('electron/main')
 
 const protocol = 'goodbuddy.deepseek-harness.control'
-const controlVersion = 2
+const controlVersion = 3
 const byteProtocol = 'goodbuddy.deepseek-harness.byte-stream'
 const byteProtocolVersion = 1
 const configuredHostPath =
@@ -183,6 +183,7 @@ async function run() {
       provider: 'goodbuddy',
       model: 'qwen-plus',
       supportsImageInput: false,
+      requestHeaders: {},
       harnessVersion: '0.1.0-rc.8',
       credentialRefs: ['GOODBUDDY_HARNESS_MODEL_API_KEY'],
       skillPackages: [],

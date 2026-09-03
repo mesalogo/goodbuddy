@@ -248,7 +248,9 @@ Execute 直接启动已签名 Runtime：
 - 托管 SSH 的生产 Prompt 从一开始就由 Agent 持有 ACP `ClientSideConnection`、原始
   Prompt Promise、Provider 轮次和 Runtime 进程。SSH relay 或 Desktop 进程不属于该
   Promise 的生命周期，因此正常退出、强制结束 Desktop 或本机网络中断后，Host 仍能继续
-  后续模型/工具轮次。该路径要求 `runtime/acp` capability v4，即 Agent `0.11.14` 或更高。
+  后续模型/工具轮次。该路径现在要求 `runtime/acp` capability v5；v5 同时保证 Agent
+  能理解 Prompt-scoped 模型连接的自定义 Header/Body，旧 v4 Agent 由现有受管更新流程
+  升级后再运行。
 - Agent 把 ACP session update、permission decision 和唯一 Prompt 终态写入有界语义
   transcript。Main 不恢复旧 JSON-RPC Promise，也不重发 `session/prompt`；Fresh Desktop
   只对同一 controller/binding/operation 执行 takeover、attach 和 ACK-exclusive page。

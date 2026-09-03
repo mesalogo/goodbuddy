@@ -10,6 +10,10 @@ import {
   remoteModelGatewayRequestSchema,
   remoteModelGatewayResponseSchema
 } from './remote-model-gateway-contracts'
+import {
+  modelRequestBodySchema,
+  modelRequestHeadersSchema
+} from './model-request-customization'
 
 const textEncoder = new TextEncoder()
 const fatalTextDecoder = new TextDecoder('utf-8', { fatal: true })
@@ -118,6 +122,8 @@ export const agentPromptModelProfileSchema = z
       minimumBytes: 1,
       label: 'Model provider API key'
     }).optional(),
+    requestHeaders: modelRequestHeadersSchema.optional(),
+    requestBody: modelRequestBodySchema.optional(),
     capabilities: z
       .object({
         imageInput: z.boolean()
@@ -214,7 +220,12 @@ export const modelBridgeRequestMessageSchema =
         message: 'Policy model profile digest does not match the message identity'
       })
     }
-    if (!pathMatchesProtocol(message.policy.protocol, message.request.path)) {
+    if (
+      !modelBridgePathMatchesProtocol(
+        message.policy.protocol,
+        message.request.path
+      )
+    ) {
       context.addIssue({
         code: 'custom',
         path: ['request', 'path'],
@@ -472,7 +483,7 @@ function sameIdentity(
   )
 }
 
-function pathMatchesProtocol(
+export function modelBridgePathMatchesProtocol(
   protocol: ModelBridgeModelProtocol,
   path: string
 ): boolean {

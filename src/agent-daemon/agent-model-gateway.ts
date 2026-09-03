@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import type { AgentPromptModelProfile } from '../shared/model-bridge-contracts'
+import {
+  modelBridgePathMatchesProtocol,
+  type AgentPromptModelProfile
+} from '../shared/model-bridge-contracts'
 import {
   REMOTE_MODEL_GATEWAY_LIMITS,
   remoteModelGatewayRequestSchema,
@@ -12,6 +15,12 @@ import {
   assertTextModelRequestPolicy,
   ModelRequestPolicyError
 } from '../shared/model-request-policy'
+import { canonicalJson } from '../shared/agent-protocol/canonical'
+import {
+  canonicalModelRequestHeaders,
+  mergeModelRequestBody,
+  mergeModelRequestHeaders
+} from '../shared/model-request-customization'
 import {
   BoundedResponseTruncatedError,
   BoundedResponseTooLargeError,
@@ -480,7 +489,12 @@ function prepareProviderRequest(
   body: Uint8Array
   canonicalRequest: string
 } {
-  if (!pathMatches(profile.protocol, request.path)) {
+  if (
+    !modelBridgePathMatchesProtocol(
+      profile.protocol,
+      request.path
+    )
+  ) {
     throw new AgentModelGatewayError(
       'policy',
       'Provider path does not match the prompt profile'
@@ -498,6 +512,10 @@ function prepareProviderRequest(
       'Provider request body is not UTF-8 JSON'
     )
   }
+  const normalized = mergeModelRequestBody(
+    profile.requestBody ?? {},
+    json as Record<string, unknown>
+  )
   try {
     assertTextModelRequestPolicy(
       {
@@ -505,7 +523,7 @@ function prepareProviderRequest(
         model: profile.model,
         supportsImageInput: profile.capabilities.imageInput
       },
-      json
+      normalized
     )
   } catch (error) {
     if (!(error instanceof ModelRequestPolicyError)) {
@@ -516,7 +534,6 @@ function prepareProviderRequest(
       'Provider request does not match the prompt profile'
     )
   }
-  const normalized = { ...(json as Record<string, unknown>) }
   const outputField =
     profile.protocol === 'openai-responses'
       ? 'max_output_tokens'
@@ -538,22 +555,37 @@ function prepareProviderRequest(
     requestedOutput === undefined
       ? maximumOutputTokens
       : Math.min(requestedOutput as number, maximumOutputTokens)
-  const body = Buffer.from(JSON.stringify(normalized), 'utf8')
+  const body = Buffer.from(canonicalJson(normalized), 'utf8')
+  if (
+    body.byteLength >
+    REMOTE_MODEL_GATEWAY_LIMITS.maximumRequestBodyBytes
+  ) {
+    throw new AgentModelGatewayError(
+      'policy',
+      'Customized provider request exceeds the configured byte limit'
+    )
+  }
   const url = providerUrl(profile)
-  const headers = { ...request.headers }
+  const headers = mergeModelRequestHeaders(
+    profile.requestHeaders ?? {},
+    request.headers
+  )
   if (profile.protocol === 'anthropic-messages') {
-    headers['anthropic-version'] = '2023-06-01'
+    headers.set('anthropic-version', '2023-06-01')
+  }
+  const canonicalHeaders = canonicalModelRequestHeaders(headers)
+  if (profile.protocol === 'anthropic-messages') {
     if (profile.authentication === 'api-key') {
-      headers['x-api-key'] = profile.apiKey!
+      headers.set('x-api-key', profile.apiKey!)
     }
   } else if (profile.authentication === 'api-key') {
-    headers.authorization = `Bearer ${profile.apiKey!}`
+    headers.set('authorization', `Bearer ${profile.apiKey!}`)
   }
   return {
     url,
-    headers,
+    headers: Object.fromEntries(headers.entries()),
     body,
-    canonicalRequest: JSON.stringify({
+    canonicalRequest: canonicalJson({
       profileId: profile.profileId,
       provider: profile.provider,
       protocol: profile.protocol,
@@ -561,11 +593,7 @@ function prepareProviderRequest(
       url: url.toString(),
       request: {
         path: request.path,
-        headers: Object.fromEntries(
-          Object.entries(request.headers).sort(([left], [right]) =>
-            left.localeCompare(right)
-          )
-        ),
+        headers: canonicalHeaders,
         bodyBase64: body.toString('base64')
       }
     })
@@ -585,20 +613,6 @@ function providerUrl(profile: AgentPromptModelProfile): URL {
   url.hash = ''
   return url
 }
-
-function pathMatches(
-  protocol: AgentPromptModelProfile['protocol'],
-  path: string
-): boolean {
-  if (protocol === 'anthropic-messages') {
-    return path === '/v1/messages'
-  }
-  if (protocol === 'openai-chat-completions') {
-    return path === '/chat/completions' || path === '/v1/chat/completions'
-  }
-  return path === '/responses' || path === '/v1/responses'
-}
-
 
 function sha256(value: string | Uint8Array): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`

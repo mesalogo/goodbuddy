@@ -965,6 +965,13 @@ describe('ContinueHostAdapter', () => {
           protocol,
           authentication,
           supportsImageInput: true,
+          requestHeaders: {
+            'x-tenant-id': 'continue-tenant'
+          },
+          requestBody: {
+            temperature: 0.25,
+            metadata: { source: 'goodbuddy' }
+          },
           ...(authentication === 'api-key'
             ? { apiKey: 'private-key' }
             : {})
@@ -1009,7 +1016,16 @@ describe('ContinueHostAdapter', () => {
             apiBase: 'http://127.0.0.1:11434/v1',
             model: 'qwen3',
             useResponsesApi,
-            capabilities: ['image_input']
+            capabilities: ['image_input'],
+            requestOptions: {
+              headers: {
+                'x-tenant-id': 'continue-tenant'
+              },
+              extraBodyProperties: {
+                temperature: 0.25,
+                metadata: { source: 'goodbuddy' }
+              }
+            }
           }
         ],
         mcpServers: [
@@ -2035,8 +2051,10 @@ describe('ContinueHostAdapter', () => {
       temporaryDirectories.push(root)
       const requestPaths: string[] = []
       const requestBodies: unknown[] = []
+      const tenantHeaders: Array<string | string[] | undefined> = []
       const server = createServer(async (request, response) => {
         requestPaths.push(request.url ?? '')
+        tenantHeaders.push(request.headers['x-tenant-id'])
         let body = ''
         for await (const chunk of request) {
           body += chunk
@@ -2081,7 +2099,14 @@ describe('ContinueHostAdapter', () => {
           baseUrl: `http://127.0.0.1:${address.port}/v1`,
           modelName: 'probe-model',
           protocol,
-          authentication: 'none'
+          authentication: 'none',
+          requestHeaders: {
+            'x-tenant-id': 'continue-native'
+          },
+          requestBody: {
+            temperature: 0.25,
+            metadata: { source: 'goodbuddy' }
+          }
         }
       })
       const controller = new AbortController()
@@ -2095,6 +2120,13 @@ describe('ContinueHostAdapter', () => {
           .catch(() => undefined)
         expect(requestPaths).toContain(expectedPath)
         expect(requestPaths).not.toContain(unexpectedPath)
+        expect(tenantHeaders).toContain('continue-native')
+        expect(requestBodies).toContainEqual(
+          expect.objectContaining({
+            temperature: 0.25,
+            metadata: { source: 'goodbuddy' }
+          })
+        )
         if (protocol === 'openai-chat-completions') {
           const chatRequest = requestBodies.find(
             (body): body is { messages: Array<{ role?: unknown }> } =>

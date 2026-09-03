@@ -320,7 +320,7 @@ function validCapabilities(): DaemonCapabilities {
   return {
     generation: 11,
     capabilities: [
-      { name: 'runtime/acp', version: 4, critical: true }
+      { name: 'runtime/acp', version: 5, critical: true }
     ],
     runtimes: [
       {

@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeStatus,
+  ModelRequestHeaders,
   RuntimeNativeSnapshot,
   RuntimeNativeTool
 } from '../../shared/contracts'
@@ -173,6 +174,7 @@ export type DeepSeekHarnessLaunchOptions = {
   baseUrl: string
   model: string
   supportsImageInput: boolean
+  requestHeaders?: ModelRequestHeaders
   credentialRefs: readonly string[]
   skillPackages: readonly RuntimeSkillPackage[]
   extensionPackages: readonly ControlledHarnessExtensionPackage[]
@@ -183,6 +185,7 @@ export type DeepSeekHarnessRuntimeOptions = {
   baseUrl: string
   model: string
   supportsImageInput?: boolean
+  requestHeaders?: ModelRequestHeaders
   launch: (
     options: DeepSeekHarnessLaunchOptions
   ) => Promise<DeepSeekHarnessChild>
@@ -821,6 +824,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
           model: this.options.model,
           supportsImageInput:
             this.options.supportsImageInput === true,
+          requestHeaders: this.options.requestHeaders ?? {},
           credentialRefs: Object.keys(
             this.options.credentialRefs ?? {}
           ),

@@ -254,7 +254,9 @@ Store 是否已经提交为准，确定性完成新目录或恢复旧目录，�
 | `goodbuddy/native/snapshot` | Main → Control Plane | 从无 Agent scope 的 Host Registry 读取有界的原生 Tool/Skill 元数据，排除 GoodBuddy 分配项与请求级代理 |
 | `goodbuddy/shutdown` | Main → Control Plane | 停止接收新请求并有序清理 |
 
-Utility 启动控制协议使用版本 2，严格携带 `supportsImageInput` 与固定 8 MiB 帧上限；版本 1 或缺少该字段的启动消息失败关闭，不能让 Host 自行猜测模型能力。扩展版本独立于 ACP 版本。握手响应至少包含：
+Utility 启动控制协议使用版本 3，严格携带 `supportsImageInput`、模型连接的有界自定义
+Header 与固定 8 MiB 帧上限；旧版本或缺少必需字段的启动消息失败关闭，不能让 Host
+自行猜测模型能力。扩展版本独立于 ACP 版本。握手响应至少包含：
 
 ```ts
 type GoodBuddyHarnessCapabilities = {
@@ -431,6 +433,9 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 - 模型名称不限制为 DeepSeek 品牌，由所选 OpenAI 兼容服务决定。
 - 模型名称和服务地址由 Main 传入受控 Host。
 - 图片能力只读取所选 GoodBuddy 模型连接的 `supportsImageInput`；Main、Utility 启动配置、ACP 能力和 Pi-AI 模型输入模态必须使用同一个布尔值。
+- 模型连接的自定义 Header 通过 Utility 启动配置交给 Pi-AI Provider；Pi-AI 没有受支持的
+  任意 Body 配置入口，因此 DeepSeek Harness 不接收自定义 Body。完整支持矩阵和合并规则
+  见[模型连接请求定制](../model-connections/technical-design.md)。
 - API Key 继续保存在 GoodBuddy 加密设置中。
 - 启动环境提供的部署连接只由 Main 自动解析，不在 Renderer 中显示为可选来源。
 - 未显式指定 Harness 模型且没有可用的管理员预置连接时，Main 优先使用当前默认的兼容 GoodBuddy 模型连接；默认连接不兼容时使用首个兼容连接。只有不存在任何兼容连接时才提示用户前往模型或 Runtime 设置。

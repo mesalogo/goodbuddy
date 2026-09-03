@@ -20,6 +20,8 @@ import {
   minimumModelContextWindowTokens,
   modelAuthenticationSchema,
   modelProtocolSchema,
+  modelRequestBodySchema,
+  modelRequestHeadersSchema,
   runtimeModelSourceSchema,
   runtimeCustomizationSettingsSchema,
   runtimePathSchema,
@@ -48,6 +50,7 @@ import {
 } from './settings-credential-cipher'
 
 const credentialSchema = encryptedSettingsCredentialSchema.optional()
+const CURRENT_SETTINGS_VERSION = 21
 const legacyRuntimeSandboxModeSchema = z.enum([
   'off',
   'auto',
@@ -276,10 +279,25 @@ const version19StoredSettingsSchema = version18StoredSettingsSchema
     activeEmbeddingConnectionId: z.string().uuid()
   })
 
-const storedSettingsSchema = version19StoredSettingsSchema
+const version20StoredSettingsSchema = version19StoredSettingsSchema
   .omit({ version: true })
   .extend({
     version: z.literal(20)
+  })
+
+const storedSettingsSchema = version20StoredSettingsSchema
+  .omit({ version: true, modelProfiles: true })
+  .extend({
+    version: z.literal(CURRENT_SETTINGS_VERSION),
+    modelProfiles: z
+      .array(
+        currentStoredModelProfileSchema.extend({
+          requestHeaders: modelRequestHeadersSchema,
+          requestBody: modelRequestBodySchema
+        })
+      )
+      .min(1)
+      .max(20)
   })
 
 type StoredSettings = z.infer<typeof storedSettingsSchema>
@@ -295,6 +313,9 @@ type Version18StoredSettings = z.infer<
 >
 type Version19StoredSettings = z.infer<
   typeof version19StoredSettingsSchema
+>
+type Version20StoredSettings = z.infer<
+  typeof version20StoredSettingsSchema
 >
 type Version16StoredSettings = z.infer<
   typeof version16StoredSettingsSchema
@@ -442,6 +463,8 @@ export type ResolvedModelProfile = {
   contextWindowTokens?: number
   maximumOutputTokens?: number
   imageGenerationQuality?: RuntimeSettings['imageGenerationQuality']
+  requestHeaders?: RuntimeSettings['modelProfiles'][number]['requestHeaders']
+  requestBody?: RuntimeSettings['modelProfiles'][number]['requestBody']
   apiKey?: string
 }
 
@@ -468,7 +491,7 @@ type ResolvedModelCredential = {
 }
 
 const defaultSettings: StoredSettings = {
-  version: 20,
+  version: CURRENT_SETTINGS_VERSION,
   provider: defaultRuntimeSettings.provider,
   modelProfiles: [
     {
@@ -480,7 +503,9 @@ const defaultSettings: StoredSettings = {
       authentication: defaultRuntimeSettings.modelAuthentication,
       supportsImageInput: defaultRuntimeSettings.supportsImageInput,
       imageGenerationQuality:
-        defaultRuntimeSettings.imageGenerationQuality
+        defaultRuntimeSettings.imageGenerationQuality,
+      requestHeaders: {},
+      requestBody: {}
     }
   ],
   defaultModelProfileId,
@@ -698,7 +723,7 @@ function migrateVersion18(
 function migrateVersion19(
   settings: Version19StoredSettings
 ): StoredSettings {
-  return {
+  return migrateVersion20({
     ...settings,
     version: 20,
     modelProfiles: settings.modelProfiles.map((profile) =>
@@ -722,6 +747,20 @@ function migrateVersion19(
           }
         : profile
     )
+  })
+}
+
+function migrateVersion20(
+  settings: Version20StoredSettings
+): StoredSettings {
+  return {
+    ...settings,
+    version: CURRENT_SETTINGS_VERSION,
+    modelProfiles: settings.modelProfiles.map((profile) => ({
+      ...profile,
+      requestHeaders: {},
+      requestBody: {}
+    }))
   }
 }
 
@@ -1014,6 +1053,119 @@ function migrateVersion9(
   })
 }
 
+function migrateVersion3(
+  settings: z.infer<typeof version3StoredSettingsSchema>
+): StoredSettings {
+  return migrateVersion4({
+    ...settings,
+    version: 4,
+    continueMode: 'chat'
+  })
+}
+
+function migrateVersion2(
+  settings: z.infer<typeof version2StoredSettingsSchema>
+): StoredSettings {
+  return migrateVersion4({
+    version: 4,
+    provider: settings.provider,
+    modelBaseUrl: settings.modelBaseUrl,
+    modelName: settings.modelName,
+    opencodeBaseUrl: settings.opencodeBaseUrl,
+    opencodeEmbedded: settings.opencodeEmbedded,
+    opencodeBinaryPath: '',
+    opencodeConfigPath: '',
+    continueBinaryPath: migrateContinueCommand(
+      settings.continueCommand
+    ),
+    continueConfigPath: '',
+    continueMode: 'chat',
+    workspacePath: settings.workspacePath,
+    credential: settings.credential,
+    toolApproval: settings.toolApproval
+  })
+}
+
+function migrateLegacySettings(
+  settings: z.infer<typeof legacyStoredSettingsSchema>
+): StoredSettings {
+  return migrateVersion4({
+    version: 4,
+    provider:
+      settings.provider === 'bigtoken' ? 'model' : settings.provider,
+    modelBaseUrl: settings.bigtokenBaseUrl,
+    modelName: settings.bigtokenModel,
+    opencodeBaseUrl: settings.opencodeBaseUrl,
+    opencodeEmbedded: settings.opencodeEmbedded,
+    opencodeBinaryPath: '',
+    opencodeConfigPath: '',
+    continueBinaryPath: migrateContinueCommand(
+      settings.continueCommand
+    ),
+    continueConfigPath: '',
+    continueMode: 'chat',
+    workspacePath: settings.workspacePath,
+    credential: settings.credential,
+    toolApproval: settings.toolApproval
+  })
+}
+
+function parseStoredSettings(value: unknown): StoredSettings {
+  const version =
+    value !== null &&
+    typeof value === 'object' &&
+    'version' in value &&
+    typeof value.version === 'number'
+      ? value.version
+      : undefined
+  switch (version) {
+    case CURRENT_SETTINGS_VERSION:
+      return storedSettingsSchema.parse(value)
+    case 20:
+      return migrateVersion20(version20StoredSettingsSchema.parse(value))
+    case 19:
+      return migrateVersion19(version19StoredSettingsSchema.parse(value))
+    case 18:
+      return migrateVersion18(version18StoredSettingsSchema.parse(value))
+    case 17:
+      return migrateVersion17(version17StoredSettingsSchema.parse(value))
+    case 16:
+      return migrateVersion16(version16StoredSettingsSchema.parse(value))
+    case 15:
+      return migrateVersion15(version15StoredSettingsSchema.parse(value))
+    case 14:
+      return migrateVersion14(version14StoredSettingsSchema.parse(value))
+    case 13:
+      return migrateVersion13(version13StoredSettingsSchema.parse(value))
+    case 12:
+      return migrateVersion12(version12StoredSettingsSchema.parse(value))
+    case 11:
+      return migrateVersion11(version11StoredSettingsSchema.parse(value))
+    case 10:
+      return migrateVersion10(version10StoredSettingsSchema.parse(value))
+    case 9:
+      return migrateVersion9(version9StoredSettingsSchema.parse(value))
+    case 8:
+      return migrateVersion8(version8StoredSettingsSchema.parse(value))
+    case 7:
+      return migrateVersion7(version7StoredSettingsSchema.parse(value))
+    case 6:
+      return migrateVersion6(version6StoredSettingsSchema.parse(value))
+    case 5:
+      return migrateVersion5(version5StoredSettingsSchema.parse(value))
+    case 4:
+      return migrateVersion4(version4StoredSettingsSchema.parse(value))
+    case 3:
+      return migrateVersion3(version3StoredSettingsSchema.parse(value))
+    case 2:
+      return migrateVersion2(version2StoredSettingsSchema.parse(value))
+    default:
+      return migrateLegacySettings(
+        legacyStoredSettingsSchema.parse(value)
+      )
+  }
+}
+
 export class RuntimeSettingsStore {
   private settings?: StoredSettings
   private settingsLoad?: Promise<StoredSettings>
@@ -1044,165 +1196,11 @@ export class RuntimeSettingsStore {
       const parsed: unknown = JSON.parse(contents)
       assertSupportedSettingsVersion(
         parsed,
-        20,
+        CURRENT_SETTINGS_VERSION,
         (version) =>
           `当前 GoodBuddy 不支持 Runtime 设置版本 ${version}，请升级应用后重试`
       )
-      const current = storedSettingsSchema.safeParse(parsed)
-      const version19 =
-        version19StoredSettingsSchema.safeParse(parsed)
-      if (current.success) {
-        this.settings = current.data
-      } else if (version19.success) {
-        this.settings = migrateVersion19(version19.data)
-      } else {
-        const version18 =
-          version18StoredSettingsSchema.safeParse(parsed)
-        if (version18.success) {
-          this.settings = migrateVersion18(version18.data)
-        } else {
-          const version17 =
-            version17StoredSettingsSchema.safeParse(parsed)
-          if (version17.success) {
-            this.settings = migrateVersion17(version17.data)
-          } else {
-            const version16 =
-              version16StoredSettingsSchema.safeParse(parsed)
-            if (version16.success) {
-              this.settings = migrateVersion16(version16.data)
-            } else {
-              const version15 =
-                version15StoredSettingsSchema.safeParse(parsed)
-              if (version15.success) {
-                this.settings = migrateVersion15(version15.data)
-              } else {
-                const version14 =
-                  version14StoredSettingsSchema.safeParse(parsed)
-                if (version14.success) {
-                  this.settings = migrateVersion14(version14.data)
-                } else {
-                  const version13 =
-                    version13StoredSettingsSchema.safeParse(parsed)
-                  if (version13.success) {
-                    this.settings = migrateVersion13(version13.data)
-                  } else {
-                    const version12 =
-                      version12StoredSettingsSchema.safeParse(parsed)
-                    if (version12.success) {
-                      this.settings = migrateVersion12(version12.data)
-                    } else {
-                      const version11 =
-                        version11StoredSettingsSchema.safeParse(parsed)
-                      if (version11.success) {
-                        this.settings = migrateVersion11(version11.data)
-                      } else {
-                        const version10 =
-                          version10StoredSettingsSchema.safeParse(parsed)
-                        if (version10.success) {
-                          this.settings = migrateVersion10(version10.data)
-                        } else {
-                          const version9 =
-                            version9StoredSettingsSchema.safeParse(parsed)
-                          if (version9.success) {
-                            this.settings = migrateVersion9(version9.data)
-                          } else {
-                            const version8 =
-                              version8StoredSettingsSchema.safeParse(parsed)
-                            if (version8.success) {
-                              this.settings = migrateVersion8(version8.data)
-                            } else {
-                              const version7 =
-                                version7StoredSettingsSchema.safeParse(parsed)
-                              if (version7.success) {
-                                this.settings = migrateVersion7(version7.data)
-                              } else {
-                                const version6 =
-                                  version6StoredSettingsSchema.safeParse(parsed)
-                                if (version6.success) {
-                                  this.settings = migrateVersion6(version6.data)
-                                } else {
-                                  const version5 =
-                                    version5StoredSettingsSchema.safeParse(parsed)
-                                  if (version5.success) {
-                                    this.settings = migrateVersion5(version5.data)
-                                  } else {
-                                    const version4 =
-                                      version4StoredSettingsSchema.safeParse(parsed)
-                                    if (version4.success) {
-                                      this.settings = migrateVersion4(version4.data)
-                                    } else {
-                                    const version3 =
-                                      version3StoredSettingsSchema.safeParse(parsed)
-                                    if (version3.success) {
-                                      this.settings = migrateVersion4({
-                                        ...version3.data,
-                                        version: 4,
-                                        continueMode: 'chat'
-                                      })
-                                    } else {
-                                      const version2 =
-                                        version2StoredSettingsSchema.safeParse(parsed)
-                                      if (version2.success) {
-                                        this.settings = migrateVersion4({
-                                          version: 4,
-                                          provider: version2.data.provider,
-                                          modelBaseUrl: version2.data.modelBaseUrl,
-                                          modelName: version2.data.modelName,
-                                          opencodeBaseUrl: version2.data.opencodeBaseUrl,
-                                          opencodeEmbedded: version2.data.opencodeEmbedded,
-                                          opencodeBinaryPath: '',
-                                          opencodeConfigPath: '',
-                                          continueBinaryPath: migrateContinueCommand(
-                                            version2.data.continueCommand
-                                          ),
-                                          continueConfigPath: '',
-                                          continueMode: 'chat',
-                                          workspacePath: version2.data.workspacePath,
-                                          credential: version2.data.credential,
-                                          toolApproval: version2.data.toolApproval
-                                        })
-                                      } else {
-                                        const legacy =
-                                          legacyStoredSettingsSchema.parse(parsed)
-                                        this.settings = migrateVersion4({
-                                          version: 4,
-                                          provider:
-                                            legacy.provider === 'bigtoken'
-                                              ? 'model'
-                                              : legacy.provider,
-                                          modelBaseUrl: legacy.bigtokenBaseUrl,
-                                          modelName: legacy.bigtokenModel,
-                                          opencodeBaseUrl: legacy.opencodeBaseUrl,
-                                          opencodeEmbedded: legacy.opencodeEmbedded,
-                                          opencodeBinaryPath: '',
-                                          opencodeConfigPath: '',
-                                          continueBinaryPath: migrateContinueCommand(
-                                            legacy.continueCommand
-                                          ),
-                                          continueConfigPath: '',
-                                          continueMode: 'chat',
-                                          workspacePath: legacy.workspacePath,
-                                          credential: legacy.credential,
-                                          toolApproval: legacy.toolApproval
-                                        })
-                                      }
-                                    }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+      this.settings = parseStoredSettings(parsed)
       this.settings = normalizeStoredSettings(this.settings)
     } catch (error) {
       if (error instanceof UnsupportedSettingsVersionError) {
@@ -1501,6 +1499,8 @@ export class RuntimeSettingsStore {
     contextWindowTokens?: number
     maximumOutputTokens?: number
     imageGenerationQuality: RuntimeSettings['imageGenerationQuality']
+    requestHeaders: RuntimeSettings['modelProfiles'][number]['requestHeaders']
+    requestBody: RuntimeSettings['modelProfiles'][number]['requestBody']
     credentialSource: RuntimeSettings['credentialSource']
   } {
     const profile =
@@ -1563,6 +1563,8 @@ export class RuntimeSettingsStore {
       contextWindowTokens: profile.contextWindowTokens,
       maximumOutputTokens: profile.maximumOutputTokens,
       imageGenerationQuality: profile.imageGenerationQuality,
+      requestHeaders: profile.requestHeaders,
+      requestBody: profile.requestBody,
       credentialSource: credential.source
     }
   }
@@ -1587,6 +1589,8 @@ export class RuntimeSettingsStore {
           contextWindowTokens: effective.contextWindowTokens,
           maximumOutputTokens: effective.maximumOutputTokens,
           imageGenerationQuality: effective.imageGenerationQuality,
+          requestHeaders: effective.requestHeaders,
+          requestBody: effective.requestBody,
           apiKey: effective.apiKey
         }
       }
@@ -1605,6 +1609,8 @@ export class RuntimeSettingsStore {
         contextWindowTokens: profile.contextWindowTokens,
         maximumOutputTokens: profile.maximumOutputTokens,
         imageGenerationQuality: profile.imageGenerationQuality,
+        requestHeaders: profile.requestHeaders,
+        requestBody: profile.requestBody,
         apiKey: credential.activeApiKey
       }
     })
@@ -1690,6 +1696,8 @@ export class RuntimeSettingsStore {
         imageGenerationQuality:
           resolved.imageGenerationQuality ??
           defaultRuntimeSettings.imageGenerationQuality,
+        requestHeaders: resolved.requestHeaders ?? {},
+        requestBody: resolved.requestBody ?? {},
         apiKeyConfigured: credential.configured,
         credentialSource: credential.source
       }
@@ -1712,6 +1720,8 @@ export class RuntimeSettingsStore {
         imageGenerationQuality:
           profile.imageGenerationQuality ??
           defaultRuntimeSettings.imageGenerationQuality,
+        requestHeaders: profile.requestHeaders,
+        requestBody: profile.requestBody,
         apiKeyConfigured: credential.configured,
         credentialSource: credential.source
       }
@@ -2014,6 +2024,8 @@ export class RuntimeSettingsStore {
               contextWindowTokens: profile.contextWindowTokens,
               maximumOutputTokens: profile.maximumOutputTokens,
               imageGenerationQuality: input.imageGenerationQuality,
+              requestHeaders: profile.requestHeaders,
+              requestBody: profile.requestBody,
               apiKey: input.apiKey
             }
           : {
@@ -2027,6 +2039,8 @@ export class RuntimeSettingsStore {
               contextWindowTokens: profile.contextWindowTokens,
               maximumOutputTokens: profile.maximumOutputTokens,
               imageGenerationQuality: profile.imageGenerationQuality,
+              requestHeaders: profile.requestHeaders,
+              requestBody: profile.requestBody,
               apiKey: { action: 'keep' as const }
             }
       )
@@ -2078,7 +2092,9 @@ export class RuntimeSettingsStore {
           supportsImageInput: profile.supportsImageInput ?? false,
           contextWindowTokens: profile.contextWindowTokens,
           maximumOutputTokens: profile.maximumOutputTokens,
-          imageGenerationQuality: profile.imageGenerationQuality
+          imageGenerationQuality: profile.imageGenerationQuality,
+          requestHeaders: profile.requestHeaders ?? {},
+          requestBody: profile.requestBody ?? {}
         }
         if (
           profile.apiKey.action === 'keep' &&
@@ -2346,7 +2362,7 @@ export class RuntimeSettingsStore {
 
     const next: StoredSettings = {
       ...current,
-      version: 20,
+      version: CURRENT_SETTINGS_VERSION,
       provider: input.provider,
       modelProfiles,
       defaultModelProfileId,
@@ -2407,7 +2423,7 @@ export class RuntimeSettingsStore {
       const current = await this.load()
       const next: StoredSettings = {
         ...current,
-        version: 20,
+        version: CURRENT_SETTINGS_VERSION,
         runtimeCustomization: parsed
       }
       await writeJsonFileAtomically(this.filePath, next)

@@ -154,6 +154,59 @@ describe('RemoteModelGateway', () => {
     expect(JSON.stringify(completed)).not.toContain('"messages"')
   })
 
+  it('applies prompt-scoped custom headers and body fields before dispatch', async () => {
+    const store = await createStore()
+    const customizedProfile: ResolvedModelProfile = {
+      ...anthropicProfile,
+      requestHeaders: {
+        'x-tenant-id': 'remote-tenant'
+      },
+      requestBody: {
+        temperature: 0.2,
+        metadata: { source: 'goodbuddy' }
+      }
+    }
+    const customizedRequest = {
+      ...request,
+      bodyBase64: Buffer.from(
+        JSON.stringify({
+          model: 'claude-test',
+          messages: [],
+          temperature: 0.8
+        })
+      ).toString('base64')
+    }
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      expect(new Headers(init?.headers).get('x-tenant-id')).toBe(
+        'remote-tenant'
+      )
+      expect(JSON.parse(String(init?.body))).toEqual({
+        messages: [],
+        metadata: { source: 'goodbuddy' },
+        model: 'claude-test',
+        temperature: 0.8
+      })
+      return new Response('{}')
+    })
+    const gateway = new RemoteModelGateway({ store, fetcher })
+
+    await gateway.dispatch(
+      {
+        ...context,
+        modelProfile: customizedProfile,
+        modelProfileDigest:
+          createResolvedModelProfileDigest(customizedProfile)
+      },
+      customizedRequest,
+      new AbortController().signal
+    )
+
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(
+      createResolvedModelProfileDigest(customizedProfile)
+    ).not.toBe(createResolvedModelProfileDigest(anthropicProfile))
+  })
+
   it('does not clamp Runtime-selected provider output parameters', async () => {
     const store = await createStore()
     let sentBody: Record<string, unknown> | undefined

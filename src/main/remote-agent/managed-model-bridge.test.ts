@@ -11,6 +11,12 @@ const profile: ResolvedModelProfile = {
   authentication: 'api-key',
   supportsImageInput: true,
   maximumOutputTokens: 8_192,
+  requestHeaders: {
+    'x-tenant-id': 'remote-tenant'
+  },
+  requestBody: {
+    temperature: 0.2
+  },
   apiKey: 'prompt-scoped-secret'
 }
 
@@ -29,6 +35,12 @@ describe('managed Agent prompt model setup', () => {
       protocol: 'openai-responses',
       authentication: 'api-key',
       apiKey: 'prompt-scoped-secret',
+      requestHeaders: {
+        'x-tenant-id': 'remote-tenant'
+      },
+      requestBody: {
+        temperature: 0.2
+      },
       capabilities: { imageInput: true },
       limits: {
         maximumOutputTokens: 8_192,

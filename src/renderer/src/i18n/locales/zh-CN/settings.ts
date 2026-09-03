@@ -117,6 +117,10 @@ export const settings = {
     detectRuntimes: 'Runtime 自动检测失败',
     readEmbeddingStatus: '读取向量模型状态失败',
     requireModelConnection: '请至少配置一个模型连接',
+    invalidModelRequestHeaders:
+      '模型连接“{{name}}”的自定义请求头无效',
+    invalidModelRequestBody:
+      '模型连接“{{name}}”的自定义请求体无效',
     refreshEmbeddingAfterSave: '设置已保存，但刷新向量模型状态失败',
     speechModelsUnavailable: '当前版本未提供语音模型服务',
     saveSettings: '保存设置失败',
@@ -679,6 +683,18 @@ export const settings = {
         high: '高'
       },
       imageQualityDescription: '仅用于 OpenAI 兼容图像生成请求。',
+      requestHeaders: '自定义请求头',
+      requestHeadersDescription:
+        '填写 JSON 对象，值必须是字符串。直连、Continue、OpenCode 和 DeepSeek Harness 会在原生支持范围内使用；认证、协议和 Runtime 生成的请求头优先。',
+      requestHeadersInvalid:
+        '请输入有效的 JSON 对象；值必须是字符串，且不能包含认证或传输保留字段。',
+      requestBody: '自定义请求体',
+      requestBodyDescription:
+        '填写 JSON 对象，与请求体做顶层浅合并。直连和 Continue 支持；受管远程 OpenCode 由模型网关支持。本地 OpenCode 与 DeepSeek Harness 不使用此项。模型、消息、工具和流式等 Runtime 字段优先。',
+      requestBodyInvalid:
+        '请输入有效的 JSON 对象；不能包含模型、消息、工具、流式或其他保留字段。',
+      requestCustomizationWarning:
+        '请勿在此处填写 API Key 或其他密钥。这些值作为普通连接设置保存；凭据请使用上方 API Key 字段。',
       compatibilitySummary:
         '直连模型：{{directCapability}} · Continue：{{continueCompatibility}} · OpenCode：{{openCodeCompatibility}} · DeepSeek Harness：{{deepseekHarnessCompatibility}}',
       textChat: '文本对话',

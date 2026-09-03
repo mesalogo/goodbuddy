@@ -4024,6 +4024,94 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
+  it('edits and saves bounded custom model request headers and body', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    const headers = await screen.findByLabelText('自定义请求头')
+    const body = screen.getByLabelText('自定义请求体')
+    expect(headers).toHaveValue('{}')
+    expect(body).toHaveValue('{}')
+    expect(headers).toHaveAttribute('maxlength')
+    expect(body).toHaveAttribute('maxlength')
+    expect(
+      screen.getByText(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
+    ).toBeInTheDocument()
+
+    fireEvent.change(headers, {
+      target: {
+        value: JSON.stringify({ 'x-tenant-id': 'tenant-a' })
+      }
+    })
+    fireEvent.change(body, {
+      target: {
+        value: JSON.stringify({
+          temperature: 0.2,
+          metadata: { source: 'goodbuddy' }
+        })
+      }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: [
+            expect.objectContaining({
+              id: modelProfileId,
+              requestHeaders: {
+                'x-tenant-id': 'tenant-a'
+              },
+              requestBody: {
+                temperature: 0.2,
+                metadata: { source: 'goodbuddy' }
+              }
+            })
+          ]
+        })
+      )
+    )
+  })
+
+  it('keeps invalid custom request JSON in the editor and blocks saving', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    const headers = await screen.findByLabelText('自定义请求头')
+    fireEvent.change(headers, {
+      target: { value: '{"Authorization":"replacement"}' }
+    })
+
+    expect(headers).toHaveAttribute('aria-invalid', 'true')
+    expect(
+      screen.getByText(/不能包含认证或传输保留字段/)
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    expect(
+      await screen.findByText(/自定义请求头无效/)
+    ).toBeInTheDocument()
+    expect(updateRuntime).not.toHaveBeenCalled()
+    expect(headers).toHaveValue('{"Authorization":"replacement"}')
+  })
+
   it('keeps saved Runtime sources valid when defaulting a new text profile', async () => {
     render(
       <SettingsPanel

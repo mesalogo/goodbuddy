@@ -122,6 +122,52 @@ describe('AgentModelGateway', () => {
     ledger.close()
   })
 
+  it('merges trusted profile request customization without overriding Runtime fields', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const headers = new Headers(init?.headers)
+      expect(headers.get('x-tenant-id')).toBe('agent-tenant')
+      expect(headers.get('authorization')).toBe(`Bearer ${secret}`)
+      expect(JSON.parse(String(init?.body))).toEqual({
+        max_output_tokens: 4_096,
+        metadata: { source: 'goodbuddy' },
+        model: 'model-1',
+        temperature: 0.8
+      })
+      return new Response('{}')
+    })
+    const { gateway, ledger } = setup(fetcher)
+    const customizedProfile: AgentPromptModelProfile = {
+      ...profile,
+      requestHeaders: {
+        'x-tenant-id': 'agent-tenant'
+      },
+      requestBody: {
+        temperature: 0.2,
+        metadata: { source: 'goodbuddy' }
+      }
+    }
+    const result = await gateway.dispatch(
+      {
+        ...context,
+        profile: customizedProfile
+      },
+      {
+        ...request,
+        bodyBase64: Buffer.from(
+          JSON.stringify({
+            model: 'model-1',
+            temperature: 0.8
+          })
+        ).toString('base64')
+      },
+      new AbortController().signal
+    )
+
+    await result.acknowledgeDelivery()
+    expect(fetcher).toHaveBeenCalledOnce()
+    ledger.close()
+  })
+
   it('does not impose prompt-wide model-call or output-token quotas', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       new Response(

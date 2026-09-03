@@ -34,6 +34,7 @@ import {
 } from './agent/deepseek-harness-extension-loader'
 import type { Stream } from '@agentclientprotocol/sdk'
 import { isDeepSeekHarnessCompatibleBaseUrl } from '../shared/deepseek-harness-compatibility'
+import type { ModelRequestHeaders } from '../shared/model-request-customization'
 import { DEEPSEEK_HARNESS_MAX_FRAME_BYTES } from './agent/deepseek-harness-control-protocol'
 
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024
@@ -45,6 +46,7 @@ export type ControlledHarnessHostConfig = Omit<
   workspace: string
   baseUrl: string
   api: 'openai-completions'
+  requestHeaders?: ModelRequestHeaders
   maxFrameBytes?: number
   stream?: Stream
   dshHome: string
@@ -249,6 +251,7 @@ export async function startControlledDeepSeekHarnessHost(
             apiKeyEnv: config.credentialRefs[0],
             api: config.api,
             baseURL: config.baseUrl,
+            headers: config.requestHeaders ?? {},
             models: [
               {
                 id: config.model,

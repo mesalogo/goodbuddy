@@ -103,7 +103,7 @@ otherwise.
   the Agent tool-dispatch boundary, while Execute has all permissions of the
   selected SSH account. The Agent owns accepted Prompts,
   provider/tool rounds, Runtime processes, a stable model ledger, and a bounded
-  semantic transcript over a private Unix socket and ACP v4. Work continues on
+  semantic transcript over a private Unix socket and ACP v5. Work continues on
   the Host after Desktop exit, network loss, or local-process termination.
   Reconnection attaches only to the original controller, binding, and
   operation, then atomically merges provenance into the original conversation
@@ -213,6 +213,14 @@ otherwise.
   a bounded real text or image-generation request and validates the generated
   result instead of testing HTTP reachability alone, so it may incur a small
   provider usage charge.
+- [x] **Custom model request fields**: Each LLM connection accepts bounded
+  JSON objects for additional request headers and top-level body fields.
+  Direct requests and Continue support both; local OpenCode and DeepSeek
+  Harness use only their natively supported headers, while the managed SSH
+  OpenCode model gateway supports both. Runtime, protocol, and authentication
+  fields take precedence, and these ordinary connection settings must not be
+  used to store API keys or other secrets. See
+  [model request customization](./docs/features/model-connections/README.md).
 - [x] **Context usage and automatic compaction**: Direct models update usage
   from each successful provider call. Images and tool rounds use the same
   accounting, with estimation only when the provider omits usage. The UI
@@ -509,7 +517,7 @@ otherwise.
 - [ ] **GoodBuddy Team Hub** (planned): An optional service for organizations,
   RBAC, project sharing, remote Agents, policy distribution, and tenant audit.
 - [ ] **SSH Host and remote execution-space release acceptance**: Host CRUD,
-  Host Key, encrypted credentials, Project UI, Workspace, OpenCode ACP v4,
+  Host Key, encrypted credentials, Project UI, Workspace, OpenCode ACP v5,
   Agent-owned Prompt/gateway/transcript, read-only Ask, full-account Execute,
   cancellation, exact detached-Agent reconnection, and release-only
   dual-architecture resource verification are wired. Current Linux x64 source

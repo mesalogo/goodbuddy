@@ -54,6 +54,7 @@ async function fixture() {
       baseUrl: 'http://gateway.example/openai/v1?api-version=1',
       model: 'qwen-plus',
       supportsImageInput: false,
+      requestHeaders: { 'x-tenant-id': 'harness-tenant' },
       credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
       skillPackages: [],
       extensionPackages: []
@@ -63,6 +64,7 @@ async function fixture() {
 
 describe('DeepSeek Harness utility launcher', () => {
   it('accepts only strict control messages and secret-free config', () => {
+    expect(DEEPSEEK_HARNESS_CONTROL_VERSION).toBe(3)
     expect(
       parseHarnessControlMessage({
         protocol: DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
@@ -106,6 +108,9 @@ describe('DeepSeek Harness utility launcher', () => {
         baseUrl: 'http://gateway.example/openai/v1?api-version=1',
         model: 'qwen-plus',
         supportsImageInput: false,
+        requestHeaders: {
+          'x-tenant-id': 'harness-tenant'
+        },
         credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF]
       }
     })

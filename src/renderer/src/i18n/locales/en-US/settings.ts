@@ -131,6 +131,10 @@ export const settings = {
     detectRuntimes: 'Could not detect Agent Runtimes',
     readEmbeddingStatus: 'Could not load embedding model status',
     requireModelConnection: 'Configure at least one model connection',
+    invalidModelRequestHeaders:
+      'Custom request headers are invalid for “{{name}}”',
+    invalidModelRequestBody:
+      'The custom request body is invalid for “{{name}}”',
     refreshEmbeddingAfterSave:
       'Settings were saved, but the vector model status could not be refreshed',
     speechModelsUnavailable:
@@ -735,6 +739,18 @@ export const settings = {
       },
       imageQualityDescription:
         'Used only for OpenAI-compatible image generation requests.',
+      requestHeaders: 'Custom request headers',
+      requestHeadersDescription:
+        'Enter a JSON object whose values are strings. Direct requests, Continue, OpenCode, and DeepSeek Harness use these headers where natively supported. Authentication, protocol, and Runtime headers take precedence.',
+      requestHeadersInvalid:
+        'Enter a valid JSON object with string values and no reserved authentication or transport headers.',
+      requestBody: 'Custom request body',
+      requestBodyDescription:
+        'Enter a JSON object for a top-level shallow merge. Direct requests and Continue support it, and the model gateway supports managed remote OpenCode. Local OpenCode and DeepSeek Harness ignore it. Runtime model, message, tool, and streaming fields take precedence.',
+      requestBodyInvalid:
+        'Enter a valid JSON object without reserved model, message, tool, streaming, or transport fields.',
+      requestCustomizationWarning:
+        'Do not enter API keys or other secrets here. These values are saved as ordinary connection settings; use the API Key field above for credentials.',
       compatibilitySummary:
         'Direct model: {{directCapability}} · Continue: {{continueCompatibility}} · OpenCode: {{openCodeCompatibility}} · DeepSeek Harness: {{deepseekHarnessCompatibility}}',
       textChat: 'Text chat',

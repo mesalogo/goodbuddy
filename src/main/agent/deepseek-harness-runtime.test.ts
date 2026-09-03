@@ -48,6 +48,7 @@ function setup(
     maxEventCharacters?: number
     maxRequestOutputCharacters?: number
     supportsImageInput?: boolean
+    requestHeaders?: Record<string, string>
     advertisedImageInput?: boolean
     initializationTimeoutMs?: number
     useDefaultInitializationTimeout?: boolean
@@ -247,6 +248,7 @@ function setup(
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-test',
     supportsImageInput: options.supportsImageInput,
+    requestHeaders: options.requestHeaders,
     launch,
     loadAcpSdk: async () => sdk,
     ...(options.useDefaultInitializationTimeout
@@ -639,7 +641,9 @@ describe('DeepSeekHarnessRuntime', () => {
   })
 
   it('uses ACP stdio, maps conversations to sessions, and streams text', async () => {
-    const harness = setup()
+    const harness = setup({
+      requestHeaders: { 'x-tenant-id': 'harness-tenant' }
+    })
     const first = collect(
       harness.runtime.run(
         request('one'),
@@ -678,6 +682,7 @@ describe('DeepSeekHarnessRuntime', () => {
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-test',
       supportsImageInput: false,
+      requestHeaders: { 'x-tenant-id': 'harness-tenant' },
       credentialRefs: [],
       skillPackages: [],
       extensionPackages: []

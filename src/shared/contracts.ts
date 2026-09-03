@@ -1,5 +1,11 @@
 import { z } from 'zod'
 import {
+  modelRequestBodySchema,
+  modelRequestHeadersSchema,
+  type ModelRequestBody,
+  type ModelRequestHeaders
+} from './model-request-customization'
+import {
   maximumModelContextWindowTokens,
   minimumModelContextWindowTokens
 } from './context-window'
@@ -597,6 +603,17 @@ export {
   maximumModelContextWindowTokens,
   minimumModelContextWindowTokens
 } from './context-window'
+export {
+  MODEL_REQUEST_CUSTOMIZATION_LIMITS,
+  modelRequestBodySchema,
+  modelRequestHeadersSchema,
+  canonicalModelRequestHeaders,
+  mergeModelRequestBody,
+  mergeModelRequestHeaders,
+  type ModelRequestBody,
+  type ModelRequestHeaders,
+  type ModelRequestJsonValue
+} from './model-request-customization'
 
 export const defaultAnthropicMaximumOutputTokens = 32_000
 export const maximumModelOutputTokens = 10_000_000
@@ -628,6 +645,8 @@ const modelProfileInputSchema = z
       .max(maximumModelOutputTokens)
       .optional(),
     imageGenerationQuality: imageGenerationQualitySchema,
+    requestHeaders: modelRequestHeadersSchema.optional(),
+    requestBody: modelRequestBodySchema.optional(),
     apiKey: modelApiKeyUpdateSchema
   })
   .strict()
@@ -1009,6 +1028,8 @@ export type ModelConnectionSettings = {
   contextWindowTokens?: number
   maximumOutputTokens?: number
   imageGenerationQuality: ImageGenerationQuality
+  requestHeaders?: ModelRequestHeaders
+  requestBody?: ModelRequestBody
   apiKeyConfigured: boolean
   credentialSource: 'none' | 'encrypted' | 'environment' | 'unreadable'
 }

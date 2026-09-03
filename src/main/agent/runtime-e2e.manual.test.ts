@@ -36,6 +36,12 @@ import {
 } from '../../shared/goodbuddy-config-tools'
 import { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
 import { SubagentScheduler } from '../assistant/subagent-scheduler'
+import { createAnthropicMessagesUrl } from './anthropic-endpoint'
+import {
+  createOpenAIChatCompletionsUrl,
+  createOpenAIResponsesUrl
+} from './openai-endpoint'
+import { createModelRequestProbe } from '../../../tests/support/model-request-probe'
 
 const enabled = process.env.GOODBUDDY_RUN_RUNTIME_E2E === '1'
 const apiKey =
@@ -372,6 +378,65 @@ describe.runIf(enabled)('runtime end-to-end', () => {
       }
     },
     120_000
+  )
+
+  it(
+    'adds configured headers and body fields to one real direct model request',
+    async () => {
+      const upstreamUrl =
+        protocol === 'anthropic-messages'
+          ? createAnthropicMessagesUrl(baseUrl)
+          : protocol === 'openai-responses'
+            ? createOpenAIResponsesUrl(baseUrl)
+            : createOpenAIChatCompletionsUrl(baseUrl)
+      const probe = await createModelRequestProbe({
+        upstreamUrl,
+        headerName: 'x-goodbuddy-e2e',
+        bodyFieldNames: ['goodbuddy_e2e_probe'],
+        removeBodyFieldNames: ['goodbuddy_e2e_probe']
+      })
+      const runtime = new ModelAgentRuntime({
+        apiKey,
+        baseUrl: probe.baseUrl,
+        model: modelName,
+        protocol,
+        authentication: 'api-key',
+        requestHeaders: {
+          'x-goodbuddy-e2e': 'header-present'
+        },
+        requestBody: {
+          goodbuddy_e2e_probe: 'body-present'
+        }
+      })
+
+      try {
+        const output = await collectText(
+          runtime.run(
+            {
+              requestId: crypto.randomUUID(),
+              conversationId: crypto.randomUUID(),
+              workMode: 'ask',
+              prompt:
+                'Return exactly this text and nothing else: CUSTOM_REQUEST_E2E_OK'
+            },
+            new AbortController().signal
+          )
+        )
+        expect(output).toContain('CUSTOM_REQUEST_E2E_OK')
+        expect(probe.observations).toEqual([
+          {
+            headerValue: 'header-present',
+            bodyFields: {
+              goodbuddy_e2e_probe: 'body-present'
+            }
+          }
+        ])
+      } finally {
+        await runtime.dispose()
+        await probe.close()
+      }
+    },
+    180_000
   )
 
   it(

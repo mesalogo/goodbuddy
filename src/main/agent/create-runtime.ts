@@ -104,7 +104,9 @@ function resolveContextCompression(
             >,
             authentication: summaryProfile.authentication,
             contextWindowTokens: summaryProfile.contextWindowTokens,
-            maximumOutputTokens: summaryProfile.maximumOutputTokens
+            maximumOutputTokens: summaryProfile.maximumOutputTokens,
+            requestHeaders: summaryProfile.requestHeaders,
+            requestBody: summaryProfile.requestBody
           }
         }
       : {})
@@ -127,6 +129,8 @@ export function createDefaultModelRuntime(
     model: settings.modelName,
     protocol: settings.modelProtocol,
     authentication: settings.modelAuthentication,
+    requestHeaders: currentProfile?.requestHeaders,
+    requestBody: currentProfile?.requestBody,
     supportsImageInput: settings.supportsImageInput,
     maximumOutputTokens: currentProfile?.maximumOutputTokens,
     defaultWorkspace: settings.workspacePath || defaultWorkspace,
@@ -149,6 +153,8 @@ export function createModelProfileRuntime(
     model: profile.modelName,
     protocol: profile.protocol,
     authentication: profile.authentication,
+    requestHeaders: profile.requestHeaders,
+    requestBody: profile.requestBody,
     supportsImageInput: profile.supportsImageInput,
     maximumOutputTokens: profile.maximumOutputTokens,
     imageGenerationQuality:
@@ -211,6 +217,7 @@ export function createAgentRuntime(
       baseUrl: profile.baseUrl,
       model: profile.modelName,
       supportsImageInput: profile.supportsImageInput === true,
+      requestHeaders: profile.requestHeaders,
       launch: capabilities.deepseekHarnessLauncher,
       credentialRefs: {
         GOODBUDDY_HARNESS_MODEL_API_KEY: profile.apiKey

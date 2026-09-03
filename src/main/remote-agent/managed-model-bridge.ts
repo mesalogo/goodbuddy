@@ -55,6 +55,14 @@ export function createManagedModelBridge(options: {
     ...(selected.apiKey === undefined
       ? {}
       : { apiKey: selected.apiKey }),
+    ...(selected.requestHeaders &&
+    Object.keys(selected.requestHeaders).length > 0
+      ? { requestHeaders: selected.requestHeaders }
+      : {}),
+    ...(selected.requestBody &&
+    Object.keys(selected.requestBody).length > 0
+      ? { requestBody: selected.requestBody }
+      : {}),
     capabilities: {
       imageInput: selected.supportsImageInput === true
     },

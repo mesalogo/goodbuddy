@@ -16,7 +16,11 @@ import {
   acpReplayChannelResultSchema,
   acpReconcilePromptRequestSchema as promptReconciliationRequestSchema,
   acpReconcilePromptResultSchema as promptReconciliationResultSchema,
-  acpResumeChannelResultSchema
+  acpResumeChannelResultSchema,
+  RUNTIME_ACP_CAPABILITY_NAME,
+  RUNTIME_ACP_CAPABILITY_VERSION,
+  RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME,
+  RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION
 } from '../../shared/agent-protocol'
 import { AgentFrameError } from '../../shared/agent-protocol/frame'
 import {
@@ -75,10 +79,6 @@ import type {
   MainModelBridgePoison
 } from './main-model-bridge-dispatcher'
 
-const RUNTIME_ACP_CAPABILITY = 'runtime/acp'
-const RUNTIME_ACP_CAPABILITY_VERSION = 4
-const RUNTIME_MODEL_BRIDGE_CAPABILITY = 'runtime/model-bridge'
-const RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION = 1
 const DEFAULT_CONTROL_TIMEOUT_MS = 15_000
 const DEFAULT_MAXIMUM_PENDING_CONTROL_REQUESTS = 32
 const UNBOUNDED_REMOTE_PROMPT_DEADLINE_MS = Date.parse(
@@ -1817,13 +1817,14 @@ function assertRuntimeCapability(
   requireModelBridge: boolean
 ): RuntimeProtocolConnection['capabilities']['runtimes'][number] {
   const capability = capabilities.capabilities.find(
-    (entry) => entry.name === RUNTIME_ACP_CAPABILITY
+    (entry) => entry.name === RUNTIME_ACP_CAPABILITY_NAME
   )
   const runtimes = capabilities.runtimes.filter(
     (entry) => entry.runtimeId === runtimeId
   )
   const modelBridgeCapability = capabilities.capabilities.find(
-    (entry) => entry.name === RUNTIME_MODEL_BRIDGE_CAPABILITY
+    (entry) =>
+      entry.name === RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME
   )
   if (
     !Number.isSafeInteger(capabilities.generation) ||

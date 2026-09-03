@@ -464,6 +464,59 @@ describe('ModelAgentRuntime', () => {
     expect(fetcher).toHaveBeenCalledOnce()
   })
 
+  it('merges custom headers and body fields into a direct model request without overriding runtime fields', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(init?.body as string) as {
+        messages: Array<{ content: string }>
+      }
+      const marker =
+        /GOODBUDDY_MODEL_TEST_[A-F0-9]+/u.exec(
+          body.messages[0]?.content ?? ''
+        )?.[0]
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: marker
+            }
+          }
+        ]
+      })
+    })
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'runtime-key',
+      baseUrl: 'https://model.example/v1',
+      model: 'runtime-model',
+      protocol: 'openai-chat-completions',
+      authentication: 'api-key',
+      requestHeaders: {
+        'x-tenant-id': 'tenant-a',
+        authorization: 'Bearer custom-key'
+      },
+      requestBody: {
+        temperature: 0.2,
+        model: 'custom-model',
+        stream: true
+      },
+      fetcher
+    })
+
+    await expect(runtime.testConnection()).resolves.toMatchObject({
+      available: true
+    })
+    const init = fetcher.mock.calls[0]?.[1]
+    const headers = new Headers(init?.headers)
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    expect(headers.get('x-tenant-id')).toBe('tenant-a')
+    expect(headers.get('authorization')).toBe('Bearer runtime-key')
+    expect(body).toMatchObject({
+      model: 'runtime-model',
+      stream: false,
+      temperature: 0.2
+    })
+  })
+
   it('uses the Anthropic messages endpoint and streams text deltas', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => {
       return new Response(createEventStream('真实模型回答', '先分析问题'), {
@@ -569,6 +622,8 @@ describe('ModelAgentRuntime', () => {
       model: 'sonnet-5',
       protocol: 'anthropic-messages',
       authentication: 'api-key',
+      requestHeaders: { 'x-model-route': 'summary-test' },
+      requestBody: { temperature: 0.1 },
       fetcher,
       contextCompression: {
         settings: {
@@ -622,6 +677,14 @@ describe('ModelAgentRuntime', () => {
     }
 
     expect(fetcher).toHaveBeenCalledTimes(2)
+    for (const [, init] of fetcher.mock.calls) {
+      expect(new Headers(init?.headers).get('x-model-route')).toBe(
+        'summary-test'
+      )
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        temperature: 0.1
+      })
+    }
     const summaryBody = JSON.parse(
       fetcher.mock.calls[0]![1]!.body as string
     ) as { max_tokens: number; system: string; messages: unknown[] }
@@ -5168,6 +5231,11 @@ describe('ModelAgentRuntime', () => {
       protocol: 'openai-images-generations',
       authentication: 'api-key',
       imageGenerationQuality: 'medium',
+      requestHeaders: { 'x-image-route': 'internal' },
+      requestBody: {
+        background: 'transparent',
+        quality: 'high'
+      },
       fetcher
     })
 
@@ -5185,8 +5253,14 @@ describe('ModelAgentRuntime', () => {
       model: 'gpt-image-2',
       n: 1,
       quality: 'medium',
+      background: 'transparent',
       response_format: 'b64_json'
     })
+    expect(
+      new Headers(fetcher.mock.calls[0]?.[1]?.headers).get(
+        'x-image-route'
+      )
+    ).toBe('internal')
   })
 
   it('generates a bounded image through the BigToken-compatible endpoint', async () => {

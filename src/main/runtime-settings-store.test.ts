@@ -99,6 +99,108 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
+  it('migrates version 20 model profiles with empty request customization', async () => {
+    const { filePath, store } = await createStore()
+    await store.update(settings())
+    const version20 = JSON.parse(
+      await readFile(filePath, 'utf8')
+    ) as {
+      version: number
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    version20.version = 20
+    for (const profile of version20.modelProfiles) {
+      delete profile.requestHeaders
+      delete profile.requestBody
+    }
+    await writeFile(filePath, JSON.stringify(version20), 'utf8')
+
+    const migrated = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(migrated.getPublicSettings()).resolves.toMatchObject({
+      modelProfiles: [
+        expect.objectContaining({
+          requestHeaders: {},
+          requestBody: {}
+        })
+      ]
+    })
+    await expect(migrated.getResolvedSettings()).resolves.toMatchObject({
+      modelProfiles: [
+        expect.objectContaining({
+          requestHeaders: {},
+          requestBody: {}
+        })
+      ]
+    })
+  })
+
+  it('round-trips model request headers and body without treating them as credentials', async () => {
+    const { filePath, store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000010'
+    const updated = await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'Customized model',
+            baseUrl: 'https://provider.example/v1',
+            modelName: 'model-1',
+            protocol: 'openai-responses',
+            authentication: 'none',
+            supportsImageInput: false,
+            imageGenerationQuality: 'auto',
+            requestHeaders: {
+              'x-tenant-id': 'tenant-a'
+            },
+            requestBody: {
+              temperature: 0.2,
+              metadata: { source: 'goodbuddy' }
+            },
+            apiKey: { action: 'keep' }
+          }
+        ],
+        defaultModelProfileId: profileId,
+        opencodeModelSource: { kind: 'profile', profileId },
+        continueModelSource: { kind: 'profile', profileId }
+      })
+    )
+
+    expect(updated.modelProfiles[0]).toMatchObject({
+      requestHeaders: {
+        'x-tenant-id': 'tenant-a'
+      },
+      requestBody: {
+        temperature: 0.2,
+        metadata: { source: 'goodbuddy' }
+      },
+      apiKeyConfigured: false
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelProfiles: [
+        expect.objectContaining({
+          requestHeaders: {
+            'x-tenant-id': 'tenant-a'
+          },
+          requestBody: {
+            temperature: 0.2,
+            metadata: { source: 'goodbuddy' }
+          },
+          apiKey: undefined
+        })
+      ]
+    })
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number
+      modelProfiles: Array<Record<string, unknown>>
+    }
+    expect(persisted.version).toBe(21)
+    expect(persisted.modelProfiles[0]).toMatchObject({
+      requestHeaders: { 'x-tenant-id': 'tenant-a' },
+      requestBody: { temperature: 0.2 }
+    })
+    expect(persisted.modelProfiles[0]).not.toHaveProperty('apiKey')
+  })
+
   it('replaces only the untouched legacy BigToken seed', async () => {
     const { filePath, store } = await createStore()
     await store.update(settings())
@@ -619,7 +721,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(
       await readFile(filePath, 'utf8')
     ) as Record<string, unknown>
-    expect(persisted.version).toBe(20)
+    expect(persisted.version).toBe(21)
     expect(persisted).not.toHaveProperty(
       'deepseekHarnessBinaryPath'
     )
@@ -898,7 +1000,7 @@ describe('RuntimeSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
       version: number
     }
-    expect(persisted.version).toBe(20)
+    expect(persisted.version).toBe(21)
   })
 
   it('migrates version 11 and removes the obsolete intranet toggle', async () => {
@@ -918,7 +1020,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       intranetCompatibilityEnabled?: boolean
     }
-    expect(persisted.version).toBe(20)
+    expect(persisted.version).toBe(21)
     expect(persisted).not.toHaveProperty('intranetCompatibilityEnabled')
   })
 
@@ -1196,7 +1298,7 @@ describe('RuntimeSettingsStore', () => {
       (JSON.parse(await readFile(filePath, 'utf8')) as {
         version: number
       }).version
-    ).toBe(20)
+    ).toBe(21)
   })
 
   it('migrates version 13 with reranking disabled by default', async () => {
@@ -1703,7 +1805,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(20)
+    expect(persisted.version).toBe(21)
     expect(persisted.modelProfiles).toContainEqual(
       expect.objectContaining({
         id: imageId,
@@ -2005,7 +2107,7 @@ describe('RuntimeSettingsStore', () => {
       unknown
     >
     expect(saved).toMatchObject({
-      version: 20,
+      version: 21,
       provider: 'model',
       continueBinaryPath: '',
       continueMode: 'chat',
@@ -2284,7 +2386,7 @@ describe('RuntimeSettingsStore', () => {
       version: number
       modelProfiles: Array<Record<string, unknown>>
     }
-    expect(persisted.version).toBe(20)
+    expect(persisted.version).toBe(21)
     expect(persisted.modelProfiles[0]).not.toHaveProperty('credential')
   })
 

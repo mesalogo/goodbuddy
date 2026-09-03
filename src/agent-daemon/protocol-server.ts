@@ -14,6 +14,10 @@ import {
   jsonRpcNotificationSchema,
   jsonRpcRequestSchema,
   positiveAgentSequenceSchema,
+  RUNTIME_ACP_CAPABILITY_NAME,
+  RUNTIME_ACP_CAPABILITY_VERSION,
+  RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME,
+  RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION,
   type DaemonCapabilities,
   type AgentProtocolFailureCategory,
   type FrameAcknowledgment,
@@ -239,15 +243,18 @@ export class AgentProtocolServer {
               ...(runtimes.length > 0
                 ? [
                     {
-                      name: 'runtime/acp',
-                      version: autonomousPromptsImplemented ? 4 : 3,
+                      name: RUNTIME_ACP_CAPABILITY_NAME,
+                      version: autonomousPromptsImplemented
+                        ? RUNTIME_ACP_CAPABILITY_VERSION
+                        : 3,
                       critical: true
                     },
                     ...(modelBridgeImplemented
                       ? [
                           {
-                            name: 'runtime/model-bridge',
-                            version: 1,
+                            name: RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME,
+                            version:
+                              RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION,
                             critical: true
                           }
                         ]

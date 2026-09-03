@@ -135,6 +135,7 @@ type OpenCodeProviderConfig = {
       options: {
         apiKey?: string
         baseURL: string
+        headers?: Record<string, string>
       }
       models: Record<
         string,
@@ -214,8 +215,13 @@ function createOpenCodeProviderConfig(
   const options: {
     apiKey?: string
     baseURL: string
+    headers?: Record<string, string>
   } = {
-    baseURL: provider.baseURL
+    baseURL: provider.baseURL,
+    ...(profile.requestHeaders &&
+    Object.keys(profile.requestHeaders).length > 0
+      ? { headers: profile.requestHeaders }
+      : {})
   }
   if (profile.authentication === 'api-key' && profile.apiKey) {
     options.apiKey = profile.apiKey

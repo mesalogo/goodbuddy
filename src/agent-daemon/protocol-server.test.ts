@@ -497,7 +497,11 @@ describe('AgentProtocolServer connection bounds', () => {
         'runtime/completePrompt',
         'runtime/getAcpCursors',
         'runtime/escalateCancellation',
-        'runtime/reconcilePrompt'
+        'runtime/reconcilePrompt',
+        'runtime/startPrompt',
+        'runtime/attachPrompt',
+        'runtime/pagePromptTranscript',
+        'runtime/ackPromptTranscript'
       ].map((method) => [method, () => null])
     )
     const harness = createHarness({
@@ -525,7 +529,7 @@ describe('AgentProtocolServer connection bounds', () => {
     expect(daemonCapabilitiesSchema.parse(result)).toMatchObject({
       capabilities: [
         { name: 'agent/control', version: 1, critical: true },
-        { name: 'runtime/acp', version: 3, critical: true },
+        { name: 'runtime/acp', version: 5, critical: true },
         {
           name: 'runtime/model-bridge',
           version: 1,

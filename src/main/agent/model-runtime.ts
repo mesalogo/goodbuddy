@@ -6,9 +6,15 @@ import type {
   ImageGenerationQuality,
   ModelAuthentication,
   ModelProtocol,
+  ModelRequestBody,
+  ModelRequestHeaders,
   RuntimeConversationCompactInput
 } from '../../shared/contracts'
-import { defaultAnthropicMaximumOutputTokens } from '../../shared/contracts'
+import {
+  defaultAnthropicMaximumOutputTokens,
+  mergeModelRequestBody,
+  mergeModelRequestHeaders
+} from '../../shared/contracts'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment'
@@ -242,6 +248,8 @@ export type ModelRuntimeOptions = {
   model: string
   protocol: ModelProtocol
   authentication: ModelAuthentication
+  requestHeaders?: ModelRequestHeaders
+  requestBody?: ModelRequestBody
   supportsImageInput?: boolean
   imageGenerationQuality?: ImageGenerationQuality
   skillInstructions?: string
@@ -265,6 +273,8 @@ export type ModelRuntimeOptions = {
       authentication: ModelAuthentication
       contextWindowTokens?: number
       maximumOutputTokens?: number
+      requestHeaders?: ModelRequestHeaders
+      requestBody?: ModelRequestBody
     }
   }
   maximumOutputTokens?: number
@@ -1762,35 +1772,47 @@ export class ModelAgentRuntime implements AgentRuntime {
   }
 
   private getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json'
-    }
+    const headers = mergeModelRequestHeaders(
+      this.options.requestHeaders ?? {},
+      {
+        'content-type': 'application/json'
+      }
+    )
     if (
       this.options.authentication === 'api-key' &&
       this.options.apiKey
     ) {
       if (this.options.protocol === 'anthropic-messages') {
-        headers['anthropic-version'] = '2023-06-01'
-        headers['x-api-key'] = this.options.apiKey
+        headers.set('anthropic-version', '2023-06-01')
+        headers.set('x-api-key', this.options.apiKey)
       } else {
-        headers.authorization = `Bearer ${this.options.apiKey}`
+        headers.set('authorization', `Bearer ${this.options.apiKey}`)
       }
     } else if (this.options.protocol === 'anthropic-messages') {
-      headers['anthropic-version'] = '2023-06-01'
+      headers.set('anthropic-version', '2023-06-01')
     }
-    return headers
+    return Object.fromEntries(headers.entries())
+  }
+
+  private createRequestBody(
+    runtimeBody: Record<string, unknown>
+  ): Record<string, unknown> {
+    return mergeModelRequestBody(
+      this.options.requestBody ?? {},
+      runtimeBody
+    )
   }
 
   private createImageGenerationRequest(
     prompt: string
   ): Record<string, unknown> {
-    return {
+    return this.createRequestBody({
       model: this.options.model,
       prompt: prompt.slice(0, 100_000),
       n: 1,
       quality: this.options.imageGenerationQuality ?? 'auto',
       response_format: 'b64_json'
-    }
+    })
   }
 
   private async fetchWithTimeout(
@@ -1921,19 +1943,21 @@ export class ModelAgentRuntime implements AgentRuntime {
       body: JSON.stringify(
         imageGeneration
           ? this.createImageGenerationRequest(prompt)
-          : this.options.protocol === 'openai-responses'
-          ? {
-              model: this.options.model,
-              max_output_tokens: 64,
-              stream: false,
-              input: prompt
-            }
-          : {
-              model: this.options.model,
-              max_tokens: 64,
-              stream: false,
-              messages: [{ role: 'user', content: prompt }]
-            }
+          : this.createRequestBody(
+              this.options.protocol === 'openai-responses'
+                ? {
+                    model: this.options.model,
+                    max_output_tokens: 64,
+                    stream: false,
+                    input: prompt
+                  }
+                : {
+                    model: this.options.model,
+                    max_tokens: 64,
+                    stream: false,
+                    messages: [{ role: 'user', content: prompt }]
+                  }
+            )
       )
     })
     const responseText = await readBoundedResponseText(response, {
@@ -2121,7 +2145,9 @@ export class ModelAgentRuntime implements AgentRuntime {
         'openai-images-generations'
       >,
       authentication: this.options.authentication,
-      maximumOutputTokens: this.options.maximumOutputTokens
+      maximumOutputTokens: this.options.maximumOutputTokens,
+      requestHeaders: this.options.requestHeaders,
+      requestBody: this.options.requestBody
     }
     const summaryRuntime = new ModelAgentRuntime({
       ...summaryModel,
@@ -2775,38 +2801,40 @@ export class ModelAgentRuntime implements AgentRuntime {
             }
           }))
     const body = JSON.stringify(
-      responses
-        ? {
-            model: this.options.model,
-            stream: true,
-            instructions: system,
-            input: messages,
-            ...(providerTools.length > 0
-              ? { tools: providerTools }
-              : {})
-          }
-        : anthropic
+      this.createRequestBody(
+        responses
           ? {
               model: this.options.model,
-              max_tokens: this.anthropicProtocolMaximumTokens,
               stream: true,
-              system,
-              messages,
+              instructions: system,
+              input: messages,
               ...(providerTools.length > 0
                 ? { tools: providerTools }
                 : {})
             }
-          : {
-              model: this.options.model,
-              stream: true,
-              stream_options: {
-                include_usage: true
-              },
-              messages,
-              ...(providerTools.length > 0
-                ? { tools: providerTools }
-                : {})
-            }
+          : anthropic
+            ? {
+                model: this.options.model,
+                max_tokens: this.anthropicProtocolMaximumTokens,
+                stream: true,
+                system,
+                messages,
+                ...(providerTools.length > 0
+                  ? { tools: providerTools }
+                  : {})
+              }
+            : {
+                model: this.options.model,
+                stream: true,
+                stream_options: {
+                  include_usage: true
+                },
+                messages,
+                ...(providerTools.length > 0
+                  ? { tools: providerTools }
+                  : {})
+              }
+      )
     )
     if (Buffer.byteLength(body) > 2 * 1024 * 1024) {
       throw new Error('模型工具请求上下文超过 2MB 安全限制')
@@ -3059,29 +3087,31 @@ export class ModelAgentRuntime implements AgentRuntime {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify(
-          responses
-            ? {
-                model: this.options.model,
-                stream: true,
-                instructions: system,
-                input: messages
-              }
-            : anthropic
+          this.createRequestBody(
+            responses
               ? {
                   model: this.options.model,
-                  max_tokens: this.anthropicProtocolMaximumTokens,
                   stream: true,
-                  system,
-                  messages
+                  instructions: system,
+                  input: messages
                 }
-              : {
-                  model: this.options.model,
-                  stream: true,
-                  stream_options: {
-                    include_usage: true
-                  },
-                  messages
-                }
+              : anthropic
+                ? {
+                    model: this.options.model,
+                    max_tokens: this.anthropicProtocolMaximumTokens,
+                    stream: true,
+                    system,
+                    messages
+                  }
+                : {
+                    model: this.options.model,
+                    stream: true,
+                    stream_options: {
+                      include_usage: true
+                    },
+                    messages
+                  }
+          )
         )
       },
       signal

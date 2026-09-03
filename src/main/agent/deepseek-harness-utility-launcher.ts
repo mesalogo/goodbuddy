@@ -288,6 +288,7 @@ export function createDeepSeekHarnessUtilityLauncher(
           provider: 'goodbuddy',
           model: options.model,
           supportsImageInput: options.supportsImageInput,
+          requestHeaders: options.requestHeaders ?? {},
           harnessVersion: DEEPSEEK_HARNESS_HOST_VERSION,
           credentialRefs: [DEEPSEEK_HARNESS_CREDENTIAL_REF],
           skillPackages: canonicalSkillPackages,

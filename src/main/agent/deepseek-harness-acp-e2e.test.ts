@@ -33,6 +33,8 @@ import {
 import { GOODBUDDY_HARNESS_MAX_STEP_TOKENS } from './goodbuddy-harness-control-plane'
 import { DshNpmExtensionInstaller } from './dsh-extension-marketplace'
 import { DEEPSEEK_HARNESS_MAX_FRAME_BYTES } from './deepseek-harness-control-protocol'
+import { createOpenAIChatCompletionsUrl } from './openai-endpoint'
+import { createModelRequestProbe } from '../../../tests/support/model-request-probe'
 
 const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
 const SKILL_CALL_ID = 'e2e-skill-call'
@@ -329,6 +331,7 @@ function createInProcessLaunch(
         provider: 'goodbuddy',
         model: options.model,
         supportsImageInput: options.supportsImageInput,
+        requestHeaders: options.requestHeaders,
         harnessVersion: '0.1.0-rc.8',
         credentialRefs: options.credentialRefs,
         skillPackages: options.skillPackages,
@@ -889,6 +892,79 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
       }
     },
     60_000
+  )
+
+  it.runIf(liveModelEnabled)(
+    'forwards a custom model header through the real DeepSeek Harness provider',
+    async () => {
+      if (!liveApiKey) {
+        throw new Error(
+          'GOODBUDDY_DSH_API_KEY is required for live DSH model E2E'
+        )
+      }
+      const root = await realpath(
+        await mkdtemp(join(tmpdir(), 'goodbuddy-harness-header-model-'))
+      )
+      const workspace = join(root, 'workspace')
+      const dshHome = join(root, 'dsh-home')
+      await Promise.all([mkdir(workspace), mkdir(dshHome)])
+      const probe = await createModelRequestProbe({
+        upstreamUrl: createOpenAIChatCompletionsUrl(liveBaseUrl),
+        headerName: 'x-goodbuddy-e2e'
+      })
+      const inProcess = createInProcessLaunch(dshHome)
+      const runtime = new DeepSeekHarnessRuntime({
+        defaultWorkspace: workspace,
+        baseUrl: probe.baseUrl,
+        model: liveModel,
+        requestHeaders: {
+          'x-goodbuddy-e2e': 'harness-header-present'
+        },
+        launch: (options) => inProcess.launch(options),
+        credentialRefs: {
+          [CREDENTIAL_REF]: liveApiKey
+        },
+        initializationTimeoutMs: 20_000,
+        promptTimeoutMs: 120_000,
+        shutdownTimeoutMs: 5_000
+      })
+
+      try {
+        const events = await collect(
+          runtime.run(
+            {
+              requestId: 'request-live-custom-header',
+              conversationId: 'live-custom-header',
+              prompt:
+                'Reply with exactly DSH_CUSTOM_HEADER_E2E_OK and nothing else.',
+              workMode: 'ask'
+            },
+            new AbortController().signal
+          )
+        )
+        expect(
+          events
+            .flatMap((event) =>
+              event.type === 'text' ? [event.delta] : []
+            )
+            .join('')
+        ).toContain('DSH_CUSTOM_HEADER_E2E_OK')
+        expect(probe.observations).toEqual([
+          {
+            headerValue: 'harness-header-present',
+            bodyFields: {}
+          }
+        ])
+      } finally {
+        await runtime.dispose()
+        await Promise.allSettled(
+          inProcess.hosts.map((host) => host.dispose())
+        )
+        await probe.close()
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    180_000
   )
 
   it.runIf(liveModelEnabled)(

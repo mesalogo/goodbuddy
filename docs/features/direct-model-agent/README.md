@@ -44,6 +44,7 @@ Task、Job、Subjob、Run 和 Subagent 的对象关系以
 
 ## 相关功能
 
+- [模型连接请求定制](../model-connections/README.md)：定义连接级 Header/Body、合并优先级和 Runtime 支持矩阵。
 - [本机工具环境](../local-tool-environment/README.md)：为新进程提供 Node、Python 和 PATH。
 - [助手工作栏与执行空间](../assistant-workbar/prd.md)：定义本机/SSH 执行位置和活动归属。
 - [远程主机与远程执行](../remote-host/README.md)：定义当前托管 SSH Runtime 边界。

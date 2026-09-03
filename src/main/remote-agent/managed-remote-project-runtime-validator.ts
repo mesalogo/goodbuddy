@@ -10,11 +10,12 @@ import type {
   RemoteRuntimeInstallationIdentity,
   RemoteRuntimeInstallationManager
 } from './remote-runtime-installation-manager'
-
-const RUNTIME_ACP_CAPABILITY = 'runtime/acp'
-const RUNTIME_ACP_CAPABILITY_VERSION = 4
-const RUNTIME_MODEL_BRIDGE_CAPABILITY = 'runtime/model-bridge'
-const RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION = 1
+import {
+  RUNTIME_ACP_CAPABILITY_NAME,
+  RUNTIME_ACP_CAPABILITY_VERSION,
+  RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME,
+  RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION
+} from '../../shared/agent-protocol'
 
 export class ManagedRemoteProjectRuntimeValidator
   implements RemoteProjectRuntimeValidator
@@ -178,11 +179,11 @@ function assertRuntimeCapability(
   installation: RemoteRuntimeInstallationIdentity
 ): void {
   const acp = capabilities.capabilities.find(
-    (capability) => capability.name === RUNTIME_ACP_CAPABILITY
+    (capability) => capability.name === RUNTIME_ACP_CAPABILITY_NAME
   )
   const modelBridge = capabilities.capabilities.find(
     (capability) =>
-      capability.name === RUNTIME_MODEL_BRIDGE_CAPABILITY
+      capability.name === RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME
   )
   const runtimes = capabilities.runtimes.filter(
     (runtime) => runtime.runtimeId === 'opencode'

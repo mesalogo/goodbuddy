@@ -9238,6 +9238,13 @@ details.settings-section > :not(summary) + :not(summary) {
   line-height: 1.5;
 }
 
+.field textarea.model-request-json-input {
+  min-height: 120px;
+  font-family: var(--font-family-mono);
+  line-height: 1.5;
+  tab-size: 2;
+}
+
 .role-prompt-detail__prompt {
   min-height: 240px;
   font-family: inherit;

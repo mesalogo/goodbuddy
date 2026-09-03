@@ -39,7 +39,10 @@ import {
   defaultModelProfileId as builtInDefaultModelProfileId,
   defaultRuntimeSettings,
   isAgentRuntimeModelProtocol,
-  isDeepSeekHarnessModelProfile
+  isDeepSeekHarnessModelProfile,
+  MODEL_REQUEST_CUSTOMIZATION_LIMITS,
+  modelRequestBodySchema,
+  modelRequestHeadersSchema
 } from '../../shared/contracts'
 import { RolePromptSettingsSection } from './RolePromptSettingsSection'
 import { CapabilitiesAndToolsSettingsSection } from './CapabilitiesAndToolsSettingsSection'
@@ -85,8 +88,13 @@ type ModelType = 'llm' | 'embedding' | 'rerank' | 'speech'
 type AgentRuntimeType =
   | RuntimeConfigActionInput['runtime']
   | 'deepseek-harness'
-type ModelProfileDraft = RuntimeSettings['modelProfiles'][number] & {
+type ModelProfileDraft = Omit<
+  RuntimeSettings['modelProfiles'][number],
+  'requestHeaders' | 'requestBody'
+> & {
   supportsImageInput: boolean
+  requestHeadersText: string
+  requestBodyText: string
   apiKey: string
   clearApiKey: boolean
 }
@@ -264,15 +272,55 @@ function settingsErrorMessage(reason: unknown, fallback: string): string {
 function toModelProfileDrafts(
   settings: RuntimeSettings
 ): ModelProfileDraft[] {
-  return settings.modelProfiles.map((profile) => ({
-    ...profile,
-    supportsImageInput: profile.supportsImageInput ?? false,
-    maximumOutputTokens:
-      profile.maximumOutputTokens ??
-      defaultAnthropicMaximumOutputTokens,
-    apiKey: '',
-    clearApiKey: false
-  }))
+  return settings.modelProfiles.map(
+    ({ requestHeaders, requestBody, ...profile }) => ({
+      ...profile,
+      supportsImageInput: profile.supportsImageInput ?? false,
+      maximumOutputTokens:
+        profile.maximumOutputTokens ??
+        defaultAnthropicMaximumOutputTokens,
+      requestHeadersText: JSON.stringify(
+        requestHeaders ?? {},
+        null,
+        2
+      ),
+      requestBodyText: JSON.stringify(requestBody ?? {}, null, 2),
+      apiKey: '',
+      clearApiKey: false
+    })
+  )
+}
+
+const maximumRequestHeadersDraftCharacters =
+  MODEL_REQUEST_CUSTOMIZATION_LIMITS.maximumHeaders *
+    (MODEL_REQUEST_CUSTOMIZATION_LIMITS.maximumHeaderNameLength +
+      MODEL_REQUEST_CUSTOMIZATION_LIMITS.maximumHeaderValueLength *
+        2 +
+      16) +
+  2
+const maximumRequestBodyDraftCharacters =
+  MODEL_REQUEST_CUSTOMIZATION_LIMITS.maximumBodyBytes * 4
+
+function parseRequestHeadersDraft(value: string) {
+  if (value.length > maximumRequestHeadersDraftCharacters) {
+    return { success: false } as const
+  }
+  try {
+    return modelRequestHeadersSchema.safeParse(JSON.parse(value))
+  } catch {
+    return { success: false } as const
+  }
+}
+
+function parseRequestBodyDraft(value: string) {
+  if (value.length > maximumRequestBodyDraftCharacters) {
+    return { success: false } as const
+  }
+  try {
+    return modelRequestBodySchema.safeParse(JSON.parse(value))
+  } catch {
+    return { success: false } as const
+  }
 }
 
 function configuredRuntimeSettings(
@@ -1336,6 +1384,26 @@ export function SettingsPanel({
         const environmentManaged =
           profile.credentialSource === 'environment' &&
           configured !== undefined
+        const requestHeaders = parseRequestHeadersDraft(
+          profile.requestHeadersText
+        )
+        if (!requestHeaders.success) {
+          throw new Error(
+            t('errors.invalidModelRequestHeaders', {
+              name: modelProfileDisplayName(profile)
+            })
+          )
+        }
+        const requestBody = parseRequestBodyDraft(
+          profile.requestBodyText
+        )
+        if (!requestBody.success) {
+          throw new Error(
+            t('errors.invalidModelRequestBody', {
+              name: modelProfileDisplayName(profile)
+            })
+          )
+        }
         return {
           id: profile.id,
           name: profile.name,
@@ -1351,6 +1419,8 @@ export function SettingsPanel({
           contextWindowTokens: profile.contextWindowTokens,
           maximumOutputTokens: profile.maximumOutputTokens,
           imageGenerationQuality: profile.imageGenerationQuality,
+          requestHeaders: requestHeaders.data,
+          requestBody: requestBody.data,
           apiKey: profile.clearApiKey
             ? ({ action: 'clear' } as const)
             : profile.authentication === 'api-key' &&
@@ -1738,6 +1808,8 @@ export function SettingsPanel({
         maximumOutputTokens: defaultAnthropicMaximumOutputTokens,
         imageGenerationQuality:
           defaultRuntimeSettings.imageGenerationQuality,
+        requestHeadersText: '{}',
+        requestBodyText: '{}',
         apiKeyConfigured: false,
         credentialSource: 'none',
         apiKey: '',
@@ -2894,11 +2966,20 @@ export function SettingsPanel({
                   ))}
                 </div>
               </aside>
-              {selectedModelProfile && (() => {
-                const profile = selectedModelProfile
-              const environmentManaged =
-                profile.credentialSource === 'environment'
-              return (
+              {selectedModelProfile &&
+                (() => {
+                  const profile = selectedModelProfile
+                  const environmentManaged =
+                    profile.credentialSource === 'environment'
+                  const requestHeadersValid =
+                    parseRequestHeadersDraft(
+                      profile.requestHeadersText
+                    ).success
+                  const requestBodyValid =
+                    parseRequestBodyDraft(
+                      profile.requestBodyText
+                    ).success
+                  return (
                 <div
                   aria-labelledby={`model-connection-${profile.id}`}
                   className="model-connection-detail"
@@ -3271,6 +3352,69 @@ export function SettingsPanel({
                         </small>
                       </label>
                     )}
+                  <label className="field">
+                    <span>{t('model.profile.requestHeaders')}</span>
+                    <textarea
+                      aria-describedby={`model-request-headers-help-${profile.id}`}
+                      aria-label={t('model.profile.requestHeaders')}
+                      aria-invalid={
+                        requestHeadersValid ? undefined : true
+                      }
+                      className="model-request-json-input"
+                      maxLength={maximumRequestHeadersDraftCharacters}
+                      onChange={(event) =>
+                        updateModelProfile(profile.id, {
+                          requestHeadersText: event.target.value
+                        })
+                      }
+                      rows={6}
+                      spellCheck={false}
+                      value={profile.requestHeadersText}
+                    />
+                    <small
+                      id={`model-request-headers-help-${profile.id}`}
+                    >
+                      {t('model.profile.requestHeadersDescription')}
+                    </small>
+                    {!requestHeadersValid && (
+                      <small className="field-error" role="alert">
+                        {t('model.profile.requestHeadersInvalid')}
+                      </small>
+                    )}
+                  </label>
+                  <label className="field">
+                    <span>{t('model.profile.requestBody')}</span>
+                    <textarea
+                      aria-describedby={`model-request-body-help-${profile.id}`}
+                      aria-label={t('model.profile.requestBody')}
+                      aria-invalid={
+                        requestBodyValid ? undefined : true
+                      }
+                      className="model-request-json-input"
+                      maxLength={maximumRequestBodyDraftCharacters}
+                      onChange={(event) =>
+                        updateModelProfile(profile.id, {
+                          requestBodyText: event.target.value
+                        })
+                      }
+                      rows={6}
+                      spellCheck={false}
+                      value={profile.requestBodyText}
+                    />
+                    <small
+                      id={`model-request-body-help-${profile.id}`}
+                    >
+                      {t('model.profile.requestBodyDescription')}
+                    </small>
+                    {!requestBodyValid && (
+                      <small className="field-error" role="alert">
+                        {t('model.profile.requestBodyInvalid')}
+                      </small>
+                    )}
+                  </label>
+                  <p className="settings-warning">
+                    {t('model.profile.requestCustomizationWarning')}
+                  </p>
                   <small className="model-connection-detail__compatibility">
                     {t('model.profile.compatibilitySummary', {
                       directCapability:
@@ -3293,8 +3437,8 @@ export function SettingsPanel({
                     })}
                   </small>
                 </div>
-              )
-              })()}
+                  )
+                })()}
             </div>
             {settings && !settings.secureStorageAvailable && (
               <p className="settings-warning">

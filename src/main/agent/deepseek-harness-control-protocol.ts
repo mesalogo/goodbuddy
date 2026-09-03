@@ -2,6 +2,9 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { isDeepSeekHarnessCompatibleBaseUrl } from '../../shared/deepseek-harness-compatibility'
 import {
+  modelRequestHeadersSchema
+} from '../../shared/model-request-customization'
+import {
   runtimeExtensionConfigurationSchema,
   runtimeExtensionIdSchema
 } from '../../shared/runtime-extension-contracts'
@@ -9,7 +12,7 @@ import { bundledDeepSeekHarnessVersion } from './bundled-runtimes'
 
 export const DEEPSEEK_HARNESS_CONTROL_PROTOCOL =
   'goodbuddy.deepseek-harness.control'
-export const DEEPSEEK_HARNESS_CONTROL_VERSION = 2
+export const DEEPSEEK_HARNESS_CONTROL_VERSION = 3
 export const DEEPSEEK_HARNESS_HOST_VERSION =
   bundledDeepSeekHarnessVersion
 export const DEEPSEEK_HARNESS_CREDENTIAL_REF =
@@ -84,6 +87,7 @@ export const controlledHarnessHostConfigSchema = z
     provider: z.literal('goodbuddy'),
     model: z.string().min(1).max(128),
     supportsImageInput: z.boolean(),
+    requestHeaders: modelRequestHeadersSchema,
     harnessVersion: z.literal(DEEPSEEK_HARNESS_HOST_VERSION),
     credentialRefs: z
       .tuple([z.literal(DEEPSEEK_HARNESS_CREDENTIAL_REF)])

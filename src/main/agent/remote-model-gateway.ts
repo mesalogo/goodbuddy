@@ -28,6 +28,13 @@ import {
   assertTextModelRequestPolicy,
   ModelRequestPolicyError
 } from '../../shared/model-request-policy'
+import { modelBridgePathMatchesProtocol } from '../../shared/model-bridge-contracts'
+import { canonicalJson } from '../../shared/agent-protocol/canonical'
+import {
+  canonicalModelRequestHeaders,
+  mergeModelRequestBody,
+  mergeModelRequestHeaders
+} from '../../shared/model-request-customization'
 
 const DEFAULT_TIMEOUT_MS = 60_000
 const RESPONSE_HEADER_NAMES = [
@@ -302,6 +309,24 @@ function prepareDispatch(
     profile,
     Buffer.from(parsedRequest.bodyBase64, 'base64')
   )
+  if (
+    body.byteLength >
+    REMOTE_MODEL_GATEWAY_LIMITS.maximumRequestBodyBytes
+  ) {
+    throw new RemoteModelGatewayError(
+      'request-too-large',
+      'Customized remote model request is too large'
+    )
+  }
+  const providerHeaders = mergeModelRequestHeaders(
+    profile.requestHeaders ?? {},
+    parsedRequest.headers
+  )
+  if (profile.protocol === 'anthropic-messages') {
+    providerHeaders.set('anthropic-version', '2023-06-01')
+  }
+  const canonicalHeaders =
+    canonicalModelRequestHeaders(providerHeaders)
   const normalizedBodyBase64 = body.toString('base64')
   const canonicalRequest = JSON.stringify({
     profileId: profile.id,
@@ -312,11 +337,7 @@ function prepareDispatch(
     request: {
       method: parsedRequest.method,
       path: parsedRequest.path,
-      headers: Object.fromEntries(
-        Object.entries(parsedRequest.headers).sort(([left], [right]) =>
-          left.localeCompare(right)
-        )
-      ),
+      headers: canonicalHeaders,
       bodyBase64: normalizedBodyBase64
     }
   })
@@ -338,16 +359,12 @@ function prepareDispatch(
     protocol: profile.protocol
   })
 
-  const headers: Record<string, string> = {
-    ...parsedRequest.headers
-  }
   if (profile.protocol === 'anthropic-messages') {
-    headers['anthropic-version'] = '2023-06-01'
     if (profile.authentication === 'api-key') {
-      headers['x-api-key'] = profile.apiKey!
+      providerHeaders.set('x-api-key', profile.apiKey!)
     }
   } else if (profile.authentication === 'api-key') {
-    headers.authorization = `Bearer ${profile.apiKey!}`
+    providerHeaders.set('authorization', `Bearer ${profile.apiKey!}`)
   }
 
   return {
@@ -355,7 +372,7 @@ function prepareDispatch(
     requestDigest,
     modelProfileDigest,
     url,
-    headers,
+    headers: Object.fromEntries(providerHeaders.entries()),
     body
   }
 }
@@ -381,7 +398,7 @@ export function createResolvedModelProfileDigest(
   profile: ResolvedModelProfile
 ): string {
   return sha256(
-    JSON.stringify({
+    canonicalJson({
       id: profile.id,
       name: profile.name,
       baseUrl: profile.baseUrl,
@@ -391,7 +408,13 @@ export function createResolvedModelProfileDigest(
       supportsImageInput: profile.supportsImageInput === true,
       contextWindowTokens: profile.contextWindowTokens ?? null,
       maximumOutputTokens: profile.maximumOutputTokens ?? null,
-      imageGenerationQuality: profile.imageGenerationQuality ?? null
+      imageGenerationQuality: profile.imageGenerationQuality ?? null,
+      requestHeaders: Object.fromEntries(
+        Object.entries(profile.requestHeaders ?? {}).map(
+          ([name, value]) => [name.toLowerCase(), value]
+        )
+      ),
+      requestBody: profile.requestBody ?? {}
     })
   )
 }
@@ -415,6 +438,10 @@ function normalizeProviderRequestBody(
   ) {
     throw requestPolicyError()
   }
+  const request = mergeModelRequestBody(
+    profile.requestBody ?? {},
+    value as Record<string, unknown>
+  )
   try {
     assertTextModelRequestPolicy(
       {
@@ -422,7 +449,7 @@ function normalizeProviderRequestBody(
         model: profile.modelName,
         supportsImageInput: profile.supportsImageInput === true
       },
-      value
+      request
     )
   } catch (error) {
     if (!(error instanceof ModelRequestPolicyError)) {
@@ -430,8 +457,7 @@ function normalizeProviderRequestBody(
     }
     throw requestPolicyError()
   }
-  const request = { ...value }
-  return Buffer.from(JSON.stringify(request), 'utf8')
+  return Buffer.from(canonicalJson(request), 'utf8')
 }
 
 function requestPolicyError(): RemoteModelGatewayError {
@@ -445,25 +471,19 @@ function providerUrl(
   profile: ResolvedModelProfile,
   path: string
 ): URL {
+  if (
+    profile.protocol === 'openai-images-generations' ||
+    !modelBridgePathMatchesProtocol(profile.protocol, path)
+  ) {
+    throw protocolPathError()
+  }
   if (profile.protocol === 'anthropic-messages') {
-    if (path !== '/v1/messages') {
-      throw protocolPathError()
-    }
     return createAnthropicMessagesUrl(profile.baseUrl)
   }
   if (profile.protocol === 'openai-chat-completions') {
-    if (
-      path !== '/chat/completions' &&
-      path !== '/v1/chat/completions'
-    ) {
-      throw protocolPathError()
-    }
     return createOpenAIChatCompletionsUrl(profile.baseUrl)
   }
   if (profile.protocol === 'openai-responses') {
-    if (path !== '/responses' && path !== '/v1/responses') {
-      throw protocolPathError()
-    }
     return createOpenAIResponsesUrl(profile.baseUrl)
   }
   throw protocolPathError()

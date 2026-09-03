@@ -678,9 +678,20 @@ describe('OpenCodeRuntime embedded launcher', () => {
         join(tmpdir(), 'goodbuddy-opencode-routing-')
       )
       const requestPaths: string[] = []
-      const server = createServer((request, response) => {
+      const tenantHeaders: Array<string | string[] | undefined> = []
+      const requestBodies: Array<Record<string, unknown>> = []
+      const server = createServer(async (request, response) => {
         requestPaths.push(request.url ?? '')
-        request.resume()
+        tenantHeaders.push(request.headers['x-tenant-id'])
+        let body = ''
+        for await (const chunk of request) {
+          body += String(chunk)
+        }
+        if (body) {
+          requestBodies.push(
+            JSON.parse(body) as Record<string, unknown>
+          )
+        }
         response.writeHead(400, {
           'content-type': 'application/json'
         })
@@ -730,7 +741,13 @@ describe('OpenCodeRuntime embedded launcher', () => {
             modelName: 'probe-model',
             protocol,
             authentication: 'api-key',
-            apiKey: 'local-probe-key'
+            apiKey: 'local-probe-key',
+            requestHeaders: {
+              'x-tenant-id': 'opencode-native'
+            },
+            requestBody: {
+              goodbuddy_unsupported_probe: 'must-not-send'
+            }
           }
         }),
         { startupTimeoutMs: 20_000 }
@@ -765,6 +782,12 @@ describe('OpenCodeRuntime embedded launcher', () => {
         }
         expect(requestPaths).toContain(expectedPath)
         expect(requestPaths).not.toContain(unexpectedPath)
+        expect(tenantHeaders).toContain('opencode-native')
+        expect(requestBodies).not.toContainEqual(
+          expect.objectContaining({
+            goodbuddy_unsupported_probe: 'must-not-send'
+          })
+        )
       } finally {
         clearTimeout(timeout)
         await runtime.dispose()
@@ -820,6 +843,12 @@ describe('OpenCodeRuntime embedded launcher', () => {
             modelName: 'custom-model',
             protocol,
             authentication,
+            requestHeaders: {
+              'x-tenant-id': 'opencode-tenant'
+            },
+            requestBody: {
+              temperature: 0.25
+            },
             ...(authentication === 'api-key'
               ? { apiKey: 'private-key' }
               : {})
@@ -854,7 +883,10 @@ describe('OpenCodeRuntime embedded launcher', () => {
       expect(config.provider?.[providerId]).toMatchObject({
         npm: providerPackage,
         options: {
-          baseURL: 'https://model.example/v1'
+          baseURL: 'https://model.example/v1',
+          headers: {
+            'x-tenant-id': 'opencode-tenant'
+          }
         },
         models: {
           'custom-model': {
@@ -873,6 +905,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
           config.provider?.[providerId]?.options
         ).not.toHaveProperty('apiKey')
       }
+      expect(JSON.stringify(config)).not.toContain('temperature')
       await runtime.dispose()
     }
   )
