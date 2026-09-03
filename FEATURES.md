@@ -78,10 +78,16 @@ otherwise.
   POSIX process groups when a child uses an independent process group. Chat
   status checks use a one-shot Runtime probe that is immediately cleaned up
   rather than entering the model-and-project execution cache. Execution
-  Runtimes remain reusable per project, so different projects can run in
-  parallel. Interactive questions are answered only by foreground
-  conversations; scheduled tasks, remote channels, delegated work, and other
-  background runs fail immediately with guidance to rerun in the foreground
+  Runtimes remain reusable per project. GoodBuddy-managed local OpenCode keeps
+  requests in the same conversation ordered, while different conversations in
+  the same project and different projects can run in parallel. Request-scoped
+  dynamic MCP tools remain isolated through default wildcard disablement and
+  explicit current-request enablement. OpenCode and Continue runs do not stop
+  at a fixed tool-call or activity count, and exceeding local display capture
+  capacity truncates the displayed copy without cancelling the native task.
+  Interactive questions are answered only by foreground conversations; scheduled tasks, remote channels,
+  delegated work, and other background runs fail immediately with guidance to
+  rerun in the foreground
   instead of waiting indefinitely. Local OpenCode startup uses the selected
   absolute path directly without checking the file or running `--version`
   first; invalid paths fail at actual launch. On managed Linux ARM Hosts,
@@ -92,9 +98,10 @@ otherwise.
   Features and disabled by default. Disabling it does not affect local
   projects, ordinary desktop capabilities, or desktop releases. When enabled,
   users can manage SSH Hosts with pinned Host Keys, browse bounded remote
-  directories, and create Ask or Execute projects. Ask keeps the Workspace
-  read-only at the Runtime boundary through bubblewrap; Execute has all
-  permissions of the selected SSH account. The Agent owns accepted Prompts,
+  directories, and create Ask or Execute projects. Both modes start the
+  signed Runtime directly without bubblewrap. Ask permits only read tools at
+  the Agent tool-dispatch boundary, while Execute has all permissions of the
+  selected SSH account. The Agent owns accepted Prompts,
   provider/tool rounds, Runtime processes, a stable model ledger, and a bounded
   semantic transcript over a private Unix socket and ACP v4. Work continues on
   the Host after Desktop exit, network loss, or local-process termination.
@@ -128,7 +135,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current source lock and
-  Agent source lock is `0.11.15`, while the current Desktop release candidate
+  Agent source lock is `0.11.16`, while the current Desktop release candidate
   is `0.12.2`; formal publication status follows the separate Agent and Desktop
   release channels.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
@@ -305,8 +312,8 @@ otherwise.
   execution, and coordination with affected running processes remain
   acceptance work. Six-platform release acceptance must not be claimed before
   the applicable checks pass.
-- [x] **On-demand built-in MCP**: Knowledge, Magic Notes, and GoodBuddy
-  configuration MCP can be enabled independently and assigned to direct
+- [x] **On-demand built-in MCP**: Knowledge, Magic Notes, GoodBuddy
+  configuration, and built-in browser MCP can be enabled independently and assigned to direct
   models, GoodBuddy-managed OpenCode, and Continue. Settings explicitly marks
   DeepSeek Harness unsupported. Built-in MCP uses short-lived local authority
   for the current request, and user configuration cannot loosen Ask/Execute
@@ -325,6 +332,14 @@ otherwise.
   explicitly does not support Resources.
 - [x] **Local knowledge bases**: Supports file, directory, and web imports,
   SQLite FTS5 retrieval, and source tracing.
+- [ ] **External knowledge-base connections** (planned): Manage Dify, FastGPT,
+  and RAGFlow instances from the existing Knowledge page, then discover and
+  bind remote knowledge bases with provider-specific retrieval settings and
+  citations. External systems provide retrieval only: GoodBuddy does not use
+  their App, Chat, Workflow, or Agent APIs, and does not bulk-sync, locally
+  index, or modify remote content. Bounded cited snippets are retained locally
+  with their conversations. See the
+  [external knowledge-base PRD](./docs/features/knowledge-base/external-knowledge-prd.md).
 - [x] **Knowledge graph**: Supports rule-based, model-based, and hybrid
   extraction plus entity, relationship, alias, and evidence maintenance.
 - [x] **Embedding configuration and retrieval**: Configures compatible
@@ -415,7 +430,7 @@ otherwise.
 
 ### Browser, communication, voice, and application maintenance
 
-- [x] **Built-in browser for direct models**: Uses GoodBuddy's isolated
+- [x] **Shared built-in browser for runtimes**: Uses GoodBuddy's isolated
   Chromium and never controls a browser installed by the user. A separate
   master switch decides whether Execute receives the capability, with no
   per-use prompt after enablement. The Browser workbar and Agent share the same

@@ -26,6 +26,28 @@ retrieval, notes, and scheduled tasks. No GoodBuddy account is required.
 Workspace data is stored locally by default. Model endpoints can run on the
 same device, on a private network, or at a provider selected by the user.
 
+## Highlights
+
+- **Local-first workspace**: No GoodBuddy account is required. Workspace data
+  stays local by default, and users choose where model services run.
+- **Unified Agent Runtimes**: Use direct models, OpenCode, Continue, and the
+  preview DeepSeek Harness from one desktop interface.
+- **Explicit execution boundaries**: `Ask` remains read-only, while `Execute`
+  uses the current account's permissions. Tool activity, cancellation,
+  timeouts, and token usage are recorded.
+- **Broad platform coverage**: Official Linux releases cover `x64` and `arm64`,
+  including compatible distributions used in China's domestic computing
+  ecosystem. A separate
+  experimental `loong64` preview is available for LoongArch systems.
+- **Knowledge and long-running work**: Knowledge bases, graphs, Magic Notes,
+  tasks, and Smart Heartbeat share one desktop workspace.
+
+Platform coverage describes operating-system, instruction-set, and package
+compatibility, not certification for every hardware vendor or distribution
+release. LoongArch is outside the official release matrix; see the
+[LoongArch preview notes](./docs/development/loongarch-preview-build.md) for its
+current limitations.
+
 ## Capabilities
 
 | Area | Available in GoodBuddy |
@@ -33,7 +55,7 @@ same device, on a private network, or at a provider selected by the user.
 | Agent Runtimes | Direct model connections, OpenCode, Continue, and the preview DeepSeek Harness |
 | Data and execution | Local SQLite storage, read-only `Ask`, full-account `Execute`, and recorded tool activity |
 | Knowledge | File, folder, and web imports with full-text, Chinese phrase, vector, and knowledge graph retrieval |
-| Desktop releases | Windows, macOS, and Linux builds for `x64` and `arm64` |
+| Desktop releases | Official Windows, macOS, and Linux builds for `x64` and `arm64`, plus an experimental LoongArch preview |
 | Integrations | Local or hosted model endpoints, custom MCP servers, WeChat ClawBot, WeCom, and DingTalk |
 
 ## Product tour
@@ -72,6 +94,9 @@ Download a build from
 | Windows | `x64`, `arm64` | NSIS, portable ZIP |
 | macOS | `x64`, `arm64` | DMG, ZIP |
 | Linux | `x64`, `arm64` | AppImage, DEB, RPM |
+
+The experimental LoongArch `loong64` build is distributed through a separate
+preview channel on the [product website](https://mesalogo.github.io/goodbuddy/#download).
 
 Desktop installers do not contain remote Agent payloads. Local projects do not
 need an Agent package; managed SSH users download or import one explicitly in
