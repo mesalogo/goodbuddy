@@ -121,13 +121,6 @@ export const builtinModelToolGroups = [
     tools: builtinModelTools.filter((tool) => tool.group === 'filesystem')
   },
   {
-    id: 'browser',
-    name: '内置浏览器',
-    description:
-      '启用“内置浏览器”后，在 Execute 模式下操作 GoodBuddy 隔离浏览器。',
-    tools: builtinModelTools.filter((tool) => tool.group === 'browser')
-  },
-  {
     id: 'web',
     name: '联网搜索',
     description:

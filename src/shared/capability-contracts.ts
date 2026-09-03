@@ -38,7 +38,8 @@ export type CapabilityAssignments = z.infer<
 export const builtinMcpServerIdSchema = z.enum([
   'knowledge-base',
   'magic-notes',
-  'goodbuddy-config'
+  'goodbuddy-config',
+  'builtin-browser'
 ])
 export type BuiltinMcpServerId = z.infer<
   typeof builtinMcpServerIdSchema
@@ -369,7 +370,7 @@ export const capabilitySnapshotSchema = z
     skills: z.array(skillSummarySchema).max(256),
     builtinMcpServers: z
       .array(builtinMcpServerStateSummarySchema)
-      .max(3)
+      .max(4)
       .optional(),
     mcpServers: z.array(mcpServerSummarySchema).max(64),
     webSearch: webSearchCapabilitySchema.optional(),

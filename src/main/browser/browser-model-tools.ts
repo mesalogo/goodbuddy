@@ -52,7 +52,7 @@ export const browserSelectInputSchema = z
 export const browserBackInputSchema = z.object({}).strict()
 export const browserScreenshotInputSchema = z.object({}).strict()
 
-type BrowserToolName =
+export type BrowserToolName =
   | 'browser_navigate'
   | 'browser_snapshot'
   | 'browser_click'
@@ -60,6 +60,12 @@ type BrowserToolName =
   | 'browser_select'
   | 'browser_back'
   | 'browser_screenshot'
+
+export const browserToolNames = Object.freeze(
+  builtinModelTools
+    .filter((tool) => tool.group === 'browser')
+    .map((tool) => tool.name as BrowserToolName)
+)
 
 function getBrowserToolMetadata(name: BrowserToolName) {
   const summary = builtinModelTools.find((tool) => tool.name === name)

@@ -435,12 +435,13 @@ otherwise.
 
 - [x] **Shared built-in browser for runtimes**: Uses GoodBuddy's isolated
   Chromium and never controls a browser installed by the user. A separate
-  master switch decides whether Execute receives the capability, with no
-  per-use prompt after enablement. The Browser workbar and Agent share the same
-  Conversation-owned session and serialized operation path, with Back,
-  Refresh/Stop Loading, address entry, Go, Interaction, and Close actions.
-  Stop Loading does not close the session, and user navigation changes the
-  page the Agent sees next.
+  master switch decides whether assigned runtimes receive the capability in
+  Execute, with no per-use prompt after enablement. Turning Agent access off
+  does not disable manual browser workbar actions. The Browser workbar and
+  Agent share the same Conversation-owned session and serialized operation
+  path, with Back, Refresh/Stop Loading, address entry, Go, Interaction, and
+  Close actions. Stop Loading does not close the session, and user navigation
+  changes the page the Agent sees next.
 - [x] **Client-computer control tools**: Managed separately from the built-in
   browser with scope, cancellation, timeout, output, and activity boundaries.
 - [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom, and

@@ -233,16 +233,17 @@ export const integrations = {
     },
     browser: {
       title: 'Built-in browser',
-      subtitle: 'Direct-model tool · Isolated GoodBuddy browser · Execute',
+      subtitle: 'Built-in GoodBuddy capability · Isolated browser · Execute',
       description:
         'Opens and operates webpages in GoodBuddy’s temporary isolated browser. It does not control Chrome, Edge, or another browser installed on the client computer.',
       control:
-        'You control this master switch. When off, browser tools are unavailable to direct models. When on, direct models can use them directly in Execute mode without per-action prompts.',
-      enableAriaLabel: 'Enable the direct-model built-in browser',
+        'This switch controls Agent access only. When off, browser tools are unavailable to every runtime, but you can still operate the browser manually from the workbar. When on, assigned runtimes can use them directly in Execute mode without per-action prompts.',
+      enableAriaLabel: 'Enable the built-in GoodBuddy browser',
       enabled: 'Enabled',
       disabled: 'Disabled',
+      unsupported: 'The built-in browser is unsupported on this device',
       diagnoseAriaLabel: 'Diagnose the built-in browser',
-      toolsAriaLabel: 'Direct-model built-in browser tools'
+      toolsAriaLabel: 'Built-in GoodBuddy browser tools'
     },
     webSearch: {
       title: 'Web search',

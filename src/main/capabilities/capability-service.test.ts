@@ -206,6 +206,14 @@ describe('CapabilityService', () => {
     await expect(
       service.getComputerCapabilityStatus('host-browser-control')
     ).resolves.toEqual({ enabled: true, supported: true })
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      builtinMcpServers: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'builtin-browser',
+          enabled: true
+        })
+      ])
+    })
   })
 
   it('enables direct-model web search by default and persists its switch', async () => {
@@ -256,6 +264,11 @@ describe('CapabilityService', () => {
           id: 'goodbuddy-config',
           enabled: true,
           assignments: ['model', 'opencode', 'continue']
+        },
+        {
+          id: 'builtin-browser',
+          enabled: false,
+          assignments: ['model', 'opencode', 'continue']
         }
       ]
     })
@@ -263,6 +276,10 @@ describe('CapabilityService', () => {
     await service.setBuiltinMcpServerEnabled('magic-notes', false)
     await service.setBuiltinMcpServerAssignments('knowledge-base', [
       'model'
+    ])
+    await service.setBuiltinMcpServerEnabled('builtin-browser', true)
+    await service.setBuiltinMcpServerAssignments('builtin-browser', [
+      'continue'
     ])
     expect(() =>
       service.setBuiltinMcpServerAssignments('knowledge-base', [
@@ -276,6 +293,12 @@ describe('CapabilityService', () => {
     await expect(
       service.getEnabledBuiltinMcpServerIds('opencode')
     ).resolves.toEqual(['goodbuddy-config'])
+    await expect(
+      service.getEnabledBuiltinMcpServerIds('continue')
+    ).resolves.toEqual([
+      'goodbuddy-config',
+      'builtin-browser'
+    ])
     await expect(
       service.getEnabledBuiltinMcpServerIds('deepseek-harness')
     ).resolves.toEqual([])
@@ -295,6 +318,11 @@ describe('CapabilityService', () => {
         expect.objectContaining({
           id: 'magic-notes',
           enabled: false
+        }),
+        expect.objectContaining({
+          id: 'builtin-browser',
+          enabled: true,
+          assignments: ['continue']
         })
       ])
     })
@@ -915,7 +943,7 @@ describe('CapabilityService', () => {
       }
     })
     const persisted = await readFile(filePath, 'utf8')
-    expect(persisted).toContain('"version": 5')
+    expect(persisted).toContain('"version": 6')
     expect(persisted).toContain(credential)
     expect(persisted).not.toContain('preserved-secret')
   })
@@ -951,7 +979,7 @@ describe('CapabilityService', () => {
     await expect(service.getSnapshot()).resolves.toMatchObject({
       webSearch: { enabled: true }
     })
-    expect(await readFile(filePath, 'utf8')).toContain('"version": 5')
+    expect(await readFile(filePath, 'utf8')).toContain('"version": 6')
   })
 
   it('migrates v3 MCP servers with dynamic tools disabled', async () => {
@@ -1001,7 +1029,7 @@ describe('CapabilityService', () => {
       ]
     })
     const persisted = await readFile(filePath, 'utf8')
-    expect(persisted).toContain('"version": 5')
+    expect(persisted).toContain('"version": 6')
     expect(persisted).toContain('"allowDynamicTools": false')
   })
 
@@ -1043,7 +1071,62 @@ describe('CapabilityService', () => {
         })
       ])
     })
-    expect(await readFile(filePath, 'utf8')).toContain('"version": 5')
+    expect(await readFile(filePath, 'utf8')).toContain('"version": 6')
+  })
+
+  it('migrates the legacy browser switch into the built-in browser assignment', async () => {
+    const { filePath, builtinRoot, importedRoot } = await createService()
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 5,
+        skills: {},
+        builtinMcpServers: {
+          'knowledge-base': {
+            enabled: true,
+            assignments: ['model', 'opencode', 'continue']
+          },
+          'magic-notes': {
+            enabled: true,
+            assignments: ['model', 'opencode', 'continue']
+          },
+          'goodbuddy-config': {
+            enabled: true,
+            assignments: ['model', 'opencode', 'continue']
+          }
+        },
+        mcpServers: [],
+        webSearch: { enabled: true },
+        computerCapabilities: {
+          'host-browser-control': {
+            enabled: true,
+            browserProfileId: null
+          },
+          'linux-desktop-control': {
+            enabled: false,
+            browserProfileId: null
+          }
+        }
+      }),
+      'utf8'
+    )
+    const service = new CapabilityService(
+      filePath,
+      builtinRoot,
+      importedRoot,
+      cipher
+    )
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      builtinMcpServers: expect.arrayContaining([
+        {
+          id: 'builtin-browser',
+          enabled: true,
+          assignments: ['model', 'opencode', 'continue']
+        }
+      ])
+    })
+    expect(await readFile(filePath, 'utf8')).toContain('"version": 6')
   })
 
   it('preserves capabilities created by a newer unsupported version', async () => {

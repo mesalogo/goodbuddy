@@ -8,7 +8,8 @@ import {
   magicNoteWriteToolNames,
   maximumScopedToolCount,
   scopedDataToolByName,
-  scopedReadToolNames
+  scopedReadToolNames,
+  type ScopedDataToolName
 } from '../../shared/scoped-data-tools'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import { createMcpTransport } from '../capabilities/mcp-client-transport'
@@ -639,6 +640,9 @@ export class ModelToolProvider implements ModelToolProviderLike {
     const available = new Set(
       this.knowledgeGateway.getAvailableToolNames(
         context.knowledgeCapabilityToken
+      ).filter(
+        (name): name is ScopedDataToolName =>
+          scopedDataToolByName.has(name as ScopedDataToolName)
       )
     )
     const tools = [...available].flatMap(

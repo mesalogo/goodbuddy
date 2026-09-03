@@ -122,13 +122,18 @@ const builtinMcpServerStateSchema = z
   })
   .strict()
 
-const builtinMcpServerStatesSchema = z
+const legacyBuiltinMcpServerStatesSchema = z
   .object({
     'knowledge-base': builtinMcpServerStateSchema,
     'magic-notes': builtinMcpServerStateSchema,
     'goodbuddy-config': builtinMcpServerStateSchema
   })
   .strict()
+
+const builtinMcpServerStatesSchema =
+  legacyBuiltinMcpServerStatesSchema.extend({
+    'builtin-browser': builtinMcpServerStateSchema
+  })
 
 const encryptedSecretSchema =
   encryptedSettingsCredentialSchema.optional()
@@ -222,8 +227,13 @@ const storedCapabilitiesV4Schema = storedCapabilitiesV3Schema.extend({
   version: z.literal(4)
 })
 
-const storedCapabilitiesSchema = storedCapabilitiesV4Schema.extend({
+const storedCapabilitiesV5Schema = storedCapabilitiesV4Schema.extend({
   version: z.literal(5),
+  builtinMcpServers: legacyBuiltinMcpServerStatesSchema
+})
+
+const storedCapabilitiesSchema = storedCapabilitiesV5Schema.extend({
+  version: z.literal(6),
   builtinMcpServers: builtinMcpServerStatesSchema
 })
 
@@ -284,7 +294,9 @@ function defaultComputerCapabilityStates(): StoredCapabilities['computerCapabili
   }
 }
 
-function defaultBuiltinMcpServerStates(): StoredCapabilities['builtinMcpServers'] {
+function defaultBuiltinMcpServerStates(
+  browserEnabled = false
+): StoredCapabilities['builtinMcpServers'] {
   const defaultState = (): z.infer<typeof builtinMcpServerStateSchema> => ({
     enabled: true,
     assignments: ['model', 'opencode', 'continue']
@@ -292,7 +304,11 @@ function defaultBuiltinMcpServerStates(): StoredCapabilities['builtinMcpServers'
   return {
     'knowledge-base': defaultState(),
     'magic-notes': defaultState(),
-    'goodbuddy-config': defaultState()
+    'goodbuddy-config': defaultState(),
+    'builtin-browser': {
+      enabled: browserEnabled,
+      assignments: ['model', 'opencode', 'continue']
+    }
   }
 }
 
@@ -300,7 +316,7 @@ function emptyStoredCapabilities(
   webSearchEnabled = true
 ): StoredCapabilities {
   return {
-    version: 5,
+    version: 6,
     skills: {},
     builtinMcpServers: defaultBuiltinMcpServerStates(),
     mcpServers: [],
@@ -775,7 +791,7 @@ export class CapabilityService {
     let shouldPersist = false
     try {
       const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
-      assertSupportedSettingsVersion(raw, 5, (version) =>
+      assertSupportedSettingsVersion(raw, 6, (version) =>
         `当前 GoodBuddy 不支持能力设置版本 ${version}，请升级应用后重试`
       )
       const version = z
@@ -785,7 +801,8 @@ export class CapabilityService {
             z.literal(2),
             z.literal(3),
             z.literal(4),
-            z.literal(5)
+            z.literal(5),
+            z.literal(6)
           ])
         })
         .passthrough()
@@ -794,7 +811,7 @@ export class CapabilityService {
         const legacy: StoredCapabilitiesV1 =
           storedCapabilitiesV1Schema.parse(raw)
         loaded = {
-          version: 5,
+          version: 6,
           skills: legacy.skills,
           builtinMcpServers: defaultBuiltinMcpServerStates(),
           mcpServers: legacy.mcpServers,
@@ -806,8 +823,10 @@ export class CapabilityService {
         const legacy = storedCapabilitiesV2Schema.parse(raw)
         loaded = {
           ...legacy,
-          version: 5,
-          builtinMcpServers: defaultBuiltinMcpServerStates(),
+          version: 6,
+          builtinMcpServers: defaultBuiltinMcpServerStates(
+            legacy.computerCapabilities['host-browser-control'].enabled
+          ),
           webSearch: { enabled: true }
         }
         shouldPersist = true
@@ -815,16 +834,35 @@ export class CapabilityService {
         const legacy = storedCapabilitiesV3Schema.parse(raw)
         loaded = {
           ...legacy,
-          version: 5,
-          builtinMcpServers: defaultBuiltinMcpServerStates()
+          version: 6,
+          builtinMcpServers: defaultBuiltinMcpServerStates(
+            legacy.computerCapabilities['host-browser-control'].enabled
+          )
         }
         shouldPersist = true
       } else if (version === 4) {
         const legacy = storedCapabilitiesV4Schema.parse(raw)
         loaded = {
           ...legacy,
-          version: 5,
-          builtinMcpServers: defaultBuiltinMcpServerStates()
+          version: 6,
+          builtinMcpServers: defaultBuiltinMcpServerStates(
+            legacy.computerCapabilities['host-browser-control'].enabled
+          )
+        }
+        shouldPersist = true
+      } else if (version === 5) {
+        const legacy = storedCapabilitiesV5Schema.parse(raw)
+        loaded = {
+          ...legacy,
+          version: 6,
+          builtinMcpServers: {
+            ...legacy.builtinMcpServers,
+            'builtin-browser': {
+              enabled:
+                legacy.computerCapabilities['host-browser-control'].enabled,
+              assignments: ['model', 'opencode', 'continue']
+            }
+          }
         }
         shouldPersist = true
       } else {
@@ -970,7 +1008,10 @@ export class CapabilityService {
           id: capability.id,
           name: capability.name,
           description: capability.description,
-          enabled: state.computerCapabilities[capability.id].enabled,
+          enabled:
+            capability.id === 'host-browser-control'
+              ? state.builtinMcpServers['builtin-browser'].enabled
+              : state.computerCapabilities[capability.id].enabled,
           supported: isComputerCapabilitySupported(
             capability,
             this.platform,
@@ -1027,7 +1068,10 @@ export class CapabilityService {
     const capability = getComputerCapability(id)
     const state = await this.load()
     return {
-      enabled: state.computerCapabilities[id].enabled,
+      enabled:
+        id === 'host-browser-control'
+          ? state.builtinMcpServers['builtin-browser'].enabled
+          : state.computerCapabilities[id].enabled,
       supported: isComputerCapabilitySupported(
         capability,
         this.platform,
@@ -1077,6 +1121,17 @@ export class CapabilityService {
       const state = await this.load()
       await this.persistUserChange({
         ...state,
+        ...(id === 'host-browser-control'
+          ? {
+              builtinMcpServers: {
+                ...state.builtinMcpServers,
+                'builtin-browser': {
+                  ...state.builtinMcpServers['builtin-browser'],
+                  enabled
+                }
+              }
+            }
+          : {}),
         computerCapabilities: {
           ...state.computerCapabilities,
           [id]: {
@@ -1197,7 +1252,9 @@ export class CapabilityService {
     const state = await this.load()
     return this.diagnoseComputerCapabilityState(
       id,
-      state.computerCapabilities[id].enabled
+      id === 'host-browser-control'
+        ? state.builtinMcpServers['builtin-browser'].enabled
+        : state.computerCapabilities[id].enabled
     )
   }
 
@@ -1652,8 +1709,39 @@ export class CapabilityService {
     return this.queue(async () => {
       const id = builtinMcpServerIdSchema.parse(serverId)
       const state = await this.load()
+      if (id === 'builtin-browser' && update.enabled === true) {
+        const capability = getComputerCapability('host-browser-control')
+        if (
+          !isComputerCapabilitySupported(
+            capability,
+            this.platform,
+            this.architecture,
+            this.availableComputerCapabilityImplementations
+          )
+        ) {
+          throw new Error('当前操作系统或处理器架构不支持此能力')
+        }
+        const report = await this.diagnoseComputerCapabilityState(
+          'host-browser-control',
+          true
+        )
+        if (report.status === 'unavailable') {
+          throw new Error('能力诊断不可用，未启用此能力')
+        }
+      }
       await this.persistUserChange({
         ...state,
+        ...(id === 'builtin-browser' && update.enabled !== undefined
+          ? {
+              computerCapabilities: {
+                ...state.computerCapabilities,
+                'host-browser-control': {
+                  ...state.computerCapabilities['host-browser-control'],
+                  enabled: update.enabled
+                }
+              }
+            }
+          : {}),
         builtinMcpServers: {
           ...state.builtinMcpServers,
           [id]: {
@@ -1915,7 +2003,18 @@ export class CapabilityService {
     const state = await this.load()
     return builtinMcpServerIdSchema.options.filter((id) => {
       const server = state.builtinMcpServers[id]
-      return server.enabled && server.assignments.includes(runtime)
+      if (!server.enabled || !server.assignments.includes(runtime)) {
+        return false
+      }
+      return (
+        id !== 'builtin-browser' ||
+        isComputerCapabilitySupported(
+          getComputerCapability('host-browser-control'),
+          this.platform,
+          this.architecture,
+          this.availableComputerCapabilityImplementations
+        )
+      )
     })
   }
 }

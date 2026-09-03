@@ -1010,6 +1010,7 @@ if (hasSingleInstanceLock) {
       {
         magicNotesDatabase: startupAssistantDatabase,
         configService: goodbuddyConfigService,
+        browserService,
         launchEnvironmentProvider:
           startupLocalToolEnvironmentService.launchEnvironmentProvider
       }
@@ -1031,9 +1032,15 @@ if (hasSingleInstanceLock) {
           capabilityService.getRuntimeSkillContext(target),
           capabilityService.getResolvedMcpServers(target),
           target === 'model'
-            ? capabilityService.getComputerCapabilityStatus(
-                'host-browser-control'
-              )
+            ? capabilityService
+                .getEnabledBuiltinMcpServerIds(target)
+                .then((enabledServers) =>
+                  enabledServers.includes('builtin-browser')
+                    ? capabilityService.getComputerCapabilityStatus(
+                        'host-browser-control'
+                      )
+                    : undefined
+                )
             : Promise.resolve(undefined),
           target === 'model' || target === 'deepseek-harness'
             ? capabilityService.getWebSearchCapabilityStatus()

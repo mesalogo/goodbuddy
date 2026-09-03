@@ -1,7 +1,8 @@
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   defaultContextCompressionSettings,
@@ -63,6 +64,55 @@ const portableRoot = process.env.GOODBUDDY_E2E_PACKAGED_ROOT
       'dist',
       'harness-package-probe',
       'win-unpacked'
+    )
+
+const bundledOpenCodePath = existsSync(
+  join(
+    portableRoot,
+    'resources',
+    'runtimes',
+    'opencode',
+    process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+  )
+)
+  ? join(
+      portableRoot,
+      'resources',
+      'runtimes',
+      'opencode',
+      process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+    )
+  : join(
+      process.cwd(),
+      '.runtime-resources',
+      process.arch,
+      process.platform === 'win32' ? 'opencode.exe' : 'opencode'
+    )
+const bundledContinuePath = existsSync(
+  join(
+    portableRoot,
+    'resources',
+    'runtimes',
+    'continue',
+    'dist',
+    'cn.js'
+  )
+)
+  ? join(
+      portableRoot,
+      'resources',
+      'runtimes',
+      'continue',
+      'dist',
+      'cn.js'
+    )
+  : join(
+      process.cwd(),
+      'node_modules',
+      '@continuedev',
+      'cli',
+      'dist',
+      'cn.js'
     )
 
 async function collectText(
@@ -1345,6 +1395,121 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         expect(output).toContain('CONTINUE_MCP_E2E_OK')
         expect(output).toContain('Prism Relay')
       } finally {
+        await runtime.dispose()
+        await gateway.dispose()
+      }
+    },
+    180_000
+  )
+
+  it.each([
+    ['OpenCode', 'opencode-browser-e2e', 'OPENCODE_BROWSER_E2E_OK'],
+    ['Continue', 'continue-browser-e2e', 'CONTINUE_BROWSER_E2E_OK']
+  ] as const)(
+    'calls the assigned built-in browser through bundled %s',
+    async (runtimeName, conversationId, completionMarker) => {
+      const navigate = vi.fn(async (_conversationId: string, url: string) => ({
+        url,
+        origin: new URL(url).origin
+      }))
+      const browserService = {
+        getOrigin: vi.fn(() => undefined),
+        navigate,
+        snapshot: vi.fn(),
+        click: vi.fn(),
+        type: vi.fn(),
+        select: vi.fn(),
+        back: vi.fn(),
+        screenshot: vi.fn(),
+        releaseConversation: vi.fn(async () => undefined)
+      }
+      const gateway = new KnowledgeMcpGateway({} as never, {
+        browserService: browserService as never
+      })
+      await gateway.start()
+      const controller = new AbortController()
+      const requestId = crypto.randomUUID()
+      const capabilityToken = gateway.grant(
+        requestId,
+        [],
+        controller.signal,
+        'none',
+        undefined,
+        conversationId
+      )!
+      const common = {
+        modelProfile: {
+          id: crypto.randomUUID(),
+          name: 'E2E model',
+          baseUrl,
+          modelName,
+          apiKey,
+          protocol,
+          authentication: 'api-key' as const
+        },
+        defaultWorkspace: workspace,
+        knowledgeGateway: gateway
+      }
+      const runtime = new AgentRuntimeController(
+        runtimeName === 'OpenCode'
+          ? new OpenCodeRuntime({
+              embedded: true,
+              binaryPath: '',
+              bundledBinaryPath: bundledOpenCodePath,
+              configPath: '',
+              ...common
+            })
+          : new ContinueAgentRuntime({
+              binaryPath: '',
+              bundledBinaryPath: bundledContinuePath,
+              configPath: '',
+              hostCacheRoot: join(
+                workspace,
+                '.continue-browser-host'
+              ),
+              ...common
+            })
+      )
+      const targetUrl = `https://example.com/${conversationId}`
+
+      try {
+        const events = await collectEvents(
+          runtime.run(
+            {
+              requestId,
+              conversationId,
+              workMode: 'execute',
+              knowledgeCapabilityToken: capabilityToken,
+              prompt:
+                `Call browser_navigate exactly once with ${targetUrl}. ` +
+                `After the tool succeeds, reply with exactly ${completionMarker}.`
+            },
+            controller.signal,
+            async () => 'once'
+          )
+        )
+        expect(navigate).toHaveBeenCalledOnce()
+        expect(navigate).toHaveBeenCalledWith(
+          conversationId,
+          targetUrl,
+          expect.any(AbortSignal)
+        )
+        expect(
+          events
+            .flatMap((event) =>
+              event.type === 'text' ? [event.delta] : []
+            )
+            .join('')
+        ).toContain(completionMarker)
+        const modelCalls = events.filter(
+          (event) => event.type === 'model-usage'
+        ).length
+        expect(modelCalls).toBeGreaterThanOrEqual(1)
+        console.info(
+          `REAL_${runtimeName.toUpperCase()}_BROWSER_MODEL_CALLS=${modelCalls}`
+        )
+      } finally {
+        controller.abort()
         await runtime.dispose()
         await gateway.dispose()
       }

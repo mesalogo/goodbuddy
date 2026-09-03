@@ -376,9 +376,6 @@ export function McpSettingsSection({
   }
 
   const computerCapabilities = snapshot?.computerCapabilities ?? []
-  const browserCapability = computerCapabilities.find(
-    (capability) => capability.id === 'host-browser-control'
-  )
   const desktopCapabilities = computerCapabilities.filter(
     (capability) => capability.id !== 'host-browser-control'
   )
@@ -588,13 +585,21 @@ export function McpSettingsSection({
             const panelId = `mcp-server-tools-${server.id}`
             const state = builtinMcpStates.get(server.id) ?? {
               id: server.id,
-              enabled: true,
+              enabled: server.id !== 'builtin-browser',
               assignments:
                 [...server.supportedAssignments] as CapabilityAssignments
             }
+            const computerCapability =
+              'computerCapabilityId' in server
+                ? computerCapabilities.find(
+                    (capability) =>
+                      capability.id === server.computerCapabilityId
+                  )
+                : undefined
             const featureAvailable =
-              !('requiresFeature' in server) ||
-              magicNotesEnabled === true
+              (!('requiresFeature' in server) ||
+                magicNotesEnabled === true) &&
+              (!computerCapability || computerCapability.supported)
             return (
               <article
                 className={`capability-card builtin-mcp-card${
@@ -610,11 +615,14 @@ export function McpSettingsSection({
                     <small>
                       {!state.enabled
                         ? t('mcp.builtin.disabled')
+                        : computerCapability &&
+                            !computerCapability.supported
+                          ? t('mcp.browser.unsupported')
                         : !featureAvailable
-                        ? t('mcp.builtin.serverSummaryDisabled')
-                        : server.access === 'mixed'
-                          ? t('mcp.builtin.serverSummaryMixed')
-                          : t('mcp.builtin.serverSummaryReadOnly')}
+                          ? t('mcp.builtin.serverSummaryDisabled')
+                          : server.access === 'mixed'
+                            ? t('mcp.builtin.serverSummaryMixed')
+                            : t('mcp.builtin.serverSummaryReadOnly')}
                     </small>
                   </div>
                 </div>
@@ -624,7 +632,7 @@ export function McpSettingsSection({
                       name: server.name
                     })}
                     checked={state.enabled}
-                    disabled={Boolean(busy)}
+                    disabled={Boolean(busy) || !featureAvailable}
                     onChange={(event) =>
                       void run(`builtin:toggle:${server.id}`, () =>
                         window.goodbuddy.capabilities.setBuiltinMcpServerEnabled(
@@ -646,8 +654,63 @@ export function McpSettingsSection({
                 {!featureAvailable && (
                   <p className="computer-capability-risk">
                     <CircleAlert aria-hidden="true" size={13} />
-                    {t('mcp.builtin.featureDisabled')}
+                    {computerCapability
+                      ? t('mcp.browser.unsupported')
+                      : t('mcp.builtin.featureDisabled')}
                   </p>
+                )}
+                {computerCapability && (
+                  <>
+                    <p className="computer-capability-risk">
+                      <CircleAlert aria-hidden="true" size={13} />
+                      {computerCapability.riskSummary}
+                    </p>
+                    <div className="capability-diagnostic">
+                      <button
+                        aria-label={t('mcp.browser.diagnoseAriaLabel')}
+                        className="secondary-button"
+                        disabled={Boolean(busy)}
+                        onClick={() =>
+                          void diagnose(computerCapability.id)
+                        }
+                        type="button"
+                      >
+                        <RefreshCw size={13} />
+                        {busy ===
+                        `diagnose:${computerCapability.id}`
+                          ? t('mcp.computer.diagnosing')
+                          : t('mcp.computer.diagnose')}
+                      </button>
+                      {diagnostics[computerCapability.id] && (
+                        <div
+                          aria-live="polite"
+                          className="capability-diagnostic__result"
+                        >
+                          <strong>
+                            {t('mcp.computer.result', {
+                              status:
+                                diagnosticStatusLabels[
+                                  diagnostics[computerCapability.id]!
+                                    .status
+                                ]
+                            })}
+                          </strong>
+                          {diagnostics[
+                            computerCapability.id
+                          ]!.checks.map((check) => (
+                            <p key={check.id}>
+                              {check.summary}
+                              {check.remedy
+                                ? t('mcp.computer.remedy', {
+                                    remedy: check.remedy
+                                  })
+                                : ''}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
                 <div className="runtime-assignments">
                   <small>{t('mcp.builtin.assignedTo')}</small>
@@ -932,18 +995,8 @@ export function McpSettingsSection({
             const expansionId = `model-tools:${group.id}`
             const expanded = expandedItemIds.has(expansionId)
             const panelId = `model-tool-group-${group.id}`
-            const groupName =
-              group.id === 'browser'
-                ? t('mcp.browser.title')
-                : group.name
-            const groupDescription =
-              group.id === 'browser'
-                ? t('mcp.browser.description')
-                : group.description
-            const report =
-              group.id === 'browser' && browserCapability
-                ? diagnostics[browserCapability.id]
-                : undefined
+            const groupName = group.name
+            const groupDescription = group.description
             return (
               <article className="mcp-server-card" key={group.id}>
                 <button
@@ -962,9 +1015,7 @@ export function McpSettingsSection({
                   <div>
                     <strong>{groupName}</strong>
                     <small>
-                      {group.id === 'browser'
-                        ? t('mcp.browser.subtitle')
-                        : t('mcp.modelTools.summary')}
+                      {t('mcp.modelTools.summary')}
                     </small>
                   </div>
                   <span className="mcp-server-card__summary">
@@ -984,105 +1035,11 @@ export function McpSettingsSection({
                 </button>
                 {expanded && (
                   <div className="mcp-server-card__body" id={panelId}>
-                    {group.id === 'browser' && browserCapability ? (
-                      <>
-                        <label className="toggle-row">
-                          <input
-                            aria-label={t(
-                              'mcp.browser.enableAriaLabel'
-                            )}
-                            checked={browserCapability.enabled}
-                            disabled={
-                              Boolean(busy) ||
-                              !browserCapability.supported
-                            }
-                            onChange={(event) =>
-                              void run(
-                                `browser:${browserCapability.id}`,
-                                () =>
-                                  window.goodbuddy.capabilities.setComputerCapabilityEnabled?.(
-                                    browserCapability.id,
-                                    event.target.checked
-                                  ) ??
-                                  Promise.reject(
-                                    new Error(
-                                      t(
-                                        'mcp.errors.unsupportedBuiltinBrowser'
-                                      )
-                                    )
-                                  )
-                              )
-                            }
-                            role="switch"
-                            type="checkbox"
-                          />
-                          <span>
-                            {browserCapability.enabled
-                              ? t('mcp.browser.enabled')
-                              : t('mcp.browser.disabled')}
-                          </span>
-                        </label>
-                        <p>{groupDescription}</p>
-                        <p className="computer-capability-risk">
-                          <CircleAlert aria-hidden="true" size={13} />
-                          {t('mcp.browser.control')}
-                        </p>
-                        <div className="capability-diagnostic">
-                          <button
-                            aria-label={t(
-                              'mcp.browser.diagnoseAriaLabel'
-                            )}
-                            className="secondary-button"
-                            disabled={Boolean(busy)}
-                            onClick={() =>
-                              void diagnose(browserCapability.id)
-                            }
-                            type="button"
-                          >
-                            <RefreshCw size={13} />
-                            {busy ===
-                            `diagnose:${browserCapability.id}`
-                              ? t('mcp.computer.diagnosing')
-                              : t('mcp.computer.diagnose')}
-                          </button>
-                          {report && (
-                            <div
-                              aria-live="polite"
-                              className="capability-diagnostic__result"
-                            >
-                              <strong>
-                                {t('mcp.computer.result', {
-                                  status:
-                                    diagnosticStatusLabels[
-                                      report.status
-                                    ]
-                                })}
-                              </strong>
-                              {report.checks.map((check) => (
-                                <p key={check.id}>
-                                  {check.summary}
-                                  {check.remedy
-                                    ? t('mcp.computer.remedy', {
-                                        remedy: check.remedy
-                                      })
-                                    : ''}
-                                </p>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <p>{groupDescription}</p>
-                    )}
+                    <p>{groupDescription}</p>
                     <section
-                      aria-label={
-                        group.id === 'browser'
-                          ? t('mcp.browser.toolsAriaLabel')
-                          : t('mcp.builtin.toolsAriaLabel', {
-                              name: groupName
-                            })
-                      }
+                      aria-label={t('mcp.builtin.toolsAriaLabel', {
+                        name: groupName
+                      })}
                       className="mcp-server-tools"
                     >
                       <div className="mcp-server-tools__heading">

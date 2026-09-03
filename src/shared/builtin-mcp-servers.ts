@@ -8,6 +8,7 @@ import {
   magicNoteScopedDataTools
 } from './scoped-data-tools'
 import { goodbuddyConfigTools } from './goodbuddy-config-tools'
+import { builtinModelTools } from './builtin-model-tools'
 
 export type BuiltinMcpServerSummary = {
   id: BuiltinMcpServerId
@@ -22,6 +23,7 @@ export type BuiltinMcpServerSummary = {
   access: 'read' | 'mixed'
   authorization: 'conversation-scoped'
   requiresFeature?: 'magic-notes'
+  computerCapabilityId?: 'host-browser-control'
 }
 
 export const builtinMcpServers = [
@@ -67,5 +69,22 @@ export const builtinMcpServers = [
     supportedAssignments: ['model', 'opencode', 'continue'],
     access: 'mixed',
     authorization: 'conversation-scoped'
+  },
+  {
+    id: 'builtin-browser',
+    name: '内置浏览器',
+    description:
+      '允许已分配的 Runtime 使用 GoodBuddy 临时隔离浏览器，不会控制客户端已安装的浏览器；关闭此能力不影响你在浏览器工作栏中手动操作。',
+    tools: builtinModelTools
+      .filter((tool) => tool.group === 'browser')
+      .map(({ name, description, access }) => ({
+        name,
+        description,
+        access
+      })),
+    supportedAssignments: ['model', 'opencode', 'continue'],
+    access: 'mixed',
+    authorization: 'conversation-scoped',
+    computerCapabilityId: 'host-browser-control'
   }
 ] as const satisfies readonly BuiltinMcpServerSummary[]

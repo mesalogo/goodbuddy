@@ -64,6 +64,14 @@ import {
   normalizeMcpToolSchema
 } from './mcp-tool-utils'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment'
+import {
+  BrowserModelTools,
+  browserToolNames,
+  type BrowserToolName,
+  type BrowserToolService
+} from '../browser/browser-model-tools'
+import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
+import { safeToolErrorDetail } from './approval-summary'
 
 const MAX_REQUEST_BODY_BYTES = 64 * 1024
 const MAX_RESULT_BYTES = 128 * 1024
@@ -79,12 +87,17 @@ const MAX_CAPABILITY_TTL_MS = 15 * 60_000
 const customMcpJsonSchemaValidator = new AjvJsonSchemaValidator()
 
 export {
+  browserToolNames,
   knowledgeToolNames,
   magicNoteReadToolNames,
   magicNoteWriteToolNames,
   maximumScopedToolCount,
   scopedReadToolNames
 }
+
+export type GoodBuddyBuiltinToolName =
+  | ScopedDataToolName
+  | BrowserToolName
 
 const {
   knowledge_list: knowledgeListTool,
@@ -171,6 +184,7 @@ type Capability = {
   configAccess: MagicNotesCapabilityAccess
   configWorkspacePath?: string
   authorizeConfigApply?: GoodBuddyConfigApplyAuthorizer
+  browserConversationId?: string
   expiresAt: number
   signal: AbortSignal
   brokerController: AbortController
@@ -216,6 +230,7 @@ export type KnowledgeMcpGatewayOptions = {
   now?: () => number
   magicNotesDatabase?: MagicNotesDatabase
   configService?: GoodBuddyConfigService
+  browserService?: BrowserToolService
   launchEnvironmentProvider?: LaunchEnvironmentProvider
 }
 
@@ -341,6 +356,7 @@ export class KnowledgeMcpGateway {
   private readonly maximumBodyBytes: number
   private readonly magicNotesDatabase?: MagicNotesDatabase
   private readonly configService?: GoodBuddyConfigService
+  private readonly browserService?: BrowserToolService
   private readonly launchEnvironmentProvider?: LaunchEnvironmentProvider
   private server?: Server
   private endpoint?: string
@@ -363,6 +379,7 @@ export class KnowledgeMcpGateway {
     this.now = options.now ?? Date.now
     this.magicNotesDatabase = options.magicNotesDatabase
     this.configService = options.configService
+    this.browserService = options.browserService
     this.launchEnvironmentProvider = options.launchEnvironmentProvider
   }
 
@@ -414,7 +431,8 @@ export class KnowledgeMcpGateway {
       access: MagicNotesCapabilityAccess
       workspacePath: string
       authorizeApply?: GoodBuddyConfigApplyAuthorizer
-    }
+    },
+    browserConversationId?: string
   ): string | undefined {
     const effectiveMagicNotesAccess = this.magicNotesDatabase
       ? magicNotesAccess
@@ -422,10 +440,14 @@ export class KnowledgeMcpGateway {
     const effectiveConfigAccess = this.configService
       ? config?.access ?? 'none'
       : 'none'
+    const effectiveBrowserConversationId = this.browserService
+      ? browserConversationId
+      : undefined
     if (
       authorizedLibraryIds.length === 0 &&
       effectiveMagicNotesAccess === 'none' &&
-      effectiveConfigAccess === 'none'
+      effectiveConfigAccess === 'none' &&
+      !effectiveBrowserConversationId
     ) {
       return undefined
     }
@@ -435,6 +457,7 @@ export class KnowledgeMcpGateway {
       libraryIds: Object.freeze([...new Set(authorizedLibraryIds)]),
       magicNotesAccess: effectiveMagicNotesAccess,
       configAccess: effectiveConfigAccess,
+      browserConversationId: effectiveBrowserConversationId,
       ...(effectiveConfigAccess !== 'none'
         ? {
             configWorkspacePath: config?.workspacePath,
@@ -683,7 +706,7 @@ export class KnowledgeMcpGateway {
     return libraries
   }
 
-  getAvailableToolNames(token: string): ScopedDataToolName[] {
+  getAvailableToolNames(token: string): GoodBuddyBuiltinToolName[] {
     const capability = this.getCapability(token)
     return [
       ...(capability.libraryIds.length > 0
@@ -700,6 +723,9 @@ export class KnowledgeMcpGateway {
         : []),
       ...(capability.configAccess === 'write'
         ? goodbuddyConfigWriteToolNames
+        : []),
+      ...(capability.browserConversationId
+        ? browserToolNames
         : [])
     ]
   }
@@ -1413,7 +1439,7 @@ export class KnowledgeMcpGateway {
 
   private createDownstreamMcpSession(
     token: string,
-    availableScopedTools: ReadonlySet<ScopedDataToolName>
+    availableTools: ReadonlySet<GoodBuddyBuiltinToolName>
   ): DownstreamMcpSession {
     const mcp = new McpProtocolServer(
       {
@@ -1461,9 +1487,11 @@ export class KnowledgeMcpGateway {
           token,
           extra.signal
         )
-        const scopedTools = [...availableScopedTools].flatMap(
+        const scopedTools = [...availableTools].flatMap(
           (name): Tool[] => {
-            const definition = scopedDataToolByName.get(name)
+            const definition = scopedDataToolByName.get(
+              name as ScopedDataToolName
+            )
             if (!definition) {
               return []
             }
@@ -1489,10 +1517,34 @@ export class KnowledgeMcpGateway {
             ]
           }
         )
+        const capability = this.getCapability(token)
+        const browserTools = capability.browserConversationId
+          ? new BrowserModelTools({
+              service: this.browserService!,
+              conversationId: capability.browserConversationId
+            })
+          : undefined
+        const browserDefinitions = browserTools
+          ? browserTools.listTools().map(
+              (definition): Tool => ({
+                name: definition.name,
+                title: definition.displayName,
+                description: definition.description,
+                inputSchema: definition.inputSchema as Tool['inputSchema'],
+                annotations: {
+                  readOnlyHint:
+                    definition.name === 'browser_snapshot' ||
+                    definition.name === 'browser_screenshot',
+                  destructiveHint: false
+                }
+              })
+            )
+          : []
         session.listedTools = true
         return {
           tools: [
             ...scopedTools,
+            ...browserDefinitions,
             ...[...customBindings.values()].map(
               (binding) => binding.exposedTool
             )
@@ -1505,27 +1557,69 @@ export class KnowledgeMcpGateway {
       async (call, extra) => {
         const name = call.params.name
         const input = call.params.arguments ?? {}
-        if (availableScopedTools.has(name as ScopedDataToolName)) {
+        if (availableTools.has(name as ScopedDataToolName)) {
           const definition = scopedDataToolByName.get(
             name as ScopedDataToolName
           )
-          if (!definition) {
-            throw new Error('GoodBuddy 工具不存在')
-          }
-          const parsedInput = definition.inputSchema.parse(input)
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify(
-                  await this.callScopedTool(
-                    token,
-                    name as ScopedDataToolName,
-                    parsedInput
+          if (definition) {
+            const parsedInput = definition.inputSchema.parse(input)
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(
+                    await this.callScopedTool(
+                      token,
+                      name as ScopedDataToolName,
+                      parsedInput
+                    )
                   )
+                }
+              ]
+            }
+          }
+          const capability = this.getCapability(token)
+          const browserTools = capability.browserConversationId
+            ? new BrowserModelTools({
+                service: this.browserService!,
+                conversationId: capability.browserConversationId
+              })
+            : undefined
+          if (browserTools?.ownsTool(name)) {
+            try {
+              const result = await browserTools.callTool(
+                name,
+                input,
+                extra.signal
+              )
+              return {
+                content: result.parts.map((part) =>
+                  part.type === 'text'
+                    ? { type: 'text' as const, text: part.text }
+                    : {
+                        type: 'image' as const,
+                        data: part.data,
+                        mimeType: part.mimeType
+                      }
                 )
               }
-            ]
+            } catch (error) {
+              const detail =
+                safeToolErrorDetail(error, 2_000) ??
+                '内置浏览器工具执行失败'
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: 'text' as const,
+                    text:
+                      error instanceof BrowserStaleReferenceError
+                        ? `${detail}。请调用 browser_snapshot 获取新快照，然后使用新引用重试。`
+                        : detail
+                  }
+                ]
+              }
+            }
           }
         }
         const binding = (
@@ -1643,12 +1737,12 @@ export class KnowledgeMcpGateway {
         })
         return
       }
-      const availableScopedTools = new Set(
+      const availableTools = new Set(
         this.getAvailableToolNames(token)
       )
       session = this.createDownstreamMcpSession(
         token,
-        availableScopedTools
+        availableTools
       )
       createdSession = true
       this.downstreamMcpSessions.set(session.registryKey, session)

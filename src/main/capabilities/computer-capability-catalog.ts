@@ -54,7 +54,7 @@ export const computerCapabilityCatalog: readonly ComputerCapabilityCatalogEntry[
         })
       ]),
       riskSummary:
-        '总开关关闭时不会向直连模型提供浏览器工具；开启后可在 Execute 模式直接读取网页并操作网站，不再逐次询问。',
+        '总开关关闭时不会向任何 Runtime 提供浏览器工具，但不影响你在浏览器工作栏中手动操作；开启后，已分配的 Runtime 可在 Execute 模式直接读取网页并操作网站，不再逐次询问。',
       requiredDiagnostics: Object.freeze([
         'browser-executable',
         'managed-profile-root'

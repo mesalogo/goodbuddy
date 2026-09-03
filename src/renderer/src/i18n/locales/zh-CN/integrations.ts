@@ -217,16 +217,17 @@ export const integrations = {
     },
     browser: {
       title: '内置浏览器',
-      subtitle: '直连模型工具 · GoodBuddy 隔离浏览器 · Execute',
+      subtitle: 'GoodBuddy 内置能力 · 隔离浏览器 · Execute',
       description:
         '在 GoodBuddy 内置的临时隔离浏览器中打开并操作网页，不会控制客户端已安装的 Chrome、Edge 或其他浏览器。',
       control:
-        '此总开关完全由你控制：关闭时不向直连模型提供浏览器工具；开启后，直连模型可在 Execute 模式直接使用，不再逐次询问。',
-      enableAriaLabel: '启用直连模型内置浏览器',
+        '此开关只控制 Agent：关闭时不向任何 Runtime 提供浏览器工具，但不影响你在浏览器工作栏中手动操作；开启后，已分配的 Runtime 可在 Execute 模式直接使用，不再逐次询问。',
+      enableAriaLabel: '启用 GoodBuddy 内置浏览器',
       enabled: '已启用',
       disabled: '已停用',
+      unsupported: '当前设备不支持内置浏览器',
       diagnoseAriaLabel: '诊断内置浏览器',
-      toolsAriaLabel: '直连模型内置浏览器工具'
+      toolsAriaLabel: 'GoodBuddy 内置浏览器工具'
     },
     webSearch: {
       title: '联网搜索',

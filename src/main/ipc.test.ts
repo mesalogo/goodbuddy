@@ -766,7 +766,8 @@ describe('registerIpcHandlers computer capabilities', () => {
       electronMocks.handlers.get(ipcChannels.browserBack)?.(event, {
         conversationId: 'browser-conversation'
       })
-    ).rejects.toThrow('尚未启用')
+    ).resolves.toBeUndefined()
+    expect(back).toHaveBeenCalledTimes(2)
     capabilityService.getComputerCapabilityStatus.mockResolvedValueOnce({
       enabled: true,
       supported: false
@@ -6983,6 +6984,99 @@ describe('registerIpcHandlers agent terminal state', () => {
 
     expect(getEnabledBuiltinMcpServerIds).toHaveBeenCalledWith('model')
     expect(knowledgeGateway.grant).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
+  it('grants the assigned built-in browser only to managed Runtime Execute', async () => {
+    const receivedRequests: Array<{
+      requestId: string
+      knowledgeCapabilityToken?: string
+      trustedInstructions?: string
+    }> = []
+    const runtime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      supportsScopedDataTools: true,
+      async *run(request: {
+        requestId: string
+        knowledgeCapabilityToken?: string
+        trustedInstructions?: string
+      }) {
+        receivedRequests.push(request)
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'browser-capability'),
+      getAvailableToolNames: vi.fn(() => [
+        'browser_navigate',
+        'browser_snapshot'
+      ]),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const getEnabledBuiltinMcpServerIds = vi.fn(async () => [
+      'builtin-browser'
+    ])
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      false,
+      undefined,
+      { getEnabledBuiltinMcpServerIds }
+    )
+    const event = trustedEvent(harness.webContents)
+    const askRequestId = '00000000-0000-4000-8000-000000000026'
+    const executeRequestId = '00000000-0000-4000-8000-000000000027'
+
+    await harness.handler?.(event, {
+      requestId: askRequestId,
+      conversationId: 'browser-ask',
+      prompt: '只回答',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        askRequestId,
+        'completed'
+      )
+    )
+    await harness.handler?.(event, {
+      requestId: executeRequestId,
+      conversationId: 'browser-execute',
+      prompt: '打开网页',
+      workMode: 'execute',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        executeRequestId,
+        'completed'
+      )
+    )
+
+    expect(knowledgeGateway.grant).toHaveBeenCalledOnce()
+    expect(knowledgeGateway.grant).toHaveBeenCalledWith(
+      executeRequestId,
+      [],
+      expect.any(AbortSignal),
+      'none',
+      undefined,
+      'browser-execute'
+    )
+    expect(receivedRequests[0]?.knowledgeCapabilityToken).toBeUndefined()
+    expect(receivedRequests[1]).toMatchObject({
+      knowledgeCapabilityToken: 'browser-capability',
+      trustedInstructions: expect.stringContaining('browser_navigate')
+    })
     await harness.dispose()
   })
 

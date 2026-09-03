@@ -11,13 +11,19 @@ describe('built-in model tool catalog', () => {
     expect(new Set(names).size).toBe(names.length)
   })
 
-  it('places every tool in exactly its declared group', () => {
+  it('places every direct-model group outside the shared browser capability', () => {
     const groupedNames = builtinModelToolGroups.flatMap((group) =>
       group.tools.map((tool) => tool.name)
     )
+    const directModelTools = builtinModelTools.filter(
+      (tool) => tool.group !== 'browser'
+    )
 
-    expect(groupedNames).toHaveLength(builtinModelTools.length)
-    expect(new Set(groupedNames).size).toBe(builtinModelTools.length)
+    expect(groupedNames).toHaveLength(directModelTools.length)
+    expect(new Set(groupedNames).size).toBe(directModelTools.length)
+    expect(groupedNames).toEqual(
+      expect.arrayContaining(directModelTools.map((tool) => tool.name))
+    )
 
     for (const group of builtinModelToolGroups) {
       expect(group.tools.every((tool) => tool.group === group.id)).toBe(true)

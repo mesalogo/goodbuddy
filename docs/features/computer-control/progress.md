@@ -6,8 +6,8 @@
 | --- | --- |
 | 文档类型 | 实施进度 |
 | 状态 | 持续更新 |
-| 版本 | 0.3 |
-| 日期 | 2026-08-18 |
+| 版本 | 0.4 |
+| 日期 | 2026-09-03 |
 | 适用能力 | 内置浏览器与客户端电脑控制 |
 
 ## 范围
@@ -17,13 +17,14 @@ Linux x64 和 Linux arm64。
 
 ## 已完成
 
-### 直连模型与浏览器
+### Runtime 与浏览器
 
 - 已实现宿主进程拥有的隔离浏览器服务。
 - 使用 Electron 自带 Chromium 和 CDP，不下载额外浏览器。
 - 已实现导航、可访问性快照、点击、输入、选择、返回和有界截图工具。
-- 浏览器工具只在直连模型的 Execute 模式中提供；用户选择 Execute 即授权
-  本次交互运行，不再逐个弹出 GoodBuddy 工具审批。
+- 浏览器工具作为 GoodBuddy 内置能力，可分别分配给直连模型、GoodBuddy 管理的
+  OpenCode 和 Continue；只在 Execute 模式中提供。用户选择 Execute 即授权本次
+  运行，不再逐个弹出 GoodBuddy 工具审批。
 - 支持当前设备可连接的 HTTP、HTTPS、公网、内网、本机和元数据地址，
   导航及重定向仍经过 DNS 解析和目标地址固定。
 - 已实现回环过滤代理、下载和文件选择器阻止、权限拒绝、会话取消、
@@ -59,11 +60,14 @@ Linux x64 和 Linux arm64。
 
 ### 设置与安全边界
 
-- 能力存储已迁移到版本 2。
-- 内置浏览器已归入“直连模型”工具，与联网搜索并列，并明确说明不会控制
-  客户端已安装的浏览器；原有开关和配置 ID 保持不变，用户状态无需迁移。
-- 用户通过内置浏览器总开关决定是否向直连模型提供工具；开启后可在 Execute
-  模式直接使用，不逐次询问。诊断位于同一分类。
+- 能力存储已迁移到版本 6。版本 2 至 5 中原有的浏览器启停状态会迁移到
+  `builtin-browser`，已有启用状态不丢失；默认分配给直连模型、GoodBuddy 管理的
+  OpenCode 和 Continue。
+- 内置浏览器位于“内置 MCP”，与知识库、笔记和 GoodBuddy 配置一样提供独立启停、
+  Runtime 分配和工具清单；DeepSeek Harness 持续显示为不支持。
+- 浏览器开关只控制 Agent 工具访问。关闭后，任何 Runtime 都不会获得浏览器工具，
+  但用户仍可在浏览器工作栏中手动前往、返回、刷新、停止加载、交互和关闭浏览器。
+  开启后，已分配 Runtime 可在 Execute 模式直接使用，不逐次询问。
 - 尚未实际参与浏览器执行的命名配置已从界面隐藏；底层旧数据和兼容接口继续
   保留，不删除用户已有记录。
 - “电脑控制”只显示实际操作客户端电脑的能力。能力启用、配置变更和本地
@@ -110,9 +114,9 @@ Linux x64 和 Linux arm64。
 “停止加载”中断。停止加载只取消页面加载，不关闭浏览器，也不释放 Runtime 上下文；原“停止
 浏览器”会话生命周期操作已统一标为“关闭浏览器”，并在视觉和文案上与停止加载清楚区分。
 
-活动 Conversation 尚无浏览器会话时，可直接从地址栏输入 URL 并“前往”，通过现有浏览器
-能力检查和同一 URL 策略创建会话。实现复用现有每 Conversation 串行队列和有界状态，不引入
-恢复、版本化或第二套会话框架。
+活动 Conversation 尚无浏览器会话时，可直接从地址栏输入 URL 并“前往”，通过浏览器组件
+可用性检查和同一 URL 策略创建会话。该手动路径不读取 Agent 浏览器开关。实现复用现有每
+Conversation 串行队列和有界状态，不引入恢复、版本化或第二套会话框架。
 
 ### P0：百度输入时元素引用失效，已修复
 
@@ -161,16 +165,26 @@ Linux x64 和 Linux arm64。
 
 ## 下一步顺序
 
-1. 在便携版真实模型流程中继续验证返回、取消和右侧画面刷新。
+1. 在便携版真实模型流程中继续验证 OpenCode、Continue 的导航、返回、取消和右侧画面刷新。
 2. 再设计命名隔离 Profile 的持久登录态、引用和清理策略。
 3. 分别实现并真机验证 Windows UIA、macOS AX 和 Linux 原生适配器。
 
 ## 最近验证
 
-- `npm test`：591 项通过，6 项跳过。
+- `npm test`：3496 项通过，53 项跳过。
 - `npm run typecheck`：通过。
 - `npm run lint`：通过。
 - `npm run build`：通过。
+- `GOODBUDDY_RUN_RUNTIME_E2E=1 ... -t "calls the assigned built-in browser
+  through bundled OpenCode"`：通过，真实模型上报 2 次模型调用，OpenCode 经请求级
+  GoodBuddy MCP 调用 `browser_navigate` 并保留正确 Conversation 归属。
+- `GOODBUDDY_RUN_RUNTIME_E2E=1 ... -t "calls the assigned built-in browser
+  through bundled Continue"`：通过，Continue 经同一路径调用 `browser_navigate` 并
+  返回预期结果；当前 Continue Host 为该完整工具轮次上报 1 条聚合模型用量事件。
+- 聚焦的能力迁移、网关、IPC、设置界面测试共 234 项通过。其中覆盖 Agent 浏览器
+  开关关闭时用户手动浏览器操作仍可用。
 
 以上自动化结果覆盖协议、安全边界和模拟驱动，不替代真实 Electron
 BrowserWindow/WebContentsView、目标网站和目标 Linux 桌面环境的集成验证。
+本轮曾尝试用隔离用户目录启动第二个 Electron 实例，但当前已运行的正式 GoodBuddy
+单实例锁阻止了该实例继续运行；未关闭或附着用户正在使用的正式实例。

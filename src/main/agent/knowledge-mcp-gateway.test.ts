@@ -18,6 +18,7 @@ import {
 import type { KnowledgeService } from '../knowledge/knowledge-service'
 import { AssistantDatabase } from '../assistant/assistant-database'
 import {
+  browserToolNames,
   KnowledgeMcpGateway,
   type MagicNotesDatabase
 } from './knowledge-mcp-gateway'
@@ -207,6 +208,81 @@ afterEach(async () => {
 })
 
 describe('KnowledgeMcpGateway', () => {
+  it('exposes the assigned browser through a request-scoped conversation', async () => {
+    const { service } = createService()
+    const browserService = {
+      getOrigin: vi.fn(() => undefined),
+      navigate: vi.fn(async () => ({
+        url: 'https://example.com/',
+        origin: 'https://example.com'
+      })),
+      snapshot: vi.fn(),
+      click: vi.fn(),
+      type: vi.fn(),
+      select: vi.fn(),
+      back: vi.fn(),
+      screenshot: vi.fn(),
+      releaseConversation: vi.fn(async () => undefined)
+    }
+    const gateway = new KnowledgeMcpGateway(service, {
+      browserService
+    })
+    gateways.push(gateway)
+    await gateway.start()
+    const token = gateway.grant(
+      'browser-request',
+      [],
+      new AbortController().signal,
+      'none',
+      undefined,
+      'browser-conversation'
+    )!
+    expect(gateway.getAvailableToolNames(token)).toEqual(browserToolNames)
+    const client = new Client({
+      name: 'browser-loopback-test',
+      version: '1.0.0'
+    })
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(gateway.getEndpoint()!),
+        {
+          requestInit: {
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        }
+      )
+    )
+    try {
+      const listed = await client.listTools()
+      expect(listed.tools.map((tool) => tool.name)).toEqual(
+        browserToolNames
+      )
+      await expect(
+        client.callTool({
+          name: 'browser_navigate',
+          arguments: { url: 'https://example.com' }
+        })
+      ).resolves.toMatchObject({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              url: 'https://example.com/',
+              origin: 'https://example.com'
+            })
+          }
+        ]
+      })
+      expect(browserService.navigate).toHaveBeenCalledWith(
+        'browser-conversation',
+        'https://example.com',
+        expect.any(AbortSignal)
+      )
+    } finally {
+      await client.close()
+    }
+  })
+
   it('exposes GoodBuddy config reads in Ask and apply only in Execute', async () => {
     const { service } = createService()
     const configService = {

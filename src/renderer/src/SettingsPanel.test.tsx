@@ -282,6 +282,15 @@ const capabilitySnapshot = {
         | 'opencode'
         | 'continue'
       )[]
+    },
+    {
+      id: 'builtin-browser' as const,
+      enabled: false,
+      assignments: ['model', 'opencode', 'continue'] as (
+        | 'model'
+        | 'opencode'
+        | 'continue'
+      )[]
     }
   ],
   mcpServers: [] as CapabilitySnapshot['mcpServers'],
@@ -299,7 +308,8 @@ const capabilitySnapshot = {
       enabled: false,
       supported: true,
       browserProfileId: null,
-      riskSummary: '可读取网页内容并代表用户操作网站。'
+      riskSummary:
+        '总开关关闭时不会向任何 Runtime 提供浏览器工具；开启后，已分配的 Runtime 可在 Execute 模式直接读取网页并操作网站，不再逐次询问。'
     },
     {
       id: 'linux-desktop-control' as const,
@@ -4994,6 +5004,63 @@ describe('SettingsPanel runtime files', () => {
         false
       )
     )
+    const browserBuiltinCard = screen
+      .getByRole('switch', {
+        name: '启用 内置浏览器 内置 MCP'
+      })
+      .closest('article')
+    expect(browserBuiltinCard).not.toBeNull()
+    expect(
+      within(browserBuiltinCard!).getByLabelText(
+        /内置浏览器 无法分配给 DeepSeek Harness/
+      )
+    ).toBeDisabled()
+    fireEvent.click(
+      within(browserBuiltinCard!).getByLabelText('Continue')
+    )
+    await waitFor(() =>
+      expect(setBuiltinMcpServerAssignments).toHaveBeenCalledWith(
+        'builtin-browser',
+        ['model', 'opencode']
+      )
+    )
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: '启用 内置浏览器 内置 MCP'
+      })
+    )
+    await waitFor(() =>
+      expect(setBuiltinMcpServerEnabled).toHaveBeenCalledWith(
+        'builtin-browser',
+        true
+      )
+    )
+    const builtinBrowserToggle = screen.getByRole('button', {
+      name: '展开服务器 内置浏览器'
+    })
+    fireEvent.click(builtinBrowserToggle)
+    expect(builtinBrowserToggle).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(
+      screen.getByText(/不会控制客户端已安装的浏览器/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/关闭时不会向任何 Runtime 提供浏览器工具/)
+    ).toHaveTextContent('不再逐次询问')
+    expect(
+      screen.getByRole('region', { name: '内置浏览器 工具' })
+    ).toContainElement(screen.getByText('browser_navigate'))
+    fireEvent.click(
+      screen.getByRole('button', { name: '诊断内置浏览器' })
+    )
+    expect(
+      await screen.findByText('诊断结果：部分可用')
+    ).toBeInTheDocument()
+    expect(diagnoseComputerCapability).toHaveBeenCalledWith(
+      'host-browser-control'
+    )
     fireEvent.click(
       within(mcpTabs).getByRole('tab', { name: '电脑控制' })
     )
@@ -5003,7 +5070,7 @@ describe('SettingsPanel runtime files', () => {
     ).not.toBeInTheDocument()
     expect(
       screen.queryByRole('switch', {
-        name: '启用直连模型内置浏览器'
+        name: '启用 内置浏览器 内置 MCP'
       })
     ).not.toBeInTheDocument()
     expect(screen.queryByText('托管浏览器配置')).not.toBeInTheDocument()
@@ -5026,7 +5093,7 @@ describe('SettingsPanel runtime files', () => {
       within(mcpTabs).getByRole('tab', { name: '直连模型' })
     )
     expect(await screen.findByText('文件系统操作')).toBeInTheDocument()
-    expect(screen.getByText('内置浏览器')).toBeInTheDocument()
+    expect(screen.queryByText('内置浏览器')).not.toBeInTheDocument()
     expect(screen.getByText('联网搜索')).toBeInTheDocument()
     expect(screen.getByText('编程能力')).toBeInTheDocument()
     const programmingToggle = screen.getByRole('button', {
@@ -5039,42 +5106,6 @@ describe('SettingsPanel runtime files', () => {
       within(programmingToggle.closest('article')!)
         .queryByRole('switch')
     ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('switch', {
-        name: '启用直连模型内置浏览器'
-      })
-    ).not.toBeInTheDocument()
-    const builtinBrowserToggle = screen.getByRole('button', {
-      name: '展开工具组 内置浏览器'
-    })
-    fireEvent.click(builtinBrowserToggle)
-    expect(builtinBrowserToggle).toHaveAttribute('aria-expanded', 'true')
-    expect(
-      screen.getByText(/不会控制客户端已安装的 Chrome、Edge/)
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/此总开关完全由你控制/)
-    ).toHaveTextContent('不再逐次询问')
-    fireEvent.click(
-      screen.getByRole('switch', {
-        name: '启用直连模型内置浏览器'
-      })
-    )
-    await waitFor(() =>
-      expect(setComputerCapabilityEnabled).toHaveBeenCalledWith(
-        'host-browser-control',
-        true
-      )
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '诊断内置浏览器' })
-    )
-    expect(
-      await screen.findByText('诊断结果：部分可用')
-    ).toBeInTheDocument()
-    expect(diagnoseComputerCapability).toHaveBeenCalledWith(
-      'host-browser-control'
-    )
     expect(screen.queryByText('托管浏览器配置')).not.toBeInTheDocument()
     expect(screen.queryByText('内置浏览器配置')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('新配置名称')).not.toBeInTheDocument()
@@ -5084,12 +5115,10 @@ describe('SettingsPanel runtime files', () => {
       })
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('switch', {
-        name: '启用直连模型内置浏览器'
+      screen.queryByRole('switch', {
+        name: '启用 内置浏览器 内置 MCP'
       })
-    ).toBeInTheDocument()
-    fireEvent.click(builtinBrowserToggle)
-    expect(builtinBrowserToggle).toHaveAttribute('aria-expanded', 'false')
+    ).not.toBeInTheDocument()
     expect(screen.queryByText('web_search')).not.toBeInTheDocument()
     expect(screen.queryByText('web_fetch')).not.toBeInTheDocument()
     const webSearchToggle = screen.getByRole('button', {
@@ -5164,7 +5193,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getAllByRole('button', {
-        name: /(?:展开|收起)服务器 (?:知识库|笔记|GoodBuddy 配置)/u
+        name: /(?:展开|收起)服务器 (?:知识库|笔记|GoodBuddy 配置|内置浏览器)/u
       })
     ).toHaveLength(builtinMcpServers.length)
     expect(
@@ -5179,15 +5208,11 @@ describe('SettingsPanel runtime files', () => {
     const filesystemToggle = screen.getByRole('button', {
       name: '展开工具组 文件系统操作'
     })
-    const browserToggle = screen.getByRole('button', {
-      name: '展开工具组 内置浏览器'
-    })
     fireEvent.click(filesystemToggle)
     expect(screen.getByText('读取工作区文本')).toBeInTheDocument()
     expect(screen.getByText('列出工作区目录')).toBeInTheDocument()
     expect(screen.getByText('写入工作区文本')).toBeInTheDocument()
-    fireEvent.click(browserToggle)
-    expect(screen.getByText('浏览器导航')).toBeInTheDocument()
+    expect(screen.queryByText('浏览器导航')).not.toBeInTheDocument()
     expect(
       screen.getAllByRole('button', { name: /工具组/u })
     ).toHaveLength(builtinModelToolGroups.length)
