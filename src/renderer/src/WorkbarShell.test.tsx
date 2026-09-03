@@ -72,12 +72,12 @@ function ControlledShell({
 }
 
 describe('WorkbarShell', () => {
-  it('keeps tabs and their controls square', () => {
+  it('keeps tabs and their controls rounded', () => {
     expect(stylesheet).toMatch(
-      /\.workbar-shell__tab-item\s*\{[^}]*border-radius:\s*0;/u
+      /\.workbar-shell__tab-item\s*\{[^}]*border-radius:\s*var\(--radius-control\) var\(--radius-control\) 0 0;/u
     )
     expect(stylesheet).toMatch(
-      /\.workbar-shell__tab-close,\s*\n\.workbar-shell__add\s*\{[^}]*border-radius:\s*0;/u
+      /\.workbar-shell__tab-close,\s*\n\.workbar-shell__add\s*\{[^}]*border-radius:\s*var\(--radius-control\);/u
     )
   })
 
