@@ -128,7 +128,8 @@ npm run lint
 
 扫描二维码加入 GoodBuddy 微信群：
 
-<img width="360" alt="GoodBuddy 微信社区群二维码" src="https://github.com/user-attachments/assets/10bb7ac2-0bc1-41a9-978d-c2862923fcd6" />
+<img width="1250" height="1194" alt="9627ce196b0de42f123c33dd9dea1568" src="https://github.com/user-attachments/assets/ff87dfac-d72f-47b7-ac9a-c88b0b4c96d9" />
+
 
 ## 开源许可
 
