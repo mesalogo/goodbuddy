@@ -39,7 +39,9 @@ export type WorkspaceEntry = WorkspaceDirectoryEntry & {
 }
 
 export type WorkspaceReadInput = WorkspacePathInput & {
+  offsetBytes?: number
   maximumBytes?: number
+  allowTruncated?: boolean
   tooLargeMessage?: string
   invalidUtf8Message?: string
 }
@@ -49,6 +51,9 @@ export type FilePreview = {
   name: string
   content: string
   size: number
+  offsetBytes: number
+  bytesRead: number
+  truncated: boolean
 }
 
 export type WorkspaceWriteInput = WorkspacePathInput & {

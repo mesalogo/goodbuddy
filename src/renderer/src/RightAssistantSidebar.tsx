@@ -120,7 +120,10 @@ type RightAssistantSidebarProps = {
   onListWorkspaceDirectory: (
     path: string
   ) => Promise<WorkspaceDirectoryListing>
-  onLoadWorkspaceFile: (path: string) => Promise<WorkspaceFilePreview>
+  onLoadWorkspaceFile: (
+    path: string,
+    offsetBytes?: number
+  ) => Promise<WorkspaceFilePreview>
   onOpenWorkspaceEntry: (
     path: string,
     type: 'file' | 'directory'
@@ -622,6 +625,10 @@ export function RightAssistantSidebar({
       }
   >()
   const workspacePreviewRequest = useRef(0)
+  const [workspacePreviewLoadingMore, setWorkspacePreviewLoadingMore] =
+    useState(false)
+  const [workspacePreviewLoadMoreError, setWorkspacePreviewLoadMoreError] =
+    useState('')
   const [workspaceRefreshVersion, setWorkspaceRefreshVersion] = useState(0)
   const [taskFilter, setTaskFilter] = useState<
     'attention' | 'active' | 'paused' | 'finished'
@@ -1037,8 +1044,10 @@ export function RightAssistantSidebar({
     workspacePreviewRequest.current = requestId
     const projectId = workspaceProjectId
     setWorkspacePreview({ projectId, path, state: 'loading' })
+    setWorkspacePreviewLoadingMore(false)
+    setWorkspacePreviewLoadMoreError('')
     setActionError('')
-    void onLoadWorkspaceFile(path)
+    void onLoadWorkspaceFile(path, 0)
       .then((file) => {
         if (workspacePreviewRequest.current === requestId) {
           setWorkspacePreview({
@@ -1061,6 +1070,59 @@ export function RightAssistantSidebar({
                 ? reason.message
                 : t('sidebar.errors.workspacePreview')
           })
+        }
+      })
+  }
+
+  const loadMoreWorkspaceFile = (): void => {
+    const preview = currentWorkspacePreview
+    if (
+      preview?.state !== 'ready' ||
+      !preview.file.truncated ||
+      workspacePreviewLoadingMore
+    ) {
+      return
+    }
+    const requestId = workspacePreviewRequest.current
+    const expectedOffset = preview.file.nextOffsetBytes
+    setWorkspacePreviewLoadingMore(true)
+    setWorkspacePreviewLoadMoreError('')
+    void onLoadWorkspaceFile(preview.path, expectedOffset)
+      .then((nextPage) => {
+        if (workspacePreviewRequest.current !== requestId) {
+          return
+        }
+        if (
+          nextPage.path !== preview.file.path ||
+          nextPage.offsetBytes !== expectedOffset ||
+          nextPage.size !== preview.file.size ||
+          nextPage.mimeType !== preview.file.mimeType
+        ) {
+          throw new Error(t('sidebar.errors.workspacePreview'))
+        }
+        setWorkspacePreview({
+          projectId: preview.projectId,
+          path: preview.path,
+          state: 'ready',
+          file: {
+            ...nextPage,
+            content: `${preview.file.content}${nextPage.content}`,
+            offsetBytes: preview.file.offsetBytes
+          }
+        })
+      })
+      .catch((reason: unknown) => {
+        if (workspacePreviewRequest.current === requestId) {
+          setWorkspacePreviewLoadMoreError(
+            reason instanceof Error
+              ? reason.message
+              : t('sidebar.errors.workspacePreview')
+          )
+        }
+      })
+      .finally(() => {
+        if (workspacePreviewRequest.current === requestId) {
+          setWorkspacePreviewLoadingMore(false)
         }
       })
   }
@@ -1426,6 +1488,8 @@ export function RightAssistantSidebar({
                   onClick={() => {
                     workspacePreviewRequest.current += 1
                     setWorkspacePreview(undefined)
+                    setWorkspacePreviewLoadingMore(false)
+                    setWorkspacePreviewLoadMoreError('')
                     setActionError('')
                   }}
                   type="button"
@@ -1471,16 +1535,50 @@ export function RightAssistantSidebar({
                   </button>
                 </div>
               ) : (
-                <div className="markdown-body markdown-content">
-                  {currentWorkspacePreview.file.mimeType ===
-                  'text/markdown' ? (
-                    <MarkdownRenderer>
-                      {currentWorkspacePreview.file.content}
-                    </MarkdownRenderer>
-                  ) : (
-                    <pre>{currentWorkspacePreview.file.content}</pre>
+                <>
+                  <div className="markdown-body markdown-content">
+                    {currentWorkspacePreview.file.mimeType ===
+                    'text/markdown' ? (
+                      <MarkdownRenderer>
+                        {currentWorkspacePreview.file.content}
+                      </MarkdownRenderer>
+                    ) : (
+                      <pre>{currentWorkspacePreview.file.content}</pre>
+                    )}
+                  </div>
+                  {currentWorkspacePreview.file.truncated && (
+                    <div className="assistant-sidebar__preview-more">
+                      <p>
+                        {t('sidebar.workspace.partialPreview', {
+                          loaded: currentWorkspacePreview.file
+                            .nextOffsetBytes.toLocaleString(locale),
+                          total:
+                            currentWorkspacePreview.file.size.toLocaleString(
+                              locale
+                            )
+                        })}
+                      </p>
+                      <button
+                        className="secondary-button"
+                        disabled={workspacePreviewLoadingMore}
+                        onClick={loadMoreWorkspaceFile}
+                        type="button"
+                      >
+                        {workspacePreviewLoadingMore
+                          ? t('sidebar.workspace.loadingMore')
+                          : t('sidebar.workspace.loadMore')}
+                      </button>
+                    </div>
                   )}
-                </div>
+                  {workspacePreviewLoadMoreError && (
+                    <p
+                      className="assistant-sidebar__preview-more-error"
+                      role="alert"
+                    >
+                      {workspacePreviewLoadMoreError}
+                    </p>
+                  )}
+                </>
               )}
             </section>
           ) : (

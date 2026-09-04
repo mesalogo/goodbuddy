@@ -23,6 +23,7 @@ import {
   isPathInside,
   listBoundedDirectoryEntries,
   readBoundedUtf8File,
+  readUtf8FileRange,
   resolveExistingWorkspacePath
 } from '../workspace-file-access'
 import type {
@@ -562,6 +563,30 @@ export class LocalWorkspaceAccess implements WorkspaceAccess {
       '工作区读取上限无效'
     )
     const file = await this.resolveExisting(input.path, 'file')
+    const offsetBytes = input.offsetBytes ?? 0
+    if (input.allowTruncated || offsetBytes > 0) {
+      const preview = await readUtf8FileRange(
+        file.canonicalPath,
+        offsetBytes,
+        maximumBytes,
+        input.invalidUtf8Message ??
+          '工作区读取目标不是有效 UTF-8 文本'
+      )
+      if (preview.truncated && !input.allowTruncated) {
+        throw new Error(
+          input.tooLargeMessage ?? '工作区文本文件超过安全限制'
+        )
+      }
+      if (preview.truncated && preview.bytesRead === 0) {
+        throw new Error('工作区读取分页无法继续')
+      }
+      input.signal?.throwIfAborted()
+      return {
+        path: file.path,
+        name: basename(file.canonicalPath),
+        ...preview
+      }
+    }
     const preview = await readBoundedUtf8File(
       file.canonicalPath,
       maximumBytes,
@@ -573,7 +598,10 @@ export class LocalWorkspaceAccess implements WorkspaceAccess {
       path: file.path,
       name: basename(file.canonicalPath),
       content: preview.content,
-      size: preview.size
+      size: preview.size,
+      offsetBytes: 0,
+      bytesRead: preview.size,
+      truncated: false
     }
   }
 

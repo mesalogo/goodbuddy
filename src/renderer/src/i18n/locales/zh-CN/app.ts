@@ -595,6 +595,8 @@ export const app = {
     conversationQueueResumeFailed:
       '无法继续执行当前对话的待发送队列',
     conversationPersistenceFailed: '会话持久化失败，请检查本地存储',
+    activityHistoryPersistenceFailed: '运行记录保存失败，请检查本地存储',
+    activityHistoryReadFailed: '运行记录读取失败',
     remoteConversationRefreshFailed: '远程通道会话刷新失败',
     projectReadFailed: '项目读取失败',
     expertsReadFailed: '专家角色读取失败',

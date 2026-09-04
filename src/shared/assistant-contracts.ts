@@ -31,6 +31,57 @@ export type ProjectChannel = z.infer<typeof projectChannelSchema>
 
 const projectExecutionSpacePathSchema = z.string().max(4_096)
 
+export const activityRecordSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    conversationId: z.string().min(1).max(256),
+    requestId: z.string().min(1).max(256),
+    callId: z.string().min(1).max(256).optional(),
+    scope: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('global') }).strict(),
+      z
+        .object({
+          kind: z.literal('project'),
+          projectId: z.string().min(1).max(256),
+          projectName: z.string().min(1).max(120)
+        })
+        .strict(),
+      z.object({ kind: z.literal('unavailable') }).strict()
+    ]),
+    kind: z.enum([
+      'request',
+      'tool',
+      'approval',
+      'subagent',
+      'result'
+    ]),
+    title: z.string().min(1).max(240),
+    detail: z.string(),
+    status: z.enum([
+      'pending',
+      'running',
+      'completed',
+      'failed',
+      'denied',
+      'cancelled',
+      'interrupted'
+    ]),
+    createdAt: z.number().finite().nonnegative()
+  })
+  .strict()
+
+export const activityHistorySnapshotSchema = z
+  .object({
+    records: z.array(activityRecordSchema),
+    legacyHistoryMayBeIncomplete: z.boolean()
+  })
+  .strict()
+
+export type ActivityRecord = z.infer<typeof activityRecordSchema>
+export type ActivityHistorySnapshot = z.infer<
+  typeof activityHistorySnapshotSchema
+>
+
 export const projectExecutionSpaceSchema = z.discriminatedUnion(
   'kind',
   [
@@ -182,12 +233,9 @@ export const conversationMessageBlockSchema = z.discriminatedUnion('type', [
     .strict()
 ])
 
-export const maximumConversationRetainedActivities = 500
-export const maximumConversationMessageBlocks = 2_000
-
-export const conversationMessageBlocksSchema = z
-  .array(conversationMessageBlockSchema)
-  .max(maximumConversationMessageBlocks)
+export const conversationMessageBlocksSchema = z.array(
+  conversationMessageBlockSchema
+)
 
 export type ConversationToolActivity = z.infer<
   typeof conversationToolActivitySchema
@@ -278,14 +326,8 @@ export const conversationMessageSchema = z
       .array(conversationContextCompressionMarkerSchema)
       .max(2)
       .optional(),
-    tools: z
-      .array(conversationToolActivitySchema)
-      .max(maximumConversationRetainedActivities)
-      .optional(),
-    subagents: z
-      .array(conversationSubagentActivitySchema)
-      .max(maximumConversationRetainedActivities)
-      .optional(),
+    tools: z.array(conversationToolActivitySchema).optional(),
+    subagents: z.array(conversationSubagentActivitySchema).optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
     sourceReferences: z
       .array(
@@ -559,6 +601,9 @@ export type WorkspaceFilePreview = {
   content: string
   mimeType: 'text/markdown' | 'text/plain' | 'application/json'
   size: number
+  offsetBytes: number
+  nextOffsetBytes: number
+  truncated: boolean
 }
 
 export type AssistantTaskStatus =

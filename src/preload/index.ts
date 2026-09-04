@@ -49,6 +49,8 @@ import type {
   AssistantHeartbeatRun,
   AssistantExpert,
   AssistantTask,
+  ActivityHistorySnapshot,
+  ActivityRecord,
   TokenUsageSummary,
   ConversationBranchInput,
   ConversationSnapshot,
@@ -1096,10 +1098,15 @@ const desktopApi: DesktopApi = {
         projectId,
         path
       }) as Promise<WorkspaceDirectoryListing>,
-    readFile: (projectId: string, path: string) =>
+    readFile: (
+      projectId: string,
+      path: string,
+      offsetBytes?: number
+    ) =>
       ipcRenderer.invoke(ipcChannels.workspaceFileRead, {
         projectId,
-        path
+        path,
+        offsetBytes
       }) as Promise<WorkspaceFilePreview>,
     openPath: async (
       projectId: string,
@@ -1123,6 +1130,21 @@ const desktopApi: DesktopApi = {
       await ipcRenderer.invoke(ipcChannels.tasksSetStatus, {
         taskId,
         status
+      })
+    }
+  },
+  activityHistory: {
+    get: () =>
+      ipcRenderer.invoke(
+        ipcChannels.activityHistoryGet
+      ) as Promise<ActivityHistorySnapshot>,
+    replace: async (
+      records: ActivityRecord[],
+      legacyHistoryMayBeIncomplete: boolean
+    ) => {
+      await ipcRenderer.invoke(ipcChannels.activityHistoryReplace, {
+        records,
+        legacyHistoryMayBeIncomplete
       })
     }
   },

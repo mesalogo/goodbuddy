@@ -168,7 +168,7 @@ Main 传入已规范化的绝对 POSIX root。Agent 返回 Workspace identity、
 - 选择目录只更新项目草稿，仍需通过正常的 Agent、Workspace、Runtime 验证和项目保存事务才会持久化。
 - Ask Workspace handle 不暴露写入方法。
 - Execute Workspace handle 可读写，但这不是 Execute 的唯一权限面；Execute Runtime 本身使用 SSH 账号的正常权限。
-- 文件预览、搜索、Git diff、目录项和显式文件传输保持字节、条目数和路径长度上限。
+- 文件预览按有界页面传输并保持 UTF-8 字符边界；超过单页大小时先返回当前页，用户可继续加载，不把单页传输上限误作文件总预览上限。搜索、Git diff、目录项和显式文件传输继续保持各自的字节、条目数和路径长度上限。
 
 ## Runtime
 
@@ -225,11 +225,11 @@ Execute 直接启动已签名 Runtime：
   调度、跨 channel 超车、批发送或第二套拥塞控制。
 - Agent 在把 Main 输入交给 Runtime 前、以及把 Runtime 输出交给 Main 前，先把 ACP frame 写入本机 journal。ACK 只推进 cursor 并裁剪已确认 frame，不表示 channel 已终止。
 - Main 持久化 binding identity 和单调 cursor；保留中的 connection lease 即使处于 offline/reconnecting，也可以先把新 cursor 落盘。重连提交不能覆盖 resume 过程中并发落盘的更新。
-- Runtime 事件仍对单项展示字段做有界截断，但不按固定工具调用数或 Desktop 累计展示量
-  中止 Prompt；待消费事件达到阈值时通过 ACP 入站暂停施加背压，不取消原生 Runtime。
-  Renderer 和 Main 为每条回复保留最多 500 条工具与子 Agent 活动以及 2,000 个交错
-  展示块；超过后显示本地截断提示，但继续执行 Runtime，也不把展示容量当作 Prompt
-  工具调用上限。已保留活动的后续状态更新仍会正常归并。
+- Runtime 事件仍对协议定义的单项传输字段应用既有边界，但不按固定工具调用数或 Desktop
+  累计展示量中止 Prompt；待消费事件达到阈值时通过 ACP 入站暂停施加背压，不取消原生
+  Runtime。Main 和 Renderer 不再按 500 条工具/子 Agent 活动或 2,000 个交错展示块丢弃
+  对话详情；独立运行记录也改由 Main SQLite 完整保存并按批渲染。旧版已经触发本地上限的
+  历史继续显示可能不完整的提示，不能通过迁移隐藏既有数据缺口。
 - OpenCode 原生 Task 工具按 `subagent_type`、`description`、`prompt` 和稳定 tool call ID
   解析为子 Agent 事件。本地 OpenCode SDK 与远端 ACP 增量工具事件复用同一转换；ACP
   首帧缺少参数时可以先显示普通工具活动，后续参数确认其为 Task 后必须替换为子 Agent
@@ -413,6 +413,10 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
   Host 的唯一 `/tmp/goodbuddy-e2e-*` 目录完成 Runtime 激活和 Agent 本机模型 gateway
   验证。模型 gateway 通过所选 Anthropic 连接返回预期随机哨兵，HTTP 状态为 200，实际
   文本模型调用恰好 1 次；Host 临时目录随后删除，共享 Agent/Runtime 安装和进程未修改。
+- 2026-09-04 使用当前源码 Desktop 和共享 Linux x64 Host 的既有 Agent/Workspace
+  生产链路验证分页文件预览。专用测试文本共 262,166 bytes，首个 256 KiB 页面在三字节
+  UTF-8 字符前回退并显示 262,143 bytes；继续加载后完整追加剩余文本，页面不再显示加载
+  按钮且没有错误。测试未调用模型；专用远端文件、目录和本机隔离用户数据均已清理。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
   OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生

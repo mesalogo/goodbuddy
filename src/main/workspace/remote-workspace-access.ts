@@ -149,6 +149,20 @@ function boundedInteger(
   return resolved
 }
 
+function isInvalidUtf8RpcError(error: unknown): boolean {
+  if (
+    !error ||
+    typeof error !== 'object' ||
+    !('data' in error) ||
+    !error.data ||
+    typeof error.data !== 'object' ||
+    !('code' in error.data)
+  ) {
+    return false
+  }
+  return error.data.code === 'invalid-utf8'
+}
+
 function assertTransportBinding(
   expected: RemoteWorkspaceProjectBinding,
   actual: RemoteWorkspaceTransportBinding
@@ -419,16 +433,43 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
       '工作区读取上限无效'
     )
     const opened = await this.open(input.signal)
-    const request = remoteWorkspaceReadTextRequestSchema.parse({
-      ...this.reference(opened),
-      relativePath: input.path,
-      offsetBytes: 0,
-      maximumBytes
-    })
-    const rawResult = await opened.lease.readWorkspaceText(
-      request,
-      input.signal
-    )
+    const offsetBytes = input.offsetBytes ?? 0
+    let rawResult: RemoteWorkspaceReadTextResult | undefined
+    let boundaryError: unknown
+    const maximumTrailingBytes = input.allowTruncated
+      ? Math.min(3, maximumBytes - 1)
+      : 0
+    for (
+      let trailingBytes = 0;
+      trailingBytes <= maximumTrailingBytes;
+      trailingBytes += 1
+    ) {
+      const request = remoteWorkspaceReadTextRequestSchema.parse({
+        ...this.reference(opened),
+        relativePath: input.path,
+        offsetBytes,
+        maximumBytes: maximumBytes - trailingBytes
+      })
+      try {
+        rawResult = await opened.lease.readWorkspaceText(
+          request,
+          input.signal
+        )
+        break
+      } catch (error) {
+        if (
+          !input.allowTruncated ||
+          trailingBytes === maximumTrailingBytes ||
+          !isInvalidUtf8RpcError(error)
+        ) {
+          throw error
+        }
+        boundaryError = error
+      }
+    }
+    if (!rawResult) {
+      throw boundaryError
+    }
     let result: RemoteWorkspaceReadTextResult
     try {
       result = remoteWorkspaceReadTextResultSchema.parse(rawResult)
@@ -444,21 +485,32 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
     }
     if (
       result.relativePath !== input.path ||
-      result.offsetBytes !== 0
+      result.offsetBytes !== offsetBytes ||
+      result.offsetBytes + result.bytesRead > result.totalBytes ||
+      (!result.truncated &&
+        result.offsetBytes + result.bytesRead !== result.totalBytes) ||
+      (result.truncated &&
+        result.offsetBytes + result.bytesRead >= result.totalBytes)
     ) {
       throw new Error('远程工作区返回了不匹配的文件')
     }
-    if (result.truncated || result.bytesRead !== result.totalBytes) {
+    if (result.truncated && !input.allowTruncated) {
       throw new Error(
         input.tooLargeMessage ?? '工作区文本文件超过安全限制'
       )
+    }
+    if (result.truncated && result.bytesRead === 0) {
+      throw new Error('远程工作区读取分页无法继续')
     }
     const name = input.path.split('/').at(-1) ?? input.path
     return {
       path: input.path,
       name,
       content: result.content,
-      size: result.totalBytes
+      size: result.totalBytes,
+      offsetBytes: result.offsetBytes,
+      bytesRead: result.bytesRead,
+      truncated: result.truncated
     }
   }
 

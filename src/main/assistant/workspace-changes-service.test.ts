@@ -95,7 +95,10 @@ describe('workspace file browsing', () => {
       path: 'remote.md',
       name: 'remote.md',
       content: '# fake\n',
-      size: 7
+      size: 7,
+      offsetBytes: 0,
+      bytesRead: 7,
+      truncated: false
     }))
     const getChanges = vi.fn(async () => ({
       rootPath: '/remote',
@@ -136,7 +139,9 @@ describe('workspace file browsing', () => {
     expect(readText).toHaveBeenCalledWith(
       expect.objectContaining({
         path: 'remote.md',
-        maximumBytes: 256 * 1024
+        offsetBytes: 0,
+        maximumBytes: 256 * 1024,
+        allowTruncated: true
       })
     )
   })
@@ -171,15 +176,11 @@ describe('workspace file browsing', () => {
     })
   })
 
-  it('rejects traversal, unsupported files, invalid UTF-8, and oversized files', async () => {
+  it('rejects traversal, unsupported files, and invalid UTF-8', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-files-'))
     temporaryDirectories.push(directory)
     await writeFile(join(directory, 'image.bin'), Buffer.from([0, 1, 2]))
     await writeFile(join(directory, 'invalid.txt'), Buffer.from([0xff]))
-    await writeFile(
-      join(directory, 'large.txt'),
-      Buffer.alloc(256 * 1024 + 1, 97)
-    )
 
     await expect(
       readWorkspaceFile(directory, '../outside.txt')
@@ -190,8 +191,33 @@ describe('workspace file browsing', () => {
     await expect(
       readWorkspaceFile(directory, 'invalid.txt')
     ).rejects.toThrow('有效 UTF-8')
-    await expect(
-      readWorkspaceFile(directory, 'large.txt')
-    ).rejects.toThrow('超过 256KB')
+  })
+
+  it('reads large UTF-8 files page by page without a total preview limit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-files-'))
+    temporaryDirectories.push(directory)
+    const firstPage = 'a'.repeat(256 * 1024 - 1)
+    const content = `${firstPage}你\n第二页`
+    await writeFile(join(directory, 'large.txt'), content)
+
+    const first = await readWorkspaceFile(directory, 'large.txt')
+    expect(first).toMatchObject({
+      content: firstPage,
+      offsetBytes: 0,
+      nextOffsetBytes: 256 * 1024 - 1,
+      truncated: true
+    })
+
+    const second = await readWorkspaceFile(
+      directory,
+      'large.txt',
+      first.nextOffsetBytes
+    )
+    expect(second).toMatchObject({
+      content: '你\n第二页',
+      offsetBytes: first.nextOffsetBytes,
+      truncated: false
+    })
+    expect(`${first.content}${second.content}`).toBe(content)
   })
 })

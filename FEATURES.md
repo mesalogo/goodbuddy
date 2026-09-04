@@ -86,8 +86,9 @@ otherwise.
   the same project and different projects can run in parallel. Request-scoped
   dynamic MCP tools remain isolated through default wildcard disablement and
   explicit current-request enablement. OpenCode and Continue runs do not stop
-  at a fixed tool-call or activity count, and exceeding local display capture
-  capacity truncates the displayed copy without cancelling the native task.
+  at a fixed tool-call or activity count, and every observed tool and Subagent
+  activity remains in the local conversation instead of being discarded while
+  the native task continues.
   Interactive questions are answered only by foreground conversations; scheduled tasks, remote channels,
   delegated work, and other background runs fail immediately with guidance to
   rerun in the foreground
@@ -393,10 +394,14 @@ otherwise.
   activity, and independent artifact files. Ordinary chat responses remain
   only in the conversation and are no longer copied into Artifacts; existing
   duplicate chat Markdown is hidden from the artifact list but not physically
-  deleted. Token usage is grouped by Runtime and model and normalizes the
-  different OpenAI-compatible and Anthropic Messages cache-reporting semantics
-  when showing cache hit rate. Activity is grouped by conversation and
-  collapsed by default so long histories do not fill the page.
+  deleted. Run history is stored in Main SQLite without the previous 500-item,
+  4,000-character, or 2 MB Renderer limits; the page renders it in batches,
+  and a persistent warning remains when a migrated legacy cache may already
+  have lost older records or detail. Token usage is grouped by Runtime and
+  model and normalizes the different OpenAI-compatible and Anthropic Messages
+  cache-reporting semantics when showing cache hit rate. Activity is grouped
+  by conversation and collapsed by default so long histories do not fill the
+  page.
 - [x] **Task and custom-task experience**: Each product-level Task belongs to
   one Conversation, while one Conversation can contain multiple Tasks. The
   left conversation list exposes Task children through a leading expand

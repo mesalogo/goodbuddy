@@ -12,10 +12,7 @@ import {
   builtInDefaultProjectSeedName
 } from '../../shared/assistant-contracts'
 import { ActivityPanel } from './ActivityPanel'
-import {
-  MAX_ACTIVITY_RECORDS,
-  type ActivityRecord
-} from './activity-store'
+import { type ActivityRecord } from './activity-store'
 import i18n from './i18n'
 
 function makeRecord(
@@ -642,9 +639,9 @@ describe('ActivityPanel', () => {
     expect(within(detail).getByText('项目：项目甲')).toBeInTheDocument()
   })
 
-  it('never renders more than 500 records', () => {
+  it('reveals retained records beyond the initial render batch', () => {
     const records = Array.from(
-      { length: MAX_ACTIVITY_RECORDS + 1 },
+      { length: 501 },
       (_, index) => makeRecord(index)
     )
     render(
@@ -658,6 +655,30 @@ describe('ActivityPanel', () => {
 
     expect(screen.getByText('活动 499')).toBeInTheDocument()
     expect(screen.queryByText('活动 500')).not.toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '继续显示（剩余 1 条）'
+      })
+    )
+    expect(screen.getByText('活动 500')).toBeInTheDocument()
+  })
+
+  it('warns when the migrated legacy history may already be incomplete', () => {
+    render(
+      <ActivityPanel
+        legacyHistoryMayBeIncomplete
+        onClear={vi.fn()}
+        onOpenConversation={vi.fn()}
+        records={[makeRecord(1)]}
+        tokenUsage={makeTokenUsage()}
+      />
+    )
+
+    expect(
+      screen.getByText(
+        '旧版本曾限制本机运行记录的数量和详情长度，因此更早的记录或部分详情可能已经丢失。新记录会完整保存。'
+      )
+    ).toHaveAttribute('role', 'status')
   })
 
   it('shows totals without double-counting cache tokens', () => {

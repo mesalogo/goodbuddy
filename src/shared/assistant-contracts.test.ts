@@ -3,6 +3,7 @@ import type { AssistantProject } from './assistant-contracts'
 import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
+  activityHistorySnapshotSchema,
   conversationBranchInputSchema,
   conversationMessageSchema,
   conversationSubagentActivitySchema,
@@ -32,6 +33,29 @@ const untouchedProject: AssistantProject = {
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z'
 }
+
+describe('activity history contracts', () => {
+  it('accepts more than 500 records and details longer than 4,000 characters', () => {
+    const records = Array.from({ length: 501 }, (_, index) => ({
+      id: `activity-${index}`,
+      conversationId: 'conversation-1',
+      requestId: 'request-1',
+      scope: { kind: 'global' as const },
+      kind: 'tool' as const,
+      title: `Activity ${index}`,
+      detail: index === 500 ? 'x'.repeat(4_001) : '',
+      status: 'completed' as const,
+      createdAt: index
+    }))
+
+    expect(
+      activityHistorySnapshotSchema.parse({
+        records,
+        legacyHistoryMayBeIncomplete: true
+      }).records
+    ).toHaveLength(501)
+  })
+})
 
 describe('isUntouchedBuiltInDefaultProject', () => {
   it('requires the persistent marker and exact seed text', () => {
@@ -174,14 +198,14 @@ describe('project execution space contracts', () => {
 })
 
 describe('conversation activity contracts', () => {
-  it('accepts long activity runs within the retained display bounds', () => {
-    const tools = Array.from({ length: 101 }, (_, index) => ({
+  it('accepts complete long activity runs without a fixed item limit', () => {
+    const tools = Array.from({ length: 501 }, (_, index) => ({
       callId: `call-${index + 1}`,
       name: 'read',
       state: 'completed' as const,
       summary: `Tool ${index + 1}`
     }))
-    const subagents = Array.from({ length: 101 }, (_, index) => ({
+    const subagents = Array.from({ length: 501 }, (_, index) => ({
       childTaskId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
       routingMode: 'native' as const,
       actor: {
@@ -203,23 +227,22 @@ describe('conversation activity contracts', () => {
         })),
         createdAt: 1,
         state: 'complete',
-        displayCaptureTruncated: true,
         tools,
         subagents
       })
     ).toMatchObject({
       tools: expect.arrayContaining([
-        expect.objectContaining({ callId: 'call-101' })
+        expect.objectContaining({ callId: 'call-501' })
       ]),
       subagents: expect.arrayContaining([
         expect.objectContaining({
-          childTaskId: '00000000-0000-4000-8000-000000000101'
+          childTaskId: '00000000-0000-4000-8000-000000000501'
         })
       ])
     })
   })
 
-  it('rejects conversation activity and block arrays beyond display bounds', () => {
+  it('accepts message block arrays beyond the former display bound', () => {
     const baseMessage = {
       id: '00000000-0000-4000-8000-000000000999',
       role: 'assistant' as const,
@@ -230,24 +253,13 @@ describe('conversation activity contracts', () => {
     expect(
       conversationMessageSchema.safeParse({
         ...baseMessage,
-        tools: Array.from({ length: 501 }, (_, index) => ({
-          callId: `call-${index + 1}`,
-          name: 'read',
-          state: 'completed' as const,
-          summary: `Tool ${index + 1}`
-        }))
-      }).success
-    ).toBe(false)
-    expect(
-      conversationMessageSchema.safeParse({
-        ...baseMessage,
         blocks: Array.from({ length: 2_001 }, (_, index) => ({
           id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
           type: 'text' as const,
           content: 'x'
         }))
       }).success
-    ).toBe(false)
+    ).toBe(true)
   })
 })
 

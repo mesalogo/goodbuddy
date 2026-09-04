@@ -168,7 +168,10 @@ describe('RemoteWorkspaceAccess', () => {
       path: 'README.md',
       name: 'README.md',
       content: 'hello',
-      size: 5
+      size: 5,
+      offsetBytes: 0,
+      bytesRead: 5,
+      truncated: false
     })
     await expect(
       access.search({
@@ -363,6 +366,70 @@ describe('RemoteWorkspaceAccess', () => {
       access.writeTextAtomic({ path: 'x', content: 'x' })
     ).rejects.toThrow('持久 operation transport')
     expect(transport.acquireLease).not.toHaveBeenCalled()
+  })
+
+  it('returns remote file pages and keeps UTF-8 boundaries intact', async () => {
+    const invalidBoundary = Object.assign(
+      new Error('Workspace file is not valid UTF-8'),
+      { data: { code: 'invalid-utf8' } }
+    )
+    const readWorkspaceText = vi
+      .fn()
+      .mockRejectedValueOnce(invalidBoundary)
+      .mockResolvedValueOnce({
+        relativePath: 'large.txt',
+        content: '你a',
+        offsetBytes: 0,
+        bytesRead: 4,
+        totalBytes: 7,
+        digest,
+        truncated: true
+      })
+      .mockResolvedValueOnce({
+        relativePath: 'large.txt',
+        content: '好',
+        offsetBytes: 4,
+        bytesRead: 3,
+        totalBytes: 7,
+        digest,
+        truncated: false
+      })
+    const lease = createLease({ readWorkspaceText })
+    const { access } = createAccess(lease)
+
+    const first = await access.readText({
+      path: 'large.txt',
+      maximumBytes: 5,
+      allowTruncated: true
+    })
+    const second = await access.readText({
+      path: 'large.txt',
+      offsetBytes: first.offsetBytes + first.bytesRead,
+      maximumBytes: 5,
+      allowTruncated: true
+    })
+
+    expect(first).toMatchObject({
+      content: '你a',
+      offsetBytes: 0,
+      bytesRead: 4,
+      truncated: true
+    })
+    expect(second).toMatchObject({
+      content: '好',
+      offsetBytes: 4,
+      truncated: false
+    })
+    expect(
+      readWorkspaceText.mock.calls.map(([request]) => ({
+        offsetBytes: request.offsetBytes,
+        maximumBytes: request.maximumBytes
+      }))
+    ).toEqual([
+      { offsetBytes: 0, maximumBytes: 5 },
+      { offsetBytes: 0, maximumBytes: 4 },
+      { offsetBytes: 4, maximumBytes: 5 }
+    ])
   })
 
   it('retries one inconsistent Git snapshot and maps status and diff', async () => {

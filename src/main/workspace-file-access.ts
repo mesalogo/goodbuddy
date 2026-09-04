@@ -67,6 +67,84 @@ export async function readBoundedUtf8File(
   }
 }
 
+export async function readUtf8FileRange(
+  filePath: string,
+  offsetBytes: number,
+  maximumBytes: number,
+  invalidUtf8Message: string
+): Promise<{
+  content: string
+  size: number
+  offsetBytes: number
+  bytesRead: number
+  truncated: boolean
+}> {
+  const handle = await open(filePath, 'r')
+  try {
+    const metadata = await handle.stat()
+    if (
+      !metadata.isFile() ||
+      !Number.isSafeInteger(offsetBytes) ||
+      offsetBytes < 0 ||
+      offsetBytes > metadata.size
+    ) {
+      throw new Error('工作区读取范围无效')
+    }
+    const requestedBytes = Math.min(
+      maximumBytes,
+      metadata.size - offsetBytes
+    )
+    const data = Buffer.alloc(requestedBytes)
+    let bytesRead = 0
+    while (bytesRead < data.length) {
+      const result = await handle.read(
+        data,
+        bytesRead,
+        data.length - bytesRead,
+        offsetBytes + bytesRead
+      )
+      if (result.bytesRead === 0) {
+        break
+      }
+      bytesRead += result.bytesRead
+    }
+    const selected = data.subarray(0, bytesRead)
+    const reachesEnd = offsetBytes + bytesRead >= metadata.size
+    let decoded: string | undefined
+    let decodedBytes = bytesRead
+    for (
+      let trailingBytes = 0;
+      trailingBytes <= (reachesEnd ? 0 : 3);
+      trailingBytes += 1
+    ) {
+      decodedBytes = bytesRead - trailingBytes
+      if (decodedBytes < 0) {
+        break
+      }
+      try {
+        decoded = new TextDecoder('utf-8', { fatal: true }).decode(
+          selected.subarray(0, decodedBytes)
+        )
+        break
+      } catch {
+        // A page may end in the middle of one UTF-8 character.
+      }
+    }
+    if (decoded === undefined) {
+      throw new Error(invalidUtf8Message)
+    }
+    return {
+      content: decoded,
+      size: metadata.size,
+      offsetBytes,
+      bytesRead: decodedBytes,
+      truncated: offsetBytes + decodedBytes < metadata.size
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
 export async function readBoundedFile(
   filePath: string,
   maximumBytes: number,

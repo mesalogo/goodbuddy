@@ -1,47 +1,24 @@
 import i18n from './i18n'
 
-import type { AssistantTask } from '../../shared/assistant-contracts'
+import {
+  activityRecordSchema,
+  type ActivityRecord as SharedActivityRecord,
+  type AssistantTask
+} from '../../shared/assistant-contracts'
 
 export const ACTIVITY_STORAGE_KEY = 'goodbuddy.activity-records.v1'
-export const MAX_ACTIVITY_RECORDS = 500
-export const MAX_ACTIVITY_DETAIL_LENGTH = 4_000
 
-const MAX_STORED_JSON_LENGTH = 2_000_000
-const MAX_ID_LENGTH = 256
-const MAX_TITLE_LENGTH = 240
-const MAX_PROJECT_NAME_LENGTH = 120
+const LEGACY_MAX_ACTIVITY_RECORDS = 500
+const LEGACY_MAX_ACTIVITY_DETAIL_LENGTH = 4_000
+const LEGACY_MAX_STORED_JSON_LENGTH = 2_000_000
+const LEGACY_NEAR_STORAGE_LIMIT_LENGTH =
+  LEGACY_MAX_STORED_JSON_LENGTH - 10_000
 
-const activityKinds = [
-  'request',
-  'tool',
-  'approval',
-  'subagent',
-  'result'
-] as const
-const activityStatuses = [
-  'pending',
-  'running',
-  'completed',
-  'failed',
-  'denied',
-  'cancelled',
-  'interrupted'
-] as const
+export type ActivityRecord = SharedActivityRecord
 
-export type ActivityRecord = {
-  id: string
-  conversationId: string
-  requestId: string
-  callId?: string
-  scope:
-    | { kind: 'global' }
-    | { kind: 'project'; projectId: string; projectName: string }
-    | { kind: 'unavailable' }
-  kind: (typeof activityKinds)[number]
-  title: string
-  detail: string
-  status: (typeof activityStatuses)[number]
-  createdAt: number
+export type LegacyActivityHistory = {
+  records: ActivityRecord[]
+  historyMayBeIncomplete: boolean
 }
 
 function getLocalStorage(): Storage | undefined {
@@ -52,94 +29,16 @@ function getLocalStorage(): Storage | undefined {
   }
 }
 
-function isBoundedString(
-  value: unknown,
-  maximumLength: number,
-  allowEmpty = false
-): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length <= maximumLength &&
-    (allowEmpty || value.length > 0)
-  )
-}
-
-function parseActivityScope(
-  value: unknown
-): ActivityRecord['scope'] | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return undefined
-  }
-  const candidate = value as Record<string, unknown>
-  if (candidate.kind === 'global') {
-    return { kind: 'global' }
-  }
-  if (candidate.kind === 'unavailable') {
-    return { kind: 'unavailable' }
-  }
-  if (
-    candidate.kind === 'project' &&
-    isBoundedString(candidate.projectId, MAX_ID_LENGTH) &&
-    isBoundedString(candidate.projectName, MAX_PROJECT_NAME_LENGTH)
-  ) {
-    return {
-      kind: 'project',
-      projectId: candidate.projectId,
-      projectName: candidate.projectName
-    }
-  }
-  return undefined
-}
-
 function parseActivityRecord(value: unknown): ActivityRecord | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return undefined
   }
-
   const candidate = value as Record<string, unknown>
-  if (
-    !isBoundedString(candidate.id, MAX_ID_LENGTH) ||
-    !isBoundedString(candidate.conversationId, MAX_ID_LENGTH) ||
-    !isBoundedString(candidate.requestId, MAX_ID_LENGTH) ||
-    (candidate.callId !== undefined &&
-      !isBoundedString(candidate.callId, MAX_ID_LENGTH)) ||
-    !activityKinds.some((kind) => kind === candidate.kind) ||
-    !isBoundedString(candidate.title, MAX_TITLE_LENGTH) ||
-    !isBoundedString(
-      candidate.detail,
-      MAX_ACTIVITY_DETAIL_LENGTH,
-      true
-    ) ||
-    !activityStatuses.some((status) => status === candidate.status) ||
-    typeof candidate.createdAt !== 'number' ||
-    !Number.isFinite(candidate.createdAt) ||
-    candidate.createdAt < 0
-  ) {
-    return undefined
-  }
-
-  const scope =
-    candidate.scope === undefined
-      ? { kind: 'unavailable' as const }
-      : parseActivityScope(candidate.scope)
-  if (!scope) {
-    return undefined
-  }
-
-  return {
-    id: candidate.id,
-    conversationId: candidate.conversationId,
-    requestId: candidate.requestId,
-    ...(candidate.callId === undefined
-      ? {}
-      : { callId: candidate.callId }),
-    scope,
-    kind: candidate.kind as ActivityRecord['kind'],
-    title: candidate.title,
-    detail: candidate.detail,
-    status: candidate.status as ActivityRecord['status'],
-    createdAt: candidate.createdAt
-  }
+  const parsed = activityRecordSchema.safeParse({
+    ...candidate,
+    scope: candidate.scope ?? { kind: 'unavailable' }
+  })
+  return parsed.success ? parsed.data : undefined
 }
 
 export function upsertActivityRecord(
@@ -150,7 +49,7 @@ export function upsertActivityRecord(
     (incoming.kind !== 'tool' && incoming.kind !== 'subagent') ||
     !incoming.callId
   ) {
-    return [incoming, ...records].slice(0, MAX_ACTIVITY_RECORDS)
+    return [incoming, ...records]
   }
 
   const existingIndex = records.findIndex(
@@ -160,7 +59,7 @@ export function upsertActivityRecord(
       record.callId === incoming.callId
   )
   if (existingIndex < 0) {
-    return [incoming, ...records].slice(0, MAX_ACTIVITY_RECORDS)
+    return [incoming, ...records]
   }
 
   const existing = records[existingIndex]!
@@ -172,7 +71,21 @@ export function upsertActivityRecord(
       scope: existing.scope
     },
     ...records.filter((_, index) => index !== existingIndex)
-  ].slice(0, MAX_ACTIVITY_RECORDS)
+  ]
+}
+
+export function mergeActivityRecords(
+  primary: readonly ActivityRecord[],
+  secondary: readonly ActivityRecord[]
+): ActivityRecord[] {
+  const seen = new Set<string>()
+  return [...primary, ...secondary].filter((record) => {
+    if (seen.has(record.id)) {
+      return false
+    }
+    seen.add(record.id)
+    return true
+  })
 }
 
 function taskTerminalStatus(
@@ -227,38 +140,33 @@ export function reconcileActivityRecords(
           ? `${record.detail}\n${i18n.t(
               'records.interruptedOnRestart',
               { ns: 'activity' }
-            )}`.slice(
-              0,
-              MAX_ACTIVITY_DETAIL_LENGTH
-            )
+            )}`
           : record.detail
     }
   })
 }
 
 /**
- * Loads only records matching the persisted activity schema. Corrupt storage,
- * inaccessible storage and oversized payloads are treated as an empty history.
+ * Reads the previous Renderer-owned history once for migration to SQLite.
+ * The legacy writer silently stopped at fixed record and payload limits, so
+ * reaching one of those boundaries is retained as durable uncertainty.
  */
-export function loadActivityRecords(
+export function loadLegacyActivityHistory(
   storage: Storage | undefined = getLocalStorage()
-): ActivityRecord[] {
+): LegacyActivityHistory {
   if (!storage) {
-    return []
+    return { records: [], historyMayBeIncomplete: false }
   }
 
   try {
     const serialized = storage.getItem(ACTIVITY_STORAGE_KEY)
-    if (
-      serialized === null ||
-      serialized.length > MAX_STORED_JSON_LENGTH
-    ) {
-      return []
+    if (serialized === null) {
+      return { records: [], historyMayBeIncomplete: false }
     }
 
     const parsed: unknown = JSON.parse(serialized)
     if (!Array.isArray(parsed)) {
-      return []
+      return { records: [], historyMayBeIncomplete: false }
     }
 
     const records: ActivityRecord[] = []
@@ -267,57 +175,31 @@ export function loadActivityRecords(
       if (record) {
         records.push(record)
       }
-      if (records.length === MAX_ACTIVITY_RECORDS) {
-        break
-      }
     }
-    return records
+    return {
+      records,
+      historyMayBeIncomplete:
+        records.length >= LEGACY_MAX_ACTIVITY_RECORDS ||
+        serialized.length >= LEGACY_NEAR_STORAGE_LIMIT_LENGTH ||
+        records.some(
+          (record) =>
+            record.detail.length === LEGACY_MAX_ACTIVITY_DETAIL_LENGTH
+        )
+    }
   } catch {
-    return []
+    return { records: [], historyMayBeIncomplete: false }
   }
 }
 
-/**
- * Persists as many of the newest schema-valid records as fit within the
- * bounded storage payload. Returns false if storage is unavailable or rejects
- * the write.
- */
-export function saveActivityRecords(
-  records: readonly ActivityRecord[],
+export function clearLegacyActivityHistory(
   storage: Storage | undefined = getLocalStorage()
-): boolean {
+): void {
   if (!storage) {
-    return false
+    return
   }
-
-  const serializedRecords: string[] = []
-  let serializedLength = 2
-  for (const record of records) {
-    const safeRecord = parseActivityRecord(record)
-    if (safeRecord) {
-      const serializedRecord = JSON.stringify(safeRecord)
-      const nextLength =
-        serializedLength +
-        serializedRecord.length +
-        (serializedRecords.length > 0 ? 1 : 0)
-      if (nextLength > MAX_STORED_JSON_LENGTH) {
-        break
-      }
-      serializedRecords.push(serializedRecord)
-      serializedLength = nextLength
-    }
-    if (serializedRecords.length === MAX_ACTIVITY_RECORDS) {
-      break
-    }
-  }
-
   try {
-    storage.setItem(
-      ACTIVITY_STORAGE_KEY,
-      `[${serializedRecords.join(',')}]`
-    )
-    return true
+    storage.removeItem(ACTIVITY_STORAGE_KEY)
   } catch {
-    return false
+    // A failed cleanup leaves the migration source intact for the next start.
   }
 }

@@ -3,12 +3,11 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
+  activityHistorySnapshotSchema,
   assistantIdSchema,
   conversationMessageSchema,
   conversationSnapshotSchema,
   expertCreateSchema,
-  maximumConversationMessageBlocks,
-  maximumConversationRetainedActivities,
   normalizeInteractiveWorkMode,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
@@ -24,6 +23,7 @@ import type {
   AssistantProject,
   AssistantSchedule,
   AssistantTask,
+  ActivityHistorySnapshot,
   ConversationQueueItem,
   ConversationBranchInput,
   ConversationMessageBlock,
@@ -95,7 +95,7 @@ import {
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 32
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 33
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -1123,6 +1123,8 @@ function toConversationSnapshot(
         blocks: interrupted
           ? interruptActiveToolBlocks(metadata.blocks)
           : metadata.blocks,
+        displayCaptureTruncated:
+          metadata.displayCaptureTruncated,
         createdAt:
           metadata.createdAt ?? Date.parse(message.created_at),
         state: interrupted ? ('error' as const) : message.state,
@@ -1192,9 +1194,6 @@ function appendRecoveredMessageBlock(
       )
     }
   } else {
-    if (current.length >= maximumConversationMessageBlocks) {
-      return blocks
-    }
     current.push({
       id: randomUUID(),
       type,
@@ -1224,9 +1223,6 @@ function upsertRecoveredToolBlock(
         ? { ...block, tool }
         : block
     )
-  }
-  if (blocks.length >= maximumConversationMessageBlocks) {
-    return blocks
   }
   return [
     ...blocks,
@@ -1267,9 +1263,6 @@ function upsertRecoveredSubagentBlock(
         : block
     )
   }
-  if (blocks.length >= maximumConversationMessageBlocks) {
-    return blocks
-  }
   return [
     ...blocks,
     { id: randomUUID(), type: 'subagent' as const, childTaskId }
@@ -1302,16 +1295,6 @@ function failedToolRepresentsError(
   )
 }
 
-function canRetainRecoveredActivity(
-  message: ConversationMessage
-): boolean {
-  return (
-    (message.tools?.length ?? 0) +
-      (message.subagents?.length ?? 0) <
-    maximumConversationRetainedActivities
-  )
-}
-
 function reduceRecoveredAgentEvent(
   message: ConversationMessage,
   event: RemoteConversationTaskEventInput['event']
@@ -1332,9 +1315,6 @@ function reduceRecoveredAgentEvent(
       ...message,
       content: `${message.content}${delta}`,
       blocks,
-      displayCaptureTruncated:
-        message.displayCaptureTruncated ||
-        Boolean(delta && message.blocks && blocks === message.blocks),
       status:
         event.delta.length > remaining
           ? '回答过长，已在本地截断显示'
@@ -1355,9 +1335,6 @@ function reduceRecoveredAgentEvent(
       ...message,
       reasoning: `${reasoning}${delta}`,
       blocks,
-      displayCaptureTruncated:
-        message.displayCaptureTruncated ||
-        Boolean(delta && message.blocks && blocks === message.blocks),
       status: undefined
     }
   } else if (event.type === 'status') {
@@ -1405,25 +1382,14 @@ function reduceRecoveredAgentEvent(
     )
     if (index >= 0) {
       tools[index] = tool
-    } else if (!canRetainRecoveredActivity(message)) {
-      next = {
-        ...message,
-        displayCaptureTruncated: true
-      }
-    }
-    if (index < 0 && next === message) {
+    } else {
       tools.push(tool)
     }
-    if (next === message) {
-      const blocks = upsertRecoveredToolBlock(message.blocks, tool)
-      next = {
-        ...message,
-        tools,
-        blocks,
-        displayCaptureTruncated:
-          message.displayCaptureTruncated ||
-          Boolean(message.blocks && blocks === message.blocks)
-      }
+    const blocks = upsertRecoveredToolBlock(message.blocks, tool)
+    next = {
+      ...message,
+      tools,
+      blocks
     }
   } else if (event.type === 'subagent') {
     const commonSubagent = {
@@ -1448,49 +1414,25 @@ function reduceRecoveredAgentEvent(
     const index = subagents.findIndex(
       (candidate) => candidate.childTaskId === event.childTaskId
     )
-    let retainSubagent = true
     if (index >= 0) {
       subagents[index] = subagent
     } else {
-      const replacesTool = Boolean(
-        event.runtimeCallId &&
-          message.tools?.some(
-            (tool) => tool.callId === event.runtimeCallId
-          )
-      )
-      if (
-        !replacesTool &&
-        !canRetainRecoveredActivity(message)
-      ) {
-        retainSubagent = false
-      } else {
-        subagents.push(subagent)
-      }
+      subagents.push(subagent)
     }
-    if (!retainSubagent) {
-      next = {
-        ...message,
-        displayCaptureTruncated: true
-      }
-    } else {
-      const blocks = upsertRecoveredSubagentBlock(
-        message.blocks,
-        event.childTaskId,
-        event.runtimeCallId
-      )
-      next = {
-        ...message,
-        subagents,
-        tools: event.runtimeCallId
-          ? message.tools?.filter(
-              (tool) => tool.callId !== event.runtimeCallId
-            )
-          : message.tools,
-        blocks,
-        displayCaptureTruncated:
-          message.displayCaptureTruncated ||
-          Boolean(message.blocks && blocks === message.blocks)
-      }
+    const blocks = upsertRecoveredSubagentBlock(
+      message.blocks,
+      event.childTaskId,
+      event.runtimeCallId
+    )
+    next = {
+      ...message,
+      subagents,
+      tools: event.runtimeCallId
+        ? message.tools?.filter(
+            (tool) => tool.callId !== event.runtimeCallId
+          )
+        : message.tools,
+      blocks
     }
   } else if (event.type === 'artifact') {
     next = {
@@ -2087,6 +2029,11 @@ export class AssistantDatabase {
       ]) {
         database.exec(`DELETE FROM ${table}`)
       }
+      database.exec(
+        `UPDATE activity_history
+         SET records_json = '[]', legacy_history_may_be_incomplete = 0
+         WHERE singleton = 1`
+      )
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
@@ -4281,6 +4228,40 @@ export class AssistantDatabase {
       )
       .all(safeLimit) as TaskRow[]
     return rows.map(toTask)
+  }
+
+  getActivityHistory(): ActivityHistorySnapshot {
+    const row = this.requireDatabase()
+      .prepare(
+        `SELECT records_json, legacy_history_may_be_incomplete
+         FROM activity_history
+         WHERE singleton = 1`
+      )
+      .get() as
+      | {
+          records_json: string
+          legacy_history_may_be_incomplete: number
+        }
+      | undefined
+    return activityHistorySnapshotSchema.parse({
+      records: row ? JSON.parse(row.records_json) : [],
+      legacyHistoryMayBeIncomplete:
+        row?.legacy_history_may_be_incomplete === 1
+    })
+  }
+
+  replaceActivityHistory(input: ActivityHistorySnapshot): void {
+    const snapshot = activityHistorySnapshotSchema.parse(input)
+    this.requireDatabase()
+      .prepare(
+        `UPDATE activity_history
+         SET records_json = ?, legacy_history_may_be_incomplete = ?
+         WHERE singleton = 1`
+      )
+      .run(
+        JSON.stringify(snapshot.records),
+        Number(snapshot.legacyHistoryMayBeIncomplete)
+      )
   }
 
   createTask(input: {
@@ -9647,6 +9628,22 @@ export class AssistantDatabase {
         database.exec('ROLLBACK')
         throw error
       }
+    }
+    if (version.user_version < 33) {
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS activity_history (
+          singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+          records_json TEXT NOT NULL,
+          legacy_history_may_be_incomplete INTEGER NOT NULL DEFAULT 0
+            CHECK(legacy_history_may_be_incomplete IN (0, 1))
+        );
+        INSERT OR IGNORE INTO activity_history
+          (singleton, records_json, legacy_history_may_be_incomplete)
+        VALUES (1, '[]', 0);
+        PRAGMA user_version = 33;
+        COMMIT;
+      `)
     }
   }
 

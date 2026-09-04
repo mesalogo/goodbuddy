@@ -159,11 +159,11 @@ describe('AssistantDatabase', () => {
     unchanged.close()
   })
 
-  it('persists more than 100 tool activities in one message', async () => {
+  it('persists more than 500 tool activities in one message', async () => {
     const database = await createDatabase()
     const conversationId = '00000000-0000-4000-8000-000000000901'
     const messageId = '00000000-0000-4000-8000-000000000902'
-    const tools = Array.from({ length: 101 }, (_, index) => ({
+    const tools = Array.from({ length: 501 }, (_, index) => ({
       callId: `call-${index + 1}`,
       name: 'read',
       state: 'completed' as const,
@@ -192,7 +192,79 @@ describe('AssistantDatabase', () => {
 
     expect(
       database.getConversation(conversationId)?.messages[0]?.tools
-    ).toHaveLength(101)
+    ).toHaveLength(501)
+    database.close()
+  })
+
+  it('persists complete Run history beyond the former Renderer limits', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-activity-history-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const records = Array.from({ length: 501 }, (_, index) => ({
+      id: `activity-${index}`,
+      conversationId: 'conversation-1',
+      requestId: 'request-1',
+      scope: { kind: 'global' as const },
+      kind: 'tool' as const,
+      title: `工具调用 ${index}`,
+      detail: index === 500 ? 'x'.repeat(4_001) : '读取文件',
+      status: 'completed' as const,
+      createdAt: index
+    }))
+
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    initial.replaceActivityHistory({
+      records,
+      legacyHistoryMayBeIncomplete: true
+    })
+    initial.close()
+
+    const reopened = new AssistantDatabase(databasePath)
+    reopened.initialize('C:\\Workspace')
+    const history = reopened.getActivityHistory()
+    expect(history.records).toHaveLength(501)
+    expect(history.records.at(-1)?.detail).toHaveLength(4_001)
+    expect(history.legacyHistoryMayBeIncomplete).toBe(true)
+
+    reopened.clearAssistantData()
+    expect(reopened.getActivityHistory()).toEqual({
+      records: [],
+      legacyHistoryMayBeIncomplete: false
+    })
+    reopened.close()
+  })
+
+  it('keeps the truthful truncation marker on legacy messages', async () => {
+    const database = await createDatabase()
+    const conversationId = '00000000-0000-4000-8000-000000000911'
+
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          title: '旧版截断记录',
+          updatedAt: 1
+        },
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000912',
+            role: 'assistant',
+            content: '',
+            createdAt: 1,
+            state: 'complete',
+            displayCaptureTruncated: true
+          }
+        ]
+      }
+    ])
+
+    expect(
+      database.getConversation(conversationId).messages[0]
+        ?.displayCaptureTruncated
+    ).toBe(true)
     database.close()
   })
 
@@ -239,7 +311,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 32', async () => {
+  it('migrates existing databases to schema version 33', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -268,7 +340,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(32)
+    ).toBe(33)
     expect(
       current
         .prepare(
@@ -374,6 +446,14 @@ describe('AssistantDatabase', () => {
         )
         .get()
     ).toEqual({ name: 'conversations_branch_source_idx' })
+    expect(
+      current
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table' AND name = 'activity_history'`
+        )
+        .get()
+    ).toEqual({ name: 'activity_history' })
     current.close()
   })
 
@@ -430,7 +510,7 @@ describe('AssistantDatabase', () => {
       enableForeignKeyConstraints: true
     })
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 32
+      user_version: 33
     })
     expect(
       inspected.prepare('SELECT * FROM projects ORDER BY rowid').all()
@@ -528,7 +608,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 32
+      user_version: 33
     })
     expect(
       inspected
@@ -605,7 +685,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 32
+      user_version: 33
     })
     expect(
       inspected
@@ -855,7 +935,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(32)
+    ).toBe(33)
     expect(
       current
         .prepare(
@@ -993,7 +1073,7 @@ describe('AssistantDatabase', () => {
     const inspected = new DatabaseSync(databasePath)
     expect(
       inspected.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 32 })
+    ).toEqual({ user_version: 33 })
     expect(
       inspected
         .prepare(
@@ -2690,7 +2770,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 32
+      user_version: 33
     })
     expect(
       inspected.prepare('PRAGMA table_info(task_events)').all()

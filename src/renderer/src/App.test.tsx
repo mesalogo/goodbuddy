@@ -112,7 +112,7 @@ vi.mock('./TerminalPanel', () => ({
 }))
 
 import App from './App'
-import { loadActivityRecords } from './activity-store'
+import { ACTIVITY_STORAGE_KEY } from './activity-store'
 import { changeUiLocale } from './i18n'
 import { UiLocaleProvider } from './i18n/UiLocaleProvider'
 
@@ -541,13 +541,23 @@ const api: DesktopApi = {
       name: path.split('/').at(-1) ?? path,
       content: '',
       mimeType: 'text/plain' as const,
-      size: 0
+      size: 0,
+      offsetBytes: 0,
+      nextOffsetBytes: 0,
+      truncated: false
     })),
     openPath: vi.fn(async () => {})
   },
   tasks: {
     list: vi.fn(async () => []),
     setStatus: vi.fn(async () => {})
+  },
+  activityHistory: {
+    get: vi.fn(async () => ({
+      records: [],
+      legacyHistoryMayBeIncomplete: false
+    })),
+    replace: vi.fn(async () => {})
   },
   usage: {
     getTokenSummary: vi.fn(async () => ({
@@ -1137,6 +1147,15 @@ describe('App', () => {
         }
       })
     vi.mocked(api.tasks.list).mockReset().mockResolvedValue([])
+    vi.mocked(api.activityHistory.get)
+      .mockReset()
+      .mockResolvedValue({
+        records: [],
+        legacyHistoryMayBeIncomplete: false
+      })
+    vi.mocked(api.activityHistory.replace)
+      .mockReset()
+      .mockResolvedValue()
     vi.mocked(api.schedules.list).mockReset().mockResolvedValue([])
     api.channels = undefined
     api.updates = undefined
@@ -3694,7 +3713,7 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
-  it('keeps a bounded display copy without stopping a long tool chain', async () => {
+  it('keeps every activity detail in a long tool chain', async () => {
     render(<App />)
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
@@ -3713,21 +3732,38 @@ describe('App', () => {
           requestId: request.requestId,
           type: 'tool',
           callId: `call-${index + 1}`,
-          name: 'read',
+          name: index === 500 ? `read${'长'.repeat(300)}` : 'read',
           state: 'completed',
-          summary: `OpenCode 工具：read ${index + 1}`
+          summary:
+            index === 500
+              ? `OpenCode 工具：read 501 ${'详情'.repeat(2_100)}`
+              : `OpenCode 工具：read ${index + 1}`
         })
       }
     })
 
     expect(
-      screen.getByRole('region', { name: '工具执行，共 500 项' })
+      screen.getByRole('region', { name: '工具执行，共 501 项' })
     ).toBeInTheDocument()
     expect(
-      screen.getByText(
+      screen.queryByText(
         '活动记录过多，后续详情未在本地保留；Runtime 任务仍继续执行'
       )
-    ).toBeInTheDocument()
+    ).not.toBeInTheDocument()
+    await waitFor(
+      () => {
+        const saved =
+          vi.mocked(api.activityHistory.replace).mock.calls.at(-1)?.[0] ??
+          []
+        expect(
+          saved.filter((record) => record.kind === 'tool')
+        ).toHaveLength(501)
+        const lastTool = saved.find((record) => record.callId === 'call-501')
+        expect(lastTool?.detail.length).toBeGreaterThan(4_000)
+        expect(lastTool?.title).toHaveLength(240)
+      },
+      { timeout: 3_000 }
+    )
   })
 
   it('keeps adjacent streamed text blocks exact in StrictMode', async () => {
@@ -5593,7 +5629,10 @@ describe('App', () => {
       name: 'README.md',
       content: '# 工作区说明',
       mimeType: 'text/markdown',
-      size: 19
+      size: 19,
+      offsetBytes: 0,
+      nextOffsetBytes: 19,
+      truncated: false
     })
     render(<App />)
 
@@ -5614,7 +5653,8 @@ describe('App', () => {
     ).not.toBeInTheDocument()
     expect(api.workspace.readFile).toHaveBeenCalledWith(
       projectId,
-      'README.md'
+      'README.md',
+      0
     )
     fireEvent.click(
       screen.getByRole('button', { name: '返回工作区' })
@@ -10645,17 +10685,64 @@ describe('App', () => {
     fireEvent.click(screen.getByLabelText('发送'))
     await waitFor(() =>
       expect(
-        loadActivityRecords().find(
-          (record) =>
-            record.kind === 'request' &&
-            record.title === '记录项目范围'
-        )?.scope
+        vi
+          .mocked(api.activityHistory.replace)
+          .mock.calls.at(-1)?.[0]
+          .find(
+            (record) =>
+              record.kind === 'request' &&
+              record.title === '记录项目范围'
+          )?.scope
       ).toEqual({
         kind: 'project',
         projectId,
         projectName: project.name
       })
     )
+  })
+
+  it('migrates legacy activity and keeps its possible-loss warning visible', async () => {
+    localStorage.setItem(
+      ACTIVITY_STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: 'legacy-activity',
+          conversationId: 'legacy-conversation',
+          requestId: 'legacy-request',
+          scope: { kind: 'global' },
+          kind: 'tool',
+          title: '旧版工具记录',
+          detail: 'x'.repeat(4_000),
+          status: 'completed',
+          createdAt: 1
+        }
+      ])
+    )
+
+    render(<App />)
+    await screen.findByText('项目：默认项目')
+
+    await waitFor(() => {
+      expect(api.activityHistory.replace).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            id: 'legacy-activity',
+            detail: 'x'.repeat(4_000)
+          })
+        ],
+        true
+      )
+      expect(localStorage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '运行记录' }))
+    expect(
+      await screen.findByText(
+        '旧版本曾限制本机运行记录的数量和详情长度，因此更早的记录或部分详情可能已经丢失。新记录会完整保存。',
+        {},
+        { timeout: 3_000 }
+      )
+    ).toBeInTheDocument()
   })
 
   it('marks the current primary navigation page and hides decorative icons', async () => {
@@ -10896,7 +10983,11 @@ describe('App', () => {
       fireEvent.click(magicNotesEntry)
 
       expect(
-        await screen.findByRole('heading', { name: '魔法笔记' })
+        await screen.findByRole(
+          'heading',
+          { name: '魔法笔记' },
+          { timeout: 3000 }
+        )
       ).toBeInTheDocument()
       expect(screen.getByText('全局')).toBeInTheDocument()
       expect(

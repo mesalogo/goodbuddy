@@ -643,6 +643,9 @@ export const app = {
       'Failed to resume this conversation’s send queue',
     conversationPersistenceFailed:
       'Failed to save conversations. Check local storage.',
+    activityHistoryPersistenceFailed:
+      'Failed to save run history. Check local storage.',
+    activityHistoryReadFailed: 'Failed to read run history',
     remoteConversationRefreshFailed:
       'Failed to refresh remote channel conversations',
     projectReadFailed: 'Failed to read projects',

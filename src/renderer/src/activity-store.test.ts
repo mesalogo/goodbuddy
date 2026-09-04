@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   ACTIVITY_STORAGE_KEY,
-  MAX_ACTIVITY_DETAIL_LENGTH,
-  MAX_ACTIVITY_RECORDS,
-  loadActivityRecords,
+  clearLegacyActivityHistory,
+  loadLegacyActivityHistory,
+  mergeActivityRecords,
   reconcileActivityRecords,
-  saveActivityRecords,
   upsertActivityRecord,
   type ActivityRecord
 } from './activity-store'
@@ -32,14 +31,14 @@ describe('activity-store', () => {
 
   it('returns an empty history for inaccessible or corrupt storage', () => {
     localStorage.setItem(ACTIVITY_STORAGE_KEY, '{invalid')
-    expect(loadActivityRecords()).toEqual([])
+    expect(loadLegacyActivityHistory().records).toEqual([])
 
     const inaccessibleStorage = {
       getItem: () => {
         throw new Error('blocked')
       }
     } as unknown as Storage
-    expect(loadActivityRecords(inaccessibleStorage)).toEqual([])
+    expect(loadLegacyActivityHistory(inaccessibleStorage).records).toEqual([])
   })
 
   it('keeps only schema-valid records from untrusted storage', () => {
@@ -49,12 +48,11 @@ describe('activity-store', () => {
       JSON.stringify([
         validRecord,
         { ...validRecord, status: 'unknown' },
-        { ...validRecord, detail: 'x'.repeat(MAX_ACTIVITY_DETAIL_LENGTH + 1) },
         null
       ])
     )
 
-    expect(loadActivityRecords()).toEqual([validRecord])
+    expect(loadLegacyActivityHistory().records).toEqual([validRecord])
   })
 
   it('loads legacy records with an explicit unavailable scope', () => {
@@ -65,7 +63,7 @@ describe('activity-store', () => {
       JSON.stringify([legacyRecord])
     )
 
-    expect(loadActivityRecords()).toEqual([
+    expect(loadLegacyActivityHistory().records).toEqual([
       expect.objectContaining({
         id: legacyRecord.id,
         scope: { kind: 'unavailable' }
@@ -89,50 +87,51 @@ describe('activity-store', () => {
       ])
     )
 
-    expect(loadActivityRecords()).toEqual([])
+    expect(loadLegacyActivityHistory().records).toEqual([])
   })
 
-  it('persists no more than the record limit', () => {
+  it('loads more than the former record limit without shortening details', () => {
     const records = Array.from(
-      { length: MAX_ACTIVITY_RECORDS + 1 },
-      (_, index) => makeRecord(index)
-    )
-
-    expect(saveActivityRecords(records)).toBe(true)
-    expect(loadActivityRecords()).toHaveLength(MAX_ACTIVITY_RECORDS)
-    expect(loadActivityRecords().at(-1)?.id).toBe(
-      `activity-${MAX_ACTIVITY_RECORDS - 1}`
-    )
-  })
-
-  it('drops the oldest records until the stored JSON fits the load bound', () => {
-    const records = Array.from(
-      { length: MAX_ACTIVITY_RECORDS },
+      { length: 501 },
       (_, index) => ({
         ...makeRecord(index),
-        detail: 'x'.repeat(4_000)
+        detail: index === 500 ? 'x'.repeat(4_001) : '读取文件'
       })
     )
+    localStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(records))
 
-    expect(saveActivityRecords(records)).toBe(true)
-    const serialized = localStorage.getItem(ACTIVITY_STORAGE_KEY)
-    expect(serialized?.length).toBeLessThanOrEqual(2_000_000)
-    const restored = loadActivityRecords()
-    expect(restored.length).toBeGreaterThan(0)
-    expect(restored.length).toBeLessThan(MAX_ACTIVITY_RECORDS)
-    expect(restored[0]?.id).toBe('activity-0')
+    const legacy = loadLegacyActivityHistory()
+    expect(legacy.records).toHaveLength(501)
+    expect(legacy.records.at(-1)?.detail).toHaveLength(4_001)
+    expect(legacy.historyMayBeIncomplete).toBe(true)
   })
 
-  it('reports rejected writes without throwing', () => {
-    const rejectingStorage = {
-      setItem: () => {
-        throw new Error('quota exceeded')
-      }
-    } as unknown as Storage
-
-    expect(saveActivityRecords([makeRecord(1)], rejectingStorage)).toBe(
-      false
+  it('marks a legacy maximum-length detail as possibly incomplete', () => {
+    localStorage.setItem(
+      ACTIVITY_STORAGE_KEY,
+      JSON.stringify([{ ...makeRecord(1), detail: 'x'.repeat(4_000) }])
     )
+
+    expect(loadLegacyActivityHistory()).toMatchObject({
+      historyMayBeIncomplete: true
+    })
+  })
+
+  it('clears the legacy migration source without throwing', () => {
+    localStorage.setItem(
+      ACTIVITY_STORAGE_KEY,
+      JSON.stringify([makeRecord(1)])
+    )
+    clearLegacyActivityHistory()
+    expect(localStorage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull()
+
+    expect(() =>
+      clearLegacyActivityHistory({
+        removeItem: () => {
+          throw new Error('blocked')
+        }
+      } as unknown as Storage)
+    ).not.toThrow()
   })
 
   it('upserts transitions for one call while preserving distinct calls', () => {
@@ -183,7 +182,7 @@ describe('activity-store', () => {
     ).toEqual(first.scope)
   })
 
-  it('persists and upserts Subagent state transitions', () => {
+  it('upserts Subagent state transitions', () => {
     const queued: ActivityRecord = {
       ...makeRecord(1),
       kind: 'subagent',
@@ -206,8 +205,25 @@ describe('activity-store', () => {
         status: 'completed'
       })
     ])
-    expect(saveActivityRecords(completed)).toBe(true)
-    expect(loadActivityRecords()).toEqual(completed)
+  })
+
+  it('keeps more than 500 distinct activity records', () => {
+    const records = Array.from({ length: 501 }, (_, index) =>
+      makeRecord(index)
+    )
+
+    expect(
+      upsertActivityRecord(records, makeRecord(501))
+    ).toHaveLength(502)
+  })
+
+  it('merges migrated and persisted records without duplicating IDs', () => {
+    expect(
+      mergeActivityRecords(
+        [makeRecord(2), makeRecord(1)],
+        [makeRecord(1), makeRecord(0)]
+      ).map((record) => record.id)
+    ).toEqual(['activity-2', 'activity-1', 'activity-0'])
   })
 
   it('reconciles stale active records with durable task outcomes', () => {

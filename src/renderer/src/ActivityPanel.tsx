@@ -6,10 +6,7 @@ import type {
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
 import { isUntouchedBuiltInDefaultProject } from '../../shared/assistant-contracts'
-import {
-  MAX_ACTIVITY_RECORDS,
-  type ActivityRecord
-} from './activity-store'
+import { type ActivityRecord } from './activity-store'
 import {
   getTokenUsageTotals,
   groupTokenUsage,
@@ -35,7 +32,10 @@ type ActivityActorKind =
   | 'tool'
   | 'approval'
 
+const activityRenderBatchSize = 500
+
 export type ActivityPanelProps = {
+  legacyHistoryMayBeIncomplete?: boolean
   projects?: readonly AssistantProject[]
   records: readonly ActivityRecord[]
   tokenUsage: TokenUsageSummary
@@ -240,6 +240,7 @@ function groupActivityRecordsByProject(
 }
 
 export function ActivityPanel({
+  legacyHistoryMayBeIncomplete = false,
   projects = [],
   records,
   tokenUsage,
@@ -256,6 +257,9 @@ export function ActivityPanel({
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [selectedTimelineRecordId, setSelectedTimelineRecordId] =
     useState<string>()
+  const [visibleRecordCount, setVisibleRecordCount] = useState(
+    activityRenderBatchSize
+  )
   const dateTimeFormatter = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.resolvedLanguage || 'zh-CN', {
@@ -378,13 +382,13 @@ export function ActivityPanel({
     }),
     [projectDisplayNames, tokenUsage]
   )
-  const visibleRecords = useMemo(
-    () => displayRecords.slice(0, MAX_ACTIVITY_RECORDS),
-    [displayRecords]
+  const matchingRecords = useMemo(
+    () => displayRecords.filter((record) => matchesFilter(record, filter)),
+    [displayRecords, filter]
   )
   const filteredRecords = useMemo(
-    () => visibleRecords.filter((record) => matchesFilter(record, filter)),
-    [filter, visibleRecords]
+    () => matchingRecords.slice(0, visibleRecordCount),
+    [matchingRecords, visibleRecordCount]
   )
   const projectGroups = useMemo(
     () => groupActivityRecordsByProject(filteredRecords, displayRecords),
@@ -418,8 +422,8 @@ export function ActivityPanel({
     () => getConversationTitles(displayRecords),
     [displayRecords]
   )
-  const activeCount = visibleRecords.filter(isActive).length
-  const failedCount = visibleRecords.filter(isFailed).length
+  const activeCount = displayRecords.filter(isActive).length
+  const failedCount = displayRecords.filter(isFailed).length
   const filters: ReadonlyArray<{
     value: ActivityFilter
     label: string
@@ -427,8 +431,8 @@ export function ActivityPanel({
     {
       value: 'all',
       label: t('filters.all', {
-        count: visibleRecords.length,
-        formattedCount: formatCount(visibleRecords.length)
+        count: displayRecords.length,
+        formattedCount: formatCount(displayRecords.length)
       })
     },
     {
@@ -620,19 +624,19 @@ export function ActivityPanel({
       />
       <DestructiveConfirmActions
         confirmAriaLabel={t('clear.confirmAriaLabel', {
-          count: visibleRecords.length,
-          formattedCount: formatCount(visibleRecords.length)
+          count: displayRecords.length,
+          formattedCount: formatCount(displayRecords.length)
         })}
         confirmLabel={t('clear.confirmLabel', {
-          count: visibleRecords.length,
-          formattedCount: formatCount(visibleRecords.length)
+          count: displayRecords.length,
+          formattedCount: formatCount(displayRecords.length)
         })}
         confirming={confirmingClear}
-        disabled={!confirmingClear && visibleRecords.length === 0}
+        disabled={!confirmingClear && displayRecords.length === 0}
         icon={<Trash2 aria-hidden="true" size={15} />}
         message={t('clear.message', {
-          count: visibleRecords.length,
-          formattedCount: formatCount(visibleRecords.length)
+          count: displayRecords.length,
+          formattedCount: formatCount(displayRecords.length)
         })}
         onCancel={() => setConfirmingClear(false)}
         onConfirm={() => {
@@ -667,6 +671,24 @@ export function ActivityPanel({
       }
     />
   )
+  const loadMoreRecords =
+    filteredRecords.length < matchingRecords.length ? (
+      <button
+        className="secondary-button activity-panel__load-more"
+        onClick={() =>
+          setVisibleRecordCount(
+            (current) => current + activityRenderBatchSize
+          )
+        }
+        type="button"
+      >
+        {t('records.loadMore', {
+          remaining: formatCount(
+            matchingRecords.length - filteredRecords.length
+          )
+        })}
+      </button>
+    ) : null
 
   return (
     <section
@@ -680,6 +702,11 @@ export function ActivityPanel({
         scope={{ kind: 'all-projects' }}
         title={t('header.title')}
       />
+      {legacyHistoryMayBeIncomplete && (
+        <p className="activity-panel__legacy-warning" role="status">
+          {t('records.legacyHistoryMayBeIncomplete')}
+        </p>
+      )}
 
       <PageTabs
         ariaLabel={t('tabs.ariaLabel')}
@@ -781,6 +808,7 @@ export function ActivityPanel({
                   </div>
                 </section>
               ))}
+              {loadMoreRecords}
             </div>
           )}
         </div>
@@ -957,6 +985,7 @@ export function ActivityPanel({
                   {renderRecordCard(selectedTimelineRecord, true)}
                 </aside>
               )}
+              {loadMoreRecords}
             </div>
           )}
         </div>

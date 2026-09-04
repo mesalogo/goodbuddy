@@ -55,7 +55,8 @@ function renderSidebar({
   }>
   onLoadArtifact?: (artifactId: string) => Promise<void>
   onLoadWorkspaceFile?: (
-    path: string
+    path: string,
+    offsetBytes?: number
   ) => Promise<WorkspaceFilePreview>
   workspaceProjectId?: string
   restoreFocusRef?: { current: HTMLElement | null }
@@ -330,7 +331,10 @@ describe('RightAssistantSidebar resizing', () => {
         name: 'README.md',
         content: 'Recovered preview',
         mimeType: 'text/plain',
-        size: 17
+        size: 17,
+        offsetBytes: 0,
+        nextOffsetBytes: 17,
+        truncated: false
       })
     renderSidebar({
       tab: 'workspace',
@@ -372,7 +376,70 @@ describe('RightAssistantSidebar resizing', () => {
     expect(await screen.findByText('Recovered preview'))
       .toBeInTheDocument()
     expect(onLoadWorkspaceFile).toHaveBeenCalledTimes(2)
-    expect(onLoadWorkspaceFile).toHaveBeenNthCalledWith(2, 'README.md')
+    expect(onLoadWorkspaceFile).toHaveBeenNthCalledWith(
+      2,
+      'README.md',
+      0
+    )
+  })
+
+  it('loads and appends the rest of a large workspace file', async () => {
+    const onLoadWorkspaceFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        path: 'large.txt',
+        name: 'large.txt',
+        content: 'first page\n',
+        mimeType: 'text/plain',
+        size: 30,
+        offsetBytes: 0,
+        nextOffsetBytes: 11,
+        truncated: true
+      })
+      .mockResolvedValueOnce({
+        path: 'large.txt',
+        name: 'large.txt',
+        content: 'second page',
+        mimeType: 'text/plain',
+        size: 30,
+        offsetBytes: 11,
+        nextOffsetBytes: 30,
+        truncated: false
+      })
+    renderSidebar({
+      tab: 'workspace',
+      workspaceProjectId: 'project-1',
+      onListWorkspaceDirectory: vi.fn(async (path: string) => ({
+        path,
+        entries: [
+          {
+            name: 'large.txt',
+            path: 'large.txt',
+            type: 'file' as const
+          }
+        ],
+        truncated: false
+      })),
+      onLoadWorkspaceFile
+    })
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'large.txt' })
+    )
+    expect(await screen.findByText('first page')).toBeInTheDocument()
+    expect(screen.getByText('已加载 11 / 30 字节')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '继续加载' }))
+
+    expect(await screen.findByText(/first page\s+second page/u))
+      .toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '继续加载' }))
+      .not.toBeInTheDocument()
+    expect(onLoadWorkspaceFile).toHaveBeenNthCalledWith(
+      2,
+      'large.txt',
+      11
+    )
   })
 
   it('previews a result without switching to a separate tab', () => {

@@ -10,7 +10,7 @@ import {
 } from '../workspace'
 
 const MAX_DIRECTORY_ENTRIES = 500
-const MAX_PREVIEW_BYTES = 256 * 1024
+const PREVIEW_PAGE_BYTES = 256 * 1024
 const previewExtensions = new Set([
   '.c',
   '.cpp',
@@ -92,6 +92,7 @@ export class WorkspaceChangesService {
 
   async readFile(
     inputPath: string,
+    offsetBytes = 0,
     signal?: AbortSignal
   ): Promise<WorkspaceFilePreview> {
     const entry = await this.workspace.stat({
@@ -110,8 +111,9 @@ export class WorkspaceChangesService {
     }
     const preview = await this.workspace.readText({
       path: inputPath,
-      maximumBytes: MAX_PREVIEW_BYTES,
-      tooLargeMessage: '工作区文件超过 256KB 预览限制',
+      offsetBytes,
+      maximumBytes: PREVIEW_PAGE_BYTES,
+      allowTruncated: true,
       invalidUtf8Message: '工作区文件不是有效 UTF-8 文本',
       signal
     })
@@ -119,6 +121,9 @@ export class WorkspaceChangesService {
       path: preview.path,
       name: preview.name,
       content: preview.content,
+      offsetBytes: preview.offsetBytes,
+      nextOffsetBytes: preview.offsetBytes + preview.bytesRead,
+      truncated: preview.truncated,
       mimeType:
         extension === '.md' || extension === '.markdown'
           ? 'text/markdown'
@@ -177,12 +182,16 @@ export async function listWorkspaceDirectory(
 
 export async function readWorkspaceFile(
   workspace: string | WorkspaceAccess,
-  inputPath: string
+  inputPath: string,
+  offsetBytes = 0
 ): Promise<WorkspaceFilePreview> {
   if (typeof workspace !== 'string') {
-    return new WorkspaceChangesService(workspace).readFile(inputPath)
+    return new WorkspaceChangesService(workspace).readFile(
+      inputPath,
+      offsetBytes
+    )
   }
   return withLocalWorkspace(workspace, (access) =>
-    new WorkspaceChangesService(access).readFile(inputPath)
+    new WorkspaceChangesService(access).readFile(inputPath, offsetBytes)
   )
 }

@@ -4959,6 +4959,25 @@ button > svg {
   font-size: 9px;
 }
 
+.assistant-sidebar__preview-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) 0;
+  gap: var(--space-3);
+}
+
+.assistant-sidebar__preview-more p,
+.assistant-sidebar__preview-more-error {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.assistant-sidebar__preview-more-error {
+  color: var(--danger);
+}
+
 .assistant-sidebar__import {
   display: flex;
   align-items: center;
@@ -13727,6 +13746,20 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .activity-panel > .page-tabs {
   padding: var(--space-4) 0;
+}
+
+.activity-panel__legacy-warning {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-secondary);
+}
+
+.activity-panel__load-more {
+  align-self: center;
+  margin-top: var(--space-3);
 }
 
 .activity-panel__tab-panel {

@@ -186,6 +186,7 @@ import {
 } from '../shared/magic-notes-contracts'
 import {
   assistantIdSchema,
+  activityHistorySnapshotSchema,
   conversationBranchInputSchema,
   conversationSnapshotsSchema,
   localConversationSaveBatchSchema,
@@ -6598,7 +6599,8 @@ export function registerIpcHandlers(
       try {
         return await readWorkspaceFile(
           executionSpace.workspaceAccess,
-          value.path
+          value.path,
+          value.offsetBytes
         )
       } finally {
         await executionSpace.workspaceAccess.dispose()
@@ -6649,6 +6651,19 @@ export function registerIpcHandlers(
       parsed.status
     )
   })
+  registerHandler(ipcChannels.activityHistoryGet, (event) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getActivityHistory()
+  })
+  registerHandler(
+    ipcChannels.activityHistoryReplace,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      assistantDatabase.replaceActivityHistory(
+        activityHistorySnapshotSchema.parse(input)
+      )
+    }
+  )
 
   registerHandler(ipcChannels.tokenUsageSummary, (event) => {
     assertTrustedSender(event, window)

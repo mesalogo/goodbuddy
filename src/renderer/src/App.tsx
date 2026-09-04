@@ -94,6 +94,7 @@ import {
   getRuntimeSelectionForProvider
 } from './runtime-selection'
 import type {
+  ActivityHistorySnapshot,
   AssistantProject,
   AssistantArtifact,
   AssistantMemory,
@@ -128,8 +129,6 @@ import {
   conversationMessageBlocksSchema,
   conversationSubagentActivitySchema,
   interactiveWorkModes,
-  maximumConversationMessageBlocks,
-  maximumConversationRetainedActivities,
   normalizeInteractiveWorkMode,
   projectChannelLabels
 } from '../../shared/assistant-contracts'
@@ -141,9 +140,10 @@ import {
   type ToolActivity
 } from './ChatTimeline'
 import {
-  loadActivityRecords,
+  clearLegacyActivityHistory,
+  loadLegacyActivityHistory,
+  mergeActivityRecords,
   reconcileActivityRecords,
-  saveActivityRecords,
   upsertActivityRecord,
   type ActivityRecord
 } from './activity-store'
@@ -638,9 +638,6 @@ function appendMessageContentBlock(
     }
     return current
   }
-  if (current.length >= maximumConversationMessageBlocks) {
-    return blocks
-  }
   current.push({
     id: crypto.randomUUID(),
     type,
@@ -669,9 +666,6 @@ function upsertMessageToolBlock(
         ? { ...block, tool }
         : block
     )
-  }
-  if (blocks.length >= maximumConversationMessageBlocks) {
-    return blocks
   }
   return [
     ...blocks,
@@ -718,9 +712,6 @@ function upsertMessageSubagentBlock(
         : block
     )
   }
-  if (blocks.length >= maximumConversationMessageBlocks) {
-    return blocks
-  }
   return [
     ...blocks,
     {
@@ -746,14 +737,6 @@ function terminalizeMessageToolBlocks(
           }
         }
       : block
-  )
-}
-
-function canRetainMessageActivity(message: Message): boolean {
-  return (
-    (message.tools?.length ?? 0) +
-      (message.subagents?.length ?? 0) <
-    maximumConversationRetainedActivities
   )
 }
 
@@ -2688,10 +2671,19 @@ function App(): React.JSX.Element {
   const [knowledgeScopeOpen, setKnowledgeScopeOpen] = useState(false)
   const knowledgeScopeTriggerRef = useRef<HTMLButtonElement>(null)
   const knowledgeScopePopoverRef = useRef<HTMLDivElement>(null)
+  const [legacyActivityHistory] = useState(loadLegacyActivityHistory)
   const [activityRecords, setActivityRecords] = useState<ActivityRecord[]>(
-    loadActivityRecords
+    legacyActivityHistory.records
   )
+  const [
+    legacyActivityHistoryMayBeIncomplete,
+    setLegacyActivityHistoryMayBeIncomplete
+  ] = useState(legacyActivityHistory.historyMayBeIncomplete)
+  const [activityHistoryReady, setActivityHistoryReady] = useState(false)
   const activityRecordsRef = useRef(activityRecords)
+  const legacyActivityHistoryMayBeIncompleteRef = useRef(
+    legacyActivityHistoryMayBeIncomplete
+  )
   const activeRuns = useRef(new Map<string, ActiveRun>())
   const preparingConversations = useRef(new Set<string>())
   const [activeConversationIds, setActiveConversationIds] = useState<
@@ -3940,6 +3932,7 @@ function App(): React.JSX.Element {
       setActivityRecords((current) =>
         upsertActivityRecord(current, {
           ...record,
+          title: record.title.slice(0, 240),
           scope,
           id: crypto.randomUUID(),
           createdAt: Date.now()
@@ -3961,7 +3954,7 @@ function App(): React.JSX.Element {
             ? {
                 ...record,
                 status,
-                detail: detail?.slice(0, 4_000) ?? record.detail
+                detail: detail ?? record.detail
               }
             : record
         )
@@ -4398,13 +4391,6 @@ function App(): React.JSX.Element {
             ...message,
             content: `${message.content}${acceptedDelta}`,
             blocks,
-            displayCaptureTruncated:
-              message.displayCaptureTruncated ||
-              Boolean(
-                acceptedDelta &&
-                  message.blocks &&
-                  blocks === message.blocks
-              ),
             status:
               event.delta.length > remaining
                 ? tRef.current('chat.status.responseTruncated')
@@ -4430,14 +4416,7 @@ function App(): React.JSX.Element {
             ...message,
             reasoning: `${currentReasoning}${acceptedDelta}`,
             status: undefined,
-            blocks,
-            displayCaptureTruncated:
-              message.displayCaptureTruncated ||
-              Boolean(
-                acceptedDelta &&
-                  message.blocks &&
-                  blocks === message.blocks
-              )
+            blocks
           }
         })
       } else if (event.type === 'context-metrics') {
@@ -4548,8 +4527,7 @@ function App(): React.JSX.Element {
           title: event.name,
           detail: [event.summary, event.error]
             .filter(Boolean)
-            .join('\n')
-            .slice(0, 4_000),
+            .join('\n'),
           status:
             event.state === 'pending'
               ? 'pending'
@@ -4575,23 +4553,14 @@ function App(): React.JSX.Element {
           }
           if (index >= 0) {
             tools[index] = tool
-          } else if (!canRetainMessageActivity(message)) {
-            return {
-              ...message,
-              displayCaptureTruncated: true
-            }
-          }
-          if (index < 0) {
+          } else {
             tools.push(tool)
           }
           const blocks = upsertMessageToolBlock(message.blocks, tool)
           return {
             ...message,
             tools,
-            blocks,
-            displayCaptureTruncated:
-              message.displayCaptureTruncated ||
-              Boolean(message.blocks && blocks === message.blocks)
+            blocks
           }
         })
       } else if (event.type === 'subagent') {
@@ -4688,8 +4657,7 @@ function App(): React.JSX.Element {
             event.error
           ]
             .filter(Boolean)
-            .join(' · ')
-            .slice(0, 4_000),
+            .join(' · '),
           status:
             event.state === 'queued'
               ? 'pending'
@@ -4722,21 +4690,6 @@ function App(): React.JSX.Element {
           if (index >= 0) {
             subagents[index] = subagent
           } else {
-            const replacesTool = Boolean(
-              event.runtimeCallId &&
-                message.tools?.some(
-                  (tool) => tool.callId === event.runtimeCallId
-                )
-            )
-            if (
-              !replacesTool &&
-              !canRetainMessageActivity(message)
-            ) {
-              return {
-                ...message,
-                displayCaptureTruncated: true
-              }
-            }
             subagents.push(subagent)
           }
           const runtimeCallId = event.runtimeCallId
@@ -4753,10 +4706,7 @@ function App(): React.JSX.Element {
                   (tool) => tool.callId !== runtimeCallId
                 )
               : message.tools,
-            blocks,
-            displayCaptureTruncated:
-              message.displayCaptureTruncated ||
-              Boolean(message.blocks && blocks === message.blocks)
+            blocks
           }
         })
       } else if (event.type === 'approval') {
@@ -4765,7 +4715,7 @@ function App(): React.JSX.Element {
           requestId: event.requestId,
           kind: 'approval',
           title: event.title,
-          detail: event.description.slice(0, 4_000),
+          detail: event.description,
           status: 'pending'
         })
         updateMessage(run.conversationId, run.messageId, (message) => ({
@@ -4879,7 +4829,7 @@ function App(): React.JSX.Element {
                     event.type === 'done'
                       ? incompleteActivityDetail
                       : event.message
-                  }`.slice(0, 4_000)
+                  }`
                 }
               : record
           )
@@ -4894,7 +4844,7 @@ function App(): React.JSX.Element {
               : tRef.current('chat.status.taskCompleted'),
           detail:
             event.type === 'error'
-              ? event.message.slice(0, 4_000)
+              ? event.message
               : tRef.current('chat.status.runtimeCompleted'),
           status: terminalStatus
         })
@@ -5109,10 +5059,28 @@ function App(): React.JSX.Element {
     persistLocalConversationChanges
   ])
 
+  const persistActivityHistory = useCallback(async (): Promise<void> => {
+    if (!activityHistoryReady) {
+      return
+    }
+    try {
+      await window.goodbuddy.activityHistory.replace(
+        activityRecordsRef.current,
+        legacyActivityHistoryMayBeIncompleteRef.current
+      )
+    } catch {
+      notify({
+        tone: 'error',
+        message: tRef.current('notices.activityHistoryPersistenceFailed'),
+        dedupeKey: 'activity-history-persistence'
+      })
+    }
+  }, [activityHistoryReady])
+
   useEffect(
     () =>
       window.goodbuddy.app.onBeforeQuit(async () => {
-        saveActivityRecords(activityRecordsRef.current)
+        await persistActivityHistory()
         if (!conversationStoreReady) {
           return
         }
@@ -5120,7 +5088,11 @@ function App(): React.JSX.Element {
         persistLocalConversationChanges()
         await conversationPersistenceQueueRef.current
       }),
-    [conversationStoreReady, persistLocalConversationChanges]
+    [
+      conversationStoreReady,
+      persistActivityHistory,
+      persistLocalConversationChanges
+    ]
   )
 
   useEffect(() => {
@@ -5438,18 +5410,87 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    let active = true
+    void (async () => {
+      let snapshot: ActivityHistorySnapshot
+      try {
+        snapshot = await window.goodbuddy.activityHistory.get()
+      } catch {
+        if (active) {
+          notify({
+            tone: 'error',
+            message: tRef.current('notices.activityHistoryReadFailed'),
+            dedupeKey: 'activity-history-read'
+          })
+        }
+        return
+      }
+      if (!active) {
+        return
+      }
+      const legacyHistoryMayBeIncomplete =
+        legacyActivityHistory.historyMayBeIncomplete ||
+        snapshot.legacyHistoryMayBeIncomplete
+      if (
+        legacyActivityHistory.records.length > 0 ||
+        legacyActivityHistory.historyMayBeIncomplete
+      ) {
+        try {
+          await window.goodbuddy.activityHistory.replace(
+            mergeActivityRecords(
+              legacyActivityHistory.records,
+              snapshot.records
+            ),
+            legacyHistoryMayBeIncomplete
+          )
+          clearLegacyActivityHistory()
+        } catch {
+          notify({
+            tone: 'error',
+            message: tRef.current(
+              'notices.activityHistoryPersistenceFailed'
+            ),
+            dedupeKey: 'activity-history-persistence'
+          })
+        }
+        if (!active) {
+          return
+        }
+      }
+      setActivityRecords((current) =>
+        mergeActivityRecords(current, snapshot.records)
+      )
+      setLegacyActivityHistoryMayBeIncomplete(legacyHistoryMayBeIncomplete)
+      setActivityHistoryReady(true)
+    })()
+    return () => {
+      active = false
+    }
+  }, [legacyActivityHistory])
+
+  useEffect(() => {
     activityRecordsRef.current = activityRecords
+    legacyActivityHistoryMayBeIncompleteRef.current =
+      legacyActivityHistoryMayBeIncomplete
+    if (!activityHistoryReady) {
+      return
+    }
     const timeout = window.setTimeout(() => {
-      saveActivityRecords(activityRecords)
+      void persistActivityHistory()
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [activityRecords])
+  }, [
+    activityHistoryReady,
+    activityRecords,
+    legacyActivityHistoryMayBeIncomplete,
+    persistActivityHistory
+  ])
 
   useEffect(
     () => () => {
-      saveActivityRecords(activityRecordsRef.current)
+      void persistActivityHistory()
     },
-    []
+    [persistActivityHistory]
   )
 
   const resumeProjectConversationQueues = useCallback(
@@ -5769,11 +5810,15 @@ function App(): React.JSX.Element {
   )
 
   const loadWorkspaceFile = useCallback(
-    async (path: string) => {
+    async (path: string, offsetBytes = 0) => {
       if (!activeProjectId) {
         throw new Error(tRef.current('notices.selectProject'))
       }
-      return window.goodbuddy.workspace.readFile(activeProjectId, path)
+      return window.goodbuddy.workspace.readFile(
+        activeProjectId,
+        path,
+        offsetBytes
+      )
     },
     [activeProjectId]
   )
@@ -8173,6 +8218,8 @@ function App(): React.JSX.Element {
       persistedLocalConversationsRef.current.clear()
       setConversations([conversation])
       setActiveId(conversation.id)
+      legacyActivityHistoryMayBeIncompleteRef.current = false
+      setLegacyActivityHistoryMayBeIncomplete(false)
       setActivityRecords([])
       setAssistantTasks([])
       setTokenUsage(emptyTokenUsage)
@@ -10871,7 +10918,14 @@ function App(): React.JSX.Element {
                   }
                 >
                   <ActivityPanel
-                    onClear={() => setActivityRecords([])}
+                    legacyHistoryMayBeIncomplete={
+                      legacyActivityHistoryMayBeIncomplete
+                    }
+                    onClear={() => {
+                      legacyActivityHistoryMayBeIncompleteRef.current = false
+                      setLegacyActivityHistoryMayBeIncomplete(false)
+                      setActivityRecords([])
+                    }}
                     onOpenConversation={openActivityConversation}
                     projects={projects}
                     records={activityRecords}

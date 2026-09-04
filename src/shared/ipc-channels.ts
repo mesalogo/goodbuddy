@@ -185,6 +185,8 @@ export const ipcChannels = {
   workspacePathOpen: 'workspace:path:open',
   tasksList: 'tasks:list',
   tasksSetStatus: 'tasks:set-status',
+  activityHistoryGet: 'activity-history:get',
+  activityHistoryReplace: 'activity-history:replace',
   tokenUsageSummary: 'usage:token-summary',
   artifactsList: 'artifacts:list',
   artifactsGet: 'artifacts:get',

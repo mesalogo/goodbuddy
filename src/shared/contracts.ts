@@ -41,6 +41,8 @@ import {
   type AssistantHeartbeatRun,
   type AssistantExpert,
   type AssistantTask,
+  type ActivityHistorySnapshot,
+  type ActivityRecord,
   type TokenUsageSummary,
   type ConversationSnapshot,
   type ConversationAttachment,
@@ -288,7 +290,8 @@ export const workspaceDirectoryRequestSchema = z
 export const workspaceFileRequestSchema = z
   .object({
     projectId: assistantIdSchema,
-    path: workspaceRelativePathSchema
+    path: workspaceRelativePathSchema,
+    offsetBytes: z.number().int().nonnegative().safe().optional()
   })
   .strict()
 
@@ -1888,7 +1891,8 @@ export type DesktopApi = {
     ) => Promise<WorkspaceDirectoryListing>
     readFile: (
       projectId: string,
-      path: string
+      path: string,
+      offsetBytes?: number
     ) => Promise<WorkspaceFilePreview>
     openPath: (
       projectId: string,
@@ -1901,6 +1905,13 @@ export type DesktopApi = {
     setStatus: (
       taskId: string,
       status: Extract<AssistantTask['status'], 'completed' | 'cancelled'>
+    ) => Promise<void>
+  }
+  activityHistory: {
+    get: () => Promise<ActivityHistorySnapshot>
+    replace: (
+      records: ActivityRecord[],
+      legacyHistoryMayBeIncomplete: boolean
     ) => Promise<void>
   }
   usage: {

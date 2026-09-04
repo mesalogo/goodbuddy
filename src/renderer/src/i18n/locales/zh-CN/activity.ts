@@ -111,12 +111,15 @@ export const activity = {
   records: {
     unknownTime: '时间未知',
     interruptedOnRestart: '应用重启时此活动尚未结束。',
+    legacyHistoryMayBeIncomplete:
+      '旧版本曾限制本机运行记录的数量和详情长度，因此更早的记录或部分详情可能已经丢失。新记录会完整保存。',
     unavailableScope:
       '创建此活动记录时未能确定其归属范围。',
     conversation: '对话：{{title}}',
     activityCount: '{{formattedCount}} 条活动',
     projectSummary:
       '{{conversationCount}} 个任务或会话 · {{activityCount}} 条活动',
+    loadMore: '继续显示（剩余 {{remaining}} 条）',
     openConversation: '打开所属对话'
   }
 } as const
