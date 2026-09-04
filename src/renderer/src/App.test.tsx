@@ -6466,6 +6466,236 @@ describe('App', () => {
     )
   })
 
+  describe('persisted terminal state convergence', () => {
+    let conversationsChangedListener: (() => void) | undefined
+
+    const startStreamingRun = async (): Promise<{
+      requestId: string
+      conversationId: string
+      assistantMessageId: string
+      userMessageId: string
+    }> => {
+      conversationsChangedListener = undefined
+      vi.mocked(api.conversations.onChanged).mockImplementation(
+        (listener) => {
+          conversationsChangedListener = listener
+          return () => {
+            if (conversationsChangedListener === listener) {
+              conversationsChangedListener = undefined
+            }
+          }
+        }
+      )
+      render(<App />)
+      fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
+        target: { value: '断网期间继续执行' }
+      })
+      await waitFor(() =>
+        expect(screen.getByLabelText('发送')).toBeEnabled()
+      )
+      fireEvent.click(screen.getByLabelText('发送'))
+      await waitFor(() => expect(run).toHaveBeenCalledOnce())
+      const request = run.mock.calls[0]?.[0]
+      if (
+        !request?.currentAssistantMessageId ||
+        !request.currentUserMessageId
+      ) {
+        throw new Error('Missing request')
+      }
+      expect(
+        screen
+          .getByText('正在连接 Agent Runtime')
+          .querySelector('.message__status-dot')
+      ).toHaveClass('message__status-dot--active')
+      expect(screen.getByLabelText('加入待发送队列')).toBeInTheDocument()
+      vi.mocked(api.conversationQueue.ready).mockClear()
+      return {
+        requestId: request.requestId,
+        conversationId: request.conversationId,
+        assistantMessageId: request.currentAssistantMessageId,
+        userMessageId: request.currentUserMessageId
+      }
+    }
+
+    const persistedSnapshot = (
+      input: {
+        conversationId: string
+        userMessageId: string
+        assistantMessageId: string
+      },
+      assistant: {
+        state: 'streaming' | 'complete' | 'error'
+        content: string
+        status?: string
+      }
+    ): ConversationSnapshot => ({
+      id: input.conversationId,
+      projectId,
+      runtimeSelection: { provider: 'model', profileId: modelProfileId },
+      title: '断网期间继续执行',
+      updatedAt: 1_000,
+      messages: [
+        {
+          id: input.userMessageId,
+          role: 'user',
+          content: '断网期间继续执行',
+          createdAt: 900,
+          state: 'complete'
+        },
+        {
+          id: input.assistantMessageId,
+          role: 'assistant',
+          content: assistant.content,
+          createdAt: 950,
+          state: assistant.state,
+          status: assistant.status
+        }
+      ]
+    })
+
+    it('converges a streaming message onto the persisted completed state after reconnecting', async () => {
+      const started = await startStreamingRun()
+      expect(conversationsChangedListener).toBeDefined()
+
+      vi.mocked(api.conversations.list).mockResolvedValue([
+        persistedSnapshot(started, {
+          state: 'complete',
+          content: '远端在断线期间已经完成的回复',
+          status: '任务已完成'
+        })
+      ])
+      act(() => {
+        conversationsChangedListener?.()
+      })
+
+      expect(
+        await screen.findByText('远端在断线期间已经完成的回复')
+      ).toBeInTheDocument()
+      await waitFor(() =>
+        expect(
+          screen.queryByText('正在连接 Agent Runtime')
+        ).not.toBeInTheDocument()
+      )
+      expect(
+        document.querySelector('.message__status-dot--active')
+      ).toBeNull()
+      expect(screen.getByLabelText('发送')).toBeInTheDocument()
+      await waitFor(() =>
+        expect(api.conversationQueue.ready).toHaveBeenCalledWith(
+          started.conversationId
+        )
+      )
+
+      // A late terminal event for the settled run must be ignored rather
+      // than resurrecting the message or double-releasing the queue.
+      vi.mocked(api.conversationQueue.ready).mockClear()
+      act(() => {
+        agentListener?.({
+          requestId: started.requestId,
+          type: 'error',
+          status: 'failed',
+          message: '迟到的连接中断错误'
+        })
+      })
+      expect(
+        screen.queryByText('迟到的连接中断错误')
+      ).not.toBeInTheDocument()
+      expect(
+        screen.getByText('远端在断线期间已经完成的回复')
+      ).toBeInTheDocument()
+      expect(api.conversationQueue.ready).not.toHaveBeenCalled()
+    })
+
+    it('converges a streaming message onto the persisted failed state after reconnecting', async () => {
+      const started = await startStreamingRun()
+
+      vi.mocked(api.conversations.list).mockResolvedValue([
+        persistedSnapshot(started, {
+          state: 'error',
+          content: '',
+          status: '远端 Agent 执行失败'
+        })
+      ])
+      act(() => {
+        conversationsChangedListener?.()
+      })
+
+      expect(
+        await screen.findByText('远端 Agent 执行失败')
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByText('正在连接 Agent Runtime')
+      ).not.toBeInTheDocument()
+      expect(
+        document.querySelector('.message__status-dot--active')
+      ).toBeNull()
+      await waitFor(() =>
+        expect(screen.getByLabelText('发送')).toBeInTheDocument()
+      )
+      await waitFor(() =>
+        expect(api.conversationQueue.ready).toHaveBeenCalledWith(
+          started.conversationId
+        )
+      )
+    })
+
+    it('keeps the run in flight while the persisted message is still streaming and refreshes on focus', async () => {
+      const started = await startStreamingRun()
+
+      vi.mocked(api.conversations.list).mockResolvedValue([
+        persistedSnapshot(started, {
+          state: 'streaming',
+          content: '',
+          status: '远端 Agent 正在处理请求'
+        })
+      ])
+      act(() => {
+        conversationsChangedListener?.()
+      })
+      await waitFor(() =>
+        expect(api.conversations.list).toHaveBeenCalledTimes(2)
+      )
+      // The local streaming copy still wins over a non-terminal snapshot.
+      expect(
+        screen.getByText('正在连接 Agent Runtime')
+      ).toBeInTheDocument()
+      expect(screen.getByLabelText('加入待发送队列')).toBeInTheDocument()
+      expect(api.conversationQueue.ready).not.toHaveBeenCalled()
+
+      // Regaining focus re-reads the store and converges once the remote
+      // terminal state has landed, even without another change event.
+      vi.mocked(api.conversations.list).mockResolvedValue([
+        persistedSnapshot(started, {
+          state: 'complete',
+          content: '聚焦后读到的最终回复',
+          status: '任务已完成'
+        })
+      ])
+      act(() => {
+        window.dispatchEvent(new Event('focus'))
+      })
+      expect(
+        await screen.findByText('聚焦后读到的最终回复')
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByText('正在连接 Agent Runtime')
+      ).not.toBeInTheDocument()
+      await waitFor(() =>
+        expect(api.conversationQueue.ready).toHaveBeenCalledWith(
+          started.conversationId
+        )
+      )
+
+      // The live done event now targets an already-settled run: no-op.
+      act(() => {
+        agentListener?.({ requestId: started.requestId, type: 'done' })
+      })
+      expect(
+        screen.getByText('聚焦后读到的最终回复')
+      ).toBeInTheDocument()
+    })
+  })
+
   it('retries a failed recovery with a new request ID and cleans up its listener', async () => {
     installRemoteProjectsSetting(true)
     const remoteProject = {

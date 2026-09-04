@@ -6229,6 +6229,20 @@ describe('registerIpcHandlers agent terminal state', () => {
         })
       )
     )
+    // The renderer converges on the persisted terminal state by re-reading
+    // conversations, so the change notice must land before `completed`.
+    const sendCalls = harness.webContents.send.mock.calls
+    const completedIndex = sendCalls.findIndex(
+      ([channel, payload]) =>
+        channel === ipcChannels.remoteProjectRecoveryProgress &&
+        (payload as { stage?: string }).stage === 'completed'
+    )
+    expect(completedIndex).toBeGreaterThan(0)
+    expect(
+      sendCalls
+        .slice(0, completedIndex)
+        .some(([channel]) => channel === ipcChannels.conversationsChanged)
+    ).toBe(true)
     await harness.dispose()
   })
 

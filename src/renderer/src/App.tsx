@@ -1482,6 +1482,19 @@ function mergeArtifacts(
   )
 }
 
+/**
+ * The persisted store is the authority for a message's terminal state.
+ * A locally streaming message (or a locally interrupted one that the
+ * remote recovery later completed) must never shadow a persisted
+ * terminal state, even when the local conversation was touched later.
+ */
+function persistedTerminalStateOverridesLocal(
+  local: Message,
+  persisted: Message
+): boolean {
+  return persisted.state !== 'streaming' && local.state !== 'complete'
+}
+
 function mergePersistedConversations(
   current: readonly Conversation[],
   incoming: readonly ConversationSnapshot[],
@@ -1510,12 +1523,19 @@ function mergePersistedConversations(
       conversation.messages.map((message) => message.id)
     )
     const messages = [
-      ...conversation.messages.map(
-        (message) =>
-          localIsNewer
-            ? localMessageById.get(message.id) ?? message
-            : message
-      ),
+      ...conversation.messages.map((message) => {
+        if (!localIsNewer) {
+          return message
+        }
+        const localMessage = localMessageById.get(message.id)
+        if (
+          !localMessage ||
+          persistedTerminalStateOverridesLocal(localMessage, message)
+        ) {
+          return message
+        }
+        return localMessage
+      }),
       ...local.messages.filter(
         (message) => !serverMessageIds.has(message.id)
       )
@@ -4140,6 +4160,39 @@ function App(): React.JSX.Element {
     []
   )
 
+  const releaseConversationQueueAfterRun = useCallback(
+    (run: Pick<ActiveRun, 'conversationId' | 'projectId'>): void => {
+      requestAnimationFrame(() => {
+        if (
+          run.projectId &&
+          ((!projectRecoverySnapshotReadyRef.current &&
+            isManagedSshProject(
+              projectsRef.current.find(
+                (project) => project.id === run.projectId
+              )
+            )) ||
+            isProjectRecoveryUnsettled(
+              projectRecoveryByProjectIdRef.current[run.projectId]
+            ))
+        ) {
+          return
+        }
+        void window.goodbuddy.conversationQueue
+          .ready(run.conversationId)
+          .catch(() => {
+            notify({
+              tone: 'error',
+              message: tRef.current(
+                'notices.conversationQueueResumeFailed'
+              ),
+              dedupeKey: 'conversation-queue-resume'
+            })
+          })
+      })
+    },
+    [notify]
+  )
+
   const handleAgentEvent = useCallback(
     (event: AgentEvent): void => {
       const run = activeRuns.current.get(event.requestId)
@@ -4959,33 +5012,7 @@ function App(): React.JSX.Element {
         })
         activeRuns.current.delete(event.requestId)
         setConversationActivity(run.conversationId, false)
-        requestAnimationFrame(() => {
-          if (
-            run.projectId &&
-            ((!projectRecoverySnapshotReadyRef.current &&
-              isManagedSshProject(
-                projectsRef.current.find(
-                  (project) => project.id === run.projectId
-                )
-              )) ||
-              isProjectRecoveryUnsettled(
-                projectRecoveryByProjectIdRef.current[run.projectId]
-              ))
-          ) {
-            return
-          }
-          void window.goodbuddy.conversationQueue
-            .ready(run.conversationId)
-            .catch(() => {
-              notify({
-                tone: 'error',
-                message: tRef.current(
-                  'notices.conversationQueueResumeFailed'
-                ),
-                dedupeKey: 'conversation-queue-resume'
-              })
-            })
-        })
+        releaseConversationQueueAfterRun(run)
         flushConversationPersistenceAfterRenderRef.current = true
       }
     },
@@ -4993,6 +5020,7 @@ function App(): React.JSX.Element {
       recordActivity,
       loadWorkspaceChanges,
       refreshTokenUsage,
+      releaseConversationQueueAfterRun,
       setConversationActivity,
       updateMessage,
       updateRequestActivity
@@ -5115,6 +5143,36 @@ function App(): React.JSX.Element {
         refresh()
       }, 50)
     }
+    // A run whose assistant message has already reached a persisted
+    // terminal state (for example a remote task that finished while the
+    // desktop was disconnected) must stop counting as in-flight, otherwise
+    // the renderer keeps showing "processing" forever.
+    const settleActiveRunsFromPersistedMessages = (
+      persisted: readonly ConversationSnapshot[]
+    ): void => {
+      if (activeRuns.current.size === 0) {
+        return
+      }
+      const persistedMessageStates = new Map<string, Message['state']>()
+      for (const conversation of persisted) {
+        for (const message of conversation.messages) {
+          persistedMessageStates.set(
+            `${conversation.id}\0${message.id}`,
+            message.state
+          )
+        }
+      }
+      for (const [requestId, run] of activeRuns.current) {
+        const state = persistedMessageStates.get(
+          `${run.conversationId}\0${run.messageId}`
+        )
+        if (state !== undefined && state !== 'streaming') {
+          activeRuns.current.delete(requestId)
+          setConversationActivity(run.conversationId, false)
+          releaseConversationQueueAfterRun(run)
+        }
+      }
+    }
     const refresh = (): void => {
       if (refreshInFlight) {
         refreshQueued = true
@@ -5215,6 +5273,7 @@ function App(): React.JSX.Element {
               persistedLocalConversationsRef.current
             )
           )
+          settleActiveRunsFromPersistedMessages(persisted)
         })
         .catch(() => {
           if (active && sequence === refreshSequence) {
@@ -5238,15 +5297,28 @@ function App(): React.JSX.Element {
         }
       })
     }
+    const refreshWhenVisible = (): void => {
+      if (document.visibilityState !== 'hidden') {
+        queueRefresh()
+      }
+    }
     const remove = window.goodbuddy.conversations.onChanged(queueRefresh)
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
     return () => {
       active = false
       if (refreshTimer !== undefined) {
         window.clearTimeout(refreshTimer)
       }
       remove()
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
     }
-  }, [conversationStoreReady])
+  }, [
+    conversationStoreReady,
+    releaseConversationQueueAfterRun,
+    setConversationActivity
+  ])
 
   useEffect(() => {
     let active = true

@@ -1935,12 +1935,16 @@ export function registerIpcHandlers(
         for (const task of tasks) {
           await recoverRemoteTask(task, requestId)
         }
+        // Recovery may terminalize the task without a trailing checkpoint;
+        // let the renderer converge on the persisted terminal state.
+        publishConversationChange()
         publishRemoteProjectRecovery({
           projectId,
           requestId,
           stage: 'completed'
         })
       } catch (error) {
+        publishConversationChange()
         publishRemoteProjectRecovery({
           projectId,
           requestId,
