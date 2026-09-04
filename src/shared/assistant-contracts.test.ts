@@ -174,7 +174,7 @@ describe('project execution space contracts', () => {
 })
 
 describe('conversation activity contracts', () => {
-  it('accepts more than 100 tool and subagent activities', () => {
+  it('accepts long activity runs within the retained display bounds', () => {
     const tools = Array.from({ length: 101 }, (_, index) => ({
       callId: `call-${index + 1}`,
       name: 'read',
@@ -203,6 +203,7 @@ describe('conversation activity contracts', () => {
         })),
         createdAt: 1,
         state: 'complete',
+        displayCaptureTruncated: true,
         tools,
         subagents
       })
@@ -216,6 +217,37 @@ describe('conversation activity contracts', () => {
         })
       ])
     })
+  })
+
+  it('rejects conversation activity and block arrays beyond display bounds', () => {
+    const baseMessage = {
+      id: '00000000-0000-4000-8000-000000000999',
+      role: 'assistant' as const,
+      content: '',
+      createdAt: 1,
+      state: 'complete' as const
+    }
+    expect(
+      conversationMessageSchema.safeParse({
+        ...baseMessage,
+        tools: Array.from({ length: 501 }, (_, index) => ({
+          callId: `call-${index + 1}`,
+          name: 'read',
+          state: 'completed' as const,
+          summary: `Tool ${index + 1}`
+        }))
+      }).success
+    ).toBe(false)
+    expect(
+      conversationMessageSchema.safeParse({
+        ...baseMessage,
+        blocks: Array.from({ length: 2_001 }, (_, index) => ({
+          id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+          type: 'text' as const,
+          content: 'x'
+        }))
+      }).success
+    ).toBe(false)
   })
 })
 

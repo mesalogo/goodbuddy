@@ -288,6 +288,36 @@ describe('SelectedRuntimeManager', () => {
     expect(cached.dispose).toHaveBeenCalledOnce()
   })
 
+  it('uses a lightweight factory only for passive status probes', async () => {
+    const probed = runtime()
+    const tested = runtime()
+    const create = vi.fn(async () => tested.value)
+    const createStatus = vi.fn(async () => probed.value)
+    const manager = new SelectedRuntimeManager(
+      create,
+      undefined,
+      undefined,
+      undefined,
+      createStatus
+    )
+    const selection = { provider: 'opencode' as const }
+
+    await expect(manager.getStatus(selection)).resolves.toMatchObject({
+      available: true
+    })
+    expect(createStatus).toHaveBeenCalledWith(selection)
+    expect(create).not.toHaveBeenCalled()
+    expect(probed.dispose).toHaveBeenCalledOnce()
+
+    await expect(manager.testStatus(selection)).resolves.toMatchObject({
+      available: true
+    })
+    expect(create).toHaveBeenCalledWith(selection)
+    expect(tested.testConnection).toHaveBeenCalledOnce()
+    expect(tested.dispose).toHaveBeenCalledOnce()
+    await manager.dispose()
+  })
+
   it('disposes a native-inventory runtime without caching it', async () => {
     const inspected = runtime()
     const cached = runtime()

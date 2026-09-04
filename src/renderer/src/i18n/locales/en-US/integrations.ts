@@ -211,6 +211,7 @@ export const integrations = {
       runtimeAssignmentUnsupportedAriaLabel:
         '{{name}} cannot be assigned to {{runtime}} because this runtime does not support built-in MCP',
       unsupportedSuffix: ' (not supported yet)',
+      serverSummaryExecuteOnly: 'Execute only',
       serverSummaryMixed: 'Read and write by mode',
       serverSummaryReadOnly: 'Read-only',
       serverSummaryDisabled: 'Disabled · Enable Magic Notes first',

@@ -83,7 +83,8 @@ const DEFAULT_MAXIMUM_OPERATIONS_PER_BINDING = 1_000
 const DEFAULT_DISPOSE_TIMEOUT_MS = 10_000
 const OWNED_PROMPT_CANCEL_GRACE_MS = 1_000
 const OWNED_PROMPT_START_TIMEOUT_MS = 2 * 60_000
-const ACP_JOURNAL_RETRY_MILLISECONDS = 25
+const ACP_JOURNAL_RETRY_INITIAL_MILLISECONDS = 25
+const ACP_JOURNAL_RETRY_MAXIMUM_MILLISECONDS = 1_000
 
 export type RuntimeAcpBackendErrorCode =
   | 'capacity'
@@ -1976,6 +1977,7 @@ export class RuntimeAcpBackend {
       try {
         await this.#enqueueOutput(binding, payload, async () => {
           const sequence = binding.nextOutputSequence.toString()
+          let retryDelay = ACP_JOURNAL_RETRY_INITIAL_MILLISECONDS
           while (true) {
             try {
               this.#options.journal.appendAcpFrame({
@@ -1998,7 +2000,11 @@ export class RuntimeAcpBackend {
                 )
               }
               this.#assertBeforeDeadline(binding)
-              await delay(ACP_JOURNAL_RETRY_MILLISECONDS)
+              await delay(retryDelay)
+              retryDelay = Math.min(
+                ACP_JOURNAL_RETRY_MAXIMUM_MILLISECONDS,
+                retryDelay * 2
+              )
             }
           }
           binding.nextOutputSequence += 1n

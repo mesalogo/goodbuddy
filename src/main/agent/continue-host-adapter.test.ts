@@ -1346,6 +1346,88 @@ describe('ContinueHostAdapter', () => {
     }
   )
 
+  it('stops forwarding later deltas after the patched stream overflows', async () => {
+    const distribution = await createDistribution()
+    let stateRequests = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/state')) {
+          stateRequests += 1
+          return Response.json({
+            session: {
+              history:
+                stateRequests < 4
+                  ? []
+                  : [
+                      {
+                        message: {
+                          role: 'assistant',
+                          content: 'prefix missing suffix'
+                        }
+                      }
+                    ]
+            },
+            isProcessing: stateRequests < 4,
+            messageQueueLength: 0,
+            pendingPermission: null,
+            goodbuddyEvents:
+              stateRequests === 2
+                ? [{ type: 'text', delta: 'prefix ' }]
+                : stateRequests === 3
+                  ? [{ type: 'text', delta: 'suffix' }]
+                  : [],
+            goodbuddyEventsOverflow: stateRequests === 3
+          })
+        }
+        return Response.json({})
+      })
+    )
+    const forwarded: unknown[] = []
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath,
+      configPath: '',
+      workspace: process.cwd(),
+      cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost: () => ({
+        exitCode: null,
+        killed: false,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true
+      }),
+      modelProfile: {
+        id: randomUUID(),
+        name: 'Local model',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        modelName: 'qwen3',
+        protocol: 'openai-chat-completions',
+        authentication: 'none'
+      }
+    })
+
+    await expect(
+      adapter.run(
+        'hello',
+        new AbortController().signal,
+        async () => 'deny',
+        {
+          onEvent: (event) => {
+            forwarded.push(event)
+          }
+        }
+      )
+    ).resolves.toMatchObject({
+      text: 'prefix missing suffix',
+      streamedText: true,
+      streamTruncated: true
+    })
+    expect(forwarded).toEqual([
+      { type: 'text', delta: 'prefix ' }
+    ])
+  })
+
   it('forwards more than 100 unique tool calls', async () => {
     const distribution = await createDistribution()
     let stateRequests = 0

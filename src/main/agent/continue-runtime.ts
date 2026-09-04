@@ -750,8 +750,10 @@ export class ContinueAgentRuntime implements AgentRuntime {
     }
     if (!result.streamedText || result.streamTruncated) {
       const remainingText =
-        result.streamTruncated && result.text.startsWith(emittedText)
-          ? result.text.slice(emittedText.length)
+        result.streamTruncated
+          ? result.text.startsWith(emittedText)
+            ? result.text.slice(emittedText.length)
+            : ''
           : result.text
       if (remainingText) {
         yield {

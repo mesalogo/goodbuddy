@@ -1862,6 +1862,43 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.queryByText('设置已保存')).not.toBeInTheDocument()
   })
 
+  it('blocks draft edits while settings are being saved', async () => {
+    let finishSave!: (settings: RuntimeSettings) => void
+    updateRuntime.mockImplementationOnce(
+      async () =>
+        await new Promise<RuntimeSettings>((resolve) => {
+          finishSave = resolve
+        })
+    )
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    const settingsBody = screen
+      .getByRole('tabpanel')
+      .closest('.settings-panel__body')
+    await waitFor(() => {
+      expect(settingsBody).toHaveAttribute('inert')
+      expect(settingsBody).toHaveAttribute('aria-busy', 'true')
+    })
+
+    act(() => finishSave(runtimeSettings))
+    await waitFor(() => {
+      expect(settingsBody).not.toHaveAttribute('inert')
+      expect(settingsBody).toHaveAttribute('aria-busy', 'false')
+    })
+  })
+
   it('submits configured model values while environment values are effective', async () => {
     getRuntime.mockResolvedValueOnce({
       ...runtimeSettings,
@@ -5123,6 +5160,9 @@ describe('SettingsPanel runtime files', () => {
         true
       )
     )
+    expect(
+      within(browserBuiltinCard!).getByText('仅 Execute')
+    ).toBeInTheDocument()
     const builtinBrowserToggle = screen.getByRole('button', {
       name: '展开服务器 内置浏览器'
     })

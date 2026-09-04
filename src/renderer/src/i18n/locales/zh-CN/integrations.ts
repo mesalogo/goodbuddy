@@ -195,6 +195,7 @@ export const integrations = {
       runtimeAssignmentUnsupportedAriaLabel:
         '{{name}} 无法分配给 {{runtime}}，当前 Runtime 不支持内置 MCP',
       unsupportedSuffix: '（暂不支持）',
+      serverSummaryExecuteOnly: '仅 Execute',
       serverSummaryMixed: '按模式读写',
       serverSummaryReadOnly: '只读',
       serverSummaryDisabled: '未启用 · 需要开启魔法笔记',

@@ -1563,11 +1563,48 @@ describe('ModelAgentRuntime', () => {
     )
   })
 
-  it('cancels immediately during model retry backoff', async () => {
-    const controller = new AbortController()
+  it('does not retry a reset whose dispatch outcome is unknown', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => {
       throw Object.assign(new Error('socket disconnected'), {
         code: 'ECONNRESET'
+      })
+    })
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai',
+      model: 'sonnet-5',
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      fetcher
+    })
+    const events: RuntimeEvent[] = []
+    const consume = async (): Promise<void> => {
+      for await (const event of runtime.run(
+        {
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'test'
+        },
+        new AbortController().signal
+      )) {
+        events.push(event)
+      }
+    }
+
+    await expect(consume()).rejects.toThrow('socket disconnected')
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining('正在重试')
+      })
+    )
+  })
+
+  it('cancels immediately during model retry backoff', async () => {
+    const controller = new AbortController()
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      throw Object.assign(new Error('connect timeout'), {
+        code: 'UND_ERR_CONNECT_TIMEOUT'
       })
     })
     const runtime = new ModelAgentRuntime({
@@ -1691,7 +1728,7 @@ describe('ModelAgentRuntime', () => {
 
       await vi.runAllTimersAsync()
       await assertion
-      expect(fetcher).toHaveBeenCalledTimes(4)
+      expect(fetcher).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }

@@ -7,6 +7,8 @@ import {
   conversationMessageSchema,
   conversationSnapshotSchema,
   expertCreateSchema,
+  maximumConversationMessageBlocks,
+  maximumConversationRetainedActivities,
   normalizeInteractiveWorkMode,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
@@ -260,6 +262,7 @@ type MessageMetadata = {
   status?: string
   reasoning?: ConversationSnapshot['messages'][number]['reasoning']
   blocks?: ConversationSnapshot['messages'][number]['blocks']
+  displayCaptureTruncated?: boolean
   contextCompression?: ConversationSnapshot['messages'][number]['contextCompression']
   contextCompressions?: ConversationSnapshot['messages'][number]['contextCompressions']
   tools?: ConversationSnapshot['messages'][number]['tools']
@@ -1154,6 +1157,7 @@ function serializeConversationMessageMetadata(
     status: message.status,
     reasoning: message.reasoning,
     blocks: message.blocks,
+    displayCaptureTruncated: message.displayCaptureTruncated,
     contextCompression: message.contextCompression,
     contextCompressions: message.contextCompressions,
     tools: message.tools,
@@ -1188,6 +1192,9 @@ function appendRecoveredMessageBlock(
       )
     }
   } else {
+    if (current.length >= maximumConversationMessageBlocks) {
+      return blocks
+    }
     current.push({
       id: randomUUID(),
       type,
@@ -1217,6 +1224,9 @@ function upsertRecoveredToolBlock(
         ? { ...block, tool }
         : block
     )
+  }
+  if (blocks.length >= maximumConversationMessageBlocks) {
+    return blocks
   }
   return [
     ...blocks,
@@ -1257,6 +1267,9 @@ function upsertRecoveredSubagentBlock(
         : block
     )
   }
+  if (blocks.length >= maximumConversationMessageBlocks) {
+    return blocks
+  }
   return [
     ...blocks,
     { id: randomUUID(), type: 'subagent' as const, childTaskId }
@@ -1289,6 +1302,16 @@ function failedToolRepresentsError(
   )
 }
 
+function canRetainRecoveredActivity(
+  message: ConversationMessage
+): boolean {
+  return (
+    (message.tools?.length ?? 0) +
+      (message.subagents?.length ?? 0) <
+    maximumConversationRetainedActivities
+  )
+}
+
 function reduceRecoveredAgentEvent(
   message: ConversationMessage,
   event: RemoteConversationTaskEventInput['event']
@@ -1300,10 +1323,18 @@ function reduceRecoveredAgentEvent(
       maximumRecoveredMessageLength - message.content.length
     )
     const delta = event.delta.slice(0, remaining)
+    const blocks = appendRecoveredMessageBlock(
+      message.blocks,
+      'text',
+      delta
+    )
     next = {
       ...message,
       content: `${message.content}${delta}`,
-      blocks: appendRecoveredMessageBlock(message.blocks, 'text', delta),
+      blocks,
+      displayCaptureTruncated:
+        message.displayCaptureTruncated ||
+        Boolean(delta && message.blocks && blocks === message.blocks),
       status:
         event.delta.length > remaining
           ? '回答过长，已在本地截断显示'
@@ -1315,14 +1346,18 @@ function reduceRecoveredAgentEvent(
       0,
       Math.max(0, maximumRecoveredMessageLength - reasoning.length)
     )
+    const blocks = appendRecoveredMessageBlock(
+      message.blocks,
+      'reasoning',
+      delta
+    )
     next = {
       ...message,
       reasoning: `${reasoning}${delta}`,
-      blocks: appendRecoveredMessageBlock(
-        message.blocks,
-        'reasoning',
-        delta
-      ),
+      blocks,
+      displayCaptureTruncated:
+        message.displayCaptureTruncated ||
+        Boolean(delta && message.blocks && blocks === message.blocks),
       status: undefined
     }
   } else if (event.type === 'status') {
@@ -1370,13 +1405,25 @@ function reduceRecoveredAgentEvent(
     )
     if (index >= 0) {
       tools[index] = tool
-    } else {
+    } else if (!canRetainRecoveredActivity(message)) {
+      next = {
+        ...message,
+        displayCaptureTruncated: true
+      }
+    }
+    if (index < 0 && next === message) {
       tools.push(tool)
     }
-    next = {
-      ...message,
-      tools,
-      blocks: upsertRecoveredToolBlock(message.blocks, tool)
+    if (next === message) {
+      const blocks = upsertRecoveredToolBlock(message.blocks, tool)
+      next = {
+        ...message,
+        tools,
+        blocks,
+        displayCaptureTruncated:
+          message.displayCaptureTruncated ||
+          Boolean(message.blocks && blocks === message.blocks)
+      }
     }
   } else if (event.type === 'subagent') {
     const commonSubagent = {
@@ -1401,24 +1448,49 @@ function reduceRecoveredAgentEvent(
     const index = subagents.findIndex(
       (candidate) => candidate.childTaskId === event.childTaskId
     )
+    let retainSubagent = true
     if (index >= 0) {
       subagents[index] = subagent
     } else {
-      subagents.push(subagent)
-    }
-    next = {
-      ...message,
-      subagents,
-      tools: event.runtimeCallId
-        ? message.tools?.filter(
-            (tool) => tool.callId !== event.runtimeCallId
+      const replacesTool = Boolean(
+        event.runtimeCallId &&
+          message.tools?.some(
+            (tool) => tool.callId === event.runtimeCallId
           )
-        : message.tools,
-      blocks: upsertRecoveredSubagentBlock(
+      )
+      if (
+        !replacesTool &&
+        !canRetainRecoveredActivity(message)
+      ) {
+        retainSubagent = false
+      } else {
+        subagents.push(subagent)
+      }
+    }
+    if (!retainSubagent) {
+      next = {
+        ...message,
+        displayCaptureTruncated: true
+      }
+    } else {
+      const blocks = upsertRecoveredSubagentBlock(
         message.blocks,
         event.childTaskId,
         event.runtimeCallId
       )
+      next = {
+        ...message,
+        subagents,
+        tools: event.runtimeCallId
+          ? message.tools?.filter(
+              (tool) => tool.callId !== event.runtimeCallId
+            )
+          : message.tools,
+        blocks,
+        displayCaptureTruncated:
+          message.displayCaptureTruncated ||
+          Boolean(message.blocks && blocks === message.blocks)
+      }
     }
   } else if (event.type === 'artifact') {
     next = {
@@ -4600,6 +4672,8 @@ export class AssistantDatabase {
         status: metadata.status,
         reasoning: metadata.reasoning,
         blocks: metadata.blocks,
+        displayCaptureTruncated:
+          metadata.displayCaptureTruncated,
         contextCompression: metadata.contextCompression,
         contextCompressions: metadata.contextCompressions,
         tools: metadata.tools,
@@ -5002,6 +5076,8 @@ export class AssistantDatabase {
         status: metadata.status,
         reasoning: metadata.reasoning,
         blocks: metadata.blocks,
+        displayCaptureTruncated:
+          metadata.displayCaptureTruncated,
         contextCompression: metadata.contextCompression,
         contextCompressions: metadata.contextCompressions,
         tools: metadata.tools,

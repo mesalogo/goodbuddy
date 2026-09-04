@@ -2028,7 +2028,11 @@ export function SettingsPanel({
           </div>
         </div>
 
-        <div className="settings-panel__body">
+        <div
+          aria-busy={saving || testing}
+          className="settings-panel__body"
+          inert={saving || testing ? true : undefined}
+        >
           <nav
             aria-label={t('center.categoriesAriaLabel')}
             aria-orientation="vertical"

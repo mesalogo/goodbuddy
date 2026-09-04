@@ -185,6 +185,7 @@ async function runModelBridgeHelper(
     'protocol',
     'model',
     'supports-image-input',
+    'work-mode',
     'opencode-entrypoint'
   ])
   requireOptions(options, [
@@ -192,6 +193,7 @@ async function runModelBridgeHelper(
     'protocol',
     'model',
     'supports-image-input',
+    'work-mode',
     'opencode-entrypoint'
   ])
   const protocol = options.protocol
@@ -206,6 +208,10 @@ async function runModelBridgeHelper(
   if (imageInput !== 'true' && imageInput !== 'false') {
     throw new Error('Invalid model bridge image-input option')
   }
+  const workMode = options['work-mode']
+  if (workMode !== 'ask' && workMode !== 'execute') {
+    throw new Error('Invalid model bridge work-mode option')
+  }
   return await (
     dependencies.runModelBridgeHelper ??
     runOpenCodeModelBridgeHelper
@@ -214,6 +220,7 @@ async function runModelBridgeHelper(
     protocol: protocol as ModelBridgeProtocol,
     model: options.model!,
     supportsImageInput: imageInput === 'true',
+    workMode,
     opencodeEntrypoint: options['opencode-entrypoint']!
   })
 }

@@ -52,6 +52,7 @@ export type Message = {
   content: string
   reasoning?: string
   blocks?: ConversationMessageBlock[]
+  displayCaptureTruncated?: boolean
   createdAt: number
   state: 'streaming' | 'complete' | 'error'
   status?: string
@@ -940,6 +941,19 @@ function ChatMessageRowView({
             }
             value={message.question}
           />
+        )}
+        {message.displayCaptureTruncated && (
+          <div
+            aria-live="polite"
+            className="message__status"
+            role="status"
+          >
+            <span
+              aria-hidden="true"
+              className="message__status-dot"
+            />
+            {t('chat.status.displayCaptureTruncated')}
+          </div>
         )}
         {message.status && (
           <div

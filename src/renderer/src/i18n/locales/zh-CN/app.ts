@@ -319,6 +319,8 @@ export const app = {
     scrollToBottom: '到底部',
     status: {
       responseTruncated: '回答过长，已在本地截断显示',
+      displayCaptureTruncated:
+        '活动记录过多，后续详情未在本地保留；Runtime 任务仍继续执行',
       savingImage: '图片已生成，正在保存结果',
       taskCompleted: '任务执行完成',
       taskFailed: '任务执行失败',

@@ -45,8 +45,10 @@ class MemoryAcpJournal implements RuntimeAcpJournal {
   mainAckSequence = '0'
   failAppend = false
   capacityBlocked = false
+  appendAttempts = 0
 
   appendAcpFrame(input: (typeof this.frames)[number]): { created: boolean } {
+    this.appendAttempts += 1
     if (this.capacityBlocked) {
       throw new EventJournalCapacityError(
         'journal capacity',
@@ -1249,6 +1251,34 @@ describe('RuntimeAcpBackend', () => {
 
     expect(fixture.process.stops).toEqual([])
     expect(fixture.outputFrames).toEqual(['later'])
+  })
+
+  it('backs off while durable journal capacity remains unavailable', async () => {
+    vi.useFakeTimers()
+    try {
+      const fixture = harness()
+      await open(fixture)
+      await invoke(
+        fixture,
+        'runtime/preparePrompt',
+        fixture.preparation()
+      )
+      fixture.journal.capacityBlocked = true
+      const output = fixture.process.emit('stdout', 'later')
+
+      await vi.advanceTimersByTimeAsync(775)
+      expect(fixture.journal.appendAttempts).toBeLessThanOrEqual(6)
+      expect(fixture.process.stops).toEqual([])
+
+      fixture.journal.capacityBlocked = false
+      await vi.advanceTimersByTimeAsync(800)
+      await output
+
+      expect(fixture.outputFrames).toEqual(['later'])
+      await fixture.backend.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('stops with output quota when the detached durable journal is exhausted', async () => {

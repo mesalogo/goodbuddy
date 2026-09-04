@@ -305,6 +305,11 @@ export type RuntimeSettingsRollback = {
   publicSettings: RuntimeSettings
   restore(): Promise<RuntimeSettings>
 }
+export type ActiveEmbeddingConnectionUpdate = {
+  changed: boolean
+  previousConnectionId: string
+  restore(): Promise<RuntimeSettings>
+}
 type Version17StoredSettings = z.infer<
   typeof version17StoredSettingsSchema
 >
@@ -1996,6 +2001,85 @@ export class RuntimeSettingsStore {
       () => undefined
     )
     return operation
+  }
+
+  setActiveEmbeddingConnection(
+    connectionId: string
+  ): Promise<ActiveEmbeddingConnectionUpdate> {
+    let result: ActiveEmbeddingConnectionUpdate | undefined
+    const operation = this.updateQueue.then(async () => {
+      const current = await this.load()
+      const previousConnectionId =
+        current.activeEmbeddingConnectionId
+      const changed = previousConnectionId !== connectionId
+      if (changed) {
+        const next = this.withActiveEmbeddingConnection(
+          current,
+          connectionId
+        )
+        await writeJsonFileAtomically(this.filePath, next)
+        this.settings = next
+        this.loadWarnings = []
+      }
+      result = {
+        changed,
+        previousConnectionId,
+        restore: () =>
+          this.restoreActiveEmbeddingConnection(
+            connectionId,
+            previousConnectionId
+          )
+      }
+    })
+    this.updateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation.then(() => result!)
+  }
+
+  private restoreActiveEmbeddingConnection(
+    expectedConnectionId: string,
+    previousConnectionId: string
+  ): Promise<RuntimeSettings> {
+    const operation = this.updateQueue.then(async () => {
+      const current = await this.load()
+      if (
+        current.activeEmbeddingConnectionId !== expectedConnectionId
+      ) {
+        return this.toPublicSettings(current)
+      }
+      const restored = this.withActiveEmbeddingConnection(
+        current,
+        previousConnectionId
+      )
+      await writeJsonFileAtomically(this.filePath, restored)
+      this.settings = restored
+      this.loadWarnings = []
+      return this.toPublicSettings(restored)
+    })
+    this.updateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
+  }
+
+  private withActiveEmbeddingConnection(
+    current: StoredSettings,
+    connectionId: string
+  ): StoredSettings {
+    const connectionExists = current.embeddingConnections.some(
+      (candidate) => candidate.id === connectionId
+    )
+    if (!connectionExists) {
+      throw new Error('当前向量连接不存在')
+    }
+    return {
+      ...current,
+      version: CURRENT_SETTINGS_VERSION,
+      activeEmbeddingConnectionId: connectionId
+    }
   }
 
   private async performUpdate(

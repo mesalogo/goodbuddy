@@ -86,11 +86,16 @@ function dependencies(
   deps: Partial<OpenCodeRuntimeDependencies>
   spawnMock: ReturnType<typeof vi.fn>
   detectBinary: ReturnType<typeof vi.fn>
+  validateBinary: ReturnType<typeof vi.fn>
   createClient: ReturnType<typeof vi.fn>
   checkServerHealth: ReturnType<typeof vi.fn>
 } {
   const spawnMock = vi.fn(() => child)
   const detectBinary = vi.fn().mockResolvedValue({
+    path: 'opencode',
+    detail: 'OpenCode CLI 已就绪'
+  })
+  const validateBinary = vi.fn().mockResolvedValue({
     path: 'opencode',
     detail: 'OpenCode CLI 已就绪'
   })
@@ -100,6 +105,7 @@ function dependencies(
     deps: {
       spawn: spawnMock as unknown as typeof spawn,
       detectBinary,
+      validateBinary,
       createClient: createClient as unknown as typeof createOpencodeClient,
       checkServerHealth,
       platform: 'linux',
@@ -108,6 +114,7 @@ function dependencies(
     },
     spawnMock,
     detectBinary,
+    validateBinary,
     createClient,
     checkServerHealth
   }
@@ -290,6 +297,126 @@ async function collectRun(
 }
 
 describe('OpenCodeRuntime embedded launcher', () => {
+  it('checks embedded availability without starting OpenCode', async () => {
+    const child = fakeChild()
+    const {
+      deps,
+      spawnMock,
+      detectBinary,
+      validateBinary,
+      createClient,
+      checkServerHealth
+    } = dependencies(child)
+    const runtime = new OpenCodeRuntime(options(), deps)
+
+    await expect(runtime.getStatus()).resolves.toMatchObject({
+      available: true,
+      detail: 'OpenCode 已配置，将在首次使用时启动'
+    })
+    expect(detectBinary).toHaveBeenCalledWith(
+      'opencode',
+      '',
+      undefined
+    )
+    expect(validateBinary).toHaveBeenCalledWith(
+      'opencode',
+      'opencode'
+    )
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(createClient).not.toHaveBeenCalled()
+    expect(checkServerHealth).not.toHaveBeenCalled()
+
+    await runtime.dispose()
+  })
+
+  it('reports an unavailable embedded binary without starting OpenCode', async () => {
+    const child = fakeChild()
+    const {
+      deps,
+      spawnMock,
+      detectBinary,
+      validateBinary,
+      createClient,
+      checkServerHealth
+    } = dependencies(child)
+    detectBinary.mockResolvedValueOnce({
+      path: '/missing/opencode',
+      detail: 'OpenCode CLI 已就绪'
+    })
+    validateBinary.mockResolvedValueOnce({
+      detail: 'OpenCode CLI 未找到'
+    })
+    const runtime = new OpenCodeRuntime(
+      options({
+        binaryPath: '/missing/opencode',
+        bundledBinaryPath: '/bundled/opencode'
+      }),
+      deps
+    )
+
+    await expect(runtime.getStatus()).resolves.toEqual({
+      id: 'opencode',
+      label: 'OpenCode',
+      available: false,
+      supportsToolExecution: true,
+      detail: 'OpenCode CLI 未找到'
+    })
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(detectBinary).toHaveBeenCalledWith(
+      'opencode',
+      '/missing/opencode',
+      '/bundled/opencode'
+    )
+    expect(validateBinary).toHaveBeenCalledWith(
+      'opencode',
+      '/missing/opencode'
+    )
+    expect(createClient).not.toHaveBeenCalled()
+    expect(checkServerHealth).not.toHaveBeenCalled()
+
+    await runtime.dispose()
+  })
+
+  it('reports a missing embedded model credential without starting OpenCode', async () => {
+    const child = fakeChild()
+    const {
+      deps,
+      spawnMock,
+      detectBinary,
+      validateBinary,
+      createClient,
+      checkServerHealth
+    } = dependencies(child)
+    const runtime = new OpenCodeRuntime(
+      options({
+        modelProfile: {
+          id: '00000000-0000-4000-8000-000000000011',
+          name: 'Independent model',
+          baseUrl: 'https://model.example',
+          modelName: 'private-model',
+          protocol: 'anthropic-messages',
+          authentication: 'api-key'
+        }
+      }),
+      deps
+    )
+
+    await expect(runtime.getStatus()).resolves.toEqual({
+      id: 'opencode',
+      label: 'OpenCode',
+      available: false,
+      supportsToolExecution: true,
+      detail: 'OpenCode 独立模型连接尚未配置 API Key'
+    })
+    expect(detectBinary).not.toHaveBeenCalled()
+    expect(validateBinary).not.toHaveBeenCalled()
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(createClient).not.toHaveBeenCalled()
+    expect(checkServerHealth).not.toHaveBeenCalled()
+
+    await runtime.dispose()
+  })
+
   it('uses the detected binary and passes an absolute config path only through env', async () => {
     const serverChild = fakeChild(314)
     const killerChild = fakeChild(315)
@@ -329,7 +456,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       }
     )
 
-    await expect(runtime.getStatus()).resolves.toMatchObject({
+    await expect(runtime.testConnection()).resolves.toMatchObject({
       available: true,
       detail:
         '由 GoodBuddy 以当前用户权限管理本机 OpenCode 进程'
@@ -476,7 +603,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       deps
     )
 
-    await expect(runtime.getStatus()).resolves.toMatchObject({
+    await expect(runtime.testConnection()).resolves.toMatchObject({
       available: true
     })
     const spawnOptions = spawnMock.mock.calls[0]?.[2] as
@@ -553,7 +680,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       deps
     )
 
-    await expect(runtime.getStatus()).resolves.toMatchObject({
+    await expect(runtime.testConnection()).resolves.toMatchObject({
       available: true
     })
     const spawnOptions = spawnMock.mock.calls[0]?.[2] as
@@ -626,7 +753,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
     )
 
     try {
-      await expect(runtime.getStatus()).resolves.toMatchObject({
+      await expect(runtime.testConnection()).resolves.toMatchObject({
         available: true
       })
       const environment = (
@@ -857,7 +984,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
         deps
       )
 
-      await expect(runtime.getStatus()).resolves.toMatchObject({
+      await expect(runtime.testConnection()).resolves.toMatchObject({
         available: true
       })
       const spawnOptions = spawnMock.mock.calls[0]?.[2] as
@@ -931,7 +1058,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       'https://telemetry.invalid'
     try {
       const runtime = new OpenCodeRuntime(options(), deps)
-      await expect(runtime.getStatus()).resolves.toMatchObject({
+      await expect(runtime.testConnection()).resolves.toMatchObject({
         available: true
       })
 
@@ -996,7 +1123,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       .mockResolvedValueOnce(true)
     const runtime = new OpenCodeRuntime(options(), deps)
 
-    await expect(runtime.getStatus()).resolves.toMatchObject({
+    await expect(runtime.testConnection()).resolves.toMatchObject({
       available: true
     })
     expect(checkServerHealth).toHaveBeenCalledTimes(2)
@@ -1023,7 +1150,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
       })
       const runtime = new OpenCodeRuntime(options(), deps)
       let settled = false
-      const statusPromise = runtime.getStatus().finally(() => {
+      const statusPromise = runtime.testConnection().finally(() => {
         settled = true
       })
 
@@ -1053,7 +1180,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
     stderrOf(child).write(secret)
     const runtime = new OpenCodeRuntime(options(), deps)
 
-    const status = await runtime.getStatus()
+    const status = await runtime.testConnection()
 
     expect(status).toMatchObject({
       available: false,
@@ -1088,7 +1215,7 @@ describe('OpenCodeRuntime embedded launcher', () => {
     })
     const runtime = new OpenCodeRuntime(options(), deps)
 
-    const status = await runtime.getStatus()
+    const status = await runtime.testConnection()
 
     expect(status.detail).toBe('OpenCode Server 启动前退出（code 9）')
     expect(status.detail).not.toContain(secret)

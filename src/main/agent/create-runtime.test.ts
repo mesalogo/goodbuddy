@@ -160,6 +160,81 @@ describe('createAgentRuntime model compatibility', () => {
     await runtime.dispose()
   })
 
+  it('forwards the selected profile request customization to direct chats', async () => {
+    const profile = {
+      id: '00000000-0000-4000-8000-000000000041',
+      name: 'Tenant model',
+      baseUrl: 'https://gateway.example/v1',
+      modelName: 'tenant-model',
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'none' as const,
+      supportsImageInput: false,
+      maximumOutputTokens: 48_000,
+      imageGenerationQuality: 'auto' as const,
+      requestHeaders: {
+        'x-tenant-id': 'tenant-a'
+      },
+      requestBody: {
+        temperature: 0.2
+      }
+    }
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      new Response(
+        [
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: { content: 'OK' },
+                finish_reason: 'stop'
+              }
+            ]
+          })}`,
+          '',
+          'data: [DONE]',
+          '',
+          ''
+        ].join('\n'),
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' }
+        }
+      )
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const runtime = createAgentRuntime(
+      process.cwd(),
+      settings({
+        modelProfiles: [profile],
+        defaultModelProfileId: profile.id
+      })
+    )
+
+    try {
+      for await (const _event of runtime.run(
+        {
+          requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ee',
+          conversationId: 'customized-direct-chat',
+          prompt: 'hello'
+        },
+        new AbortController().signal
+      )) {
+        void _event
+      }
+
+      const init = fetcher.mock.calls[0]?.[1]
+      expect(new Headers(init?.headers).get('x-tenant-id')).toBe(
+        'tenant-a'
+      )
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: 'tenant-model',
+        temperature: 0.2
+      })
+    } finally {
+      await runtime.dispose()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('forwards the selected profile image capability to direct runtimes', async () => {
     const visionSettings = settings({
       supportsImageInput: true

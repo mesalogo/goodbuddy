@@ -17,7 +17,6 @@ import {
 } from '../shared/model-request-policy'
 import { canonicalJson } from '../shared/agent-protocol/canonical'
 import {
-  canonicalModelRequestHeaders,
   mergeModelRequestBody,
   mergeModelRequestHeaders
 } from '../shared/model-request-customization'
@@ -573,7 +572,7 @@ function prepareProviderRequest(
   if (profile.protocol === 'anthropic-messages') {
     headers.set('anthropic-version', '2023-06-01')
   }
-  const canonicalHeaders = canonicalModelRequestHeaders(headers)
+  const canonicalHeaders = Object.fromEntries(headers.entries())
   if (profile.protocol === 'anthropic-messages') {
     if (profile.authentication === 'api-key') {
       headers.set('x-api-key', profile.apiKey!)

@@ -75,7 +75,8 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     private readonly maximumRetainedRuntimes =
       DEFAULT_MAXIMUM_RETAINED_RUNTIMES,
     private readonly observeFailure?:
-      DesktopDiagnosticFailureObserver
+      DesktopDiagnosticFailureObserver,
+    private readonly createStatusRuntime = createRuntime
   ) {
     if (
       !Number.isSafeInteger(maximumCachedRuntimes) ||
@@ -339,7 +340,7 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
   private async runStatusProbe(
     selection: AgentRuntimeSelection
   ): Promise<AgentRuntimeStatus> {
-    const runtime = await this.createRuntime(selection)
+    const runtime = await this.createStatusRuntime(selection)
     try {
       if (this.disposed) {
         throw new Error('Agent Runtime 正在关闭')

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  canonicalModelRequestHeaders,
   mergeModelRequestBody,
   mergeModelRequestHeaders,
   modelRequestBodySchema,
@@ -27,6 +26,11 @@ describe('model request customization', () => {
       modelRequestHeadersSchema.parse({
         'X-Tenant': 'one',
         'x-tenant': 'two'
+      })
+    ).toThrow()
+    expect(() =>
+      modelRequestHeadersSchema.parse({
+        'x-tenant': '租户甲'
       })
     ).toThrow()
   })
@@ -83,12 +87,6 @@ describe('model request customization', () => {
       'content-type': 'application/json',
       'x-tenant': 'custom'
     })
-    expect(canonicalModelRequestHeaders(headers)).toEqual({
-      accept: 'application/json',
-      'content-type': 'application/json',
-      'x-tenant': 'custom'
-    })
-
     expect(
       mergeModelRequestBody(
         {

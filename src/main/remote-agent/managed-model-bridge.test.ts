@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
-import { createManagedModelBridge } from './managed-model-bridge'
+import {
+  createManagedModelBridge,
+  createResolvedModelProfileDigest
+} from './managed-model-bridge'
 
 const profile: ResolvedModelProfile = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -79,5 +82,23 @@ describe('managed Agent prompt model setup', () => {
         }
       })
     ).toThrow(/usable text model profile/iu)
+  })
+
+  it('binds request customization but not credentials into the profile digest', () => {
+    expect(
+      createResolvedModelProfileDigest({
+        ...profile,
+        apiKey: 'different-secret'
+      })
+    ).toBe(createResolvedModelProfileDigest(profile))
+    expect(
+      createResolvedModelProfileDigest({
+        ...profile,
+        requestBody: {
+          ...profile.requestBody,
+          temperature: 0.4
+        }
+      })
+    ).not.toBe(createResolvedModelProfileDigest(profile))
   })
 })

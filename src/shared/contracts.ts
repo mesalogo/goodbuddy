@@ -607,7 +607,6 @@ export {
   MODEL_REQUEST_CUSTOMIZATION_LIMITS,
   modelRequestBodySchema,
   modelRequestHeadersSchema,
-  canonicalModelRequestHeaders,
   mergeModelRequestBody,
   mergeModelRequestHeaders,
   type ModelRequestBody,

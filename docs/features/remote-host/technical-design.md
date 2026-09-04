@@ -12,7 +12,7 @@ Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
 `0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前未发布
-Agent 源码 lock 为 `0.11.16`，Desktop 恢复候选为 `0.12.2`，等待各自独立发布审批。
+Agent 源码 lock 为 `0.11.17`，Desktop 候选为 `0.12.3`，等待各自独立发布审批。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
 
@@ -187,8 +187,9 @@ Ask 与 Execute 一样直接启动已签名 Runtime，不要求 Host 安装额�
 - `cwd` 为项目 Workspace，并继承 SSH 账号的正常环境；
 - ACP 权限请求只有在工具种类为原生 `read` 且 Runtime 提供 `allow_once` 选项时才允许；
   search、edit、execute、未知工具以及只提供持久授权的请求全部拒绝。
-- Ask 的只读语义由 Agent 持有的工具权限分发边界执行，不对 Runtime 进程增加文件系统
-  confinement。未来审批模式也在同一工具边界决定是否放行，不改变 Runtime 启动方式。
+- Ask 启动时同时注入 OpenCode 顶层和 build Agent 的 `permission: "ask"`；Agent
+  工具权限分发边界只批准上述原生读取请求。该双重边界不另加文件系统 confinement，
+  也不改变 Runtime 的直接启动方式。
 
 ### Execute
 
@@ -200,6 +201,7 @@ Execute 直接启动已签名 Runtime：
   launcher 路径；
 - `cwd` 为项目 Workspace；
 - 继承 SSH 账号的正常环境、文件系统、进程和网络能力；
+- 不注入 OpenCode Ask 权限配置；
 - 不进行 T2/T3、confinement attestation、approval bridge 或逐工具批准。
 
 两种模式都保留输入字节上限、用户取消和进程组清理；输出只用有界内存队列与 journal
@@ -225,7 +227,9 @@ Execute 直接启动已签名 Runtime：
 - Main 持久化 binding identity 和单调 cursor；保留中的 connection lease 即使处于 offline/reconnecting，也可以先把新 cursor 落盘。重连提交不能覆盖 resume 过程中并发落盘的更新。
 - Runtime 事件仍对单项展示字段做有界截断，但不按固定工具调用数或 Desktop 累计展示量
   中止 Prompt；待消费事件达到阈值时通过 ACP 入站暂停施加背压，不取消原生 Runtime。
-  Renderer 和 Main 将已接受的全部工具活动保存到本地 SQLite，不再按活动数静默截断。
+  Renderer 和 Main 为每条回复保留最多 500 条工具与子 Agent 活动以及 2,000 个交错
+  展示块；超过后显示本地截断提示，但继续执行 Runtime，也不把展示容量当作 Prompt
+  工具调用上限。已保留活动的后续状态更新仍会正常归并。
 - OpenCode 原生 Task 工具按 `subagent_type`、`description`、`prompt` 和稳定 tool call ID
   解析为子 Agent 事件。本地 OpenCode SDK 与远端 ACP 增量工具事件复用同一转换；ACP
   首帧缺少参数时可以先显示普通工具活动，后续参数确认其为 Task 后必须替换为子 Agent
@@ -350,7 +354,7 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
   的双架构验收。Agent `0.11.10` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 固定为 `0.11.16`；正式发布状态以独立 Agent Release 与签名 catalog 为准。
+  当前源码 lock 固定为 `0.11.17`；正式发布状态以独立 Agent Release 与签名 catalog 为准。
 - 2026-08-30 在共享 Linux x64 Host 的隔离测试 HOME 中验证当前 `0.11.13` 源码候选：
   签名 Runtime 清单的测试墙钟上限为 1 秒，模型桥首轮故意延迟 2.515 秒后 Prompt 仍在
   5.770 秒正常完成；随后 OpenCode 原生 Task 依次产生 `running`、`completed` 子 Agent

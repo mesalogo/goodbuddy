@@ -77,8 +77,11 @@ otherwise.
   cleanup preserves complete Windows process-tree termination and terminates
   POSIX process groups when a child uses an independent process group. Chat
   status checks use a one-shot Runtime probe that is immediately cleaned up
-  rather than entering the model-and-project execution cache. Execution
-  Runtimes remain reusable per project. GoodBuddy-managed local OpenCode keeps
+  rather than entering the model-and-project execution cache. For managed
+  local OpenCode, this passive check validates the selected path and model
+  credential without starting a throwaway server; the explicit settings test,
+  native inventory, and first real use still perform full startup and health
+  checks. Execution Runtimes remain reusable per project. GoodBuddy-managed local OpenCode keeps
   requests in the same conversation ordered, while different conversations in
   the same project and different projects can run in parallel. Request-scoped
   dynamic MCP tools remain isolated through default wildcard disablement and
@@ -99,9 +102,10 @@ otherwise.
   projects, ordinary desktop capabilities, or desktop releases. When enabled,
   users can manage SSH Hosts with pinned Host Keys, browse bounded remote
   directories, and create Ask or Execute projects. Both modes start the
-  signed Runtime directly without bubblewrap. Ask permits only read tools at
-  the Agent tool-dispatch boundary, while Execute has all permissions of the
-  selected SSH account. The Agent owns accepted Prompts,
+  signed Runtime directly without bubblewrap. Ask applies OpenCode's Ask
+  permission configuration and permits only native read approvals at the
+  Agent tool-dispatch boundary, while Execute receives no such override and
+  retains all permissions of the selected SSH account. The Agent owns accepted Prompts,
   provider/tool rounds, Runtime processes, a stable model ledger, and a bounded
   semantic transcript over a private Unix socket and ACP v5. Work continues on
   the Host after Desktop exit, network loss, or local-process termination.
@@ -137,9 +141,9 @@ otherwise.
   concurrency, SSH relay loss, cancellation, definite and uncertain provider
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
-  Prompt, provider, or tool replay observed. The current source lock and
-  Agent source lock is `0.11.16`, while the current Desktop release candidate
-  is `0.12.2`; formal publication status follows the separate Agent and Desktop
+  Prompt, provider, or tool replay observed. The current Agent source lock is
+  `0.11.17`, while the current Desktop release candidate is `0.12.3`; formal
+  publication status follows the separate Agent and Desktop
   release channels.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
@@ -318,9 +322,10 @@ otherwise.
   install, SSL, pip, and venv probe before packaging. The immutable `v0.12.0`
   attempt passed Windows and macOS but exposed Linux TAR case handling before
   publication. The immutable `v0.12.1` attempt was cancelled before native
-  packaging while synchronizing the Agent release; the corrected `0.12.2`
-  candidate must pass all six targets. Real Skill/MCP execution, custom interpreter
-  execution, and coordination with affected running processes remain
+  packaging while synchronizing the Agent release. Published `v0.12.2`
+  subsequently passed all six native package jobs and their managed-Python
+  install probes. Real Skill/MCP execution, custom interpreter execution, and
+  coordination with affected running processes remain
   acceptance work. Six-platform release acceptance must not be claimed before
   the applicable checks pass.
 - [x] **On-demand built-in MCP**: Knowledge, Magic Notes, GoodBuddy
@@ -523,15 +528,18 @@ otherwise.
   dual-architecture resource verification are wired. Current Linux x64 source
   has passed a real-model and tool matrix covering detach, process exit, relay
   loss, concurrency, cancellation, provider failures, Agent restart, and
-  Desktop SQLite recovery. The final `0.11.14` test-signed package again
-  verified two delivered model rounds, one tool, one terminal state,
-  `latest=ACK`, and no owner/journal residue. The public signing-key registry is
-  provisioned. Direct control-plane source does not wait for a new
-  installer-bearing package, but the current formally signed Linux x64/arm64
-  artifact matrix still requires public verification, along with
-  GitHub/Beijing mirror, dual-architecture, and offline GoodBuddy transfer
-  release acceptance. Until these gates pass, this path must not be described
-  as published or as having passed formal release acceptance.
+  Desktop SQLite recovery. A current-source, test-signed Agent `0.11.17`
+  package on Linux x64 additionally passed two concurrent Ask reads, an
+  Execute write/read, and six real managed-gateway model requests with the
+  configured custom headers and body fields. No provider request was replayed,
+  and scanning the isolated Agent state found no API key or custom request
+  value. The public signing-key registry is provisioned. Direct control-plane
+  source does not wait for a new installer-bearing package, but the current
+  formally signed Linux x64/arm64 artifact matrix still requires public
+  verification, along with GitHub/Beijing mirror, dual-architecture, and
+  offline GoodBuddy transfer release acceptance. Until these gates pass, this
+  path must not be described as published or as having passed formal release
+  acceptance.
 - [ ] **Multi-cloud remote sandbox Agents** (planned): Manages dedicated Linux
   sandboxes through cloud-provider APIs and SSH Agents. Credentials remain in
   Main, and high-risk control-plane operations receive separate confirmation.

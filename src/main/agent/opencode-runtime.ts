@@ -477,6 +477,11 @@ export type OpenCodeRuntimeDependencies = {
     configuredPath: string,
     bundledPath?: string
   ) => Promise<{ path?: string; detail: string }>
+  validateBinary: (
+    runtime: 'opencode',
+    configuredPath: string,
+    bundledPath?: string
+  ) => Promise<{ path?: string; detail: string }>
   createClient: typeof createOpencodeClient
   checkServerHealth: (
     url: string,
@@ -695,6 +700,19 @@ async function defaultDetectBinary(
   })
 }
 
+async function defaultValidateBinary(
+  runtime: 'opencode',
+  configuredPath: string
+): Promise<{ path?: string; detail: string }> {
+  return detectRuntimeBinary({
+    binaryPath: configuredPath,
+    validation: 'canonical-file',
+    allowAutomaticDiscovery: false,
+    binaryNames: [runtime],
+    label: 'OpenCode CLI'
+  })
+}
+
 async function defaultCheckServerHealth(
   url: string,
   authorization: string,
@@ -740,6 +758,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     this.dependencies = {
       spawn,
       detectBinary: defaultDetectBinary,
+      validateBinary: defaultValidateBinary,
       createClient: createOpencodeClient,
       checkServerHealth: defaultCheckServerHealth,
       platform: process.platform,
@@ -854,15 +873,37 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
   }
 
-  private async launchEmbedded(signal?: AbortSignal): Promise<OpenCodeServer> {
-    if (signal?.aborted) {
-      throw new Error('OpenCode Server 启动已取消')
+  private async inspectEmbeddedConfiguration(
+    validatePath = false
+  ): Promise<{
+    path?: string
+    detail: string
+  }> {
+    if (
+      this.options.modelProfile?.authentication === 'api-key' &&
+      !this.options.modelProfile.apiKey
+    ) {
+      throw new Error('OpenCode 独立模型连接尚未配置 API Key')
     }
     const detection = await this.dependencies.detectBinary(
       'opencode',
       this.options.binaryPath,
       this.options.bundledBinaryPath
     )
+    if (!validatePath || !detection.path) {
+      return detection
+    }
+    return this.dependencies.validateBinary(
+      'opencode',
+      detection.path
+    )
+  }
+
+  private async launchEmbedded(signal?: AbortSignal): Promise<OpenCodeServer> {
+    if (signal?.aborted) {
+      throw new Error('OpenCode Server 启动已取消')
+    }
+    const detection = await this.inspectEmbeddedConfiguration()
     const binaryPath = detection.path
     if (!binaryPath) {
       throw new Error(detection.detail)
@@ -875,12 +916,6 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw new Error('OpenCode Server 启动已取消')
     }
 
-    if (
-      this.options.modelProfile?.authentication === 'api-key' &&
-      !this.options.modelProfile.apiKey
-    ) {
-      throw new Error('OpenCode 独立模型连接尚未配置 API Key')
-    }
     const skillIds = this.getNativeSkillIds()
     const registration = await this.createSkillRegistration()
     try {
@@ -1186,6 +1221,38 @@ export class OpenCodeRuntime implements AgentRuntime {
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
+    if (this.usesEmbeddedPermissionMediation() && !this.client) {
+      try {
+        const detection =
+          await this.inspectEmbeddedConfiguration(true)
+        return {
+          id: 'opencode',
+          label: 'OpenCode',
+          available: Boolean(detection.path),
+          supportsToolExecution: this.supportsToolExecution,
+          detail: detection.path
+            ? 'OpenCode 已配置，将在首次使用时启动'
+            : detection.detail
+        }
+      } catch (error) {
+        return {
+          id: 'opencode',
+          label: 'OpenCode',
+          available: false,
+          supportsToolExecution: this.supportsToolExecution,
+          detail:
+            error instanceof Error ? error.message : 'OpenCode 不可用'
+        }
+      }
+    }
+    return this.checkConnection()
+  }
+
+  async testConnection(): Promise<AgentRuntimeStatus> {
+    return this.checkConnection()
+  }
+
+  private async checkConnection(): Promise<AgentRuntimeStatus> {
     try {
       const client = await this.getClient()
       const response = await this.controlRequest(

@@ -128,6 +128,8 @@ import {
   conversationMessageBlocksSchema,
   conversationSubagentActivitySchema,
   interactiveWorkModes,
+  maximumConversationMessageBlocks,
+  maximumConversationRetainedActivities,
   normalizeInteractiveWorkMode,
   projectChannelLabels
 } from '../../shared/assistant-contracts'
@@ -636,6 +638,9 @@ function appendMessageContentBlock(
     }
     return current
   }
+  if (current.length >= maximumConversationMessageBlocks) {
+    return blocks
+  }
   current.push({
     id: crypto.randomUUID(),
     type,
@@ -664,6 +669,9 @@ function upsertMessageToolBlock(
         ? { ...block, tool }
         : block
     )
+  }
+  if (blocks.length >= maximumConversationMessageBlocks) {
+    return blocks
   }
   return [
     ...blocks,
@@ -710,6 +718,9 @@ function upsertMessageSubagentBlock(
         : block
     )
   }
+  if (blocks.length >= maximumConversationMessageBlocks) {
+    return blocks
+  }
   return [
     ...blocks,
     {
@@ -735,6 +746,14 @@ function terminalizeMessageToolBlocks(
           }
         }
       : block
+  )
+}
+
+function canRetainMessageActivity(message: Message): boolean {
+  return (
+    (message.tools?.length ?? 0) +
+      (message.subagents?.length ?? 0) <
+    maximumConversationRetainedActivities
   )
 }
 
@@ -1373,6 +1392,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     content: message.content,
     reasoning: message.reasoning,
     blocks: message.blocks,
+    displayCaptureTruncated: message.displayCaptureTruncated,
     createdAt: message.createdAt,
     state: message.state,
     status: message.status,
@@ -4316,14 +4336,22 @@ function App(): React.JSX.Element {
             maxMessageContentLength - message.content.length
           )
           const acceptedDelta = event.delta.slice(0, remaining)
+          const blocks = appendMessageContentBlock(
+            message.blocks,
+            'text',
+            acceptedDelta
+          )
           return {
             ...message,
             content: `${message.content}${acceptedDelta}`,
-            blocks: appendMessageContentBlock(
-              message.blocks,
-              'text',
-              acceptedDelta
-            ),
+            blocks,
+            displayCaptureTruncated:
+              message.displayCaptureTruncated ||
+              Boolean(
+                acceptedDelta &&
+                  message.blocks &&
+                  blocks === message.blocks
+              ),
             status:
               event.delta.length > remaining
                 ? tRef.current('chat.status.responseTruncated')
@@ -4340,15 +4368,23 @@ function App(): React.JSX.Element {
               maxMessageContentLength - currentReasoning.length
             )
           )
+          const blocks = appendMessageContentBlock(
+            message.blocks,
+            'reasoning',
+            acceptedDelta
+          )
           return {
             ...message,
             reasoning: `${currentReasoning}${acceptedDelta}`,
             status: undefined,
-            blocks: appendMessageContentBlock(
-              message.blocks,
-              'reasoning',
-              acceptedDelta
-            )
+            blocks,
+            displayCaptureTruncated:
+              message.displayCaptureTruncated ||
+              Boolean(
+                acceptedDelta &&
+                  message.blocks &&
+                  blocks === message.blocks
+              )
           }
         })
       } else if (event.type === 'context-metrics') {
@@ -4486,13 +4522,23 @@ function App(): React.JSX.Element {
           }
           if (index >= 0) {
             tools[index] = tool
-          } else {
+          } else if (!canRetainMessageActivity(message)) {
+            return {
+              ...message,
+              displayCaptureTruncated: true
+            }
+          }
+          if (index < 0) {
             tools.push(tool)
           }
+          const blocks = upsertMessageToolBlock(message.blocks, tool)
           return {
             ...message,
             tools,
-            blocks: upsertMessageToolBlock(message.blocks, tool)
+            blocks,
+            displayCaptureTruncated:
+              message.displayCaptureTruncated ||
+              Boolean(message.blocks && blocks === message.blocks)
           }
         })
       } else if (event.type === 'subagent') {
@@ -4623,9 +4669,29 @@ function App(): React.JSX.Element {
           if (index >= 0) {
             subagents[index] = subagent
           } else {
+            const replacesTool = Boolean(
+              event.runtimeCallId &&
+                message.tools?.some(
+                  (tool) => tool.callId === event.runtimeCallId
+                )
+            )
+            if (
+              !replacesTool &&
+              !canRetainMessageActivity(message)
+            ) {
+              return {
+                ...message,
+                displayCaptureTruncated: true
+              }
+            }
             subagents.push(subagent)
           }
           const runtimeCallId = event.runtimeCallId
+          const blocks = upsertMessageSubagentBlock(
+            message.blocks,
+            event.childTaskId,
+            runtimeCallId
+          )
           return {
             ...message,
             subagents,
@@ -4634,11 +4700,10 @@ function App(): React.JSX.Element {
                   (tool) => tool.callId !== runtimeCallId
                 )
               : message.tools,
-            blocks: upsertMessageSubagentBlock(
-              message.blocks,
-              event.childTaskId,
-              runtimeCallId
-            )
+            blocks,
+            displayCaptureTruncated:
+              message.displayCaptureTruncated ||
+              Boolean(message.blocks && blocks === message.blocks)
           }
         })
       } else if (event.type === 'approval') {

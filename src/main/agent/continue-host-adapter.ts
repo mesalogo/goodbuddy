@@ -1647,8 +1647,9 @@ export class ContinueHostAdapter {
         const nextStreamEventBytes =
           streamEventBytes + batchStreamEventBytes
         if (
+          streamTruncated ||
           nextStreamEventBytes >
-          this.dependencies.maximumStreamEventBytes
+            this.dependencies.maximumStreamEventBytes
         ) {
           streamTruncated = true
           streamEvents = []

@@ -3694,7 +3694,7 @@ describe('App', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
   })
 
-  it('keeps more than 100 tool activities in one response', async () => {
+  it('keeps a bounded display copy without stopping a long tool chain', async () => {
     render(<App />)
 
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
@@ -3708,7 +3708,7 @@ describe('App', () => {
     }
 
     act(() => {
-      for (let index = 0; index < 101; index += 1) {
+      for (let index = 0; index < 501; index += 1) {
         agentListener?.({
           requestId: request.requestId,
           type: 'tool',
@@ -3721,7 +3721,12 @@ describe('App', () => {
     })
 
     expect(
-      screen.getByRole('region', { name: '工具执行，共 101 项' })
+      screen.getByRole('region', { name: '工具执行，共 500 项' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '活动记录过多，后续详情未在本地保留；Runtime 任务仍继续执行'
+      )
     ).toBeInTheDocument()
   })
 

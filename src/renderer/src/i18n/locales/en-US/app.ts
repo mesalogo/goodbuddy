@@ -336,6 +336,8 @@ export const app = {
     scrollToBottom: 'Scroll to bottom',
     status: {
       responseTruncated: 'The response was too long and was truncated locally',
+      displayCaptureTruncated:
+        'Later activity details were not retained locally; the Runtime task continued',
       savingImage: 'Image generated; saving the result',
       taskCompleted: 'Task completed',
       taskFailed: 'Task failed',

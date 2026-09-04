@@ -465,14 +465,19 @@ describe('model bridge loopback helper', () => {
         name: 'Private model',
         loopbackOrigin:
           `http://127.0.0.1:12345/${modelBridgeRouteToken}`,
-        supportsImageInput: true
+        supportsImageInput: true,
+        workMode: 'ask'
       })
 
       expect(config).toMatchObject({
         model: `${providerId}/private-model`,
+        permission: 'ask',
         agent: {
           title: {
             disable: true
+          },
+          build: {
+            permission: 'ask'
           }
         },
         provider: {
@@ -500,6 +505,19 @@ describe('model bridge loopback helper', () => {
       expect(JSON.stringify(config)).not.toContain('provider.example')
     }
   )
+
+  it('leaves Execute provider permissions unchanged', () => {
+    const config = createOpenCodeModelBridgeProviderConfig({
+      protocol: 'openai-responses',
+      model: 'private-model',
+      loopbackOrigin:
+        `http://127.0.0.1:12345/${modelBridgeRouteToken}`,
+      workMode: 'execute'
+    })
+
+    expect(config).not.toHaveProperty('permission')
+    expect(config.agent).not.toHaveProperty('build')
+  })
 })
 
 describe('model bridge Unix broker', () => {

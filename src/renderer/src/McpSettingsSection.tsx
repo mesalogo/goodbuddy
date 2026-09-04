@@ -620,6 +620,8 @@ export function McpSettingsSection({
                           ? t('mcp.browser.unsupported')
                         : !featureAvailable
                           ? t('mcp.builtin.serverSummaryDisabled')
+                          : server.id === 'builtin-browser'
+                            ? t('mcp.builtin.serverSummaryExecuteOnly')
                           : server.access === 'mixed'
                             ? t('mcp.builtin.serverSummaryMixed')
                             : t('mcp.builtin.serverSummaryReadOnly')}

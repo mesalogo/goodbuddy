@@ -195,22 +195,14 @@ const maxToolArgumentBytes = 128 * 1024
 const maxToolContextBytes = 1024 * 1024
 const defaultModelRequestTimeoutMs = 10 * 60_000
 const modelRequestRetryDelaysMs = [500, 1_000, 2_000] as const
-const retryableModelNetworkErrorCodes = new Set([
+const retryablePreDispatchNetworkErrorCodes = new Set([
   'EAI_AGAIN',
-  'ECONNABORTED',
   'ECONNREFUSED',
-  'ECONNRESET',
   'EHOSTDOWN',
   'EHOSTUNREACH',
   'ENETDOWN',
-  'ENETRESET',
   'ENETUNREACH',
-  'EPIPE',
-  'ETIMEDOUT',
-  'UND_ERR_BODY_TIMEOUT',
-  'UND_ERR_CONNECT_TIMEOUT',
-  'UND_ERR_HEADERS_TIMEOUT',
-  'UND_ERR_SOCKET'
+  'UND_ERR_CONNECT_TIMEOUT'
 ])
 
 const noModelTools: ModelToolProviderLike = {
@@ -617,7 +609,7 @@ function isRetryableModelRequestError(error: unknown): boolean {
     const record = current as Record<string, unknown>
     if (
       typeof record.code === 'string' &&
-      retryableModelNetworkErrorCodes.has(
+      retryablePreDispatchNetworkErrorCodes.has(
         record.code.toLocaleUpperCase()
       )
     ) {
@@ -625,8 +617,8 @@ function isRetryableModelRequestError(error: unknown): boolean {
     }
     if (typeof record.message === 'string') {
       if (
-        record.message === '模型接口请求超时' ||
-        /(?:fetch failed|failed to fetch|network(?: request)? (?:error|failed)|socket disconnected|connection (?:closed|reset)|\bECONNRESET\b|\bETIMEDOUT\b)/iu.test(
+        record.code === 'ECONNRESET' &&
+        /before secure TLS connection was established/iu.test(
           record.message
         )
       ) {

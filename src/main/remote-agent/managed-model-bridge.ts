@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto'
+import { canonicalJson } from '../../shared/agent-protocol/canonical'
 import {
   agentPromptModelProfileSchema,
   modelBridgePolicySchema,
   type AgentPromptModelProfile,
   type ModelBridgePolicy
 } from '../../shared/model-bridge-contracts'
-import { createResolvedModelProfileDigest } from '../agent/remote-model-gateway'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 
 const DEFAULT_MAXIMUM_OUTPUT_TOKENS = 32_000
@@ -17,6 +18,32 @@ const MODEL_REQUEST_TIMEOUT_MILLISECONDS = 60_000
 export type ManagedModelBridge = {
   policy: ModelBridgePolicy
   profile: AgentPromptModelProfile
+}
+
+export function createResolvedModelProfileDigest(
+  profile: ResolvedModelProfile
+): string {
+  const canonical = canonicalJson({
+    id: profile.id,
+    name: profile.name,
+    baseUrl: profile.baseUrl,
+    modelName: profile.modelName,
+    protocol: profile.protocol,
+    authentication: profile.authentication,
+    supportsImageInput: profile.supportsImageInput === true,
+    contextWindowTokens: profile.contextWindowTokens ?? null,
+    maximumOutputTokens: profile.maximumOutputTokens ?? null,
+    imageGenerationQuality: profile.imageGenerationQuality ?? null,
+    requestHeaders: Object.fromEntries(
+      Object.entries(profile.requestHeaders ?? {}).map(
+        ([name, value]) => [name.toLowerCase(), value]
+      )
+    ),
+    requestBody: profile.requestBody ?? {}
+  })
+  return `sha256:${createHash('sha256')
+    .update(canonical)
+    .digest('hex')}`
 }
 
 export function createManagedModelBridge(options: {

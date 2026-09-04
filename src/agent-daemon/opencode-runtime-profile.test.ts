@@ -42,6 +42,16 @@ describe('OpenCode direct launch profile', () => {
         process.env.HOME ?? fixture.workspaceDirectory,
       PATH: process.env.PATH || '/usr/bin:/bin'
     })
+    expect(
+      JSON.parse(profile.env.OPENCODE_CONFIG_CONTENT!)
+    ).toMatchObject({
+      permission: 'ask',
+      agent: {
+        build: {
+          permission: 'ask'
+        }
+      }
+    })
   })
 
   it('runs Execute directly with the SSH account environment', () => {
@@ -199,6 +209,8 @@ describe('OpenCode direct launch profile', () => {
       'private-model',
       '--supports-image-input',
       'false',
+      '--work-mode',
+      'ask',
       '--opencode-entrypoint',
       resolve(fixture.bundleDirectory, 'bin', 'opencode')
     ])

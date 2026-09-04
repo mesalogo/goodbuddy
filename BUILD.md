@@ -220,6 +220,9 @@ package format v1 归档已经包含固定 Agent 和 Node，可直接用于 Host
 
 GoodBuddy 管理的本机 OpenCode 启动后会轮询已认证的 loopback health 接口，最多等待
 30 秒。该窗口用于兼容 Linux ARM 等较慢环境；不要改回依赖 stdout 文案或 10 秒固定上限。
+聊天中的 Runtime 切换只执行路径和模型凭据就绪检查，不为状态显示启动临时 Server。
+设置中的显式连接测试、原生能力清单读取和首次实际请求仍会启动 OpenCode，并继续使用
+上述完整健康检查。
 
 ## GoodBuddy Agent 工件
 
@@ -308,7 +311,8 @@ integrity，以 `--ignore-scripts` 从官方 npm registry 获取归档；bundle 
 manifest/Ed25519/payload/ELF/lock 校验、digest registry、ACP v3、直接进程 ownership 和
 `runtime/model-bridge` v1。Agent 通过私有 Unix socket 按需 detached 启动，不依赖
 systemd、D-Bus、Linger 或 bubblewrap。Ask 与 Execute 都直接启动签名 Runtime；两者的
-差异由 Agent 工具权限分发边界执行。
+差异由 OpenCode Ask 权限配置和 Agent 工具权限分发边界共同执行，Execute 不注入该
+权限覆盖。
 
 OpenCode 通过已签名 Agent helper 和每次 Prompt 的私有 Unix socket 使用 Main-only 模型
 网关；Provider URL、API Key 和真实 Provider 认证头不进入远端。helper 的 loopback

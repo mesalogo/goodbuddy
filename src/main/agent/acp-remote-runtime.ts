@@ -332,9 +332,9 @@ function usageEvent(
  * Generic ACP runtime over an authenticated remote virtual channel.
  *
  * The class deliberately does not claim confinement from ACP itself. Ask
- * permits only one-shot native reads, while the injected channel's read-only
- * sandbox remains the filesystem boundary. Execute follows the user's full
- * authorization for the selected SSH account.
+ * permits only one-shot native reads in addition to the OpenCode Ask
+ * permission profile. Execute follows the user's full authorization for the
+ * selected SSH account.
  */
 export class AcpRemoteRuntime implements AgentRuntime {
   readonly requiresToolApproval = false
@@ -1833,15 +1833,6 @@ export class AcpRemoteRuntime implements AgentRuntime {
       return
     }
     const bytes = utf8JsonBytes(notification.update)
-    const maximumItems = Math.max(
-      1,
-      this.options.maxPendingUpdates ?? DEFAULT_MAX_PENDING_UPDATES
-    )
-    const maximumBytes = Math.max(
-      1,
-      this.options.maxPendingUpdateBytes ??
-        DEFAULT_MAX_PENDING_UPDATE_BYTES
-    )
     let consume: (() => void) | undefined
     const consumed = new Promise<void>((resolve) => {
       consume = resolve
@@ -1856,10 +1847,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     prompt.wake = undefined
     if (
       !prompt.inboundPaused &&
-      (
-        prompt.updates.length >= maximumItems ||
-        prompt.pendingUpdateBytes >= maximumBytes
-      )
+      this.pendingUpdateLimitReached(prompt)
     ) {
       prompt.inboundPaused = true
       await this.awaitOperation(
@@ -1881,7 +1869,11 @@ export class AcpRemoteRuntime implements AgentRuntime {
       prompt.pendingUpdateBytes - queued.bytes
     )
     queued.consumed()
-    if (prompt.inboundPaused && !prompt.interruption) {
+    if (
+      prompt.inboundPaused &&
+      !prompt.interruption &&
+      !this.pendingUpdateLimitReached(prompt)
+    ) {
       prompt.inboundPaused = false
       void this.awaitOperation(
         prompt.context,
@@ -1890,6 +1882,22 @@ export class AcpRemoteRuntime implements AgentRuntime {
       ).catch(() => undefined)
     }
     return queued.update
+  }
+
+  private pendingUpdateLimitReached(prompt: ActivePrompt): boolean {
+    const maximumItems = Math.max(
+      1,
+      this.options.maxPendingUpdates ?? DEFAULT_MAX_PENDING_UPDATES
+    )
+    const maximumBytes = Math.max(
+      1,
+      this.options.maxPendingUpdateBytes ??
+        DEFAULT_MAX_PENDING_UPDATE_BYTES
+    )
+    return (
+      prompt.updates.length >= maximumItems ||
+      prompt.pendingUpdateBytes >= maximumBytes
+    )
   }
 
   private discardUpdates(prompt: ActivePrompt): void {

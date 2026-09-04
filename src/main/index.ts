@@ -152,10 +152,6 @@ import {
 import {
   RemoteEnvironmentOperationStore
 } from './remote-agent/remote-environment-operation-store'
-import type {
-  RuntimeSettings,
-  RuntimeSettingsInput
-} from '../shared/contracts'
 import {
   DesktopDiagnostics,
   type DesktopDiagnosticFailureObserver
@@ -361,84 +357,6 @@ async function createEmbeddingProvider(
         embeddingBrokers.delete(broker)
       }
     }
-  }
-}
-
-function runtimeSettingsInputWithEmbeddingSelection(
-  settings: RuntimeSettings,
-  activeEmbeddingConnectionId: string
-): RuntimeSettingsInput {
-  const configured = settings.configured ?? settings
-  const defaultProfile =
-    settings.modelProfiles.find(
-      (profile) => profile.id === settings.defaultModelProfileId
-    ) ?? settings.modelProfiles[0]
-  if (!defaultProfile || !settings.embeddingConnections) {
-    throw new Error('模型连接设置不完整')
-  }
-  return {
-    provider: settings.provider,
-    modelBaseUrl: defaultProfile.baseUrl,
-    modelName: defaultProfile.modelName,
-    modelProtocol: defaultProfile.protocol,
-    modelAuthentication: defaultProfile.authentication,
-    imageGenerationQuality: defaultProfile.imageGenerationQuality,
-    opencodeBaseUrl: configured.opencodeBaseUrl,
-    opencodeEmbedded: settings.opencodeEmbedded,
-    opencodeBinaryPath: configured.opencodeBinaryPath,
-    opencodeConfigPath: configured.opencodeConfigPath,
-    continueBinaryPath: configured.continueBinaryPath,
-    continueConfigPath: configured.continueConfigPath,
-    continueMode: settings.continueMode,
-    subagentSmartRoutingEnabled: settings.subagentSmartRoutingEnabled,
-    knowledgeEmbeddingEnabled: settings.knowledgeEmbeddingEnabled,
-    knowledgeEmbeddingBaseUrl: settings.knowledgeEmbeddingBaseUrl,
-    knowledgeEmbeddingModel: settings.knowledgeEmbeddingModel,
-    knowledgeEmbeddingApiKey: { action: 'keep' },
-    embeddingConnections: settings.embeddingConnections.map(
-      (connection) =>
-        connection.kind === 'builtin'
-          ? {
-              id: connection.id,
-              name: connection.name,
-              kind: connection.kind
-            }
-          : {
-              id: connection.id,
-              name: connection.name,
-              kind: connection.kind,
-              baseUrl: connection.baseUrl,
-              modelName: connection.modelName,
-              authentication: connection.authentication,
-              apiKey: { action: 'keep' as const }
-            }
-    ),
-    activeEmbeddingConnectionId,
-    knowledgeRerankEnabled: settings.knowledgeRerankEnabled ?? false,
-    knowledgeRerankEndpoint: settings.knowledgeRerankEndpoint ?? '',
-    knowledgeRerankModel: settings.knowledgeRerankModel ?? '',
-    knowledgeRerankApiKey: { action: 'keep' },
-    contextCompression: settings.contextCompression,
-    workspacePath: configured.workspacePath,
-    apiKey: { action: 'keep' },
-    modelProfiles: settings.modelProfiles.map((profile) => ({
-      id: profile.id,
-      name: profile.name,
-      baseUrl: profile.baseUrl,
-      modelName: profile.modelName,
-      protocol: profile.protocol,
-      authentication: profile.authentication,
-      supportsImageInput: profile.supportsImageInput,
-      contextWindowTokens: profile.contextWindowTokens,
-      imageGenerationQuality: profile.imageGenerationQuality,
-      apiKey: { action: 'keep' as const }
-    })),
-    defaultModelProfileId: settings.defaultModelProfileId,
-    opencodeModelSource: configured.opencodeModelSource,
-    continueModelSource: configured.continueModelSource,
-    deepseekHarnessModelSource:
-      configured.deepseekHarnessModelSource ?? { kind: 'platform' },
-    toolApproval: settings.toolApproval
   }
 }
 
@@ -1120,6 +1038,22 @@ if (hasSingleInstanceLock) {
         executionSpace
       )
     }
+    const createSelectedStatusRuntime = async (
+      selection: AgentRuntimeSelection
+    ): Promise<AgentRuntime> => {
+      const resolved = applyRuntimeSelection(
+        await settingsStore.getResolvedSettings(),
+        selection
+      )
+      return resolved.target === 'opencode'
+        ? createAgentRuntime(defaultWorkspace, resolved.settings, {
+            bundledRuntimePaths
+          })
+        : createRuntimeWithCapabilities(
+            resolved.settings,
+            resolved.target
+          )
+    }
     const configuredRuntime = await runStartupPrerequisites({
       prepareDeepSeekHome: async () => {
         await mkdir(deepSeekHarnessHome, {
@@ -1192,7 +1126,8 @@ if (hasSingleInstanceLock) {
       createSelectedRuntime,
       undefined,
       undefined,
-      observeDesktopFailure
+      observeDesktopFailure,
+      createSelectedStatusRuntime
     )
     const contextManager = new ContextManager({
       parseDocument: documentParsingService.parse
@@ -1329,27 +1264,16 @@ if (hasSingleInstanceLock) {
     const setCurrentEmbeddingConnection = async (
       connectionId: string
     ): Promise<void> => {
-      const previous = await settingsStore.getPublicSettings()
-      if (previous.activeEmbeddingConnectionId === connectionId) {
+      const selection =
+        await settingsStore.setActiveEmbeddingConnection(connectionId)
+      if (!selection.changed) {
         return
       }
-      await settingsStore.update(
-        runtimeSettingsInputWithEmbeddingSelection(
-          previous,
-          connectionId
-        )
-      )
       try {
         await reconfigureRuntimes()
       } catch (activationError) {
         try {
-          await settingsStore.update(
-            runtimeSettingsInputWithEmbeddingSelection(
-              previous,
-              previous.activeEmbeddingConnectionId ??
-                connectionId
-            )
-          )
+          await selection.restore()
           await reconfigureRuntimes()
         } catch (rollbackError) {
           throw new AggregateError(

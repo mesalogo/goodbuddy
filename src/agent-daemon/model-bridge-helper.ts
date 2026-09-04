@@ -44,9 +44,13 @@ export const MODEL_BRIDGE_SDK_AUTH_SENTINEL =
 
 export type OpenCodeModelBridgeProviderConfig = {
   model: string
+  permission?: 'ask'
   agent: {
     title: {
       disable: true
+    }
+    build?: {
+      permission: 'ask'
     }
   }
   provider: Record<
@@ -389,6 +393,7 @@ export async function runOpenCodeModelBridgeHelper(options: {
   protocol: ModelBridgeProtocol
   model: string
   supportsImageInput: boolean
+  workMode: 'ask' | 'execute'
   opencodeEntrypoint: string
   environment?: Readonly<NodeJS.ProcessEnv>
   spawn?: ModelBridgeHelperSpawn
@@ -409,7 +414,8 @@ export async function runOpenCodeModelBridgeHelper(options: {
       protocol: options.protocol,
       model: options.model,
       loopbackOrigin: origin,
-      supportsImageInput: options.supportsImageInput
+      supportsImageInput: options.supportsImageInput,
+      workMode: options.workMode
     })
     const environment = credentialFreeHelperEnvironment(
       options.environment ?? process.env,
@@ -487,6 +493,7 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   loopbackOrigin: string
   name?: string
   supportsImageInput?: boolean
+  workMode?: 'ask' | 'execute'
 }): OpenCodeModelBridgeProviderConfig {
   const model = boundedMetadataText(input.model, 'Model name')
   const name = boundedMetadataText(
@@ -500,13 +507,25 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   const baseURL = `${origin}/v1`
   return {
     model: openCodeModelBridgeModelId(input.protocol, model),
+    ...(input.workMode === 'ask'
+      ? {
+          permission: 'ask' as const
+        }
+      : {}),
     // GoodBuddy owns conversation titles. A first-prompt title request can
     // race the real ACP prompt, abandon its Provider response, and correctly
     // poison the no-replay ledger before the user request can run.
     agent: {
       title: {
         disable: true
-      }
+      },
+      ...(input.workMode === 'ask'
+        ? {
+            build: {
+              permission: 'ask' as const
+            }
+          }
+        : {})
     },
     provider: {
       [providerId]: {

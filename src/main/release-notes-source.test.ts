@@ -35,14 +35,31 @@ describe('packaged release notes', () => {
         )
       }
     }
-    const releaseWithLongScenario = parsed.releases.find(
-      (release) => release.version === packageSource.version
-    )
-    expect(
-      releaseWithLongScenario?.notes['en-US'].features.some(
-        (item) => item.length > 500
-      )
-    ).toBe(true)
+    expect(() =>
+      releaseNotesFileSchema.parse({
+        formatVersion: 1,
+        releases: [
+          {
+            version: '1.0.0',
+            releasedAt: '2026-01-01',
+            notes: {
+              'zh-CN': {
+                highlights: [],
+                features: ['详'.repeat(501)],
+                fixes: [],
+                notices: []
+              },
+              'en-US': {
+                highlights: [],
+                features: ['detail '.repeat(100)],
+                fixes: [],
+                notices: []
+              }
+            }
+          }
+        ]
+      })
+    ).not.toThrow()
 
     const currentRelease = parsed.releases.find(
       (release) => release.version === '0.10.1'

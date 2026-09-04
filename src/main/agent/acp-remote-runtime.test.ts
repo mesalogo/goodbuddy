@@ -2279,7 +2279,19 @@ describe('AcpRemoteRuntime', () => {
       done: false
     })
     await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(server.setInboundPaused).toHaveBeenCalledWith(true)
+    expect(server.setInboundPaused).not.toHaveBeenCalledWith(false)
     const events = []
+    const firstUpdate = await stream.next()
+    expect(firstUpdate).toMatchObject({
+      value: { type: 'text' },
+      done: false
+    })
+    if (firstUpdate.done) {
+      throw new Error('Expected the first queued Runtime update')
+    }
+    events.push(firstUpdate.value)
+    expect(server.setInboundPaused).not.toHaveBeenCalledWith(false)
     while (true) {
       const next = await stream.next()
       if (next.done) {

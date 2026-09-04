@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档类型 | 功能进度 |
-| 状态 | 已实施，发布候选 CI 验收中 |
-| 版本 | 0.5 |
+| 状态 | 已实施，六平台打包验收已通过；真实 Skills/MCP 与自定义环境验收待完成 |
+| 版本 | 0.6 |
 | 日期 | 2026-09-03 |
 | 关联入口 | [工具执行环境](./README.md) |
 
@@ -21,7 +21,8 @@
 带入许可证文件。标准六平台打包任务已改用目标架构原生 Runner，并在打包前执行托管 Python
 的真实安装、SSL、pip 和 venv 探针。不可变的 `v0.12.0` 尝试已通过 Windows 与 macOS，
 但 Linux x64/ARM64 在发布前暴露 TAR 大小写冲突误判；`v0.12.1` 在同步 Agent 发布时
-于原生打包前取消。修正后的 `0.12.2` 候选仍需通过全部六个目标才能完成对应跨平台验收。
+于原生打包前取消。已发布的 `v0.12.2` 随后通过全部六个原生打包任务及其托管 Python
+安装、SSL、pip 和 venv 探针。
 
 ## 已完成
 
@@ -67,8 +68,7 @@
 - [x] 发布六个平台/架构的字节完全相同 OSS 镜像对象并公开回读校验。
 - [x] 确认托管 Python 保持按需下载，Desktop 发行包不额外带入许可证文件。
 - [x] Windows ARM64、macOS x64/ARM64 原生 CI 安装、SSL、pip、venv 探针。
-- [ ] Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针；`v0.12.0` 因 TAR 大小写
-  冲突误判失败，`v0.12.1` 未进入原生矩阵，等待 `0.12.2` 修正候选运行结果。
+- [x] Linux x64/ARM64 原生 CI 安装、SSL、pip、venv 探针；`v0.12.2` 标签工作流已通过。
 - [ ] 最低 Windows/macOS/glibc 支持矩阵和 Windows NuGet 签名核验。
 - [ ] 真实 JavaScript/Python SKILL 成果及 Node/Python stdio MCP 调用。
 - [ ] 自定义 Node/Python 在产品 UI 中的真实选择和任务执行。
@@ -100,6 +100,9 @@
 - `0.12.2` 协调候选的 Release Notes 校验通过；Agent/Desktop 发布链路聚焦测试
   `106/106` 通过、1 项平台用例跳过。最终 `npm test` 为 `3478` 通过、`51` 跳过，
   typecheck 与 lint 通过；仍未运行本地 production build、package 或安装探针。
+- `v0.12.2` 标签工作流 `33714902060` 随后成功完成 source validation、production
+  bundle、Windows/macOS/Linux x64/arm64 六个原生 package job 及各自托管 Python
+  安装探针，并于 2026-09-03 发布非 draft、非 prerelease 的正式 Release。
 
 ### 2026-09-02 完整实现
 

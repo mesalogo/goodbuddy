@@ -182,9 +182,12 @@ export const conversationMessageBlockSchema = z.discriminatedUnion('type', [
     .strict()
 ])
 
-export const conversationMessageBlocksSchema = z.array(
-  conversationMessageBlockSchema
-)
+export const maximumConversationRetainedActivities = 500
+export const maximumConversationMessageBlocks = 2_000
+
+export const conversationMessageBlocksSchema = z
+  .array(conversationMessageBlockSchema)
+  .max(maximumConversationMessageBlocks)
 
 export type ConversationToolActivity = z.infer<
   typeof conversationToolActivitySchema
@@ -265,6 +268,7 @@ export const conversationMessageSchema = z
     content: z.string().max(1_000_000),
     reasoning: z.string().optional(),
     blocks: conversationMessageBlocksSchema.optional(),
+    displayCaptureTruncated: z.boolean().optional(),
     createdAt: z.number().int().nonnegative(),
     state: z.enum(['streaming', 'complete', 'error']),
     status: z.string().max(4_000).optional(),
@@ -274,8 +278,14 @@ export const conversationMessageSchema = z
       .array(conversationContextCompressionMarkerSchema)
       .max(2)
       .optional(),
-    tools: z.array(conversationToolActivitySchema).optional(),
-    subagents: z.array(conversationSubagentActivitySchema).optional(),
+    tools: z
+      .array(conversationToolActivitySchema)
+      .max(maximumConversationRetainedActivities)
+      .optional(),
+    subagents: z
+      .array(conversationSubagentActivitySchema)
+      .max(maximumConversationRetainedActivities)
+      .optional(),
     sources: z.array(z.string().max(8_192)).max(100).optional(),
     sourceReferences: z
       .array(

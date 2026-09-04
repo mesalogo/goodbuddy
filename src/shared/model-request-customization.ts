@@ -51,10 +51,10 @@ export type ModelRequestJsonValue = CanonicalJsonValue
 
 export type ModelRequestBody = Record<string, ModelRequestJsonValue>
 
-function hasControlCharacter(value: string): boolean {
+function hasInvalidHeaderValueCharacter(value: string): boolean {
   return [...value].some((character) => {
     const code = character.charCodeAt(0)
-    return code <= 31 || code === 127
+    return code <= 31 || code === 127 || code > 255
   })
 }
 
@@ -93,7 +93,7 @@ function isModelRequestHeaders(value: unknown): value is ModelRequestHeaders {
       typeof headerValue !== 'string' ||
       headerValue.length >
         MODEL_REQUEST_CUSTOMIZATION_LIMITS.maximumHeaderValueLength ||
-      hasControlCharacter(headerValue)
+      hasInvalidHeaderValueCharacter(headerValue)
     ) {
       return false
     }
@@ -225,16 +225,6 @@ export function mergeModelRequestHeaders(
   const runtime = new Headers(runtimeHeaders)
   runtime.forEach((value, name) => headers.set(name, value))
   return headers
-}
-
-export function canonicalModelRequestHeaders(
-  headers: Headers
-): Record<string, string> {
-  return Object.fromEntries(
-    [...headers.entries()].sort(([left], [right]) =>
-      left.localeCompare(right)
-    )
-  )
 }
 
 export function mergeModelRequestBody(

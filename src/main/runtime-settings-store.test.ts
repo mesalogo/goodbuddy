@@ -1301,6 +1301,172 @@ describe('RuntimeSettingsStore', () => {
     ).toBe(21)
   })
 
+  it('changes the active embedding connection without changing model profiles', async () => {
+    const { store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000091'
+    const connectionId = '00000000-0000-4000-8000-000000000092'
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'Tenant model',
+            baseUrl: 'https://gateway.example/v1',
+            modelName: 'tenant-model',
+            protocol: 'anthropic-messages',
+            authentication: 'api-key',
+            supportsImageInput: false,
+            contextWindowTokens: 200_000,
+            maximumOutputTokens: 48_000,
+            imageGenerationQuality: 'auto',
+            requestHeaders: { 'x-tenant-id': 'tenant-a' },
+            requestBody: { temperature: 0.2 },
+            apiKey: { action: 'replace', value: 'tenant-secret' }
+          }
+        ],
+        defaultModelProfileId: profileId,
+        embeddingConnections: [
+          {
+            id: builtinEmbeddingConnectionId,
+            name: 'GoodBuddy 内置向量模型',
+            kind: 'builtin'
+          },
+          {
+            id: connectionId,
+            name: '团队向量模型',
+            kind: 'openai-compatible',
+            baseUrl: 'https://team-vectors.example/v1/embeddings',
+            modelName: 'team/embed-v2',
+            authentication: 'none',
+            apiKey: { action: 'keep' }
+          }
+        ],
+        activeEmbeddingConnectionId: builtinEmbeddingConnectionId
+      })
+    )
+    const selection =
+      await store.setActiveEmbeddingConnection(connectionId)
+    expect(selection).toMatchObject({
+      changed: true,
+      previousConnectionId: builtinEmbeddingConnectionId
+    })
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      activeEmbeddingConnectionId: connectionId,
+      modelProfiles: [
+        expect.objectContaining({
+          id: profileId,
+          contextWindowTokens: 200_000,
+          maximumOutputTokens: 48_000,
+          requestHeaders: { 'x-tenant-id': 'tenant-a' },
+          requestBody: { temperature: 0.2 },
+          apiKey: 'tenant-secret'
+        })
+      ]
+    })
+  })
+
+  it('preserves configured model fields when embedding changes under an environment override', async () => {
+    const { filePath, store } = await createStore()
+    const profileId = '00000000-0000-4000-8000-000000000093'
+    await store.update(
+      settings({
+        modelProfiles: [
+          {
+            id: profileId,
+            name: 'Stored OpenAI model',
+            baseUrl: 'https://stored.example/v1',
+            modelName: 'stored-model',
+            protocol: 'openai-chat-completions',
+            authentication: 'none',
+            supportsImageInput: false,
+            imageGenerationQuality: 'auto',
+            requestHeaders: { 'x-tenant-id': 'tenant-a' },
+            requestBody: { temperature: 0.2 },
+            apiKey: { action: 'keep' }
+          }
+        ],
+        defaultModelProfileId: profileId
+      })
+    )
+    const environmentStore = new RuntimeSettingsStore(
+      filePath,
+      cipher,
+      { GOODBUDDY_BIGTOKEN_API_KEY: 'environment-key' }
+    )
+    const effective = await environmentStore.getPublicSettings()
+    expect(effective.modelProfiles[0]).toMatchObject({
+      protocol: 'anthropic-messages',
+      authentication: 'api-key',
+      credentialSource: 'environment'
+    })
+
+    await environmentStore.setActiveEmbeddingConnection(
+      legacyEmbeddingConnectionId
+    )
+
+    const withoutEnvironment = new RuntimeSettingsStore(
+      filePath,
+      cipher,
+      {}
+    )
+    await expect(
+      withoutEnvironment.getResolvedSettings()
+    ).resolves.toMatchObject({
+      activeEmbeddingConnectionId: legacyEmbeddingConnectionId,
+      modelProfiles: [
+        expect.objectContaining({
+          id: profileId,
+          baseUrl: 'https://stored.example/v1',
+          modelName: 'stored-model',
+          protocol: 'openai-chat-completions',
+          authentication: 'none',
+          requestHeaders: { 'x-tenant-id': 'tenant-a' },
+          requestBody: { temperature: 0.2 }
+        })
+      ]
+    })
+  })
+
+  it('serializes embedding selection with full settings updates', async () => {
+    const { store } = await createStore()
+    const settingsUpdate = store.update(
+      settings({ modelName: 'updated-after-selection-read' })
+    )
+    const selectionUpdate =
+      store.setActiveEmbeddingConnection(
+        legacyEmbeddingConnectionId
+      )
+
+    await Promise.all([settingsUpdate, selectionUpdate])
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelName: 'updated-after-selection-read',
+      activeEmbeddingConnectionId: legacyEmbeddingConnectionId
+    })
+  })
+
+  it('rolls back only the embedding selection after later settings updates', async () => {
+    const { store } = await createStore()
+    const selection =
+      await store.setActiveEmbeddingConnection(
+        legacyEmbeddingConnectionId
+      )
+    await store.update(
+      settings({
+        modelName: 'saved-while-embedding-activated',
+        activeEmbeddingConnectionId: legacyEmbeddingConnectionId
+      })
+    )
+
+    await selection.restore()
+
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelName: 'saved-while-embedding-activated',
+      activeEmbeddingConnectionId: builtinEmbeddingConnectionId
+    })
+  })
+
   it('migrates version 13 with reranking disabled by default', async () => {
     const { filePath, store } = await createStore()
     await store.update(settings())

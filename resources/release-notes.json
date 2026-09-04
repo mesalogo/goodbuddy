@@ -2,6 +2,56 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.3",
+      "releasedAt": "2026-09-04",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.12.3 新增按模型连接定制请求 Header 和 Body，并把内置浏览器扩展到 OpenCode 与 Continue；同时改善多会话并发、长任务、远程 Ask/Execute 和 OpenCode 切换体验。"
+          ],
+          "features": [
+            "**模型请求定制。** 每个 LLM 连接现在可以填写有界 JSON 请求头和顶层请求体，用于兼容自建网关、局域网服务和其他需要额外字段的 Provider。直连模型与 Continue 支持 Header 和 Body，本地 OpenCode 与 DeepSeek Harness 使用各自原生支持的 Header，受管 SSH OpenCode 支持两者；认证、协议和 Runtime 自有字段始终优先。",
+            "**Runtime 共享内置浏览器。** 内置浏览器现在可以分配给直连模型、GoodBuddy 管理的 OpenCode 和 Continue，并在 Execute 模式使用。用户与 Agent 共享同一个按会话隔离的浏览器页面；关闭 Agent 浏览器能力后，用户仍可在工作栏中手动导航。"
+          ],
+          "fixes": [
+            "**多会话和长任务不再被人为中止。** 同一项目中的不同 OpenCode 会话现在可以并行运行，同一会话内仍保持顺序。OpenCode、Continue 和受管 SSH 任务不再因 GoodBuddy 固定的工具、活动、模型调用或累计输出数量而取消；本机展示达到容量时会给出提示，但原生任务继续运行。",
+            "**OpenCode 状态检查和 Runtime 切换更快。** 被动状态检查现在只验证所选路径和模型凭据，不再启动并立即销毁一个 OpenCode Server，减少较慢设备和 Linux ARM Host 上的切换等待。设置中的显式连接测试、原生能力读取和首次实际请求仍执行完整启动与健康检查，失效的自定义路径也不会被其他候选静默替代。",
+            "**模型重试和流式结果更可靠。** 直连模型会在尚未输出内容时，对明确发生在请求发送前的临时连接故障执行可取消重试；可能已经到达 Provider 的请求不会自动重放。Continue 事件流溢出后也不会再把后续增量与最终完整答案重复显示。",
+            "**远程 Ask 与 Execute 启动边界更一致。** 两种模式现在都直接启动已签名 Runtime，不再要求 Host 安装 bubblewrap。Ask 同时使用 OpenCode Ask 权限和 Agent 原生读取审批保持只读；Execute 不注入该限制，继续使用所选 SSH 账号的完整权限。",
+            "**设置保存和能力提示更准确。** 保存或测试期间设置表单会暂时锁定，避免旧响应覆盖新输入；切换 Embedding 连接也不再改写模型凭据、环境覆盖或并发保存的其他字段。无效 Header 会在保存时提示，浏览器卡片会明确标注仅 Execute 可供 Agent 使用。",
+            "**工作栏与终端操作恢复一致。** 终端工具栏粘贴改走受信任的 Main/Preload 剪贴板路径，避免 Electron 拒绝浏览器剪贴板权限后无法粘贴。工作栏页签、关闭按钮和“+”入口恢复圆角样式，终端面板与工具栏继续保持直角。"
+          ],
+          "notices": [
+            "**远程项目仍为技术预览。** Host 需要单独发布的 Agent `0.11.17`；Desktop `0.12.3` 不内置 Agent 或远程 Runtime。Ask 保持只读，Execute 表示授权所选 SSH 账号可用的完整工具、进程、网络和写入权限。",
+            "**请求定制不是密钥存储。** 自定义 Header 和 Body 会随连接普通设置保存，请勿在其中填写 API Key 或其他密钥。各 Runtime 只应用其原生支持的字段，界面会标明实际生效范围。",
+            "**发布平台。** GoodBuddy 使用 Windows、macOS、Linux 的 `x64`/`arm64` 标准发布矩阵。本次不构建独立的 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.12.3 adds per-connection request headers and body fields and extends the built-in browser to OpenCode and Continue, together with smoother concurrent conversations, long tasks, Remote Ask/Execute, and OpenCode switching."
+          ],
+          "features": [
+            "**Custom model requests.** Each LLM connection can now supply bounded JSON headers and top-level body fields for self-hosted gateways, LAN services, and providers that require additional values. Direct models and Continue support both headers and body fields, local OpenCode and DeepSeek Harness use their native header support, and managed SSH OpenCode supports both; authentication, protocol, and Runtime-owned fields always take precedence.",
+            "**Built-in browser shared across Runtimes.** The built-in browser can now be assigned to direct models, GoodBuddy-managed OpenCode, and Continue for use in Execute. The user and Agent share the same conversation-isolated page, while disabling Agent browser access still leaves manual workbar navigation available."
+          ],
+          "fixes": [
+            "**Concurrent conversations and long tasks keep running.** Separate OpenCode conversations in one project can now run in parallel while requests within one conversation stay ordered. OpenCode, Continue, and managed SSH tasks are no longer cancelled by GoodBuddy-defined tool, activity, model-call, or accumulated-output counts; reaching local display capacity shows a notice while native execution continues.",
+            "**Faster OpenCode status checks and Runtime switching.** Passive status checks now validate only the selected path and model credential instead of starting and immediately destroying an OpenCode Server, reducing switching delays on slower systems and Linux ARM Hosts. Explicit connection tests, native capability discovery, and first real use still perform full startup and health checks, and an invalid custom path is never silently replaced by another candidate.",
+            "**Safer model retries and streaming results.** Direct models perform cancellable retries before any visible output only for temporary connection failures proven to occur before request dispatch; requests that may have reached the provider are never replayed automatically. Continue also avoids showing later stream deltas again with a complete fallback response after an event-stream overflow.",
+            "**Consistent Remote Ask and Execute startup boundaries.** Both modes now launch the signed Runtime directly without requiring bubblewrap on the Host. Ask stays read-only through both OpenCode Ask permissions and Agent native-read approval, while Execute applies no such override and retains the selected SSH account's full permissions.",
+            "**Reliable settings saves and capability guidance.** Settings are temporarily locked while saving or testing so an older response cannot overwrite newer input, and changing the Embedding connection no longer rewrites model credentials, environment overrides, or unrelated concurrent saves. Invalid headers are rejected when saving, and the browser card now clearly identifies Agent access as Execute-only.",
+            "**Restored workbar and terminal behavior.** Terminal toolbar paste now uses the trusted Main/Preload clipboard path instead of a browser clipboard call that Electron could reject. Workbar tabs, close buttons, and the “+” entry use rounded styling again, while the terminal panel and toolbar remain square."
+          ],
+          "notices": [
+            "**Remote Projects remain a technical preview.** Hosts require the separately published Agent `0.11.17`; Desktop `0.12.3` does not embed the Agent or Remote Runtime. Ask remains read-only, while Execute authorizes the full tools, processes, network access, and writable paths available to the selected SSH account.",
+            "**Request customization is not credential storage.** Custom headers and body fields are saved as ordinary connection settings, so do not place API keys or other secrets in them. Each Runtime applies only the fields it supports natively, and the interface identifies the effective scope.",
+            "**Release platforms.** GoodBuddy uses the standard Windows, macOS, and Linux `x64`/`arm64` release matrix. This release does not include a separate experimental LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.2",
       "releasedAt": "2026-09-03",
       "notes": {

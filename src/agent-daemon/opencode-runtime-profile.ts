@@ -19,6 +19,15 @@ import {
   assertAbsoluteManagedPath
 } from './managed-paths'
 
+const OPEN_CODE_ASK_CONFIG = JSON.stringify({
+  permission: 'ask',
+  agent: {
+    build: {
+      permission: 'ask'
+    }
+  }
+})
+
 export type OpenCodeLaunchProfile = {
   executable: string
   processExecutable: string
@@ -143,16 +152,25 @@ export function createOpenCodeLaunchProfile(input: {
             modelBridge.policy.model,
             '--supports-image-input',
             modelBridge.policy.supportsImageInput ? 'true' : 'false',
+            '--work-mode',
+            input.workMode,
             '--opencode-entrypoint',
             executablePath
           ]
         }
 
+  const environment =
+    input.workMode === 'ask'
+      ? {
+          ...executeEnvironment(process.env, workspaceDirectory),
+          OPENCODE_CONFIG_CONTENT: OPEN_CODE_ASK_CONFIG
+        }
+      : executeEnvironment(process.env, workspaceDirectory)
   return {
     ...runtimeCommand,
     processExecutable: runtimeCommand.executable,
     cwd: workspaceDirectory,
-    env: executeEnvironment(process.env, workspaceDirectory),
+    env: environment,
     workMode: input.workMode
   }
 }
