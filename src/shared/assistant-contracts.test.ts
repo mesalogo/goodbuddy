@@ -298,6 +298,38 @@ describe('conversation branch contracts', () => {
   })
 })
 
+describe('conversation knowledge scope contracts', () => {
+  it('persists a bounded per-conversation knowledge library selection', () => {
+    const knowledgeLibraryIds = [
+      '00000000-0000-4000-8000-000000000301',
+      '00000000-0000-4000-8000-000000000302'
+    ]
+    expect(
+      conversationSnapshotSchema.parse({
+        id: '00000000-0000-4000-8000-000000000303',
+        knowledgeLibraryIds,
+        knowledgeRetrievalMode: 'always',
+        title: '知识问答',
+        updatedAt: 1,
+        messages: []
+      }).knowledgeLibraryIds
+    ).toEqual(knowledgeLibraryIds)
+    expect(
+      conversationSnapshotSchema.safeParse({
+        id: '00000000-0000-4000-8000-000000000303',
+        knowledgeLibraryIds: Array.from(
+          { length: 21 },
+          (_, index) =>
+            `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`
+        ),
+        title: '知识问答',
+        updatedAt: 1,
+        messages: []
+      }).success
+    ).toBe(false)
+  })
+})
+
 describe('conversation persistence contracts', () => {
   it('preserves complete tool details without persistence length limits', () => {
     const input = 'input'.repeat(10_000)

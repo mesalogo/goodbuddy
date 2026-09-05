@@ -7,6 +7,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractStructured } from './graph-extractor'
 import { embeddingStorageProvider } from './embedding-provider-key'
@@ -16,6 +17,83 @@ import { UrlImporter } from './url-importer'
 
 const temporaryDirectories: string[] = []
 const services: KnowledgeService[] = []
+
+function createRealDocxFixture(): Buffer {
+  return Buffer.from(
+    zipSync({
+      '[Content_Types].xml': strToU8(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+        '</Types>'
+      ),
+      '_rels/.rels': strToU8(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+        '</Relationships>'
+      ),
+      'word/document.xml': strToU8(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        '<w:body>' +
+        '<w:p><w:r><w:t>蓝鲸发布流程</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:t>发布前必须完成审批和回归测试。</w:t></w:r></w:p>' +
+        '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>负责人</w:t></w:r></w:p></w:tc>' +
+        '<w:tc><w:p><w:r><w:t>产品团队</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+        '<w:sectPr/></w:body></w:document>'
+      ),
+      'word/_rels/document.xml.rels': strToU8(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
+      )
+    })
+  )
+}
+
+function createRealPdfFixture(...pageTexts: string[]): Buffer {
+  const texts = pageTexts.length > 0 ? pageTexts : ['']
+  const fontObjectId = texts.length + 3
+  const firstContentObjectId = fontObjectId + 1
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    `<< /Type /Pages /Kids [${texts
+      .map((_, index) => `${index + 3} 0 R`)
+      .join(' ')}] /Count ${texts.length} >>`,
+    ...texts.map(
+      (_, index) =>
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+        `/Resources << /Font << /F1 ${fontObjectId} 0 R >> >> ` +
+        `/Contents ${firstContentObjectId + index} 0 R >>`
+    ),
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ...texts.map((text) => {
+      const stream = `BT /F1 14 Tf 72 720 Td (${text}) Tj ET`
+      return (
+        `<< /Length ${Buffer.byteLength(stream)} >>\n` +
+        `stream\n${stream}\nendstream`
+      )
+    })
+  ]
+  let content = '%PDF-1.4\n'
+  const offsets = [0]
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(content))
+    content += `${index + 1} 0 obj\n${object}\nendobj\n`
+  }
+  const xrefOffset = Buffer.byteLength(content)
+  content += `xref\n0 ${objects.length + 1}\n`
+  content += '0000000000 65535 f \n'
+  content += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
+    .join('')
+  content += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`
+  content += `startxref\n${xrefOffset}\n%%EOF\n`
+  return Buffer.from(content)
+}
 
 async function createService(
   urlImporter?: UrlImporter,
@@ -48,6 +126,83 @@ afterEach(async () => {
 })
 
 describe('KnowledgeService', () => {
+  it('imports real DOCX and PDF files from disk into searchable chunks', async () => {
+    const { directory, service } = await createService()
+    const docxPath = join(directory, '蓝鲸发布手册.docx')
+    const pdfPath = join(directory, 'Blue-Harbor-operations.pdf')
+    await Promise.all([
+      writeFile(docxPath, createRealDocxFixture()),
+      writeFile(
+        pdfPath,
+        createRealPdfFixture(
+          'Blue Harbor deployment requires a signed approval.',
+          'Rollback begins by restoring the verified package.'
+        )
+      )
+    ])
+    const library = service.createLibrary({
+      name: '真实办公文档',
+      storageMode: 'reference',
+      graphEnabled: false
+    })
+
+    await service.importPaths(library.id, [docxPath, pdfPath])
+
+    const snapshot = service.snapshot(library.id)
+    expect(snapshot.libraries[0]).toMatchObject({
+      documentCount: 2,
+      indexedDocumentCount: 2,
+      processingDocumentCount: 0,
+      failedDocumentCount: 0
+    })
+    expect(snapshot.documents).toHaveLength(2)
+    expect(
+      snapshot.documents.every(
+        (document) =>
+          document.status === 'ready' &&
+          document.textIndexStatus === 'ready' &&
+          document.vectorIndexStatus === 'disabled'
+      )
+    ).toBe(true)
+
+    const docxDocument = snapshot.documents.find(
+      (document) => document.sourceLocation === docxPath
+    )
+    const pdfDocument = snapshot.documents.find(
+      (document) => document.sourceLocation === pdfPath
+    )
+    expect(docxDocument).toBeDefined()
+    expect(pdfDocument).toBeDefined()
+    expect(
+      service.getDocumentSource({
+        knowledgeBaseId: library.id,
+        documentId: docxDocument!.id
+      })
+    ).toMatchObject({
+      document: { sourceLocation: docxPath },
+      source: { knowledgeBaseId: library.id }
+    })
+    const docxChunks = service.database.listChunks(docxDocument!.id)
+    const pdfChunks = service.database.listChunks(pdfDocument!.id)
+    expect(docxChunks.map((chunk) => chunk.content).join('\n')).toContain(
+      '发布前必须完成审批和回归测试'
+    )
+    expect(docxChunks.some((chunk) => chunk.location?.includes('表格'))).toBe(
+      true
+    )
+    expect(pdfChunks.map((chunk) => chunk.location)).toEqual([
+      '第 1 页',
+      '第 2 页'
+    ])
+
+    expect(service.search(library.id, '发布审批')[0]?.document.id).toBe(
+      docxDocument!.id
+    )
+    expect(
+      service.search(library.id, 'verified package')[0]?.document.id
+    ).toBe(pdfDocument!.id)
+  })
+
   it('uses document and query embedding roles without exposing providers to runtimes', async () => {
     const embed = vi.fn(async (input: readonly string[]) =>
       input.map(() => [9, 9])

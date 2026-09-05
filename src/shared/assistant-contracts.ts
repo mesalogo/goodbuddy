@@ -485,6 +485,7 @@ export const conversationSnapshotSchema = z
     id: assistantIdSchema,
     projectId: assistantIdSchema.optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
+    knowledgeLibraryIds: z.array(assistantIdSchema).max(20).optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
     contextMetrics: conversationContextMetricsSchema.optional(),
     contextCompressionState:

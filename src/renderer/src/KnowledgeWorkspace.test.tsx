@@ -216,6 +216,7 @@ function createProps(
     onUpdateChunk: vi.fn(),
     onDeleteChunk: vi.fn(),
     onRebuildDocument: vi.fn(),
+    onOpenDocumentSource: vi.fn(),
     onRebuildLibrary: vi.fn(),
     onCancelRebuild: vi.fn(),
     onGetEmbeddingIndex: vi.fn(async () => ({
@@ -245,6 +246,8 @@ function createProps(
     onCancelTask: vi.fn(),
     onRetryTask: vi.fn(),
     onOpenReferenceSource: vi.fn(),
+    onUseInChat: vi.fn(),
+    onOpenModelSettings: vi.fn(),
     onMoveNode: vi.fn(),
     onCreateEntity: vi.fn(),
     onUpdateEntity: vi.fn(),
@@ -282,6 +285,7 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.change(screen.getByLabelText('描述'), {
       target: { value: '访谈与反馈' }
     })
+    fireEvent.click(screen.getByText('高级设置'))
     fireEvent.click(screen.getByLabelText(/引用原文件/))
     expect(
       screen.getByRole('switch', { name: /启用知识图谱/u })
@@ -341,6 +345,96 @@ describe('KnowledgeWorkspace', () => {
         undefined
       )
     )
+  })
+
+  it('confirms source removal before deleting indexed documents', async () => {
+    const onRemoveSource = vi.fn()
+    render(
+      <KnowledgeWorkspace
+        {...createProps({ onRemoveSource })}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '移除来源 产品手册' })
+    )
+    expect(
+      screen.getByRole('alertdialog', {
+        name: '移除来源“产品手册”？'
+      })
+    ).toHaveAccessibleDescription(
+      '将删除此来源的 1 篇文档、检索索引、图谱证据和应用托管副本。磁盘上的原始文件不会改变。'
+    )
+    expect(onRemoveSource).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', { name: '移除来源' })
+    )
+    await waitFor(() =>
+      expect(onRemoveSource).toHaveBeenCalledWith('source-1')
+    )
+  })
+
+  it('opens original documents, exposes index availability, and enters chat', () => {
+    const onOpenDocumentSource = vi.fn()
+    const onUseInChat = vi.fn()
+    render(
+      <KnowledgeWorkspace
+        {...createProps({ onOpenDocumentSource, onUseInChat })}
+      />
+    )
+
+    expect(screen.getByText('全文可用')).toBeInTheDocument()
+    expect(screen.getByText('向量未启用')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '1 篇可检索 · 0 篇处理中 · 0 篇需处理 · 共 1 篇'
+      )
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '打开 架构说明.md 的原始来源'
+      })
+    )
+    expect(onOpenDocumentSource).toHaveBeenCalledWith(
+      'library-1',
+      'document-1'
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: '用于当前对话' })
+    )
+    expect(onUseInChat).toHaveBeenCalledWith('library-1')
+  })
+
+  it('lets a failed document be retried while preserving available chunks', () => {
+    const onRebuildDocument = vi.fn()
+    const failedDocument = {
+      ...createProps().documents[0]!,
+      status: 'failed' as const,
+      textIndexStatus: 'failed' as const,
+      vectorIndexStatus: 'failed' as const,
+      graphIndexStatus: 'failed' as const
+    }
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          documents: [failedDocument],
+          onRebuildDocument
+        })}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '重新处理 架构说明.md'
+      })
+    )
+    expect(onRebuildDocument).toHaveBeenCalledWith(
+      'library-1',
+      'document-1'
+    )
+    expect(
+      screen.getByRole('button', { name: '文档分块' })
+    ).toBeEnabled()
   })
 
   it('opens the retrieval workbench and runs an isolated test query', async () => {
@@ -603,12 +697,18 @@ describe('KnowledgeWorkspace', () => {
 
     const tabs = screen.getByRole('tablist', { name: '知识库视图' })
     expect(within(tabs).getAllByRole('tab').map((item) => item.textContent))
-      .toEqual(['文档与来源', '知识图谱', '任务中心', '索引与检索'])
+      .toEqual(['文档与来源', '知识图谱', '任务中心', '高级设置'])
     expect(
       screen.queryByRole('switch', { name: '知识图谱' })
     ).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    fireEvent.click(screen.getByRole('tab', { name: '高级设置' }))
+    expect(
+      screen.getByRole('heading', { name: '问答效果' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '测试并调整' })
+    ).toBeInTheDocument()
     expect(
       await screen.findByRole('heading', { name: '向量索引' })
     ).toBeInTheDocument()
@@ -627,6 +727,32 @@ describe('KnowledgeWorkspace', () => {
     })
   })
 
+  it('links a disabled vector index to model settings', async () => {
+    const onOpenModelSettings = vi.fn()
+    render(
+      <KnowledgeWorkspace
+        {...createProps({
+          onGetEmbeddingIndex: vi.fn(async () => ({
+            knowledgeBaseId: library.id,
+            enabled: false,
+            coverage: { total: 1, indexed: 0, missing: 1, error: 0 },
+            indexStatus: { job: null }
+          })),
+          onOpenModelSettings
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '高级设置' }))
+    expect(
+      await screen.findByText('向量模型未启用')
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: '前往设置' })
+    )
+    expect(onOpenModelSettings).toHaveBeenCalledOnce()
+  })
+
   it('hides graph navigation and graph-only controls until enabled', () => {
     const disabledLibrary = {
       ...library,
@@ -640,11 +766,11 @@ describe('KnowledgeWorkspace', () => {
 
     const tabs = screen.getByRole('tablist', { name: '知识库视图' })
     expect(within(tabs).getAllByRole('tab').map((item) => item.textContent))
-      .toEqual(['文档与来源', '任务中心', '索引与检索'])
+      .toEqual(['文档与来源', '任务中心', '高级设置'])
     expect(screen.queryByText('本次导入的图谱抽取策略'))
       .not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    fireEvent.click(screen.getByRole('tab', { name: '高级设置' }))
     expect(screen.getByRole('switch', { name: /启用知识图谱/u }))
       .not.toBeChecked()
     expect(
@@ -717,7 +843,7 @@ describe('KnowledgeWorkspace', () => {
     })
     const { rerender } = render(<KnowledgeWorkspace {...props} />)
 
-    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    fireEvent.click(screen.getByRole('tab', { name: '高级设置' }))
     rerender(
       <KnowledgeWorkspace
         {...props}
@@ -755,7 +881,7 @@ describe('KnowledgeWorkspace', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '索引与检索' }))
+    fireEvent.click(screen.getByRole('tab', { name: '高级设置' }))
     fireEvent.change(screen.getByLabelText('分块方式'), {
       target: { value: 'parent-child' }
     })
@@ -1185,7 +1311,7 @@ describe('KnowledgeWorkspace', () => {
     )
 
     expect(
-      screen.getByRole('columnheader', { name: '处理状态' })
+      screen.getByRole('columnheader', { name: '可用状态' })
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('columnheader', { name: '索引进度' })
@@ -1317,7 +1443,7 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.click(mobileBack)
     expect(workspace).toHaveClass('knowledge-workspace--mobile-list')
     const selectedLibraryButton = screen.getByRole('button', {
-      name: /^产品知识 1 个文档/u
+      name: /^产品知识 1 篇可用 · 0 篇需处理/u
     })
     expect(selectedLibraryButton).toHaveClass(
       'knowledge-workspace__library-button--selected'
@@ -1895,8 +2021,8 @@ describe('KnowledgeWorkspace', () => {
       screen.queryByText('建立第一个知识库')
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: '新建知识库' })
-    ).toBeDisabled()
+      screen.queryByRole('button', { name: '新建知识库' })
+    ).not.toBeInTheDocument()
   })
 
   it('shows a retryable load error instead of the first-library empty state', () => {
@@ -1933,7 +2059,9 @@ describe('KnowledgeWorkspace', () => {
       .toBeInTheDocument()
     expect(screen.getByText('架构说明.md')).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /^产品知识 1 个文档/u })
+      screen.getByRole('button', {
+        name: /^产品知识 1 篇可用 · 0 篇需处理/u
+      })
     ).toHaveAttribute('aria-current', 'page')
   })
 

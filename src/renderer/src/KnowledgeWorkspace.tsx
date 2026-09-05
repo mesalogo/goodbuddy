@@ -15,6 +15,7 @@ import {
   Link2,
   ListChecks,
   LoaderCircle,
+  MessageSquare,
   Network,
   Pencil,
   Plus,
@@ -302,6 +303,10 @@ export type KnowledgeWorkspaceProps = {
     libraryId: string,
     documentId: string
   ) => void | Promise<void>
+  onOpenDocumentSource: (
+    libraryId: string,
+    documentId: string
+  ) => void | Promise<void>
   onRebuildLibrary: (libraryId: string) => void | Promise<void>
   onCancelRebuild: (libraryId: string) => void | Promise<void>
   onGetEmbeddingIndex: (
@@ -319,6 +324,8 @@ export type KnowledgeWorkspaceProps = {
     documentId: string
     chunkId: string
   }) => void | Promise<void>
+  onUseInChat: (libraryId: string) => void
+  onOpenModelSettings: () => void
   onMoveNode: (
     nodeId: string,
     position: { x: number; y: number }
@@ -690,6 +697,9 @@ function CreateLibraryWizard({
         <h2 className="knowledge-create__title">
           {t('create.title')}
         </h2>
+        <p className="knowledge-section-description">
+          {t('create.description')}
+        </p>
       </div>
       <label className="knowledge-field">
         {t('fields.name')}
@@ -709,6 +719,14 @@ function CreateLibraryWizard({
           value={description}
         />
       </label>
+      <details className="knowledge-create__advanced">
+        <summary>
+          <span>
+            <strong>{t('create.advanced')}</strong>
+            <small>{t('create.advancedDescription')}</small>
+          </span>
+        </summary>
+        <div className="knowledge-create__advanced-content">
       <fieldset className="knowledge-create__storage">
         <legend>
           {t('fields.storageMode')}
@@ -779,6 +797,8 @@ function CreateLibraryWizard({
           </select>
         </label>
       )}
+        </div>
+      </details>
       {error && (
         <p
           aria-live="polite"
@@ -1032,6 +1052,105 @@ function DeleteLibraryDialog({
   )
 }
 
+function RemoveSourceDialog({
+  onCancel,
+  onConfirm,
+  source,
+  storageMode
+}: {
+  onCancel: () => void
+  onConfirm: () => void | Promise<void>
+  source: KnowledgeSource
+  storageMode: KnowledgeStorageMode
+}): React.JSX.Element {
+  const { t } = useTranslation('knowledge')
+  const [removing, setRemoving] = useState(false)
+  const [error, setError] = useState<string>()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
+  const descriptionId = useId()
+
+  useEffect(
+    () => activateModalFocus(() => cancelRef.current),
+    []
+  )
+
+  const remove = async (): Promise<void> => {
+    setRemoving(true)
+    setError(undefined)
+    try {
+      await onConfirm()
+      onCancel()
+    } catch (reason) {
+      setError(toErrorMessage(reason, t))
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  return (
+    <div
+      aria-describedby={descriptionId}
+      aria-labelledby={titleId}
+      aria-modal="true"
+      className="knowledge-confirm-dialog-backdrop"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !removing) {
+          event.preventDefault()
+          onCancel()
+          return
+        }
+        trapTabFocus(event, dialogRef.current)
+      }}
+      ref={dialogRef}
+      role="alertdialog"
+    >
+      <section className="knowledge-confirm-dialog">
+        <AlertCircle aria-hidden="true" size={26} />
+        <h2 id={titleId}>
+          {t('documents.removeSource.title', { name: source.name })}
+        </h2>
+        <p id={descriptionId}>
+          {t(
+            storageMode === 'managed'
+              ? 'documents.removeSource.managedDescription'
+              : 'documents.removeSource.referenceDescription',
+            { count: source.documentCount }
+          )}
+        </p>
+        {error && (
+          <p className="knowledge-inline-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="knowledge-confirm-dialog__actions">
+          <button
+            className="secondary-button"
+            disabled={removing}
+            onClick={onCancel}
+            ref={cancelRef}
+            type="button"
+          >
+            {t('actions.cancel')}
+          </button>
+          <button
+            className="danger-button"
+            disabled={removing}
+            onClick={() => void remove()}
+            type="button"
+          >
+            <Trash2 aria-hidden="true" size={15} />
+            {removing
+              ? t('documents.removeSource.removing')
+              : t('documents.removeSource.action')}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 type GraphDestructiveAction =
   | {
       kind: 'delete-entity'
@@ -1179,9 +1298,11 @@ function DocumentsView({
   onImportDirectory,
   onImportFiles,
   onImportUrl,
+  onOpenDocumentSource,
   onPauseSource,
   onManageChunks,
   onRemoveSource,
+  onRebuildDocument,
   onRetrySource,
   onSyncSource,
   onViewTasks,
@@ -1193,8 +1314,10 @@ function DocumentsView({
   | 'onImportDirectory'
   | 'onImportFiles'
   | 'onImportUrl'
+  | 'onOpenDocumentSource'
   | 'onPauseSource'
   | 'onRemoveSource'
+  | 'onRebuildDocument'
   | 'onRetrySource'
   | 'onSyncSource'
   | 'sources'
@@ -1216,6 +1339,8 @@ function DocumentsView({
   const [dragging, setDragging] = useState(false)
   const [pending, setPending] = useState<string>()
   const [error, setError] = useState<string>()
+  const [removingSource, setRemovingSource] =
+    useState<KnowledgeSource>()
   const [askStrategy, setAskStrategy] =
     useState<Exclude<KnowledgeGraphStrategy, 'ask'>>('hybrid')
   const importGraphStrategy =
@@ -1574,9 +1699,7 @@ function DocumentsView({
                     })}
                     className="danger-button danger-button--quiet"
                     disabled={pending === source.id}
-                    onClick={() =>
-                      void run(source.id, () => onRemoveSource(source.id))
-                    }
+                    onClick={() => setRemovingSource(source)}
                     type="button"
                   >
                     <Trash2 aria-hidden="true" size={14} />
@@ -1671,6 +1794,34 @@ function DocumentsView({
                         >
                           {t(documentStatusLabelKeys[document.status])}
                         </span>
+                        <span className="knowledge-document-status__channels">
+                          <span>
+                            {t(
+                              `indexStatuses.text.${
+                                document.textIndexStatus ??
+                                (document.status === 'ready'
+                                  ? 'ready'
+                                  : document.status === 'failed'
+                                    ? 'failed'
+                                    : 'waiting')
+                              }`
+                            )}
+                          </span>
+                          <span>
+                            {t(
+                              `indexStatuses.vector.${
+                                document.vectorIndexStatus ?? 'disabled'
+                              }`
+                            )}
+                          </span>
+                          {document.graphIndexStatus !== undefined && (
+                            <span>
+                              {t(
+                                `indexStatuses.graph.${document.graphIndexStatus}`
+                              )}
+                            </span>
+                          )}
+                        </span>
                         {activeTask && (
                           <span className="knowledge-document-status__active">
                             {t(taskStageLabelKeys[activeTask.stage])}
@@ -1711,8 +1862,49 @@ function DocumentsView({
                           </button>
                         )}
                         <button
+                          aria-label={t(
+                            'documents.actions.openDocumentSource',
+                            { name: document.name }
+                          )}
                           className="secondary-button"
-                          disabled={document.status !== 'ready'}
+                          disabled={pending === `open:${document.id}`}
+                          onClick={() =>
+                            void run(`open:${document.id}`, () =>
+                              onOpenDocumentSource(
+                                library.id,
+                                document.id
+                              )
+                            )
+                          }
+                          type="button"
+                        >
+                          {t('actions.openSource')}
+                        </button>
+                        {document.status === 'failed' && (
+                          <button
+                            aria-label={t(
+                              'documents.actions.retryDocument',
+                              { name: document.name }
+                            )}
+                            className="secondary-button"
+                            disabled={pending === `retry:${document.id}`}
+                            onClick={() =>
+                              void run(`retry:${document.id}`, () =>
+                                onRebuildDocument(
+                                  library.id,
+                                  document.id
+                                )
+                              )
+                            }
+                            type="button"
+                          >
+                            <RotateCcw aria-hidden="true" size={14} />
+                            {t('actions.retryDocument')}
+                          </button>
+                        )}
+                        <button
+                          className="secondary-button"
+                          disabled={(document.chunkCount ?? 0) === 0}
                           onClick={() => onManageChunks(document)}
                           type="button"
                         >
@@ -1728,6 +1920,14 @@ function DocumentsView({
           </div>
         )}
       </section>
+      {removingSource && (
+        <RemoveSourceDialog
+          onCancel={() => setRemovingSource(undefined)}
+          onConfirm={() => onRemoveSource(removingSource.id)}
+          source={removingSource}
+          storageMode={library.storageMode}
+        />
+      )}
     </div>
   )
 }
@@ -1992,6 +2192,8 @@ function KnowledgeSettingsView({
   mode,
   onCancelRebuild,
   onGetEmbeddingIndex,
+  onOpenModelSettings,
+  onOpenRetrieval,
   onRebuildLibrary,
   onRebuildEmbeddingIndex,
   onViewTasks,
@@ -2002,6 +2204,8 @@ function KnowledgeSettingsView({
   mode: 'index' | 'graph'
   onCancelRebuild: KnowledgeWorkspaceProps['onCancelRebuild']
   onGetEmbeddingIndex: KnowledgeWorkspaceProps['onGetEmbeddingIndex']
+  onOpenModelSettings: KnowledgeWorkspaceProps['onOpenModelSettings']
+  onOpenRetrieval: () => void
   onRebuildLibrary: KnowledgeWorkspaceProps['onRebuildLibrary']
   onRebuildEmbeddingIndex:
     KnowledgeWorkspaceProps['onRebuildEmbeddingIndex']
@@ -2221,8 +2425,29 @@ function KnowledgeSettingsView({
       className={`knowledge-settings knowledge-settings--${mode}`}
     >
       {mode === 'index' && (
+        <section className="knowledge-settings__section">
+          <div>
+            <h3>{t('settings.retrieval.title')}</h3>
+            <p className="knowledge-section-description">
+              {t('settings.retrieval.description')}
+            </p>
+          </div>
+          <div className="knowledge-settings__actions">
+            <button
+              className="primary-button"
+              onClick={onOpenRetrieval}
+              type="button"
+            >
+              <Search aria-hidden="true" size={15} />
+              {t('settings.retrieval.action')}
+            </button>
+          </div>
+        </section>
+      )}
+      {mode === 'index' && (
         <KnowledgeEmbeddingIndexSection
           loading={embeddingIndexLoading}
+          onGoToSettings={onOpenModelSettings}
           onRebuild={() => void rebuildEmbeddingIndex()}
           onViewTasks={onViewTasks}
           snapshot={embeddingIndex}
@@ -4096,6 +4321,8 @@ export function KnowledgeWorkspace({
   onImportFiles,
   onImportDirectory,
   onImportUrl,
+  onOpenDocumentSource,
+  onOpenModelSettings,
   onSyncSource,
   onPauseSource,
   onRetrySource,
@@ -4113,6 +4340,7 @@ export function KnowledgeWorkspace({
   onCancelTask,
   onRetryTask,
   onOpenReferenceSource,
+  onUseInChat,
   onMoveNode,
   onCreateEntity,
   onUpdateEntity,
@@ -4279,6 +4507,7 @@ export function KnowledgeWorkspace({
     <div className="knowledge-page">
       <PageHeader
         actions={
+          libraries.length > 0 ? (
           <button
             className="primary-button"
             disabled={loading}
@@ -4291,6 +4520,7 @@ export function KnowledgeWorkspace({
             <Plus aria-hidden="true" size={16} />
             {t('actions.newLibrary')}
           </button>
+          ) : undefined
         }
         description={t('page.description')}
         headingId="knowledge-workspace-title"
@@ -4328,9 +4558,13 @@ export function KnowledgeWorkspace({
                 {libraries.map((library) => {
                   const selected = library.id === selectedLibrary?.id
                   const libraryMeta = t('workspace.libraryMeta', {
-                    count: formatNumber(library.documentCount, locale),
-                    storageMode: t(
-                      storageModeLabelKeys[library.storageMode]
+                    ready: formatNumber(
+                      library.indexedDocumentCount,
+                      locale
+                    ),
+                    failed: formatNumber(
+                      library.failedDocumentCount ?? 0,
+                      locale
                     )
                   })
                   return (
@@ -4430,6 +4664,16 @@ export function KnowledgeWorkspace({
           />
         ) : !selectedLibrary ? (
           <EmptyState
+            action={
+              <button
+                className="primary-button"
+                onClick={() => setCreating(true)}
+                type="button"
+              >
+                <Plus aria-hidden="true" size={16} />
+                {t('actions.newLibrary')}
+              </button>
+            }
             description={t('empty.description')}
             icon={<BookOpen size={34} />}
             level="page"
@@ -4453,27 +4697,49 @@ export function KnowledgeWorkspace({
                 <h2>
                   {selectedLibrary.name}
                 </h2>
+                {selectedLibrary.description && (
+                  <p className="knowledge-workspace__description">
+                    {selectedLibrary.description}
+                  </p>
+                )}
                 <p className="knowledge-workspace__description">
-                  {selectedLibrary.description ||
-                    t('workspace.librarySummary', {
-                      sourceCount: formatNumber(
-                        selectedLibrary.sourceCount,
-                        locale
-                      ),
-                      indexedCount: formatNumber(
-                        selectedLibrary.indexedDocumentCount,
-                        locale
-                      ),
-                      documentCount: formatNumber(
-                        selectedLibrary.documentCount,
-                        locale
-                      )
-                    })}
+                  {t('workspace.librarySummary', {
+                    ready: formatNumber(
+                      selectedLibrary.indexedDocumentCount,
+                      locale
+                    ),
+                    processing: formatNumber(
+                      selectedLibrary.processingDocumentCount ?? 0,
+                      locale
+                    ),
+                    failed: formatNumber(
+                      selectedLibrary.failedDocumentCount ?? 0,
+                      locale
+                    ),
+                    documentCount: formatNumber(
+                      selectedLibrary.documentCount,
+                      locale
+                    )
+                  })}
                 </p>
               </div>
               <div
                 className="knowledge-workspace__header-actions"
               >
+                <button
+                  className="secondary-button"
+                  disabled={selectedLibrary.indexedDocumentCount === 0}
+                  onClick={() => onUseInChat(selectedLibrary.id)}
+                  title={t(
+                    selectedLibrary.indexedDocumentCount > 0
+                      ? 'workspace.readyForQuestions'
+                      : 'workspace.waitingForDocuments'
+                  )}
+                  type="button"
+                >
+                  <MessageSquare aria-hidden="true" size={15} />
+                  {t('actions.useInChat')}
+                </button>
                 <button
                   className="secondary-button"
                   onClick={() => {
@@ -4532,9 +4798,11 @@ export function KnowledgeWorkspace({
                   onImportDirectory={onImportDirectory}
                   onImportFiles={onImportFiles}
                   onImportUrl={onImportUrl}
+                  onOpenDocumentSource={onOpenDocumentSource}
                   onManageChunks={openChunkManager}
                   onPauseSource={onPauseSource}
                   onRemoveSource={onRemoveSource}
+                  onRebuildDocument={onRebuildDocument}
                   onRetrySource={onRetrySource}
                   onSyncSource={onSyncSource}
                   onViewTasks={(context) => {
@@ -4598,6 +4866,13 @@ export function KnowledgeWorkspace({
                         mode="graph"
                         onCancelRebuild={onCancelRebuild}
                         onGetEmbeddingIndex={onGetEmbeddingIndex}
+                        onOpenModelSettings={onOpenModelSettings}
+                        onOpenRetrieval={() => {
+                          setRetrievalStatus('idle')
+                          setRetrievalError(undefined)
+                          setRetrievalResponse(undefined)
+                          setRetrievalOpen(true)
+                        }}
                         onRebuildLibrary={onRebuildLibrary}
                         onRebuildEmbeddingIndex={onRebuildEmbeddingIndex}
                         onViewTasks={() => {
@@ -4627,6 +4902,13 @@ export function KnowledgeWorkspace({
                   mode="index"
                   onCancelRebuild={onCancelRebuild}
                   onGetEmbeddingIndex={onGetEmbeddingIndex}
+                  onOpenModelSettings={onOpenModelSettings}
+                  onOpenRetrieval={() => {
+                    setRetrievalStatus('idle')
+                    setRetrievalError(undefined)
+                    setRetrievalResponse(undefined)
+                    setRetrievalOpen(true)
+                  }}
                   onRebuildLibrary={onRebuildLibrary}
                   onRebuildEmbeddingIndex={onRebuildEmbeddingIndex}
                   onViewTasks={() => {

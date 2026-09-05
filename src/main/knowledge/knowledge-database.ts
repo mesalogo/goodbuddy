@@ -846,6 +846,8 @@ export class KnowledgeDatabase {
       sourceCount: number
       documentCount: number
       indexedDocumentCount: number
+      processingDocumentCount: number
+      failedDocumentCount: number
     }
   > {
     const rows = this.requireDatabase()
@@ -855,8 +857,15 @@ export class KnowledgeDatabase {
            COUNT(DISTINCT d.id) AS document_count,
            COUNT(DISTINCT CASE
              WHEN COALESCE(json_extract(d.metadata, '$.status'), 'ready')
-               <> 'failed'
+               = 'ready'
              THEN d.id END) AS indexed_document_count
+           ,COUNT(DISTINCT CASE
+             WHEN json_extract(d.metadata, '$.status')
+               IN ('queued', 'parsing', 'indexing')
+             THEN d.id END) AS processing_document_count
+           ,COUNT(DISTINCT CASE
+             WHEN json_extract(d.metadata, '$.status') = 'failed'
+             THEN d.id END) AS failed_document_count
          FROM knowledge_bases kb
          LEFT JOIN knowledge_sources s ON s.knowledge_base_id = kb.id
          LEFT JOIN documents d ON d.knowledge_base_id = kb.id
@@ -872,6 +881,14 @@ export class KnowledgeDatabase {
           indexedDocumentCount: asNumber(
             row,
             'indexed_document_count'
+          ),
+          processingDocumentCount: asNumber(
+            row,
+            'processing_document_count'
+          ),
+          failedDocumentCount: asNumber(
+            row,
+            'failed_document_count'
           )
         }
       ])

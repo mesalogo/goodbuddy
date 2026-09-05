@@ -894,6 +894,7 @@ const api: DesktopApi = {
       graphRelations: [],
       evidence: []
     })),
+    openDocumentSource: vi.fn(async () => {}),
     rebuildLibrary: vi.fn(async () => ({
       rebuilt: 0,
       failed: 0
@@ -4741,7 +4742,7 @@ describe('App', () => {
     })
     render(<App />)
     const knowledgeScopeTrigger = await screen.findByRole('button', {
-      name: '选择知识库，本次已启用 1 个'
+      name: '选择知识库，本次已启用 0 个'
     })
     expect(knowledgeScopeTrigger).toHaveAttribute(
       'aria-haspopup',
@@ -4774,6 +4775,7 @@ describe('App', () => {
       name: /产品知识/u
     })
     await waitFor(() => expect(scopeCheckbox).toHaveFocus())
+    fireEvent.click(scopeCheckbox)
     const composerInput = screen.getByLabelText('向 GoodBuddy 提问')
     fireEvent.focusOut(scopeCheckbox, {
       relatedTarget: composerInput
@@ -4880,6 +4882,78 @@ describe('App', () => {
     )
   })
 
+  it('restores an independent knowledge scope for each conversation', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    const firstConversationId =
+      '22222222-2222-4222-8222-222222222222'
+    const secondConversationId =
+      '33333333-3333-4333-8333-333333333333'
+    vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
+      libraries: [
+        {
+          id: libraryId,
+          name: '产品知识',
+          description: '',
+          storageMode: 'managed',
+          graphEnabled: false,
+          graphStrategy: 'rules',
+          sourceCount: 1,
+          documentCount: 1,
+          indexedDocumentCount: 1
+        }
+      ],
+      sources: [],
+      documents: [],
+      graphNodes: [],
+      graphRelations: [],
+      evidence: []
+    })
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: firstConversationId,
+        projectId,
+        knowledgeLibraryIds: [libraryId],
+        knowledgeRetrievalMode: 'always',
+        title: '带知识范围',
+        updatedAt: 200,
+        messages: []
+      },
+      {
+        id: secondConversationId,
+        projectId,
+        knowledgeLibraryIds: [],
+        knowledgeRetrievalMode: 'auto',
+        title: '空知识范围',
+        updatedAt: 100,
+        messages: []
+      }
+    ])
+
+    render(<App />)
+
+    expect(
+      await screen.findByRole('button', {
+        name: '选择知识库，本次已启用 1 个'
+      })
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: /^空知识范围/u })
+    )
+    expect(
+      screen.getByRole('button', {
+        name: '选择知识库，本次已启用 0 个'
+      })
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: /^带知识范围/u })
+    )
+    expect(
+      screen.getByRole('button', {
+        name: '选择知识库，本次已启用 1 个'
+      })
+    ).toBeInTheDocument()
+  })
+
   it('persists and submits always-retrieve mode for the active conversation', async () => {
     const libraryId = '11111111-1111-4111-8111-111111111111'
     vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
@@ -4904,9 +4978,12 @@ describe('App', () => {
     })
     render(<App />)
     const knowledgeScope = await screen.findByRole('button', {
-      name: '选择知识库，本次已启用 1 个'
+      name: '选择知识库，本次已启用 0 个'
     })
     fireEvent.click(knowledgeScope)
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /产品知识/u })
+    )
     const retrievalMode = screen.getByRole('group', {
       name: '知识检索方式'
     })
@@ -8410,6 +8487,7 @@ describe('App', () => {
           provider: 'model',
           profileId: modelProfileId
         },
+        knowledgeLibraryIds: [libraryId],
         knowledgeRetrievalMode: 'auto',
         title: '元数据会话',
         updatedAt: 1_775_000_000_000,
@@ -10591,8 +10669,8 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
     fireEvent.click(
       await screen.findByRole('button', {
-        name: /^工程知识 0 个文档/u
-      })
+        name: /^工程知识/u
+      }, { timeout: 5_000 })
     )
     expect(
       await screen.findByText('知识库刷新失败')
@@ -10606,7 +10684,7 @@ describe('App', () => {
     )
     expect(
       screen.getByRole('button', {
-        name: /^工程知识 0 个文档/u
+        name: /^工程知识/u
       })
     ).toHaveAttribute('aria-current', 'page')
   })

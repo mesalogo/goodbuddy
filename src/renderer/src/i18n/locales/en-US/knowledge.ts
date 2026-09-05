@@ -23,6 +23,9 @@ export const knowledge = {
     retry: 'Retry',
     sync: 'Sync',
     remove: 'Remove',
+    openSource: 'Open source',
+    retryDocument: 'Process again',
+    useInChat: 'Use in this conversation',
     saveEntity: 'Save entity',
     addEntity: 'Add entity',
     saveRelation: 'Save relation',
@@ -79,6 +82,27 @@ export const knowledge = {
     indexing: 'Indexing',
     ready: 'Indexed',
     failed: 'Processing failed'
+  },
+  indexStatuses: {
+    text: {
+      waiting: 'Full text pending',
+      ready: 'Full text ready',
+      failed: 'Full text unavailable'
+    },
+    vector: {
+      disabled: 'Vectors disabled',
+      waiting: 'Vectors processing',
+      ready: 'Vectors ready',
+      failed: 'Vectors failed',
+      missing: 'Vectors pending'
+    },
+    graph: {
+      disabled: 'Graph disabled',
+      'on-demand': 'Graph on demand',
+      waiting: 'Graph processing',
+      ready: 'Graph ready',
+      failed: 'Graph failed'
+    }
   },
   taskKinds: {
     sourceSync: 'Source sync',
@@ -138,7 +162,12 @@ export const knowledge = {
   create: {
     ariaLabel: 'Create library',
     eyebrow: 'New library',
-    title: 'Create library'
+    title: 'Create library',
+    description:
+      'Name the library, then add files, folders, or web pages and use it in this conversation.',
+    advanced: 'Advanced settings',
+    advancedDescription:
+      'Change these only when you need managed copies or a knowledge graph.'
   },
   edit: {
     ariaLabel: 'Edit library',
@@ -526,7 +555,19 @@ export const knowledge = {
       pauseSource: 'Pause {{name}}',
       retrySource: 'Retry {{name}}',
       syncSource: 'Sync {{name}}',
-      removeSource: 'Remove source {{name}}'
+      removeSource: 'Remove source {{name}}',
+      openDocumentSource: 'Open the original source for {{name}}',
+      retryDocument: 'Process {{name}} again'
+    },
+    removeSource: {
+      ariaLabel: 'Confirm source removal',
+      title: 'Remove source “{{name}}”?',
+      managedDescription:
+        'This removes {{count}} documents, their retrieval indexes and graph evidence, plus the app-managed copy. Original files on disk are not changed.',
+      referenceDescription:
+        'This removes {{count}} documents, their retrieval indexes, and graph evidence. Original files on disk are not changed.',
+      action: 'Remove source',
+      removing: 'Removing…'
     },
     table: {
       title: 'Documents and index',
@@ -537,7 +578,7 @@ export const knowledge = {
         document: 'Document',
         status: 'Status',
         indexProgress: 'Index progress',
-        processingStatus: 'Processing status',
+        processingStatus: 'Availability',
         chunks: 'Chunks',
         size: 'Size',
         actions: 'Actions'
@@ -572,6 +613,12 @@ export const knowledge = {
       title: 'Extraction method',
       description:
         'Control how new imports, resyncs, and explicit rebuilds generate entities, relations, and evidence.'
+    },
+    retrieval: {
+      title: 'Answer quality',
+      description:
+        'Test a real question against this library. Advanced retrieval parameters can be adjusted and saved in the test workbench.',
+      action: 'Test and adjust'
     },
     chunking: {
       title: 'Chunking strategy',
@@ -712,19 +759,23 @@ export const knowledge = {
     documents: 'Documents and sources',
     graph: 'Knowledge graph',
     tasks: 'Task center',
-    settings: 'Index and retrieval'
+    settings: 'Advanced settings'
   },
   workspace: {
     ariaLabel: 'Knowledge workspace',
     libraryList: 'Library list',
     libraryListEmpty:
       'Create a library to manage reusable sources, indexes, and entity relations.',
-    libraryMeta: '{{count}} documents · {{storageMode}}',
+    libraryMeta: '{{ready}} ready · {{failed}} need attention',
     detailsAriaLabel: 'Library details',
     tabsAriaLabel: 'Knowledge base views',
     scopeGlobal: 'Global',
     librarySummary:
-      '{{sourceCount}} sources, {{indexedCount}}/{{documentCount}} documents indexed.'
+      '{{ready}} searchable · {{processing}} processing · {{failed}} need attention · {{documentCount}} total',
+    readyForQuestions:
+      'Your content is searchable. Add this library to the current conversation and start asking questions.',
+    waitingForDocuments:
+      'Add content and wait for processing before using this library in a conversation.'
   },
   loading: {
     title: 'Loading knowledge base',

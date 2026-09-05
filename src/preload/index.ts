@@ -149,6 +149,7 @@ import type {
   KnowledgeChunkPage,
   KnowledgeChunkUpdateInput,
   KnowledgeChunksListInput,
+  KnowledgeDocumentOpenInput,
   KnowledgeDocumentRebuildInput,
   KnowledgeLibraryRebuildInput,
   KnowledgeReferenceContext,
@@ -1639,6 +1640,12 @@ const desktopApi: DesktopApi = {
         ipcChannels.knowledgeRebuildDocument,
         input
       ) as Promise<KnowledgeSnapshot>,
+    openDocumentSource: async (input: KnowledgeDocumentOpenInput) => {
+      await ipcRenderer.invoke(
+        ipcChannels.knowledgeOpenDocumentSource,
+        input
+      )
+    },
     rebuildLibrary: (input: KnowledgeLibraryRebuildInput) =>
       ipcRenderer.invoke(
         ipcChannels.knowledgeRebuildLibrary,

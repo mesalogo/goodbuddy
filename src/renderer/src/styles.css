@@ -12525,6 +12525,32 @@ details.settings-section > :not(summary) + :not(summary) {
   font-size: 22px;
 }
 
+.knowledge-create__advanced {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+
+.knowledge-create__advanced > summary {
+  padding: var(--space-3);
+  cursor: pointer;
+}
+
+.knowledge-create__advanced > summary span,
+.knowledge-create__advanced-content {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.knowledge-create__advanced > summary small {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.knowledge-create__advanced-content {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
 .knowledge-create textarea,
 .knowledge-graph__form textarea {
   resize: vertical;
@@ -13328,6 +13354,20 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-document-status__active {
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+
+.knowledge-document-status__channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.knowledge-document-status__channels > span {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
   color: var(--text-secondary);
   font-size: var(--font-caption);
 }

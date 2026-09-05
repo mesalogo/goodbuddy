@@ -74,6 +74,7 @@ import {
   knowledgeChunkPageSchema,
   knowledgeChunksListInputSchema,
   knowledgeChunkUpdateInputSchema,
+  knowledgeDocumentOpenInputSchema,
   knowledgeDocumentRebuildInputSchema,
   knowledgeLibraryRebuildInputSchema,
   knowledgeReferenceContextInputSchema,
@@ -892,6 +893,8 @@ function getKnowledgeSnapshot(
       sourceCount: library.sourceCount,
       documentCount: library.documentCount,
       indexedDocumentCount: library.indexedDocumentCount,
+      processingDocumentCount: library.processingDocumentCount,
+      failedDocumentCount: library.failedDocumentCount,
       retrievalSettings: library.retrievalSettings,
       chunkingSettings: library.chunkingSettings,
       chunkingRebuildRequired: library.chunkingRebuildRequired,
@@ -926,6 +929,9 @@ function getKnowledgeSnapshot(
       name: document.title,
       path: document.sourceLocation,
       status: document.status,
+      textIndexStatus: document.textIndexStatus,
+      vectorIndexStatus: document.vectorIndexStatus,
+      graphIndexStatus: document.graphIndexStatus,
       indexProgress: document.status === 'ready' ? 100 : 0,
       chunkCount: document.chunkCount,
       size: document.size,
@@ -7966,6 +7972,42 @@ export function registerIpcHandlers(
         knowledgeBaseId,
         jobId
       )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.knowledgeOpenDocumentSource,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const value = knowledgeDocumentOpenInputSchema.parse(input)
+      const reference = knowledgeService.getDocumentSource(value)
+      if (!reference) {
+        throw new Error('文档来源不存在')
+      }
+      if (reference.source.type === 'url') {
+        const target = new URL(reference.source.location)
+        if (!['http:', 'https:'].includes(target.protocol)) {
+          throw new Error('文档来源 URL 协议不受支持')
+        }
+        await shell.openExternal(target.href)
+        return
+      }
+      const storedPath =
+        reference.document.sourceLocation ?? reference.source.location
+      if (!isAbsolute(storedPath)) {
+        throw new Error('文档来源路径无效')
+      }
+      if ((await lstat(storedPath)).isSymbolicLink()) {
+        throw new Error('文档来源不能是符号链接')
+      }
+      const targetPath = await realpath(storedPath)
+      if (!(await stat(targetPath)).isFile()) {
+        throw new Error('文档来源不是可打开的文件')
+      }
+      const openError = await shell.openPath(targetPath)
+      if (openError) {
+        throw new Error('无法打开文档来源')
+      }
     }
   )
 

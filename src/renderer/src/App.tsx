@@ -767,6 +767,7 @@ function createConversation(
     id: crypto.randomUUID(),
     projectId,
     runtimeSelection,
+    knowledgeLibraryIds: [],
     knowledgeRetrievalMode: 'auto',
     title: '新对话',
     updatedAt: now,
@@ -1270,6 +1271,14 @@ function isConversation(value: unknown): value is Conversation {
     (item.runtimeSelection === undefined ||
       agentRuntimeSelectionSchema.safeParse(item.runtimeSelection)
         .success) &&
+    (item.knowledgeLibraryIds === undefined ||
+      (Array.isArray(item.knowledgeLibraryIds) &&
+        item.knowledgeLibraryIds.length <= 20 &&
+        item.knowledgeLibraryIds.every(
+          (libraryId) =>
+            typeof libraryId === 'string' &&
+            assistantIdSchema.safeParse(libraryId).success
+        ))) &&
     (item.knowledgeRetrievalMode === undefined ||
       item.knowledgeRetrievalMode === 'auto' ||
       item.knowledgeRetrievalMode === 'always') &&
@@ -1358,6 +1367,7 @@ function toConversationSnapshots(
       id: conversation.id,
       projectId: conversation.projectId,
       runtimeSelection: conversation.runtimeSelection,
+      knowledgeLibraryIds: conversation.knowledgeLibraryIds,
       knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
       contextMetrics: conversation.contextMetrics,
       contextCompressionState: conversation.contextCompressionState,
@@ -1402,6 +1412,7 @@ function toLocalConversationHeader(
     id: conversation.id,
     projectId: conversation.projectId,
     runtimeSelection: conversation.runtimeSelection,
+    knowledgeLibraryIds: conversation.knowledgeLibraryIds,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
     contextMetrics: conversation.contextMetrics,
     contextCompressionState: conversation.contextCompressionState,
@@ -2672,9 +2683,6 @@ function App(): React.JSX.Element {
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(
     undefined
   )
-  const [enabledKnowledgeLibraryIds, setEnabledKnowledgeLibraryIds] = useState<
-    string[]
-  >([])
   const [knowledgeScopeOpen, setKnowledgeScopeOpen] = useState(false)
   const knowledgeScopeTriggerRef = useRef<HTMLButtonElement>(null)
   const knowledgeScopePopoverRef = useRef<HTMLDivElement>(null)
@@ -2714,7 +2722,6 @@ function App(): React.JSX.Element {
     []
   )
   const hydratingArtifactIds = useRef(new Set<string>())
-  const knowledgeScopeInitialized = useRef(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [chatScrollSnapshots, setChatScrollSnapshots] = useState<
     Record<string, ChatScrollSnapshot>
@@ -3245,6 +3252,34 @@ function App(): React.JSX.Element {
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeId),
     [activeId, conversations]
+  )
+  const enabledKnowledgeLibraryIds =
+    activeConversation?.knowledgeLibraryIds ?? []
+  const setEnabledKnowledgeLibraryIds = useCallback(
+    (action: SetStateAction<string[]>): void => {
+      setConversations((current) =>
+        current.map((conversation) => {
+          if (conversation.id !== activeId) {
+            return conversation
+          }
+          const previous = conversation.knowledgeLibraryIds ?? []
+          const next =
+            typeof action === 'function' ? action(previous) : action
+          if (
+            previous.length === next.length &&
+            previous.every((id, index) => id === next[index])
+          ) {
+            return conversation
+          }
+          return {
+            ...conversation,
+            knowledgeLibraryIds: next,
+            updatedAt: Date.now()
+          }
+        })
+      )
+    },
+    [activeId]
   )
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -4017,18 +4052,22 @@ function App(): React.JSX.Element {
         failedKnowledgeLibraryIdRef.current = undefined
         setKnowledgeSnapshot(snapshot)
         setKnowledgeLoadError(undefined)
-        if (!knowledgeScopeInitialized.current) {
-          knowledgeScopeInitialized.current = true
-          setEnabledKnowledgeLibraryIds(
-            snapshot.libraries.map((library) => library.id)
-          )
-        } else {
-          setEnabledKnowledgeLibraryIds((current) =>
-            current.filter((id) =>
-              snapshot.libraries.some((library) => library.id === id)
-            )
-          )
-        }
+        const availableIds = new Set(
+          snapshot.libraries.map((library) => library.id)
+        )
+        setConversations((current) =>
+          current.map((conversation) => {
+            const previous = conversation.knowledgeLibraryIds ?? []
+            const next = previous.filter((id) => availableIds.has(id))
+            return previous.length === next.length
+              ? conversation
+              : {
+                  ...conversation,
+                  knowledgeLibraryIds: next,
+                  updatedAt: Date.now()
+                }
+          })
+        )
         return snapshot
       } catch (reason) {
         if (requestId !== knowledgeLoadRequestRef.current) {
@@ -6173,7 +6212,10 @@ function App(): React.JSX.Element {
   }, [refreshKnowledge])
 
   useEffect(() => {
-    if (view !== 'knowledge' && knowledgeOperationCount === 0) {
+    if (
+      knowledgeLoadError ||
+      (view !== 'knowledge' && knowledgeOperationCount === 0)
+    ) {
       return
     }
     const interval = setInterval(() => {
@@ -6185,6 +6227,7 @@ function App(): React.JSX.Element {
     }, knowledgeOperationCount > 0 ? 350 : 1_000)
     return () => clearInterval(interval)
   }, [
+    knowledgeLoadError,
     knowledgeOperationCount,
     knowledgeSnapshot.selectedLibraryId,
     refreshKnowledge,
@@ -8248,7 +8291,6 @@ function App(): React.JSX.Element {
         graphRelations: [],
         evidence: []
       })
-      setEnabledKnowledgeLibraryIds([])
       updateAttachments([])
       setInput('')
       setView('chat')
@@ -10574,6 +10616,16 @@ function App(): React.JSX.Element {
                   )
                 )
               }
+              onOpenDocumentSource={(libraryId, documentId) =>
+                window.goodbuddy.knowledge.openDocumentSource({
+                  knowledgeBaseId: libraryId,
+                  documentId
+                })
+              }
+              onOpenModelSettings={() => {
+                setSettingsInitialCategory('model')
+                setView('settings')
+              }}
               onMergeEntities={(sourceId, targetId) =>
                 runKnowledgeSourceAction(() =>
                   window.goodbuddy.knowledge.mergeEntities(
@@ -10606,6 +10658,15 @@ function App(): React.JSX.Element {
                   }).slice(0, 500)
                 })
               }
+              onUseInChat={(libraryId) => {
+                setEnabledKnowledgeLibraryIds((current) =>
+                  current.includes(libraryId)
+                    ? current
+                    : [...current, libraryId]
+                )
+                setView('chat')
+                requestAnimationFrame(() => inputRef.current?.focus())
+              }}
               onPauseSource={(sourceId) =>
                 runKnowledgeSourceAction(() =>
                   window.goodbuddy.knowledge.pauseSource(sourceId)

@@ -491,7 +491,7 @@ export function KnowledgeRetrievalWorkbench({
             )}
           </section>
 
-          <details className="knowledge-workbench-settings" open>
+          <details className="knowledge-workbench-settings">
             <summary>
               <span>
                 <strong>{t('retrieval.settings.title')}</strong>

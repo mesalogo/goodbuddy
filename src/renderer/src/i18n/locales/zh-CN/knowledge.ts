@@ -20,6 +20,9 @@ export const knowledge = {
     retry: '重试',
     sync: '同步',
     remove: '移除',
+    openSource: '打开来源',
+    retryDocument: '重新处理',
+    useInChat: '用于当前对话',
     saveEntity: '保存实体',
     addEntity: '新增实体',
     saveRelation: '保存关系',
@@ -75,6 +78,27 @@ export const knowledge = {
     indexing: '索引中',
     ready: '索引完成',
     failed: '处理失败'
+  },
+  indexStatuses: {
+    text: {
+      waiting: '全文待建立',
+      ready: '全文可用',
+      failed: '全文不可用'
+    },
+    vector: {
+      disabled: '向量未启用',
+      waiting: '向量处理中',
+      ready: '向量可用',
+      failed: '向量失败',
+      missing: '向量待建立'
+    },
+    graph: {
+      disabled: '图谱未启用',
+      'on-demand': '图谱按需生成',
+      waiting: '图谱处理中',
+      ready: '图谱可用',
+      failed: '图谱失败'
+    }
   },
   taskKinds: {
     sourceSync: '来源同步',
@@ -134,7 +158,10 @@ export const knowledge = {
   create: {
     ariaLabel: '创建知识库',
     eyebrow: '新建知识库',
-    title: '创建知识库'
+    title: '创建知识库',
+    description: '命名后即可添加文件、文件夹或网页，并在当前对话中使用。',
+    advanced: '高级设置',
+    advancedDescription: '仅在需要托管副本或知识图谱时调整。'
   },
   edit: {
     ariaLabel: '编辑知识库',
@@ -492,7 +519,19 @@ export const knowledge = {
       pauseSource: '暂停 {{name}}',
       retrySource: '重试 {{name}}',
       syncSource: '同步 {{name}}',
-      removeSource: '移除来源 {{name}}'
+      removeSource: '移除来源 {{name}}',
+      openDocumentSource: '打开 {{name}} 的原始来源',
+      retryDocument: '重新处理 {{name}}'
+    },
+    removeSource: {
+      ariaLabel: '移除来源确认',
+      title: '移除来源“{{name}}”？',
+      managedDescription:
+        '将删除此来源的 {{count}} 篇文档、检索索引、图谱证据和应用托管副本。磁盘上的原始文件不会改变。',
+      referenceDescription:
+        '将删除此来源的 {{count}} 篇文档、检索索引和图谱证据。磁盘上的原始文件不会改变。',
+      action: '移除来源',
+      removing: '正在移除…'
     },
     table: {
       title: '文档与索引',
@@ -502,7 +541,7 @@ export const knowledge = {
         document: '文档',
         status: '状态',
         indexProgress: '索引进度',
-        processingStatus: '处理状态',
+        processingStatus: '可用状态',
         chunks: '分块',
         size: '大小',
         actions: '操作'
@@ -533,6 +572,12 @@ export const knowledge = {
     graphConfiguration: {
       title: '抽取方式',
       description: '控制新导入、重新同步和显式重建时如何生成实体、关系与证据。'
+    },
+    retrieval: {
+      title: '问答效果',
+      description:
+        '输入真实问题验证当前知识库；高级检索参数可以在测试工作台中调整并保存。',
+      action: '测试并调整'
     },
     chunking: {
       title: '分块策略',
@@ -666,19 +711,21 @@ export const knowledge = {
     documents: '文档与来源',
     graph: '知识图谱',
     tasks: '任务中心',
-    settings: '索引与检索'
+    settings: '高级设置'
   },
   workspace: {
     ariaLabel: '知识工作区',
     libraryList: '知识库列表',
     libraryListEmpty:
       '创建知识库，集中管理可跨项目使用的来源、索引和实体关系。',
-    libraryMeta: '{{count}} 个文档 · {{storageMode}}',
+    libraryMeta: '{{ready}} 篇可用 · {{failed}} 篇需处理',
     detailsAriaLabel: '知识库详情',
     tabsAriaLabel: '知识库视图',
     scopeGlobal: '全局',
     librarySummary:
-      '{{sourceCount}} 个来源，{{indexedCount}}/{{documentCount}} 个文档已完成索引。'
+      '{{ready}} 篇可检索 · {{processing}} 篇处理中 · {{failed}} 篇需处理 · 共 {{documentCount}} 篇',
+    readyForQuestions: '资料已可检索，可以加入当前对话开始提问。',
+    waitingForDocuments: '添加资料并完成处理后，即可在对话中使用。'
   },
   loading: {
     title: '正在加载知识库',

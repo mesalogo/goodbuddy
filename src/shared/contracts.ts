@@ -139,6 +139,7 @@ import type {
   KnowledgeChunkPage,
   KnowledgeChunkUpdateInput,
   KnowledgeChunksListInput,
+  KnowledgeDocumentOpenInput,
   KnowledgeDocumentRebuildInput,
   KnowledgeLibraryRebuildInput,
   KnowledgeReferenceContext,
@@ -1477,6 +1478,8 @@ export type KnowledgeLibrary = z.infer<typeof knowledgeCreateSchema> & {
   sourceCount: number
   documentCount: number
   indexedDocumentCount: number
+  processingDocumentCount?: number
+  failedDocumentCount?: number
   retrievalSettings?: KnowledgeRetrievalSettings
   chunkingSettings?: KnowledgeChunkingSettings
   chunkingRebuildRequired?: boolean
@@ -1505,6 +1508,9 @@ export type KnowledgeDocumentItem = {
   name: string
   path?: string
   status: 'queued' | 'parsing' | 'indexing' | 'ready' | 'failed'
+  textIndexStatus?: 'waiting' | 'ready' | 'failed'
+  vectorIndexStatus?: 'disabled' | 'waiting' | 'ready' | 'failed' | 'missing'
+  graphIndexStatus?: 'disabled' | 'on-demand' | 'waiting' | 'ready' | 'failed'
   indexProgress?: number
   chunkCount?: number
   size?: number
@@ -2144,6 +2150,9 @@ export type DesktopApi = {
     rebuildDocument: (
       input: KnowledgeDocumentRebuildInput
     ) => Promise<KnowledgeSnapshot>
+    openDocumentSource: (
+      input: KnowledgeDocumentOpenInput
+    ) => Promise<void>
     rebuildLibrary: (
       input: KnowledgeLibraryRebuildInput
     ) => Promise<{ rebuilt: number; failed: number }>

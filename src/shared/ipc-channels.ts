@@ -276,6 +276,7 @@ export const ipcChannels = {
   knowledgeUpdateChunk: 'knowledge:chunk:update',
   knowledgeDeleteChunk: 'knowledge:chunk:delete',
   knowledgeRebuildDocument: 'knowledge:document:rebuild',
+  knowledgeOpenDocumentSource: 'knowledge:document:open-source',
   knowledgeRebuildLibrary: 'knowledge:library:rebuild',
   knowledgeCancelRebuild: 'knowledge:library:rebuild:cancel',
   knowledgeEmbeddingIndexGet: 'knowledge:embedding-index:get',

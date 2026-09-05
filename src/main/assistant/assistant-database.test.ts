@@ -3954,6 +3954,9 @@ describe('AssistantDatabase', () => {
           provider: 'model',
           profileId: '00000000-0000-4000-8000-000000000299'
         },
+        knowledgeLibraryIds: [
+          '00000000-0000-4000-8000-000000000214'
+        ],
         knowledgeRetrievalMode: 'always',
         title: '发布讨论',
         updatedAt: 1_775_000_000_000,
@@ -4055,6 +4058,9 @@ describe('AssistantDatabase', () => {
           provider: 'model',
           profileId: '00000000-0000-4000-8000-000000000299'
         },
+        knowledgeLibraryIds: [
+          '00000000-0000-4000-8000-000000000214'
+        ],
         knowledgeRetrievalMode: 'always',
         messages: [
           expect.objectContaining({
@@ -4442,6 +4448,9 @@ describe('AssistantDatabase', () => {
           provider: 'model',
           profileId: channelDefaultProfileId
         },
+        knowledgeLibraryIds: [
+          '00000000-0000-4000-8000-000000000559'
+        ],
         knowledgeRetrievalMode: 'always',
         contextMetrics: {
           runtimeSelectionKey: `model:${channelDefaultProfileId}`,
@@ -4550,6 +4559,9 @@ describe('AssistantDatabase', () => {
         provider: 'model',
         profileId: channelDefaultProfileId
       },
+      knowledgeLibraryIds: [
+        '00000000-0000-4000-8000-000000000559'
+      ],
       knowledgeRetrievalMode: 'always',
       branch: {
         sourceConversationId,
@@ -4623,6 +4635,7 @@ describe('AssistantDatabase', () => {
           id: branch.id,
           projectId: branch.projectId,
           runtimeSelection: branch.runtimeSelection,
+          knowledgeLibraryIds: branch.knowledgeLibraryIds,
           knowledgeRetrievalMode: branch.knowledgeRetrievalMode,
           branch: branch.branch,
           title: '发布方案讨论 · 分支（独立更新）',

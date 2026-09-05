@@ -1033,6 +1033,7 @@ function interruptActiveToolBlocks(
 }
 
 const conversationContextStateSchema = conversationSnapshotSchema.pick({
+  knowledgeLibraryIds: true,
   contextMetrics: true,
   contextCompressionState: true
 })
@@ -1041,7 +1042,7 @@ function parseConversationContextState(
   value: string | null
 ): Pick<
   ConversationSnapshot,
-  'contextMetrics' | 'contextCompressionState'
+  'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
 > {
   if (!value) {
     return {}
@@ -1059,12 +1060,14 @@ function parseConversationContextState(
 function serializeConversationContextState(
   conversation: Pick<
     ConversationSnapshot,
-    'contextMetrics' | 'contextCompressionState'
+    'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
   >
 ): string | null {
-  return conversation.contextMetrics ||
+  return conversation.knowledgeLibraryIds !== undefined ||
+    conversation.contextMetrics ||
     conversation.contextCompressionState
     ? JSON.stringify({
+        knowledgeLibraryIds: conversation.knowledgeLibraryIds,
         contextMetrics: conversation.contextMetrics,
         contextCompressionState: conversation.contextCompressionState
       })
@@ -1081,9 +1084,9 @@ function toConversationSnapshot(
     runtimeSelection: parseRuntimeSelection(
       conversation.runtime_selection_json
     ),
+    ...parseConversationContextState(conversation.context_state_json),
     knowledgeRetrievalMode:
       conversation.knowledge_retrieval_mode ?? undefined,
-    ...parseConversationContextState(conversation.context_state_json),
     ...(conversation.channel &&
     conversation.conversation_type &&
     conversation.account_display
@@ -2992,7 +2995,7 @@ export class AssistantDatabase {
       const source = database
         .prepare(
           `SELECT id, project_id, runtime_selection_json,
-                  knowledge_retrieval_mode, title
+                  knowledge_retrieval_mode, context_state_json, title
            FROM conversations
            WHERE id = ? AND status = 'active' AND channel IS NULL`
         )
@@ -3002,6 +3005,7 @@ export class AssistantDatabase {
             project_id: string | null
             runtime_selection_json: string | null
             knowledge_retrieval_mode: 'auto' | 'always' | null
+            context_state_json: string | null
             title: string
           }
         | undefined
@@ -3052,13 +3056,18 @@ export class AssistantDatabase {
              knowledge_retrieval_mode, context_state_json, work_mode,
              title, branch_source_conversation_id, branch_source_title,
              status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, NULL, 'ask', ?, ?, ?, 'active', ?, ?)`
+           VALUES (?, ?, ?, ?, ?, 'ask', ?, ?, ?, 'active', ?, ?)`
         )
         .run(
           destinationConversationId,
           source.project_id,
           source.runtime_selection_json,
           source.knowledge_retrieval_mode,
+          serializeConversationContextState({
+            knowledgeLibraryIds:
+              parseConversationContextState(source.context_state_json)
+                .knowledgeLibraryIds
+          }),
           input.title,
           source.id,
           source.title,

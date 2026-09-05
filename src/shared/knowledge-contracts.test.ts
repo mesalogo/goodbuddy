@@ -4,6 +4,7 @@ import {
   defaultKnowledgeRetrievalSettings,
   knowledgeChunkingSettingsSchema,
   knowledgeChunkUpdateInputSchema,
+  knowledgeDocumentOpenInputSchema,
   knowledgeRetrievalSettingsSchema,
   knowledgeRetrieveInputSchema
 } from './knowledge-contracts'
@@ -83,6 +84,22 @@ describe('knowledge contracts', () => {
         knowledgeBaseId: 'library',
         documentId: 'document',
         chunkId: 'chunk'
+      }).success
+    ).toBe(false)
+    expect(
+      knowledgeDocumentOpenInputSchema.parse({
+        knowledgeBaseId: 'library',
+        documentId: 'document'
+      })
+    ).toEqual({
+      knowledgeBaseId: 'library',
+      documentId: 'document'
+    })
+    expect(
+      knowledgeDocumentOpenInputSchema.safeParse({
+        knowledgeBaseId: 'library',
+        documentId: 'document',
+        path: 'C:\\untrusted.docx'
       }).success
     ).toBe(false)
   })

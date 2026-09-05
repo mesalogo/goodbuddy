@@ -94,6 +94,18 @@ afterEach(async () => {
 })
 
 describe('KnowledgeRetrievalWorkbench', () => {
+  const openAdvancedSettings = (): void => {
+    fireEvent.click(screen.getByText('本次测试参数'))
+  }
+
+  it('keeps advanced retrieval parameters collapsed by default', () => {
+    render(<KnowledgeRetrievalWorkbench {...createProps()} />)
+
+    expect(
+      screen.getByText('本次测试参数').closest('details')
+    ).not.toHaveAttribute('open')
+  })
+
   it('provides dialog semantics, focuses the persistent query, and returns focus on close', async () => {
     function Harness(): React.JSX.Element {
       const [open, setOpen] = useState(false)
@@ -159,6 +171,7 @@ describe('KnowledgeRetrievalWorkbench', () => {
         })}
       />
     )
+    openAdvancedSettings()
 
     fireEvent.click(screen.getByRole('button', { name: '测试检索' }))
 
@@ -182,6 +195,7 @@ describe('KnowledgeRetrievalWorkbench', () => {
         })}
       />
     )
+    openAdvancedSettings()
 
     fireEvent.change(screen.getByLabelText(/^全文占比/), {
       target: { value: '40' }
@@ -208,6 +222,7 @@ describe('KnowledgeRetrievalWorkbench', () => {
         })}
       />
     )
+    openAdvancedSettings()
 
     expect(screen.getByLabelText(/^最低向量相似度/)).toHaveValue(0)
     fireEvent.click(screen.getByRole('button', { name: '测试检索' }))
@@ -238,6 +253,7 @@ describe('KnowledgeRetrievalWorkbench', () => {
         })}
       />
     )
+    openAdvancedSettings()
 
     expect(screen.getByText(/当前最多召回 24 个融合候选/u))
       .toBeInTheDocument()

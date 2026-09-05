@@ -315,6 +315,16 @@ export type KnowledgeDocumentRebuildInput = z.infer<
   typeof knowledgeDocumentRebuildInputSchema
 >
 
+export const knowledgeDocumentOpenInputSchema = z
+  .object({
+    knowledgeBaseId: idSchema,
+    documentId: idSchema
+  })
+  .strict()
+export type KnowledgeDocumentOpenInput = z.infer<
+  typeof knowledgeDocumentOpenInputSchema
+>
+
 export const knowledgeLibraryRebuildInputSchema = z
   .object({
     knowledgeBaseId: idSchema

@@ -9,12 +9,14 @@ export type KnowledgeEmbeddingIndexSectionProps = {
   snapshot?: KnowledgeEmbeddingIndexSnapshot
   loading?: boolean
   onRebuild: () => void
+  onGoToSettings?: () => void
   onViewTasks?: () => void
 }
 
 export function KnowledgeEmbeddingIndexSection({
   snapshot,
   loading = false,
+  onGoToSettings,
   onRebuild,
   onViewTasks
 }: KnowledgeEmbeddingIndexSectionProps): React.JSX.Element {
@@ -52,6 +54,15 @@ export function KnowledgeEmbeddingIndexSection({
         <div className="knowledge-embedding-index__empty">
           <strong>{t('settings.vectorIndex.disabledTitle')}</strong>
           <p>{t('settings.vectorIndex.disabledDescription')}</p>
+          {onGoToSettings && (
+            <button
+              className="secondary-button"
+              onClick={onGoToSettings}
+              type="button"
+            >
+              {t('actions.goToSettings')}
+            </button>
+          )}
         </div>
       ) : (
         <>

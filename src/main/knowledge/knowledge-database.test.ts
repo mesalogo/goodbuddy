@@ -207,6 +207,51 @@ describe('KnowledgeDatabase', () => {
     ).toBe(true)
   })
 
+  it('counts only ready documents as indexed and separates actionable states', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Status counts',
+      storageMode: 'reference'
+    })
+    const source = database.upsertSource({
+      knowledgeBaseId: library.id,
+      type: 'file',
+      location: 'C:\\notes\\status.md',
+      displayName: 'status.md',
+      status: 'ready'
+    })
+    for (const [index, status] of [
+      'ready',
+      'queued',
+      'parsing',
+      'indexing',
+      'failed'
+    ].entries()) {
+      database.upsertDocument(
+        {
+          knowledgeBaseId: library.id,
+          sourceId: source.id,
+          externalId: `status-${index}`,
+          title: `Status ${index}`,
+          metadata: { status }
+        },
+        [{
+          id: `status-${index}-chunk`,
+          ordinal: 0,
+          content: `status ${status}`
+        }]
+      )
+    }
+
+    expect(database.getKnowledgeBaseCounts().get(library.id)).toEqual({
+      sourceCount: 1,
+      documentCount: 5,
+      indexedDocumentCount: 1,
+      processingDocumentCount: 3,
+      failedDocumentCount: 1
+    })
+  })
+
   it('normalizes legacy negative vector thresholds without losing settings', async () => {
     const { database, path } = await createDatabase()
     const library = database.createKnowledgeBase({

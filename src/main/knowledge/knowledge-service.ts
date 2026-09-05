@@ -30,6 +30,8 @@ import {
   knowledgeDocumentRebuildInputSchema,
   knowledgeLibraryRebuildInputSchema,
   knowledgeReferenceContextInputSchema,
+  knowledgeDocumentOpenInputSchema,
+  type KnowledgeDocumentOpenInput,
   knowledgeRetrieveInputSchema,
   knowledgeSettingsUpdateInputSchema,
   type KnowledgeChunkDeleteInput,
@@ -109,6 +111,8 @@ export type KnowledgeLibrarySnapshot = KnowledgeBase & {
   sourceCount: number
   documentCount: number
   indexedDocumentCount: number
+  processingDocumentCount: number
+  failedDocumentCount: number
 }
 
 export type KnowledgeSourceSnapshot = KnowledgeSource & {
@@ -120,6 +124,9 @@ export type KnowledgeSourceSnapshot = KnowledgeSource & {
 export type KnowledgeDocumentSnapshot = Document & {
   chunkCount: number
   status: 'queued' | 'parsing' | 'indexing' | 'ready' | 'failed'
+  textIndexStatus: 'waiting' | 'ready' | 'failed'
+  vectorIndexStatus: 'disabled' | 'waiting' | 'ready' | 'failed' | 'missing'
+  graphIndexStatus: 'disabled' | 'on-demand' | 'waiting' | 'ready' | 'failed'
   size?: number
   error?: string
 }
@@ -1067,7 +1074,9 @@ export class KnowledgeService {
       const counts = libraryCounts.get(library.id) ?? {
         sourceCount: 0,
         documentCount: 0,
-        indexedDocumentCount: 0
+        indexedDocumentCount: 0,
+        processingDocumentCount: 0,
+        failedDocumentCount: 0
       }
       return {
         ...library,
@@ -1120,6 +1129,21 @@ export class KnowledgeService {
           : undefined
       }))
     const chunkCounts = this.database.getDocumentChunkCounts(libraryId)
+    const tasks = this.database.listKnowledgeTasks(libraryId)
+    const library = libraries.find((item) => item.id === libraryId)
+    const graphTaskByDocument = new Map<
+      string,
+      KnowledgeTaskItem
+    >()
+    for (const task of tasks) {
+      if (
+        task.documentId &&
+        task.kind === 'graph' &&
+        !graphTaskByDocument.has(task.documentId)
+      ) {
+        graphTaskByDocument.set(task.documentId, task)
+      }
+    }
     const documents = libraryDocuments.map((document) => {
       const status =
         typeof document.metadata.status === 'string' &&
@@ -1132,6 +1156,49 @@ export class KnowledgeService {
         ...document,
         chunkCount: chunkCounts.get(document.id) ?? 0,
         status,
+        textIndexStatus:
+          status === 'ready'
+            ? ('ready' as const)
+            : status === 'failed'
+              ? ('failed' as const)
+              : ('waiting' as const),
+        vectorIndexStatus: (() => {
+          if (!this.embeddingProvider) {
+            return 'disabled' as const
+          }
+          if (status !== 'ready') {
+            return 'waiting' as const
+          }
+          const state = this.database.getEmbeddingIndexState(
+            document.id,
+            embeddingStorageProvider(this.embeddingProvider),
+            this.embeddingProvider.model
+          )
+          return state?.status === 'ready'
+            ? ('ready' as const)
+            : state?.status === 'error'
+              ? ('failed' as const)
+              : ('missing' as const)
+        })(),
+        graphIndexStatus: (() => {
+          if (!library?.graphEnabled) {
+            return 'disabled' as const
+          }
+          if (library.graphStrategy === 'ask') {
+            return 'on-demand' as const
+          }
+          if (status !== 'ready') {
+            return 'waiting' as const
+          }
+          const task = graphTaskByDocument.get(document.id)
+          if (task?.status === 'failed' || task?.status === 'interrupted') {
+            return 'failed' as const
+          }
+          if (task?.status === 'succeeded') {
+            return 'ready' as const
+          }
+          return 'waiting' as const
+        })(),
         size:
           typeof document.metadata.size === 'number'
             ? document.metadata.size
@@ -1150,7 +1217,7 @@ export class KnowledgeService {
       entities: graph.entities,
       relations: graph.relations,
       evidence: graph.evidence,
-      tasks: this.database.listKnowledgeTasks(libraryId)
+      tasks
     }
   }
 
@@ -1696,6 +1763,25 @@ export class KnowledgeService {
       ...reference,
       contextChunks: this.database.listContextChunks(reference.chunk, 2)
     }
+  }
+
+  getDocumentSource(rawInput: KnowledgeDocumentOpenInput) {
+    const input = knowledgeDocumentOpenInputSchema.parse(rawInput)
+    const document = this.database.getDocument(input.documentId)
+    if (
+      !document ||
+      document.knowledgeBaseId !== input.knowledgeBaseId
+    ) {
+      return undefined
+    }
+    const source = this.database.getSource(document.sourceId)
+    if (
+      !source ||
+      source.knowledgeBaseId !== input.knowledgeBaseId
+    ) {
+      return undefined
+    }
+    return { document, source }
   }
 
   async searchHybrid(
