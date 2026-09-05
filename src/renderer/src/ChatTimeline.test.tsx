@@ -5,6 +5,8 @@ import {
   screen,
   within
 } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ChatTimeline,
@@ -13,6 +15,10 @@ import {
 
 const markdownRenderProbe = vi.hoisted(() => vi.fn())
 const htmlRenderProbe = vi.hoisted(() => vi.fn())
+const stylesheet = readFileSync(
+  join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
+  'utf8'
+).replaceAll('\r\n', '\n')
 
 vi.mock('./MarkdownRenderer', () => ({
   MarkdownRenderer: ({
@@ -58,6 +64,14 @@ describe('ChatTimeline', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+  })
+
+  it('uses actual message heights for the conversation scroll range', () => {
+    const rule = stylesheet.match(/\.message\s*\{([^}]*)\}/u)?.[1]
+
+    expect(rule).toBeDefined()
+    expect(rule).not.toContain('content-visibility')
+    expect(rule).not.toContain('contain-intrinsic')
   })
 
   it('enables HTML rendering only for completed Agent output', () => {

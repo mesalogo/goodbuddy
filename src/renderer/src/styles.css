@@ -5281,8 +5281,6 @@ button > svg {
 }
 
 .message {
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto 160px;
   display: grid;
   min-width: 0;
   padding: 17px 8px;
