@@ -60,8 +60,8 @@ otherwise.
   supervision, unified Runtime monitoring, managed processes, safe static HTML
   preview, target-pinnable workspace/browser/artifact instances, bottom
   docking, and separate windows. Task Center remains the singleton Task index;
-  attachments and knowledge remain in the conversation composer, while future
-  memory and historical execution context belong to the associated Task. See
+  attachments and knowledge remain in the conversation composer, while memory,
+  when implemented, and historical execution context belong to the associated Task. See
   the [Feature PRD](./docs/features/assistant-workbar/prd.md).
 
 ### Agent Runtimes and model connections
@@ -432,8 +432,8 @@ otherwise.
   created and edited for Global or one or more selected Projects. Legacy
   single-project settings migrate without loss, and project-level memory and
   action output must explicitly target a Project in scope. Task Center and
-  Settings no longer duplicate the form. Future partitioned memory remains an
-  independently designed long-term direction. See the
+  Settings no longer duplicate the form. Partition-aware review, candidate
+  generation, and recall triggers remain to be designed. See the
   [Smart Heartbeat PRD](./docs/features/smart-heartbeat/prd.md).
 - [ ] **General supervision** (planned): Uses a fixed supervision section to
   observe user-selected conversations, Tasks, automations, or experiments and

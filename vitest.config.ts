@@ -6,6 +6,12 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/renderer/src/test-setup.ts'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/build-server/**',
+      '**/.git/**'
+    ],
     maxWorkers: 1,
     coverage: {
       reporter: ['text', 'html']

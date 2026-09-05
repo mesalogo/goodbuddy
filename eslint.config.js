@@ -12,7 +12,10 @@ export default tseslint.config(
       'coverage/**',
       'dist/**',
       'node_modules/**',
-      'out/**'
+      'out/**',
+      'shareserver/build-server/**',
+      'shareserver/dist/**',
+      'shareserver/node_modules/**'
     ]
   },
   js.configs.recommended,
@@ -48,6 +51,30 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules
+    }
+  },
+  {
+    files: ['shareserver/src/**/*.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.vitest
+      }
+    },
+    plugins: {
+      'react-hooks': reactHooks
+    },
+    rules: {
+      ...reactHooks.configs.recommended.rules
+    }
+  },
+  {
+    files: ['shareserver/server/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.vitest
+      }
     }
   },
   {

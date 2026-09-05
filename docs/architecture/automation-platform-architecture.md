@@ -37,11 +37,11 @@ GoodBuddy 当前已经具备若干长期助手能力，但它们仍是彼此分�
 
 ## 2. 核心产品判断
 
-### 2.1 智能心跳保持独立，未来分区记忆另行设计
+### 2.1 智能心跳保持独立，分区记忆协同另行设计
 
 当前智能心跳继续承担周期回顾、报告和建议，并支持 Global 或指定 Project 范围。它不是
-Task、通用调度器或后台 Agent，也不进入统一 `AutomationPlan.kind`。未来分区记忆的
-数据、状态、唤起和页面需要独立设计，不能从当前方向直接推导。
+Task、通用调度器或后台 Agent，也不进入统一 `AutomationPlan.kind`。按分区回顾、候选生成
+以及时间/内部事件唤起需要独立设计，不能从当前心跳行为直接推导，也不创建平行记忆类型。
 
 - Scheduled Task 解决“何时在一个 Task 中执行新的 Job”。
 - Goal Task 解决“围绕结果在同一 Task 中持续规划和推进”。
@@ -507,7 +507,7 @@ experiment_runs
 现有 `schedules`、`schedule_runs`、`heartbeat_configs`、`heartbeat_runs`、
 `heartbeat_entries`、`tasks` 和 `runs` 不应一次性重写。Schedule 可渐进建立稳定 Task 与
 Conversation 关联，旧 child-task 字段可兼容映射到 Job/Subjob；心跳数据保持独立，不得
-静默转成 `AutomationPlan` 或顶层 Task。未来分区记忆完成设计前，不新增迁移目标。
+静默转成 `AutomationPlan` 或顶层 Task。分区记忆协同和唤起条件完成设计前，不新增迁移目标。
 
 ## 16. 分阶段实施
 
@@ -518,7 +518,7 @@ Conversation 关联，旧 child-task 字段可兼容映射到 Job/Subjob；心�
 - 明确 Task N:1 Conversation 关系、左侧行首展开按钮与 Task 子项图标，以及 Task Center
   索引边界，不复制内容。
 - 为现有 Scheduled Task 和专家执行建立按 Task 聚合的活动视图。
-- 明确当前心跳保持独立，未来分区记忆尚待设计。
+- 明确当前心跳保持独立，分区记忆协同与唤起条件尚待设计。
 - 补充触发来源、运行版本、预算和读写范围展示。
 
 ### 阶段 1：调度与运行基础
@@ -569,7 +569,7 @@ Conversation 关联，旧 child-task 字段可兼容映射到 Job/Subjob；心�
 
 ## 18. 总体验收标准
 
-- [ ] 智能心跳保持独立，不作为 Task 类型；未来分区记忆尚未设计。
+- [ ] 智能心跳保持独立，不作为 Task 类型；分区记忆协同与唤起条件尚未设计。
 - [ ] Task Center 只索引 Task；每个 Task 只关联一条 Conversation，一条 Conversation 可以
   关联多个 Task。
 - [ ] 当前 UI 只展示到 Task，不提供 Job/Subjob/Run 树或独立导航。

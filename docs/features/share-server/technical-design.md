@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 设计中 |
-| 版本 | 0.1 |
-| 日期 | 2026-09-03 |
+| 版本 | 0.2 |
+| 日期 | 2026-09-05 |
 | 关联 PRD | [ShareServer PRD](./prd.md) |
 | 功能逻辑 | [功能逻辑设计](./logic-design.md) |
 | 共享协议 | [共享网络总体设计](../../architecture/share-network-architecture.md) |
@@ -38,8 +38,11 @@ shareserver/
   tests/
 ```
 
-当前只提交设计文档，不创建无法运行的目录占位。服务端和 Desktop 共同依赖未来的
-`packages/share-protocol`，ShareServer 不导入 Electron 的 `src/shared`。
+仓库已创建可独立运行的 `shareserver/` 全控制台交互原型。原型使用 Hono 提供健康、就绪、
+界面快照和无持久化操作确认 API，并同源托管 React/Vite Web 控制台；它不依赖 Electron 的
+`src/shared`。当前尚未建立生产数据库、认证、设备连接和共享协议，因此也不提前创建空的
+`packages/share-protocol`。进入真实 Desktop 协议实现时，服务端和 Desktop 共同依赖
+`packages/share-protocol`，ShareServer 仍不得导入 Electron 的 `src/shared`。
 
 ## 2. 技术选型约束
 
@@ -57,7 +60,7 @@ shareserver/
 | `auth` | 本地身份、OIDC、Web session、服务和设备凭据 |
 | `organizations` | 组织、成员、组、角色和范围解析 |
 | `devices` | 注册挑战、设备记录、出站连接和在线状态 |
-| `capabilities` | manifest、provider、Publication 和目录投影 |
+| `capabilities` | manifest、数字人 profile、provider、Publication 和目录投影 |
 | `policies` | Grant、强制策略和确定性授权计算 |
 | `approvals` | 内容绑定申请、决定、过期和通知 |
 | `tasks` | task/attempt、provider 路由、状态和取消 |
@@ -104,6 +107,7 @@ device_credentials
 device_connections
 capabilities
 capability_versions
+agent_profiles
 providers
 publications
 grants
@@ -130,6 +134,13 @@ revocations
 - 密钥保存为单向摘要或经外部主密钥加密的密文；数据库不保存明文 token。
 - 在线连接和短期 nonce 主要在内存；表中只保存恢复所需元数据，不把 socket 当持久对象。
 - task event 只存控制状态和有界统计；正文流不进入普通关系表。
+- `agent_profiles` 只保存组织内唯一 handle、显示元数据和其能力版本引用。数字人复用
+  Publication、Grant、Approval 和 Task，不创建第二套授权或路由模型；本地 Agent 记忆条目、
+  分区目录和来源正文不进入 ShareServer 数据库。
+- 数字人 Publication revision 保存有界 `memory_source_policy`，只允许 `agent`、`global`、
+  `project` 和 `automation` 种类及 Provider 验证后的本地关联 ID 摘要。Provider 执行时按该
+  revision 在本地重新解析分区并检索；服务端不接收记忆文本、来源正文、Embedding 或检索
+  结果。新增来源是权限扩大，移除来源是单向收紧。
 
 ## 6. 事务与一致性
 
@@ -240,3 +251,19 @@ PostgreSQL
 - 生产 TLS、OIDC 和对象存储组合的端到端验证。
 
 设计完成不代表服务已实现；只有独立部署和真实 Desktop 端到端路径通过后才能更新实施状态。
+
+## 15. 当前原型实现
+
+2026-09-05 建立的交互原型固定以下技术基线：
+
+- API：Hono + `@hono/node-server`，保留 `/api/v1/public/*` 与
+  `/api/v1/web/*` audience 路径。
+- Web：React、Vite、TypeScript、Tailwind CSS 和 Radix primitives，按 shadcn/ui 组件模式
+  维护本地可修改组件。
+- 路由与范围：管理员和成员自助使用不同可见导航；当前组织持续显示。
+- 部署：生产构建由同源 Hono 服务托管，并提供非 root 多阶段 Docker 镜像。
+
+`/api/v1/public/ready` 返回 `mode=interactive-prototype` 和
+`productionReady=false`。原型 fixture、角色切换和操作确认只用于评审信息架构，不得被
+Desktop 或部署脚本当作真实身份、策略、任务或审计 API。下一实施阶段必须从 FR-1
+初始化、本地身份、PostgreSQL 组织作用域和事务审计开始，不在 fixture 上叠加生产状态。

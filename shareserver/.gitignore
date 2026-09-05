@@ -1,0 +1,4 @@
+build-server/
+dist/
+node_modules/
+*.png

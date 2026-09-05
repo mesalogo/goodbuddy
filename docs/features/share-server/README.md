@@ -14,10 +14,13 @@ ShareServer 不属于 Electron Main，不负责桌面端局域网发现，也不
 | [功能逻辑](./logic-design.md) | 组织隔离、设备、发布、策略、任务和联邦状态规则 |
 | [管理界面设计](./ui-design.md) | ShareServer Web 控制台的信息架构与交互 |
 | [技术设计](./technical-design.md) | 服务模块、API、数据、部署、运维和验证 |
+| [实施进度](./progress.md) | 已验证实现、剩余生产工作与验证证据 |
 | [共享网络总体设计](../../architecture/share-network-architecture.md) | 跨端身份、能力、授权、任务、更新和协议权威 |
 
 当前没有单独的 User Stories：管理员、能力发布者、审计员和普通成员场景已进入 PRD 与逻辑
-设计。服务尚未实施，因此不创建 `progress.md`。
+设计。仓库已建立可运行的全控制台交互原型；它用于确认信息架构与交互，不代表生产服务已经
+实现。当前边界和运行方法见[实施进度](./progress.md)与
+[`shareserver/README.md`](../../../shareserver/README.md)。
 
 ## 角色
 
