@@ -211,7 +211,6 @@ type MessageRow = {
   state: ConversationSnapshot['messages'][number]['state']
   metadata_json: string
   created_at: string
-  remote_recoverable?: number
 }
 
 type MagicNoteRow = {
@@ -1110,38 +1109,31 @@ function toConversationSnapshot(
       : {}),
     title: conversation.title,
     updatedAt: Date.parse(conversation.updated_at),
+    // Startup recovery is the only authority for interruption: it persists
+    // the terminal state once. Deriving it while reading would also hit
+    // messages that are streaming right now, because the renderer keeps
+    // saving them during a live run.
     messages: messages.map((message) => {
       const metadata = JSON.parse(
         message.metadata_json
       ) as MessageMetadata
-      const interrupted =
-        message.state === 'streaming' &&
-        message.remote_recoverable !== 1
       return {
         id: message.id,
         queueItemId: metadata.queueItemId,
         role: message.role,
         content: message.content,
         reasoning: metadata.reasoning,
-        blocks: interrupted
-          ? interruptActiveToolBlocks(metadata.blocks)
-          : metadata.blocks,
+        blocks: metadata.blocks,
         displayCaptureTruncated:
           metadata.displayCaptureTruncated,
         createdAt:
           metadata.createdAt ?? Date.parse(message.created_at),
-        state: interrupted ? ('error' as const) : message.state,
-        status: interrupted
-          ? interruptedMessageStatus
-          : metadata.status,
+        state: message.state,
+        status: metadata.status,
         contextCompression: metadata.contextCompression,
         contextCompressions: metadata.contextCompressions,
-        tools: interrupted
-          ? interruptActiveTools(metadata.tools)
-          : metadata.tools,
-        subagents: interrupted
-          ? interruptActiveSubagents(metadata.subagents)
-          : metadata.subagents,
+        tools: metadata.tools,
+        subagents: metadata.subagents,
         sources: metadata.sources,
         sourceReferences: metadata.sourceReferences,
         knowledgeRetrieval: metadata.knowledgeRetrieval,
@@ -2604,18 +2596,10 @@ export class AssistantDatabase {
       .all() as ConversationRow[]
     const messageStatement = database.prepare(
       `SELECT id, conversation_id, role, content, state, metadata_json,
-              created_at, remote_recoverable
+              created_at
        FROM (
          SELECT id, conversation_id, role, content, state, metadata_json,
-                created_at, sequence,
-                EXISTS(
-                  SELECT 1 FROM tasks
-                  WHERE tasks.id = messages.request_id
-                    AND tasks.remote_recoverable = 1
-                    AND tasks.status IN (
-                      'running', 'waiting_approval', 'interrupted'
-                    )
-                ) AS remote_recoverable
+                created_at, sequence
          FROM messages
          WHERE conversation_id = ?
          ORDER BY sequence DESC
@@ -2651,18 +2635,10 @@ export class AssistantDatabase {
     const messages = database
       .prepare(
         `SELECT id, conversation_id, role, content, state, metadata_json,
-                created_at, remote_recoverable
+                created_at
          FROM (
            SELECT id, conversation_id, role, content, state,
-                  metadata_json, created_at, sequence,
-                  EXISTS(
-                    SELECT 1 FROM tasks
-                    WHERE tasks.id = messages.request_id
-                      AND tasks.remote_recoverable = 1
-                      AND tasks.status IN (
-                        'running', 'waiting_approval', 'interrupted'
-                      )
-                  ) AS remote_recoverable
+                  metadata_json, created_at, sequence
            FROM messages
            WHERE conversation_id = ?
            ORDER BY sequence DESC

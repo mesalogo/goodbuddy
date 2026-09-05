@@ -4082,8 +4082,7 @@ describe('AssistantDatabase', () => {
           }),
           expect.objectContaining({
             role: 'assistant',
-            state: 'error',
-            status: expect.stringContaining('意外中断'),
+            state: 'streaming',
             reasoning: '先分析发布范围',
             contextCompression: {
               state: 'completed',
@@ -4100,7 +4099,7 @@ describe('AssistantDatabase', () => {
                 type: 'tool',
                 tool: expect.objectContaining({
                   callId: 'call-1',
-                  state: 'interrupted'
+                  state: 'running'
                 })
               }),
               expect.objectContaining({
@@ -5435,6 +5434,85 @@ describe('AssistantDatabase', () => {
       ).tools?.[0]?.state
     ).toBe('interrupted')
     durable.close()
+  })
+
+  it('keeps a live streaming message streaming until startup recovery runs', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-live-streaming-read-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const conversationId =
+      '00000000-0000-4000-8000-000000000971'
+    const assistantMessageId =
+      '00000000-0000-4000-8000-000000000972'
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    database.saveLocalConversations([
+      {
+        header: {
+          id: conversationId,
+          title: '流式进行中',
+          updatedAt: 1_775_000_000_000
+        },
+        messages: [
+          {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '正在回答',
+            createdAt: 1_775_000_000_001,
+            state: 'streaming',
+            status: '正在生成',
+            tools: [
+              {
+                callId: 'call-1',
+                name: 'read',
+                state: 'running',
+                summary: '正在调用'
+              }
+            ]
+          }
+        ]
+      }
+    ])
+
+    const liveExpectation = {
+      id: assistantMessageId,
+      state: 'streaming',
+      status: '正在生成',
+      tools: [
+        expect.objectContaining({
+          callId: 'call-1',
+          state: 'running'
+        })
+      ]
+    }
+    // Reading during a live run must not manufacture an interruption; the
+    // renderer keeps saving the streaming message while the run continues.
+    expect(
+      database.getConversation(conversationId).messages[0]
+    ).toMatchObject(liveExpectation)
+    expect(
+      database.listConversations()[0]?.messages[0]
+    ).toMatchObject(liveExpectation)
+    database.close()
+
+    const recovered = new AssistantDatabase(databasePath)
+    recovered.initialize('C:\\Workspace')
+    expect(
+      recovered.getConversation(conversationId).messages[0]
+    ).toMatchObject({
+      id: assistantMessageId,
+      state: 'error',
+      status: '上次运行意外中断，可以重新发送问题',
+      tools: [
+        expect.objectContaining({
+          callId: 'call-1',
+          state: 'interrupted'
+        })
+      ]
+    })
+    recovered.close()
   })
 
   it('keeps duplicate chat replies out of artifact listings', async () => {

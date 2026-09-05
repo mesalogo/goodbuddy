@@ -3393,7 +3393,24 @@ function App(): React.JSX.Element {
       )
     : undefined
 
+  // Conversation refreshes replace the conversation object, so the runtime
+  // selection identity changes without the selection itself changing. Keying
+  // this effect on the resolved scope keeps the runtime controls mounted
+  // instead of clearing and refetching the snapshot on every refresh.
+  const runtimeNativeScopeKey = [
+    activeConversation?.remote ? 'remote' : 'local',
+    activeProjectUsesManagedSsh ? 'managed-ssh' : 'direct',
+    activeProjectId ?? '',
+    activeRuntimeSelectionKey
+  ].join('\u0000')
+  const runtimeNativeScopeKeyRef = useRef<string | undefined>(undefined)
+
   useEffect(() => {
+    if (runtimeNativeScopeKeyRef.current === runtimeNativeScopeKey) {
+      return
+    }
+    runtimeNativeScopeKeyRef.current = runtimeNativeScopeKey
+    const selection = activeRuntimeSelectionRef.current
     const requestId = runtimeCustomizationRequestRef.current + 1
     runtimeCustomizationRequestRef.current = requestId
     queueMicrotask(() => {
@@ -3407,22 +3424,21 @@ function App(): React.JSX.Element {
       setSelectedContinuePreset('')
     })
     if (
-      !activeRuntimeSelection ||
+      !selection ||
       activeConversation?.remote ||
       activeProjectUsesManagedSsh ||
-      (activeRuntimeSelection.provider !== 'opencode' &&
-        activeRuntimeSelection.provider !== 'continue')
+      (selection.provider !== 'opencode' &&
+        selection.provider !== 'continue')
     ) {
       return
     }
-    const provider = activeRuntimeSelection.provider
+    const provider = selection.provider
     void Promise.all([
       window.goodbuddy.runtimeCustomization.getSettings(),
       window.goodbuddy.runtimeCustomization.getNativeSnapshot({
         provider,
-        ...('profileId' in activeRuntimeSelection &&
-        activeRuntimeSelection.profileId
-          ? { profileId: activeRuntimeSelection.profileId }
+        ...('profileId' in selection && selection.profileId
+          ? { profileId: selection.profileId }
           : {}),
         ...(activeProjectId ? { projectId: activeProjectId } : {})
       })
@@ -3445,8 +3461,7 @@ function App(): React.JSX.Element {
     activeConversation?.remote,
     activeProjectUsesManagedSsh,
     activeProjectId,
-    activeRuntimeSelection,
-    activeRuntimeSelectionKey
+    runtimeNativeScopeKey
   ])
 
   const runtimeAgentOptions = useMemo<

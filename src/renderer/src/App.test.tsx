@@ -6818,6 +6818,68 @@ describe('App', () => {
         screen.getByText('聚焦后读到的最终回复')
       ).toBeInTheDocument()
     })
+
+    it('keeps streaming through window switches while the store still reports the run', async () => {
+      const started = await startStreamingRun()
+
+      act(() => {
+        agentListener?.({
+          requestId: started.requestId,
+          type: 'text',
+          delta: '第一段回答'
+        })
+      })
+      expect(await screen.findByText('第一段回答')).toBeInTheDocument()
+
+      // The renderer keeps saving the streaming message, so a refresh reads
+      // it back as streaming. That must not be reported as an interruption.
+      vi.mocked(api.conversations.list).mockResolvedValue([
+        persistedSnapshot(started, {
+          state: 'streaming',
+          content: '第一段回答'
+        })
+      ])
+      act(() => {
+        window.dispatchEvent(
+          new Event('visibilitychange', { bubbles: true })
+        )
+        window.dispatchEvent(new Event('focus'))
+      })
+      await waitFor(() =>
+        expect(api.conversations.list).toHaveBeenCalledTimes(2)
+      )
+
+      expect(
+        screen.queryByText('上次运行意外中断，可以重新发送问题')
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: '重新编辑并发送' })
+      ).not.toBeInTheDocument()
+      expect(api.conversationQueue.ready).not.toHaveBeenCalled()
+
+      // The run is still live, so later deltas and the terminal event must
+      // still reach the message.
+      act(() => {
+        agentListener?.({
+          requestId: started.requestId,
+          type: 'text',
+          delta: '，第二段回答'
+        })
+        agentListener?.({
+          requestId: started.requestId,
+          type: 'done'
+        })
+      })
+      expect(
+        await screen.findByText('第一段回答，第二段回答')
+      ).toBeInTheDocument()
+      await waitFor(() =>
+        expect(api.conversationQueue.ready).toHaveBeenCalledWith(
+          started.conversationId
+        )
+      )
+      expect(screen.getByLabelText('发送')).toBeInTheDocument()
+    })
   })
 
   it('retries a failed recovery with a new request ID and cleans up its listener', async () => {
@@ -7692,6 +7754,142 @@ describe('App', () => {
         })
       )
     )
+  })
+
+  it('keeps native OpenCode controls mounted across conversation refreshes', async () => {
+    const conversationId = '00000000-0000-4000-8000-000000000761'
+    const settings = await api.settings.getRuntime()
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: 'opencode',
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: 'platform' }
+    })
+    vi.mocked(api.agent.getStatus).mockResolvedValue({
+      id: 'opencode',
+      label: 'OpenCode',
+      available: true,
+      supportsToolExecution: true,
+      detail: 'Ready'
+    })
+    vi.mocked(
+      api.runtimeCustomization.getSettings
+    ).mockResolvedValueOnce({
+      opencode: {},
+      continue: { presets: [] }
+    })
+    vi.mocked(
+      api.runtimeCustomization.getNativeSnapshot
+    ).mockResolvedValueOnce({
+      provider: 'opencode',
+      available: true,
+      inventoryStatus: 'available',
+      detail: 'Ready',
+      agents: [
+        {
+          id: 'planner',
+          name: 'Planner',
+          description: 'Plan before editing',
+          mode: 'primary',
+          native: true,
+          hidden: false
+        }
+      ],
+      tools: [],
+      toolsSupported: true,
+      commands: [],
+      lsp: [],
+      formatters: [],
+      mcpServers: [],
+      skills: [],
+      rules: [],
+      prompts: [],
+      resources: [],
+      resourcesSupported: true,
+      context: {
+        strategy: 'native',
+        manualCompact: true,
+        detail: 'OpenCode native context'
+      }
+    })
+    // Every read returns freshly parsed rows, so the conversation and its
+    // nested runtime selection change identity on each refresh even when the
+    // selection itself is unchanged. The store keeps the persisted timestamp
+    // in step with the local one, so the incoming copy wins each merge.
+    vi.mocked(api.conversations.list).mockImplementation(async () => [
+      {
+        id: conversationId,
+        projectId,
+        runtimeSelection: { provider: 'opencode' },
+        title: 'OpenCode 会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000762',
+            role: 'assistant',
+            content: '已就绪',
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    let conversationsChangedListener: (() => void) | undefined
+    vi.mocked(api.conversations.onChanged).mockImplementation(
+      (listener) => {
+        conversationsChangedListener = listener
+        return () => {
+          if (conversationsChangedListener === listener) {
+            conversationsChangedListener = undefined
+          }
+        }
+      }
+    )
+
+    render(<App />)
+
+    const runtimeToolbar = await screen.findByRole('group', {
+      name: 'OpenCode 专属功能'
+    })
+    expect(await screen.findByText('已就绪')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        api.runtimeCustomization.getNativeSnapshot
+      ).toHaveBeenCalled()
+    )
+    vi.mocked(
+      api.runtimeCustomization.getNativeSnapshot
+    ).mockClear()
+
+    // The resolved runtime scope is unchanged, so the runtime controls must
+    // not unmount and refetch, which visibly shifted the conversation
+    // layout on every window switch.
+    const refreshesBefore = vi.mocked(api.conversations.list).mock.calls
+      .length
+    act(() => {
+      conversationsChangedListener?.()
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.conversations.list).mock.calls.length
+      ).toBeGreaterThan(refreshesBefore)
+    )
+    // Let the merged conversation render before asserting that the runtime
+    // scope stayed stable.
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(
+      screen.getByRole('group', { name: 'OpenCode 专属功能' })
+    ).toBe(runtimeToolbar)
+    expect(
+      screen.getByRole('button', { name: /OpenCode Runtime Agent/u })
+    ).toBeInTheDocument()
+    expect(
+      api.runtimeCustomization.getNativeSnapshot
+    ).not.toHaveBeenCalled()
   })
 
   it('fills editable Continue Prompts and submits the selected preset', async () => {
