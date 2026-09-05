@@ -1007,6 +1007,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
     updateSource: 'github',
     modelDownloadSource: 'modelscope',
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
+    conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: enabled,
     magicNotesEnabled: false,
     magicNotesShowIncompleteTodoCount: true,
@@ -2195,6 +2196,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
@@ -2296,6 +2298,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -2307,6 +2310,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -2408,6 +2412,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -2419,6 +2424,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -4455,6 +4461,7 @@ describe('App', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -10952,6 +10959,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -10963,6 +10971,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -11014,6 +11023,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
@@ -11068,6 +11078,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: false,
@@ -11101,6 +11112,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
@@ -11112,6 +11124,7 @@ describe('App', () => {
         updateSource: 'github' as const,
         modelDownloadSource: 'modelscope' as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
@@ -11142,12 +11155,92 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('renders Agent HTML by default and applies the platform switch immediately', async () => {
+    const conversationId =
+      '00000000-0000-4000-8000-000000000471'
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      {
+        id: conversationId,
+        projectId,
+        title: 'HTML 预览会话',
+        updatedAt: 1_775_000_000_000,
+        messages: [
+          {
+            id: '00000000-0000-4000-8000-000000000472',
+            role: 'assistant',
+            content: `\`\`\`html
+<main><h1>Rendered dashboard</h1></main>
+\`\`\``,
+            createdAt: 1_775_000_000_000,
+            state: 'complete'
+          }
+        ]
+      }
+    ])
+    let applicationSettings: ApplicationSettings = {
+      checkUpdatesOnStartup: false,
+      updateSource: 'github',
+      modelDownloadSource: 'modelscope',
+      localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      conversationHtmlRenderingEnabled: true,
+      remoteProjectsEnabled: false,
+      magicNotesEnabled: false,
+      magicNotesShowIncompleteTodoCount: true,
+      magicNoteCommentMode: 'immediate',
+      magicNoteCommentFormat: 'combined'
+    }
+    const updateSettings = vi.fn<
+      NonNullable<DesktopApi['updates']>['updateSettings']
+    >(async (input) => {
+      applicationSettings = { ...applicationSettings, ...input }
+      return { ...applicationSettings }
+    })
+    api.updates = {
+      getSettings: vi.fn(async () => ({ ...applicationSettings })),
+      updateSettings,
+      check: vi.fn(),
+      openReleasePage: vi.fn(async () => {}),
+      onResult: vi.fn(() => () => {})
+    }
+
+    render(<App />)
+
+    expect(
+      await screen.findByTitle('Agent 回复 HTML 静态预览')
+    ).toHaveAttribute('sandbox', '')
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /本地工作区/u })
+    )
+    fireEvent.click(
+      await screen.findByRole('tab', { name: '平台功能' })
+    )
+    const toggle = await screen.findByRole('switch', {
+      name: '在会话中渲染 HTML'
+    })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        conversationHtmlRenderingEnabled: false
+      })
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByTitle('Agent 回复 HTML 静态预览')
+      ).not.toBeInTheDocument()
+    )
+    expect(screen.getByText(/Rendered dashboard/u)).toBeInTheDocument()
+  })
+
   it('keeps platform-feature switches in Settings without navigating', async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,

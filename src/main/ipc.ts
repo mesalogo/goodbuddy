@@ -4527,9 +4527,11 @@ export function registerIpcHandlers(
           pendingGoodBuddyConfigReload = true
         }
         await flushGoodBuddyConfigReload().catch(() => undefined)
-        if (readyConversationQueues.has(request.conversationId)) {
-          void pumpConversationQueue(request.conversationId)
-        }
+        // The renderer also reports readiness after a finished run, but a
+        // run that fails before publishing a terminal event never triggers
+        // that call, which would leave later messages queued forever.
+        readyConversationQueues.add(request.conversationId)
+        void pumpConversationQueue(request.conversationId)
       }
     })()
     if (managedSshExecution) {
@@ -4542,6 +4544,35 @@ export function registerIpcHandlers(
     }
     } finally {
       preparingRequestConversations.delete(parsedInput.requestId)
+      // A dispatched queue item whose run never started keeps the
+      // conversation reserved, so later messages would stay queued
+      // forever instead of running.
+      if (
+        parsedInput.queueItemId &&
+        reservedConversationQueueItems.get(
+          parsedInput.conversationId
+        ) === parsedInput.queueItemId
+      ) {
+        reservedConversationQueueItems.delete(
+          parsedInput.conversationId
+        )
+        const dispatchTimeout = queueDispatchTimers.get(
+          parsedInput.queueItemId
+        )
+        if (dispatchTimeout) {
+          clearTimeout(dispatchTimeout)
+          queueDispatchTimers.delete(parsedInput.queueItemId)
+        }
+        try {
+          assistantDatabase.releaseConversationUserQueueItem(
+            parsedInput.queueItemId
+          )
+        } catch {
+          // The renderer may have released the item already.
+        }
+        readyConversationQueues.add(parsedInput.conversationId)
+        publishConversationQueueChange(parsedInput.conversationId)
+      }
     }
   })
 

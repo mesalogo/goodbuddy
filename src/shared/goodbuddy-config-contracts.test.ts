@@ -137,6 +137,7 @@ describe('GoodBuddy configuration contracts', () => {
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,

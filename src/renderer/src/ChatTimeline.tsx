@@ -252,8 +252,10 @@ function ToolExecutionList({
 }
 
 const SubagentStatusCard = memo(function SubagentStatusCard({
+  renderHtml,
   subagent
 }: {
+  renderHtml: boolean
   subagent: SubagentActivity
 }): React.JSX.Element {
   const { t } = useTranslation('app')
@@ -334,7 +336,13 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
             <section>
               <strong>{t('chat.subagents.output')}</strong>
               <div className="markdown-content">
-                <MarkdownRenderer>{subagent.output}</MarkdownRenderer>
+                <MarkdownRenderer
+                  renderHtml={
+                    renderHtml && subagent.state === 'completed'
+                  }
+                >
+                  {subagent.output}
+                </MarkdownRenderer>
               </div>
             </section>
           ) : (
@@ -355,8 +363,10 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
 })
 
 function SubagentStatusList({
+  renderHtml,
   subagents
 }: {
+  renderHtml: boolean
   subagents: SubagentActivity[]
 }): React.JSX.Element {
   const { t } = useTranslation('app')
@@ -369,6 +379,7 @@ function SubagentStatusList({
       {subagents.map((subagent) => (
         <SubagentStatusCard
           key={subagent.childTaskId}
+          renderHtml={renderHtml}
           subagent={subagent}
         />
       ))}
@@ -383,6 +394,7 @@ type ChatMessageRowProps = {
   greeting: boolean
   locale: TimeFormatLocale
   message: Message
+  renderAssistantHtml?: boolean
   onArticleRef: (messageId: string, element: HTMLElement | null) => void
   onCopyMessage: (content: string) => Promise<void>
   onDownloadImage: (item: ImageViewerItem) => void
@@ -416,6 +428,7 @@ function ChatMessageRowView({
   greeting,
   locale,
   message,
+  renderAssistantHtml = false,
   onArticleRef,
   onCopyMessage,
   onDownloadImage,
@@ -594,6 +607,7 @@ function ChatMessageRowView({
               ) : item.kind === 'subagents' ? (
                 <SubagentStatusList
                   key={item.id}
+                  renderHtml={renderAssistantHtml}
                   subagents={item.childTaskIds.flatMap((childTaskId) => {
                     const subagent = subagentsById.get(childTaskId)
                     return subagent ? [subagent] : []
@@ -610,7 +624,15 @@ function ChatMessageRowView({
                   className="markdown-content message__content"
                   key={item.block.id}
                 >
-                  <MarkdownRenderer>{item.block.content}</MarkdownRenderer>
+                  <MarkdownRenderer
+                    renderHtml={
+                      renderAssistantHtml &&
+                      message.role === 'assistant' &&
+                      message.state === 'complete'
+                    }
+                  >
+                    {item.block.content}
+                  </MarkdownRenderer>
                 </div>
               )
             )}
@@ -626,7 +648,13 @@ function ChatMessageRowView({
             )}
             {message.content && (
               <div className="markdown-content message__content">
-                <MarkdownRenderer>
+                <MarkdownRenderer
+                  renderHtml={
+                    renderAssistantHtml &&
+                    message.role === 'assistant' &&
+                    message.state === 'complete'
+                  }
+                >
                   {greeting ? t('conversation.greeting') : message.content}
                 </MarkdownRenderer>
               </div>
@@ -634,7 +662,10 @@ function ChatMessageRowView({
           </>
         )}
         {unorderedSubagents && unorderedSubagents.length > 0 && (
-          <SubagentStatusList subagents={unorderedSubagents} />
+          <SubagentStatusList
+            renderHtml={renderAssistantHtml}
+            subagents={unorderedSubagents}
+          />
         )}
         {message.artifactIds?.map((artifactId) => {
           const candidate = artifactById.get(artifactId)
@@ -1089,6 +1120,7 @@ type ChatTimelineProps = {
   ) => Promise<void>
   onRetry: (content: string) => void
   onRevealEarlier: () => void
+  renderAssistantHtml?: boolean
   retryContent?: string
   totalMessageCount: number
 }
@@ -1111,6 +1143,7 @@ export function ChatTimeline({
   onRespondQuestion,
   onRetry,
   onRevealEarlier,
+  renderAssistantHtml = false,
   retryContent,
   totalMessageCount
 }: ChatTimelineProps): React.JSX.Element {
@@ -1152,6 +1185,7 @@ export function ChatTimeline({
             onRespondApproval={onRespondApproval}
             onRespondQuestion={onRespondQuestion}
             onRetry={onRetry}
+            renderAssistantHtml={renderAssistantHtml}
             retryContent={retryContent}
           />
         )

@@ -65,6 +65,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: false,
@@ -76,6 +77,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: false,
@@ -83,11 +85,12 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 10,
+      version: 11,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: false,
@@ -116,7 +119,7 @@ describe('ApplicationSettingsStore', () => {
       remoteProjectsEnabled: true
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 10,
+      version: 11,
       lastSeenReleaseNotesVersion: null,
       ...defaultApplicationSettings,
       remoteProjectsEnabled: true
@@ -139,6 +142,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -165,6 +169,7 @@ describe('ApplicationSettingsStore', () => {
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
         localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+        conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
@@ -191,6 +196,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -217,6 +223,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -245,11 +252,12 @@ describe('ApplicationSettingsStore', () => {
       createApplicationSettingsStore(filePath).getLastSeenReleaseNotesVersion()
     ).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 10,
+      version: 11,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -279,6 +287,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -306,6 +315,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'mirror',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -314,9 +324,10 @@ describe('ApplicationSettingsStore', () => {
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionSix,
-      version: 10,
+      version: 11,
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesShowIncompleteTodoCount: true
     })
@@ -324,9 +335,10 @@ describe('ApplicationSettingsStore', () => {
     await store.update({ modelDownloadSource: 'hugging-face' })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionSix,
-      version: 10,
+      version: 11,
       modelDownloadSource: 'hugging-face',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesShowIncompleteTodoCount: true
     })
@@ -351,6 +363,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -359,8 +372,9 @@ describe('ApplicationSettingsStore', () => {
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionSeven,
-      version: 10,
+      version: 11,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesShowIncompleteTodoCount: true
     })
@@ -388,6 +402,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'mirror',
       modelDownloadSource: 'hugging-face',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: false,
@@ -397,17 +412,19 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.getLastSeenReleaseNotesVersion()).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionEight,
-      version: 10,
+      version: 11,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false
     })
 
     await store.update({ checkUpdatesOnStartup: true })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionEight,
-      version: 10,
+      version: 11,
       checkUpdatesOnStartup: true,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false
     })
   })
@@ -445,6 +462,7 @@ describe('ApplicationSettingsStore', () => {
       magicNotesShowIncompleteTodoCount: false,
       magicNoteCommentMode: 'after-save-manual',
       magicNoteCommentFormat: 'narrative',
+      conversationHtmlRenderingEnabled: true,
       localToolEnvironment: {
         node: {
           source: 'custom',
@@ -459,7 +477,8 @@ describe('ApplicationSettingsStore', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8'))
     expect(persisted).toEqual({
       ...versionNine,
-      version: 10,
+      version: 11,
+      conversationHtmlRenderingEnabled: true,
       localToolEnvironment: {
         node: {
           source: 'custom',
@@ -523,6 +542,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
@@ -543,6 +563,41 @@ describe('ApplicationSettingsStore', () => {
     ).resolves.toEqual({
       ...defaultApplicationSettings,
       updateSource: 'mirror'
+    })
+  })
+
+  it('persists disabling conversation HTML rendering', async () => {
+    const { filePath, store } = await createStore()
+
+    await expect(
+      store.update({ conversationHtmlRenderingEnabled: false })
+    ).resolves.toEqual({
+      ...defaultApplicationSettings,
+      conversationHtmlRenderingEnabled: false
+    })
+    await expect(
+      createApplicationSettingsStore(filePath).get()
+    ).resolves.toEqual({
+      ...defaultApplicationSettings,
+      conversationHtmlRenderingEnabled: false
+    })
+  })
+
+  it('enables conversation HTML rendering when migrating version 10 settings', async () => {
+    const { filePath, store } = await createStore()
+    const versionTenSettings: Record<string, unknown> = {
+      ...defaultApplicationSettings,
+      version: 10,
+      lastSeenReleaseNotesVersion: '0.8.18'
+    }
+    delete versionTenSettings.conversationHtmlRenderingEnabled
+    await writeFile(filePath, JSON.stringify(versionTenSettings), 'utf8')
+
+    await expect(store.get()).resolves.toEqual(defaultApplicationSettings)
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...versionTenSettings,
+      version: 11,
+      conversationHtmlRenderingEnabled: true
     })
   })
 
@@ -634,6 +689,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -641,11 +697,12 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 10,
+      version: 11,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -674,6 +731,7 @@ describe('ApplicationSettingsStore', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,

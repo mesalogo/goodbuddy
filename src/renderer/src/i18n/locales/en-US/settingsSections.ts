@@ -540,6 +540,8 @@ export const settingsSections = {
       serviceUnavailable:
         'Application settings are not available in this version',
       readFailed: 'Could not load platform feature settings',
+      saveConversationHtmlRenderingFailed:
+        'Could not save the conversation HTML rendering setting. Try again.',
       saveRemoteProjectsFailed:
         'Could not save the Remote Projects setting. Try again.',
       saveMagicNotesFailed: 'Could not save Magic Notes settings. Try again.',
@@ -557,6 +559,12 @@ export const settingsSections = {
       ariaLabel: 'Platform feature settings',
       general: 'General',
       magicNotes: 'Magic Notes'
+    },
+    conversationHtml: {
+      title: 'Conversation HTML rendering',
+      description:
+        'Shows complete HTML documents and HTML code blocks in Agent replies as static previews. Previews cannot run scripts, access the network, submit forms, or open windows.',
+      enabled: 'Render HTML in conversations'
     },
     remoteProjects: {
       title: 'Remote Projects (Technical Preview)',

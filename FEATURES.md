@@ -32,9 +32,13 @@ otherwise.
   Host heading and only the remote path on each project row.
 - [x] **File, screenshot, window, and clipboard context**: Added to model
   context only after explicit user selection.
-- [x] **Rich responses**: Supports GitHub Flavored Markdown, LaTeX math, and
-  constrained Mermaid diagrams. Large diagrams can be zoomed, panned, or
-  viewed as source, and failed renders preserve the original diagram code.
+- [x] **Rich responses**: Supports GitHub Flavored Markdown, LaTeX math,
+  constrained Mermaid diagrams, and static in-conversation HTML previews.
+  Complete HTML and HTML code blocks can be previewed in place after an Agent
+  reply finishes, with icon actions to reveal the source or open a full-screen
+  preview. The feature is on by default and can be disabled under Platform
+  Features / General; previews cannot run scripts, access the network, submit
+  forms, or open windows.
 - [x] **AI response and full-conversation copy**: Completed AI responses expose
   a bottom action that copies Markdown source without reasoning, tool logs, or
   citation metadata. Full-conversation copy uses the same validated

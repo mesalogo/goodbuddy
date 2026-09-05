@@ -6710,6 +6710,221 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('releases the queue reservation when a dispatched run cannot start', async () => {
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId,
+          type: 'done'
+        } as const
+      }
+    }
+    const harness = createHarness(runtime)
+    const conversationId =
+      '00000000-0000-4000-8000-000000000745'
+    const itemId = '00000000-0000-4000-8000-000000000746'
+    const input = {
+      conversationId,
+      runtimeSelection: { provider: 'auto' as const },
+      workMode: 'ask' as const,
+      includeMemoryContext: true,
+      prompt: '需要重新排队',
+      attachments: [],
+      knowledgeLibraryIds: [],
+      knowledgeRetrievalMode: 'auto' as const
+    }
+    const item = {
+      id: itemId,
+      conversationId,
+      source: 'user' as const,
+      label: input.prompt,
+      createdAt: '2026-08-21T00:02:00.000Z'
+    }
+    harness.assistantDatabase.enqueueConversationUserInput.mockReturnValue(
+      item
+    )
+    harness.assistantDatabase.listConversationQueueItems
+      .mockReturnValueOnce([item])
+      .mockReturnValue([])
+    harness.assistantDatabase.claimConversationQueueItem.mockReturnValueOnce(
+      {
+        source: 'user',
+        item,
+        payloadJson: JSON.stringify({
+          input,
+          serializedContexts: '[]'
+        })
+      }
+    )
+    harness.assistantDatabase.getConversationQueueItem.mockReturnValue(
+      item
+    )
+    harness.assistantDatabase.createTask.mockImplementationOnce(() => {
+      throw new Error('会话记录不可用')
+    })
+
+    electronMocks.handlers.get(
+      ipcChannels.conversationQueueEnqueueUser
+    )?.(trustedEvent(harness.webContents), input)
+    await vi.waitFor(() =>
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.conversationQueueDispatch,
+        { item, input }
+      )
+    )
+
+    await expect(
+      harness.handler?.(trustedEvent(harness.webContents), {
+        requestId: '00000000-0000-4000-8000-000000000747',
+        conversationId,
+        queueItemId: itemId,
+        runtimeSelection: input.runtimeSelection,
+        prompt: input.prompt,
+        workMode: input.workMode,
+        knowledgeLibraryIds: []
+      })
+    ).rejects.toThrow('会话记录不可用')
+
+    expect(
+      harness.assistantDatabase.releaseConversationUserQueueItem
+    ).toHaveBeenCalledWith(itemId)
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId: '00000000-0000-4000-8000-000000000748',
+      conversationId,
+      runtimeSelection: { provider: 'auto' },
+      prompt: '失败后的新消息',
+      workMode: 'ask',
+      knowledgeLibraryIds: []
+    })
+    await harness.dispose()
+  })
+
+  it('dispatches a message queued during a run that later fails', async () => {
+    let failRun: ((error: Error) => void) | undefined
+    const runtimeStarted = vi.fn()
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: false,
+      // eslint-disable-next-line require-yield
+      async *run(request: { requestId: string }) {
+        runtimeStarted(request.requestId)
+        throw await new Promise<Error>((resolve) => {
+          failRun = resolve
+        })
+      }
+    }
+    const harness = createHarness(runtime)
+    const conversationId =
+      '00000000-0000-4000-8000-000000000751'
+    const createItem = (id: string, prompt: string) => {
+      const input = {
+        conversationId,
+        runtimeSelection: { provider: 'auto' as const },
+        workMode: 'ask' as const,
+        includeMemoryContext: true,
+        prompt,
+        attachments: [],
+        knowledgeLibraryIds: [],
+        knowledgeRetrievalMode: 'auto' as const
+      }
+      return {
+        input,
+        item: {
+          id,
+          conversationId,
+          source: 'user' as const,
+          label: prompt,
+          createdAt: '2026-08-21T00:03:00.000Z'
+        }
+      }
+    }
+    const first = createItem(
+      '00000000-0000-4000-8000-000000000752',
+      '会失败的消息'
+    )
+    const second = createItem(
+      '00000000-0000-4000-8000-000000000753',
+      '失败之后的新消息'
+    )
+    harness.assistantDatabase.enqueueConversationUserInput
+      .mockReturnValueOnce(first.item)
+      .mockReturnValueOnce(second.item)
+    harness.assistantDatabase.listConversationQueueItems
+      .mockReturnValueOnce([first.item])
+      .mockReturnValueOnce([second.item])
+      .mockReturnValue([])
+    harness.assistantDatabase.claimConversationQueueItem
+      .mockReturnValueOnce({
+        source: 'user',
+        item: first.item,
+        payloadJson: JSON.stringify({
+          input: first.input,
+          serializedContexts: '[]'
+        })
+      })
+      .mockReturnValueOnce({
+        source: 'user',
+        item: second.item,
+        payloadJson: JSON.stringify({
+          input: second.input,
+          serializedContexts: '[]'
+        })
+      })
+    harness.assistantDatabase.getConversationQueueItem.mockImplementation(
+      (id: string) =>
+        id === first.item.id ? first.item : second.item
+    )
+
+    electronMocks.handlers.get(
+      ipcChannels.conversationQueueEnqueueUser
+    )?.(trustedEvent(harness.webContents), first.input)
+    await vi.waitFor(() =>
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.conversationQueueDispatch,
+        { item: first.item, input: first.input }
+      )
+    )
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId: '00000000-0000-4000-8000-000000000754',
+      conversationId,
+      queueItemId: first.item.id,
+      runtimeSelection: first.input.runtimeSelection,
+      prompt: first.input.prompt,
+      workMode: first.input.workMode,
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() => expect(runtimeStarted).toHaveBeenCalled())
+
+    // The next message arrives while the run is still in flight, so the
+    // renderer never reports readiness for it afterwards.
+    electronMocks.handlers.get(
+      ipcChannels.conversationQueueEnqueueUser
+    )?.(trustedEvent(harness.webContents), second.input)
+    failRun?.(new Error('模型接口请求失败'))
+    await vi.waitFor(() =>
+      expect(
+        harness.assistantDatabase.updateTaskStatus
+      ).toHaveBeenCalledWith(
+        '00000000-0000-4000-8000-000000000754',
+        'failed',
+        expect.any(String)
+      )
+    )
+
+    await vi.waitFor(() =>
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.conversationQueueDispatch,
+        { item: second.item, input: second.input }
+      )
+    )
+    await harness.dispose()
+  })
+
   it('publishes Runtime usage as context metrics with one settings read', async () => {
     const runtime = {
       runtimeId: 'continue',

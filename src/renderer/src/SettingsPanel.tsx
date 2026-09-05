@@ -237,6 +237,9 @@ type SettingsPanelProps = {
   ) => boolean
   magicNotesEnabled?: boolean
   remoteProjectsEnabled?: boolean
+  onConversationHtmlRenderingEnabledChange?: (
+    enabled: boolean
+  ) => void
   onMagicNotesEnabledChange?: (enabled: boolean) => void
   onRemoteProjectsEnabledChange?: (enabled: boolean) => void
   onMagicNotesShowIncompleteTodoCountChange?: (
@@ -646,6 +649,7 @@ export function SettingsPanel({
   onBrandingPreferencesChange = () => false,
   magicNotesEnabled = false,
   remoteProjectsEnabled = false,
+  onConversationHtmlRenderingEnabledChange = () => {},
   onMagicNotesEnabledChange = () => {},
   onRemoteProjectsEnabledChange = () => {},
   onMagicNotesShowIncompleteTodoCountChange = () => {},
@@ -2255,6 +2259,9 @@ export function SettingsPanel({
           {activeTab === 'platform-features' && (
             <PlatformFeaturesSettingsSection
               onDirtyChange={setPlatformFeaturesDirty}
+              onConversationHtmlRenderingEnabledChange={
+                onConversationHtmlRenderingEnabledChange
+              }
               onMagicNotesEnabledChange={onMagicNotesEnabledChange}
               onMagicNotesShowIncompleteTodoCountChange={
                 onMagicNotesShowIncompleteTodoCountChange

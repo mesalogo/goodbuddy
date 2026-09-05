@@ -36,6 +36,7 @@ const applicationPreferencesSchema = z
     updateSource: updateSourceSchema,
     modelDownloadSource: modelDownloadSourceSchema,
     localToolEnvironment: localToolEnvironmentSettingsSchema,
+    conversationHtmlRenderingEnabled: z.boolean(),
     remoteProjectsEnabled: z.boolean(),
     magicNotesEnabled: z.boolean(),
     magicNotesShowIncompleteTodoCount: z.boolean(),

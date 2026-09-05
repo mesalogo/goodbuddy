@@ -189,10 +189,6 @@ type ModelToolResponse = {
 
 const maxGeneratedImageBytes = 3_900_000
 const maxImageResponseBytes = 5_300_000
-const maxChatResponseBytes = 2 * 1024 * 1024
-const maxStreamBlockBytes = 1024 * 1024
-const maxToolArgumentBytes = 128 * 1024
-const maxToolContextBytes = 1024 * 1024
 const defaultModelRequestTimeoutMs = 10 * 60_000
 const modelRequestRetryDelaysMs = [500, 1_000, 2_000] as const
 const retryablePreDispatchNetworkErrorCodes = new Set([
@@ -734,12 +730,16 @@ function parseGeneratedImage(value: unknown): {
   throw new Error('图像生成接口返回了不支持的图片格式')
 }
 
+async function readResponseText(response: Response): Promise<string> {
+  if (!response.body) {
+    throw new Error('模型接口未返回响应内容')
+  }
+  return response.text()
+}
+
 function parseToolArguments(value: unknown): Record<string, unknown> {
   let parsed = value
   if (typeof value === 'string') {
-    if (Buffer.byteLength(value) > maxToolArgumentBytes) {
-      throw new Error('模型工具参数超过 128KB 安全限制')
-    }
     try {
       parsed = JSON.parse(value)
     } catch (error) {
@@ -751,14 +751,10 @@ function parseToolArguments(value: unknown): Record<string, unknown> {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('模型工具参数必须是 JSON object')
   }
-  let serialized: string
   try {
-    serialized = JSON.stringify(parsed)
+    JSON.stringify(parsed)
   } catch (error) {
     throw new Error('模型工具参数无法序列化', { cause: error })
-  }
-  if (Buffer.byteLength(serialized) > maxToolArgumentBytes) {
-    throw new Error('模型工具参数超过 128KB 安全限制')
   }
   return parsed as Record<string, unknown>
 }
@@ -1232,7 +1228,7 @@ function parseSseData(
   }
 }
 
-async function* readBoundedSseBlocks(
+async function* readSseBlocks(
   response: Response
 ): AsyncGenerator<string, void, void> {
   if (!response.body) {
@@ -1242,19 +1238,11 @@ async function* readBoundedSseBlocks(
   const decoder = new TextDecoder()
   let buffer = ''
   let completed = false
-  let receivedBytes = 0
   try {
     while (true) {
       const { done, value } = await reader.read()
-      receivedBytes += value?.byteLength ?? 0
-      if (receivedBytes > maxChatResponseBytes) {
-        throw new Error('模型接口流式响应超过安全限制')
-      }
       buffer += decoder.decode(value, { stream: !done })
       buffer = buffer.replaceAll('\r\n', '\n')
-      if (Buffer.byteLength(buffer) > maxStreamBlockBytes) {
-        throw new Error('模型接口流式响应块超过安全限制')
-      }
 
       const blocks = buffer.split('\n\n')
       buffer = blocks.pop() ?? ''
@@ -1288,7 +1276,7 @@ async function* readOpenAIResponsesToolStream(
     reported: false
   }
 
-  for await (const block of readBoundedSseBlocks(response)) {
+  for await (const block of readSseBlocks(response)) {
     const parsed = parseSseData(block)
     if (parsed.stopped) {
       break
@@ -1423,7 +1411,7 @@ async function* readAnthropicToolStream(
   let reasoning = ''
   let stopReason: unknown
 
-  for await (const block of readBoundedSseBlocks(response)) {
+  for await (const block of readSseBlocks(response)) {
     const parsed = parseSseData(block)
     if (parsed.stopped) {
       break
@@ -1566,12 +1554,6 @@ async function* readAnthropicToolStream(
           throw new Error('Anthropic 返回了无效流式工具参数增量')
         }
         current.partialJson += delta.partial_json
-        if (
-          Buffer.byteLength(current.partialJson) >
-          maxToolArgumentBytes
-        ) {
-          throw new Error('模型工具参数超过 128KB 安全限制')
-        }
       }
       continue
     }
@@ -1952,13 +1934,14 @@ export class ModelAgentRuntime implements AgentRuntime {
             )
       )
     })
-    const responseText = await readBoundedResponseText(response, {
-      maxBytes: response.ok && imageGeneration
-        ? maxImageResponseBytes
-        : 128 * 1024,
-      missingBodyMessage: '模型接口未返回响应内容',
-      tooLargeMessage: '模型接口响应超过安全限制'
-    })
+    const responseText =
+      response.ok && imageGeneration
+        ? await readBoundedResponseText(response, {
+            maxBytes: maxImageResponseBytes,
+            missingBodyMessage: '模型接口未返回响应内容',
+            tooLargeMessage: '模型接口响应超过安全限制'
+          })
+        : await readResponseText(response)
     if (!response.ok) {
       let detail: string | undefined
       try {
@@ -2660,13 +2643,13 @@ export class ModelAgentRuntime implements AgentRuntime {
     const response = modelRequest.response
     let responseText: string
     try {
-      responseText = await readBoundedResponseText(response, {
-        maxBytes: response.ok
-          ? maxImageResponseBytes
-          : 128 * 1024,
-        missingBodyMessage: '模型接口未返回响应内容',
-        tooLargeMessage: '模型接口响应超过安全限制'
-      })
+      responseText = response.ok
+        ? await readBoundedResponseText(response, {
+            maxBytes: maxImageResponseBytes,
+            missingBodyMessage: '模型接口未返回响应内容',
+            tooLargeMessage: '模型接口响应超过安全限制'
+          })
+        : await readResponseText(response)
     } catch (error) {
       return normalizeRequestError(error, modelRequest.timedOut())
     } finally {
@@ -2828,9 +2811,6 @@ export class ModelAgentRuntime implements AgentRuntime {
               }
       )
     )
-    if (Buffer.byteLength(body) > 2 * 1024 * 1024) {
-      throw new Error('模型工具请求上下文超过 2MB 安全限制')
-    }
     const request = await this.fetchWithTimeout(
       this.getEndpoint(),
       {
@@ -2843,11 +2823,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     const response = request.response
     try {
       if (!response.ok) {
-        const responseText = await readBoundedResponseText(response, {
-          maxBytes: 128 * 1024,
-          missingBodyMessage: '模型接口未返回响应内容',
-          tooLargeMessage: '模型接口响应超过安全限制'
-        })
+        const responseText = await readResponseText(response)
         let detail: string | undefined
         try {
           detail = getErrorMessage(
@@ -2890,7 +2866,7 @@ export class ModelAgentRuntime implements AgentRuntime {
         let reasoning = ''
         let receivedStop = false
 
-        for await (const block of readBoundedSseBlocks(response)) {
+        for await (const block of readSseBlocks(response)) {
           const parsed = parseSseData(block)
           if (parsed.stopped) {
             receivedStop = true
@@ -2972,16 +2948,6 @@ export class ModelAgentRuntime implements AgentRuntime {
                   ? functionDelta.name
                   : current.name
             }
-            if (
-              next.id.length > 256 ||
-              next.name.length > 128 ||
-              Buffer.byteLength(next.arguments) >
-                maxToolArgumentBytes
-            ) {
-              throw new Error(
-                'OpenAI 模型接口返回的流式工具调用超过安全限制'
-              )
-            }
             streamedToolCalls.set(index as number, next)
           }
         }
@@ -3025,11 +2991,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           streamed: true
         }
       }
-      const responseText = await readBoundedResponseText(response, {
-        maxBytes: maxChatResponseBytes,
-        missingBodyMessage: '模型接口未返回响应内容',
-        tooLargeMessage: '模型接口响应超过安全限制'
-      })
+      const responseText = await readResponseText(response)
       let payload: unknown
       try {
         payload = responseText.trim()
@@ -3115,11 +3077,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     } satisfies ModelUsageAccumulator
     try {
       if (!response.ok) {
-        const responseText = await readBoundedResponseText(response, {
-          maxBytes: 128 * 1024,
-          missingBodyMessage: '模型接口未返回响应内容',
-          tooLargeMessage: '模型接口响应超过安全限制'
-        })
+        const responseText = await readResponseText(response)
         let detail: string | undefined
         try {
           detail = getErrorMessage(
@@ -3136,7 +3094,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       }
 
       let receivedStop = false
-      for await (const block of readBoundedSseBlocks(response)) {
+      for await (const block of readSseBlocks(response)) {
         const parsed = parseStreamBlock(block, this.options.protocol)
         if (parsed.usage) {
           applyUsageUpdate(usage, parsed.usage)
@@ -3619,9 +3577,6 @@ export class ModelAgentRuntime implements AgentRuntime {
       }
       if (response.text) {
         answer += response.text
-        if (Buffer.byteLength(answer) > 1024 * 1024) {
-          throw new Error('直连模型回答超过 1MB 安全限制')
-        }
         if (!response.streamed) {
           yield {
             requestId: request.requestId,
@@ -3844,25 +3799,6 @@ export class ModelAgentRuntime implements AgentRuntime {
           }
         }
         roundContextBytes += validateToolResult(result)
-        const retainedContextBytes = compressionState.rounds.reduce(
-          (total, retainedRound) =>
-            total + retainedRound.contextBytes,
-          roundContextBytes
-        )
-        if (retainedContextBytes > maxToolContextBytes) {
-          if (showToolActivity) {
-            yield {
-              requestId: request.requestId,
-              type: 'tool',
-              callId: call.id,
-              name: displayName,
-              state: 'failed',
-              summary: `直连模型工具结果超过限制：${displayName}`,
-              input
-            }
-          }
-          throw new Error('直连模型工具结果总量超过 1MB 安全限制')
-        }
         if (responses) {
           responsesResults.push({
             type: 'function_call_output',

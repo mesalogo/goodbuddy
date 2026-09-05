@@ -12,10 +12,20 @@ import {
 } from './ChatTimeline'
 
 const markdownRenderProbe = vi.hoisted(() => vi.fn())
+const htmlRenderProbe = vi.hoisted(() => vi.fn())
 
 vi.mock('./MarkdownRenderer', () => ({
-  MarkdownRenderer: ({ children }: { children: string }) => {
+  MarkdownRenderer: ({
+    children,
+    renderHtml
+  }: {
+    children: string
+    renderHtml?: boolean
+  }) => {
     markdownRenderProbe(children)
+    if (renderHtml) {
+      htmlRenderProbe(children)
+    }
     return <span>{children}</span>
   }
 }))
@@ -48,6 +58,54 @@ describe('ChatTimeline', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+  })
+
+  it('enables HTML rendering only for completed Agent output', () => {
+    const messages: Message[] = [
+      {
+        id: 'user-message',
+        role: 'user',
+        content: '<div>User HTML</div>',
+        createdAt: 1_775_000_000_000,
+        state: 'complete'
+      },
+      {
+        id: 'streaming-message',
+        role: 'assistant',
+        content: '<div>Streaming HTML</div>',
+        createdAt: 1_775_000_001_000,
+        state: 'streaming'
+      },
+      {
+        id: 'complete-message',
+        role: 'assistant',
+        content: '<div>Complete HTML</div>',
+        reasoning: '<div>Reasoning HTML</div>',
+        createdAt: 1_775_000_002_000,
+        state: 'complete'
+      }
+    ]
+
+    render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="zh-CN"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        renderAssistantHtml
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    expect(htmlRenderProbe).toHaveBeenCalledTimes(1)
+    expect(htmlRenderProbe).toHaveBeenCalledWith(
+      '<div>Complete HTML</div>'
+    )
   })
 
   it('renders only the immutably changed streaming row and retains unchanged DOM state', () => {

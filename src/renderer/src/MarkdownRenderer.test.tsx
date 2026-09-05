@@ -109,6 +109,142 @@ const ready = true
     expect(container.querySelector('script')).not.toBeInTheDocument()
   })
 
+  it('renders fenced HTML as an isolated static preview when enabled', () => {
+    render(
+      <MarkdownRenderer renderHtml>{`\`\`\`html
+<!doctype html>
+<html>
+  <head>
+    <style>body { color: navy; }</style>
+    <script>window.bad = true</script>
+  </head>
+  <body>
+    <h1>HTML dashboard</h1>
+    <img src="https://tracker.example/pixel.png" onerror="bad()">
+    <form action="https://example.com"><button>Send</button></form>
+  </body>
+</html>
+\`\`\``}</MarkdownRenderer>
+    )
+
+    const preview = screen.getByTitle('Agent 回复 HTML 静态预览')
+    const source = preview.getAttribute('srcdoc') ?? ''
+    expect(preview).toHaveAttribute('sandbox', '')
+    expect(preview).toHaveAttribute('referrerpolicy', 'no-referrer')
+    expect(source).toContain('HTML dashboard')
+    expect(source).toContain("default-src 'none'")
+    expect(source).not.toContain('<script')
+    expect(source).not.toContain('<form')
+    expect(source).not.toContain('https://tracker.example')
+    expect(
+      screen.getByText('静态安全预览，脚本和网络已禁用')
+    ).toBeInTheDocument()
+
+    const sourceButton = screen.getByRole('button', {
+      name: '查看源码'
+    })
+    expect(sourceButton).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(sourceButton)
+    expect(screen.getByText(/window\.bad = true/u)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '隐藏源码' })
+    ).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '隐藏源码' }))
+    expect(
+      screen.queryByText(/window\.bad = true/u)
+    ).not.toBeInTheDocument()
+  })
+
+  it('opens and closes the full-screen HTML preview', () => {
+    render(
+      <div className="app-shell">
+        <MarkdownRenderer renderHtml>{`\`\`\`html
+<section><h1>Full screen page</h1></section>
+\`\`\``}</MarkdownRenderer>
+      </div>
+    )
+
+    const viewerButton = screen.getByRole('button', {
+      name: '全屏预览'
+    })
+    viewerButton.focus()
+    fireEvent.click(viewerButton)
+
+    const dialog = screen.getByRole('dialog', {
+      name: 'HTML 全屏预览'
+    })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    const closeButton = screen.getByRole('button', {
+      name: '关闭全屏预览'
+    })
+    expect(closeButton).toHaveFocus()
+    expect(
+      document.querySelector<HTMLElement>('.app-shell')?.inert
+    ).toBe(true)
+
+    const frame = screen.getByTitle('Agent 回复 HTML 全屏静态预览')
+    expect(frame).toHaveAttribute('sandbox', '')
+    expect(frame).toHaveAttribute('referrerpolicy', 'no-referrer')
+    expect(frame.getAttribute('srcdoc') ?? '').toContain(
+      'Full screen page'
+    )
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(viewerButton).toHaveFocus()
+  })
+
+  it('keeps author stylesheets and inline styles in the preview', () => {
+    render(
+      <MarkdownRenderer renderHtml>{`\`\`\`html
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body { background: #101014; color: #f5f5f7; }
+      .hero { background-image: url(https://cdn.example/bg.png); }
+      @import url("https://fonts.example/inter.css");
+    </style>
+  </head>
+  <body>
+    <section class="hero" style="padding: 24px; background: url(https://cdn.example/b.png)">
+      Styled hero
+    </section>
+  </body>
+</html>
+\`\`\``}</MarkdownRenderer>
+    )
+
+    const source =
+      screen
+        .getByTitle('Agent 回复 HTML 静态预览')
+        .getAttribute('srcdoc') ?? ''
+    expect(source).toContain('background: #101014')
+    expect(source).toContain('.hero {')
+    expect(source).toContain('padding: 24px')
+  })
+
+  it('renders a complete HTML reply directly and keeps HTML as code when disabled', () => {
+    const source = '<html><body><main>Complete page</main></body></html>'
+    const { rerender } = render(
+      <MarkdownRenderer renderHtml>{source}</MarkdownRenderer>
+    )
+
+    expect(
+      screen.getByTitle('Agent 回复 HTML 静态预览')
+    ).toHaveAttribute('sandbox', '')
+
+    rerender(
+      <MarkdownRenderer>{source}</MarkdownRenderer>
+    )
+    expect(
+      screen.queryByTitle('Agent 回复 HTML 静态预览')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(source, { exact: true })
+    ).toBeInTheDocument()
+  })
+
   it('renders a whole Markdown fence as formatted content', () => {
     const { container } = render(
       <MarkdownRenderer>{`\`\`\`markdown

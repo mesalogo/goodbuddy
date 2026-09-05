@@ -647,6 +647,16 @@ export const app = {
     mermaidZoomIn: '放大图表',
     mermaidResetZoom: '重置缩放',
     mermaidZoomLevel: '当前缩放比例',
-    mermaidCloseViewer: '关闭 Mermaid 大图'
+    mermaidCloseViewer: '关闭 Mermaid 大图',
+    htmlPreview: 'HTML 预览',
+    htmlPreviewNotice: '静态安全预览，脚本和网络已禁用',
+    htmlPreviewFrame: 'Agent 回复 HTML 静态预览',
+    htmlActions: 'HTML 预览操作',
+    htmlViewSource: '查看源码',
+    htmlHideSource: '隐藏源码',
+    htmlOpenViewer: '全屏预览',
+    htmlViewerTitle: 'HTML 全屏预览',
+    htmlViewerFrame: 'Agent 回复 HTML 全屏静态预览',
+    htmlCloseViewer: '关闭全屏预览'
   }
 } as const

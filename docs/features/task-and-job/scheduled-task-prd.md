@@ -231,8 +231,10 @@ type TimeTrigger =
 
 同一 Conversation 的普通消息和 Scheduled Task occurrence 使用同一 FIFO 队列。Agent
 正在回复时，到期 occurrence 只显示为待执行，不中断当前输出；当前执行结束后才认领下一项。
-用户显式选择“立即中断并插入”时，系统取消当前 Conversation 的活动请求，并让所选项成为
-下一项。删除待执行 occurrence 只取消该次运行，不删除稳定 Task、Conversation 或历史结果。
+执行以失败、取消或中断结束时同样立即释放该 Conversation，下一项无需用户再次操作即会
+执行。用户显式选择“立即中断并插入”时，系统取消当前 Conversation 的活动请求，并让所选项
+成为下一项。删除待执行 occurrence 只取消该次运行，不删除稳定 Task、Conversation 或历史
+结果。
 
 ## 8. 一次触发的对象关系
 
@@ -365,6 +367,8 @@ Task Center 显示 Scheduled Task 的范围、关联 Conversation、状态、模
 - [x] 当前回复期间可以继续发送普通消息，并在 Composer 上沿查看、删除或提升待发送项。
 - [x] 应用重启恢复尚未执行的队列项和有界附件上下文；已写入 Conversation 的用户输入
   通过队列项身份完成恢复对账，不会再次进入待发送队列。
+- [x] 执行失败、取消或中断后立即释放会话，下一项和随后发送的新消息无需用户额外操作
+  即会执行。
 - [x] 文本结果只写入 Conversation，独立交付物才进入成果。
 - [ ] Task Center 和桌面通知可以打开正确 Conversation 并定位 Task。
 - [ ] 应用重启不自动重放结果未知的副作用。

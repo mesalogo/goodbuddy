@@ -27,7 +27,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 10
+const CURRENT_SETTINGS_VERSION = 11
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -58,6 +58,7 @@ const versionFourStoredApplicationSettingsSchema = applicationSettingsSchema
     updateSource: true,
     modelDownloadSource: true,
     localToolEnvironment: true,
+    conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
@@ -71,6 +72,7 @@ const versionFiveStoredApplicationSettingsSchema = applicationSettingsSchema
     updateSource: true,
     modelDownloadSource: true,
     localToolEnvironment: true,
+    conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
@@ -84,6 +86,7 @@ const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     modelDownloadSource: true,
     localToolEnvironment: true,
+    conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
@@ -96,6 +99,7 @@ const versionSixStoredApplicationSettingsSchema = applicationSettingsSchema
 const versionSevenStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     localToolEnvironment: true,
+    conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: true,
     magicNotesShowIncompleteTodoCount: true
   })
@@ -108,6 +112,7 @@ const versionSevenStoredApplicationSettingsSchema = applicationSettingsSchema
 const versionEightStoredApplicationSettingsSchema = applicationSettingsSchema
   .omit({
     localToolEnvironment: true,
+    conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: true
   })
   .extend({
@@ -117,12 +122,24 @@ const versionEightStoredApplicationSettingsSchema = applicationSettingsSchema
   .strict()
 
 const versionNineStoredApplicationSettingsSchema = applicationSettingsSchema
-  .omit({ localToolEnvironment: true })
+  .omit({
+    localToolEnvironment: true,
+    conversationHtmlRenderingEnabled: true
+  })
   .extend({
     version: z.literal(9),
     lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
   })
   .strict()
+
+const versionTenStoredApplicationSettingsSchema =
+  applicationSettingsSchema
+    .omit({ conversationHtmlRenderingEnabled: true })
+    .extend({
+      version: z.literal(10),
+      lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
+    })
+    .strict()
 
 const storedApplicationSettingsSchema = applicationSettingsSchema
   .extend({
@@ -215,6 +232,7 @@ export const defaultApplicationSettings: ApplicationSettings = {
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
+  conversationHtmlRenderingEnabled: true,
   remoteProjectsEnabled: false,
   magicNotesEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
@@ -236,8 +254,13 @@ export class ApplicationSettingsStore {
   private async migrateLegacy(
     settings: Omit<
       StoredApplicationSettings,
-      'localToolEnvironment' | 'version'
-    > & { version: number }
+      | 'conversationHtmlRenderingEnabled'
+      | 'localToolEnvironment'
+      | 'version'
+    > & {
+      conversationHtmlRenderingEnabled?: boolean
+      version: number
+    }
   ): Promise<StoredApplicationSettings> {
     const resolved = await this.legacyLocalToolEnvironmentResolver()
     const selection = (
@@ -249,6 +272,8 @@ export class ApplicationSettingsStore {
         : { source: 'managed' }
     const next: StoredApplicationSettings = {
       ...settings,
+      conversationHtmlRenderingEnabled:
+        settings.conversationHtmlRenderingEnabled ?? true,
       version: CURRENT_SETTINGS_VERSION,
       localToolEnvironment: {
         node: selection(resolved.nodeExecutablePath),
@@ -303,6 +328,17 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionTenResult =
+          versionTenStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionTenResult.success) {
+          const next: StoredApplicationSettings = {
+            ...versionTenResult.data,
+            version: CURRENT_SETTINGS_VERSION,
+            conversationHtmlRenderingEnabled: true
+          }
+          await this.persist(next)
+          return next
+        }
         const versionNineResult =
           versionNineStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionNineResult.success) {
@@ -443,6 +479,8 @@ export class ApplicationSettingsStore {
       updateSource: stored.updateSource,
       modelDownloadSource: stored.modelDownloadSource,
       localToolEnvironment: stored.localToolEnvironment,
+      conversationHtmlRenderingEnabled:
+        stored.conversationHtmlRenderingEnabled,
       remoteProjectsEnabled: stored.remoteProjectsEnabled,
       magicNotesEnabled: stored.magicNotesEnabled,
       magicNotesShowIncompleteTodoCount:
@@ -478,6 +516,8 @@ export class ApplicationSettingsStore {
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
         localToolEnvironment: next.localToolEnvironment,
+        conversationHtmlRenderingEnabled:
+          next.conversationHtmlRenderingEnabled,
         remoteProjectsEnabled: next.remoteProjectsEnabled,
         magicNotesEnabled: next.magicNotesEnabled,
         magicNotesShowIncompleteTodoCount:

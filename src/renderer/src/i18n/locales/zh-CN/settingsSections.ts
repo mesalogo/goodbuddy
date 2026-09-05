@@ -515,6 +515,8 @@ export const settingsSections = {
     errors: {
       serviceUnavailable: '当前版本未提供应用设置服务',
       readFailed: '读取平台功能设置失败',
+      saveConversationHtmlRenderingFailed:
+        '保存会话 HTML 渲染设置失败，请重试',
       saveRemoteProjectsFailed: '保存远程项目设置失败，请重试',
       saveMagicNotesFailed: '保存魔法笔记设置失败，请重试',
       saveIncompleteTodoCountFailed:
@@ -528,6 +530,12 @@ export const settingsSections = {
       ariaLabel: '平台功能设置',
       general: '通用设置',
       magicNotes: '魔法笔记'
+    },
+    conversationHtml: {
+      title: '会话 HTML 渲染',
+      description:
+        '将 Agent 回复中的完整 HTML 或 HTML 代码块直接显示为静态预览。预览不会执行脚本、联网、提交表单或打开窗口。',
+      enabled: '在会话中渲染 HTML'
     },
     remoteProjects: {
       title: '远程项目（技术预览）',

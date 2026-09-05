@@ -1788,19 +1788,41 @@ describe('ModelAgentRuntime', () => {
     }
   })
 
-  it('bounds the total ordinary streaming response size', async () => {
-    const chunk = new TextEncoder().encode(
-      `data: ${JSON.stringify({
-        type: 'content_block_delta',
-        delta: {
-          type: 'text_delta',
-          text: 'x'.repeat(65_000)
-        }
-      })}\n\n`
-    )
+  it('streams long ordinary responses without a size limit', async () => {
+    const encoder = new TextEncoder()
+    const deltaChunks = 48
+    const deltaText = 'x'.repeat(65_000)
     const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        controller.enqueue(chunk)
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: 'message_start',
+              message: {
+                id: 'message-long',
+                model: 'sonnet-5',
+                usage: { input_tokens: 5 }
+              }
+            })}\n\n`
+          )
+        )
+        for (let index = 0; index < deltaChunks; index += 1) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: 'content_block_delta',
+                delta: {
+                  type: 'text_delta',
+                  text: deltaText
+                }
+              })}\n\n`
+            )
+          )
+        }
+        controller.enqueue(
+          encoder.encode('data: {"type":"message_stop"}\n\n')
+        )
+        controller.close()
       }
     })
     const runtime = new ModelAgentRuntime({
@@ -1816,22 +1838,26 @@ describe('ModelAgentRuntime', () => {
         })
       )
     })
-    const consume = async (): Promise<void> => {
-      for await (const _event of runtime.run(
-        {
-          requestId: crypto.randomUUID(),
-          conversationId: crypto.randomUUID(),
-          prompt: 'test'
-        },
-        new AbortController().signal
-      )) {
-        void _event
+    let streamedText = ''
+    let done = false
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'test'
+      },
+      new AbortController().signal
+    )) {
+      if (event.type === 'text') {
+        streamedText += event.delta
+      }
+      if (event.type === 'done') {
+        done = true
       }
     }
 
-    await expect(consume()).rejects.toThrow(
-      '流式响应超过安全限制'
-    )
+    expect(done).toBe(true)
+    expect(streamedText.length).toBe(deltaChunks * deltaText.length)
   })
 
   it('preserves bounded provider error messages', async () => {
@@ -5192,29 +5218,44 @@ describe('ModelAgentRuntime', () => {
     await replacement.dispose()
   })
 
-  it('counts image base64 data against the aggregate tool context limit', async () => {
-    const response = {
-      choices: [
-        {
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [
-              {
-                id: 'call-large-image',
-                type: 'function',
-                function: {
-                  name: 'workspace_read_text',
-                  arguments: '{}'
-                }
-              }
-            ]
-          }
-        }
-      ]
-    }
+  it('keeps an oversized image tool result in the model round', async () => {
     const imageData = Buffer.alloc(1024 * 1024 + 1).toString('base64')
-    const fetcher = vi.fn<typeof fetch>(async () => Response.json(response))
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call-large-image',
+                    type: 'function',
+                    function: {
+                      name: 'workspace_read_text',
+                      arguments: '{}'
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: '图片已读取。'
+              }
+            }
+          ]
+        })
+      )
     const runtime = new ModelAgentRuntime({
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'qwen3',
@@ -5234,23 +5275,25 @@ describe('ModelAgentRuntime', () => {
         }))
       })
     })
-    const consume = async (): Promise<void> => {
-      for await (const _event of runtime.run(
-        {
-          requestId: crypto.randomUUID(),
-          conversationId: crypto.randomUUID(),
-          prompt: 'run',
-          workMode: 'execute'
-        },
-        new AbortController().signal,
-        async () => 'once'
-      )) {
-        void _event
-      }
+    const events = []
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: 'run',
+        workMode: 'execute'
+      },
+      new AbortController().signal,
+      async () => 'once'
+    )) {
+      events.push(event)
     }
 
-    await expect(consume()).rejects.toThrow('结果总量超过 1MB')
-    expect(fetcher).toHaveBeenCalledOnce()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+    expect(fetcher.mock.calls[1]?.[1]?.body as string).toContain(
+      imageData
+    )
   })
 
   it('performs and validates a real image generation when testing an image connection', async () => {

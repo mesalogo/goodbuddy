@@ -546,6 +546,7 @@ let applicationSettings: ApplicationSettings = {
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
+  conversationHtmlRenderingEnabled: true,
   remoteProjectsEnabled: false,
   magicNotesEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
@@ -836,6 +837,7 @@ describe('SettingsPanel runtime files', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
@@ -1610,6 +1612,39 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.getByRole('switch', { name: '显示魔法笔记入口' })
     ).toBeInTheDocument()
+  })
+
+  it('disables conversation HTML rendering from General settings', async () => {
+    const onConversationHtmlRenderingEnabledChange = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        onConversationHtmlRenderingEnabledChange={
+          onConversationHtmlRenderingEnabledChange
+        }
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const toggle = await screen.findByRole('switch', {
+      name: '在会话中渲染 HTML'
+    })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(updateApplicationSettings).toHaveBeenCalledWith({
+        conversationHtmlRenderingEnabled: false
+      })
+    )
+    expect(
+      onConversationHtmlRenderingEnabledChange
+    ).toHaveBeenCalledWith(false)
+    expect(toggle).not.toBeChecked()
   })
 
   it('does not guess a model download source when settings fail to load', async () => {

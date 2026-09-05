@@ -846,6 +846,7 @@ type ChatScrollSnapshot = {
 function ChatHistoryPane({
   active,
   artifactById,
+  conversationHtmlRenderingEnabled,
   conversation,
   locale,
   onCopyMessage,
@@ -866,6 +867,7 @@ function ChatHistoryPane({
 }: {
   active: boolean
   artifactById: ReadonlyMap<string, AssistantArtifact>
+  conversationHtmlRenderingEnabled: boolean
   conversation: Conversation
   locale: TimeFormatLocale
   onCopyMessage: (content: string) => Promise<void>
@@ -1169,6 +1171,7 @@ function ChatHistoryPane({
           onRespondQuestion={onRespondQuestion}
           onRetry={onRetry}
           onRevealEarlier={revealEarlierMessages}
+          renderAssistantHtml={conversationHtmlRenderingEnabled}
           retryContent={
             conversation.messages.at(-2)?.role === 'user'
               ? conversation.messages.at(-2)?.content
@@ -2548,6 +2551,10 @@ function App(): React.JSX.Element {
     useState<ProjectChannel>()
   const [remoteProjectsEnabled, setRemoteProjectsEnabled] =
     useState(false)
+  const [
+    conversationHtmlRenderingEnabled,
+    setConversationHtmlRenderingEnabled
+  ] = useState(true)
   const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
   const [
     magicNotesShowIncompleteTodoCount,
@@ -3077,6 +3084,9 @@ function App(): React.JSX.Element {
     void updates
       .getSettings()
       .then(async (settings) => {
+        setConversationHtmlRenderingEnabled(
+          settings.conversationHtmlRenderingEnabled !== false
+        )
         setRemoteProjectsEnabled(settings.remoteProjectsEnabled)
         setMagicNotesEnabled(settings.magicNotesEnabled)
         setMagicNotesShowIncompleteTodoCount(
@@ -9372,6 +9382,9 @@ function App(): React.JSX.Element {
                       view === 'chat' && conversation.id === activeId
                     }
                     artifactById={assistantArtifactById}
+                    conversationHtmlRenderingEnabled={
+                      conversationHtmlRenderingEnabled
+                    }
                     conversation={conversation}
                     key={conversation.id}
                     locale={locale}
@@ -10831,6 +10844,9 @@ function App(): React.JSX.Element {
             initialChannel={settingsInitialChannel}
             magicNotesEnabled={magicNotesEnabled}
             remoteProjectsEnabled={remoteProjectsEnabled}
+            onConversationHtmlRenderingEnabledChange={
+              setConversationHtmlRenderingEnabled
+            }
             onAppearanceThemeChange={setAppearanceTheme}
             onBrandingPreferencesChange={(preferences) => {
               if (!saveBrandingPreferences(preferences)) {

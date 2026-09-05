@@ -44,6 +44,9 @@ import {
 import { displayErrorMessage } from './error-message'
 
 type PlatformFeaturesSettingsSectionProps = {
+  onConversationHtmlRenderingEnabledChange: (
+    enabled: boolean
+  ) => void
   onMagicNotesEnabledChange: (enabled: boolean) => void
   onMagicNotesShowIncompleteTodoCountChange: (
     enabled: boolean
@@ -74,6 +77,7 @@ const shortcutErrorTranslationKeys: Record<
 }
 
 export function PlatformFeaturesSettingsSection({
+  onConversationHtmlRenderingEnabledChange,
   onMagicNotesEnabledChange,
   onMagicNotesShowIncompleteTodoCountChange,
   onRemoteProjectsEnabledChange,
@@ -486,6 +490,34 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
+  const changeConversationHtmlRendering = async (
+    enabled: boolean
+  ): Promise<void> => {
+    const updates = window.goodbuddy.updates
+    if (!updates || !settings) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      const nextSettings = await updates.updateSettings({
+        conversationHtmlRenderingEnabled: enabled
+      })
+      setSettings(nextSettings)
+      onConversationHtmlRenderingEnabledChange(
+        nextSettings.conversationHtmlRenderingEnabled
+      )
+    } catch {
+      setError(
+        t(
+          'platformFeatures.errors.saveConversationHtmlRenderingFailed'
+        )
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const changeRemoteProjects = async (
     enabled: boolean
   ): Promise<void> => {
@@ -723,6 +755,36 @@ export function PlatformFeaturesSettingsSection({
             </p>
           )}
         </article>
+        {settings && (
+          <article className="capability-card">
+            <div className="capability-card__header">
+              <div>
+                <strong>
+                  {t('platformFeatures.conversationHtml.title')}
+                </strong>
+                <small>
+                  {t('platformFeatures.conversationHtml.description')}
+                </small>
+              </div>
+            </div>
+            <label className="toggle-row">
+              <input
+                checked={settings.conversationHtmlRenderingEnabled}
+                disabled={saving}
+                onChange={(event) =>
+                  void changeConversationHtmlRendering(
+                    event.target.checked
+                  )
+                }
+                role="switch"
+                type="checkbox"
+              />
+              <span>
+                {t('platformFeatures.conversationHtml.enabled')}
+              </span>
+            </label>
+          </article>
+        )}
         {settings ? (
         <article className="capability-card">
           <div className="capability-card__header">

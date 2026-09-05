@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { Components } from 'react-markdown'
 import { useTranslation } from 'react-i18next'
+import { StaticHtmlPreview } from './StaticHtmlPreview'
 
 const MermaidDiagram = lazy(() =>
   import('./MermaidDiagram').then((module) => ({
@@ -34,7 +35,8 @@ const linkComponent: Components['a'] = ({
 
 function markdownComponents(
   tableAriaLabel: string,
-  mermaidLoadingLabel: string
+  mermaidLoadingLabel: string,
+  renderHtml: boolean
 ): Components {
   return {
     a: linkComponent,
@@ -70,6 +72,22 @@ function markdownComponents(
           </Suspense>
         )
       }
+      if (
+        renderHtml &&
+        isValidElement<{
+          children?: React.ReactNode
+          className?: string
+        }>(child) &&
+        /(?:^|\s)language-html?(?:\s|$)/iu.test(
+          child.props.className ?? ''
+        )
+      ) {
+        const source = String(child.props.children ?? '').replace(
+          /\n$/u,
+          ''
+        )
+        return <StaticHtmlPreview source={source} />
+      }
       return <pre {...properties}>{children}</pre>
     },
     table: ({ children, node, ...properties }) => {
@@ -90,6 +108,7 @@ function markdownComponents(
 
 type MarkdownRendererProps = {
   children: string
+  renderHtml?: boolean
 }
 
 const inlineMarkdownComponents: Components = {
@@ -213,18 +232,49 @@ function unwrapMarkdownFence(content: string): string {
   return fencedMarkdown?.[1] ?? content
 }
 
+function standaloneHtmlSource(content: string): string | undefined {
+  const trimmed = content.trim()
+  if (
+    /^(?:<!doctype\s+html(?:\s[^>]*)?>\s*)?<html(?:\s|>)/iu.test(
+      trimmed
+    ) ||
+    /^<[a-z][a-z0-9:-]*(?:\s[^<>]*?)?>[\s\S]*<\/[a-z][a-z0-9:-]*>\s*$/iu.test(
+      trimmed
+    )
+  ) {
+    return trimmed
+  }
+  return undefined
+}
+
 export const MarkdownRenderer = memo(function MarkdownRenderer({
-  children
+  children,
+  renderHtml = false
 }: MarkdownRendererProps): React.JSX.Element {
   const { t } = useTranslation('app')
+  const normalizedContent = normalizeLatexDelimiters(
+    unwrapMarkdownFence(children)
+  )
   const components = useMemo(
     () =>
       markdownComponents(
         t('markdown.scrollableTable'),
-        t('markdown.mermaidLoading')
+        t('markdown.mermaidLoading'),
+        renderHtml
       ),
-    [t]
+    [renderHtml, t]
   )
+  const standaloneHtml = standaloneHtmlSource(normalizedContent)
+
+  if (standaloneHtml) {
+    return renderHtml ? (
+      <StaticHtmlPreview source={standaloneHtml} />
+    ) : (
+      <pre>
+        <code className="language-html">{standaloneHtml}</code>
+      </pre>
+    )
+  }
 
   return (
     <ReactMarkdown
@@ -245,7 +295,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
       ]}
       skipHtml
     >
-      {normalizeLatexDelimiters(unwrapMarkdownFence(children))}
+      {normalizedContent}
     </ReactMarkdown>
   )
 })
