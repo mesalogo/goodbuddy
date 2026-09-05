@@ -2,6 +2,50 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.4",
+      "releasedAt": "2026-09-05",
+      "notes": {
+        "zh-CN": {
+          "highlights": [
+            "GoodBuddy 0.12.4 新增会话内 HTML 静态预览，并改善长任务活动、大文件预览、长回复与消息队列、远程任务终态，以及 Linux ARM 上的 OpenCode 后续响应速度。"
+          ],
+          "features": [
+            "**会话内 HTML 静态预览。** Agent 和 Subagent 完成回复后，完整 HTML 文档及 HTML 代码块可直接在会话中预览，并支持查看源码和全屏展示。该能力默认开启，可在“平台功能 / 通用设置”中关闭；预览不会执行脚本、访问网络、提交表单或打开窗口。"
+          ],
+          "fixes": [
+            "**长任务活动与大文件预览更完整。** Runtime 工具和 Subagent 活动现在持久保存在 Main SQLite 中，不再受旧版条目数、详情长度或缓存总量限制；旧数据可能已被截断时会明确提示。本地和远程超过 256 KiB 的 UTF-8 文本文件可按页继续加载，不再直接拒绝预览。",
+            "**长回复和消息队列不再意外中断。** 直连模型的流式及非流式长回复、工具参数和累计答案不再因固定字节上限失败。上一次运行失败、被中断或未成功启动后，后续消息会释放并继续调度，不再长期停留在等待队列。",
+            "**远程任务终态显示更准确。** 托管 SSH 任务断线恢复后，已持久化的完成或失败状态会覆盖旧的本地流式状态；窗口重新聚焦或恢复可见时也会重新读取会话，避免 Agent 已结束但界面仍显示处理中。",
+            "**Linux ARM 上 OpenCode 后续响应更快。** 原生能力清单与后续对话请求现在复用同一个 Runtime，不再先启动并销毁临时 OpenCode Server、再为首条消息重复冷启动。"
+          ],
+          "notices": [
+            "**远程项目仍为技术预览。** Host 需要单独发布的 Agent `0.11.18`；Desktop `0.12.4` 不内置 Agent 或远程 Runtime。Ask 保持只读，Execute 表示授权所选 SSH 账号可用的完整工具、进程、网络和写入权限。",
+            "**HTML 预览是静态展示。** 预览保留作者样式，但禁止脚本和外部资源；关闭该功能后继续显示 HTML 源码。",
+            "**发布平台。** GoodBuddy 使用 Windows、macOS、Linux 的 `x64`/`arm64` 标准发布矩阵。本次不构建独立的 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [
+            "GoodBuddy 0.12.4 adds static HTML previews in conversations and improves long-run activity, large-file previews, long replies and message queues, remote terminal state, and OpenCode follow-up speed on Linux ARM."
+          ],
+          "features": [
+            "**Static HTML previews in conversations.** Completed Agent and Subagent replies can render complete HTML documents and HTML code blocks directly in the conversation, with source and full-screen views. The feature is enabled by default and can be disabled under Platform Features / General; previews cannot run scripts, access the network, submit forms, or open windows."
+          ],
+          "fixes": [
+            "**Complete long-run activity and large-file previews.** Runtime tool and Subagent activity is now persisted in Main SQLite without the former item-count, detail-length, or total-cache limits, with a clear warning when legacy data may already have been truncated. Local and remote UTF-8 text files larger than 256 KiB can continue loading page by page instead of being rejected.",
+            "**Long replies and message queues no longer stop unexpectedly.** Direct-model streaming and non-streaming replies, tool arguments, and accumulated answers no longer fail at fixed byte limits. After a previous run fails, is interrupted, or never starts, later messages are released and dispatched instead of remaining queued indefinitely.",
+            "**Accurate terminal state after remote recovery.** After a managed SSH disconnect, persisted completion or failure now replaces stale local streaming state. Conversations are also refreshed when the window regains focus or visibility, avoiding a Processing state after the Agent has already finished.",
+            "**Faster follow-up after switching to OpenCode on Linux ARM.** Native capability discovery and later conversation requests now share one Runtime instead of starting and destroying a temporary OpenCode Server before cold-starting another one for the first message."
+          ],
+          "notices": [
+            "**Remote Projects remain a technical preview.** Hosts require the separately published Agent `0.11.18`; Desktop `0.12.4` does not embed the Agent or Remote Runtime. Ask remains read-only, while Execute authorizes the full tools, processes, network access, and writable paths available to the selected SSH account.",
+            "**HTML previews are static.** Author styles are preserved, but scripts and external resources are blocked. Disabling the feature keeps the HTML source visible.",
+            "**Release platforms.** GoodBuddy uses the standard Windows, macOS, and Linux `x64`/`arm64` release matrix. This release does not include a separate experimental LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.3",
       "releasedAt": "2026-09-04",
       "notes": {

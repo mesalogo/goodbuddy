@@ -84,8 +84,9 @@ otherwise.
   rather than entering the model-and-project execution cache. For managed
   local OpenCode, this passive check validates the selected path and model
   credential without starting a throwaway server; the explicit settings test,
-  native inventory, and first real use still perform full startup and health
-  checks. Execution Runtimes remain reusable per project. GoodBuddy-managed local OpenCode keeps
+  native inventory still performs full startup and health checks, then shares
+  that execution Runtime with the first real request instead of cold-starting
+  another server. Execution Runtimes remain reusable per project. GoodBuddy-managed local OpenCode keeps
   requests in the same conversation ordered, while different conversations in
   the same project and different projects can run in parallel. Request-scoped
   dynamic MCP tools remain isolated through default wildcard disablement and
@@ -147,7 +148,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.17`, while the current Desktop release candidate is `0.12.3`; formal
+  `0.11.18`, while the current Desktop release candidate is `0.12.4`; formal
   publication status follows the separate Agent and Desktop
   release channels.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
