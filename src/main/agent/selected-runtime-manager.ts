@@ -355,18 +355,11 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
     selection: AgentRuntimeSelection,
     executionSpace?: ExecutionSpaceDescriptor
   ): Promise<RuntimeNativeSnapshot> {
-    const runtime = await this.createRuntime(selection, executionSpace)
-    try {
-      if (this.disposed) {
-        throw new Error('Agent Runtime 正在关闭')
-      }
-      if (!runtime.getNativeSnapshot) {
-        throw new Error('当前 Runtime 不支持原生能力清单')
-      }
-      return await runtime.getNativeSnapshot()
-    } finally {
-      await runtime.dispose()
-    }
+    // The inventory runs on the same cached Runtime that later serves the
+    // conversation, so a slow cold start (embedded OpenCode on Linux ARM)
+    // is paid once instead of once per inventory and again per request.
+    const controller = await this.getRuntime(selection, executionSpace)
+    return controller.getNativeSnapshot()
   }
 
   private async startRetiring(

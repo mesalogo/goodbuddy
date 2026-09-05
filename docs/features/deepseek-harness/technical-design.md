@@ -338,7 +338,7 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 
 ### 9.4 释放与退出
 
-- 原生能力清单通过一次性 Runtime 探测，取得有界快照后立即 dispose，不得因浏览设置或切换项目把 Host 缓存在执行 Runtime 池中。
+- 原生能力清单由 `SelectedRuntimeManager` 缓存的执行 Runtime 提供，与随后的对话请求共用同一实例，不再为清单单独启动并销毁一次 Host；该实例遵循执行缓存的空闲淘汰、设置变更 reset 和退出 dispose 规则。
 - 删除或释放对话时调用 `goodbuddy/session/release`。
 - Runtime dispose 时先拒绝新请求，再取消所有 Session。
 - Harness Control Plane 完成 Agent、工具和会话清理，Host 完成 Cordis Fiber 与子进程的反向清理。

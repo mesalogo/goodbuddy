@@ -318,13 +318,9 @@ describe('SelectedRuntimeManager', () => {
     await manager.dispose()
   })
 
-  it('disposes a native-inventory runtime without caching it', async () => {
-    const inspected = runtime()
-    const cached = runtime()
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(inspected.value)
-      .mockResolvedValueOnce(cached.value)
+  it('serves the native inventory from the cached execution runtime', async () => {
+    const shared = runtime()
+    const create = vi.fn(async () => shared.value)
     const manager = new SelectedRuntimeManager(create)
     const selection = { provider: 'opencode' as const }
 
@@ -337,14 +333,41 @@ describe('SelectedRuntimeManager', () => {
       provider: 'opencode',
       inventoryStatus: 'available'
     })
-    expect(inspected.getNativeSnapshot).toHaveBeenCalledOnce()
-    expect(inspected.dispose).toHaveBeenCalledOnce()
+    expect(shared.getNativeSnapshot).toHaveBeenCalledOnce()
+    expect(shared.dispose).not.toHaveBeenCalled()
 
-    await manager.getRuntime(
+    const controller = await manager.getRuntime(
       selection,
       executionSpace('local:project-one')
     )
+    expect(create).toHaveBeenCalledOnce()
+    await expect(controller.getStatus()).resolves.toMatchObject({
+      available: true
+    })
+
+    await manager.getNativeSnapshot(
+      selection,
+      executionSpace('local:project-two')
+    )
     expect(create).toHaveBeenCalledTimes(2)
+    await manager.dispose()
+    expect(shared.dispose).toHaveBeenCalled()
+  })
+
+  it('rejects the native inventory when the runtime lacks it', async () => {
+    const plain = runtime()
+    const withoutInventory: AgentRuntime = { ...plain.value }
+    delete withoutInventory.getNativeSnapshot
+    const manager = new SelectedRuntimeManager(
+      vi.fn(async () => withoutInventory)
+    )
+
+    await expect(
+      manager.getNativeSnapshot({
+        provider: 'model',
+        profileId: '00000000-0000-4000-8000-000000000001'
+      })
+    ).rejects.toThrow('当前 Runtime 不支持原生能力清单')
     await manager.dispose()
   })
 
