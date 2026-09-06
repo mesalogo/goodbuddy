@@ -48,7 +48,7 @@ type ManagedRemoteRuntimeIdentity = {
   bundleDigest: string
   runtimeAdapterDigest: string
   acpCapabilitiesDigest: string
-  platform: 'linux'
+  platform: 'linux' | 'darwin'
   architecture: 'x64' | 'arm64'
 }
 
@@ -648,7 +648,7 @@ function runtimeIdentityFromCapabilities(
 ): ManagedRemoteRuntimeIdentity {
   if (
     installation.runtimeId !== 'opencode' ||
-    installation.platform !== 'linux'
+    (installation.platform !== 'linux' && !(installation.platform === 'darwin' && installation.architecture === 'arm64'))
   ) {
     throw new Error(
       'Remote Agent does not advertise the current Runtime'
@@ -660,7 +660,7 @@ function runtimeIdentityFromCapabilities(
     bundleDigest: installation.bundleDigest,
     runtimeAdapterDigest: installation.runtimeAdapterDigest,
     acpCapabilitiesDigest: installation.acpCapabilitiesDigest,
-    platform: 'linux',
+    platform: installation.platform,
     architecture: installation.architecture
   }
   assertRuntimeAdvertised(runtime, capabilities)

@@ -127,7 +127,7 @@ export type SshRemotePackageAgentIdentity = {
   agentVersion: string;
   manifestSha256: string;
   binaryDigest: string;
-  platform: "linux";
+  platform: "linux" | "darwin";
   architecture: "x64" | "arm64";
   protocol: SshRemotePackageProtocol;
   supervisor: "detached-on-demand";
@@ -140,7 +140,7 @@ export type SshRemotePackageRuntimeIdentity = {
   manifestDigest: string;
   runtimeAdapterDigest: string;
   acpCapabilitiesDigest: string;
-  platform: "linux";
+  platform: "linux" | "darwin";
   architecture: "x64" | "arm64";
   protocol: SshRemotePackageProtocol;
 };
@@ -614,9 +614,17 @@ if [ "$action" = prepare-uploaded ]; then
   run_prepare
 fi
 command -v curl >/dev/null 2>&1 || stop unavailable missing-curl
-command -v sha256sum >/dev/null 2>&1 || stop unavailable missing-sha256sum
+hash_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$@"
+  else
+    return 1
+  fi
+}
 command -v unzip >/dev/null 2>&1 || stop unavailable missing-unzip
-printf test | sha256sum >/dev/null 2>&1 || stop unavailable missing-sha256sum
+printf test | hash_sha256 >/dev/null 2>&1 || stop unavailable missing-sha256sum
 unzip -v >/dev/null 2>&1 || stop unavailable missing-unzip
 if ! mkdir -p -- "$staging_root"; then stop unavailable managed-path-unavailable; fi
 if [ -L "$goodbuddy_root" ] || [ -L "$managed_root" ] ||
@@ -708,7 +716,7 @@ set -- $actual_size
 actual_size=${SHELL_FIRST_POSITIONAL_OR_EMPTY}
 [ "$actual_size" = "$expected_size" ] || stop failed size-mismatch
 emit_progress verifying
-actual_sha256=$(sha256sum "$archive" 2>/dev/null) || stop failed sha256-mismatch
+actual_sha256=$(hash_sha256 "$archive" 2>/dev/null) || stop failed sha256-mismatch
 set -- $actual_sha256
 actual_sha256=${SHELL_FIRST_POSITIONAL_OR_EMPTY}
 [ "$actual_sha256" = "$expected_sha256" ] || stop failed sha256-mismatch
@@ -973,7 +981,7 @@ function parsePackageIdentity(
     agent.installationId !== `agent-${agent.manifestSha256}` ||
     agent.binaryDigest !== `sha256:${agent.manifestSha256}` ||
     !isVersion(agent.agentVersion) ||
-    agent.platform !== "linux" ||
+    (agent.platform !== "linux" && !(agent.platform === "darwin" && architecture === "arm64")) ||
     (architecture !== "x64" && architecture !== "arm64") ||
     !agentProtocol ||
     agent.supervisor !== "detached-on-demand" ||
@@ -987,7 +995,7 @@ function parsePackageIdentity(
     !DIGEST_PATTERN.test(runtime.runtimeAdapterDigest) ||
     typeof runtime.acpCapabilitiesDigest !== "string" ||
     !DIGEST_PATTERN.test(runtime.acpCapabilitiesDigest) ||
-    runtime.platform !== "linux" ||
+    runtime.platform !== agent.platform ||
     runtime.architecture !== architecture ||
     !runtimeProtocol
   ) {
@@ -1003,7 +1011,7 @@ function parsePackageIdentity(
       agentVersion: agent.agentVersion,
       manifestSha256: agent.manifestSha256,
       binaryDigest: agent.binaryDigest,
-      platform: "linux",
+      platform: agent.platform as "linux" | "darwin",
       architecture,
       protocol: agentProtocol,
       supervisor: "detached-on-demand",
@@ -1015,7 +1023,7 @@ function parsePackageIdentity(
       manifestDigest: runtime.manifestDigest,
       runtimeAdapterDigest: runtime.runtimeAdapterDigest,
       acpCapabilitiesDigest: runtime.acpCapabilitiesDigest,
-      platform: "linux",
+      platform: agent.platform as "linux" | "darwin",
       architecture,
       protocol: runtimeProtocol,
     },

@@ -20,6 +20,7 @@ import {
 } from '../../shared/agent-package-contracts'
 import {
   AgentPackageManager,
+  selectLatestCompatibleEntry,
   type VerifiedRemoteAgentInstallCandidate
 } from './agent-package-manager'
 
@@ -256,6 +257,22 @@ function response(
 }
 
 describe('AgentPackageManager remote install candidates', () => {
+  it('selects Linux and Darwin arm64 independently from one catalog', async () => {
+    await createFixture('mirror', (catalog) => {
+      for (const platform of ['linux', 'darwin'] as const) {
+        catalog.entries.push({
+          ...catalog.entries[0]!,
+          platform,
+          architecture: 'arm64',
+          archive: `goodbuddy-agent-2.0.0-${platform}-arm64.gbagent`
+        })
+      }
+      const parsed = agentPackageCatalogSchema.parse(catalog)
+      expect(selectLatestCompatibleEntry(parsed, 'arm64', '2.0.0').platform).toBe('linux')
+      expect(selectLatestCompatibleEntry(parsed, 'arm64', '2.0.0', 'darwin').platform).toBe('darwin')
+      expect(() => selectLatestCompatibleEntry(parsed, 'x64', '2.0.0', 'darwin')).toThrow()
+    })
+  })
   it('removes interrupted manager-owned staging on startup', async () => {
     const fixture = await createFixture('mirror')
     const packageRoot = join(

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { open } from 'node:fs/promises'
+import { binaryTargetArchitecture } from '../shared/node/binary-target'
+import type { AgentPlatform } from '../shared/agent-target'
 import type {
   AgentArchitecture
 } from '../shared/agent-installation-contracts'
@@ -16,7 +18,8 @@ export async function sha256File(filePath: string): Promise<string> {
 export async function assertElfArchitecture(
   filePath: string,
   expected: AgentArchitecture,
-  label: string
+  label: string,
+  platform: AgentPlatform = 'linux'
 ): Promise<void> {
   const handle = await open(filePath, 'r')
   try {
@@ -27,8 +30,8 @@ export async function assertElfArchitecture(
       header.length,
       0
     )
-    const actual = detectElfArchitecture(
-      header.subarray(0, bytesRead)
+    const actual = binaryTargetArchitecture(
+      header.subarray(0, bytesRead), platform
     )
     if (actual !== expected) {
       throw new Error(
@@ -38,26 +41,4 @@ export async function assertElfArchitecture(
   } finally {
     await handle.close()
   }
-}
-
-function detectElfArchitecture(
-  header: Buffer
-): AgentArchitecture | undefined {
-  if (
-    header.length < 20 ||
-    header[0] !== 0x7f ||
-    header.toString('ascii', 1, 4) !== 'ELF' ||
-    (header[5] !== 1 && header[5] !== 2)
-  ) {
-    return undefined
-  }
-  const machine =
-    header[5] === 2
-      ? header.readUInt16BE(18)
-      : header.readUInt16LE(18)
-  return machine === 62
-    ? 'x64'
-    : machine === 183
-      ? 'arm64'
-      : undefined
 }

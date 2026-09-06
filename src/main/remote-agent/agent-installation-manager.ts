@@ -43,7 +43,7 @@ export type AgentInstallationIdentity = {
     major: number
     minor: number
   }
-  platform: 'linux'
+  platform: 'linux' | 'darwin'
   architecture: AgentArchitecture
   supervisor: 'detached-on-demand'
 }
@@ -239,7 +239,7 @@ export class AgentInstallationManager {
         protocol: {
           ...(registeredProtocol ?? runtimeLock.protocol)
         },
-        platform: 'linux',
+        platform: probe.platform,
         architecture: registered.arch,
         supervisor: 'detached-on-demand'
       }

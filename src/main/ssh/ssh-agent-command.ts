@@ -129,17 +129,17 @@ export function parseAgentBootstrapProbeOutput(
   }
 
   const os = values.get('os')
-  if (os !== 'Linux') {
-    return incompatible('non-linux')
+  if (os !== 'Linux' && os !== 'Darwin') {
+    return incompatible('unsupported-platform')
   }
   const rawArchitecture = values.get('arch')
   const architecture =
     rawArchitecture === 'x86_64'
       ? 'x64'
-      : rawArchitecture === 'aarch64'
+      : rawArchitecture === 'aarch64' || rawArchitecture === 'arm64'
         ? 'arm64'
         : undefined
-  if (!architecture) {
+  if (!architecture || (os === 'Darwin' && architecture !== 'arm64')) {
     return incompatible('unsupported-architecture')
   }
 
@@ -169,17 +169,17 @@ export function parseAgentBootstrapProbeOutput(
   if (procfs !== 'ready' && procfs !== 'unavailable') {
     throw new Error('Agent 启动探针返回了无效结果')
   }
-  if (procfs === 'unavailable') {
+  if (procfs === 'unavailable' && os === 'Linux') {
     return incompatible('procfs-unavailable')
   }
   return agentBootstrapProbeResultSchema.parse({
     ready: true,
-    platform: 'linux',
+    platform: os === 'Darwin' ? 'darwin' : 'linux',
     architecture,
     canonicalHomeDirectory: home,
     uid,
     shell,
-    procfs: 'ready'
+    procfs: os === 'Darwin' ? 'not-applicable' : 'ready'
   })
 }
 

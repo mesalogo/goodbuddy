@@ -7,6 +7,7 @@ import {
 import { isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { assertAbsoluteManagedPath } from './managed-paths'
+import { inspectDarwinProcess } from './darwin-process-identity'
 
 const linuxProcessIdentitySchema = z
   .object({
@@ -45,6 +46,14 @@ export class LinuxProcessInspector {
 
   inspect(pidInput: number): LinuxProcessIdentity | undefined {
     const pid = positivePid(pidInput)
+    if (process.platform === 'darwin') {
+      const identity = inspectDarwinProcess(pid)
+      return identity === undefined ? undefined : {
+        pid: identity.pid,
+        starttime: identity.starttime,
+        executablePath: identity.executablePath
+      }
+    }
     try {
       const starttime = parseStarttime(
         this.#fileSystem.readText(

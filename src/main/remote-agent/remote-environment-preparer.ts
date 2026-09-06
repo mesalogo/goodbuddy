@@ -164,7 +164,8 @@ export class RemoteEnvironmentPreparer implements Preparer {
           await this.#acquireGoodBuddyArchive(
             probe.architecture,
             emit,
-            signal
+            signal,
+            probe.platform
           )
         candidate = archiveLease.candidate
         method = 'goodbuddy-transfer'
@@ -173,7 +174,7 @@ export class RemoteEnvironmentPreparer implements Preparer {
           candidate =
             await this.#agentPackageManager.getRemoteInstallCandidate(
               probe.architecture,
-              { signal }
+              { signal, platform: probe.platform }
             )
         } catch (error) {
           if (requestedMethod === 'remote-download') {
@@ -183,14 +184,15 @@ export class RemoteEnvironmentPreparer implements Preparer {
             await this.#acquireGoodBuddyArchive(
               probe.architecture,
               emit,
-              signal
+              signal,
+              probe.platform
             )
           candidate = archiveLease.candidate
           method = 'goodbuddy-transfer'
         }
       }
       signal.throwIfAborted()
-      assertCandidate(candidate, probe.architecture)
+      assertCandidate(candidate, probe.architecture, probe.platform)
       await assertTargetCurrent(this.#resolver, target, signal)
 
       operationId = randomUUID()
@@ -503,12 +505,14 @@ export class RemoteEnvironmentPreparer implements Preparer {
       method: RemoteEnvironmentPreparationMethod,
       phase: RemoteEnvironmentUpdateProgress['phase']
     ) => void,
-    signal: AbortSignal
+    signal: AbortSignal,
+    platform: 'linux' | 'darwin'
   ): Promise<AgentPackageArchiveLease> {
     return this.#agentPackageManager.acquireGoodBuddyInstallArchive(
       architecture,
       {
         signal,
+        platform,
         onProgress: (progress) => {
           emit(
             'goodbuddy-transfer',
@@ -674,10 +678,11 @@ function assertSameLeaseIdentity(
 
 function assertCandidate(
   candidate: VerifiedRemoteAgentInstallCandidate,
-  architecture: 'x64' | 'arm64'
+  architecture: 'x64' | 'arm64',
+  platform: 'linux' | 'darwin'
 ): void {
   if (
-    candidate.platform !== 'linux' ||
+    candidate.platform !== platform ||
     candidate.architecture !== architecture
   ) {
     throw new Error('签名 Agent 安装候选与 Host 架构不匹配')

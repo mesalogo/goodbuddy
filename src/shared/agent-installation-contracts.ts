@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { agentPlatformSchema } from './agent-target'
 
 const versionPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+((?:[0-9a-zA-Z-]+)(?:\.[0-9a-zA-Z-]+)*))?$/u
@@ -81,7 +82,7 @@ export const agentBundleManifestSchema = z
     formatVersion: z.literal(1),
     product: z.literal('GoodBuddy'),
     agentVersion: componentVersionSchema,
-    platform: z.literal('linux'),
+    platform: agentPlatformSchema,
     arch: agentArchitectureSchema,
     protocol: agentProtocolVersionSchema,
     signingKeyId: z.string().regex(keyIdPattern),
@@ -248,7 +249,8 @@ export const agentRuntimeLockSchema = z
         targets: z
           .object({
             'linux-x64': lockedNodeTargetSchema,
-            'linux-arm64': lockedNodeTargetSchema
+            'linux-arm64': lockedNodeTargetSchema,
+            'darwin-arm64': lockedNodeTargetSchema.optional()
           })
           .strict()
       })

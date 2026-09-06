@@ -45,17 +45,22 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build Linux ${{ matrix.arch }} compound package
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }} compound package
     needs: authorize
     if: needs.authorize.outputs.authorized == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
+          - platform: linux
+            arch: x64
             runner: ubuntu-24.04
-          - arch: arm64
+          - platform: linux
+            arch: arm64
             runner: ubuntu-24.04-arm
+          - platform: darwin
+            arch: arm64
+            runner: macos-15
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     environment:
@@ -76,11 +81,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify native build target
+        run: node -e "if(process.platform !== '${{ matrix.platform }}' || process.arch !== '${{ matrix.arch }}') throw new Error('Native Agent target mismatch')"
+
       - name: Resolve locked native inputs
         id: inputs
         shell: bash
         env:
           AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           node - <<'NODE'
@@ -88,9 +97,11 @@ jobs:
           const { createHash } = require('node:crypto')
           const agent = require('./agent-runtime-lock.json')
           const remote = require('./remote-runtime-lock.json')
-          const node = agent.node?.targets?.[`linux-${process.env.AGENT_ARCH}`]
+          const node = agent.node?.targets?.[`${process.env.AGENT_PLATFORM}-${process.env.AGENT_ARCH}`]
           const runtime = remote.runtimes?.opencode
-          const opencode = runtime?.targets?.[process.env.AGENT_ARCH]
+          const runtimeKey = process.env.AGENT_PLATFORM === 'linux'
+            ? process.env.AGENT_ARCH : `${process.env.AGENT_PLATFORM}-${process.env.AGENT_ARCH}`
+          const opencode = runtime?.targets?.[runtimeKey]
           if (
             !node ||
             !opencode ||
@@ -136,7 +147,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/goodbuddy-agent-release-inputs
-          key: goodbuddy-agent-release-${{ matrix.arch }}-${{ steps.inputs.outputs.cache-key }}
+          key: goodbuddy-agent-release-${{ matrix.platform }}-${{ matrix.arch }}-${{ steps.inputs.outputs.cache-key }}
 
       - name: Acquire and verify native inputs
         shell: bash
@@ -162,8 +173,14 @@ jobs:
               "$NODE_URL" --output "$node_archive.partial"
             mv "$node_archive.partial" "$node_archive"
           fi
-          printf '%s  %s\n' "$NODE_SHA256" "$node_archive" |
-            sha256sum --check --strict -
+          node - "$node_archive" "$NODE_SHA256" <<'NODE'
+          const { createHash } = require('node:crypto')
+          const { readFileSync } = require('node:fs')
+          const [archive, expected] = process.argv.slice(2)
+          if (createHash('sha256').update(readFileSync(archive)).digest('hex') !== expected) {
+            throw new Error('Node runtime archive integrity mismatch')
+          }
+          NODE
 
           opencode_archive="$directory/$OPENCODE_ARCHIVE"
           if [[ ! -f "$opencode_archive" ]]; then
@@ -201,6 +218,7 @@ jobs:
         shell: bash
         env:
           AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_PLATFORM: ${{ matrix.platform }}
           AGENT_VERSION: ${{ needs.authorize.outputs.version }}
           GOODBUDDY_SIGNING_KEY_ID: ${{ vars.GOODBUDDY_SIGNING_KEY_ID }}
           GOODBUDDY_SIGNING_PRIVATE_KEY: ${{ secrets.GOODBUDDY_SIGNING_PRIVATE_KEY }}
@@ -211,11 +229,12 @@ jobs:
           output="$RUNNER_TEMP/goodbuddy-agent-output"
           mkdir -p "$output"
           node build/agent-package.cjs build \
+            --platform "$AGENT_PLATFORM" \
             --arch "$AGENT_ARCH" \
             --minimum-desktop-version "$(node -p "require('./package.json').version")" \
             --node-archive "$RUNNER_TEMP/goodbuddy-agent-release-inputs/$NODE_ARCHIVE" \
             --runtime-archive "$RUNNER_TEMP/goodbuddy-agent-release-inputs/$OPENCODE_ARCHIVE" \
-            --output "$output/goodbuddy-agent-$AGENT_VERSION-linux-$AGENT_ARCH.gbagent" \
+            --output "$output/goodbuddy-agent-$AGENT_VERSION-$AGENT_PLATFORM-$AGENT_ARCH.gbagent" \
             > "$output/result.json"
           node - "$output/result.json" "$AGENT_ARCH" "$AGENT_VERSION" <<'NODE'
           const { readFileSync } = require('node:fs')
@@ -223,9 +242,10 @@ jobs:
           const result = JSON.parse(readFileSync(resultPath, 'utf8'))
           if (
             result.descriptor?.architecture !== architecture ||
+            result.descriptor?.platform !== process.env.AGENT_PLATFORM ||
             result.descriptor?.version !== version ||
             result.archive !==
-              `goodbuddy-agent-${version}-linux-${architecture}.gbagent` ||
+              `goodbuddy-agent-${version}-${process.env.AGENT_PLATFORM}-${architecture}.gbagent` ||
             !/^[a-f0-9]{64}$/u.test(result.sha256)
           ) {
             throw new Error('Production Agent package result is invalid')
@@ -235,7 +255,7 @@ jobs:
       - name: Upload verified compound package
         uses: actions/upload-artifact@v7
         with:
-          name: goodbuddy-agent-package-linux-${{ matrix.arch }}
+          name: goodbuddy-agent-package-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/goodbuddy-agent-output/goodbuddy-agent-*.gbagent
           if-no-files-found: error
           compression-level: 0
@@ -269,7 +289,7 @@ jobs:
       - name: Download compound packages
         uses: actions/download-artifact@v8
         with:
-          pattern: goodbuddy-agent-package-linux-*
+          pattern: goodbuddy-agent-package-*
           path: dist/agent-release
           merge-multiple: true
 
@@ -353,6 +373,7 @@ jobs:
           node build/agent-catalog.cjs create \
             --x64-package "dist/agent-release/goodbuddy-agent-$AGENT_VERSION-linux-x64.gbagent" \
             --arm64-package "dist/agent-release/goodbuddy-agent-$AGENT_VERSION-linux-arm64.gbagent" \
+            --darwin-arm64-package "dist/agent-release/goodbuddy-agent-$AGENT_VERSION-darwin-arm64.gbagent" \
             "${previous[@]}" \
             --catalog dist/agent-release/agent-catalog.json \
             --signature dist/agent-release/agent-catalog.sig \
@@ -489,8 +510,8 @@ jobs:
         run: |
           set -euo pipefail
           root="https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases/v$AGENT_VERSION"
-          for architecture in x64 arm64; do
-            name="goodbuddy-agent-$AGENT_VERSION-linux-$architecture.gbagent"
+          for target in linux-x64 linux-arm64 darwin-arm64; do
+            name="goodbuddy-agent-$AGENT_VERSION-$target.gbagent"
             curl --fail --silent --show-error --location \
               "$root/$name" --output "$RUNNER_TEMP/$name"
             cmp "dist/agent-release/$name" "$RUNNER_TEMP/$name"

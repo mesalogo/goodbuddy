@@ -155,6 +155,7 @@ function harness(options: {
       installationId: agentInstallationId,
       binaryDigest: status.binaryDigest,
       version: status.agentVersion,
+      platform: 'linux',
       architecture,
       protocolMajor: 1
     },

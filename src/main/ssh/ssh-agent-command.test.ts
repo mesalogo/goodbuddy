@@ -214,7 +214,8 @@ describe('fixed Agent SSH commands', () => {
     const cases: Array<
       [Partial<Record<string, string>>, string]
     > = [
-      [{ os: 'Darwin' }, 'non-linux'],
+      [{ os: 'Darwin' }, 'unsupported-architecture'],
+      [{ os: 'FreeBSD' }, 'unsupported-platform'],
       [{ arch: 'riscv64' }, 'unsupported-architecture'],
       [{ home: 'unknown' }, 'home-directory-unavailable'],
       [{ uid: 'unknown' }, 'uid-unavailable'],

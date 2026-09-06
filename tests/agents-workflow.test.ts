@@ -89,21 +89,26 @@ describe('GoodBuddy Agents workflow', () => {
     expect(workflow.match(/'src\/shared\/\*\*'/gu)).toHaveLength(2)
   })
 
-  it('builds both Agent architectures on native Linux runners', () => {
+  it('builds Linux and Darwin arm64 targets on native runners', () => {
     expect(
       parsedWorkflow.jobs.build?.strategy?.matrix?.include
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
+    ).toEqual([
+        {
+          platform: 'linux',
           arch: 'x64',
           runner: 'ubuntu-24.04'
-        }),
-        expect.objectContaining({
+        },
+        {
+          platform: 'linux',
           arch: 'arm64',
           runner: 'ubuntu-24.04-arm'
-        })
+        },
+        {
+          platform: 'darwin',
+          arch: 'arm64',
+          runner: 'macos-15'
+        }
       ])
-    )
     expect(parsedWorkflow.jobs.build?.needs).toBe('validate')
     expect(serializedJob('build')).toContain(
       '"runs-on":"${{ matrix.runner }}"'
@@ -125,7 +130,7 @@ describe('GoodBuddy Agents workflow', () => {
   it('resolves and verifies the locked official Node runtime', () => {
     const scripts = jobScripts('build')
     expect(scripts).toContain(
-      "require('./agent-runtime-lock.json')"
+      "require('./build/agent-ci-bundle.cjs').readCiLocks("
     )
     expect(scripts).toContain("url.protocol !== 'https:'")
     expect(scripts).toContain("url.hostname !== 'nodejs.org'")
@@ -133,14 +138,15 @@ describe('GoodBuddy Agents workflow', () => {
       "curl --proto '=https' --tlsv1.2"
     )
     expect(scripts).toContain('--max-filesize 104857600')
-    expect(scripts).toContain('sha256sum --check --strict -')
+    expect(scripts).toContain('Node runtime archive integrity mismatch')
+    expect(scripts).not.toContain('sha256sum')
     expect(serializedJob('build')).toContain('actions/cache@v6')
   })
 
   it('resolves and verifies the locked official OpenCode Runtime', () => {
     const scripts = jobScripts('build')
     expect(scripts).toContain(
-      "require('./remote-runtime-lock.json')"
+      "require('./build/agent-ci-bundle.cjs').readCiLocks("
     )
     expect(scripts).toContain(
       '--registry https://registry.npmjs.org/'
@@ -218,5 +224,27 @@ describe('GoodBuddy Agents workflow', () => {
         'secret'
       ])
     ).toThrow('Unknown Agent CI bundle argument')
+  })
+
+  it('includes Darwin in production packaging while retaining native target checks', () => {
+    expect(serializedJob('build')).toContain("matrix.platform == 'linux'")
+    expect(jobScripts('build')).toContain('src/agent-daemon/darwin-process-identity.test.ts')
+    const release = readFileSync(
+      join(process.cwd(), '.github/workflows/agent-release.yml'), 'utf8'
+    )
+    expect(release).toContain('macos-15')
+    expect(release).toContain('AGENT_PLATFORM')
+    for (const target of ['darwin', 'win32']) {
+      expect(() => agentCiBundle.parseArguments([
+        '--platform', target, '--arch', 'x64'
+      ])).toThrow('Unsupported Agent build target')
+    }
+    expect(agentCiBundle.parseArguments([
+      '--platform', 'darwin', '--arch', 'arm64',
+      '--node-archive', 'node.tar.gz',
+      '--opencode-archive', 'opencode.tgz',
+      '--output-directory', 'bundle',
+      '--archive', 'goodbuddy-agent-1.0.0-darwin-arm64.gbagent'
+    ])).toMatchObject({ platform: 'darwin', arch: 'arm64' })
   })
 })

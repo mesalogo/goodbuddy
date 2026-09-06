@@ -190,7 +190,7 @@ export const daemonStatusSchema = z
       label: 'Agent version'
     }),
     protocol: protocolVersionSchema,
-    platform: z.literal('linux'),
+    platform: z.enum(['linux', 'darwin']),
     architecture: z.enum(['x64', 'arm64']),
     supervisor: z.literal('detached-on-demand'),
     remoteUserIdentity: agentIdentifierSchema,

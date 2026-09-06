@@ -24,6 +24,7 @@ const {
   assembleAgentPackage
 } = require('./agent-package.cjs')
 const { sha256File } = require('./file-hash.cjs')
+const { targetName } = require('./agent-build-target.cjs')
 
 const ciSigningKeyId = 'goodbuddy-agent-ci-ephemeral'
 
@@ -34,6 +35,7 @@ function parseArguments(argv) {
     if (
       ![
         '--arch',
+        '--platform',
         '--node-archive',
         '--opencode-archive',
         '--output-directory',
@@ -56,6 +58,8 @@ function parseArguments(argv) {
   if (!supportedArchitectures.includes(options.arch)) {
     throw new Error('--arch must be x64 or arm64')
   }
+  const platform = options.platform ?? 'linux'
+  targetName(options.arch, platform)
   for (const key of [
     'nodearchive',
     'opencodearchive',
@@ -70,11 +74,20 @@ function parseArguments(argv) {
   }
   return {
     arch: options.arch,
+    platform,
     nodeArchive: resolve(options.nodearchive),
     opencodeArchive: resolve(options.opencodearchive),
     outputDirectory: resolve(options.outputdirectory),
     archive: resolve(options.archive)
   }
+}
+
+function readCiLocks(platform = 'linux', architecture = 'x64') {
+  const projectRoot = resolve(__dirname, '..')
+  targetName(architecture, platform)
+  const lock = readRuntimeLock(projectRoot)
+  const runtimeLock = readRemoteRuntimeLock(projectRoot)
+  return { lock, runtimeLock }
 }
 
 function ephemeralSigningIdentity() {
@@ -97,8 +110,12 @@ function ephemeralSigningIdentity() {
 
 async function buildCiAgentBundle(options) {
   const projectRoot = resolve(__dirname, '..')
-  const lock = readRuntimeLock(projectRoot)
-  const runtimeLock = readRemoteRuntimeLock(projectRoot)
+  const platform = options.platform ?? 'linux'
+  const target = targetName(options.arch, platform)
+  if (process.platform !== platform || process.arch !== options.arch) {
+    throw new Error(`Agent CI build requires a native ${target} host`)
+  }
+  const { lock, runtimeLock } = readCiLocks(platform, options.arch)
   const signing = ephemeralSigningIdentity()
   const firstArchiveRoot = resolve(
     join(
@@ -124,6 +141,8 @@ async function buildCiAgentBundle(options) {
       force: true
     })
     buildAgentBundle({
+      platform,
+      lock,
       projectRoot,
       arch: options.arch,
       runtimeArchive: options.nodeArchive,
@@ -132,6 +151,8 @@ async function buildCiAgentBundle(options) {
       testSigningIdentity: identity
     })
     const runtime = buildRuntimeBundle({
+      platform,
+      lock: runtimeLock,
       projectRoot,
       architecture: options.arch,
       runtimeArchive: options.opencodeArchive,
@@ -141,6 +162,7 @@ async function buildCiAgentBundle(options) {
     })
     const assemble = (archive) =>
       assembleAgentPackage({
+        platform,
         projectRoot,
         architecture: options.arch,
         minimumDesktopVersion:
@@ -181,7 +203,31 @@ async function buildCiAgentBundle(options) {
       throw new Error('Built Agent native launch smoke failed')
     }
 
+    const nativeChecks = [
+      [
+        resolve(options.outputDirectory, 'node'),
+        ['-e', `const k = require(${JSON.stringify(resolve(options.outputDirectory, 'lib/node_modules/koffi'))}); if (k.sizeof('int') !== 4) process.exit(1)`]
+      ],
+      [join(runtime.bundleDirectory, 'bin', 'opencode'), ['--version']]
+    ]
+    for (const [executable, args] of nativeChecks) {
+      const result = spawnSync(executable, args, {
+        encoding: 'utf8',
+        timeout: 30_000,
+        windowsHide: true
+      })
+      if (
+        result.error ||
+        result.status !== 0 ||
+        (args[0] === '--version' &&
+          result.stdout.trim() !== runtimeLock.runtimes.opencode.version)
+      ) {
+        throw new Error(`Built native dependency smoke failed: ${basename(executable)}`)
+      }
+    }
+
     return {
+      platform,
       agentVersion: lock.agentVersion,
       remoteRuntimeVersion:
         runtimeLock.runtimes.opencode.version,
@@ -214,5 +260,6 @@ if (require.main === module) {
 
 module.exports = {
   buildCiAgentBundle,
-  parseArguments
+  parseArguments,
+  readCiLocks
 }

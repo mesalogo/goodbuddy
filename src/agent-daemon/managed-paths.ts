@@ -287,20 +287,20 @@ export function derivePrivateTemporaryRoot(options: {
   const platform = options.platform ?? process.platform
   const uid = options.uid ?? process.getuid?.()
   if (
-    platform !== 'linux' ||
+    !['linux', 'darwin'].includes(platform) ||
     uid === undefined ||
     !Number.isSafeInteger(uid) ||
     uid < 0
   ) {
     throw new ManagedPathError(
-      'Private Agent endpoint root requires a current Linux UID'
+      'Private Agent endpoint root requires a current Unix UID'
     )
   }
   const canonicalHomeDirectory = resolve(
     options.homeDirectory ?? homedir()
   )
   const temporaryDirectory = resolve(
-    options.temporaryDirectory ?? '/tmp'
+    options.temporaryDirectory ?? (platform === 'darwin' ? '/private/tmp' : '/tmp')
   )
   assertAbsoluteManagedPath(canonicalHomeDirectory)
   assertAbsoluteManagedPath(temporaryDirectory)

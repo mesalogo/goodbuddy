@@ -230,7 +230,8 @@ export async function verifyPublishedAgentBundle(
   await assertElfArchitecture(
     join(installationDirectory, manifest.entrypoint.runtimePath),
     manifest.arch,
-    'Agent Node runtime'
+    'Agent Node runtime',
+    manifest.platform
   )
   const manifestSha256 = sha256Bytes(manifestBytes)
   return {

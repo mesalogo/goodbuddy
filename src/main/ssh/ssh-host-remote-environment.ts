@@ -83,7 +83,7 @@ export type SshHostRemoteEnvironmentInspectorOptions = {
   remoteRuntimeLockPath: string
   loadRemoteEnvironmentCatalog?: (
     architecture: 'x64' | 'arm64',
-    options: { signal?: AbortSignal }
+    options: { signal?: AbortSignal; platform?: 'linux' | 'darwin' }
   ) => Promise<RemoteEnvironmentCatalog>
   now?: () => Date
 }
@@ -155,7 +155,7 @@ export class SshHostRemoteEnvironmentInspector {
         await Promise.all([
           this.#loadRemoteEnvironmentCatalog(
             probe.architecture,
-            { signal }
+            { signal, platform: probe.platform }
           ),
           readOptionalRegistry(
             sftp,

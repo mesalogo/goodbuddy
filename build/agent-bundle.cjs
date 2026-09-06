@@ -29,9 +29,11 @@ const {
   sep
 } = require('node:path')
 const tar = require('tar')
+const { detectElfArchitecture } = require('./binary-architecture.cjs')
 const {
-  detectElfArchitecture
-} = require('./binary-architecture.cjs')
+  targetName,
+  assertTargetBinary
+} = require('./agent-build-target.cjs')
 const {
   preflightRegisteredProductionKey
 } = require('./signing-key-preflight.cjs')
@@ -132,15 +134,8 @@ function readTrustedKeyRegistry(projectRoot = root) {
   return registry
 }
 
-function targetName(arch) {
-  if (!supportedArchitectures.includes(arch)) {
-    throw new Error(`Unsupported Agent architecture: ${arch}`)
-  }
-  return `linux-${arch}`
-}
-
-function lockedRuntimeInput(lock, arch, archivePath) {
-  const target = targetName(arch)
+function lockedRuntimeInput(lock, arch, archivePath, platform = 'linux') {
+  const target = targetName(arch, platform)
   const input = lock.node?.targets?.[target]
   if (
     !input ||
@@ -177,24 +172,23 @@ function lockedRuntimeInput(lock, arch, archivePath) {
 function assertElfArchitecture(
   filePath,
   expectedArchitecture,
-  description = 'Agent Node runtime'
+  description = 'Agent Node runtime',
+  platform = 'linux'
 ) {
-  const actual = detectElfArchitecture(readFileSync(filePath).subarray(0, 64))
-  if (actual !== expectedArchitecture) {
-    throw new Error(
-      `${description} architecture mismatch: expected ${expectedArchitecture}, received ${actual ?? 'unknown'}`
-    )
-  }
+  assertTargetBinary(filePath, expectedArchitecture, platform, description)
 }
 
-function koffiNativePackageName(arch) {
-  return `@koromix/koffi-linux-${arch}`
+function koffiNativePackageName(arch, platform = 'linux') {
+  return `@koromix/koffi-${targetName(arch, platform)}`
 }
 
-function koffiPayloadPaths(arch) {
+function koffiPayloadPaths(arch, platform = 'linux') {
   const packageRoot = `lib/node_modules/${koffiPackageName}`
   const nativeRoot =
-    `lib/node_modules/${koffiNativePackageName(arch)}`
+    `lib/node_modules/${koffiNativePackageName(arch, platform)}`
+  const native = platform === 'linux'
+    ? [`${nativeRoot}/linux_${arch}/koffi.node`, `${nativeRoot}/musl_${arch}/koffi.node`]
+    : [`${nativeRoot}/darwin_${arch}/koffi.node`]
   return {
     packageRoot,
     nativeRoot,
@@ -205,13 +199,9 @@ function koffiPayloadPaths(arch) {
       `${packageRoot}/src/koffi/src/static.js`,
       `${nativeRoot}/package.json`,
       `${nativeRoot}/index.js`,
-      `${nativeRoot}/linux_${arch}/koffi.node`,
-      `${nativeRoot}/musl_${arch}/koffi.node`
+      ...native
     ],
-    native: [
-      `${nativeRoot}/linux_${arch}/koffi.node`,
-      `${nativeRoot}/musl_${arch}/koffi.node`
-    ]
+    native
   }
 }
 
@@ -359,7 +349,7 @@ function createManifest(bundleDirectory, metadata) {
     formatVersion: 1,
     product: 'GoodBuddy',
     agentVersion: metadata.agentVersion,
-    platform: 'linux',
+    platform: metadata.platform ?? 'linux',
     arch: metadata.arch,
     protocol: metadata.protocol,
     signingKeyId: metadata.signingKeyId,
@@ -452,7 +442,10 @@ function validateManifestShape(manifest, expected) {
     manifest.product !== 'GoodBuddy' ||
     typeof manifest.agentVersion !== 'string' ||
     !semanticVersionPattern.test(manifest.agentVersion) ||
-    manifest.platform !== 'linux' ||
+    !(
+      manifest.platform === 'linux' ||
+      (manifest.platform === 'darwin' && manifest.arch === 'arm64')
+    ) ||
     !supportedArchitectures.includes(manifest.arch) ||
     !Number.isSafeInteger(manifest.protocol?.major) ||
     !Number.isSafeInteger(manifest.protocol?.minor) ||
@@ -617,7 +610,7 @@ function verifyBundleDirectory(bundleDirectory, options = {}) {
       throw new Error(`Agent entrypoint payload is missing: ${required}`)
     }
   }
-  const koffiPaths = koffiPayloadPaths(manifest.arch)
+  const koffiPaths = koffiPayloadPaths(manifest.arch, manifest.platform)
   for (const required of koffiPaths.required) {
     if (!declaredPaths.has(required)) {
       throw new Error(`Agent Koffi payload is missing: ${required}`)
@@ -626,7 +619,7 @@ function verifyBundleDirectory(bundleDirectory, options = {}) {
   const koffiLicense = manifest.licenses.find(
     (license) => license.package === koffiPackageName
   )
-  const nativePackage = koffiNativePackageName(manifest.arch)
+  const nativePackage = koffiNativePackageName(manifest.arch, manifest.platform)
   const nativeLicense = manifest.licenses.find(
     (license) => license.package === nativePackage
   )
@@ -641,13 +634,16 @@ function verifyBundleDirectory(bundleDirectory, options = {}) {
   }
   assertElfArchitecture(
     join(bundleDirectory, manifest.entrypoint.runtimePath),
-    manifest.arch
+    manifest.arch,
+    'Agent Node runtime',
+    manifest.platform
   )
   for (const nativePath of koffiPaths.native) {
     assertElfArchitecture(
       join(bundleDirectory, ...nativePath.split('/')),
       manifest.arch,
-      'Agent Koffi native binding'
+      'Agent Koffi native binding',
+      manifest.platform
     )
   }
   return {
@@ -668,7 +664,8 @@ function assertReplaceableBundle(directory) {
     if (
       manifest.formatVersion === 1 &&
       manifest.product === 'GoodBuddy' &&
-      manifest.platform === 'linux'
+      (manifest.platform === 'linux' ||
+        (manifest.platform === 'darwin' && manifest.arch === 'arm64'))
     ) {
       return
     }
@@ -717,13 +714,13 @@ function copyRegularFile(source, destination) {
   chmodSync(destination, 0o644)
 }
 
-function copyKoffiRuntime(projectRoot, staging, arch, lockedVersion) {
+function copyKoffiRuntime(projectRoot, staging, arch, lockedVersion, platform = 'linux') {
   const sourceRoot = join(projectRoot, 'node_modules', koffiPackageName)
   const packageMetadata = readJson(
     join(sourceRoot, 'package.json'),
     'Koffi package metadata'
   )
-  const nativePackage = koffiNativePackageName(arch)
+  const nativePackage = koffiNativePackageName(arch, platform)
   const nativeSourceRoot = join(
     projectRoot,
     'node_modules',
@@ -739,7 +736,7 @@ function copyKoffiRuntime(projectRoot, staging, arch, lockedVersion) {
     nativeMetadata.name !== nativePackage ||
     nativeMetadata.version !== lockedVersion ||
     !Array.isArray(nativeMetadata.os) ||
-    !nativeMetadata.os.includes('linux') ||
+    !nativeMetadata.os.includes(platform) ||
     !Array.isArray(nativeMetadata.cpu) ||
     !nativeMetadata.cpu.includes(arch)
   ) {
@@ -748,10 +745,13 @@ function copyKoffiRuntime(projectRoot, staging, arch, lockedVersion) {
     )
   }
 
-  const paths = koffiPayloadPaths(arch)
+  const paths = koffiPayloadPaths(arch, platform)
   const files = [
     ['package.json', `${paths.packageRoot}/package.json`],
     ['index.js', `${paths.packageRoot}/index.js`],
+    ['index.cjs', `${paths.packageRoot}/index.cjs`],
+    ['src/koffi/index.cjs', `${paths.packageRoot}/src/koffi/index.cjs`],
+    ['src/koffi/src/static.cjs', `${paths.packageRoot}/src/koffi/src/static.cjs`],
     [
       'src/koffi/index.js',
       `${paths.packageRoot}/src/koffi/index.js`
@@ -770,8 +770,7 @@ function copyKoffiRuntime(projectRoot, staging, arch, lockedVersion) {
   for (const source of [
     'package.json',
     'index.js',
-    `linux_${arch}/koffi.node`,
-    `musl_${arch}/koffi.node`
+    ...paths.native.map((path) => path.slice(paths.nativeRoot.length + 1))
   ]) {
     const destination = `${paths.nativeRoot}/${source}`
     copyRegularFile(
@@ -783,7 +782,8 @@ function copyKoffiRuntime(projectRoot, staging, arch, lockedVersion) {
     assertElfArchitecture(
       join(staging, ...nativePath.split('/')),
       arch,
-      'Agent Koffi native binding'
+      'Agent Koffi native binding',
+      platform
     )
   }
   return {
@@ -795,11 +795,13 @@ function copyKoffiRuntime(projectRoot, staging, arch, lockedVersion) {
 function buildAgentBundle(options) {
   const projectRoot = options.projectRoot ?? root
   const arch = options.arch
+  const platform = options.platform ?? 'linux'
   const lock = options.lock ?? readRuntimeLock(projectRoot)
   const runtimeInput = lockedRuntimeInput(
     lock,
     arch,
-    options.runtimeArchive
+    options.runtimeArchive,
+    platform
   )
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
@@ -843,13 +845,13 @@ function buildAgentBundle(options) {
 
   const destination =
     options.outputDirectory ??
-    join(projectRoot, '.agent-resources', targetName(arch))
+    join(projectRoot, '.agent-resources', targetName(arch, platform))
   mkdirSync(dirname(destination), { recursive: true })
   const staging = mkdtempSync(
-    join(dirname(destination), `.stage-${targetName(arch)}-`)
+    join(dirname(destination), `.stage-${targetName(arch, platform)}-`)
   )
   const runtimeStaging = mkdtempSync(
-    join(tmpdir(), `goodbuddy-node-${targetName(arch)}-`)
+    join(tmpdir(), `goodbuddy-node-${targetName(arch, platform)}-`)
   )
   try {
     tar.x({
@@ -872,7 +874,7 @@ function buildAgentBundle(options) {
       runtimeStaging,
       ...runtimeInput.licensePath.split('/')
     )
-    assertElfArchitecture(runtimeBinary, arch)
+    assertElfArchitecture(runtimeBinary, arch, 'Agent Node runtime', platform)
     copyFileSync(runtimeBinary, join(staging, 'node'))
     chmodSync(join(staging, 'node'), 0o755)
 
@@ -912,7 +914,8 @@ function buildAgentBundle(options) {
       projectRoot,
       staging,
       arch,
-      lock.koffi.version
+      lock.koffi.version,
+      platform
     )
     const launcher = [
       '#!/bin/sh',
@@ -980,6 +983,7 @@ function buildAgentBundle(options) {
       acpSdkVersion: acpSdkPackage.version,
       koffiVersion: koffi.version,
       koffiNativePackage: koffi.nativePackage,
+      platform,
       arch,
       protocol: lock.protocol,
       signingKeyId: signingIdentity.keyId
@@ -1004,6 +1008,7 @@ function buildAgentBundle(options) {
         ? 'test'
         : 'production',
       expected: {
+        platform,
         agentVersion: lock.agentVersion,
         arch,
         protocol: lock.protocol
@@ -1073,6 +1078,7 @@ function verifyLockedBundle(bundleDirectory, arch, options = {}) {
       options.registry ?? readTrustedKeyRegistry(projectRoot),
     verificationEnvironment: options.verificationEnvironment ?? 'production',
     expected: {
+      platform: options.platform ?? 'linux',
       agentVersion: lock.agentVersion,
       arch,
       protocol: lock.protocol
@@ -1203,6 +1209,7 @@ function main(argv = process.argv.slice(2)) {
 }
 
 module.exports = {
+  koffiPayloadPaths,
   assertElfArchitecture,
   assertSafeManifestPath,
   buildAgentBundle,

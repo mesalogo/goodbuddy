@@ -1,3 +1,5 @@
+import { binaryTargetArchitecture } from '../../shared/node/binary-target'
+import type { AgentPlatform } from '../../shared/agent-target'
 import {
   createHash,
   createPublicKey,
@@ -206,9 +208,10 @@ export async function verifyAgentBundleDirectory(
   await assertElfArchitecture(
     join(bundleDirectory, manifest.entrypoint.runtimePath),
     manifest.arch,
-    'Agent Node runtime'
+    'Agent Node runtime',
+    manifest.platform
   )
-  const koffiPaths = requiredKoffiPayloadPaths(manifest.arch)
+  const koffiPaths = requiredKoffiPayloadPaths(manifest.arch, manifest.platform)
   assertKoffiManifest(
     manifest,
     runtimeLock.koffi.version,
@@ -218,7 +221,8 @@ export async function verifyAgentBundleDirectory(
     await assertElfArchitecture(
       join(bundleDirectory, ...nativePath.split('/')),
       manifest.arch,
-      'Agent Koffi native binding'
+      'Agent Koffi native binding',
+      manifest.platform
     )
   }
   return {
@@ -349,15 +353,19 @@ export function assertAgentManifestMatchesRuntimeLock(
 }
 
 function requiredKoffiPayloadPaths(
-  architecture: AgentArchitecture
+  architecture: AgentArchitecture,
+  platform: AgentPlatform
 ): {
   required: string[]
   native: string[]
 } {
   const packageRoot = 'lib/node_modules/koffi'
   const nativePackage =
-    `@koromix/koffi-linux-${architecture}`
+    `@koromix/koffi-${platform}-${architecture}`
   const nativeRoot = `lib/node_modules/${nativePackage}`
+  const native = platform === 'darwin'
+    ? [`${nativeRoot}/darwin_${architecture}/koffi.node`]
+    : [`${nativeRoot}/linux_${architecture}/koffi.node`, `${nativeRoot}/musl_${architecture}/koffi.node`]
   return {
     required: [
       `${packageRoot}/package.json`,
@@ -366,13 +374,9 @@ function requiredKoffiPayloadPaths(
       `${packageRoot}/src/koffi/src/static.js`,
       `${nativeRoot}/package.json`,
       `${nativeRoot}/index.js`,
-      `${nativeRoot}/linux_${architecture}/koffi.node`,
-      `${nativeRoot}/musl_${architecture}/koffi.node`
+      ...native
     ],
-    native: [
-      `${nativeRoot}/linux_${architecture}/koffi.node`,
-      `${nativeRoot}/musl_${architecture}/koffi.node`
-    ]
+    native
   }
 }
 
@@ -390,7 +394,7 @@ function assertKoffiManifest(
     }
   }
   const nativePackage =
-    `@koromix/koffi-linux-${manifest.arch}`
+    `@koromix/koffi-${manifest.platform}-${manifest.arch}`
   const koffiLicense = manifest.licenses.find(
     (license) => license.package === 'koffi'
   )
@@ -614,14 +618,15 @@ function modeString(mode: number): string {
 async function assertElfArchitecture(
   filePath: string,
   expectedArchitecture: AgentArchitecture,
-  description: string
+  description: string,
+  platform: AgentPlatform
 ): Promise<void> {
   const handle = await open(filePath, 'r')
   try {
     const header = Buffer.alloc(64)
     const { bytesRead } = await handle.read(header, 0, header.length, 0)
-    const actualArchitecture = detectElfArchitecture(
-      header.subarray(0, bytesRead)
+    const actualArchitecture = binaryTargetArchitecture(
+      header.subarray(0, bytesRead), platform
     )
     if (actualArchitecture !== expectedArchitecture) {
       throw new Error(
@@ -633,29 +638,6 @@ async function assertElfArchitecture(
   }
 }
 
-function detectElfArchitecture(
-  buffer: Buffer
-): AgentArchitecture | undefined {
-  if (
-    buffer.length < 20 ||
-    buffer[0] !== 0x7f ||
-    buffer.toString('ascii', 1, 4) !== 'ELF' ||
-    (buffer[5] !== 1 && buffer[5] !== 2)
-  ) {
-    return undefined
-  }
-  const machine =
-    buffer[5] === 2
-      ? buffer.readUInt16BE(18)
-      : buffer.readUInt16LE(18)
-  if (machine === 62) {
-    return 'x64'
-  }
-  if (machine === 183) {
-    return 'arm64'
-  }
-  return undefined
-}
 
 function parseContract<T>(
   schema: { safeParse(value: unknown): {

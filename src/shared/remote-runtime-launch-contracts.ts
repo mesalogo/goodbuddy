@@ -118,7 +118,7 @@ const remoteRuntimeManifestFields = {
     runtimeId: agentIdentifierSchema,
     runtimeVersion: agentBundleManifestSchema.shape.agentVersion,
     provider: remoteRuntimeProviderKindSchema,
-    platform: z.literal('linux'),
+    platform: z.enum(['linux', 'darwin']),
     architecture: agentArchitectureSchema,
     signingKeyId: agentReleaseKeySchema.shape.keyId,
     bundleDigest: sha256DigestSchema,
@@ -252,7 +252,10 @@ export const remoteRuntimeLockSchema = z
                 }),
                 arm64: remoteRuntimeLockedTargetSchema.extend({
                   package: z.literal('opencode-linux-arm64')
-                })
+                }),
+                'darwin-arm64': remoteRuntimeLockedTargetSchema.extend({
+                  package: z.literal('opencode-darwin-arm64')
+                }).optional()
               })
               .strict()
           })

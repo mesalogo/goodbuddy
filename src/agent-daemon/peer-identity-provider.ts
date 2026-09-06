@@ -67,23 +67,39 @@ export async function createLinuxPeerIdentityProvider(
     byteOrder?: 'BE' | 'LE'
     loadKoffi?: () => Promise<Koffi>
   } = {}
-): Promise<LinuxPeerIdentityProvider> {
+): Promise<UnixPeerIdentityProvider> {
   const platform = options.platform ?? process.platform
   const architecture = options.architecture ?? arch()
   const byteOrder = options.byteOrder ?? endianness()
   if (
-    platform !== 'linux' ||
+    (platform !== 'linux' && !(platform === 'darwin' && architecture === 'arm64')) ||
     !SUPPORTED_ARCHITECTURES.has(architecture) ||
     byteOrder !== 'LE'
   ) {
     throw unavailable(
-      'SO_PEERCRED is certified only on little-endian Linux x64 and arm64'
+      'Unix peer credentials require little-endian Linux or macOS arm64'
     )
   }
   try {
     const koffi =
       await (options.loadKoffi?.() ??
         import('koffi').then((module) => module.default))
+    if (platform === 'darwin') {
+      const library = koffi.load('/usr/lib/libSystem.B.dylib')
+      const getpeereid = library.func('getpeereid', 'int', [
+        'int', 'void *', 'void *'
+      ])
+      return {
+        async getPeerIdentity(socket) {
+          const uid = Buffer.alloc(4)
+          const gid = Buffer.alloc(4)
+          if (getpeereid(socketDescriptor(socket), uid, gid) !== 0) {
+            throw new Error(`getpeereid failed with errno ${koffi.errno()}`)
+          }
+          return { uid: uid.readUInt32LE() }
+        }
+      }
+    }
     return new LinuxPeerIdentityProvider(createNativeBinding(koffi))
   } catch (error) {
     if (error instanceof AgentUnsupportedError) {

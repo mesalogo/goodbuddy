@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { agentPlatformSchema, agentTargetKey, type AgentPlatform } from './agent-target'
 import {
   agentArchitectureSchema,
   agentProtocolVersionSchema
@@ -9,9 +10,10 @@ export const AGENT_PACKAGE_FORMAT_VERSION = 1
 
 export function agentPackageArchiveName(
   version: string,
-  architecture: 'x64' | 'arm64'
+  architecture: 'x64' | 'arm64',
+  platform: AgentPlatform = 'linux'
 ): string {
-  return `goodbuddy-agent-${version}-linux-${architecture}.gbagent`
+  return `goodbuddy-agent-${version}-${agentTargetKey({ platform, architecture })}.gbagent`
 }
 
 const semanticVersionSchema = z
@@ -31,7 +33,7 @@ const safeArchiveNameSchema = z
   .min(1)
   .max(255)
   .regex(
-    /^goodbuddy-agent-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?-linux-(?:x64|arm64)\.gbagent$/u
+    /^goodbuddy-agent-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?-(?:linux-(?:x64|arm64)|darwin-arm64)\.gbagent$/u
   )
 
 const windowsReservedNamePattern =
@@ -86,7 +88,7 @@ const agentPackageDescriptorObjectSchema = z
     component: z.literal('agent'),
     version: semanticVersionSchema,
     minimumDesktopVersion: semanticVersionSchema,
-    platform: z.literal('linux'),
+    platform: agentPlatformSchema,
     architecture: agentArchitectureSchema,
     signingKeyId: signingKeyIdSchema,
     agentProtocol: agentProtocolVersionSchema,
@@ -152,7 +154,7 @@ export const agentPackageCatalogEntrySchema =
     .superRefine((entry, context) => {
       if (
         entry.archive !==
-        agentPackageArchiveName(entry.version, entry.architecture)
+        agentPackageArchiveName(entry.version, entry.architecture, entry.platform)
       ) {
         context.addIssue({
           code: 'custom',
@@ -182,7 +184,7 @@ export const agentPackageCatalogSchema = z
   .strict()
   .superRefine((catalog, context) => {
     const identities = catalog.entries.map(
-      (entry) => `${entry.version}:${entry.architecture}`
+      (entry) => `${entry.version}:${entry.platform}:${entry.architecture}`
     )
     if (new Set(identities).size !== identities.length) {
       context.addIssue({
@@ -205,7 +207,7 @@ export const agentPackageStateSchema = z.enum([
 
 export const agentPackageInventoryEntrySchema = z
   .object({
-    platform: z.literal('linux'),
+    platform: agentPlatformSchema,
     architecture: agentArchitectureSchema,
     state: agentPackageStateSchema,
     version: semanticVersionSchema.nullable(),
@@ -247,12 +249,12 @@ export const agentPackageInventorySchema = z
     catalog: agentPackageCatalogStatusSchema,
     entries: z
       .array(agentPackageInventoryEntrySchema)
-      .length(agentArchitectureSchema.options.length)
+      .min(1).max(3)
   })
   .strict()
   .superRefine((inventory, context) => {
     const architectures = inventory.entries.map(
-      (entry) => entry.architecture
+      (entry) => `${entry.platform}-${entry.architecture}`
     )
     if (new Set(architectures).size !== architectures.length) {
       context.addIssue({
@@ -276,7 +278,8 @@ export const agentPackageInventoryRequestSchema = z
 
 export const agentPackageArchitectureRequestSchema = z
   .object({
-    architecture: agentArchitectureSchema
+    architecture: agentArchitectureSchema,
+    platform: agentPlatformSchema.default('linux')
   })
   .strict()
 
@@ -287,6 +290,7 @@ export type AgentPackageArchitectureRequest = z.infer<
 export const agentPackageDownloadProgressSchema = z
   .object({
     architecture: agentArchitectureSchema,
+    platform: agentPlatformSchema.default('linux'),
     phase: z.enum([
       'catalog',
       'downloading',

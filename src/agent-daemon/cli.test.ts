@@ -449,7 +449,7 @@ describe('Agent CLI fixed command contract', () => {
         homeDirectory: 'C:\\Users\\tester',
         uid: 1234
       })
-    ).toThrow('current Linux UID')
+    ).toThrow('current Unix UID')
   })
 
   it('rejects injected installation IDs before lifecycle dispatch', async () => {

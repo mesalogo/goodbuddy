@@ -225,7 +225,7 @@ export async function createProductionRuntimeProtocol(
   try {
     if (
       verificationEnvironment === 'production' &&
-      process.platform === 'linux'
+      (process.platform === 'linux' || process.platform === 'darwin')
     ) {
       await (
         options.reconcileOrphanedProcesses ??
@@ -436,7 +436,7 @@ export function derivePrivateModelBridgeDirectory(
     controllerGeneration?: number
   }
 ): string {
-  if (process.platform === 'linux') {
+  if (process.platform === 'linux' || process.platform === 'darwin') {
     const stateDirectory = resolve(stateDirectoryInput)
     ensurePrivateDirectory(stateDirectory, { create: false })
     const userRoot = ensurePrivateTemporaryRoot(

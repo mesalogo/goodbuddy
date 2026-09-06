@@ -123,12 +123,16 @@ otherwise.
   in the desktop package; switching projects updates only local selection and
   does not connect or download. Settings reads a small signed catalog and
   reports the local version, latest compatible online version, and update
-  state for Linux x64/arm64. Downloads occur only after a user action, and
+  state for Linux x64, Linux arm64, and macOS arm64. Intel Macs are not supported.
+  Downloads occur only after a user action, and
   packages can also be imported or exported offline. Each compound `.gbagent`
   package contains the Agent, fixed Node, and the compatible OpenCode Runtime
   maintained by the desktop source. Online sources follow the GitHub/Beijing
   OSS choice in About and Updates. The cumulative signed catalog binds minimum
-  Desktop version, Agent protocol, architecture, size, SHA-256, and fixed URL.
+  Desktop version, Agent protocol, platform, architecture, size, SHA-256, and fixed URL.
+  All three targets share one catalog. Users must upgrade Desktop before the
+  first mixed-platform catalog is published because older Linux-only readers
+  reject catalogs containing Darwin entries.
   The public-key registry accepts equivalent JSON whitespace and line endings
   while still strictly validating schema, Ed25519 keys, environment, and
   revocation; catalog, package, manifest, payload signatures, and streaming
@@ -150,7 +154,9 @@ otherwise.
   Prompt, provider, or tool replay observed. The current Agent source lock is
   `0.11.18`, while the current Desktop release candidate is `0.12.4`; formal
   publication status follows the separate Agent and Desktop
-  release channels.
+  release channels. Current macOS source has passed native package installation,
+  detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
+  separate process groups on a real Host; this does not imply publication.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
   read-only probes the shared Agent/Runtime. Saving a Host or opening a project

@@ -36,7 +36,7 @@ export type RemoteRuntimeInstallationIdentity = {
   manifestDigest: string
   runtimeAdapterDigest: string
   acpCapabilitiesDigest: string
-  platform: 'linux'
+  platform: 'linux' | 'darwin'
   architecture: AgentArchitecture
 }
 
@@ -188,7 +188,7 @@ export class RemoteRuntimeInstallationManager {
         )
       }
       if (
-        probe.platform !== 'linux' ||
+        (probe.platform !== 'linux' && !(probe.platform === 'darwin' && probe.architecture === 'arm64')) ||
         (
           probe.architecture !== 'x64' &&
           probe.architecture !== 'arm64'
@@ -279,7 +279,7 @@ export class RemoteRuntimeInstallationManager {
         runtimeAdapterDigest,
         acpCapabilitiesDigest:
           current.acpCapabilitiesDigest,
-        platform: 'linux',
+        platform: probe.platform,
         architecture: current.architecture
       }
     } catch (error) {

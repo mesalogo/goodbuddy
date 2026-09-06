@@ -29,6 +29,10 @@
           "package": "opencode-linux-x64-baseline",
           "integrity": "sha512-x4KiJk9EF7ktM18Ru5Jue4kTntxMvlhWb7tHniQGGRvY2KeoK1iIkyAFd7ri5H/fSkM22hNv/Gg1Jk6/h9IlxQ=="
         },
+        "darwin-arm64": {
+          "package": "opencode-darwin-arm64",
+          "integrity": "sha512-cTWxW9IFjDdzx9mscQgr5uL478moU64t486JebaSZmUPEGDJVQjvCtXfqbZDzVuoVorRfaytlykqrH3qTSL2VQ=="
+        },
         "arm64": {
           "package": "opencode-linux-arm64",
           "integrity": "sha512-2IN4lLjhx2FICcMDnBsKgwrey0AvAM0SlNzzj7L71uakNxWvrhcqPYVpEhrEYUjIn+uQGMY5PjA+uupXigJE2A=="

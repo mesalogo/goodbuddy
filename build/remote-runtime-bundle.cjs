@@ -33,8 +33,9 @@ const {
 } = require('node:path')
 const tar = require('tar')
 const {
-  detectElfArchitecture
-} = require('./binary-architecture.cjs')
+  targetName,
+  assertTargetBinary
+} = require('./agent-build-target.cjs')
 const {
   preflightRegisteredProductionKey
 } = require('./signing-key-preflight.cjs')
@@ -143,13 +144,6 @@ function readTrustedKeyRegistry(projectRoot = root) {
     keyIds.add(key.keyId)
   }
   return registry
-}
-
-function targetName(architecture) {
-  if (!supportedArchitectures.includes(architecture)) {
-    throw new Error(`Unsupported Runtime architecture: ${architecture}`)
-  }
-  return `linux-${architecture}`
 }
 
 function sha256(contents) {
@@ -390,15 +384,8 @@ function modeString(filePath) {
     .padStart(4, '0')
 }
 
-function assertElfArchitecture(filePath, expectedArchitecture) {
-  const actual = detectElfArchitecture(
-    readFileSync(filePath).subarray(0, 64)
-  )
-  if (actual !== expectedArchitecture) {
-    throw new Error(
-      `Runtime architecture mismatch: expected ${expectedArchitecture}, received ${actual ?? 'unknown'}`
-    )
-  }
+function assertElfArchitecture(filePath, expectedArchitecture, platform = 'linux') {
+  assertTargetBinary(filePath, expectedArchitecture, platform, 'Runtime')
 }
 
 function validateManifestShape(manifest) {
@@ -408,7 +395,10 @@ function validateManifestShape(manifest) {
     manifest.runtimeId !== 'opencode' ||
     manifest.runtimeVersion !== '1.18.9' ||
     manifest.provider !== 'opencode' ||
-    manifest.platform !== 'linux' ||
+    !(
+      manifest.platform === 'linux' ||
+      (manifest.platform === 'darwin' && manifest.architecture === 'arm64')
+    ) ||
     !supportedArchitectures.includes(manifest.architecture) ||
     typeof manifest.signingKeyId !== 'string' ||
     !/^sha256:[a-f0-9]{64}$/u.test(manifest.bundleDigest) ||
@@ -478,13 +468,14 @@ function trustedKeyForManifest(
   return key
 }
 
-function assertManifestMatchesLock(manifest, lock, architecture) {
+function assertManifestMatchesLock(manifest, lock, architecture, platform = 'linux') {
   const expected = lock.runtimes.opencode
-  const target = expected.targets[architecture]
+  const target = expected.targets[platform === 'linux' ? architecture : targetName(architecture, platform)]
   if (
     manifest.runtimeId !== 'opencode' ||
     manifest.runtimeVersion !== expected.version ||
     manifest.provider !== expected.provider ||
+    manifest.platform !== platform ||
     manifest.architecture !== architecture ||
     manifest.sourcePackage?.name !== target.package ||
     manifest.sourcePackage.integrity !== target.integrity ||
@@ -512,7 +503,8 @@ function verifyBundleDirectory(bundleDirectoryInput, options = {}) {
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
   const architecture = options.architecture
-  targetName(architecture)
+  const platform = options.platform ?? 'linux'
+  targetName(architecture, platform)
   const manifestBytes = readFileSync(
     join(bundleDirectory, manifestFileName)
   )
@@ -530,7 +522,7 @@ function verifyBundleDirectory(bundleDirectoryInput, options = {}) {
       'Runtime manifest is not in canonical deterministic form'
     )
   }
-  assertManifestMatchesLock(manifest, lock, architecture)
+  assertManifestMatchesLock(manifest, lock, architecture, platform)
   const environment =
     options.verificationEnvironment ?? 'production'
   const key = trustedKeyForManifest(
@@ -635,7 +627,8 @@ function verifyBundleDirectory(bundleDirectoryInput, options = {}) {
   }
   assertElfArchitecture(
     join(bundleDirectory, ...manifest.entrypoint.path.split('/')),
-    architecture
+    architecture,
+    platform
   )
   return {
     bundleDirectory,
@@ -644,8 +637,8 @@ function verifyBundleDirectory(bundleDirectoryInput, options = {}) {
   }
 }
 
-function lockedArchive(lock, architecture, archivePath) {
-  const input = resolveLockedRuntimeInput(lock, architecture)
+function lockedArchive(lock, architecture, archivePath, platform = 'linux') {
+  const input = resolveLockedRuntimeInput(lock, architecture, platform)
   if (!archivePath || !existsSync(archivePath)) {
     throw new Error(
       `Locked OpenCode archive is required: ${input.archive}`
@@ -665,13 +658,13 @@ function lockedArchive(lock, architecture, archivePath) {
       `Runtime archive integrity mismatch for ${targetName(architecture)}`
     )
   }
-  return lock.runtimes.opencode.targets[architecture]
+  return lock.runtimes.opencode.targets[platform === 'linux' ? architecture : targetName(architecture, platform)]
 }
 
-function resolveLockedRuntimeInput(lock, architecture) {
-  targetName(architecture)
+function resolveLockedRuntimeInput(lock, architecture, platform = 'linux') {
+  targetName(architecture, platform)
   const runtime = lock.runtimes.opencode
-  const target = runtime.targets[architecture]
+  const target = runtime.targets[platform === 'linux' ? architecture : targetName(architecture, platform)]
   return {
     packageName: target.package,
     version: runtime.version,
@@ -708,7 +701,7 @@ function createManifest(bundleDirectory, metadata) {
     runtimeId: 'opencode',
     runtimeVersion: metadata.runtime.version,
     provider: metadata.runtime.provider,
-    platform: 'linux',
+    platform: metadata.platform ?? 'linux',
     architecture: metadata.architecture,
     signingKeyId: metadata.signingKeyId,
     bundleDigest: `sha256:${'0'.repeat(64)}`,
@@ -745,10 +738,10 @@ function defaultOutputRoot(projectRoot = root) {
   return join(projectRoot, '.remote-runtime-resources')
 }
 
-function bundleDirectory(outputRoot, architecture, digest) {
+function bundleDirectory(outputRoot, architecture, digest, platform = 'linux') {
   return join(
     outputRoot,
-    targetName(architecture),
+    targetName(architecture, platform),
     'opencode',
     digest.slice('sha256:'.length)
   )
@@ -757,12 +750,14 @@ function bundleDirectory(outputRoot, architecture, digest) {
 function buildRuntimeBundle(options) {
   const projectRoot = options.projectRoot ?? root
   const architecture = options.architecture
+  const platform = options.platform ?? 'linux'
   const lock = options.lock ?? readRemoteRuntimeLock(projectRoot)
   const runtime = lock.runtimes.opencode
   const sourcePackage = lockedArchive(
     lock,
     architecture,
-    options.runtimeArchive
+    options.runtimeArchive,
+    platform
   )
   const registry =
     options.registry ?? readTrustedKeyRegistry(projectRoot)
@@ -810,7 +805,7 @@ function buildRuntimeBundle(options) {
       // The lock target itself carries the canonical package name.
       if (
         sourceMetadata.name !==
-        runtime.targets[architecture].package
+        sourcePackage.package
       ) {
         throw new Error('OpenCode source package name does not match the lock')
       }
@@ -828,7 +823,8 @@ function buildRuntimeBundle(options) {
     chmodSync(join(staging, 'bin', 'opencode'), 0o755)
     assertElfArchitecture(
       join(staging, 'bin', 'opencode'),
-      architecture
+      architecture,
+      platform
     )
     mkdirSync(join(staging, 'licenses'), { mode: 0o700 })
     copyFileSync(
@@ -840,11 +836,12 @@ function buildRuntimeBundle(options) {
       0o644
     )
     const manifest = createManifest(staging, {
+      platform,
       architecture,
       runtime,
       sourcePackage: {
-        name: runtime.targets[architecture].package,
-        integrity: runtime.targets[architecture].integrity
+        name: sourcePackage.package,
+        integrity: sourcePackage.integrity
       },
       signingKeyId: signingIdentity.keyId
     })
@@ -869,11 +866,13 @@ function buildRuntimeBundle(options) {
     const destination = bundleDirectory(
       outputRoot,
       architecture,
-      manifest.bundleDigest
+      manifest.bundleDigest,
+      platform
     )
     mkdirSync(dirname(destination), { recursive: true, mode: 0o700 })
     if (existsSync(destination)) {
       const existing = verifyBundleDirectory(destination, {
+        platform,
         projectRoot,
         architecture,
         lock,
@@ -893,6 +892,7 @@ function buildRuntimeBundle(options) {
     chmodSync(staging, 0o700)
     renameSync(staging, destination)
     return verifyBundleDirectory(destination, {
+      platform,
       projectRoot,
       architecture,
       lock,

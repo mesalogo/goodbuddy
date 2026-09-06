@@ -100,6 +100,7 @@ export class AgentDaemon {
   readonly #agentVersion: string
   readonly #protocol: AttachPreface['protocol']
   readonly #architecture: 'x64' | 'arm64'
+  readonly #platform = process.platform
   readonly #remoteUserIdentity: string
   readonly #stateDirectory: string
   readonly #socketPath: string
@@ -171,7 +172,7 @@ export class AgentDaemon {
       daemonBootId: this.#bootId,
       agentVersion: this.#agentVersion,
       protocol: this.#protocol,
-      platform: 'linux',
+      platform: this.#platform,
       architecture: this.#architecture,
       supervisor: 'detached-on-demand',
       remoteUserIdentity: this.#remoteUserIdentity,
@@ -180,9 +181,12 @@ export class AgentDaemon {
   }
 
   async start(): Promise<void> {
-    if (process.platform !== 'linux') {
+    if (
+      this.#platform !== 'linux' &&
+      !(this.#platform === 'darwin' && process.arch === 'arm64')
+    ) {
       throw new AgentUnsupportedError(
-        'GoodBuddy Agent daemon is certified only on Linux',
+        'GoodBuddy Agent daemon requires Linux or macOS arm64',
         'platform-incompatible'
       )
     }

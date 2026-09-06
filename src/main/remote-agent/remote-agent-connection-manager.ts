@@ -64,7 +64,7 @@ export type RemoteAgentInstallationIdentity = {
     major: number
     minor: number
   }
-  platform: 'linux'
+  platform: 'linux' | 'darwin'
   architecture: 'x64' | 'arm64'
   supervisor: 'detached-on-demand'
   requiredCapabilities?: ReadonlyArray<{
@@ -1145,7 +1145,7 @@ function validateInstallation(
     input.protocol ?? AGENT_PROTOCOL_VERSION
   )
   if (
-    input.platform !== 'linux' ||
+    (input.platform !== 'linux' && !(input.platform === 'darwin' && input.architecture === 'arm64')) ||
     !['x64', 'arm64'].includes(input.architecture) ||
     input.supervisor !== 'detached-on-demand'
   ) {

@@ -165,7 +165,7 @@ function assertInstallationIdentity(
 ): void {
   if (
     installation.runtimeId !== 'opencode' ||
-    installation.platform !== 'linux' ||
+    installation.platform !== input.agent.platform ||
     installation.architecture !== input.agent.architecture
   ) {
     throw new Error(

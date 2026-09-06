@@ -1660,11 +1660,13 @@ export type DesktopApi = {
       refresh?: boolean
     ) => Promise<AgentPackageInventory>
     downloadAgentPackage: (
-      architecture: AgentArchitecture
+      architecture: AgentArchitecture,
+      platform?: 'linux' | 'darwin'
     ) => Promise<AgentPackageInventory>
     importAgentPackage: () => Promise<AgentPackageInventory | undefined>
     exportAgentPackage: (
-      architecture: AgentArchitecture
+      architecture: AgentArchitecture,
+      platform?: 'linux' | 'darwin'
     ) => Promise<void>
     onAgentPackageProgress: (
       listener: (progress: AgentPackageDownloadProgress) => void

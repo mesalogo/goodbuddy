@@ -2149,7 +2149,7 @@ describe('SettingsPanel runtime files', () => {
       await screen.findByText('GoodBuddy Agent 包')
     ).toBeInTheDocument()
     expect(
-      screen.getByText('当前 1 / 2 个 Linux 架构可用。')
+      screen.getByText('当前 1 / 2 个平台与架构目标可用。')
     ).toBeInTheDocument()
     expect(screen.getByText('Linux x64')).toBeInTheDocument()
     expect(screen.getByText('Linux arm64')).toBeInTheDocument()
@@ -2192,7 +2192,7 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     await waitFor(() =>
-      expect(downloadAgentPackage).toHaveBeenCalledWith('x64')
+      expect(downloadAgentPackage).toHaveBeenCalledWith('x64', 'linux')
     )
     expect(
       await within(x64Card as HTMLElement).findByText('已是最新')
@@ -2208,7 +2208,7 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     await waitFor(() =>
-      expect(exportAgentPackage).toHaveBeenCalledWith('x64')
+      expect(exportAgentPackage).toHaveBeenCalledWith('x64', 'linux')
     )
     fireEvent.click(
       within(arm64Card as HTMLElement).getByRole('button', {
@@ -2216,7 +2216,7 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     await waitFor(() =>
-      expect(downloadAgentPackage).toHaveBeenCalledWith('arm64')
+      expect(downloadAgentPackage).toHaveBeenCalledWith('arm64', 'linux')
     )
     fireEvent.click(
       screen.getByRole('button', { name: '导入离线包' })
@@ -2272,7 +2272,7 @@ describe('SettingsPanel runtime files', () => {
       await Promise.resolve()
     })
     expect(
-      await screen.findByText('当前 1 / 2 个 Linux 架构可用。')
+      await screen.findByText('当前 1 / 2 个平台与架构目标可用。')
     ).toBeInTheDocument()
 
     getAgentPackageInventory.mockRejectedValueOnce(

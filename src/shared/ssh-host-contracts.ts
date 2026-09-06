@@ -404,6 +404,7 @@ export type RemoteEnvironmentUpdateProgress = z.infer<
 
 export const agentBootstrapIncompatibleReasonSchema = z.enum([
   'non-linux',
+  'unsupported-platform',
   'unsupported-architecture',
   'home-directory-unavailable',
   'uid-unavailable',
@@ -562,12 +563,12 @@ export const agentBootstrapProbeResultSchema = z.discriminatedUnion(
     z
       .object({
         ready: z.literal(true),
-        platform: z.literal('linux'),
+        platform: z.enum(['linux', 'darwin']),
         architecture: z.enum(['x64', 'arm64']),
         canonicalHomeDirectory: canonicalRemotePathSchema,
         uid: z.number().int().min(0).max(4_294_967_294),
         shell: canonicalRemotePathSchema,
-        procfs: z.literal('ready')
+        procfs: z.enum(['ready', 'not-applicable'])
       })
       .strict(),
     z

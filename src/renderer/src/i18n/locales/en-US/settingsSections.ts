@@ -585,7 +585,7 @@ export const settingsSections = {
         downloadVersion: 'Download {{version}}',
         listLabel: 'Local Agent package inventory',
         summary:
-          '{{available}} of {{total}} Linux architectures are available.',
+          '{{available}} of {{total}} platform and architecture targets are available.',
         states: {
           verified: 'Downloaded and verified',
           'not-downloaded': 'Not downloaded',
@@ -613,9 +613,9 @@ export const settingsSections = {
           installing: 'Writing the local cache…'
         },
         notifications: {
-          downloaded: 'Linux {{architecture}} Agent package updated',
+          downloaded: '{{platform}} {{architecture}} Agent package updated',
           imported: 'Agent offline package imported and verified',
-          exported: 'Linux {{architecture}} Agent package exported'
+          exported: '{{platform}} {{architecture}} Agent package exported'
         },
         errors: {
           unavailable:

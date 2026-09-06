@@ -5123,7 +5123,7 @@ export function registerIpcHandlers(
       const request =
         agentPackageInventoryRequestSchema.parse(input ?? {})
       return agentPackageInventorySchema.parse(
-        await agentPackageManager.getSnapshot(request)
+        await agentPackageManager.getAllSnapshot(request)
       )
     }
   )
@@ -5135,10 +5135,9 @@ export function registerIpcHandlers(
       if (!agentPackageManager) {
         throw new Error('Agent 包管理服务不可用')
       }
-      const { architecture } =
+      const { architecture, platform } =
         agentPackageArchitectureRequestSchema.parse(input)
-      return agentPackageInventorySchema.parse(
-        await agentPackageManager.download(
+      await agentPackageManager.forPlatform(platform).download(
           architecture,
           (progress) =>
             sendValidatedProgress(
@@ -5148,7 +5147,7 @@ export function registerIpcHandlers(
               progress
             )
         )
-      )
+      return agentPackageManager.getAllSnapshot()
     }
   )
 
@@ -5171,9 +5170,8 @@ export function registerIpcHandlers(
       if (result.canceled || !archivePath) {
         return undefined
       }
-      return agentPackageInventorySchema.parse(
-        await agentPackageManager.importArchive(archivePath)
-      )
+      await agentPackageManager.importArchive(archivePath)
+      return agentPackageManager.getAllSnapshot()
     }
   )
 
@@ -5184,10 +5182,10 @@ export function registerIpcHandlers(
       if (!agentPackageManager) {
         throw new Error('Agent 包管理服务不可用')
       }
-      const { architecture } =
+      const { architecture, platform } =
         agentPackageArchitectureRequestSchema.parse(input)
       const defaultPath =
-        await agentPackageManager.getExportArchiveName(
+        await agentPackageManager.forPlatform(platform).getExportArchiveName(
           architecture
         )
       const result = await dialog.showSaveDialog(window, {
@@ -5204,7 +5202,7 @@ export function registerIpcHandlers(
       const destination = result.filePath.endsWith('.gbagent')
         ? result.filePath
         : `${result.filePath}.gbagent`
-      await agentPackageManager.exportArchive(
+      await agentPackageManager.forPlatform(platform).exportArchive(
         architecture,
         destination
       )

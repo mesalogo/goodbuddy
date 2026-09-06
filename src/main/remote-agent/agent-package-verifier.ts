@@ -188,6 +188,7 @@ export async function verifyExtractedAgentPackage(options: {
     }
   )
   if (
+    agentBundle.manifest.platform !== descriptor.platform ||
     agentBundle.manifest.agentVersion !== descriptor.version ||
     agentBundle.manifest.protocol.major !==
       descriptor.agentProtocol.major ||
@@ -231,6 +232,7 @@ export async function verifyExtractedAgentPackage(options: {
       }
     )
   if (
+    runtimeBundle.manifest.platform !== descriptor.platform ||
     runtimeBundle.manifest.runtimeVersion !==
       descriptor.remoteRuntime.version ||
     runtimeBundle.manifest.bundleDigest !==

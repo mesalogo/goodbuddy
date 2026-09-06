@@ -351,6 +351,53 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
 
 ## 已完成的 E2E 验收记录
 
+### macOS arm64 Host 支持
+
+`agents.yml` 增加 `macos-15` / `darwin-arm64` 的原生 CI 组包任务，使用临时测试
+签名校验 Agent、固定 Node、Koffi 和 OpenCode，并比较两次组包的字节摘要。
+构建输入与检查的权威说明见 [BUILD.md 的 Agent 原生 CI 策略](../../../BUILD.md#agent-原生-ci-策略)。
+此 CI 任务不发布工件。生产 lock、`agent-release.yml`、安装器、Desktop 包管理和
+SSH Host 链路现支持 `linux-x64`、`linux-arm64`、`darwin-arm64`，三个目标共用
+原有 catalog JSON 和签名格式，不增加 Mac 专用目录。旧版 Linux-only Desktop
+读取器不能解析混合目录，首次发布 Darwin 条目前需先升级 Desktop。
+
+macOS 保持 SSH 按需启动 detached Agent，不要求 launchd、开机服务或管理员权限。
+私有 socket 使用 `/private/tmp`，通过 `getpeereid` 核对 UID；进程身份、启动标识和
+进程组通过系统原生 API 获取。取消前枚举 Runtime 的实际后代并核对 PID、启动时间
+和可执行文件，停止独立进程组中的工具，再停止 Runtime，避免只杀主进程组留下工具。
+
+2026-09-06 当前源码在真实 macOS arm64 Host 的隔离目录通过生产安装器
+`preparePackage` / `commitPackage`、adopt、health、Runtime activate、stop、
+bootstrap 和再次 health。实际 Desktop 协议客户端通过 Attach、只读 Workspace
+打开、真实 Ask 输出、Execute 写入并读回测试文件、取消工具并验证子进程退出，以及
+重新连接同一 daemon。两个 Darwin 原生进程测试通过，其中一个覆盖独立进程组子进程。
+共享 Linux x64 Host 同时通过当前源码组包、生产安装、生命周期、真实 Ask 和重连。
+这些验证没有发布 catalog 或工件；GitHub Actions 和正式下载渠道的发布验收尚未执行。
+最终本地 typecheck、lint、开发 build 和 diff whitespace 检查通过。最终全量
+`npm test` 为 3520 通过、57 跳过、0 失败（326 个测试文件通过、9 个跳过）。
+此前 ActivityPanel 的批量记录用例超时、App 的实时浏览器用例未观察到预期调用，
+分别复跑后通过；未修改这两个用例或放宽超时，随后完整测试套件通过。
+隔离测试 ledger 统计 Mac 模型请求 7 次，Linux 首轮
+1 次；最终 Linux 源码重装后又完成 1 次最小 Ask，总计 9 次真实模型请求。
+
+以下为较早的仅构建阶段记录，摘要不代表上述最终源码产物：
+
+2026-09-06：在真实 macOS 26.5.2 / arm64 Host 的独立测试目录运行当前源码
+`build/agent-ci-bundle.cjs --platform darwin --arch arm64`，退出码为 0。
+测试使用固定 Node 24.19.0、OpenCode 1.18.9 和内存临时签名密钥；Node 官方
+归档 SHA-256、OpenCode integrity、Mach-O 架构、内外层签名和两次组包摘要比较
+通过，Agent CLI 加载、Koffi 原生模块加载与 OpenCode `--version` 检查通过。
+生成 `goodbuddy-agent-0.11.18-darwin-arm64.gbagent`，本次测试包 SHA-256 为
+`9c63ba080def56ebd371a622f2650b89d0c652444077bd6ee19c4bd51b60f6ff`。
+临时签名每次独立运行都会变化，因此该摘要只标识本次测试产物，不是发布输入。
+源码压缩传输 529,624 字节，大依赖由 Host 直接下载并复用 npm 缓存。
+真实模型调用为 0 次；没有安装 Agent 服务，没有修改在线 catalog 或发布工件。
+
+该仅构建阶段的聚焦测试为 53 项通过、1 项平台跳过，typecheck、lint 和开发生产
+bundle 构建通过；这组历史结果不替代完整 Host 支持改动后的最终验证。
+
+### Linux 历史验收
+
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
   的双架构验收。Agent `0.11.10` 后续已由原生 workflow 发布并公开验证双架构工件；

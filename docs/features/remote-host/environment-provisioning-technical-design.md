@@ -102,7 +102,7 @@ bootstrap 能力元数据。公开直连能力仍须完成本文末尾 GitHub/�
 
 探测在 Host Key 已固定且 SSH 认证成功后执行，只检查当前选择的“关于与更新”来源：
 
-- Host 是受支持的 Linux `x64` 或 `arm64`。
+- Host 是 Linux `x64`、Linux `arm64` 或 macOS `arm64`；Intel Mac 不在支持范围。
 - SSH 账号 Home 可写，GoodBuddy-owned staging 可创建。
 - 可用空间满足签名目录声明的包大小、解包上限和安全余量。
 - Host 可以通过 HTTPS 访问所选 GitHub 或北京镜像 URL。

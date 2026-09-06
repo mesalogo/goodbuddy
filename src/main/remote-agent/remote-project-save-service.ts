@@ -59,6 +59,7 @@ export type RemoteProjectRuntimeValidationInput = Readonly<{
     installationId: AgentInstallationIdentity['installationId']
     binaryDigest: string
     version: string
+    platform: 'linux' | 'darwin'
     architecture: 'x64' | 'arm64'
     protocolMajor: number
   }>
@@ -308,6 +309,7 @@ export class RemoteProjectSaveService {
         installationId: installation.installationId,
         binaryDigest: installation.binaryDigest,
         version: installation.agentVersion,
+        platform: installation.platform,
         architecture: installation.architecture,
         protocolMajor: installation.protocol.major
       },
@@ -484,7 +486,7 @@ function assertInstallation(
       installation.installationId
     ) ||
     !sha256DigestSchema.safeParse(installation.binaryDigest).success ||
-    installation.platform !== 'linux' ||
+    (installation.platform !== 'linux' && !(installation.platform === 'darwin' && installation.architecture === 'arm64')) ||
     !['x64', 'arm64'].includes(installation.architecture) ||
     installation.supervisor !== 'detached-on-demand'
   ) {

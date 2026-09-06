@@ -275,7 +275,7 @@ async function validateVerifiedBundle(
     verified.bundleDirectory !== bundleDirectory ||
     manifest.runtimeId !== 'opencode' ||
     manifest.provider !== 'opencode' ||
-    manifest.platform !== 'linux' ||
+    (manifest.platform !== 'linux' && !(manifest.platform === 'darwin' && manifest.architecture === 'arm64')) ||
     manifest.architecture !== architecture
   ) {
     throw new Error(

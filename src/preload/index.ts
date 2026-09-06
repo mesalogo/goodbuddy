@@ -450,19 +450,19 @@ const desktopApi: DesktopApi = {
         ipcChannels.sshHostsAgentPackageInventory,
         { refresh }
       ) as Promise<AgentPackageInventory>,
-    downloadAgentPackage: (architecture: AgentArchitecture) =>
+    downloadAgentPackage: (architecture: AgentArchitecture, platform: 'linux' | 'darwin' = 'linux') =>
       ipcRenderer.invoke(
         ipcChannels.sshHostsAgentPackageDownload,
-        { architecture }
+        { architecture, platform }
       ) as Promise<AgentPackageInventory>,
     importAgentPackage: () =>
       ipcRenderer.invoke(
         ipcChannels.sshHostsAgentPackageImport
       ) as Promise<AgentPackageInventory | undefined>,
-    exportAgentPackage: async (architecture: AgentArchitecture) => {
+    exportAgentPackage: async (architecture: AgentArchitecture, platform: 'linux' | 'darwin' = 'linux') => {
       await ipcRenderer.invoke(
         ipcChannels.sshHostsAgentPackageExport,
-        { architecture }
+        { architecture, platform }
       )
     },
     onAgentPackageProgress: (listener) => {

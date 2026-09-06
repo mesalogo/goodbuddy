@@ -16,6 +16,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
+import { agentPlatformSchema, type AgentPlatform } from '../../shared/agent-target'
 import {
   agentPackageArchiveName,
   agentPackageCatalogSchema,
@@ -94,6 +95,7 @@ type CatalogState =
     }
 
 export type AgentPackageManagerOptions = {
+  platform?: AgentPlatform
   userDataPath: string
   desktopVersion: string
   keyRegistryPath: string
@@ -104,7 +106,7 @@ export type AgentPackageManagerOptions = {
 
 export type VerifiedRemoteAgentInstallCandidate = {
   source: UpdateSource
-  platform: 'linux'
+  platform: AgentPlatform
   architecture: AgentArchitecture
   version: string
   minimumDesktopVersion: string
@@ -161,6 +163,7 @@ export type AgentPackageArchiveLease = {
 }
 
 export type AcquireInstallArchiveOptions = {
+  platform?: AgentPlatform
   signal?: AbortSignal
   onProgress?: (progress: AgentPackageDownloadProgress) => void
 }
@@ -185,7 +188,7 @@ function candidateFromCatalogEntry(
 ): VerifiedRemoteAgentInstallCandidate {
   return {
     source,
-    platform: 'linux',
+    platform: entry.platform,
     architecture: entry.architecture,
     version: entry.version,
     minimumDesktopVersion: entry.minimumDesktopVersion,
@@ -209,7 +212,7 @@ function candidateFromVerifiedRecord(
   const descriptor = record.verified.descriptor
   return {
     source,
-    platform: 'linux',
+    platform: descriptor.platform,
     architecture: descriptor.architecture,
     version: descriptor.version,
     minimumDesktopVersion: descriptor.minimumDesktopVersion,
@@ -220,7 +223,8 @@ function candidateFromVerifiedRecord(
     },
     archive: agentPackageArchiveName(
       descriptor.version,
-      descriptor.architecture
+      descriptor.architecture,
+      descriptor.platform
     ),
     size,
     sha256: record.archiveSha256,
@@ -229,6 +233,9 @@ function candidateFromVerifiedRecord(
 }
 
 export class AgentPackageManager {
+  readonly #options: AgentPackageManagerOptions
+  readonly #platform: AgentPlatform
+  readonly #platformManagers = new Map<AgentPlatform, AgentPackageManager>()
   readonly #rootDirectory: string
   readonly #desktopVersion: string
   readonly #keyRegistryPath: string
@@ -250,6 +257,8 @@ export class AgentPackageManager {
   #catalogState?: CatalogState
 
   constructor(options: AgentPackageManagerOptions) {
+    this.#options = options
+    this.#platform = agentPlatformSchema.parse(options.platform ?? 'linux')
     this.#rootDirectory = resolve(
       options.userDataPath,
       'remote-components',
@@ -263,6 +272,31 @@ export class AgentPackageManager {
     this.#startupCleanup = this.#cleanupInterruptedArtifacts()
   }
 
+  forPlatform(platform: AgentPlatform): AgentPackageManager {
+    if (platform === this.#platform) return this
+    let manager = this.#platformManagers.get(platform)
+    if (!manager) {
+      manager = new AgentPackageManager({ ...this.#options, platform })
+      this.#platformManagers.set(platform, manager)
+    }
+    return manager
+  }
+
+  async getAllSnapshot(options: { refresh?: boolean } = {}): Promise<AgentPackageInventory> {
+    const linux = await this.forPlatform('linux').getSnapshot(options)
+    const darwin = this.forPlatform('darwin')
+    darwin.#catalogState = this.forPlatform('linux').#catalogState
+    const mac = await darwin.getInventory(options)
+    return agentPackageInventorySchema.parse({
+      ...linux,
+      entries: [...linux.entries, ...mac.entries]
+    })
+  }
+
+  #select(catalog: AgentPackageCatalog, architecture: AgentArchitecture, desktopVersion: string) {
+    return selectLatestCompatibleEntry(catalog, architecture, desktopVersion, this.#platform)
+  }
+
   async getInventory(
     options: { refresh?: boolean } = {}
   ): Promise<AgentPackageInventory> {
@@ -270,7 +304,9 @@ export class AgentPackageManager {
       this.#installed.clear()
     }
     const entries = await Promise.all(
-      agentArchitectureSchema.options.map(async (architecture) => {
+      agentArchitectureSchema.options.filter(architecture =>
+        this.#platform === 'linux' || architecture === 'arm64'
+      ).map(async (architecture) => {
         let record: InstalledRecord | undefined
         let state: 'not-downloaded' | 'verified' | 'invalid'
         try {
@@ -283,7 +319,7 @@ export class AgentPackageManager {
         }
         const latestVersion = this.#latestVersion(architecture)
         return {
-          platform: 'linux' as const,
+          platform: this.#platform,
           architecture,
           state,
           version: record?.verified.descriptor.version ?? null,
@@ -334,8 +370,11 @@ export class AgentPackageManager {
 
   async getRemoteEnvironmentCatalog(
     architecture: AgentArchitecture,
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; platform?: AgentPlatform } = {}
   ): Promise<VerifiedRemoteAgentEnvironmentCatalog> {
+    if (options.platform && options.platform !== this.#platform) {
+      return this.forPlatform(options.platform).getRemoteEnvironmentCatalog(architecture, options)
+    }
     options.signal?.throwIfAborted()
     let entry: AgentPackageCatalogEntry
     let source: UpdateSource | undefined
@@ -346,7 +385,7 @@ export class AgentPackageManager {
         source,
         options.signal
       )
-      entry = selectLatestCompatibleEntry(
+      entry = this.#select(
         catalog,
         architecture,
         this.#desktopVersion
@@ -406,8 +445,11 @@ export class AgentPackageManager {
    */
   async getRemoteInstallCandidate(
     architecture: AgentArchitecture,
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; platform?: AgentPlatform } = {}
   ): Promise<VerifiedRemoteAgentInstallCandidate> {
+    if (options.platform && options.platform !== this.#platform) {
+      return this.forPlatform(options.platform).getRemoteInstallCandidate(architecture, options)
+    }
     options.signal?.throwIfAborted()
     const source = await this.#getUpdateSource()
     options.signal?.throwIfAborted()
@@ -415,7 +457,7 @@ export class AgentPackageManager {
       source,
       options.signal
     )
-    const entry = selectLatestCompatibleEntry(
+    const entry = this.#select(
       catalog,
       architecture,
       this.#desktopVersion
@@ -463,7 +505,7 @@ export class AgentPackageManager {
         source,
         signal
       )
-      const entry = selectLatestCompatibleEntry(
+      const entry = this.#select(
         catalog,
         architecture,
         this.#desktopVersion
@@ -484,6 +526,11 @@ export class AgentPackageManager {
     expectedCandidate: VerifiedRemoteAgentInstallCandidate,
     options: AcquireInstallArchiveOptions = {}
   ): Promise<AgentPackageArchiveLease> {
+    if (expectedCandidate.platform !== this.#platform) {
+      return this.forPlatform(expectedCandidate.platform).acquireInstallArchive(
+        architecture, expectedCandidate, options
+      )
+    }
     return this.#runExclusive(
       architecture,
       async () => {
@@ -507,7 +554,7 @@ export class AgentPackageManager {
           source,
           options.signal
         )
-        const entry = selectLatestCompatibleEntry(
+        const entry = this.#select(
           catalog,
           architecture,
           this.#desktopVersion
@@ -534,6 +581,9 @@ export class AgentPackageManager {
     architecture: AgentArchitecture,
     options: AcquireInstallArchiveOptions = {}
   ): Promise<AgentPackageArchiveLease> {
+    if (options.platform && options.platform !== this.#platform) {
+      return this.forPlatform(options.platform).acquireGoodBuddyInstallArchive(architecture, options)
+    }
     return this.#runExclusive(
       architecture,
       async () => {
@@ -562,7 +612,7 @@ export class AgentPackageManager {
         }
         let entry: AgentPackageCatalogEntry
         if (this.#catalogState?.state === 'available') {
-          entry = selectLatestCompatibleEntry(
+          entry = this.#select(
             this.#catalogState.catalog,
             architecture,
             this.#desktopVersion
@@ -584,7 +634,7 @@ export class AgentPackageManager {
             source,
             options.signal
           )
-          entry = selectLatestCompatibleEntry(
+          entry = this.#select(
             catalog,
             architecture,
             this.#desktopVersion
@@ -651,6 +701,7 @@ export class AgentPackageManager {
   ): Promise<boolean> {
     const descriptor = record.verified.descriptor
     if (
+      descriptor.platform === candidate.platform &&
       descriptor.architecture === candidate.architecture &&
       descriptor.version === candidate.version &&
       descriptor.minimumDesktopVersion ===
@@ -831,11 +882,12 @@ export class AgentPackageManager {
       )
       const architecture =
         installed.verified.descriptor.architecture
-      return await this.#runExclusive(
+      const manager = this.forPlatform(installed.verified.descriptor.platform)
+      return await manager.#runExclusive(
         architecture,
         async () => {
-          await this.#publishInstalled(installed, architecture)
-          return this.getInventory()
+          await manager.#publishInstalled(installed, architecture)
+          return manager.getInventory()
         }
       )
     } finally {
@@ -918,7 +970,8 @@ export class AgentPackageManager {
         .verified.descriptor
     return agentPackageArchiveName(
       descriptor.version,
-      descriptor.architecture
+      descriptor.architecture,
+      descriptor.platform
     )
   }
 
@@ -978,7 +1031,10 @@ export class AgentPackageManager {
           desktopVersion: this.#desktopVersion,
           trustedRegistry: await this.#loadTrustedRegistry()
         })
-        if (packageContent.descriptor.version !== entry.name) {
+        if (
+          packageContent.descriptor.version !== entry.name ||
+          packageContent.descriptor.platform !== this.#platform
+        ) {
           continue
         }
         const archivePath = join(directory, 'package.gbagent')
@@ -1051,6 +1107,10 @@ export class AgentPackageManager {
     architecture: AgentArchitecture,
     catalogEntry?: AgentPackageCatalogEntry
   ): Promise<InstalledRecord> {
+    if (
+      installed.verified.descriptor.platform !== this.#platform ||
+      installed.verified.descriptor.architecture !== architecture
+    ) throw new Error('Agent package does not match the selected platform and architecture')
     const destination = join(
       this.#architectureRoot(architecture),
       installed.verified.descriptor.version
@@ -1318,7 +1378,7 @@ export class AgentPackageManager {
       return null
     }
     try {
-      return selectLatestCompatibleEntry(
+      return this.#select(
         this.#catalogState.catalog,
         architecture,
         this.#desktopVersion
@@ -1701,7 +1761,7 @@ export class AgentPackageManager {
     await mkdir(this.#rootDirectory, { recursive: true })
     const path = join(
       this.#rootDirectory,
-      `.stage-linux-${architecture}-${randomUUID()}`
+      `.stage-${this.#platform}-${architecture}-${randomUUID()}`
     )
     await mkdir(path)
     return path
@@ -1710,7 +1770,7 @@ export class AgentPackageManager {
   async #cleanupInterruptedArtifacts(): Promise<void> {
     await this.#removeOwnedTemporaryDirectories(
       this.#rootDirectory,
-      /^\.stage-linux-(?:x64|arm64|import)-[0-9a-f-]{36}$/u
+      new RegExp(`^\\.stage-${this.#platform}-(?:x64|arm64|import)-[0-9a-f-]{36}$`, 'u')
     )
     await Promise.all(
       agentArchitectureSchema.options.map((architecture) =>
@@ -1756,7 +1816,7 @@ export class AgentPackageManager {
   #architectureRoot(
     architecture: AgentArchitecture
   ): string {
-    return join(this.#rootDirectory, `linux-${architecture}`)
+    return join(this.#rootDirectory, `${this.#platform}-${architecture}`)
   }
 
   #loadTrustedRegistry(): Promise<AgentReleaseKeyRegistry> {
@@ -1825,10 +1885,10 @@ export class AgentPackageManager {
     observer:
       | ((progress: AgentPackageDownloadProgress) => void)
       | undefined,
-    progress: AgentPackageDownloadProgress
+    progress: Omit<AgentPackageDownloadProgress, 'platform'>
   ): void {
     try {
-      observer?.(agentPackageDownloadProgressSchema.parse(progress))
+      observer?.(agentPackageDownloadProgressSchema.parse({ ...progress, platform: this.#platform }))
     } catch {
       // Progress observers cannot alter the package operation.
     }
@@ -1838,11 +1898,13 @@ export class AgentPackageManager {
 export function selectLatestCompatibleEntry(
   catalog: AgentPackageCatalog,
   architecture: AgentArchitecture,
-  desktopVersion: string
+  desktopVersion: string,
+  platform: AgentPlatform = 'linux'
 ): AgentPackageCatalogEntry {
   const entry = catalog.entries
     .filter(
       (candidate) =>
+        candidate.platform === platform &&
         candidate.architecture === architecture &&
         compareSemanticVersions(
           desktopVersion,

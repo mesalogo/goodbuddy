@@ -842,13 +842,13 @@ export function deriveManagedInstallationPaths(
   const platform = options.platform ?? process.platform
   const uid = options.uid ?? process.getuid?.()
   if (
-    platform !== 'linux' ||
+    !['linux', 'darwin'].includes(platform) ||
     uid === undefined ||
     !Number.isSafeInteger(uid) ||
     uid < 0
   ) {
     throw new AgentUnsupportedError(
-      'Managed Agent paths require a current Linux UID',
+      'Managed Agent paths require a current Unix UID',
       'platform-incompatible'
     )
   }
@@ -860,7 +860,7 @@ export function deriveManagedInstallationPaths(
     .digest('hex')
     .slice(0, 20)
   const socketRoot = posix.join(
-    '/tmp',
+    platform === 'darwin' ? '/private/tmp' : '/tmp',
     `goodbuddy-${uid}-${homeHash}`
   )
   const socketName = createHash('sha256')

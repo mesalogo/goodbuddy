@@ -109,7 +109,7 @@ export function PlatformFeaturesSettingsSection({
   const [agentInventoryError, setAgentInventoryError] =
     useState<string>()
   const [agentPackageBusy, setAgentPackageBusy] =
-    useState<AgentArchitecture | 'import'>()
+    useState<string>()
   const [agentPackageProgress, setAgentPackageProgress] =
     useState<AgentPackageDownloadProgress>()
   const agentInventoryRequested = useRef(false)
@@ -195,23 +195,24 @@ export function PlatformFeaturesSettingsSection({
   }, [])
 
   const downloadAgentPackage = async (
-    architecture: AgentArchitecture
+    architecture: AgentArchitecture,
+    platform: 'linux' | 'darwin'
   ): Promise<void> => {
     const download =
       window.goodbuddy.sshHosts?.downloadAgentPackage
     if (!download) {
       return
     }
-    setAgentPackageBusy(architecture)
+    setAgentPackageBusy(`${platform}-${architecture}`)
     setAgentPackageProgress(undefined)
     setAgentInventoryError(undefined)
     try {
-      setAgentInventory(await download(architecture))
+      setAgentInventory(await download(architecture, platform))
       onNotify?.({
-        dedupeKey: `agent-package-downloaded:${architecture}`,
+        dedupeKey: `agent-package-downloaded:${platform}-${architecture}`,
         message: t(
           'platformFeatures.remoteProjects.agentInventory.notifications.downloaded',
-          { architecture }
+          { architecture, platform: platform === 'darwin' ? 'macOS' : 'Linux' }
         ),
         tone: 'success'
       })
@@ -265,22 +266,23 @@ export function PlatformFeaturesSettingsSection({
   }
 
   const exportAgentPackage = async (
-    architecture: AgentArchitecture
+    architecture: AgentArchitecture,
+    platform: 'linux' | 'darwin'
   ): Promise<void> => {
     const exportPackage =
       window.goodbuddy.sshHosts?.exportAgentPackage
     if (!exportPackage) {
       return
     }
-    setAgentPackageBusy(architecture)
+    setAgentPackageBusy(`${platform}-${architecture}`)
     setAgentInventoryError(undefined)
     try {
-      await exportPackage(architecture)
+      await exportPackage(architecture, platform)
       onNotify?.({
-        dedupeKey: `agent-package-exported:${architecture}`,
+        dedupeKey: `agent-package-exported:${platform}-${architecture}`,
         message: t(
           'platformFeatures.remoteProjects.agentInventory.notifications.exported',
-          { architecture }
+          { architecture, platform: platform === 'darwin' ? 'macOS' : 'Linux' }
         ),
         tone: 'success'
       })
@@ -983,13 +985,13 @@ export function PlatformFeaturesSettingsSection({
               {agentInventory.entries.map((entry) => (
                 <article
                   className="bundled-agent-inventory__item"
-                  key={entry.architecture}
+                  key={`${entry.platform}-${entry.architecture}`}
                   role="listitem"
                 >
                   <div className="bundled-agent-inventory__item-header">
                     <Cpu aria-hidden="true" size={16} />
                     <strong>
-                      Linux {entry.architecture}
+                      {entry.platform === 'darwin' ? 'macOS' : 'Linux'} {entry.architecture}
                     </strong>
                     <span
                       className={`bundled-agent-inventory__badge bundled-agent-inventory__badge--${
@@ -1063,7 +1065,8 @@ export function PlatformFeaturesSettingsSection({
                   </dl>
                   {agentPackageProgress?.architecture ===
                     entry.architecture &&
-                    agentPackageBusy === entry.architecture && (
+                    agentPackageProgress.platform === entry.platform &&
+                    agentPackageBusy === `${entry.platform}-${entry.architecture}` && (
                       <p className="settings-notice" role="status">
                         {t(
                           `platformFeatures.remoteProjects.agentInventory.progress.${agentPackageProgress.phase}`
@@ -1084,7 +1087,8 @@ export function PlatformFeaturesSettingsSection({
                         disabled={agentPackageBusy !== undefined}
                         onClick={() =>
                           void downloadAgentPackage(
-                            entry.architecture
+                            entry.architecture,
+                            entry.platform
                           )
                         }
                         type="button"
@@ -1107,7 +1111,8 @@ export function PlatformFeaturesSettingsSection({
                         disabled={agentPackageBusy !== undefined}
                         onClick={() =>
                           void exportAgentPackage(
-                            entry.architecture
+                            entry.architecture,
+                            entry.platform
                           )
                         }
                         type="button"

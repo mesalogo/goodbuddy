@@ -1,5 +1,6 @@
 import { readFile, readlink } from 'node:fs/promises'
 import { posix } from 'node:path'
+import { darwinBootId, inspectDarwinProcess } from './darwin-process-identity'
 
 export type LinuxRuntimeProcessIdentity = {
   bootId: string
@@ -72,6 +73,19 @@ export async function readLinuxRuntimeProcessIdentity(
   options: { procRoot?: string; bootId?: string } = {}
 ): Promise<LinuxRuntimeProcessIdentity> {
   const pid = positiveInteger(pidInput, 'PID')
+  if (process.platform === 'darwin') {
+    const identity = inspectDarwinProcess(pid)
+    if (identity === undefined) {
+      throw Object.assign(new Error('Runtime process no longer exists'), { code: 'ESRCH' })
+    }
+    return {
+      bootId: options.bootId ?? darwinBootId(),
+      pid,
+      startTimeTicks: BigInt(identity.starttime),
+      processGroupId: identity.processGroupId,
+      executablePath: identity.executablePath
+    }
+  }
   const procRoot = options.procRoot ?? '/proc'
   if (!posix.isAbsolute(procRoot) || procRoot.includes('\0')) {
     throw new Error('Linux proc root must be absolute')

@@ -1537,7 +1537,8 @@ describe('registerIpcHandlers SSH hosts', () => {
       ]
     } as const
     const agentPackageManager = {
-      getSnapshot: vi.fn(async () => agentPackageInventory),
+      getAllSnapshot: vi.fn(async () => agentPackageInventory),
+      forPlatform: vi.fn(() => agentPackageManager),
       download: vi.fn(
         async (
           architecture: 'x64' | 'arm64',
@@ -1675,7 +1676,7 @@ describe('registerIpcHandlers SSH hosts', () => {
       )?.(event, { refresh: true })
     ).resolves.toEqual(agentPackageInventory)
     expect(
-      agentPackageManager.getSnapshot
+      agentPackageManager.getAllSnapshot
     ).toHaveBeenCalledWith({ refresh: true })
     await expect(
       electronMocks.handlers.get(
@@ -1690,6 +1691,7 @@ describe('registerIpcHandlers SSH hosts', () => {
       ipcChannels.sshHostsAgentPackageProgress,
       {
         architecture: 'x64',
+        platform: 'linux',
         phase: 'downloading',
         completedBytes: 1,
         totalBytes: 2
@@ -1902,8 +1904,8 @@ describe('registerIpcHandlers SSH hosts', () => {
       })
     ).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
     expect(
-      agentPackageManager.getSnapshot
-    ).toHaveBeenCalledOnce()
+      agentPackageManager.getAllSnapshot
+    ).toHaveBeenCalledTimes(3)
 
     await expect(
       electronMocks.handlers.get(

@@ -50,9 +50,9 @@ below.
   optional: users explicitly download a compatible compound `.gbagent` package
   from Settings or import one offline before GoodBuddy can install or update a
   Host.
-- Each independently published Linux x64 or arm64 `.gbagent` contains the
+- Each independently published Linux x64, Linux arm64, or macOS arm64 `.gbagent` contains the
   Agent daemon, pinned Node, and the desktop-maintained compatible OpenCode
-  Runtime. Build both architectures on native GitHub Actions runners from one
+  Runtime. Build all three targets on native GitHub Actions runners from one
   immutable `agent-v<agentVersion>` tag.
 - Keep the GoodBuddy Agent source, shared protocol/contracts, runtime lock,
   bundle tooling, and tests in this repository so a desktop commit identifies
@@ -66,7 +66,9 @@ below.
   digest, use only an ephemeral in-memory test signing identity, and verify the
   resulting compound package and deterministic archive. It must not read
   production signing secrets, publish installable release artifacts, or modify
-  the checked-in public key registry.
+  the checked-in public key registry. The Darwin arm64 target uses `macos-15`
+  and the same production locks. Native CI checks do not replace real Host
+  installation, Attach, Ask/Execute, and lifecycle validation during development.
 - `.github/workflows/agent-release.yml` is the only production compound Agent
   publication path. It requires an annotated immutable Agent tag, the protected
   `agent-signing` Environment, native x64/arm64 builds, one production
@@ -98,11 +100,18 @@ below.
   and are separate from desktop `v${package.version}` releases. Confirm the
   exact Agent release commit and tag with the user before creating or pushing
   either.
-- The tagged commit must be reachable from protected `main`. The two native
-  jobs build the compound x64/arm64 packages from the same source and locks;
+- The tagged commit must be reachable from protected `main`. The three native
+  jobs build Linux x64, Linux arm64, and Darwin arm64 packages from the same source and locks;
   the catalog job rejects missing architectures, changed bytes for an existing
-  version/architecture identity, invalid prior signatures, and incompatible
+  version/platform/architecture identity, invalid prior signatures, and incompatible
   matrix metadata.
+- All three targets share the existing signed `agent-catalog.json`. Before the
+  first mixed-platform catalog is published, release the Desktop reader that
+  accepts Darwin entries and document the required Desktop upgrade. Older
+  Desktop readers reject the entire mixed catalog and cannot check online Agent
+  updates; preserve their locally verified packages and immutable historical
+  releases. Do not introduce a second catalog or silently weaken package
+  signature and integrity verification.
 - Agent GitHub Releases are ordinary non-draft, non-prerelease releases but
   must use `--latest=false`; they must never replace the desktop release marked
   Latest. Publish immutable packages and the versioned catalog to

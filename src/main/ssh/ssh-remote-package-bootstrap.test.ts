@@ -503,7 +503,7 @@ describe("fixed SSH remote package bootstrap", () => {
       '--archive-sha256-verified true',
     );
     expect(SSH_REMOTE_PACKAGE_BOOTSTRAP_SCRIPT).toContain(
-      'actual_sha256=$(sha256sum "$archive"',
+      'actual_sha256=$(hash_sha256 "$archive"',
     );
   });
 

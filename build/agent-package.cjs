@@ -19,6 +19,7 @@ const {
 } = require('node:fs')
 const { basename, dirname, join, relative, resolve, sep } = require('node:path')
 const { tmpdir } = require('node:os')
+const { targetName } = require('./agent-build-target.cjs')
 const { crc32 } = require('node:zlib')
 const {
   buildAgentBundle,
@@ -345,6 +346,8 @@ function createPackageArchive(
 function assembleAgentPackage(options) {
   const projectRoot = options.projectRoot ?? root
   const architecture = options.architecture
+  const platform = options.platform ?? 'linux'
+  const target = targetName(architecture, platform)
   if (
     !['x64', 'arm64'].includes(architecture) ||
     !semanticVersionPattern.test(options.minimumDesktopVersion ?? '') ||
@@ -386,6 +389,7 @@ function assembleAgentPackage(options) {
     options.agentBundle,
     architecture,
     {
+      platform,
       projectRoot,
       registry,
       lock: agentLock,
@@ -395,6 +399,7 @@ function assembleAgentPackage(options) {
     }
   )
   const runtime = verifyRuntimeBundle(options.runtimeBundle, {
+    platform,
     projectRoot,
     architecture,
     registry,
@@ -405,14 +410,14 @@ function assembleAgentPackage(options) {
   })
   const expectedArchiveName =
     `goodbuddy-agent-${agent.manifest.agentVersion}` +
-    `-linux-${architecture}.gbagent`
+    `-${target}.gbagent`
   if (basename(options.output) !== expectedArchiveName) {
     throw new Error(
       `Agent package output must be named ${expectedArchiveName}`
     )
   }
   const staging = mkdtempSync(
-    join(tmpdir(), `goodbuddy-agent-package-linux-${architecture}-`)
+    join(tmpdir(), `goodbuddy-agent-package-${target}-`)
   )
   try {
     stagePackagePayload({
@@ -431,7 +436,7 @@ function assembleAgentPackage(options) {
       component: 'agent',
       version: agent.manifest.agentVersion,
       minimumDesktopVersion: options.minimumDesktopVersion,
-      platform: 'linux',
+      platform,
       architecture,
       signingKeyId: signingIdentity.keyId,
       agentProtocol: agent.manifest.protocol,
@@ -493,6 +498,7 @@ function buildAgentPackage(options) {
   )
   try {
     const agentBundle = buildAgentBundle({
+      platform: options.platform ?? 'linux',
       projectRoot,
       arch: options.architecture,
       runtimeArchive: options.nodeArchive,
@@ -504,6 +510,7 @@ function buildAgentPackage(options) {
         : { signingIdentity })
     })
     const runtime = buildRuntimeBundle({
+      platform: options.platform ?? 'linux',
       projectRoot,
       architecture: options.architecture,
       runtimeArchive: options.runtimeArchive,
@@ -544,6 +551,7 @@ function parseArguments(argv) {
     if (
       ![
         '--arch',
+        '--platform',
         '--minimum-desktop-version',
         '--node-archive',
         '--runtime-archive',
@@ -571,10 +579,12 @@ function parseArguments(argv) {
     throw new Error('Agent package arguments are incomplete')
   }
   const common = {
+    platform: options.platform ?? 'linux',
     architecture: options.arch,
     minimumDesktopVersion: options.minimumDesktopVersion,
     output: resolve(options.output)
   }
+  targetName(common.architecture, common.platform)
   if (command === 'build') {
     if (!options.nodeArchive || !options.runtimeArchive) {
       throw new Error('Agent package build inputs are incomplete')

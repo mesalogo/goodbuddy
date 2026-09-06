@@ -32,6 +32,10 @@ const {
 } = require('./zip-central-directory.cjs')
 
 const root = resolve(__dirname, '..')
+function supportedTarget(platform, architecture) {
+  return (platform === 'linux' && ['x64', 'arm64'].includes(architecture)) ||
+    (platform === 'darwin' && architecture === 'arm64')
+}
 const catalogName = 'agent-catalog.json'
 const catalogSignatureName = 'agent-catalog.sig'
 const catalogSignatureDomain = Buffer.from(
@@ -136,7 +140,7 @@ function assertPackageDescriptor(descriptor) {
     !semanticVersionPattern.test(
       descriptor.minimumDesktopVersion ?? ''
     ) ||
-    descriptor.platform !== 'linux' ||
+    !supportedTarget(descriptor.platform, descriptor.architecture) ||
     !['x64', 'arm64'].includes(descriptor.architecture) ||
     typeof descriptor.signingKeyId !== 'string' ||
     !/^sha256:[a-f0-9]{64}$/u.test(
@@ -214,7 +218,7 @@ function readPackageMetadata(archivePath, registry) {
   )
   const expectedArchive =
     `goodbuddy-agent-${descriptor.version}` +
-    `-linux-${descriptor.architecture}.gbagent`
+    `-${descriptor.platform}-${descriptor.architecture}.gbagent`
   if (basename(archive) !== expectedArchive) {
     throw new Error(
       `Agent package archive must be named ${expectedArchive}`
@@ -566,11 +570,11 @@ function assertCatalog(catalog) {
       !semanticVersionPattern.test(
         entry.minimumDesktopVersion ?? ''
       ) ||
-      entry.platform !== 'linux' ||
+      !supportedTarget(entry.platform, entry.architecture) ||
       !['x64', 'arm64'].includes(entry.architecture) ||
       entry.archive !==
         `goodbuddy-agent-${entry.version}` +
-          `-linux-${entry.architecture}.gbagent` ||
+        `-${entry.platform}-${entry.architecture}.gbagent` ||
       !Number.isSafeInteger(entry.size) ||
       entry.size <= 0 ||
       !sha256Pattern.test(entry.sha256 ?? '') ||
@@ -600,7 +604,7 @@ function assertCatalog(catalog) {
       entry.remoteRuntime.protocol,
       'Remote Runtime protocol'
     )
-    const identity = `${entry.version}:${entry.architecture}`
+    const identity = `${entry.version}:${entry.platform}:${entry.architecture}`
     if (identities.has(identity)) {
       throw new Error('Agent catalog contains duplicate entries')
     }
@@ -698,7 +702,8 @@ function createCatalog(options) {
   }
   const packages = [
     readPackageMetadata(options.x64Package, registry),
-    readPackageMetadata(options.arm64Package, registry)
+    readPackageMetadata(options.arm64Package, registry),
+    ...(options.darwinArm64Package ? [readPackageMetadata(options.darwinArm64Package, registry)] : [])
   ]
   const [first, second] = packages
   const {
@@ -721,11 +726,25 @@ function createCatalog(options) {
       canonicalJson(secondRuntimeIdentity) ||
     new Set(packages.map(
       (metadata) => metadata.descriptor.architecture
-    )).size !== 2
+    ).slice(0, 2)).size !== 2 ||
+    first.descriptor.platform !== 'linux' ||
+    second.descriptor.platform !== 'linux'
   ) {
     throw new Error(
       'Agent package matrix does not describe one coherent release'
     )
+  }
+  if (packages[2]) {
+    const mac = packages[2].descriptor
+    const { bundleDigest: _digest, ...runtimeIdentity } = mac.remoteRuntime
+    void _digest
+    if (
+      mac.platform !== 'darwin' || mac.architecture !== 'arm64' ||
+      mac.version !== first.descriptor.version ||
+      mac.minimumDesktopVersion !== first.descriptor.minimumDesktopVersion ||
+      canonicalJson(mac.agentProtocol) !== canonicalJson(first.descriptor.agentProtocol) ||
+      canonicalJson(runtimeIdentity) !== canonicalJson(firstRuntimeIdentity)
+    ) throw new Error('Agent package matrix does not describe one coherent release')
   }
   const previous =
     options.previousCatalog && options.previousSignature
@@ -745,11 +764,11 @@ function createCatalog(options) {
   }
   const entries = new Map()
   for (const entry of previous?.entries ?? []) {
-    entries.set(`${entry.version}:${entry.architecture}`, entry)
+    entries.set(`${entry.version}:${entry.platform}:${entry.architecture}`, entry)
   }
   for (const metadata of packages) {
     const entry = catalogEntry(metadata)
-    const identity = `${entry.version}:${entry.architecture}`
+    const identity = `${entry.version}:${entry.platform}:${entry.architecture}`
     const existing = entries.get(identity)
     if (
       existing &&
@@ -764,6 +783,7 @@ function createCatalog(options) {
   const sortedEntries = [...entries.values()].sort(
     (left, right) =>
       compareVersions(right.version, left.version) ||
+      left.platform.localeCompare(right.platform, 'en') ||
       left.architecture.localeCompare(right.architecture, 'en')
   )
   if (sortedEntries.length > maximumCatalogEntries) {
@@ -813,6 +833,7 @@ function parseArguments(argv) {
       ![
         '--x64-package',
         '--arm64-package',
+        '--darwin-arm64-package',
         '--previous-catalog',
         '--previous-signature',
         '--catalog',
@@ -852,6 +873,9 @@ function parseArguments(argv) {
     command,
     x64Package: resolve(options['--x64-package']),
     arm64Package: resolve(options['--arm64-package']),
+    ...(options['--darwin-arm64-package'] ? {
+      darwinArm64Package: resolve(options['--darwin-arm64-package'])
+    } : {}),
     ...(options['--previous-catalog']
       ? {
           previousCatalog: resolve(

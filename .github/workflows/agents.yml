@@ -9,6 +9,8 @@ on:
       - 'build/agent-bundle.cjs'
       - 'build/agent-package.cjs'
       - 'build/agent-ci-bundle.cjs'
+      - 'build/agent-build-target.cjs'
+      - 'build/binary-architecture.cjs'
       - 'build/file-hash.cjs'
       - 'build/remote-runtime-bundle.cjs'
       - 'build/signing-key-preflight.cjs'
@@ -19,6 +21,7 @@ on:
       - 'src/agent-daemon/**'
       - 'src/shared/**'
       - 'tests/agent-bundle.test.ts'
+      - 'tests/agent-darwin-build.test.ts'
       - 'tests/agent-package.test.ts'
       - 'tests/agents-workflow.test.ts'
       - 'tests/remote-runtime-bundle.test.ts'
@@ -31,6 +34,8 @@ on:
       - 'build/agent-bundle.cjs'
       - 'build/agent-package.cjs'
       - 'build/agent-ci-bundle.cjs'
+      - 'build/agent-build-target.cjs'
+      - 'build/binary-architecture.cjs'
       - 'build/file-hash.cjs'
       - 'build/remote-runtime-bundle.cjs'
       - 'build/signing-key-preflight.cjs'
@@ -41,6 +46,7 @@ on:
       - 'src/agent-daemon/**'
       - 'src/shared/**'
       - 'tests/agent-bundle.test.ts'
+      - 'tests/agent-darwin-build.test.ts'
       - 'tests/agent-package.test.ts'
       - 'tests/agents-workflow.test.ts'
       - 'tests/remote-runtime-bundle.test.ts'
@@ -73,22 +79,28 @@ jobs:
         run: |
           npm test -- \
             tests/agent-bundle.test.ts \
+            tests/agent-darwin-build.test.ts \
             tests/agent-package.test.ts \
             tests/remote-runtime-bundle.test.ts \
             tests/agents-workflow.test.ts
           npm run typecheck
 
   build:
-    name: Build Linux ${{ matrix.arch }} Agent
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }} Agent
     needs: validate
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
+          - platform: linux
+            arch: x64
             runner: ubuntu-24.04
-          - arch: arm64
+          - platform: linux
+            arch: arm64
             runner: ubuntu-24.04-arm
+          - platform: darwin
+            arch: arm64
+            runner: macos-15
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
 
@@ -103,17 +115,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify native runner target
+        run: node -e "if (process.platform !== '${{ matrix.platform }}' || process.arch !== '${{ matrix.arch }}') throw new Error('Agent CI requires the native target')"
+
       - name: Resolve locked official Node runtime
         id: runtime
         shell: bash
         env:
           AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           node - <<'NODE'
           const { appendFileSync } = require('node:fs')
-          const lock = require('./agent-runtime-lock.json')
-          const target = lock.node?.targets?.[`linux-${process.env.AGENT_ARCH}`]
+          const { lock } = require('./build/agent-ci-bundle.cjs').readCiLocks(
+            process.env.AGENT_PLATFORM, process.env.AGENT_ARCH
+          )
+          const target = lock.node?.targets?.[`${process.env.AGENT_PLATFORM}-${process.env.AGENT_ARCH}`]
           if (
             !target ||
             !/^[A-Za-z0-9._-]+\.tar\.gz$/u.test(target.archive) ||
@@ -147,7 +165,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/goodbuddy-agent-node
-          key: goodbuddy-agent-ci-node-${{ matrix.arch }}-${{ steps.runtime.outputs.sha256 }}
+          key: goodbuddy-agent-ci-node-${{ matrix.platform }}-${{ matrix.arch }}-${{ steps.runtime.outputs.sha256 }}
 
       - name: Acquire and verify locked Node runtime
         shell: bash
@@ -170,22 +188,34 @@ jobs:
               "$NODE_URL" --output "$archive.partial"
             mv "$archive.partial" "$archive"
           fi
-          printf '%s  %s\n' "$NODE_SHA256" "$archive" |
-            sha256sum --check --strict -
+          node - "$archive" "$NODE_SHA256" <<'NODE'
+          const { createHash } = require('node:crypto')
+          const { readFileSync } = require('node:fs')
+          const [archive, expected] = process.argv.slice(2)
+          if (createHash('sha256').update(readFileSync(archive)).digest('hex') !== expected) {
+            throw new Error('Node runtime archive integrity mismatch')
+          }
+          NODE
 
       - name: Resolve locked OpenCode Runtime
         id: opencode
         shell: bash
         env:
           AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           node - <<'NODE'
           const { appendFileSync } = require('node:fs')
           const { createHash: hash } = require('node:crypto')
-          const lock = require('./remote-runtime-lock.json')
-          const runtime = lock.runtimes?.opencode
-          const target = runtime?.targets?.[process.env.AGENT_ARCH]
+          const { runtimeLock } = require('./build/agent-ci-bundle.cjs').readCiLocks(
+            process.env.AGENT_PLATFORM, process.env.AGENT_ARCH
+          )
+          const runtime = runtimeLock.runtimes?.opencode
+          const key = process.env.AGENT_PLATFORM === 'linux'
+            ? process.env.AGENT_ARCH
+            : `${process.env.AGENT_PLATFORM}-${process.env.AGENT_ARCH}`
+          const target = runtime?.targets?.[key]
           if (
             !runtime ||
             !target ||
@@ -213,7 +243,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/goodbuddy-opencode-runtime
-          key: goodbuddy-agent-ci-opencode-${{ matrix.arch }}-${{ steps.opencode.outputs.cache-key }}
+          key: goodbuddy-agent-ci-opencode-${{ matrix.platform }}-${{ matrix.arch }}-${{ steps.opencode.outputs.cache-key }}
 
       - name: Acquire and verify locked OpenCode Runtime
         shell: bash
@@ -251,16 +281,22 @@ jobs:
           NODE
 
       - name: Run native Agent regressions
+        if: matrix.platform == 'linux'
         run: |
           npm test -- \
             src/agent-daemon/model-bridge.test.ts \
             src/agent-daemon/lifecycle.test.ts
+
+      - name: Run native macOS process regressions
+        if: matrix.platform == 'darwin'
+        run: npm test -- src/agent-daemon/darwin-process-identity.test.ts
 
       - name: Build and verify ephemeral signed compound Agent package twice
         id: agent
         shell: bash
         env:
           AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_PLATFORM: ${{ matrix.platform }}
           NODE_ARCHIVE: ${{ steps.runtime.outputs.archive }}
           OPENCODE_ARCHIVE: ${{ steps.opencode.outputs.archive }}
         run: |
@@ -270,11 +306,12 @@ jobs:
           mkdir -p "$directory"
           agent_version="$(node -p "require('./agent-runtime-lock.json').agentVersion")"
           node build/agent-ci-bundle.cjs \
+            --platform "$AGENT_PLATFORM" \
             --arch "$AGENT_ARCH" \
             --node-archive "$RUNNER_TEMP/goodbuddy-agent-node/$NODE_ARCHIVE" \
             --opencode-archive "$RUNNER_TEMP/goodbuddy-opencode-runtime/$OPENCODE_ARCHIVE" \
             --output-directory "$directory/bundle" \
-            --archive "$directory/goodbuddy-agent-$agent_version-linux-$AGENT_ARCH.gbagent" |
+            --archive "$directory/goodbuddy-agent-$agent_version-$AGENT_PLATFORM-$AGENT_ARCH.gbagent" |
             tee "$directory/result.json"
           node - <<'NODE'
           const { appendFileSync, readFileSync } = require('node:fs')
@@ -286,6 +323,7 @@ jobs:
           )
           if (
             result.architecture !== process.env.AGENT_ARCH ||
+            result.platform !== process.env.AGENT_PLATFORM ||
             !/^[a-f0-9]{64}$/u.test(result.archiveSha256)
           ) {
             throw new Error('Agent CI result is invalid')
@@ -300,14 +338,16 @@ jobs:
         shell: bash
         env:
           AGENT_ARCH: ${{ matrix.arch }}
+          AGENT_PLATFORM: ${{ matrix.platform }}
           AGENT_SHA256: ${{ steps.agent.outputs.sha256 }}
         run: |
           {
-            echo "### Linux $AGENT_ARCH Agent"
+            echo "### $AGENT_PLATFORM $AGENT_ARCH Agent build"
             echo
             echo "Native compound Agent, Node, and OpenCode Runtime build, test-signature verification, launch smoke, and deterministic archive comparison passed."
             echo
             echo "Archive SHA-256: \`$AGENT_SHA256\`"
             echo
             echo "The ephemeral CI key and bundle are not published."
+            echo "Native build checks do not replace real Host installation, Attach, and Ask/Execute acceptance."
           } >> "$GITHUB_STEP_SUMMARY"

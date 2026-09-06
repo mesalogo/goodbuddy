@@ -554,7 +554,7 @@ export const settingsSections = {
         updateTo: '更新到 {{version}}',
         downloadVersion: '下载 {{version}}',
         listLabel: '本地 Agent 包清单',
-        summary: '当前 {{available}} / {{total}} 个 Linux 架构可用。',
+        summary: '当前 {{available}} / {{total}} 个平台与架构目标可用。',
         states: {
           verified: '已下载并验证',
           'not-downloaded': '未下载',
@@ -582,9 +582,9 @@ export const settingsSections = {
           installing: '正在写入本地缓存…'
         },
         notifications: {
-          downloaded: 'Linux {{architecture}} Agent 包已更新',
+          downloaded: '{{platform}} {{architecture}} Agent 包已更新',
           imported: 'Agent 离线包已导入并验证',
-          exported: 'Linux {{architecture}} Agent 包已导出'
+          exported: '{{platform}} {{architecture}} Agent 包已导出'
         },
         errors: {
           unavailable: '当前版本未提供 Agent 包管理服务',

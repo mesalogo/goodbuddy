@@ -28,6 +28,7 @@ import {
   sameLinuxRuntimeProcessIdentity,
   type LinuxRuntimeProcessIdentity
 } from './runtime-process-identity'
+import { listDarwinProcessGroup, stopDarwinDescendants } from './darwin-process-identity'
 
 const DEFAULT_MAXIMUM_STDIN_WRITE_BYTES = 1024 * 1024
 const DEFAULT_MAXIMUM_OUTPUT_QUEUE_CHUNKS = 128
@@ -401,6 +402,9 @@ export class DirectLinuxStdioProcessOwner {
       throw identityError('Runtime PID identity changed before signal')
     }
     this.#registry.markStopping(this.ownerId)
+    if (process.platform === 'darwin') {
+      await stopDarwinDescendants(this.processIdentity.pid, Date.parse(deadlineAt))
+    }
     this.#stdinClosed = true
     this.#child.stdin.end()
     this.#sendSignal(-record.processIdentity.processGroupId, 'SIGTERM')
@@ -540,9 +544,9 @@ export class DirectLinuxStdioProcessOwner {
 export async function launchDirectLinuxStdioProcessOwner(
   options: DirectLinuxStdioProcessOwnerOptions
 ): Promise<DirectLinuxStdioProcessOwner> {
-  if ((options.platform ?? process.platform) !== 'linux') {
+  if (!['linux', 'darwin'].includes(options.platform ?? process.platform)) {
     throw new DirectLinuxStdioProcessOwnerError(
-      'Direct Runtime ownership is Linux-only',
+      'Direct Runtime ownership requires Linux or macOS',
       'platform'
     )
   }
@@ -786,6 +790,18 @@ export async function listLinuxPidNamespaceMembers(
   >,
   options: { procRoot?: string } = {}
 ): Promise<LinuxRuntimeProcessIdentity[]> {
+  if (process.platform === 'darwin') {
+    const identities: LinuxRuntimeProcessIdentity[] = []
+    for (const pid of listDarwinProcessGroup(owner.processGroupId)) {
+      try {
+        const identity = await readLinuxRuntimeProcessIdentity(pid, { bootId: owner.bootId })
+        if (identity.processGroupId === owner.processGroupId) identities.push(identity)
+      } catch (error) {
+        if (!isMissingProcess(error)) throw error
+      }
+    }
+    return identities.sort((left, right) => left.pid - right.pid)
+  }
   const procRoot = options.procRoot ?? '/proc'
   const entries = await readdir(procRoot, { withFileTypes: true })
   const identities: LinuxRuntimeProcessIdentity[] = []

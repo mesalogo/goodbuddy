@@ -63,6 +63,7 @@ const windowsReservedNamePattern =
 
 type JsonRecord = Record<string, unknown>
 type Architecture = 'x64' | 'arm64'
+type Platform = 'linux' | 'darwin'
 type Protocol = { major: number; minor: number }
 type FileRecord = {
   path: string
@@ -94,7 +95,7 @@ export type PackageInstallerAgentIdentity = {
   agentVersion: string
   manifestSha256: string
   binaryDigest: string
-  platform: 'linux'
+  platform: Platform
   architecture: Architecture
   protocol: Protocol
   supervisor: 'detached-on-demand'
@@ -107,7 +108,7 @@ export type PackageInstallerRuntimeIdentity = {
   manifestDigest: string
   runtimeAdapterDigest: string
   acpCapabilitiesDigest: string
-  platform: 'linux'
+  platform: Platform
   architecture: Architecture
   protocol: Protocol
 }
@@ -818,7 +819,7 @@ function assertOuterDescriptor(
     descriptor.component !== 'agent' ||
     !versionPattern.test(String(descriptor.version)) ||
     !versionPattern.test(String(descriptor.minimumDesktopVersion)) ||
-    descriptor.platform !== 'linux' ||
+    !isSupportedTarget(descriptor.platform, architecture) ||
     !['x64', 'arm64'].includes(String(architecture)) ||
     typeof descriptor.signingKeyId !== 'string' ||
     !digestPattern.test(String(descriptor.contentDigest)) ||
@@ -920,7 +921,7 @@ function assertAgentManifest(
     manifest.formatVersion !== 1 ||
     manifest.product !== 'GoodBuddy' ||
     !versionPattern.test(String(manifest.agentVersion)) ||
-    manifest.platform !== 'linux' ||
+    !isSupportedTarget(manifest.platform, manifest.arch) ||
     !['x64', 'arm64'].includes(String(manifest.arch)) ||
     !isRecord(manifest.entrypoint) ||
     !Array.isArray(manifest.licenses)
@@ -944,6 +945,7 @@ function assertAgentManifest(
     lock.formatVersion !== 1 ||
     manifest.agentVersion !== lock.agentVersion ||
     manifest.arch !== descriptor.architecture ||
+    manifest.platform !== descriptor.platform ||
     manifest.agentVersion !== descriptor.version ||
     canonicalJson(agentProtocol) !== canonicalJson(descriptor.agentProtocol) ||
     canonicalJson(agentProtocol) !== canonicalJson(lock.protocol)
@@ -1002,7 +1004,7 @@ function assertAgentManifest(
   }
   const architecture = manifest.arch as Architecture
   const koffiPackageRoot = 'lib/node_modules/koffi'
-  const koffiNativePackage = `@koromix/koffi-linux-${architecture}`
+  const koffiNativePackage = `@koromix/koffi-${manifest.platform}-${architecture}`
   const koffiNativeRoot =
     `lib/node_modules/${koffiNativePackage}`
   for (const required of [
@@ -1017,10 +1019,7 @@ function assertAgentManifest(
       throw new Error(`Agent Koffi payload is missing: ${required}`)
     }
   }
-  for (const native of [
-    `lib/node_modules/@koromix/koffi-linux-${manifest.arch}/linux_${manifest.arch}/koffi.node`,
-    `lib/node_modules/@koromix/koffi-linux-${manifest.arch}/musl_${manifest.arch}/koffi.node`
-  ]) {
+  for (const native of nativeKoffiPaths(manifest.platform as Platform, architecture)) {
     if (!declared.has(native)) {
       throw new Error(`Agent Koffi payload is missing: ${native}`)
     }
@@ -1091,11 +1090,12 @@ function assertRuntimeManifest(
   const runtime = isRecord(lock.runtimes) && isRecord(lock.runtimes.opencode)
     ? lock.runtimes.opencode
     : undefined
+  const targetKey = descriptor.platform === 'darwin' ? 'darwin-arm64' : String(descriptor.architecture)
   const target =
     runtime !== undefined &&
     isRecord(runtime.targets) &&
-    isRecord(runtime.targets[String(descriptor.architecture)])
-      ? runtime.targets[String(descriptor.architecture)]
+    isRecord(runtime.targets[targetKey])
+      ? runtime.targets[targetKey]
       : undefined
   const remote = descriptor.remoteRuntime as JsonRecord
   if (
@@ -1103,7 +1103,7 @@ function assertRuntimeManifest(
     manifest.product !== 'GoodBuddy' ||
     manifest.runtimeId !== 'opencode' ||
     manifest.provider !== 'opencode' ||
-    manifest.platform !== 'linux' ||
+    manifest.platform !== descriptor.platform ||
     manifest.architecture !== descriptor.architecture ||
     !versionPattern.test(String(manifest.runtimeVersion)) ||
     !digestPattern.test(String(manifest.bundleDigest)) ||
@@ -1255,7 +1255,26 @@ function assertRuntimeManifest(
   }
 }
 
-function elfArchitecture(bytes: Buffer): Architecture | undefined {
+function isSupportedTarget(platform: unknown, architecture: unknown): boolean {
+  return (platform === 'linux' && (architecture === 'x64' || architecture === 'arm64')) ||
+    (platform === 'darwin' && architecture === 'arm64')
+}
+
+function nativeKoffiPaths(platform: Platform, architecture: Architecture): string[] {
+  const root = `lib/node_modules/@koromix/koffi-${platform}-${architecture}`
+  return platform === 'darwin'
+    ? [`${root}/darwin_${architecture}/koffi.node`]
+    : [`${root}/linux_${architecture}/koffi.node`, `${root}/musl_${architecture}/koffi.node`]
+}
+
+function elfArchitecture(bytes: Buffer, platform: Platform): Architecture | undefined {
+  if (platform === 'darwin') {
+    if (bytes.length < 8) return undefined
+    const cpu = bytes.readUInt32LE(0) === 0xfeedfacf
+      ? bytes.readUInt32LE(4)
+      : bytes.readUInt32BE(0) === 0xfeedfacf ? bytes.readUInt32BE(4) : 0
+    return cpu === 0x0100000c ? 'arm64' : undefined
+  }
   if (
     bytes.length < 20 ||
     !bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
@@ -1273,32 +1292,16 @@ function elfArchitecture(bytes: Buffer): Architecture | undefined {
 
 function assertExtractedArchitectures(
   preparedRoot: string,
-  architecture: Architecture
+  architecture: Architecture,
+  platform: Platform
 ): void {
   for (const path of [
     join(preparedRoot, 'agent', 'node'),
-    join(
-      preparedRoot,
-      'agent',
-      'lib',
-      'node_modules',
-      `@koromix/koffi-linux-${architecture}`,
-      `linux_${architecture}`,
-      'koffi.node'
-    ),
-    join(
-      preparedRoot,
-      'agent',
-      'lib',
-      'node_modules',
-      `@koromix/koffi-linux-${architecture}`,
-      `musl_${architecture}`,
-      'koffi.node'
-    ),
+    ...nativeKoffiPaths(platform, architecture).map(path => join(preparedRoot, 'agent', path)),
     join(preparedRoot, 'runtime', 'bin', 'opencode')
   ]) {
     if (
-      elfArchitecture(readFileHeader(path, 64)) !== architecture
+      elfArchitecture(readFileHeader(path, 64), platform) !== architecture
     ) {
       throw new Error(`Installed executable architecture mismatch: ${basename(path)}`)
     }
@@ -1518,7 +1521,7 @@ function verifyArchive(
         agentVersion: String(agentManifest.agentVersion),
         manifestSha256: agentManifestSha256,
         binaryDigest: `sha256:${agentManifestSha256}`,
-        platform: 'linux',
+        platform: descriptor.platform as Platform,
         architecture,
         protocol: protocol(agentManifest.protocol, 'Agent protocol'),
         supervisor: 'detached-on-demand'
@@ -1530,7 +1533,7 @@ function verifyArchive(
         manifestDigest: runtime.manifestDigest,
         runtimeAdapterDigest: String(runtime.manifest.adapterDigest),
         acpCapabilitiesDigest: String(runtime.manifest.acpCapabilitiesDigest),
-        platform: 'linux',
+        platform: descriptor.platform as Platform,
         architecture,
         protocol: protocol(runtime.manifest.protocol, 'Runtime protocol')
       }
@@ -1766,7 +1769,7 @@ function extractPayload(
     } finally {
       closeSync(handle)
     }
-    assertExtractedArchitectures(temporary, verified.agent.architecture)
+    assertExtractedArchitectures(temporary, verified.agent.architecture, verified.agent.platform)
     chmodSync(temporary, 0o700)
     renameSync(temporary, destinationRoot)
   } catch (error) {
@@ -2127,7 +2130,7 @@ function readPreparedState(path: string): PreparedState {
     !sha256Pattern.test(String(agent.manifestSha256)) ||
     agent.installationId !== `agent-${String(agent.manifestSha256)}` ||
     agent.binaryDigest !== `sha256:${String(agent.manifestSha256)}` ||
-    agent.platform !== 'linux' ||
+    !isSupportedTarget(agent.platform, agent.architecture) ||
     !['x64', 'arm64'].includes(String(agent.architecture)) ||
     agent.supervisor !== 'detached-on-demand' ||
     runtime.runtimeId !== 'opencode' ||
@@ -2136,7 +2139,7 @@ function readPreparedState(path: string): PreparedState {
     !digestPattern.test(String(runtime.manifestDigest)) ||
     !digestPattern.test(String(runtime.runtimeAdapterDigest)) ||
     !digestPattern.test(String(runtime.acpCapabilitiesDigest)) ||
-    runtime.platform !== 'linux' ||
+    runtime.platform !== agent.platform ||
     runtime.architecture !== agent.architecture
   ) {
     throw new Error('Prepared package state identity is invalid')
@@ -2159,7 +2162,7 @@ function readPreparedState(path: string): PreparedState {
       agentVersion: String(agent.agentVersion),
       manifestSha256: String(agent.manifestSha256),
       binaryDigest: String(agent.binaryDigest),
-      platform: 'linux',
+      platform: agent.platform as Platform,
       architecture: agent.architecture as Architecture,
       protocol: agentProtocol,
       supervisor: 'detached-on-demand'
@@ -2171,7 +2174,7 @@ function readPreparedState(path: string): PreparedState {
       manifestDigest: String(runtime.manifestDigest),
       runtimeAdapterDigest: String(runtime.runtimeAdapterDigest),
       acpCapabilitiesDigest: String(runtime.acpCapabilitiesDigest),
-      platform: 'linux',
+      platform: agent.platform as Platform,
       architecture: runtime.architecture as Architecture,
       protocol: runtimeProtocol
     }
@@ -2322,7 +2325,7 @@ function assertPreparedIdentity(
     agentVersion: String(agentManifest.agentVersion),
     manifestSha256: agentManifestSha256,
     binaryDigest: `sha256:${agentManifestSha256}`,
-    platform: 'linux',
+    platform: agentManifest.platform as Platform,
     architecture,
     protocol: protocol(agentManifest.protocol, 'Agent protocol'),
     supervisor: 'detached-on-demand'
@@ -2336,7 +2339,7 @@ function assertPreparedIdentity(
     acpCapabilitiesDigest: String(
       runtime.manifest.acpCapabilitiesDigest
     ),
-    platform: 'linux',
+    platform: agentManifest.platform as Platform,
     architecture,
     protocol: protocol(
       runtime.manifest.protocol,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   agentPackageArchiveName,
   agentPackageCatalogEntrySchema,
+  agentPackageCatalogSchema,
   agentPackageInventoryRequestSchema,
   agentPackageInventorySchema,
   isSafeAgentPackagePath
@@ -48,6 +49,27 @@ function catalogEntry() {
 }
 
 describe('Agent package contracts', () => {
+  it('accepts Linux and macOS arm64 independently in one signed catalog', () => {
+    const linux = {
+      ...catalogEntry(),
+      architecture: 'arm64',
+      archive: agentPackageArchiveName('0.11.2', 'arm64', 'linux')
+    }
+    const mac = {
+      ...linux,
+      platform: 'darwin',
+      archive: agentPackageArchiveName('0.11.2', 'arm64', 'darwin')
+    }
+    const catalog = agentPackageCatalogSchema.parse({
+      formatVersion: 1, product: 'GoodBuddy', component: 'agent',
+      signingKeyId: 'test', generatedAt: '2026-09-06T00:00:00.000Z',
+      entries: [catalogEntry(), linux, mac]
+    })
+    expect(catalog.entries).toHaveLength(3)
+    expect(() => agentPackageCatalogSchema.parse({
+      ...catalog, entries: [...catalog.entries, mac]
+    })).toThrow('duplicate')
+  })
   it('binds each catalog archive name to its signed identity', () => {
     expect(agentPackageCatalogEntrySchema.parse(catalogEntry()))
       .toMatchObject({

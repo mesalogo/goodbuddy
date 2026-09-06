@@ -1,3 +1,5 @@
+import { binaryTargetArchitecture } from './binary-target'
+import type { AgentPlatform } from '../agent-target'
 import {
   createHash,
   createPublicKey,
@@ -219,7 +221,8 @@ export async function verifyPublishedRuntimeBundle(
   await assertElfArchitecture(
     executablePath,
     options.architecture,
-    'Runtime executable'
+    'Runtime executable',
+    manifest.platform
   )
   return {
     bundleDirectory,
@@ -412,8 +415,11 @@ export function assertRuntimeManifestMatchesLock(
   architecture: AgentArchitecture
 ): void {
   const expected = lock.runtimes.opencode
-  const target = expected.targets[architecture]
+  const target = manifest.platform === 'darwin'
+    ? expected.targets['darwin-arm64']
+    : expected.targets[architecture]
   if (
+    target === undefined ||
     manifest.runtimeId !== 'opencode' ||
     manifest.provider !== expected.provider ||
     manifest.runtimeVersion !== expected.version ||
@@ -696,7 +702,8 @@ async function sha256File(filePath: string): Promise<string> {
 async function assertElfArchitecture(
   filePath: string,
   expected: AgentArchitecture,
-  label: string
+  label: string,
+  platform: AgentPlatform
 ): Promise<void> {
   const handle = await open(filePath, 'r')
   try {
@@ -707,8 +714,8 @@ async function assertElfArchitecture(
       header.length,
       0
     )
-    const actual = detectElfArchitecture(
-      header.subarray(0, bytesRead)
+    const actual = binaryTargetArchitecture(
+      header.subarray(0, bytesRead), platform
     )
     if (actual !== expected) {
       throw new Error(
@@ -718,26 +725,4 @@ async function assertElfArchitecture(
   } finally {
     await handle.close()
   }
-}
-
-function detectElfArchitecture(
-  header: Buffer
-): AgentArchitecture | undefined {
-  if (
-    header.length < 20 ||
-    header[0] !== 0x7f ||
-    header.toString('ascii', 1, 4) !== 'ELF' ||
-    (header[5] !== 1 && header[5] !== 2)
-  ) {
-    return undefined
-  }
-  const machine =
-    header[5] === 2
-      ? header.readUInt16BE(18)
-      : header.readUInt16LE(18)
-  return machine === 62
-    ? 'x64'
-    : machine === 183
-      ? 'arm64'
-      : undefined
 }

@@ -145,7 +145,7 @@ npm run dist:linux:arm64
 组件，缺少远端包也不能阻塞普通桌面打包或发布。
 
 “设置 > 平台功能 > 远程项目（技术预览）”列出用户数据目录中已经下载或导入的
-Linux x64/arm64 复合 Agent 包。首次打开和手动刷新会从“关于与更新”所选来源读取
+Linux x64、Linux arm64 和 macOS arm64 复合 Agent 包。首次打开和手动刷新会从“关于与更新”所选来源读取
 小型签名目录，显示本地版本、在线最新兼容版本以及 `有更新 / 已是最新 / 未下载 /
 校验失败`；此检查不会下载 `.gbagent`。只有用户点击“下载”或“更新到”后才传输包，
 用户也可导入或导出 `.gbagent` 离线包。
@@ -254,16 +254,32 @@ node build/agent-package.cjs build \
 Agent 源码、共享协议、lock、bundle 工具和测试与桌面应用保持在同一仓库、同一 commit；
 不维护长期分叉的 Agent 源码分支。`.github/workflows/agents.yml` 在相关 Pull Request、
 `main` push 和手工触发时，分别使用 `ubuntu-24.04` 与 `ubuntu-24.04-arm` 原生构建
-Linux x64/arm64 复合包。每个 job 从 `agent-runtime-lock.json` 解析官方 Node HTTPS
+Linux x64/arm64 复合包，并使用 `macos-15` 原生构建 Darwin arm64
+复合包。所有 job 从 `agent-runtime-lock.json` 解析官方 Node HTTPS
 地址与 digest，并从 `remote-runtime-lock.json` 解析固定 OpenCode npm 包与 integrity；
 下载后再次校验，随后使用仅存在于进程内的临时 Ed25519 测试 key 构建两次，完成内外层
-测试签名验证、Agent 原生启动 smoke 和确定性 `.gbagent` 对比。
+测试签名验证、Agent CLI 加载 smoke 和确定性 `.gbagent` 对比。所有目标还验证
+Koffi 原生模块加载与 OpenCode `--version`；Linux job 继续运行 Agent 原生回归。
+
+Darwin arm64 的 Node 和 OpenCode 固定输入分别由同一份
+`agent-runtime-lock.json` 与 `remote-runtime-lock.json` 提供，不再维护 CI 专用副本。
+组包器区分 ELF 与 Mach-O，Darwin CI 产物命名为
+`goodbuddy-agent-<version>-darwin-arm64.gbagent`，不构建 Intel Mac 目标。
+macOS Host 继续通过 SSH 按需启动 detached Agent，不注册 launchd 或开机服务。
+进程身份使用 macOS 原生接口，Unix Socket 使用 `getpeereid`；Host 下载兼容系统自带
+`shasum -a 256`，不要求安装 GNU coreutils。真实 Host 验证记录见
+[远程主机技术设计](./docs/features/remote-host/technical-design.md)。
+
+三个目标共用 `agent-catalog.json` 和现有签名格式，条目按平台与架构区分。旧版 Desktop
+只接受 Linux catalog 条目；首次发布包含 Darwin 的累计 catalog 前必须先发布新版
+Desktop，并在发布说明中要求用户升级 Desktop。旧版的在线 Agent 目录检查会失败，
+本地已验证包不被删除。不得为此改写历史包或复用发布标签。
 
 该验证 workflow 不读取 production signing secret，不修改公开 key registry，也不上传
 可安装 Agent 工件。`.github/workflows/agent-release.yml` 是唯一 production Agent
 发布路径：只接受指向受保护 `main` 历史的 annotated
 `agent-v${agent-runtime-lock.agentVersion}` 标签，在 `agent-signing` Environment 中
-原生构建两种架构，生成并签名累计目录，然后同步到非 Latest 的 GitHub Agent Release
+原生构建 Linux x64、Linux arm64、macOS arm64 三个目标，生成并签名累计目录，然后同步到非 Latest 的 GitHub Agent Release
 与北京 OSS。该 Environment 只保护一组 GoodBuddy 通用发布变量与 Secret：
 
 - `GOODBUDDY_SIGNING_KEY_ID` /
