@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, relative } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   RecoverableModelToolError,
@@ -2495,6 +2498,69 @@ describe('ModelAgentRuntime', () => {
     await runtime.dispose()
     expect(toolProvider.dispose).toHaveBeenCalledOnce()
   })
+
+  it.each(['absolute', 'relative'])(
+    'executes a real command outside the workspace using a %s cwd through the model tool loop',
+    async (pathKind) => {
+      const root = await mkdtemp(join(tmpdir(), 'goodbuddy-model-cwd-'))
+      const workspace = join(root, 'workspace')
+      const target = join(root, 'target')
+      await mkdir(workspace)
+      await mkdir(target)
+      await writeFile(join(target, 'input.txt'), 'outside-workspace')
+      const command = process.platform === 'win32'
+        ? "Copy-Item 'input.txt' 'output.txt'"
+        : 'cp input.txt output.txt'
+      const responses = [
+        {
+          choices: [{
+            message: {
+              role: 'assistant', content: null,
+              tool_calls: [{
+                id: 'call-process', type: 'function',
+                function: {
+                  name: 'process_execute',
+                  arguments: JSON.stringify({
+                    command,
+                    cwd: pathKind === 'absolute' ? target : relative(workspace, target)
+                  })
+                }
+              }]
+            }
+          }]
+        },
+        { choices: [{ message: { role: 'assistant', content: 'done' } }] }
+      ]
+      const fetcher = vi.fn<typeof fetch>(async () => Response.json(responses.shift()))
+      const runtime = new ModelAgentRuntime({
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'test-model',
+        protocol: 'openai-chat-completions',
+        authentication: 'none',
+        fetcher,
+        defaultWorkspace: workspace
+      })
+      try {
+        const events: RuntimeEvent[] = []
+        for await (const event of runtime.run({
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'Copy the file in the requested directory.',
+          workMode: 'execute'
+        }, new AbortController().signal, async () => 'once')) {
+          events.push(event)
+        }
+        expect(await readFile(join(target, 'output.txt'), 'utf8')).toBe('outside-workspace')
+        expect(events).toContainEqual(expect.objectContaining({
+          type: 'tool', callId: 'call-process', state: 'completed'
+        }))
+        expect(fetcher).toHaveBeenCalledTimes(2)
+      } finally {
+        await runtime.dispose()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('delegates one programming Subagent that can run a real project command without recursion', async () => {
     const command =

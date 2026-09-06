@@ -1290,6 +1290,59 @@ describe('OpenCodeRuntime embedded launcher', () => {
     expect(runtime.requiresToolApproval).toBe(false)
   })
 
+  it.each(['completed', 'failed', 'cancelled', 'consumer-return'])(
+    'closes the event subscription when a run is %s',
+    async (outcome) => {
+      const setup = runClient([])
+      const controller = new AbortController()
+      let subscriptionSignal: AbortSignal | undefined
+      const subscribe = setup.event.subscribe as unknown as ReturnType<typeof vi.fn>
+      subscribe.mockImplementation(async (_input, options: { signal: AbortSignal }) => {
+        subscriptionSignal = options.signal
+        return {
+          stream: (async function* () {
+            if (outcome === 'cancelled') {
+              controller.abort(new DOMException('Cancelled', 'AbortError'))
+              return
+            }
+            if (outcome === 'failed') return
+            yield {
+              type: 'session.idle',
+              properties: { sessionID: 'session-1' }
+            }
+          })()
+        }
+      })
+      const runtime = new OpenCodeRuntime(
+        options({ embedded: false, baseUrl: 'http://127.0.0.1:4096' }),
+        { createClient: (() => setup.client) as typeof createOpencodeClient }
+      )
+      const collect = async (): Promise<void> => {
+        for await (const event of runtime.run({
+          requestId: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          prompt: 'test',
+          workMode: 'execute'
+        }, controller.signal)) {
+          if (outcome === 'consumer-return' && event.type === 'done') break
+        }
+      }
+      try {
+        if (outcome === 'failed') {
+          await expect(collect()).rejects.toThrow('事件流意外结束')
+        } else if (outcome === 'cancelled') {
+          await expect(collect()).rejects.toMatchObject({ name: 'AbortError' })
+        } else {
+          await collect()
+        }
+        expect(subscriptionSignal?.aborted).toBe(true)
+        expect(controller.signal.aborted).toBe(outcome === 'cancelled')
+      } finally {
+        await runtime.dispose()
+      }
+    }
+  )
+
   it('serializes external runs that share one conversation session', async () => {
     const child = fakeChild()
     let releaseFirst!: () => void

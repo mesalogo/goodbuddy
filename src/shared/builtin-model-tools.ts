@@ -98,7 +98,7 @@ export const builtinModelTools = [
     name: 'process_execute',
     displayName: '进程执行',
     description:
-      '使用当前工作区和当前用户权限运行 PowerShell、Bash 或 Sh 命令。',
+      '使用当前用户权限运行 PowerShell、Bash 或 Sh 命令，默认在工作区执行，也可指定其他工作目录。',
     access: 'write',
     group: 'programming'
   },

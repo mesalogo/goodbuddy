@@ -239,6 +239,11 @@ Execute 直接启动已签名 Runtime：
   解析为子 Agent 事件。本地 OpenCode SDK 与远端 ACP 增量工具事件复用同一转换；ACP
   首帧缺少参数时可以先显示普通工具活动，后续参数确认其为 Task 后必须替换为子 Agent
   状态卡，并持久化任务说明、终态与输出。
+- 本机 OpenCode SDK 路径允许不同会话并行，同一会话仍按请求顺序执行。每个请求独立拥有
+  SSE 事件订阅，并在正常完成、错误、取消或消费方结束迭代时主动关闭自己的响应流，
+  不关闭其他会话的订阅或共享 Server。取消导致事件迭代结束时保留原取消原因，不改报
+  “事件流意外结束”。这一清理规则属于本机 SDK 路径，不改变远端 Agent 持有 ACP Prompt
+  的断线继续执行语义。
 - 同一 detached Agent 存活时，短暂 SSH 断线依次执行 `controller/resume`、`runtime/resumeAcpChannel` 和 `runtime/replayAcpChannel`，从 Main 已确认的 cursor 后只重放 Agent 到 Main 的已记录输出。重复 frame 会被确认但不会再次交给上层。若上一代连接只留下没有活动请求的 detached binding，完成精确 controller takeover 后会先有界停止并核对遗留 Runtime process，再用新 channel epoch 重新打开同一 binding 并恢复已有 ACP session；其他 controller、未证明 takeover 或仍有活动请求的 binding 仍被拒绝。
 - Main 到 Runtime 的 ACP 输入、模型请求、工具请求和 blob 不自动重放。
 - 无法确认外部 Provider 是否已处理的模型调用保持结果未知，避免重复计费或重复副作用。

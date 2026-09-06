@@ -89,7 +89,8 @@ const processExecuteInputSchema = z.object({
 }).strict()
 ```
 
-- `cwd` 只接受相对工作区路径。
+- `cwd` 接受绝对路径或相对工作区路径，省略时使用工作区根目录；按本机路径语义解析
+  `..` 和符号链接，不限制目标位于工作区内。工具 schema 向模型明确这一规则。
 - 首版不接受 `env`、`stdin`、`background`、`pty`、`shell` 或任意 executable 参数。
 - Shell 选择由执行后端决定，防止模型绕过平台契约启动另一套受管接口。
 - 命令字符串仍可以调用当前账号本来有权运行的程序；Execute 不增加命令白名单。
@@ -114,8 +115,8 @@ type ProcessExecuteResult = {
 }
 ```
 
-`cwd` 返回工作区相对显示值，不把不必要的绝对用户路径送入模型上下文。Shell 在模型结果
-中只返回稳定标签；绝对可执行路径只进入 Main 诊断状态。
+`cwd` 在工作区内返回相对显示值，根目录为 `.`；工作区外返回规范化绝对路径，准确说明
+命令实际执行位置。Shell 在模型结果中只返回稳定标签；绝对可执行路径只进入 Main 诊断状态。
 
 ### 4.3 输出边界
 
@@ -293,7 +294,7 @@ DeepSeek Harness 的 Main 工具代理必须使用仅包含分配 MCP 和 Web �
 - `failed`：启动或契约失败。
 - `cancelled`：父请求取消。
 
-结果摘要包含 Shell、相对目录、退出码、耗时和截断标记。完整有界 stdout/stderr 进入工具
+结果摘要包含 Shell、工作目录、退出码、耗时和截断标记。完整有界 stdout/stderr 进入工具
 输出字段，不写应用诊断日志。
 
 ### 9.2 Subagent 事件
@@ -351,7 +352,7 @@ type SubagentActor =
 - 工具可见性矩阵和 Runtime target 过滤。
 - Ask 伪造进程调用拒绝。
 - Windows PowerShell、POSIX Bash/Sh 选择和参数。
-- cwd 默认、合法子目录、越界、符号链接越界和不存在。
+- cwd 默认、相对子目录、绝对路径、工作区外目录、指向外部的符号链接和不存在的目录。
 - exit 0、非零退出、spawn 失败、超时、取消和输出截断。
 - 环境筛选、本机工具 PATH 优先且模型凭据不进入进程。
 - 子级模式、模型、项目、执行空间和能力继承。

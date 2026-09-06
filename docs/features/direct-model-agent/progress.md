@@ -84,6 +84,26 @@
   GoodBuddy 托管 Node/Python 已可用。
 - 远端直连模型进程执行不在首版，后续需要独立增加 Agent 进程协议和真机验证。
 
+## 2026-09-06 命令工作目录限制修复
+
+- FR-3 / US-A3：移除命令工作目录的工作区范围限制。绝对路径、`..` 和指向工作区外
+  的符号链接均按本机文件系统解析，工作区只作为默认目录和相对路径基准。
+- 保留目录存在性、本机执行空间绑定、Ask 拒绝命令、取消、超时和进程树回收。
+  本次没有改变工作区文件读写工具或远端 Agent 路径。
+- `direct-model-process-service.test.ts` 覆盖绝对路径、相对路径、外部目录、符号链接、
+  不存在的目录和普通文件；当前 Windows 环境通过。
+- `model-runtime.test.ts` 新增两个生产工具链回归：模型协议响应提供绝对或相对外部
+  `cwd`，经 `ModelAgentRuntime → ModelToolProvider → LocalDirectModelProcessService`
+  启动真实 PowerShell，在专用工作区外测试目录复制文件并读回验证。模型响应为本机
+  测试替身，没有外部模型调用；不将此记录为真实模型或 macOS/Linux 真机验收。
+- 最终聚焦验证：`opencode-runtime`、`opencode-runtime-lifecycle`、
+  `direct-model-process-service`、`model-tool-provider`、`model-runtime` 五个测试文件
+  `182 passed, 1 skipped`；`npm run typecheck` 和 `npm run lint` 通过。
+- 本次共享工作区的全量 `npm test` 为 `3542 passed, 57 skipped, 1 failed`。唯一失败是
+  `App.test.tsx` 的 `opens the global assistant sidebar and switches work tabs`，
+  仍期望“项目工作区”标题，单独复测同样失败；该侧栏处于其他会话的修改范围，本次未改动。
+  因此本次全量验证不能记录为全部通过。
+
 ## 2026-09-01 至 2026-09-02 实施与验证证据
 
 - 新增 `direct-model-process-service.ts`：PowerShell/Bash/Sh 探测、工作区目录校验、96 KiB

@@ -28,7 +28,15 @@ export const DIRECT_MODEL_PROCESS_TRUNCATION_MARKER =
 export const processExecuteInputSchema = z
   .object({
     command: z.string().trim().min(1).max(100_000),
-    cwd: z.string().trim().min(1).max(4_096).optional(),
+    cwd: z
+      .string()
+      .trim()
+      .min(1)
+      .max(4_096)
+      .describe(
+        '工作目录，可使用绝对路径或相对于当前工作区的路径；省略时使用工作区根目录，也可选择工作区外目录。'
+      )
+      .optional(),
     timeoutMs: z
       .number()
       .int()
@@ -350,10 +358,6 @@ async function resolveWorkingDirectory(
   if (input.cwd?.includes('\0')) {
     throw new Error('工作目录包含无效字符')
   }
-  if (input.cwd && isAbsolute(input.cwd)) {
-    throw new Error('工作目录必须相对于工作区')
-  }
-
   const initialIdentity = await workspace.getIdentity()
   if (initialIdentity.kind !== 'local') {
     throw new Error('本机进程不能在远程工作区中运行')
@@ -365,23 +369,8 @@ async function resolveWorkingDirectory(
     throw new Error('项目工作区不是目录')
   }
   const candidatePath = resolve(canonicalRoot, input.cwd ?? '.')
-  const lexicalDifference = relative(canonicalRoot, candidatePath)
-  if (
-    lexicalDifference === '..' ||
-    lexicalDifference.startsWith(`..${sep}`) ||
-    isAbsolute(lexicalDifference)
-  ) {
-    throw new Error('工作目录不能超出项目工作区')
-  }
   const canonicalPath = await realpath(candidatePath)
   const canonicalDifference = relative(canonicalRoot, canonicalPath)
-  if (
-    canonicalDifference === '..' ||
-    canonicalDifference.startsWith(`..${sep}`) ||
-    isAbsolute(canonicalDifference)
-  ) {
-    throw new Error('工作目录不能通过符号链接超出项目工作区')
-  }
   if (!(await stat(canonicalPath)).isDirectory()) {
     throw new Error('工作目录不是目录')
   }
@@ -397,7 +386,12 @@ async function resolveWorkingDirectory(
   }
   return {
     canonicalPath,
-    displayPath: canonicalDifference || '.'
+    displayPath:
+      canonicalDifference === '..' ||
+      canonicalDifference.startsWith(`..${sep}`) ||
+      isAbsolute(canonicalDifference)
+        ? canonicalPath
+        : canonicalDifference || '.'
   }
 }
 

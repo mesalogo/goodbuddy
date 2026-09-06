@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LocalWorkspaceAccess } from '../workspace'
 import {
@@ -110,10 +110,10 @@ describe('LocalDirectModelProcessService', () => {
     ).rejects.toThrow()
     await expect(
       service.execute(
-        { command: 'echo ok', cwd: join(process.cwd(), 'absolute') },
+        { command: 'echo ok', cwd: 'invalid\0directory' },
         context
       )
-    ).rejects.toThrow('相对于工作区')
+    ).rejects.toThrow('无效字符')
     expect(spawnProcess).not.toHaveBeenCalled()
     await service.dispose()
   })
@@ -198,68 +198,82 @@ describe('LocalDirectModelProcessService', () => {
     await unavailable.dispose()
   })
 
-  it('resolves only existing workspace directories and rejects symlink escapes', async () => {
-    const { root, access } = await workspace()
-    const child = new FakeChild()
-    const { service, spawnProcess } = fakeService(child)
-    await mkdir(join(root, 'nested'))
-
-    const execution = service.execute(
-      { command: 'pwd', cwd: 'nested' },
-      {
-        conversationId: 'cwd',
-        workspace: access,
-        signal: new AbortController().signal
+  it.each(['relative', 'absolute', 'outside', 'parent', 'symlink'])(
+    'resolves an existing %s working directory without workspace containment',
+    async (kind) => {
+      const { root, access } = await workspace()
+      const outside = await mkdtemp(join(tmpdir(), 'goodbuddy-outside-'))
+      temporaryDirectories.push(outside)
+      const nested = join(root, 'nested')
+      await mkdir(nested)
+      const link = join(root, 'outside-link')
+      if (kind === 'symlink') {
+        await symlink(
+          outside,
+          link,
+          process.platform === 'win32' ? 'junction' : 'dir'
+        )
       }
-    )
-    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce())
-    expect(spawnProcess.mock.calls[0]?.[2].cwd).toBe(
-      await realpath(join(root, 'nested'))
-    )
-    child.close(0)
-    await expect(execution).resolves.toMatchObject({ cwd: 'nested' })
+      const cwd =
+        kind === 'relative'
+          ? 'nested'
+          : kind === 'absolute'
+            ? nested
+            : kind === 'outside'
+              ? outside
+              : kind === 'parent'
+                ? relative(root, outside)
+                : 'outside-link'
+      const expectedPath = await realpath(
+        kind === 'relative' || kind === 'absolute' ? nested : outside
+      )
+      const child = new FakeChild()
+      const { service, spawnProcess } = fakeService(child)
 
-    await expect(
-      service.execute(
-        { command: 'pwd', cwd: '..' },
+      const execution = service.execute(
+        { command: 'pwd', cwd },
         {
-          conversationId: 'escape',
+          conversationId: 'cwd',
           workspace: access,
           signal: new AbortController().signal
         }
       )
-    ).rejects.toThrow('不能超出')
-
-    const outside = await mkdtemp(join(tmpdir(), 'goodbuddy-outside-'))
-    temporaryDirectories.push(outside)
-    const link = join(root, 'outside-link')
-    try {
-      await symlink(
-        outside,
-        link,
-        process.platform === 'win32' ? 'junction' : 'dir'
-      )
-      await expect(
-        service.execute(
-          { command: 'pwd', cwd: 'outside-link' },
-          {
-            conversationId: 'symlink',
-            workspace: access,
-            signal: new AbortController().signal
-          }
-        )
-      ).rejects.toThrow('符号链接')
-    } catch (error) {
-      if (
-        !(
-          error instanceof Error &&
-          'code' in error &&
-          error.code === 'EPERM'
-        )
-      ) {
-        throw error
-      }
+      await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce())
+      expect(spawnProcess.mock.calls[0]?.[2].cwd).toBe(expectedPath)
+      child.close(0)
+      await expect(execution).resolves.toMatchObject({
+        cwd:
+          kind === 'relative' || kind === 'absolute'
+            ? 'nested'
+            : expectedPath
+      })
+      await service.dispose()
     }
+  )
+
+  it('rejects missing working directories and files before starting a process', async () => {
+    const { root, access } = await workspace()
+    const file = join(root, 'file.txt')
+    await writeFile(file, 'not a directory')
+    const { service, spawnProcess } = fakeService(new FakeChild())
+    const context = {
+      conversationId: 'invalid-cwd',
+      workspace: access,
+      signal: new AbortController().signal
+    }
+    await expect(
+      service.execute(
+        { command: 'pwd', cwd: join(root, 'missing') },
+        context
+      )
+    ).rejects.toThrow()
+    await expect(
+      service.execute(
+        { command: 'pwd', cwd: file },
+        context
+      )
+    ).rejects.toThrow('不是目录')
+    expect(spawnProcess).not.toHaveBeenCalled()
     await service.dispose()
   })
 

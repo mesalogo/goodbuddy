@@ -1217,7 +1217,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         scopeKey: 'model:builtin:process_execute',
         title: '允许运行项目命令？',
         description:
-          '该命令会在当前工作区中使用当前用户权限运行，并可访问该账号有权访问的主机资源。',
+          '该命令会在指定目录（默认当前工作区）中使用当前用户权限运行，并可访问该账号有权访问的主机资源。',
         toolName: tool.displayName,
         argumentSummary,
         allowPermanent: false

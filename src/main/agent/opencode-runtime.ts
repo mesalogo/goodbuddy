@@ -1980,6 +1980,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     let knowledgeToolIds: string[] = []
     let customMcpName: string | undefined
     let customMcpToken: string | undefined
+    const subscriptionController = new AbortController()
     try {
       if (
         request.knowledgeCapabilityToken &&
@@ -2193,7 +2194,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           { directory },
           { signal: controlSignal }
         ),
-      signal
+      AbortSignal.any([signal, subscriptionController.signal])
     )
 
     const abortSession = (): void => {
@@ -2699,6 +2700,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           )
         )
       }
+      signal.throwIfAborted()
       throw new Error('OpenCode 事件流意外结束')
     } catch (error) {
       abortSession()
@@ -2739,6 +2741,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       }
     }
     } finally {
+      subscriptionController.abort()
       const cleanupSignal = AbortSignal.timeout(1_000)
       if (knowledgeMcpName) {
         await awaitWithAbort(
