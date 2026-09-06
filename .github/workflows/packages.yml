@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install ShareServer test dependencies
+        run: npm ci --prefix shareserver
+
       - name: Run validators
         run: |
           npm test
