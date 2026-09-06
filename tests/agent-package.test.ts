@@ -1652,7 +1652,7 @@ describe('compound Agent packages', () => {
       const transport = vi.fn(async (input: string | URL) => {
         const url = input.toString()
         requested.push(url)
-        if (url.includes('/releases?per_page=100')) {
+        if (url.includes('/releases?per_page=10&page=1')) {
           return jsonResponse([{
             tag_name: `agent-v${agentLock.agentVersion}`,
             draft: false,
@@ -1713,7 +1713,7 @@ describe('compound Agent packages', () => {
       })
       expect(requested).toContain(
         source === 'github'
-          ? 'https://api.github.com/repos/mesalogo/goodbuddy/releases?per_page=100'
+          ? 'https://api.github.com/repos/mesalogo/goodbuddy/releases?per_page=10&page=1'
           : 'https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases/latest.json'
       )
       expect(requested).not.toContain(
@@ -1736,7 +1736,7 @@ describe('compound Agent packages', () => {
       await manager.download('x64')
       expect(requested).toContain(
         source === 'github'
-          ? 'https://api.github.com/repos/mesalogo/goodbuddy/releases?per_page=100'
+          ? 'https://api.github.com/repos/mesalogo/goodbuddy/releases?per_page=10&page=1'
           : 'https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases/latest.json'
       )
       expect(requested).toContain(
@@ -1769,7 +1769,7 @@ describe('compound Agent packages', () => {
     let packageRequested = false
     const transport = vi.fn(async (input: string | URL) => {
       const url = input.toString()
-      if (url.includes('/releases?per_page=100')) {
+      if (url.includes('/releases?per_page=10&page=1')) {
         return jsonResponse([{
           tag_name: `agent-v${agentLock.agentVersion}`,
           draft: false,
@@ -1838,7 +1838,7 @@ describe('compound Agent packages', () => {
     let packageRequested = false
     const transport = vi.fn(async (input: string | URL) => {
       const url = input.toString()
-      if (url.includes('/releases?per_page=100')) {
+      if (url.includes('/releases?per_page=10&page=1')) {
         return jsonResponse([{
           tag_name: `agent-v${agentLock.agentVersion}`,
           draft: false,

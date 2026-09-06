@@ -104,6 +104,11 @@ Detached GoodBuddy Agent
   小型签名目录。Renderer 只得到本地/在线版本、是否有更新、架构、远端 Runtime 版本、
   协议和本地状态，不得到缓存路径、key ID 或 digest。目录检查不下载 `.gbagent`，在线
   包下载只由用户点击带目标版本的操作触发；离线导入/导出通过 Main 管理的文件对话框完成。
+- GitHub 来源按每页 10 条读取 Release 元数据，最多检查原有的 100 条历史发布，
+  找到首个有效 Agent 目录及签名地址后立即停止。每次响应仍保留 1 MiB 上限，
+  避免一次读取全部历史正文和资产详情导致目录检查失败；签名、URL 与包校验不变。
+  2026-09-06 使用当前 Main 目录读取实现验证公开 GitHub 与北京镜像，两者均可读取
+  Agent `0.11.19` 的 Linux x64、Linux arm64 和 macOS arm64 条目，未下载或安装包。
 - “自动”只在 operation/prepare 前用 Host capability probe 选择 acquisition：直连明确
   可用才选 Host 下载，否则选 GoodBuddy 传输；显式选择不被改写。prepare、commit 或
   adoption 失败后都不跨 acquisition 自动 fallback。

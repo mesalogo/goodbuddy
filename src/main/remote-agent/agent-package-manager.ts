@@ -61,7 +61,7 @@ const CATALOG_SIGNATURE_DOMAIN = Buffer.from(
 const MIRROR_ROOT =
   'https://goodbuddy.oss-cn-beijing.aliyuncs.com/agent-releases/'
 const GITHUB_RELEASES_API =
-  'https://api.github.com/repos/mesalogo/goodbuddy/releases?per_page=100'
+  'https://api.github.com/repos/mesalogo/goodbuddy/releases?per_page=10'
 const GITHUB_RELEASE_ROOT =
   'https://github.com/mesalogo/goodbuddy/releases/download/'
 const MAXIMUM_CATALOG_BYTES = 1024 * 1024
@@ -1449,17 +1449,29 @@ export class AgentPackageManager {
     ])
   }
 
+  async *#githubReleases(signal?: AbortSignal): AsyncGenerator<unknown> {
+    // Keep the existing 100-release search window without downloading all
+    // historical release bodies and asset metadata in one response.
+    for (let page = 1; page <= 10; page += 1) {
+      signal?.throwIfAborted()
+      const releases = await this.#fetchJson(
+        `${GITHUB_RELEASES_API}&page=${page}`,
+        signal
+      )
+      if (!Array.isArray(releases)) {
+        throw new Error('GitHub Agent 发布目录无效')
+      }
+      yield* releases.slice(0, 10)
+      if (releases.length < 10) {
+        return
+      }
+    }
+  }
+
   async #fetchGithubCatalog(
     signal?: AbortSignal
   ): Promise<[Buffer, Buffer]> {
-    const releases = await this.#fetchJson(
-      GITHUB_RELEASES_API,
-      signal
-    )
-    if (!Array.isArray(releases)) {
-      throw new Error('GitHub Agent 发布目录无效')
-    }
-    for (const untrusted of releases.slice(0, 100)) {
+    for await (const untrusted of this.#githubReleases(signal)) {
       if (
         typeof untrusted !== 'object' ||
         untrusted === null ||

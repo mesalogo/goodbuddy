@@ -257,6 +257,48 @@ function response(
 }
 
 describe('AgentPackageManager remote install candidates', () => {
+  it('pages GitHub release metadata and stops at the first signed catalog', async () => {
+    const fixture = await createFixture('github')
+    const pages: number[] = []
+    const desktopReleases = Array.from({ length: 10 }, () => ({
+      tag_name: 'v9.0.0',
+      body: 'release notes'.repeat(1500),
+      assets: []
+    }))
+    expect(JSON.stringify(Array(10).fill(desktopReleases)).length)
+      .toBeGreaterThan(1024 * 1024)
+    const transport = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input.toString())
+      if (url.hostname === 'api.github.com') {
+        expect(url.searchParams.get('per_page')).toBe('10')
+        const page = Number(url.searchParams.get('page'))
+        pages.push(page)
+        return response(JSON.stringify(
+          page === 1 ? desktopReleases : fixture.releases
+        ))
+      }
+      return response(url.pathname.endsWith('.sig')
+        ? fixture.signature : fixture.catalogBytes)
+    })
+
+    const snapshot = await fixture.manager(transport).getSnapshot()
+    expect(snapshot.catalog.state).toBe('available')
+    expect(snapshot.entries[0]?.latestVersion).toBe('2.0.0')
+    expect(pages).toEqual([1, 2])
+  })
+
+  it.each([0, 10])('bounds GitHub discovery when each page contains %i releases', async (count) => {
+    const fixture = await createFixture('github')
+    const transport = vi.fn<typeof fetch>(async () =>
+      response(JSON.stringify(Array.from({ length: count }, () => ({
+        tag_name: 'v9.0.0'
+      }))))
+    )
+    const snapshot = await fixture.manager(transport).getSnapshot()
+    expect(snapshot.catalog.state).toBe('unavailable')
+    expect(transport).toHaveBeenCalledTimes(count === 0 ? 1 : 10)
+  })
+
   it('selects Linux and Darwin arm64 independently from one catalog', async () => {
     await createFixture('mirror', (catalog) => {
       for (const platform of ['linux', 'darwin'] as const) {
