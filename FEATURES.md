@@ -32,6 +32,10 @@ otherwise.
   Host heading and only the remote path on each project row.
 - [x] **File, screenshot, window, and clipboard context**: Added to model
   context only after explicit user selection.
+- [x] **Per-file workspace diffs**: Changed files expose separate staged and
+  unstaged diffs, including deleted, renamed, and untracked files. Refresh
+  reloads the selected diff and expanded directories; more than 50 changes
+  remain accessible through incremental loading.
 - [x] **Rich responses**: Supports GitHub Flavored Markdown, LaTeX math,
   constrained Mermaid diagrams, and static in-conversation HTML previews.
   Complete HTML and HTML code blocks can be previewed in place after an Agent
@@ -74,7 +78,9 @@ otherwise.
   and capability scope. OpenCode, Continue, DeepSeek Harness, and managed SSH
   do not receive duplicate copies of these tools. The Windows local command
   path and a real-model edit, test, fix, and review loop have passed; native
-  macOS and Linux command validation remains.
+  macOS and Linux command validation remains. Execute commands can select
+  absolute, relative, or symbolic-link directories outside the workspace;
+  the workspace stays the default and relative-path base. Ask remains read-only.
 - [x] **OpenCode and Continue**: Use isolated child processes, an environment
   variable allowlist, unified configuration, cancellation, total execution
   limits, bounded streaming output, and activity records. Shared process
@@ -152,7 +158,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.19`, while the current Desktop release candidate is `0.12.5`; formal
+  `0.11.20`, while the current Desktop release candidate is `0.12.6`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -213,6 +219,12 @@ otherwise.
   up to three read-only experts running in parallel. Chat shows each
   expandable full expert response first and the main Agent's synthesis below,
   and persists both with the conversation.
+- [x] **OpenCode child progress and final results**: Child cards show ordered
+  text, reasoning, and tool progress separately from the final result. Remote
+  live progress requires Agent `0.11.20`; older packages still expose final
+  results without reconstructing missing progress.
+- [x] **OpenCode event-stream cleanup**: Each completed or cancelled request
+  closes its own subscription without cancelling parallel conversations.
 - [x] **Role-bound model connections**: Each role can inherit the default model
   or select an independent text-model connection. Invalid connections safely
   fall back to the default; the synthesis role always inherits the default.

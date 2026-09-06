@@ -2,6 +2,44 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.6",
+      "releasedAt": "2026-09-06",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**子代理过程与结果显示更完整。** 展开 OpenCode 子代理卡片，可以按顺序查看文字、推理和工具详情，最终结果单独展示。远程项目需要更新 Agent 才能查看实时过程；旧 Agent 仍可显示最终结果，但不会补造缺失的过程记录。",
+            "**工作区文件变更更容易查看。** 点击变更文件，可分别查看已暂存和未暂存差异，包括删除、重命名和未跟踪文件。刷新会更新当前差异和已展开目录，超过 50 项的变更可以继续加载。",
+            "**知识库支持整行勾选。** 点击知识库名称或所在行即可切换选择，不再因焦点变化导致点击无效。选择范围仍按当前对话保存。",
+            "**OpenCode 连续与并行对话更稳定。** 每次请求结束后会释放自身的事件连接，避免连续使用后连接不断积累。取消一条请求不会关闭其他并行会话的连接。",
+            "**命令可以使用工作区外目录。** 直连模型在 Execute 模式下，可以使用绝对路径、相对路径或符号链接指定工作目录。未指定时仍使用项目工作区，Ask 保持只读。",
+            "**恢复 GitHub 来源的 Agent 更新检查。** 选择 GitHub 后，可以正常读取可用 Agent 版本，不再因历史发布信息过大提示“发布目录超出大小限制”。镜像入口和已有本地包不受影响。"
+          ],
+          "notices": [
+            "远程子代理实时过程和本轮远程文件差异改进需要更新至 Agent `0.11.20`。提供 Linux x64、Linux arm64 和 macOS arm64 包，Desktop 不内置 Agent。",
+            "本次使用标准六平台桌面发布矩阵，不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**More complete subagent progress and results.** Expand an OpenCode subagent card to view ordered text, reasoning, and tool details, with the final result shown separately. Remote projects require an updated Agent for live progress; older Agents still show final results without inventing missing progress history.",
+            "**Clearer workspace file changes.** Select a changed file to inspect staged and unstaged diffs separately, including deleted, renamed, and untracked files. Refresh updates the selected diff and expanded directories, and lists with more than 50 changes can load additional entries.",
+            "**Whole-row knowledge selection.** Click a knowledge library’s name or row to toggle its selection without focus changes losing the click. Selection remains scoped to the current conversation.",
+            "**More reliable consecutive and parallel OpenCode conversations.** Each request releases its own event connection when it ends, preventing connections from accumulating during continued use. Cancelling one request does not close other parallel conversations’ connections.",
+            "**Commands can use directories outside the workspace.** Direct models in Execute mode can select a working directory using an absolute path, a relative path, or a symbolic link. The project workspace remains the default, and Ask stays read-only.",
+            "**Restored Agent update checks through GitHub.** Selecting GitHub now retrieves available Agent versions without failing because the release history exceeds the response-size limit. Mirror access and existing local packages are unaffected."
+          ],
+          "notices": [
+            "Update to Agent `0.11.20` for live remote subagent progress and the remote file-diff improvements in this release. Packages are available for Linux x64, Linux arm64, and macOS arm64; Desktop does not embed the Agent.",
+            "This release uses the standard six-target desktop matrix and does not include an experimental LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.5",
       "releasedAt": "2026-09-06",
       "notes": {
