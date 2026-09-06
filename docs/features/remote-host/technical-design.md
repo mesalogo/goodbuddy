@@ -238,7 +238,20 @@ Execute 直接启动已签名 Runtime：
 - OpenCode 原生 Task 工具按 `subagent_type`、`description`、`prompt` 和稳定 tool call ID
   解析为子 Agent 事件。本地 OpenCode SDK 与远端 ACP 增量工具事件复用同一转换；ACP
   首帧缺少参数时可以先显示普通工具活动，后续参数确认其为 Task 后必须替换为子 Agent
-  状态卡，并持久化任务说明、终态与输出。
+  状态卡，并持久化任务说明、终态与输出。卡片展开后分为“执行过程”和“最终结果”：
+  正文、折叠思考与可展开工具记录按收到的顺序显示，工具状态原位更新；完成后仅在最终
+  结果区显示与末尾正文完全相同的返回结果，避免重复。失败或取消保留已有过程，未终结
+  工具不再显示进行中。
+- 本地 SDK 通过 Task `metadata.sessionId` 关联子会话，复用稳定消息块 ID 保存过程。
+  固定 OpenCode 1.18.9 的 ACP 不转发子会话，因此 Agent 的模型桥 helper 在受管临时目录
+  写入事件插件，并通过既有 ACP `session/update` 的 `_meta.goodbuddySubagentEvent`
+  转发到所属 Task；不新增端口，不修改签名 Runtime 包。插件文件随 helper 退出清理，
+  事件继续经过既有 Agent transcript、ACK 和 Desktop 消息持久化路径。
+- ACP 工具结果同时支持文本 `content` 和 `rawOutput.output`，移除 OpenCode 的
+  `<task><task_result>` 外层包装后渲染正文。恢复已有子代理时使用 ACP 所带的所属
+  `toolCallId` 继续路由，不等待新的父 Task metadata，也不重放模型请求。
+  远端实时过程需要包含该插件的 Agent；旧 Agent 的最终结果仍可查看，历史未采集过程
+  不会被补造。
 - 本机 OpenCode SDK 路径允许不同会话并行，同一会话仍按请求顺序执行。每个请求独立拥有
   SSE 事件订阅，并在正常完成、错误、取消或消费方结束迭代时主动关闭自己的响应流，
   不关闭其他会话的订阅或共享 Server。取消导致事件迭代结束时保留原取消原因，不改报
@@ -407,6 +420,17 @@ bootstrap 和再次 health。实际 Desktop 协议客户端通过 Attach、只�
 bundle 构建通过；这组历史结果不替代完整 Host 支持改动后的最终验证。
 
 ### Linux 历史验收
+
+- 2026-09-06 使用当前源码隔离 Agent 验证原生子代理过程插件。最终场景收到 37 条 ACP
+  插件事件，桌面侧从已保留活动重建跟踪器后仍接收后续文本与工具；子代理和父请求正常
+  完成，最终模型调用账本为 4 次 completed。此前成功场景另 4 次，两轮真实 Host 共
+  8 次模型请求。
+- 同日 Windows 隔离桌面实际发送 OpenCode 原生 Task，展开卡片可看到进行中的正文与
+  read 工具，取消后已有过程保留且工具显示已取消；正确工作区场景完成后显示测试文件
+  内容，最终结果不重复留在过程末尾。本机有界代理共记录 10 次模型请求（含错误路径、
+  取消和成功场景）；另外 2 次使用原生测试配置的请求返回 401，改选显式测试模型后通过。
+  未改动正常用户设置，也未发布 Agent 包。全量静态与测试结果见
+  [本轮验证记录](../assistant-workbar/progress.md)。
 
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布

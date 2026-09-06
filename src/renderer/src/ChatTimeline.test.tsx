@@ -408,6 +408,46 @@ describe('ChatTimeline', () => {
     }
   })
 
+  it('renders live child progress in order and keeps the final result separate', () => {
+    const child = {
+      childTaskId: '00000000-0000-4000-8000-000000000111',
+      expertId: '00000000-0000-4000-8000-000000000211',
+      expertName: 'general', routingMode: 'native' as const,
+      state: 'running' as const,
+      progress: [
+        { id: 'text', type: 'text' as const, content: 'Inspecting seed' },
+        { id: 'tool', type: 'tool' as const, tool: {
+          callId: 'read', name: 'read', state: 'completed' as const,
+          summary: 'Read seed', output: 'seed contents'
+        } },
+        { id: 'reasoning', type: 'reasoning' as const, content: 'Check the result' }
+      ]
+    }
+    const props = {
+      artifactById: new Map(), conversationId: 'conversation-1',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, ...callbacks, retryContent: '', totalMessageCount: 1
+    }
+    const message: Message = {
+      id: 'assistant', role: 'assistant', content: '', createdAt: 0,
+      state: 'streaming', subagents: [child]
+    }
+    const view = render(<ChatTimeline {...props} messages={[message]} />)
+    expect(screen.queryByText('Inspecting seed')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('general', { selector: 'strong' }))
+    fireEvent(screen.getByText('general', { selector: 'strong' }).closest('details')!, new Event('toggle'))
+    const progress = screen.getByRole('region', { name: '执行过程' })
+    expect(within(progress).getByText('Inspecting seed')).toBeInTheDocument()
+    expect(within(progress).getByText('Check the result').closest('details')).not.toHaveAttribute('open')
+    expect(screen.queryByRole('region', { name: '最终结果' })).not.toBeInTheDocument()
+    view.rerender(<ChatTimeline {...props} messages={[{
+      ...message, state: 'complete',
+      subagents: [{ ...child, state: 'completed', output: 'Final seed' }]
+    }]} />)
+    expect(screen.getByRole('region', { name: '最终结果' })).toHaveTextContent('Final seed')
+    expect(screen.getByRole('region', { name: '执行过程' })).not.toHaveTextContent('Final seed')
+  })
+
   it('labels native OpenCode subagents and shows their task description', () => {
     const messages: Message[] = [
       {

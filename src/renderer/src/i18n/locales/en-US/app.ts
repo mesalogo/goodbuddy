@@ -376,6 +376,8 @@ export const app = {
       fallbackTask: '{{name}} subagent task',
       task: 'Task',
       output: 'Subagent output',
+      progress: 'Execution progress',
+      finalOutput: 'Final result',
       error: 'Execution details',
       noOutput: 'This subagent has no output to display yet.',
       incomplete:

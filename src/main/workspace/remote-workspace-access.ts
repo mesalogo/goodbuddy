@@ -247,7 +247,7 @@ function mapChangedFiles(
           : `${gitStatusCharacter(entry.index)}${gitStatusCharacter(entry.worktree)}`
     return {
       path: entry.relativePath,
-      status,
+      status: entry.statusCode?.replaceAll('.', ' ') ?? status,
       ...(entry.originalRelativePath
         ? { previousPath: entry.originalRelativePath }
         : {})
@@ -577,8 +577,7 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         input.signal?.throwIfAborted()
         const reference = this.reference(opened)
-        const [status, diff] = await Promise.all([
-          opened.lease
+        const status = await opened.lease
             .getGitStatus(
               remoteGitStatusRequestSchema.parse({
                 ...reference,
@@ -590,12 +589,13 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
             )
             .then((result) =>
               remoteGitStatusResultSchema.parse(result)
-            ),
-          opened.lease
+            )
+        const readDiff = (staged: boolean) => opened.lease
             .getGitDiff(
               remoteGitDiffRequestSchema.parse({
                 ...reference,
-                staged: false,
+                staged,
+                ...(input.path === undefined ? {} : { relativePath: input.path }),
                 maximumBytes:
                   REMOTE_WORKSPACE_LIMITS.maximumGitDiffBytes
               }),
@@ -604,8 +604,12 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
             .then((result) =>
               remoteGitDiffResultSchema.parse(result)
             )
+        const [diff, stagedDiff] = await Promise.all([
+          readDiff(false),
+          input.path === undefined ? undefined : readDiff(true)
         ])
-        if (status.repositoryIdentity !== diff.repositoryIdentity) {
+        if (status.repositoryIdentity !== diff.repositoryIdentity ||
+          (stagedDiff && status.repositoryIdentity !== stagedDiff.repositoryIdentity)) {
           if (attempt === 0) {
             continue
           }
@@ -617,10 +621,12 @@ export class RemoteWorkspaceAccess implements WorkspaceAccess {
           available: true,
           status: formatChangedFiles(files),
           patch: diff.patch,
+          ...(stagedDiff ? { stagedPatch: stagedDiff.patch } : {}),
           files,
           truncated:
             status.truncated ||
             diff.truncated ||
+            stagedDiff?.truncated === true ||
             diff.nextCursor !== undefined
         }
       }

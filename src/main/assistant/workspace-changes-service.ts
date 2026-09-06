@@ -59,8 +59,8 @@ const previewFileNames = new Set([
 export class WorkspaceChangesService {
   constructor(private readonly workspace: WorkspaceAccess) {}
 
-  getChanges(signal?: AbortSignal): Promise<WorkspaceChanges> {
-    return this.workspace.getChanges({ signal })
+  getChanges(signal?: AbortSignal, path?: string): Promise<WorkspaceChanges> {
+    return this.workspace.getChanges({ signal, path })
   }
 
   async listDirectory(
@@ -158,13 +158,14 @@ export async function resolveWorkspaceEntryPath(
 }
 
 export async function getWorkspaceChanges(
-  workspace: string | WorkspaceAccess
+  workspace: string | WorkspaceAccess,
+  path?: string
 ): Promise<WorkspaceChanges> {
   if (typeof workspace !== 'string') {
-    return new WorkspaceChangesService(workspace).getChanges()
+    return new WorkspaceChangesService(workspace).getChanges(undefined, path)
   }
   return withLocalWorkspace(workspace, (access) =>
-    new WorkspaceChangesService(access).getChanges()
+    new WorkspaceChangesService(access).getChanges(undefined, path)
   )
 }
 

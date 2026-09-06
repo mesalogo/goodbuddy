@@ -802,6 +802,7 @@ export const remoteGitStatusRequestSchema = z
 
 export const remoteGitFileStatusSchema = z
   .object({
+    statusCode: z.string().regex(/^[ .AMDRCUT?!]{2}$/u).optional(),
     relativePath: remoteRelativePathSchema,
     index: z.enum([
       'unmodified',

@@ -292,6 +292,14 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
     actor.kind === 'direct-model' && subagent.workMode
       ? `${source} · ${subagent.workMode === 'execute' ? 'Execute' : 'Ask'}`
       : source
+  const progress = subagent.progress?.filter((block, index, blocks) =>
+    !(
+      subagent.state === 'completed' &&
+      index === blocks.length - 1 &&
+      block.type === 'text' &&
+      block.content.trim() === subagent.output?.trim()
+    )
+  )
 
   return (
     <details
@@ -332,9 +340,37 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
       </summary>
       {expanded && (
         <div className="subagent-status-card__details">
+          {progress && progress.length > 0 && (
+            <section aria-label={t('chat.subagents.progress')}>
+              <strong>{t('chat.subagents.progress')}</strong>
+              <div className="subagent-status-card__progress">
+                {groupMessageBlocks(progress).map((item) =>
+                  item.kind === 'tools' ? (
+                    <ToolExecutionList key={item.id} tools={item.tools.map((tool) =>
+                      (tool.state === 'pending' || tool.state === 'running') &&
+                      subagent.state !== 'queued' && subagent.state !== 'running'
+                        ? { ...tool, state: subagent.state === 'cancelled' ? 'cancelled' : 'interrupted' }
+                        : tool
+                    )} />
+                  ) : item.kind === 'subagents' ? null
+                    : item.block.type === 'reasoning' ? (
+                      <MessageReasoning
+                        key={item.block.id}
+                        content={item.block.content}
+                        streaming={false}
+                      />
+                    ) : item.block.type === 'text' ? (
+                      <div key={item.block.id} className="markdown-content">
+                        <MarkdownRenderer>{item.block.content}</MarkdownRenderer>
+                      </div>
+                    ) : null
+                )}
+              </div>
+            </section>
+          )}
           {subagent.output ? (
-            <section>
-              <strong>{t('chat.subagents.output')}</strong>
+            <section aria-label={t('chat.subagents.finalOutput')}>
+              <strong>{t('chat.subagents.finalOutput')}</strong>
               <div className="markdown-content">
                 <MarkdownRenderer
                   renderHtml={
@@ -345,9 +381,9 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
                 </MarkdownRenderer>
               </div>
             </section>
-          ) : (
+          ) : !subagent.progress?.length ? (
             <p>{t('chat.subagents.noOutput')}</p>
-          )}
+          ) : null}
           {subagent.error &&
             (subagent.state === 'failed' ||
               subagent.state === 'cancelled') && (

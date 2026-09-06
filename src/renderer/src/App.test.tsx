@@ -523,6 +523,7 @@ const api: DesktopApi = {
     })
   },
   workspace: {
+    getFileDiff: vi.fn(),
     getChanges: vi.fn(async () => ({
       rootPath: 'C:\\Workspace',
       available: true,
@@ -4775,7 +4776,14 @@ describe('App', () => {
       name: /产品知识/u
     })
     await waitFor(() => expect(scopeCheckbox).toHaveFocus())
-    fireEvent.click(scopeCheckbox)
+    fireEvent.focusOut(scopeCheckbox, { relatedTarget: null })
+    expect(knowledgeScopeTrigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(screen.getByText('产品知识', { selector: 'span' }))
+    expect(scopeCheckbox).toBeChecked()
+    fireEvent.click(scopeCheckbox.closest('label')!)
+    expect(scopeCheckbox).not.toBeChecked()
+    fireEvent.click(scopeCheckbox.closest('label')!.querySelector('small')!)
+    expect(scopeCheckbox).toBeChecked()
     const composerInput = screen.getByLabelText('向 GoodBuddy 提问')
     fireEvent.focusOut(scopeCheckbox, {
       relatedTarget: composerInput
@@ -5815,6 +5823,13 @@ describe('App', () => {
   })
 
   it('refreshes generated workspace files when a run completes', async () => {
+    vi.mocked(api.workspace.listDirectory).mockImplementation(async (_projectId, path) => ({
+      path,
+      entries: vi.mocked(api.workspace.getChanges).mock.calls.length >= 2
+        ? [{ name: 'tree-only.txt', path: 'tree-only.txt', type: 'file' as const }]
+        : [],
+      truncated: false
+    }))
     vi.mocked(api.workspace.getChanges)
       .mockResolvedValueOnce({
         rootPath: project.rootPath,
@@ -5852,6 +5867,7 @@ describe('App', () => {
     })
 
     expect(await screen.findByText('generated.md')).toBeInTheDocument()
+    expect(await screen.findByText('tree-only.txt')).toBeInTheDocument()
   })
 
   it('ignores stale Git changes after switching projects', async () => {
@@ -10246,8 +10262,8 @@ describe('App', () => {
       screen.getByRole('tab', { name: '工作区' })
     ).toHaveAttribute('title', '浏览项目文件、Git 变更与文件内容')
     expect(
-      screen.getByRole('heading', { name: '项目工作区' })
-    ).toBeInTheDocument()
+      screen.queryByRole('heading', { name: '项目工作区' })
+    ).not.toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: '刷新工作区文件' })
     ).toBeInTheDocument()

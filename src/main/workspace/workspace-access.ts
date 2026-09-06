@@ -88,6 +88,7 @@ export type SearchPage = {
 }
 
 export type WorkspaceChangesInput = {
+  path?: string
   signal?: AbortSignal
 }
 

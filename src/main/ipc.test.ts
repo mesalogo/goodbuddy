@@ -4157,6 +4157,7 @@ describe('registerIpcHandlers workspace files', () => {
 
     for (const [channel, input] of [
       [ipcChannels.workspaceChangesGet, projectId],
+      [ipcChannels.workspaceFileDiff, { projectId, path: 'deleted.txt' }],
       [
         ipcChannels.workspaceDirectoryList,
         { projectId, path: '' }

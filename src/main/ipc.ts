@@ -6602,6 +6602,23 @@ export function registerIpcHandlers(
     }
   )
   registerHandler(
+    ipcChannels.workspaceFileDiff,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const value = workspaceFileRequestSchema.omit({ offsetBytes: true }).parse(input)
+      const project = assistantDatabase.getProject(value.projectId)
+      if (project.executionSpace?.kind === 'ssh') {
+        await requireRemoteProjectsEnabled()
+      }
+      const executionSpace = spaceResolver.resolveProject(project)
+      try {
+        return await getWorkspaceChanges(executionSpace.workspaceAccess, value.path)
+      } finally {
+        await executionSpace.workspaceAccess.dispose()
+      }
+    }
+  )
+  registerHandler(
     ipcChannels.workspaceDirectoryList,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
@@ -6652,9 +6669,9 @@ export function registerIpcHandlers(
         await requireRemoteProjectsEnabled()
       }
       const executionSpace = spaceResolver.resolveProject(project)
-      spaceResolver.assertLocal(executionSpace)
       let targetPath: string
       try {
+        spaceResolver.assertLocal(executionSpace)
         targetPath = await resolveWorkspaceEntryPath(
           executionSpace.rootPath,
           value.path,

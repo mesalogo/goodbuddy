@@ -1544,6 +1544,58 @@ describe('AcpRemoteRuntime', () => {
     })
   })
 
+  it('keeps ACP content results and bridged child progress in the same card', async () => {
+    const client: { value?: AgentSideConnection } = {}
+    const input = { subagent_type: 'general', prompt: 'Read seed' }
+    const server = fakeServer({
+      prompt: async ({ sessionId }) => {
+        for (const event of [
+          { type: 'message.part.updated', properties: {
+            sessionID: sessionId, part: {
+              id: 'task', callID: 'task', type: 'tool', tool: 'task',
+              state: { status: 'running', input, metadata: { sessionId: 'child' } }
+            }
+          } },
+          { type: 'message.part.delta', properties: {
+            sessionID: 'child', partID: 'text', field: 'text', delta: 'Inspecting seed'
+          } },
+          { type: 'message.part.updated', properties: {
+            sessionID: 'child', part: {
+              id: 'read', callID: 'read', type: 'tool', tool: 'read',
+              state: { status: 'completed', input: { path: 'seed.txt' }, output: 'seed' }
+            }
+          } }
+        ]) {
+          await client.value!.sessionUpdate({
+            sessionId, update: {
+              sessionUpdate: 'tool_call_update', toolCallId: 'task',
+              _meta: { goodbuddySubagentEvent: event }
+            }
+          })
+        }
+        await client.value!.sessionUpdate({
+          sessionId, update: {
+            sessionUpdate: 'tool_call', toolCallId: 'task', title: 'Read seed', rawInput: input,
+            status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: '**Final seed**' } }]
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
+    })
+    client.value = server.client
+    const events = await collect(runtime(server).run(request, new AbortController().signal))
+    const children = events.filter(event => event.type === 'subagent')
+    expect(children.at(-1)).toMatchObject({
+      state: 'completed', output: '**Final seed**',
+      progress: [
+        { type: 'text', content: 'Inspecting seed' },
+        { type: 'tool', tool: { name: 'read', state: 'completed', output: 'seed' } }
+      ]
+    })
+    expect(events.some(event => event.type === 'text')).toBe(false)
+  })
+
   it('bounds native subagent output per event without a request-wide stop', async () => {
     const client: { value?: AgentSideConnection } = {}
     const server = fakeServer({

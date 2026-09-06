@@ -60,6 +60,7 @@ import {
 } from './remote-runtime-channel'
 import type { RuntimeSessionBindingStore } from './runtime-session-binding-store'
 import {
+  OpenCodeSubagentProgress,
   parseOpenCodeSubagentInput,
   toOpenCodeSubagentEvent
 } from './opencode-subagent'
@@ -136,6 +137,7 @@ export class RemotePromptRecoveryUnavailableError extends Error {
 }
 
 type ActivePrompt = {
+  subagentProgress?: OpenCodeSubagentProgress
   requestId: string
   operationId: string
   sessionId: string
@@ -153,6 +155,7 @@ type ActivePrompt = {
       status?: 'pending' | 'in_progress' | 'completed' | 'failed'
       rawInput?: unknown
       rawOutput?: unknown
+      contentOutput?: string
       retainedInput?: string
       retainedOutput?: string
       retainedError?: string
@@ -2067,6 +2070,34 @@ export class AcpRemoteRuntime implements AgentRuntime {
     prompt: ActivePrompt,
     update: SessionUpdate
   ): RuntimePublicEvent | undefined {
+    if (this.options.runtimeId === 'opencode') {
+      if (!prompt.subagentProgress) {
+        prompt.subagentProgress = new OpenCodeSubagentProgress(
+          prompt.requestId, prompt.sessionId
+        )
+        for (const tool of prompt.toolCalls.values()) {
+          if (tool.retainedSubagent) {
+            prompt.subagentProgress.retain({
+              ...tool.retainedSubagent,
+              requestId: prompt.requestId, type: 'subagent'
+            })
+          }
+        }
+      }
+      const childEvent = update._meta?.goodbuddySubagentEvent
+      if (childEvent !== undefined) {
+        const event = prompt.subagentProgress.update(
+          childEvent, 'toolCallId' in update ? update.toolCallId : undefined
+        )
+        if (event?.runtimeCallId) {
+          const previous = prompt.toolCalls.get(event.runtimeCallId)
+          prompt.toolCalls.set(event.runtimeCallId, {
+            ...previous, retainedSubagent: event
+          })
+        }
+        return event
+      }
+    }
     if (
       (update.sessionUpdate === 'agent_message_chunk' ||
         update.sessionUpdate === 'agent_thought_chunk') &&
@@ -2118,6 +2149,13 @@ export class AcpRemoteRuntime implements AgentRuntime {
                 update.rawOutput,
                 retainedMaximum
               ),
+        contentOutput:
+          update.content === undefined || update.content === null
+            ? previous?.contentOutput
+            : update.content.flatMap((entry) =>
+                entry.type === 'content' && entry.content.type === 'text'
+                  ? [entry.content.text] : []
+              ).join('\n').slice(0, retainedMaximum),
         retainedInput:
           update.rawInput === undefined
             ? previous?.retainedInput
@@ -2148,22 +2186,22 @@ export class AcpRemoteRuntime implements AgentRuntime {
               callId,
               state: toolCall.status ?? 'pending',
               input: toolCall.rawInput,
-              output: toolCall.rawOutput
+              output: toolCall.contentOutput || toolCall.rawOutput
             })
           : undefined
       if (subagent) {
-        return subagent
+        return prompt.subagentProgress?.retain(subagent) ?? subagent
       }
       if (toolCall.retainedSubagent) {
         const retained = toolCall.retainedSubagent
         const state =
           toolCall.status === 'pending'
-            ? ('queued' as const)
+            ? retained.state
             : toolCall.status === 'in_progress'
               ? ('running' as const)
               : toolCall.status ?? retained.state
         const detail = safeStringify(
-          toolCall.rawOutput,
+          toolCall.contentOutput || toolCall.rawOutput,
           retainedMaximum
         )
         return {
@@ -2191,7 +2229,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         retainedMaximum
       ) ?? toolCall.retainedInput
       const output = safeStringify(
-        toolCall.rawOutput,
+        toolCall.contentOutput || toolCall.rawOutput,
         retainedMaximum
       ) ?? toolCall.retainedOutput
       return {

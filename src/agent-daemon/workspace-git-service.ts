@@ -184,8 +184,23 @@ export class WorkspaceGitService {
     options: WorkspaceIoOptions = {}
   ): Promise<RemoteGitDiffResult> {
     const repository = await this.#repository(accessService, options)
-    if (request.relativePath !== undefined && request.relativePath !== '') {
-      await accessService.stat(request.relativePath, options)
+    const selectedPath = request.relativePath || undefined
+    const status = selectedPath === undefined ? undefined : await this.status(
+      accessService,
+      { workspaceId: request.workspaceId, generation: request.generation,
+        includeIgnored: false, maximumEntries: 2000 },
+      options
+    )
+    const file = status?.entries.find((entry) => entry.relativePath === selectedPath)
+    if (selectedPath !== undefined && !file) {
+      throw new WorkspaceServiceError('File is no longer in the Git changes list', 'git-failed')
+    }
+    const untracked = file?.index === 'untracked'
+    if (untracked && request.staged) {
+      return { repositoryIdentity: repository.repositoryIdentity, patch: '', byteLength: 0, truncated: false }
+    }
+    if (untracked) {
+      await accessService.stat(selectedPath!, options)
     }
     const cursor = parseCursor(request.cursor)
     if (cursor > MAXIMUM_GIT_PROCESS_BYTES) {
@@ -205,13 +220,14 @@ export class WorkspaceGitService {
       '--no-ext-diff',
       '--no-textconv',
       '--no-color',
-      '--no-renames',
       '--ignore-submodules=all',
-      ...(request.staged ? ['--cached'] : []),
-      ...(request.relativePath === undefined ||
-      request.relativePath === ''
-        ? []
-        : ['--', request.relativePath])
+      ...(untracked ? ['--no-index', '--', NULL_DEVICE, selectedPath!] : [
+        ...(request.staged ? ['--cached'] : []),
+        ...(selectedPath === undefined ? [] : ['--',
+          ...[...new Set([file?.originalRelativePath, selectedPath])]
+            .filter((path): path is string => path !== undefined)
+            .map((path) => `:(literal)${path}`)])
+      ])
     ]
     if (cursor > 0) {
       const cached = this.#diffSnapshots.get(snapshotKey)
@@ -228,7 +244,7 @@ export class WorkspaceGitService {
         cached === undefined ||
         cached.repositoryIdentity !== repository.repositoryIdentity ||
         current === undefined ||
-        current.exitCode !== 0 ||
+        (current.exitCode !== 0 && !(untracked && current.exitCode === 1)) ||
         current.truncated ||
         !current.stdout.equals(cached.bytes) ||
         cursor > cached.bytes.byteLength
@@ -254,7 +270,7 @@ export class WorkspaceGitService {
       options,
       MAXIMUM_GIT_PROCESS_BYTES
     )
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== 0 && !(untracked && result.exitCode === 1)) {
       throw gitFailure(result)
     }
     const middle = await repositorySnapshot(repository, accessService)
@@ -266,7 +282,7 @@ export class WorkspaceGitService {
       MAXIMUM_GIT_PROCESS_BYTES
     )
     if (
-      verification.exitCode !== 0 ||
+      (verification.exitCode !== 0 && !(untracked && verification.exitCode === 1)) ||
       verification.truncated !== result.truncated ||
       !verification.stdout.equals(result.stdout)
     ) {
@@ -876,6 +892,7 @@ function parseStatus(
       continue
     }
     entries.push({
+      statusCode,
       relativePath: remoteRelativePathSchema.parse(relativePath),
       index: mapStatus(statusCode[0]!, statusCode),
       worktree: mapStatus(statusCode[1]!, statusCode),

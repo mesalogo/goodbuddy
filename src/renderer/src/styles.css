@@ -4283,21 +4283,51 @@ button > svg {
   word-break: break-word;
 }
 
-.assistant-sidebar__diff-details {
-  color: var(--text-secondary);
-  font-size: var(--font-caption);
-}
-
-.assistant-sidebar__diff-details summary {
-  padding: var(--space-2) 0;
-  cursor: pointer;
-}
-
 .workspace-files {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.workspace-files__toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.workspace-files__diff [data-line="added"] {
+  color: var(--success);
+  background: var(--success-subtle);
+}
+
+.workspace-files__diff [data-line="deleted"] {
+  color: var(--danger);
+  background: var(--danger-subtle);
+}
+
+.workspace-files__diff [data-line="hunk"] {
+  color: var(--accent);
+}
+
+.workspace-files [data-status] {
+  color: var(--warning);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.workspace-files [data-status="A"],
+.workspace-files [data-status="U"] {
+  color: var(--success);
+}
+
+.workspace-files [data-status="D"],
+.workspace-files [data-conflict="true"] {
+  color: var(--danger);
+}
+
+.workspace-files [data-status="R"],
+.workspace-files [data-status="C"] {
+  color: var(--accent);
 }
 
 .workspace-files__heading,
@@ -6224,6 +6254,14 @@ button > svg {
   border-top: 1px solid var(--border-subtle);
   background: var(--surface-subtle);
   gap: var(--space-3);
+}
+
+.subagent-status-card__progress {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border-default);
 }
 
 .subagent-status-card__details section {
@@ -11958,6 +11996,16 @@ details.settings-section > :not(summary) + :not(summary) {
 .knowledge-scope__popover label:hover {
   background: var(--accent-subtle);
   color: var(--accent);
+}
+
+.knowledge-scope__popover label:has(input:checked) {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.knowledge-scope__popover label:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .knowledge-scope__popover label input {

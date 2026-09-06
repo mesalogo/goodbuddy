@@ -358,6 +358,8 @@ export const app = {
       fallbackTask: '{{name}} 子专家任务',
       task: '任务',
       output: '子代理输出',
+      progress: '执行过程',
+      finalOutput: '最终结果',
       error: '执行说明',
       noOutput: '子代理暂时没有可显示的输出。',
       incomplete: '父请求已结束，但子 Agent 未报告完成状态。',

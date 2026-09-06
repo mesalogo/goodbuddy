@@ -26,6 +26,12 @@
   有效 Open XML DOCX 与两页原生文本 PDF 均通过生产 `KnowledgeService.importPaths`
   导入、解析、分块和全文检索。
 
+2026-09-06 对话知识库选择补充验证：
+
+- `App.test.tsx` 覆盖点击名称、文档数量和行本身时切换选中状态，以及空目标失焦时
+  弹层不提前卸载。Windows 隔离桌面实际点击名称后选中、点击数量后取消，弹层保持打开。
+- 本轮全量校验结果见[工作栏验证记录](../assistant-workbar/progress.md)；本项验证未调用模型。
+
 ## 剩余工作
 
 - 外部 Dify、FastGPT 和 RAGFlow 知识库接入仍为规划中能力。

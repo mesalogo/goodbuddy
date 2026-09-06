@@ -76,6 +76,7 @@ function renderSidebar({
         onListWorkspaceDirectory={onListWorkspaceDirectory}
         onLoadArtifact={onLoadArtifact}
         onLoadWorkspaceFile={onLoadWorkspaceFile}
+        onLoadWorkspaceDiff={vi.fn()}
         onOpenWorkspaceEntry={vi.fn(async () => undefined)}
         onInteractBrowser={vi.fn(async () => undefined)}
         onRefreshChanges={vi.fn(async () => undefined)}

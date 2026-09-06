@@ -432,6 +432,11 @@ export const workspace = {
     taskList: 'Task list'
   },
   files: {
+    staged: 'Staged changes',
+    unstaged: 'Working tree changes',
+    noDiff: 'No textual differences (the file may be empty or only its status changed).',
+    diffTruncated: 'Diff output truncated.',
+    retry: 'Retry',
     statuses: {
       added: 'Added',
       deleted: 'Deleted',
@@ -452,7 +457,7 @@ export const workspace = {
       'This folder has more than 500 items. Only the first 500 are shown.',
     selectProject: 'Select a project to browse its workspace.',
     changedTitle: 'Uncommitted changes',
-    changesTruncated: 'Only the first 50 uncommitted changes are shown.',
+    loadMoreChanges: 'Load more changes ({{count}} remaining)',
     currentWorkspace: 'Current workspace',
     readingWorkspace: 'Reading workspace…',
     rootTruncated:

@@ -127,6 +127,32 @@ describe('WorkspaceGitService', () => {
       code: 'git-unsafe'
     })
   })
+
+  linuxIt('diffs unborn, untracked, staged, renamed and deleted files by literal path', async () => {
+    const root = temporaryDirectory()
+    const executable = await resolveVerifiedGitExecutable()
+    git(executable, root, 'init', '--quiet')
+    const service = new WorkspaceGitService({ gitExecutable: executable })
+    const access = accessFor(root)
+    const diff = (relativePath: string, staged = false) => service.diff(access, {
+      workspaceId: 'workspace-a', generation: 1, relativePath, staged, maximumBytes: 4096
+    })
+    writeFileSync(join(root, '[new].txt'), 'original\n')
+    expect((await diff('[new].txt')).patch).toContain('+original')
+    expect((await diff('[new].txt', true)).patch).toBe('')
+    git(executable, root, 'add', '.')
+    expect((await diff('[new].txt', true)).patch).toContain('+original')
+    writeFileSync(join(root, '[new].txt'), 'edited\n')
+    expect((await diff('[new].txt')).patch).toContain('+edited')
+    git(executable, root, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'initial')
+    git(executable, root, 'mv', '[new].txt', 'renamed file.txt')
+    expect((await diff('renamed file.txt', true)).patch).toContain('rename from [new].txt')
+    expect((await diff('renamed file.txt')).patch).toContain('+edited')
+    rmSync(join(root, 'renamed file.txt'))
+    expect((await diff('renamed file.txt')).patch).toContain('-original')
+    git(executable, root, 'add', '-u')
+    expect((await diff('[new].txt', true)).patch).toContain('-original')
+  })
 })
 
 function git(executable: string, cwd: string, ...args: string[]): void {

@@ -1893,6 +1893,7 @@ export type DesktopApi = {
   }
   workspace: {
     getChanges: (projectId: string) => Promise<WorkspaceChanges>
+    getFileDiff: (projectId: string, path: string) => Promise<WorkspaceChanges>
     listDirectory: (
       projectId: string,
       path: string

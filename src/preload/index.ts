@@ -1089,6 +1089,11 @@ const desktopApi: DesktopApi = {
     }
   },
   workspace: {
+    getFileDiff: (projectId: string, path: string) =>
+      ipcRenderer.invoke(ipcChannels.workspaceFileDiff, {
+        projectId,
+        path
+      }) as Promise<WorkspaceChanges>,
     getChanges: (projectId: string) =>
       ipcRenderer.invoke(
         ipcChannels.workspaceChangesGet,

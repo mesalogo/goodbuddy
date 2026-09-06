@@ -6,7 +6,6 @@ import {
   CircleAlert,
   ExternalLink,
   FileText,
-  FolderTree,
   ClockFading,
   Monitor,
   Plus,
@@ -117,6 +116,7 @@ type RightAssistantSidebarProps = {
   onImportArtifacts: () => Promise<void>
   onLoadArtifact: (artifactId: string) => Promise<void>
   onRefreshChanges: () => Promise<void>
+  onLoadWorkspaceDiff: (path: string) => Promise<WorkspaceChanges>
   onListWorkspaceDirectory: (
     path: string
   ) => Promise<WorkspaceDirectoryListing>
@@ -500,6 +500,7 @@ export function RightAssistantSidebar({
   onImportArtifacts,
   onLoadArtifact,
   onRefreshChanges,
+  onLoadWorkspaceDiff,
   onListWorkspaceDirectory,
   onLoadWorkspaceFile,
   onOpenWorkspaceEntry,
@@ -629,7 +630,6 @@ export function RightAssistantSidebar({
     useState(false)
   const [workspacePreviewLoadMoreError, setWorkspacePreviewLoadMoreError] =
     useState('')
-  const [workspaceRefreshVersion, setWorkspaceRefreshVersion] = useState(0)
   const [taskFilter, setTaskFilter] = useState<
     'attention' | 'active' | 'paused' | 'finished'
   >('active')
@@ -1583,15 +1583,12 @@ export function RightAssistantSidebar({
             </section>
           ) : (
             <section className="assistant-sidebar__section">
-              <h3>
-                <FolderTree size={15} />
-                {t('sidebar.workspace.projectTitle')}
+              <div className="workspace-files__toolbar">
                 <button
                   aria-label={t('sidebar.workspace.refreshAriaLabel')}
                   className="icon-button"
                   disabled={!workspaceProjectId}
                   onClick={() => {
-                    setWorkspaceRefreshVersion((current) => current + 1)
                     void runAction(
                       onRefreshChanges,
                       t('sidebar.errors.refreshWorkspace')
@@ -1602,12 +1599,14 @@ export function RightAssistantSidebar({
                 >
                   <RefreshCw size={14} />
                 </button>
-              </h3>
+              </div>
               <WorkspaceFilesPanel
                 changedFiles={workspaceChanges?.files ?? emptyChangedFiles}
-                key={`${workspaceProjectId ?? 'none'}:${workspaceRefreshVersion}`}
+                key={workspaceProjectId ?? 'none'}
+                refreshToken={workspaceChanges}
+                onLoadDiff={onLoadWorkspaceDiff}
                 onListDirectory={onListWorkspaceDirectory}
-                onOpenEntry={onOpenWorkspaceEntry}
+                onOpenEntry={currentProject?.executionSpace?.kind === 'ssh' ? undefined : onOpenWorkspaceEntry}
                 onOpenFile={openWorkspaceFile}
                 projectId={workspaceProjectId}
               />
@@ -1617,17 +1616,6 @@ export function RightAssistantSidebar({
                     error: workspaceChanges.error
                   })}
                 </p>
-              )}
-              {workspaceChanges?.patch && (
-                <details className="assistant-sidebar__diff-details">
-                  <summary>{t('sidebar.workspace.fullDiff')}</summary>
-                  <pre className="assistant-sidebar__diff">
-                    {workspaceChanges.patch}
-                    {workspaceChanges.truncated
-                      ? t('sidebar.workspace.truncatedDiff')
-                      : ''}
-                  </pre>
-                </details>
               )}
             </section>
           )

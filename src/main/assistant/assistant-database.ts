@@ -1394,6 +1394,7 @@ function reduceRecoveredAgentEvent(
       workMode: event.workMode,
       state: event.state,
       reason: event.reason,
+      progress: event.progress,
       output: event.output,
       error: event.error
     }

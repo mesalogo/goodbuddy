@@ -1,5 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { spawn as nodeSpawn } from 'node:child_process'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
+import { openCodeSubagentPluginSource } from './opencode-subagent-plugin'
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -8,7 +12,7 @@ import {
   type ServerResponse
 } from 'node:http'
 import type { Socket } from 'node:net'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, resolve, join } from 'node:path'
 import type {
   ModelBridgeModelProtocol
 } from '../shared/model-bridge-contracts'
@@ -409,7 +413,11 @@ export async function runOpenCodeModelBridgeHelper(options: {
   const exchange = createUnixModelBridgeExchange({ socketPath })
   const proxy = new ModelBridgeLoopbackProxy({ exchange })
   const origin = await proxy.listen()
+  let pluginDirectory: string | undefined
   try {
+    pluginDirectory = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-plugin-'))
+    const pluginPath = join(pluginDirectory, 'subagent.mjs')
+    await writeFile(pluginPath, openCodeSubagentPluginSource(), 'utf8')
     const config = createOpenCodeModelBridgeProviderConfig({
       protocol: options.protocol,
       model: options.model,
@@ -419,7 +427,10 @@ export async function runOpenCodeModelBridgeHelper(options: {
     })
     const environment = credentialFreeHelperEnvironment(
       options.environment ?? process.env,
-      JSON.stringify(config)
+      JSON.stringify({
+        ...config,
+        plugin: [pathToFileURL(pluginPath).href]
+      })
     )
     const child = (options.spawn ?? defaultHelperSpawn)(
       opencodeEntrypoint,
@@ -442,6 +453,9 @@ export async function runOpenCodeModelBridgeHelper(options: {
     })
   } finally {
     await proxy.close()
+    if (pluginDirectory) {
+      await rm(pluginDirectory, { recursive: true, force: true })
+    }
   }
 }
 

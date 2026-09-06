@@ -775,53 +775,76 @@ export class LocalWorkspaceAccess implements WorkspaceAccess {
         canonicalRoot,
         input.signal
       )
-      const [statusResult, patchResult] = await Promise.all([
-        runGit(
+      const git = (args: string[]): Promise<CommandResult> =>
+        runGit(canonicalRoot, withSafeGitArguments(args), input.signal, filterOverrides)
+      const statusResult = await runGit(
           canonicalRoot,
           withSafeGitArguments([
             'status',
             '--porcelain=v1',
             '-z',
-            '--untracked-files=normal'
-          ]),
-          input.signal,
-          filterOverrides
-        ),
-        runGit(
-          canonicalRoot,
-          withSafeGitArguments([
-            'diff',
-            '--no-ext-diff',
-            '--no-textconv',
-            '--no-color',
-            'HEAD'
+            '--untracked-files=all'
           ]),
           input.signal,
           filterOverrides
         )
-      ])
-      if (statusResult.code !== 0 || patchResult.code !== 0) {
-        const detail = statusResult.stderr || patchResult.stderr
+      if (statusResult.code !== 0) {
+        const detail = statusResult.stderr
         return {
           rootPath: this.rootPath,
           available: false,
           status: '',
           patch: '',
           files: [],
-          truncated: statusResult.truncated || patchResult.truncated,
+          truncated: statusResult.truncated,
           error: detail.trim().slice(0, 2_000) || '无法读取 Git 工作区'
         }
       }
       const changedFiles = parseChangedFiles(statusResult.stdout)
+      const diffArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color']
+      let patchResult: CommandResult
+      let stagedResult: CommandResult | undefined
+      if (input.path !== undefined) {
+        const path = normalizeRelativePath(input.path, false).path
+        const file = changedFiles.files.find((entry) => entry.path === path)
+        if (!file) {
+          throw new Error('File is no longer in the Git changes list')
+        }
+        const paths = [...new Set([file.previousPath, path].filter((value): value is string => value !== undefined))]
+          .map((value) => `:(literal)${value}`)
+        if (file.status === '??') {
+          await this.resolveEntryPath(path, 'file')
+          patchResult = await git([...diffArgs, '--no-index', '--', NULL_DEVICE, path])
+          if (patchResult.code !== 0 && patchResult.code !== 1) {
+            throw new Error(patchResult.stderr || 'Git diff failed')
+          }
+        } else {
+          ;[stagedResult, patchResult] = await Promise.all([
+            git([...diffArgs, '--cached', '--', ...paths]),
+            git([...diffArgs, '--', ...paths])
+          ])
+          if (stagedResult.code !== 0 || patchResult.code !== 0) {
+            throw new Error(stagedResult.stderr || patchResult.stderr || 'Git diff failed')
+          }
+        }
+      } else {
+        const head = await git(['rev-parse', '--verify', '--quiet', 'HEAD'])
+        patchResult = await git([...diffArgs, ...(head.code === 0 ? ['HEAD'] : ['--cached'])])
+      }
       return {
         rootPath: this.rootPath,
         available: true,
         status: formatChangedFiles(changedFiles.files),
         patch: patchResult.stdout,
+        ...(patchResult.code !== 0 && input.path === undefined
+          ? { error: patchResult.stderr.trim().slice(0, 2000) || 'Git diff failed' }
+          : {}),
+        ...(stagedResult ? { stagedPatch: stagedResult.stdout } : {}),
         files: changedFiles.files,
         truncated:
           statusResult.truncated ||
           patchResult.truncated ||
+          stagedResult?.truncated === true ||
           changedFiles.truncated
       }
     } catch (error) {

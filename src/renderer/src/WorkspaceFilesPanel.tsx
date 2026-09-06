@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   FileSearch,
   FileText,
   Folder,
@@ -9,6 +10,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState
@@ -16,6 +18,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import type {
   WorkspaceChangedFile,
+  WorkspaceChanges,
   WorkspaceDirectoryEntry,
   WorkspaceDirectoryListing
 } from '../../shared/assistant-contracts'
@@ -23,36 +26,27 @@ import type {
 type WorkspaceFilesPanelProps = {
   projectId?: string
   changedFiles: WorkspaceChangedFile[]
+  refreshToken?: unknown
+  onLoadDiff: (path: string) => Promise<WorkspaceChanges>
   onListDirectory: (path: string) => Promise<WorkspaceDirectoryListing>
   onOpenFile: (path: string) => void
-  onOpenEntry: (
+  onOpenEntry?: (
     path: string,
     type: WorkspaceDirectoryEntry['type']
   ) => Promise<void>
 }
 
-function statusKey(
-  status: string
-): 'added' | 'deleted' | 'renamed' | 'modified' {
-  const value = status.trim()
-  if (value === '??') {
-    return 'added'
-  }
-  if (value.includes('D')) {
-    return 'deleted'
-  }
-  if (value.includes('R')) {
-    return 'renamed'
-  }
-  if (value.includes('A')) {
-    return 'added'
-  }
-  return 'modified'
+export function gitStatusLetter(status: string): string {
+  if (status === '??') return 'U'
+  if (['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(status)) return 'U'
+  return status.trim().replaceAll('.', '').split('').filter((value, index, values) => values.indexOf(value) === index).join('')
 }
 
 export function WorkspaceFilesPanel({
   projectId,
   changedFiles,
+  refreshToken,
+  onLoadDiff,
   onListDirectory,
   onOpenFile,
   onOpenEntry
@@ -80,6 +74,18 @@ export function WorkspaceFilesPanel({
   }>({})
   const requestGeneration = useRef(0)
   const inFlightPaths = useRef(new Set<string>())
+  const [diff, setDiff] = useState<{ path: string; value?: WorkspaceChanges; error?: string }>()
+  const diffRequest = useRef(0)
+  const [visibleChangeCount, setVisibleChangeCount] = useState(50)
+  const openDiff = (path: string): void => {
+    const request = ++diffRequest.current
+    setDiff({ path })
+    void onLoadDiff(path).then((value) => {
+      if (request === diffRequest.current) setDiff({ path, value, error: value.error })
+    }).catch((reason: unknown) => {
+      if (request === diffRequest.current) setDiff({ path, error: reason instanceof Error ? reason.message : t('files.errors.read') })
+    })
+  }
 
   const loadDirectory = useCallback(
     async (path: string, generation: number): Promise<void> => {
@@ -118,8 +124,8 @@ export function WorkspaceFilesPanel({
           })
         }
       } finally {
-        inFlightPaths.current.delete(path)
         if (requestGeneration.current === generation) {
+          inFlightPaths.current.delete(path)
           setLoadingState((current) => {
             const next = new Set(
               current.projectId === projectId ? current.value : []
@@ -133,6 +139,14 @@ export function WorkspaceFilesPanel({
     [onListDirectory, projectId]
   )
 
+  const refreshDirectories = useEffectEvent((generation: number) => {
+    const paths = expandedState.projectId === projectId ? [...expandedState.value] : []
+    setListingState({ projectId, value: {} })
+    setLoadingState({ projectId, value: new Set() })
+    void loadDirectory('', generation)
+    for (const path of paths) void loadDirectory(path, generation)
+    if (diff) openDiff(diff.path)
+  })
   useEffect(() => {
     requestGeneration.current += 1
     const generation = requestGeneration.current
@@ -141,10 +155,14 @@ export function WorkspaceFilesPanel({
       return
     }
     const timeout = setTimeout(() => {
-      void loadDirectory('', generation)
+      refreshDirectories(generation)
     }, 0)
-    return () => clearTimeout(timeout)
-  }, [loadDirectory, projectId])
+    return () => {
+      clearTimeout(timeout)
+      requestGeneration.current += 1
+      diffRequest.current += 1
+    }
+  }, [loadDirectory, projectId, refreshToken])
 
   const changedByPath = useMemo(
     () =>
@@ -190,7 +208,7 @@ export function WorkspaceFilesPanel({
 
   const openEntry = (entry: WorkspaceDirectoryEntry): void => {
     setErrorState({ projectId })
-    void onOpenEntry(entry.path, entry.type).catch((reason: unknown) => {
+    void onOpenEntry?.(entry.path, entry.type).catch((reason: unknown) => {
       setErrorState({
         projectId,
         value:
@@ -227,7 +245,7 @@ export function WorkspaceFilesPanel({
               {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
               <span title={entry.path}>{entry.name}</span>
             </button>
-            <button
+            {onOpenEntry && <button
               aria-label={t('files.openFolderAriaLabel', {
                 name: entry.name
               })}
@@ -237,7 +255,7 @@ export function WorkspaceFilesPanel({
               type="button"
             >
               <FolderOpen size={14} />
-            </button>
+            </button>}
           </div>
           {expanded && (
             <div className="workspace-files__children">
@@ -271,12 +289,12 @@ export function WorkspaceFilesPanel({
           <FileText size={15} />
           <span>{entry.name}</span>
           {changed && (
-            <small className="workspace-files__change">
-              {t(`files.statuses.${statusKey(changed.status)}`)}
+            <small className="workspace-files__change" data-status={gitStatusLetter(changed.status)} title={changed.status}>
+              {gitStatusLetter(changed.status)}
             </small>
           )}
         </button>
-        <button
+        {onOpenEntry && <button
           aria-label={t('files.openFileAriaLabel', {
             name: entry.name
           })}
@@ -286,7 +304,7 @@ export function WorkspaceFilesPanel({
           type="button"
         >
           <FileSearch size={14} />
-        </button>
+        </button>}
       </div>
     )
   }
@@ -300,34 +318,68 @@ export function WorkspaceFilesPanel({
   }
 
   const root = listings['']
+  const renderPatch = (patch: string): React.JSX.Element => (
+    <pre className="assistant-sidebar__diff workspace-files__diff">
+      {patch.split('\n').map((line, index) => (
+        <span key={index} data-line={
+          line.startsWith('+++') || line.startsWith('---') ? 'header'
+            : line.startsWith('+') ? 'added'
+              : line.startsWith('-') ? 'deleted'
+                : line.startsWith('@@') ? 'hunk' : undefined
+        }>{line}{'\n'}</span>
+      ))}
+    </pre>
+  )
+  if (diff) {
+    return <section className="assistant-sidebar__preview" aria-busy={!diff.value && !diff.error}>
+      <header>
+        <button className="assistant-sidebar__back" type="button" onClick={() => {
+          diffRequest.current += 1
+          setDiff(undefined)
+        }}><ChevronLeft size={14} />{t('files.currentWorkspace')}</button>
+        <strong>{diff.path}</strong>
+      </header>
+      {diff.error ? <p role="alert">{diff.error}<button type="button" onClick={() => openDiff(diff.path)}>{t('files.retry')}</button></p>
+        : !diff.value ? <p>{t('files.reading')}</p> : <>
+          {diff.value.stagedPatch && <><h4>{t('files.staged')}</h4>{renderPatch(diff.value.stagedPatch)}</>}
+          {diff.value.patch && <><h4>{t('files.unstaged')}</h4>{renderPatch(diff.value.patch)}</>}
+          {!diff.value.patch && !diff.value.stagedPatch && <p>{t('files.noDiff')}</p>}
+          {diff.value.truncated && <p>{t('files.diffTruncated')}</p>}
+        </>}
+    </section>
+  }
   return (
     <div className="workspace-files">
       {changedFiles.length > 0 && (
         <div className="workspace-files__changed">
           <strong>{t('files.changedTitle')}</strong>
-          {changedFiles.slice(0, 50).map((file) => {
-            const deleted = file.status.includes('D')
+          {changedFiles.slice(0, visibleChangeCount).map((file) => {
             return (
               <button
                 className="workspace-files__changed-row"
-                disabled={deleted}
                 key={`${file.status}:${file.path}`}
-                onClick={() => onOpenFile(file.path)}
-                title={file.path}
+                onClick={() => openDiff(file.path)}
+                title={`${file.previousPath ? `${file.previousPath} -> ` : ''}${file.path} (${file.status})`}
                 type="button"
               >
                 <FileText size={14} />
                 <span>{file.path}</span>
-                <small>
-                  {t(`files.statuses.${statusKey(file.status)}`)}
+                <small data-status={gitStatusLetter(file.status)} data-conflict={['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(file.status)} aria-label={file.status}>
+                  {gitStatusLetter(file.status)}
                 </small>
               </button>
             )
           })}
-          {changedFiles.length > 50 && (
-            <p className="workspace-files__status">
-              {t('files.changesTruncated')}
-            </p>
+          {changedFiles.length > visibleChangeCount && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setVisibleChangeCount((count) => count + 50)}
+            >
+              {t('files.loadMoreChanges', {
+                count: changedFiles.length - visibleChangeCount
+              })}
+            </button>
           )}
         </div>
       )}

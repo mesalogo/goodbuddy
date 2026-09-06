@@ -63,7 +63,7 @@ import {
   requestProcessTreeTermination,
   waitForProcessExit
 } from './child-process-termination'
-import { toOpenCodeSubagentEvent } from './opencode-subagent'
+import { OpenCodeSubagentProgress, toOpenCodeSubagentEvent } from './opencode-subagent'
 import { promptWithUntrustedConversationHistory } from './runtime-conversation-history'
 
 const STARTUP_TIMEOUT_MS = 30_000
@@ -2217,6 +2217,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       }
     >()
     const reasoningPartIds = new Set<string>()
+    const subagentProgress = new OpenCodeSubagentProgress(request.requestId, sessionId)
     const reportedQuestionIds = new Map<string, string>()
     let aggregateOutputBytes = 0
     let outputTruncated = false
@@ -2315,6 +2316,18 @@ export class OpenCodeRuntime implements AgentRuntime {
       const repliedPermissionIds = new Set<string>()
       const reportedMessageIds = new Set<string>()
       for await (const event of subscription.stream) {
+        const childProgress = subagentProgress.update(event)
+        if (
+          childProgress &&
+          'sessionID' in event.properties &&
+          event.properties.sessionID !== sessionId
+        ) {
+          const task = childProgress.runtimeCallId
+            ? toolStates.get(childProgress.runtimeCallId)
+            : undefined
+          if (task) task.subagent = childProgress
+          yield childProgress
+        }
         if (
           event.type === 'message.updated' &&
           event.properties.sessionID === sessionId &&
@@ -2424,7 +2437,9 @@ export class OpenCodeRuntime implements AgentRuntime {
               ...(subagent ? { subagent } : {})
             })
             if (subagent) {
-              yield subagent
+              const retained = subagentProgress.retain(subagent)
+              toolStates.get(callId)!.subagent = retained
+              yield retained
             } else {
               yield {
                 requestId: request.requestId,

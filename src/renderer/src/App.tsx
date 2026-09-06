@@ -4740,6 +4740,7 @@ function App(): React.JSX.Element {
             workMode: event.workMode,
             state: event.state,
             reason: event.reason,
+            progress: event.progress,
             output: event.output,
             error: event.error
           }
@@ -5886,6 +5887,10 @@ function App(): React.JSX.Element {
     },
     [activeProjectId]
   )
+  const loadWorkspaceDiff = useCallback(async (path: string) => {
+    if (!activeProjectId) throw new Error(tRef.current('notices.selectProject'))
+    return window.goodbuddy.workspace.getFileDiff(activeProjectId, path)
+  }, [activeProjectId])
   const openWorkspaceEntry = useCallback(
     async (
       path: string,
@@ -9787,7 +9792,7 @@ function App(): React.JSX.Element {
                     className="knowledge-scope"
                     onBlurCapture={(event) => {
                       if (
-                        !(event.relatedTarget instanceof Node) ||
+                        event.relatedTarget instanceof Node &&
                         !event.currentTarget.contains(event.relatedTarget)
                       ) {
                         setKnowledgeScopeOpen(false)
@@ -11228,6 +11233,7 @@ function App(): React.JSX.Element {
         onListWorkspaceDirectory={listWorkspaceDirectory}
         onLoadWorkspaceFile={loadWorkspaceFile}
         onOpenWorkspaceEntry={openWorkspaceEntry}
+        onLoadWorkspaceDiff={loadWorkspaceDiff}
         onRefreshChanges={refreshWorkspaceChanges}
         onTabChange={setAssistantSidebarTab}
         open={assistantSidebarOpen}

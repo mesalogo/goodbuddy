@@ -113,6 +113,26 @@ function createAccess(lease: RemoteWorkspaceTransportLease): {
 }
 
 describe('RemoteWorkspaceAccess', () => {
+  it('requests both single-file diff layers and preserves raw Git status', async () => {
+    const lease = createLease({
+      getGitStatus: vi.fn(async () => ({
+        repositoryIdentity: 'repository-1', branch: 'main', truncated: false,
+        entries: [{ relativePath: '[file].txt', index: 'modified' as const, worktree: 'unmodified' as const, statusCode: 'T.' }]
+      })),
+      getGitDiff: vi.fn(async (request) => ({
+        repositoryIdentity: 'repository-1', patch: request.staged ? 'staged' : 'worktree', byteLength: request.staged ? 6 : 8, truncated: request.staged
+      }))
+    })
+    const { access } = createAccess(lease)
+    expect(await access.getChanges({ path: '[file].txt' })).toMatchObject({
+      available: true, patch: 'worktree', stagedPatch: 'staged', truncated: true,
+      files: [{ path: '[file].txt', status: 'T ' }]
+    })
+    expect(lease.getGitDiff).toHaveBeenCalledWith(expect.objectContaining({ relativePath: '[file].txt', staged: true }), undefined)
+    expect(lease.getGitDiff).toHaveBeenCalledWith(expect.objectContaining({ relativePath: '[file].txt', staged: false }), undefined)
+    expect(lease.statWorkspace).not.toHaveBeenCalled()
+    await access.dispose()
+  })
   it('lazily validates once and maps bounded workspace methods', async () => {
     const lease = createLease({
       listWorkspace: vi.fn(async () => ({

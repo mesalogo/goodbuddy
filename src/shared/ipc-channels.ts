@@ -180,6 +180,7 @@ export const ipcChannels = {
   conversationQueueChanged: 'conversation-queue:changed',
   conversationQueueDispatch: 'conversation-queue:dispatch',
   workspaceChangesGet: 'workspace:changes:get',
+  workspaceFileDiff: 'workspace:file:diff',
   workspaceDirectoryList: 'workspace:directory:list',
   workspaceFileRead: 'workspace:file:read',
   workspacePathOpen: 'workspace:path:open',

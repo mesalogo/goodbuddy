@@ -266,6 +266,7 @@ const conversationSubagentActivityBaseSchema = z.object({
     'cancelled'
   ]),
   reason: z.string().trim().min(1).max(240).optional(),
+  progress: conversationMessageBlocksSchema.optional(),
   output: z.string().optional(),
   error: z.string().trim().min(1).max(1_000).optional()
 })
@@ -573,6 +574,7 @@ export type WorkspaceChanges = {
   available: boolean
   status: string
   patch: string
+  stagedPatch?: string
   files: WorkspaceChangedFile[]
   truncated: boolean
   error?: string

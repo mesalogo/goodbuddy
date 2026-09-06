@@ -422,6 +422,11 @@ export const workspace = {
     taskList: '任务列表'
   },
   files: {
+    staged: '已暂存更改',
+    unstaged: '工作树更改',
+    noDiff: '没有文本差异（文件可能为空，或仅状态发生变化）。',
+    diffTruncated: '差异内容已截断。',
+    retry: '重试',
     statuses: {
       added: '新增',
       deleted: '删除',
@@ -441,7 +446,7 @@ export const workspace = {
     directoryTruncated: '目录项目超过 500 项，仅显示前 500 项。',
     selectProject: '选择项目后可浏览项目工作区。',
     changedTitle: '未提交更改',
-    changesTruncated: '仅显示前 50 个未提交更改。',
+    loadMoreChanges: '加载更多变更（剩余 {{count}} 个）',
     currentWorkspace: '当前工作区',
     readingWorkspace: '正在读取工作区…',
     rootTruncated: '根目录项目超过 500 项，仅显示前 500 项。',
