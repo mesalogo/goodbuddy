@@ -56,7 +56,7 @@
 - [x] **内置 MCP 按需接入**：知识库、魔法笔记、GoodBuddy 配置与内置浏览器 MCP 可分别启停，并可分配给直连模型、GoodBuddy 管理的 OpenCode 和 Continue；DeepSeek Harness 在设置中明确显示为暂不支持。内置 MCP 仅通过当前请求的短期本机权限提供，Ask / Execute 读写边界不受用户配置放宽。
 - [x] **MCP Tools**：显式启用的自定义 MCP 可按 Runtime 分配给直连模型、GoodBuddy 管理的 OpenCode、Continue Agent Execute 和 DeepSeek Harness，并仅在 Execute 加载；Agent 子进程只获得按请求签发的本机回环权限，MCP 地址、命令和凭据保留在 Main，动态工具仍会重新发现并经过现有执行记录与权限边界。
 - [x] **MCP Prompts 与 Resources 元数据**：MCP 测试仅在 Server 声明对应能力时发现有界的 Prompt、参数与 Resource 元数据，不读取 Resource 内容；Runtime 支持的 Prompt 可填入聊天草稿后继续编辑。OpenCode 可报告实验性 Resource 清单，Continue 当前版本明确不支持 Resources。
-- [x] **本地知识库**：支持文件、目录和网页导入、SQLite FTS5 检索及来源追溯。
+- [x] **本地知识库**：支持文件、目录和网页导入、SQLite FTS5 检索及来源追溯。知识范围按对话保存，新对话默认不选择知识库；创建与检索高级参数默认折叠。文档区分可用、处理中和失败，支持打开来源、失败重试及移除来源前确认。
 - [ ] **外部知识库接入**（规划中）：在现有知识库页面管理 Dify、FastGPT 和 RAGFlow 实例；新建知识库时可读取并绑定远端知识库，保留 Provider 专属检索配置和引用。外部系统只负责知识检索，不接入其 App、Chat、Workflow 或 Agent，也不批量同步、本地索引或修改远端内容。被回答引用的有界检索片段随会话保存在本机。详见[外部知识库接入 PRD](./docs/features/knowledge-base/external-knowledge-prd.md)。
 - [x] **知识图谱**：支持规则、模型和混合抽取，以及实体、关系、别名和证据维护。
 - [x] **向量模型配置与检索**：可配置兼容 Embeddings 接口并用于语义检索。

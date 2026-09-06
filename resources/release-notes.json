@@ -2,6 +2,46 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.5",
+      "releasedAt": "2026-09-06",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**Apple Silicon Mac 远程项目。** 可以把 macOS arm64 设备添加为 SSH Host，安装独立 Agent 后使用 Ask、Execute 和断线重连。无需管理员权限或 launchd 服务；Intel Mac 暂不支持，远程项目仍为默认关闭的技术预览。"
+          ],
+          "fixes": [
+            "**知识库使用流程更完整。** 创建和检索测试默认收起高级参数，资料可用后可直接“用于当前对话”；知识范围按对话保存，新对话默认不选择知识库。文档明确区分可用、处理中和失败，支持打开来源、失败重试，并在移除来源前说明影响和要求确认。",
+            "**切换窗口不再误中断回复。** 来回切换桌面窗口时，仍在生成的回复不会被误判为“上次运行意外中断”，后续消息也不会因此滞留队列。OpenCode 专属操作栏在会话刷新时保持稳定，减少界面抖动。",
+            "**长会话可以完整滚动。** 较长推理、工具记录或正文不再因估算高度导致滚动条提前到底。全部已加载内容可直接滚动查看，无需切换会话刷新。"
+          ],
+          "notices": [
+            "**先升级桌面端，再更新 Agent。** Agent `0.11.19` 提供 Linux x64、Linux arm64 和 macOS arm64 包，共用一个签名目录。旧桌面端无法解析包含 macOS 条目的新目录，需升级至 Desktop `0.12.5` 后检查在线 Agent 更新；已有本地包和历史发布仍保留。",
+            "Desktop 不内置 Agent 或远程 Runtime。Ask 保持只读，Execute 使用所选 SSH 账号的完整权限。",
+            "本次使用标准六平台桌面发布矩阵，不构建 LoongArch 实验预览。",
+            "仓库新增独立 ShareServer 管理控制台交互原型，不包含在桌面安装包中，也不是已上线的团队共享服务；原型数据操作不持久化。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Remote projects on Apple Silicon Macs.** Add a macOS arm64 device as an SSH Host and install the separate Agent to use Ask, Execute, and reconnection. No administrator access or launchd service is required; Intel Macs are not supported, and Remote Projects remain an off-by-default technical preview."
+          ],
+          "fixes": [
+            "**A more complete knowledge workflow.** Creation and retrieval testing collapse advanced settings by default, and searchable libraries can be sent directly to the current conversation. Knowledge selection is saved per conversation and starts empty for new conversations; documents distinguish ready, processing, and failed states, with source opening, retry, and explicit removal confirmation.",
+            "**Window switching no longer interrupts active replies.** Returning to the desktop window no longer mislabels an active reply as interrupted or leaves subsequent messages queued because of that false state. OpenCode-specific controls remain stable during conversation refreshes, reducing layout shifts.",
+            "**Complete scrolling in long conversations.** Long reasoning, tool records, and replies no longer cause the scrollbar to end early because of estimated message heights. All loaded content remains reachable without switching conversations to refresh the layout."
+          ],
+          "notices": [
+            "**Upgrade Desktop before updating the Agent.** Agent `0.11.19` provides Linux x64, Linux arm64, and macOS arm64 packages through one signed catalog. Older Desktop versions cannot parse the new catalog containing macOS entries; upgrade to Desktop `0.12.5` before checking online Agent updates. Existing local packages and historical releases remain available.",
+            "Desktop does not embed the Agent or Remote Runtime. Ask remains read-only; Execute uses the selected SSH account’s full permissions.",
+            "This release uses the standard six-target desktop matrix and does not include an experimental LoongArch preview.",
+            "The repository now includes a standalone interactive ShareServer console prototype. It is not bundled with Desktop or a deployed team-sharing service, and prototype data operations are not persisted."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.4",
       "releasedAt": "2026-09-05",
       "notes": {

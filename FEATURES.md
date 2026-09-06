@@ -152,7 +152,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.18`, while the current Desktop release candidate is `0.12.4`; formal
+  `0.11.19`, while the current Desktop release candidate is `0.12.5`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -359,7 +359,11 @@ otherwise.
   report an experimental Resource catalog; the current Continue version
   explicitly does not support Resources.
 - [x] **Local knowledge bases**: Supports file, directory, and web imports,
-  SQLite FTS5 retrieval, and source tracing.
+  SQLite FTS5 retrieval, and source tracing. Knowledge selection persists per
+  conversation and starts empty for new conversations. Advanced creation and
+  retrieval parameters are collapsed by default. Documents distinguish ready,
+  processing, and failed states, with source opening, retry, and confirmation
+  before source removal.
 - [ ] **External knowledge-base connections** (planned): Manage Dify, FastGPT,
   and RAGFlow instances from the existing Knowledge page, then discover and
   bind remote knowledge bases with provider-specific retrieval settings and
