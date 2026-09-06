@@ -9,7 +9,7 @@
 | 日期 | 2026-09-03 |
 | 适用范围 | GoodBuddy 桌面端、ShareServer、网关间联邦协议 |
 | 桌面端设计 | [设备发现与共享](../features/device-sharing/README.md) |
-| 服务端设计 | [ShareServer](../features/share-server/README.md) |
+| 服务端设计 | [ShareServer](../../../goodbuddy-shareserver/docs/features/share-server/README.md) |
 
 ## 1. 文档职责
 
@@ -72,7 +72,8 @@ ShareServer 负责身份、目录、策略、任务路由、更新和审计。�
 | `Package` | 可下载到本机安装的签名能力工件 |
 | `FederationTrust` | 两个组织网关之间经管理员确认的双边信任关系 |
 
-“网关”是 ShareServer 的网络角色；产品名称和代码目录统一使用 `ShareServer` / `shareserver`。
+“网关”是 ShareServer 的网络角色；产品名称为 `ShareServer`，独立仓库为
+`goodbuddy-shareserver`。
 
 ## 4. 系统拓扑
 
@@ -406,21 +407,27 @@ Revocation
 
 ## 15. 仓库边界
 
-目标目录结构：
+当前仓库边界（跨仓库文档链接约定两个仓库克隆到同一级目录）：
 
 ```text
-docs/
-  architecture/share-network-architecture.md
-  features/device-sharing/
-  features/share-server/
-packages/
-  share-protocol/        # 与 Electron、数据库和 Web 框架无关的 schema/类型
-shareserver/             # 独立 Web 服务及管理前端
-src/                     # GoodBuddy Desktop
+goodbuddy/
+  docs/architecture/share-network-architecture.md
+  docs/features/device-sharing/
+  src/                   # GoodBuddy Desktop
+goodbuddy-shareserver/
+  docs/features/share-server/
+  server/                # 独立 Hono Web 服务
+  shared/                # 当前原型 fixture，不是跨端协议
+  src/                   # React 管理前端
 ```
 
-当前文档先固定边界，不创建空服务脚手架。实现时 `shareserver` 不反向依赖桌面端 `src/shared`；
-双方依赖独立 `share-protocol`。协议包不得包含数据库模型、Electron API、服务实现或凭据。
+ShareServer 源码和服务端文档已迁入独立仓库：
+`ssh://git@git.digiman.live:11022/root/goodbuddy-shareserver.git`。
+当前服务是交互原型，尚未提供真实 Desktop 集成。共享网络总体设计仍由本文统一维护。
+
+ShareServer 不反向依赖桌面端 `src/shared`，构建和运行不要求桌面仓库存在。
+真实跨端协议实现时双方依赖独立 `share-protocol` 包，具体仓库归属和发布方式届时确定，
+不提前创建空包。协议包不得包含数据库模型、Electron API、服务实现或凭据。
 
 ## 16. 共同验收标准
 
@@ -442,9 +449,9 @@ src/                     # GoodBuddy Desktop
 - [设备发现与共享功能逻辑](../features/device-sharing/logic-design.md)
 - [设备发现与共享 UI](../features/device-sharing/ui-design.md)
 - [设备发现与共享技术设计](../features/device-sharing/technical-design.md)
-- [ShareServer PRD](../features/share-server/prd.md)
-- [ShareServer 功能逻辑](../features/share-server/logic-design.md)
-- [ShareServer 管理界面](../features/share-server/ui-design.md)
-- [ShareServer 技术设计](../features/share-server/technical-design.md)
+- [ShareServer PRD](../../../goodbuddy-shareserver/docs/features/share-server/prd.md)
+- [ShareServer 功能逻辑](../../../goodbuddy-shareserver/docs/features/share-server/logic-design.md)
+- [ShareServer 管理界面](../../../goodbuddy-shareserver/docs/features/share-server/ui-design.md)
+- [ShareServer 技术设计](../../../goodbuddy-shareserver/docs/features/share-server/technical-design.md)
 - [SSH 远程主机与 Agent](../features/remote-host/README.md)
 - [GoodBuddy 统一界面设计系统](../../UI-DESIGN.md)

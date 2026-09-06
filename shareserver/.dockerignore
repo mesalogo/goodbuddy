@@ -1,5 +1,0 @@
-build-server
-dist
-node_modules
-*.log
-*.png

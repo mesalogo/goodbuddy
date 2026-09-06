@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+# Local build output left by the extracted ShareServer project.
+shareserver/build-server/
 coverage/
 .vite/
 .runtime-resources/
