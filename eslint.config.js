@@ -13,13 +13,18 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       'out/**',
-      'shareserver/build-server/**',
-      'shareserver/dist/**',
-      'shareserver/node_modules/**'
+      'shareserver/**'
     ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    languageOptions: {
+      parserOptions: {
+        tsconfigRootDir: import.meta.dirname
+      }
+    }
+  },
   {
     files: ['src/main/**/*.ts', 'src/preload/**/*.ts', 'src/shared/**/*.ts'],
     languageOptions: {
@@ -51,30 +56,6 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules
-    }
-  },
-  {
-    files: ['shareserver/src/**/*.{ts,tsx}'],
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.vitest
-      }
-    },
-    plugins: {
-      'react-hooks': reactHooks
-    },
-    rules: {
-      ...reactHooks.configs.recommended.rules
-    }
-  },
-  {
-    files: ['shareserver/server/**/*.ts'],
-    languageOptions: {
-      globals: {
-        ...globals.node,
-        ...globals.vitest
-      }
     }
   },
   {

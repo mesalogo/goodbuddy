@@ -11,7 +11,7 @@ ShareServer 功能尚未完成，不属于本次 Desktop `0.12.5` / Agent `0.11.
 的产品交付或发布验收范围。用户确认本次发布不需要单独测试 ShareServer，
 其原型测试通过也不代表生产功能已完成。
 
-桌面端根测试配置排除 `shareserver/**`，桌面发布 CI 不为其单独安装测试依赖。
+桌面端根测试和 lint 配置排除 `shareserver/**`，桌面发布 CI 不为其单独安装测试依赖。
 ShareServer 独立项目自身的测试配置保留，供后续功能开发使用；本次不运行其独立测试。
 此前候选 `89a81dd` 临时加入的 `npm ci --prefix shareserver` 步骤已撤除。
 
