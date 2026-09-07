@@ -119,11 +119,11 @@ const remoteEnvironment: SshHostRemoteEnvironment = {
     provider: 'opencode',
     state: 'current',
     expected: {
-      version: '1.18.9',
+      version: '1.18.29',
       architecture: 'x64'
     },
     installed: {
-      version: '1.18.9',
+      version: '1.18.29',
       architecture: 'x64'
     }
   }],
@@ -761,7 +761,7 @@ describe('SshHostsSettingsSection', () => {
     expect(within(host).getByText('版本匹配')).toBeInTheDocument()
     expect(within(host).getByText('0.10.4')).toBeInTheDocument()
     expect(within(host).getByText('0.11.1')).toBeInTheDocument()
-    expect(within(host).getAllByText('1.18.9')).toHaveLength(2)
+    expect(within(host).getAllByText('1.18.29')).toHaveLength(2)
     expect(within(host).getByText('安装方式')).toBeInTheDocument()
     expect(
       within(host)

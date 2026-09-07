@@ -542,7 +542,7 @@ describe('Agent CLI fixed command contract', () => {
       runtimeId: 'opencode',
       bundleDigest,
       architecture: 'x64',
-      runtimeVersion: '1.18.9'
+      runtimeVersion: '1.18.29'
     })
 
     expect(
@@ -704,7 +704,7 @@ function verifiedRuntime(
     manifest: {
       runtimeId: 'opencode',
       provider: 'opencode',
-      runtimeVersion: '1.18.9',
+      runtimeVersion: '1.18.29',
       architecture: 'x64',
       signingKeyId: 'test-key',
       bundleDigest,

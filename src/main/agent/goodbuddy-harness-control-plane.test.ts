@@ -22,7 +22,7 @@ function controlPlane() {
       provider: 'goodbuddy',
       model: 'deepseek-test',
       workspace: resolve('workspace'),
-      harnessVersion: '0.1.0-rc.8',
+      harnessVersion: '0.1.2-rc.1',
       execution: { mode: 'host' },
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skills: []
@@ -75,7 +75,7 @@ function stubAgentContext() {
     provider: 'goodbuddy',
     model: 'deepseek-test',
     workspace: resolve('workspace'),
-    harnessVersion: '0.1.0-rc.8',
+    harnessVersion: '0.1.2-rc.1',
     execution: { mode: 'host' },
     credentialRefs: ['GOODBUDDY_API_KEY'],
     skills: [],
@@ -172,7 +172,7 @@ describe('GoodBuddy Harness internal control plane', () => {
       model: 'vision-test',
       supportsImageInput: true,
       workspace: resolve('workspace'),
-      harnessVersion: '0.1.0-rc.8',
+      harnessVersion: '0.1.2-rc.1',
       execution: { mode: 'host' },
       credentialRefs: ['GOODBUDDY_API_KEY'],
       skills: []

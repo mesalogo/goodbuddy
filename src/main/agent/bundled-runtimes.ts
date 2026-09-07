@@ -2,12 +2,13 @@ import { join } from 'node:path'
 
 export type BundledRuntimePaths = {
   opencode: string
+  opencodeConfig?: string
   continue: string
   deepseekHarness: string
 }
 
 export const bundledContinueVersion = '1.5.47'
-export const bundledDeepSeekHarnessVersion = '0.1.0-rc.8'
+export const bundledDeepSeekHarnessVersion = '0.1.2-rc.1'
 
 export function resolveBundledRuntimePaths(input: {
   appPath: string
@@ -26,6 +27,11 @@ export function resolveBundledRuntimePaths(input: {
         'runtimes',
         'opencode',
         packagedExecutable
+      ),
+      opencodeConfig: join(
+        input.resourcesPath,
+        'runtimes',
+        'opencode-config'
       ),
       continue: join(
         input.resourcesPath,

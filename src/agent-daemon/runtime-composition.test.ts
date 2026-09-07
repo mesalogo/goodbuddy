@@ -101,7 +101,7 @@ describe('production Runtime composition', () => {
     await expect(protocol.runtimes()).resolves.toEqual([
       {
         runtimeId: 'opencode',
-        version: '1.18.9',
+        version: '1.18.29',
         bundleDigest: fixture.manifest.bundleDigest,
         acpCapabilitiesDigest:
           fixture.manifest.acpCapabilitiesDigest,

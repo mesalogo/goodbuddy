@@ -46,7 +46,7 @@ function agentEntry(version = '0.11.1', digestCharacter = 'a') {
   }
 }
 
-function runtimeEntry(version = '1.18.9') {
+function runtimeEntry(version = '1.18.29') {
   return {
     runtimeId: 'opencode',
     runtimeVersion: version,
@@ -167,7 +167,7 @@ function harness(options: HarnessOptions = {}) {
         runtimes: [{
           runtimeId: 'opencode' as const,
           provider: 'opencode' as const,
-          version: '1.18.9'
+          version: '1.18.29'
         }]
       },
       candidate,
@@ -252,11 +252,11 @@ describe('SshHostRemoteEnvironmentInspector', () => {
         provider: 'opencode',
         state: 'current',
         expected: {
-          version: '1.18.9',
+          version: '1.18.29',
           architecture: 'x64'
         },
         installed: {
-          version: '1.18.9',
+          version: '1.18.29',
           architecture: 'x64'
         }
       }],

@@ -25,13 +25,13 @@ afterEach(() => {
 describe('Runtime bundle registry', () => {
   it('registers and resolves the current signed digest atomically', () => {
     const fixture = createRegistry()
-    const verified = runtimeBundle(fixture, '1.18.9', 'a')
+    const verified = runtimeBundle(fixture, '1.18.29', 'a')
 
     const entry = fixture.registry.register(verified)
 
     expect(entry).toMatchObject({
       runtimeId: 'opencode',
-      runtimeVersion: '1.18.9',
+      runtimeVersion: '1.18.29',
       architecture: 'x64',
       bundleDigest: verified.manifest.bundleDigest
     })
@@ -54,7 +54,7 @@ describe('Runtime bundle registry', () => {
 
   it('reuses an exact bundle and replaces it with another signed identity', () => {
     const fixture = createRegistry()
-    const first = runtimeBundle(fixture, '1.18.9', 'a')
+    const first = runtimeBundle(fixture, '1.18.29', 'a')
     const second = runtimeBundle(fixture, '1.19.0', 'b')
 
     expect(fixture.registry.register(first)).toEqual(
@@ -87,7 +87,7 @@ describe('Runtime bundle registry', () => {
         current: [{
           runtimeId: 'opencode',
           provider: 'opencode',
-          runtimeVersion: '1.18.9',
+          runtimeVersion: '1.18.29',
           releaseSequence: 3,
           architecture: 'x64',
           signingKeyId: 'test-key',
@@ -107,7 +107,7 @@ describe('Runtime bundle registry', () => {
       formatVersion: 1,
       current: [{
         runtimeId: 'opencode',
-        runtimeVersion: '1.18.9',
+        runtimeVersion: '1.18.29',
         architecture: 'x64',
         bundleDigest: `sha256:${'a'.repeat(64)}`,
         manifestDigest: `sha256:${'b'.repeat(64)}`,
@@ -124,7 +124,7 @@ describe('Runtime bundle registry', () => {
     const activator = new RuntimeBundleRegistry({
       runtimeRoot: fixture.runtimeRoot
     })
-    const first = runtimeBundle(fixture, '1.18.9', 'a')
+    const first = runtimeBundle(fixture, '1.18.29', 'a')
     const firstEntry = activator.register(first)
 
     expect(fixture.registry.current('x64')).toEqual([firstEntry])

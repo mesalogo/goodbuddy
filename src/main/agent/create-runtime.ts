@@ -44,13 +44,13 @@ import {
 } from '../execution-space'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment/launch-environment-provider'
 
-const noSubagentTools: ModelToolProviderLike = {
+const noModelTaskTools: ModelToolProviderLike = {
   listTools: async () => [],
   getApproval: () => {
-    throw new Error('子专家不允许工具调用')
+    throw new Error('此模型任务不允许工具调用')
   },
   callTool: async () => {
-    throw new Error('子专家不允许工具调用')
+    throw new Error('此模型任务不允许工具调用')
   },
   releaseConversation: async () => undefined,
   dispose: async () => undefined
@@ -61,6 +61,7 @@ export type AgentCapabilityContext = {
   skillPackages?: RuntimeSkillPackage[]
   mcpServers?: ResolvedMcpServer[]
   continueHostCacheRoot?: string
+  opencodeSharedCacheRoot?: string
   bundledRuntimePaths?: BundledRuntimePaths
   continueHostLauncher?: ContinueHostLauncher
   deepseekHarnessLauncher?: DeepSeekHarnessRuntimeOptions['launch']
@@ -138,7 +139,7 @@ export function createDefaultModelRuntime(
       settings,
       currentProfile
     ),
-    toolProvider: noSubagentTools
+    toolProvider: noModelTaskTools
   })
 }
 
@@ -162,7 +163,7 @@ export function createModelProfileRuntime(
       defaultRuntimeSettings.imageGenerationQuality,
     contextCompression: resolveContextCompression(settings, profile),
     defaultWorkspace: settings.workspacePath || defaultWorkspace,
-    toolProvider: noSubagentTools
+    toolProvider: noModelTaskTools
   })
 }
 
@@ -300,6 +301,8 @@ export function createAgentRuntime(
         process.env.GOODBUDDY_OPENCODE_BINARY?.trim() ??
         '',
       bundledBinaryPath: capabilities.bundledRuntimePaths?.opencode,
+      bundledConfigPath:
+        capabilities.bundledRuntimePaths?.opencodeConfig,
       configPath:
         settings?.opencodeConfigPath ??
         process.env.GOODBUDDY_OPENCODE_CONFIG?.trim() ??
@@ -307,6 +310,7 @@ export function createAgentRuntime(
       modelProfile: settings?.opencodeModelProfile,
       skillInstructions: capabilities.skillInstructions,
       skillPackages: capabilities.skillPackages,
+      sharedCacheRoot: capabilities.opencodeSharedCacheRoot,
       defaultWorkspace: workspace,
       knowledgeGateway: capabilities.knowledgeGateway,
       mcpServers: capabilities.mcpServers,

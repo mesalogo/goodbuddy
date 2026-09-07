@@ -159,7 +159,7 @@ function setup(
         if (method === 'goodbuddy/handshake') {
           return {
             controlProtocolVersion: 1,
-            harnessVersion: '0.1.0-rc.8',
+            harnessVersion: '0.1.2-rc.1',
             acpProtocolVersion: 1,
             supports: {
               cancellation: true,

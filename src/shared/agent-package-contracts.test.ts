@@ -26,7 +26,7 @@ function catalogEntry() {
     remoteRuntime: {
       runtimeId: 'opencode',
       provider: 'opencode',
-      version: '1.18.9',
+      version: '1.18.29',
       bundleDigest: `sha256:${digest}`,
       protocol: { major: 1, minor: 0 }
     },

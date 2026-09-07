@@ -258,6 +258,7 @@ export type ResolvedMcpServer = McpServerSummary & {
 export type RuntimeSkillPackage = {
   id: string
   directory: string
+  digest?: string
 }
 
 export type RuntimeSkillContext = {
@@ -1941,7 +1942,11 @@ export class CapabilityService {
         skipped.push(skill.name)
         continue
       }
-      packages.push({ id: skill.id, directory })
+      packages.push({
+        id: skill.id,
+        directory,
+        digest: skill.digest
+      })
       sections.push(section)
       length += section.length
     }

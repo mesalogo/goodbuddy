@@ -226,7 +226,7 @@ export const remoteRuntimeLockSchema = z
       .object({
         opencode: z
           .object({
-            version: z.literal('1.18.9'),
+            version: z.literal('1.18.29'),
             provider: z.literal('opencode'),
             entrypoint: z.literal('bin/opencode'),
             entrypointIdentity: z.literal('opencode-acp'),

@@ -661,6 +661,140 @@ describe('OpenCodeRuntime embedded launcher', () => {
     await expect(stat(registrationRoot)).rejects.toThrow()
   })
 
+  it('reuses shared OpenCode config and content-addressed Skills across projects', async () => {
+    const sourceRoot = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-opencode-shared-skill-source-')
+    )
+    const sharedCacheRoot = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-opencode-shared-cache-')
+    )
+    const skillDirectory = join(sourceRoot, 'shared-skill')
+    const bundledConfigPath = join(sourceRoot, 'bundled-config')
+    await mkdir(skillDirectory, { recursive: true })
+    await mkdir(
+      join(
+        bundledConfigPath,
+        'node_modules',
+        '@opencode-ai',
+        'plugin'
+      ),
+      { recursive: true }
+    )
+    await writeFile(
+      join(bundledConfigPath, '.goodbuddy-ready.json'),
+      '{"version":"1.18.29"}\n',
+      'utf8'
+    )
+    await writeFile(
+      join(
+        bundledConfigPath,
+        'node_modules',
+        '@opencode-ai',
+        'plugin',
+        'package.json'
+      ),
+      '{"name":"@opencode-ai/plugin","version":"1.18.29"}\n',
+      'utf8'
+    )
+    await writeFile(
+      join(skillDirectory, 'SKILL.md'),
+      [
+        '---',
+        'name: Shared Skill',
+        'description: Shared test Skill',
+        '---',
+        '',
+        '# Shared Skill'
+      ].join('\n'),
+      'utf8'
+    )
+    const skillPackages = [
+      {
+        id: 'shared-skill',
+        directory: skillDirectory,
+        digest: 'shared-skill-digest'
+      }
+    ]
+    const firstChild = fakeChild()
+    const first = dependencies(firstChild)
+    const firstRuntime = new OpenCodeRuntime(
+      options({
+        sharedCacheRoot,
+        skillPackages,
+        bundledConfigPath
+      }),
+      first.deps
+    )
+    const secondChild = fakeChild()
+    const second = dependencies(secondChild)
+    const secondRuntime = new OpenCodeRuntime(
+      options({
+        sharedCacheRoot,
+        skillPackages,
+        bundledConfigPath
+      }),
+      second.deps
+    )
+
+    try {
+      await expect(firstRuntime.testConnection()).resolves.toMatchObject({
+        available: true
+      })
+      const firstEnvironment = first.spawnMock.mock.calls[0]?.[2]?.env
+      const firstConfigDirectory =
+        firstEnvironment?.OPENCODE_CONFIG_DIR ?? ''
+      const firstConfig = JSON.parse(
+        firstEnvironment?.OPENCODE_CONFIG_CONTENT ?? '{}'
+      ) as { skills?: { paths?: string[] } }
+      const firstSkillsRoot = firstConfig.skills?.paths?.[0] ?? ''
+      expect(firstConfigDirectory).toBe(
+        join(sharedCacheRoot, 'config', 'opencode')
+      )
+      expect(firstEnvironment?.XDG_CONFIG_HOME).toBe(
+        join(sharedCacheRoot, 'config')
+      )
+      await expect(
+        readFile(
+          join(
+            firstConfigDirectory,
+            'node_modules',
+            '@opencode-ai',
+            'plugin',
+            'package.json'
+          ),
+          'utf8'
+        )
+      ).resolves.toContain('1.18.29')
+      expect(firstEnvironment?.XDG_CACHE_HOME).toBe(
+        join(sharedCacheRoot, 'cache')
+      )
+      expect(firstEnvironment).toMatchObject({
+        OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: '1'
+      })
+      await firstRuntime.dispose()
+      await expect(
+        readFile(join(firstSkillsRoot, 'shared-skill', 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: shared-skill')
+
+      await expect(secondRuntime.testConnection()).resolves.toMatchObject({
+        available: true
+      })
+      const secondEnvironment = second.spawnMock.mock.calls[0]?.[2]?.env
+      const secondConfig = JSON.parse(
+        secondEnvironment?.OPENCODE_CONFIG_CONTENT ?? '{}'
+      ) as { skills?: { paths?: string[] } }
+      expect(secondEnvironment?.OPENCODE_CONFIG_DIR).toBe(
+        firstConfigDirectory
+      )
+      expect(secondConfig.skills?.paths?.[0]).toBe(firstSkillsRoot)
+    } finally {
+      await firstRuntime.dispose()
+      await secondRuntime.dispose()
+      await rm(sourceRoot, { recursive: true, force: true })
+      await rm(sharedCacheRoot, { recursive: true, force: true })
+    }
+  })
+
   it('injects an independent model profile without persisting its key', async () => {
     const child = fakeChild()
     const { deps, spawnMock } = dependencies(child)

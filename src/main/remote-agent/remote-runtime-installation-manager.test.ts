@@ -17,7 +17,7 @@ const manifest: RemoteRuntimeBundleManifest = {
   formatVersion: 2,
   product: 'GoodBuddy',
   runtimeId: 'opencode',
-  runtimeVersion: '1.18.9',
+  runtimeVersion: '1.18.29',
   provider: 'opencode',
   platform: 'linux',
   architecture: 'x64',
@@ -52,7 +52,7 @@ const manifest: RemoteRuntimeBundleManifest = {
   licenses: [
     {
       package: 'opencode',
-      version: '1.18.9',
+      version: '1.18.29',
       spdx: 'MIT',
       path: 'licenses/opencode.txt'
     }

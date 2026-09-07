@@ -200,7 +200,7 @@ const detectAgentRuntimes = vi.fn<
   deepseekHarness: {
     available: true,
     path: 'bundled://deepseek-harness',
-    version: '0.1.0-rc.8',
+    version: '0.1.2-rc.1',
     source: 'bundled',
     detail: '内置 Harness Adapter 已就绪'
   }
@@ -569,7 +569,7 @@ const agentPackageInventory: AgentPackageInventory = {
       latestVersion: '0.11.4',
       updateAvailable: true,
       agentProtocol: { major: 2, minor: 0 },
-      remoteRuntimeVersion: '1.18.9'
+      remoteRuntimeVersion: '1.18.29'
     },
     {
       platform: 'linux',
@@ -2840,7 +2840,7 @@ describe('SettingsPanel runtime files', () => {
       '自动选择 1 位专家'
     )
     expect(screen.getByText(/仅在 Ask 模式/)).toHaveTextContent(
-      '只读运行且不使用工具'
+      '继承当前模式和已启用工具'
     )
 
     fireEvent.click(smartRouting)
@@ -3035,11 +3035,11 @@ describe('SettingsPanel runtime files', () => {
       )
     ).toHaveClass('runtime-overview__path')
     expect(
-      within(harnessOverview).getByText('0.1.0-rc.8')
+      within(harnessOverview).getByText('0.1.2-rc.1')
     ).toBeInTheDocument()
     expect(
       within(harnessOverview).getByText(
-        '内置 DeepSeek Harness 0.1.0-rc.8 已就绪'
+        '内置 DeepSeek Harness 0.1.2-rc.1 已就绪'
       )
     ).toBeInTheDocument()
     expect(

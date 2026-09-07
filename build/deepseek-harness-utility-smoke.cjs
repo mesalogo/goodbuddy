@@ -184,7 +184,7 @@ async function run() {
       model: 'qwen-plus',
       supportsImageInput: false,
       requestHeaders: {},
-      harnessVersion: '0.1.0-rc.8',
+      harnessVersion: '0.1.2-rc.1',
       credentialRefs: ['GOODBUDDY_HARNESS_MODEL_API_KEY'],
       skillPackages: [],
       extensionPackages: [],

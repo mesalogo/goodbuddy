@@ -7,7 +7,7 @@
 | 文档状态 | 实现与发布验收基线 |
 | 设计目标 | 将 DeepSeek Harness 作为 GoodBuddy 的第三个 Agent Runtime |
 | Runtime 标识 | `deepseek-harness` |
-| 当前依赖基线 | 实际使用的 `@deepseek-ai/dsh-*` 底层库，精确锁定 `0.1.0-rc.8` |
+| 当前依赖基线 | 实际使用的 `@deepseek-ai/dsh-*` 底层库，精确锁定 `0.1.2-rc.1` |
 | 上游状态 | Developer Preview，允许出现破坏性变更 |
 | 上游许可证 | MIT |
 | GoodBuddy 目标平台 | Windows、macOS、Linux，x64 与 arm64 |
@@ -503,7 +503,7 @@ Runtime：       GoodBuddy 内置 DeepSeek Harness
 模型配置：      跟随 GoodBuddy · 企业网关（qwen-plus）
 状态：          已就绪
 路径：          <受控 Host 路径>
-版本：          0.1.0-rc.8
+版本：          0.1.2-rc.1
 执行权限：      当前用户权限
 
 Host 始终由当前 GoodBuddy 版本提供，不存在自定义 Host 入口。

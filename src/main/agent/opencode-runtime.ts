@@ -9,13 +9,17 @@ import {
 import spawn from 'cross-spawn'
 import { createHash, randomBytes } from 'node:crypto'
 import {
+  cp,
+  mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
+  stat,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type {
   AgentQuestionAnswer,
@@ -172,6 +176,9 @@ type OpenCodeSkillRegistration = {
   configDirectory: string
   skillsRoot: string
 }
+
+const sharedSkillPreparations = new Map<string, Promise<string>>()
+const sharedConfigPreparations = new Map<string, Promise<void>>()
 
 const executePermissionRules: PermissionRuleset = [
   { permission: '*', pattern: '*', action: 'allow' }
@@ -499,11 +506,13 @@ export type OpenCodeRuntimeOptions = {
   embedded: boolean
   binaryPath: string
   bundledBinaryPath?: string
+  bundledConfigPath?: string
   configPath: string
   defaultWorkspace: string
   modelProfile?: ResolvedModelProfile
   skillInstructions?: string
   skillPackages?: RuntimeSkillPackage[]
+  sharedCacheRoot?: string
   knowledgeGateway?: KnowledgeMcpGateway
   mcpServers?: ResolvedMcpServer[]
   customization?: RuntimeCustomizationSettings['opencode']
@@ -851,24 +860,155 @@ export class OpenCodeRuntime implements AgentRuntime {
     return ids
   }
 
+  private async normalizeSkillPackages(skillsRoot: string): Promise<void> {
+    for (const skill of this.options.skillPackages ?? []) {
+      await normalizeOpenCodeSkillManifest(
+        join(skillsRoot, skill.id),
+        skill.id
+      )
+    }
+  }
+
+  private async prepareSharedSkills(sharedRoot: string): Promise<string> {
+    const packages = this.options.skillPackages ?? []
+    const fingerprint = createHash('sha256')
+      .update(
+        packages
+          .map((skill) => ({
+            id: skill.id,
+            digest: skill.digest ?? resolve(skill.directory)
+          }))
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((skill) => `${skill.id}\0${skill.digest}`)
+          .join('\0')
+      )
+      .digest('hex')
+    const cacheRoot = join(sharedRoot, 'skills')
+    const target = join(cacheRoot, fingerprint)
+    const existing = sharedSkillPreparations.get(target)
+    if (existing) {
+      return existing
+    }
+    const preparation = (async () => {
+      try {
+        if ((await stat(target)).isDirectory()) {
+          return target
+        }
+      } catch {
+        // The immutable Skill snapshot has not been prepared yet.
+      }
+      await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
+      const stagingRoot = await mkdtemp(join(cacheRoot, '.staging-'))
+      try {
+        const staged = await stageRuntimeSkillPackages(
+          stagingRoot,
+          packages,
+          'OpenCode'
+        )
+        await this.normalizeSkillPackages(staged)
+        try {
+          await rename(staged, target)
+        } catch (error) {
+          try {
+            if ((await stat(target)).isDirectory()) {
+              return target
+            }
+          } catch {
+            // Preserve the original rename failure below.
+          }
+          throw error
+        }
+        return target
+      } finally {
+        await rm(stagingRoot, { recursive: true, force: true })
+      }
+    })()
+    sharedSkillPreparations.set(target, preparation)
+    try {
+      return await preparation
+    } catch (error) {
+      sharedSkillPreparations.delete(target)
+      throw error
+    }
+  }
+
   private async createSkillRegistration(): Promise<OpenCodeSkillRegistration> {
     const root = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-'))
-    const configDirectory = join(root, 'config')
     try {
+      const sharedRoot = this.options.sharedCacheRoot?.trim()
+      if (sharedRoot) {
+        const configDirectory = join(
+          resolve(sharedRoot),
+          'config',
+          'opencode'
+        )
+        await this.prepareSharedConfig(configDirectory)
+        const skillsRoot = await this.prepareSharedSkills(
+          resolve(sharedRoot)
+        )
+        return { root, configDirectory, skillsRoot }
+      }
+      const configDirectory = join(root, 'config')
       const skillsRoot = await stageRuntimeSkillPackages(
         configDirectory,
         this.options.skillPackages ?? [],
         'OpenCode'
       )
-      for (const skill of this.options.skillPackages ?? []) {
-        await normalizeOpenCodeSkillManifest(
-          join(skillsRoot, skill.id),
-          skill.id
-        )
-      }
+      await this.normalizeSkillPackages(skillsRoot)
       return { root, configDirectory, skillsRoot }
     } catch (error) {
       await rm(root, { recursive: true, force: true })
+      throw error
+    }
+  }
+
+  private async prepareSharedConfig(
+    configDirectory: string
+  ): Promise<void> {
+    const bundledConfigPath = this.options.bundledConfigPath?.trim()
+    if (!bundledConfigPath) {
+      await mkdir(configDirectory, { recursive: true, mode: 0o700 })
+      return
+    }
+    const target = resolve(configDirectory)
+    const existing = sharedConfigPreparations.get(target)
+    if (existing) {
+      return existing
+    }
+    const preparation = (async () => {
+      const source = resolve(bundledConfigPath)
+      const markerName = '.goodbuddy-ready.json'
+      const sourceMarker = await readFile(join(source, markerName), 'utf8')
+      try {
+        if (
+          (await readFile(join(target, markerName), 'utf8')) ===
+          sourceMarker
+        ) {
+          return
+        }
+      } catch {
+        // Install the bundled dependency tree below.
+      }
+      await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+      const staging = `${target}.staging-${process.pid}-${randomBytes(6).toString('hex')}`
+      await rm(staging, { recursive: true, force: true })
+      try {
+        await cp(source, staging, {
+          recursive: true,
+          errorOnExist: true,
+          force: false
+        })
+        await rm(target, { recursive: true, force: true })
+        await rename(staging, target)
+      } finally {
+        await rm(staging, { recursive: true, force: true })
+      }
+    })()
+    sharedConfigPreparations.set(target, preparation)
+    try {
+      await preparation
+    } catch (error) {
+      sharedConfigPreparations.delete(target)
       throw error
     }
   }
@@ -957,12 +1097,17 @@ export class OpenCodeRuntime implements AgentRuntime {
       env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = '1'
       env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = '1'
       env.OPENCODE_DISABLE_EXTERNAL_SKILLS = '1'
+      env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER = '1'
       env.OPENCODE_DISABLE_LSP_DOWNLOAD = '1'
       env.OPENCODE_DISABLE_MODELS_FETCH = '1'
       env.OPENCODE_DISABLE_PROJECT_CONFIG = '1'
       env.OPENCODE_DISABLE_SHARE = '1'
-      env.XDG_CACHE_HOME = join(registration.root, 'xdg-cache')
-      env.XDG_CONFIG_HOME = join(registration.root, 'xdg-config')
+      env.XDG_CACHE_HOME = this.options.sharedCacheRoot?.trim()
+        ? join(resolve(this.options.sharedCacheRoot), 'cache')
+        : join(registration.root, 'xdg-cache')
+      env.XDG_CONFIG_HOME = this.options.sharedCacheRoot?.trim()
+        ? dirname(registration.configDirectory)
+        : join(registration.root, 'xdg-config')
       env.XDG_DATA_HOME = join(registration.root, 'xdg-data')
       env.XDG_STATE_HOME = join(registration.root, 'xdg-state')
       const skillConfig = createOpenCodeSkillConfig(

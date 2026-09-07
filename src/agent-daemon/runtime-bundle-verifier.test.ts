@@ -188,7 +188,7 @@ describe('Remote Runtime bundle verifier', () => {
     await expect(capabilities()).resolves.toEqual([
       {
         runtimeId: 'opencode',
-        version: '1.18.9',
+        version: '1.18.29',
         bundleDigest: fixture.manifest.bundleDigest,
         acpCapabilitiesDigest:
           fixture.manifest.acpCapabilitiesDigest,
@@ -236,7 +236,7 @@ describe('Remote Runtime bundle verifier', () => {
         options
       )
     ).resolves.toMatchObject({
-      manifest: { runtimeVersion: '1.18.9' }
+      manifest: { runtimeVersion: '1.18.29' }
     })
 
     writeFileSync(

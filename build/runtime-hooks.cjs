@@ -14,7 +14,8 @@ const { spawnSync } = require('node:child_process')
 const tar = require('tar')
 const { sha256File } = require('./file-hash.cjs')
 
-const opencodeVersion = '1.18.9'
+const opencodeVersion = '1.18.29'
+const opencodePluginPackage = '@opencode-ai/plugin'
 const architectureNames = {
   1: 'x64',
   3: 'arm64'
@@ -125,6 +126,109 @@ async function downloadPackage(projectDir, packageName, integrity) {
   return archivePath
 }
 
+async function prepareBundledOpenCodeConfig(projectDir) {
+  const targetDirectory = join(
+    projectDir,
+    '.runtime-resources',
+    'opencode-config'
+  )
+  const pluginIntegrity = await lockedIntegrity(
+    projectDir,
+    opencodePluginPackage
+  )
+  const identity = {
+    packageName: opencodePluginPackage,
+    version: opencodeVersion,
+    integrity: pluginIntegrity
+  }
+  try {
+    const ready = JSON.parse(
+      await readFile(join(targetDirectory, '.goodbuddy-ready.json'), 'utf8')
+    )
+    if (
+      ready.packageName === identity.packageName &&
+      ready.version === identity.version &&
+      ready.integrity === identity.integrity &&
+      (await stat(
+        join(
+          targetDirectory,
+          'node_modules',
+          '@opencode-ai',
+          'plugin',
+          'package.json'
+        )
+      )).isFile()
+    ) {
+      return
+    }
+  } catch {
+    // Rebuild an incomplete or stale offline config template.
+  }
+
+  const stagingDirectory = `${targetDirectory}.staging-${process.pid}`
+  await rm(stagingDirectory, { recursive: true, force: true })
+  await mkdir(stagingDirectory, { recursive: true })
+  try {
+    await writeFile(
+      join(stagingDirectory, 'package.json'),
+      `${JSON.stringify(
+        {
+          private: true,
+          dependencies: {
+            [opencodePluginPackage]: opencodeVersion
+          }
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    )
+    const npm = npmInvocation()
+    const environment = { ...process.env }
+    delete environment.NODE_TLS_REJECT_UNAUTHORIZED
+    const result = spawnSync(
+      npm.command,
+      [
+        ...npm.prefixArgs,
+        'install',
+        '--ignore-scripts',
+        '--omit=dev',
+        '--omit=optional',
+        '--no-audit',
+        '--no-fund',
+        '--save-exact'
+      ],
+      {
+        cwd: stagingDirectory,
+        encoding: 'utf8',
+        env: environment,
+        maxBuffer: 16 * 1024 * 1024,
+        shell: false,
+        windowsHide: true
+      }
+    )
+    if (result.status !== 0) {
+      throw new Error(
+        `Unable to prepare bundled OpenCode config: ${
+          result.error?.message ||
+          result.stderr ||
+          result.stdout ||
+          `npm exited with ${result.status}`
+        }`
+      )
+    }
+    await writeFile(
+      join(stagingDirectory, '.goodbuddy-ready.json'),
+      `${JSON.stringify(identity)}\n`,
+      'utf8'
+    )
+    await rm(targetDirectory, { recursive: true, force: true })
+    await rename(stagingDirectory, targetDirectory)
+  } finally {
+    await rm(stagingDirectory, { recursive: true, force: true })
+  }
+}
+
 module.exports = async function prepareBundledRuntimes(context) {
   const platform = context.electronPlatformName
   const architecture = architectureNames[context.arch]
@@ -139,6 +243,7 @@ module.exports = async function prepareBundledRuntimes(context) {
     architecture === 'x64' ? `${architecture}-baseline` : architecture
   const packageName = `opencode-${packagePlatform}-${suffix}`
   const projectDir = context.packager.projectDir
+  await prepareBundledOpenCodeConfig(projectDir)
   const projectPackage = JSON.parse(
     await readFile(join(projectDir, 'package.json'), 'utf8')
   )

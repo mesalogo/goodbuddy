@@ -431,7 +431,7 @@ describe('AgentProtocolServer connection bounds', () => {
   it('advertises only a verified Runtime with ACP control and data handlers', async () => {
     const runtime = {
       runtimeId: 'opencode',
-      version: '1.18.9',
+      version: '1.18.29',
       bundleDigest: `sha256:${'b'.repeat(64)}`,
       acpCapabilitiesDigest: `sha256:${'c'.repeat(64)}`,
       sessionLoad: false,
@@ -481,7 +481,7 @@ describe('AgentProtocolServer connection bounds', () => {
   it('advertises the critical model bridge only with blob composition', async () => {
     const runtime = {
       runtimeId: 'opencode',
-      version: '1.18.9',
+      version: '1.18.29',
       bundleDigest: `sha256:${'b'.repeat(64)}`,
       acpCapabilitiesDigest: `sha256:${'c'.repeat(64)}`,
       sessionLoad: false,

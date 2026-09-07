@@ -1461,11 +1461,11 @@ describe('registerIpcHandlers SSH hosts', () => {
         provider: 'opencode',
         state: 'current',
         expected: {
-          version: '1.18.9',
+          version: '1.18.29',
           architecture: 'x64'
         },
         installed: {
-          version: '1.18.9',
+          version: '1.18.29',
           architecture: 'x64'
         }
       }],
@@ -1521,7 +1521,7 @@ describe('registerIpcHandlers SSH hosts', () => {
           version: '0.11.2',
           latestVersion: '0.11.4',
           updateAvailable: true,
-          remoteRuntimeVersion: '1.18.9',
+          remoteRuntimeVersion: '1.18.29',
           agentProtocol: { major: 2, minor: 0 }
         },
         {

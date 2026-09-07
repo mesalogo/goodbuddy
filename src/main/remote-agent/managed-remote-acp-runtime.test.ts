@@ -198,7 +198,7 @@ function harness(
     runtimeInstallationManager: {
       activateInstalled: vi.fn(async () => ({
         runtimeId: 'opencode',
-        runtimeVersion: '1.18.9',
+        runtimeVersion: '1.18.29',
         bundleDigest: digest('b'),
         manifestDigest: digest('d'),
         runtimeAdapterDigest: digest('c'),
@@ -519,7 +519,7 @@ function capabilities() {
     runtimes: [
       {
         runtimeId: 'opencode',
-        version: '1.18.9',
+        version: '1.18.29',
         bundleDigest: digest('b'),
         acpCapabilitiesDigest: digest('f'),
         sessionLoad: true,

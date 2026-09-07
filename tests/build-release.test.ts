@@ -899,7 +899,7 @@ describe('release build arguments', () => {
         join(projectRoot, 'package.json'),
         JSON.stringify({
           dependencies: {
-            '@deepseek-ai/dsh-llm': '0.1.0-rc.8'
+            '@deepseek-ai/dsh-llm': '0.1.2-rc.1'
           }
         })
       )
@@ -908,7 +908,7 @@ describe('release build arguments', () => {
         JSON.stringify({
           packages: {
             [`node_modules/${packageName}`]: {
-              version: '1.18.9',
+              version: '1.18.29',
               integrity
             }
           }
@@ -932,7 +932,7 @@ describe('release build arguments', () => {
         ),
         JSON.stringify({
           packageName,
-          version: '1.18.9',
+          version: '1.18.29',
           integrity,
           executableSha256: createHash('sha256')
             .update(executable)
@@ -959,7 +959,7 @@ describe('release build arguments', () => {
         )
       ).toMatchObject({
         name: '@deepseek-ai/dsh-llm',
-        version: '0.1.0-rc.8'
+        version: '0.1.2-rc.1'
       })
     } finally {
       rmSync(projectRoot, { recursive: true, force: true })

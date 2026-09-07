@@ -92,10 +92,18 @@ describe('SubagentService', () => {
     await service.dispose()
   })
 
-  it('fails tool-producing experts and records bounded failure state', async () => {
+  it('allows expert tools through the parent policy and records their activity', async () => {
     const events: SubagentEvent[] = []
+    const authorize = vi.fn(async () => 'once' as const)
+    let receivedAuthorize: unknown
     const runtime = {
-      run: async function* (request: AgentExecutionRequest) {
+      run: async function* (
+        request: AgentExecutionRequest,
+        signal: AbortSignal,
+        runtimeAuthorize: unknown
+      ) {
+        void signal
+        receivedAuthorize = runtimeAuthorize
         yield {
           requestId: request.requestId,
           type: 'text',
@@ -109,27 +117,32 @@ describe('SubagentService', () => {
           state: 'running',
           summary: 'unsafe'
         } as const
+        yield { requestId: request.requestId, type: 'done' } as const
       },
       dispose: vi.fn(async () => undefined)
     } as unknown as AgentRuntime
     const db = database()
     const service = new SubagentService(runtime, db as never)
     await expect(service.run({
-      parentRequest,
+      parentRequest: { ...parentRequest, workMode: 'execute' },
       expert,
       routingMode: 'manual',
       signal: new AbortController().signal,
-      onEvent: (event) => events.push(event)
-    })).rejects.toThrow('不允许工具调用')
-    expect(db.updateTaskStatus).toHaveBeenLastCalledWith(
+      onEvent: (event) => events.push(event),
+      authorize
+    })).resolves.toMatchObject({ output: '部分结果' })
+    expect(receivedAuthorize).toBe(authorize)
+    expect(db.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ workMode: 'execute' })
+    )
+    expect(db.appendTaskEvent).toHaveBeenCalledWith(
       expect.any(String),
-      'failed',
-      expect.stringContaining('不允许工具调用')
+      'tool',
+      expect.objectContaining({ name: 'unsafe' })
     )
     expect(events.at(-1)).toMatchObject({
-      state: 'failed',
-      output: '部分结果',
-      error: expect.stringContaining('不允许工具调用')
+      state: 'completed',
+      output: '部分结果'
     })
     await service.dispose()
   })

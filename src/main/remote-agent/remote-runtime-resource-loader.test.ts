@@ -17,7 +17,7 @@ const runtimeLock: RemoteRuntimeLock = {
   formatVersion: 1,
   runtimes: {
     opencode: {
-      version: '1.18.9',
+      version: '1.18.29',
       provider: 'opencode',
       entrypoint: 'bin/opencode',
       entrypointIdentity: 'opencode-acp',

@@ -17,9 +17,7 @@ import { dirname, join } from 'node:path'
 import spawn from 'cross-spawn'
 import { ipcChannels } from '../shared/ipc-channels'
 import {
-  createAgentRuntime,
-  createDefaultModelRuntime,
-  createModelProfileRuntime
+  createAgentRuntime
 } from './agent/create-runtime'
 import { AgentRuntimeController } from './agent/runtime-controller'
 import type { AgentRuntime } from './agent/runtime'
@@ -370,31 +368,6 @@ function createRerankProvider(
         apiKey: settings.knowledgeRerankApiKey
       })
     : undefined
-}
-
-function createSubagentProfileRuntimes(
-  defaultWorkspace: string,
-  settings: ResolvedRuntimeSettings
-): ReadonlyMap<string, AgentRuntime> {
-  return new Map(
-    settings.modelProfiles
-      .filter(
-        (profile) =>
-          profile.id !== settings.defaultModelProfileId &&
-          profile.protocol !== 'openai-images-generations'
-      )
-      .map(
-        (profile) =>
-          [
-            profile.id,
-            createModelProfileRuntime(
-              defaultWorkspace,
-              settings,
-              profile
-            )
-          ] as const
-      )
-  )
 }
 
 const launchContinueHost: ContinueHostLauncher = (
@@ -975,6 +948,11 @@ if (hasSingleInstanceLock) {
           app.getPath('userData'),
           'continue-host'
         ),
+        opencodeSharedCacheRoot: join(
+          app.getPath('userData'),
+          'opencode-runtime',
+          app.getVersion()
+        ),
         bundledRuntimePaths,
         continueHostLauncher: launchContinueHost,
         deepseekHarnessLauncher: launchDeepSeekHarness,
@@ -1002,6 +980,37 @@ if (hasSingleInstanceLock) {
         getConfiguredRuntimeTarget(settings)
       )
     }
+    const createSubagentRuntime = (
+      settings: ResolvedRuntimeSettings,
+      profileId = settings.defaultModelProfileId
+    ): Promise<AgentRuntime> =>
+      createRuntimeWithCapabilities(
+        {
+          ...settings,
+          provider: 'model',
+          defaultModelProfileId: profileId
+        },
+        'model'
+      )
+    const createSubagentProfileRuntimes = async (
+      settings: ResolvedRuntimeSettings
+    ): Promise<ReadonlyMap<string, AgentRuntime>> =>
+      new Map(
+        await Promise.all(
+          settings.modelProfiles
+            .filter(
+              (profile) =>
+                profile.id !== settings.defaultModelProfileId &&
+                profile.protocol !== 'openai-images-generations'
+            )
+            .map(async (profile) =>
+              [
+                profile.id,
+                await createSubagentRuntime(settings, profile.id)
+              ] as const
+            )
+        )
+      )
     const createSelectedRuntime = async (
       selection: AgentRuntimeSelection,
       executionSpace?: ExecutionSpaceDescriptor
@@ -1105,17 +1114,16 @@ if (hasSingleInstanceLock) {
         )
       }
     })
+    const [initialSubagentRuntime, initialSubagentProfileRuntimes] =
+      await Promise.all([
+        createSubagentRuntime(initialResolvedSettings),
+        createSubagentProfileRuntimes(initialResolvedSettings)
+      ])
     const subagentService = new SubagentService(
-      createDefaultModelRuntime(
-        defaultWorkspace,
-        initialResolvedSettings
-      ),
+      initialSubagentRuntime,
       startupAssistantDatabase,
       undefined,
-      createSubagentProfileRuntimes(
-        defaultWorkspace,
-        initialResolvedSettings
-      )
+      initialSubagentProfileRuntimes
     )
     runtime = new AgentRuntimeController(
       configuredRuntime,
@@ -1168,15 +1176,9 @@ if (hasSingleInstanceLock) {
           | ReadonlyMap<string, AgentRuntime>
           | undefined
         try {
-          nextSubagentRuntime = createDefaultModelRuntime(
-            defaultWorkspace,
-            settings
-          )
+          nextSubagentRuntime = await createSubagentRuntime(settings)
           nextSubagentProfileRuntimes =
-            createSubagentProfileRuntimes(
-              defaultWorkspace,
-              settings
-            )
+            await createSubagentProfileRuntimes(settings)
           if (runtime) {
             nextRuntime = await createConfiguredRuntime(settings)
           }

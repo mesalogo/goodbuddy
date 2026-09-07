@@ -244,11 +244,11 @@ describe('SSH host contracts', () => {
         provider: 'opencode',
         state: 'current',
         expected: {
-          version: '1.18.9',
+          version: '1.18.29',
           architecture: 'x64'
         },
         installed: {
-          version: '1.18.9',
+          version: '1.18.29',
           architecture: 'x64'
         }
       }],

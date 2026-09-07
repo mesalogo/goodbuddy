@@ -92,7 +92,10 @@ otherwise.
   credential without starting a throwaway server; the explicit settings test,
   native inventory still performs full startup and health checks, then shares
   that execution Runtime with the first real request instead of cold-starting
-  another server. Execution Runtimes remain reusable per project. GoodBuddy-managed local OpenCode keeps
+  another server. Execution Runtimes remain reusable per project, while local
+  OpenCode configuration dependencies and content-addressed Skill snapshots are
+  shared globally across projects. Session data, tool output, and request-scoped
+  MCP state remain isolated. GoodBuddy-managed local OpenCode keeps
   requests in the same conversation ordered, while different conversations in
   the same project and different projects can run in parallel. Request-scoped
   dynamic MCP tools remain isolated through default wildcard disablement and

@@ -372,6 +372,7 @@ import {
 
 const requestIdSchema = z.string().uuid()
 const BACKGROUND_QUESTION_REJECTION_TIMEOUT_MS = 1_000
+const DURABLE_AGENT_EVENT_FLUSH_INTERVAL_MS = 250
 const runtimeConfigFileMetadata = {
   opencode: {
     filterName: 'OpenCode 配置',
@@ -2304,6 +2305,7 @@ export function registerIpcHandlers(
     const resultAttachments: ChannelMediaAttachment[] = []
     const artifactIds: string[] = []
     const eventBuffer = new AgentEventBuffer({
+      flushIntervalMs: DURABLE_AGENT_EVENT_FLUSH_INTERVAL_MS,
       onError: (error) => controller.abort(error),
       onEvent: (event) => {
         assistantDatabase.appendTaskEvent(
@@ -2764,7 +2766,8 @@ export function registerIpcHandlers(
 
   const runExpertTeam = async function* (
     request: AgentExecutionRequest,
-    signal: AbortSignal
+    signal: AbortSignal,
+    authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void> {
     if (!subagentService) {
       throw new Error('专家子任务服务不可用')
@@ -2787,7 +2790,8 @@ export function registerIpcHandlers(
           signal,
           onEvent: (event) =>
             publishSubagentEvent(request.requestId, event),
-          onModelUsage: persistModelUsage
+          onModelUsage: persistModelUsage,
+          authorize
         }).then((result) => ({
           expert: expert.name,
           output: result.output
@@ -2843,7 +2847,8 @@ export function registerIpcHandlers(
     expert: ReturnType<AssistantDatabase['getExpert']>,
     routingMode: 'manual' | 'smart',
     signal: AbortSignal,
-    reason?: string
+    reason?: string,
+    authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void> {
     if (!subagentService) {
       throw new Error('专家子任务服务不可用')
@@ -2856,7 +2861,8 @@ export function registerIpcHandlers(
       signal,
       onEvent: (event) =>
         publishSubagentEvent(request.requestId, event),
-      onModelUsage: persistModelUsage
+      onModelUsage: persistModelUsage,
+      authorize
     })
     if (result.output) {
       yield {
@@ -3940,6 +3946,7 @@ export function registerIpcHandlers(
         | Promise<Awaited<ReturnType<RuntimeSettingsStore['getResolvedSettings']>>>
         | undefined
       const persistedEventBuffer = new AgentEventBuffer({
+        flushIntervalMs: DURABLE_AGENT_EVENT_FLUSH_INTERVAL_MS,
         onError: (error) => controller.abort(error),
         onEvent: (event) => {
           assistantDatabase.appendTaskEvent(
@@ -4278,7 +4285,8 @@ export function registerIpcHandlers(
               smartRoute.expert,
               'smart',
               controller.signal,
-              `匹配 ${smartRoute.matches} 个关键词，得分 ${smartRoute.score}`
+              `匹配 ${smartRoute.matches} 个关键词，得分 ${smartRoute.score}`,
+              authorize
             )
           } catch (error) {
             if (controller.signal.aborted) {
@@ -4296,7 +4304,11 @@ export function registerIpcHandlers(
           }
         }
         const eventStream = executionRequest.teamMode
-          ? runExpertTeam(executionRequest, controller.signal)
+          ? runExpertTeam(
+              executionRequest,
+              controller.signal,
+              authorize
+            )
           : executionRequest.expertId && !imageGeneration
             ? runSingleExpert(
                 executionRequest,
@@ -4304,7 +4316,9 @@ export function registerIpcHandlers(
                   executionRequest.expertId
                 ),
                 'manual',
-                controller.signal
+                controller.signal,
+                undefined,
+                authorize
               )
             : runSmartRoute()
         for await (const agentEvent of splitTaggedReasoning(eventStream)) {

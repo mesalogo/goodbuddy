@@ -20,6 +20,10 @@ import {
 import {
   CredentialProvider,
   type CredentialInfo,
+  type CredentialKey,
+  type CredentialRecord,
+  type CredentialRecordEntry,
+  type CredentialRecordInfo,
   type CredentialRef,
   type ResolvedCredential
 } from '@deepseek-ai/dsh-credentials'
@@ -290,6 +294,40 @@ export class GoodBuddyCredentialProvider extends CredentialProvider {
 
   async unset(ref: CredentialRef): Promise<void> {
     void ref
+    throw new Error('GoodBuddy Harness credentials are read-only')
+  }
+
+  async readRecord(
+    key: CredentialKey
+  ): Promise<CredentialRecord | undefined> {
+    void key
+    return undefined
+  }
+
+  async describeRecord(
+    key: CredentialKey
+  ): Promise<CredentialRecordInfo> {
+    void key
+    return { configured: false, writable: false }
+  }
+
+  async listRecords(): Promise<readonly CredentialRecordEntry[]> {
+    return []
+  }
+
+  async modifyRecord(
+    key: CredentialKey,
+    mutate: (
+      current: CredentialRecord | undefined
+    ) => Promise<CredentialRecord | undefined>
+  ): Promise<CredentialRecord | undefined> {
+    void key
+    void mutate
+    throw new Error('GoodBuddy Harness credentials are read-only')
+  }
+
+  async deleteRecord(key: CredentialKey): Promise<void> {
+    void key
     throw new Error('GoodBuddy Harness credentials are read-only')
   }
 }

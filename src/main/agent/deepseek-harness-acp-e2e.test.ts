@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createCanvas } from '@napi-rs/canvas'
 import {
-  CallId,
+  ToolCallId,
   type GenerateOptions,
   type StreamChunk
 } from '@deepseek-ai/dsh-llm'
@@ -112,7 +112,7 @@ async function* toolCall(
   name: string,
   argumentsValue: Record<string, unknown>
 ): AsyncGenerator<StreamChunk> {
-  const id = CallId(callId)
+  const id = ToolCallId(callId)
   const argumentsText = JSON.stringify(argumentsValue)
   yield {
     type: 'block-start',
@@ -332,7 +332,7 @@ function createInProcessLaunch(
         model: options.model,
         supportsImageInput: options.supportsImageInput,
         requestHeaders: options.requestHeaders,
-        harnessVersion: '0.1.0-rc.8',
+        harnessVersion: '0.1.2-rc.1',
         credentialRefs: options.credentialRefs,
         skillPackages: options.skillPackages,
         extensionPackages: options.extensionPackages,

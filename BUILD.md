@@ -300,7 +300,7 @@ OSS 先写 `agent-releases/v<version>/` 不可变对象，GitHub Release 公开�
 
 ### 远程 OpenCode Runtime 基础
 
-`remote-runtime-lock.json` 独立锁定首个远程 Runtime：OpenCode 1.18.9 的 Linux x64
+`remote-runtime-lock.json` 独立锁定首个远程 Runtime：OpenCode 1.18.29 的 Linux x64
 baseline 与 arm64 官方包 integrity、`bin/opencode` 入口和固定 `acp` 参数。它不同于
 `agent-runtime-lock.json`，后者锁定 Agent 自带 Node 以及用于 Linux `SO_PEERCRED`
 的 Koffi 版本。Agent bundle 将 Koffi loader 作为 external module，并只携带目标

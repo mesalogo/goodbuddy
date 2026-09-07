@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "runtimes": {
     "opencode": {
-      "version": "1.18.9",
+      "version": "1.18.29",
       "provider": "opencode",
       "entrypoint": "bin/opencode",
       "entrypointIdentity": "opencode-acp",
@@ -27,15 +27,15 @@
       "targets": {
         "x64": {
           "package": "opencode-linux-x64-baseline",
-          "integrity": "sha512-x4KiJk9EF7ktM18Ru5Jue4kTntxMvlhWb7tHniQGGRvY2KeoK1iIkyAFd7ri5H/fSkM22hNv/Gg1Jk6/h9IlxQ=="
+          "integrity": "sha512-AnPvoVjeLC6qBYSeDwmj8fIVeJxspkrh1xAPow5NMSdH7IZZd0auiI2PHIW+0/3B+xfar1Zx1a6yvDd4Wd74Wg=="
         },
         "darwin-arm64": {
           "package": "opencode-darwin-arm64",
-          "integrity": "sha512-cTWxW9IFjDdzx9mscQgr5uL478moU64t486JebaSZmUPEGDJVQjvCtXfqbZDzVuoVorRfaytlykqrH3qTSL2VQ=="
+          "integrity": "sha512-EU0qma5GPJXcDp5rENvedSfqJjqxatQW/Qzjs71pR2YdbrSh7YmBwtvnIb2/KIvfQr0DErX4ST14sbBQI2mQdg=="
         },
         "arm64": {
           "package": "opencode-linux-arm64",
-          "integrity": "sha512-2IN4lLjhx2FICcMDnBsKgwrey0AvAM0SlNzzj7L71uakNxWvrhcqPYVpEhrEYUjIn+uQGMY5PjA+uupXigJE2A=="
+          "integrity": "sha512-Lr7XXik5wPJZBV5RW+aR6Uogf1n5GogpB565m+D/jiO/vRXr9LhvCpixgAr1tiwuH1ZfMsqOOlbFQz5jgH3Tqg=="
         }
       }
     }

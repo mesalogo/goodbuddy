@@ -243,7 +243,7 @@ Execute 直接启动已签名 Runtime：
   结果区显示与末尾正文完全相同的返回结果，避免重复。失败或取消保留已有过程，未终结
   工具不再显示进行中。
 - 本地 SDK 通过 Task `metadata.sessionId` 关联子会话，复用稳定消息块 ID 保存过程。
-  固定 OpenCode 1.18.9 的 ACP 不转发子会话，因此 Agent 的模型桥 helper 在受管临时目录
+  固定 OpenCode 1.18.29 的 ACP 不转发子会话，因此 Agent 的模型桥 helper 在受管临时目录
   写入事件插件，并通过既有 ACP `session/update` 的 `_meta.goodbuddySubagentEvent`
   转发到所属 Task；不新增端口，不修改签名 Runtime 包。插件文件随 helper 退出清理，
   事件继续经过既有 Agent transcript、ACK 和 Desktop 消息持久化路径。
@@ -407,7 +407,7 @@ bootstrap 和再次 health。实际 Desktop 协议客户端通过 Attach、只�
 
 2026-09-06：在真实 macOS 26.5.2 / arm64 Host 的独立测试目录运行当前源码
 `build/agent-ci-bundle.cjs --platform darwin --arch arm64`，退出码为 0。
-测试使用固定 Node 24.19.0、OpenCode 1.18.9 和内存临时签名密钥；Node 官方
+测试使用固定 Node 24.19.0、OpenCode 1.18.29 和内存临时签名密钥；Node 官方
 归档 SHA-256、OpenCode integrity、Mach-O 架构、内外层签名和两次组包摘要比较
 通过，Agent CLI 加载、Koffi 原生模块加载与 OpenCode `--version` 检查通过。
 生成 `goodbuddy-agent-0.11.18-darwin-arm64.gbagent`，本次测试包 SHA-256 为
@@ -453,7 +453,7 @@ bundle 构建通过；这组历史结果不替代完整 Host 支持改动后的�
 - 最终源码复核后重新构建测试签名 package：
   SHA-256 `39307fd1dccd638dcb723027591bcd83deab7057d550c99eff6f037e339829f4`，
   installation `agent-2cad05acfebe853394807e3a11f7befcd9f47215c2cf3a33a03d5f644b45716e`，
-  Runtime `1.18.9` / bundle
+  Runtime `1.18.29` / bundle
   `sha256:6c7fc975415ef2547d3729bc4772d3e78362c2e76c05d1fc24968a0468fcb7ba`。
   最终 15 秒 detach/recovery 使用两个模型轮次、一个工具和一个终态，ledger 两轮均
   `completed + delivered`，语义 `latest=ACK=41`，保留事件、Runtime owner、ACP channel/
@@ -499,7 +499,7 @@ bundle 构建通过；这组历史结果不替代完整 Host 支持改动后的�
   UTF-8 字符前回退并显示 262,143 bytes；继续加载后完整追加剩余文本，页面不再显示加载
   按钮且没有错误。测试未调用模型；专用远端文件、目录和本机隔离用户数据均已清理。
 - 正常 Host 更新路径把 Linux x64 Host 的 Agent 更新为 `0.11.2-e2e.12`，并确认
-  OpenCode Runtime 已安装版本与所需版本均为 `1.18.9`。
+  OpenCode Runtime 已安装版本与所需版本均为 `1.18.29`。
 - 一条新的 Ask 用户操作只提交一次。OpenCode 先在 build 模型轮次请求一个原生
   `read`，读取专用测试 Workspace 中的证据文件，再在第二个 build 模型轮次生成最终
   回答；没有 title 模型轮次，也没有第二个工具调用。
