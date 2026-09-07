@@ -1163,7 +1163,7 @@ type ChatTimelineProps = {
   totalMessageCount: number
 }
 
-export function ChatTimeline({
+export const ChatTimeline = memo(function ChatTimeline({
   artifactById,
   conversationId,
   hiddenMessageCount,
@@ -1230,4 +1230,4 @@ export function ChatTimeline({
       })}
     </div>
   )
-}
+})

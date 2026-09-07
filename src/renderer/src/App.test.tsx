@@ -44,6 +44,19 @@ const speechRecognitionMocks = vi.hoisted(() => ({
   startPcmRecording: vi.fn()
 }))
 
+const messageRenderProbe = vi.hoisted(() => vi.fn())
+
+vi.mock('./MarkdownRenderer', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./MarkdownRenderer')>()
+  return {
+    ...original,
+    MarkdownRenderer: (props: { children: string; renderHtml?: boolean }) => {
+      messageRenderProbe(props.children)
+      return <original.MarkdownRenderer {...props} />
+    }
+  }
+})
+
 const lazyRouteMocks = vi.hoisted(() => {
   let pending: Promise<void> | undefined
   let releasePending: (() => void) | undefined
@@ -2527,6 +2540,28 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('measures composer height once per input and resizes after sending', async () => {
+    render(<App />)
+    const input = await screen.findByLabelText('向 GoodBuddy 提问')
+    const measureHeight = vi.fn(() =>
+      (input as HTMLTextAreaElement).value ? 300 : 0
+    )
+    Object.defineProperty(input, 'scrollHeight', {
+      configurable: true,
+      get: measureHeight
+    })
+
+    fireEvent.input(input, { target: { value: 'First line\nSecond line' } })
+    expect(measureHeight).toHaveBeenCalledTimes(1)
+    expect(input).toHaveStyle({ height: '220px' })
+
+    measureHeight.mockClear()
+    fireEvent.click(screen.getByLabelText('发送'))
+    await waitFor(() => expect(input).toHaveValue(''))
+    expect(measureHeight).toHaveBeenCalledTimes(1)
+    expect(input).toHaveStyle({ height: '72px' })
+  })
+
   it('shows a red recording state until microphone capture stops', async () => {
     let resolveRecording!: (value: {
       audio: ArrayBuffer
@@ -3325,9 +3360,12 @@ describe('App', () => {
       scrollTop: { configurable: true, writable: true, value: 225 }
     })
     fireEvent.scroll(firstChat)
+    messageRenderProbe.mockClear()
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '第一段会话草稿' }
     })
+    expect(messageRenderProbe).not.toHaveBeenCalled()
+    expect(firstPane?.querySelectorAll('.message')).toHaveLength(160)
     fireEvent.click(screen.getByLabelText('添加附件'))
     expect(
       await screen.findByText(draftAttachment.name)
@@ -3341,9 +3379,12 @@ describe('App', () => {
     expect(
       screen.queryByText(draftAttachment.name)
     ).not.toBeInTheDocument()
+    messageRenderProbe.mockClear()
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
       target: { value: '第二段会话草稿' }
     })
+    expect(messageRenderProbe).not.toHaveBeenCalled()
+    expect(firstPane?.querySelectorAll('.message')).toHaveLength(160)
     fireEvent.click(
       screen.getByText('第一段长会话').closest('button')!
     )

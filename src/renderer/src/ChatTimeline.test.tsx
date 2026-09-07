@@ -182,6 +182,12 @@ describe('ChatTimeline', () => {
     unchangedDetails!.open = true
     markdownRenderProbe.mockClear()
 
+    const mapMessages = vi.spyOn(messages, 'map')
+    rerender(<ChatTimeline {...props} messages={messages} />)
+    expect(mapMessages).not.toHaveBeenCalled()
+    expect(markdownRenderProbe).not.toHaveBeenCalled()
+    mapMessages.mockRestore()
+
     const streamedMessages = messages.map((message, index) =>
       index === messages.length - 1
         ? { ...message, content: `${message.content} delta` }

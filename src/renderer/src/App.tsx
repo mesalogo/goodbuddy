@@ -931,10 +931,22 @@ function ChatHistoryPane({
     0,
     conversation.messages.length - visibleMessageCount
   )
-  const visibleMessages = conversation.messages.slice(
-    visibleMessageStartIndex
+  const visibleMessages = useMemo(
+    () => conversation.messages.slice(visibleMessageStartIndex),
+    [conversation.messages, visibleMessageStartIndex]
   )
   const hiddenMessageCount = visibleMessageStartIndex
+
+  const handleArticleRef = useCallback(
+    (messageId: string, element: HTMLElement | null): void => {
+      if (element) {
+        messageArticleRefs.current.set(messageId, element)
+      } else {
+        messageArticleRefs.current.delete(messageId)
+      }
+    },
+    []
+  )
 
   const saveScrollPosition = useCallback(
     (scrollContainer: HTMLElement): boolean => {
@@ -1068,7 +1080,7 @@ function ChatHistoryPane({
     }
   }, [visibleMessageCount])
 
-  const revealEarlierMessages = (): void => {
+  const revealEarlierMessages = useCallback((): void => {
     const scrollContainer = scrollRef.current
     if (scrollContainer) {
       prependScrollPositionRef.current = {
@@ -1087,7 +1099,12 @@ function ChatHistoryPane({
       conversation.id,
       visibleMessageCount + messageRenderBatchSize
     )
-  }
+  }, [
+    conversation.id,
+    conversation.messages,
+    onVisibleMessageCountChange,
+    visibleMessageCount
+  ])
 
   const scrollToBottom = (): void => {
     const scrollContainer = scrollRef.current
@@ -1156,13 +1173,7 @@ function ChatHistoryPane({
           locale={locale}
           messages={visibleMessages}
           messageStartIndex={visibleMessageStartIndex}
-          onArticleRef={(messageId, element) => {
-            if (element) {
-              messageArticleRefs.current.set(messageId, element)
-            } else {
-              messageArticleRefs.current.delete(messageId)
-            }
-          }}
+          onArticleRef={handleArticleRef}
           onCopyMessage={onCopyMessage}
           onDownloadImage={onDownloadImage}
           onOpenCitationContext={onOpenCitationContext}
@@ -3073,7 +3084,7 @@ function App(): React.JSX.Element {
     assistantTasksRef.current = assistantTasks
   }, [assistantTasks])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     resizeComposerTextarea(inputRef.current)
   }, [input])
 
@@ -9679,9 +9690,6 @@ function App(): React.JSX.Element {
                 title={t('composer.keyboardHint')}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                onInput={(event) =>
-                  resizeComposerTextarea(event.currentTarget)
-                }
                 onPaste={(event) => {
                   const imageItem = Array.from(
                     event.clipboardData.items
