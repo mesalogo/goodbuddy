@@ -213,6 +213,12 @@ describe('TerminalPanel', () => {
     )
   })
 
+  it('renders the terminal emulator without inner spacing', () => {
+    expect(terminalStylesheet).toMatch(
+      /\.terminal-panel__emulator\s*\{[^}]*padding:\s*0;/u
+    )
+  })
+
   it('creates only after the first valid fitted size and forwards input', async () => {
     const backend = adapterHarness()
     const emulator = emulatorHarness()
