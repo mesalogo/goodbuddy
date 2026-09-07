@@ -532,14 +532,14 @@ function ChatMessageRowView({
       ref={(element) => onArticleRef(message.id, element)}
       tabIndex={-1}
     >
-      <div className="message__avatar">
-        {message.role === 'assistant' ? (
-          <Bot size={18} />
-        ) : (
-          <UserRound size={18} />
-        )}
-      </div>
-      <div className="message__body">
+      <div className="message__header">
+        <div className="message__avatar">
+          {message.role === 'assistant' ? (
+            <Bot size={18} />
+          ) : (
+            <UserRound size={18} />
+          )}
+        </div>
         <div className="message__meta">
           <strong>
             {message.role === 'assistant' ? 'GoodBuddy' : t('chat.user')}
@@ -557,6 +557,8 @@ function ChatMessageRowView({
           )}
           <span>{formatTime(message.createdAt, locale)}</span>
         </div>
+      </div>
+      <div className="message__body">
         {message.attachments && message.attachments.length > 0 && (
           <div
             aria-label={t('chat.attachments.region')}

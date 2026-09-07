@@ -74,6 +74,40 @@ describe('ChatTimeline', () => {
     expect(rule).not.toContain('contain-intrinsic')
   })
 
+  it('places message identity above the message body', () => {
+    const messages: Message[] = [
+      {
+        id: 'assistant-message',
+        role: 'assistant',
+        content: 'Answer',
+        createdAt: 1_775_000_000_000,
+        state: 'complete'
+      }
+    ]
+    const { container } = render(
+      <ChatTimeline
+        artifactById={new Map()}
+        conversationId="conversation-1"
+        hiddenMessageCount={0}
+        isUnusedConversation={false}
+        locale="zh-CN"
+        messageStartIndex={0}
+        messages={messages}
+        {...callbacks}
+        retryContent=""
+        totalMessageCount={messages.length}
+      />
+    )
+
+    const message = container.querySelector('.message')
+    const header = message?.querySelector('.message__header')
+    const body = message?.querySelector('.message__body')
+
+    expect(header).toContainElement(message?.querySelector('.message__avatar') ?? null)
+    expect(header).toContainElement(message?.querySelector('.message__meta') ?? null)
+    expect(Array.from(message?.children ?? [])).toEqual([header, body])
+  })
+
   it('enables HTML rendering only for completed Agent output', () => {
     const messages: Message[] = [
       {

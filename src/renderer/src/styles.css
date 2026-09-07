@@ -5311,15 +5311,24 @@ button > svg {
 }
 
 .message {
-  display: grid;
+  display: flex;
   min-width: 0;
   padding: 17px 8px;
-  gap: 12px;
-  grid-template-columns: 30px minmax(0, 1fr);
+  flex-direction: column;
+  gap: 8px;
 }
 
-.message--user {
-  grid-template-columns: minmax(0, 1fr) 30px;
+.message__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.message--user .message__header {
+  width: min(78%, 720px);
+  align-self: flex-end;
+  flex-direction: row-reverse;
 }
 
 .route-loading-status {
@@ -5374,6 +5383,7 @@ button > svg {
 
 .message__avatar {
   display: grid;
+  flex: 0 0 auto;
   width: 29px;
   height: 29px;
   place-items: center;
@@ -5384,8 +5394,6 @@ button > svg {
 }
 
 .message--user .message__avatar {
-  grid-column: 2;
-  grid-row: 1;
   border-color: var(--accent-selected);
   background: var(--accent-subtle);
   color: var(--accent);
@@ -5398,15 +5406,13 @@ button > svg {
 
 .message--user .message__body {
   width: min(78%, 720px);
-  grid-column: 1;
-  grid-row: 1;
-  justify-self: end;
+  align-self: flex-end;
 }
 
 .message__meta {
   display: flex;
+  min-width: 0;
   align-items: center;
-  margin: 1px 0 8px;
   gap: 8px;
 }
 
