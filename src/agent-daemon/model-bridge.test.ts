@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import {
   chmodSync,
   existsSync,
@@ -21,8 +22,12 @@ import {
 import {
   createOpenCodeModelBridgeProviderConfig,
   MODEL_BRIDGE_SDK_AUTH_SENTINEL,
-  ModelBridgeLoopbackProxy
+  ModelBridgeLoopbackProxy,
+  runOpenCodeModelBridgeHelper,
+  type ModelBridgeHelperSpawn
 } from './model-bridge-helper'
+import { createOpenCodeLaunchProfile } from './opencode-runtime-profile'
+import { createRuntimeBundleTestFixture } from './runtime-bundle-test-fixture'
 import {
   createUnixModelBridgeExchange,
   MODEL_BRIDGE_BROKER_SOCKET_NAME,
@@ -51,6 +56,89 @@ afterEach(() => {
 })
 
 describe('model bridge loopback helper', () => {
+  it.each(['ask', 'execute'] as const)(
+    'preserves the %s launch profile offline resources in the final OpenCode spawn',
+    async (workMode) => {
+      const fixture = await createRuntimeBundleTestFixture()
+      temporaryPaths.push(fixture.root)
+      const socketPath = join(fixture.root, 'bridge', 'model.sock')
+      const profile = createOpenCodeLaunchProfile({
+        ...fixture,
+        workspaceDirectory: fixture.root,
+        workMode,
+        modelBridge: {
+          agentExecutablePath: join(fixture.root, 'agent', 'goodbuddy-agent'),
+          bridgeDirectory: join(fixture.root, 'bridge'),
+          socketPath,
+          policy: {
+            protocol: 'anthropic-messages',
+            model: 'private-model',
+            modelProfileDigest: `sha256:${'9'.repeat(64)}`,
+            supportsImageInput: false
+          }
+        }
+      })
+      const spawn = vi.fn<ModelBridgeHelperSpawn>(() => {
+        const child = new EventEmitter()
+        queueMicrotask(() => child.emit('close', 0, null))
+        return child
+      })
+      const resources = {
+        HOME: fixture.root,
+        PATH: join(fixture.root, 'tools'),
+        TMPDIR: join(fixture.root, 'tmp'),
+        XDG_CACHE_HOME: join(fixture.root, 'cache'),
+        XDG_CONFIG_HOME: join(fixture.root, 'config'),
+        XDG_DATA_HOME: join(fixture.root, 'data'),
+        XDG_STATE_HOME: join(fixture.root, 'state')
+      }
+      await expect(runOpenCodeModelBridgeHelper({
+        socketPath,
+        protocol: 'anthropic-messages',
+        model: 'private-model',
+        supportsImageInput: false,
+        workMode,
+        opencodeEntrypoint: join(fixture.bundleDirectory, 'bin', 'opencode'),
+        environment: {
+          ...profile.env,
+          ...resources,
+          OPENCODE_CONFIG_CONTENT: '{"model":"must-not-be-used"}',
+          OPENCODE_CONFIG: '/unrelated/config.json',
+          ANTHROPIC_API_KEY: 'must-not-be-forwarded',
+          NODE_OPTIONS: '--inspect'
+        },
+        spawn
+      })).resolves.toBe(0)
+      expect(spawn).toHaveBeenCalledOnce()
+      const [executable, args, options] = spawn.mock.calls[0]!
+      expect(executable).toBe(join(fixture.bundleDirectory, 'bin', 'opencode'))
+      expect(args).toEqual(['acp'])
+      expect(options).toMatchObject({ shell: false, stdio: 'inherit' })
+      expect(options.env).toMatchObject({
+        ...resources,
+        LANG: profile.env.LANG,
+        LC_ALL: profile.env.LC_ALL,
+        OPENCODE_CONFIG_DIR: join(fixture.bundleDirectory, 'config', 'opencode'),
+        OPENCODE_DISABLE_AUTOUPDATE: '1',
+        OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
+        OPENCODE_DISABLE_EMBEDDED_WEB_UI: '1',
+        OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
+        OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: '1',
+        OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
+        OPENCODE_DISABLE_MODELS_FETCH: '1',
+        OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+        OPENCODE_DISABLE_SHARE: '1'
+      })
+      expect(options.env.OPENCODE_CONFIG).toBeUndefined()
+      expect(options.env.ANTHROPIC_API_KEY).toBeUndefined()
+      expect(options.env.NODE_OPTIONS).toBeUndefined()
+      const config = JSON.parse(options.env.OPENCODE_CONFIG_CONTENT!)
+      expect(config.model).toBe('goodbuddy-anthropic/private-model')
+      expect(config.permission).toBe(workMode === 'ask' ? 'ask' : undefined)
+      expect(config.plugin).toHaveLength(1)
+    }
+  )
+
   it('forwards only the bounded request contract and returns the response', async () => {
     const exchange = vi.fn<ModelBridgeExchange>(
       async () => validResponse

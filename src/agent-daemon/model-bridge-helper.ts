@@ -890,6 +890,26 @@ function credentialFreeHelperEnvironment(
     }
     environment[name] = value
   }
+  for (const name of [
+    'OPENCODE_CONFIG_DIR',
+    'OPENCODE_DISABLE_AUTOUPDATE',
+    'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS',
+    'OPENCODE_DISABLE_EMBEDDED_WEB_UI',
+    'OPENCODE_DISABLE_EXTERNAL_SKILLS',
+    'OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER',
+    'OPENCODE_DISABLE_LSP_DOWNLOAD',
+    'OPENCODE_DISABLE_MODELS_FETCH',
+    'OPENCODE_DISABLE_PROJECT_CONFIG',
+    'OPENCODE_DISABLE_SHARE'
+  ]) {
+    const value = source[name]
+    if (value !== undefined) {
+      if (value.includes('\0')) {
+        throw new Error(`Invalid helper environment value for ${name}`)
+      }
+      environment[name] = value
+    }
+  }
   return environment
 }
 

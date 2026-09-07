@@ -5,203 +5,184 @@ import {
   render,
   screen,
   within,
-  waitFor
-} from '@testing-library/react'
-import { StrictMode } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+  waitFor,
+} from "@testing-library/react";
+import { StrictMode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentEvent,
   BrowserLiveState,
   ContextAttachment,
   ConversationQueueDispatch,
-  DesktopApi
-} from '../../shared/contracts'
+  DesktopApi,
+} from "../../shared/contracts";
 import {
   defaultLocalToolEnvironmentSettings,
-  type ApplicationSettings
-} from '../../shared/application-settings-contracts'
-import type { GlobalShortcutSettingsSnapshot } from '../../shared/shortcut'
-import type {
-  TerminalSnapshot
-} from '../../shared/terminal-contracts'
-import {
-  loadBrandingPreferences,
-  saveBrandingPreferences
-} from './branding'
+  type ApplicationSettings,
+} from "../../shared/application-settings-contracts";
+import type { GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
+import type { TerminalSnapshot } from "../../shared/terminal-contracts";
+import { loadBrandingPreferences, saveBrandingPreferences } from "./branding";
 import type {
   AssistantProject,
   AssistantSchedule,
   AssistantTask,
-  ConversationSnapshot
-} from '../../shared/assistant-contracts'
+  ConversationSnapshot,
+} from "../../shared/assistant-contracts";
 import {
   builtInDefaultProjectSeedDescription,
-  builtInDefaultProjectSeedName
-} from '../../shared/assistant-contracts'
-import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
+  builtInDefaultProjectSeedName,
+} from "../../shared/assistant-contracts";
+import { agentRuntimeSelectionKey } from "../../shared/runtime-selection-contracts";
 
 const speechRecognitionMocks = vi.hoisted(() => ({
-  startPcmRecording: vi.fn()
-}))
+  startPcmRecording: vi.fn(),
+}));
 
-const messageRenderProbe = vi.hoisted(() => vi.fn())
+const messageRenderProbe = vi.hoisted(() => vi.fn());
 
-vi.mock('./MarkdownRenderer', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./MarkdownRenderer')>()
+vi.mock("./MarkdownRenderer", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./MarkdownRenderer")>();
   return {
     ...original,
     MarkdownRenderer: (props: { children: string; renderHtml?: boolean }) => {
-      messageRenderProbe(props.children)
-      return <original.MarkdownRenderer {...props} />
-    }
-  }
-})
+      messageRenderProbe(props.children);
+      return <original.MarkdownRenderer {...props} />;
+    },
+  };
+});
 
 const lazyRouteMocks = vi.hoisted(() => {
-  let pending: Promise<void> | undefined
-  let releasePending: (() => void) | undefined
+  let pending: Promise<void> | undefined;
+  let releasePending: (() => void) | undefined;
   return {
     suspendKnowledgeRoute(): void {
       pending = new Promise((resolve) => {
-        releasePending = resolve
-      })
+        releasePending = resolve;
+      });
     },
     releaseKnowledgeRoute(): void {
-      releasePending?.()
-      releasePending = undefined
-      pending = undefined
+      releasePending?.();
+      releasePending = undefined;
+      pending = undefined;
     },
     async waitForKnowledgeRoute(): Promise<void> {
-      await pending
-    }
-  }
-})
+      await pending;
+    },
+  };
+});
 
 const routeModuleLoads = vi.hoisted(() => ({
   activity: 0,
   heartbeat: 0,
   knowledge: 0,
   magicNotes: 0,
-  settings: 0
-}))
+  settings: 0,
+}));
 
-vi.mock('./speech-recognition', async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import('./speech-recognition')
-  >()),
-  startPcmRecording: speechRecognitionMocks.startPcmRecording
-}))
+vi.mock("./speech-recognition", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./speech-recognition")>()),
+  startPcmRecording: speechRecognitionMocks.startPcmRecording,
+}));
 
-vi.mock('./KnowledgeWorkspace', async (importOriginal) => {
-  await lazyRouteMocks.waitForKnowledgeRoute()
-  routeModuleLoads.knowledge += 1
-  return importOriginal<typeof import('./KnowledgeWorkspace')>()
-})
+vi.mock("./KnowledgeWorkspace", async (importOriginal) => {
+  await lazyRouteMocks.waitForKnowledgeRoute();
+  routeModuleLoads.knowledge += 1;
+  return importOriginal<typeof import("./KnowledgeWorkspace")>();
+});
 
-vi.mock('./HeartbeatCenter', async (importOriginal) => {
-  routeModuleLoads.heartbeat += 1
-  return importOriginal<typeof import('./HeartbeatCenter')>()
-})
+vi.mock("./HeartbeatCenter", async (importOriginal) => {
+  routeModuleLoads.heartbeat += 1;
+  return importOriginal<typeof import("./HeartbeatCenter")>();
+});
 
-vi.mock('./MagicNotesWorkspace', async (importOriginal) => {
-  routeModuleLoads.magicNotes += 1
-  return importOriginal<typeof import('./MagicNotesWorkspace')>()
-})
+vi.mock("./MagicNotesWorkspace", async (importOriginal) => {
+  routeModuleLoads.magicNotes += 1;
+  return importOriginal<typeof import("./MagicNotesWorkspace")>();
+});
 
-vi.mock('./SettingsPanel', async (importOriginal) => {
-  routeModuleLoads.settings += 1
-  return importOriginal<typeof import('./SettingsPanel')>()
-})
+vi.mock("./SettingsPanel", async (importOriginal) => {
+  routeModuleLoads.settings += 1;
+  return importOriginal<typeof import("./SettingsPanel")>();
+});
 
-vi.mock('./ActivityPanel', async (importOriginal) => {
-  routeModuleLoads.activity += 1
-  return importOriginal<typeof import('./ActivityPanel')>()
-})
+vi.mock("./ActivityPanel", async (importOriginal) => {
+  routeModuleLoads.activity += 1;
+  return importOriginal<typeof import("./ActivityPanel")>();
+});
 
-vi.mock('./TerminalPanel', () => ({
+vi.mock("./TerminalPanel", () => ({
   TerminalPanel: ({ title }: { title?: string }) => (
-    <section aria-label={`用户终端：${title ?? '终端'}`} />
-  )
-}))
+    <section aria-label={`用户终端：${title ?? "终端"}`} />
+  ),
+}));
 
-import App from './App'
-import { ACTIVITY_STORAGE_KEY } from './activity-store'
-import { changeUiLocale } from './i18n'
-import { UiLocaleProvider } from './i18n/UiLocaleProvider'
+import App from "./App";
+import { ACTIVITY_STORAGE_KEY } from "./activity-store";
+import { changeUiLocale } from "./i18n";
+import { UiLocaleProvider } from "./i18n/UiLocaleProvider";
 
-let agentListener: ((event: AgentEvent) => void) | undefined
-let browserListener: ((state: BrowserLiveState) => void) | undefined
+let agentListener: ((event: AgentEvent) => void) | undefined;
+let browserListener: ((state: BrowserLiveState) => void) | undefined;
 let fileSelectionProgressListener:
-  | Parameters<
-      DesktopApi['context']['onFileSelectionProgress']
-    >[0]
-  | undefined
-let newConversationListener: (() => void) | undefined
-let magicTodoStatusChangedListener: (() => void) | undefined
-let maximizedChangedListener: ((maximized: boolean) => void) | undefined
-let beforeQuitListener: (() => Promise<void>) | undefined
+  Parameters<DesktopApi["context"]["onFileSelectionProgress"]>[0] | undefined;
+let newConversationListener: (() => void) | undefined;
+let magicTodoStatusChangedListener: (() => void) | undefined;
+let maximizedChangedListener: ((maximized: boolean) => void) | undefined;
+let beforeQuitListener: (() => Promise<void>) | undefined;
 let conversationQueueDispatchListener:
-  | ((dispatch: ConversationQueueDispatch) => void)
-  | undefined
+  ((dispatch: ConversationQueueDispatch) => void) | undefined;
 let conversationQueueChangeListener:
-  | Parameters<
-      DesktopApi['conversationQueue']['onChanged']
-    >[0]
-  | undefined
+  Parameters<DesktopApi["conversationQueue"]["onChanged"]>[0] | undefined;
 let remoteProjectSaveProgressListener:
-  | Parameters<
-      DesktopApi['projects']['remote']['onSaveProgress']
-    >[0]
-  | undefined
+  Parameters<DesktopApi["projects"]["remote"]["onSaveProgress"]>[0] | undefined;
 let remoteProjectRecoveryProgressListener:
-  | Parameters<
-      DesktopApi['projects']['remote']['onRecoveryProgress']
-    >[0]
-  | undefined
-const removeMaximizedChangedListener = vi.fn()
-const removeProjectRecoveryListener = vi.fn()
-const run = vi.fn<DesktopApi['agent']['run']>()
-const modelProfileId = '00000000-0000-4000-8000-000000000001'
-const projectId = '00000000-0000-4000-8000-000000000101'
+  | Parameters<DesktopApi["projects"]["remote"]["onRecoveryProgress"]>[0]
+  | undefined;
+const removeMaximizedChangedListener = vi.fn();
+const removeProjectRecoveryListener = vi.fn();
+const run = vi.fn<DesktopApi["agent"]["run"]>();
+const modelProfileId = "00000000-0000-4000-8000-000000000001";
+const projectId = "00000000-0000-4000-8000-000000000101";
 const project = {
   id: projectId,
   name: builtInDefaultProjectSeedName,
   description: builtInDefaultProjectSeedDescription,
-  rootPath: 'C:\\Users\\test',
+  rootPath: "C:\\Users\\test",
   executionSpace: {
-    kind: 'local' as const,
-    rootPath: 'C:\\Users\\test'
+    kind: "local" as const,
+    rootPath: "C:\\Users\\test",
   },
-  defaultWorkMode: 'ask' as const,
-  kind: 'user' as const,
+  defaultWorkMode: "ask" as const,
+  kind: "user" as const,
   builtInDefault: true,
-  status: 'active' as const,
-  createdAt: '2026-07-31T00:00:00.000Z',
-  updatedAt: '2026-07-31T00:00:00.000Z'
-}
+  status: "active" as const,
+  createdAt: "2026-07-31T00:00:00.000Z",
+  updatedAt: "2026-07-31T00:00:00.000Z",
+};
 
 const terminalSnapshot: TerminalSnapshot = {
-  sessionId: '00000000-0000-4000-8000-000000000901',
-  target: { type: 'local' },
-  targetLabel: '本机',
-  title: '终端 1',
-  state: 'running',
-  shell: 'PowerShell 7',
-  workingDirectory: 'C:\\Users\\test',
+  sessionId: "00000000-0000-4000-8000-000000000901",
+  target: { type: "local" },
+  targetLabel: "本机",
+  title: "终端 1",
+  state: "running",
+  shell: "PowerShell 7",
+  workingDirectory: "C:\\Users\\test",
   size: { cols: 80, rows: 24 },
   lastSequence: 0,
   exit: null,
-  error: null
-}
+  error: null,
+};
 
 const api: DesktopApi = {
   app: {
     getInfo: vi.fn(async () => ({
-      name: 'GoodBuddy',
-      version: '0.1.0',
-      platform: 'win32',
-      arch: 'x64',
-      shortcut: 'Ctrl+Shift+Space'
+      name: "GoodBuddy",
+      version: "0.1.0",
+      platform: "win32",
+      arch: "x64",
+      shortcut: "Ctrl+Shift+Space",
     })),
     show: vi.fn(async () => {}),
     hide: vi.fn(async () => {}),
@@ -210,59 +191,59 @@ const api: DesktopApi = {
     close: vi.fn(async () => {}),
     isMaximized: vi.fn(async () => false),
     onMaximizedChanged: vi.fn((listener) => {
-      maximizedChangedListener = listener
-      return removeMaximizedChangedListener
+      maximizedChangedListener = listener;
+      return removeMaximizedChangedListener;
     }),
     onBeforeQuit: vi.fn((listener) => {
-      beforeQuitListener = listener
+      beforeQuitListener = listener;
       return () => {
-        beforeQuitListener = undefined
-      }
+        beforeQuitListener = undefined;
+      };
     }),
     clearLocalData: vi.fn(async () => {}),
     onNewConversation: vi.fn((listener) => {
-      newConversationListener = listener
+      newConversationListener = listener;
       return () => {
-        newConversationListener = undefined
-      }
+        newConversationListener = undefined;
+      };
     }),
-    onOpenSettings: vi.fn(() => () => {})
+    onOpenSettings: vi.fn(() => () => {}),
   },
   clipboard: {
-    readText: vi.fn(async () => ''),
-    writeText: vi.fn(async () => {})
+    readText: vi.fn(async () => ""),
+    writeText: vi.fn(async () => {}),
   },
   feedback: {
-    submit: vi.fn<DesktopApi['feedback']['submit']>(async () => ({
+    submit: vi.fn<DesktopApi["feedback"]["submit"]>(async () => ({
       ok: true,
-      reference: 'GOODBUDDY-000001',
-      duplicate: false
-    }))
+      reference: "GOODBUDDY-000001",
+      duplicate: false,
+    })),
   },
   agent: {
-    getStatus: vi.fn<DesktopApi['agent']['getStatus']>(async () => ({
-      id: 'model' as const,
-      label: 'sonnet-5',
+    getStatus: vi.fn<DesktopApi["agent"]["getStatus"]>(async () => ({
+      id: "model" as const,
+      label: "sonnet-5",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
+      detail: "Ready",
     })),
     run,
     cancel: vi.fn(async () => {}),
     respondApproval: vi.fn(async () => {}),
     respondQuestion: vi.fn(async () => {}),
     compactConversation: vi.fn(async () => ({
-      provider: 'continue' as const,
-      strategy: 'goodbuddy-summary' as const,
+      provider: "continue" as const,
+      strategy: "goodbuddy-summary" as const,
       compacted: false,
-      detail: 'No context to compact'
+      detail: "No context to compact",
     })),
     onEvent: vi.fn((listener) => {
-      agentListener = listener
+      agentListener = listener;
       return () => {
-        agentListener = undefined
-      }
-    })
+        agentListener = undefined;
+      };
+    }),
   },
   browser: {
     navigate: vi.fn(async () => {}),
@@ -272,84 +253,83 @@ const api: DesktopApi = {
     interact: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     onState: vi.fn((listener) => {
-      browserListener = listener
+      browserListener = listener;
       return () => {
-        browserListener = undefined
-      }
-    })
+        browserListener = undefined;
+      };
+    }),
   },
   terminal: {
     create: vi.fn(async (request) => ({
       ...terminalSnapshot,
       target: request.target,
-      size: { cols: request.cols, rows: request.rows }
+      size: { cols: request.cols, rows: request.rows },
     })),
     write: vi.fn(async () => undefined),
     resize: vi.fn(async () => undefined),
     close: vi.fn(async () => ({
       ...terminalSnapshot,
-      state: 'exited' as const,
-      exit: { exitCode: 0, signal: null }
+      state: "exited" as const,
+      exit: { exitCode: 0, signal: null },
     })),
     getSnapshot: vi.fn(async () => terminalSnapshot),
     ack: vi.fn(async () => undefined),
-    onEvent: vi.fn(() => () => {})
+    onEvent: vi.fn(() => () => {}),
   },
   speech: {
-    transcribe: vi.fn(async () => ({ text: '本地语音结果' })),
-    cancel: vi.fn(async () => true)
+    transcribe: vi.fn(async () => ({ text: "本地语音结果" })),
+    cancel: vi.fn(async () => true),
   },
   settings: {
-    getRuntime: vi.fn<DesktopApi['settings']['getRuntime']>(async () => ({
-      provider: 'auto',
-      modelBaseUrl: 'https://bigtoken.ai',
-      modelName: 'sonnet-5',
-      modelProtocol: 'anthropic-messages',
-      modelAuthentication: 'api-key',
-      imageGenerationQuality: 'auto',
-      opencodeBaseUrl: '',
+    getRuntime: vi.fn<DesktopApi["settings"]["getRuntime"]>(async () => ({
+      provider: "auto",
+      modelBaseUrl: "https://bigtoken.ai",
+      modelName: "sonnet-5",
+      modelProtocol: "anthropic-messages",
+      modelAuthentication: "api-key",
+      imageGenerationQuality: "auto",
+      opencodeBaseUrl: "",
       opencodeEmbedded: false,
-      opencodeBinaryPath: '',
-      opencodeConfigPath: '',
-      continueBinaryPath: '',
-      continueConfigPath: '',
-      continueMode: 'chat',
+      opencodeBinaryPath: "",
+      opencodeConfigPath: "",
+      continueBinaryPath: "",
+      continueConfigPath: "",
+      continueMode: "chat",
       subagentSmartRoutingEnabled: false,
       knowledgeEmbeddingEnabled: false,
-      knowledgeEmbeddingBaseUrl:
-        'http://127.0.0.1:11434/v1/embeddings',
-      knowledgeEmbeddingModel: 'nomic-embed-text',
+      knowledgeEmbeddingBaseUrl: "http://127.0.0.1:11434/v1/embeddings",
+      knowledgeEmbeddingModel: "nomic-embed-text",
       knowledgeEmbeddingApiKeyConfigured: false,
-      knowledgeEmbeddingCredentialSource: 'none',
-      workspacePath: 'C:\\Users\\test',
+      knowledgeEmbeddingCredentialSource: "none",
+      workspacePath: "C:\\Users\\test",
       apiKeyConfigured: false,
-      credentialSource: 'none',
+      credentialSource: "none",
       modelProfiles: [
         {
           id: modelProfileId,
-          name: '默认模型',
-          baseUrl: 'https://bigtoken.ai',
-          modelName: 'sonnet-5',
-          protocol: 'anthropic-messages',
-          authentication: 'api-key',
-          imageGenerationQuality: 'auto',
+          name: "默认模型",
+          baseUrl: "https://bigtoken.ai",
+          modelName: "sonnet-5",
+          protocol: "anthropic-messages",
+          authentication: "api-key",
+          imageGenerationQuality: "auto",
           apiKeyConfigured: false,
-          credentialSource: 'none'
-        }
+          credentialSource: "none",
+        },
       ],
       defaultModelProfileId: modelProfileId,
       opencodeModelSource: {
-        kind: 'profile',
-        profileId: modelProfileId
+        kind: "profile",
+        profileId: modelProfileId,
       },
       continueModelSource: {
-        kind: 'profile',
-        profileId: modelProfileId
+        kind: "profile",
+        profileId: modelProfileId,
       },
       secureStorageAvailable: true,
-      toolApproval: 'always'
+      toolApproval: "always",
     })),
-    updateRuntime: vi.fn<DesktopApi['settings']['updateRuntime']>(
+    updateRuntime: vi.fn<DesktopApi["settings"]["updateRuntime"]>(
       async (input) => ({
         provider: input.provider,
         modelBaseUrl: input.modelBaseUrl,
@@ -364,127 +344,119 @@ const api: DesktopApi = {
         continueBinaryPath: input.continueBinaryPath,
         continueConfigPath: input.continueConfigPath,
         continueMode: input.continueMode,
-        subagentSmartRoutingEnabled:
-          input.subagentSmartRoutingEnabled ?? false,
+        subagentSmartRoutingEnabled: input.subagentSmartRoutingEnabled ?? false,
         knowledgeEmbeddingEnabled: input.knowledgeEmbeddingEnabled,
         knowledgeEmbeddingBaseUrl: input.knowledgeEmbeddingBaseUrl,
         knowledgeEmbeddingModel: input.knowledgeEmbeddingModel,
         knowledgeEmbeddingApiKeyConfigured:
-          input.knowledgeEmbeddingApiKey?.action === 'replace',
+          input.knowledgeEmbeddingApiKey?.action === "replace",
         knowledgeEmbeddingCredentialSource:
-          input.knowledgeEmbeddingApiKey?.action === 'replace'
-            ? 'encrypted'
-            : 'none',
+          input.knowledgeEmbeddingApiKey?.action === "replace"
+            ? "encrypted"
+            : "none",
         workspacePath: input.workspacePath,
-        apiKeyConfigured: input.apiKey.action === 'replace',
+        apiKeyConfigured: input.apiKey.action === "replace",
         credentialSource:
-          input.apiKey.action === 'replace' ? 'encrypted' : 'none',
+          input.apiKey.action === "replace" ? "encrypted" : "none",
         modelProfiles: (
           input.modelProfiles ?? [
             {
               id: modelProfileId,
-              name: '默认模型',
+              name: "默认模型",
               baseUrl: input.modelBaseUrl,
               modelName: input.modelName,
               protocol: input.modelProtocol,
               authentication: input.modelAuthentication,
-              imageGenerationQuality:
-                input.imageGenerationQuality,
-              apiKey: input.apiKey
-            }
+              imageGenerationQuality: input.imageGenerationQuality,
+              apiKey: input.apiKey,
+            },
           ]
         ).map(({ apiKey, ...profile }) => ({
           ...profile,
-          apiKeyConfigured: apiKey.action === 'replace',
+          apiKeyConfigured: apiKey.action === "replace",
           credentialSource:
-            apiKey.action === 'replace'
-              ? ('encrypted' as const)
-              : ('none' as const)
+            apiKey.action === "replace"
+              ? ("encrypted" as const)
+              : ("none" as const),
         })),
-        defaultModelProfileId:
-          input.defaultModelProfileId ?? modelProfileId,
-        opencodeModelSource:
-          input.opencodeModelSource ?? { kind: 'platform' },
-        continueModelSource:
-          input.continueModelSource ?? { kind: 'platform' },
+        defaultModelProfileId: input.defaultModelProfileId ?? modelProfileId,
+        opencodeModelSource: input.opencodeModelSource ?? { kind: "platform" },
+        continueModelSource: input.continueModelSource ?? { kind: "platform" },
         secureStorageAvailable: true,
-        toolApproval: input.toolApproval
-      })
+        toolApproval: input.toolApproval,
+      }),
     ),
     selectWorkspace: vi.fn(async () => undefined),
-    detectAgentRuntimes: vi.fn<
-      DesktopApi['settings']['detectAgentRuntimes']
-    >(async () => ({
-      opencode: {
-        available: false,
-        detail: '未检测到 OpenCode'
-      },
-      continue: {
-        available: false,
-        detail: '未检测到 Continue'
-      },
-      deepseekHarness: {
-        available: true,
-        path: 'bundled://deepseek-harness',
-        detail: 'Bundled Harness Adapter ready'
-      }
-    })),
+    detectAgentRuntimes: vi.fn<DesktopApi["settings"]["detectAgentRuntimes"]>(
+      async () => ({
+        opencode: {
+          available: false,
+          detail: "未检测到 OpenCode",
+        },
+        continue: {
+          available: false,
+          detail: "未检测到 Continue",
+        },
+        deepseekHarness: {
+          available: true,
+          path: "bundled://deepseek-harness",
+          detail: "Bundled Harness Adapter ready",
+        },
+      }),
+    ),
     selectRuntimeFile: vi.fn(async () => undefined),
     openRuntimeConfig: vi.fn(async () => {}),
-    testModelConnection: vi.fn<
-      DesktopApi['settings']['testModelConnection']
-    >(async () => ({
-      id: 'model',
-      label: 'sonnet-5',
-      available: true,
-      supportsToolExecution: true,
-      detail: 'Ready'
-    })),
-    testRuntime: vi.fn<DesktopApi['settings']['testRuntime']>(
+    testModelConnection: vi.fn<DesktopApi["settings"]["testModelConnection"]>(
       async () => ({
-        id: 'model',
-        label: 'sonnet-5',
+        id: "model",
+        label: "sonnet-5",
         available: true,
         supportsToolExecution: true,
-        detail: 'Ready'
-      })
-    )
+        detail: "Ready",
+      }),
+    ),
+    testRuntime: vi.fn<DesktopApi["settings"]["testRuntime"]>(async () => ({
+      id: "model",
+      label: "sonnet-5",
+      available: true,
+      supportsToolExecution: true,
+      detail: "Ready",
+    })),
   },
   projects: {
     list: vi.fn(async () => [project]),
     create: vi.fn(async (input) => ({
       ...project,
       ...input,
-      id: crypto.randomUUID()
+      id: crypto.randomUUID(),
     })),
     update: vi.fn(async (_projectId, input) => ({
       ...project,
       ...input,
-      id: _projectId
+      id: _projectId,
     })),
     setArchived: vi.fn(async () => {}),
     delete: vi.fn(async () => {}),
     remote: {
-      save: vi.fn<DesktopApi['projects']['remote']['save']>(),
-      cancelCurrent:
-        vi.fn<DesktopApi['projects']['remote']['cancelCurrent']>(),
+      save: vi.fn<DesktopApi["projects"]["remote"]["save"]>(),
+      cancelCurrent: vi.fn<DesktopApi["projects"]["remote"]["cancelCurrent"]>(),
       onSaveProgress: vi.fn((listener) => {
-        remoteProjectSaveProgressListener = listener
+        remoteProjectSaveProgressListener = listener;
         return () => {
           if (remoteProjectSaveProgressListener === listener) {
-            remoteProjectSaveProgressListener = undefined
+            remoteProjectSaveProgressListener = undefined;
           }
-        }
+        };
       }),
       getRecoverySnapshot: vi.fn(async () => ({
-        recoveries: []
+        recoveries: [],
       })),
       retryRecovery: vi.fn(),
       onRecoveryProgress: vi.fn((listener) => {
-        remoteProjectRecoveryProgressListener = listener
-        return removeProjectRecoveryListener
-      })
-    }
+        remoteProjectRecoveryProgressListener = listener;
+        return removeProjectRecoveryListener;
+      }),
+    },
   },
   conversations: {
     list: vi.fn(async () => []),
@@ -494,14 +466,14 @@ const api: DesktopApi = {
       id: crypto.randomUUID(),
       branch: {
         sourceConversationId: input.sourceConversationId,
-        sourceTitle: '新对话'
+        sourceTitle: "新对话",
       },
       title: input.title,
       updatedAt: Date.now(),
-      messages: []
+      messages: [],
     })),
     deleteLocal: vi.fn(async () => true),
-    onChanged: vi.fn(() => () => undefined)
+    onChanged: vi.fn(() => () => undefined),
   },
   conversationQueue: {
     list: vi.fn(async () => []),
@@ -509,69 +481,69 @@ const api: DesktopApi = {
       const item = {
         id: crypto.randomUUID(),
         conversationId: input.conversationId,
-        source: 'user' as const,
+        source: "user" as const,
         label: input.prompt,
-        createdAt: '2026-07-31T00:00:00.000Z'
-      }
+        createdAt: "2026-07-31T00:00:00.000Z",
+      };
       queueMicrotask(() =>
-        conversationQueueDispatchListener?.({ item, input })
-      )
-      return item
+        conversationQueueDispatchListener?.({ item, input }),
+      );
+      return item;
     }),
     remove: vi.fn(async () => {}),
     interruptAndRun: vi.fn(async () => {}),
     releaseUser: vi.fn(async () => {}),
     ready: vi.fn(async () => {}),
     onChanged: vi.fn((listener) => {
-      conversationQueueChangeListener = listener
+      conversationQueueChangeListener = listener;
       return () => {
-        conversationQueueChangeListener = undefined
-      }
+        conversationQueueChangeListener = undefined;
+      };
     }),
     onDispatch: vi.fn((listener) => {
-      conversationQueueDispatchListener = listener
+      conversationQueueDispatchListener = listener;
       return () => {
-        conversationQueueDispatchListener = undefined
-      }
-    })
+        conversationQueueDispatchListener = undefined;
+      };
+    }),
   },
   workspace: {
     getFileDiff: vi.fn(),
     getChanges: vi.fn(async () => ({
-      rootPath: 'C:\\Workspace',
+      rootPath: "C:\\Workspace",
       available: true,
-      status: '',
-      patch: '',
+      status: "",
+      patch: "",
       files: [],
-      truncated: false
+      truncated: false,
     })),
     listDirectory: vi.fn(async (path: string) => ({
       path,
       entries: [],
-      truncated: false
+      truncated: false,
     })),
     readFile: vi.fn(async (path: string) => ({
       path,
-      name: path.split('/').at(-1) ?? path,
-      content: '',
-      mimeType: 'text/plain' as const,
+      name: path.split("/").at(-1) ?? path,
+      content: "",
+      mimeType: "text/plain" as const,
       size: 0,
       offsetBytes: 0,
       nextOffsetBytes: 0,
-      truncated: false
+      truncated: false,
     })),
-    openPath: vi.fn(async () => {})
+    openPath: vi.fn(async () => {}),
   },
   tasks: {
     list: vi.fn(async () => []),
-    setStatus: vi.fn(async () => {})
+    setStatus: vi.fn(async () => {}),
   },
   activityHistory: {
     get: vi.fn(async () => ({
       records: [],
-      legacyHistoryMayBeIncomplete: false
+      legacyHistoryMayBeIncomplete: false,
     })),
-    replace: vi.fn(async () => {})
+    replace: vi.fn(async () => {}),
   },
   usage: {
     getTokenSummary: vi.fn(async () => ({
@@ -581,17 +553,17 @@ const api: DesktopApi = {
         output: 0,
         cacheRead: 0,
         cacheWrite: 0,
-        totalTokens: 0
+        totalTokens: 0,
       },
-      records: []
-    }))
+      records: [],
+    })),
   },
   artifacts: {
     list: vi.fn(async () => []),
     get: vi.fn(async () => {
-      throw new Error('Artifact not found')
+      throw new Error("Artifact not found");
     }),
-    importFiles: vi.fn(async () => [])
+    importFiles: vi.fn(async () => []),
   },
   memory: {
     list: vi.fn(async () => []),
@@ -600,12 +572,12 @@ const api: DesktopApi = {
       id: crypto.randomUUID(),
       confidence: 1,
       salience: 1,
-      status: 'confirmed' as const,
-      createdAt: '2026-07-31T00:00:00.000Z',
-      updatedAt: '2026-07-31T00:00:00.000Z'
+      status: "confirmed" as const,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
     })),
     setStatus: vi.fn(async () => {}),
-    remove: vi.fn(async () => {})
+    remove: vi.fn(async () => {}),
   },
   schedules: {
     list: vi.fn(async () => []),
@@ -615,42 +587,42 @@ const api: DesktopApi = {
       taskId: crypto.randomUUID(),
       conversationId: input.conversationId ?? crypto.randomUUID(),
       enabled: true,
-      createdAt: '2026-07-31T00:00:00.000Z',
-      updatedAt: '2026-07-31T00:00:00.000Z'
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
     })),
     setEnabled: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
-    runNow: vi.fn(async () => {})
+    runNow: vi.fn(async () => {}),
   },
   heartbeats: {
     list: vi.fn(async () => []),
     create: vi.fn(async (input) => ({
       ...input,
       id: crypto.randomUUID(),
-      nextRunAt: '2026-08-01T09:00:00.000Z',
-      createdAt: '2026-08-01T00:00:00.000Z',
-      updatedAt: '2026-08-01T00:00:00.000Z'
+      nextRunAt: "2026-08-01T09:00:00.000Z",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
     })),
     update: vi.fn(async (heartbeatId, input) => ({
       ...input,
       id: heartbeatId,
-      nextRunAt: '2026-08-01T09:00:00.000Z',
-      createdAt: '2026-08-01T00:00:00.000Z',
-      updatedAt: '2026-08-01T00:00:00.000Z'
+      nextRunAt: "2026-08-01T09:00:00.000Z",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
     })),
     setPaused: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
     runNow: vi.fn(async (heartbeatId) => ({
       id: crypto.randomUUID(),
       configId: heartbeatId,
-      trigger: 'manual' as const,
-      scheduledFor: '2026-08-01T00:00:00.000Z',
-      status: 'completed' as const,
+      trigger: "manual" as const,
+      scheduledFor: "2026-08-01T00:00:00.000Z",
+      status: "completed" as const,
       attemptCount: 1,
-      createdAt: '2026-08-01T00:00:00.000Z',
-      updatedAt: '2026-08-01T00:00:00.000Z'
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
     })),
-    history: vi.fn(async () => ({ runs: [], entries: [] }))
+    history: vi.fn(async () => ({ runs: [], entries: [] })),
   },
   experts: {
     list: vi.fn(async () => []),
@@ -658,87 +630,87 @@ const api: DesktopApi = {
       ...input,
       id: crypto.randomUUID(),
       enabled: true,
-      createdAt: '2026-07-31T00:00:00.000Z',
-      updatedAt: '2026-07-31T00:00:00.000Z'
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
     })),
     update: vi.fn(async (expertId, input) => ({
       ...input,
       id: expertId,
       enabled: true,
-      createdAt: '2026-07-31T00:00:00.000Z',
-      updatedAt: '2026-08-04T00:00:00.000Z'
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-08-04T00:00:00.000Z",
     })),
-    remove: vi.fn(async () => {})
+    remove: vi.fn(async () => {}),
   },
   capabilities: {
     getSnapshot: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     importSkill: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     removeSkill: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     setSkillEnabled: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     setSkillAssignments: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     setBuiltinMcpServerEnabled: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     setBuiltinMcpServerAssignments: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     saveMcpServer: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     removeMcpServer: vi.fn(async () => ({
       skills: [],
-      mcpServers: []
+      mcpServers: [],
     })),
     testMcpServer: vi.fn(async () => ({
       dynamicToolsSupported: false,
       toolCount: 0,
-      tools: []
-    }))
+      tools: [],
+    })),
   },
   runtimeExtensions: {
     getSnapshot: vi.fn(async () => ({
       marketplaceEnabled: false,
       catalog: [],
-      installed: []
+      installed: [],
     })),
     apply: vi.fn(async () => ({
       marketplaceEnabled: false,
       catalog: [],
-      installed: []
-    }))
+      installed: [],
+    })),
   },
   runtimeCustomization: {
     getSettings: vi.fn(async () => ({
       opencode: {},
-      continue: { presets: [] }
+      continue: { presets: [] },
     })),
     updateSettings: vi.fn(async (settings) => settings),
     getNativeSnapshot: vi.fn(async (input) => ({
       provider: input.provider,
       available: true,
-      inventoryStatus: 'available' as const,
-      detail: 'Ready',
+      inventoryStatus: "available" as const,
+      detail: "Ready",
       agents: [],
       tools: [],
-      toolsSupported: input.provider !== 'continue',
+      toolsSupported: input.provider !== "continue",
       commands: [],
       lsp: [],
       formatters: [],
@@ -749,77 +721,77 @@ const api: DesktopApi = {
       resources: [],
       resourcesSupported: false,
       context: {
-        strategy: 'unsupported' as const,
+        strategy: "unsupported" as const,
         manualCompact: false,
-        detail: 'Unsupported'
-      }
-    }))
+        detail: "Unsupported",
+      },
+    })),
   },
   context: {
     selectFiles: vi.fn(async () => []),
     onFileSelectionProgress: vi.fn((listener) => {
-      fileSelectionProgressListener = listener
+      fileSelectionProgressListener = listener;
       return () => {
-        fileSelectionProgressListener = undefined
-      }
+        fileSelectionProgressListener = undefined;
+      };
     }),
     addPastedImage: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     captureScreen: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     listWindows: vi.fn(async () => []),
     captureWindow: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     readClipboard: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
-    remove: vi.fn(async () => {})
+    remove: vi.fn(async () => {}),
   },
   magicNotes: {
     list: vi.fn(async () => ({ notes: [] })),
     get: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     create: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     update: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     remove: vi.fn(async () => {}),
     createEntry: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     updateEntry: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     removeEntry: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     analyze: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     analyzeDraft: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     listTodos: vi.fn(async () => ({ todos: [] })),
     getTodoStatus: vi.fn(async () => ({ incompleteCount: 0 })),
     updateTodo: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     analyzeTodo: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     onAnalysisEvent: vi.fn(() => vi.fn()),
     onTodoStatusChanged: vi.fn((listener) => {
-      magicTodoStatusChangedListener = listener
+      magicTodoStatusChangedListener = listener;
       return () => {
-        magicTodoStatusChangedListener = undefined
-      }
-    })
+        magicTodoStatusChangedListener = undefined;
+      };
+    }),
   },
   knowledge: {
     getSnapshot: vi.fn(async () => ({
@@ -828,14 +800,14 @@ const api: DesktopApi = {
       documents: [],
       graphNodes: [],
       graphRelations: [],
-      evidence: []
+      evidence: [],
     })),
     createLibrary: vi.fn(async (input) => ({
       ...input,
       id: crypto.randomUUID(),
       sourceCount: 0,
       documentCount: 0,
-      indexedDocumentCount: 0
+      indexedDocumentCount: 0,
     })),
     updateLibrary: vi.fn(async () => {}),
     deleteLibrary: vi.fn(async () => {}),
@@ -863,7 +835,7 @@ const api: DesktopApi = {
         contextMaxCharacters: 16_000,
         adjacentChunkCount: 0,
         localRerankEnabled: false,
-        rerankMode: 'none'
+        rerankMode: "none",
       },
       diagnostics: {
         requestedChannels: [],
@@ -875,28 +847,28 @@ const api: DesktopApi = {
         filteredByThresholdCount: 0,
         filteredByBudgetCount: 0,
         rerank: {
-          requested: 'none' as const,
-          used: 'none' as const,
-          status: 'skipped' as const,
+          requested: "none" as const,
+          used: "none" as const,
+          status: "skipped" as const,
           candidateCount: 0,
-          durationMs: 0
-        }
+          durationMs: 0,
+        },
       },
       results: [],
       context: {
         characterCount: 0,
         truncated: false,
-        groups: []
-      }
+        groups: [],
+      },
     })),
     updateSettings: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     listChunks: vi.fn(async () => ({
       items: [],
       page: 1,
       pageSize: 50,
-      totalItems: 0
+      totalItems: 0,
     })),
     updateChunk: vi.fn(async () => {}),
     deleteChunk: vi.fn(async () => {}),
@@ -906,31 +878,31 @@ const api: DesktopApi = {
       documents: [],
       graphNodes: [],
       graphRelations: [],
-      evidence: []
+      evidence: [],
     })),
     openDocumentSource: vi.fn(async () => {}),
     rebuildLibrary: vi.fn(async () => ({
       rebuilt: 0,
-      failed: 0
+      failed: 0,
     })),
     cancelRebuild: vi.fn(async () => true),
     getEmbeddingIndex: vi.fn(async (knowledgeBaseId: string) => ({
       knowledgeBaseId,
       enabled: false,
       coverage: { total: 0, indexed: 0, missing: 0, error: 0 },
-      indexStatus: { job: null }
+      indexStatus: { job: null },
     })),
     rebuildEmbeddingIndex: vi.fn(async (knowledgeBaseId: string) => ({
       knowledgeBaseId,
       enabled: false,
       coverage: { total: 0, indexed: 0, missing: 0, error: 0 },
-      indexStatus: { job: null }
+      indexStatus: { job: null },
     })),
     cancelEmbeddingIndex: vi.fn(async () => false),
     cancelTask: vi.fn(async () => false),
     retryTask: vi.fn(async () => {}),
     getReferenceContext: vi.fn(async () => {
-      throw new Error('not used')
+      throw new Error("not used");
     }),
     openReferenceSource: vi.fn(async () => {}),
     createEntity: vi.fn(async () => {}),
@@ -940,753 +912,707 @@ const api: DesktopApi = {
     mergeEntities: vi.fn(async () => {}),
     createRelation: vi.fn(async () => {}),
     updateRelation: vi.fn(async () => {}),
-    deleteRelation: vi.fn(async () => {})
-  }
-}
+    deleteRelation: vi.fn(async () => {}),
+  },
+};
 
 function composerMenuTrigger(
-  label: '专家角色' | '工作模式'
+  label: "专家角色" | "工作模式",
 ): HTMLButtonElement {
-  return screen.getByRole('button', {
-    name: new RegExp(`^${label}：`, 'u')
-  })
+  return screen.getByRole("button", {
+    name: new RegExp(`^${label}：`, "u"),
+  });
 }
 
-function openComposerMenu(
-  label: '专家角色' | '工作模式'
-): HTMLElement {
-  fireEvent.click(composerMenuTrigger(label))
-  return screen.getByRole('menu', { name: label })
+function openComposerMenu(label: "专家角色" | "工作模式"): HTMLElement {
+  fireEvent.click(composerMenuTrigger(label));
+  return screen.getByRole("menu", { name: label });
 }
 
 function selectComposerOption(
-  label: '专家角色' | '工作模式',
-  optionLabel: string
+  label: "专家角色" | "工作模式",
+  optionLabel: string,
 ): void {
-  const menu = openComposerMenu(label)
+  const menu = openComposerMenu(label);
   const option = within(menu)
-    .getByText(optionLabel, { selector: 'span' })
-    .closest<HTMLButtonElement>('button')
+    .getByText(optionLabel, { selector: "span" })
+    .closest<HTMLButtonElement>("button");
   if (!option) {
-    throw new Error(`Missing ${label} option: ${optionLabel}`)
+    throw new Error(`Missing ${label} option: ${optionLabel}`);
   }
-  fireEvent.click(option)
+  fireEvent.click(option);
 }
 
 function selectProjectOption(projectName: string): void {
-  fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
-  const menu = screen.getByRole('menu', { name: '当前项目' })
+  fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+  const menu = screen.getByRole("menu", { name: "当前项目" });
   const option = within(menu)
-    .getByText(projectName, { selector: 'b' })
-    .closest<HTMLButtonElement>('[role="menuitemradio"]')
+    .getByText(projectName, { selector: "b" })
+    .closest<HTMLButtonElement>('[role="menuitemradio"]');
   if (!option) {
-    throw new Error(`Missing project option: ${projectName}`)
+    throw new Error(`Missing project option: ${projectName}`);
   }
-  fireEvent.click(option)
+  fireEvent.click(option);
 }
 
 function deferred<T>(): {
-  promise: Promise<T>
-  resolve: (value: T) => void
-  reject: (reason: unknown) => void
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
 } {
-  let resolve!: (value: T) => void
-  let reject!: (reason: unknown) => void
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, resolve, reject }
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function createBrowserState(
   conversationId: string,
-  overrides: Partial<BrowserLiveState> = {}
+  overrides: Partial<BrowserLiveState> = {},
 ): BrowserLiveState {
   return {
     conversationId,
-    status: 'ready',
+    status: "ready",
     sessionActive: true,
     isLoading: false,
     canGoBack: false,
     updatedAt: Date.now(),
-    ...overrides
-  }
+    ...overrides,
+  };
 }
 
 function installRemoteProjectsSetting(enabled: boolean): {
-  updateSettings: NonNullable<DesktopApi['updates']>['updateSettings']
+  updateSettings: NonNullable<DesktopApi["updates"]>["updateSettings"];
 } {
   let settings: ApplicationSettings = {
     checkUpdatesOnStartup: false,
-    updateSource: 'github',
-    modelDownloadSource: 'modelscope',
+    updateSource: "github",
+    modelDownloadSource: "modelscope",
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
     conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: enabled,
     magicNotesEnabled: false,
     magicNotesShowIncompleteTodoCount: true,
-    magicNoteCommentMode: 'immediate',
-    magicNoteCommentFormat: 'combined'
-  }
+    magicNoteCommentMode: "immediate",
+    magicNoteCommentFormat: "combined",
+  };
   const updateSettings = vi.fn<
-    NonNullable<DesktopApi['updates']>['updateSettings']
+    NonNullable<DesktopApi["updates"]>["updateSettings"]
   >(async (input) => {
-    settings = { ...settings, ...input }
-    return { ...settings }
-  })
+    settings = { ...settings, ...input };
+    return { ...settings };
+  });
   api.updates = {
     getSettings: vi.fn(async () => ({ ...settings })),
     updateSettings,
     check: vi.fn(),
     openReleasePage: vi.fn(),
-    onResult: vi.fn(() => () => {})
-  }
-  return { updateSettings }
+    onResult: vi.fn(() => () => {}),
+  };
+  return { updateSettings };
 }
 
-describe('App', () => {
+describe("App", () => {
   beforeEach(() => {
-    localStorage.clear()
-    delete document.documentElement.dataset.theme
-    document.documentElement.style.colorScheme = ''
-    vi.clearAllMocks()
-    magicTodoStatusChangedListener = undefined
+    localStorage.clear();
+    delete document.documentElement.dataset.theme;
+    document.documentElement.style.colorScheme = "";
+    vi.clearAllMocks();
+    magicTodoStatusChangedListener = undefined;
     vi.mocked(api.magicNotes.getTodoStatus)
       .mockReset()
-      .mockResolvedValue({ incompleteCount: 0 })
+      .mockResolvedValue({ incompleteCount: 0 });
     vi.mocked(api.magicNotes.onTodoStatusChanged)
       .mockReset()
       .mockImplementation((listener) => {
-        magicTodoStatusChangedListener = listener
+        magicTodoStatusChangedListener = listener;
         return () => {
-          magicTodoStatusChangedListener = undefined
-        }
-      })
-    vi.mocked(api.conversations.list).mockReset().mockResolvedValue([])
-    vi.mocked(api.conversations.replace)
-      .mockReset()
-      .mockResolvedValue()
-    vi.mocked(api.conversations.saveLocal)
-      .mockReset()
-      .mockResolvedValue()
+          magicTodoStatusChangedListener = undefined;
+        };
+      });
+    vi.mocked(api.conversations.list).mockReset().mockResolvedValue([]);
+    vi.mocked(api.conversations.replace).mockReset().mockResolvedValue();
+    vi.mocked(api.conversations.saveLocal).mockReset().mockResolvedValue();
     vi.mocked(api.conversations.branchLocal)
       .mockReset()
       .mockImplementation(async (input) => ({
         id: crypto.randomUUID(),
         branch: {
           sourceConversationId: input.sourceConversationId,
-          sourceTitle: '新对话'
+          sourceTitle: "新对话",
         },
         title: input.title,
         updatedAt: Date.now(),
-        messages: []
-      }))
+        messages: [],
+      }));
     vi.mocked(api.conversations.deleteLocal)
       .mockReset()
-      .mockResolvedValue(true)
+      .mockResolvedValue(true);
     vi.mocked(api.conversations.onChanged)
       .mockReset()
-      .mockReturnValue(() => undefined)
+      .mockReturnValue(() => undefined);
     vi.mocked(api.projects.remote.cancelCurrent)
       .mockReset()
-      .mockResolvedValue()
-    remoteProjectSaveProgressListener = undefined
+      .mockResolvedValue();
+    remoteProjectSaveProgressListener = undefined;
     vi.mocked(api.projects.remote.onSaveProgress)
       .mockReset()
       .mockImplementation((listener) => {
-        remoteProjectSaveProgressListener = listener
+        remoteProjectSaveProgressListener = listener;
         return () => {
           if (remoteProjectSaveProgressListener === listener) {
-            remoteProjectSaveProgressListener = undefined
+            remoteProjectSaveProgressListener = undefined;
           }
-        }
-      })
-    remoteProjectRecoveryProgressListener = undefined
-    removeProjectRecoveryListener.mockReset()
+        };
+      });
+    remoteProjectRecoveryProgressListener = undefined;
+    removeProjectRecoveryListener.mockReset();
     vi.mocked(api.projects.remote.getRecoverySnapshot)
       .mockReset()
-      .mockResolvedValue({ recoveries: [] })
-    vi.mocked(api.projects.remote.retryRecovery).mockReset()
+      .mockResolvedValue({ recoveries: [] });
+    vi.mocked(api.projects.remote.retryRecovery).mockReset();
     vi.mocked(api.projects.remote.onRecoveryProgress)
       .mockReset()
       .mockImplementation((listener) => {
-        remoteProjectRecoveryProgressListener = listener
-        return removeProjectRecoveryListener
-      })
-    conversationQueueChangeListener = undefined
-    conversationQueueDispatchListener = undefined
-    vi.mocked(api.conversationQueue.list)
-      .mockReset()
-      .mockResolvedValue([])
+        remoteProjectRecoveryProgressListener = listener;
+        return removeProjectRecoveryListener;
+      });
+    conversationQueueChangeListener = undefined;
+    conversationQueueDispatchListener = undefined;
+    vi.mocked(api.conversationQueue.list).mockReset().mockResolvedValue([]);
     vi.mocked(api.conversationQueue.enqueueUser)
       .mockReset()
       .mockImplementation(async (input) => {
         const item = {
           id: crypto.randomUUID(),
           conversationId: input.conversationId,
-          source: 'user' as const,
+          source: "user" as const,
           label: input.prompt,
-          createdAt: '2026-07-31T00:00:00.000Z'
-        }
+          createdAt: "2026-07-31T00:00:00.000Z",
+        };
         queueMicrotask(() =>
-          conversationQueueDispatchListener?.({ item, input })
-        )
-        return item
-      })
-    vi.mocked(api.conversationQueue.remove)
-      .mockReset()
-      .mockResolvedValue()
+          conversationQueueDispatchListener?.({ item, input }),
+        );
+        return item;
+      });
+    vi.mocked(api.conversationQueue.remove).mockReset().mockResolvedValue();
     vi.mocked(api.conversationQueue.interruptAndRun)
       .mockReset()
-      .mockResolvedValue()
+      .mockResolvedValue();
     vi.mocked(api.conversationQueue.releaseUser)
       .mockReset()
-      .mockResolvedValue()
-    vi.mocked(api.conversationQueue.ready)
-      .mockReset()
-      .mockResolvedValue()
+      .mockResolvedValue();
+    vi.mocked(api.conversationQueue.ready).mockReset().mockResolvedValue();
     vi.mocked(api.conversationQueue.onChanged)
       .mockReset()
       .mockImplementation((listener) => {
-        conversationQueueChangeListener = listener
+        conversationQueueChangeListener = listener;
         return () => {
-          conversationQueueChangeListener = undefined
-        }
-      })
+          conversationQueueChangeListener = undefined;
+        };
+      });
     vi.mocked(api.conversationQueue.onDispatch)
       .mockReset()
       .mockImplementation((listener) => {
-        conversationQueueDispatchListener = listener
+        conversationQueueDispatchListener = listener;
         return () => {
-          conversationQueueDispatchListener = undefined
-        }
-      })
-    vi.mocked(api.tasks.list).mockReset().mockResolvedValue([])
-    vi.mocked(api.activityHistory.get)
-      .mockReset()
-      .mockResolvedValue({
-        records: [],
-        legacyHistoryMayBeIncomplete: false
-      })
-    vi.mocked(api.activityHistory.replace)
-      .mockReset()
-      .mockResolvedValue()
-    vi.mocked(api.schedules.list).mockReset().mockResolvedValue([])
-    api.channels = undefined
-    api.updates = undefined
-    newConversationListener = undefined
-    beforeQuitListener = undefined
-    browserListener = undefined
-    fileSelectionProgressListener = undefined
-    maximizedChangedListener = undefined
+          conversationQueueDispatchListener = undefined;
+        };
+      });
+    vi.mocked(api.tasks.list).mockReset().mockResolvedValue([]);
+    vi.mocked(api.activityHistory.get).mockReset().mockResolvedValue({
+      records: [],
+      legacyHistoryMayBeIncomplete: false,
+    });
+    vi.mocked(api.activityHistory.replace).mockReset().mockResolvedValue();
+    vi.mocked(api.schedules.list).mockReset().mockResolvedValue([]);
+    api.channels = undefined;
+    api.updates = undefined;
+    newConversationListener = undefined;
+    beforeQuitListener = undefined;
+    browserListener = undefined;
+    fileSelectionProgressListener = undefined;
+    maximizedChangedListener = undefined;
     speechRecognitionMocks.startPcmRecording.mockResolvedValue({
       result: Promise.resolve({
         audio: new Float32Array([0, 0.25, -0.25]).buffer,
-        sampleRate: 16_000
+        sampleRate: 16_000,
       }),
       stop: vi.fn(),
-      cancel: vi.fn()
-    })
-    Object.defineProperty(navigator, 'mediaDevices', {
+      cancel: vi.fn(),
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: vi.fn() }
-    })
-    Object.defineProperty(window, 'AudioContext', {
+      value: { getUserMedia: vi.fn() },
+    });
+    Object.defineProperty(window, "AudioContext", {
       configurable: true,
-      value: class AudioContextMock {}
-    })
+      value: class AudioContextMock {},
+    });
     vi.mocked(api.speech!.transcribe).mockResolvedValue({
-      text: '本地语音结果'
-    })
-    vi.mocked(api.speech!.cancel).mockResolvedValue(true)
+      text: "本地语音结果",
+    });
+    vi.mocked(api.speech!.cancel).mockResolvedValue(true);
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'model',
-      label: 'sonnet-5',
+      id: "model",
+      label: "sonnet-5",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
+      detail: "Ready",
+    });
     vi.stubGlobal(
-      'requestIdleCallback',
-      vi.fn(() => 1)
-    )
-    vi.stubGlobal('cancelIdleCallback', vi.fn())
-    Object.defineProperty(window, 'goodbuddy', {
+      "requestIdleCallback",
+      vi.fn(() => 1),
+    );
+    vi.stubGlobal("cancelIdleCallback", vi.fn());
+    Object.defineProperty(window, "goodbuddy", {
       configurable: true,
-      value: api
-    })
-  })
+      value: api,
+    });
+  });
 
   afterEach(() => {
-    cleanup()
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
-  it('provides custom minimize, maximize, and close controls', async () => {
-    const { unmount } = render(<App />)
+  it("provides custom minimize, maximize, and close controls", async () => {
+    const { unmount } = render(<App />);
 
-    fireEvent.click(screen.getByLabelText('最小化窗口'))
-    fireEvent.click(screen.getByLabelText('最大化窗口'))
-    fireEvent.click(screen.getByLabelText('关闭窗口'))
+    fireEvent.click(screen.getByLabelText("最小化窗口"));
+    fireEvent.click(screen.getByLabelText("最大化窗口"));
+    fireEvent.click(screen.getByLabelText("关闭窗口"));
 
     await waitFor(() => {
-      expect(api.app.minimize).toHaveBeenCalledOnce()
-      expect(api.app.toggleMaximize).toHaveBeenCalledOnce()
-      expect(api.app.close).toHaveBeenCalledOnce()
-    })
-    act(() => maximizedChangedListener?.(true))
-    expect(await screen.findByLabelText('还原窗口')).toBeInTheDocument()
-    act(() => maximizedChangedListener?.(false))
-    expect(screen.getByLabelText('最大化窗口')).toBeInTheDocument()
+      expect(api.app.minimize).toHaveBeenCalledOnce();
+      expect(api.app.toggleMaximize).toHaveBeenCalledOnce();
+      expect(api.app.close).toHaveBeenCalledOnce();
+    });
+    act(() => maximizedChangedListener?.(true));
+    expect(await screen.findByLabelText("还原窗口")).toBeInTheDocument();
+    act(() => maximizedChangedListener?.(false));
+    expect(screen.getByLabelText("最大化窗口")).toBeInTheDocument();
 
-    unmount()
-    expect(removeMaximizedChangedListener).toHaveBeenCalledOnce()
-  })
+    unmount();
+    expect(removeMaximizedChangedListener).toHaveBeenCalledOnce();
+  });
 
-  it('renders the core app shell in English', async () => {
-    await changeUiLocale('en-US')
+  it("renders the core app shell in English", async () => {
+    await changeUiLocale("en-US");
     try {
-      render(<App />)
+      render(<App />);
 
       expect(
-        await screen.findByText('New conversation', {
-          selector: '.new-chat span'
-        })
-      ).toBeInTheDocument()
+        await screen.findByText("New conversation", {
+          selector: ".new-chat span",
+        }),
+      ).toBeInTheDocument();
       expect(
-        screen.getByRole('navigation', {
-          name: 'Main navigation'
-        })
-      ).toBeInTheDocument()
+        screen.getByRole("navigation", {
+          name: "Main navigation",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+      expect(screen.queryByText("Desktop workspace")).not.toBeInTheDocument();
+      expect(screen.queryByText("GOODBUDDY WORKSPACE")).not.toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: 'Chat' })
-      ).toBeInTheDocument()
-      expect(screen.queryByText('Desktop workspace')).not.toBeInTheDocument()
-      expect(screen.queryByText('GOODBUDDY WORKSPACE')).not.toBeInTheDocument()
-      expect(
-        screen.getByRole('heading', {
+        screen.getByRole("heading", {
           level: 1,
-          name: 'Conversation'
-        })
-      ).toBeInTheDocument()
+          name: "Conversation",
+        }),
+      ).toBeInTheDocument();
       expect(
-        screen.getByRole('heading', {
+        screen.getByRole("heading", {
           level: 2,
-          name: 'What would you like to accomplish today?'
-        })
-      ).toBeInTheDocument()
+          name: "What would you like to accomplish today?",
+        }),
+      ).toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: 'Current project' })
-      ).toHaveTextContent('Default project')
-      expect(screen.getByText('Project: Default project')).toHaveClass(
-        'scope-badge'
-      )
+        screen.getByRole("button", { name: "Current project" }),
+      ).toHaveTextContent("Default project");
+      expect(screen.getByText("Project: Default project")).toHaveClass(
+        "scope-badge",
+      );
       expect(
         screen.getByText(
-          /Hi, I’m GoodBuddy\. Ask me a question, add local files/u
-        )
-      ).toBeInTheDocument()
-      expect(
-        screen.getByLabelText('Message GoodBuddy')
-      ).toHaveAttribute(
-        'placeholder',
-        'Message GoodBuddy…\nEnter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text'
-      )
-      expect(
-        screen.getByLabelText('Message GoodBuddy')
-      ).toHaveAttribute(
-        'title',
-        'Enter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text'
-      )
+          /Hi, I’m GoodBuddy\. Ask me a question, add local files/u,
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
+        "placeholder",
+        "Message GoodBuddy…\nEnter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text",
+      );
+      expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
+        "title",
+        "Enter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text",
+      );
     } finally {
-      cleanup()
-      await changeUiLocale('zh-CN')
+      cleanup();
+      await changeUiLocale("zh-CN");
     }
-  })
+  });
 
-  it('localizes untouched project labels but keeps settings and destructive values raw', async () => {
+  it("localizes untouched project labels but keeps settings and destructive values raw", async () => {
     const secondProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000102',
-      name: 'Second project',
-      description: 'Another workspace',
-      rootPath: 'C:\\Second',
+      id: "00000000-0000-4000-8000-000000000102",
+      name: "Second project",
+      description: "Another workspace",
+      rootPath: "C:\\Second",
       executionSpace: {
-        kind: 'local' as const,
-        rootPath: 'C:\\Second'
-      }
-    }
+        kind: "local" as const,
+        rootPath: "C:\\Second",
+      },
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      secondProject
-    ])
+      secondProject,
+    ]);
     vi.mocked(api.tasks.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000901',
+        id: "00000000-0000-4000-8000-000000000901",
         projectId,
-        title: 'Seed project task',
-        instructions: 'Verify the project label',
-        origin: 'schedule',
-        status: 'queued',
-        workMode: 'ask',
-        createdAt: '2026-07-31T01:00:00.000Z'
-      }
-    ])
-    await changeUiLocale('en-US')
+        title: "Seed project task",
+        instructions: "Verify the project label",
+        origin: "schedule",
+        status: "queued",
+        workMode: "ask",
+        createdAt: "2026-07-31T01:00:00.000Z",
+      },
+    ]);
+    await changeUiLocale("en-US");
     try {
-      render(<App />)
+      render(<App />);
 
-      const projectTrigger = await screen.findByRole('button', {
-        name: 'Current project'
-      })
-      expect(projectTrigger).toHaveTextContent('Default project')
-      fireEvent.click(projectTrigger)
+      const projectTrigger = await screen.findByRole("button", {
+        name: "Current project",
+      });
+      expect(projectTrigger).toHaveTextContent("Default project");
+      fireEvent.click(projectTrigger);
       expect(
-        within(
-          screen.getByRole('menu', { name: 'Current project' })
-        ).getByText('Default project', { selector: 'b' })
-      ).toBeInTheDocument()
-      fireEvent.click(projectTrigger)
+        within(screen.getByRole("menu", { name: "Current project" })).getByText(
+          "Default project",
+          { selector: "b" },
+        ),
+      ).toBeInTheDocument();
+      fireEvent.click(projectTrigger);
 
-      fireEvent.click(
-        screen.getByLabelText('Toggle assistant workspace')
-      )
-      fireEvent.click(
-        await screen.findByRole('tab', { name: 'Task center' })
-      )
-      const assistantSidebar = screen.getByLabelText(
-        'Assistant workspace'
-      )
+      fireEvent.click(screen.getByLabelText("Toggle assistant workspace"));
+      fireEvent.click(await screen.findByRole("tab", { name: "Task center" }));
+      const assistantSidebar = screen.getByLabelText("Assistant workspace");
       expect(
-        within(assistantSidebar).getByText('Project: Default project')
-      ).toBeInTheDocument()
-      const taskIndexHeading = within(assistantSidebar).getByRole(
-        'heading',
-        { name: 'Task index' }
-      )
-      const newTaskButton = within(assistantSidebar).getByRole(
-        'button',
-        { name: 'New task' }
-      )
-      expect(taskIndexHeading.parentElement).toContainElement(
-        newTaskButton
-      )
-      fireEvent.click(newTaskButton)
-      const taskDialog = screen.getByRole('dialog', {
-        name: 'New custom task'
-      })
+        within(assistantSidebar).getByText("Project: Default project"),
+      ).toBeInTheDocument();
+      const taskIndexHeading = within(assistantSidebar).getByRole("heading", {
+        name: "Task index",
+      });
+      const newTaskButton = within(assistantSidebar).getByRole("button", {
+        name: "New task",
+      });
+      expect(taskIndexHeading.parentElement).toContainElement(newTaskButton);
+      fireEvent.click(newTaskButton);
+      const taskDialog = screen.getByRole("dialog", {
+        name: "New custom task",
+      });
       expect(
-        within(taskDialog).getByText('Default project')
-      ).toBeInTheDocument()
+        within(taskDialog).getByText("Default project"),
+      ).toBeInTheDocument();
       expect(
-        within(taskDialog).getByRole('button', {
-          name: 'Current conversation'
-        })
-      ).toHaveAttribute('aria-pressed', 'true')
+        within(taskDialog).getByRole("button", {
+          name: "Current conversation",
+        }),
+      ).toHaveAttribute("aria-pressed", "true");
       fireEvent.click(
-        within(taskDialog).getByRole('button', {
-          name: 'Close new custom task'
-        })
-      )
-      fireEvent.click(
-        screen.getByLabelText('Toggle assistant workspace')
-      )
+        within(taskDialog).getByRole("button", {
+          name: "Close new custom task",
+        }),
+      );
+      fireEvent.click(screen.getByLabelText("Toggle assistant workspace"));
 
-      fireEvent.click(screen.getByLabelText('Project settings'))
-      const settingsDialog = screen.getByRole('dialog', {
-        name: 'Project settings'
-      })
-      expect(
-        within(settingsDialog).getByLabelText('Name')
-      ).toHaveValue(builtInDefaultProjectSeedName)
-      expect(
-        within(settingsDialog).getByLabelText('Description')
-      ).toHaveValue(builtInDefaultProjectSeedDescription)
+      fireEvent.click(screen.getByLabelText("Project settings"));
+      const settingsDialog = screen.getByRole("dialog", {
+        name: "Project settings",
+      });
+      expect(within(settingsDialog).getByLabelText("Name")).toHaveValue(
+        builtInDefaultProjectSeedName,
+      );
+      expect(within(settingsDialog).getByLabelText("Description")).toHaveValue(
+        builtInDefaultProjectSeedDescription,
+      );
 
       fireEvent.click(
-        within(settingsDialog).getByRole('button', {
-          name: 'Delete project'
-        })
-      )
+        within(settingsDialog).getByRole("button", {
+          name: "Delete project",
+        }),
+      );
       const confirmation = within(settingsDialog).getByLabelText(
-        `Enter “${builtInDefaultProjectSeedName}” to confirm deletion`
-      )
-      const deleteButton = within(settingsDialog).getByRole('button', {
-        name: 'Permanently delete project'
-      })
+        `Enter “${builtInDefaultProjectSeedName}” to confirm deletion`,
+      );
+      const deleteButton = within(settingsDialog).getByRole("button", {
+        name: "Permanently delete project",
+      });
       fireEvent.change(confirmation, {
-        target: { value: 'Default project' }
-      })
-      expect(deleteButton).toBeDisabled()
+        target: { value: "Default project" },
+      });
+      expect(deleteButton).toBeDisabled();
       fireEvent.change(confirmation, {
-        target: { value: builtInDefaultProjectSeedName }
-      })
-      expect(deleteButton).toBeEnabled()
+        target: { value: builtInDefaultProjectSeedName },
+      });
+      expect(deleteButton).toBeEnabled();
       fireEvent.click(
-        within(settingsDialog).getByRole('button', {
-          name: 'Cancel deletion'
-        })
-      )
+        within(settingsDialog).getByRole("button", {
+          name: "Cancel deletion",
+        }),
+      );
       fireEvent.click(
-        within(settingsDialog).getByRole('button', {
-          name: 'Save project'
-        })
-      )
+        within(settingsDialog).getByRole("button", {
+          name: "Save project",
+        }),
+      );
 
       await waitFor(() =>
         expect(api.projects.update).toHaveBeenCalledWith(
           projectId,
           expect.objectContaining({
             name: builtInDefaultProjectSeedName,
-            description: builtInDefaultProjectSeedDescription
-          })
-        )
-      )
+            description: builtInDefaultProjectSeedDescription,
+          }),
+        ),
+      );
       expect(
-        screen.getByRole('button', { name: 'Current project' })
-      ).toHaveTextContent('Default project')
-      expect(api.projects.delete).not.toHaveBeenCalled()
+        screen.getByRole("button", { name: "Current project" }),
+      ).toHaveTextContent("Default project");
+      expect(api.projects.delete).not.toHaveBeenCalled();
     } finally {
-      cleanup()
-      await changeUiLocale('zh-CN')
+      cleanup();
+      await changeUiLocale("zh-CN");
     }
-  })
+  });
 
-  it('renders localized workspace branding in Chinese', async () => {
-    render(<App />)
+  it("renders localized workspace branding in Chinese", async () => {
+    render(<App />);
 
-    await screen.findByRole('heading', {
-      name: '今天想一起完成什么？'
-    })
-    const runtimeStatus = document.querySelector<HTMLElement>(
-      '.runtime-status'
-    )
-    expect(runtimeStatus).not.toBeNull()
+    await screen.findByRole("heading", {
+      name: "今天想一起完成什么？",
+    });
+    const runtimeStatus =
+      document.querySelector<HTMLElement>(".runtime-status");
+    expect(runtimeStatus).not.toBeNull();
+    expect(within(runtimeStatus!).queryByText("就绪")).not.toBeInTheDocument();
+    expect(runtimeStatus).toHaveClass("runtime-status--ready");
     expect(
-      within(runtimeStatus!).queryByText('就绪')
-    ).not.toBeInTheDocument()
-    expect(runtimeStatus).toHaveClass('runtime-status--ready')
-    expect(
-      runtimeStatus?.querySelector('.runtime-status__dot')
-    ).toBeInTheDocument()
+      runtimeStatus?.querySelector(".runtime-status__dot"),
+    ).toBeInTheDocument();
     expect(runtimeStatus).toHaveAttribute(
-      'aria-describedby',
-      'topbar-runtime-detail'
-    )
-    expect(screen.getByText('Ready', { selector: '.sr-only' }))
-      .toHaveAttribute('id', 'topbar-runtime-detail')
+      "aria-describedby",
+      "topbar-runtime-detail",
+    );
+    expect(screen.getByText("Ready", { selector: ".sr-only" })).toHaveAttribute(
+      "id",
+      "topbar-runtime-detail",
+    );
     expect(
       screen.getByText(
-        /你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件/u
-      )
-    ).toBeInTheDocument()
-    expect(screen.getByText('智能工作台')).toBeInTheDocument()
-    expect(screen.queryByText('GOODBUDDY 工作台')).not.toBeInTheDocument()
+        /你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件/u,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("智能工作台")).toBeInTheDocument();
+    expect(screen.queryByText("GOODBUDDY 工作台")).not.toBeInTheDocument();
     expect(
-      document.querySelector('.composer__runtime-toolbar')
-    ).not.toBeInTheDocument()
-  })
+      document.querySelector(".composer__runtime-toolbar"),
+    ).not.toBeInTheDocument();
+  });
 
-  it('uses a compact color indicator while connecting to a Runtime', () => {
-    render(<App />)
-    const connectingStatus = document.querySelector<HTMLElement>(
-      '.runtime-status'
-    )
-    expect(connectingStatus).toHaveClass('runtime-status--connecting')
-    expect(within(connectingStatus!).queryByText('连接中'))
-      .not.toBeInTheDocument()
-  })
+  it("uses a compact color indicator while connecting to a Runtime", () => {
+    render(<App />);
+    const connectingStatus =
+      document.querySelector<HTMLElement>(".runtime-status");
+    expect(connectingStatus).toHaveClass("runtime-status--connecting");
+    expect(
+      within(connectingStatus!).queryByText("连接中"),
+    ).not.toBeInTheDocument();
+  });
 
-  it('loads customized branding into the primary sidebar', async () => {
+  it("loads customized branding into the primary sidebar", async () => {
     expect(
       saveBrandingPreferences({
-        name: '研发伙伴',
-        subtitleZhCN: '团队工作台',
-        subtitleEnUS: 'Team Workspace',
-        logoDataUrl: 'data:image/png;base64,iVBORw0KGgo='
-      })
-    ).toBe(true)
+        name: "研发伙伴",
+        subtitleZhCN: "团队工作台",
+        subtitleEnUS: "Team Workspace",
+        logoDataUrl: "data:image/png;base64,iVBORw0KGgo=",
+      }),
+    ).toBe(true);
 
-    render(<App />)
+    render(<App />);
 
-    await screen.findByRole('heading', {
-      name: '今天想一起完成什么？'
-    })
-    const brand = document.querySelector('.brand')
-    expect(brand).not.toBeNull()
-    expect(within(brand as HTMLElement).getByText('研发伙伴'))
-      .toBeInTheDocument()
-    expect(within(brand as HTMLElement).getByText('团队工作台'))
-      .toBeInTheDocument()
-    expect(brand?.querySelector('img')).toHaveAttribute(
-      'src',
-      'data:image/png;base64,iVBORw0KGgo='
-    )
-  })
+    await screen.findByRole("heading", {
+      name: "今天想一起完成什么？",
+    });
+    const brand = document.querySelector(".brand");
+    expect(brand).not.toBeNull();
+    expect(
+      within(brand as HTMLElement).getByText("研发伙伴"),
+    ).toBeInTheDocument();
+    expect(
+      within(brand as HTMLElement).getByText("团队工作台"),
+    ).toBeInTheDocument();
+    expect(brand?.querySelector("img")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+  });
 
-  it('renders the unified user and Scheduled Task queue above the Composer', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000951'
+  it("renders the unified user and Scheduled Task queue above the Composer", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000951";
     vi.mocked(api.conversations.list).mockResolvedValue([
       {
         id: conversationId,
         projectId,
-        title: '排队对话',
+        title: "排队对话",
         updatedAt: Date.now(),
-        messages: []
-      }
-    ])
+        messages: [],
+      },
+    ]);
     vi.mocked(api.conversationQueue.list).mockResolvedValue([
       {
-        id: '00000000-0000-4000-8000-000000000952',
+        id: "00000000-0000-4000-8000-000000000952",
         conversationId,
-        source: 'schedule',
-        label: '每日汇总',
-        createdAt: '2026-08-20T09:00:00.000Z'
+        source: "schedule",
+        label: "每日汇总",
+        createdAt: "2026-08-20T09:00:00.000Z",
       },
       {
-        id: '00000000-0000-4000-8000-000000000953',
+        id: "00000000-0000-4000-8000-000000000953",
         conversationId,
-        source: 'user',
-        label: '补充说明',
-        createdAt: '2026-08-20T09:01:00.000Z'
-      }
-    ])
+        source: "user",
+        label: "补充说明",
+        createdAt: "2026-08-20T09:01:00.000Z",
+      },
+    ]);
 
-    render(<App />)
+    render(<App />);
 
-    const queue = await screen.findByRole('region', {
-      name: '对话待发送队列'
-    })
-    expect(queue.parentElement).toHaveClass('composer-wrap')
-    expect(queue.closest('.composer')).toBeNull()
-    expect(queue.nextElementSibling).toHaveClass('composer')
-    expect(within(queue).queryByText('待发送（2）')).not.toBeInTheDocument()
-    expect(within(queue).getByText('每日汇总')).toBeInTheDocument()
-    expect(within(queue).getByText('补充说明')).toBeInTheDocument()
+    const queue = await screen.findByRole("region", {
+      name: "对话待发送队列",
+    });
+    expect(queue.parentElement).toHaveClass("composer-wrap");
+    expect(queue.closest(".composer")).toBeNull();
+    expect(queue.nextElementSibling).toHaveClass("composer");
+    expect(within(queue).queryByText("待发送（2）")).not.toBeInTheDocument();
+    expect(within(queue).getByText("每日汇总")).toBeInTheDocument();
+    expect(within(queue).getByText("补充说明")).toBeInTheDocument();
     fireEvent.click(
-      within(queue).getByRole('button', {
-        name: '立即运行“每日汇总”'
-      })
-    )
+      within(queue).getByRole("button", {
+        name: "立即运行“每日汇总”",
+      }),
+    );
     await waitFor(() =>
-      expect(
-        api.conversationQueue.interruptAndRun
-      ).toHaveBeenCalledWith(
-        '00000000-0000-4000-8000-000000000952'
-      )
-    )
+      expect(api.conversationQueue.interruptAndRun).toHaveBeenCalledWith(
+        "00000000-0000-4000-8000-000000000952",
+      ),
+    );
     fireEvent.click(
-      within(queue).getByRole('button', {
-        name: '从待发送队列删除“补充说明”'
-      })
-    )
+      within(queue).getByRole("button", {
+        name: "从待发送队列删除“补充说明”",
+      }),
+    );
     await waitFor(() =>
       expect(api.conversationQueue.remove).toHaveBeenCalledWith(
-        '00000000-0000-4000-8000-000000000953'
-      )
-    )
-  })
+        "00000000-0000-4000-8000-000000000953",
+      ),
+    );
+  });
 
-  it('preserves scoped queue updates that arrive during another refresh', async () => {
-    const firstConversationId =
-      '00000000-0000-4000-8000-000000000954'
-    const secondConversationId =
-      '00000000-0000-4000-8000-000000000955'
+  it("preserves scoped queue updates that arrive during another refresh", async () => {
+    const firstConversationId = "00000000-0000-4000-8000-000000000954";
+    const secondConversationId = "00000000-0000-4000-8000-000000000955";
     vi.mocked(api.conversations.list).mockResolvedValue([
       {
         id: firstConversationId,
         projectId,
-        title: '第一条排队对话',
+        title: "第一条排队对话",
         updatedAt: Date.now(),
-        messages: []
+        messages: [],
       },
       {
         id: secondConversationId,
         projectId,
-        title: '第二条排队对话',
+        title: "第二条排队对话",
         updatedAt: Date.now() - 1,
-        messages: []
-      }
-    ])
-    const firstRefresh = deferred<
-      Awaited<
-        ReturnType<DesktopApi['conversationQueue']['list']>
-      >
-    >()
+        messages: [],
+      },
+    ]);
+    const firstRefresh =
+      deferred<Awaited<ReturnType<DesktopApi["conversationQueue"]["list"]>>>();
     vi.mocked(api.conversationQueue.list).mockImplementation(
       async (conversationId) => {
         if (conversationId === firstConversationId) {
-          return firstRefresh.promise
+          return firstRefresh.promise;
         }
-        return []
-      }
-    )
+        return [];
+      },
+    );
 
-    render(<App />)
-    await waitFor(() =>
-      expect(conversationQueueChangeListener).toBeDefined()
-    )
+    render(<App />);
+    await waitFor(() => expect(conversationQueueChangeListener).toBeDefined());
     act(() => {
-      conversationQueueChangeListener?.(firstConversationId)
-    })
+      conversationQueueChangeListener?.(firstConversationId);
+    });
     await waitFor(() =>
       expect(api.conversationQueue.list).toHaveBeenCalledWith(
-        firstConversationId
-      )
-    )
+        firstConversationId,
+      ),
+    );
     await act(async () => {
-      conversationQueueChangeListener?.(secondConversationId)
-      await new Promise((resolve) => window.setTimeout(resolve, 0))
-    })
+      conversationQueueChangeListener?.(secondConversationId);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
     act(() => {
       firstRefresh.resolve([
         {
-          id: '00000000-0000-4000-8000-000000000956',
+          id: "00000000-0000-4000-8000-000000000956",
           conversationId: firstConversationId,
-          source: 'user',
-          label: '不能被后续刷新丢弃',
-          createdAt: '2026-08-20T09:03:00.000Z'
-        }
-      ])
-    })
+          source: "user",
+          label: "不能被后续刷新丢弃",
+          createdAt: "2026-08-20T09:03:00.000Z",
+        },
+      ]);
+    });
 
-    expect(
-      await screen.findByText('不能被后续刷新丢弃')
-    ).toBeInTheDocument()
+    expect(await screen.findByText("不能被后续刷新丢弃")).toBeInTheDocument();
     await waitFor(() =>
       expect(api.conversationQueue.list).toHaveBeenCalledWith(
-        secondConversationId
-      )
-    )
-  })
+        secondConversationId,
+      ),
+    );
+  });
 
-  it('discovers product Tasks through their Conversation without exposing Runs', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000821'
-    const taskId = '00000000-0000-4000-8000-000000000822'
-    const scheduleId =
-      '00000000-0000-4000-8000-000000000823'
+  it("discovers product Tasks through their Conversation without exposing Runs", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000821";
+    const taskId = "00000000-0000-4000-8000-000000000822";
+    const scheduleId = "00000000-0000-4000-8000-000000000823";
     const conversation: ConversationSnapshot = {
       id: conversationId,
       projectId,
-      title: '产品发布讨论',
+      title: "产品发布讨论",
       updatedAt: Date.now(),
-      messages: []
-    }
+      messages: [],
+    };
     const task: AssistantTask = {
       id: taskId,
       projectId,
       conversationId,
       scheduleId,
-      title: '每周发布总结',
-      instructions: '总结本周发布进度',
-      origin: 'schedule',
-      status: 'idle',
-      createdAt: '2026-08-19T00:00:00.000Z'
-    }
+      title: "每周发布总结",
+      instructions: "总结本周发布进度",
+      origin: "schedule",
+      status: "idle",
+      createdAt: "2026-08-19T00:00:00.000Z",
+    };
     const schedule: AssistantSchedule = {
       id: scheduleId,
       projectId,
@@ -1694,96 +1620,95 @@ describe('App', () => {
       conversationId,
       title: task.title,
       prompt: task.instructions,
-      workMode: 'execute',
-      recurrence: 'weekly',
-      nextRunAt: '2026-08-21T09:00:00.000Z',
+      workMode: "execute",
+      recurrence: "weekly",
+      nextRunAt: "2026-08-21T09:00:00.000Z",
       enabled: true,
       createdAt: task.createdAt,
-      updatedAt: task.createdAt
-    }
-    vi.mocked(api.conversations.list).mockResolvedValue([conversation])
-    vi.mocked(api.tasks.list).mockResolvedValue([task])
-    vi.mocked(api.schedules.list).mockResolvedValue([schedule])
+      updatedAt: task.createdAt,
+    };
+    vi.mocked(api.conversations.list).mockResolvedValue([conversation]);
+    vi.mocked(api.tasks.list).mockResolvedValue([task]);
+    vi.mocked(api.schedules.list).mockResolvedValue([schedule]);
 
-    render(<App />)
+    render(<App />);
 
     const toggle = await screen.findByLabelText(
-      '展开或折叠“产品发布讨论”中的 1 个任务'
-    )
+      "展开或折叠“产品发布讨论”中的 1 个任务",
+    );
     const conversationButton =
-      toggle.parentElement?.querySelector('.conversation-item')
-    expect(toggle.nextElementSibling).toBe(conversationButton)
+      toggle.parentElement?.querySelector(".conversation-item");
+    expect(toggle.nextElementSibling).toBe(conversationButton);
     expect(
-      conversationButton?.querySelector('.conversation-item__title')
-    ).toHaveAttribute('title', '产品发布讨论')
-    expect(screen.queryByText('任务 1')).not.toBeInTheDocument()
-    fireEvent.click(toggle)
-    const taskTitle = await screen.findByText('每周发布总结', {
-      selector: '.conversation-task-child__title'
-    })
-    const taskChild = taskTitle.closest('button')
-    expect(taskChild).not.toBeNull()
+      conversationButton?.querySelector(".conversation-item__title"),
+    ).toHaveAttribute("title", "产品发布讨论");
+    expect(screen.queryByText("任务 1")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    const taskTitle = await screen.findByText("每周发布总结", {
+      selector: ".conversation-task-child__title",
+    });
+    const taskChild = taskTitle.closest("button");
+    expect(taskChild).not.toBeNull();
+    expect(taskChild?.querySelector(".task-status-dot")).toHaveClass(
+      "task-status-dot--idle",
+    );
     expect(
-      taskChild?.querySelector('.task-status-dot')
-    ).toHaveClass('task-status-dot--idle')
-    expect(taskChild?.querySelector('.lucide-clock-fading'))
-      .not.toBeInTheDocument()
+      taskChild?.querySelector(".lucide-clock-fading"),
+    ).not.toBeInTheDocument();
     expect(
-      taskChild?.querySelector('.conversation-task-child__meta')
-    ).toHaveTextContent('Execute · 每周 · 空闲')
-    expect(screen.queryByText('Run')).not.toBeInTheDocument()
-    fireEvent.click(taskChild!)
-    const taskRegion = await screen.findByRole('region', {
-      name: '当前会话的任务'
-    })
-    expect(within(taskRegion).getByText('Execute')).toBeInTheDocument()
-  })
+      taskChild?.querySelector(".conversation-task-child__meta"),
+    ).toHaveTextContent("Execute · 每周 · 空闲");
+    expect(screen.queryByText("Run")).not.toBeInTheDocument();
+    fireEvent.click(taskChild!);
+    const taskRegion = await screen.findByRole("region", {
+      name: "当前会话的任务",
+    });
+    expect(within(taskRegion).getByText("Execute")).toBeInTheDocument();
+  });
 
-  it('keeps completed Conversation Task metadata compact and accessible', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000824'
-    const scheduleId =
-      '00000000-0000-4000-8000-000000000828'
+  it("keeps completed Conversation Task metadata compact and accessible", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000824";
+    const scheduleId = "00000000-0000-4000-8000-000000000828";
     const conversation: ConversationSnapshot = {
       id: conversationId,
       projectId,
-      title: '任务状态会话',
+      title: "任务状态会话",
       updatedAt: Date.now(),
-      messages: []
-    }
+      messages: [],
+    };
     const tasks: AssistantTask[] = [
       {
-        id: '00000000-0000-4000-8000-000000000825',
+        id: "00000000-0000-4000-8000-000000000825",
         projectId,
         conversationId,
         scheduleId,
-        title: '归档任务',
-        instructions: '检查完成状态',
-        origin: 'schedule',
-        status: 'completed',
-        createdAt: '2026-08-19T03:00:00.000Z'
+        title: "归档任务",
+        instructions: "检查完成状态",
+        origin: "schedule",
+        status: "completed",
+        createdAt: "2026-08-19T03:00:00.000Z",
       },
       {
-        id: '00000000-0000-4000-8000-000000000826',
+        id: "00000000-0000-4000-8000-000000000826",
         projectId,
         conversationId,
-        title: '运行中任务',
-        instructions: '检查运行状态',
-        origin: 'schedule',
-        status: 'running',
-        createdAt: '2026-08-19T02:00:00.000Z'
+        title: "运行中任务",
+        instructions: "检查运行状态",
+        origin: "schedule",
+        status: "running",
+        createdAt: "2026-08-19T02:00:00.000Z",
       },
       {
-        id: '00000000-0000-4000-8000-000000000827',
+        id: "00000000-0000-4000-8000-000000000827",
         projectId,
         conversationId,
-        title: '失败任务',
-        instructions: '检查失败状态',
-        origin: 'schedule',
-        status: 'failed',
-        createdAt: '2026-08-19T01:00:00.000Z'
-      }
-    ]
+        title: "失败任务",
+        instructions: "检查失败状态",
+        origin: "schedule",
+        status: "failed",
+        createdAt: "2026-08-19T01:00:00.000Z",
+      },
+    ];
     const schedule: AssistantSchedule = {
       id: scheduleId,
       projectId,
@@ -1791,970 +1716,909 @@ describe('App', () => {
       conversationId,
       title: tasks[0]!.title,
       prompt: tasks[0]!.instructions,
-      workMode: 'ask',
-      recurrence: 'once',
-      nextRunAt: '2026-08-19T03:00:00.000Z',
+      workMode: "ask",
+      recurrence: "once",
+      nextRunAt: "2026-08-19T03:00:00.000Z",
       enabled: false,
       createdAt: tasks[0]!.createdAt,
-      updatedAt: tasks[0]!.createdAt
-    }
-    vi.mocked(api.conversations.list).mockResolvedValue([
-      conversation
-    ])
-    vi.mocked(api.tasks.list).mockResolvedValue(tasks)
-    vi.mocked(api.schedules.list).mockResolvedValue([schedule])
+      updatedAt: tasks[0]!.createdAt,
+    };
+    vi.mocked(api.conversations.list).mockResolvedValue([conversation]);
+    vi.mocked(api.tasks.list).mockResolvedValue(tasks);
+    vi.mocked(api.schedules.list).mockResolvedValue([schedule]);
 
-    render(<App />)
+    render(<App />);
 
     fireEvent.click(
-      await screen.findByLabelText(
-        '展开或折叠“任务状态会话”中的 3 个任务'
-      )
-    )
-    const completedTitle = await screen.findByText('归档任务', {
-      selector: '.conversation-task-child__title'
-    })
-    const completedTask = completedTitle.closest('button')
+      await screen.findByLabelText("展开或折叠“任务状态会话”中的 3 个任务"),
+    );
+    const completedTitle = await screen.findByText("归档任务", {
+      selector: ".conversation-task-child__title",
+    });
+    const completedTask = completedTitle.closest("button");
     const completedStatus = completedTask?.querySelector(
-      '.conversation-task-child__completed-status'
-    )
+      ".conversation-task-child__completed-status",
+    );
     expect(completedStatus).toHaveClass(
-      'task-status-dot',
-      'task-status-dot--completed'
-    )
-    expect(completedStatus).toHaveAttribute('title', '已完成')
+      "task-status-dot",
+      "task-status-dot--completed",
+    );
+    expect(completedStatus).toHaveAttribute("title", "已完成");
+    expect(completedStatus?.querySelector(".lucide-check")).toBeInTheDocument();
+    expect(completedTask?.firstElementChild).toBe(completedTitle);
+    expect(completedTask?.lastElementChild).toBe(completedStatus);
+    expect(completedTask).toHaveAccessibleName(/已完成/u);
     expect(
-      completedStatus?.querySelector('.lucide-check')
-    ).toBeInTheDocument()
-    expect(completedTask?.firstElementChild).toBe(completedTitle)
-    expect(completedTask?.lastElementChild).toBe(completedStatus)
-    expect(completedTask).toHaveAccessibleName(/已完成/u)
+      completedTask?.querySelector(".conversation-task-child__meta"),
+    ).toHaveTextContent("Ask · 仅一次");
     expect(
-      completedTask?.querySelector('.conversation-task-child__meta')
-    ).toHaveTextContent('Ask · 仅一次')
-    expect(
-      completedTask?.querySelector('.conversation-task-child__meta')
-    ).not.toHaveTextContent('已完成')
+      completedTask?.querySelector(".conversation-task-child__meta"),
+    ).not.toHaveTextContent("已完成");
 
     for (const [title, status, label] of [
-      ['运行中任务', 'running', '运行中'],
-      ['失败任务', 'failed', '失败']
+      ["运行中任务", "running", "运行中"],
+      ["失败任务", "failed", "失败"],
     ] as const) {
       const taskTitle = await screen.findByText(title, {
-        selector: '.conversation-task-child__title'
-      })
-      const taskChild = taskTitle.closest('button')
-      expect(
-        taskChild?.querySelector('.task-status-dot')
-      ).toHaveClass(`task-status-dot--${status}`)
-      expect(taskChild?.firstElementChild).toBe(taskTitle)
+        selector: ".conversation-task-child__title",
+      });
+      const taskChild = taskTitle.closest("button");
+      expect(taskChild?.querySelector(".task-status-dot")).toHaveClass(
+        `task-status-dot--${status}`,
+      );
+      expect(taskChild?.firstElementChild).toBe(taskTitle);
       expect(taskChild?.lastElementChild).toBe(
-        taskChild?.querySelector('.task-status-dot')
-      )
+        taskChild?.querySelector(".task-status-dot"),
+      );
       expect(
-        taskChild?.querySelector('.conversation-task-child__meta')
-      ).toHaveTextContent(label)
+        taskChild?.querySelector(".conversation-task-child__meta"),
+      ).toHaveTextContent(label);
     }
     expect(
-      document.querySelector('.conversation-task-child__icon')
-    ).not.toBeInTheDocument()
-  })
+      document.querySelector(".conversation-task-child__icon"),
+    ).not.toBeInTheDocument();
+  });
 
-  it('routes scheduled Task approvals to the associated Conversation', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000831'
-    const taskId = '00000000-0000-4000-8000-000000000832'
+  it("routes scheduled Task approvals to the associated Conversation", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000831";
+    const taskId = "00000000-0000-4000-8000-000000000832";
     vi.mocked(api.conversations.list).mockResolvedValue([
       {
         id: conversationId,
         projectId,
-        title: '发布审批会话',
+        title: "发布审批会话",
         updatedAt: Date.now(),
-        messages: []
-      }
-    ])
+        messages: [],
+      },
+    ]);
     vi.mocked(api.tasks.list).mockResolvedValue([
       {
         id: taskId,
         projectId,
         conversationId,
-        scheduleId: '00000000-0000-4000-8000-000000000833',
-        title: '发布任务',
-        instructions: '更新发布文件',
-        origin: 'schedule',
-        status: 'running',
-        createdAt: '2026-08-19T00:00:00.000Z'
-      }
-    ])
-    render(<App />)
-    await screen.findAllByText('发布审批会话')
-    await waitFor(() => expect(api.tasks.list).toHaveBeenCalled())
+        scheduleId: "00000000-0000-4000-8000-000000000833",
+        title: "发布任务",
+        instructions: "更新发布文件",
+        origin: "schedule",
+        status: "running",
+        createdAt: "2026-08-19T00:00:00.000Z",
+      },
+    ]);
+    render(<App />);
+    await screen.findAllByText("发布审批会话");
+    await waitFor(() => expect(api.tasks.list).toHaveBeenCalled());
 
     act(() => {
       agentListener?.({
         requestId: taskId,
-        type: 'approval',
-        approvalId: '00000000-0000-4000-8000-000000000834',
-        title: '请求写入工作区',
-        description: '更新发布文件',
-        toolName: 'write_file',
-        argumentSummary: 'release.md',
-        allowPermanent: false
-      })
-    })
+        type: "approval",
+        approvalId: "00000000-0000-4000-8000-000000000834",
+        title: "请求写入工作区",
+        description: "更新发布文件",
+        toolName: "write_file",
+        argumentSummary: "release.md",
+        allowPermanent: false,
+      });
+    });
 
-    expect(await screen.findAllByText('请求写入工作区'))
-      .not.toHaveLength(0)
-    expect(screen.getByText('仅此次')).toBeInTheDocument()
-    expect(screen.getByLabelText('任务结果：发布任务'))
-      .toBeInTheDocument()
-  })
+    expect(await screen.findAllByText("请求写入工作区")).not.toHaveLength(0);
+    expect(screen.getByText("仅此次")).toBeInTheDocument();
+    expect(screen.getByLabelText("任务结果：发布任务")).toBeInTheDocument();
+  });
 
-  it('idle-preloads only the small Heartbeat route at startup', async () => {
-    render(<App />)
+  it("idle-preloads only the small Heartbeat route at startup", async () => {
+    render(<App />);
 
     expect(window.requestIdleCallback).toHaveBeenCalledWith(
       expect.any(Function),
-      { timeout: 2000 }
-    )
-    const idleCallback = vi.mocked(window.requestIdleCallback)
-      .mock.calls[0]?.[0]
+      { timeout: 2000 },
+    );
+    const idleCallback = vi.mocked(window.requestIdleCallback).mock
+      .calls[0]?.[0];
     await act(async () => {
       idleCallback?.({
         didTimeout: false,
-        timeRemaining: () => 50
-      })
-    })
-    await waitFor(() => expect(routeModuleLoads.heartbeat).toBe(1))
+        timeRemaining: () => 50,
+      });
+    });
+    await waitFor(() => expect(routeModuleLoads.heartbeat).toBe(1));
     expect(routeModuleLoads).toMatchObject({
       activity: 0,
       knowledge: 0,
       magicNotes: 0,
-      settings: 0
-    })
-  })
+      settings: 0,
+    });
+  });
 
-  it('saves branding from Appearance and updates the sidebar immediately', async () => {
-    render(<App />)
+  it("saves branding from Appearance and updates the sidebar immediately", async () => {
+    render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', {
-        name: /本地工作区/u
-      })
-    )
-    await screen.findByRole(
-      'heading',
-      { name: '设置中心' },
-      { timeout: 3000 }
-    )
-    fireEvent.click(
-      screen.getByRole('tab', { name: '外观' })
-    )
-    fireEvent.change(screen.getByLabelText('品牌名称'), {
-      target: { value: '研发伙伴' }
-    })
-    fireEvent.change(screen.getByLabelText('中文副标题'), {
-      target: { value: '团队工作台' }
-    })
-    fireEvent.click(
-      screen.getByRole('button', { name: '保存品牌设置' })
-    )
+      await screen.findByRole("button", {
+        name: /本地工作区/u,
+      }),
+    );
+    await screen.findByRole("heading", { name: "设置中心" }, { timeout: 3000 });
+    fireEvent.click(screen.getByRole("tab", { name: "外观" }));
+    fireEvent.change(screen.getByLabelText("品牌名称"), {
+      target: { value: "研发伙伴" },
+    });
+    fireEvent.change(screen.getByLabelText("中文副标题"), {
+      target: { value: "团队工作台" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存品牌设置" }));
 
-    expect(await screen.findByText('品牌设置已保存'))
-      .toBeInTheDocument()
-    const brand = document.querySelector('.brand')
-    expect(brand).not.toBeNull()
-    expect(within(brand as HTMLElement).getByText('研发伙伴'))
-      .toBeInTheDocument()
-    expect(within(brand as HTMLElement).getByText('团队工作台'))
-      .toBeInTheDocument()
+    expect(await screen.findByText("品牌设置已保存")).toBeInTheDocument();
+    const brand = document.querySelector(".brand");
+    expect(brand).not.toBeNull();
+    expect(
+      within(brand as HTMLElement).getByText("研发伙伴"),
+    ).toBeInTheDocument();
+    expect(
+      within(brand as HTMLElement).getByText("团队工作台"),
+    ).toBeInTheDocument();
     expect(loadBrandingPreferences()).toMatchObject({
-      name: '研发伙伴',
-      subtitleZhCN: '团队工作台'
-    })
-  })
+      name: "研发伙伴",
+      subtitleZhCN: "团队工作台",
+    });
+  });
 
-  it('preloads a heavy route once across repeated pointer and focus intent', async () => {
-    render(<App />)
-    const activity = await screen.findByRole('button', {
-      name: '运行记录'
-    })
+  it("preloads a heavy route once across repeated pointer and focus intent", async () => {
+    render(<App />);
+    const activity = await screen.findByRole("button", {
+      name: "运行记录",
+    });
 
-    fireEvent.pointerEnter(activity)
-    fireEvent.focus(activity)
-    fireEvent.pointerEnter(activity)
+    fireEvent.pointerEnter(activity);
+    fireEvent.focus(activity);
+    fireEvent.pointerEnter(activity);
 
-    await waitFor(() => expect(routeModuleLoads.activity).toBe(1))
-  })
+    await waitFor(() => expect(routeModuleLoads.activity).toBe(1));
+  });
 
-  it('waits for project bootstrap before project-scoped startup loads', async () => {
-    const projects = deferred<(typeof project)[]>()
-    vi.mocked(api.projects.list).mockImplementationOnce(
-      () => projects.promise
-    )
+  it("waits for project bootstrap before project-scoped startup loads", async () => {
+    const projects = deferred<(typeof project)[]>();
+    vi.mocked(api.projects.list).mockImplementationOnce(() => projects.promise);
 
-    render(<App />)
+    render(<App />);
 
-    expect(api.projects.list).toHaveBeenCalledOnce()
-    expect(api.memory.list).not.toHaveBeenCalled()
-    expect(api.schedules.list).not.toHaveBeenCalled()
-    expect(api.heartbeats.list).not.toHaveBeenCalled()
+    expect(api.projects.list).toHaveBeenCalledOnce();
+    expect(api.memory.list).not.toHaveBeenCalled();
+    expect(api.schedules.list).not.toHaveBeenCalled();
+    expect(api.heartbeats.list).not.toHaveBeenCalled();
 
-    await act(async () => projects.resolve([project]))
+    await act(async () => projects.resolve([project]));
 
     await waitFor(() => {
-      expect(api.memory.list).toHaveBeenCalledTimes(2)
-      expect(api.memory.list).toHaveBeenCalledWith(projectId)
-      expect(api.memory.list).toHaveBeenCalledWith()
-      expect(api.schedules.list).toHaveBeenCalledOnce()
-      expect(api.schedules.list).toHaveBeenCalledWith()
-      expect(api.heartbeats.list).toHaveBeenCalledOnce()
-    })
-  })
+      expect(api.memory.list).toHaveBeenCalledTimes(2);
+      expect(api.memory.list).toHaveBeenCalledWith(projectId);
+      expect(api.memory.list).toHaveBeenCalledWith();
+      expect(api.schedules.list).toHaveBeenCalledOnce();
+      expect(api.schedules.list).toHaveBeenCalledWith();
+      expect(api.heartbeats.list).toHaveBeenCalledOnce();
+    });
+  });
 
-  it('shows an accessible fallback while a lazy route loads', async () => {
-    lazyRouteMocks.suspendKnowledgeRoute()
+  it("shows an accessible fallback while a lazy route loads", async () => {
+    lazyRouteMocks.suspendKnowledgeRoute();
     try {
-      render(<App />)
+      render(<App />);
 
-      fireEvent.click(
-        await screen.findByRole('button', { name: '知识库' })
-      )
+      fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
 
-      const loading = screen.getByRole('status', {
-        name: '正在加载页面…'
-      })
-      expect(loading).toHaveAttribute('aria-live', 'polite')
-      expect(loading).toHaveAttribute('aria-busy', 'true')
-      await act(async () => lazyRouteMocks.releaseKnowledgeRoute())
+      const loading = screen.getByRole("status", {
+        name: "正在加载页面…",
+      });
+      expect(loading).toHaveAttribute("aria-live", "polite");
+      expect(loading).toHaveAttribute("aria-busy", "true");
+      await act(async () => lazyRouteMocks.releaseKnowledgeRoute());
       expect(
         await screen.findByRole(
-          'heading',
+          "heading",
           {
             level: 1,
-            name: '知识库'
+            name: "知识库",
           },
-          { timeout: 3000 }
-        )
-      ).toBeInTheDocument()
+          { timeout: 3000 },
+        ),
+      ).toBeInTheDocument();
       expect(
-        screen.queryByRole('status', { name: '正在加载页面…' })
-      ).not.toBeInTheDocument()
+        screen.queryByRole("status", { name: "正在加载页面…" }),
+      ).not.toBeInTheDocument();
     } finally {
-      lazyRouteMocks.releaseKnowledgeRoute()
+      lazyRouteMocks.releaseKnowledgeRoute();
     }
-  })
+  });
 
-  it('keeps a recently visited workspace page mounted', async () => {
-    render(<App />)
-    fireEvent.click(
-      await screen.findByRole('button', { name: '知识库' })
-    )
-    const heading = await screen.findByRole('heading', {
+  it("keeps a recently visited workspace page mounted", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
+    const heading = await screen.findByRole("heading", {
       level: 1,
-      name: '知识库'
-    })
-    const route = heading.closest<HTMLElement>('[data-route="knowledge"]')
-    expect(route).not.toHaveAttribute('hidden')
+      name: "知识库",
+    });
+    const route = heading.closest<HTMLElement>('[data-route="knowledge"]');
+    expect(route).not.toHaveAttribute("hidden");
 
-    fireEvent.click(screen.getByRole('button', { name: '对话' }))
-    expect(heading).toBeInTheDocument()
-    expect(route).toHaveAttribute('hidden')
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    expect(heading).toBeInTheDocument();
+    expect(route).toHaveAttribute("hidden");
 
-    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
     expect(
-      await screen.findByRole('heading', {
+      await screen.findByRole("heading", {
         level: 1,
-        name: '知识库'
-      })
-    ).toBe(heading)
-    expect(route).not.toHaveAttribute('hidden')
-  })
+        name: "知识库",
+      }),
+    ).toBe(heading);
+    expect(route).not.toHaveAttribute("hidden");
+  });
 
-  it('enforces the workspace KeepAlive cap during rapid visits', async () => {
-    let now = 2_000_000
-    vi.spyOn(Date, 'now').mockImplementation(() => ++now)
-    render(<App />)
+  it("enforces the workspace KeepAlive cap during rapid visits", async () => {
+    let now = 2_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => ++now);
+    render(<App />);
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: '知识库' })
-    )
-    await screen.findByRole('heading', { name: '知识库' })
-    fireEvent.click(screen.getByRole('button', { name: '智能心跳' }))
-    await screen.findByRole('heading', { name: '智能心跳' })
-    fireEvent.click(screen.getByRole('button', { name: '运行记录' }))
-    await screen.findByRole('heading', { name: '运行记录' })
-    fireEvent.click(screen.getByRole('button', { name: '对话' }))
-    fireEvent.click(
-      screen.getByRole('button', { name: /本地工作区/u })
-    )
-    await screen.findByRole('heading', { name: '设置中心' })
+    fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
+    await screen.findByRole("heading", { name: "知识库" });
+    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    await screen.findByRole("heading", { name: "智能心跳" });
+    fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
+    await screen.findByRole("heading", { name: "运行记录" });
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    fireEvent.click(screen.getByRole("button", { name: /本地工作区/u }));
+    await screen.findByRole("heading", { name: "设置中心" });
 
+    expect(document.querySelectorAll(".workspace-route-cache")).toHaveLength(4);
     expect(
-      document.querySelectorAll('.workspace-route-cache')
-    ).toHaveLength(4)
-    expect(
-      document.querySelector('[data-route="knowledge"]')
-    ).not.toBeInTheDocument()
-  })
+      document.querySelector('[data-route="knowledge"]'),
+    ).not.toBeInTheDocument();
+  });
 
-  it('preserves title, message, and project filtering with deferred search', async () => {
+  it("preserves title, message, and project filtering with deferred search", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000411',
+        id: "00000000-0000-4000-8000-000000000411",
         projectId,
-        title: '标题里的 Alpha',
+        title: "标题里的 Alpha",
         updatedAt: 1_775_000_000_003,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000412',
-            role: 'assistant',
-            content: '普通正文',
+            id: "00000000-0000-4000-8000-000000000412",
+            role: "assistant",
+            content: "普通正文",
             createdAt: 1_775_000_000_003,
-            state: 'complete'
-          }
-        ]
+            state: "complete",
+          },
+        ],
       },
       {
-        id: '00000000-0000-4000-8000-000000000413',
+        id: "00000000-0000-4000-8000-000000000413",
         projectId,
-        title: '正文命中的会话',
+        title: "正文命中的会话",
         updatedAt: 1_775_000_000_002,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000414',
-            role: 'user',
-            content: '这里包含 Beta Needle',
+            id: "00000000-0000-4000-8000-000000000414",
+            role: "user",
+            content: "这里包含 Beta Needle",
             createdAt: 1_775_000_000_002,
-            state: 'complete'
-          }
-        ]
+            state: "complete",
+          },
+        ],
       },
       {
-        id: '00000000-0000-4000-8000-000000000415',
-        projectId: '00000000-0000-4000-8000-000000000999',
-        title: '其他项目里的 Alpha',
+        id: "00000000-0000-4000-8000-000000000415",
+        projectId: "00000000-0000-4000-8000-000000000999",
+        title: "其他项目里的 Alpha",
         updatedAt: 1_775_000_000_001,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000416',
-            role: 'user',
-            content: 'Beta Needle',
+            id: "00000000-0000-4000-8000-000000000416",
+            role: "user",
+            content: "Beta Needle",
             createdAt: 1_775_000_000_001,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    const { container } = render(<App />)
-    const search = await screen.findByLabelText('搜索对话')
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    const { container } = render(<App />);
+    const search = await screen.findByLabelText("搜索对话");
     const conversationList =
-      container.querySelector<HTMLElement>('.conversation-list')
+      container.querySelector<HTMLElement>(".conversation-list");
     if (!conversationList) {
-      throw new Error('Missing conversation list')
+      throw new Error("Missing conversation list");
     }
     expect(
-      await within(conversationList).findByText('标题里的 Alpha')
-    ).toBeInTheDocument()
+      await within(conversationList).findByText("标题里的 Alpha"),
+    ).toBeInTheDocument();
     expect(
-      within(conversationList).queryByText('其他项目里的 Alpha')
-    ).not.toBeInTheDocument()
+      within(conversationList).queryByText("其他项目里的 Alpha"),
+    ).not.toBeInTheDocument();
 
-    fireEvent.change(search, { target: { value: 'beta needle' } })
-    expect(search).toHaveValue('beta needle')
+    fireEvent.change(search, { target: { value: "beta needle" } });
+    expect(search).toHaveValue("beta needle");
     await waitFor(() => {
       expect(
-        within(conversationList).getByText('正文命中的会话')
-      ).toBeInTheDocument()
+        within(conversationList).getByText("正文命中的会话"),
+      ).toBeInTheDocument();
       expect(
-        within(conversationList).queryByText('标题里的 Alpha')
-      ).not.toBeInTheDocument()
-    })
+        within(conversationList).queryByText("标题里的 Alpha"),
+      ).not.toBeInTheDocument();
+    });
 
-    fireEvent.change(search, { target: { value: 'ALPHA' } })
+    fireEvent.change(search, { target: { value: "ALPHA" } });
     await waitFor(() => {
       expect(
-        within(conversationList).getByText('标题里的 Alpha')
-      ).toBeInTheDocument()
+        within(conversationList).getByText("标题里的 Alpha"),
+      ).toBeInTheDocument();
       expect(
-        within(conversationList).queryByText('正文命中的会话')
-      ).not.toBeInTheDocument()
+        within(conversationList).queryByText("正文命中的会话"),
+      ).not.toBeInTheDocument();
       expect(
-        within(conversationList).queryByText('其他项目里的 Alpha')
-      ).not.toBeInTheDocument()
-    })
+        within(conversationList).queryByText("其他项目里的 Alpha"),
+      ).not.toBeInTheDocument();
+    });
 
-    fireEvent.change(search, { target: { value: 'missing topic' } })
+    fireEvent.change(search, { target: { value: "missing topic" } });
     expect(
-      await within(conversationList).findByText('没有匹配的对话')
-    ).toBeInTheDocument()
+      await within(conversationList).findByText("没有匹配的对话"),
+    ).toBeInTheDocument();
     expect(
       within(conversationList).getByText(
-        '请修改搜索关键词，或清除搜索后查看全部会话。'
-      )
-    ).toBeInTheDocument()
+        "请修改搜索关键词，或清除搜索后查看全部会话。",
+      ),
+    ).toBeInTheDocument();
     fireEvent.click(
-      within(conversationList).getByRole('button', {
-        name: '清除搜索'
-      })
-    )
-    expect(search).toHaveValue('')
+      within(conversationList).getByRole("button", {
+        name: "清除搜索",
+      }),
+    );
+    expect(search).toHaveValue("");
     expect(
-      await within(conversationList).findByText('标题里的 Alpha')
-    ).toBeInTheDocument()
-  })
+      await within(conversationList).findByText("标题里的 Alpha"),
+    ).toBeInTheDocument();
+  });
 
-  it('keeps Settings open when the interface language changes', async () => {
+  it("keeps Settings open when the interface language changes", async () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       updateSettings: vi.fn(),
       check: vi.fn(),
       openReleasePage: vi.fn(),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
       render(
         <UiLocaleProvider initialPreference="zh-CN">
           <App />
-        </UiLocaleProvider>
-      )
+        </UiLocaleProvider>,
+      );
 
       fireEvent.click(
-        await screen.findByRole('button', {
-          name: /本地工作区/u
-        })
-      )
+        await screen.findByRole("button", {
+          name: /本地工作区/u,
+        }),
+      );
       await screen.findByRole(
-        'heading',
-        { name: '设置中心' },
-        { timeout: 3000 }
-      )
-      fireEvent.click(
-        screen.getByRole('tab', { name: '外观' })
-      )
-      const projectsList = vi.mocked(api.projects.list)
-      const expertsList = vi.mocked(api.experts.list)
-      const tasksList = vi.mocked(api.tasks.list)
+        "heading",
+        { name: "设置中心" },
+        { timeout: 3000 },
+      );
+      fireEvent.click(screen.getByRole("tab", { name: "外观" }));
+      const projectsList = vi.mocked(api.projects.list);
+      const expertsList = vi.mocked(api.experts.list);
+      const tasksList = vi.mocked(api.tasks.list);
       await waitFor(() => {
-        expect(projectsList).toHaveBeenCalled()
-        expect(expertsList).toHaveBeenCalled()
-        expect(tasksList).toHaveBeenCalled()
-      })
+        expect(projectsList).toHaveBeenCalled();
+        expect(expertsList).toHaveBeenCalled();
+        expect(tasksList).toHaveBeenCalled();
+      });
       const loadCounts = {
         projects: projectsList.mock.calls.length,
         experts: expertsList.mock.calls.length,
-        tasks: tasksList.mock.calls.length
-      }
+        tasks: tasksList.mock.calls.length,
+      };
       fireEvent.click(
-        screen.getByRole('radio', {
-          name: /^English/u
-        })
-      )
+        screen.getByRole("radio", {
+          name: /^English/u,
+        }),
+      );
 
       expect(
-        await screen.findByRole('region', {
-          name: 'Settings'
-        })
-      ).toBeInTheDocument()
+        await screen.findByRole("region", {
+          name: "Settings",
+        }),
+      ).toBeInTheDocument();
       expect(
-        screen.getByRole('heading', {
+        screen.getByRole("heading", {
           level: 1,
-          name: 'Settings'
-        })
-      ).toBeInTheDocument()
-      expect(api.updates.getSettings).toHaveBeenCalledOnce()
+          name: "Settings",
+        }),
+      ).toBeInTheDocument();
+      expect(api.updates.getSettings).toHaveBeenCalledOnce();
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0))
-      })
-      expect(projectsList).toHaveBeenCalledTimes(loadCounts.projects)
-      expect(expertsList).toHaveBeenCalledTimes(loadCounts.experts)
-      expect(tasksList).toHaveBeenCalledTimes(loadCounts.tasks)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(projectsList).toHaveBeenCalledTimes(loadCounts.projects);
+      expect(expertsList).toHaveBeenCalledTimes(loadCounts.experts);
+      expect(tasksList).toHaveBeenCalledTimes(loadCounts.tasks);
     } finally {
-      delete api.updates
-      cleanup()
-      await changeUiLocale('zh-CN')
+      delete api.updates;
+      cleanup();
+      await changeUiLocale("zh-CN");
     }
-  })
+  });
 
-  it('checks for updates silently on startup and only reports a new version', async () => {
+  it("checks for updates silently on startup and only reports a new version", async () => {
     const check = vi.fn(async () => ({
       updateAvailable: true,
-      currentVersion: '0.8.4',
-      latestVersion: '0.9.0',
-      releaseUrl:
-        'https://github.com/mesalogo/goodbuddy/releases/tag/v0.9.0',
+      currentVersion: "0.8.4",
+      latestVersion: "0.9.0",
+      releaseUrl: "https://github.com/mesalogo/goodbuddy/releases/tag/v0.9.0",
       target: {
-        platform: 'windows' as const,
-        arch: 'x64' as const,
-        formats: ['nsis', 'portable'],
+        platform: "windows" as const,
+        arch: "x64" as const,
+        formats: ["nsis", "portable"],
         files: [
           {
-            name: 'GoodBuddy-0.9.0-windows-x64-portable.zip',
+            name: "GoodBuddy-0.9.0-windows-x64-portable.zip",
             size: 1,
-            sha256: 'a'.repeat(64)
-          }
-        ]
-      }
-    }))
+            sha256: "a".repeat(64),
+          },
+        ],
+      },
+    }));
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
-      render(<App />)
-      await waitFor(() => expect(check).toHaveBeenCalledOnce())
+      render(<App />);
+      await waitFor(() => expect(check).toHaveBeenCalledOnce());
       expect(
-        await screen.findByText(
-          '发现 GoodBuddy 0.9.0，可在“关于与更新”中查看'
-        )
-      ).toBeInTheDocument()
-      expect(api.updates.onResult).not.toHaveBeenCalled()
+        await screen.findByText("发现 GoodBuddy 0.9.0，可在“关于与更新”中查看"),
+      ).toBeInTheDocument();
+      expect(api.updates.onResult).not.toHaveBeenCalled();
     } finally {
-      delete api.updates
+      delete api.updates;
     }
-  })
+  });
 
-  it('shows and acknowledges pending release notes on startup', async () => {
-    const acknowledge = vi.fn(async () => {})
+  it("shows and acknowledges pending release notes on startup", async () => {
+    const acknowledge = vi.fn(async () => {});
     api.releaseNotes = {
       getPending: vi.fn(async () => ({
-        currentVersion: '0.8.18',
+        currentVersion: "0.8.18",
         releases: [
           {
-            version: '0.8.18',
-            releasedAt: '2026-08-11',
+            version: "0.8.18",
+            releasedAt: "2026-08-11",
             notes: {
-              'zh-CN': {
-                highlights: ['多 Runtime 工作流更加连贯'],
-                features: ['新增版本更新说明'],
-                fixes: ['修复重复显示'],
-                notices: ['Ask 模式保持只读']
+              "zh-CN": {
+                highlights: ["多 Runtime 工作流更加连贯"],
+                features: ["新增版本更新说明"],
+                fixes: ["修复重复显示"],
+                notices: ["Ask 模式保持只读"],
               },
-              'en-US': {
-                highlights: ['Multi-Runtime workflows are more cohesive'],
-                features: ['Added release notes'],
-                fixes: ['Fixed repeated display'],
-                notices: ['Ask remains read-only']
-              }
-            }
-          }
-        ]
+              "en-US": {
+                highlights: ["Multi-Runtime workflows are more cohesive"],
+                features: ["Added release notes"],
+                fixes: ["Fixed repeated display"],
+                notices: ["Ask remains read-only"],
+              },
+            },
+          },
+        ],
       })),
-      acknowledge
-    }
+      acknowledge,
+    };
     try {
-      render(<App />)
+      render(<App />);
 
       expect(
-        await screen.findByRole('dialog', {
-          name: 'GoodBuddy 0.8.18 更新内容'
-        })
-      ).toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: '开始使用' }))
+        await screen.findByRole("dialog", {
+          name: "GoodBuddy 0.8.18 更新内容",
+        }),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "开始使用" }));
 
+      await waitFor(() => expect(acknowledge).toHaveBeenCalledWith("0.8.18"));
       await waitFor(() =>
-        expect(acknowledge).toHaveBeenCalledWith('0.8.18')
-      )
-      await waitFor(() =>
-        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-      )
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
     } finally {
-      delete api.releaseNotes
+      delete api.releaseNotes;
     }
-  })
+  });
 
-  it('keeps current-version checks quiet and reports startup check failures', async () => {
+  it("keeps current-version checks quiet and reports startup check failures", async () => {
     const currentResult = {
       updateAvailable: false,
-      currentVersion: '0.8.4',
-      latestVersion: '0.8.4',
-      releaseUrl:
-        'https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.4',
+      currentVersion: "0.8.4",
+      latestVersion: "0.8.4",
+      releaseUrl: "https://github.com/mesalogo/goodbuddy/releases/tag/v0.8.4",
       target: {
-        platform: 'windows' as const,
-        arch: 'x64' as const,
-        formats: ['nsis', 'portable'],
-        files: []
-      }
-    }
+        platform: "windows" as const,
+        arch: "x64" as const,
+        formats: ["nsis", "portable"],
+        files: [],
+      },
+    };
     const check = vi
       .fn()
       .mockResolvedValueOnce(currentResult)
       .mockRejectedValueOnce(
         new Error(
-          "Error invoking remote method 'application:update:check': TypeError: fetch failed"
-        )
-      )
+          "Error invoking remote method 'application:update:check': TypeError: fetch failed",
+        ),
+      );
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
-      const first = render(<App />)
-      await waitFor(() => expect(check).toHaveBeenCalledTimes(1))
+      const first = render(<App />);
+      await waitFor(() => expect(check).toHaveBeenCalledTimes(1));
       expect(
-        screen.queryByText(/发现 GoodBuddy|版本检查失败/u)
-      ).not.toBeInTheDocument()
+        screen.queryByText(/发现 GoodBuddy|版本检查失败/u),
+      ).not.toBeInTheDocument();
 
-      first.unmount()
-      render(<App />)
-      await waitFor(() => expect(check).toHaveBeenCalledTimes(2))
-      expect(
-        await screen.findByRole('alert')
-      ).toHaveTextContent(
-        '启动更新检查失败（GitHub）：无法连接更新源，请检查网络或代理后重试'
-      )
+      first.unmount();
+      render(<App />);
+      await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "启动更新检查失败（GitHub）：无法连接更新源，请检查网络或代理后重试",
+      );
     } finally {
-      delete api.updates
+      delete api.updates;
     }
-  })
+  });
 
-  it('shows a recoverable recent-conversation load failure', async () => {
+  it("shows a recoverable recent-conversation load failure", async () => {
     vi.mocked(api.projects.list)
-      .mockRejectedValueOnce(new Error('database busy'))
-      .mockResolvedValueOnce([project])
+      .mockRejectedValueOnce(new Error("database busy"))
+      .mockResolvedValueOnce([project]);
 
-    render(<App />)
+    render(<App />);
 
-    const loadError = await screen.findByRole('alert')
-    expect(loadError).toHaveTextContent('最近会话加载失败')
-    expect(loadError).toHaveTextContent('database busy')
+    const loadError = await screen.findByRole("alert");
+    expect(loadError).toHaveTextContent("最近会话加载失败");
+    expect(loadError).toHaveTextContent("database busy");
     fireEvent.click(
-      within(loadError).getByRole('button', {
-        name: '重新读取会话'
-      })
-    )
+      within(loadError).getByRole("button", {
+        name: "重新读取会话",
+      }),
+    );
+    await waitFor(() => expect(api.projects.list).toHaveBeenCalledTimes(2));
     await waitFor(() =>
-      expect(api.projects.list).toHaveBeenCalledTimes(2)
-    )
-    await waitFor(() =>
-      expect(screen.queryByText('最近会话加载失败'))
-        .not.toBeInTheDocument()
-    )
-  })
+      expect(screen.queryByText("最近会话加载失败")).not.toBeInTheDocument(),
+    );
+  });
 
-  it('keeps rendering when an older preload has no browser bridge', async () => {
-    Object.defineProperty(window, 'goodbuddy', {
+  it("keeps rendering when an older preload has no browser bridge", async () => {
+    Object.defineProperty(window, "goodbuddy", {
       configurable: true,
       value: {
         ...api,
-        browser: undefined
-      }
-    })
+        browser: undefined,
+      },
+    });
 
-    render(<App />)
+    render(<App />);
 
     expect(
-      await screen.findByLabelText('向 GoodBuddy 提问')
-    ).toBeInTheDocument()
-  })
+      await screen.findByLabelText("向 GoodBuddy 提问"),
+    ).toBeInTheDocument();
+  });
 
-  it('uses local transcription when Electron has no Web Speech API', async () => {
-    Object.defineProperty(window, 'SpeechRecognition', {
+  it("uses local transcription when Electron has no Web Speech API", async () => {
+    Object.defineProperty(window, "SpeechRecognition", {
       configurable: true,
-      value: undefined
-    })
-    Object.defineProperty(window, 'webkitSpeechRecognition', {
+      value: undefined,
+    });
+    Object.defineProperty(window, "webkitSpeechRecognition", {
       configurable: true,
-      value: undefined
-    })
+      value: undefined,
+    });
 
-    render(<App />)
-    fireEvent.click(await screen.findByLabelText('语音输入'))
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText("语音输入"));
 
     await waitFor(() =>
       expect(api.speech?.transcribe).toHaveBeenCalledWith(
         expect.objectContaining({
           sampleRate: 16_000,
-          audio: expect.any(ArrayBuffer)
-        })
-      )
-    )
-    expect(await screen.findByDisplayValue('本地语音结果')).toBeInTheDocument()
-    expect(
-      screen.getByText('快捷唤起：', { exact: false })
-    ).toHaveTextContent('快捷唤起：Ctrl+Shift+Space')
-    expect(
-      screen.queryByText(/CommandOrControl/)
-    ).not.toBeInTheDocument()
-  })
+          audio: expect.any(ArrayBuffer),
+        }),
+      ),
+    );
+    expect(await screen.findByDisplayValue("本地语音结果")).toBeInTheDocument();
+    expect(screen.getByText("快捷唤起：", { exact: false })).toHaveTextContent(
+      "快捷唤起：Ctrl+Shift+Space",
+    );
+    expect(screen.queryByText(/CommandOrControl/)).not.toBeInTheDocument();
+  });
 
-  it('measures composer height once per input and resizes after sending', async () => {
-    render(<App />)
-    const input = await screen.findByLabelText('向 GoodBuddy 提问')
+  it("measures composer height once per input and resizes after sending", async () => {
+    render(<App />);
+    const input = await screen.findByLabelText("向 GoodBuddy 提问");
     const measureHeight = vi.fn(() =>
-      (input as HTMLTextAreaElement).value ? 300 : 0
-    )
-    Object.defineProperty(input, 'scrollHeight', {
+      (input as HTMLTextAreaElement).value ? 300 : 0,
+    );
+    Object.defineProperty(input, "scrollHeight", {
       configurable: true,
-      get: measureHeight
-    })
+      get: measureHeight,
+    });
 
-    fireEvent.input(input, { target: { value: 'First line\nSecond line' } })
-    expect(measureHeight).toHaveBeenCalledTimes(1)
-    expect(input).toHaveStyle({ height: '220px' })
+    fireEvent.input(input, { target: { value: "First line\nSecond line" } });
+    expect(measureHeight).toHaveBeenCalledTimes(1);
+    expect(input).toHaveStyle({ height: "220px" });
 
-    measureHeight.mockClear()
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(input).toHaveValue(''))
-    expect(measureHeight).toHaveBeenCalledTimes(1)
-    expect(input).toHaveStyle({ height: '72px' })
-  })
+    measureHeight.mockClear();
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(measureHeight).toHaveBeenCalledTimes(1);
+    expect(input).toHaveStyle({ height: "72px" });
+  });
 
-  it('shows a red recording state until microphone capture stops', async () => {
+  it("shows a red recording state until microphone capture stops", async () => {
     let resolveRecording!: (value: {
-      audio: ArrayBuffer
-      sampleRate: 16_000
-    }) => void
-    const stop = vi.fn()
+      audio: ArrayBuffer;
+      sampleRate: 16_000;
+    }) => void;
+    const stop = vi.fn();
     speechRecognitionMocks.startPcmRecording.mockResolvedValueOnce({
       result: new Promise((resolve) => {
-        resolveRecording = resolve
+        resolveRecording = resolve;
       }),
       stop,
-      cancel: vi.fn()
-    })
+      cancel: vi.fn(),
+    });
 
-    render(<App />)
-    const input = await screen.findByLabelText('向 GoodBuddy 提问')
-    expect(input).toHaveAttribute('rows', '3')
-    expect(input).toHaveStyle({ height: '72px' })
+    render(<App />);
+    const input = await screen.findByLabelText("向 GoodBuddy 提问");
+    expect(input).toHaveAttribute("rows", "3");
+    expect(input).toHaveStyle({ height: "72px" });
 
-    fireEvent.click(screen.getByLabelText('语音输入'))
-    const recordingButton = await screen.findByRole('button', {
-      name: '停止录音'
-    })
-    expect(recordingButton).toHaveAttribute('data-state', 'recording')
-    expect(recordingButton).toHaveAttribute('aria-pressed', 'true')
-    expect(recordingButton).toHaveClass(
-      'composer__voice-button--recording'
-    )
+    fireEvent.click(screen.getByLabelText("语音输入"));
+    const recordingButton = await screen.findByRole("button", {
+      name: "停止录音",
+    });
+    expect(recordingButton).toHaveAttribute("data-state", "recording");
+    expect(recordingButton).toHaveAttribute("aria-pressed", "true");
+    expect(recordingButton).toHaveClass("composer__voice-button--recording");
 
-    fireEvent.click(recordingButton)
-    expect(stop).toHaveBeenCalledOnce()
+    fireEvent.click(recordingButton);
+    expect(stop).toHaveBeenCalledOnce();
     resolveRecording({
       audio: new Float32Array([0, 0.25, -0.25]).buffer,
-      sampleRate: 16_000
-    })
-    expect(
-      await screen.findByDisplayValue('本地语音结果')
-    ).toBeInTheDocument()
-  })
+      sampleRate: 16_000,
+    });
+    expect(await screen.findByDisplayValue("本地语音结果")).toBeInTheDocument();
+  });
 
-  it('keeps conversation actions in the conversation list', async () => {
-    const { container } = render(<App />)
-    const topbar = container.querySelector<HTMLElement>('.topbar')
+  it("keeps conversation actions in the conversation list", async () => {
+    const { container } = render(<App />);
+    const topbar = container.querySelector<HTMLElement>(".topbar");
     const conversationList =
-      container.querySelector<HTMLElement>('.conversation-list')
-    expect(topbar).not.toBeNull()
-    expect(conversationList).not.toBeNull()
+      container.querySelector<HTMLElement>(".conversation-list");
+    expect(topbar).not.toBeNull();
+    expect(conversationList).not.toBeNull();
     if (!topbar || !conversationList) {
-      return
+      return;
     }
 
     expect(
-      within(topbar).queryByRole('button', {
-        name: /^专家角色：/u
-      })
-    ).not.toBeInTheDocument()
-    expect(composerMenuTrigger('专家角色').closest('.composer')).not.toBeNull()
+      within(topbar).queryByRole("button", {
+        name: /^专家角色：/u,
+      }),
+    ).not.toBeInTheDocument();
+    expect(composerMenuTrigger("专家角色").closest(".composer")).not.toBeNull();
 
-    const themeToggle = within(topbar).getByRole('button', {
-      name: '切换深色主题'
-    })
-    fireEvent.click(themeToggle)
+    const themeToggle = within(topbar).getByRole("button", {
+      name: "切换深色主题",
+    });
+    fireEvent.click(themeToggle);
     await waitFor(() =>
-      expect(document.documentElement.dataset.theme).toBe('dark')
-    )
+      expect(document.documentElement.dataset.theme).toBe("dark"),
+    );
     expect(
-      screen.queryByRole('menuitem', { name: '重命名会话' })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("menuitem", { name: "重命名会话" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(topbar).getByRole('button', {
-        name: '切换浅色主题'
-      })
-    ).toBe(themeToggle)
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      within(topbar).getByRole("button", {
+        name: "切换浅色主题",
+      }),
+    ).toBe(themeToggle);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
-    const conversationMenuTrigger = within(
-      conversationList
-    ).getByLabelText('更多会话操作 新对话')
-    fireEvent.click(conversationMenuTrigger)
-    const renameButton = within(conversationList).getByRole('button', {
-      name: '重命名会话'
-    })
-    expect(renameButton).toBeVisible()
+    const conversationMenuTrigger =
+      within(conversationList).getByLabelText("更多会话操作 新对话");
+    fireEvent.click(conversationMenuTrigger);
+    const renameButton = within(conversationList).getByRole("button", {
+      name: "重命名会话",
+    });
+    expect(renameButton).toBeVisible();
     expect(
-      within(conversationList).getByRole('button', {
-        name: '复制完整会话'
-      })
-    ).toBeVisible()
+      within(conversationList).getByRole("button", {
+        name: "复制完整会话",
+      }),
+    ).toBeVisible();
     expect(
-      within(conversationList).getByRole('button', {
-        name: '导出 Markdown'
-      })
-    ).toBeVisible()
+      within(conversationList).getByRole("button", {
+        name: "导出 Markdown",
+      }),
+    ).toBeVisible();
 
-    fireEvent.click(renameButton)
-    const renameInput = within(conversationList).getByLabelText(
-      '重命名会话 新对话'
-    )
+    fireEvent.click(renameButton);
+    const renameInput =
+      within(conversationList).getByLabelText("重命名会话 新对话");
     fireEvent.change(renameInput, {
-      target: { value: '重命名后的会话' }
-    })
-    fireEvent.submit(renameInput.closest('form')!)
+      target: { value: "重命名后的会话" },
+    });
+    fireEvent.submit(renameInput.closest("form")!);
     expect(
-      within(conversationList).getByText('重命名后的会话')
-    ).toBeInTheDocument()
-    await waitFor(() => expect(conversationMenuTrigger).toHaveFocus())
+      within(conversationList).getByText("重命名后的会话"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(conversationMenuTrigger).toHaveFocus());
 
-    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
     fireEvent.click(
-      within(conversationList).getByLabelText(
-        '更多会话操作 重命名后的会话'
-      )
-    )
+      within(conversationList).getByLabelText("更多会话操作 重命名后的会话"),
+    );
     fireEvent.click(
-      within(conversationList).getByRole('button', {
-        name: '复制完整会话'
-      })
-    )
-    await waitFor(() =>
-      expect(api.clipboard.writeText).toHaveBeenCalledOnce()
-    )
-    expect(await screen.findByRole('status')).toBeVisible()
-  })
+      within(conversationList).getByRole("button", {
+        name: "复制完整会话",
+      }),
+    );
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("status")).toBeVisible();
+  });
 
-  it('copies a completed assistant reply through the desktop bridge', async () => {
-    render(<App />)
+  it("copies a completed assistant reply through the desktop bridge", async () => {
+    render(<App />);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '复制此回复' })
-    )
+    fireEvent.click(screen.getByRole("button", { name: "复制此回复" }));
 
     await waitFor(() =>
       expect(api.clipboard.writeText).toHaveBeenCalledWith(
-        expect.stringContaining('你好，我是 GoodBuddy')
-      )
-    )
-    expect(
-      await screen.findByText('回复已复制到剪贴板')
-    ).toBeVisible()
-  })
+        expect.stringContaining("你好，我是 GoodBuddy"),
+      ),
+    );
+    expect(await screen.findByText("回复已复制到剪贴板")).toBeVisible();
+  });
 
-  it('reports a desktop clipboard write failure', async () => {
+  it("reports a desktop clipboard write failure", async () => {
     vi.mocked(api.clipboard.writeText).mockRejectedValueOnce(
-      new Error('clipboard unavailable')
-    )
-    render(<App />)
+      new Error("clipboard unavailable"),
+    );
+    render(<App />);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '复制此回复' })
-    )
+    fireEvent.click(screen.getByRole("button", { name: "复制此回复" }));
 
-    expect(
-      await screen.findByRole('alert')
-    ).toHaveTextContent('无法访问剪贴板，请检查系统权限')
-  })
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法访问剪贴板，请检查系统权限",
+    );
+  });
 
-  it('flushes and opens an independent conversation branch with provenance badges', async () => {
-    const sourceConversationId =
-      '00000000-0000-4000-8000-000000000421'
-    const branchConversationId =
-      '00000000-0000-4000-8000-000000000422'
+  it("flushes and opens an independent conversation branch with provenance badges", async () => {
+    const sourceConversationId = "00000000-0000-4000-8000-000000000421";
+    const branchConversationId = "00000000-0000-4000-8000-000000000422";
     const sourceConversation: ConversationSnapshot = {
       id: sourceConversationId,
       projectId,
-      title: '方案讨论',
+      title: "方案讨论",
       updatedAt: 1_775_000_000_000,
       messages: [
         {
-          id: '00000000-0000-4000-8000-000000000423',
-          role: 'user',
-          content: '探索不同发布方案',
+          id: "00000000-0000-4000-8000-000000000423",
+          role: "user",
+          content: "探索不同发布方案",
           createdAt: 1_775_000_000_000,
-          state: 'complete'
+          state: "complete",
         },
         {
-          id: '00000000-0000-4000-8000-000000000424',
-          role: 'assistant',
-          content: '可以比较风险、成本和回滚路径。',
+          id: "00000000-0000-4000-8000-000000000424",
+          role: "assistant",
+          content: "可以比较风险、成本和回滚路径。",
           createdAt: 1_775_000_001_000,
-          state: 'complete'
-        }
-      ]
-    }
+          state: "complete",
+        },
+      ],
+    };
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
-      sourceConversation
-    ])
+      sourceConversation,
+    ]);
     vi.mocked(api.conversations.branchLocal).mockImplementationOnce(
       async (input) => ({
         ...sourceConversation,
         id: branchConversationId,
         branch: {
           sourceConversationId,
-          sourceTitle: '方案讨论更新'
+          sourceTitle: "方案讨论更新",
         },
         contextMetrics: undefined,
         contextCompressionState: undefined,
@@ -2762,712 +2626,649 @@ describe('App', () => {
         updatedAt: 1_775_000_002_000,
         messages: sourceConversation.messages.map((message, index) => ({
           ...message,
-          id: `00000000-0000-4000-8000-${String(
-            430 + index
-          ).padStart(12, '0')}`
-        }))
-      })
-    )
-    const { container } = render(<App />)
-    expect(
-      await screen.findByText('探索不同发布方案')
-    ).toBeInTheDocument()
+          id: `00000000-0000-4000-8000-${String(430 + index).padStart(
+            12,
+            "0",
+          )}`,
+        })),
+      }),
+    );
+    const { container } = render(<App />);
+    expect(await screen.findByText("探索不同发布方案")).toBeInTheDocument();
 
-    fireEvent.click(
-      await screen.findByLabelText('更多会话操作 方案讨论')
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '重命名会话' })
-    )
-    const renameInput = screen.getByLabelText('重命名会话 方案讨论')
+    fireEvent.click(await screen.findByLabelText("更多会话操作 方案讨论"));
+    fireEvent.click(screen.getByRole("button", { name: "重命名会话" }));
+    const renameInput = screen.getByLabelText("重命名会话 方案讨论");
     fireEvent.change(renameInput, {
-      target: { value: '方案讨论更新' }
-    })
-    fireEvent.submit(renameInput.closest('form')!)
-    expect(
-      await screen.findAllByText('方案讨论更新')
-    ).toHaveLength(2)
-    vi.mocked(api.conversations.saveLocal).mockClear()
+      target: { value: "方案讨论更新" },
+    });
+    fireEvent.submit(renameInput.closest("form")!);
+    expect(await screen.findAllByText("方案讨论更新")).toHaveLength(2);
+    vi.mocked(api.conversations.saveLocal).mockClear();
 
-    fireEvent.click(
-      screen.getByLabelText('更多会话操作 方案讨论更新')
-    )
-    const branchButton = screen.getByRole('button', {
-      name: '在新会话中继续'
-    })
-    await waitFor(() => expect(branchButton).toBeEnabled())
-    fireEvent.click(branchButton)
+    fireEvent.click(screen.getByLabelText("更多会话操作 方案讨论更新"));
+    const branchButton = screen.getByRole("button", {
+      name: "在新会话中继续",
+    });
+    await waitFor(() => expect(branchButton).toBeEnabled());
+    fireEvent.click(branchButton);
 
     await waitFor(() =>
       expect(api.conversations.saveLocal).toHaveBeenCalledWith([
         expect.objectContaining({
           header: expect.objectContaining({
             id: sourceConversationId,
-            title: '方案讨论更新'
-          })
-        })
-      ])
-    )
+            title: "方案讨论更新",
+          }),
+        }),
+      ]),
+    );
     await waitFor(() =>
       expect(api.conversations.branchLocal).toHaveBeenCalledWith({
         sourceConversationId,
-        title: '方案讨论更新 · 分支'
-      })
-    )
+        title: "方案讨论更新 · 分支",
+      }),
+    );
     expect(
-      vi.mocked(api.conversations.saveLocal).mock.invocationCallOrder.at(-1)
+      vi.mocked(api.conversations.saveLocal).mock.invocationCallOrder.at(-1),
     ).toBeLessThan(
-      vi.mocked(api.conversations.branchLocal).mock.invocationCallOrder[0]!
-    )
+      vi.mocked(api.conversations.branchLocal).mock.invocationCallOrder[0]!,
+    );
     expect(
-      await screen.findAllByLabelText(
-        '分支会话，来源：方案讨论更新'
-      )
-    ).toHaveLength(2)
-    const sidebar = container.querySelector('.conversation-list')
+      await screen.findAllByLabelText("分支会话，来源：方案讨论更新"),
+    ).toHaveLength(2);
+    const sidebar = container.querySelector(".conversation-list");
     const badge = within(sidebar as HTMLElement).getByLabelText(
-      '分支会话，来源：方案讨论更新'
-    )
-    expect(badge).toHaveClass('conversation-branch-badge')
-    expect(badge.querySelector('.lucide-git-fork')).toBeInTheDocument()
-    expect(
-      container.querySelector('.conversation-title')
-    ).toHaveTextContent('方案讨论更新 · 分支')
+      "分支会话，来源：方案讨论更新",
+    );
+    expect(badge).toHaveClass("conversation-branch-badge");
+    expect(badge.querySelector(".lucide-git-fork")).toBeInTheDocument();
+    expect(container.querySelector(".conversation-title")).toHaveTextContent(
+      "方案讨论更新 · 分支",
+    );
     await waitFor(() =>
-      expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveFocus()
-    )
+      expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveFocus(),
+    );
     expect(
-      screen.getAllByText('可以比较风险、成本和回滚路径。').length
-    ).toBeGreaterThan(0)
-    expect(
-      await screen.findByText('已创建并打开分支会话')
-    ).toBeInTheDocument()
-  })
+      screen.getAllByText("可以比较风险、成本和回滚路径。").length,
+    ).toBeGreaterThan(0);
+    expect(await screen.findByText("已创建并打开分支会话")).toBeInTheDocument();
+  });
 
-  it('keeps the source conversation open when branch persistence fails', async () => {
-    const sourceConversationId =
-      '00000000-0000-4000-8000-000000000441'
+  it("keeps the source conversation open when branch persistence fails", async () => {
+    const sourceConversationId = "00000000-0000-4000-8000-000000000441";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: sourceConversationId,
         projectId,
-        title: '保留的来源会话',
+        title: "保留的来源会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000442',
-            role: 'user',
-            content: '不能丢失的来源内容',
+            id: "00000000-0000-4000-8000-000000000442",
+            role: "user",
+            content: "不能丢失的来源内容",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
+            state: "complete",
+          },
+        ],
+      },
+    ]);
     vi.mocked(api.conversations.branchLocal).mockRejectedValueOnce(
-      new Error('分支数据写入失败')
-    )
-    const { container } = render(<App />)
-    expect(
-      await screen.findByText('不能丢失的来源内容')
-    ).toBeInTheDocument()
+      new Error("分支数据写入失败"),
+    );
+    const { container } = render(<App />);
+    expect(await screen.findByText("不能丢失的来源内容")).toBeInTheDocument();
 
-    const actionTrigger = await screen.findByLabelText(
-      '更多会话操作 保留的来源会话'
-    )
-    fireEvent.click(actionTrigger)
-    const branchButton = screen.getByRole('button', {
-      name: '在新会话中继续'
-    })
-    await waitFor(() => expect(branchButton).toBeEnabled())
-    fireEvent.click(branchButton)
+    const actionTrigger =
+      await screen.findByLabelText("更多会话操作 保留的来源会话");
+    fireEvent.click(actionTrigger);
+    const branchButton = screen.getByRole("button", {
+      name: "在新会话中继续",
+    });
+    await waitFor(() => expect(branchButton).toBeEnabled());
+    fireEvent.click(branchButton);
 
+    expect(await screen.findByText("分支数据写入失败")).toBeInTheDocument();
+    expect(container.querySelector(".conversation-title")).toHaveTextContent(
+      "保留的来源会话",
+    );
+    expect(screen.getByText("不能丢失的来源内容")).toBeInTheDocument();
     expect(
-      await screen.findByText('分支数据写入失败')
-    ).toBeInTheDocument()
-    expect(
-      container.querySelector('.conversation-title')
-    ).toHaveTextContent('保留的来源会话')
-    expect(
-      screen.getByText('不能丢失的来源内容')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByLabelText(/^分支会话，来源：/u)
-    ).not.toBeInTheDocument()
-    await waitFor(() => expect(actionTrigger).toHaveFocus())
-  })
+      screen.queryByLabelText(/^分支会话，来源：/u),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(actionTrigger).toHaveFocus());
+  });
 
-  it('explains why a queued conversation cannot be branched', async () => {
-    const sourceConversationId =
-      '00000000-0000-4000-8000-000000000451'
+  it("explains why a queued conversation cannot be branched", async () => {
+    const sourceConversationId = "00000000-0000-4000-8000-000000000451";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: sourceConversationId,
         projectId,
-        title: '等待队列的会话',
+        title: "等待队列的会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000452',
-            role: 'user',
-            content: '还有待发送内容',
+            id: "00000000-0000-4000-8000-000000000452",
+            role: "user",
+            content: "还有待发送内容",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
+            state: "complete",
+          },
+        ],
+      },
+    ]);
     vi.mocked(api.conversationQueue.list).mockResolvedValue([
       {
-        id: '00000000-0000-4000-8000-000000000453',
+        id: "00000000-0000-4000-8000-000000000453",
         conversationId: sourceConversationId,
-        source: 'user',
-        label: '待发送',
-        createdAt: '2026-08-20T08:00:00.000Z'
-      }
-    ])
-    render(<App />)
-    expect(
-      await screen.findByText('还有待发送内容')
-    ).toBeInTheDocument()
+        source: "user",
+        label: "待发送",
+        createdAt: "2026-08-20T08:00:00.000Z",
+      },
+    ]);
+    render(<App />);
+    expect(await screen.findByText("还有待发送内容")).toBeInTheDocument();
 
     fireEvent.click(
-      await screen.findByLabelText('更多会话操作 等待队列的会话')
-    )
-    const branchButton = screen.getByRole('button', {
-      name: '在新会话中继续'
-    })
+      await screen.findByLabelText("更多会话操作 等待队列的会话"),
+    );
+    const branchButton = screen.getByRole("button", {
+      name: "在新会话中继续",
+    });
     await waitFor(() =>
-      expect(branchButton).toHaveAttribute('aria-disabled', 'true')
-    )
+      expect(branchButton).toHaveAttribute("aria-disabled", "true"),
+    );
     expect(branchButton).toHaveAccessibleDescription(
-      '会话运行或待发送内容处理完后才能创建分支'
-    )
-    fireEvent.click(branchButton)
+      "会话运行或待发送内容处理完后才能创建分支",
+    );
+    fireEvent.click(branchButton);
     await waitFor(() =>
       expect(
-        screen.getAllByText(
-          '会话运行或待发送内容处理完后才能创建分支'
-        )
-      ).toHaveLength(2)
-    )
-    expect(api.conversations.branchLocal).not.toHaveBeenCalled()
-  })
+        screen.getAllByText("会话运行或待发送内容处理完后才能创建分支"),
+      ).toHaveLength(2),
+    );
+    expect(api.conversations.branchLocal).not.toHaveBeenCalled();
+  });
 
-  it('offers a floating control when more messages remain below', async () => {
+  it("offers a floating control when more messages remain below", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000401',
+        id: "00000000-0000-4000-8000-000000000401",
         projectId,
-        title: '长会话',
+        title: "长会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000402',
-            role: 'assistant',
-            content: '较早的会话内容',
+            id: "00000000-0000-4000-8000-000000000402",
+            role: "assistant",
+            content: "较早的会话内容",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    const { container } = render(<App />)
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    const { container } = render(<App />);
 
-    expect(await screen.findByText('较早的会话内容')).toBeInTheDocument()
-    const chat = container.querySelector<HTMLElement>('.chat')
+    expect(await screen.findByText("较早的会话内容")).toBeInTheDocument();
+    const chat = container.querySelector<HTMLElement>(".chat");
     if (!chat) {
-      throw new Error('Missing chat scroll container')
+      throw new Error("Missing chat scroll container");
     }
     Object.defineProperties(chat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: { configurable: true, value: 1_200 },
-      scrollTop: { configurable: true, writable: true, value: 100 }
-    })
-    const scrollTo = vi.fn()
-    chat.scrollTo = scrollTo
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+    const scrollTo = vi.fn();
+    chat.scrollTo = scrollTo;
 
-    fireEvent.scroll(chat)
-    const scrollButton = screen.getByRole('button', {
-      name: '到底部'
-    })
-    expect(scrollButton).toHaveAttribute(
-      'aria-controls',
-      'chat-message-list'
-    )
-    expect(scrollButton).toHaveAttribute('title', '到底部')
-    expect(scrollButton).toHaveTextContent('')
+    fireEvent.scroll(chat);
+    const scrollButton = screen.getByRole("button", {
+      name: "到底部",
+    });
+    expect(scrollButton).toHaveAttribute("aria-controls", "chat-message-list");
+    expect(scrollButton).toHaveAttribute("title", "到底部");
+    expect(scrollButton).toHaveTextContent("");
 
-    fireEvent.click(scrollButton)
+    fireEvent.click(scrollButton);
     expect(scrollTo).toHaveBeenLastCalledWith({
       top: 1_200,
-      behavior: 'smooth'
-    })
+      behavior: "smooth",
+    });
 
-    chat.scrollTop = 750
-    fireEvent.scroll(chat)
+    chat.scrollTop = 750;
+    fireEvent.scroll(chat);
     expect(
-      screen.queryByRole('button', { name: '到底部' })
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByRole("button", { name: "到底部" }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('keeps a newly opened persisted conversation at the bottom while its content settles', async () => {
-    let resizeCallback: ResizeObserverCallback | undefined
-    const disconnect = vi.fn()
+  it("keeps a newly opened persisted conversation at the bottom while its content settles", async () => {
+    let resizeCallback: ResizeObserverCallback | undefined;
+    const disconnect = vi.fn();
     vi.stubGlobal(
-      'ResizeObserver',
+      "ResizeObserver",
       class {
         constructor(callback: ResizeObserverCallback) {
-          resizeCallback = callback
+          resizeCallback = callback;
         }
 
         observe(): void {}
         unobserve(): void {}
         disconnect(): void {
-          disconnect()
+          disconnect();
         }
-      }
-    )
+      },
+    );
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000417',
+        id: "00000000-0000-4000-8000-000000000417",
         projectId,
-        title: '已有会话',
+        title: "已有会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000418',
-            role: 'user',
-            content: '最后一个用户问题',
+            id: "00000000-0000-4000-8000-000000000418",
+            role: "user",
+            content: "最后一个用户问题",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
+            state: "complete",
           },
           {
-            id: '00000000-0000-4000-8000-000000000419',
-            role: 'assistant',
-            content: '加载后会继续完成布局的回复',
+            id: "00000000-0000-4000-8000-000000000419",
+            role: "assistant",
+            content: "加载后会继续完成布局的回复",
             createdAt: 1_775_000_000_001,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    const { container } = render(<App />)
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    const { container } = render(<App />);
 
     expect(
-      await screen.findByText('加载后会继续完成布局的回复')
-    ).toBeInTheDocument()
-    const chat = container.querySelector<HTMLElement>('.chat')
+      await screen.findByText("加载后会继续完成布局的回复"),
+    ).toBeInTheDocument();
+    const chat = container.querySelector<HTMLElement>(".chat");
     if (!chat || !resizeCallback) {
-      throw new Error('Missing chat resize observer')
+      throw new Error("Missing chat resize observer");
     }
-    let scrollHeight = 1_200
+    let scrollHeight = 1_200;
     Object.defineProperties(chat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: {
         configurable: true,
-        get: () => scrollHeight
+        get: () => scrollHeight,
       },
-      scrollTop: { configurable: true, writable: true, value: 800 }
-    })
-    const scrollTo = vi.fn()
-    chat.scrollTo = scrollTo
+      scrollTop: { configurable: true, writable: true, value: 800 },
+    });
+    const scrollTo = vi.fn();
+    chat.scrollTo = scrollTo;
 
-    scrollHeight = 1_800
-    act(() => resizeCallback?.([], {} as ResizeObserver))
+    scrollHeight = 1_800;
+    act(() => resizeCallback?.([], {} as ResizeObserver));
     expect(scrollTo).toHaveBeenLastCalledWith({
       top: 1_800,
-      behavior: 'auto'
-    })
+      behavior: "auto",
+    });
 
-    chat.scrollTop = 100
-    fireEvent.scroll(chat)
-    scrollTo.mockClear()
-    scrollHeight = 2_200
-    act(() => resizeCallback?.([], {} as ResizeObserver))
-    expect(scrollTo).not.toHaveBeenCalled()
-  })
+    chat.scrollTop = 100;
+    fireEvent.scroll(chat);
+    scrollTo.mockClear();
+    scrollHeight = 2_200;
+    act(() => resizeCallback?.([], {} as ResizeObserver));
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
 
-  it('renders the latest 80 messages and preserves scroll when revealing earlier messages', async () => {
+  it("renders the latest 80 messages and preserves scroll when revealing earlier messages", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000421',
+        id: "00000000-0000-4000-8000-000000000421",
         projectId,
-        title: '超长会话',
+        title: "超长会话",
         updatedAt: 1_775_000_000_000,
         messages: Array.from({ length: 161 }, (_, index) => ({
-          id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
-          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
-          content: `历史消息 ${String(index).padStart(3, '0')}`,
+          id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+          content: `历史消息 ${String(index).padStart(3, "0")}`,
           createdAt: 1_775_000_000_000 + index,
-          state: 'complete' as const
-        }))
-      }
-    ])
-    const { container } = render(<App />)
+          state: "complete" as const,
+        })),
+      },
+    ]);
+    const { container } = render(<App />);
 
-    expect(await screen.findByText('历史消息 160')).toBeInTheDocument()
-    expect(screen.queryByText('历史消息 080')).not.toBeInTheDocument()
-    expect(container.querySelectorAll('.message')).toHaveLength(80)
-    const chat = container.querySelector<HTMLElement>('.chat')
+    expect(await screen.findByText("历史消息 160")).toBeInTheDocument();
+    expect(screen.queryByText("历史消息 080")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".message")).toHaveLength(80);
+    const chat = container.querySelector<HTMLElement>(".chat");
     if (!chat) {
-      throw new Error('Missing chat scroll container')
+      throw new Error("Missing chat scroll container");
     }
     Object.defineProperties(chat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: {
         configurable: true,
-        get: () => container.querySelectorAll('.message').length * 10
+        get: () => container.querySelectorAll(".message").length * 10,
       },
       scrollTop: {
         configurable: true,
         writable: true,
-        value: 125
-      }
-    })
+        value: 125,
+      },
+    });
 
     fireEvent.click(
-      screen.getByRole('button', {
-        name: '加载更早的消息（还剩 81 条）'
-      })
-    )
+      screen.getByRole("button", {
+        name: "加载更早的消息（还剩 81 条）",
+      }),
+    );
 
-    expect(container.querySelectorAll('.message')).toHaveLength(160)
-    expect(screen.getByText('历史消息 001')).toBeInTheDocument()
-    expect(screen.queryByText('历史消息 000')).not.toBeInTheDocument()
-    expect(chat.scrollTop).toBe(925)
+    expect(container.querySelectorAll(".message")).toHaveLength(160);
+    expect(screen.getByText("历史消息 001")).toBeInTheDocument();
+    expect(screen.queryByText("历史消息 000")).not.toBeInTheDocument();
+    expect(chat.scrollTop).toBe(925);
     fireEvent.click(
-      screen.getByRole('button', {
-        name: '加载更早的消息（还剩 1 条）'
-      })
-    )
-    expect(container.querySelectorAll('.message')).toHaveLength(161)
-    expect(screen.getByText('历史消息 000')).toBeInTheDocument()
+      screen.getByRole("button", {
+        name: "加载更早的消息（还剩 1 条）",
+      }),
+    );
+    expect(container.querySelectorAll(".message")).toHaveLength(161);
+    expect(screen.getByText("历史消息 000")).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /加载更早的消息/u })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.getByText('历史消息 000').closest('article')
-    ).toHaveFocus()
-  })
+      screen.queryByRole("button", { name: /加载更早的消息/u }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("历史消息 000").closest("article")).toHaveFocus();
+  });
 
-  it('keeps the reader position while a response continues below', async () => {
-    render(<App />)
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '继续生成较长回复' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+  it("keeps the reader position while a response continues below", async () => {
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "继续生成较长回复" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     await act(
       () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve())
-        )
-    )
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
 
-    const chat = document.querySelector<HTMLElement>('.chat')
+    const chat = document.querySelector<HTMLElement>(".chat");
     if (!chat) {
-      throw new Error('Missing chat scroll container')
+      throw new Error("Missing chat scroll container");
     }
     Object.defineProperties(chat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: { configurable: true, value: 1_200 },
-      scrollTop: { configurable: true, writable: true, value: 100 }
-    })
-    const scrollTo = vi.fn()
-    chat.scrollTo = scrollTo
-    fireEvent.scroll(chat)
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+    const scrollTo = vi.fn();
+    chat.scrollTo = scrollTo;
+    fireEvent.scroll(chat);
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: '新增的回复内容'
-      })
-    })
-    expect(await screen.findByText('新增的回复内容')).toBeInTheDocument()
+        type: "text",
+        delta: "新增的回复内容",
+      });
+    });
+    expect(await screen.findByText("新增的回复内容")).toBeInTheDocument();
     await act(
       () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve())
-        )
-    )
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
 
-    expect(scrollTo).not.toHaveBeenCalled()
-    expect(
-      screen.getByRole('button', { name: '到底部' })
-    ).toBeInTheDocument()
-  })
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "到底部" })).toBeInTheDocument();
+  });
 
-  it('restores the reader position after activity continues on another page', async () => {
-    const { container } = render(<App />)
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '离开页面后继续生成' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+  it("restores the reader position after activity continues on another page", async () => {
+    const { container } = render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "离开页面后继续生成" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     const conversationList =
-      container.querySelector<HTMLElement>('.conversation-list')
+      container.querySelector<HTMLElement>(".conversation-list");
     if (!conversationList) {
-      throw new Error('Missing conversation list')
+      throw new Error("Missing conversation list");
     }
-    const activeIndicator = within(conversationList).getByRole('status', {
-      name: '会话正在活动'
-    })
-    expect(activeIndicator).toHaveClass(
-      'conversation-activity-indicator'
-    )
-    expect(activeIndicator.closest('.conversation-row')).toHaveTextContent(
-      '离开页面后继续生成'
-    )
+    const activeIndicator = within(conversationList).getByRole("status", {
+      name: "会话正在活动",
+    });
+    expect(activeIndicator).toHaveClass("conversation-activity-indicator");
+    expect(activeIndicator.closest(".conversation-row")).toHaveTextContent(
+      "离开页面后继续生成",
+    );
     await act(
       () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve())
-        )
-    )
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
 
-    const chat = container.querySelector<HTMLElement>('.chat')
+    const chat = container.querySelector<HTMLElement>(".chat");
     if (!chat) {
-      throw new Error('Missing chat scroll container')
+      throw new Error("Missing chat scroll container");
     }
     Object.defineProperties(chat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: { configurable: true, value: 1_200 },
-      scrollTop: { configurable: true, writable: true, value: 175 }
-    })
-    fireEvent.scroll(chat)
+      scrollTop: { configurable: true, writable: true, value: 175 },
+    });
+    fireEvent.scroll(chat);
 
-    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
-    expect(chat).toBeInTheDocument()
-    expect(chat.closest('[data-route="chat"]')).toHaveAttribute('hidden')
+    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
+    expect(chat).toBeInTheDocument();
+    expect(chat.closest('[data-route="chat"]')).toHaveAttribute("hidden");
     expect(
-      within(conversationList).getByRole('status', {
-        name: '会话正在活动'
-      })
-    ).toBeInTheDocument()
+      within(conversationList).getByRole("status", {
+        name: "会话正在活动",
+      }),
+    ).toBeInTheDocument();
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: '后台新增的回复内容'
-      })
-    })
+        type: "text",
+        delta: "后台新增的回复内容",
+      });
+    });
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
     await waitFor(() =>
       expect(
-        within(conversationList).queryByRole('status', {
-          name: '会话正在活动'
-        })
-      ).not.toBeInTheDocument()
-    )
+        within(conversationList).queryByRole("status", {
+          name: "会话正在活动",
+        }),
+      ).not.toBeInTheDocument(),
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: '对话' }))
-    expect(await screen.findByText('后台新增的回复内容')).toBeInTheDocument()
-    const restoredChat = container.querySelector<HTMLElement>('.chat')
-    expect(restoredChat).toBe(chat)
-    expect(restoredChat?.scrollTop).toBe(175)
-    expect(
-      screen.getByRole('button', { name: '到底部' })
-    ).toBeInTheDocument()
-  })
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    expect(await screen.findByText("后台新增的回复内容")).toBeInTheDocument();
+    const restoredChat = container.querySelector<HTMLElement>(".chat");
+    expect(restoredChat).toBe(chat);
+    expect(restoredChat?.scrollTop).toBe(175);
+    expect(screen.getByRole("button", { name: "到底部" })).toBeInTheDocument();
+  });
 
-  it('keeps each conversation history window and reader position', async () => {
-    const firstConversationId =
-      '00000000-0000-4000-8000-000000000461'
-    const secondConversationId =
-      '00000000-0000-4000-8000-000000000462'
+  it("keeps each conversation history window and reader position", async () => {
+    const firstConversationId = "00000000-0000-4000-8000-000000000461";
+    const secondConversationId = "00000000-0000-4000-8000-000000000462";
     const draftAttachment = {
-      id: '00000000-0000-4000-8000-000000000463',
-      name: '第一段草稿附件.md',
+      id: "00000000-0000-4000-8000-000000000463",
+      name: "第一段草稿附件.md",
       size: 1_024,
-      preview: '会话级草稿附件',
-      kind: 'text' as const
-    }
-    vi.mocked(api.context.selectFiles).mockResolvedValueOnce([
-      draftAttachment
-    ])
+      preview: "会话级草稿附件",
+      kind: "text" as const,
+    };
+    vi.mocked(api.context.selectFiles).mockResolvedValueOnce([draftAttachment]);
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: firstConversationId,
         projectId,
-        title: '第一段长会话',
+        title: "第一段长会话",
         updatedAt: 1_775_000_000_002,
         messages: Array.from({ length: 161 }, (_, index) => ({
-          id: `00000000-0000-4000-8100-${String(index).padStart(12, '0')}`,
-          role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
-          content: `第一段历史 ${String(index).padStart(3, '0')}`,
-          reasoning: index === 159 ? '需要保留展开状态' : undefined,
+          id: `00000000-0000-4000-8100-${String(index).padStart(12, "0")}`,
+          role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+          content: `第一段历史 ${String(index).padStart(3, "0")}`,
+          reasoning: index === 159 ? "需要保留展开状态" : undefined,
           createdAt: 1_775_000_000_000 + index,
-          state: 'complete' as const
-        }))
+          state: "complete" as const,
+        })),
       },
       {
         id: secondConversationId,
         projectId,
-        title: '第二段会话',
+        title: "第二段会话",
         updatedAt: 1_775_000_000_001,
         messages: [
           {
-            id: '00000000-0000-4000-8200-000000000001',
-            role: 'assistant',
-            content: '第二段会话内容',
+            id: "00000000-0000-4000-8200-000000000001",
+            role: "assistant",
+            content: "第二段会话内容",
             createdAt: 1_775_000_000_001,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    const { container } = render(<App />)
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    const { container } = render(<App />);
 
-    expect(await screen.findByText('第一段历史 160')).toBeInTheDocument()
+    expect(await screen.findByText("第一段历史 160")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole('button', {
-        name: '加载更早的消息（还剩 81 条）'
-      })
-    )
+      screen.getByRole("button", {
+        name: "加载更早的消息（还剩 81 条）",
+      }),
+    );
     const firstPane = container.querySelector<HTMLElement>(
-      `[data-conversation-id="${firstConversationId}"]`
-    )
-    expect(firstPane?.querySelectorAll('.message')).toHaveLength(160)
-    const firstChat = firstPane?.querySelector<HTMLElement>('.chat')
+      `[data-conversation-id="${firstConversationId}"]`,
+    );
+    expect(firstPane?.querySelectorAll(".message")).toHaveLength(160);
+    const firstChat = firstPane?.querySelector<HTMLElement>(".chat");
     if (!firstChat) {
-      throw new Error('Missing first chat scroll container')
+      throw new Error("Missing first chat scroll container");
     }
-    const reasoningDetails = firstPane?.querySelector<HTMLDetailsElement>(
-      '.message-reasoning'
-    )
+    const reasoningDetails =
+      firstPane?.querySelector<HTMLDetailsElement>(".message-reasoning");
     if (!reasoningDetails) {
-      throw new Error('Missing reasoning details')
+      throw new Error("Missing reasoning details");
     }
-    reasoningDetails.open = true
+    reasoningDetails.open = true;
     Object.defineProperties(firstChat, {
       clientHeight: { configurable: true, value: 400 },
       scrollHeight: { configurable: true, value: 1_600 },
-      scrollTop: { configurable: true, writable: true, value: 225 }
-    })
-    fireEvent.scroll(firstChat)
-    messageRenderProbe.mockClear()
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '第一段会话草稿' }
-    })
-    expect(messageRenderProbe).not.toHaveBeenCalled()
-    expect(firstPane?.querySelectorAll('.message')).toHaveLength(160)
-    fireEvent.click(screen.getByLabelText('添加附件'))
-    expect(
-      await screen.findByText(draftAttachment.name)
-    ).toBeInTheDocument()
+      scrollTop: { configurable: true, writable: true, value: 225 },
+    });
+    fireEvent.scroll(firstChat);
+    messageRenderProbe.mockClear();
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "第一段会话草稿" },
+    });
+    expect(messageRenderProbe).not.toHaveBeenCalled();
+    expect(firstPane?.querySelectorAll(".message")).toHaveLength(160);
+    fireEvent.click(screen.getByLabelText("添加附件"));
+    expect(await screen.findByText(draftAttachment.name)).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByText('第二段会话').closest('button')!
-    )
-    expect(await screen.findByText('第二段会话内容')).toBeInTheDocument()
-    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('')
-    expect(
-      screen.queryByText(draftAttachment.name)
-    ).not.toBeInTheDocument()
-    messageRenderProbe.mockClear()
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '第二段会话草稿' }
-    })
-    expect(messageRenderProbe).not.toHaveBeenCalled()
-    expect(firstPane?.querySelectorAll('.message')).toHaveLength(160)
-    fireEvent.click(
-      screen.getByText('第一段长会话').closest('button')!
-    )
+    fireEvent.click(screen.getByText("第二段会话").closest("button")!);
+    expect(await screen.findByText("第二段会话内容")).toBeInTheDocument();
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("");
+    expect(screen.queryByText(draftAttachment.name)).not.toBeInTheDocument();
+    messageRenderProbe.mockClear();
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "第二段会话草稿" },
+    });
+    expect(messageRenderProbe).not.toHaveBeenCalled();
+    expect(firstPane?.querySelectorAll(".message")).toHaveLength(160);
+    fireEvent.click(screen.getByText("第一段长会话").closest("button")!);
 
-    expect(await screen.findByText('第一段历史 001')).toBeInTheDocument()
+    expect(await screen.findByText("第一段历史 001")).toBeInTheDocument();
     const restoredFirstPane = container.querySelector<HTMLElement>(
-      `[data-conversation-id="${firstConversationId}"]`
-    )
-    expect(restoredFirstPane).toBe(firstPane)
-    expect(restoredFirstPane?.querySelectorAll('.message')).toHaveLength(
-      160
-    )
-    expect(restoredFirstPane?.querySelector('.chat')).toBe(firstChat)
-    expect(firstChat.scrollTop).toBe(225)
-    expect(reasoningDetails).toHaveAttribute('open')
-    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue(
-      '第一段会话草稿'
-    )
-    expect(screen.getByText(draftAttachment.name)).toBeInTheDocument()
-  })
+      `[data-conversation-id="${firstConversationId}"]`,
+    );
+    expect(restoredFirstPane).toBe(firstPane);
+    expect(restoredFirstPane?.querySelectorAll(".message")).toHaveLength(160);
+    expect(restoredFirstPane?.querySelector(".chat")).toBe(firstChat);
+    expect(firstChat.scrollTop).toBe(225);
+    expect(reasoningDetails).toHaveAttribute("open");
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue(
+      "第一段会话草稿",
+    );
+    expect(screen.getByText(draftAttachment.name)).toBeInTheDocument();
+  });
 
-  it('requires an accessible confirmation before permanently deleting a conversation', async () => {
-    render(<App />)
-    const menuTrigger = screen.getByLabelText(
-      '更多会话操作 新对话'
-    )
-    fireEvent.click(menuTrigger)
-    const deleteTrigger = screen.getByRole('button', {
-      name: '删除对话 新对话'
-    })
-    fireEvent.click(deleteTrigger)
+  it("requires an accessible confirmation before permanently deleting a conversation", async () => {
+    render(<App />);
+    const menuTrigger = screen.getByLabelText("更多会话操作 新对话");
+    fireEvent.click(menuTrigger);
+    const deleteTrigger = screen.getByRole("button", {
+      name: "删除对话 新对话",
+    });
+    fireEvent.click(deleteTrigger);
 
-    const dialog = screen.getByRole('alertdialog', {
-      name: '确认永久删除对话 新对话'
-    })
-    expect(dialog).toHaveTextContent('将永久删除此会话的全部内容')
+    const dialog = screen.getByRole("alertdialog", {
+      name: "确认永久删除对话 新对话",
+    });
+    expect(dialog).toHaveTextContent("将永久删除此会话的全部内容");
     expect(dialog).toHaveTextContent(
-      '如果此会话有正在运行的任务，也会同时停止'
-    )
-    expect(dialog).toHaveTextContent('此操作不可恢复')
-    const cancel = screen.getByRole('button', {
-      name: '取消删除对话 新对话'
-    })
-    expect(cancel).toHaveFocus()
+      "如果此会话有正在运行的任务，也会同时停止",
+    );
+    expect(dialog).toHaveTextContent("此操作不可恢复");
+    const cancel = screen.getByRole("button", {
+      name: "取消删除对话 新对话",
+    });
+    expect(cancel).toHaveFocus();
 
-    expect(fireEvent.keyDown(dialog, { key: 'Tab' })).toBe(true)
-    expect(cancel).toHaveFocus()
-    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(fireEvent.keyDown(dialog, { key: "Tab" })).toBe(true);
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: '删除对话 新对话' })
-      ).toHaveFocus()
-    )
+        screen.getByRole("button", { name: "删除对话 新对话" }),
+      ).toHaveFocus(),
+    );
     expect(
-      screen.queryByRole('alertdialog', {
-        name: '确认永久删除对话 新对话'
-      })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("alertdialog", {
+        name: "确认永久删除对话 新对话",
+      }),
+    ).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "删除对话 新对话" }));
     fireEvent.click(
-      screen.getByRole('button', { name: '删除对话 新对话' })
-    )
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: '确认永久删除对话 新对话'
-      })
-    )
+      screen.getByRole("button", {
+        name: "确认永久删除对话 新对话",
+      }),
+    );
     await waitFor(() =>
       expect(
-        screen.queryByRole('alertdialog', {
-          name: '确认永久删除对话 新对话'
-        })
-      ).not.toBeInTheDocument()
-    )
+        screen.queryByRole("alertdialog", {
+          name: "确认永久删除对话 新对话",
+        }),
+      ).not.toBeInTheDocument(),
+    );
     expect(api.conversations.deleteLocal).toHaveBeenCalledWith(
-      expect.any(String)
-    )
-  })
+      expect.any(String),
+    );
+  });
 
-  it('keeps a local conversation visible when deleting its persisted record fails', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000431'
-    const title = '删除失败时保留的本地会话'
+  it("keeps a local conversation visible when deleting its persisted record fails", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000431";
+    const title = "删除失败时保留的本地会话";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: conversationId,
@@ -3476,1066 +3277,991 @@ describe('App', () => {
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000432',
-            role: 'assistant',
-            content: '需要保留的消息',
+            id: "00000000-0000-4000-8000-000000000432",
+            role: "assistant",
+            content: "需要保留的消息",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
+            state: "complete",
+          },
+        ],
+      },
+    ]);
     vi.mocked(api.conversations.deleteLocal).mockRejectedValueOnce(
-      new Error('delete failed')
-    )
-    render(<App />)
+      new Error("delete failed"),
+    );
+    render(<App />);
 
+    fireEvent.click(await screen.findByLabelText(`更多会话操作 ${title}`));
+    fireEvent.click(screen.getByRole("button", { name: `删除对话 ${title}` }));
     fireEvent.click(
-      await screen.findByLabelText(`更多会话操作 ${title}`)
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: `删除对话 ${title}` })
-    )
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: `确认永久删除对话 ${title}`
-      })
-    )
+      screen.getByRole("button", {
+        name: `确认永久删除对话 ${title}`,
+      }),
+    );
 
     await waitFor(() =>
       expect(api.conversations.deleteLocal).toHaveBeenCalledWith(
-        conversationId
-      )
-    )
+        conversationId,
+      ),
+    );
     expect(
-      await screen.findByText('删除本地会话失败，已保留当前对话')
-    ).toBeInTheDocument()
-    expect(screen.getByText('需要保留的消息')).toBeInTheDocument()
-    const dialog = screen.getByRole('alertdialog', {
-      name: `确认永久删除对话 ${title}`
-    })
+      await screen.findByText("删除本地会话失败，已保留当前对话"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("需要保留的消息")).toBeInTheDocument();
+    const dialog = screen.getByRole("alertdialog", {
+      name: `确认永久删除对话 ${title}`,
+    });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.keyDown(dialog, { key: "Escape" });
     expect(
-      dialog
-    ).toBeInTheDocument()
-    fireEvent.keyDown(dialog, { key: 'Escape' })
-    expect(
-      await screen.findByLabelText(`更多会话操作 ${title}`)
-    ).toBeInTheDocument()
-  })
+      await screen.findByLabelText(`更多会话操作 ${title}`),
+    ).toBeInTheDocument();
+  });
 
-  it('keeps a conversation when cancelling its active task fails', async () => {
+  it("keeps a conversation when cancelling its active task fails", async () => {
     vi.mocked(api.agent.cancel).mockRejectedValueOnce(
-      new Error('cancel failed')
-    )
-    render(<App />)
-    const title = '取消失败时保留会话'
+      new Error("cancel failed"),
+    );
+    render(<App />);
+    const title = "取消失败时保留会话";
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: title }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: title },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
 
-    fireEvent.click(
-      await screen.findByLabelText(`更多会话操作 ${title}`)
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: `删除对话 ${title}` })
-    )
-    const confirm = screen.getByRole('button', {
-      name: `确认永久删除对话 ${title}`
-    })
-    fireEvent.click(confirm)
+    fireEvent.click(await screen.findByLabelText(`更多会话操作 ${title}`));
+    fireEvent.click(screen.getByRole("button", { name: `删除对话 ${title}` }));
+    const confirm = screen.getByRole("button", {
+      name: `确认永久删除对话 ${title}`,
+    });
+    fireEvent.click(confirm);
 
-    await waitFor(() =>
-      expect(api.agent.cancel).toHaveBeenCalledOnce()
-    )
+    await waitFor(() => expect(api.agent.cancel).toHaveBeenCalledOnce());
     expect(
-      await screen.findByText('停止会话中的运行任务失败，尚未删除对话')
-    ).toBeInTheDocument()
+      await screen.findByText("停止会话中的运行任务失败，尚未删除对话"),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole('alertdialog', {
-        name: `确认永久删除对话 ${title}`
-      })
-    ).toBeInTheDocument()
-    await waitFor(() => expect(confirm).toBeEnabled())
+      screen.getByRole("alertdialog", {
+        name: `确认永久删除对话 ${title}`,
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(confirm).toBeEnabled());
 
-    vi.mocked(api.agent.cancel).mockResolvedValueOnce()
-    fireEvent.click(confirm)
+    vi.mocked(api.agent.cancel).mockResolvedValueOnce();
+    fireEvent.click(confirm);
     await waitFor(() =>
       expect(
-        screen.queryByRole('alertdialog', {
-          name: `确认永久删除对话 ${title}`
-        })
-      ).not.toBeInTheDocument()
-    )
-  })
+        screen.queryByRole("alertdialog", {
+          name: `确认永久删除对话 ${title}`,
+        }),
+      ).not.toBeInTheDocument(),
+    );
+  });
 
-  it('renders streamed reasoning, text, and tools in event order', async () => {
-    render(<App />)
+  it("renders streamed reasoning, text, and tools in event order", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '帮我分析项目' }
-    })
-    await waitFor(() => expect(screen.getByLabelText('发送')).toBeEnabled())
-    fireEvent.click(screen.getByLabelText('发送'))
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "帮我分析项目" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
 
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
-    expect(request?.prompt).toBe('帮我分析项目')
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
+    expect(request?.prompt).toBe("帮我分析项目");
     expect(request?.runtimeSelection).toEqual({
-      provider: 'model',
-      profileId: modelProfileId
-    })
+      provider: "model",
+      profileId: modelProfileId,
+    });
     expect(
       screen
-        .getByText('正在连接 Agent Runtime')
-        .querySelector('.message__status-dot')
-    ).toHaveClass('message__status-dot--active')
+        .getByText("正在连接 Agent Runtime")
+        .querySelector(".message__status-dot"),
+    ).toHaveClass("message__status-dot--active");
     const userMessage = screen
-      .getAllByText('帮我分析项目')
-      .map((element) => element.closest('article'))
-      .find((element) => element?.classList.contains('message--user'))
-    expect(userMessage).toHaveClass('message--user')
+      .getAllByText("帮我分析项目")
+      .map((element) => element.closest("article"))
+      .find((element) => element?.classList.contains("message--user"));
+    expect(userMessage).toHaveClass("message--user");
 
     act(() => {
       if (!request) {
-        throw new Error('Missing request')
+        throw new Error("Missing request");
       }
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: '这是'
-      })
+        type: "text",
+        delta: "这是",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: '回答内容'
-      })
+        type: "text",
+        delta: "回答内容",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'reasoning',
-        delta: '先检查项目结构'
-      })
-    })
+        type: "reasoning",
+        delta: "先检查项目结构",
+      });
+    });
 
-    expect(await screen.findByText('这是回答内容')).toBeInTheDocument()
-    const streamingReasoning = screen
-      .getByText('正在推理')
-      .closest('details')
-    expect(streamingReasoning).toHaveAttribute('open')
-    expect(screen.getByText('先检查项目结构')).toBeInTheDocument()
-    const reasoningContent =
-      streamingReasoning!.querySelector<HTMLElement>(
-        '.message-reasoning__content'
-      )
+    expect(await screen.findByText("这是回答内容")).toBeInTheDocument();
+    const streamingReasoning = screen.getByText("正在推理").closest("details");
+    expect(streamingReasoning).toHaveAttribute("open");
+    expect(screen.getByText("先检查项目结构")).toBeInTheDocument();
+    const reasoningContent = streamingReasoning!.querySelector<HTMLElement>(
+      ".message-reasoning__content",
+    );
     if (!reasoningContent) {
-      throw new Error('Missing reasoning content')
+      throw new Error("Missing reasoning content");
     }
-    const reasoningScrollTo = vi.fn()
-    reasoningContent.scrollTo = reasoningScrollTo
-    Object.defineProperty(reasoningContent, 'scrollHeight', {
+    const reasoningScrollTo = vi.fn();
+    reasoningContent.scrollTo = reasoningScrollTo;
+    Object.defineProperty(reasoningContent, "scrollHeight", {
       configurable: true,
-      value: 640
-    })
+      value: 640,
+    });
 
     act(() => {
       if (!request) {
-        throw new Error('Missing request')
+        throw new Error("Missing request");
       }
       agentListener?.({
         requestId: request.requestId,
-        type: 'reasoning',
-        delta: '，再确认依赖'
-      })
-    })
+        type: "reasoning",
+        delta: "，再确认依赖",
+      });
+    });
 
     expect(reasoningScrollTo).toHaveBeenLastCalledWith({
       top: 640,
-      behavior: 'auto'
-    })
-    expect(screen.getByText('先检查项目结构，再确认依赖')).toBeInTheDocument()
+      behavior: "auto",
+    });
+    expect(screen.getByText("先检查项目结构，再确认依赖")).toBeInTheDocument();
 
     act(() => {
       if (!request) {
-        throw new Error('Missing request')
+        throw new Error("Missing request");
       }
       agentListener?.({
         requestId: request.requestId,
-        type: 'tool',
-        callId: 'call-1',
-        name: 'read',
-        state: 'running',
-        summary: 'OpenCode 工具：read',
-        input: '{"path":"README.md"}'
-      })
-      agentListener?.({
-        requestId: request.requestId,
-        type: 'tool',
-        callId: 'call-2',
-        name: 'grep',
-        state: 'completed',
-        summary: 'OpenCode 工具：grep',
-        input: '{"pattern":"runtime"}',
-        output: 'src/main/agent/runtime.ts'
-      })
-      agentListener?.({
-        requestId: request.requestId,
-        type: 'reasoning',
-        delta: '再检查关键文件'
-      })
-      agentListener?.({
-        requestId: request.requestId,
-        type: 'text',
-        delta: '最终结论'
-      })
-      agentListener?.({
-        requestId: request.requestId,
-        type: 'tool',
-        callId: 'call-1',
-        name: 'read',
-        state: 'completed',
-        summary: 'OpenCode 工具：read',
+        type: "tool",
+        callId: "call-1",
+        name: "read",
+        state: "running",
+        summary: "OpenCode 工具：read",
         input: '{"path":"README.md"}',
-        output:
-          'README contents\nAuthorization: Bearer visible-token'
-      })
-    })
+      });
+      agentListener?.({
+        requestId: request.requestId,
+        type: "tool",
+        callId: "call-2",
+        name: "grep",
+        state: "completed",
+        summary: "OpenCode 工具：grep",
+        input: '{"pattern":"runtime"}',
+        output: "src/main/agent/runtime.ts",
+      });
+      agentListener?.({
+        requestId: request.requestId,
+        type: "reasoning",
+        delta: "再检查关键文件",
+      });
+      agentListener?.({
+        requestId: request.requestId,
+        type: "text",
+        delta: "最终结论",
+      });
+      agentListener?.({
+        requestId: request.requestId,
+        type: "tool",
+        callId: "call-1",
+        name: "read",
+        state: "completed",
+        summary: "OpenCode 工具：read",
+        input: '{"path":"README.md"}',
+        output: "README contents\nAuthorization: Bearer visible-token",
+      });
+    });
 
-    const assistantArticle = screen
-      .getByText('最终结论')
-      .closest('article')
+    const assistantArticle = screen.getByText("最终结论").closest("article");
     const orderedBlocks = [
-      ...assistantArticle!.querySelectorAll('.message-blocks > *')
-    ].map((element) => element.textContent)
+      ...assistantArticle!.querySelectorAll(".message-blocks > *"),
+    ].map((element) => element.textContent);
     expect(orderedBlocks).toEqual([
-      expect.stringContaining('这是回答内容'),
-      expect.stringContaining('先检查项目结构'),
-      expect.stringContaining('OpenCode 工具：read'),
-      expect.stringContaining('再检查关键文件'),
-      expect.stringContaining('最终结论')
-    ])
+      expect.stringContaining("这是回答内容"),
+      expect.stringContaining("先检查项目结构"),
+      expect.stringContaining("OpenCode 工具：read"),
+      expect.stringContaining("再检查关键文件"),
+      expect.stringContaining("最终结论"),
+    ]);
+    expect(screen.getAllByText("OpenCode 工具：read")).toHaveLength(1);
     expect(
-      screen.getAllByText('OpenCode 工具：read')
-    ).toHaveLength(1)
-    expect(
-      screen.getByRole('region', { name: '工具执行，共 2 项' })
-    ).toBeInTheDocument()
-    const readTool = screen.getByText('read').closest('details')
+      screen.getByRole("region", { name: "工具执行，共 2 项" }),
+    ).toBeInTheDocument();
+    const readTool = screen.getByText("read").closest("details");
     const rawToolOutput =
-      'README contents\nAuthorization: Bearer visible-token'
-    expect(readTool).not.toHaveAttribute('open')
+      "README contents\nAuthorization: Bearer visible-token";
+    expect(readTool).not.toHaveAttribute("open");
     expect(
-      screen.getByText(
-        (_, element) => element?.textContent === rawToolOutput
-      )
-    ).not.toBeVisible()
-    fireEvent.click(screen.getByText('read').closest('summary')!)
-    expect(readTool).toHaveAttribute('open')
-    expect(within(readTool!).getByText('调用参数')).toBeVisible()
+      screen.getByText((_, element) => element?.textContent === rawToolOutput),
+    ).not.toBeVisible();
+    fireEvent.click(screen.getByText("read").closest("summary")!);
+    expect(readTool).toHaveAttribute("open");
+    expect(within(readTool!).getByText("调用参数")).toBeVisible();
     expect(
       within(readTool!).getByText(
-        (_, element) => element?.textContent === rawToolOutput
-      )
-    ).toBeVisible()
-    const activeReasoning = screen.getAllByText('正在推理')
-    expect(activeReasoning).toHaveLength(2)
+        (_, element) => element?.textContent === rawToolOutput,
+      ),
+    ).toBeVisible();
+    const activeReasoning = screen.getAllByText("正在推理");
+    expect(activeReasoning).toHaveLength(2);
     for (const reasoning of activeReasoning) {
-      expect(reasoning.closest('details')).toHaveAttribute('open')
+      expect(reasoning.closest("details")).toHaveAttribute("open");
     }
 
     act(() => {
       if (!request) {
-        throw new Error('Missing request')
+        throw new Error("Missing request");
       }
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
 
-    const completedReasoning = await screen.findAllByText('推理过程')
-    expect(completedReasoning).toHaveLength(2)
+    const completedReasoning = await screen.findAllByText("推理过程");
+    expect(completedReasoning).toHaveLength(2);
     for (const reasoning of completedReasoning) {
-      expect(reasoning.closest('details')).not.toHaveAttribute('open')
+      expect(reasoning.closest("details")).not.toHaveAttribute("open");
     }
-    expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
-  })
+    expect(screen.getByText("项目：默认项目")).toHaveClass("scope-badge");
+  });
 
-  it('keeps every activity detail in a long tool chain', async () => {
-    render(<App />)
+  it("keeps every activity detail in a long tool chain", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '执行长工具链' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "执行长工具链" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       for (let index = 0; index < 501; index += 1) {
         agentListener?.({
           requestId: request.requestId,
-          type: 'tool',
+          type: "tool",
           callId: `call-${index + 1}`,
-          name: index === 500 ? `read${'长'.repeat(300)}` : 'read',
-          state: 'completed',
+          name: index === 500 ? `read${"长".repeat(300)}` : "read",
+          state: "completed",
           summary:
             index === 500
-              ? `OpenCode 工具：read 501 ${'详情'.repeat(2_100)}`
-              : `OpenCode 工具：read ${index + 1}`
-        })
+              ? `OpenCode 工具：read 501 ${"详情".repeat(2_100)}`
+              : `OpenCode 工具：read ${index + 1}`,
+        });
       }
-    })
+    });
 
     expect(
-      screen.getByRole('region', { name: '工具执行，共 501 项' })
-    ).toBeInTheDocument()
+      screen.getByRole("region", { name: "工具执行，共 501 项" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText(
-        '活动记录过多，后续详情未在本地保留；Runtime 任务仍继续执行'
-      )
-    ).not.toBeInTheDocument()
+        "活动记录过多，后续详情未在本地保留；Runtime 任务仍继续执行",
+      ),
+    ).not.toBeInTheDocument();
     await waitFor(
       () => {
         const saved =
-          vi.mocked(api.activityHistory.replace).mock.calls.at(-1)?.[0] ??
-          []
-        expect(
-          saved.filter((record) => record.kind === 'tool')
-        ).toHaveLength(501)
-        const lastTool = saved.find((record) => record.callId === 'call-501')
-        expect(lastTool?.detail.length).toBeGreaterThan(4_000)
-        expect(lastTool?.title).toHaveLength(240)
+          vi.mocked(api.activityHistory.replace).mock.calls.at(-1)?.[0] ?? [];
+        expect(saved.filter((record) => record.kind === "tool")).toHaveLength(
+          501,
+        );
+        const lastTool = saved.find((record) => record.callId === "call-501");
+        expect(lastTool?.detail.length).toBeGreaterThan(4_000);
+        expect(lastTool?.title).toHaveLength(240);
       },
-      { timeout: 3_000 }
-    )
-  })
+      { timeout: 3_000 },
+    );
+  });
 
-  it('keeps adjacent streamed text blocks exact in StrictMode', async () => {
+  it("keeps adjacent streamed text blocks exact in StrictMode", async () => {
     render(
       <StrictMode>
         <App />
-      </StrictMode>
-    )
+      </StrictMode>,
+    );
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '读取验收标记' }
-    })
-    await waitFor(() => expect(screen.getByLabelText('发送')).toBeEnabled())
-    fireEvent.click(screen.getByLabelText('发送'))
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "读取验收标记" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
 
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: 'GO'
-      })
+        type: "text",
+        delta: "GO",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: 'ODBUDDY_REMOTE_TOOL_4C6B9D8A'
-      })
-    })
+        type: "text",
+        delta: "ODBUDDY_REMOTE_TOOL_4C6B9D8A",
+      });
+    });
 
-    const expected = 'GOODBUDDY_REMOTE_TOOL_4C6B9D8A'
-    const text = await screen.findByText(expected)
-    const assistantArticle = text.closest('article')
-    expect(assistantArticle).not.toBeNull()
+    const expected = "GOODBUDDY_REMOTE_TOOL_4C6B9D8A";
+    const text = await screen.findByText(expected);
+    const assistantArticle = text.closest("article");
+    expect(assistantArticle).not.toBeNull();
     expect(
-      assistantArticle!.querySelectorAll(
-        '.message-blocks > .message__content'
-      )
-    ).toHaveLength(1)
+      assistantArticle!.querySelectorAll(".message-blocks > .message__content"),
+    ).toHaveLength(1);
     expect(
-      assistantArticle!.querySelector('.message-blocks')
-    ).toHaveTextContent(expected)
+      assistantArticle!.querySelector(".message-blocks"),
+    ).toHaveTextContent(expected);
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
-  })
+        type: "done",
+      });
+    });
+  });
 
-  it('persists only the changed conversation and streamed assistant message', async () => {
-    const activeConversationId =
-      '00000000-0000-4000-8000-000000000441'
-    const activeMessageId =
-      '00000000-0000-4000-8000-000000000442'
-    const unrelatedConversationId =
-      '00000000-0000-4000-8000-000000000443'
-    const unrelatedMessageId =
-      '00000000-0000-4000-8000-000000000444'
+  it("persists only the changed conversation and streamed assistant message", async () => {
+    const activeConversationId = "00000000-0000-4000-8000-000000000441";
+    const activeMessageId = "00000000-0000-4000-8000-000000000442";
+    const unrelatedConversationId = "00000000-0000-4000-8000-000000000443";
+    const unrelatedMessageId = "00000000-0000-4000-8000-000000000444";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: activeConversationId,
         projectId,
-        title: '增量持久化会话',
+        title: "增量持久化会话",
         updatedAt: 1_775_000_000_002,
         messages: [
           {
             id: activeMessageId,
-            role: 'assistant',
-            content: '原有消息',
+            role: "assistant",
+            content: "原有消息",
             createdAt: 1_775_000_000_002,
-            state: 'complete'
-          }
-        ]
+            state: "complete",
+          },
+        ],
       },
       {
         id: unrelatedConversationId,
         projectId,
-        title: '无关会话',
+        title: "无关会话",
         updatedAt: 1_775_000_000_001,
         messages: [
           {
             id: unrelatedMessageId,
-            role: 'assistant',
-            content: '不应重复保存',
+            role: "assistant",
+            content: "不应重复保存",
             createdAt: 1_775_000_000_001,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    render(<App />)
-    expect(await screen.findByText('原有消息')).toBeInTheDocument()
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    render(<App />);
+    expect(await screen.findByText("原有消息")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '只更新当前会话' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "只更新当前会话" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
-    await waitFor(() =>
-      expect(api.conversations.saveLocal).toHaveBeenCalled()
-    )
-    vi.mocked(api.conversations.saveLocal).mockClear()
+    await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalled());
+    vi.mocked(api.conversations.saveLocal).mockClear();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: '流式增量'
-      })
-    })
+        type: "text",
+        delta: "流式增量",
+      });
+    });
 
     await waitFor(
       () => {
         const batch = vi
           .mocked(api.conversations.saveLocal)
-          .mock.calls.at(-1)?.[0]
-        expect(batch).toHaveLength(1)
-        expect(batch?.[0]?.header.id).toBe(activeConversationId)
+          .mock.calls.at(-1)?.[0];
+        expect(batch).toHaveLength(1);
+        expect(batch?.[0]?.header.id).toBe(activeConversationId);
         expect(batch?.[0]?.messages).toEqual([
           expect.objectContaining({
-            role: 'assistant',
-            content: '流式增量',
-            state: 'streaming'
-          })
-        ])
+            role: "assistant",
+            content: "流式增量",
+            state: "streaming",
+          }),
+        ]);
         expect(
-          batch?.some(
-            (entry) => entry.header.id === unrelatedConversationId
-          )
-        ).toBe(false)
+          batch?.some((entry) => entry.header.id === unrelatedConversationId),
+        ).toBe(false);
         expect(
-          batch?.flatMap((entry) => entry.messages).some(
-            (message) =>
-              message.id === activeMessageId ||
-              message.id === unrelatedMessageId ||
-              message.role === 'user'
-          )
-        ).toBe(false)
+          batch
+            ?.flatMap((entry) => entry.messages)
+            .some(
+              (message) =>
+                message.id === activeMessageId ||
+                message.id === unrelatedMessageId ||
+                message.role === "user",
+            ),
+        ).toBe(false);
       },
-      { timeout: 2_000 }
-    )
-  })
+      { timeout: 2_000 },
+    );
+  });
 
-  it('flushes pending local conversation changes before quit', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000445'
+  it("flushes pending local conversation changes before quit", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000445";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: conversationId,
         projectId,
-        title: '退出持久化会话',
+        title: "退出持久化会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000446',
-            role: 'assistant',
-            content: '已有内容',
+            id: "00000000-0000-4000-8000-000000000446",
+            role: "assistant",
+            content: "已有内容",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    render(<App />)
-    expect(await screen.findByText('已有内容')).toBeInTheDocument()
-    vi.mocked(api.conversations.saveLocal).mockClear()
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    render(<App />);
+    expect(await screen.findByText("已有内容")).toBeInTheDocument();
+    vi.mocked(api.conversations.saveLocal).mockClear();
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '退出前必须保存' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    expect(
-      await screen.findByText('退出前必须保存')
-    ).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "退出前必须保存" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    expect(await screen.findByText("退出前必须保存")).toBeInTheDocument();
     if (!beforeQuitListener) {
-      throw new Error('Missing before-quit persistence listener')
+      throw new Error("Missing before-quit persistence listener");
     }
 
-    await act(async () => beforeQuitListener?.())
+    await act(async () => beforeQuitListener?.());
 
     expect(api.conversations.saveLocal).toHaveBeenCalledWith([
       expect.objectContaining({
         header: expect.objectContaining({ id: conversationId }),
         messages: expect.arrayContaining([
           expect.objectContaining({
-            role: 'user',
-            content: '退出前必须保存',
-            state: 'complete'
-          })
-        ])
-      })
-    ])
-  })
+            role: "user",
+            content: "退出前必须保存",
+            state: "complete",
+          }),
+        ]),
+      }),
+    ]);
+  });
 
-  it('replaces the direct-model thinking status with real reasoning', async () => {
-    render(<App />)
+  it("replaces the direct-model thinking status with real reasoning", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '分析这个问题' }
-    })
-    const send = await screen.findByLabelText('发送')
-    await waitFor(() => expect(send).toBeEnabled())
-    fireEvent.click(send)
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "分析这个问题" },
+    });
+    const send = await screen.findByLabelText("发送");
+    await waitFor(() => expect(send).toBeEnabled());
+    fireEvent.click(send);
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'status',
-        message: 'deepseek-v4-flash 正在思考'
-      })
-    })
-    expect(
-      screen.getByText('deepseek-v4-flash 正在思考')
-    ).toBeInTheDocument()
+        type: "status",
+        message: "deepseek-v4-flash 正在思考",
+      });
+    });
+    expect(screen.getByText("deepseek-v4-flash 正在思考")).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'reasoning',
-        delta: '正在分析真实推理内容'
-      })
-    })
+        type: "reasoning",
+        delta: "正在分析真实推理内容",
+      });
+    });
 
     expect(
-      screen.queryByText('deepseek-v4-flash 正在思考')
-    ).not.toBeInTheDocument()
-    expect(screen.getByText('正在推理').closest('details')).toHaveAttribute(
-      'open'
-    )
-    expect(screen.getByText('正在分析真实推理内容')).toBeVisible()
-  })
+      screen.queryByText("deepseek-v4-flash 正在思考"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("正在推理").closest("details")).toHaveAttribute(
+      "open",
+    );
+    expect(screen.getByText("正在分析真实推理内容")).toBeVisible();
+  });
 
-  it('updates context usage after model responses and keeps compression status', async () => {
-    const settings = await api.settings.getRuntime()
+  it("updates context usage after model responses and keeps compression status", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'model',
+      provider: "model",
       modelProfiles: settings.modelProfiles.map((profile) => ({
         ...profile,
-        contextWindowTokens: 32_000
+        contextWindowTokens: 32_000,
       })),
       contextCompression: {
         enabled: true,
         triggerTokens: 200_000,
         recentRawTokens: 32_000,
-        modelSource: { kind: 'current' },
-        summaryPrompt: 'Preserve important facts.'
-      }
-    })
-    render(<App />)
+        modelSource: { kind: "current" },
+        summaryPrompt: "Preserve important facts.",
+      },
+    });
+    render(<App />);
 
-    await screen.findByLabelText('向 GoodBuddy 提问')
+    await screen.findByLabelText("向 GoodBuddy 提问");
     expect(
-      screen.queryByRole('progressbar', {
-        name: '当前上下文使用量'
-      })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("progressbar", {
+        name: "当前上下文使用量",
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("只读问答，不修改文件")).not.toBeInTheDocument();
     expect(
-      screen.queryByText('只读问答，不修改文件')
-    ).not.toBeInTheDocument()
-    expect(
-      await screen.findByText('快捷唤起：', { exact: false })
-    ).toHaveTextContent('快捷唤起：Ctrl+Shift+Space')
+      await screen.findByText("快捷唤起：", { exact: false }),
+    ).toHaveTextContent("快捷唤起：Ctrl+Shift+Space");
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '中'.repeat(1_000) }
-    })
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "中".repeat(1_000) },
+    });
     expect(
-      screen.queryByRole('progressbar', {
-        name: '当前上下文使用量'
-      })
-    ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+      screen.queryByRole("progressbar", {
+        name: "当前上下文使用量",
+      }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-metrics',
+        type: "context-metrics",
         contextTokens: 22_000,
         effectiveTriggerTokens: 20_000,
         contextWindowTokens: 32_000,
         compressionEnabled: true,
-        source: 'provider'
-      })
-    })
+        source: "provider",
+      });
+    });
     expect(
-      screen.getByText('本次调用 22.0K / 32.0K · 69%')
-    ).toBeInTheDocument()
+      screen.getByText("本次调用 22.0K / 32.0K · 69%"),
+    ).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-compression',
-        scope: 'conversation',
-        state: 'started',
+        type: "context-compression",
+        scope: "conversation",
+        state: "started",
         estimatedBeforeTokens: 22_000,
         effectiveTriggerTokens: 20_000,
         contextWindowTokens: 32_000,
         recentRawTokens: 32_000,
-        coveredMessageCount: 2
-      })
-    })
-    expect(
-      screen.getByText('正在压缩较早对话…')
-    ).toBeInTheDocument()
+        coveredMessageCount: 2,
+      });
+    });
+    expect(screen.getByText("正在压缩较早对话…")).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'status',
-        message: 'sonnet-5 正在思考'
-      })
-    })
-    expect(
-      screen.getByText('正在压缩较早对话…')
-    ).toBeInTheDocument()
-    expect(screen.getByText('sonnet-5 正在思考')).toBeInTheDocument()
+        type: "status",
+        message: "sonnet-5 正在思考",
+      });
+    });
+    expect(screen.getByText("正在压缩较早对话…")).toBeInTheDocument();
+    expect(screen.getByText("sonnet-5 正在思考")).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-compression',
-        scope: 'conversation',
-        state: 'completed',
+        type: "context-compression",
+        scope: "conversation",
+        state: "completed",
         estimatedBeforeTokens: 22_000,
         estimatedAfterTokens: 9_000,
         effectiveTriggerTokens: 20_000,
         contextWindowTokens: 32_000,
         recentRawTokens: 32_000,
         coveredMessageCount: 2,
-        summaryTokens: 1_000
-      })
-    })
+        summaryTokens: 1_000,
+      });
+    });
 
     expect(
-      screen.getByText(
-        '已压缩较早对话（估算） · ≈22.0K → ≈9.0K'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("已压缩较早对话（估算） · ≈22.0K → ≈9.0K"),
+    ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        '压缩后对话估算 ≈9.0K / 32.0K · 28%'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("压缩后对话估算 ≈9.0K / 32.0K · 28%"),
+    ).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-compression',
-        scope: 'agent-run',
-        state: 'started',
+        type: "context-compression",
+        scope: "agent-run",
+        state: "started",
         estimatedBeforeTokens: 24_000,
         effectiveTriggerTokens: 20_000,
         contextWindowTokens: 32_000,
         recentRawTokens: 4_000,
-        compressionCount: 1
-      })
-    })
-    expect(
-      screen.getByText('正在整理 Agent 执行上下文…')
-    ).toBeInTheDocument()
+        compressionCount: 1,
+      });
+    });
+    expect(screen.getByText("正在整理 Agent 执行上下文…")).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-compression',
-        scope: 'agent-run',
-        state: 'completed',
+        type: "context-compression",
+        scope: "agent-run",
+        state: "completed",
         estimatedBeforeTokens: 24_000,
         estimatedAfterTokens: 11_000,
         effectiveTriggerTokens: 20_000,
         contextWindowTokens: 32_000,
         recentRawTokens: 4_000,
-        compressionCount: 2
-      })
-    })
+        compressionCount: 2,
+      });
+    });
     expect(
       screen.getByText(
-        'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K'
-      )
-    ).toBeInTheDocument()
+        "Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K",
+      ),
+    ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        '已压缩较早对话（估算） · ≈22.0K → ≈9.0K'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("已压缩较早对话（估算） · ≈22.0K → ≈9.0K"),
+    ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        '压缩后对话估算 ≈9.0K / 32.0K · 28%'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("压缩后对话估算 ≈9.0K / 32.0K · 28%"),
+    ).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-compression',
-        scope: 'conversation',
-        state: 'completed',
+        type: "context-compression",
+        scope: "conversation",
+        state: "completed",
         estimatedBeforeTokens: 24_000,
         estimatedAfterTokens: 8_500,
         effectiveTriggerTokens: 20_000,
         contextWindowTokens: 32_000,
         recentRawTokens: 4_000,
-        coveredMessageCount: 4
-      })
-    })
+        coveredMessageCount: 4,
+      });
+    });
     expect(
       screen.getByText(
-        'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K'
-      )
-    ).toBeInTheDocument()
+        "Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K",
+      ),
+    ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        '已压缩较早对话（估算） · ≈24.0K → ≈8.5K'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("已压缩较早对话（估算） · ≈24.0K → ≈8.5K"),
+    ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        '压缩后对话估算 ≈8.5K / 32.0K · 27%'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("压缩后对话估算 ≈8.5K / 32.0K · 27%"),
+    ).toBeInTheDocument();
     expect(
       Array.from(
-        document.querySelectorAll(
-          '.context-compression-event__label'
-        )
-      ).map((element) => element.textContent)
+        document.querySelectorAll(".context-compression-event__label"),
+      ).map((element) => element.textContent),
     ).toEqual([
-      'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K',
-      '已压缩较早对话（估算） · ≈24.0K → ≈8.5K'
-    ])
+      "Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K",
+      "已压缩较早对话（估算） · ≈24.0K → ≈8.5K",
+    ]);
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
     expect(
       screen.getByText(
-        'Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K'
-      )
-    ).toBeInTheDocument()
-  })
+        "Agent 执行期间已压缩上下文 2 次（估算） · ≈24.0K → ≈11.0K",
+      ),
+    ).toBeInTheDocument();
+  });
 
-  it('does not present the compression threshold as a context-window percentage', async () => {
-    const settings = await api.settings.getRuntime()
+  it("does not present the compression threshold as a context-window percentage", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'model',
+      provider: "model",
       modelProfiles: settings.modelProfiles.map((profile) => ({
         ...profile,
-        contextWindowTokens: undefined
+        contextWindowTokens: undefined,
       })),
       contextCompression: {
         enabled: true,
         triggerTokens: 12_000,
         recentRawTokens: 4_000,
-        modelSource: { kind: 'current' },
-        summaryPrompt: 'Preserve important facts.'
-      }
-    })
-    render(<App />)
+        modelSource: { kind: "current" },
+        summaryPrompt: "Preserve important facts.",
+      },
+    });
+    render(<App />);
 
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '检查上下文显示' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "检查上下文显示" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-metrics',
+        type: "context-metrics",
         contextTokens: 22_000,
         effectiveTriggerTokens: 20_000,
         compressionEnabled: true,
-        source: 'provider'
-      })
-    })
+        source: "provider",
+      });
+    });
 
     expect(
-      screen.getByText('本次调用 22.0K · 压缩线 12.0K')
-    ).toBeInTheDocument()
+      screen.getByText("本次调用 22.0K · 压缩线 12.0K"),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole('progressbar', {
-        name: '当前上下文使用量'
-      })
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText('110%')).not.toBeInTheDocument()
+      screen.queryByRole("progressbar", {
+        name: "当前上下文使用量",
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("110%")).not.toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-compression',
-        scope: 'conversation',
-        state: 'completed',
+        type: "context-compression",
+        scope: "conversation",
+        state: "completed",
         estimatedBeforeTokens: 22_000,
         estimatedAfterTokens: 9_400,
         effectiveTriggerTokens: 20_000,
         recentRawTokens: 4_000,
-        coveredMessageCount: 2
-      })
-    })
+        coveredMessageCount: 2,
+      });
+    });
 
     expect(
-      screen.getByText(
-        '压缩后对话估算 ≈9.4K · 压缩线 12.0K'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("压缩后对话估算 ≈9.4K · 压缩线 12.0K"),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByText('本次调用 22.0K · 压缩线 12.0K')
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByText("本次调用 22.0K · 压缩线 12.0K"),
+    ).not.toBeInTheDocument();
+  });
 
-  it('updates the composer compression line immediately after settings change', async () => {
-    const settings = await api.settings.getRuntime()
+  it("updates the composer compression line immediately after settings change", async () => {
+    const settings = await api.settings.getRuntime();
     const initialSettings = {
       ...settings,
-      provider: 'model' as const,
+      provider: "model" as const,
       modelProfiles: settings.modelProfiles.map((profile) => ({
         ...profile,
-        contextWindowTokens: undefined
+        contextWindowTokens: undefined,
       })),
       contextCompression: {
         enabled: true,
         triggerTokens: 20_000,
         recentRawTokens: 4_000,
-        modelSource: { kind: 'current' as const },
-        summaryPrompt: 'Preserve important facts.'
-      }
-    }
+        modelSource: { kind: "current" as const },
+        summaryPrompt: "Preserve important facts.",
+      },
+    };
     vi.mocked(api.settings.getRuntime)
       .mockResolvedValueOnce(initialSettings)
-      .mockResolvedValueOnce(initialSettings)
+      .mockResolvedValueOnce(initialSettings);
     vi.mocked(api.settings.updateRuntime).mockImplementationOnce(
       async (input) => ({
         ...initialSettings,
         contextCompression:
-          input.contextCompression ??
-          initialSettings.contextCompression
-      })
-    )
-    render(<App />)
+          input.contextCompression ?? initialSettings.contextCompression,
+      }),
+    );
+    render(<App />);
 
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '检查压缩线设置刷新' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "检查压缩线设置刷新" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-metrics',
+        type: "context-metrics",
         contextTokens: 9_000,
         effectiveTriggerTokens: 20_000,
         compressionEnabled: true,
-        source: 'provider'
-      })
-    })
+        source: "provider",
+      });
+    });
     expect(
-      screen.getByText('本次调用 9.0K · 压缩线 20.0K')
-    ).toBeInTheDocument()
+      screen.getByText("本次调用 9.0K · 压缩线 20.0K"),
+    ).toBeInTheDocument();
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
 
-    fireEvent.click(
-      screen.getByRole('button', { name: /本地工作区/u })
-    )
-    await screen.findByRole('heading', { name: '设置中心' })
-    fireEvent.click(
-      screen.getByRole('tab', { name: '上下文控制' })
-    )
-    const trigger = await screen.findByLabelText('压缩触发阈值')
-    fireEvent.change(trigger, { target: { value: '12' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    fireEvent.click(screen.getByRole("button", { name: /本地工作区/u }));
+    await screen.findByRole("heading", { name: "设置中心" });
+    fireEvent.click(screen.getByRole("tab", { name: "上下文控制" }));
+    const trigger = await screen.findByLabelText("压缩触发阈值");
+    fireEvent.change(trigger, { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() =>
       expect(api.settings.updateRuntime).toHaveBeenCalledWith(
         expect.objectContaining({
           contextCompression: expect.objectContaining({
-            triggerTokens: 12_000
-          })
-        })
-      )
-    )
+            triggerTokens: 12_000,
+          }),
+        }),
+      ),
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: '对话' }))
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
     expect(
-      await screen.findByText('本次调用 9.0K · 压缩线 12.0K')
-    ).toBeInTheDocument()
-  })
+      await screen.findByText("本次调用 9.0K · 压缩线 12.0K"),
+    ).toBeInTheDocument();
+  });
 
-  it('guards sidebar navigation away from dirty Settings drafts', async () => {
-    render(<App />)
+  it("guards sidebar navigation away from dirty Settings drafts", async () => {
+    render(<App />);
 
-    fireEvent.click(await screen.findByText('本地工作区'))
-    await screen.findByRole('heading', { name: '设置中心' })
-    fireEvent.change(await screen.findByLabelText('默认工作区目录'), {
-      target: { value: 'C:\\Unsaved from App' }
-    })
-    const knowledgeNavigation = screen.getByRole('button', {
-      name: '知识库'
-    })
-    fireEvent.click(knowledgeNavigation)
+    fireEvent.click(await screen.findByText("本地工作区"));
+    await screen.findByRole("heading", { name: "设置中心" });
+    fireEvent.change(await screen.findByLabelText("默认工作区目录"), {
+      target: { value: "C:\\Unsaved from App" },
+    });
+    const knowledgeNavigation = screen.getByRole("button", {
+      name: "知识库",
+    });
+    fireEvent.click(knowledgeNavigation);
 
+    expect(screen.getByRole("heading", { name: "设置中心" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("当前设置有未保存更改");
+    fireEvent.click(screen.getByRole("button", { name: "放弃更改并关闭" }));
     expect(
-      screen.getByRole('heading', { name: '设置中心' })
-    ).toBeVisible()
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      '当前设置有未保存更改'
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '放弃更改并关闭' })
-    )
-    expect(
-      await screen.findByRole('heading', { name: '知识库' })
-    ).toBeVisible()
-    await waitFor(() => expect(knowledgeNavigation).toHaveFocus())
-  })
+      await screen.findByRole("heading", { name: "知识库" }),
+    ).toBeVisible();
+    await waitFor(() => expect(knowledgeNavigation).toHaveFocus());
+  });
 
-  it('restores focus outside Settings after closing the page', async () => {
-    render(<App />)
+  it("restores focus outside Settings after closing the page", async () => {
+    render(<App />);
 
-    await screen.findByLabelText('向 GoodBuddy 提问')
-    const settingsTrigger = screen.getByRole('button', {
-      name: /本地工作区/u
-    })
-    fireEvent.click(settingsTrigger)
-    await screen.findByRole('heading', { name: '设置中心' })
+    await screen.findByLabelText("向 GoodBuddy 提问");
+    const settingsTrigger = screen.getByRole("button", {
+      name: /本地工作区/u,
+    });
+    fireEvent.click(settingsTrigger);
+    await screen.findByRole("heading", { name: "设置中心" });
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '关闭设置' })
-    )
+    fireEvent.click(screen.getByRole("button", { name: "关闭设置" }));
 
-    await waitFor(() => expect(settingsTrigger).toHaveFocus())
-  })
+    await waitFor(() => expect(settingsTrigger).toHaveFocus());
+  });
 
-  it('focuses the Composer after closing automatically opened Settings', async () => {
+  it("focuses the Composer after closing automatically opened Settings", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
-      id: 'setup',
-      label: '未配置',
+      id: "setup",
+      label: "未配置",
       available: false,
       supportsToolExecution: false,
-      detail: '尚未配置 Runtime'
-    })
-    render(<App />)
+      detail: "尚未配置 Runtime",
+    });
+    render(<App />);
 
-    await screen.findByRole('heading', { name: '设置中心' })
-    const composer = screen.getByLabelText('向 GoodBuddy 提问')
-    fireEvent.click(
-      screen.getByRole('button', { name: '关闭设置' })
-    )
+    await screen.findByRole("heading", { name: "设置中心" });
+    const composer = screen.getByLabelText("向 GoodBuddy 提问");
+    fireEvent.click(screen.getByRole("button", { name: "关闭设置" }));
 
-    await waitFor(() => expect(composer).toHaveFocus())
-  })
+    await waitFor(() => expect(composer).toHaveFocus());
+  });
 
-  it('updates and removes the composer shortcut hint immediately after saving Settings', async () => {
+  it("updates and removes the composer shortcut hint immediately after saving Settings", async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
-      updateSource: 'github',
-      modelDownloadSource: 'modelscope',
+      updateSource: "github",
+      modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
-      magicNoteCommentMode: 'immediate',
-      magicNoteCommentFormat: 'combined'
-    }
+      magicNoteCommentMode: "immediate",
+      magicNoteCommentFormat: "combined",
+    };
     let shortcutSnapshot: GlobalShortcutSettingsSnapshot = {
       settings: {
         enabled: true,
-        accelerator: 'CommandOrControl+Shift+Space'
+        accelerator: "CommandOrControl+Shift+Space",
       },
       defaultSettings: {
         enabled: true,
-        accelerator: 'CommandOrControl+Shift+Space'
+        accelerator: "CommandOrControl+Shift+Space",
       },
-      platform: 'win32',
-      displayAccelerator: 'Ctrl+Shift+Space',
+      platform: "win32",
+      displayAccelerator: "Ctrl+Shift+Space",
       registered: true,
-      registeredAccelerator: 'CommandOrControl+Shift+Space',
-      status: 'registered'
-    }
+      registeredAccelerator: "CommandOrControl+Shift+Space",
+      status: "registered",
+    };
     api.updates = {
       getSettings: vi.fn(async () => ({ ...applicationSettings })),
       updateSettings: vi.fn(async (input) => {
-        applicationSettings = { ...applicationSettings, ...input }
-        return { ...applicationSettings }
+        applicationSettings = { ...applicationSettings, ...input };
+        return { ...applicationSettings };
       }),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     api.shortcuts = {
       getSettings: vi.fn(async () => shortcutSnapshot),
       updateSettings: vi.fn(async (input) => {
@@ -4543,861 +4269,795 @@ describe('App', () => {
           ...shortcutSnapshot,
           settings: input,
           displayAccelerator:
-            input.accelerator === 'Control+Alt+K'
-              ? 'Ctrl+Alt+K'
-              : 'Ctrl+Shift+Space',
+            input.accelerator === "Control+Alt+K"
+              ? "Ctrl+Alt+K"
+              : "Ctrl+Shift+Space",
           registered: input.enabled,
-          registeredAccelerator: input.enabled
-            ? input.accelerator
-            : undefined,
-          status: input.enabled ? 'registered' : 'disabled'
-        }
-        return { ok: true as const, snapshot: shortcutSnapshot }
-      })
-    }
+          registeredAccelerator: input.enabled ? input.accelerator : undefined,
+          status: input.enabled ? "registered" : "disabled",
+        };
+        return { ok: true as const, snapshot: shortcutSnapshot };
+      }),
+    };
     try {
-      render(<App />)
-      expect(
-        await screen.findByText('Ctrl+Shift+Space')
-      ).toBeInTheDocument()
-      fireEvent.click(await screen.findByText('本地工作区'))
-      await screen.findByRole('heading', { name: '设置中心' })
-      fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-      const shortcutInput = await screen.findByLabelText('快捷键')
+      render(<App />);
+      expect(await screen.findByText("Ctrl+Shift+Space")).toBeInTheDocument();
+      fireEvent.click(await screen.findByText("本地工作区"));
+      await screen.findByRole("heading", { name: "设置中心" });
+      fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
+      const shortcutInput = await screen.findByLabelText("快捷键");
       fireEvent.change(shortcutInput, {
-        target: { value: 'Control+Alt+K' }
-      })
-      fireEvent.click(
-        screen.getByRole('button', { name: '保存快捷键' })
-      )
+        target: { value: "Control+Alt+K" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "保存快捷键" }));
       await waitFor(() =>
         expect(api.shortcuts?.updateSettings).toHaveBeenCalledWith({
           enabled: true,
-          accelerator: 'Control+Alt+K'
-        })
-      )
-      fireEvent.click(screen.getByRole('button', { name: '对话' }))
-      expect(await screen.findByText('Ctrl+Alt+K')).toBeInTheDocument()
+          accelerator: "Control+Alt+K",
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "对话" }));
+      expect(await screen.findByText("Ctrl+Alt+K")).toBeInTheDocument();
 
-      fireEvent.click(await screen.findByText('本地工作区'))
-      await screen.findByRole('heading', { name: '设置中心' })
-      fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-      const shortcutSwitch = await screen.findByRole('switch', {
-        name: '启用全局快捷键'
-      })
-      fireEvent.click(shortcutSwitch)
-      fireEvent.click(
-        screen.getByRole('button', { name: '保存快捷键' })
-      )
+      fireEvent.click(await screen.findByText("本地工作区"));
+      await screen.findByRole("heading", { name: "设置中心" });
+      fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
+      const shortcutSwitch = await screen.findByRole("switch", {
+        name: "启用全局快捷键",
+      });
+      fireEvent.click(shortcutSwitch);
+      fireEvent.click(screen.getByRole("button", { name: "保存快捷键" }));
       await waitFor(() =>
         expect(api.shortcuts?.updateSettings).toHaveBeenCalledWith({
           enabled: false,
-          accelerator: 'Control+Alt+K'
-        })
-      )
-      fireEvent.click(screen.getByRole('button', { name: '对话' }))
-      await screen.findByLabelText('向 GoodBuddy 提问')
-      expect(
-        screen.queryByText('Ctrl+Alt+K')
-      ).not.toBeInTheDocument()
+          accelerator: "Control+Alt+K",
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "对话" }));
+      await screen.findByLabelText("向 GoodBuddy 提问");
+      expect(screen.queryByText("Ctrl+Alt+K")).not.toBeInTheDocument();
     } finally {
-      delete api.shortcuts
-      delete api.updates
+      delete api.shortcuts;
+      delete api.updates;
     }
-  })
+  });
 
-  it('restores persisted context usage and compression state after restart', async () => {
-    const settings = await api.settings.getRuntime()
-    const profile = settings.modelProfiles[0]!
-    const conversationId =
-      '00000000-0000-4000-8000-000000000451'
+  it("restores persisted context usage and compression state after restart", async () => {
+    const settings = await api.settings.getRuntime();
+    const profile = settings.modelProfiles[0]!;
+    const conversationId = "00000000-0000-4000-8000-000000000451";
     const compressionState = {
-      coveredHistoryDigest: 'a'.repeat(64),
+      coveredHistoryDigest: "a".repeat(64),
       coveredMessageCount: 2,
-      coveredFromMessageId:
-        '00000000-0000-4000-8000-000000000452',
-      coveredThroughMessageId:
-        '00000000-0000-4000-8000-000000000453',
-      summary: 'Persisted conversation summary'
-    }
+      coveredFromMessageId: "00000000-0000-4000-8000-000000000452",
+      coveredThroughMessageId: "00000000-0000-4000-8000-000000000453",
+      summary: "Persisted conversation summary",
+    };
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'model',
+      provider: "model",
       defaultModelProfileId: profile.id,
       modelProfiles: settings.modelProfiles.map((candidate) => ({
         ...candidate,
-        contextWindowTokens: undefined
+        contextWindowTokens: undefined,
       })),
       contextCompression: {
         enabled: true,
         triggerTokens: 12_000,
         recentRawTokens: 4_000,
-        modelSource: { kind: 'current' },
-        summaryPrompt: 'Preserve important facts.'
-      }
-    })
+        modelSource: { kind: "current" },
+        summaryPrompt: "Preserve important facts.",
+      },
+    });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: conversationId,
         projectId,
         runtimeSelection: {
-          provider: 'model',
-          profileId: profile.id
+          provider: "model",
+          profileId: profile.id,
         },
         contextMetrics: {
           runtimeSelectionKey: `model:${profile.id}`,
           contextTokens: 9_000,
-          source: 'estimated',
-          basis: 'conversation'
+          source: "estimated",
+          basis: "conversation",
         },
         contextCompressionState: compressionState,
-        title: '已压缩会话',
+        title: "已压缩会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000452',
-            role: 'user',
-            content: '此前问题',
+            id: "00000000-0000-4000-8000-000000000452",
+            role: "user",
+            content: "此前问题",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
+            state: "complete",
           },
           {
-            id: '00000000-0000-4000-8000-000000000453',
-            role: 'assistant',
-            content: '此前回答',
+            id: "00000000-0000-4000-8000-000000000453",
+            role: "assistant",
+            content: "此前回答",
             createdAt: 1_775_000_000_001,
-            state: 'complete',
+            state: "complete",
             contextCompression: {
-              state: 'completed',
-              scope: 'conversation',
+              state: "completed",
+              scope: "conversation",
               estimatedBeforeTokens: 22_000,
-              estimatedAfterTokens: 9_000
-            }
-          }
-        ]
-      }
-    ])
-    render(<App />)
+              estimatedAfterTokens: 9_000,
+            },
+          },
+        ],
+      },
+    ]);
+    render(<App />);
 
     expect(
-      await screen.findByText(
-        '压缩后对话估算 ≈9.0K · 压缩线 12.0K'
-      )
-    ).toBeInTheDocument()
+      await screen.findByText("压缩后对话估算 ≈9.0K · 压缩线 12.0K"),
+    ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        '已压缩较早对话（估算） · ≈22.0K → ≈9.0K'
-      )
-    ).toBeInTheDocument()
+      screen.getByText("已压缩较早对话（估算） · ≈22.0K → ≈9.0K"),
+    ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '继续工作' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "继续工作" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run.mock.calls[0]?.[0].contextCompressionState).toEqual(
-      compressionState
-    )
+      compressionState,
+    );
     expect(run.mock.calls[0]?.[0]).toMatchObject({
       historyMessageIds: [
-        '00000000-0000-4000-8000-000000000452',
-        '00000000-0000-4000-8000-000000000453'
+        "00000000-0000-4000-8000-000000000452",
+        "00000000-0000-4000-8000-000000000453",
       ],
       currentUserMessageId: expect.any(String),
-      currentAssistantMessageId: expect.any(String)
-    })
-  })
+      currentAssistantMessageId: expect.any(String),
+    });
+  });
 
-  it('keeps a tool failure in details and hides retry after continuing', async () => {
-    render(<App />)
+  it("keeps a tool failure in details and hides retry after continuing", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '读取演示文稿' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "读取演示文稿" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     const toolError =
-      'Cannot read binary file: D:\\workspace\\presentation.pptx'
-    const runtimeError = `OpenCode 工具执行失败（call-1）：${toolError}`
+      "Cannot read binary file: D:\\workspace\\presentation.pptx";
+    const runtimeError = `OpenCode 工具执行失败（call-1）：${toolError}`;
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'tool',
-        callId: 'call-1',
-        name: 'read',
-        state: 'failed',
-        summary: 'OpenCode 工具：read',
+        type: "tool",
+        callId: "call-1",
+        name: "read",
+        state: "failed",
+        summary: "OpenCode 工具：read",
         input: '{"path":"D:\\\\workspace\\\\presentation.pptx"}',
-        error: toolError
-      })
+        error: toolError,
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'error',
-        status: 'failed',
-        message: runtimeError
-      })
-    })
+        type: "error",
+        status: "failed",
+        message: runtimeError,
+      });
+    });
 
-    expect(screen.getByText(toolError)).toBeInTheDocument()
-    expect(screen.queryByText(runtimeError)).not.toBeInTheDocument()
+    expect(screen.getByText(toolError)).toBeInTheDocument();
+    expect(screen.queryByText(runtimeError)).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: '重新编辑并发送' })
-    ).toBeInTheDocument()
+      screen.getByRole("button", { name: "重新编辑并发送" }),
+    ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '继续处理' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "继续处理" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 
     expect(
-      screen.queryByRole('button', { name: '重新编辑并发送' })
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByRole("button", { name: "重新编辑并发送" }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('submits knowledge scope without eager search or prompt injection and merges runtime references', async () => {
-    const libraryId = '11111111-1111-4111-8111-111111111111'
+  it("submits knowledge scope without eager search or prompt injection and merges runtime references", async () => {
+    const libraryId = "11111111-1111-4111-8111-111111111111";
     vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
       libraries: [
         {
           id: libraryId,
-          name: '产品知识',
-          description: '',
-          storageMode: 'managed',
+          name: "产品知识",
+          description: "",
+          storageMode: "managed",
           graphEnabled: false,
-          graphStrategy: 'rules',
+          graphStrategy: "rules",
           sourceCount: 1,
           documentCount: 1,
-          indexedDocumentCount: 1
-        }
+          indexedDocumentCount: 1,
+        },
       ],
       sources: [],
       documents: [],
       graphNodes: [],
       graphRelations: [],
-      evidence: []
-    })
-    render(<App />)
-    const knowledgeScopeTrigger = await screen.findByRole('button', {
-      name: '选择知识库，本次已启用 0 个'
-    })
-    expect(knowledgeScopeTrigger).toHaveAttribute(
-      'aria-haspopup',
-      'dialog'
-    )
-    fireEvent.click(knowledgeScopeTrigger)
-    expect(knowledgeScopeTrigger).toHaveAttribute(
-      'aria-expanded',
-      'true'
-    )
+      evidence: [],
+    });
+    render(<App />);
+    const knowledgeScopeTrigger = await screen.findByRole("button", {
+      name: "选择知识库，本次已启用 0 个",
+    });
+    expect(knowledgeScopeTrigger).toHaveAttribute("aria-haspopup", "dialog");
+    fireEvent.click(knowledgeScopeTrigger);
+    expect(knowledgeScopeTrigger).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole('dialog', {
-        name: '本次对话检索范围'
-      })
-    ).toBeInTheDocument()
+      screen.getByRole("dialog", {
+        name: "本次对话检索范围",
+      }),
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect(
-        screen.getByRole('checkbox', { name: /产品知识/u })
-      ).toHaveFocus()
-    )
-    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
-    expect(knowledgeScopeTrigger).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(knowledgeScopeTrigger).toHaveFocus()
+      expect(screen.getByRole("checkbox", { name: /产品知识/u })).toHaveFocus(),
+    );
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(knowledgeScopeTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(knowledgeScopeTrigger).toHaveFocus();
 
-    fireEvent.click(knowledgeScopeTrigger)
-    const scopeCheckbox = screen.getByRole('checkbox', {
-      name: /产品知识/u
-    })
-    await waitFor(() => expect(scopeCheckbox).toHaveFocus())
-    fireEvent.focusOut(scopeCheckbox, { relatedTarget: null })
-    expect(knowledgeScopeTrigger).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.click(screen.getByText('产品知识', { selector: 'span' }))
-    expect(scopeCheckbox).toBeChecked()
-    fireEvent.click(scopeCheckbox.closest('label')!)
-    expect(scopeCheckbox).not.toBeChecked()
-    fireEvent.click(scopeCheckbox.closest('label')!.querySelector('small')!)
-    expect(scopeCheckbox).toBeChecked()
-    const composerInput = screen.getByLabelText('向 GoodBuddy 提问')
+    fireEvent.click(knowledgeScopeTrigger);
+    const scopeCheckbox = screen.getByRole("checkbox", {
+      name: /产品知识/u,
+    });
+    await waitFor(() => expect(scopeCheckbox).toHaveFocus());
+    fireEvent.focusOut(scopeCheckbox, { relatedTarget: null });
+    expect(knowledgeScopeTrigger).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByText("产品知识", { selector: "span" }));
+    expect(scopeCheckbox).toBeChecked();
+    fireEvent.click(scopeCheckbox.closest("label")!);
+    expect(scopeCheckbox).not.toBeChecked();
+    fireEvent.click(scopeCheckbox.closest("label")!.querySelector("small")!);
+    expect(scopeCheckbox).toBeChecked();
+    const composerInput = screen.getByLabelText("向 GoodBuddy 提问");
     fireEvent.focusOut(scopeCheckbox, {
-      relatedTarget: composerInput
-    })
-    composerInput.focus()
-    expect(knowledgeScopeTrigger).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(composerInput).toHaveFocus()
+      relatedTarget: composerInput,
+    });
+    composerInput.focus();
+    expect(knowledgeScopeTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(composerInput).toHaveFocus();
 
     fireEvent.change(composerInput, {
-      target: { value: '发布流程是什么？' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+      target: { value: "发布流程是什么？" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     expect(request).toMatchObject({
-      prompt: '发布流程是什么？',
+      prompt: "发布流程是什么？",
       knowledgeLibraryIds: [libraryId],
-      knowledgeRetrievalMode: 'auto'
-    })
-    expect(api.knowledge.search).not.toHaveBeenCalled()
-    expect(
-      screen.queryByText(/查看 \d+ 条证据引用/u)
-    ).not.toBeInTheDocument()
+      knowledgeRetrievalMode: "auto",
+    });
+    expect(api.knowledge.search).not.toHaveBeenCalled();
+    expect(screen.queryByText(/查看 \d+ 条证据引用/u)).not.toBeInTheDocument();
 
     act(() => {
       if (!request) {
-        throw new Error('Missing request')
+        throw new Error("Missing request");
       }
       for (let batch = 0; batch < 5; batch += 1) {
         agentListener?.({
           requestId: request.requestId,
-          type: 'source-references',
+          type: "source-references",
           references: Array.from({ length: 25 }, (_, index) => ({
             libraryId,
-            libraryName: '产品知识',
+            libraryName: "产品知识",
             documentId: crypto.randomUUID(),
             chunkId: crypto.randomUUID(),
             documentName: `发布手册 ${batch}-${index}`,
             sourceName: `release-${batch}-${index}.md`,
             locator: `第 ${batch}-${index} 节`,
             snippet: `证据 ${batch}-${index}`,
-            rank: index + 1
-          }))
-        })
+            rank: index + 1,
+          })),
+        });
       }
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
-    expect(
-      await screen.findByText('查看 20 条证据引用')
-    ).toBeInTheDocument()
+        type: "done",
+      });
+    });
+    expect(await screen.findByText("查看 20 条证据引用")).toBeInTheDocument();
     vi.mocked(api.knowledge.getReferenceContext).mockResolvedValueOnce({
       knowledgeBaseId: libraryId,
-      documentId: 'document-context',
-      chunkId: 'chunk-context',
-      documentTitle: '发布手册',
-      sourceDisplayName: 'release.md',
-      locator: '第 4 节',
-      matchedContent: '命中分块内容',
-      contextContent: '上文\n\n命中分块内容\n\n下文',
-      contextChunkIds: ['chunk-context'],
-      truncated: false
-    })
-    fireEvent.click(screen.getByText('查看 20 条证据引用'))
-    fireEvent.click(
-      screen.getAllByRole('button', { name: '查看上下文' })[0]!
-    )
+      documentId: "document-context",
+      chunkId: "chunk-context",
+      documentTitle: "发布手册",
+      sourceDisplayName: "release.md",
+      locator: "第 4 节",
+      matchedContent: "命中分块内容",
+      contextContent: "上文\n\n命中分块内容\n\n下文",
+      contextChunkIds: ["chunk-context"],
+      truncated: false,
+    });
+    fireEvent.click(screen.getByText("查看 20 条证据引用"));
+    fireEvent.click(screen.getAllByRole("button", { name: "查看上下文" })[0]!);
     expect(
-      await screen.findByRole('dialog', { name: '引用上下文' })
-    ).toBeInTheDocument()
+      await screen.findByRole("dialog", { name: "引用上下文" }),
+    ).toBeInTheDocument();
     expect(api.knowledge.getReferenceContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        knowledgeBaseId: libraryId
-      })
-    )
+        knowledgeBaseId: libraryId,
+      }),
+    );
     fireEvent.click(
-      screen.getAllByRole('button', {
-        name: '关闭引用上下文'
-      })[0]!
-    )
+      screen.getAllByRole("button", {
+        name: "关闭引用上下文",
+      })[0]!,
+    );
     await waitFor(
       () => {
         const persistedMessages = vi
           .mocked(api.conversations.saveLocal)
           .mock.calls.flatMap(([batch]) =>
-            batch.flatMap((conversation) => conversation.messages)
-          )
+            batch.flatMap((conversation) => conversation.messages),
+          );
         const persisted = persistedMessages
-          .filter((message) => message.role === 'assistant')
+          .filter((message) => message.role === "assistant")
           .slice()
           .reverse()
-          .find(
-            (message) => message.sourceReferences?.length === 20
-          )
-        expect(persisted?.sourceReferences).toHaveLength(20)
-        expect(persisted?.sources).toBeUndefined()
+          .find((message) => message.sourceReferences?.length === 20);
+        expect(persisted?.sourceReferences).toHaveLength(20);
+        expect(persisted?.sources).toBeUndefined();
       },
-      { timeout: 2_000 }
-    )
-  })
+      { timeout: 2_000 },
+    );
+  });
 
-  it('restores an independent knowledge scope for each conversation', async () => {
-    const libraryId = '11111111-1111-4111-8111-111111111111'
-    const firstConversationId =
-      '22222222-2222-4222-8222-222222222222'
-    const secondConversationId =
-      '33333333-3333-4333-8333-333333333333'
+  it("restores an independent knowledge scope for each conversation", async () => {
+    const libraryId = "11111111-1111-4111-8111-111111111111";
+    const firstConversationId = "22222222-2222-4222-8222-222222222222";
+    const secondConversationId = "33333333-3333-4333-8333-333333333333";
     vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
       libraries: [
         {
           id: libraryId,
-          name: '产品知识',
-          description: '',
-          storageMode: 'managed',
+          name: "产品知识",
+          description: "",
+          storageMode: "managed",
           graphEnabled: false,
-          graphStrategy: 'rules',
+          graphStrategy: "rules",
           sourceCount: 1,
           documentCount: 1,
-          indexedDocumentCount: 1
-        }
+          indexedDocumentCount: 1,
+        },
       ],
       sources: [],
       documents: [],
       graphNodes: [],
       graphRelations: [],
-      evidence: []
-    })
+      evidence: [],
+    });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: firstConversationId,
         projectId,
         knowledgeLibraryIds: [libraryId],
-        knowledgeRetrievalMode: 'always',
-        title: '带知识范围',
+        knowledgeRetrievalMode: "always",
+        title: "带知识范围",
         updatedAt: 200,
-        messages: []
+        messages: [],
       },
       {
         id: secondConversationId,
         projectId,
         knowledgeLibraryIds: [],
-        knowledgeRetrievalMode: 'auto',
-        title: '空知识范围',
+        knowledgeRetrievalMode: "auto",
+        title: "空知识范围",
         updatedAt: 100,
-        messages: []
-      }
-    ])
+        messages: [],
+      },
+    ]);
 
-    render(<App />)
+    render(<App />);
 
     expect(
-      await screen.findByRole('button', {
-        name: '选择知识库，本次已启用 1 个'
-      })
-    ).toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('button', { name: /^空知识范围/u })
-    )
+      await screen.findByRole("button", {
+        name: "选择知识库，本次已启用 1 个",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^空知识范围/u }));
     expect(
-      screen.getByRole('button', {
-        name: '选择知识库，本次已启用 0 个'
-      })
-    ).toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('button', { name: /^带知识范围/u })
-    )
+      screen.getByRole("button", {
+        name: "选择知识库，本次已启用 0 个",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^带知识范围/u }));
     expect(
-      screen.getByRole('button', {
-        name: '选择知识库，本次已启用 1 个'
-      })
-    ).toBeInTheDocument()
-  })
+      screen.getByRole("button", {
+        name: "选择知识库，本次已启用 1 个",
+      }),
+    ).toBeInTheDocument();
+  });
 
-  it('persists and submits always-retrieve mode for the active conversation', async () => {
-    const libraryId = '11111111-1111-4111-8111-111111111111'
+  it("persists and submits always-retrieve mode for the active conversation", async () => {
+    const libraryId = "11111111-1111-4111-8111-111111111111";
     vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
       libraries: [
         {
           id: libraryId,
-          name: '产品知识',
-          description: '',
-          storageMode: 'managed',
+          name: "产品知识",
+          description: "",
+          storageMode: "managed",
           graphEnabled: false,
-          graphStrategy: 'rules',
+          graphStrategy: "rules",
           sourceCount: 1,
           documentCount: 1,
-          indexedDocumentCount: 1
-        }
+          indexedDocumentCount: 1,
+        },
       ],
       sources: [],
       documents: [],
       graphNodes: [],
       graphRelations: [],
-      evidence: []
-    })
-    render(<App />)
-    const knowledgeScope = await screen.findByRole('button', {
-      name: '选择知识库，本次已启用 0 个'
-    })
-    fireEvent.click(knowledgeScope)
+      evidence: [],
+    });
+    render(<App />);
+    const knowledgeScope = await screen.findByRole("button", {
+      name: "选择知识库，本次已启用 0 个",
+    });
+    fireEvent.click(knowledgeScope);
+    fireEvent.click(screen.getByRole("checkbox", { name: /产品知识/u }));
+    const retrievalMode = screen.getByRole("group", {
+      name: "知识检索方式",
+    });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /产品知识/u })
-    )
-    const retrievalMode = screen.getByRole('group', {
-      name: '知识检索方式'
-    })
-    fireEvent.click(
-      within(retrievalMode).getByRole('button', {
-        name: '每次先检索'
-      })
-    )
+      within(retrievalMode).getByRole("button", {
+        name: "每次先检索",
+      }),
+    );
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '必须查询发布流程' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "必须查询发布流程" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
 
     expect(run.mock.calls[0]?.[0]).toMatchObject({
-      prompt: '必须查询发布流程',
+      prompt: "必须查询发布流程",
       knowledgeLibraryIds: [libraryId],
-      knowledgeRetrievalMode: 'always'
-    })
-    const request = run.mock.calls[0]?.[0]
+      knowledgeRetrievalMode: "always",
+    });
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'knowledge-retrieval',
-        mode: 'always',
-        state: 'degraded',
+        type: "knowledge-retrieval",
+        mode: "always",
+        state: "degraded",
         libraryCount: 1,
         resultCount: 2,
         durationMs: 18,
-        usedChannels: ['fts', 'cjk'],
-        warnings: ['向量模型未配置']
-      })
-    })
+        usedChannels: ["fts", "cjk"],
+        warnings: ["向量模型未配置"],
+      });
+    });
+    expect(await screen.findByText("知识检索已降级")).toBeInTheDocument();
     expect(
-      await screen.findByText('知识检索已降级')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/已检索 1 个知识库，获得 2 条结果/u)
-    ).toBeInTheDocument()
-    expect(screen.getByText('向量模型未配置')).toBeInTheDocument()
+      screen.getByText(/已检索 1 个知识库，获得 2 条结果/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText("向量模型未配置")).toBeInTheDocument();
     await waitFor(() => {
       const snapshots = vi
         .mocked(api.conversations.saveLocal)
-        .mock.calls.flatMap(([batch]) => batch)
+        .mock.calls.flatMap(([batch]) => batch);
       expect(
         snapshots?.some(
           (conversation) =>
-            conversation.header.knowledgeRetrievalMode === 'always'
-        )
-      ).toBe(true)
-    })
-  })
+            conversation.header.knowledgeRetrievalMode === "always",
+        ),
+      ).toBe(true);
+    });
+  });
 
-  it('keeps a running response visible when cancellation fails', async () => {
+  it("keeps a running response visible when cancellation fails", async () => {
     vi.mocked(api.agent.cancel).mockRejectedValueOnce(
-      new Error('cancel failed')
-    )
-    render(<App />)
+      new Error("cancel failed"),
+    );
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '开始一个长任务' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "开始一个长任务" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
 
-    fireEvent.click(await screen.findByLabelText('停止生成'))
+    fireEvent.click(await screen.findByLabelText("停止生成"));
 
-    await waitFor(() =>
-      expect(api.agent.cancel).toHaveBeenCalledOnce()
-    )
+    await waitFor(() => expect(api.agent.cancel).toHaveBeenCalledOnce());
     expect(
-      await screen.findByText(/停止生成失败，请重试/u)
-    ).toBeInTheDocument()
-    expect(screen.getByLabelText('停止生成')).toBeInTheDocument()
-    vi.useFakeTimers()
+      await screen.findByText(/停止生成失败，请重试/u),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("停止生成")).toBeInTheDocument();
+    vi.useFakeTimers();
     try {
-      act(() => vi.advanceTimersByTime(10_000))
-      expect(
-        screen.getByText(/停止生成失败，请重试/u)
-      ).toBeInTheDocument()
+      act(() => vi.advanceTimersByTime(10_000));
+      expect(screen.getByText(/停止生成失败，请重试/u)).toBeInTheDocument();
       fireEvent.click(
-        screen.getByRole('button', {
-          name: '关闭通知'
-        })
-      )
+        screen.getByRole("button", {
+          name: "关闭通知",
+        }),
+      );
       expect(
-        screen.queryByText(/停止生成失败，请重试/u)
-      ).not.toBeInTheDocument()
+        screen.queryByText(/停止生成失败，请重试/u),
+      ).not.toBeInTheDocument();
     } finally {
-      vi.useRealTimers()
+      vi.useRealTimers();
     }
-  })
+  });
 
-  it('locks agent context controls while a response is running', async () => {
-    render(<App />)
+  it("locks agent context controls while a response is running", async () => {
+    render(<App />);
 
-    const expertButton = composerMenuTrigger('专家角色')
-    const modeButton = composerMenuTrigger('工作模式')
-    const runtimeButton = await screen.findByRole('button', {
-      name: /sonnet-5/u
-    })
-    expect(expertButton).toBeEnabled()
-    expect(modeButton).toBeEnabled()
-    expect(runtimeButton).toBeEnabled()
+    const expertButton = composerMenuTrigger("专家角色");
+    const modeButton = composerMenuTrigger("工作模式");
+    const runtimeButton = await screen.findByRole("button", {
+      name: /sonnet-5/u,
+    });
+    expect(expertButton).toBeEnabled();
+    expect(modeButton).toBeEnabled();
+    expect(runtimeButton).toBeEnabled();
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '检查运行上下文锁定' }
-    })
-    openComposerMenu('专家角色')
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "检查运行上下文锁定" },
+    });
+    openComposerMenu("专家角色");
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
 
     expect(
-      screen.queryByRole('menu', { name: '专家角色' })
-    ).not.toBeInTheDocument()
-    expect(expertButton).toBeDisabled()
-    expect(modeButton).toBeDisabled()
-    expect(runtimeButton).toBeDisabled()
+      screen.queryByRole("menu", { name: "专家角色" }),
+    ).not.toBeInTheDocument();
+    expect(expertButton).toBeDisabled();
+    expect(modeButton).toBeDisabled();
+    expect(runtimeButton).toBeDisabled();
 
-    const request = run.mock.calls[0]?.[0]
+    const request = run.mock.calls[0]?.[0];
     act(() => {
       if (!request) {
-        throw new Error('Missing request')
+        throw new Error("Missing request");
       }
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
 
-    await waitFor(() => expect(expertButton).toBeEnabled())
-    expect(modeButton).toBeEnabled()
-    expect(runtimeButton).toBeEnabled()
-  })
+    await waitFor(() => expect(expertButton).toBeEnabled());
+    expect(modeButton).toBeEnabled();
+    expect(runtimeButton).toBeEnabled();
+  });
 
-  it('queues another ordinary message while the Conversation is running', async () => {
-    render(<App />)
+  it("queues another ordinary message while the Conversation is running", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '第一条长消息' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "第一条长消息" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
 
     const secondItem = {
-      id: '00000000-0000-4000-8000-000000000941',
+      id: "00000000-0000-4000-8000-000000000941",
       conversationId: run.mock.calls[0]![0].conversationId,
-      source: 'user' as const,
-      label: '第二条排队消息',
-      createdAt: '2026-08-20T09:01:00.000Z'
-    }
-    vi.mocked(api.conversationQueue.enqueueUser)
-      .mockResolvedValueOnce(secondItem)
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: secondItem.label }
-    })
-    fireEvent.click(
-      await screen.findByLabelText('加入待发送队列')
-    )
+      source: "user" as const,
+      label: "第二条排队消息",
+      createdAt: "2026-08-20T09:01:00.000Z",
+    };
+    vi.mocked(api.conversationQueue.enqueueUser).mockResolvedValueOnce(
+      secondItem,
+    );
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: secondItem.label },
+    });
+    fireEvent.click(await screen.findByLabelText("加入待发送队列"));
 
     await waitFor(() =>
-      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledTimes(2)
-    )
-    expect(run).toHaveBeenCalledTimes(1)
+      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledTimes(2),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
     expect(
-      screen.queryByText(/当前对话已有任务正在运行/u)
-    ).not.toBeInTheDocument()
+      screen.queryByText(/当前对话已有任务正在运行/u),
+    ).not.toBeInTheDocument();
 
-    const firstRequest = run.mock.calls[0]![0]
+    const firstRequest = run.mock.calls[0]![0];
     act(() => {
       agentListener?.({
         requestId: firstRequest.requestId,
-        type: 'done'
-      })
-    })
-    const secondInput = vi.mocked(
-      api.conversationQueue.enqueueUser
-    ).mock.calls[1]![0]
+        type: "done",
+      });
+    });
+    const secondInput = vi.mocked(api.conversationQueue.enqueueUser).mock
+      .calls[1]![0];
     act(() => {
       conversationQueueDispatchListener?.({
         item: secondItem,
-        input: secondInput
-      })
-    })
+        input: secondInput,
+      });
+    });
 
-    await waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
     expect(run.mock.calls[1]![0]).toMatchObject({
       queueItemId: secondItem.id,
-      prompt: secondItem.label
-    })
-  })
+      prompt: secondItem.label,
+    });
+  });
 
-  it('restores a queued message when Agent preflight rejects it', async () => {
+  it("restores a queued message when Agent preflight rejects it", async () => {
     run.mockRejectedValueOnce(
       new Error(
-        "Error invoking remote method 'agent:run': Error: Runtime 暂不可用"
-      )
-    )
-    render(<App />)
+        "Error invoking remote method 'agent:run': Error: Runtime 暂不可用",
+      ),
+    );
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '需要稍后重试的消息' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "需要稍后重试的消息" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
 
     await waitFor(() =>
-      expect(api.conversationQueue.releaseUser).toHaveBeenCalledOnce()
-    )
+      expect(api.conversationQueue.releaseUser).toHaveBeenCalledOnce(),
+    );
+    expect(await screen.findByText("Runtime 暂不可用")).toBeInTheDocument();
     expect(
-      await screen.findByText('Runtime 暂不可用')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByText(/Error invoking remote method/u)
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByText('需要稍后重试的消息')
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByLabelText('停止生成')
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByText(/Error invoking remote method/u),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("需要稍后重试的消息")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument();
+  });
 
-  it('persists the claimed queue identity with a dispatched user message', async () => {
-    render(<App />)
+  it("persists the claimed queue identity with a dispatched user message", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '只发送一次' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "只发送一次" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request?.queueItemId) {
-      throw new Error('Missing queued request')
+      throw new Error("Missing queued request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'error',
-        status: 'failed',
-        message: 'Remote Runtime failed'
-      })
-    })
+        type: "error",
+        status: "failed",
+        message: "Remote Runtime failed",
+      });
+    });
 
     await waitFor(() =>
       expect(
-        vi.mocked(api.conversations.saveLocal).mock.calls.some(
-          ([batch]) =>
+        vi
+          .mocked(api.conversations.saveLocal)
+          .mock.calls.some(([batch]) =>
             batch.some((conversation) =>
               conversation.messages.some(
                 (message) =>
-                  message.role === 'user' &&
-                  message.content === '只发送一次' &&
-                  message.queueItemId === request.queueItemId
-              )
-            )
-        )
-      ).toBe(true)
-    )
-  })
+                  message.role === "user" &&
+                  message.content === "只发送一次" &&
+                  message.queueItemId === request.queueItemId,
+              ),
+            ),
+          ),
+      ).toBe(true),
+    );
+  });
 
-  it('keeps sent documents and images in conversation history', async () => {
+  it("keeps sent documents and images in conversation history", async () => {
     const documentAttachment = {
-      id: '00000000-0000-4000-8000-000000000301',
-      name: '需求说明.md',
+      id: "00000000-0000-4000-8000-000000000301",
+      name: "需求说明.md",
       size: 2_048,
-      preview: '需要保留在用户消息中的文档',
-      kind: 'text' as const
-    }
+      preview: "需要保留在用户消息中的文档",
+      kind: "text" as const,
+    };
     const imageAttachment = {
-      id: '00000000-0000-4000-8000-000000000302',
-      name: '页面截图.png',
+      id: "00000000-0000-4000-8000-000000000302",
+      name: "页面截图.png",
       size: 4_096,
-      preview: '1280 × 720',
-      kind: 'image' as const,
-      thumbnailUrl:
-        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
-      contentUrl:
-        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q=='
-    }
+      preview: "1280 × 720",
+      kind: "image" as const,
+      thumbnailUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+      contentUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q==",
+    };
     vi.mocked(api.context.selectFiles).mockResolvedValueOnce([
       documentAttachment,
-      imageAttachment
-    ])
-    render(<App />)
+      imageAttachment,
+    ]);
+    render(<App />);
 
-    fireEvent.click(await screen.findByLabelText('添加附件'))
+    fireEvent.click(await screen.findByLabelText("添加附件"));
     const composer = screen
-      .getByLabelText('向 GoodBuddy 提问')
-      .closest<HTMLElement>('.composer')
-    expect(composer).not.toBeNull()
+      .getByLabelText("向 GoodBuddy 提问")
+      .closest<HTMLElement>(".composer");
+    expect(composer).not.toBeNull();
     if (!composer) {
-      return
+      return;
     }
     expect(
-      await within(composer).findByText('需求说明.md')
-    ).toBeInTheDocument()
-    expect(
-      within(composer).getByText('页面截图.png')
-    ).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '分析这些附件' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
+      await within(composer).findByText("需求说明.md"),
+    ).toBeInTheDocument();
+    expect(within(composer).getByText("页面截图.png")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "分析这些附件" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
 
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run.mock.calls[0]?.[0].contextIds).toEqual([
       documentAttachment.id,
-      imageAttachment.id
-    ])
+      imageAttachment.id,
+    ]);
     const userArticle = screen
-      .getAllByText('分析这些附件')
-      .map((element) => element.closest('article'))
-      .find((element) => element?.classList.contains('message--user'))
-    expect(userArticle).not.toBeNull()
+      .getAllByText("分析这些附件")
+      .map((element) => element.closest("article"))
+      .find((element) => element?.classList.contains("message--user"));
+    expect(userArticle).not.toBeNull();
     if (!userArticle) {
-      return
+      return;
     }
     const anchorClick = vi
-      .spyOn(HTMLAnchorElement.prototype, 'click')
-      .mockImplementation(() => {})
-    expect(within(userArticle).getByText('需求说明.md')).toBeInTheDocument()
-    expect(within(userArticle).getByText('2 KB')).toBeInTheDocument()
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+    expect(within(userArticle).getByText("需求说明.md")).toBeInTheDocument();
+    expect(within(userArticle).getByText("2 KB")).toBeInTheDocument();
     expect(
-      within(userArticle).getByRole('img', { name: '页面截图.png' })
-    ).toHaveAttribute('src', imageAttachment.contentUrl)
-    const viewerTrigger = within(userArticle).getByRole('button', {
-      name: '查看图片 页面截图.png'
-    })
-    fireEvent.click(viewerTrigger)
-    const imageDialog = await screen.findByRole('dialog', {
-      name: '页面截图.png'
-    })
+      within(userArticle).getByRole("img", { name: "页面截图.png" }),
+    ).toHaveAttribute("src", imageAttachment.contentUrl);
+    const viewerTrigger = within(userArticle).getByRole("button", {
+      name: "查看图片 页面截图.png",
+    });
+    fireEvent.click(viewerTrigger);
+    const imageDialog = await screen.findByRole("dialog", {
+      name: "页面截图.png",
+    });
     expect(
-      within(imageDialog).getByRole('img', { name: '页面截图.png' })
-    ).toHaveAttribute('src', imageAttachment.contentUrl)
-    const closeViewer = within(imageDialog).getByRole('button', {
-      name: '关闭图片查看器'
-    })
-    expect(closeViewer).toHaveFocus()
-    expect(document.querySelector('main')?.inert).toBe(true)
-    fireEvent.keyDown(closeViewer, { key: 'Tab' })
+      within(imageDialog).getByRole("img", { name: "页面截图.png" }),
+    ).toHaveAttribute("src", imageAttachment.contentUrl);
+    const closeViewer = within(imageDialog).getByRole("button", {
+      name: "关闭图片查看器",
+    });
+    expect(closeViewer).toHaveFocus();
+    expect(document.querySelector("main")?.inert).toBe(true);
+    fireEvent.keyDown(closeViewer, { key: "Tab" });
     expect(
-      within(imageDialog).getByRole('button', {
-        name: '下载图片'
-      })
-    ).toHaveFocus()
-    fireEvent.keyDown(imageDialog, { key: 'Escape' })
-    await waitFor(() =>
-      expect(viewerTrigger).toHaveFocus()
-    )
+      within(imageDialog).getByRole("button", {
+        name: "下载图片",
+      }),
+    ).toHaveFocus();
+    fireEvent.keyDown(imageDialog, { key: "Escape" });
+    await waitFor(() => expect(viewerTrigger).toHaveFocus());
     expect(
-      screen.queryByRole('dialog', { name: '页面截图.png' })
-    ).not.toBeInTheDocument()
-    expect(document.querySelector('main')?.inert).toBe(false)
+      screen.queryByRole("dialog", { name: "页面截图.png" }),
+    ).not.toBeInTheDocument();
+    expect(document.querySelector("main")?.inert).toBe(false);
     fireEvent.click(
-      within(userArticle).getByRole('button', {
-        name: '下载图片 页面截图.png'
-      })
-    )
-    expect(anchorClick).toHaveBeenCalledOnce()
+      within(userArticle).getByRole("button", {
+        name: "下载图片 页面截图.png",
+      }),
+    );
+    expect(anchorClick).toHaveBeenCalledOnce();
     await waitFor(
       () =>
         expect(api.conversations.saveLocal).toHaveBeenCalledWith(
@@ -5405,608 +5065,594 @@ describe('App', () => {
             expect.objectContaining({
               messages: expect.arrayContaining([
                 expect.objectContaining({
-                  role: 'user',
-                  attachments: [
-                    documentAttachment,
-                    imageAttachment
-                  ]
-                })
-              ])
-            })
-          ])
+                  role: "user",
+                  attachments: [documentAttachment, imageAttachment],
+                }),
+              ]),
+            }),
+          ]),
         ),
-      { timeout: 2_000 }
-    )
-  })
+      { timeout: 2_000 },
+    );
+  });
 
-  it('shows attachment parsing progress and prevents duplicate selection', async () => {
+  it("shows attachment parsing progress and prevents duplicate selection", async () => {
     const attachment = {
-      id: '00000000-0000-4000-8000-000000000309',
-      name: '扫描材料.pdf',
+      id: "00000000-0000-4000-8000-000000000309",
+      name: "扫描材料.pdf",
       size: 8_705_692,
-      preview: '解析后的文档',
-      kind: 'text' as const
-    }
+      preview: "解析后的文档",
+      kind: "text" as const,
+    };
     let resolveSelection:
-      | ((attachments: ContextAttachment[]) => void)
-      | undefined
+      ((attachments: ContextAttachment[]) => void) | undefined;
     vi.mocked(api.context.selectFiles).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          resolveSelection = resolve
-        })
-    )
-    render(<App />)
+          resolveSelection = resolve;
+        }),
+    );
+    render(<App />);
 
-    const addButton = await screen.findByLabelText('添加附件')
-    fireEvent.click(addButton)
+    const addButton = await screen.findByLabelText("添加附件");
+    fireEvent.click(addButton);
 
-    expect(addButton).toBeDisabled()
+    expect(addButton).toBeDisabled();
     expect(
-      screen.getByRole('progressbar', {
-        name: '附件读取与解析进度'
-      })
-    ).toBeInTheDocument()
-    expect(screen.getByText('正在选择附件…')).toBeInTheDocument()
+      screen.getByRole("progressbar", {
+        name: "附件读取与解析进度",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("正在选择附件…")).toBeInTheDocument();
 
     act(() => {
       fileSelectionProgressListener?.({
-        phase: 'parsing',
-        fileName: '扫描材料.pdf',
+        phase: "parsing",
+        fileName: "扫描材料.pdf",
         fileNumber: 1,
-        fileCount: 1
-      })
-    })
-    expect(screen.getByText('正在解析 扫描材料.pdf')).toBeInTheDocument()
-    expect(screen.getByText('第 1 / 1 个文件')).toBeInTheDocument()
-    fireEvent.click(addButton)
-    expect(api.context.selectFiles).toHaveBeenCalledOnce()
+        fileCount: 1,
+      });
+    });
+    expect(screen.getByText("正在解析 扫描材料.pdf")).toBeInTheDocument();
+    expect(screen.getByText("第 1 / 1 个文件")).toBeInTheDocument();
+    fireEvent.click(addButton);
+    expect(api.context.selectFiles).toHaveBeenCalledOnce();
 
-    act(() => resolveSelection?.([attachment]))
-    expect(await screen.findByText('扫描材料.pdf')).toBeInTheDocument()
+    act(() => resolveSelection?.([attachment]));
+    expect(await screen.findByText("扫描材料.pdf")).toBeInTheDocument();
     await waitFor(() => {
-      expect(addButton).toBeEnabled()
+      expect(addButton).toBeEnabled();
       expect(
-        screen.queryByRole('progressbar', {
-          name: '附件读取与解析进度'
-        })
-      ).not.toBeInTheDocument()
-    })
-  })
+        screen.queryByRole("progressbar", {
+          name: "附件读取与解析进度",
+        }),
+      ).not.toBeInTheDocument();
+    });
+  });
 
-  it('associates attachment errors with the Composer controls', async () => {
+  it("associates attachment errors with the Composer controls", async () => {
     vi.mocked(api.context.selectFiles).mockRejectedValueOnce(
-      new Error('文件解析失败，请重新选择')
-    )
-    render(<App />)
+      new Error("文件解析失败，请重新选择"),
+    );
+    render(<App />);
 
-    const addButton = await screen.findByLabelText('添加附件')
-    const input = screen.getByLabelText('向 GoodBuddy 提问')
-    fireEvent.click(addButton)
+    const addButton = await screen.findByLabelText("添加附件");
+    const input = screen.getByLabelText("向 GoodBuddy 提问");
+    fireEvent.click(addButton);
 
-    const error = await screen.findByRole('alert', {
-      name: '文件解析失败，请重新选择'
-    })
-    expect(error).toHaveAttribute('id', 'composer-context-error')
-    expect(input).toHaveAttribute('aria-invalid', 'true')
-    expect(input).toHaveAttribute(
-      'aria-describedby',
-      'composer-context-error'
-    )
-    expect(addButton).toHaveAttribute('aria-invalid', 'true')
+    const error = await screen.findByRole("alert", {
+      name: "文件解析失败，请重新选择",
+    });
+    expect(error).toHaveAttribute("id", "composer-context-error");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAttribute("aria-describedby", "composer-context-error");
+    expect(addButton).toHaveAttribute("aria-invalid", "true");
     expect(addButton).toHaveAttribute(
-      'aria-describedby',
-      'composer-context-error'
-    )
-  })
+      "aria-describedby",
+      "composer-context-error",
+    );
+  });
 
-  it('sends and renders five selected images together', async () => {
+  it("sends and renders five selected images together", async () => {
     const imageAttachments = Array.from({ length: 5 }, (_, index) => ({
       id: `00000000-0000-4000-8000-00000000031${index}`,
       name: `参考图-${index + 1}.png`,
       size: 4_096,
-      preview: '640 × 480',
-      kind: 'image' as const,
-      thumbnailUrl:
-        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q==',
-      contentUrl:
-        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q=='
-    }))
-    vi.mocked(api.context.selectFiles).mockResolvedValueOnce(imageAttachments)
-    render(<App />)
+      preview: "640 × 480",
+      kind: "image" as const,
+      thumbnailUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q==",
+      contentUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2Q==",
+    }));
+    vi.mocked(api.context.selectFiles).mockResolvedValueOnce(imageAttachments);
+    render(<App />);
 
-    fireEvent.click(await screen.findByLabelText('添加附件'))
+    fireEvent.click(await screen.findByLabelText("添加附件"));
     const composer = screen
-      .getByLabelText('向 GoodBuddy 提问')
-      .closest<HTMLElement>('.composer')
-    expect(composer).not.toBeNull()
+      .getByLabelText("向 GoodBuddy 提问")
+      .closest<HTMLElement>(".composer");
+    expect(composer).not.toBeNull();
     if (!composer) {
-      return
+      return;
     }
     await waitFor(() =>
-      expect(
-        within(composer).getAllByText(/^参考图-\d\.png$/u)
-      ).toHaveLength(5)
-    )
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '比较这五张图片' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
+      expect(within(composer).getAllByText(/^参考图-\d\.png$/u)).toHaveLength(
+        5,
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "比较这五张图片" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
 
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
     expect(run.mock.calls[0]?.[0].contextIds).toEqual(
-      imageAttachments.map((attachment) => attachment.id)
-    )
+      imageAttachments.map((attachment) => attachment.id),
+    );
     const userArticle = screen
-      .getAllByText('比较这五张图片')
-      .map((element) => element.closest('article'))
-      .find((element) => element?.classList.contains('message--user'))
-    expect(userArticle).not.toBeNull()
+      .getAllByText("比较这五张图片")
+      .map((element) => element.closest("article"))
+      .find((element) => element?.classList.contains("message--user"));
+    expect(userArticle).not.toBeNull();
     if (!userArticle) {
-      return
+      return;
     }
-    expect(within(userArticle).getAllByRole('img')).toHaveLength(5)
-    expect(within(userArticle).getByLabelText('消息附件')).toHaveClass(
-      'message-attachments'
-    )
-  })
+    expect(within(userArticle).getAllByRole("img")).toHaveLength(5);
+    expect(within(userArticle).getByLabelText("消息附件")).toHaveClass(
+      "message-attachments",
+    );
+  });
 
-  it('accepts pasted images without intercepting pasted text', async () => {
+  it("accepts pasted images without intercepting pasted text", async () => {
     vi.mocked(api.context.addPastedImage).mockResolvedValueOnce({
-      id: '00000000-0000-4000-8000-000000000303',
-      name: '粘贴图片.jpg',
+      id: "00000000-0000-4000-8000-000000000303",
+      name: "粘贴图片.jpg",
       size: 120_000,
-      preview: '1280 × 800',
-      kind: 'image',
-      thumbnailUrl:
-        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
-    })
+      preview: "1280 × 800",
+      kind: "image",
+      thumbnailUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+    });
     const pastedImage = new File(
       [Uint8Array.from([0x89, 0x50, 0x4e, 0x47])],
-      'pasted.png',
-      { type: 'image/png' }
-    )
-    render(<App />)
+      "pasted.png",
+      { type: "image/png" },
+    );
+    render(<App />);
 
-    const input = await screen.findByLabelText('向 GoodBuddy 提问')
+    const input = await screen.findByLabelText("向 GoodBuddy 提问");
     expect(
       fireEvent.paste(input, {
         clipboardData: {
           items: [
             {
               getAsFile: () => null,
-              kind: 'string',
-              type: 'text/plain'
-            }
-          ]
-        }
-      })
-    ).toBe(true)
-    expect(api.context.addPastedImage).not.toHaveBeenCalled()
+              kind: "string",
+              type: "text/plain",
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    expect(api.context.addPastedImage).not.toHaveBeenCalled();
 
     fireEvent.paste(input, {
       clipboardData: {
         items: [
           {
             getAsFile: () => pastedImage,
-            kind: 'file',
-            type: 'image/png'
-          }
-        ]
-      }
-    })
+            kind: "file",
+            type: "image/png",
+          },
+        ],
+      },
+    });
 
     await waitFor(() =>
       expect(api.context.addPastedImage).toHaveBeenCalledWith({
         data: Uint8Array.from([0x89, 0x50, 0x4e, 0x47]),
-        mimeType: 'image/png'
-      })
-    )
-    expect(api.context.addPastedImage).toHaveBeenCalledTimes(1)
-    expect(api.context.readClipboard).not.toHaveBeenCalled()
-    const composer = input.closest<HTMLElement>('.composer')
-    expect(composer).not.toBeNull()
+        mimeType: "image/png",
+      }),
+    );
+    expect(api.context.addPastedImage).toHaveBeenCalledTimes(1);
+    expect(api.context.readClipboard).not.toHaveBeenCalled();
+    const composer = input.closest<HTMLElement>(".composer");
+    expect(composer).not.toBeNull();
     if (!composer) {
-      return
+      return;
     }
     expect(
-      await within(composer).findByText('粘贴图片.jpg')
-    ).toBeInTheDocument()
+      await within(composer).findByText("粘贴图片.jpg"),
+    ).toBeInTheDocument();
     expect(
-      within(composer).queryByRole('button', {
-        name: '截取当前屏幕'
-      })
-    ).not.toBeInTheDocument()
+      within(composer).queryByRole("button", {
+        name: "截取当前屏幕",
+      }),
+    ).not.toBeInTheDocument();
     expect(
-      within(composer).queryByRole('button', {
-        name: '捕获应用窗口'
-      })
-    ).not.toBeInTheDocument()
+      within(composer).queryByRole("button", {
+        name: "捕获应用窗口",
+      }),
+    ).not.toBeInTheDocument();
     expect(
-      within(composer).queryByRole('button', {
-        name: '读取剪贴板'
-      })
-    ).not.toBeInTheDocument()
-  })
+      within(composer).queryByRole("button", {
+        name: "读取剪贴板",
+      }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('keeps a draft in chat when Enter is pressed while the runtime loads', async () => {
-    vi.mocked(api.agent.getStatus).mockReturnValue(
-      new Promise(() => {})
-    )
-    render(<App />)
+  it("keeps a draft in chat when Enter is pressed while the runtime loads", async () => {
+    vi.mocked(api.agent.getStatus).mockReturnValue(new Promise(() => {}));
+    render(<App />);
 
-    const composer = screen.getByLabelText('向 GoodBuddy 提问')
+    const composer = screen.getByLabelText("向 GoodBuddy 提问");
     fireEvent.change(composer, {
-      target: { value: '等待 Runtime' }
-    })
-    fireEvent.keyDown(composer, { key: 'Enter' })
+      target: { value: "等待 Runtime" },
+    });
+    fireEvent.keyDown(composer, { key: "Enter" });
 
-    expect(composer).toHaveValue('等待 Runtime')
+    expect(composer).toHaveValue("等待 Runtime");
     expect(
-      screen.queryByRole('heading', { name: '设置中心' })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("heading", { name: "设置中心" }),
+    ).not.toBeInTheDocument();
     expect(
-      await screen.findByText('Agent Runtime 正在加载，请稍后重试')
-    ).toBeInTheDocument()
-    expect(run).not.toHaveBeenCalled()
-  })
+      await screen.findByText("Agent Runtime 正在加载，请稍后重试"),
+    ).toBeInTheDocument();
+    expect(run).not.toHaveBeenCalled();
+  });
 
-  it('keeps a new-conversation draft in chat when the runtime is unavailable', async () => {
+  it("keeps a new-conversation draft in chat when the runtime is unavailable", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'setup',
-      label: '需要配置模型',
+      id: "setup",
+      label: "需要配置模型",
       available: false,
       supportsToolExecution: false,
-      detail: '请配置模型'
-    })
-    render(<App />)
+      detail: "请配置模型",
+    });
+    render(<App />);
 
     expect(
-      await screen.findByRole('heading', { name: '设置中心' })
-    ).toBeInTheDocument()
-    const newConversation = screen.getByRole('button', {
-      name: /新建对话/u
-    })
-    fireEvent.click(newConversation)
+      await screen.findByRole("heading", { name: "设置中心" }),
+    ).toBeInTheDocument();
+    const newConversation = screen.getByRole("button", {
+      name: /新建对话/u,
+    });
+    fireEvent.click(newConversation);
 
-    const composer = screen.getByLabelText('向 GoodBuddy 提问')
-    await waitFor(() => expect(composer).toHaveFocus())
+    const composer = screen.getByLabelText("向 GoodBuddy 提问");
+    await waitFor(() => expect(composer).toHaveFocus());
     fireEvent.change(composer, {
-      target: { value: '保留这条草稿' }
-    })
-    fireEvent.keyDown(composer, { key: 'Enter' })
+      target: { value: "保留这条草稿" },
+    });
+    fireEvent.keyDown(composer, { key: "Enter" });
 
-    expect(composer).toHaveValue('保留这条草稿')
+    expect(composer).toHaveValue("保留这条草稿");
     expect(
-      screen.queryByRole('heading', { name: '设置中心' })
-    ).not.toBeInTheDocument()
-    expect(screen.getByLabelText('发送')).toBeDisabled()
-    expect(run).not.toHaveBeenCalled()
-  })
+      screen.queryByRole("heading", { name: "设置中心" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("发送")).toBeDisabled();
+    expect(run).not.toHaveBeenCalled();
+  });
 
-  it('opens chat and focuses the composer for tray conversations', async () => {
-    render(<App />)
+  it("opens chat and focuses the composer for tray conversations", async () => {
+    render(<App />);
 
-    fireEvent.click(await screen.findByText('本地工作区'))
+    fireEvent.click(await screen.findByText("本地工作区"));
     expect(
-      await screen.findByRole('heading', { name: '设置中心' })
-    ).toBeInTheDocument()
+      await screen.findByRole("heading", { name: "设置中心" }),
+    ).toBeInTheDocument();
 
-    act(() => newConversationListener?.())
+    act(() => newConversationListener?.());
 
-    const composer = await screen.findByLabelText('向 GoodBuddy 提问')
-    await waitFor(() => expect(composer).toHaveFocus())
-  })
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    await waitFor(() => expect(composer).toHaveFocus());
+  });
 
-  it('reuses the active empty conversation and preserves its draft', async () => {
-    render(<App />)
+  it("reuses the active empty conversation and preserves its draft", async () => {
+    render(<App />);
 
-    const composer = await screen.findByLabelText('向 GoodBuddy 提问')
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
     fireEvent.change(composer, {
-      target: { value: '尚未发送的草稿' }
-    })
-    const newConversation = screen.getByRole('button', {
-      name: /新建对话/u
-    })
-    fireEvent.click(newConversation)
-    fireEvent.click(newConversation)
+      target: { value: "尚未发送的草稿" },
+    });
+    const newConversation = screen.getByRole("button", {
+      name: /新建对话/u,
+    });
+    fireEvent.click(newConversation);
+    fireEvent.click(newConversation);
 
-    expect(composer).toHaveValue('尚未发送的草稿')
+    expect(composer).toHaveValue("尚未发送的草稿");
     expect(
-      screen.getAllByRole('button', {
-        name: '更多会话操作 新对话'
-      })
-    ).toHaveLength(1)
-  })
+      screen.getAllByRole("button", {
+        name: "更多会话操作 新对话",
+      }),
+    ).toHaveLength(1);
+  });
 
-  it('coalesces batched new-conversation requests after a used conversation', async () => {
-    render(<App />)
+  it("coalesces batched new-conversation requests after a used conversation", async () => {
+    render(<App />);
 
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '已有内容' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const requestId = run.mock.calls[0]?.[0].requestId
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "已有内容" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]?.[0].requestId;
     act(() => {
       if (requestId) {
-        agentListener?.({ requestId, type: 'done' })
+        agentListener?.({ requestId, type: "done" });
       }
-      newConversationListener?.()
-      newConversationListener?.()
-    })
+      newConversationListener?.();
+      newConversationListener?.();
+    });
 
     await waitFor(() =>
       expect(
-        screen.getAllByRole('button', {
-          name: /^更多会话操作/u
-        })
-      ).toHaveLength(2)
-    )
-  })
+        screen.getAllByRole("button", {
+          name: /^更多会话操作/u,
+        }),
+      ).toHaveLength(2),
+    );
+  });
 
-  it('opens a workspace Markdown file in the right-side preview', async () => {
+  it("opens a workspace Markdown file in the right-side preview", async () => {
     vi.mocked(api.workspace.listDirectory).mockResolvedValue({
-      path: '',
+      path: "",
       entries: [
         {
-          name: 'README.md',
-          path: 'README.md',
-          type: 'file'
-        }
+          name: "README.md",
+          path: "README.md",
+          type: "file",
+        },
       ],
-      truncated: false
-    })
+      truncated: false,
+    });
     vi.mocked(api.workspace.readFile).mockResolvedValue({
-      path: 'README.md',
-      name: 'README.md',
-      content: '# 工作区说明',
-      mimeType: 'text/markdown',
+      path: "README.md",
+      name: "README.md",
+      content: "# 工作区说明",
+      mimeType: "text/markdown",
       size: 19,
       offsetBytes: 0,
       nextOffsetBytes: 19,
-      truncated: false
-    })
-    render(<App />)
+      truncated: false,
+    });
+    render(<App />);
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'README.md' })
-    )
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(await screen.findByRole("tab", { name: "工作区" }));
+    fireEvent.click(await screen.findByRole("button", { name: "README.md" }));
 
     expect(
-      await screen.findByRole('heading', { name: '工作区说明' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('tab', { name: '工作区' })
-    ).toHaveAttribute('aria-selected', 'true')
-    expect(
-      screen.queryByRole('tab', { name: '预览' })
-    ).not.toBeInTheDocument()
+      await screen.findByRole("heading", { name: "工作区说明" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "工作区" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByRole("tab", { name: "预览" })).not.toBeInTheDocument();
     expect(api.workspace.readFile).toHaveBeenCalledWith(
       projectId,
-      'README.md',
-      0
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '返回工作区' })
-    )
+      "README.md",
+      0,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
     expect(
-      await screen.findByRole('button', { name: 'README.md' })
-    ).toBeInTheDocument()
-  })
+      await screen.findByRole("button", { name: "README.md" }),
+    ).toBeInTheDocument();
+  });
 
-  it('opens multiple current-project terminals without a second target picker', async () => {
-    render(<App />)
+  it("opens multiple current-project terminals without a second target picker", async () => {
+    render(<App />);
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    const add = await screen.findByRole('button', {
-      name: '打开工作栏应用'
-    })
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    const add = await screen.findByRole("button", {
+      name: "打开工作栏应用",
+    });
     for (let count = 1; count <= 2; count += 1) {
-      fireEvent.click(add)
+      fireEvent.click(add);
       fireEvent.click(
-        await screen.findByRole('button', {
-          name: /打开当前项目的用户终端/u
-        })
-      )
+        await screen.findByRole("button", {
+          name: /打开当前项目的用户终端/u,
+        }),
+      );
       expect(
-        await screen.findByRole('tab', {
-          name: `终端 ${count}`
-        })
-      ).toHaveAttribute('aria-selected', 'true')
+        await screen.findByRole("tab", {
+          name: `终端 ${count}`,
+        }),
+      ).toHaveAttribute("aria-selected", "true");
     }
 
     expect(
-      screen.getByRole('button', { name: '打开工作栏应用' })
-    ).toBeVisible()
-    expect(
-      screen.getAllByRole('tab', { name: /^终端 \d+$/u })
-    ).toHaveLength(2)
-  })
+      screen.getByRole("button", { name: "打开工作栏应用" }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("tab", { name: /^终端 \d+$/u })).toHaveLength(2);
+  });
 
-  it('opens workspace entries from their row actions', async () => {
+  it("opens workspace entries from their row actions", async () => {
     vi.mocked(api.workspace.listDirectory).mockResolvedValue({
-      path: '',
+      path: "",
       entries: [
-        { name: 'docs', path: 'docs', type: 'directory' },
-        { name: 'README.md', path: 'README.md', type: 'file' }
+        { name: "docs", path: "docs", type: "directory" },
+        { name: "README.md", path: "README.md", type: "file" },
       ],
-      truncated: false
-    })
-    render(<App />)
+      truncated: false,
+    });
+    render(<App />);
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(await screen.findByRole("tab", { name: "工作区" }));
     fireEvent.click(
-      await screen.findByRole('button', {
-        name: '在系统资源管理器中打开文件夹 docs'
-      })
-    )
+      await screen.findByRole("button", {
+        name: "在系统资源管理器中打开文件夹 docs",
+      }),
+    );
     fireEvent.click(
-      screen.getByRole('button', {
-        name: '使用默认应用打开文件 README.md'
-      })
-    )
+      screen.getByRole("button", {
+        name: "使用默认应用打开文件 README.md",
+      }),
+    );
     await waitFor(() =>
       expect(api.workspace.openPath).toHaveBeenCalledWith(
         projectId,
-        'docs',
-        'directory'
-      )
-    )
+        "docs",
+        "directory",
+      ),
+    );
     expect(api.workspace.openPath).toHaveBeenCalledWith(
       projectId,
-      'README.md',
-      'file'
-    )
-  })
+      "README.md",
+      "file",
+    );
+  });
 
-  it('refreshes generated workspace files when a run completes', async () => {
-    vi.mocked(api.workspace.listDirectory).mockImplementation(async (_projectId, path) => ({
-      path,
-      entries: vi.mocked(api.workspace.getChanges).mock.calls.length >= 2
-        ? [{ name: 'tree-only.txt', path: 'tree-only.txt', type: 'file' as const }]
-        : [],
-      truncated: false
-    }))
+  it("refreshes generated workspace files when a run completes", async () => {
+    vi.mocked(api.workspace.listDirectory).mockImplementation(
+      async (_projectId, path) => ({
+        path,
+        entries:
+          vi.mocked(api.workspace.getChanges).mock.calls.length >= 2
+            ? [
+                {
+                  name: "tree-only.txt",
+                  path: "tree-only.txt",
+                  type: "file" as const,
+                },
+              ]
+            : [],
+        truncated: false,
+      }),
+    );
     vi.mocked(api.workspace.getChanges)
       .mockResolvedValueOnce({
         rootPath: project.rootPath,
         available: true,
-        status: '',
-        patch: '',
+        status: "",
+        patch: "",
         files: [],
-        truncated: false
+        truncated: false,
       })
       .mockResolvedValueOnce({
         rootPath: project.rootPath,
         available: true,
-        status: '?? generated.md',
-        patch: '',
-        files: [{ path: 'generated.md', status: '??' }],
-        truncated: false
-      })
-    render(<App />)
+        status: "?? generated.md",
+        patch: "",
+        files: [{ path: "generated.md", status: "??" }],
+        truncated: false,
+      });
+    render(<App />);
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(await screen.findByRole("tab", { name: "工作区" }));
     await waitFor(() =>
-      expect(api.workspace.getChanges).toHaveBeenCalledOnce()
-    )
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '生成文件' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const requestId = run.mock.calls[0]?.[0].requestId
+      expect(api.workspace.getChanges).toHaveBeenCalledOnce(),
+    );
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "生成文件" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]?.[0].requestId;
     act(() => {
       if (requestId) {
-        agentListener?.({ requestId, type: 'done' })
+        agentListener?.({ requestId, type: "done" });
       }
-    })
+    });
 
-    expect(await screen.findByText('generated.md')).toBeInTheDocument()
-    expect(await screen.findByText('tree-only.txt')).toBeInTheDocument()
-  })
+    expect(await screen.findByText("generated.md")).toBeInTheDocument();
+    expect(await screen.findByText("tree-only.txt")).toBeInTheDocument();
+  });
 
-  it('ignores stale Git changes after switching projects', async () => {
+  it("ignores stale Git changes after switching projects", async () => {
     const secondProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000102',
-      name: '第二项目',
-      rootPath: 'C:\\Second',
+      id: "00000000-0000-4000-8000-000000000102",
+      name: "第二项目",
+      rootPath: "C:\\Second",
       executionSpace: {
-        kind: 'local' as const,
-        rootPath: 'C:\\Second'
-      }
-    }
+        kind: "local" as const,
+        rootPath: "C:\\Second",
+      },
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      secondProject
-    ])
+      secondProject,
+    ]);
     let resolveFirst:
-      | ((value: Awaited<ReturnType<DesktopApi['workspace']['getChanges']>>) => void)
-      | undefined
+      | ((
+          value: Awaited<ReturnType<DesktopApi["workspace"]["getChanges"]>>,
+        ) => void)
+      | undefined;
     let resolveSecond:
-      | ((value: Awaited<ReturnType<DesktopApi['workspace']['getChanges']>>) => void)
-      | undefined
+      | ((
+          value: Awaited<ReturnType<DesktopApi["workspace"]["getChanges"]>>,
+        ) => void)
+      | undefined;
     vi.mocked(api.workspace.getChanges)
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
-            resolveFirst = resolve
-          })
+            resolveFirst = resolve;
+          }),
       )
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
-            resolveSecond = resolve
-          })
-      )
-    render(<App />)
+            resolveSecond = resolve;
+          }),
+      );
+    render(<App />);
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(await screen.findByRole('tab', { name: '工作区' }))
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(await screen.findByRole("tab", { name: "工作区" }));
     await waitFor(() =>
-      expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId)
-    )
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    selectProjectOption(secondProject.name)
+      expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId),
+    );
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    selectProjectOption(secondProject.name);
     await waitFor(() =>
-      expect(api.workspace.getChanges).toHaveBeenCalledWith(
-        secondProject.id
-      )
-    )
+      expect(api.workspace.getChanges).toHaveBeenCalledWith(secondProject.id),
+    );
 
     resolveSecond?.({
       rootPath: secondProject.rootPath,
       available: true,
-      status: '?? second.md',
-      patch: '',
-      files: [{ path: 'second.md', status: '??' }],
-      truncated: false
-    })
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    expect(await screen.findByText('second.md')).toBeInTheDocument()
+      status: "?? second.md",
+      patch: "",
+      files: [{ path: "second.md", status: "??" }],
+      truncated: false,
+    });
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    expect(await screen.findByText("second.md")).toBeInTheDocument();
     resolveFirst?.({
       rootPath: project.rootPath,
       available: true,
-      status: '?? stale.md',
-      patch: '',
-      files: [{ path: 'stale.md', status: '??' }],
-      truncated: false
-    })
+      status: "?? stale.md",
+      patch: "",
+      files: [{ path: "stale.md", status: "??" }],
+      truncated: false,
+    });
 
     await waitFor(() =>
-      expect(screen.queryByText('stale.md')).not.toBeInTheDocument()
-    )
-    expect(screen.getByText('second.md')).toBeInTheDocument()
-  })
+      expect(screen.queryByText("stale.md")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("second.md")).toBeInTheDocument();
+  });
 
-  it('applies and persists a dark appearance from Settings', async () => {
-    render(<App />)
+  it("applies and persists a dark appearance from Settings", async () => {
+    render(<App />);
 
-    fireEvent.click(await screen.findByText('本地工作区'))
-    await screen.findByRole(
-      'heading',
-      { name: '设置中心' },
-      { timeout: 3000 }
-    )
-    fireEvent.click(screen.getByRole('tab', { name: '外观' }))
-    fireEvent.click(screen.getByRole('radio', { name: /暗色/u }))
+    fireEvent.click(await screen.findByText("本地工作区"));
+    await screen.findByRole("heading", { name: "设置中心" }, { timeout: 3000 });
+    fireEvent.click(screen.getByRole("tab", { name: "外观" }));
+    fireEvent.click(screen.getByRole("radio", { name: /暗色/u }));
 
     await waitFor(() =>
-      expect(document.documentElement.dataset.theme).toBe('dark')
-    )
-    expect(document.documentElement.style.colorScheme).toBe('dark')
-    expect(localStorage.getItem('goodbuddy.appearance-theme')).toBe(
-      'dark'
-    )
-  })
+      expect(document.documentElement.dataset.theme).toBe("dark"),
+    );
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    expect(localStorage.getItem("goodbuddy.appearance-theme")).toBe("dark");
+  });
 
-  it('loads token usage in activity and refreshes it when a run finishes', async () => {
+  it("loads token usage in activity and refreshes it when a run finishes", async () => {
     vi.mocked(api.usage.getTokenSummary).mockResolvedValueOnce({
       totals: {
         callCount: 1,
@@ -6014,57 +5660,53 @@ describe('App', () => {
         output: 20,
         cacheRead: 0,
         cacheWrite: 0,
-        totalTokens: 120
+        totalTokens: 120,
       },
       records: [
         {
-          requestId: 'usage-request-1',
+          requestId: "usage-request-1",
           projectId,
           projectName: project.name,
-          conversationId: 'usage-conversation-1',
-          conversationTitle: '用量会话',
-          runtime: 'model',
-          provider: 'anthropic',
-          model: 'sonnet-5',
+          conversationId: "usage-conversation-1",
+          conversationTitle: "用量会话",
+          runtime: "model",
+          provider: "anthropic",
+          model: "sonnet-5",
           callCount: 1,
           input: 100,
           output: 20,
           cacheRead: 0,
           cacheWrite: 0,
-          totalTokens: 120
-        }
-      ]
-    })
+          totalTokens: 120,
+        },
+      ],
+    });
 
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '统计用量' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "统计用量" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
-    fireEvent.click(screen.getByText('运行记录'))
-    fireEvent.click(
-      await screen.findByRole('tab', { name: '用量统计' })
-    )
-    const stats = await screen.findByLabelText('Token 用量统计')
+    fireEvent.click(screen.getByText("运行记录"));
+    fireEvent.click(await screen.findByRole("tab", { name: "用量统计" }));
+    const stats = await screen.findByLabelText("Token 用量统计");
     expect(
-      screen.getByRole('heading', { level: 1, name: '运行记录' })
-    ).toBeInTheDocument()
+      screen.getByRole("heading", { level: 1, name: "运行记录" }),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /^专家角色：/u })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByLabelText('切换助手工作栏')
-    ).toBeInTheDocument()
+      screen.queryByRole("button", { name: /^专家角色：/u }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();
     await waitFor(() =>
-      expect(api.usage.getTokenSummary).toHaveBeenCalledOnce()
-    )
-    expect(within(stats).getByText('120')).toBeInTheDocument()
+      expect(api.usage.getTokenSummary).toHaveBeenCalledOnce(),
+    );
+    expect(within(stats).getByText("120")).toBeInTheDocument();
 
     vi.mocked(api.usage.getTokenSummary).mockResolvedValueOnce({
       totals: {
@@ -6073,7 +5715,7 @@ describe('App', () => {
         output: 45,
         cacheRead: 10,
         cacheWrite: 5,
-        totalTokens: 360
+        totalTokens: 360,
       },
       records: [
         {
@@ -6081,1794 +5723,1684 @@ describe('App', () => {
           projectId,
           projectName: project.name,
           conversationId: request.conversationId,
-          conversationTitle: '用量会话',
-          runtime: 'model',
-          provider: 'anthropic',
-          model: 'sonnet-5',
+          conversationTitle: "用量会话",
+          runtime: "model",
+          provider: "anthropic",
+          model: "sonnet-5",
           callCount: 2,
           input: 300,
           output: 45,
           cacheRead: 10,
           cacheWrite: 5,
-          totalTokens: 360
-        }
-      ]
-    })
+          totalTokens: 360,
+        },
+      ],
+    });
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
 
     await waitFor(() =>
-      expect(api.usage.getTokenSummary).toHaveBeenCalledTimes(2)
-    )
-    expect(within(stats).getByText('345')).toBeInTheDocument()
-  })
+      expect(api.usage.getTokenSummary).toHaveBeenCalledTimes(2),
+    );
+    expect(within(stats).getByText("345")).toBeInTheDocument();
+  });
 
-  it('offers only Ask and Execute in visible work mode controls', async () => {
-    render(<App />)
+  it("offers only Ask and Execute in visible work mode controls", async () => {
+    render(<App />);
 
-    await screen.findByRole('button', {
-      name: '工作模式：Ask · 只读问答'
-    })
-    const modeMenu = openComposerMenu('工作模式')
+    await screen.findByRole("button", {
+      name: "工作模式：Ask · 只读问答",
+    });
+    const modeMenu = openComposerMenu("工作模式");
     expect(
       within(modeMenu)
-        .getAllByRole('menuitemradio')
-        .map((option) => option.querySelector('span')?.textContent)
-    ).toEqual(['Ask · 只读问答', 'Execute · 完全权限'])
+        .getAllByRole("menuitemradio")
+        .map((option) => option.querySelector("span")?.textContent),
+    ).toEqual(["Ask · 只读问答", "Execute · 完全权限"]);
 
-    fireEvent.click(screen.getByLabelText('新建项目'))
-    const dialog = screen.getByRole('dialog', { name: '新建项目' })
+    fireEvent.click(screen.getByLabelText("新建项目"));
+    const dialog = screen.getByRole("dialog", { name: "新建项目" });
     const defaultMode = within(dialog)
-      .getAllByRole('group', { name: '默认模式' })
-      .find((candidate) =>
-        candidate.classList.contains('segmented-control')
-      )!
+      .getAllByRole("group", { name: "默认模式" })
+      .find((candidate) => candidate.classList.contains("segmented-control"))!;
     expect(
       within(defaultMode)
-        .getAllByRole('button')
-        .map((button) => button.textContent)
-    ).toEqual(['Ask · 只读问答', 'Execute · 完全权限'])
-    expect(screen.queryByRole('option', { name: /Plan/u })).toBeNull()
-  })
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Ask · 只读问答", "Execute · 完全权限"]);
+    expect(screen.queryByRole("option", { name: /Plan/u })).toBeNull();
+  });
 
-  it('matches expert and work mode keyboard menus to the model picker', async () => {
-    render(<App />)
+  it("matches expert and work mode keyboard menus to the model picker", async () => {
+    render(<App />);
 
-    const expertTrigger = await screen.findByRole('button', {
-      name: '专家角色：通用助手'
-    })
-    expect(expertTrigger).toHaveClass('model-button')
-    fireEvent.keyDown(expertTrigger, { key: 'ArrowDown' })
+    const expertTrigger = await screen.findByRole("button", {
+      name: "专家角色：通用助手",
+    });
+    expect(expertTrigger).toHaveClass("model-button");
+    fireEvent.keyDown(expertTrigger, { key: "ArrowDown" });
 
-    const expertMenu = screen.getByRole('menu', {
-      name: '专家角色'
-    })
-    expect(expertMenu).toHaveClass('runtime-picker__menu')
-    const generalExpert = within(expertMenu).getByRole(
-      'menuitemradio',
-      { name: /^通用助手/u }
-    )
-    const expertTeam = within(expertMenu).getByRole(
-      'menuitemradio',
-      { name: /^专家团队（并行）/u }
-    )
-    await waitFor(() => expect(generalExpert).toHaveFocus())
-    fireEvent.keyDown(generalExpert, { key: 'ArrowDown' })
-    expect(expertTeam).toHaveFocus()
-    fireEvent.keyDown(expertTeam, { key: 'Escape' })
-    expect(expertTrigger).toHaveFocus()
+    const expertMenu = screen.getByRole("menu", {
+      name: "专家角色",
+    });
+    expect(expertMenu).toHaveClass("runtime-picker__menu");
+    const generalExpert = within(expertMenu).getByRole("menuitemradio", {
+      name: /^通用助手/u,
+    });
+    const expertTeam = within(expertMenu).getByRole("menuitemradio", {
+      name: /^专家团队（并行）/u,
+    });
+    await waitFor(() => expect(generalExpert).toHaveFocus());
+    fireEvent.keyDown(generalExpert, { key: "ArrowDown" });
+    expect(expertTeam).toHaveFocus();
+    fireEvent.keyDown(expertTeam, { key: "Escape" });
+    expect(expertTrigger).toHaveFocus();
     expect(
-      screen.queryByRole('menu', { name: '专家角色' })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("menu", { name: "专家角色" }),
+    ).not.toBeInTheDocument();
 
-    const modeTrigger = composerMenuTrigger('工作模式')
-    fireEvent.click(modeTrigger)
-    const modeMenu = screen.getByRole('menu', { name: '工作模式' })
-    expect(modeMenu).toHaveClass('runtime-picker__menu')
-    fireEvent.pointerDown(screen.getByLabelText('向 GoodBuddy 提问'))
+    const modeTrigger = composerMenuTrigger("工作模式");
+    fireEvent.click(modeTrigger);
+    const modeMenu = screen.getByRole("menu", { name: "工作模式" });
+    expect(modeMenu).toHaveClass("runtime-picker__menu");
+    fireEvent.pointerDown(screen.getByLabelText("向 GoodBuddy 提问"));
     expect(
-      screen.queryByRole('menu', { name: '工作模式' })
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByRole("menu", { name: "工作模式" }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('groups composer tools and exposes clear control descriptions', async () => {
-    render(<App />)
+  it("groups composer tools and exposes clear control descriptions", async () => {
+    render(<App />);
 
-    const composer = (await screen.findByLabelText(
-      '向 GoodBuddy 提问'
-    )).closest<HTMLElement>('.composer')
-    expect(composer).not.toBeNull()
+    const composer = (
+      await screen.findByLabelText("向 GoodBuddy 提问")
+    ).closest<HTMLElement>(".composer");
+    expect(composer).not.toBeNull();
 
-    const contentTools = within(composer!).getByRole('group', {
-      name: '添加内容'
-    })
+    const contentTools = within(composer!).getByRole("group", {
+      name: "添加内容",
+    });
     expect(
-      within(contentTools).getByRole('button', { name: '添加附件' })
-    ).toHaveAttribute('title', '添加附件')
+      within(contentTools).getByRole("button", { name: "添加附件" }),
+    ).toHaveAttribute("title", "添加附件");
     expect(
-      within(contentTools).getByRole('button', { name: '语音输入' })
-    ).toHaveAttribute('title', '语音转文字，转写后可编辑再发送')
+      within(contentTools).getByRole("button", { name: "语音输入" }),
+    ).toHaveAttribute("title", "语音转文字，转写后可编辑再发送");
 
-    const conversationSettings = within(composer!).getByRole(
-      'group',
-      { name: '对话设置' }
-    )
+    const conversationSettings = within(composer!).getByRole("group", {
+      name: "对话设置",
+    });
     expect(
-      within(conversationSettings).getByRole('button', {
-        name: '专家角色：通用助手'
-      })
-    ).toBeInTheDocument()
+      within(conversationSettings).getByRole("button", {
+        name: "专家角色：通用助手",
+      }),
+    ).toBeInTheDocument();
     expect(
-      within(conversationSettings).getByRole('button', {
-        name: '工作模式：Ask · 只读问答'
-      })
-    ).toBeInTheDocument()
+      within(conversationSettings).getByRole("button", {
+        name: "工作模式：Ask · 只读问答",
+      }),
+    ).toBeInTheDocument();
     expect(
-      within(conversationSettings).getByRole('button', {
-        name: '工作模式：Ask · 只读问答'
-      })
-    ).toHaveTextContent(/^Ask$/u)
-    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
-      'placeholder',
-      '给 GoodBuddy 发消息…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本'
-    )
+      within(conversationSettings).getByRole("button", {
+        name: "工作模式：Ask · 只读问答",
+      }),
+    ).toHaveTextContent(/^Ask$/u);
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
+      "placeholder",
+      "给 GoodBuddy 发消息…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本",
+    );
     expect(
-      within(conversationSettings).getByRole('button', {
-        name: /默认模型/u
-      })
-    ).toHaveAttribute(
-      'title',
-      expect.stringContaining('Runtime 和模型')
-    )
-  })
+      within(conversationSettings).getByRole("button", {
+        name: /默认模型/u,
+      }),
+    ).toHaveAttribute("title", expect.stringContaining("Runtime 和模型"));
+  });
 
-  it('starts in the first local project and persists manual selection', async () => {
+  it("starts in the first local project and persists manual selection", async () => {
     const secondProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000102',
-      name: '第二项目',
-      rootPath: 'C:\\Second',
+      id: "00000000-0000-4000-8000-000000000102",
+      name: "第二项目",
+      rootPath: "C:\\Second",
       executionSpace: {
-        kind: 'local' as const,
-        rootPath: 'C:\\Second'
+        kind: "local" as const,
+        rootPath: "C:\\Second",
       },
-      defaultWorkMode: 'execute' as const
-    }
+      defaultWorkMode: "execute" as const,
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      secondProject
-    ])
-    localStorage.setItem(
-      'goodbuddy.active-project.v1',
-      secondProject.id
-    )
+      secondProject,
+    ]);
+    localStorage.setItem("goodbuddy.active-project.v1", secondProject.id);
 
-    render(<App />)
+    render(<App />);
 
     expect(
-      await screen.findByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
+      await screen.findByRole("button", { name: "当前项目" }),
+    ).toHaveTextContent(project.name);
     expect(
-      screen.getByRole('button', {
-        name: '工作模式：Ask · 只读问答'
-      })
-    ).toBeEnabled()
+      screen.getByRole("button", {
+        name: "工作模式：Ask · 只读问答",
+      }),
+    ).toBeEnabled();
 
-    selectProjectOption(secondProject.name)
+    selectProjectOption(secondProject.name);
     await waitFor(() =>
-      expect(
-        localStorage.getItem('goodbuddy.active-project.v1')
-      ).toBe(secondProject.id)
-    )
-  })
+      expect(localStorage.getItem("goodbuddy.active-project.v1")).toBe(
+        secondProject.id,
+      ),
+    );
+  });
 
-  it('persists a new local conversation before queueing its first message', async () => {
+  it("persists a new local conversation before queueing its first message", async () => {
     const secondProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000105',
-      name: '新本地项目',
-      rootPath: 'C:\\NewLocal',
+      id: "00000000-0000-4000-8000-000000000105",
+      name: "新本地项目",
+      rootPath: "C:\\NewLocal",
       executionSpace: {
-        kind: 'local' as const,
-        rootPath: 'C:\\NewLocal'
-      }
-    }
-    const persistence = deferred<void>()
+        kind: "local" as const,
+        rootPath: "C:\\NewLocal",
+      },
+    };
+    const persistence = deferred<void>();
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      secondProject
-    ])
-    vi.mocked(api.conversations.saveLocal).mockImplementation(
-      async (batch) => {
-        if (
-          batch.some(
-            (conversation) =>
-              conversation.header.projectId === secondProject.id
-          )
-        ) {
-          await persistence.promise
-        }
+      secondProject,
+    ]);
+    vi.mocked(api.conversations.saveLocal).mockImplementation(async (batch) => {
+      if (
+        batch.some(
+          (conversation) => conversation.header.projectId === secondProject.id,
+        )
+      ) {
+        await persistence.promise;
       }
-    )
-    render(<App />)
+    });
+    render(<App />);
     expect(
-      await screen.findByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
+      await screen.findByRole("button", { name: "当前项目" }),
+    ).toHaveTextContent(project.name);
 
-    selectProjectOption(secondProject.name)
+    selectProjectOption(secondProject.name);
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: '当前项目' })
-      ).toHaveTextContent(secondProject.name)
-    )
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '首条消息必须先保存会话' }
-    })
-    await waitFor(() =>
-      expect(screen.getByLabelText('发送')).toBeEnabled()
-    )
-    fireEvent.click(screen.getByLabelText('发送'))
+        screen.getByRole("button", { name: "当前项目" }),
+      ).toHaveTextContent(secondProject.name),
+    );
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "首条消息必须先保存会话" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
 
     await waitFor(() =>
       expect(api.conversations.saveLocal).toHaveBeenCalledWith([
         expect.objectContaining({
           header: expect.objectContaining({
-            projectId: secondProject.id
-          })
-        })
-      ])
-    )
-    expect(api.conversationQueue.enqueueUser).not.toHaveBeenCalled()
+            projectId: secondProject.id,
+          }),
+        }),
+      ]),
+    );
+    expect(api.conversationQueue.enqueueUser).not.toHaveBeenCalled();
 
-    persistence.resolve(undefined)
+    persistence.resolve(undefined);
     await waitFor(() =>
-      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledOnce()
-    )
+      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledOnce(),
+    );
     const projectSaveIndex = vi
       .mocked(api.conversations.saveLocal)
       .mock.calls.findIndex(([batch]) =>
         batch.some(
-          (conversation) =>
-            conversation.header.projectId === secondProject.id
-        )
-      )
-    expect(projectSaveIndex).toBeGreaterThanOrEqual(0)
+          (conversation) => conversation.header.projectId === secondProject.id,
+        ),
+      );
+    expect(projectSaveIndex).toBeGreaterThanOrEqual(0);
     expect(
       vi.mocked(api.conversations.saveLocal).mock.invocationCallOrder[
         projectSaveIndex
-      ]
+      ],
     ).toBeLessThan(
-      vi.mocked(
-        api.conversationQueue.enqueueUser
-      ).mock.invocationCallOrder[0]!
-    )
-  })
+      vi.mocked(api.conversationQueue.enqueueUser).mock.invocationCallOrder[0]!,
+    );
+  });
 
-  it('starts in the first local project instead of restoring an SSH project', async () => {
+  it("starts in the first local project instead of restoring an SSH project", async () => {
     const remoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000103',
-      name: '远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000103",
+      name: "远程项目",
+      rootPath: "/srv/project",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000203',
-        remoteRootPath: '/srv/project'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000203",
+        remoteRootPath: "/srv/project",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       remoteProject,
-      project
-    ])
-    localStorage.setItem(
-      'goodbuddy.active-project.v1',
-      remoteProject.id
-    )
+      project,
+    ]);
+    localStorage.setItem("goodbuddy.active-project.v1", remoteProject.id);
 
-    render(<App />)
+    render(<App />);
 
     expect(
-      await screen.findByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
+      await screen.findByRole("button", { name: "当前项目" }),
+    ).toHaveTextContent(project.name);
     await waitFor(() =>
-      expect(
-        localStorage.getItem('goodbuddy.active-project.v1')
-      ).toBe(project.id)
-    )
-  })
+      expect(localStorage.getItem("goodbuddy.active-project.v1")).toBe(
+        project.id,
+      ),
+    );
+  });
 
-  it('switches immediately to a managed SSH project and shows only supported OpenCode choices', async () => {
-    installRemoteProjectsSetting(true)
+  it("switches immediately to a managed SSH project and shows only supported OpenCode choices", async () => {
+    installRemoteProjectsSetting(true);
     const remoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000119',
-      name: '仅 OpenCode 远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000119",
+      name: "仅 OpenCode 远程项目",
+      rootPath: "/srv/project",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000219',
-        remoteRootPath: '/srv/project'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000219",
+        remoteRootPath: "/srv/project",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      remoteProject
-    ])
+      remoteProject,
+    ]);
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000319',
+        id: "00000000-0000-4000-8000-000000000319",
         projectId: remoteProject.id,
         runtimeSelection: {
-          provider: 'model',
-          profileId: modelProfileId
+          provider: "model",
+          profileId: modelProfileId,
         },
-        title: '旧直连模型会话',
+        title: "旧直连模型会话",
         updatedAt: 1_775_000_000_000,
-        messages: []
+        messages: [],
       },
       {
-        id: '00000000-0000-4000-8000-000000000419',
+        id: "00000000-0000-4000-8000-000000000419",
         projectId: remoteProject.id,
         runtimeSelection: {
-          provider: 'continue',
-          profileId: modelProfileId
+          provider: "continue",
+          profileId: modelProfileId,
         },
-        title: '旧 Continue 会话',
+        title: "旧 Continue 会话",
         updatedAt: 1_774_000_000_000,
-        messages: []
-      }
-    ])
+        messages: [],
+      },
+    ]);
 
-    render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(remoteProject.name)
+    render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(remoteProject.name);
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: '当前项目' })
-      ).toHaveTextContent(remoteProject.name)
-    )
-    expect(
-      screen.queryByRole('progressbar')
-    ).not.toBeInTheDocument()
+        screen.getByRole("button", { name: "当前项目" }),
+      ).toHaveTextContent(remoteProject.name),
+    );
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 
-    const runtimeButton = await screen.findByRole('button', {
-      name: /OpenCode · 默认模型/u
-    })
-    fireEvent.click(runtimeButton)
-    const runtimeMenu = screen.getByRole('menu', {
-      name: 'Runtime 和模型'
-    })
+    const runtimeButton = await screen.findByRole("button", {
+      name: /OpenCode · 默认模型/u,
+    });
+    fireEvent.click(runtimeButton);
+    const runtimeMenu = screen.getByRole("menu", {
+      name: "Runtime 和模型",
+    });
     expect(
-      within(runtimeMenu).getByRole('menuitemradio', {
-        name: /^OpenCode · 默认模型.*sonnet-5$/u
-      })
-    ).toBeInTheDocument()
+      within(runtimeMenu).getByRole("menuitemradio", {
+        name: /^OpenCode · 默认模型.*sonnet-5$/u,
+      }),
+    ).toBeInTheDocument();
+    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(1);
+    expect(within(runtimeMenu).queryByText("直连模型")).not.toBeInTheDocument();
     expect(
-      within(runtimeMenu).getAllByRole('menuitemradio')
-    ).toHaveLength(1)
+      within(runtimeMenu).queryByText("Continue Runtime"),
+    ).not.toBeInTheDocument();
     expect(
-      within(runtimeMenu).queryByText('直连模型')
-    ).not.toBeInTheDocument()
+      within(runtimeMenu).queryByText(/DeepSeek Harness/u),
+    ).not.toBeInTheDocument();
     expect(
-      within(runtimeMenu).queryByText('Continue Runtime')
-    ).not.toBeInTheDocument()
-    expect(
-      within(runtimeMenu).queryByText(/DeepSeek Harness/u)
-    ).not.toBeInTheDocument()
-    expect(
-      within(runtimeMenu).getByRole('menuitem', {
-        name: '管理 Runtime 和模型连接'
-      })
-    ).toBeInTheDocument()
+      within(runtimeMenu).getByRole("menuitem", {
+        name: "管理 Runtime 和模型连接",
+      }),
+    ).toBeInTheDocument();
 
-    fireEvent.keyDown(document, { key: 'Escape' })
-    fireEvent.click(
-      screen.getByText('旧 Continue 会话').closest('button')!
-    )
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByText("旧 Continue 会话").closest("button")!);
     expect(
-      await screen.findByRole('button', {
-        name: /OpenCode · 默认模型/u
-      })
-    ).toBeInTheDocument()
-  })
+      await screen.findByRole("button", {
+        name: /OpenCode · 默认模型/u,
+      }),
+    ).toBeInTheDocument();
+  });
 
-  it('keeps managed SSH histories visible while independently blocking recovery projects', async () => {
-    installRemoteProjectsSetting(true)
+  it("keeps managed SSH histories visible while independently blocking recovery projects", async () => {
+    installRemoteProjectsSetting(true);
     const first = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000131',
-      name: '恢复项目一',
-      rootPath: '/srv/one',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000131",
+      name: "恢复项目一",
+      rootPath: "/srv/one",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000231',
-        remoteRootPath: '/srv/one'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000231",
+        remoteRootPath: "/srv/one",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     const second = {
       ...first,
-      id: '00000000-0000-4000-8000-000000000132',
-      name: '恢复项目二',
-      rootPath: '/srv/two',
+      id: "00000000-0000-4000-8000-000000000132",
+      name: "恢复项目二",
+      rootPath: "/srv/two",
       executionSpace: {
         ...first.executionSpace,
-        remoteRootPath: '/srv/two'
-      }
-    }
-    const firstConversationId =
-      '00000000-0000-4000-8000-000000000331'
-    const secondConversationId =
-      '00000000-0000-4000-8000-000000000332'
-    const firstRequestId =
-      '00000000-0000-4000-8000-000000000431'
+        remoteRootPath: "/srv/two",
+      },
+    };
+    const firstConversationId = "00000000-0000-4000-8000-000000000331";
+    const secondConversationId = "00000000-0000-4000-8000-000000000332";
+    const firstRequestId = "00000000-0000-4000-8000-000000000431";
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
       first,
-      second
-    ])
+      second,
+    ]);
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: firstConversationId,
         projectId: first.id,
-        runtimeSelection: { provider: 'opencode' },
-        title: '恢复前的会话',
+        runtimeSelection: { provider: "opencode" },
+        title: "恢复前的会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000531',
-            role: 'assistant',
-            content: '恢复期间仍可查看的历史',
+            id: "00000000-0000-4000-8000-000000000531",
+            role: "assistant",
+            content: "恢复期间仍可查看的历史",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
+            state: "complete",
+          },
+        ],
       },
       {
         id: secondConversationId,
         projectId: second.id,
-        runtimeSelection: { provider: 'opencode' },
-        title: '第二个恢复会话',
+        runtimeSelection: { provider: "opencode" },
+        title: "第二个恢复会话",
         updatedAt: 1_774_000_000_000,
-        messages: []
-      }
-    ])
-    vi.mocked(
-      api.projects.remote.getRecoverySnapshot
-    ).mockResolvedValueOnce({
+        messages: [],
+      },
+    ]);
+    vi.mocked(api.projects.remote.getRecoverySnapshot).mockResolvedValueOnce({
       recoveries: [
         {
           projectId: first.id,
           requestId: firstRequestId,
-          stage: 'cursor',
-          current: '125'
+          stage: "cursor",
+          current: "125",
         },
         {
           projectId: second.id,
-          requestId:
-            '00000000-0000-4000-8000-000000000432',
-          stage: 'agent'
-        }
-      ]
-    })
+          requestId: "00000000-0000-4000-8000-000000000432",
+          stage: "agent",
+        },
+      ],
+    });
 
-    render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
+    render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
     await waitFor(() =>
-      expect(
-        api.projects.remote.getRecoverySnapshot
-      ).toHaveBeenCalledOnce()
-    )
-    vi.mocked(api.conversationQueue.ready).mockClear()
+      expect(api.projects.remote.getRecoverySnapshot).toHaveBeenCalledOnce(),
+    );
+    vi.mocked(api.conversationQueue.ready).mockClear();
 
-    selectProjectOption(first.name)
+    selectProjectOption(first.name);
+    expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent(
+      first.name,
+    );
     expect(
-      screen.getByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(first.name)
+      await screen.findByText("恢复期间仍可查看的历史"),
+    ).toBeInTheDocument();
     expect(
-      await screen.findByText('恢复期间仍可查看的历史')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('正在恢复对话，已同步到事件 125')
-    ).toBeInTheDocument()
+      screen.getByText("正在恢复对话，已同步到事件 125"),
+    ).toBeInTheDocument();
     expect(api.conversationQueue.ready).not.toHaveBeenCalledWith(
-      firstConversationId
-    )
+      firstConversationId,
+    );
 
-    const firstComposer = screen.getByLabelText('向 GoodBuddy 提问')
+    const firstComposer = screen.getByLabelText("向 GoodBuddy 提问");
     fireEvent.change(firstComposer, {
-      target: { value: '恢复完成后发送' }
-    })
-    fireEvent.keyDown(firstComposer, { key: 'Enter' })
-    expect(firstComposer).toHaveValue('恢复完成后发送')
-    expect(api.conversationQueue.enqueueUser).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('发送')).toBeDisabled()
+      target: { value: "恢复完成后发送" },
+    });
+    fireEvent.keyDown(firstComposer, { key: "Enter" });
+    expect(firstComposer).toHaveValue("恢复完成后发送");
+    expect(api.conversationQueue.enqueueUser).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("发送")).toBeDisabled();
 
-    fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
-    const menu = screen.getByRole('menu', { name: '当前项目' })
-    expect(
-      within(menu).getByText('正在恢复远端 Agent…')
-    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+    const menu = screen.getByRole("menu", { name: "当前项目" });
+    expect(within(menu).getByText("正在恢复远端 Agent…")).toBeInTheDocument();
     fireEvent.click(
-      within(menu).getByText(project.name, { selector: 'b' })
-        .closest('[role="menuitemradio"]')!
-    )
-    const localComposer = screen.getByLabelText('向 GoodBuddy 提问')
+      within(menu)
+        .getByText(project.name, { selector: "b" })
+        .closest('[role="menuitemradio"]')!,
+    );
+    const localComposer = screen.getByLabelText("向 GoodBuddy 提问");
     fireEvent.change(localComposer, {
-      target: { value: '本地项目不受影响' }
-    })
+      target: { value: "本地项目不受影响" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.keyDown(localComposer, { key: "Enter" });
     await waitFor(() =>
-      expect(screen.getByLabelText('发送')).toBeEnabled()
-    )
-    fireEvent.keyDown(localComposer, { key: 'Enter' })
-    await waitFor(() =>
-      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledOnce()
-    )
+      expect(api.conversationQueue.enqueueUser).toHaveBeenCalledOnce(),
+    );
 
-    selectProjectOption(first.name)
+    selectProjectOption(first.name);
     act(() => {
       remoteProjectRecoveryProgressListener?.({
         projectId: first.id,
-        requestId:
-          '00000000-0000-4000-8000-000000000499',
-        stage: 'completed'
-      })
-    })
-    expect(screen.getByLabelText('发送')).toBeDisabled()
-    expect(firstComposer).toHaveValue('恢复完成后发送')
+        requestId: "00000000-0000-4000-8000-000000000499",
+        stage: "completed",
+      });
+    });
+    expect(screen.getByLabelText("发送")).toBeDisabled();
+    expect(firstComposer).toHaveValue("恢复完成后发送");
 
     act(() => {
       remoteProjectRecoveryProgressListener?.({
         projectId: first.id,
         requestId: firstRequestId,
-        stage: 'completed'
-      })
-    })
+        stage: "completed",
+      });
+    });
     await waitFor(() =>
-      expect(screen.getByText('恢复完成')).toBeInTheDocument()
-    )
-    expect(screen.getByLabelText('发送')).toBeEnabled()
+      expect(screen.getByText("恢复完成")).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText("发送")).toBeEnabled();
     await waitFor(() =>
       expect(api.conversationQueue.ready).toHaveBeenCalledWith(
-        firstConversationId
-      )
-    )
+        firstConversationId,
+      ),
+    );
     expect(api.conversationQueue.ready).not.toHaveBeenCalledWith(
-      secondConversationId
-    )
-  })
+      secondConversationId,
+    );
+  });
 
-  describe('persisted terminal state convergence', () => {
-    let conversationsChangedListener: (() => void) | undefined
+  describe("persisted terminal state convergence", () => {
+    let conversationsChangedListener: (() => void) | undefined;
 
     const startStreamingRun = async (): Promise<{
-      requestId: string
-      conversationId: string
-      assistantMessageId: string
-      userMessageId: string
+      requestId: string;
+      conversationId: string;
+      assistantMessageId: string;
+      userMessageId: string;
     }> => {
-      conversationsChangedListener = undefined
-      vi.mocked(api.conversations.onChanged).mockImplementation(
-        (listener) => {
-          conversationsChangedListener = listener
-          return () => {
-            if (conversationsChangedListener === listener) {
-              conversationsChangedListener = undefined
-            }
+      conversationsChangedListener = undefined;
+      vi.mocked(api.conversations.onChanged).mockImplementation((listener) => {
+        conversationsChangedListener = listener;
+        return () => {
+          if (conversationsChangedListener === listener) {
+            conversationsChangedListener = undefined;
           }
-        }
-      )
-      render(<App />)
-      fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-        target: { value: '断网期间继续执行' }
-      })
-      await waitFor(() =>
-        expect(screen.getByLabelText('发送')).toBeEnabled()
-      )
-      fireEvent.click(screen.getByLabelText('发送'))
-      await waitFor(() => expect(run).toHaveBeenCalledOnce())
-      const request = run.mock.calls[0]?.[0]
+        };
+      });
+      render(<App />);
+      fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+        target: { value: "断网期间继续执行" },
+      });
+      await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+      fireEvent.click(screen.getByLabelText("发送"));
+      await waitFor(() => expect(run).toHaveBeenCalledOnce());
+      const request = run.mock.calls[0]?.[0];
       if (
         !request?.currentAssistantMessageId ||
         !request.currentUserMessageId
       ) {
-        throw new Error('Missing request')
+        throw new Error("Missing request");
       }
       expect(
         screen
-          .getByText('正在连接 Agent Runtime')
-          .querySelector('.message__status-dot')
-      ).toHaveClass('message__status-dot--active')
-      expect(screen.getByLabelText('加入待发送队列')).toBeInTheDocument()
-      vi.mocked(api.conversationQueue.ready).mockClear()
+          .getByText("正在连接 Agent Runtime")
+          .querySelector(".message__status-dot"),
+      ).toHaveClass("message__status-dot--active");
+      expect(screen.getByLabelText("加入待发送队列")).toBeInTheDocument();
+      vi.mocked(api.conversationQueue.ready).mockClear();
       return {
         requestId: request.requestId,
         conversationId: request.conversationId,
         assistantMessageId: request.currentAssistantMessageId,
-        userMessageId: request.currentUserMessageId
-      }
-    }
+        userMessageId: request.currentUserMessageId,
+      };
+    };
 
     const persistedSnapshot = (
       input: {
-        conversationId: string
-        userMessageId: string
-        assistantMessageId: string
+        conversationId: string;
+        userMessageId: string;
+        assistantMessageId: string;
       },
       assistant: {
-        state: 'streaming' | 'complete' | 'error'
-        content: string
-        status?: string
-      }
+        state: "streaming" | "complete" | "error";
+        content: string;
+        status?: string;
+      },
     ): ConversationSnapshot => ({
       id: input.conversationId,
       projectId,
-      runtimeSelection: { provider: 'model', profileId: modelProfileId },
-      title: '断网期间继续执行',
+      runtimeSelection: { provider: "model", profileId: modelProfileId },
+      title: "断网期间继续执行",
       updatedAt: 1_000,
       messages: [
         {
           id: input.userMessageId,
-          role: 'user',
-          content: '断网期间继续执行',
+          role: "user",
+          content: "断网期间继续执行",
           createdAt: 900,
-          state: 'complete'
+          state: "complete",
         },
         {
           id: input.assistantMessageId,
-          role: 'assistant',
+          role: "assistant",
           content: assistant.content,
           createdAt: 950,
           state: assistant.state,
-          status: assistant.status
-        }
-      ]
-    })
+          status: assistant.status,
+        },
+      ],
+    });
 
-    it('converges a streaming message onto the persisted completed state after reconnecting', async () => {
-      const started = await startStreamingRun()
-      expect(conversationsChangedListener).toBeDefined()
+    it("converges a streaming message onto the persisted completed state after reconnecting", async () => {
+      const started = await startStreamingRun();
+      expect(conversationsChangedListener).toBeDefined();
 
       vi.mocked(api.conversations.list).mockResolvedValue([
         persistedSnapshot(started, {
-          state: 'complete',
-          content: '远端在断线期间已经完成的回复',
-          status: '任务已完成'
-        })
-      ])
+          state: "complete",
+          content: "远端在断线期间已经完成的回复",
+          status: "任务已完成",
+        }),
+      ]);
       act(() => {
-        conversationsChangedListener?.()
-      })
+        conversationsChangedListener?.();
+      });
 
       expect(
-        await screen.findByText('远端在断线期间已经完成的回复')
-      ).toBeInTheDocument()
+        await screen.findByText("远端在断线期间已经完成的回复"),
+      ).toBeInTheDocument();
       await waitFor(() =>
         expect(
-          screen.queryByText('正在连接 Agent Runtime')
-        ).not.toBeInTheDocument()
-      )
-      expect(
-        document.querySelector('.message__status-dot--active')
-      ).toBeNull()
-      expect(screen.getByLabelText('发送')).toBeInTheDocument()
+          screen.queryByText("正在连接 Agent Runtime"),
+        ).not.toBeInTheDocument(),
+      );
+      expect(document.querySelector(".message__status-dot--active")).toBeNull();
+      expect(screen.getByLabelText("发送")).toBeInTheDocument();
       await waitFor(() =>
         expect(api.conversationQueue.ready).toHaveBeenCalledWith(
-          started.conversationId
-        )
-      )
+          started.conversationId,
+        ),
+      );
 
       // A late terminal event for the settled run must be ignored rather
       // than resurrecting the message or double-releasing the queue.
-      vi.mocked(api.conversationQueue.ready).mockClear()
+      vi.mocked(api.conversationQueue.ready).mockClear();
       act(() => {
         agentListener?.({
           requestId: started.requestId,
-          type: 'error',
-          status: 'failed',
-          message: '迟到的连接中断错误'
-        })
-      })
+          type: "error",
+          status: "failed",
+          message: "迟到的连接中断错误",
+        });
+      });
+      expect(screen.queryByText("迟到的连接中断错误")).not.toBeInTheDocument();
       expect(
-        screen.queryByText('迟到的连接中断错误')
-      ).not.toBeInTheDocument()
-      expect(
-        screen.getByText('远端在断线期间已经完成的回复')
-      ).toBeInTheDocument()
-      expect(api.conversationQueue.ready).not.toHaveBeenCalled()
-    })
+        screen.getByText("远端在断线期间已经完成的回复"),
+      ).toBeInTheDocument();
+      expect(api.conversationQueue.ready).not.toHaveBeenCalled();
+    });
 
-    it('converges a streaming message onto the persisted failed state after reconnecting', async () => {
-      const started = await startStreamingRun()
+    it("converges a streaming message onto the persisted failed state after reconnecting", async () => {
+      const started = await startStreamingRun();
 
       vi.mocked(api.conversations.list).mockResolvedValue([
         persistedSnapshot(started, {
-          state: 'error',
-          content: '',
-          status: '远端 Agent 执行失败'
-        })
-      ])
+          state: "error",
+          content: "",
+          status: "远端 Agent 执行失败",
+        }),
+      ]);
       act(() => {
-        conversationsChangedListener?.()
-      })
+        conversationsChangedListener?.();
+      });
 
       expect(
-        await screen.findByText('远端 Agent 执行失败')
-      ).toBeInTheDocument()
+        await screen.findByText("远端 Agent 执行失败"),
+      ).toBeInTheDocument();
       expect(
-        screen.queryByText('正在连接 Agent Runtime')
-      ).not.toBeInTheDocument()
-      expect(
-        document.querySelector('.message__status-dot--active')
-      ).toBeNull()
+        screen.queryByText("正在连接 Agent Runtime"),
+      ).not.toBeInTheDocument();
+      expect(document.querySelector(".message__status-dot--active")).toBeNull();
       await waitFor(() =>
-        expect(screen.getByLabelText('发送')).toBeInTheDocument()
-      )
+        expect(screen.getByLabelText("发送")).toBeInTheDocument(),
+      );
       await waitFor(() =>
         expect(api.conversationQueue.ready).toHaveBeenCalledWith(
-          started.conversationId
-        )
-      )
-    })
+          started.conversationId,
+        ),
+      );
+    });
 
-    it('keeps the run in flight while the persisted message is still streaming and refreshes on focus', async () => {
-      const started = await startStreamingRun()
+    it("keeps the run in flight while the persisted message is still streaming and refreshes on focus", async () => {
+      const started = await startStreamingRun();
 
       vi.mocked(api.conversations.list).mockResolvedValue([
         persistedSnapshot(started, {
-          state: 'streaming',
-          content: '',
-          status: '远端 Agent 正在处理请求'
-        })
-      ])
+          state: "streaming",
+          content: "",
+          status: "远端 Agent 正在处理请求",
+        }),
+      ]);
       act(() => {
-        conversationsChangedListener?.()
-      })
+        conversationsChangedListener?.();
+      });
       await waitFor(() =>
-        expect(api.conversations.list).toHaveBeenCalledTimes(2)
-      )
+        expect(api.conversations.list).toHaveBeenCalledTimes(2),
+      );
       // The local streaming copy still wins over a non-terminal snapshot.
-      expect(
-        screen.getByText('正在连接 Agent Runtime')
-      ).toBeInTheDocument()
-      expect(screen.getByLabelText('加入待发送队列')).toBeInTheDocument()
-      expect(api.conversationQueue.ready).not.toHaveBeenCalled()
+      expect(screen.getByText("正在连接 Agent Runtime")).toBeInTheDocument();
+      expect(screen.getByLabelText("加入待发送队列")).toBeInTheDocument();
+      expect(api.conversationQueue.ready).not.toHaveBeenCalled();
 
       // Regaining focus re-reads the store and converges once the remote
       // terminal state has landed, even without another change event.
       vi.mocked(api.conversations.list).mockResolvedValue([
         persistedSnapshot(started, {
-          state: 'complete',
-          content: '聚焦后读到的最终回复',
-          status: '任务已完成'
-        })
-      ])
+          state: "complete",
+          content: "聚焦后读到的最终回复",
+          status: "任务已完成",
+        }),
+      ]);
       act(() => {
-        window.dispatchEvent(new Event('focus'))
-      })
+        window.dispatchEvent(new Event("focus"));
+      });
       expect(
-        await screen.findByText('聚焦后读到的最终回复')
-      ).toBeInTheDocument()
+        await screen.findByText("聚焦后读到的最终回复"),
+      ).toBeInTheDocument();
       expect(
-        screen.queryByText('正在连接 Agent Runtime')
-      ).not.toBeInTheDocument()
+        screen.queryByText("正在连接 Agent Runtime"),
+      ).not.toBeInTheDocument();
       await waitFor(() =>
         expect(api.conversationQueue.ready).toHaveBeenCalledWith(
-          started.conversationId
-        )
-      )
+          started.conversationId,
+        ),
+      );
 
       // The live done event now targets an already-settled run: no-op.
       act(() => {
-        agentListener?.({ requestId: started.requestId, type: 'done' })
-      })
-      expect(
-        screen.getByText('聚焦后读到的最终回复')
-      ).toBeInTheDocument()
-    })
+        agentListener?.({ requestId: started.requestId, type: "done" });
+      });
+      expect(screen.getByText("聚焦后读到的最终回复")).toBeInTheDocument();
+    });
 
-    it('keeps streaming through window switches while the store still reports the run', async () => {
-      const started = await startStreamingRun()
+    it("keeps streaming through window switches while the store still reports the run", async () => {
+      const started = await startStreamingRun();
 
       act(() => {
         agentListener?.({
           requestId: started.requestId,
-          type: 'text',
-          delta: '第一段回答'
-        })
-      })
-      expect(await screen.findByText('第一段回答')).toBeInTheDocument()
+          type: "text",
+          delta: "第一段回答",
+        });
+      });
+      expect(await screen.findByText("第一段回答")).toBeInTheDocument();
 
       // The renderer keeps saving the streaming message, so a refresh reads
       // it back as streaming. That must not be reported as an interruption.
       vi.mocked(api.conversations.list).mockResolvedValue([
         persistedSnapshot(started, {
-          state: 'streaming',
-          content: '第一段回答'
-        })
-      ])
+          state: "streaming",
+          content: "第一段回答",
+        }),
+      ]);
       act(() => {
-        window.dispatchEvent(
-          new Event('visibilitychange', { bubbles: true })
-        )
-        window.dispatchEvent(new Event('focus'))
-      })
+        window.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
+        window.dispatchEvent(new Event("focus"));
+      });
       await waitFor(() =>
-        expect(api.conversations.list).toHaveBeenCalledTimes(2)
-      )
+        expect(api.conversations.list).toHaveBeenCalledTimes(2),
+      );
 
       expect(
-        screen.queryByText('上次运行意外中断，可以重新发送问题')
-      ).not.toBeInTheDocument()
+        screen.queryByText("上次运行意外中断，可以重新发送问题"),
+      ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole('button', { name: '重新编辑并发送' })
-      ).not.toBeInTheDocument()
-      expect(api.conversationQueue.ready).not.toHaveBeenCalled()
+        screen.queryByRole("button", { name: "重新编辑并发送" }),
+      ).not.toBeInTheDocument();
+      expect(api.conversationQueue.ready).not.toHaveBeenCalled();
 
       // The run is still live, so later deltas and the terminal event must
       // still reach the message.
       act(() => {
         agentListener?.({
           requestId: started.requestId,
-          type: 'text',
-          delta: '，第二段回答'
-        })
+          type: "text",
+          delta: "，第二段回答",
+        });
         agentListener?.({
           requestId: started.requestId,
-          type: 'done'
-        })
-      })
+          type: "done",
+        });
+      });
       expect(
-        await screen.findByText('第一段回答，第二段回答')
-      ).toBeInTheDocument()
+        await screen.findByText("第一段回答，第二段回答"),
+      ).toBeInTheDocument();
       await waitFor(() =>
         expect(api.conversationQueue.ready).toHaveBeenCalledWith(
-          started.conversationId
-        )
-      )
-      expect(screen.getByLabelText('发送')).toBeInTheDocument()
-    })
-  })
+          started.conversationId,
+        ),
+      );
+      expect(screen.getByLabelText("发送")).toBeInTheDocument();
+    });
+  });
 
-  it('retries a failed recovery with a new request ID and cleans up its listener', async () => {
-    installRemoteProjectsSetting(true)
+  it("retries a failed recovery with a new request ID and cleans up its listener", async () => {
+    installRemoteProjectsSetting(true);
     const remoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000133',
-      name: '失败的恢复项目',
-      rootPath: '/srv/failed',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000133",
+      name: "失败的恢复项目",
+      rootPath: "/srv/failed",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000233',
-        remoteRootPath: '/srv/failed'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000233",
+        remoteRootPath: "/srv/failed",
       },
-      builtInDefault: false
-    }
-    const oldRequestId =
-      '00000000-0000-4000-8000-000000000433'
-    const newRequestId =
-      '00000000-0000-4000-8000-000000000434'
+      builtInDefault: false,
+    };
+    const oldRequestId = "00000000-0000-4000-8000-000000000433";
+    const newRequestId = "00000000-0000-4000-8000-000000000434";
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      remoteProject
-    ])
-    vi.mocked(
-      api.projects.remote.getRecoverySnapshot
-    ).mockResolvedValueOnce({
+      remoteProject,
+    ]);
+    vi.mocked(api.projects.remote.getRecoverySnapshot).mockResolvedValueOnce({
       recoveries: [
         {
           projectId: remoteProject.id,
           requestId: oldRequestId,
-          stage: 'failed',
-          message: '无法连接 Host',
-          retryable: true
-        }
-      ]
-    })
+          stage: "failed",
+          message: "无法连接 Host",
+          retryable: true,
+        },
+      ],
+    });
     vi.mocked(api.projects.remote.retryRecovery).mockResolvedValueOnce({
       projectId: remoteProject.id,
       requestId: newRequestId,
-      stage: 'network'
-    })
+      stage: "network",
+    });
 
-    const { unmount } = render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(remoteProject.name)
-    expect(
-      await screen.findByRole('alert')
-    ).toHaveTextContent('恢复失败：无法连接 Host')
+    const { unmount } = render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(remoteProject.name);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "恢复失败：无法连接 Host",
+    );
 
     fireEvent.click(
-      screen.getByRole('button', {
-        name: `重试恢复项目 ${remoteProject.name}`
-      })
-    )
+      screen.getByRole("button", {
+        name: `重试恢复项目 ${remoteProject.name}`,
+      }),
+    );
     await waitFor(() =>
-      expect(
-        api.projects.remote.retryRecovery
-      ).toHaveBeenCalledWith(remoteProject.id)
-    )
-    expect(
-      await screen.findByText('正在恢复网络连接…')
-    ).toBeInTheDocument()
+      expect(api.projects.remote.retryRecovery).toHaveBeenCalledWith(
+        remoteProject.id,
+      ),
+    );
+    expect(await screen.findByText("正在恢复网络连接…")).toBeInTheDocument();
 
     act(() => {
       remoteProjectRecoveryProgressListener?.({
         projectId: remoteProject.id,
         requestId: oldRequestId,
-        stage: 'completed'
-      })
-    })
-    expect(screen.getByText('正在恢复网络连接…')).toBeInTheDocument()
-    expect(screen.getByLabelText('发送')).toBeDisabled()
+        stage: "completed",
+      });
+    });
+    expect(screen.getByText("正在恢复网络连接…")).toBeInTheDocument();
+    expect(screen.getByLabelText("发送")).toBeDisabled();
 
     act(() => {
       remoteProjectRecoveryProgressListener?.({
         projectId: remoteProject.id,
         requestId: newRequestId,
-        stage: 'completed'
-      })
-    })
-    expect(
-      await screen.findByText('恢复完成')
-    ).toBeInTheDocument()
+        stage: "completed",
+      });
+    });
+    expect(await screen.findByText("恢复完成")).toBeInTheDocument();
     act(() => {
       remoteProjectRecoveryProgressListener?.({
         projectId: remoteProject.id,
         requestId: newRequestId,
-        stage: 'network'
-      })
-    })
-    expect(screen.getByText('恢复完成')).toBeInTheDocument()
+        stage: "network",
+      });
+    });
+    expect(screen.getByText("恢复完成")).toBeInTheDocument();
 
-    unmount()
-    expect(removeProjectRecoveryListener).toHaveBeenCalledOnce()
-  })
+    unmount();
+    expect(removeProjectRecoveryListener).toHaveBeenCalledOnce();
+  });
 
-  it('switches between projects on one Host without a connection phase', async () => {
-    installRemoteProjectsSetting(true)
+  it("switches between projects on one Host without a connection phase", async () => {
+    installRemoteProjectsSetting(true);
     const first = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000126',
-      name: 'Host 项目一',
-      rootPath: '/srv/one',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000126",
+      name: "Host 项目一",
+      rootPath: "/srv/one",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000226',
-        remoteRootPath: '/srv/one'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000226",
+        remoteRootPath: "/srv/one",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     const second = {
       ...first,
-      id: '00000000-0000-4000-8000-000000000127',
-      name: 'Host 项目二',
-      rootPath: '/srv/two',
+      id: "00000000-0000-4000-8000-000000000127",
+      name: "Host 项目二",
+      rootPath: "/srv/two",
       executionSpace: {
         ...first.executionSpace,
-        remoteRootPath: '/srv/two'
-      }
-    }
+        remoteRootPath: "/srv/two",
+      },
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
       first,
-      second
-    ])
+      second,
+    ]);
 
-    render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
-    vi.mocked(
-      api.runtimeCustomization.getNativeSnapshot
-    ).mockClear()
+    render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockClear();
 
     for (const remoteProject of [first, second, first]) {
-      selectProjectOption(remoteProject.name)
+      selectProjectOption(remoteProject.name);
       expect(
-        screen.getByRole('button', { name: '当前项目' })
-      ).toHaveTextContent(remoteProject.name)
-      expect(
-        screen.queryByRole('progressbar')
-      ).not.toBeInTheDocument()
+        screen.getByRole("button", { name: "当前项目" }),
+      ).toHaveTextContent(remoteProject.name);
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     }
-    expect(
-      api.runtimeCustomization.getNativeSnapshot
-    ).not.toHaveBeenCalled()
-  })
+    expect(api.runtimeCustomization.getNativeSnapshot).not.toHaveBeenCalled();
+  });
 
-  it('keeps saved remote projects hidden while the preview is disabled', async () => {
-    installRemoteProjectsSetting(false)
+  it("keeps saved remote projects hidden while the preview is disabled", async () => {
+    installRemoteProjectsSetting(false);
     const remoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000116',
-      name: '已保存远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000116",
+      name: "已保存远程项目",
+      rootPath: "/srv/project",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000216',
-        remoteRootPath: '/srv/project'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000216",
+        remoteRootPath: "/srv/project",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      remoteProject
-    ])
+      remoteProject,
+    ]);
 
-    render(<App />)
+    render(<App />);
 
-    const trigger = await screen.findByRole('button', {
-      name: '当前项目'
-    })
-    fireEvent.click(trigger)
-    const menu = screen.getByRole('menu', { name: '当前项目' })
+    const trigger = await screen.findByRole("button", {
+      name: "当前项目",
+    });
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu", { name: "当前项目" });
     expect(
-      within(menu).queryByText(remoteProject.name)
-    ).not.toBeInTheDocument()
-  })
+      within(menu).queryByText(remoteProject.name),
+    ).not.toBeInTheDocument();
+  });
 
-  it('falls back to a local project when the remote preview is disabled', async () => {
-    const { updateSettings } = installRemoteProjectsSetting(true)
+  it("falls back to a local project when the remote preview is disabled", async () => {
+    const { updateSettings } = installRemoteProjectsSetting(true);
     const remoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000117',
-      name: '预览远程项目',
-      rootPath: '/srv/project',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000117",
+      name: "预览远程项目",
+      rootPath: "/srv/project",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000217',
-        remoteRootPath: '/srv/project'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000217",
+        remoteRootPath: "/srv/project",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      remoteProject
-    ])
+      remoteProject,
+    ]);
 
-    render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(remoteProject.name)
+    render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(remoteProject.name);
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: '当前项目' })
-      ).toHaveTextContent(remoteProject.name)
-    )
+        screen.getByRole("button", { name: "当前项目" }),
+      ).toHaveTextContent(remoteProject.name),
+    );
 
-    fireEvent.click(screen.getByText('本地工作区'))
+    fireEvent.click(screen.getByText("本地工作区"));
+    fireEvent.click(await screen.findByRole("tab", { name: "平台功能" }));
     fireEvent.click(
-      await screen.findByRole('tab', { name: '平台功能' })
-    )
-    fireEvent.click(
-      await screen.findByRole('tab', {
-        name: '远程项目（技术预览）'
-      })
-    )
-    const remoteProjectsSwitch = await screen.findByRole('switch', {
-      name: '远程项目（技术预览）'
-    })
-    expect(remoteProjectsSwitch).toBeChecked()
-    fireEvent.click(remoteProjectsSwitch)
+      await screen.findByRole("tab", {
+        name: "远程项目（技术预览）",
+      }),
+    );
+    const remoteProjectsSwitch = await screen.findByRole("switch", {
+      name: "远程项目（技术预览）",
+    });
+    expect(remoteProjectsSwitch).toBeChecked();
+    fireEvent.click(remoteProjectsSwitch);
 
     await waitFor(() =>
       expect(updateSettings).toHaveBeenCalledWith({
-        remoteProjectsEnabled: false
-      })
-    )
+        remoteProjectsEnabled: false,
+      }),
+    );
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: '当前项目' })
-      ).toHaveTextContent(project.name)
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '当前项目' })
-    )
-    expect(
-      screen.queryByText(remoteProject.name)
-    ).not.toBeInTheDocument()
-    expect(api.projects.setArchived).not.toHaveBeenCalled()
-    expect(api.projects.delete).not.toHaveBeenCalled()
-  })
+        screen.getByRole("button", { name: "当前项目" }),
+      ).toHaveTextContent(project.name),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+    expect(screen.queryByText(remoteProject.name)).not.toBeInTheDocument();
+    expect(api.projects.setArchived).not.toHaveBeenCalled();
+    expect(api.projects.delete).not.toHaveBeenCalled();
+  });
 
-  it('deletes an unreachable non-active remote project without connecting', async () => {
-    installRemoteProjectsSetting(true)
+  it("deletes an unreachable non-active remote project without connecting", async () => {
+    installRemoteProjectsSetting(true);
     const remoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000125',
-      name: '目录已丢失的远程项目',
-      rootPath: '/srv/missing',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000125",
+      name: "目录已丢失的远程项目",
+      rootPath: "/srv/missing",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000225',
-        remoteRootPath: '/srv/missing'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000225",
+        remoteRootPath: "/srv/missing",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      remoteProject
-    ])
-    render(<App />)
-    await screen.findByRole('button', { name: '当前项目' })
+      remoteProject,
+    ]);
+    render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
 
-    fireEvent.click(screen.getByLabelText('当前项目'))
+    fireEvent.click(screen.getByLabelText("当前项目"));
     fireEvent.click(
-      screen.getByRole('menuitem', {
-        name: `管理项目 ${remoteProject.name}`
-      })
-    )
-    const dialog = screen.getByRole('dialog', { name: '项目设置' })
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: '删除项目' })
-    )
+      screen.getByRole("menuitem", {
+        name: `管理项目 ${remoteProject.name}`,
+      }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "项目设置" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "删除项目" }));
     fireEvent.change(
-      within(dialog).getByLabelText(
-        `输入“${remoteProject.name}”确认删除`
-      ),
-      { target: { value: remoteProject.name } }
-    )
+      within(dialog).getByLabelText(`输入“${remoteProject.name}”确认删除`),
+      { target: { value: remoteProject.name } },
+    );
     fireEvent.click(
-      within(dialog).getByRole('button', {
-        name: '永久删除项目'
-      })
-    )
+      within(dialog).getByRole("button", {
+        name: "永久删除项目",
+      }),
+    );
 
     await waitFor(() =>
       expect(api.projects.delete).toHaveBeenCalledWith(
         remoteProject.id,
-        remoteProject.name
-      )
-    )
-    expect(
-      screen.getByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
-  })
+        remoteProject.name,
+      ),
+    );
+    expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent(
+      project.name,
+    );
+  });
 
-  it('shows grouped project details and keeps the rich menu keyboard accessible', async () => {
+  it("shows grouped project details and keeps the rich menu keyboard accessible", async () => {
     const channelProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000201',
-      name: '微信 ClawBot',
-      kind: 'channel' as const,
-      channel: 'weixin' as const
-    }
+      id: "00000000-0000-4000-8000-000000000201",
+      name: "微信 ClawBot",
+      kind: "channel" as const,
+      channel: "weixin" as const,
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      channelProject
-    ])
-    render(<App />)
+      channelProject,
+    ]);
+    render(<App />);
 
-    const trigger = await screen.findByRole('button', {
-      name: '当前项目'
-    })
-    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const trigger = await screen.findByRole("button", {
+      name: "当前项目",
+    });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
 
-    const menu = screen.getByRole('menu', { name: '当前项目' })
+    const menu = screen.getByRole("menu", { name: "当前项目" });
     expect(
-      within(menu).getByRole('group', { name: '本地项目' })
-    ).toHaveTextContent('本地目录 · C:\\Users\\test')
+      within(menu).getByRole("group", { name: "本地项目" }),
+    ).toHaveTextContent("本地目录 · C:\\Users\\test");
     expect(
-      within(menu).getByRole('group', { name: '远程通道' })
-    ).toHaveTextContent(
-      '微信 ClawBot · 远程通道 · C:\\Users\\test'
-    )
+      within(menu).getByRole("group", { name: "远程通道" }),
+    ).toHaveTextContent("微信 ClawBot · 远程通道 · C:\\Users\\test");
     const selectedProject = within(menu)
-      .getByText(project.name, { selector: 'b' })
-      .closest<HTMLButtonElement>('[role="menuitemradio"]')
-    const remoteProjectSettings = within(menu).getByRole(
-      'menuitem',
-      { name: `管理项目 ${channelProject.name}` }
-    )
-    expect(selectedProject).toHaveAttribute('aria-checked', 'true')
-    await waitFor(() => expect(selectedProject).toHaveFocus())
+      .getByText(project.name, { selector: "b" })
+      .closest<HTMLButtonElement>('[role="menuitemradio"]');
+    const remoteProjectSettings = within(menu).getByRole("menuitem", {
+      name: `管理项目 ${channelProject.name}`,
+    });
+    expect(selectedProject).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(selectedProject).toHaveFocus());
 
-    fireEvent.keyDown(selectedProject!, { key: 'End' })
-    expect(remoteProjectSettings).toHaveFocus()
-    fireEvent.keyDown(remoteProjectSettings, { key: 'Escape' })
-    expect(trigger).toHaveFocus()
+    fireEvent.keyDown(selectedProject!, { key: "End" });
+    expect(remoteProjectSettings).toHaveFocus();
+    fireEvent.keyDown(remoteProjectSettings, { key: "Escape" });
+    expect(trigger).toHaveFocus();
     expect(
-      screen.queryByRole('menu', { name: '当前项目' })
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByRole("menu", { name: "当前项目" }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('keeps channel projects empty until a client message creates a remote conversation', async () => {
+  it("keeps channel projects empty until a client message creates a remote conversation", async () => {
     const channelProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000201',
-      name: '微信 ClawBot',
-      kind: 'channel' as const,
-      channel: 'weixin' as const,
+      id: "00000000-0000-4000-8000-000000000201",
+      name: "微信 ClawBot",
+      kind: "channel" as const,
+      channel: "weixin" as const,
       runtimeSelection: {
-        provider: 'model' as const,
-        profileId: modelProfileId
-      }
-    }
+        provider: "model" as const,
+        profileId: modelProfileId,
+      },
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      channelProject
-    ])
-    render(<App />)
+      channelProject,
+    ]);
+    render(<App />);
 
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(channelProject.name)
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(channelProject.name);
 
     expect(
-      screen.queryByRole('button', { name: /新建对话/u })
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText('Ctrl N')).not.toBeInTheDocument()
-    expect(
-      screen.getAllByText('尚无远程会话').length
-    ).toBeGreaterThan(0)
+      screen.queryByRole("button", { name: /新建对话/u }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Ctrl N")).not.toBeInTheDocument();
+    expect(screen.getAllByText("尚无远程会话").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        '请先连接微信 ClawBot，远程用户发送第一条消息后，会话会自动出现在这里。'
-      )
-    ).toBeInTheDocument()
+        "请先连接微信 ClawBot，远程用户发送第一条消息后，会话会自动出现在这里。",
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.keyDown(document, {
-      key: 'n',
-      ctrlKey: true
-    })
+      key: "n",
+      ctrlKey: true,
+    });
     expect(
-      await screen.findByText(
-        '通道项目的会话由客户端收到新消息后自动创建'
-      )
-    ).toBeInTheDocument()
+      await screen.findByText("通道项目的会话由客户端收到新消息后自动创建"),
+    ).toBeInTheDocument();
     await act(
       () =>
         new Promise((resolve) => {
-          setTimeout(resolve, 550)
-        })
-    )
+          setTimeout(resolve, 550);
+        }),
+    );
     const savedChannelHeaders = vi
       .mocked(api.conversations.saveLocal)
-      .mock.calls.flatMap(([batch]) => batch.map((entry) => entry.header))
+      .mock.calls.flatMap(([batch]) => batch.map((entry) => entry.header));
     expect(
       savedChannelHeaders.some(
-        (header) => header.projectId === channelProject.id
-      )
-    ).toBe(false)
-    expect(screen.getAllByText('尚无远程会话').length).toBeGreaterThan(0)
+        (header) => header.projectId === channelProject.id,
+      ),
+    ).toBe(false);
+    expect(screen.getAllByText("尚无远程会话").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole('button', { name: '打开设置' }))
+    fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
 
-    const channelSettingsTab = await screen.findByRole('tab', {
-      name: '消息通道'
-    })
-    expect(channelSettingsTab).toHaveAttribute('aria-selected', 'true')
-  })
+    const channelSettingsTab = await screen.findByRole("tab", {
+      name: "消息通道",
+    });
+    expect(channelSettingsTab).toHaveAttribute("aria-selected", "true");
+  });
 
-  it('keeps channel project settings synchronized between both entry points', async () => {
+  it("keeps channel project settings synchronized between both entry points", async () => {
     let channelProjects: AssistantProject[] = [
-      ['weixin', '微信 ClawBot'],
-      ['wecom', '企业微信'],
-      ['dingtalk', '钉钉']
+      ["weixin", "微信 ClawBot"],
+      ["wecom", "企业微信"],
+      ["dingtalk", "钉钉"],
     ].map(([channel, name], index) => ({
       ...project,
       id: `00000000-0000-4000-8000-00000000020${index + 1}`,
       name: name!,
       description: `${name}通道项目`,
-      kind: 'channel' as const,
-      channel: channel as 'weixin' | 'wecom' | 'dingtalk',
+      kind: "channel" as const,
+      channel: channel as "weixin" | "wecom" | "dingtalk",
       runtimeSelection: {
-        provider: 'model' as const,
-        profileId: modelProfileId
-      }
-    }))
+        provider: "model" as const,
+        profileId: modelProfileId,
+      },
+    }));
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      ...channelProjects
-    ])
+      ...channelProjects,
+    ]);
     vi.mocked(api.projects.update).mockImplementation(
       async (projectToUpdate, input) => {
         const existing = channelProjects.find(
-          (candidate) => candidate.id === projectToUpdate
-        )
+          (candidate) => candidate.id === projectToUpdate,
+        );
         if (!existing) {
           return {
             ...project,
             ...input,
-            id: projectToUpdate
-          }
+            id: projectToUpdate,
+          };
         }
         const updated = {
           ...existing,
           ...input,
-          updatedAt: '2026-08-14T00:00:00.000Z'
-        }
+          updatedAt: "2026-08-14T00:00:00.000Z",
+        };
         channelProjects = channelProjects.map((candidate) =>
-          candidate.id === updated.id ? updated : candidate
-        )
-        return updated
-      }
-    )
+          candidate.id === updated.id ? updated : candidate,
+        );
+        return updated;
+      },
+    );
     api.channels = {
       getSnapshot: vi.fn(async () => ({
         weixin: {
           enabled: false,
           bindingConfigured: false,
-          source: 'none' as const,
-          status: { state: 'disabled' as const }
+          source: "none" as const,
+          status: { state: "disabled" as const },
         },
         wecom: {
           enabled: false,
-          botId: '',
+          botId: "",
           secretConfigured: false,
-          source: 'none' as const,
+          source: "none" as const,
           readOnly: false,
           allowedSenderIds: [],
           allowGroupMessages: false,
-          status: { state: 'disabled' as const }
+          status: { state: "disabled" as const },
         },
         dingtalk: {
           enabled: false,
-          clientId: '',
+          clientId: "",
           secretConfigured: false,
-          source: 'none' as const,
+          source: "none" as const,
           readOnly: false,
           allowedSenderIds: [],
           allowGroupMessages: false,
-          status: { state: 'disabled' as const }
-        }
+          status: { state: "disabled" as const },
+        },
       })),
       apply: vi.fn(async () => {
-        throw new Error('No channel connection settings changed')
+        throw new Error("No channel connection settings changed");
       }),
       testConnection: vi.fn(async (channel) => ({
         channel,
-        ok: true
+        ok: true,
       })),
       getWeixinBinding: vi.fn(async () => ({
-        status: 'stopped' as const
+        status: "stopped" as const,
       })),
       startWeixinBinding: vi.fn(async () => ({
-        status: 'starting' as const
+        status: "starting" as const,
       })),
       submitWeixinVerification: vi.fn(async () => ({
-        status: 'scanned' as const
+        status: "scanned" as const,
       })),
       disconnectWeixin: vi.fn(async () => ({
-        status: 'stopped' as const
+        status: "stopped" as const,
       })),
       onWeixinBindingChanged: vi.fn(() => () => undefined),
-      onRemoteActivity: vi.fn(() => () => undefined)
-    }
+      onRemoteActivity: vi.fn(() => () => undefined),
+    };
 
-    render(<App />)
-    const weixinProject = channelProjects[0]!
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(weixinProject.name)
-    fireEvent.click(
-      await screen.findByRole('button', { name: '打开设置' })
-    )
+    render(<App />);
+    const weixinProject = channelProjects[0]!;
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(weixinProject.name);
+    fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
 
+    expect(await screen.findByLabelText("微信 ClawBot 项目说明")).toHaveValue(
+      "微信 ClawBot通道项目",
+    );
+
+    fireEvent.click(screen.getByLabelText("项目设置"));
+    let dialog = screen.getByRole("dialog", { name: "项目设置" });
+    const dialogDescription =
+      within(dialog).getByLabelText("微信 ClawBot 项目说明");
+    expect(dialogDescription).toHaveFocus();
+    const dialogBackend =
+      within(dialog).getByLabelText("微信 ClawBot 消息处理后端");
     expect(
-      await screen.findByLabelText('微信 ClawBot 项目说明')
-    ).toHaveValue('微信 ClawBot通道项目')
-
-    fireEvent.click(screen.getByLabelText('项目设置'))
-    let dialog = screen.getByRole('dialog', { name: '项目设置' })
-    const dialogDescription = within(dialog).getByLabelText(
-      '微信 ClawBot 项目说明'
-    )
-    expect(dialogDescription).toHaveFocus()
-    const dialogBackend = within(dialog).getByLabelText(
-      '微信 ClawBot 消息处理后端'
-    )
-    expect(
-      within(dialogBackend).getByRole('option', {
-        name: 'DeepSeek Harness（预览 · OpenAI 兼容）'
-      })
-    ).toBeInTheDocument()
+      within(dialogBackend).getByRole("option", {
+        name: "DeepSeek Harness（预览 · OpenAI 兼容）",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.change(dialogDescription, { target: { value: "从左上角更新" } });
     fireEvent.change(
-      dialogDescription,
-      { target: { value: '从左上角更新' } }
-    )
-    fireEvent.change(
-      within(dialog).getByLabelText('微信 ClawBot 默认工作目录'),
-      { target: { value: 'C:\\FromSwitcher' } }
-    )
-    fireEvent.change(
-      dialogBackend,
-      {
-        target: {
-          value: agentRuntimeSelectionKey({
-            provider: 'opencode'
-          })
-        }
-      }
-    )
+      within(dialog).getByLabelText("微信 ClawBot 默认工作目录"),
+      { target: { value: "C:\\FromSwitcher" } },
+    );
+    fireEvent.change(dialogBackend, {
+      target: {
+        value: agentRuntimeSelectionKey({
+          provider: "opencode",
+        }),
+      },
+    });
     fireEvent.click(
       within(
-        within(dialog).getByRole('group', {
-          name: '微信 ClawBot 默认模式'
-        })
-      ).getByRole('button', { name: '执行' })
-    )
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: '保存项目' })
-    )
+        within(dialog).getByRole("group", {
+          name: "微信 ClawBot 默认模式",
+        }),
+      ).getByRole("button", { name: "执行" }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存项目" }));
 
     await waitFor(() => {
-      expect(
-        screen.getByLabelText('微信 ClawBot 项目说明')
-      ).toHaveValue('从左上角更新')
-      expect(
-        screen.getByLabelText('微信 ClawBot 默认工作目录')
-      ).toHaveValue('C:\\FromSwitcher')
-      expect(
-        screen.getByLabelText('微信 ClawBot 消息处理后端')
-      ).toHaveValue(
-        agentRuntimeSelectionKey({ provider: 'opencode' })
-      )
-    })
+      expect(screen.getByLabelText("微信 ClawBot 项目说明")).toHaveValue(
+        "从左上角更新",
+      );
+      expect(screen.getByLabelText("微信 ClawBot 默认工作目录")).toHaveValue(
+        "C:\\FromSwitcher",
+      );
+      expect(screen.getByLabelText("微信 ClawBot 消息处理后端")).toHaveValue(
+        agentRuntimeSelectionKey({ provider: "opencode" }),
+      );
+    });
 
-    fireEvent.change(
-      screen.getByLabelText('微信 ClawBot 项目说明'),
-      { target: { value: '从消息通道更新' } }
-    )
-    fireEvent.change(
-      screen.getByLabelText('微信 ClawBot 默认工作目录'),
-      { target: { value: 'C:\\FromChannels' } }
-    )
-    fireEvent.change(
-      screen.getByLabelText('微信 ClawBot 消息处理后端'),
-      {
-        target: {
-          value: agentRuntimeSelectionKey({
-            provider: 'continue'
-          })
-        }
-      }
-    )
+    fireEvent.change(screen.getByLabelText("微信 ClawBot 项目说明"), {
+      target: { value: "从消息通道更新" },
+    });
+    fireEvent.change(screen.getByLabelText("微信 ClawBot 默认工作目录"), {
+      target: { value: "C:\\FromChannels" },
+    });
+    fireEvent.change(screen.getByLabelText("微信 ClawBot 消息处理后端"), {
+      target: {
+        value: agentRuntimeSelectionKey({
+          provider: "continue",
+        }),
+      },
+    });
     fireEvent.click(
       within(
-        screen.getByRole('group', {
-          name: '微信 ClawBot 默认模式'
-        })
-      ).getByRole('button', { name: '对话' })
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '保存通道设置' })
-    )
+        screen.getByRole("group", {
+          name: "微信 ClawBot 默认模式",
+        }),
+      ).getByRole("button", { name: "对话" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存通道设置" }));
 
     await waitFor(() =>
       expect(api.projects.update).toHaveBeenCalledWith(
         weixinProject.id,
         expect.objectContaining({
-          description: '从消息通道更新',
-          rootPath: 'C:\\FromChannels',
-          defaultWorkMode: 'ask',
-          runtimeSelection: { provider: 'continue' }
-        })
-      )
-    )
+          description: "从消息通道更新",
+          rootPath: "C:\\FromChannels",
+          defaultWorkMode: "ask",
+          runtimeSelection: { provider: "continue" },
+        }),
+      ),
+    );
 
-    fireEvent.click(screen.getByLabelText('项目设置'))
-    dialog = screen.getByRole('dialog', { name: '项目设置' })
+    fireEvent.click(screen.getByLabelText("项目设置"));
+    dialog = screen.getByRole("dialog", { name: "项目设置" });
+    expect(within(dialog).getByLabelText("微信 ClawBot 项目说明")).toHaveValue(
+      "从消息通道更新",
+    );
     expect(
-      within(dialog).getByLabelText('微信 ClawBot 项目说明')
-    ).toHaveValue('从消息通道更新')
+      within(dialog).getByLabelText("微信 ClawBot 默认工作目录"),
+    ).toHaveValue("C:\\FromChannels");
     expect(
-      within(dialog).getByLabelText('微信 ClawBot 默认工作目录')
-    ).toHaveValue('C:\\FromChannels')
-    expect(
-      within(dialog).getByLabelText('微信 ClawBot 消息处理后端')
-    ).toHaveValue(
-      agentRuntimeSelectionKey({ provider: 'continue' })
-    )
+      within(dialog).getByLabelText("微信 ClawBot 消息处理后端"),
+    ).toHaveValue(agentRuntimeSelectionKey({ provider: "continue" }));
     expect(
       within(
-        within(dialog).getByRole('group', {
-          name: '微信 ClawBot 默认模式'
-        })
-      ).getByRole('button', { name: '对话' })
-    ).toHaveAttribute('aria-pressed', 'true')
-  })
+        within(dialog).getByRole("group", {
+          name: "微信 ClawBot 默认模式",
+        }),
+      ).getByRole("button", { name: "对话" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
 
-  it('shows client-created remote conversations without obsolete approval copy', async () => {
+  it("shows client-created remote conversations without obsolete approval copy", async () => {
     const channelProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000201',
-      name: '微信 ClawBot',
-      kind: 'channel' as const,
-      channel: 'weixin' as const,
+      id: "00000000-0000-4000-8000-000000000201",
+      name: "微信 ClawBot",
+      kind: "channel" as const,
+      channel: "weixin" as const,
       runtimeSelection: {
-        provider: 'model' as const,
-        profileId: modelProfileId
-      }
-    }
+        provider: "model" as const,
+        profileId: modelProfileId,
+      },
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      channelProject
-    ])
+      channelProject,
+    ]);
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000301',
+        id: "00000000-0000-4000-8000-000000000301",
         projectId: channelProject.id,
         runtimeSelection: channelProject.runtimeSelection,
         remote: {
-          channel: 'weixin',
-          accountDisplay: '发送者 ****0001',
-          conversationType: 'direct'
+          channel: "weixin",
+          accountDisplay: "发送者 ****0001",
+          conversationType: "direct",
         },
-        title: '微信 ClawBot · ****0001',
+        title: "微信 ClawBot · ****0001",
         updatedAt: 1_775_000_000_000,
-        messages: []
-      }
-    ])
-    render(<App />)
+        messages: [],
+      },
+    ]);
+    render(<App />);
 
-    await screen.findByRole('button', { name: '当前项目' })
-    selectProjectOption(channelProject.name)
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(channelProject.name);
 
     expect(
-      screen.getAllByRole('button', {
-        name: /微信 ClawBot · \*{4}0001/u
-      }).length
-    ).toBeGreaterThan(0)
+      screen.getAllByRole("button", {
+        name: /微信 ClawBot · \*{4}0001/u,
+      }).length,
+    ).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        '请在 微信 ClawBot 客户端继续发送消息。本窗口用于查看历史、任务与执行结果。'
-      )
-    ).toBeInTheDocument()
-    expect(screen.queryByText(/审批执行/u)).not.toBeInTheDocument()
-  })
+        "请在 微信 ClawBot 客户端继续发送消息。本窗口用于查看历史、任务与执行结果。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/审批执行/u)).not.toBeInTheDocument();
+  });
 
-  it('falls back when the last active project is no longer available', async () => {
+  it("falls back when the last active project is no longer available", async () => {
     localStorage.setItem(
-      'goodbuddy.active-project.v1',
-      '00000000-0000-4000-8000-000000000999'
-    )
+      "goodbuddy.active-project.v1",
+      "00000000-0000-4000-8000-000000000999",
+    );
 
-    render(<App />)
+    render(<App />);
 
     expect(
-      await screen.findByRole('button', { name: '当前项目' })
-    ).toHaveTextContent(project.name)
+      await screen.findByRole("button", { name: "当前项目" }),
+    ).toHaveTextContent(project.name);
     await waitFor(() =>
-      expect(
-        localStorage.getItem('goodbuddy.active-project.v1')
-      ).toBe(project.id)
-    )
-  })
+      expect(localStorage.getItem("goodbuddy.active-project.v1")).toBe(
+        project.id,
+      ),
+    );
+  });
 
   it.each([
-    ['opencode', 'OpenCode'],
-    ['continue', 'Continue CLI']
-  ] as const)(
-    'lets %s select Ask or Execute',
-    async (runtimeId, label) => {
+    ["opencode", "OpenCode"],
+    ["continue", "Continue CLI"],
+  ] as const)("lets %s select Ask or Execute", async (runtimeId, label) => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: runtimeId,
       label,
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
-    render(<App />)
+      detail: "Ready",
+    });
+    render(<App />);
 
-    const mode = await screen.findByRole('button', {
-      name: '工作模式：Ask · 只读问答'
-    })
-    expect(mode).toBeEnabled()
-    expect(mode.closest('.composer')).not.toBeNull()
+    const mode = await screen.findByRole("button", {
+      name: "工作模式：Ask · 只读问答",
+    });
+    expect(mode).toBeEnabled();
+    expect(mode.closest(".composer")).not.toBeNull();
     expect(
-      await screen.findByText('快捷唤起：', { exact: false })
-    ).toBeInTheDocument()
-    selectComposerOption('工作模式', 'Execute · 完全权限')
-    expect(mode).toHaveAccessibleName(
-      '工作模式：Execute · 完全权限'
-    )
-    expect(mode).toHaveTextContent(/^Execute$/u)
+      await screen.findByText("快捷唤起：", { exact: false }),
+    ).toBeInTheDocument();
+    selectComposerOption("工作模式", "Execute · 完全权限");
+    expect(mode).toHaveAccessibleName("工作模式：Execute · 完全权限");
+    expect(mode).toHaveTextContent(/^Execute$/u);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '执行任务' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "执行任务" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
-          prompt: '执行任务',
-          workMode: 'execute'
-        })
-      )
-    )
-    }
-  )
+          prompt: "执行任务",
+          workMode: "execute",
+        }),
+      ),
+    );
+  });
 
-  it('submits native OpenCode Agent and Command controls', async () => {
-    const settings = await api.settings.getRuntime()
+  it("submits native OpenCode Agent and Command controls", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'opencode',
+      provider: "opencode",
       opencodeEmbedded: true,
-      opencodeModelSource: { kind: 'platform' }
-    })
+      opencodeModelSource: { kind: "platform" },
+    });
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
-      id: 'opencode',
-      label: 'OpenCode',
+      id: "opencode",
+      label: "OpenCode",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
-    vi.mocked(
-      api.runtimeCustomization.getSettings
-    ).mockResolvedValueOnce({
+      detail: "Ready",
+    });
+    vi.mocked(api.runtimeCustomization.getSettings).mockResolvedValueOnce({
       opencode: {},
-      continue: { presets: [] }
-    })
-    vi.mocked(
-      api.runtimeCustomization.getNativeSnapshot
-    ).mockResolvedValueOnce({
-      provider: 'opencode',
-      available: true,
-      inventoryStatus: 'available',
-      detail: 'Ready',
-      agents: [
-        {
-          id: 'planner',
-          name: 'Planner',
-          description: 'Plan before editing',
-          mode: 'primary',
-          native: true,
-          hidden: false
-        }
-      ],
-      tools: [],
-      toolsSupported: true,
-      commands: [
-        {
-          id: 'review',
-          name: 'review',
-          description: 'Review a target',
-          source: 'command'
-        }
-      ],
-      lsp: [],
-      formatters: [],
-      mcpServers: [],
-      skills: [],
-      rules: [],
-      prompts: [],
-      resources: [],
-      resourcesSupported: true,
-      context: {
-        strategy: 'native',
-        manualCompact: true,
-        detail: 'OpenCode native context'
-      }
-    })
+      continue: { presets: [] },
+    });
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce(
+      {
+        provider: "opencode",
+        available: true,
+        inventoryStatus: "available",
+        detail: "Ready",
+        agents: [
+          {
+            id: "planner",
+            name: "Planner",
+            description: "Plan before editing",
+            mode: "primary",
+            native: true,
+            hidden: false,
+          },
+        ],
+        tools: [],
+        toolsSupported: true,
+        commands: [
+          {
+            id: "review",
+            name: "review",
+            description: "Review a target",
+            source: "command",
+          },
+        ],
+        lsp: [],
+        formatters: [],
+        mcpServers: [],
+        skills: [],
+        rules: [],
+        prompts: [],
+        resources: [],
+        resourcesSupported: true,
+        context: {
+          strategy: "native",
+          manualCompact: true,
+          detail: "OpenCode native context",
+        },
+      },
+    );
 
-    render(<App />)
+    render(<App />);
 
-    const agentPicker = await screen.findByRole('button', {
-      name: /OpenCode Runtime Agent/u
-    })
-    const runtimeToolbar = screen.getByRole('group', {
-      name: 'OpenCode 专属功能'
-    })
-    const universalSettings = screen.getByRole('group', {
-      name: '对话设置'
-    })
-    expect(runtimeToolbar).toHaveClass('composer__runtime-toolbar')
-    expect(runtimeToolbar).toContainElement(agentPicker)
-    expect(universalSettings).not.toContainElement(agentPicker)
-    expect(universalSettings.closest('.composer__toolbar')).toHaveClass(
-      'composer__toolbar--with-runtime-controls'
-    )
-    fireEvent.click(agentPicker)
+    const agentPicker = await screen.findByRole("button", {
+      name: /OpenCode Runtime Agent/u,
+    });
+    const runtimeToolbar = screen.getByRole("group", {
+      name: "OpenCode 专属功能",
+    });
+    const universalSettings = screen.getByRole("group", {
+      name: "对话设置",
+    });
+    expect(runtimeToolbar).toHaveClass("composer__runtime-toolbar");
+    expect(runtimeToolbar).toContainElement(agentPicker);
+    expect(universalSettings).not.toContainElement(agentPicker);
+    expect(universalSettings.closest(".composer__toolbar")).toHaveClass(
+      "composer__toolbar--with-runtime-controls",
+    );
+    fireEvent.click(agentPicker);
     fireEvent.click(
       within(
-        screen.getByRole('menu', {
-          name: 'OpenCode Runtime Agent'
-        })
-      ).getByRole('menuitemradio', { name: /Planner/u })
-    )
-    const actionPicker = screen.getByRole('button', {
-      name: /Runtime 快捷操作/u
-    })
-    expect(runtimeToolbar).toContainElement(actionPicker)
-    fireEvent.click(actionPicker)
+        screen.getByRole("menu", {
+          name: "OpenCode Runtime Agent",
+        }),
+      ).getByRole("menuitemradio", { name: /Planner/u }),
+    );
+    const actionPicker = screen.getByRole("button", {
+      name: /Runtime 快捷操作/u,
+    });
+    expect(runtimeToolbar).toContainElement(actionPicker);
+    fireEvent.click(actionPicker);
     fireEvent.click(
       within(
-        screen.getByRole('menu', {
-          name: 'Runtime 快捷操作'
-        })
-      ).getByRole('menuitemradio', { name: /\/review/u })
-    )
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: 'src/main' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
+        screen.getByRole("menu", {
+          name: "Runtime 快捷操作",
+        }),
+      ).getByRole("menuitemradio", { name: /\/review/u }),
+    );
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "src/main" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
-          prompt: '/review src/main',
+          prompt: "/review src/main",
           runtimeControl: {
-            provider: 'opencode',
-            agent: 'planner',
+            provider: "opencode",
+            agent: "planner",
             command: {
-              name: 'review',
-              arguments: 'src/main'
-            }
-          }
-        })
-      )
-    )
-  })
+              name: "review",
+              arguments: "src/main",
+            },
+          },
+        }),
+      ),
+    );
+  });
 
-  it('keeps native OpenCode controls mounted across conversation refreshes', async () => {
-    const conversationId = '00000000-0000-4000-8000-000000000761'
-    const settings = await api.settings.getRuntime()
+  it.each(["rejected", "unavailable", "partial"] as const)("retries %s native OpenCode controls and keeps them mounted across conversation refreshes", async (failure) => {
+    const conversationId = "00000000-0000-4000-8000-000000000761";
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'opencode',
+      provider: "opencode",
       opencodeEmbedded: true,
-      opencodeModelSource: { kind: 'platform' }
-    })
+      opencodeModelSource: { kind: "platform" },
+    });
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'opencode',
-      label: 'OpenCode',
+      id: "opencode",
+      label: "OpenCode",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
-    vi.mocked(
-      api.runtimeCustomization.getSettings
-    ).mockResolvedValueOnce({
+      detail: "Ready",
+    });
+    vi.mocked(api.runtimeCustomization.getSettings).mockResolvedValueOnce({
       opencode: {},
-      continue: { presets: [] }
-    })
-    vi.mocked(
-      api.runtimeCustomization.getNativeSnapshot
-    ).mockResolvedValueOnce({
-      provider: 'opencode',
-      available: true,
-      inventoryStatus: 'available',
-      detail: 'Ready',
-      agents: [
-        {
-          id: 'planner',
-          name: 'Planner',
-          description: 'Plan before editing',
-          mode: 'primary',
-          native: true,
-          hidden: false
-        }
-      ],
-      tools: [],
-      toolsSupported: true,
-      commands: [],
-      lsp: [],
-      formatters: [],
-      mcpServers: [],
-      skills: [],
-      rules: [],
-      prompts: [],
-      resources: [],
-      resourcesSupported: true,
-      context: {
-        strategy: 'native',
-        manualCompact: true,
-        detail: 'OpenCode native context'
-      }
-    })
+      continue: { presets: [] },
+    });
+    const emptySnapshot = await api.runtimeCustomization.getNativeSnapshot({ provider: "opencode" });
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockClear();
+    if (failure === "rejected") {
+      vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockRejectedValueOnce(
+        new Error("temporary inventory failure"),
+      );
+    } else {
+      vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce({
+        ...emptySnapshot,
+        available: failure === "partial",
+        inventoryStatus: failure,
+      });
+    }
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce({
+        provider: "opencode",
+        available: true,
+        inventoryStatus: "available",
+        detail: "Ready",
+        agents: [
+          {
+            id: "planner",
+            name: "Planner",
+            description: "Plan before editing",
+            mode: "primary",
+            native: true,
+            hidden: false,
+          },
+        ],
+        tools: [],
+        toolsSupported: true,
+        commands: [],
+        lsp: [],
+        formatters: [],
+        mcpServers: [],
+        skills: [],
+        rules: [],
+        prompts: [],
+        resources: [],
+        resourcesSupported: true,
+        context: {
+          strategy: "native",
+          manualCompact: true,
+          detail: "OpenCode native context",
+        },
+      });
     // Every read returns freshly parsed rows, so the conversation and its
     // nested runtime selection change identity on each refresh even when the
     // selection itself is unchanged. The store keeps the persisted timestamp
@@ -7877,933 +7409,1048 @@ describe('App', () => {
       {
         id: conversationId,
         projectId,
-        runtimeSelection: { provider: 'opencode' },
-        title: 'OpenCode 会话',
+        runtimeSelection: { provider: "opencode" },
+        title: "OpenCode 会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000762',
-            role: 'assistant',
-            content: '已就绪',
+            id: "00000000-0000-4000-8000-000000000762",
+            role: "assistant",
+            content: "已就绪",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    let conversationsChangedListener: (() => void) | undefined
-    vi.mocked(api.conversations.onChanged).mockImplementation(
-      (listener) => {
-        conversationsChangedListener = listener
-        return () => {
-          if (conversationsChangedListener === listener) {
-            conversationsChangedListener = undefined
-          }
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    let conversationsChangedListener: (() => void) | undefined;
+    vi.mocked(api.conversations.onChanged).mockImplementation((listener) => {
+      conversationsChangedListener = listener;
+      return () => {
+        if (conversationsChangedListener === listener) {
+          conversationsChangedListener = undefined;
         }
-      }
-    )
+      };
+    });
 
-    render(<App />)
+    render(<App />);
 
-    const runtimeToolbar = await screen.findByRole('group', {
-      name: 'OpenCode 专属功能'
-    })
-    expect(await screen.findByText('已就绪')).toBeInTheDocument()
+    const runtimeToolbar = await screen.findByRole("group", {
+      name: "OpenCode 专属功能",
+    });
+    expect(await screen.findByText("已就绪")).toBeInTheDocument();
     await waitFor(() =>
-      expect(
-        api.runtimeCustomization.getNativeSnapshot
-      ).toHaveBeenCalled()
-    )
-    vi.mocked(
-      api.runtimeCustomization.getNativeSnapshot
-    ).mockClear()
+      expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(
+        2,
+      ),
+    );
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockClear();
 
     // The resolved runtime scope is unchanged, so the runtime controls must
     // not unmount and refetch, which visibly shifted the conversation
     // layout on every window switch.
-    const refreshesBefore = vi.mocked(api.conversations.list).mock.calls
-      .length
+    const refreshesBefore = vi.mocked(api.conversations.list).mock.calls.length;
     act(() => {
-      conversationsChangedListener?.()
-      window.dispatchEvent(new Event('focus'))
-    })
+      conversationsChangedListener?.();
+      window.dispatchEvent(new Event("focus"));
+    });
     await waitFor(() =>
       expect(
-        vi.mocked(api.conversations.list).mock.calls.length
-      ).toBeGreaterThan(refreshesBefore)
-    )
+        vi.mocked(api.conversations.list).mock.calls.length,
+      ).toBeGreaterThan(refreshesBefore),
+    );
     // Let the merged conversation render before asserting that the runtime
     // scope stayed stable.
     await act(async () => {
-      await Promise.resolve()
-    })
+      await Promise.resolve();
+    });
 
+    expect(screen.getByRole("group", { name: "OpenCode 专属功能" })).toBe(
+      runtimeToolbar,
+    );
     expect(
-      screen.getByRole('group', { name: 'OpenCode 专属功能' })
-    ).toBe(runtimeToolbar)
-    expect(
-      screen.getByRole('button', { name: /OpenCode Runtime Agent/u })
-    ).toBeInTheDocument()
-    expect(
-      api.runtimeCustomization.getNativeSnapshot
-    ).not.toHaveBeenCalled()
-  })
+      screen.getByRole("button", { name: /OpenCode Runtime Agent/u }),
+    ).toBeInTheDocument();
+    expect(api.runtimeCustomization.getNativeSnapshot).not.toHaveBeenCalled();
+  });
 
-  it('fills editable Continue Prompts and submits the selected preset', async () => {
-    const presetId = '00000000-0000-4000-8000-000000000721'
-    const promptId = '00000000-0000-4000-8000-000000000722'
-    const settings = await api.settings.getRuntime()
+  it("shows native agents and commands after an unavailable inventory retries to available partial data", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'continue',
-      continueModelSource: { kind: 'platform' }
-    })
+      provider: "opencode",
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: "platform" },
+    });
+    vi.mocked(api.agent.getStatus).mockResolvedValue({
+      id: "opencode", label: "OpenCode", available: true,
+      supportsToolExecution: true, detail: "Ready",
+    });
+    const empty = await api.runtimeCustomization.getNativeSnapshot({ provider: "opencode" });
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockClear();
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot)
+      .mockResolvedValueOnce({
+        ...empty,
+        available: false,
+        inventoryStatus: "unavailable",
+      })
+      .mockResolvedValueOnce({
+        ...empty,
+        available: true,
+        inventoryStatus: "partial",
+        agents: [{ id: "planner", name: "Planner", mode: "primary", native: true, hidden: false }],
+        commands: [{ id: "review", name: "review", source: "command" }],
+      });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /OpenCode Runtime Agent/u }));
+    expect(screen.getByRole("menuitemradio", { name: /Planner/u })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("menu", { name: "OpenCode Runtime Agent" }), { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /Runtime 快捷操作/u }));
+    expect(screen.getByRole("menuitemradio", { name: /review/u })).toBeVisible();
+    expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["unavailable", "partial"] as const)("retains cached native controls through %s project revalidation with a bounded retry", async (inventoryStatus) => {
+    const settings = await api.settings.getRuntime();
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: "opencode",
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: "platform" },
+    });
+    vi.mocked(api.agent.getStatus).mockResolvedValue({
+      id: "opencode", label: "OpenCode", available: true,
+      supportsToolExecution: true, detail: "Ready",
+    });
+    const firstProject = { ...project, runtimeSelection: { provider: "opencode" as const } };
+    const secondProject = { ...firstProject, id: "00000000-0000-4000-8000-000000000179", name: "Inventory project B" };
+    vi.mocked(api.projects.list).mockResolvedValueOnce([firstProject, secondProject]);
+    const empty = await api.runtimeCustomization.getNativeSnapshot({ provider: "opencode" });
+    const healthy = {
+      ...empty,
+      agents: [{ id: "planner", name: "Planner", mode: "primary" as const, native: true, hidden: false }],
+    };
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockClear();
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot)
+      .mockResolvedValueOnce(healthy)
+      .mockResolvedValueOnce(healthy);
+    render(<App />);
+    await screen.findByRole("button", { name: /OpenCode Runtime Agent/u });
+    selectProjectOption(secondProject.name);
+    await waitFor(() => expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectId: secondProject.id }),
+    ));
+    const pending = deferred<typeof empty>();
+    const failed = { ...empty, available: inventoryStatus === "partial", inventoryStatus };
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(failed);
+    const callsBefore = vi.mocked(api.runtimeCustomization.getNativeSnapshot).mock.calls.length;
+    selectProjectOption(firstProject.name);
+    const toolbar = await screen.findByRole("group", { name: "OpenCode 专属功能" });
+    await act(async () => {
+      pending.resolve(failed);
+      await pending.promise;
+    });
+    await waitFor(() => expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(callsBefore + 2));
+    expect(screen.getByRole("group", { name: "OpenCode 专属功能" })).toBe(toolbar);
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode Runtime Agent/u }));
+    expect(screen.getByRole("menuitemradio", { name: /Planner/u })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("menu", { name: "OpenCode Runtime Agent" }), { key: "Escape" });
+
+    // A successful empty inventory is authoritative, not a transient failure.
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce(healthy);
+    selectProjectOption(secondProject.name);
+    await waitFor(() => expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(callsBefore + 3));
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce(empty);
+    selectProjectOption(firstProject.name);
+    await waitFor(() => expect(screen.queryByRole("group", { name: "OpenCode 专属功能" })).not.toBeInTheDocument());
+    expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(callsBefore + 4);
+  });
+
+  it("resets selected native Agent and Command when switching same-scope conversations", async () => {
+    const settings = await api.settings.getRuntime();
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: "opencode",
+      opencodeEmbedded: true,
+      opencodeModelSource: { kind: "platform" },
+    });
+    vi.mocked(api.agent.getStatus).mockResolvedValue({
+      id: "opencode", label: "OpenCode", available: true,
+      supportsToolExecution: true, detail: "Ready",
+    });
+    const snapshot = await api.runtimeCustomization.getNativeSnapshot({ provider: "opencode" });
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockClear();
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce({
+      ...snapshot,
+      agents: [{ id: "planner", name: "Planner", mode: "primary", native: true, hidden: false }],
+      commands: [{ id: "review", name: "review", source: "command" }],
+    });
+    const rows = [1, 2].map((index) => ({
+      id: `00000000-0000-4000-8000-00000000077${index}`,
+      projectId,
+      runtimeSelection: { provider: "opencode" as const },
+      title: `Native conversation ${index}`,
+      updatedAt: 1_775_000_000_000 - index,
+      messages: [],
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(rows);
+    render(<App />);
+
+    const toolbar = await screen.findByRole("group", { name: "OpenCode 专属功能" });
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode Runtime Agent/u }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Planner/u }));
+    fireEvent.click(screen.getByRole("button", { name: /Runtime 快捷操作/u }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /\/review/u }));
+    const inventoryCalls = vi.mocked(api.runtimeCustomization.getNativeSnapshot).mock.calls.length;
+    fireEvent.click(screen.getByText(rows[1]!.title).closest("button")!);
+    expect(screen.getByRole("group", { name: "OpenCode 专属功能" })).toBe(toolbar);
+    expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(inventoryCalls);
+    await waitFor(() => expect(screen.getByRole("button", { name: /OpenCode Runtime Agent/u })).not.toHaveTextContent("Planner"));
+    expect(screen.getByRole("button", { name: /Runtime 快捷操作/u })).not.toHaveTextContent("/review");
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "plain request" } });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0]).toMatchObject({ conversationId: rows[1]!.id, prompt: "plain request" });
+    expect(run.mock.calls[0]?.[0].runtimeControl).toBeUndefined();
+  });
+
+  it("fills editable Continue Prompts and submits the selected preset", async () => {
+    const presetId = "00000000-0000-4000-8000-000000000721";
+    const promptId = "00000000-0000-4000-8000-000000000722";
+    const settings = await api.settings.getRuntime();
+    vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
+      ...settings,
+      provider: "continue",
+      continueModelSource: { kind: "platform" },
+    });
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
-      id: 'continue',
-      label: 'Continue',
+      id: "continue",
+      label: "Continue",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
-    vi.mocked(
-      api.runtimeCustomization.getSettings
-    ).mockResolvedValueOnce({
+      detail: "Ready",
+    });
+    vi.mocked(api.runtimeCustomization.getSettings).mockResolvedValueOnce({
       opencode: {},
       continue: {
         defaultPresetId: presetId,
         presets: [
           {
             id: presetId,
-            name: '代码审查',
+            name: "代码审查",
             rules: [],
             prompts: [
               {
                 id: promptId,
-                name: '审查草稿',
-                description: '检查当前草稿',
-                prompt: '请审查当前草稿。'
-              }
-            ]
-          }
-        ]
-      }
-    })
-    vi.mocked(
-      api.runtimeCustomization.getNativeSnapshot
-    ).mockResolvedValueOnce({
-      provider: 'continue',
-      available: true,
-      inventoryStatus: 'available',
-      detail: 'Ready',
-      agents: [],
-      tools: [],
-      toolsSupported: false,
-      commands: [],
-      lsp: [],
-      formatters: [],
-      mcpServers: [],
-      skills: [],
-      rules: [],
-      prompts: [
-        {
-          id: promptId,
-          name: '原生同 ID Prompt',
-          prompt: '不应填入此原生 Prompt。',
-          source: 'configuration'
-        }
-      ],
-      resources: [],
-      resourcesSupported: false,
-      context: {
-        strategy: 'goodbuddy-summary',
-        manualCompact: true,
-        detail: 'GoodBuddy summary context'
-      }
-    })
+                name: "审查草稿",
+                description: "检查当前草稿",
+                prompt: "请审查当前草稿。",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce(
+      {
+        provider: "continue",
+        available: true,
+        inventoryStatus: "available",
+        detail: "Ready",
+        agents: [],
+        tools: [],
+        toolsSupported: false,
+        commands: [],
+        lsp: [],
+        formatters: [],
+        mcpServers: [],
+        skills: [],
+        rules: [],
+        prompts: [
+          {
+            id: promptId,
+            name: "原生同 ID Prompt",
+            prompt: "不应填入此原生 Prompt。",
+            source: "configuration",
+          },
+        ],
+        resources: [],
+        resourcesSupported: false,
+        context: {
+          strategy: "goodbuddy-summary",
+          manualCompact: true,
+          detail: "GoodBuddy summary context",
+        },
+      },
+    );
 
-    render(<App />)
+    render(<App />);
 
-    const presetPicker = await screen.findByRole('button', {
-      name: /Continue 配置预设.*使用设置默认预设/u
-    })
-    const runtimeToolbar = screen.getByRole('group', {
-      name: 'Continue 专属功能'
-    })
-    expect(runtimeToolbar).toHaveClass('composer__runtime-toolbar')
-    expect(runtimeToolbar).toContainElement(presetPicker)
+    const presetPicker = await screen.findByRole("button", {
+      name: /Continue 配置预设.*使用设置默认预设/u,
+    });
+    const runtimeToolbar = screen.getByRole("group", {
+      name: "Continue 专属功能",
+    });
+    expect(runtimeToolbar).toHaveClass("composer__runtime-toolbar");
+    expect(runtimeToolbar).toContainElement(presetPicker);
     expect(
-      screen.getByRole('group', { name: '对话设置' })
-    ).not.toContainElement(presetPicker)
-    fireEvent.click(presetPicker)
+      screen.getByRole("group", { name: "对话设置" }),
+    ).not.toContainElement(presetPicker);
+    fireEvent.click(presetPicker);
     fireEvent.click(
       within(
-        screen.getByRole('menu', {
-          name: 'Continue 配置预设'
-        })
-      ).getByRole('menuitemradio', { name: /代码审查/u })
-    )
-    const actionPicker = screen.getByRole('button', {
-      name: /Runtime 快捷操作/u
-    })
-    expect(runtimeToolbar).toContainElement(actionPicker)
-    fireEvent.click(actionPicker)
+        screen.getByRole("menu", {
+          name: "Continue 配置预设",
+        }),
+      ).getByRole("menuitemradio", { name: /代码审查/u }),
+    );
+    const actionPicker = screen.getByRole("button", {
+      name: /Runtime 快捷操作/u,
+    });
+    expect(runtimeToolbar).toContainElement(actionPicker);
+    fireEvent.click(actionPicker);
     fireEvent.click(
       within(
-        screen.getByRole('menu', {
-          name: 'Runtime 快捷操作'
-        })
-      ).getByRole('menuitemradio', { name: /审查草稿/u })
-    )
-    const composer = screen.getByLabelText('向 GoodBuddy 提问')
-    expect(composer).toHaveValue('请审查当前草稿。')
+        screen.getByRole("menu", {
+          name: "Runtime 快捷操作",
+        }),
+      ).getByRole("menuitemradio", { name: /审查草稿/u }),
+    );
+    const composer = screen.getByLabelText("向 GoodBuddy 提问");
+    expect(composer).toHaveValue("请审查当前草稿。");
     fireEvent.change(composer, {
-      target: { value: '请审查当前草稿，并优先检查权限。' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
+      target: { value: "请审查当前草稿，并优先检查权限。" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
-          prompt: '请审查当前草稿，并优先检查权限。',
+          prompt: "请审查当前草稿，并优先检查权限。",
           runtimeControl: {
-            provider: 'continue',
-            presetId
-          }
-        })
-      )
-    )
-  })
+            provider: "continue",
+            presetId,
+          },
+        }),
+      ),
+    );
+  });
 
-  it('manually compacts Continue context and persists the summary state', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000731'
+  it("manually compacts Continue context and persists the summary state", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000731";
     const messages = [
       {
-        id: '00000000-0000-4000-8000-000000000732',
-        role: 'user' as const,
-        content: '第一轮问题',
+        id: "00000000-0000-4000-8000-000000000732",
+        role: "user" as const,
+        content: "第一轮问题",
         createdAt: 1_775_000_000_000,
-        state: 'complete' as const
+        state: "complete" as const,
       },
       {
-        id: '00000000-0000-4000-8000-000000000733',
-        role: 'assistant' as const,
-        content: '第一轮回答',
+        id: "00000000-0000-4000-8000-000000000733",
+        role: "assistant" as const,
+        content: "第一轮回答",
         createdAt: 1_775_000_000_001,
-        state: 'complete' as const
-      }
-    ]
+        state: "complete" as const,
+      },
+    ];
     const summaryState = {
-      coveredHistoryDigest: 'a'.repeat(64),
+      coveredHistoryDigest: "a".repeat(64),
       coveredMessageCount: 1,
       coveredFromMessageId: messages[0]!.id,
       coveredThroughMessageId: messages[0]!.id,
-      summary: '用户提出了第一轮问题。'
-    }
-    const settings = await api.settings.getRuntime()
+      summary: "用户提出了第一轮问题。",
+    };
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
       contextCompression: {
         enabled: true,
         triggerTokens: 20_000,
         recentRawTokens: 4_000,
-        modelSource: { kind: 'current' },
-        summaryPrompt: 'Preserve important facts.'
-      }
-    })
+        modelSource: { kind: "current" },
+        summaryPrompt: "Preserve important facts.",
+      },
+    });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: conversationId,
         projectId,
-        runtimeSelection: { provider: 'continue' },
-        title: 'Continue 长对话',
+        runtimeSelection: { provider: "continue" },
+        title: "Continue 长对话",
         updatedAt: 1_775_000_000_001,
-        messages
-      }
-    ])
+        messages,
+      },
+    ]);
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
-      id: 'continue',
-      label: 'Continue',
+      id: "continue",
+      label: "Continue",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
-    vi.mocked(
-      api.runtimeCustomization.getNativeSnapshot
-    ).mockResolvedValueOnce({
-      provider: 'continue',
-      available: true,
-      inventoryStatus: 'available',
-      detail: 'Ready',
-      agents: [],
-      tools: [],
-      toolsSupported: false,
-      commands: [],
-      lsp: [],
-      formatters: [],
-      mcpServers: [],
-      skills: [],
-      rules: [],
-      prompts: [],
-      resources: [],
-      resourcesSupported: false,
-      context: {
-        strategy: 'goodbuddy-summary',
-        manualCompact: true,
-        detail: 'GoodBuddy summary context'
-      }
-    })
+      detail: "Ready",
+    });
+    vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockResolvedValueOnce(
+      {
+        provider: "continue",
+        available: true,
+        inventoryStatus: "available",
+        detail: "Ready",
+        agents: [],
+        tools: [],
+        toolsSupported: false,
+        commands: [],
+        lsp: [],
+        formatters: [],
+        mcpServers: [],
+        skills: [],
+        rules: [],
+        prompts: [],
+        resources: [],
+        resourcesSupported: false,
+        context: {
+          strategy: "goodbuddy-summary",
+          manualCompact: true,
+          detail: "GoodBuddy summary context",
+        },
+      },
+    );
     vi.mocked(api.agent.compactConversation).mockResolvedValueOnce({
-      provider: 'continue',
-      strategy: 'goodbuddy-summary',
+      provider: "continue",
+      strategy: "goodbuddy-summary",
       compacted: true,
-      detail: '已压缩 Continue 对话历史',
-      contextCompressionState: summaryState
-    })
+      detail: "已压缩 Continue 对话历史",
+      contextCompressionState: summaryState,
+    });
 
-    render(<App />)
+    render(<App />);
 
-    const compactContext = await screen.findByRole('button', {
-      name: '压缩上下文'
-    })
+    const compactContext = await screen.findByRole("button", {
+      name: "压缩上下文",
+    });
     expect(compactContext.parentElement).toHaveClass(
-      'composer-meta',
-      'composer-meta--with-context-compact'
-    )
-    expect(
-      compactContext.parentElement?.firstElementChild
-    ).toBe(compactContext)
-    fireEvent.click(compactContext)
+      "composer-meta",
+      "composer-meta--with-context-compact",
+    );
+    expect(compactContext.parentElement?.firstElementChild).toBe(
+      compactContext,
+    );
+    fireEvent.click(compactContext);
     await waitFor(() =>
       expect(api.agent.compactConversation).toHaveBeenCalledWith({
         requestId: expect.any(String),
         conversationId,
         projectId,
-        runtimeSelection: { provider: 'continue' },
+        runtimeSelection: { provider: "continue" },
         history: messages.map(({ role, content }) => ({
           role,
-          content
+          content,
         })),
         historyMessageIds: messages.map((message) => message.id),
-        contextCompressionState: undefined
-      })
-    )
+        contextCompressionState: undefined,
+      }),
+    );
     expect(
-      await screen.findByText('已压缩 Continue 对话历史')
-    ).toBeInTheDocument()
-    expect(
-      await screen.findByText(/压缩后对话估算/u)
-    ).not.toHaveTextContent('压缩线')
+      await screen.findByText("已压缩 Continue 对话历史"),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/压缩后对话估算/u)).not.toHaveTextContent(
+      "压缩线",
+    );
     await waitFor(() =>
       expect(api.conversations.saveLocal).toHaveBeenCalledWith([
         expect.objectContaining({
           header: expect.objectContaining({
             contextCompressionState: summaryState,
             contextMetrics: expect.objectContaining({
-              basis: 'conversation',
-              source: 'estimated'
-            })
-          })
-        })
-      ])
-    )
-  })
+              basis: "conversation",
+              source: "estimated",
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
 
-  it('restores the direct-model mode after leaving an Agent Runtime', async () => {
-    const settings = await api.settings.getRuntime()
+  it("restores the direct-model mode after leaving an Agent Runtime", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'opencode',
+      provider: "opencode",
       opencodeEmbedded: true,
-      opencodeModelSource: { kind: 'platform' }
-    })
+      opencodeModelSource: { kind: "platform" },
+    });
     vi.mocked(api.agent.getStatus)
       .mockResolvedValueOnce({
-        id: 'opencode',
-        label: 'OpenCode',
+        id: "opencode",
+        label: "OpenCode",
         available: true,
         supportsToolExecution: true,
-        detail: 'Ready'
+        detail: "Ready",
       })
       .mockResolvedValueOnce({
-        id: 'model',
-        label: 'sonnet-5',
+        id: "model",
+        label: "sonnet-5",
         available: true,
         supportsToolExecution: false,
-        detail: 'Ready'
-      })
-    render(<App />)
+        detail: "Ready",
+      });
+    render(<App />);
 
-    const mode = await screen.findByRole('button', {
-      name: '工作模式：Ask · 只读问答'
-    })
-    expect(mode).toBeEnabled()
-    selectComposerOption('工作模式', 'Execute · 完全权限')
-    expect(mode).toHaveAccessibleName(
-      '工作模式：Execute · 完全权限'
-    )
+    const mode = await screen.findByRole("button", {
+      name: "工作模式：Ask · 只读问答",
+    });
+    expect(mode).toBeEnabled();
+    selectComposerOption("工作模式", "Execute · 完全权限");
+    expect(mode).toHaveAccessibleName("工作模式：Execute · 完全权限");
 
-    fireEvent.click(await screen.findByRole('button', { name: /OpenCode/u }))
+    fireEvent.click(await screen.findByRole("button", { name: /OpenCode/u }));
     fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^默认模型.*sonnet-5$/u
-      })
-    )
+      screen.getByRole("menuitemradio", {
+        name: /^默认模型.*sonnet-5$/u,
+      }),
+    );
 
     await waitFor(() => {
-      expect(mode).toHaveAccessibleName('工作模式：Ask · 只读问答')
-      expect(mode).toBeEnabled()
-    })
-  })
+      expect(mode).toHaveAccessibleName("工作模式：Ask · 只读问答");
+      expect(mode).toBeEnabled();
+    });
+  });
 
-  it('disables Execute for a runtime without tool support', async () => {
+  it("disables Execute for a runtime without tool support", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'model',
-      label: 'legacy-model',
+      id: "model",
+      label: "legacy-model",
       available: true,
       supportsToolExecution: false,
-      detail: 'Ready'
-    })
-    render(<App />)
+      detail: "Ready",
+    });
+    render(<App />);
 
-    const mode = await screen.findByRole('button', {
-      name: '工作模式：Ask · 只读问答'
-    })
-    const modeMenu = openComposerMenu('工作模式')
+    const mode = await screen.findByRole("button", {
+      name: "工作模式：Ask · 只读问答",
+    });
+    const modeMenu = openComposerMenu("工作模式");
     expect(
-      within(modeMenu).getByRole('menuitemradio', {
-        name: /^Execute · 完全权限/u
-      })
-    ).toBeDisabled()
-    expect(mode).toHaveAccessibleName('工作模式：Ask · 只读问答')
-  })
+      within(modeMenu).getByRole("menuitemradio", {
+        name: /^Execute · 完全权限/u,
+      }),
+    ).toBeDisabled();
+    expect(mode).toHaveAccessibleName("工作模式：Ask · 只读问答");
+  });
 
-  it('allows a direct model to submit Execute with GoodBuddy approvals', async () => {
+  it("allows a direct model to submit Execute with GoodBuddy approvals", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'model',
-      label: 'sonnet-5',
+      id: "model",
+      label: "sonnet-5",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
-    render(<App />)
+      detail: "Ready",
+    });
+    render(<App />);
 
-    const mode = await screen.findByRole('button', {
-      name: '工作模式：Ask · 只读问答'
-    })
-    selectComposerOption('工作模式', 'Execute · 完全权限')
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '读取项目文件' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
+    const mode = await screen.findByRole("button", {
+      name: "工作模式：Ask · 只读问答",
+    });
+    selectComposerOption("工作模式", "Execute · 完全权限");
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "读取项目文件" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
-          prompt: '读取项目文件',
-          workMode: 'execute'
-        })
-      )
-    )
-    expect(mode).toBeDisabled()
-  })
+          prompt: "读取项目文件",
+          workMode: "execute",
+        }),
+      ),
+    );
+    expect(mode).toBeDisabled();
+  });
 
-  it('terminalizes tools and activity when a request is cancelled', async () => {
+  it("terminalizes tools and activity when a request is cancelled", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'opencode',
-      label: 'OpenCode',
+      id: "opencode",
+      label: "OpenCode",
       available: true,
       supportsToolExecution: true,
-      detail: 'Ready'
-    })
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '执行长任务' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+      detail: "Ready",
+    });
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "执行长任务" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'tool',
-        callId: 'call-1',
-        name: 'bash',
-        state: 'running',
-        summary: 'OpenCode 工具：bash'
-      })
+        type: "tool",
+        callId: "call-1",
+        name: "bash",
+        state: "running",
+        summary: "OpenCode 工具：bash",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'error',
-        status: 'cancelled',
-        message: '请求已取消'
-      })
-    })
+        type: "error",
+        status: "cancelled",
+        message: "请求已取消",
+      });
+    });
 
-    expect(await screen.findByText('已取消')).toBeInTheDocument()
+    expect(await screen.findByText("已取消")).toBeInTheDocument();
     const cancelledStatus = screen
-      .getAllByText('请求已取消')
-      .find((element) => element.classList.contains('message__status'))
-    expect(cancelledStatus).toBeDefined()
-    const cancelledDot = cancelledStatus?.querySelector(
-      '.message__status-dot'
-    )
-    expect(cancelledDot).toHaveClass('message__status-dot')
-    expect(cancelledDot).not.toHaveClass('message__status-dot--active')
-    fireEvent.click(screen.getByText('运行记录'))
-    expect((await screen.findAllByText('已取消')).length).toBeGreaterThan(0)
-    fireEvent.click(
-      screen.getByRole('button', { name: /^进行中 \d+$/u })
-    )
+      .getAllByText("请求已取消")
+      .find((element) => element.classList.contains("message__status"));
+    expect(cancelledStatus).toBeDefined();
+    const cancelledDot = cancelledStatus?.querySelector(".message__status-dot");
+    expect(cancelledDot).toHaveClass("message__status-dot");
+    expect(cancelledDot).not.toHaveClass("message__status-dot--active");
+    fireEvent.click(screen.getByText("运行记录"));
+    expect((await screen.findAllByText("已取消")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^进行中 \d+$/u }));
     expect(
-      screen.getByText('当前没有等待中或正在运行的活动。')
-    ).toBeInTheDocument()
-  })
+      screen.getByText("当前没有等待中或正在运行的活动。"),
+    ).toBeInTheDocument();
+  });
 
-  it('keeps persisted completed message statuses static', async () => {
+  it("keeps persisted completed message statuses static", async () => {
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000210',
+        id: "00000000-0000-4000-8000-000000000210",
         projectId,
-        title: '已完成会话',
+        title: "已完成会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000211',
-            role: 'assistant',
-            content: '任务结果',
+            id: "00000000-0000-4000-8000-000000000211",
+            role: "assistant",
+            content: "任务结果",
             createdAt: 1_775_000_000_000,
-            state: 'complete',
-            status: '任务已完成'
-          }
-        ]
-      }
-    ])
+            state: "complete",
+            status: "任务已完成",
+          },
+        ],
+      },
+    ]);
 
-    render(<App />)
+    render(<App />);
 
-    const completedStatus = await screen.findByText('任务已完成')
+    const completedStatus = await screen.findByText("任务已完成");
+    expect(completedStatus.querySelector(".message__status-dot")).toHaveClass(
+      "message__status-dot",
+    );
     expect(
-      completedStatus.querySelector('.message__status-dot')
-    ).toHaveClass('message__status-dot')
-    expect(
-      completedStatus.querySelector('.message__status-dot')
-    ).not.toHaveClass('message__status-dot--active')
-  })
+      completedStatus.querySelector(".message__status-dot"),
+    ).not.toHaveClass("message__status-dot--active");
+  });
 
-  it('switches runtime profiles from the composer dropdown', async () => {
-    render(<App />)
+  it("switches runtime profiles from the composer dropdown", async () => {
+    render(<App />);
 
-    const runtimeButton = await screen.findByRole('button', {
-      name: /sonnet-5/u
-    })
-    fireEvent.click(runtimeButton)
+    const runtimeButton = await screen.findByRole("button", {
+      name: /sonnet-5/u,
+    });
+    fireEvent.click(runtimeButton);
     expect(
-      await screen.findByRole('menu', { name: 'Runtime 和模型' })
-    ).toBeInTheDocument()
+      await screen.findByRole("menu", { name: "Runtime 和模型" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("自动选择")).not.toBeInTheDocument();
     expect(
-      screen.queryByText('自动选择')
-    ).not.toBeInTheDocument()
+      screen.getByRole("menuitemradio", {
+        name: /^默认模型.*sonnet-5$/u,
+      }),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole('menuitemradio', {
-        name: /^默认模型.*sonnet-5$/u
-      })
-    ).toBeInTheDocument()
+      screen.getByRole("menuitemradio", {
+        name: /^OpenCode · 默认模型.*sonnet-5$/u,
+      }),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole('menuitemradio', {
-        name: /^OpenCode · 默认模型.*sonnet-5$/u
-      })
-    ).toBeInTheDocument()
+      screen.getByRole("menuitemradio", {
+        name: /^Continue · 默认模型.*sonnet-5$/u,
+      }),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole('menuitemradio', {
-        name: /^Continue · 默认模型.*sonnet-5$/u
-      })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('menuitemradio', {
-        name: /^DeepSeek Harness · 自身配置/u
-      })
-    ).toBeInTheDocument()
+      screen.getByRole("menuitemradio", {
+        name: /^DeepSeek Harness · 自身配置/u,
+      }),
+    ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^默认模型.*sonnet-5$/u
-      })
-    )
+      screen.getByRole("menuitemradio", {
+        name: /^默认模型.*sonnet-5$/u,
+      }),
+    );
 
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
-        provider: 'model',
-        profileId: modelProfileId
-      })
-    )
-    expect(api.settings.updateRuntime).not.toHaveBeenCalled()
+        provider: "model",
+        profileId: modelProfileId,
+      }),
+    );
+    expect(api.settings.updateRuntime).not.toHaveBeenCalled();
     expect(
-      screen.queryByRole('heading', { name: '设置中心' })
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByRole("heading", { name: "设置中心" }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('shows Runtime switches globally without replacing composer guidance', async () => {
-    render(<App />)
-    const runtimeButton = await screen.findByRole('button', {
-      name: /sonnet-5/u
-    })
-    vi.useFakeTimers()
+  it("shows Runtime switches globally without replacing composer guidance", async () => {
+    render(<App />);
+    const runtimeButton = await screen.findByRole("button", {
+      name: /sonnet-5/u,
+    });
+    vi.useFakeTimers();
     try {
-      fireEvent.click(runtimeButton)
+      fireEvent.click(runtimeButton);
       fireEvent.click(
-        screen.getByRole('menuitemradio', {
-          name: /^OpenCode · 默认模型.*sonnet-5$/u
-        })
-      )
+        screen.getByRole("menuitemradio", {
+          name: /^OpenCode · 默认模型.*sonnet-5$/u,
+        }),
+      );
       await act(async () => {
-        await Promise.resolve()
-      })
+        await Promise.resolve();
+      });
 
-      const notification = screen.getByRole('status')
+      const notification = screen.getByRole("status");
       expect(notification).toHaveTextContent(
-        '当前对话已切换到 OpenCode · 默认模型'
-      )
+        "当前对话已切换到 OpenCode · 默认模型",
+      );
       expect(
-        screen.getByRole('button', {
-          name: '工作模式：Ask · 只读问答'
-        })
-      ).toBeInTheDocument()
+        screen.getByRole("button", {
+          name: "工作模式：Ask · 只读问答",
+        }),
+      ).toBeInTheDocument();
 
       fireEvent.click(
-        screen.getByRole('button', {
-          name: /OpenCode · 默认模型/u
-        })
-      )
+        screen.getByRole("button", {
+          name: /OpenCode · 默认模型/u,
+        }),
+      );
       fireEvent.click(
-        screen.getByRole('menuitemradio', {
-          name: /^Continue · 默认模型.*sonnet-5$/u
-        })
-      )
+        screen.getByRole("menuitemradio", {
+          name: /^Continue · 默认模型.*sonnet-5$/u,
+        }),
+      );
       await act(async () => {
-        await Promise.resolve()
-      })
-      expect(screen.getAllByRole('status')).toHaveLength(1)
-      expect(screen.getByRole('status')).toHaveTextContent(
-        '当前对话已切换到 Continue · 默认模型'
-      )
+        await Promise.resolve();
+      });
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "当前对话已切换到 Continue · 默认模型",
+      );
 
-      act(() => vi.advanceTimersByTime(4_500))
+      act(() => vi.advanceTimersByTime(4_500));
       expect(
-        screen.queryByText(
-          '当前对话已切换到 Continue · 默认模型'
-        )
-      ).not.toBeInTheDocument()
+        screen.queryByText("当前对话已切换到 Continue · 默认模型"),
+      ).not.toBeInTheDocument();
       expect(
-        screen.getByRole('button', {
-          name: '工作模式：Ask · 只读问答'
-        })
-      ).toBeInTheDocument()
+        screen.getByRole("button", {
+          name: "工作模式：Ask · 只读问答",
+        }),
+      ).toBeInTheDocument();
     } finally {
-      vi.useRealTimers()
+      vi.useRealTimers();
     }
-  })
+  });
 
-  it('shows one configured choice per Agent Runtime in a flat keyboard menu', async () => {
-    const settings = await api.settings.getRuntime()
-    const secondProfileId =
-      '00000000-0000-4000-8000-000000000002'
+  it("shows one configured choice per Agent Runtime in a flat keyboard menu", async () => {
+    const settings = await api.settings.getRuntime();
+    const secondProfileId = "00000000-0000-4000-8000-000000000002";
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'model',
+      provider: "model",
       modelProfiles: [
         ...settings.modelProfiles,
         {
           id: secondProfileId,
-          name: '第二模型',
-          baseUrl: 'http://127.0.0.1:11434/v1',
-          modelName: 'qwen3',
-          protocol: 'openai-chat-completions',
-          authentication: 'none',
-          imageGenerationQuality: 'auto',
+          name: "第二模型",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          modelName: "qwen3",
+          protocol: "openai-chat-completions",
+          authentication: "none",
+          imageGenerationQuality: "auto",
           apiKeyConfigured: false,
-          credentialSource: 'none'
-        }
-      ]
-    })
-    render(<App />)
+          credentialSource: "none",
+        },
+      ],
+    });
+    render(<App />);
 
-    const runtimeButton = await screen.findByRole('button', {
-      name: /sonnet-5/u
-    })
-    fireEvent.click(runtimeButton)
-    const runtimeMenu = screen.getByRole('menu', {
-      name: 'Runtime 和模型'
-    })
-    const directModel = screen.getByRole('menuitemradio', {
-      name: /^默认模型.*sonnet-5$/u
-    })
-    const secondDirectModel = screen.getByRole('menuitemradio', {
-      name: /^第二模型.*qwen3$/u
-    })
-    const openCodeModel = screen.getByRole('menuitemradio', {
-      name: /^OpenCode · 默认模型.*sonnet-5$/u
-    })
-    const continueModel = screen.getByRole('menuitemradio', {
-      name: /^Continue · 默认模型.*sonnet-5$/u
-    })
-    const deepseekHarness = screen.getByRole('menuitemradio', {
-      name: /^DeepSeek Harness · 自身配置/u
-    })
-    expect(directModel).toBeEnabled()
-    expect(secondDirectModel).toBeEnabled()
-    expect(openCodeModel).toBeEnabled()
-    expect(continueModel).toBeEnabled()
-    expect(deepseekHarness).toBeEnabled()
-    expect(screen.getAllByRole('menuitemradio')).toHaveLength(5)
-    expect(within(runtimeMenu).getAllByRole('separator')).toHaveLength(4)
-    expect(within(runtimeMenu).queryByRole('menu')).not.toBeInTheDocument()
+    const runtimeButton = await screen.findByRole("button", {
+      name: /sonnet-5/u,
+    });
+    fireEvent.click(runtimeButton);
+    const runtimeMenu = screen.getByRole("menu", {
+      name: "Runtime 和模型",
+    });
+    const directModel = screen.getByRole("menuitemradio", {
+      name: /^默认模型.*sonnet-5$/u,
+    });
+    const secondDirectModel = screen.getByRole("menuitemradio", {
+      name: /^第二模型.*qwen3$/u,
+    });
+    const openCodeModel = screen.getByRole("menuitemradio", {
+      name: /^OpenCode · 默认模型.*sonnet-5$/u,
+    });
+    const continueModel = screen.getByRole("menuitemradio", {
+      name: /^Continue · 默认模型.*sonnet-5$/u,
+    });
+    const deepseekHarness = screen.getByRole("menuitemradio", {
+      name: /^DeepSeek Harness · 自身配置/u,
+    });
+    expect(directModel).toBeEnabled();
+    expect(secondDirectModel).toBeEnabled();
+    expect(openCodeModel).toBeEnabled();
+    expect(continueModel).toBeEnabled();
+    expect(deepseekHarness).toBeEnabled();
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(5);
+    expect(within(runtimeMenu).getAllByRole("separator")).toHaveLength(4);
+    expect(within(runtimeMenu).queryByRole("menu")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('menuitemradio', {
-        name: /^OpenCode · 第二模型/u
-      })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("menuitemradio", {
+        name: /^OpenCode · 第二模型/u,
+      }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('menuitemradio', {
-        name: /^Continue · 第二模型/u
-      })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("menuitemradio", {
+        name: /^Continue · 第二模型/u,
+      }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('menuitem', { name: /Agent Runtime/u })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("menuitem", { name: /Agent Runtime/u }),
+    ).not.toBeInTheDocument();
 
-    await waitFor(() => expect(directModel).toHaveFocus())
-    expect(directModel).toHaveAttribute('tabindex', '0')
-    expect(secondDirectModel).toHaveAttribute('tabindex', '-1')
-    fireEvent.keyDown(directModel, { key: 'ArrowDown' })
-    expect(secondDirectModel).toHaveFocus()
-    expect(directModel).toHaveAttribute('tabindex', '-1')
-    expect(secondDirectModel).toHaveAttribute('tabindex', '0')
-    fireEvent.keyDown(secondDirectModel, { key: 'ArrowDown' })
-    expect(openCodeModel).toHaveFocus()
-    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
-    expect(runtimeButton).toHaveFocus()
+    await waitFor(() => expect(directModel).toHaveFocus());
+    expect(directModel).toHaveAttribute("tabindex", "0");
+    expect(secondDirectModel).toHaveAttribute("tabindex", "-1");
+    fireEvent.keyDown(directModel, { key: "ArrowDown" });
+    expect(secondDirectModel).toHaveFocus();
+    expect(directModel).toHaveAttribute("tabindex", "-1");
+    expect(secondDirectModel).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(secondDirectModel, { key: "ArrowDown" });
+    expect(openCodeModel).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(runtimeButton).toHaveFocus();
     expect(
-      screen.queryByRole('menu', { name: 'Runtime 和模型' })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("menu", { name: "Runtime 和模型" }),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(runtimeButton)
+    fireEvent.click(runtimeButton);
     fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^OpenCode · 默认模型.*sonnet-5$/u
-      })
-    )
-    expect(runtimeButton).toHaveFocus()
+      screen.getByRole("menuitemradio", {
+        name: /^OpenCode · 默认模型.*sonnet-5$/u,
+      }),
+    );
+    expect(runtimeButton).toHaveFocus();
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
-        provider: 'opencode',
-        profileId: modelProfileId
-      })
-    )
+        provider: "opencode",
+        profileId: modelProfileId,
+      }),
+    );
 
-    const selectedRuntimeButton = await screen.findByRole('button', {
-      name: /OpenCode · 默认模型/u
-    })
-    fireEvent.click(selectedRuntimeButton)
-    const selectedOpenCodeModel = screen.getByRole('menuitemradio', {
-      name: /^OpenCode · 默认模型.*sonnet-5$/u
-    })
-    await waitFor(() => expect(selectedOpenCodeModel).toHaveFocus())
-    expect(selectedOpenCodeModel).toHaveAttribute('aria-checked', 'true')
-    expect(selectedOpenCodeModel).toHaveAttribute('tabindex', '0')
+    const selectedRuntimeButton = await screen.findByRole("button", {
+      name: /OpenCode · 默认模型/u,
+    });
+    fireEvent.click(selectedRuntimeButton);
+    const selectedOpenCodeModel = screen.getByRole("menuitemradio", {
+      name: /^OpenCode · 默认模型.*sonnet-5$/u,
+    });
+    await waitFor(() => expect(selectedOpenCodeModel).toHaveFocus());
+    expect(selectedOpenCodeModel).toHaveAttribute("aria-checked", "true");
+    expect(selectedOpenCodeModel).toHaveAttribute("tabindex", "0");
     fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^Continue · 默认模型.*sonnet-5$/u
-      })
-    )
+      screen.getByRole("menuitemradio", {
+        name: /^Continue · 默认模型.*sonnet-5$/u,
+      }),
+    );
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
-        provider: 'continue',
-        profileId: modelProfileId
-      })
-    )
-  })
+        provider: "continue",
+        profileId: modelProfileId,
+      }),
+    );
+  });
 
-  it('dismisses the Runtime menu on outside pointer and focus changes', async () => {
-    render(<App />)
+  it("dismisses the Runtime menu on outside pointer and focus changes", async () => {
+    render(<App />);
 
-    const runtimeButton = await screen.findByRole('button', {
-      name: /sonnet-5/u
-    })
-    const composer = screen.getByLabelText('向 GoodBuddy 提问')
+    const runtimeButton = await screen.findByRole("button", {
+      name: /sonnet-5/u,
+    });
+    const composer = screen.getByLabelText("向 GoodBuddy 提问");
 
-    fireEvent.click(runtimeButton)
+    fireEvent.click(runtimeButton);
     expect(
-      screen.getByRole('menu', { name: 'Runtime 和模型' })
-    ).toBeInTheDocument()
-    fireEvent.pointerDown(composer)
+      screen.getByRole("menu", { name: "Runtime 和模型" }),
+    ).toBeInTheDocument();
+    fireEvent.pointerDown(composer);
     expect(
-      screen.queryByRole('menu', { name: 'Runtime 和模型' })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("menu", { name: "Runtime 和模型" }),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(runtimeButton)
-    const selectedModel = screen.getByRole('menuitemradio', {
-      name: /^默认模型.*sonnet-5$/u
-    })
-    await waitFor(() => expect(selectedModel).toHaveFocus())
-    fireEvent.keyDown(selectedModel, { key: 'Tab' })
-    composer.focus()
-    expect(composer).toHaveFocus()
+    fireEvent.click(runtimeButton);
+    const selectedModel = screen.getByRole("menuitemradio", {
+      name: /^默认模型.*sonnet-5$/u,
+    });
+    await waitFor(() => expect(selectedModel).toHaveFocus());
+    fireEvent.keyDown(selectedModel, { key: "Tab" });
+    composer.focus();
+    expect(composer).toHaveFocus();
     await waitFor(() =>
       expect(
-        screen.queryByRole('menu', { name: 'Runtime 和模型' })
-      ).not.toBeInTheDocument()
-    )
-  })
+        screen.queryByRole("menu", { name: "Runtime 和模型" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
 
-  it('labels explicitly configured Runtime-owned model sources', async () => {
-    const settings = await api.settings.getRuntime()
+  it("labels explicitly configured Runtime-owned model sources", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'model',
-      opencodeModelSource: { kind: 'platform' },
-      continueModelSource: { kind: 'platform' }
-    })
-    render(<App />)
+      provider: "model",
+      opencodeModelSource: { kind: "platform" },
+      continueModelSource: { kind: "platform" },
+    });
+    render(<App />);
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: /sonnet-5/u })
-    )
+    fireEvent.click(await screen.findByRole("button", { name: /sonnet-5/u }));
     expect(
-      screen.getByRole('menuitemradio', {
-        name: /^OpenCode · 自身配置.*使用 OpenCode 自身配置$/u
-      })
-    ).toBeInTheDocument()
-    const continueChoice = screen.getByRole('menuitemradio', {
-      name: /^Continue · 自身配置.*使用 Continue 自身配置$/u
-    })
-    fireEvent.click(continueChoice)
+      screen.getByRole("menuitemradio", {
+        name: /^OpenCode · 自身配置.*使用 OpenCode 自身配置$/u,
+      }),
+    ).toBeInTheDocument();
+    const continueChoice = screen.getByRole("menuitemradio", {
+      name: /^Continue · 自身配置.*使用 Continue 自身配置$/u,
+    });
+    fireEvent.click(continueChoice);
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
-        provider: 'continue'
-      })
-    )
-  })
+        provider: "continue",
+      }),
+    );
+  });
 
-  it('persists metadata-only retrieval and Runtime changes without rewriting messages', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000451'
-    const existingMessageId =
-      '00000000-0000-4000-8000-000000000452'
-    const libraryId = '11111111-1111-4111-8111-111111111111'
-    const secondProfileId =
-      '00000000-0000-4000-8000-000000000453'
-    const settings = await api.settings.getRuntime()
+  it("persists metadata-only retrieval and Runtime changes without rewriting messages", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000451";
+    const existingMessageId = "00000000-0000-4000-8000-000000000452";
+    const libraryId = "11111111-1111-4111-8111-111111111111";
+    const secondProfileId = "00000000-0000-4000-8000-000000000453";
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
       modelProfiles: [
         ...settings.modelProfiles,
         {
           id: secondProfileId,
-          name: '仅元数据模型',
-          baseUrl: 'http://127.0.0.1:11434/v1',
-          modelName: 'qwen3',
-          protocol: 'openai-chat-completions',
-          authentication: 'none',
-          imageGenerationQuality: 'auto',
+          name: "仅元数据模型",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          modelName: "qwen3",
+          protocol: "openai-chat-completions",
+          authentication: "none",
+          imageGenerationQuality: "auto",
           apiKeyConfigured: false,
-          credentialSource: 'none'
-        }
-      ]
-    })
+          credentialSource: "none",
+        },
+      ],
+    });
     vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
       libraries: [
         {
           id: libraryId,
-          name: '产品知识',
-          description: '',
-          storageMode: 'managed',
+          name: "产品知识",
+          description: "",
+          storageMode: "managed",
           graphEnabled: false,
-          graphStrategy: 'rules',
+          graphStrategy: "rules",
           sourceCount: 1,
           documentCount: 1,
-          indexedDocumentCount: 1
-        }
+          indexedDocumentCount: 1,
+        },
       ],
       sources: [],
       documents: [],
       graphNodes: [],
       graphRelations: [],
-      evidence: []
-    })
+      evidence: [],
+    });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: conversationId,
         projectId,
         runtimeSelection: {
-          provider: 'model',
-          profileId: modelProfileId
+          provider: "model",
+          profileId: modelProfileId,
         },
         knowledgeLibraryIds: [libraryId],
-        knowledgeRetrievalMode: 'auto',
-        title: '元数据会话',
+        knowledgeRetrievalMode: "auto",
+        title: "元数据会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
             id: existingMessageId,
-            role: 'assistant',
-            content: '现有消息不应重写',
+            role: "assistant",
+            content: "现有消息不应重写",
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    vi.mocked(api.agent.getStatus).mockImplementation(
-      async (selection) => ({
-        id: 'model',
-        label:
-          selection?.provider === 'model' &&
-          selection.profileId === secondProfileId
-            ? 'qwen3'
-            : 'sonnet-5',
-        available: true,
-        supportsToolExecution: true,
-        detail: 'Ready'
-      })
-    )
-    render(<App />)
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    vi.mocked(api.agent.getStatus).mockImplementation(async (selection) => ({
+      id: "model",
+      label:
+        selection?.provider === "model" &&
+        selection.profileId === secondProfileId
+          ? "qwen3"
+          : "sonnet-5",
+      available: true,
+      supportsToolExecution: true,
+      detail: "Ready",
+    }));
+    render(<App />);
 
-    const knowledgeScope = await screen.findByRole('button', {
-      name: '选择知识库，本次已启用 1 个'
-    })
-    fireEvent.click(knowledgeScope)
+    const knowledgeScope = await screen.findByRole("button", {
+      name: "选择知识库，本次已启用 1 个",
+    });
+    fireEvent.click(knowledgeScope);
     fireEvent.click(
-      within(
-        screen.getByRole('group', { name: '知识检索方式' })
-      ).getByRole('button', { name: '每次先检索' })
-    )
+      within(screen.getByRole("group", { name: "知识检索方式" })).getByRole(
+        "button",
+        { name: "每次先检索" },
+      ),
+    );
     await waitFor(
       () =>
         expect(api.conversations.saveLocal).toHaveBeenCalledWith([
           {
             header: expect.objectContaining({
               id: conversationId,
-              knowledgeRetrievalMode: 'always'
+              knowledgeRetrievalMode: "always",
             }),
-            messages: []
-          }
+            messages: [],
+          },
         ]),
-      { timeout: 2_000 }
-    )
+      { timeout: 2_000 },
+    );
 
-    vi.mocked(api.conversations.saveLocal).mockClear()
+    vi.mocked(api.conversations.saveLocal).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /sonnet-5/u }));
     fireEvent.click(
-      screen.getByRole('button', { name: /sonnet-5/u })
-    )
-    fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^仅元数据模型.*qwen3$/u
-      })
-    )
+      screen.getByRole("menuitemradio", {
+        name: /^仅元数据模型.*qwen3$/u,
+      }),
+    );
     await waitFor(
       () =>
         expect(api.conversations.saveLocal).toHaveBeenCalledWith([
@@ -8811,364 +8458,347 @@ describe('App', () => {
             header: expect.objectContaining({
               id: conversationId,
               runtimeSelection: {
-                provider: 'model',
-                profileId: secondProfileId
+                provider: "model",
+                profileId: secondProfileId,
               },
-              knowledgeRetrievalMode: 'always'
+              knowledgeRetrievalMode: "always",
             }),
-            messages: []
-          }
+            messages: [],
+          },
         ]),
-      { timeout: 2_000 }
-    )
+      { timeout: 2_000 },
+    );
     const savedMessages = vi
       .mocked(api.conversations.saveLocal)
       .mock.calls.flatMap(([batch]) =>
-        batch.flatMap((entry) => entry.messages)
-      )
+        batch.flatMap((entry) => entry.messages),
+      );
     expect(
-      savedMessages.some((message) => message.id === existingMessageId)
-    ).toBe(false)
-  })
+      savedMessages.some((message) => message.id === existingMessageId),
+    ).toBe(false);
+  });
 
-  it('migrates legacy startup conversations with replace when SQLite has no local conversation', async () => {
-    const settings = await api.settings.getRuntime()
+  it("migrates legacy startup conversations with replace when SQLite has no local conversation", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
       modelProfiles: settings.modelProfiles.map((profile) => ({
         ...profile,
-        contextWindowTokens: undefined
+        contextWindowTokens: undefined,
       })),
       contextCompression: {
         enabled: true,
         triggerTokens: 12_000,
         recentRawTokens: 4_000,
-        modelSource: { kind: 'current' },
-        summaryPrompt: 'Preserve important facts.'
-      }
-    })
+        modelSource: { kind: "current" },
+        summaryPrompt: "Preserve important facts.",
+      },
+    });
     const normalizedContextMetrics = {
       runtimeSelectionKey: `model:${settings.defaultModelProfileId}`,
       contextTokens: 9_000,
-      source: 'provider' as const,
-      basis: 'model-call' as const
-    }
+      source: "provider" as const,
+      basis: "model-call" as const,
+    };
     const legacyConversation = {
-      id: '00000000-0000-4000-8000-000000000461',
+      id: "00000000-0000-4000-8000-000000000461",
       runtimeSelection: {
-        provider: 'model' as const,
-        profileId: settings.defaultModelProfileId
+        provider: "model" as const,
+        profileId: settings.defaultModelProfileId,
       },
       contextMetrics: {
         ...normalizedContextMetrics,
         effectiveTriggerTokens: 20_000,
         contextWindowTokens: 32_000,
-        compressionEnabled: true
+        compressionEnabled: true,
       },
-      title: '待迁移旧会话',
+      title: "待迁移旧会话",
       updatedAt: 1_775_000_000_000,
       messages: [
         {
-          id: '00000000-0000-4000-8000-000000000462',
-          role: 'assistant' as const,
-          content: '旧版浏览器存储消息',
+          id: "00000000-0000-4000-8000-000000000462",
+          role: "assistant" as const,
+          content: "旧版浏览器存储消息",
           createdAt: 1_775_000_000_000,
-          state: 'complete' as const
-        }
-      ]
-    }
+          state: "complete" as const,
+        },
+      ],
+    };
     localStorage.setItem(
-      'goodbuddy.conversations.v1',
-      JSON.stringify([legacyConversation])
-    )
-    render(<App />)
+      "goodbuddy.conversations.v1",
+      JSON.stringify([legacyConversation]),
+    );
+    render(<App />);
 
+    expect(await screen.findByText("旧版浏览器存储消息")).toBeInTheDocument();
     expect(
-      await screen.findByText('旧版浏览器存储消息')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('本次调用 9.0K · 压缩线 12.0K')
-    ).toBeInTheDocument()
+      screen.getByText("本次调用 9.0K · 压缩线 12.0K"),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(api.conversations.replace).toHaveBeenCalledWith([
         expect.objectContaining({
           ...legacyConversation,
           contextMetrics: normalizedContextMetrics,
-          projectId
-        })
-      ])
-    )
-    expect(api.conversations.saveLocal).not.toHaveBeenCalled()
-  })
+          projectId,
+        }),
+      ]),
+    );
+    expect(api.conversations.saveLocal).not.toHaveBeenCalled();
+  });
 
-  it('does not let remote rows displace legacy local conversations during migration', async () => {
+  it("does not let remote rows displace legacy local conversations during migration", async () => {
     const legacyConversations = [0, 1].map((index) => ({
-      id: `00000000-0000-4000-8000-${String(470 + index).padStart(12, '0')}`,
+      id: `00000000-0000-4000-8000-${String(470 + index).padStart(12, "0")}`,
       title: `待迁移本地会话 ${index}`,
       updatedAt: 1_775_000_000_000 + index,
       messages: [
         {
-          id: `00000000-0000-4000-8001-${String(470 + index).padStart(12, '0')}`,
-          role: 'assistant' as const,
+          id: `00000000-0000-4000-8001-${String(470 + index).padStart(12, "0")}`,
+          role: "assistant" as const,
           content: `待迁移消息 ${index}`,
           createdAt: 1_775_000_000_000 + index,
-          state: 'complete' as const
-        }
-      ]
-    }))
+          state: "complete" as const,
+        },
+      ],
+    }));
     localStorage.setItem(
-      'goodbuddy.conversations.v1',
-      JSON.stringify(legacyConversations)
-    )
-    const remoteProjectId =
-      '00000000-0000-4000-8000-000000000499'
+      "goodbuddy.conversations.v1",
+      JSON.stringify(legacyConversations),
+    );
+    const remoteProjectId = "00000000-0000-4000-8000-000000000499";
     vi.mocked(api.conversations.list).mockResolvedValueOnce(
       Array.from({ length: 100 }, (_, index) => ({
-        id: `00000000-0000-4000-8002-${String(index).padStart(12, '0')}`,
+        id: `00000000-0000-4000-8002-${String(index).padStart(12, "0")}`,
         projectId: remoteProjectId,
         remote: {
-          channel: 'weixin' as const,
+          channel: "weixin" as const,
           accountDisplay: `远程联系人 ${index}`,
-          conversationType: 'direct' as const
+          conversationType: "direct" as const,
         },
         title: `远程会话 ${index}`,
         updatedAt: 1_775_000_100_000 + index,
-        messages: []
-      }))
-    )
-    render(<App />)
+        messages: [],
+      })),
+    );
+    render(<App />);
 
-    await waitFor(() =>
-      expect(api.conversations.saveLocal).toHaveBeenCalled()
-    )
-    expect(api.conversations.replace).not.toHaveBeenCalled()
+    await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalled());
+    expect(api.conversations.replace).not.toHaveBeenCalled();
     const migrated =
-      vi.mocked(api.conversations.saveLocal).mock.calls[0]?.[0] ?? []
+      vi.mocked(api.conversations.saveLocal).mock.calls[0]?.[0] ?? [];
     expect(migrated.map((conversation) => conversation.header.id)).toEqual(
       expect.arrayContaining(
-        legacyConversations.map((conversation) => conversation.id)
-      )
-    )
-  })
+        legacyConversations.map((conversation) => conversation.id),
+      ),
+    );
+  });
 
-  it('preserves a legacy Auto conversation without silently persisting a replacement', async () => {
-    const settings = await api.settings.getRuntime()
+  it("preserves a legacy Auto conversation without silently persisting a replacement", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      provider: 'auto',
-      opencodeBaseUrl: '',
+      provider: "auto",
+      opencodeBaseUrl: "",
       opencodeEmbedded: false,
       modelProfiles: settings.modelProfiles.map((profile) => ({
         ...profile,
-        contextWindowTokens: 32_000
+        contextWindowTokens: 32_000,
       })),
       contextCompression: {
         enabled: true,
         triggerTokens: 20_000,
         recentRawTokens: 4_000,
-        modelSource: { kind: 'current' },
-        summaryPrompt: 'Preserve important facts.'
-      }
-    })
+        modelSource: { kind: "current" },
+        summaryPrompt: "Preserve important facts.",
+      },
+    });
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000020',
+        id: "00000000-0000-4000-8000-000000000020",
         projectId,
-        runtimeSelection: { provider: 'auto' },
+        runtimeSelection: { provider: "auto" },
         contextMetrics: {
-          runtimeSelectionKey: 'auto:default',
+          runtimeSelectionKey: "auto:default",
           contextTokens: 9_000,
-          source: 'provider',
-          basis: 'model-call'
+          source: "provider",
+          basis: "model-call",
         },
-        title: '旧自动对话',
+        title: "旧自动对话",
         updatedAt: 1,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000021',
-            role: 'assistant',
-            content: '旧消息',
+            id: "00000000-0000-4000-8000-000000000021",
+            role: "assistant",
+            content: "旧消息",
             createdAt: 1,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    render(<App />)
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    render(<App />);
 
     expect(
-      await screen.findByRole('button', { name: /自动.*sonnet-5/u })
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByText(/本次调用 9\.0K/u)
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument()
-    expect(api.conversations.replace).not.toHaveBeenCalled()
-    expect(api.conversations.saveLocal).not.toHaveBeenCalled()
+      await screen.findByRole("button", { name: /自动.*sonnet-5/u }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/本次调用 9\.0K/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument();
+    expect(api.conversations.replace).not.toHaveBeenCalled();
+    expect(api.conversations.saveLocal).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '刷新自动 Runtime 用量' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "刷新自动 Runtime 用量" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'context-metrics',
+        type: "context-metrics",
         contextTokens: 9_000,
         effectiveTriggerTokens: 20_000,
         compressionEnabled: false,
-        source: 'provider'
-      })
-    })
-    expect(screen.getByText(/本次调用 9\.0K/u)).toBeInTheDocument()
-    expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument()
+        source: "provider",
+      });
+    });
+    expect(screen.getByText(/本次调用 9\.0K/u)).toBeInTheDocument();
+    expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument();
     const currentRuntimeSelectionKey =
-      settings.opencodeModelSource.kind === 'profile'
+      settings.opencodeModelSource.kind === "profile"
         ? `opencode:${settings.opencodeModelSource.profileId}`
-        : 'opencode:platform'
+        : "opencode:platform";
     await waitFor(() =>
       expect(api.conversations.saveLocal).toHaveBeenCalledWith([
         expect.objectContaining({
           header: expect.objectContaining({
             contextMetrics: expect.objectContaining({
-              runtimeSelectionKey: currentRuntimeSelectionKey
-            })
-          })
-        })
-      ])
-    )
-  })
+              runtimeSelectionKey: currentRuntimeSelectionKey,
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
 
-  it('keeps a removed model selection visible until the user replaces it', async () => {
-    const removedProfileId =
-      '00000000-0000-4000-8000-000000000099'
+  it("keeps a removed model selection visible until the user replaces it", async () => {
+    const removedProfileId = "00000000-0000-4000-8000-000000000099";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000022',
+        id: "00000000-0000-4000-8000-000000000022",
         projectId,
         runtimeSelection: {
-          provider: 'model',
-          profileId: removedProfileId
+          provider: "model",
+          profileId: removedProfileId,
         },
-        title: '旧模型对话',
+        title: "旧模型对话",
         updatedAt: 1,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000023',
-            role: 'assistant',
-            content: '旧消息',
+            id: "00000000-0000-4000-8000-000000000023",
+            role: "assistant",
+            content: "旧消息",
             createdAt: 1,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
-    render(<App />)
+            state: "complete",
+          },
+        ],
+      },
+    ]);
+    render(<App />);
 
+    expect(await screen.findByText("旧消息")).toBeInTheDocument();
     expect(
-      await screen.findByText('旧消息')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: /模型配置不可用/u })
-    ).toBeInTheDocument()
-    expect(api.conversations.replace).not.toHaveBeenCalled()
-    expect(api.conversations.saveLocal).not.toHaveBeenCalled()
-  })
+      screen.getByRole("button", { name: /模型配置不可用/u }),
+    ).toBeInTheDocument();
+    expect(api.conversations.replace).not.toHaveBeenCalled();
+    expect(api.conversations.saveLocal).not.toHaveBeenCalled();
+  });
 
-  it('keeps model Runtime selection scoped to its conversation', async () => {
-    const secondProfileId =
-      '00000000-0000-4000-8000-000000000002'
-    const settings = await api.settings.getRuntime()
+  it("keeps model Runtime selection scoped to its conversation", async () => {
+    const secondProfileId = "00000000-0000-4000-8000-000000000002";
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
       modelProfiles: [
         ...settings.modelProfiles,
         {
           id: secondProfileId,
-          name: '第二模型',
-          baseUrl: 'http://127.0.0.1:11434/v1',
-          modelName: 'qwen3',
-          protocol: 'openai-chat-completions',
-          authentication: 'none',
-          imageGenerationQuality: 'auto',
+          name: "第二模型",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          modelName: "qwen3",
+          protocol: "openai-chat-completions",
+          authentication: "none",
+          imageGenerationQuality: "auto",
           apiKeyConfigured: false,
-          credentialSource: 'none'
-        }
-      ]
-    })
-    vi.mocked(api.agent.getStatus).mockImplementation(
-      async (selection) => ({
-        id: 'model',
-        label:
-          selection?.provider === 'model' &&
-          selection.profileId === secondProfileId
-            ? 'qwen3'
-            : 'sonnet-5',
-        available: true,
-        supportsToolExecution: true,
-        detail: 'Ready'
-      })
-    )
-    render(<App />)
+          credentialSource: "none",
+        },
+      ],
+    });
+    vi.mocked(api.agent.getStatus).mockImplementation(async (selection) => ({
+      id: "model",
+      label:
+        selection?.provider === "model" &&
+        selection.profileId === secondProfileId
+          ? "qwen3"
+          : "sonnet-5",
+      available: true,
+      supportsToolExecution: true,
+      detail: "Ready",
+    }));
+    render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /sonnet-5/u }));
     fireEvent.click(
-      await screen.findByRole('button', { name: /sonnet-5/u })
-    )
-    fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^第二模型.*qwen3$/u
-      })
-    )
+      screen.getByRole("menuitemradio", {
+        name: /^第二模型.*qwen3$/u,
+      }),
+    );
     expect(
-      await screen.findByRole('button', { name: /第二模型/u })
-    ).toBeInTheDocument()
+      await screen.findByRole("button", { name: /第二模型/u }),
+    ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '第二模型对话' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "第二模型对话" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     expect(request?.runtimeSelection).toEqual({
-      provider: 'model',
-      profileId: secondProfileId
-    })
+      provider: "model",
+      profileId: secondProfileId,
+    });
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
 
-    fireEvent.click(
-      screen.getByRole('button', { name: /新建对话/u })
-    )
+    fireEvent.click(screen.getByRole("button", { name: /新建对话/u }));
     expect(
-      await screen.findByRole('button', { name: /默认模型/u })
-    ).toBeInTheDocument()
+      await screen.findByRole("button", { name: /默认模型/u }),
+    ).toBeInTheDocument();
     const previousConversation = screen
-      .getAllByText('第二模型对话')
-      .map((element) => element.closest('button'))
-      .find((button) => button?.classList.contains('conversation-item'))
+      .getAllByText("第二模型对话")
+      .map((element) => element.closest("button"))
+      .find((button) => button?.classList.contains("conversation-item"));
     if (!previousConversation) {
-      throw new Error('Missing previous conversation')
+      throw new Error("Missing previous conversation");
     }
-    fireEvent.click(previousConversation)
+    fireEvent.click(previousConversation);
     await waitFor(() =>
       expect(
         screen
-          .getAllByRole('button', { name: /第二模型/u })
-          .find((button) => button.classList.contains('model-button'))
-      ).toBeInTheDocument()
-    )
+          .getAllByRole("button", { name: /第二模型/u })
+          .find((button) => button.classList.contains("model-button")),
+      ).toBeInTheDocument(),
+    );
 
     await waitFor(
       () =>
@@ -9176,510 +8806,524 @@ describe('App', () => {
           expect.arrayContaining([
             expect.objectContaining({
               header: expect.objectContaining({
-                title: '第二模型对话',
+                title: "第二模型对话",
                 runtimeSelection: {
-                  provider: 'model',
-                  profileId: secondProfileId
-                }
+                  provider: "model",
+                  profileId: secondProfileId,
+                },
               }),
-              messages: expect.any(Array)
-            })
-          ])
+              messages: expect.any(Array),
+            }),
+          ]),
         ),
-      { timeout: 2_000 }
-    )
-  })
+      { timeout: 2_000 },
+    );
+  });
 
-  it('ignores a stale picker status after rapidly changing conversations', async () => {
-    const secondProfileId =
-      '00000000-0000-4000-8000-000000000002'
-    const thirdProfileId =
-      '00000000-0000-4000-8000-000000000003'
-    const settings = await api.settings.getRuntime()
+  it("ignores a stale picker status after rapidly changing conversations", async () => {
+    const secondProfileId = "00000000-0000-4000-8000-000000000002";
+    const thirdProfileId = "00000000-0000-4000-8000-000000000003";
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
       modelProfiles: [
         ...settings.modelProfiles,
         {
           id: secondProfileId,
-          name: '第二模型',
-          baseUrl: 'http://127.0.0.1:11434/v1',
-          modelName: 'qwen3',
-          protocol: 'openai-chat-completions',
-          authentication: 'none',
-          imageGenerationQuality: 'auto',
+          name: "第二模型",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          modelName: "qwen3",
+          protocol: "openai-chat-completions",
+          authentication: "none",
+          imageGenerationQuality: "auto",
           apiKeyConfigured: false,
-          credentialSource: 'none'
+          credentialSource: "none",
         },
         {
           id: thirdProfileId,
-          name: '第三模型',
-          baseUrl: 'http://127.0.0.1:11435/v1',
-          modelName: 'llama3',
-          protocol: 'openai-chat-completions',
-          authentication: 'none',
-          imageGenerationQuality: 'auto',
+          name: "第三模型",
+          baseUrl: "http://127.0.0.1:11435/v1",
+          modelName: "llama3",
+          protocol: "openai-chat-completions",
+          authentication: "none",
+          imageGenerationQuality: "auto",
           apiKeyConfigured: false,
-          credentialSource: 'none'
-        }
-      ]
-    })
+          credentialSource: "none",
+        },
+      ],
+    });
     let resolveThird!: (status: {
-      id: 'model'
-      label: string
-      available: boolean
-      supportsToolExecution: boolean
-      detail: string
-    }) => void
+      id: "model";
+      label: string;
+      available: boolean;
+      supportsToolExecution: boolean;
+      detail: string;
+    }) => void;
     const thirdStatus = new Promise<{
-      id: 'model'
-      label: string
-      available: boolean
-      supportsToolExecution: boolean
-      detail: string
+      id: "model";
+      label: string;
+      available: boolean;
+      supportsToolExecution: boolean;
+      detail: string;
     }>((resolve) => {
-      resolveThird = resolve
-    })
+      resolveThird = resolve;
+    });
     vi.mocked(api.agent.getStatus).mockImplementation(async (selection) => {
       if (
-        selection?.provider === 'model' &&
+        selection?.provider === "model" &&
         selection.profileId === thirdProfileId
       ) {
-        return thirdStatus
+        return thirdStatus;
       }
       return {
-        id: 'model',
+        id: "model",
         label:
-          selection?.provider === 'model' &&
+          selection?.provider === "model" &&
           selection.profileId === secondProfileId
-            ? 'qwen3'
-            : 'sonnet-5',
+            ? "qwen3"
+            : "sonnet-5",
         available: true,
         supportsToolExecution: true,
-        detail: 'Ready'
-      }
-    })
-    render(<App />)
+        detail: "Ready",
+      };
+    });
+    render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /sonnet-5/u }));
     fireEvent.click(
-      await screen.findByRole('button', { name: /sonnet-5/u })
-    )
-    fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^第二模型.*qwen3$/u
-      })
-    )
-    await screen.findByRole('button', { name: /第二模型/u })
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '保留第二模型会话' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+      screen.getByRole("menuitemradio", {
+        name: /^第二模型.*qwen3$/u,
+      }),
+    );
+    await screen.findByRole("button", { name: /第二模型/u });
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "保留第二模型会话" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
-      agentListener?.({ requestId: request.requestId, type: 'done' })
-    })
+      agentListener?.({ requestId: request.requestId, type: "done" });
+    });
 
     const secondModelButton = screen
-      .getAllByRole('button', { name: /第二模型/u })
-      .find((button) => button.classList.contains('model-button'))
+      .getAllByRole("button", { name: /第二模型/u })
+      .find((button) => button.classList.contains("model-button"));
     if (!secondModelButton) {
-      throw new Error('Missing second model picker')
+      throw new Error("Missing second model picker");
     }
-    fireEvent.click(secondModelButton)
+    fireEvent.click(secondModelButton);
     fireEvent.click(
-      screen.getByRole('menuitemradio', {
-        name: /^第三模型.*llama3$/u
-      })
-    )
+      screen.getByRole("menuitemradio", {
+        name: /^第三模型.*llama3$/u,
+      }),
+    );
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenCalledWith({
-        provider: 'model',
-        profileId: thirdProfileId
-      })
-    )
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '状态未完成时不能发送' }
-    })
-    expect(screen.getByLabelText('发送')).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: /新建对话/u }))
-    await screen.findByRole('button', { name: /默认模型/u })
+        provider: "model",
+        profileId: thirdProfileId,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "状态未完成时不能发送" },
+    });
+    expect(screen.getByLabelText("发送")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /新建对话/u }));
+    await screen.findByRole("button", { name: /默认模型/u });
 
     await act(async () => {
       resolveThird({
-        id: 'model',
-        label: 'llama3',
+        id: "model",
+        label: "llama3",
         available: true,
         supportsToolExecution: true,
-        detail: 'Ready'
-      })
-      await thirdStatus
-    })
+        detail: "Ready",
+      });
+      await thirdStatus;
+    });
     expect(
-      screen.getByRole('button', { name: /默认模型/u })
-    ).toBeInTheDocument()
+      screen.getByRole("button", { name: /默认模型/u }),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /第三模型/u })
-    ).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '新对话仍可发送' }
-    })
-    await waitFor(() => expect(screen.getByLabelText('发送')).toBeEnabled())
-  })
+      screen.queryByRole("button", { name: /第三模型/u }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "新对话仍可发送" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+  });
 
-  it('opens project creation as an unobscured dialog', async () => {
-    render(<App />)
+  it.each(["resolved", "rejected", "returned"] as const)("ignores a %s deferred picker switch after same-runtime conversation navigation", async (outcome) => {
+    const settings = await api.settings.getRuntime();
+    const selection = { provider: "model" as const, profileId: settings.defaultModelProfileId! };
+    const rows = [1, 2].map((index) => ({
+      id: `00000000-0000-4000-8000-00000000078${index}`,
+      projectId,
+      runtimeSelection: selection,
+      title: `Picker conversation ${index}`,
+      updatedAt: 1_775_000_000_000 - index,
+      messages: [],
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValueOnce(rows);
+    render(<App />);
+    const picker = await screen.findByRole("button", { name: /sonnet-5/u });
+    const pending = deferred<Awaited<ReturnType<typeof api.agent.getStatus>>>();
+    vi.mocked(api.agent.getStatus).mockReturnValueOnce(pending.promise);
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^OpenCode/u }));
+    fireEvent.click(screen.getByText(rows[1]!.title).closest("button")!);
+    if (outcome === "returned") {
+      fireEvent.click(screen.getByText(rows[0]!.title).closest("button")!);
+    }
+    const activeRow = rows[outcome === "returned" ? 0 : 1]!;
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "still usable" } });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    await act(async () => {
+      if (outcome === "rejected") {
+        pending.reject(new Error("obsolete picker failure"));
+      } else {
+        pending.resolve({ id: "opencode", label: "OpenCode", available: true, supportsToolExecution: true, detail: "Ready" });
+      }
+      await pending.promise.catch(() => undefined);
+    });
+    expect(screen.queryByText("obsolete picker failure")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sonnet-5/u })).toBeInTheDocument();
+    expect(screen.getByLabelText("发送")).toBeEnabled();
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0]).toMatchObject({ conversationId: activeRow.id, runtimeSelection: selection });
+  });
 
-    const newProjectButton = await screen.findByLabelText('新建项目')
-    fireEvent.click(newProjectButton)
-    let dialog = screen.getByRole('dialog', { name: '新建项目' })
-    expect(dialog).toHaveClass('project-create-card')
-    expect(within(dialog).getByRole('button', { name: '创建' }))
-      .toBeDisabled()
-    expect(within(dialog).getByLabelText('名称')).toHaveFocus()
+  it("opens project creation as an unobscured dialog", async () => {
+    render(<App />);
 
-    fireEvent.keyDown(document, { key: 'Escape' })
+    const newProjectButton = await screen.findByLabelText("新建项目");
+    fireEvent.click(newProjectButton);
+    let dialog = screen.getByRole("dialog", { name: "新建项目" });
+    expect(dialog).toHaveClass("project-create-card");
+    expect(within(dialog).getByRole("button", { name: "创建" })).toBeDisabled();
+    expect(within(dialog).getByLabelText("名称")).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(
-      screen.queryByRole('dialog', { name: '新建项目' })
-    ).not.toBeInTheDocument()
-    expect(newProjectButton).toHaveFocus()
+      screen.queryByRole("dialog", { name: "新建项目" }),
+    ).not.toBeInTheDocument();
+    expect(newProjectButton).toHaveFocus();
 
-    fireEvent.click(newProjectButton)
-    dialog = screen.getByRole('dialog', { name: '新建项目' })
+    fireEvent.click(newProjectButton);
+    dialog = screen.getByRole("dialog", { name: "新建项目" });
 
-    fireEvent.change(within(dialog).getByLabelText('名称'), {
-      target: { value: '新项目' }
-    })
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }))
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "新项目" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
     await waitFor(() =>
       expect(api.projects.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: '新项目',
-          rootPath: ''
-        })
-      )
-    )
-  })
+          name: "新项目",
+          rootPath: "",
+        }),
+      ),
+    );
+  });
 
-  it('keeps project input when creation fails', async () => {
+  it("keeps project input when creation fails", async () => {
     vi.mocked(api.projects.create).mockRejectedValueOnce(
-      new Error('项目目录不可用')
-    )
-    render(<App />)
+      new Error("项目目录不可用"),
+    );
+    render(<App />);
 
-    fireEvent.click(await screen.findByLabelText('新建项目'))
-    const dialog = screen.getByRole('dialog', { name: '新建项目' })
-    const nameInput = within(dialog).getByLabelText('名称')
+    fireEvent.click(await screen.findByLabelText("新建项目"));
+    const dialog = screen.getByRole("dialog", { name: "新建项目" });
+    const nameInput = within(dialog).getByLabelText("名称");
     fireEvent.change(nameInput, {
-      target: { value: '保留的项目名称' }
-    })
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: '创建' })
-    )
+      target: { value: "保留的项目名称" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
-      '项目目录不可用'
-    )
-    expect(nameInput).toHaveValue('保留的项目名称')
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "项目目录不可用",
+    );
+    expect(nameInput).toHaveValue("保留的项目名称");
     expect(
-      screen.getByRole('dialog', { name: '新建项目' })
-    ).toBeInTheDocument()
-  })
+      screen.getByRole("dialog", { name: "新建项目" }),
+    ).toBeInTheDocument();
+  });
 
-  it('edits and safely deletes the current project from project settings', async () => {
+  it("edits and safely deletes the current project from project settings", async () => {
     const hiddenRemoteProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000119',
-      name: '隐藏远程项目',
-      rootPath: '/srv/hidden',
-      runtimeSelection: { provider: 'opencode' as const },
+      id: "00000000-0000-4000-8000-000000000119",
+      name: "隐藏远程项目",
+      rootPath: "/srv/hidden",
+      runtimeSelection: { provider: "opencode" as const },
       executionSpace: {
-        kind: 'ssh' as const,
-        hostId: '00000000-0000-4000-8000-000000000219',
-        remoteRootPath: '/srv/hidden'
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000219",
+        remoteRootPath: "/srv/hidden",
       },
-      builtInDefault: false
-    }
+      builtInDefault: false,
+    };
     const secondProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000102',
-      name: '第二项目',
-      rootPath: 'C:\\Second',
+      id: "00000000-0000-4000-8000-000000000102",
+      name: "第二项目",
+      rootPath: "C:\\Second",
       executionSpace: {
-        kind: 'local' as const,
-        rootPath: 'C:\\Second'
-      }
-    }
+        kind: "local" as const,
+        rootPath: "C:\\Second",
+      },
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       hiddenRemoteProject,
       project,
-      secondProject
-    ])
-    render(<App />)
+      secondProject,
+    ]);
+    render(<App />);
 
-    fireEvent.click(await screen.findByLabelText('项目设置'))
-    let dialog = screen.getByRole('dialog', { name: '项目设置' })
-    expect(within(dialog).getByLabelText('名称')).toHaveValue(
-      project.name
-    )
-    expect(within(dialog).getByLabelText('根目录')).toHaveValue(
-      project.rootPath
-    )
-    expect(
-      within(dialog).getByLabelText('新对话默认 Runtime')
-    ).toHaveValue(
+    fireEvent.click(await screen.findByLabelText("项目设置"));
+    let dialog = screen.getByRole("dialog", { name: "项目设置" });
+    expect(within(dialog).getByLabelText("名称")).toHaveValue(project.name);
+    expect(within(dialog).getByLabelText("根目录")).toHaveValue(
+      project.rootPath,
+    );
+    expect(within(dialog).getByLabelText("新对话默认 Runtime")).toHaveValue(
       agentRuntimeSelectionKey({
-        provider: 'model',
-        profileId: modelProfileId
-      })
-    )
-    fireEvent.change(within(dialog).getByLabelText('说明'), {
-      target: { value: '更新后的说明' }
-    })
-    fireEvent.change(
-      within(dialog).getByLabelText('新对话默认 Runtime'),
-      {
-        target: {
-          value: agentRuntimeSelectionKey({
-            provider: 'continue',
-            profileId: modelProfileId
-          })
-        }
-      }
-    )
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: '保存项目' })
-    )
+        provider: "model",
+        profileId: modelProfileId,
+      }),
+    );
+    fireEvent.change(within(dialog).getByLabelText("说明"), {
+      target: { value: "更新后的说明" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("新对话默认 Runtime"), {
+      target: {
+        value: agentRuntimeSelectionKey({
+          provider: "continue",
+          profileId: modelProfileId,
+        }),
+      },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存项目" }));
     await waitFor(() =>
       expect(api.projects.update).toHaveBeenCalledWith(
         project.id,
         expect.objectContaining({
-          description: '更新后的说明',
+          description: "更新后的说明",
           rootPath: project.rootPath,
           runtimeSelection: {
-            provider: 'continue',
-            profileId: modelProfileId
-          }
-        })
-      )
-    )
+            provider: "continue",
+            profileId: modelProfileId,
+          },
+        }),
+      ),
+    );
 
-    fireEvent.click(screen.getByLabelText('项目设置'))
-    dialog = screen.getByRole('dialog', { name: '项目设置' })
-    expect(dialog).toHaveTextContent('不会删除磁盘上的项目目录或文件')
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: '删除项目' })
-    )
+    fireEvent.click(screen.getByLabelText("项目设置"));
+    dialog = screen.getByRole("dialog", { name: "项目设置" });
+    expect(dialog).toHaveTextContent("不会删除磁盘上的项目目录或文件");
+    fireEvent.click(within(dialog).getByRole("button", { name: "删除项目" }));
     const confirmation = within(dialog).getByLabelText(
-      `输入“${project.name}”确认删除`
-    )
-    const deleteButton = within(dialog).getByRole('button', {
-      name: '永久删除项目'
-    })
-    expect(deleteButton).toBeDisabled()
+      `输入“${project.name}”确认删除`,
+    );
+    const deleteButton = within(dialog).getByRole("button", {
+      name: "永久删除项目",
+    });
+    expect(deleteButton).toBeDisabled();
     fireEvent.change(confirmation, {
-      target: { value: project.name }
-    })
-    expect(deleteButton).toBeEnabled()
-    fireEvent.click(deleteButton)
+      target: { value: project.name },
+    });
+    expect(deleteButton).toBeEnabled();
+    fireEvent.click(deleteButton);
 
     await waitFor(() =>
       expect(api.projects.delete).toHaveBeenCalledWith(
         project.id,
-        project.name
-      )
-    )
-    expect(screen.getByRole('button', { name: '当前项目' })).toHaveTextContent(
-      secondProject.name
-    )
-  })
+        project.name,
+      ),
+    );
+    expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent(
+      secondProject.name,
+    );
+  });
 
-  it('uses the project default Runtime for new conversations', async () => {
+  it("uses the project default Runtime for new conversations", async () => {
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       {
         ...project,
         runtimeSelection: {
-          provider: 'opencode',
-          profileId: modelProfileId
-        }
-      }
-    ])
+          provider: "opencode",
+          profileId: modelProfileId,
+        },
+      },
+    ]);
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
-        id: '00000000-0000-4000-8000-000000000220',
+        id: "00000000-0000-4000-8000-000000000220",
         projectId,
         runtimeSelection: {
-          provider: 'model',
-          profileId: modelProfileId
+          provider: "model",
+          profileId: modelProfileId,
         },
-        title: '已有对话',
+        title: "已有对话",
         updatedAt: 1,
-        messages: []
-      }
-    ])
-    render(<App />)
+        messages: [],
+      },
+    ]);
+    render(<App />);
 
-    await screen.findAllByText('已有对话')
-    fireEvent.click(
-      screen.getByRole('button', { name: /新建对话/u })
-    )
+    await screen.findAllByText("已有对话");
+    fireEvent.click(screen.getByRole("button", { name: /新建对话/u }));
 
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
-        provider: 'opencode',
-        profileId: modelProfileId
-      })
-    )
+        provider: "opencode",
+        profileId: modelProfileId,
+      }),
+    );
     expect(
-      screen.getByRole('button', {
-        name: /OpenCode · 默认模型/u
-      })
-    ).toBeInTheDocument()
-  })
+      screen.getByRole("button", {
+        name: /OpenCode · 默认模型/u,
+      }),
+    ).toBeInTheDocument();
+  });
 
-  it('uses a message icon for conversation navigation', async () => {
-    render(<App />)
+  it("uses a message icon for conversation navigation", async () => {
+    render(<App />);
 
-    const conversationNavigation = await screen.findByRole('button', {
-      name: '对话'
-    })
+    const conversationNavigation = await screen.findByRole("button", {
+      name: "对话",
+    });
     expect(
-      conversationNavigation.querySelector('.lucide-message-square')
-    ).not.toBeNull()
-    expect(
-      conversationNavigation.querySelector('.lucide-history')
-    ).toBeNull()
-  })
+      conversationNavigation.querySelector(".lucide-message-square"),
+    ).not.toBeNull();
+    expect(conversationNavigation.querySelector(".lucide-history")).toBeNull();
+  });
 
-  it('marks an image model and renders its generated artifact', async () => {
+  it("marks an image model and renders its generated artifact", async () => {
     const anchorClick = vi
-      .spyOn(HTMLAnchorElement.prototype, 'click')
-      .mockImplementation(() => {})
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
-      id: 'model',
-      label: 'gpt-image-2',
+      id: "model",
+      label: "gpt-image-2",
       available: true,
       supportsToolExecution: false,
-      detail: 'OpenAI Images Generations',
-      capability: 'image-generation'
-    })
-    render(<App />)
+      detail: "OpenAI Images Generations",
+      capability: "image-generation",
+    });
+    render(<App />);
 
-    expect((await screen.findAllByText('生图')).length).toBeGreaterThan(0)
-    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveAttribute(
-      'placeholder',
-      '描述你想生成的图片…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本'
-    )
-    await waitFor(() =>
-      expect(api.artifacts.list).toHaveBeenCalled()
-    )
+    expect((await screen.findAllByText("生图")).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
+      "placeholder",
+      "描述你想生成的图片…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本",
+    );
+    await waitFor(() => expect(api.artifacts.list).toHaveBeenCalled());
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '生成一只蓝色的猫' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "生成一只蓝色的猫" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
-    const artifactId = '00000000-0000-4000-8000-000000000301'
-    vi.mocked(api.artifacts.get).mockResolvedValueOnce(
-      {
-        id: artifactId,
-        projectId,
-        taskId: request.requestId,
-        kind: 'image',
-        title: '生成一只蓝色的猫',
-        mimeType: 'image/png',
-        content:
-          'data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA',
-        byteSize: 42,
-        createdAt: '2026-08-01T00:00:00.000Z',
-        updatedAt: '2026-08-01T00:00:00.000Z'
-      }
-    )
+    const artifactId = "00000000-0000-4000-8000-000000000301";
+    vi.mocked(api.artifacts.get).mockResolvedValueOnce({
+      id: artifactId,
+      projectId,
+      taskId: request.requestId,
+      kind: "image",
+      title: "生成一只蓝色的猫",
+      mimeType: "image/png",
+      content: "data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA",
+      byteSize: 42,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    });
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'artifact',
+        type: "artifact",
         artifactId,
-        kind: 'image',
-        title: '生成一只蓝色的猫'
-      })
-    })
+        kind: "image",
+        title: "生成一只蓝色的猫",
+      });
+    });
 
     expect(
-      await screen.findByRole('img', { name: '生成一只蓝色的猫' })
-    ).toHaveAttribute('src', expect.stringMatching(/^data:image\/png/u))
+      await screen.findByRole("img", { name: "生成一只蓝色的猫" }),
+    ).toHaveAttribute("src", expect.stringMatching(/^data:image\/png/u));
     fireEvent.click(
-      screen.getByRole('button', {
-        name: '下载图片 生成一只蓝色的猫'
-      })
-    )
-    expect(anchorClick).toHaveBeenCalledOnce()
+      screen.getByRole("button", {
+        name: "下载图片 生成一只蓝色的猫",
+      }),
+    );
+    expect(anchorClick).toHaveBeenCalledOnce();
 
     fireEvent.click(
-      screen.getByRole('button', {
-        name: '查看图片 生成一只蓝色的猫'
-      })
-    )
-    const imageDialog = await screen.findByRole('dialog', {
-      name: '生成一只蓝色的猫'
-    })
+      screen.getByRole("button", {
+        name: "查看图片 生成一只蓝色的猫",
+      }),
+    );
+    const imageDialog = await screen.findByRole("dialog", {
+      name: "生成一只蓝色的猫",
+    });
     expect(
-      within(imageDialog).getByRole('img', {
-        name: '生成一只蓝色的猫'
-      })
-    ).toHaveAttribute('src', expect.stringMatching(/^data:image\/png/u))
+      within(imageDialog).getByRole("img", {
+        name: "生成一只蓝色的猫",
+      }),
+    ).toHaveAttribute("src", expect.stringMatching(/^data:image\/png/u));
     fireEvent.click(
-      within(imageDialog).getByRole('button', { name: '下载图片' })
-    )
-    expect(anchorClick).toHaveBeenCalledTimes(2)
-    fireEvent.keyDown(imageDialog, { key: 'Escape' })
+      within(imageDialog).getByRole("button", { name: "下载图片" }),
+    );
+    expect(anchorClick).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(imageDialog, { key: "Escape" });
     expect(
-      screen.queryByRole('dialog', { name: '生成一只蓝色的猫' })
-    ).not.toBeInTheDocument()
-    anchorClick.mockRestore()
-  })
+      screen.queryByRole("dialog", { name: "生成一只蓝色的猫" }),
+    ).not.toBeInTheDocument();
+    anchorClick.mockRestore();
+  });
 
-  it('can dispatch a request to the parallel expert team', async () => {
-    render(<App />)
+  it("can dispatch a request to the parallel expert team", async () => {
+    render(<App />);
 
-    selectComposerOption('专家角色', '专家团队（并行）')
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '制定发布计划' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
+    selectComposerOption("专家角色", "专家团队（并行）");
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "制定发布计划" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
           teamMode: true,
           expertId: undefined,
-          prompt: '制定发布计划'
-        })
-      )
-    )
-  })
+          prompt: "制定发布计划",
+        }),
+      ),
+    );
+  });
 
-  it('requests smart routing only when enabled without an explicit expert', async () => {
-    const settings = await api.settings.getRuntime()
+  it("requests smart routing only when enabled without an explicit expert", async () => {
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      subagentSmartRoutingEnabled: true
-    })
-    render(<App />)
+      subagentSmartRoutingEnabled: true,
+    });
+    render(<App />);
 
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '分析发布风险' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "分析发布风险" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
@@ -9687,1342 +9331,1295 @@ describe('App', () => {
           smartRouting: true,
           expertId: undefined,
           teamMode: false,
-          workMode: 'ask'
-        })
-      )
-    )
-  })
+          workMode: "ask",
+        }),
+      ),
+    );
+  });
 
-  it('gives an explicitly selected expert priority over smart routing', async () => {
-    const expertId = '00000000-0000-4000-8000-000000000501'
-    const settings = await api.settings.getRuntime()
+  it("gives an explicitly selected expert priority over smart routing", async () => {
+    const expertId = "00000000-0000-4000-8000-000000000501";
+    const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
       ...settings,
-      subagentSmartRoutingEnabled: true
-    })
+      subagentSmartRoutingEnabled: true,
+    });
     vi.mocked(api.experts.list).mockResolvedValueOnce([
       {
         id: expertId,
-        name: '发布专家',
-        description: '检查发布风险',
-        systemInstructions: 'Review release risks.',
-        routingKeywords: ['发布', '风险'],
+        name: "发布专家",
+        description: "检查发布风险",
+        systemInstructions: "Review release risks.",
+        routingKeywords: ["发布", "风险"],
         enabled: true,
-        createdAt: '2026-08-01T00:00:00.000Z',
-        updatedAt: '2026-08-01T00:00:00.000Z'
-      }
-    ])
-    render(<App />)
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+    render(<App />);
 
-    await waitFor(() => expect(api.experts.list).toHaveBeenCalled())
-    const expertMenu = openComposerMenu('专家角色')
+    await waitFor(() => expect(api.experts.list).toHaveBeenCalled());
+    const expertMenu = openComposerMenu("专家角色");
     fireEvent.click(
-      (await within(expertMenu).findByText('发布专家', {
-        selector: 'span'
-      }))
-        .closest<HTMLButtonElement>('button')!
-    )
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '检查发布方案' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
+      (
+        await within(expertMenu).findByText("发布专家", {
+          selector: "span",
+        })
+      ).closest<HTMLButtonElement>("button")!,
+    );
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "检查发布方案" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
 
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
           expertId,
           smartRouting: undefined,
-          teamMode: false
-        })
-      )
-    )
-  })
+          teamMode: false,
+        }),
+      ),
+    );
+  });
 
-  it('shows Subagent states and records child expert activity', async () => {
-    render(<App />)
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '分析复杂问题' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+  it("shows Subagent states and records child expert activity", async () => {
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "分析复杂问题" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     const events = [
       {
-        childTaskId: '00000000-0000-4000-8000-000000000601',
-        expertId: '00000000-0000-4000-8000-000000000701',
-        expertName: '研究专家',
-        routingMode: 'smart' as const,
-        state: 'queued' as const
+        childTaskId: "00000000-0000-4000-8000-000000000601",
+        expertId: "00000000-0000-4000-8000-000000000701",
+        expertName: "研究专家",
+        routingMode: "smart" as const,
+        state: "queued" as const,
       },
       {
-        childTaskId: '00000000-0000-4000-8000-000000000602',
-        expertId: '00000000-0000-4000-8000-000000000702',
-        expertName: '代码专家',
-        routingMode: 'manual' as const,
-        state: 'running' as const
+        childTaskId: "00000000-0000-4000-8000-000000000602",
+        expertId: "00000000-0000-4000-8000-000000000702",
+        expertName: "代码专家",
+        routingMode: "manual" as const,
+        state: "running" as const,
       },
       {
-        childTaskId: '00000000-0000-4000-8000-000000000603',
-        expertId: '00000000-0000-4000-8000-000000000703',
-        expertName: '安全专家',
-        routingMode: 'smart' as const,
-        state: 'failed' as const,
-        error: '无法读取必要上下文'
+        childTaskId: "00000000-0000-4000-8000-000000000603",
+        expertId: "00000000-0000-4000-8000-000000000703",
+        expertName: "安全专家",
+        routingMode: "smart" as const,
+        state: "failed" as const,
+        error: "无法读取必要上下文",
       },
       {
-        childTaskId: '00000000-0000-4000-8000-000000000604',
-        expertId: '00000000-0000-4000-8000-000000000704',
-        expertName: '第四位专家',
-        routingMode: 'smart' as const,
-        state: 'completed' as const
-      }
-    ]
+        childTaskId: "00000000-0000-4000-8000-000000000604",
+        expertId: "00000000-0000-4000-8000-000000000704",
+        expertName: "第四位专家",
+        routingMode: "smart" as const,
+        state: "completed" as const,
+      },
+    ];
     act(() => {
       for (const event of events) {
         agentListener?.({
           requestId: request.requestId,
-          type: 'subagent',
-          ...event
-        })
+          type: "subagent",
+          ...event,
+        });
       }
-    })
+    });
 
-    const statusRegion = await screen.findByLabelText('子代理状态')
-    expect(within(statusRegion).getByText('研究专家')).toBeInTheDocument()
-    expect(within(statusRegion).getByText('等待中')).toBeInTheDocument()
-    expect(within(statusRegion).getByText('代码专家')).toBeInTheDocument()
-    expect(within(statusRegion).getByText('进行中')).toBeInTheDocument()
-    expect(within(statusRegion).getByText('安全专家')).toBeInTheDocument()
-    expect(within(statusRegion).getByText('失败')).toBeInTheDocument()
-    const subagentCards = within(statusRegion).getAllByRole('group')
+    const statusRegion = await screen.findByLabelText("子代理状态");
+    expect(within(statusRegion).getByText("研究专家")).toBeInTheDocument();
+    expect(within(statusRegion).getByText("等待中")).toBeInTheDocument();
+    expect(within(statusRegion).getByText("代码专家")).toBeInTheDocument();
+    expect(within(statusRegion).getByText("进行中")).toBeInTheDocument();
+    expect(within(statusRegion).getByText("安全专家")).toBeInTheDocument();
+    expect(within(statusRegion).getByText("失败")).toBeInTheDocument();
+    const subagentCards = within(statusRegion).getAllByRole("group");
     fireEvent.click(
-      within(subagentCards[2]!).getByText('安全专家', {
-        selector: 'strong'
-      })
-    )
-    fireEvent(subagentCards[2]!, new Event('toggle'))
+      within(subagentCards[2]!).getByText("安全专家", {
+        selector: "strong",
+      }),
+    );
+    fireEvent(subagentCards[2]!, new Event("toggle"));
     expect(
-      within(statusRegion).getByText('无法读取必要上下文')
-    ).toBeInTheDocument()
-    expect(
-      within(statusRegion).getByText('第四位专家')
-    ).toBeInTheDocument()
+      within(statusRegion).getByText("无法读取必要上下文"),
+    ).toBeInTheDocument();
+    expect(within(statusRegion).getByText("第四位专家")).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'subagent',
+        type: "subagent",
         ...events[0]!,
-        state: 'completed',
-        output: '研究专家的独立结论'
-      })
+        state: "completed",
+        output: "研究专家的独立结论",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'subagent',
+        type: "subagent",
         ...events[1]!,
-        state: 'cancelled',
-        reason: '父任务已停止',
-        output: '代码专家的部分结论'
-      })
-    })
-    expect(within(statusRegion).getAllByText('已完成')).toHaveLength(2)
-    expect(within(statusRegion).getByText('已取消')).toBeInTheDocument()
-    expect(within(statusRegion).getByText('父任务已停止')).toBeInTheDocument()
-    for (const [index, expertName] of [
-      '研究专家',
-      '代码专家'
-    ].entries()) {
+        state: "cancelled",
+        reason: "父任务已停止",
+        output: "代码专家的部分结论",
+      });
+    });
+    expect(within(statusRegion).getAllByText("已完成")).toHaveLength(2);
+    expect(within(statusRegion).getByText("已取消")).toBeInTheDocument();
+    expect(within(statusRegion).getByText("父任务已停止")).toBeInTheDocument();
+    for (const [index, expertName] of ["研究专家", "代码专家"].entries()) {
       fireEvent.click(
         within(subagentCards[index]!).getByText(expertName, {
-          selector: 'strong'
-        })
-      )
-      fireEvent(subagentCards[index]!, new Event('toggle'))
+          selector: "strong",
+        }),
+      );
+      fireEvent(subagentCards[index]!, new Event("toggle"));
     }
     expect(
-      within(statusRegion).getByText('研究专家的独立结论')
-    ).toBeInTheDocument()
+      within(statusRegion).getByText("研究专家的独立结论"),
+    ).toBeInTheDocument();
     expect(
-      within(statusRegion).getByText('代码专家的部分结论')
-    ).toBeInTheDocument()
+      within(statusRegion).getByText("代码专家的部分结论"),
+    ).toBeInTheDocument();
     await waitFor(() => {
       const persistedMessages = vi
         .mocked(api.conversations.saveLocal)
         .mock.calls.flatMap(([batch]) =>
-          batch.flatMap((conversation) => conversation.messages)
-        )
+          batch.flatMap((conversation) => conversation.messages),
+        );
       expect(
         persistedMessages.some(
           (message) =>
-            message.subagents?.[0]?.output ===
-              '研究专家的独立结论' &&
-            message.subagents?.[1]?.output === '代码专家的部分结论'
-        )
-      ).toBe(true)
-    })
+            message.subagents?.[0]?.output === "研究专家的独立结论" &&
+            message.subagents?.[1]?.output === "代码专家的部分结论",
+        ),
+      ).toBe(true);
+    });
 
-    fireEvent.click(screen.getByText('运行记录'))
-    expect(await screen.findAllByText('子专家')).toHaveLength(4)
-    expect(screen.getAllByText(/智能路由/u).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/指定专家/u).length).toBeGreaterThan(0)
-    expect(
-      screen.getByText(/研究专家的独立结论/u)
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/代码专家的部分结论/u)
-    ).toBeInTheDocument()
-  })
+    fireEvent.click(screen.getByText("运行记录"));
+    expect(await screen.findAllByText("子专家")).toHaveLength(4);
+    expect(screen.getAllByText(/智能路由/u).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/指定专家/u).length).toBeGreaterThan(0);
+    expect(screen.getByText(/研究专家的独立结论/u)).toBeInTheDocument();
+    expect(screen.getByText(/代码专家的部分结论/u)).toBeInTheDocument();
+  });
 
-  it('replaces an incremental OpenCode Task tool with a native subagent card', async () => {
-    render(<App />)
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '检查架构' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+  it("replaces an incremental OpenCode Task tool with a native subagent card", async () => {
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "检查架构" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'tool',
-        callId: 'call-task-1',
-        name: 'Review application architecture',
-        state: 'running',
-        summary: '远端 Runtime 工具：Review application architecture'
-      })
+        type: "tool",
+        callId: "call-task-1",
+        name: "Review application architecture",
+        state: "running",
+        summary: "远端 Runtime 工具：Review application architecture",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'reasoning',
-        delta: '等待子代理结果'
-      })
-    })
-    expect(await screen.findByText('等待子代理结果')).toBeInTheDocument()
+        type: "reasoning",
+        delta: "等待子代理结果",
+      });
+    });
+    expect(await screen.findByText("等待子代理结果")).toBeInTheDocument();
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'subagent',
-        childTaskId: '00000000-0000-4000-8000-000000000611',
-        expertId: '00000000-0000-4000-8000-000000000711',
-        expertName: 'explorer',
-        routingMode: 'native',
-        runtimeCallId: 'call-task-1',
-        state: 'running',
-        reason: 'Review application architecture'
-      })
+        type: "subagent",
+        childTaskId: "00000000-0000-4000-8000-000000000611",
+        expertId: "00000000-0000-4000-8000-000000000711",
+        expertName: "explorer",
+        routingMode: "native",
+        runtimeCallId: "call-task-1",
+        state: "running",
+        reason: "Review application architecture",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: '父 Agent 最终回复'
-      })
-    })
+        type: "text",
+        delta: "父 Agent 最终回复",
+      });
+    });
 
-    const region = await screen.findByLabelText('子代理状态')
-    expect(within(region).getByText('explorer')).toBeInTheDocument()
-    expect(within(region).getByText('OpenCode 原生'))
-      .toBeInTheDocument()
+    const region = await screen.findByLabelText("子代理状态");
+    expect(within(region).getByText("explorer")).toBeInTheDocument();
+    expect(within(region).getByText("OpenCode 原生")).toBeInTheDocument();
     expect(
-      screen.queryByRole('region', {
-        name: '工具执行，共 1 项'
-      })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("region", {
+        name: "工具执行，共 1 项",
+      }),
+    ).not.toBeInTheDocument();
     const assistantArticle = screen
-      .getByText('父 Agent 最终回复')
-      .closest('article')
+      .getByText("父 Agent 最终回复")
+      .closest("article");
     const orderedBlocks = [
-      ...assistantArticle!.querySelectorAll('.message-blocks > *')
-    ].map((element) => element.textContent)
+      ...assistantArticle!.querySelectorAll(".message-blocks > *"),
+    ].map((element) => element.textContent);
     expect(orderedBlocks).toEqual([
-      expect.stringContaining('Review application architecture'),
-      expect.stringContaining('等待子代理结果'),
-      expect.stringContaining('父 Agent 最终回复')
-    ])
-    fireEvent.click(screen.getByText('运行记录'))
-    expect(await screen.findAllByText('子专家')).toHaveLength(1)
+      expect.stringContaining("Review application architecture"),
+      expect.stringContaining("等待子代理结果"),
+      expect.stringContaining("父 Agent 最终回复"),
+    ]);
+    fireEvent.click(screen.getByText("运行记录"));
+    expect(await screen.findAllByText("子专家")).toHaveLength(1);
     expect(
-      screen.queryByText(
-        '远端 Runtime 工具：Review application architecture'
-      )
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByText("远端 Runtime 工具：Review application architecture"),
+    ).not.toBeInTheDocument();
+  });
 
-  it('records direct-model child runs without adding Assistant Tasks', async () => {
-    render(<App />)
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '修复并验证聚焦变更' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+  it("records direct-model child runs without adding Assistant Tasks", async () => {
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "修复并验证聚焦变更" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
-    const childRunId =
-      '00000000-0000-4000-8000-000000000613'
+    const childRunId = "00000000-0000-4000-8000-000000000613";
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'subagent',
+        type: "subagent",
         childTaskId: childRunId,
         actor: {
-          kind: 'direct-model',
-          label: '编程 Subagent'
+          kind: "direct-model",
+          label: "编程 Subagent",
         },
-        routingMode: 'native',
-        workMode: 'execute',
-        state: 'completed',
-        reason: '修复并验证聚焦变更',
-        output: '验证通过'
-      })
-    })
+        routingMode: "native",
+        workMode: "execute",
+        state: "completed",
+        reason: "修复并验证聚焦变更",
+        output: "验证通过",
+      });
+    });
 
-    const region = await screen.findByLabelText('子代理状态')
+    const region = await screen.findByLabelText("子代理状态");
     expect(
-      within(region).getByText('编程 Subagent', {
-        selector: 'strong'
-      })
-    ).toBeInTheDocument()
-    expect(within(region).getByText('直连模型 · Execute'))
-      .toBeInTheDocument()
+      within(region).getByText("编程 Subagent", {
+        selector: "strong",
+      }),
+    ).toBeInTheDocument();
+    expect(within(region).getByText("直连模型 · Execute")).toBeInTheDocument();
     await waitFor(() => {
       const persistedActivities = vi
         .mocked(api.conversations.saveLocal)
         .mock.calls.flatMap(([batch]) =>
           batch.flatMap((conversation) =>
-            conversation.messages.flatMap(
-              (message) => message.subagents ?? []
-            )
-          )
-        )
+            conversation.messages.flatMap((message) => message.subagents ?? []),
+          ),
+        );
       expect(persistedActivities).toContainEqual(
         expect.objectContaining({
           childTaskId: childRunId,
           actor: {
-            kind: 'direct-model',
-            label: '编程 Subagent'
+            kind: "direct-model",
+            label: "编程 Subagent",
           },
-          workMode: 'execute',
-          output: '验证通过'
-        })
-      )
-    })
+          workMode: "execute",
+          output: "验证通过",
+        }),
+      );
+    });
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
     expect(
-      await screen.findByText('明确创建的任务会显示在这里。')
-    ).toBeInTheDocument()
-  })
+      await screen.findByText("明确创建的任务会显示在这里。"),
+    ).toBeInTheDocument();
+  });
 
-  it('fails an unterminated subagent when the parent reports done', async () => {
-    render(<App />)
-    fireEvent.change(await screen.findByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '检查未完成子任务' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+  it("fails an unterminated subagent when the parent reports done", async () => {
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "检查未完成子任务" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'subagent',
-        childTaskId: '00000000-0000-4000-8000-000000000612',
-        expertId: '00000000-0000-4000-8000-000000000712',
-        expertName: 'explorer',
-        routingMode: 'native',
-        runtimeCallId: 'call-task-2',
-        state: 'running',
-        reason: '检查未完成路径'
-      })
+        type: "subagent",
+        childTaskId: "00000000-0000-4000-8000-000000000612",
+        expertId: "00000000-0000-4000-8000-000000000712",
+        expertName: "explorer",
+        routingMode: "native",
+        runtimeCallId: "call-task-2",
+        state: "running",
+        reason: "检查未完成路径",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
+        type: "done",
+      });
+    });
 
-    const region = await screen.findByLabelText('子代理状态')
-    expect(within(region).getByText('失败')).toBeInTheDocument()
-    const subagentCard = within(region).getByRole('group')
+    const region = await screen.findByLabelText("子代理状态");
+    expect(within(region).getByText("失败")).toBeInTheDocument();
+    const subagentCard = within(region).getByRole("group");
     fireEvent.click(
-      within(subagentCard).getByText('explorer', {
-        selector: 'strong'
-      })
-    )
-    fireEvent(subagentCard, new Event('toggle'))
+      within(subagentCard).getByText("explorer", {
+        selector: "strong",
+      }),
+    );
+    fireEvent(subagentCard, new Event("toggle"));
     expect(
-      within(region).getByText(
-        '父请求已结束，但子 Agent 未报告完成状态。'
-      )
-    ).toBeInTheDocument()
+      within(region).getByText("父请求已结束，但子 Agent 未报告完成状态。"),
+    ).toBeInTheDocument();
     await waitFor(() => {
       const persistedMessages = vi
         .mocked(api.conversations.saveLocal)
         .mock.calls.flatMap(([batch]) =>
-          batch.flatMap((conversation) => conversation.messages)
-        )
+          batch.flatMap((conversation) => conversation.messages),
+        );
       expect(
         persistedMessages.some(
           (message) =>
-            message.subagents?.[0]?.state === 'failed' &&
+            message.subagents?.[0]?.state === "failed" &&
             message.subagents[0].error ===
-              '父请求已结束，但子 Agent 未报告完成状态。'
-        )
-      ).toBe(true)
-    })
-  })
+              "父请求已结束，但子 Agent 未报告完成状态。",
+        ),
+      ).toBe(true);
+    });
+  });
 
-  it('offers once, session, permanent, and deny for a tool call', async () => {
-    render(<App />)
+  it("offers once, session, permanent, and deny for a tool call", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '运行工具' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "运行工具" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'approval',
+        type: "approval",
         approvalId: crypto.randomUUID(),
-        title: 'Continue 请求调用 Bash',
-        description: '确认工具调用',
-        toolName: 'Bash',
-        argumentSummary: 'echo safe',
-        allowPermanent: true
-      })
-    })
+        title: "Continue 请求调用 Bash",
+        description: "确认工具调用",
+        toolName: "Bash",
+        argumentSummary: "echo safe",
+        allowPermanent: true,
+      });
+    });
 
-    expect(await screen.findByText('仅此次')).toBeInTheDocument()
-    expect(screen.getByText('此会话')).toBeInTheDocument()
-    expect(screen.getByText('永久允许')).toBeInTheDocument()
-    expect(screen.getAllByText('拒绝')).toHaveLength(2)
-    fireEvent.click(screen.getByText('此会话'))
+    expect(await screen.findByText("仅此次")).toBeInTheDocument();
+    expect(screen.getByText("此会话")).toBeInTheDocument();
+    expect(screen.getByText("永久允许")).toBeInTheDocument();
+    expect(screen.getAllByText("拒绝")).toHaveLength(2);
+    fireEvent.click(screen.getByText("此会话"));
     await waitFor(() =>
       expect(api.agent.respondApproval).toHaveBeenCalledWith(
         expect.any(String),
-        'session'
-      )
-    )
-  })
+        "session",
+      ),
+    );
+  });
 
-  it('renders and answers an OpenCode question request', async () => {
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '需要确认的任务' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+  it("renders and answers an OpenCode question request", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "需要确认的任务" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
 
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'question',
-        questionId: 'question-1',
+        type: "question",
+        questionId: "question-1",
         questions: [
           {
-            header: '实现方式',
-            question: '请选择实现方式',
+            header: "实现方式",
+            question: "请选择实现方式",
             options: [
               {
-                label: '直接修改',
-                description: '立即更新现有实现'
+                label: "直接修改",
+                description: "立即更新现有实现",
               },
               {
-                label: '先写测试',
-                description: '先增加回归测试'
-              }
+                label: "先写测试",
+                description: "先增加回归测试",
+              },
             ],
             multiple: false,
-            custom: true
-          }
-        ]
-      })
-    })
+            custom: true,
+          },
+        ],
+      });
+    });
 
     expect(
-      await screen.findByText('OpenCode 需要补充信息')
-    ).toBeInTheDocument()
-    fireEvent.click(screen.getByLabelText(/先写测试/u))
-    fireEvent.click(screen.getByRole('button', { name: '提交回答' }))
+      await screen.findByText("OpenCode 需要补充信息"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/先写测试/u));
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
     await waitFor(() =>
-      expect(api.agent.respondQuestion).toHaveBeenCalledWith(
-        'question-1',
-        [['先写测试']]
-      )
-    )
-    expect(
-      screen.queryByText('OpenCode 需要补充信息')
-    ).not.toBeInTheDocument()
-  })
+      expect(api.agent.respondQuestion).toHaveBeenCalledWith("question-1", [
+        ["先写测试"],
+      ]),
+    );
+    expect(screen.queryByText("OpenCode 需要补充信息")).not.toBeInTheDocument();
+  });
 
-  it('configures a runtime without reading an existing API key', async () => {
-    render(<App />)
+  it("configures a runtime without reading an existing API key", async () => {
+    render(<App />);
 
-    fireEvent.click(await screen.findByText('本地工作区'))
+    fireEvent.click(await screen.findByText("本地工作区"));
     expect(
-      await screen.findByRole('heading', {
-        name: '设置中心'
-      })
-    ).toBeInTheDocument()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.getByRole('region', { name: '设置中心' }))
-      .toBeInTheDocument()
+      await screen.findByRole("heading", {
+        name: "设置中心",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole('tab', { name: 'Agent Runtime' })
-    ).toBeInTheDocument()
+      screen.getByRole("region", { name: "设置中心" }),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole('tab', { name: '安全与数据' })
-    ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+      screen.getByRole("tab", { name: "Agent Runtime" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "安全与数据" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "模型连接" }));
 
-    const apiKeyInput = screen.getByLabelText('API Key')
-    expect(apiKeyInput).toHaveValue('')
+    const apiKeyInput = screen.getByLabelText("API Key");
+    expect(apiKeyInput).toHaveValue("");
     fireEvent.change(apiKeyInput, {
-      target: { value: 'test-api-key' }
-    })
-    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+      target: { value: "test-api-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     await waitFor(() =>
       expect(api.settings.updateRuntime).toHaveBeenCalledWith(
         expect.objectContaining({
           apiKey: {
-            action: 'replace',
-            value: 'test-api-key'
-          }
-        })
-      )
-    )
-    await waitFor(() => expect(apiKeyInput).toHaveValue(''))
-  })
+            action: "replace",
+            value: "test-api-key",
+          },
+        }),
+      ),
+    );
+    await waitFor(() => expect(apiKeyInput).toHaveValue(""));
+  });
 
-  it('opens the global assistant sidebar and switches work tabs', async () => {
-    const { container } = render(<App />)
+  it("opens the global assistant sidebar and switches work tabs", async () => {
+    const { container } = render(<App />);
 
-    const sidebar = screen.getByLabelText('助手工作栏')
-    expect(sidebar).not.toHaveClass('assistant-sidebar--open')
-    const assistantTrigger =
-      screen.getByLabelText('切换助手工作栏')
+    const sidebar = screen.getByLabelText("助手工作栏");
+    expect(sidebar).not.toHaveClass("assistant-sidebar--open");
+    const assistantTrigger = screen.getByLabelText("切换助手工作栏");
     expect(assistantTrigger.parentElement).toBe(
-      container.querySelector('.app-content')
-    )
-    expect(container.querySelector('.sidebar')?.parentElement).toBe(
-      container.querySelector('.app-shell')
-    )
-    expect(container.querySelector('.app-frame')?.parentElement).toBe(
-      container.querySelector('.app-shell')
-    )
-    expect(container.querySelector('.topbar')?.parentElement).toBe(
-      container.querySelector('.app-frame')
-    )
-    expect(assistantTrigger).toHaveClass('assistant-sidebar-toggle')
-    expect(assistantTrigger).not.toHaveClass('icon-button--active')
-    expect(assistantTrigger).toHaveAttribute('aria-expanded', 'false')
+      container.querySelector(".app-content"),
+    );
+    expect(container.querySelector(".sidebar")?.parentElement).toBe(
+      container.querySelector(".app-shell"),
+    );
+    expect(container.querySelector(".app-frame")?.parentElement).toBe(
+      container.querySelector(".app-shell"),
+    );
+    expect(container.querySelector(".topbar")?.parentElement).toBe(
+      container.querySelector(".app-frame"),
+    );
+    expect(assistantTrigger).toHaveClass("assistant-sidebar-toggle");
+    expect(assistantTrigger).not.toHaveClass("icon-button--active");
+    expect(assistantTrigger).toHaveAttribute("aria-expanded", "false");
     expect(assistantTrigger).toHaveAttribute(
-      'aria-controls',
-      'assistant-sidebar'
-    )
+      "aria-controls",
+      "assistant-sidebar",
+    );
     expect(
-      assistantTrigger.querySelector('.lucide-panel-right-open')
-    ).toBeInTheDocument()
+      assistantTrigger.querySelector(".lucide-panel-right-open"),
+    ).toBeInTheDocument();
     expect(
-      assistantTrigger.querySelector('.lucide-panel-right-close')
-    ).not.toBeInTheDocument()
+      assistantTrigger.querySelector(".lucide-panel-right-close"),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector(".topbar")).toContainElement(
+      screen.getByLabelText("关闭窗口"),
+    );
+    expect(container.querySelector(".topbar")).toContainElement(
+      container.querySelector(".conversation-title"),
+    );
+    expect(container.querySelector(".topbar")).not.toContainElement(
+      assistantTrigger,
+    );
+    expect(screen.queryByLabelText("关闭助手工作栏")).not.toBeInTheDocument();
+    fireEvent.click(assistantTrigger);
+    expect(sidebar).toHaveClass("assistant-sidebar--open");
+    expect(sidebar).toHaveAttribute("id", "assistant-sidebar");
+    expect(sidebar).toHaveAttribute("role", "complementary");
+    expect(sidebar).not.toHaveAttribute("aria-modal");
+    expect(assistantTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(assistantTrigger).not.toHaveClass("icon-button--active");
     expect(
-      container.querySelector('.topbar')
-    ).toContainElement(screen.getByLabelText('关闭窗口'))
-    expect(container.querySelector('.topbar')).toContainElement(
-      container.querySelector('.conversation-title')
-    )
+      assistantTrigger.querySelector(".lucide-panel-right-close"),
+    ).toBeInTheDocument();
     expect(
-      container.querySelector('.topbar')
-    ).not.toContainElement(assistantTrigger)
+      assistantTrigger.querySelector(".lucide-panel-right-open"),
+    ).not.toBeInTheDocument();
+    const main = document.querySelector("main");
+    expect(main).not.toHaveAttribute("inert");
     expect(
-      screen.queryByLabelText('关闭助手工作栏')
-    ).not.toBeInTheDocument()
-    fireEvent.click(assistantTrigger)
-    expect(sidebar).toHaveClass('assistant-sidebar--open')
-    expect(sidebar).toHaveAttribute('id', 'assistant-sidebar')
-    expect(sidebar).toHaveAttribute('role', 'complementary')
-    expect(sidebar).not.toHaveAttribute('aria-modal')
-    expect(assistantTrigger).toHaveAttribute('aria-expanded', 'true')
-    expect(assistantTrigger).not.toHaveClass('icon-button--active')
-    expect(
-      assistantTrigger.querySelector('.lucide-panel-right-close')
-    ).toBeInTheDocument()
-    expect(
-      assistantTrigger.querySelector('.lucide-panel-right-open')
-    ).not.toBeInTheDocument()
-    const main = document.querySelector('main')
-    expect(main).not.toHaveAttribute('inert')
-    expect(
-      container.querySelector('.assistant-sidebar-backdrop')
-    ).not.toBeInTheDocument()
+      container.querySelector(".assistant-sidebar-backdrop"),
+    ).not.toBeInTheDocument();
 
+    expect(screen.getByRole("tab", { name: "任务中心" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const taskIndexHeading = screen.getByRole("heading", {
+      name: "任务索引",
+    });
+    const newTaskButton = screen.getByRole("button", {
+      name: "新建任务",
+    });
+    expect(taskIndexHeading.parentElement).toContainElement(newTaskButton);
     expect(
-      screen.getByRole('tab', { name: '任务中心' })
-    ).toHaveAttribute('aria-selected', 'true')
-    const taskIndexHeading = screen.getByRole('heading', {
-      name: '任务索引'
-    })
-    const newTaskButton = screen.getByRole('button', {
-      name: '新建任务'
-    })
-    expect(taskIndexHeading.parentElement).toContainElement(
-      newTaskButton
-    )
+      screen.queryByRole("region", { name: "当前会话的任务" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("最近任务")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('region', { name: '当前会话的任务' })
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
+      screen.queryByRole("tab", { name: "上下文" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "工作区" }));
+    expect(screen.getByRole("tab", { name: "工作区" })).toHaveAttribute(
+      "title",
+      "浏览项目文件、Git 变更与文件内容",
+    );
     expect(
-      screen.queryByRole('tab', { name: '上下文' })
-    ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+      screen.queryByRole("heading", { name: "项目工作区" }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('tab', { name: '工作区' })
-    ).toHaveAttribute('title', '浏览项目文件、Git 变更与文件内容')
+      screen.getByRole("button", { name: "刷新工作区文件" }),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole('heading', { name: '项目工作区' })
-    ).not.toBeInTheDocument()
+      screen.queryByText(/选择文件后在当前工作区内预览/),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "浏览器" }));
+    expect(screen.getByText("实时浏览器")).toBeInTheDocument();
+    expect(screen.getByText(/Agent 打开网页后/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "成果" }));
     expect(
-      screen.getByRole('button', { name: '刷新工作区文件' })
-    ).toBeInTheDocument()
+      screen.getByRole("button", { name: "导入 PDF、图片或网页" }),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByText(/选择文件后在当前工作区内预览/)
-    ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
-    expect(screen.getByText('实时浏览器')).toBeInTheDocument()
+      screen.getByRole("heading", { name: "生成与导入成果" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "预览" })).not.toBeInTheDocument();
+    fireEvent.click(assistantTrigger);
+    expect(sidebar).not.toHaveClass("assistant-sidebar--open");
+    expect(assistantTrigger).toHaveAttribute("aria-expanded", "false");
     expect(
-      screen.getByText(/Agent 打开网页后/)
-    ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '成果' }))
-    expect(
-      screen.getByRole('button', { name: '导入 PDF、图片或网页' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('heading', { name: '生成与导入成果' })
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('tab', { name: '预览' })
-    ).not.toBeInTheDocument()
-    fireEvent.click(assistantTrigger)
-    expect(sidebar).not.toHaveClass('assistant-sidebar--open')
-    expect(assistantTrigger).toHaveAttribute('aria-expanded', 'false')
-    expect(
-      assistantTrigger.querySelector('.lucide-panel-right-open')
-    ).toBeInTheDocument()
-    expect(main).not.toHaveAttribute('inert')
-    await waitFor(() => expect(assistantTrigger).toHaveFocus())
-  })
+      assistantTrigger.querySelector(".lucide-panel-right-open"),
+    ).toBeInTheDocument();
+    expect(main).not.toHaveAttribute("inert");
+    await waitFor(() => expect(assistantTrigger).toHaveFocus());
+  });
 
-  it('keeps completed chat replies out of the results sidebar', async () => {
-    render(<App />)
+  it("keeps completed chat replies out of the results sidebar", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '普通聊天问题' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-    const request = run.mock.calls[0]?.[0]
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "普通聊天问题" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]?.[0];
     if (!request) {
-      throw new Error('Missing request')
+      throw new Error("Missing request");
     }
     act(() => {
       agentListener?.({
         requestId: request.requestId,
-        type: 'text',
-        delta: '这是一条普通聊天回复'
-      })
+        type: "text",
+        delta: "这是一条普通聊天回复",
+      });
       agentListener?.({
         requestId: request.requestId,
-        type: 'done'
-      })
-    })
-    expect(
-      await screen.findByText('这是一条普通聊天回复')
-    ).toBeInTheDocument()
+        type: "done",
+      });
+    });
+    expect(await screen.findByText("这是一条普通聊天回复")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(screen.getByRole('tab', { name: '成果' }))
-    const sidebar = screen.getByLabelText('助手工作栏')
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(screen.getByRole("tab", { name: "成果" }));
+    const sidebar = screen.getByLabelText("助手工作栏");
     expect(
-      within(sidebar).queryByText('这是一条普通聊天回复')
-    ).not.toBeInTheDocument()
+      within(sidebar).queryByText("这是一条普通聊天回复"),
+    ).not.toBeInTheDocument();
     expect(
       within(sidebar).getByText(
-        '生成的文件、图片、报告和手动导入内容会显示在这里。'
-      )
-    ).toBeInTheDocument()
-  })
+        "生成的文件、图片、报告和手动导入内容会显示在这里。",
+      ),
+    ).toBeInTheDocument();
+  });
 
-  it('shows the browser toolbar and starts an empty session by address', async () => {
-    render(<App />)
+  it("shows the browser toolbar and starts an empty session by address", async () => {
+    render(<App />);
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(screen.getByRole("tab", { name: "浏览器" }));
 
-    const toolbar = screen.getByRole('form', {
-      name: '浏览器工具栏'
-    })
-    const address = within(toolbar).getByRole('textbox', {
-      name: '浏览器地址'
-    })
-    const go = within(toolbar).getByRole('button', { name: '前往' })
-    expect(within(toolbar).getByRole('button', { name: '返回' }))
-      .toBeDisabled()
-    expect(within(toolbar).getByRole('button', { name: '刷新' }))
-      .toBeDisabled()
-    expect(within(toolbar).getByRole('button', { name: '交互' }))
-      .toBeDisabled()
+    const toolbar = screen.getByRole("form", {
+      name: "浏览器工具栏",
+    });
+    const address = within(toolbar).getByRole("textbox", {
+      name: "浏览器地址",
+    });
+    const go = within(toolbar).getByRole("button", { name: "前往" });
     expect(
-      within(toolbar).getByRole('button', { name: '关闭浏览器' })
-    ).toBeDisabled()
-    expect(go).toBeDisabled()
-    expect(screen.getByText(/输入地址并前往可打开页面/u))
-      .toBeInTheDocument()
+      within(toolbar).getByRole("button", { name: "返回" }),
+    ).toBeDisabled();
+    expect(
+      within(toolbar).getByRole("button", { name: "刷新" }),
+    ).toBeDisabled();
+    expect(
+      within(toolbar).getByRole("button", { name: "交互" }),
+    ).toBeDisabled();
+    expect(
+      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
+    ).toBeDisabled();
+    expect(go).toBeDisabled();
+    expect(screen.getByText(/输入地址并前往可打开页面/u)).toBeInTheDocument();
 
     fireEvent.change(address, {
-      target: { value: 'https://example.com/start' }
-    })
-    expect(go).toBeEnabled()
-    fireEvent.click(go)
+      target: { value: "https://example.com/start" },
+    });
+    expect(go).toBeEnabled();
+    fireEvent.click(go);
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
         expect.any(String),
-        'https://example.com/start'
-      )
-    )
-    expect(address).toHaveValue('https://example.com/start')
+        "https://example.com/start",
+      ),
+    );
+    expect(address).toHaveValue("https://example.com/start");
 
     fireEvent.change(address, {
-      target: { value: 'example.com/enter' }
-    })
-    fireEvent.keyDown(address, { key: 'Enter' })
+      target: { value: "example.com/enter" },
+    });
+    fireEvent.keyDown(address, { key: "Enter" });
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
         expect.any(String),
-        'http://example.com/enter'
-      )
-    )
-    expect(address).toHaveValue('http://example.com/enter')
+        "http://example.com/enter",
+      ),
+    );
+    expect(address).toHaveValue("http://example.com/enter");
 
     fireEvent.change(address, {
-      target: { value: 'mailto:user@example.com' }
-    })
-    fireEvent.keyDown(address, { key: 'Enter' })
+      target: { value: "mailto:user@example.com" },
+    });
+    fireEvent.keyDown(address, { key: "Enter" });
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
         expect.any(String),
-        'mailto:user@example.com'
-      )
-    )
+        "mailto:user@example.com",
+      ),
+    );
 
     fireEvent.change(address, {
-      target: { value: 'localhost:3000/path' }
-    })
-    fireEvent.keyDown(address, { key: 'Enter' })
+      target: { value: "localhost:3000/path" },
+    });
+    fireEvent.keyDown(address, { key: "Enter" });
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
         expect.any(String),
-        'http://localhost:3000/path'
-      )
-    )
-    expect(api.browser.navigate).toHaveBeenCalledTimes(4)
-  })
+        "http://localhost:3000/path",
+      ),
+    );
+    expect(api.browser.navigate).toHaveBeenCalledTimes(4);
+  });
 
-  it('suppresses duplicate browser actions while keeping stop loading available', async () => {
-    const navigation = deferred<void>()
-    vi.mocked(api.browser.navigate).mockReturnValueOnce(
-      navigation.promise
-    )
-    render(<App />)
+  it("suppresses duplicate browser actions while keeping stop loading available", async () => {
+    const navigation = deferred<void>();
+    vi.mocked(api.browser.navigate).mockReturnValueOnce(navigation.promise);
+    render(<App />);
 
-    fireEvent.click(screen.getByLabelText('切换助手工作栏'))
-    fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(screen.getByRole("tab", { name: "浏览器" }));
 
-    const toolbar = screen.getByRole('form', {
-      name: '浏览器工具栏'
-    })
-    const address = within(toolbar).getByRole('textbox', {
-      name: '浏览器地址'
-    })
-    const go = within(toolbar).getByRole('button', { name: '前往' })
+    const toolbar = screen.getByRole("form", {
+      name: "浏览器工具栏",
+    });
+    const address = within(toolbar).getByRole("textbox", {
+      name: "浏览器地址",
+    });
+    const go = within(toolbar).getByRole("button", { name: "前往" });
     fireEvent.change(address, {
-      target: { value: 'https://example.com/pending' }
-    })
-    fireEvent.click(go)
-    fireEvent.click(go)
-    fireEvent.keyDown(address, { key: 'Enter' })
+      target: { value: "https://example.com/pending" },
+    });
+    fireEvent.click(go);
+    fireEvent.click(go);
+    fireEvent.keyDown(address, { key: "Enter" });
 
-    expect(api.browser.navigate).toHaveBeenCalledOnce()
+    expect(api.browser.navigate).toHaveBeenCalledOnce();
     const conversationId =
-      vi.mocked(api.browser.navigate).mock.calls[0]?.[0] ?? ''
+      vi.mocked(api.browser.navigate).mock.calls[0]?.[0] ?? "";
     act(() => {
-      browserListener?.(createBrowserState(conversationId, {
-        status: 'loading',
-        isLoading: true,
-        url: 'https://example.com/pending',
-        updatedAt: Date.now()
-      }))
-    })
+      browserListener?.(
+        createBrowserState(conversationId, {
+          status: "loading",
+          isLoading: true,
+          url: "https://example.com/pending",
+          updatedAt: Date.now(),
+        }),
+      );
+    });
 
     expect(
-      within(toolbar).getByRole('button', { name: '返回' })
-    ).toBeDisabled()
-    expect(address).toBeDisabled()
-    expect(go).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "返回" }),
+    ).toBeDisabled();
+    expect(address).toBeDisabled();
+    expect(go).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '交互' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "交互" }),
+    ).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '关闭浏览器' })
-    ).toBeDisabled()
-    const stopLoading = within(toolbar).getByRole('button', {
-      name: '停止加载'
-    })
-    expect(stopLoading).toBeEnabled()
-    fireEvent.click(stopLoading)
-    expect(api.browser.stopLoading).toHaveBeenCalledOnce()
+      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
+    ).toBeDisabled();
+    const stopLoading = within(toolbar).getByRole("button", {
+      name: "停止加载",
+    });
+    expect(stopLoading).toBeEnabled();
+    fireEvent.click(stopLoading);
+    expect(api.browser.stopLoading).toHaveBeenCalledOnce();
 
     await act(async () => {
-      navigation.resolve()
-      await navigation.promise
-    })
-    const back = within(toolbar).getByRole('button', { name: '返回' })
-    const backNavigation = deferred<void>()
-    vi.mocked(api.browser.back).mockReturnValueOnce(
-      backNavigation.promise
-    )
+      navigation.resolve();
+      await navigation.promise;
+    });
+    const back = within(toolbar).getByRole("button", { name: "返回" });
+    const backNavigation = deferred<void>();
+    vi.mocked(api.browser.back).mockReturnValueOnce(backNavigation.promise);
     act(() => {
-      browserListener?.(createBrowserState(conversationId, {
-        canGoBack: true,
-        url: 'https://example.com/pending',
-        updatedAt: Date.now() + 1
-      }))
-    })
-    expect(back).toBeEnabled()
-    fireEvent.click(back)
-    fireEvent.click(back)
-    expect(api.browser.back).toHaveBeenCalledOnce()
+      browserListener?.(
+        createBrowserState(conversationId, {
+          canGoBack: true,
+          url: "https://example.com/pending",
+          updatedAt: Date.now() + 1,
+        }),
+      );
+    });
+    expect(back).toBeEnabled();
+    fireEvent.click(back);
+    fireEvent.click(back);
+    expect(api.browser.back).toHaveBeenCalledOnce();
 
     await act(async () => {
-      backNavigation.resolve()
-      await backNavigation.promise
-    })
-  })
+      backNavigation.resolve();
+      await backNavigation.promise;
+    });
+  });
 
-  it('controls the active live browser without overwriting its address draft', async () => {
-    render(<App />)
+  it("controls the active live browser without overwriting its address draft", async () => {
+    render(<App />);
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '打开示例网页' }
-    })
-    fireEvent.click(await screen.findByLabelText('发送'))
-    await waitFor(
-      () => expect(run).toHaveBeenCalledOnce(),
-      { timeout: 3000 }
-    )
-    const conversationId = run.mock.calls[0]?.[0].conversationId
-    expect(conversationId).toBeTruthy()
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "打开示例网页" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce(), { timeout: 3000 });
+    const conversationId = run.mock.calls[0]?.[0].conversationId;
+    expect(conversationId).toBeTruthy();
 
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        canGoBack: false,
-        url: 'https://example.com/',
-        frameDataUrl: 'data:image/jpeg;base64,/9j/2Q==',
-        updatedAt: Date.now()
-      }))
-    })
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          canGoBack: false,
+          url: "https://example.com/",
+          frameDataUrl: "data:image/jpeg;base64,/9j/2Q==",
+          updatedAt: Date.now(),
+        }),
+      );
+    });
 
-    expect(screen.getByLabelText('助手工作栏')).toHaveClass(
-      'assistant-sidebar--open'
-    )
-    expect(
-      screen.getByRole('tab', { name: '浏览器' })
-    ).toHaveAttribute('aria-selected', 'true')
-    expect(
-      screen.getByAltText('Agent 实时浏览器画面')
-    ).toHaveAttribute(
-      'src',
-      'data:image/jpeg;base64,/9j/2Q=='
-    )
-    const toolbar = screen.getByRole('form', {
-      name: '浏览器工具栏'
-    })
-    const address = within(toolbar).getByRole('textbox', {
-      name: '浏览器地址'
-    })
-    const back = within(toolbar).getByRole('button', { name: '返回' })
-    expect(address).toHaveValue('https://example.com/')
-    expect(back).toBeDisabled()
+    expect(screen.getByLabelText("助手工作栏")).toHaveClass(
+      "assistant-sidebar--open",
+    );
+    expect(screen.getByRole("tab", { name: "浏览器" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByAltText("Agent 实时浏览器画面")).toHaveAttribute(
+      "src",
+      "data:image/jpeg;base64,/9j/2Q==",
+    );
+    const toolbar = screen.getByRole("form", {
+      name: "浏览器工具栏",
+    });
+    const address = within(toolbar).getByRole("textbox", {
+      name: "浏览器地址",
+    });
+    const back = within(toolbar).getByRole("button", { name: "返回" });
+    expect(address).toHaveValue("https://example.com/");
+    expect(back).toBeDisabled();
 
-    fireEvent.focus(address)
+    fireEvent.focus(address);
     fireEvent.change(address, {
-      target: { value: 'https://typed.example/draft' }
-    })
+      target: { value: "https://typed.example/draft" },
+    });
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        canGoBack: true,
-        url: 'https://example.com/redirected',
-        updatedAt: Date.now() + 1
-      }))
-    })
-    expect(address).toHaveValue('https://typed.example/draft')
-    expect(
-      screen.getByAltText('Agent 实时浏览器画面')
-    ).toHaveAttribute(
-      'src',
-      'data:image/jpeg;base64,/9j/2Q=='
-    )
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          canGoBack: true,
+          url: "https://example.com/redirected",
+          updatedAt: Date.now() + 1,
+        }),
+      );
+    });
+    expect(address).toHaveValue("https://typed.example/draft");
+    expect(screen.getByAltText("Agent 实时浏览器画面")).toHaveAttribute(
+      "src",
+      "data:image/jpeg;base64,/9j/2Q==",
+    );
 
-    fireEvent.keyDown(address, { key: 'Escape' })
-    expect(address).toHaveValue('https://example.com/redirected')
-    expect(address).not.toHaveFocus()
-    expect(back).toBeEnabled()
-    fireEvent.click(back)
+    fireEvent.keyDown(address, { key: "Escape" });
+    expect(address).toHaveValue("https://example.com/redirected");
+    expect(address).not.toHaveFocus();
+    expect(back).toBeEnabled();
+    fireEvent.click(back);
     await waitFor(() =>
-      expect(api.browser.back).toHaveBeenCalledWith(conversationId)
-    )
+      expect(api.browser.back).toHaveBeenCalledWith(conversationId),
+    );
 
-    fireEvent.click(
-      within(toolbar).getByRole('button', { name: '刷新' })
-    )
+    fireEvent.click(within(toolbar).getByRole("button", { name: "刷新" }));
     await waitFor(() =>
-      expect(api.browser.reload).toHaveBeenCalledWith(conversationId)
-    )
+      expect(api.browser.reload).toHaveBeenCalledWith(conversationId),
+    );
     fireEvent.change(address, {
-      target: { value: 'https://example.com/manual' }
-    })
-    fireEvent.click(
-      within(toolbar).getByRole('button', { name: '前往' })
-    )
+      target: { value: "https://example.com/manual" },
+    });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "前往" }));
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenCalledWith(
         conversationId,
-        'https://example.com/manual'
-      )
-    )
-    expect(address).toHaveValue('https://example.com/redirected')
+        "https://example.com/manual",
+      ),
+    );
+    expect(address).toHaveValue("https://example.com/redirected");
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        canGoBack: true,
-        url: 'https://example.com/canonical/',
-        updatedAt: Date.now() + 2
-      }))
-    })
-    expect(address).toHaveValue('https://example.com/canonical/')
-    fireEvent.focus(address)
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          canGoBack: true,
+          url: "https://example.com/canonical/",
+          updatedAt: Date.now() + 2,
+        }),
+      );
+    });
+    expect(address).toHaveValue("https://example.com/canonical/");
+    fireEvent.focus(address);
     fireEvent.change(address, {
-      target: { value: 'https://example.com/canonical' }
-    })
-    fireEvent.click(
-      within(toolbar).getByRole('button', { name: '前往' })
-    )
+      target: { value: "https://example.com/canonical" },
+    });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "前往" }));
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenCalledWith(
         conversationId,
-        'https://example.com/canonical'
-      )
-    )
-    expect(address).toHaveValue('https://example.com/canonical/')
-    fireEvent.click(
-      within(toolbar).getByRole('button', { name: '交互' })
-    )
+        "https://example.com/canonical",
+      ),
+    );
+    expect(address).toHaveValue("https://example.com/canonical/");
+    fireEvent.click(within(toolbar).getByRole("button", { name: "交互" }));
     await waitFor(() =>
-      expect(api.browser.interact).toHaveBeenCalledWith(conversationId)
-    )
+      expect(api.browser.interact).toHaveBeenCalledWith(conversationId),
+    );
 
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        status: 'loading',
-        isLoading: false,
-        canGoBack: true,
-        url: 'https://example.com/canonical/',
-        updatedAt: Date.now() + 3
-      }))
-    })
-    expect(back).toBeDisabled()
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          status: "loading",
+          isLoading: false,
+          canGoBack: true,
+          url: "https://example.com/canonical/",
+          updatedAt: Date.now() + 3,
+        }),
+      );
+    });
+    expect(back).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '刷新' })
-    ).toBeDisabled()
-    expect(address).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "刷新" }),
+    ).toBeDisabled();
+    expect(address).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '交互' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "交互" }),
+    ).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '关闭浏览器' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
+    ).toBeDisabled();
 
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        status: 'acting',
-        canGoBack: true,
-        url: 'https://example.com/canonical/',
-        updatedAt: Date.now() + 4
-      }))
-    })
-    expect(back).toBeDisabled()
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          status: "acting",
+          canGoBack: true,
+          url: "https://example.com/canonical/",
+          updatedAt: Date.now() + 4,
+        }),
+      );
+    });
+    expect(back).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '刷新' })
-    ).toBeDisabled()
-    expect(address).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "刷新" }),
+    ).toBeDisabled();
+    expect(address).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '前往' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "前往" }),
+    ).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '交互' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "交互" }),
+    ).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '关闭浏览器' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
+    ).toBeDisabled();
 
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        status: 'acting',
-        isLoading: true,
-        canGoBack: true,
-        url: 'https://example.com/canonical/',
-        updatedAt: Date.now() + 5
-      }))
-    })
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          status: "acting",
+          isLoading: true,
+          canGoBack: true,
+          url: "https://example.com/canonical/",
+          updatedAt: Date.now() + 5,
+        }),
+      );
+    });
     expect(
-      within(toolbar).queryByRole('button', { name: '刷新' })
-    ).not.toBeInTheDocument()
-    const stopLoading = within(toolbar).getByRole('button', {
-      name: '停止加载'
-    })
-    expect(stopLoading).toBeEnabled()
+      within(toolbar).queryByRole("button", { name: "刷新" }),
+    ).not.toBeInTheDocument();
+    const stopLoading = within(toolbar).getByRole("button", {
+      name: "停止加载",
+    });
+    expect(stopLoading).toBeEnabled();
     expect(
-      within(toolbar).getByRole('button', { name: '关闭浏览器' })
-    ).toBeDisabled()
-    fireEvent.click(stopLoading)
+      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
+    ).toBeDisabled();
+    fireEvent.click(stopLoading);
     await waitFor(() =>
-      expect(api.browser.stopLoading).toHaveBeenCalledWith(
-        conversationId
-      )
-    )
+      expect(api.browser.stopLoading).toHaveBeenCalledWith(conversationId),
+    );
 
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        status: 'interactive',
-        canGoBack: true,
-        url: 'https://example.com/canonical/',
-        updatedAt: Date.now() + 6
-      }))
-    })
-    expect(back).toBeDisabled()
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          status: "interactive",
+          canGoBack: true,
+          url: "https://example.com/canonical/",
+          updatedAt: Date.now() + 6,
+        }),
+      );
+    });
+    expect(back).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '刷新' })
-    ).toBeDisabled()
-    expect(address).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "刷新" }),
+    ).toBeDisabled();
+    expect(address).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '交互' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "交互" }),
+    ).toBeDisabled();
     expect(
-      within(toolbar).getByRole('button', { name: '关闭浏览器' })
-    ).toBeDisabled()
+      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
+    ).toBeDisabled();
 
     act(() => {
-      browserListener?.(createBrowserState(conversationId ?? '', {
-        canGoBack: true,
-        url: 'https://example.com/canonical/',
-        updatedAt: Date.now() + 7
-      }))
-    })
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          canGoBack: true,
+          url: "https://example.com/canonical/",
+          updatedAt: Date.now() + 7,
+        }),
+      );
+    });
     fireEvent.click(
-      within(toolbar).getByRole('button', { name: '关闭浏览器' })
-    )
+      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
+    );
     await waitFor(() =>
-      expect(api.browser.stop).toHaveBeenCalledWith(conversationId)
-    )
-  })
+      expect(api.browser.stop).toHaveBeenCalledWith(conversationId),
+    );
+  });
 
-  it('opens Smart Heartbeat as a first-class workspace', async () => {
-    render(<App />)
+  it("opens Smart Heartbeat as a first-class workspace", async () => {
+    render(<App />);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '智能心跳' })
-    )
+    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
 
     expect(
-      await screen.findByRole('heading', { name: '智能心跳' })
-    ).toBeInTheDocument()
+      await screen.findByRole("heading", { name: "智能心跳" }),
+    ).toBeInTheDocument();
     expect(
-      await screen.findByRole('tab', { name: '运行概览' })
-    ).toBeInTheDocument()
+      await screen.findByRole("tab", { name: "运行概览" }),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: '配置智能心跳' })
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByLabelText('切换助手工作栏')
-    ).toBeInTheDocument()
-  })
+      screen.getByRole("button", { name: "配置智能心跳" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();
+  });
 
-  it('excludes ignored heartbeat suggestions from the navigation badge', async () => {
-    const heartbeatId = '00000000-0000-4000-8000-000000000701'
-    const cancelledTaskId = '00000000-0000-4000-8000-000000000801'
-    const pendingTaskId = '00000000-0000-4000-8000-000000000802'
+  it("excludes ignored heartbeat suggestions from the navigation badge", async () => {
+    const heartbeatId = "00000000-0000-4000-8000-000000000701";
+    const cancelledTaskId = "00000000-0000-4000-8000-000000000801";
+    const pendingTaskId = "00000000-0000-4000-8000-000000000802";
     vi.mocked(api.heartbeats.list).mockResolvedValue([
       {
         id: heartbeatId,
-        scope: { kind: 'projects', projectIds: [projectId] },
-        name: '每日回顾',
-        timezone: 'Asia/Shanghai',
-        recurrence: { type: 'daily', localTime: '09:00' },
+        scope: { kind: "projects", projectIds: [projectId] },
+        name: "每日回顾",
+        timezone: "Asia/Shanghai",
+        recurrence: { type: "daily", localTime: "09:00" },
         enabled: true,
         lookbackHours: 24,
         retentionDays: 30,
-        nextRunAt: '2026-08-05T01:00:00.000Z',
-        createdAt: '2026-08-01T00:00:00.000Z',
-        updatedAt: '2026-08-01T00:00:00.000Z'
-      }
-    ])
+        nextRunAt: "2026-08-05T01:00:00.000Z",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
     vi.mocked(api.heartbeats.history).mockResolvedValue({
       runs: [],
       entries: [
         {
-          id: '00000000-0000-4000-8000-000000000901',
+          id: "00000000-0000-4000-8000-000000000901",
           configId: heartbeatId,
-          runId: '00000000-0000-4000-8000-000000000902',
-          scheduledFor: '2026-08-04T01:00:00.000Z',
-          summary: '建议处理两个后续行动。',
+          runId: "00000000-0000-4000-8000-000000000902",
+          scheduledFor: "2026-08-04T01:00:00.000Z",
+          summary: "建议处理两个后续行动。",
           highlights: [],
           proposedMemoryIds: [],
           followUpTaskIds: [cancelledTaskId, pendingTaskId],
-          createdAt: '2026-08-04T01:00:00.000Z'
-        }
-      ]
-    })
+          createdAt: "2026-08-04T01:00:00.000Z",
+        },
+      ],
+    });
     vi.mocked(api.tasks.list).mockResolvedValue([
       {
         id: cancelledTaskId,
         projectId,
-        title: '已忽略建议',
-        instructions: '无需继续处理。',
-        origin: 'assistant',
-        status: 'cancelled',
-        createdAt: '2026-08-04T01:00:00.000Z'
+        title: "已忽略建议",
+        instructions: "无需继续处理。",
+        origin: "assistant",
+        status: "cancelled",
+        createdAt: "2026-08-04T01:00:00.000Z",
       },
       {
         id: pendingTaskId,
         projectId,
-        title: '待处理建议',
-        instructions: '继续处理此建议。',
-        origin: 'assistant',
-        status: 'paused',
-        createdAt: '2026-08-04T01:00:00.000Z'
-      }
-    ])
+        title: "待处理建议",
+        instructions: "继续处理此建议。",
+        origin: "assistant",
+        status: "paused",
+        createdAt: "2026-08-04T01:00:00.000Z",
+      },
+    ]);
 
     try {
-      render(<App />)
+      render(<App />);
 
       expect(
-        await screen.findByLabelText('1 条待处理建议')
-      ).toBeInTheDocument()
-      expect(
-        screen.queryByLabelText('2 条待处理建议')
-      ).not.toBeInTheDocument()
+        await screen.findByLabelText("1 条待处理建议"),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("2 条待处理建议")).not.toBeInTheDocument();
     } finally {
-      cleanup()
-      vi.mocked(api.heartbeats.list).mockResolvedValue([])
+      cleanup();
+      vi.mocked(api.heartbeats.list).mockResolvedValue([]);
       vi.mocked(api.heartbeats.history).mockResolvedValue({
         runs: [],
-        entries: []
-      })
-      vi.mocked(api.tasks.list).mockResolvedValue([])
+        entries: [],
+      });
+      vi.mocked(api.tasks.list).mockResolvedValue([]);
     }
-  })
+  });
 
-  it('shows retryable page-local knowledge errors without an empty-state flash', async () => {
+  it("shows retryable page-local knowledge errors without an empty-state flash", async () => {
     vi.mocked(api.knowledge.getSnapshot).mockRejectedValueOnce(
-      new Error('知识数据库暂时不可用')
-    )
-    render(<App />)
+      new Error("知识数据库暂时不可用"),
+    );
+    render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
-    expect(
-      await screen.findByText('知识库加载失败')
-    ).toBeInTheDocument()
-    expect(screen.getAllByText('知识数据库暂时不可用')).toHaveLength(1)
-    expect(screen.queryByText('建立第一个知识库')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
+    expect(await screen.findByText("知识库加载失败")).toBeInTheDocument();
+    expect(screen.getAllByText("知识数据库暂时不可用")).toHaveLength(1);
+    expect(screen.queryByText("建立第一个知识库")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '重试' }))
-    expect(
-      await screen.findByText('建立第一个知识库')
-    ).toBeInTheDocument()
-  })
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByText("建立第一个知识库")).toBeInTheDocument();
+  });
 
-  it('retries the knowledge library whose selection failed', async () => {
-    const firstLibraryId = '11111111-1111-4111-8111-111111111111'
-    const secondLibraryId = '22222222-2222-4222-8222-222222222222'
+  it("retries the knowledge library whose selection failed", async () => {
+    const firstLibraryId = "11111111-1111-4111-8111-111111111111";
+    const secondLibraryId = "22222222-2222-4222-8222-222222222222";
     const libraries = [
       {
         id: firstLibraryId,
-        name: '产品知识',
-        description: '',
-        storageMode: 'managed' as const,
+        name: "产品知识",
+        description: "",
+        storageMode: "managed" as const,
         graphEnabled: false,
-        graphStrategy: 'rules' as const,
+        graphStrategy: "rules" as const,
         sourceCount: 0,
         documentCount: 0,
-        indexedDocumentCount: 0
+        indexedDocumentCount: 0,
       },
       {
         id: secondLibraryId,
-        name: '工程知识',
-        description: '',
-        storageMode: 'managed' as const,
+        name: "工程知识",
+        description: "",
+        storageMode: "managed" as const,
         graphEnabled: false,
-        graphStrategy: 'rules' as const,
+        graphStrategy: "rules" as const,
         sourceCount: 0,
         documentCount: 0,
-        indexedDocumentCount: 0
-      }
-    ]
+        indexedDocumentCount: 0,
+      },
+    ];
     const snapshot = {
       libraries,
       sources: [],
       documents: [],
       graphNodes: [],
       graphRelations: [],
-      evidence: []
-    }
+      evidence: [],
+    };
     vi.mocked(api.knowledge.getSnapshot)
       .mockResolvedValueOnce({
         ...snapshot,
-        selectedLibraryId: firstLibraryId
+        selectedLibraryId: firstLibraryId,
       })
-      .mockRejectedValueOnce(new Error('工程知识暂时不可用'))
+      .mockRejectedValueOnce(new Error("工程知识暂时不可用"))
       .mockResolvedValueOnce({
         ...snapshot,
-        selectedLibraryId: secondLibraryId
-      })
-    render(<App />)
+        selectedLibraryId: secondLibraryId,
+      });
+    render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
     fireEvent.click(
-      await screen.findByRole('button', {
-        name: /^工程知识/u
-      }, { timeout: 5_000 })
-    )
-    expect(
-      await screen.findByText('知识库刷新失败')
-    ).toBeInTheDocument()
+      await screen.findByRole(
+        "button",
+        {
+          name: /^工程知识/u,
+        },
+        { timeout: 5_000 },
+      ),
+    );
+    expect(await screen.findByText("知识库刷新失败")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() =>
       expect(api.knowledge.getSnapshot).toHaveBeenLastCalledWith(
-        secondLibraryId
-      )
-    )
+        secondLibraryId,
+      ),
+    );
     expect(
-      screen.getByRole('button', {
-        name: /^工程知识/u
-      })
-    ).toHaveAttribute('aria-current', 'page')
-  })
+      screen.getByRole("button", {
+        name: /^工程知识/u,
+      }),
+    ).toHaveAttribute("aria-current", "page");
+  });
 
-  it('shows retryable page-local heartbeat errors without first-time guidance', async () => {
+  it("shows retryable page-local heartbeat errors without first-time guidance", async () => {
     vi.mocked(api.heartbeats.list).mockRejectedValue(
-      new Error('心跳数据库暂时不可用')
-    )
-    render(<App />)
+      new Error("心跳数据库暂时不可用"),
+    );
+    render(<App />);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '智能心跳' })
-    )
+    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    expect(await screen.findByText("智能心跳加载失败")).toBeInTheDocument();
     expect(
-      await screen.findByText('智能心跳加载失败')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: '配置智能心跳' })
-    ).not.toBeInTheDocument()
+      screen.queryByRole("button", { name: "配置智能心跳" }),
+    ).not.toBeInTheDocument();
 
-    const retry = await screen.findByRole('button', { name: '重试' })
-    vi.mocked(api.heartbeats.list).mockResolvedValue([])
-    fireEvent.click(retry)
+    const retry = await screen.findByRole("button", { name: "重试" });
+    vi.mocked(api.heartbeats.list).mockResolvedValue([]);
+    fireEvent.click(retry);
     expect(
-      await screen.findByRole('button', { name: '配置智能心跳' })
-    ).toBeInTheDocument()
-  })
+      await screen.findByRole("button", { name: "配置智能心跳" }),
+    ).toBeInTheDocument();
+  });
 
-  it('keeps heartbeat plans independent of the active project', async () => {
+  it("keeps heartbeat plans independent of the active project", async () => {
     const secondProject = {
       ...project,
-      id: '00000000-0000-4000-8000-000000000102',
-      name: '第二项目',
-      rootPath: 'C:\\Second',
+      id: "00000000-0000-4000-8000-000000000102",
+      name: "第二项目",
+      rootPath: "C:\\Second",
       executionSpace: {
-        kind: 'local' as const,
-        rootPath: 'C:\\Second'
-      }
-    }
+        kind: "local" as const,
+        rootPath: "C:\\Second",
+      },
+    };
     vi.mocked(api.projects.list).mockResolvedValueOnce([
       project,
-      secondProject
-    ])
+      secondProject,
+    ]);
     vi.mocked(api.heartbeats.list).mockResolvedValue([
       {
-        id: '00000000-0000-4000-8000-000000000701',
-        scope: { kind: 'projects', projectIds: [projectId] },
-        name: '旧项目心跳',
-        timezone: 'Asia/Shanghai',
-        recurrence: { type: 'daily', localTime: '09:00' },
+        id: "00000000-0000-4000-8000-000000000701",
+        scope: { kind: "projects", projectIds: [projectId] },
+        name: "旧项目心跳",
+        timezone: "Asia/Shanghai",
+        recurrence: { type: "daily", localTime: "09:00" },
         enabled: true,
         lookbackHours: 24,
         retentionDays: 30,
-        nextRunAt: '2026-08-05T01:00:00.000Z',
-        createdAt: '2026-08-01T00:00:00.000Z',
-        updatedAt: '2026-08-01T00:00:00.000Z'
-      }
-    ])
-    render(<App />)
+        nextRunAt: "2026-08-05T01:00:00.000Z",
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+    render(<App />);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: '智能心跳' })
-    )
-    fireEvent.click(
-      await screen.findByRole('tab', { name: '心跳计划' })
-    )
-    expect(await screen.findAllByText('旧项目心跳')).not.toHaveLength(0)
-    selectProjectOption(secondProject.name)
-    fireEvent.click(
-      screen.getByRole('button', { name: '智能心跳' })
-    )
+    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "心跳计划" }));
+    expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
+    selectProjectOption(secondProject.name);
+    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
 
-    expect(await screen.findAllByText('旧项目心跳')).not.toHaveLength(0)
-  })
+    expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
+  });
 
-  it('automatically snapshots the conversation project on new activity', async () => {
-    render(<App />)
-    await screen.findByText('项目：默认项目')
+  it("automatically snapshots the conversation project on new activity", async () => {
+    render(<App />);
+    await screen.findByText("项目：默认项目");
 
-    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), {
-      target: { value: '记录项目范围' }
-    })
-    fireEvent.click(screen.getByLabelText('发送'))
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "记录项目范围" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
     await waitFor(() =>
       expect(
         vi
@@ -11030,651 +10627,621 @@ describe('App', () => {
           .mock.calls.at(-1)?.[0]
           .find(
             (record) =>
-              record.kind === 'request' &&
-              record.title === '记录项目范围'
-          )?.scope
+              record.kind === "request" && record.title === "记录项目范围",
+          )?.scope,
       ).toEqual({
-        kind: 'project',
+        kind: "project",
         projectId,
-        projectName: project.name
-      })
-    )
-  })
+        projectName: project.name,
+      }),
+    );
+  });
 
-  it('migrates legacy activity and keeps its possible-loss warning visible', async () => {
+  it("migrates legacy activity and keeps its possible-loss warning visible", async () => {
     localStorage.setItem(
       ACTIVITY_STORAGE_KEY,
       JSON.stringify([
         {
-          id: 'legacy-activity',
-          conversationId: 'legacy-conversation',
-          requestId: 'legacy-request',
-          scope: { kind: 'global' },
-          kind: 'tool',
-          title: '旧版工具记录',
-          detail: 'x'.repeat(4_000),
-          status: 'completed',
-          createdAt: 1
-        }
-      ])
-    )
+          id: "legacy-activity",
+          conversationId: "legacy-conversation",
+          requestId: "legacy-request",
+          scope: { kind: "global" },
+          kind: "tool",
+          title: "旧版工具记录",
+          detail: "x".repeat(4_000),
+          status: "completed",
+          createdAt: 1,
+        },
+      ]),
+    );
 
-    render(<App />)
-    await screen.findByText('项目：默认项目')
+    render(<App />);
+    await screen.findByText("项目：默认项目");
 
     await waitFor(() => {
       expect(api.activityHistory.replace).toHaveBeenCalledWith(
         [
           expect.objectContaining({
-            id: 'legacy-activity',
-            detail: 'x'.repeat(4_000)
-          })
+            id: "legacy-activity",
+            detail: "x".repeat(4_000),
+          }),
         ],
-        true
-      )
-      expect(localStorage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull()
-    })
+        true,
+      );
+      expect(localStorage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull();
+    });
 
-    fireEvent.click(screen.getByRole('button', { name: '运行记录' }))
+    fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
     expect(
       await screen.findByText(
-        '旧版本曾限制本机运行记录的数量和详情长度，因此更早的记录或部分详情可能已经丢失。新记录会完整保存。',
+        "旧版本曾限制本机运行记录的数量和详情长度，因此更早的记录或部分详情可能已经丢失。新记录会完整保存。",
         {},
-        { timeout: 3_000 }
-      )
-    ).toBeInTheDocument()
-  })
+        { timeout: 3_000 },
+      ),
+    ).toBeInTheDocument();
+  });
 
-  it('marks the current primary navigation page and hides decorative icons', async () => {
-    render(<App />)
+  it("marks the current primary navigation page and hides decorative icons", async () => {
+    render(<App />);
 
-    const navigation = screen.getByRole('navigation', {
-      name: '主导航'
-    })
-    const chat = within(navigation).getByRole('button', { name: '对话' })
-    const knowledge = within(navigation).getByRole('button', {
-      name: '知识库'
-    })
+    const navigation = screen.getByRole("navigation", {
+      name: "主导航",
+    });
+    const chat = within(navigation).getByRole("button", { name: "对话" });
+    const knowledge = within(navigation).getByRole("button", {
+      name: "知识库",
+    });
 
-    expect(chat).toHaveAttribute('aria-current', 'page')
-    expect(knowledge).not.toHaveAttribute('aria-current')
-    for (const button of within(navigation).getAllByRole('button')) {
-      expect(button.querySelector('svg')).toHaveAttribute(
-        'aria-hidden',
-        'true'
-      )
+    expect(chat).toHaveAttribute("aria-current", "page");
+    expect(knowledge).not.toHaveAttribute("aria-current");
+    for (const button of within(navigation).getAllByRole("button")) {
+      expect(button.querySelector("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
     }
 
-    fireEvent.click(knowledge)
-    expect(knowledge).toHaveAttribute('aria-current', 'page')
-    expect(chat).not.toHaveAttribute('aria-current')
-  })
+    fireEvent.click(knowledge);
+    expect(knowledge).toHaveAttribute("aria-current", "page");
+    expect(chat).not.toHaveAttribute("aria-current");
+  });
 
-  it('collapses the primary sidebar into an inert narrow-window overlay', async () => {
-    const originalWidth = window.innerWidth
-    const { container } = render(<App />)
-    const sidebar = container.querySelector<HTMLElement>('.sidebar')
-    const workspace = container.querySelector<HTMLElement>('.workspace')
-    expect(sidebar).not.toBeNull()
-    expect(workspace).not.toBeNull()
+  it("collapses the primary sidebar into an inert narrow-window overlay", async () => {
+    const originalWidth = window.innerWidth;
+    const { container } = render(<App />);
+    const sidebar = container.querySelector<HTMLElement>(".sidebar");
+    const workspace = container.querySelector<HTMLElement>(".workspace");
+    expect(sidebar).not.toBeNull();
+    expect(workspace).not.toBeNull();
     if (!sidebar || !workspace) {
-      return
+      return;
     }
 
     try {
-      Object.defineProperty(window, 'innerWidth', {
+      Object.defineProperty(window, "innerWidth", {
         configurable: true,
-        value: 680
-      })
-      window.dispatchEvent(new Event('resize'))
+        value: 680,
+      });
+      window.dispatchEvent(new Event("resize"));
 
-      await waitFor(() =>
-        expect(sidebar).toHaveClass('sidebar--closed')
-      )
-      expect(sidebar).toHaveAttribute('aria-hidden', 'true')
-      expect(sidebar).toHaveAttribute('inert')
+      await waitFor(() => expect(sidebar).toHaveClass("sidebar--closed"));
+      expect(sidebar).toHaveAttribute("aria-hidden", "true");
+      expect(sidebar).toHaveAttribute("inert");
 
-      const toggle = screen.getByRole('button', { name: '切换侧栏' })
-      fireEvent.click(toggle)
-      expect(sidebar).not.toHaveClass('sidebar--closed')
-      expect(sidebar).toHaveAttribute('aria-hidden', 'false')
-      expect(sidebar).toHaveAttribute('aria-modal', 'true')
-      expect(sidebar).not.toHaveAttribute('inert')
-      expect(workspace).toHaveAttribute('aria-hidden', 'true')
-      expect(workspace).toHaveAttribute('inert')
+      const toggle = screen.getByRole("button", { name: "切换侧栏" });
+      fireEvent.click(toggle);
+      expect(sidebar).not.toHaveClass("sidebar--closed");
+      expect(sidebar).toHaveAttribute("aria-hidden", "false");
+      expect(sidebar).toHaveAttribute("aria-modal", "true");
+      expect(sidebar).not.toHaveAttribute("inert");
+      expect(workspace).toHaveAttribute("aria-hidden", "true");
+      expect(workspace).toHaveAttribute("inert");
       await waitFor(() =>
         expect(
-          within(sidebar).getByRole('button', { name: '对话' })
-        ).toHaveFocus()
-      )
+          within(sidebar).getByRole("button", { name: "对话" }),
+        ).toHaveFocus(),
+      );
 
-      fireEvent.click(
-        within(sidebar).getByRole('button', { name: '知识库' })
-      )
-      await waitFor(() => expect(toggle).toHaveFocus())
-      expect(sidebar).toHaveClass('sidebar--closed')
-      expect(workspace).not.toHaveAttribute('aria-hidden')
-      expect(workspace).not.toHaveAttribute('inert')
+      fireEvent.click(within(sidebar).getByRole("button", { name: "知识库" }));
+      await waitFor(() => expect(toggle).toHaveFocus());
+      expect(sidebar).toHaveClass("sidebar--closed");
+      expect(workspace).not.toHaveAttribute("aria-hidden");
+      expect(workspace).not.toHaveAttribute("inert");
     } finally {
-      Object.defineProperty(window, 'innerWidth', {
+      Object.defineProperty(window, "innerWidth", {
         configurable: true,
-        value: originalWidth
-      })
+        value: originalWidth,
+      });
     }
-  })
+  });
 
-  it('resizes and remembers the docked primary sidebar width', () => {
-    const originalWidth = window.innerWidth
-    Object.defineProperty(window, 'innerWidth', {
+  it("resizes and remembers the docked primary sidebar width", () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", {
       configurable: true,
-      value: 1200
-    })
-    const { container, unmount } = render(<App />)
+      value: 1200,
+    });
+    const { container, unmount } = render(<App />);
 
     try {
-      const sidebar =
-        container.querySelector<HTMLElement>('.sidebar')
-      const separator = screen.getByRole('separator', {
-        name: '调整主侧栏宽度'
-      })
-      const setPointerCapture = vi.fn()
-      const releasePointerCapture = vi.fn()
+      const sidebar = container.querySelector<HTMLElement>(".sidebar");
+      const separator = screen.getByRole("separator", {
+        name: "调整主侧栏宽度",
+      });
+      const setPointerCapture = vi.fn();
+      const releasePointerCapture = vi.fn();
       Object.defineProperties(separator, {
         setPointerCapture: { value: setPointerCapture },
         hasPointerCapture: { value: () => true },
-        releasePointerCapture: { value: releasePointerCapture }
-      })
+        releasePointerCapture: { value: releasePointerCapture },
+      });
 
-      expect(
-        sidebar?.style.getPropertyValue('--primary-sidebar-width')
-      ).toBe('278px')
-      expect(separator).toHaveAttribute('aria-valuemin', '220')
-      expect(separator).toHaveAttribute('aria-valuemax', '420')
+      expect(sidebar?.style.getPropertyValue("--primary-sidebar-width")).toBe(
+        "278px",
+      );
+      expect(separator).toHaveAttribute("aria-valuemin", "220");
+      expect(separator).toHaveAttribute("aria-valuemax", "420");
 
       fireEvent.pointerDown(separator, {
         button: 0,
         clientX: 320,
-        pointerId: 17
-      })
+        pointerId: 17,
+      });
       fireEvent.pointerMove(separator, {
         clientX: 400,
-        pointerId: 17
-      })
+        pointerId: 17,
+      });
 
-      expect(setPointerCapture).toHaveBeenCalledWith(17)
-      expect(sidebar).toHaveClass('sidebar--resizing')
-      expect(
-        sidebar?.style.getPropertyValue('--primary-sidebar-width')
-      ).toBe('400px')
+      expect(setPointerCapture).toHaveBeenCalledWith(17);
+      expect(sidebar).toHaveClass("sidebar--resizing");
+      expect(sidebar?.style.getPropertyValue("--primary-sidebar-width")).toBe(
+        "400px",
+      );
 
-      fireEvent.pointerUp(separator, { pointerId: 17 })
-      expect(releasePointerCapture).toHaveBeenCalledWith(17)
-      expect(sidebar).not.toHaveClass('sidebar--resizing')
-      expect(
-        localStorage.getItem('goodbuddy.primary-sidebar-width.v1')
-      ).toBe('400')
+      fireEvent.pointerUp(separator, { pointerId: 17 });
+      expect(releasePointerCapture).toHaveBeenCalledWith(17);
+      expect(sidebar).not.toHaveClass("sidebar--resizing");
+      expect(localStorage.getItem("goodbuddy.primary-sidebar-width.v1")).toBe(
+        "400",
+      );
 
-      fireEvent.keyDown(separator, { key: 'Home' })
-      expect(
-        sidebar?.style.getPropertyValue('--primary-sidebar-width')
-      ).toBe('220px')
+      fireEvent.keyDown(separator, { key: "Home" });
+      expect(sidebar?.style.getPropertyValue("--primary-sidebar-width")).toBe(
+        "220px",
+      );
 
-      fireEvent.keyDown(separator, { key: 'ArrowRight' })
-      expect(
-        sidebar?.style.getPropertyValue('--primary-sidebar-width')
-      ).toBe('236px')
+      fireEvent.keyDown(separator, { key: "ArrowRight" });
+      expect(sidebar?.style.getPropertyValue("--primary-sidebar-width")).toBe(
+        "236px",
+      );
 
-      fireEvent.keyDown(separator, { key: 'End' })
-      expect(
-        sidebar?.style.getPropertyValue('--primary-sidebar-width')
-      ).toBe('420px')
-      expect(separator).toHaveAttribute('aria-valuenow', '420')
+      fireEvent.keyDown(separator, { key: "End" });
+      expect(sidebar?.style.getPropertyValue("--primary-sidebar-width")).toBe(
+        "420px",
+      );
+      expect(separator).toHaveAttribute("aria-valuenow", "420");
 
-      unmount()
-      const persistedRender = render(<App />)
+      unmount();
+      const persistedRender = render(<App />);
       expect(
         persistedRender.container
-          .querySelector<HTMLElement>('.sidebar')
-          ?.style.getPropertyValue('--primary-sidebar-width')
-      ).toBe('420px')
+          .querySelector<HTMLElement>(".sidebar")
+          ?.style.getPropertyValue("--primary-sidebar-width"),
+      ).toBe("420px");
     } finally {
-      Object.defineProperty(window, 'innerWidth', {
+      Object.defineProperty(window, "innerWidth", {
         configurable: true,
-        value: originalWidth
-      })
+        value: originalWidth,
+      });
     }
-  })
+  });
 
-  it('docks the assistant workbar without obscuring a narrow workspace', async () => {
-    const originalWidth = window.innerWidth
-    const { container } = render(<App />)
+  it("docks the assistant workbar without obscuring a narrow workspace", async () => {
+    const originalWidth = window.innerWidth;
+    const { container } = render(<App />);
 
     try {
-      Object.defineProperty(window, 'innerWidth', {
+      Object.defineProperty(window, "innerWidth", {
         configurable: true,
-        value: 680
-      })
-      window.dispatchEvent(new Event('resize'))
+        value: 680,
+      });
+      window.dispatchEvent(new Event("resize"));
 
       await waitFor(() =>
-        expect(container.querySelector('.sidebar'))
-          .toHaveClass('sidebar--closed')
-      )
-      fireEvent.click(screen.getByLabelText('切换助手工作栏'))
+        expect(container.querySelector(".sidebar")).toHaveClass(
+          "sidebar--closed",
+        ),
+      );
+      fireEvent.click(screen.getByLabelText("切换助手工作栏"));
 
-      const workbar = screen.getByRole('complementary', {
-        name: '助手工作栏'
-      })
-      expect(workbar).toHaveClass('assistant-sidebar--open')
-      expect(workbar.parentElement).toHaveClass('app-content')
+      const workbar = screen.getByRole("complementary", {
+        name: "助手工作栏",
+      });
+      expect(workbar).toHaveClass("assistant-sidebar--open");
+      expect(workbar.parentElement).toHaveClass("app-content");
       expect(
-        workbar.parentElement?.querySelector('main.workspace')
-      ).toBeInTheDocument()
-      expect(workbar).not.toHaveAttribute('aria-modal')
-      expect(container.querySelector('main')).not.toHaveAttribute(
-        'inert'
-      )
+        workbar.parentElement?.querySelector("main.workspace"),
+      ).toBeInTheDocument();
+      expect(workbar).not.toHaveAttribute("aria-modal");
+      expect(container.querySelector("main")).not.toHaveAttribute("inert");
       expect(
-        container.querySelector('.assistant-sidebar-backdrop')
-      ).not.toBeInTheDocument()
+        container.querySelector(".assistant-sidebar-backdrop"),
+      ).not.toBeInTheDocument();
     } finally {
-      Object.defineProperty(window, 'innerWidth', {
+      Object.defineProperty(window, "innerWidth", {
         configurable: true,
-        value: originalWidth
-      })
+        value: originalWidth,
+      });
     }
-  })
+  });
 
-  it('opens Magic Notes as a global first-class workspace', async () => {
+  it("opens Magic Notes as a global first-class workspace", async () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
-      render(<App />)
-      await screen.findByText('项目：默认项目')
-      const magicNotesEntry = await screen.findByRole('button', {
-        name: '魔法笔记'
-      })
+      render(<App />);
+      await screen.findByText("项目：默认项目");
+      const magicNotesEntry = await screen.findByRole("button", {
+        name: "魔法笔记",
+      });
 
-      fireEvent.click(magicNotesEntry)
+      fireEvent.click(magicNotesEntry);
 
       expect(
         await screen.findByRole(
-          'heading',
-          { name: '魔法笔记' },
-          { timeout: 3000 }
-        )
-      ).toBeInTheDocument()
-      expect(screen.getByText('全局')).toBeInTheDocument()
+          "heading",
+          { name: "魔法笔记" },
+          { timeout: 3000 },
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText("全局")).toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: '新建笔记' })
-      ).toBeInTheDocument()
-      await waitFor(() =>
-        expect(api.magicNotes.list).toHaveBeenCalled()
-      )
-      expect(
-        screen.queryByLabelText('切换助手工作栏')
-      ).toBeInTheDocument()
+        screen.getByRole("button", { name: "新建笔记" }),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(api.magicNotes.list).toHaveBeenCalled());
+      expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();
     } finally {
-      delete api.updates
+      delete api.updates;
     }
-  })
+  });
 
-  it('shows and refreshes the incomplete Magic Notes todo count', async () => {
+  it("shows and refreshes the incomplete Magic Notes todo count", async () => {
     vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValueOnce({
-      incompleteCount: 4
-    })
+      incompleteCount: 4,
+    });
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       updateSettings: vi.fn(),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
-      render(<App />)
+      render(<App />);
 
-      expect(
-        await screen.findByLabelText('4 个未完成待办')
-      ).toHaveTextContent('4')
+      expect(await screen.findByLabelText("4 个未完成待办")).toHaveTextContent(
+        "4",
+      );
 
       vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValueOnce({
-        incompleteCount: 0
-      })
+        incompleteCount: 0,
+      });
       await act(async () => {
-        magicTodoStatusChangedListener?.()
-      })
+        magicTodoStatusChangedListener?.();
+      });
       await waitFor(() =>
         expect(
-          screen.queryByLabelText('4 个未完成待办')
-        ).not.toBeInTheDocument()
-      )
+          screen.queryByLabelText("4 个未完成待办"),
+        ).not.toBeInTheDocument(),
+      );
 
       vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValueOnce({
-        incompleteCount: 125
-      })
+        incompleteCount: 125,
+      });
       await act(async () => {
-        magicTodoStatusChangedListener?.()
-      })
+        magicTodoStatusChangedListener?.();
+      });
       expect(
-        await screen.findByLabelText('125 个未完成待办')
-      ).toHaveTextContent('99+')
+        await screen.findByLabelText("125 个未完成待办"),
+      ).toHaveTextContent("99+");
     } finally {
-      delete api.updates
+      delete api.updates;
     }
-  })
+  });
 
-  it('hides the todo count when its Magic Notes setting is off', async () => {
+  it("hides the todo count when its Magic Notes setting is off", async () => {
     vi.mocked(api.magicNotes.getTodoStatus).mockResolvedValue({
-      incompleteCount: 4
-    })
+      incompleteCount: 4,
+    });
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: false,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       updateSettings: vi.fn(),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
-      render(<App />)
+      render(<App />);
 
       expect(
-        await screen.findByRole('button', { name: '魔法笔记' })
-      ).toBeInTheDocument()
-      expect(
-        screen.queryByLabelText('4 个未完成待办')
-      ).not.toBeInTheDocument()
-      expect(api.magicNotes.getTodoStatus).not.toHaveBeenCalled()
+        await screen.findByRole("button", { name: "魔法笔记" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("4 个未完成待办")).not.toBeInTheDocument();
+      expect(api.magicNotes.getTodoStatus).not.toHaveBeenCalled();
     } finally {
-      delete api.updates
+      delete api.updates;
     }
-  })
+  });
 
-  it('hides Magic Notes when the platform feature is disabled', async () => {
+  it("hides Magic Notes when the platform feature is disabled", async () => {
     api.updates = {
       getSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
-        updateSource: 'github' as const,
-        modelDownloadSource: 'modelscope' as const,
+        updateSource: "github" as const,
+        modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
         magicNotesShowIncompleteTodoCount: true,
-        magicNoteCommentMode: 'immediate' as const,
-        magicNoteCommentFormat: 'combined' as const
+        magicNoteCommentMode: "immediate" as const,
+        magicNoteCommentFormat: "combined" as const,
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
-      render(<App />)
+      render(<App />);
       await waitFor(() =>
         expect(
-          screen.queryByRole('button', { name: '魔法笔记' })
-        ).not.toBeInTheDocument()
-      )
+          screen.queryByRole("button", { name: "魔法笔记" }),
+        ).not.toBeInTheDocument(),
+      );
     } finally {
-      delete api.updates
+      delete api.updates;
     }
-  })
+  });
 
-  it('hides Magic Notes by default without an explicit setting', () => {
-    render(<App />)
+  it("hides Magic Notes by default without an explicit setting", () => {
+    render(<App />);
 
     expect(
-      screen.queryByRole('button', { name: '魔法笔记' })
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByRole("button", { name: "魔法笔记" }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('renders Agent HTML by default and applies the platform switch immediately', async () => {
-    const conversationId =
-      '00000000-0000-4000-8000-000000000471'
+  it("renders Agent HTML by default and applies the platform switch immediately", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000471";
     vi.mocked(api.conversations.list).mockResolvedValueOnce([
       {
         id: conversationId,
         projectId,
-        title: 'HTML 预览会话',
+        title: "HTML 预览会话",
         updatedAt: 1_775_000_000_000,
         messages: [
           {
-            id: '00000000-0000-4000-8000-000000000472',
-            role: 'assistant',
+            id: "00000000-0000-4000-8000-000000000472",
+            role: "assistant",
             content: `\`\`\`html
 <main><h1>Rendered dashboard</h1></main>
 \`\`\``,
             createdAt: 1_775_000_000_000,
-            state: 'complete'
-          }
-        ]
-      }
-    ])
+            state: "complete",
+          },
+        ],
+      },
+    ]);
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
-      updateSource: 'github',
-      modelDownloadSource: 'modelscope',
+      updateSource: "github",
+      modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
-      magicNoteCommentMode: 'immediate',
-      magicNoteCommentFormat: 'combined'
-    }
+      magicNoteCommentMode: "immediate",
+      magicNoteCommentFormat: "combined",
+    };
     const updateSettings = vi.fn<
-      NonNullable<DesktopApi['updates']>['updateSettings']
+      NonNullable<DesktopApi["updates"]>["updateSettings"]
     >(async (input) => {
-      applicationSettings = { ...applicationSettings, ...input }
-      return { ...applicationSettings }
-    })
+      applicationSettings = { ...applicationSettings, ...input };
+      return { ...applicationSettings };
+    });
     api.updates = {
       getSettings: vi.fn(async () => ({ ...applicationSettings })),
       updateSettings,
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
 
-    render(<App />)
+    render(<App />);
 
     expect(
-      await screen.findByTitle('Agent 回复 HTML 静态预览')
-    ).toHaveAttribute('sandbox', '')
+      await screen.findByTitle("Agent 回复 HTML 静态预览"),
+    ).toHaveAttribute("sandbox", "");
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: /本地工作区/u })
-    )
-    fireEvent.click(
-      await screen.findByRole('tab', { name: '平台功能' })
-    )
-    const toggle = await screen.findByRole('switch', {
-      name: '在会话中渲染 HTML'
-    })
-    expect(toggle).toBeChecked()
-    fireEvent.click(toggle)
+    fireEvent.click(await screen.findByRole("button", { name: /本地工作区/u }));
+    fireEvent.click(await screen.findByRole("tab", { name: "平台功能" }));
+    const toggle = await screen.findByRole("switch", {
+      name: "在会话中渲染 HTML",
+    });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
 
     await waitFor(() =>
       expect(updateSettings).toHaveBeenCalledWith({
-        conversationHtmlRenderingEnabled: false
-      })
-    )
+        conversationHtmlRenderingEnabled: false,
+      }),
+    );
     await waitFor(() =>
       expect(
-        screen.queryByTitle('Agent 回复 HTML 静态预览')
-      ).not.toBeInTheDocument()
-    )
-    expect(screen.getByText(/Rendered dashboard/u)).toBeInTheDocument()
-  })
+        screen.queryByTitle("Agent 回复 HTML 静态预览"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText(/Rendered dashboard/u)).toBeInTheDocument();
+  });
 
-  it('keeps platform-feature switches in Settings without navigating', async () => {
+  it("keeps platform-feature switches in Settings without navigating", async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
-      updateSource: 'github',
-      modelDownloadSource: 'modelscope',
+      updateSource: "github",
+      modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
-      magicNoteCommentMode: 'immediate',
-      magicNoteCommentFormat: 'combined'
-    }
+      magicNoteCommentMode: "immediate",
+      magicNoteCommentFormat: "combined",
+    };
     api.updates = {
       getSettings: vi.fn(async () => ({ ...applicationSettings })),
       updateSettings: vi.fn(async (input) => {
         applicationSettings = {
           ...applicationSettings,
-          ...input
-        }
-        return { ...applicationSettings }
+          ...input,
+        };
+        return { ...applicationSettings };
       }),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
-      onResult: vi.fn(() => () => {})
-    }
+      onResult: vi.fn(() => () => {}),
+    };
     try {
-      const { container } = render(<App />)
+      const { container } = render(<App />);
       fireEvent.click(
-        await screen.findByRole('button', {
-          name: /本地工作区/u
-        })
-      )
-      await screen.findByRole('heading', { name: '设置中心' })
-      fireEvent.click(
-        screen.getByRole('tab', { name: '平台功能' })
-      )
-      fireEvent.click(
-        await screen.findByRole('tab', { name: '魔法笔记' })
-      )
-      const toggle = await screen.findByRole('switch', {
-        name: '显示魔法笔记入口'
-      })
+        await screen.findByRole("button", {
+          name: /本地工作区/u,
+        }),
+      );
+      await screen.findByRole("heading", { name: "设置中心" });
+      fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
+      fireEvent.click(await screen.findByRole("tab", { name: "魔法笔记" }));
+      const toggle = await screen.findByRole("switch", {
+        name: "显示魔法笔记入口",
+      });
 
-      fireEvent.click(toggle)
-      await waitFor(() => expect(toggle).toBeChecked())
+      fireEvent.click(toggle);
+      await waitFor(() => expect(toggle).toBeChecked());
       expect(
-        screen.getByRole('heading', { name: '设置中心' })
-      ).toBeInTheDocument()
+        screen.getByRole("heading", { name: "设置中心" }),
+      ).toBeInTheDocument();
       expect(
-        screen.getByRole('button', { name: '魔法笔记' })
-      ).toBeInTheDocument()
+        screen.getByRole("button", { name: "魔法笔记" }),
+      ).toBeInTheDocument();
       expect(
-        container.querySelector('.magic-notes-page')
-      ).not.toBeInTheDocument()
+        container.querySelector(".magic-notes-page"),
+      ).not.toBeInTheDocument();
 
-      fireEvent.click(toggle)
-      await waitFor(() => expect(toggle).not.toBeChecked())
+      fireEvent.click(toggle);
+      await waitFor(() => expect(toggle).not.toBeChecked());
       expect(
-        screen.getByRole('heading', { name: '设置中心' })
-      ).toBeInTheDocument()
+        screen.getByRole("heading", { name: "设置中心" }),
+      ).toBeInTheDocument();
       expect(
-        screen.queryByRole('button', { name: '魔法笔记' })
-      ).not.toBeInTheDocument()
+        screen.queryByRole("button", { name: "魔法笔记" }),
+      ).not.toBeInTheDocument();
     } finally {
-      delete api.updates
+      delete api.updates;
     }
-  })
+  });
 
-  it('gives the knowledge workspace the full content width', async () => {
-    render(<App />)
+  it("gives the knowledge workspace the full content width", async () => {
+    render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
 
+    expect(await screen.findByLabelText("知识工作区")).toBeInTheDocument();
+    expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();
     expect(
-      await screen.findByLabelText('知识工作区')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByLabelText('切换助手工作栏')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: /^专家角色：/u })
-    ).not.toBeInTheDocument()
-  })
+      screen.queryByRole("button", { name: /^专家角色：/u }),
+    ).not.toBeInTheDocument();
+  });
 
-  it('keeps Smart Heartbeat available when the runtime is not configured', async () => {
+  it("keeps Smart Heartbeat available when the runtime is not configured", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
-      id: 'setup',
-      label: '需要配置模型',
+      id: "setup",
+      label: "需要配置模型",
       available: false,
       supportsToolExecution: false,
-      detail: '请配置模型'
-    })
-    render(<App />)
+      detail: "请配置模型",
+    });
+    render(<App />);
 
     expect(
-      await screen.findByRole('heading', { name: '设置中心' })
-    ).toBeInTheDocument()
-    await waitFor(() =>
-      expect(api.agent.getStatus).toHaveBeenCalledOnce()
-    )
-    fireEvent.click(
-      screen.getByRole('button', { name: '智能心跳' })
-    )
+      await screen.findByRole("heading", { name: "设置中心" }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(api.agent.getStatus).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
 
     expect(
-      await screen.findByRole('heading', { name: '智能心跳' })
-    ).toBeInTheDocument()
-    expect(api.agent.getStatus).toHaveBeenCalledOnce()
-  })
-})
+      await screen.findByRole("heading", { name: "智能心跳" }),
+    ).toBeInTheDocument();
+    expect(api.agent.getStatus).toHaveBeenCalledOnce();
+  });
+});
