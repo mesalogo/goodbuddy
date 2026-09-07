@@ -40,6 +40,7 @@ import {
 } from './model-tool-provider'
 import {
   createOpenAIChatCompletionsUrl,
+  createOpenAIImagesEditsUrl,
   createOpenAIImagesGenerationsUrl,
   createOpenAIResponsesUrl
 } from './openai-endpoint'
@@ -1745,12 +1746,10 @@ export class ModelAgentRuntime implements AgentRuntime {
       : createOpenAIChatCompletionsUrl(this.options.baseUrl)
   }
 
-  private getHeaders(): Record<string, string> {
+  private getHeaders(json = true): Record<string, string> {
     const headers = mergeModelRequestHeaders(
       this.options.requestHeaders ?? {},
-      {
-        'content-type': 'application/json'
-      }
+      json ? { 'content-type': 'application/json' } : {}
     )
     if (
       this.options.authentication === 'api-key' &&
@@ -1787,6 +1786,32 @@ export class ModelAgentRuntime implements AgentRuntime {
       quality: this.options.imageGenerationQuality ?? 'auto',
       response_format: 'b64_json'
     })
+  }
+
+  private createImageEditRequest(
+    prompt: string,
+    images: NonNullable<AgentExecutionRequest['images']>
+  ): FormData {
+    const form = new FormData()
+    const fields = this.createImageGenerationRequest(prompt)
+    for (const [name, value] of Object.entries(fields)) {
+      form.append(
+        name,
+        typeof value === 'string' ? value : JSON.stringify(value)
+      )
+    }
+    const imageField = images.length === 1 ? 'image' : 'image[]'
+    images.forEach((image, index) => {
+      const extension = image.mediaType === 'image/png' ? 'png' : 'jpg'
+      form.append(
+        imageField,
+        new Blob([Buffer.from(image.data, 'base64')], {
+          type: image.mediaType
+        }),
+        `reference-${index + 1}.${extension}`
+      )
+    })
+    return form
   }
 
   private async fetchWithTimeout(
@@ -2620,23 +2645,26 @@ export class ModelAgentRuntime implements AgentRuntime {
     request: AgentExecutionRequest,
     signal: AbortSignal
   ): AsyncGenerator<RuntimeEvent, void, void> {
-    if (request.images?.length) {
-      throw new Error('当前图像生成接口暂不支持参考图或图片编辑')
-    }
+    const images = request.images ?? []
     yield {
       requestId: request.requestId,
       type: 'status',
-      message: `${this.options.model} 正在生成图片`
+      message: `${this.options.model} 正在${images.length > 0 ? '编辑' : '生成'}图片`
     }
-    const imageRequest = this.createImageGenerationRequest(
-      request.prompt
-    )
+    const body =
+      images.length > 0
+        ? this.createImageEditRequest(request.prompt, images)
+        : JSON.stringify(
+            this.createImageGenerationRequest(request.prompt)
+          )
     const modelRequest = await this.fetchWithTimeout(
-      this.getEndpoint(),
+      images.length > 0
+        ? createOpenAIImagesEditsUrl(this.options.baseUrl)
+        : this.getEndpoint(),
       {
         method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(imageRequest)
+        headers: this.getHeaders(images.length === 0),
+        body
       },
       signal
     )

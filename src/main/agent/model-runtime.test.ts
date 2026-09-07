@@ -5493,6 +5493,75 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it('edits reference images through the multipart image edits endpoint', async () => {
+    const source = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00
+    ])
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({ data: [{ b64_json: source.toString('base64') }] })
+    )
+    const runtime = new ModelAgentRuntime({
+      apiKey: 'test-key',
+      baseUrl: 'https://bigtoken.ai/v1',
+      model: 'gpt-image-2',
+      protocol: 'openai-images-generations',
+      authentication: 'api-key',
+      imageGenerationQuality: 'medium',
+      requestHeaders: { 'x-image-route': 'internal' },
+      requestBody: { background: 'transparent' },
+      fetcher
+    })
+    const events = []
+
+    for await (const event of runtime.run(
+      {
+        requestId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        prompt: '把背景改成白色',
+        images: [
+          {
+            name: 'source.png',
+            mediaType: 'image/png',
+            data: source.toString('base64')
+          }
+        ]
+      },
+      new AbortController().signal
+    )) {
+      events.push(event)
+    }
+
+    const [input, init] = fetcher.mock.calls[0] ?? []
+    expect(input?.toString()).toBe(
+      'https://bigtoken.ai/v1/images/edits'
+    )
+    expect(new Headers(init?.headers).get('authorization')).toBe(
+      'Bearer test-key'
+    )
+    expect(new Headers(init?.headers).get('content-type')).toBeNull()
+    expect(new Headers(init?.headers).get('x-image-route')).toBe(
+      'internal'
+    )
+    const form = init?.body as FormData
+    expect(form.get('model')).toBe('gpt-image-2')
+    expect(form.get('prompt')).toBe('把背景改成白色')
+    expect(form.get('n')).toBe('1')
+    expect(form.get('quality')).toBe('medium')
+    expect(form.get('response_format')).toBe('b64_json')
+    expect(form.get('background')).toBe('transparent')
+    const uploaded = form.get('image')
+    expect(uploaded).toBeInstanceOf(Blob)
+    expect((uploaded as Blob).type).toBe('image/png')
+    expect(Buffer.from(await (uploaded as Blob).arrayBuffer())).toEqual(
+      source
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'generated-image' })
+    )
+    expect(events.at(-1)).toMatchObject({ type: 'done' })
+  })
+
   it('rejects remote image URLs instead of fetching provider output', async () => {
     const runtime = new ModelAgentRuntime({
       apiKey: 'test-key',

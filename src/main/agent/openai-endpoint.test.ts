@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createOpenAIApiBaseUrl,
   createOpenAIChatCompletionsUrl,
+  createOpenAIImagesEditsUrl,
   createOpenAIImagesGenerationsUrl,
   createOpenAIResponsesUrl
 } from './openai-endpoint'
@@ -25,6 +26,9 @@ describe('OpenAI endpoint normalization', () => {
     )
     expect(createOpenAIImagesGenerationsUrl(baseUrl).toString()).toBe(
       'http://192.168.1.50:8000/openai/v1/images/generations'
+    )
+    expect(createOpenAIImagesEditsUrl(baseUrl).toString()).toBe(
+      'http://192.168.1.50:8000/openai/v1/images/edits'
     )
   })
 

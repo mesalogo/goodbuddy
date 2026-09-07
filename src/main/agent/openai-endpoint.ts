@@ -31,3 +31,7 @@ export function createOpenAIResponsesUrl(baseUrl: string): URL {
 export function createOpenAIImagesGenerationsUrl(baseUrl: string): URL {
   return createOpenAIRequestUrl(baseUrl, '/images/generations')
 }
+
+export function createOpenAIImagesEditsUrl(baseUrl: string): URL {
+  return createOpenAIRequestUrl(baseUrl, '/images/edits')
+}
