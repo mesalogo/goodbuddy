@@ -17,8 +17,9 @@ GoodBuddy 直连模型已经可以读取、列出和写入工作区文本，使�
 分配的 MCP，但没有内置命令执行工具。模型可以生成代码，却不能运行构建、测试、格式化、
 Git 或项目脚本，因此无法独立验证结果。
 
-GoodBuddy 也已经有面向用户专家协作的只读 Subagent，但直连模型不能在自己的工具循环中
-主动委派一个聚焦的编程子任务。OpenCode、Continue 和 DeepSeek Harness 一般已经提供
+本功能设计时，GoodBuddy 已有面向用户专家协作的只读 Subagent，但直连模型尚不能在工具
+循环中主动委派编程子任务。当前专家协作已继承父请求 Ask/Execute 模式并使用本机直连模型
+工具，与本功能的 `subagent_delegate` 仍为不同入口。OpenCode、Continue 和 DeepSeek Harness 一般已经提供
 Shell、Agent 或 Task 能力，再向它们注入 GoodBuddy 同名工具只会造成重复入口和语义冲突。
 
 本功能只补齐直连模型缺少的基础 Agent 能力：

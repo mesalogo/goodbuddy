@@ -24,7 +24,9 @@
 - [x] `ModelAgentRuntime` 已有多轮工具循环、取消、上下文压缩和有界结果。
 - [x] DeepSeek Harness 已按 Windows PowerShell、macOS/Linux Bash 注册原生 Shell。
 - [x] OpenCode 和 Continue 使用各自原生执行工具。
-- [x] 当前专家 Subagent 是只读协作流程，不是直连模型可调用的编程工具。
+- [x] 专家协作与直连模型可调用的编程工具是不同入口；当前专家继承父请求 Ask/Execute，
+  使用已启用本机直连模型工具并记录工具活动。模式与 authorizer 传递已由
+  `subagent-service.test.ts` 覆盖，不把该单元测试作为额外的真实模型或远程执行验收。
 - [x] Task/Job 领域文档已经明确 Subagent 不是新的顶层 Task 或 Conversation。
 - [x] 当前跨平台进程树清理已经覆盖 Windows `taskkill /T /F` 和 POSIX 进程组。
 

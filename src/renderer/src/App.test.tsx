@@ -10153,7 +10153,9 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "打开示例网页" },
     });
-    fireEvent.click(await screen.findByLabelText("发送"));
+    const send = await screen.findByLabelText("发送");
+    await waitFor(() => expect(send).toBeEnabled());
+    fireEvent.click(send);
     await waitFor(() => expect(run).toHaveBeenCalledOnce(), { timeout: 3000 });
     const conversationId = run.mock.calls[0]?.[0].conversationId;
     expect(conversationId).toBeTruthy();

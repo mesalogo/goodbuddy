@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.7",
+      "releasedAt": "2026-09-08",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**参考图编辑。** 使用兼容的图像模型连接时，可以附加参考图片并描述修改要求。GoodBuddy 会发送图片编辑请求；服务商必须支持图片编辑接口。",
+            "**专家协作沿用工作模式。** 选择专家或团队分析时，专家可以按当前 Ask/Execute 模式使用已启用的本机直连模型工具。Ask 仍只读；这些工具不是远程 OpenCode 子会话。"
+          ],
+          "fixes": [
+            "**Execute 不再卡在目录权限等待。** OpenCode、Continue 和 DeepSeek Harness 可以按当前账号权限访问工作区外目录。OpenCode 原生子代理的权限请求也会正确处理，Ask 保持只读。",
+            "**原生问答正确回传。** 本机 OpenCode 和 Continue 的选项、yes/no、自由文本及跳过通过现有问答卡片处理。修复 OpenCode 子会话提问丢失，以及 Continue 自定义答案回传错误。",
+            "**OpenCode 会话切换更稳定。** 切回会话时保留可用的原生操作栏，并在复用服务前检查其状态。并行请求的取消和临时 MCP 清理保持隔离。",
+            "**Runtime 启动更可靠。** OpenCode 使用随包提供并按版本复用的离线配置依赖，减少重复准备。修复 DeepSeek Harness 升级后的初始化失败。",
+            "**远程 Agent 安装与重连更可靠。** 修复包含 OpenCode 离线依赖的安装包被误判为元数据过大，以及部分合法握手被拒绝的问题。连接在握手期间关闭时会及时返回错误，不再一直等待。",
+            "**聊天输入与布局更顺畅。** 输入时不再重复渲染未变化的聊天历史，消息正文统一显示在头像和名称下方。终端移除多余内边距，让内容使用完整面板空间。"
+          ],
+          "notices": [
+            "先升级至 Desktop `0.12.7`，再安装 Agent `0.11.21`，以获得远程修复。远程项目仍为技术预览；Agent 单独提供 Linux x64、Linux arm64 和 macOS arm64 包。",
+            "OpenCode 更新至 `1.18.29`；已运行的旧 Runtime 不会热更新，需要升级并重启。结构化业务问题仍需用户回答，不会自动代答终端密码、OAuth 或任意确认提示。",
+            "本次使用标准六平台桌面发布矩阵，不构建 LoongArch 实验预览。应用导航与系统工具入口文档仍为设计稿，不代表新界面已经交付。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Reference-image editing.** Attach reference images and describe the changes when using a compatible image-model connection. GoodBuddy sends an image-edit request; the provider must support the image-editing endpoint.",
+            "**Experts inherit the work mode.** Selected experts and team analysis can use enabled local direct-model tools under the current Ask/Execute mode. Ask remains read-only; these tools are not remote OpenCode child sessions."
+          ],
+          "fixes": [
+            "**Execute no longer stalls on directory permissions.** OpenCode, Continue, and DeepSeek Harness can access paths outside the workspace using the current account’s permissions. OpenCode native subagent permission requests are also handled correctly, while Ask stays read-only.",
+            "**Native questions return answers correctly.** Local OpenCode and Continue handle choices, yes/no, free text, and skipping through the existing question cards. This fixes lost OpenCode child-session questions and incorrect Continue custom-answer responses.",
+            "**More stable OpenCode session switching.** Returning to a conversation preserves usable native controls, and cached services are checked before reuse. Cancellation and temporary MCP cleanup remain isolated between parallel requests.",
+            "**More reliable Runtime startup.** OpenCode uses bundled offline configuration dependencies and reuses them by version, reducing repeated preparation. DeepSeek Harness initialization failures after upgrading are also fixed.",
+            "**More reliable remote Agent installation and reconnection.** Packages containing OpenCode’s offline dependencies are no longer incorrectly rejected as oversized metadata, and valid handshakes are no longer intermittently rejected. Connections closed during the handshake now return an error promptly instead of waiting indefinitely.",
+            "**Smoother typing and cleaner layouts.** Typing no longer rerenders unchanged chat history, and message content appears below the avatar and name. Removing extra terminal padding gives content the full panel area."
+          ],
+          "notices": [
+            "Upgrade to Desktop `0.12.7` before installing Agent `0.11.21` for the remote fixes. Remote Projects remain a technical preview; separate Agent packages target Linux x64, Linux arm64, and macOS arm64.",
+            "OpenCode updates to `1.18.29`; running older Runtimes require an upgrade and restart rather than a live update. Structured business questions still require user answers; terminal passwords, OAuth, and arbitrary confirmation prompts are not answered automatically.",
+            "This release uses the standard six-target desktop matrix without a LoongArch preview. Application navigation and system-tool entry documents remain design drafts, not delivered UI."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.6",
       "releasedAt": "2026-09-06",
       "notes": {

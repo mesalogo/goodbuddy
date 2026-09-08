@@ -19,7 +19,9 @@
 - `ModelToolProvider` 的直连模型内置工具、浏览器、Web、知识和自定义 MCP 聚合。
 - `WorkspaceAccess` 的本机和远端工作区抽象。
 - 跨平台子进程树终止辅助函数。
-- 面向用户专家协作的 `SubagentScheduler`、状态事件和只读模型调用。
+- 面向用户专家协作的 `SubagentScheduler` 和状态事件。专家使用具备已启用本机能力的
+  直连模型 Runtime，继承父请求 Ask/Execute 及 authorizer，工具事件记入子任务；
+  Ask 保持只读，不把这些本机工具表述为远程 OpenCode 子会话。
 - OpenCode、Continue 和 DeepSeek Harness 各自的 Shell/Agent 能力。
 - 直连模型 `process_execute` 和 `subagent_delegate`。
 - 不创建顶层 Task/Conversation 的编程 Subagent actor 与活动归并。

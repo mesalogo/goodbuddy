@@ -12,7 +12,7 @@ Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
 `0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前未发布
-Agent 源码 lock 为 `0.11.20`，Desktop 候选为 `0.12.6`，等待各自独立发布审批。
+Agent 源码 lock 为 `0.11.21`，Desktop 候选为 `0.12.7`，等待各自独立发布审批。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
 
@@ -468,7 +468,7 @@ bundle 构建通过；这组历史结果不替代完整 Host 支持改动后的�
 - 2026-08 的本地 fixture 完整验证 Linux x64 Agent `0.11.2-e2e.12`、Node `24.19.0`
   和 Agent protocol `2.0`；当时没有 arm64 fixture，因此该记录不能作为当前独立发布
   的双架构验收。Agent `0.11.10` 后续已由原生 workflow 发布并公开验证双架构工件；
-  当前源码 lock 固定为 `0.11.20`；正式发布状态以独立 Agent Release 与签名 catalog 为准。
+  当前源码 lock 固定为 `0.11.21`；正式发布状态以独立 Agent Release 与签名 catalog 为准。
 - 2026-08-30 在共享 Linux x64 Host 的隔离测试 HOME 中验证当前 `0.11.13` 源码候选：
   签名 Runtime 清单的测试墙钟上限为 1 秒，模型桥首轮故意延迟 2.515 秒后 Prompt 仍在
   5.770 秒正常完成；随后 OpenCode 原生 Task 依次产生 `running`、`completed` 子 Agent

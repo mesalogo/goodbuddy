@@ -17,6 +17,12 @@ otherwise.
 
 - [x] **Cross-platform desktop application**: Supports Windows, macOS, and
   Linux release targets on `x64` and `arm64`.
+- [x] **Chinese hardware and operating-system coverage**: Standard Linux
+  packages target compatible x64 and arm64 environments, including UOS, Kylin,
+  Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
+  LoongArch has a separate experimental loong64 preview outside standard
+  releases and automatic updates; no preview is planned for 0.12.7. See the
+  [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
   `CommandOrControl+Shift+Space`; if registration conflicts or saving fails,
@@ -59,6 +65,10 @@ otherwise.
 - [ ] **Project Agent Space** (planned): Unifies roles, knowledge, Skills/MCP,
   models, approval policy, budgets, and timeouts in a Project, with reusable
   templates.
+- [ ] **Application navigation and system-tool shortcuts** (design only):
+  Plans fixed system entries, configurable built-in application visibility,
+  and footer shortcuts into the existing workbar. These are not implemented
+  interface changes. See the [design](./docs/features/application-tool-navigation/README.md).
 - [ ] **Additional assistant workbar and execution-space capabilities**
   (planned): Builds on the current workbar and multiple terminals with
   supervision, unified Runtime monitoring, managed processes, safe static HTML
@@ -71,7 +81,10 @@ otherwise.
 ### Agent Runtimes and model connections
 
 - [x] **Direct model Runtime**: Supports question answering, knowledge
-  synthesis, controlled tool execution, and image generation.
+  synthesis, controlled tool execution, image generation, and reference-image
+  editing through providers supporting the OpenAI-compatible image-editing
+  endpoint. Editing sends attached images as multipart data and still requires
+  validated inline image output rather than fetching provider-returned URLs.
 - [x] **Direct model programming agent**: Local direct text models can run the
   platform Shell in Execute mode and delegate one level of programming
   Subagent work while inheriting the parent request's mode, model, workspace,
@@ -161,7 +174,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.20`, while the current Desktop release candidate is `0.12.6`; formal
+  `0.11.21`, while the current Desktop release candidate is `0.12.7`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -192,10 +205,12 @@ otherwise.
   capabilities, and prompt startup do not scan the full payload. See the
   [design](./docs/features/remote-host/environment-provisioning-technical-design.md).
 - [ ] **Real-Host acceptance for SSH Host environment provisioning**: The
-  source can use the current format-v1 package. GitHub, Beijing mirror, Linux
-  x64/arm64, cancellation, and offline GoodBuddy transfer validation remains.
-  This status does not mean the path is published or has completed real-Host
-  testing.
+  current source passed isolated Linux x64 package installation, Ask/Execute,
+  native subagent external writes, reconnection, and stop/bootstrap.
+  The complete Host-card acquisition matrix across GitHub, Beijing mirror,
+  Linux x64/arm64, cancellation, and offline GoodBuddy transfer remains.
+  Candidate CI/native packaging and system sleep/wake are not yet verified;
+  this partial development evidence does not imply publication.
 - [x] **DeepSeek Harness (preview)**: Uses the fixed GoodBuddy Host and an
   OpenAI-compatible model connection. It prefers an administrator-provided
   connection, otherwise follows the compatible default model or first
@@ -225,7 +240,9 @@ otherwise.
   Execute permission confirmations are handled automatically rather than
   waiting for another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
 - [x] **Experts and Subagents**: Supports explicit experts, team analysis, and
-  up to three read-only experts running in parallel. Chat shows each
+  up to three experts running in parallel. Experts inherit the parent
+  Ask/Execute mode and can use enabled local direct-model tools; Ask remains
+  read-only. They are not remote OpenCode child sessions. Chat shows each
   expandable full expert response first and the main Agent's synthesis below,
   and persists both with the conversation.
 - [x] **OpenCode child progress and final results**: Child cards show ordered
@@ -327,10 +344,10 @@ otherwise.
   supervision across OpenCode, Continue, and DeepSeek Harness. Users select
   only Conversation or Task; Job/Run remains internal rather than becoming a
   tree or independent object.
-- [ ] **Executable Subagents** (planned): Explicit Execute delegation with
-  bounded nesting, parallelism, tokens, time, and tool permissions, aggregated
-  by Task in the workbar's fixed Runtime section with cancellation and audit
-  ownership.
+- [ ] **Advanced Subagent supervision** (planned): Task-level aggregation in
+  the workbar's fixed Runtime section, configurable nesting, parallelism,
+  budgets, and lifecycle controls. Basic expert-mode inheritance and
+  single-level direct-model programming delegation are already available.
 
 ### Skills, MCP, and knowledge
 
