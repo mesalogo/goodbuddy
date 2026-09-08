@@ -90,6 +90,7 @@ export default defineConfig({
           '@deepseek-ai/dsh-sandbox',
           '@deepseek-ai/dsh-sandbox-policy',
           '@deepseek-ai/dsh-session',
+          '@deepseek-ai/dsh-session-projection',
           '@deepseek-ai/dsh-shell-env',
           '@deepseek-ai/dsh-skill',
           '@deepseek-ai/dsh-subprocess-local',

@@ -14,7 +14,7 @@
 ### 桌面基础、工作空间与上下文
 
 - [x] **跨平台桌面应用**：支持 Windows、macOS、Linux，以及 `x64`、`arm64` 发布目标。
-- [x] **信创软硬件覆盖**：正式 Linux 安装包覆盖国产 `x64` 与 `arm64` 架构，可用于统信 UOS、银河麒麟及海光、兆芯、鲲鹏、飞腾等兼容环境。龙芯 LoongArch 另行提供 `loong64` 实验预览版，不属于正式发布矩阵，也未纳入自动更新；`0.12.7` 不构建该预览。这里的覆盖范围不等同于厂商或整机兼容认证，具体状态与限制见[龙芯预览版构建说明](./docs/development/loongarch-preview-build.md)。
+- [x] **信创软硬件覆盖**：正式 Linux 安装包覆盖国产 `x64` 与 `arm64` 架构，可用于统信 UOS、银河麒麟及海光、兆芯、鲲鹏、飞腾等兼容环境。龙芯 LoongArch 另行提供 `loong64` 实验预览版，不属于正式发布矩阵，也未纳入自动更新；`0.12.8` 不构建该预览。这里的覆盖范围不等同于厂商或整机兼容认证，具体状态与限制见[龙芯预览版构建说明](./docs/development/loongarch-preview-build.md)。
 - [x] **可配置全局快捷唤起**：在“平台功能 / 通用设置”中启停或录制 Electron accelerator；默认保留 `CommandOrControl+Shift+Space`，冲突或保存失败时继续使用上一组已注册快捷键，并显示可处理的状态。
 - [x] **Projects、独立对话与会话分支**：按项目隔离上下文，管理会话、附件和 Git 工作区变更；本地会话可在稳定状态下复制当前聊天内容到独立分支，分支持续显示来源徽标且不复制 Task、队列或成果归属；项目选择器区分本地、托管 SSH 与远程消息通道项目，托管 SSH 项目按 Host 分组并在 Host 标题显示真实 Agent 连接状态，项目行只保留远端路径。
 - [x] **文件、截图、窗口、剪贴板上下文**：用户明确选择后才加入模型上下文。
@@ -104,10 +104,12 @@
 
 ### 开源、构建与发布
 
-- 当前源码候选为 Desktop `0.12.7`、Agent `0.11.21`，OpenCode 固定为 `1.18.29`；正式发布状态以 Desktop 与 Agent 的独立发布渠道为准。
+- 当前源码候选为 Desktop `0.12.8`、Agent `0.11.21`，OpenCode 固定为 `1.18.29`；正式发布状态以 Desktop 与 Agent 的独立发布渠道为准。
 - [x] **0BSD 开源许可**：原创代码可自由使用、复制、修改、分发和商用；第三方组件和资源仍遵循各自许可证。
 - [x] **可复现依赖安装与源码构建**：使用锁定依赖、Node.js 24 和统一的测试、类型检查、Lint、生产构建命令。
-- [x] **六平台原生发布矩阵**：Windows、macOS、Linux 的 `x64`、`arm64` 目标由原生 Runner 构建，并提供发布清单和 SHA-256 哈希；Linux 同时生成 AppImage、DEB 和 RPM。
+- [x] **六平台原生发布矩阵**：Windows、macOS、Linux 的 `x64`、`arm64` 目标由原生 Runner 构建，并提供发布清单和 SHA-256 哈希。Windows 提供 NSIS 与 portable ZIP，macOS 仅 DMG，Linux 提供 AppImage、DEB 和 RPM，共 12 个安装包、20 个发布资产。
+- [x] **桌面 Runtime 包校验**：OpenCode 离线依赖复制避开 electron-builder 对源根目录 node_modules 的排除，DSH 会话投影组件打入解包后的 Host。最终包逐文件核对离线依赖并拒绝外部 DeepSeek 导入；Windows x64 CI 还会导入包内 OpenCode 插件、验证真实 DSH UtilityProcess 握手，通过后才发布。
+- [x] **DMG-only 更新清单**：当前 Desktop 和官网读取器同时接受仅 DMG 与历史 DMG/ZIP 清单。旧版 macOS 的 GitHub 更新检查及所有旧版镜像更新检查需要从下载页手动升级。
 
 ### 开放接口、团队协作与远程执行
 

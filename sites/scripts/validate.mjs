@@ -538,7 +538,7 @@ const expectedDownloadOptions = {
   },
   macos: {
     arches: ["arm64", "x64"],
-    formats: ["dmg", "zip"],
+    formats: ["dmg"],
   },
   linux: {
     arches: ["x64", "arm64", "loong64"],

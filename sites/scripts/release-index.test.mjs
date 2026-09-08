@@ -128,6 +128,14 @@ test("accepts the canonical stable six-target release index", () => {
   assert.equal(validateReleaseIndex(index), index);
 });
 
+test("accepts DMG-only releases with twelve installer entries", () => {
+  const index = validIndex();
+  delete index.targets["macos-x64"].files.zip;
+  delete index.targets["macos-arm64"].files.zip;
+  assert.equal(validateReleaseIndex(index), index);
+  assert.equal(Object.values(index.targets).flatMap((target) => Object.values(target.files)).length, 12);
+});
+
 test("rejects unstable or non-strict versions and extra top-level fields", () => {
   for (const version of ["v1.2.3", "01.2.3", "1.2", "1.2.3-rc.1"]) {
     expectRejected((index) => {

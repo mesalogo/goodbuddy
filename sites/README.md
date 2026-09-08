@@ -81,7 +81,7 @@ https://github.com/mesalogo/goodbuddy/releases/latest
 
 校验规则与桌面更新检查保持一致：索引只能指向稳定 SemVer 版本，必须恰好
 包含 Windows、macOS、Linux 的 x64 / arm64 六个匹配目标；每个目标必须提供
-准确的两种格式和扩展名、正的安全整数大小、64 字符小写十六进制 SHA-256、
+准确的格式和扩展名（Windows 两种、macOS 仅 DMG、Linux 三种），正的安全整数大小、64 字符小写十六进制 SHA-256、
 全局唯一文件名，以及位于
 `https://goodbuddy.oss-cn-beijing.aliyuncs.com/releases/v${version}/`
 下、对文件名进行 URL 编码的精确地址。校验清单和 GitHub 回退地址也必须
@@ -90,7 +90,7 @@ https://github.com/mesalogo/goodbuddy/releases/latest
 安装包文件名必须与发布生成器完全一致：Windows 使用
 `GoodBuddy-${version}-windows-${arch}-setup.exe` 与
 `GoodBuddy-${version}-windows-${arch}-portable.zip`；macOS 使用
-`GoodBuddy-${version}-mac-${arch}.dmg|zip`；Linux x64 的 AppImage、DEB 与
+`GoodBuddy-${version}-mac-${arch}.dmg`；读取器仍接受历史 DMG/ZIP 清单，但当前页面不提供 macOS ZIP 选项。Linux x64 的 AppImage、DEB 与
 RPM 分别使用 electron-builder 的 `x86_64`、`amd64` 与 `x86_64` 架构名。
 Linux arm64 的 AppImage/DEB 使用 `arm64`，RPM 使用 `aarch64`。
 Linux 处理器选择器另外提供龙芯 `loong64` 实验预览；选中后安装包类型固定为

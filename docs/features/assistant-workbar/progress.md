@@ -1,5 +1,18 @@
 # 工作栏实现与验证进度
 
+## 2026-09-08 Desktop 0.12.8 安装包修复
+
+- 真实 `0.12.7` 安装目录确认 OpenCode 配置缺少整个 `node_modules`。新增测试调用实际
+  electron-builder 资源复制器，复现相同 ENOENT；把复制源上移到 `.runtime-resources`
+  后，插件及传递依赖逐文件复制验证通过。
+- 真实安装的 DSH bootstrap 存在 `dsh-session-projection` 外部导入，而 Host 解包目录没有
+  对应依赖。将其加入 Vite bundling，配置回归从失败转为通过；最终包会拒绝同类外部导入。
+- Windows x64 CI 已接入包内 OpenCode 插件导入、真实 DSH UtilityProcess 握手及 npm
+  探针，位于解包目录清理和发布之前。用户要求不做本地打包；CI 探针结果尚待本候选执行，
+  不能把当前源码回归通过当作真实发布包已通过。
+- 本次不改变 Agent `0.11.21` 源码或包。macOS 改为 DMG-only，用户明确接受旧版客户端
+  手动升级影响；格式与发布规则见[发布手册](../../development/release-runbook.md)。
+
 ## 2026-09-08 Execute 目录权限等待修复
 
 - 本机 OpenCode 的内部配置显式允许默认工具权限；每次 Ask 仍设置 deny-all 会话规则并

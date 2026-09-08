@@ -1,6 +1,6 @@
 {
   "name": "goodbuddy",
-  "version": "0.12.7",
+  "version": "0.12.8",
   "private": true,
   "description": "Secure desktop AI workspace with controlled Agent Runtimes",
   "desktopName": "GoodBuddy",
@@ -128,10 +128,10 @@
         ]
       },
       {
-        "from": ".runtime-resources/opencode-config",
-        "to": "runtimes/opencode-config",
+        "from": ".runtime-resources",
+        "to": "runtimes",
         "filter": [
-          "**/*"
+          "opencode-config{,/**/*}"
         ]
       },
       {

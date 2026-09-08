@@ -2,6 +2,38 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.8",
+      "releasedAt": "2026-09-08",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**修复 OpenCode 启动失败。** 安装包补齐离线配置依赖，避免因缺少 `@opencode-ai/plugin/package.json` 无法启动。升级后无需手动安装 Node.js 或 npm 依赖。",
+            "**修复 DeepSeek Harness Host 启动退出。** 将必需的会话组件完整打入 Host，避免安装后提示“Host 启动前退出（code 1）”。现有模型配置保持不变。",
+            "**macOS 仅提供 DMG。** Intel 与 Apple 芯片版本不再构建或发布 ZIP。Windows 和 Linux 的安装包格式保持不变。"
+          ],
+          "notices": [
+            "旧版 macOS 的 GitHub 更新检查，以及所有平台的旧版镜像更新检查可能无法识别新清单，请从官方下载页手动升级至 `0.12.8`。",
+            "Agent 继续使用 `0.11.21`，本次不重发 Agent，也不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Fixed OpenCode startup failures.** Desktop packages now include the offline configuration dependencies, avoiding startup failures caused by a missing `@opencode-ai/plugin/package.json`. No manual Node.js or npm dependency installation is needed after upgrading.",
+            "**Fixed DeepSeek Harness Host startup exits.** Required session components are bundled into the Host, preventing the “Host exited before startup (code 1)” error after installation. Existing model settings remain unchanged.",
+            "**DMG-only macOS releases.** Intel and Apple silicon versions no longer build or publish ZIP packages. Windows and Linux package formats are unchanged."
+          ],
+          "notices": [
+            "Older macOS GitHub update checks and older mirror update checks on all platforms may reject the new manifest. Upgrade manually to `0.12.8` from the official download page.",
+            "Agent remains at `0.11.21`; this release does not republish the Agent or include a LoongArch preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.7",
       "releasedAt": "2026-09-08",
       "notes": {

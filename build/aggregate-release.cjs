@@ -19,8 +19,8 @@ const manifestName = 'release-manifest.json'
 const targetDefinitions = [
   { platform: 'windows', arch: 'x64', formats: ['nsis', 'portable'] },
   { platform: 'windows', arch: 'arm64', formats: ['nsis', 'portable'] },
-  { platform: 'macos', arch: 'x64', formats: ['dmg', 'zip'] },
-  { platform: 'macos', arch: 'arm64', formats: ['dmg', 'zip'] },
+  { platform: 'macos', arch: 'x64', formats: ['dmg'] },
+  { platform: 'macos', arch: 'arm64', formats: ['dmg'] },
   { platform: 'linux', arch: 'x64', formats: ['AppImage', 'deb', 'rpm'] },
   { platform: 'linux', arch: 'arm64', formats: ['AppImage', 'deb', 'rpm'] }
 ]

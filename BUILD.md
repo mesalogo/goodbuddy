@@ -219,6 +219,7 @@ package format v1 归档已经包含固定 Agent 和 Node，可直接用于 Host
 桌面包会携带经过版本与完整性校验的 OpenCode、Continue 和 DSH 插件安装 Runtime：
 
 - OpenCode 平台二进制来自 `.runtime-resources/<arch>`。
+- Desktop 的离线配置复制以 `.runtime-resources` 为源、`opencode-config{,/**/*}` 为过滤器，避免 electron-builder 对复制源根目录下 `node_modules` 的固定排除。最终包逐文件核对离线配置与依赖；DSH bootstrap 和 chunk 不得残留外部 `@deepseek-ai/*` 导入。Windows x64 CI 在删除解包目录前实际导入包内 OpenCode 插件并运行隔离的 DSH UtilityProcess 握手与 npm 探针，失败即停止发布。
 - OpenCode 离线配置位于 `.runtime-resources/opencode-config`，构建时按已安装 `@opencode-ai/plugin/package.json` 的版本复用，不依赖根 lockfile 或自定义 ready/integrity 标记。缺失、不可读或版本不匹配时，在 staging 中执行精确版本 npm 安装，成功后替换缓存；安装失败保留旧缓存并清理 staging。本机共享配置同样比较随包插件与缓存插件的版本，版本不同时通过 staging 替换。
 - 离线依赖安装禁用 npm bin links；远程 Runtime 组包排除不使用的 `.bin` 命令链接，并把复制后的普通依赖文件统一为 `0644`，OpenCode 入口仍为 `0755`。目录元数据、每个依赖文件及许可证继续纳入签名校验。
 - Continue Runtime 来自锁定版本的 `@continuedev/cli`。
@@ -397,8 +398,8 @@ DeepSeek Harness Runtime、`app.asar`、目标架构和安装包签名。
 npm run release:package -- --platform macos --arch <x64|arm64> --unsigned
 ```
 
-默认发布产物为 Windows 的 NSIS 安装包与 portable ZIP、macOS 的 DMG 与
-ZIP，以及 Linux 的 AppImage、DEB 与 RPM。Linux 原生 Runner 必须安装
+默认发布产物为 Windows 的 NSIS 安装包与 portable ZIP、macOS 的 DMG，
+以及 Linux 的 AppImage、DEB 与 RPM。Linux 原生 Runner 必须安装
 `rpm`/`rpmbuild` 工具后再调用 electron-builder。Windows portable ZIP 解压后可直接
 运行 `GoodBuddy.exe`，并包含启用便携数据目录的
 `.goodbuddy-portable.json`。每个目标目录都包含带文件大小和 SHA-256 的
@@ -434,8 +435,8 @@ Desktop 正式发布必须把候选分支推送与标签推送拆成两个阶段
 全部目标成功后，才会严格校验并聚合所有平台产物，生成按平台重命名的
 manifests、总 `release-manifest.json` 和 `SHA256SUMS`。随后工作流通过
 GitHub OIDC 获取短期 STS 凭据，将发布资产和 `site-release.json` 上传到
-北京 OSS 的不可变版本目录，并公开校验 14 个安装包。验证通过后才创建或
-更新 draft GitHub Release、上传 22 个 Release 资产并正式发布，最后原子
+北京 OSS 的不可变版本目录，并公开校验 12 个安装包。验证通过后才创建或
+更新 draft GitHub Release、上传 20 个 Release 资产并正式发布，最后原子
 切换官网 `latest.json`。任一步失败都不会提前切换官网最新版本。
 
 同一标签重跑时，工作流会根据 `resources/release-notes.json` 重新生成并
@@ -482,7 +483,7 @@ git push github "$tag"
 macOS 发布 job 会先原子判断 Apple 凭据状态：以下五项 Actions Secrets 全部
 存在时，使用 Developer ID Application 证书签名，并通过 App Store Connect
 API Key 提交 Apple notarization；五项全部缺失时，明确生成未签名、未公证的
-DMG 和 ZIP，并在 Actions 日志与摘要中警告 Gatekeeper 限制；只配置一部分时
+DMG，并在 Actions 日志与摘要中警告 Gatekeeper 限制；只配置一部分时
 任务失败，不能静默降级为未签名包。
 
 - `MACOS_CERTIFICATE_BASE64`：包含证书及私钥的 `.p12` 文件经 Base64 编码后的内容。

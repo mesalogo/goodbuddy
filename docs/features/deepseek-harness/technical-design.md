@@ -141,6 +141,9 @@ Harness 子进程内控制面不能取代 Main 控制面，Main 控制面也不�
 Harness Session 只在当前 Runtime 进程生命周期内存在。释放 GoodBuddy 会话时必须同步释放对应 Harness Agent。
 固定 Host 显式加载 `dsh-session-projection` 的内存 SessionProjectionRegistry，这是
 `0.1.2-rc.1` AgentLoop 的必需依赖；不加载 Session persistence，也不新增磁盘会话副本。
+该依赖与其余 DSH 依赖一起由 Vite 打入 Host，不能从 `app.asar.unpacked` 外部导入
+仅存在于 `app.asar` 的 npm 包。最终打包检查及 Windows CI 的真实 UtilityProcess
+启动探针见 [Runtime 资源与打包](../../../BUILD.md#runtime-资源)。
 
 ## 6. 总体架构
 

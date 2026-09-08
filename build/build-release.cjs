@@ -42,6 +42,10 @@ const {
 const {
   readZipCentralDirectory
 } = require('./zip-central-directory.cjs')
+const {
+  verifyOpenCodeConfig,
+  verifyHarnessBundleImports
+} = require('./verify-desktop-runtimes.cjs')
 
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(
@@ -90,6 +94,8 @@ const portableRequiredFiles = [
   'resources/tray-icon.png',
   'resources/tool-environment/managed-python-artifacts.json',
   'resources/runtimes/opencode/opencode.exe',
+  'resources/runtimes/opencode-config/node_modules/@opencode-ai/plugin/package.json',
+  'resources/runtimes/opencode-config/node_modules/@opencode-ai/plugin/dist/index.js',
   'resources/runtimes/continue/package.json',
   'resources/runtimes/npm/bin/npm-cli.js',
   'resources/runtimes/npm/bin/npx-cli.js',
@@ -126,7 +132,7 @@ const platformDefinitions = {
   },
   macos: {
     builderFlag: '--mac',
-    defaultFormats: ['dmg', 'zip'],
+    defaultFormats: ['dmg'],
     supportedFormats: ['dmg', 'zip'],
     unpackedPattern: /^mac(?:-.+)?$/u,
     executable: [
@@ -820,6 +826,10 @@ function verifyHarnessPackage(
     join(unpackedRoot, ...harnessHostEntry.split('/')),
     'DeepSeek Harness 可执行 Host'
   )
+  verifyHarnessBundleImports(
+    readFileSync(join(unpackedRoot, ...harnessHostEntry.split('/')), 'utf8'),
+    harnessHostEntry
+  )
   const harnessLlmChunk = [...entries]
     .map((entry) => entry.slice(1).split(sep).join('/'))
     .find((entry) =>
@@ -867,6 +877,10 @@ function verifyHarnessPackage(
     assertFile(
       join(unpackedRoot, ...chunkPath.split('/')),
       'DeepSeek Harness 可执行 module chunk'
+    )
+    verifyHarnessBundleImports(
+      readFileSync(join(unpackedRoot, ...chunkPath.split('/')), 'utf8'),
+      chunkPath
     )
   }
   for (const [packageName, expectedVersion] of Object.entries(
@@ -1080,6 +1094,10 @@ function verifyUnpackedOutput(directory, options) {
     'Remote Runtime 锁定清单'
   )
   assertFile(runtimeExecutable, 'OpenCode Runtime')
+  verifyOpenCodeConfig(
+    resources,
+    join(root, '.runtime-resources', 'opencode-config')
+  )
   assertFile(
     join(resources, 'runtimes', 'continue', 'dist', 'index.js'),
     'Continue Runtime'
@@ -1567,7 +1585,7 @@ function printHelp() {
 
 默认格式：
   windows: nsis, portable (ZIP)
-  macos:   dmg, zip
+  macos:   dmg
   linux:   AppImage, deb, rpm`)
 }
 
@@ -1629,6 +1647,16 @@ async function main(argv = process.argv.slice(2)) {
       stagingDirectory,
       options
     )
+    if (
+      process.env.GITHUB_ACTIONS === 'true' &&
+      options.platform === 'windows' &&
+      options.arch === 'x64'
+    ) {
+      await run(process.execPath, [
+        join(root, 'build', 'run-packaged-deepseek-harness-smoke.cjs'),
+        unpackedDirectory
+      ])
+    }
     if (
       options.platform === 'windows' &&
       options.formats.includes('portable')

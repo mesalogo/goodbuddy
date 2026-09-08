@@ -248,7 +248,7 @@ jobs:
 
       - name: Build, sign and notarize macOS release packages
         if: matrix.platform == 'macos' && steps.macos-signing.outputs.enabled == 'true'
-        run: npm run release:package -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --skip-build
+        run: npm run release:package -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --format dmg --skip-build
         env:
           ELECTRON_CACHE: ${{ runner.temp }}/electron
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
@@ -261,7 +261,7 @@ jobs:
 
       - name: Build unsigned macOS release packages
         if: matrix.platform == 'macos' && steps.macos-signing.outputs.enabled == 'false'
-        run: npm run release:package -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --skip-build --unsigned
+        run: npm run release:package -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --format dmg --skip-build --unsigned
         env:
           ELECTRON_CACHE: ${{ runner.temp }}/electron
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder

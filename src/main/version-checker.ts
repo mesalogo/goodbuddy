@@ -336,8 +336,14 @@ function isCanonicalReleaseAssetApiUrl(value: string): boolean {
 
 const expectedFormats: Record<ReleasePlatform, string[]> = {
   windows: ['nsis', 'portable'],
-  macos: ['dmg', 'zip'],
+  macos: ['dmg'],
   linux: ['AppImage', 'deb', 'rpm']
+}
+
+function formatsForTarget(platform: ReleasePlatform, includesZip: boolean): string[] {
+  return platform === 'macos' && includesZip
+    ? ['dmg', 'zip']
+    : expectedFormats[platform]
 }
 
 function hasExpectedFileFormats(
@@ -352,7 +358,7 @@ function hasExpectedFileFormats(
   }
   const extensions =
     platform === 'macos'
-      ? ['.dmg', '.zip']
+      ? files.length === 2 ? ['.dmg', '.zip'] : ['.dmg']
       : ['.AppImage', '.deb', '.rpm']
   return extensions.every(
     (extension) =>
@@ -418,7 +424,7 @@ function validateMirrorIndex(
     if (!target || `${target.platform}-${target.arch}` !== key) {
       throw new Error(`Mirror release target is invalid: ${key}`)
     }
-    const formats = expectedFormats[target.platform]
+    const formats = formatsForTarget(target.platform, Boolean(target.files.zip))
     if (
       Object.keys(target.files).length !== formats.length ||
       formats.some((format) => !target.files[format])
@@ -454,7 +460,7 @@ function validateMirrorIndex(
   if (!target) {
     throw new Error(`Mirror release target is missing: ${platform}/${arch}`)
   }
-  const formats = expectedFormats[platform]
+  const formats = formatsForTarget(platform, Boolean(target.files.zip))
   return {
     platform,
     arch,
@@ -487,7 +493,7 @@ function validateCurrentTarget(
   if (!target) {
     throw new Error('Release manifest target is missing')
   }
-  const formats = expectedFormats[platform]
+  const formats = formatsForTarget(platform, target.formats.includes('zip'))
   if (
     target.formats.length !== formats.length ||
     !formats.every((format, index) => target.formats[index] === format) ||

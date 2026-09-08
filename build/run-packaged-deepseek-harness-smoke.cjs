@@ -13,6 +13,7 @@ const {
 const { statSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { delimiter, join, resolve } = require('node:path')
+const { pathToFileURL } = require('node:url')
 
 const unpackedPath = process.argv[2]
   ? resolve(process.argv[2])
@@ -109,6 +110,20 @@ async function main() {
     const npmProject = join(root, 'npm-project')
     const npmFixture = join(root, 'npm-fixture')
     await mkdir(project, { recursive: true })
+    const pluginUrl = pathToFileURL(join(
+      unpackedPath, 'resources', 'runtimes', 'opencode-config',
+      'node_modules', '@opencode-ai', 'plugin', 'dist', 'index.js'
+    )).href
+    const importedPlugin = await run(
+      executable,
+      ['--input-type=module', '--eval', `await import(${JSON.stringify(pluginUrl)})`],
+      { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      root
+    )
+    if (importedPlugin.exitCode !== 0 || importedPlugin.signal) {
+      throw new Error(`Packaged OpenCode plugin import failed: ${importedPlugin.output.trim()}`)
+    }
+    console.log('Packaged OpenCode offline plugin import: ready')
 
     await copyFile(
       resolve('build/deepseek-harness-utility-smoke.cjs'),

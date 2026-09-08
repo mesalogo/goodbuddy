@@ -50,6 +50,18 @@ function jobNeeds(name: string): string[] {
 }
 
 describe('desktop packages workflow', () => {
+  it('builds only DMG for both signed and unsigned macOS jobs', () => {
+    const steps = parsed.jobs.package?.steps?.filter(
+      (step) => step.name?.endsWith('macOS release packages') &&
+        !step.name.includes('non-macOS')
+    )
+    expect(steps).toHaveLength(2)
+    for (const step of steps ?? []) {
+      expect(step.run).toContain('--format dmg')
+      expect(step.run).not.toContain('--format dmg,zip')
+    }
+  })
+
   it('uses valid YAML, pinned action majors, and only desktop release jobs', () => {
     expect(() => parse(workflow)).not.toThrow()
     expect(Object.keys(parsed.jobs)).toEqual([

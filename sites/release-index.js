@@ -27,12 +27,12 @@
     "macos-x64": Object.freeze({
       platform: "macos",
       arch: "x64",
-      formats: Object.freeze(["dmg", "zip"]),
+      formats: Object.freeze(["dmg"]),
     }),
     "macos-arm64": Object.freeze({
       platform: "macos",
       arch: "arm64",
-      formats: Object.freeze(["dmg", "zip"]),
+      formats: Object.freeze(["dmg"]),
     }),
     "linux-x64": Object.freeze({
       platform: "linux",
@@ -143,6 +143,9 @@
     for (const key of targetKeys) {
       const definition = targetDefinitions[key];
       const target = index.targets[key];
+      const formats = definition.platform === "macos" && target?.files?.zip
+        ? ["dmg", "zip"]
+        : definition.formats;
       assert(
         hasExactKeys(target, ["platform", "arch", "files"]) &&
           target.platform === definition.platform &&
@@ -150,11 +153,11 @@
         `发布目标与键不匹配：${key}`,
       );
       assert(
-        hasExactKeys(target.files, definition.formats),
+        hasExactKeys(target.files, formats),
         `发布目标文件格式无效：${key}`,
       );
 
-      for (const format of definition.formats) {
+      for (const format of formats) {
         const file = target.files[format];
         assert(
           hasExactKeys(file, ["name", "size", "sha256", "url"]),

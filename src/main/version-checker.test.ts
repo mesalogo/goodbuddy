@@ -99,6 +99,46 @@ function successfulFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
   })
 }
 
+describe('DMG-only release updates', () => {
+  it.each([false, true])('accepts macOS GitHub releases (legacy ZIP: %s)', async (legacyZip) => {
+    const formats = legacyZip ? ['dmg', 'zip'] : ['dmg']
+    const macFiles = formats.map((format, index) => ({
+      name: `GoodBuddy-${latestVersion}-mac-arm64.${format}`,
+      size: 100 + index,
+      sha256: 'a'.repeat(64)
+    }))
+    const manifest = manifestPayload({
+      targets: [{
+        platform: 'macos', arch: 'arm64', formats,
+        manifest: 'release-manifest-macos-arm64.json', files: macFiles
+      }],
+      files: macFiles.map((file) => ({ ...file, platform: 'macos', arch: 'arm64' }))
+    })
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input) =>
+      jsonResponse(String(input) === GOODBUDDY_LATEST_RELEASE_API_URL
+        ? releasePayload() : manifest)
+    )
+    const result = await checkForUpdates({
+      currentVersion: '1.0.0', platform: 'darwin', arch: 'arm64', fetch
+    })
+    expect(result.target.formats).toEqual(formats)
+  })
+
+  it('accepts a DMG-only mirror for Windows and macOS clients', async () => {
+    const index = mirrorIndexPayload()
+    delete index.targets['macos-x64']!.files.zip
+    delete index.targets['macos-arm64']!.files.zip
+    for (const platform of ['win32', 'darwin'] as const) {
+      const result = await checkMirrorForUpdates({
+        currentVersion: '1.0.0', platform, arch: 'x64',
+        fetch: vi.fn(async () => jsonResponse(index))
+      })
+      expect(result.updateAvailable).toBe(true)
+      if (platform === 'darwin') expect(result.target.formats).toEqual(['dmg'])
+    }
+  })
+})
+
 type MirrorTestFile = {
   name: string
   size: number

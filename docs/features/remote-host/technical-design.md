@@ -12,7 +12,7 @@ Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
 `0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前未发布
-Agent 源码 lock 为 `0.11.21`，Desktop 候选为 `0.12.7`，等待各自独立发布审批。
+Agent 源码 lock 为已发布的 `0.11.21`，Desktop 候选为 `0.12.8`；本次桌面打包修复不重发 Agent。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
 

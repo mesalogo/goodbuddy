@@ -21,7 +21,7 @@ otherwise.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.12.7. See the
+  releases and automatic updates; no preview is planned for 0.12.8. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -174,7 +174,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.21`, while the current Desktop release candidate is `0.12.7`; formal
+  `0.11.21`, while the current Desktop release candidate is `0.12.8`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -567,7 +567,17 @@ otherwise.
   build commands.
 - [x] **Six-target native release matrix**: Native runners build Windows,
   macOS, and Linux `x64` and `arm64` targets with release manifests and SHA-256
-  hashes. Linux also produces AppImage, DEB, and RPM.
+  hashes. Windows provides NSIS and portable ZIP, macOS DMG only, and Linux
+  AppImage, DEB, and RPM, for 12 installers and 20 published assets.
+- [x] **Desktop Runtime package verification**: Offline OpenCode dependencies
+  are copied without electron-builder's root node_modules exclusion; DSH
+  session projection is bundled into the unpacked Host. Final package checks
+  compare the offline dependency tree and reject external DeepSeek imports.
+  Windows x64 CI additionally imports the packaged OpenCode plugin and checks
+  the real DSH UtilityProcess handshake before publishing.
+- [x] **DMG-only update manifests**: Current Desktop and website readers accept
+  DMG-only and historical DMG/ZIP manifests. Older macOS GitHub readers and all
+  older mirror readers require a manual upgrade from the download page.
 
 ### Open interfaces, team collaboration, and remote execution
 

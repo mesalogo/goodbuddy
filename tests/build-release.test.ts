@@ -235,6 +235,10 @@ function machO(cpuType: number): Buffer {
 
 function portableDirectory(parent: string): string {
   const directory = join(parent, 'portable')
+  const plugin = join(directory, 'resources', 'runtimes', 'opencode-config', 'node_modules', '@opencode-ai', 'plugin')
+  mkdirSync(join(plugin, 'dist'), { recursive: true })
+  writeFileSync(join(plugin, 'package.json'), '{"name":"@opencode-ai/plugin","version":"1.18.29"}')
+  writeFileSync(join(plugin, 'dist', 'index.js'), 'export const tool = true')
   mkdirSync(
     join(directory, 'resources', 'runtimes', 'opencode'),
     { recursive: true }
@@ -319,7 +323,7 @@ function endOfCentralDirectory(
 describe('release build arguments', () => {
   it.each([
     ['win32', 'x64', 'windows', ['nsis', 'portable']],
-    ['darwin', 'arm64', 'macos', ['dmg', 'zip']],
+    ['darwin', 'arm64', 'macos', ['dmg']],
     ['linux', 'x64', 'linux', ['AppImage', 'deb', 'rpm']]
   ])(
     'uses %s host defaults',

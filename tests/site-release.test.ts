@@ -46,8 +46,8 @@ const verifier = require(
 const targetDefinitions = [
   ['windows', 'x64', ['nsis', 'portable']],
   ['windows', 'arm64', ['nsis', 'portable']],
-  ['macos', 'x64', ['dmg', 'zip']],
-  ['macos', 'arm64', ['dmg', 'zip']],
+  ['macos', 'x64', ['dmg']],
+  ['macos', 'arm64', ['dmg']],
   ['linux', 'x64', ['AppImage', 'deb', 'rpm']],
   ['linux', 'arm64', ['AppImage', 'deb', 'rpm']]
 ] as const
@@ -145,7 +145,7 @@ describe('site release manifest', () => {
 
     await expect(
       verifier.verifySiteRelease(manifest, request)
-    ).resolves.toBe(14)
-    expect(request).toHaveBeenCalledTimes(14)
+    ).resolves.toBe(12)
+    expect(request).toHaveBeenCalledTimes(12)
   })
 })

@@ -38,9 +38,19 @@ below.
   `npm run release:package -- --platform <platform> --arch <arch>`. It only
   packages for the native host and writes to
   `dist/release/<platform>-<arch>`.
-- Default deliverables are NSIS and portable ZIP for Windows, DMG and ZIP for
+- Default deliverables are NSIS and portable ZIP for Windows, DMG for
   macOS, and AppImage, DEB, and RPM for Linux. Every target includes
   `release-manifest.json` with SHA-256 hashes.
+- Starting with Desktop 0.12.8, macOS releases contain DMG only. Older macOS
+  GitHub update readers and all older mirror readers require ZIP and cannot
+  validate this new matrix; affected users must upgrade manually from the
+  download page. The user approved this immediate format change. Current
+  readers accept both the historical DMG/ZIP matrix and the DMG-only matrix.
+- Final Desktop package verification compares every bundled OpenCode
+  configuration file with the prepared dependency tree and rejects external
+  DeepSeek imports in the unpacked Host and chunks. Windows x64 CI also
+  imports the packaged OpenCode plugin and starts an isolated packaged
+  UtilityProcess before publishing; source-only tests do not replace it.
 - `build/build-release.cjs` verifies the unpacked application, `app.asar`,
   bundled Continue and OpenCode runtimes, executable architecture, and package
   signatures before atomically replacing a release directory.
@@ -211,12 +221,12 @@ surface together before a new release.
   It must be able to write immutable version objects and the final latest
   pointer without granting unrelated administration privileges.
 - Upload release assets and `site-release.json` under the immutable
-  `releases/<tag>/` prefix first. Verify all 14 installer URLs publicly before
+  `releases/<tag>/` prefix first. Verify all 12 installer URLs publicly before
   creating or publishing the GitHub Release. Update
   `releases/latest.json` only after the GitHub Release is public and all prior
   checks succeeded.
-- The expected GitHub Release contains 22 assets: 14 installers (two formats
-  for each Windows/macOS target and three formats for each Linux target), six
+- The expected GitHub Release contains 20 assets: 12 installers (two formats
+  for each Windows target, DMG for each macOS target, and three formats for each Linux target), six
   renamed target manifests, one aggregate `release-manifest.json`, and one `SHA256SUMS`.
   `site-release.json` is an OSS publication artifact, not a GitHub Release
   asset.
@@ -269,17 +279,17 @@ Do not report a release complete until all of the following are verified:
 2. The public GitHub Release is non-draft, non-prerelease, marked Latest, and
    uses the expected tag and title. Its body must exactly match the Markdown
    generated from the approved packaged bilingual notes.
-3. GitHub release metadata contains exactly the expected 22 uploaded asset
+3. GitHub release metadata contains exactly the expected 20 uploaded asset
    names, including the expected Windows x64 and arm64 assets. Do not download,
    hash, launch, or send individual network probes to published installers
    unless the user explicitly requests that additional validation.
 4. The Beijing `releases/latest.json` returns HTTP 200, has the expected stable
-   version, exact six targets and 14 installer entries, the trusted Beijing
+   version, exact six targets and 12 installer entries, the trusted Beijing
    URLs, and the GitHub fallback URL. It must match the immutable
    `releases/<tag>/site-release.json`. Fetching and comparing these small JSON
    metadata files is sufficient; rely on the successful publication job for
    its per-asset public checks.
-5. The live website successfully fetches the index and produces the 14 correct
+5. The live website successfully fetches the index and produces the 12 correct
    platform/architecture/format links from that metadata.
 6. Both remote `main` refs and both peeled tag refs still equal the approved
    release commit, and the local working tree is clean.
