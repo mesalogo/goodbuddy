@@ -5548,7 +5548,7 @@ describe('ModelAgentRuntime', () => {
     expect(form.get('prompt')).toBe('把背景改成白色')
     expect(form.get('n')).toBe('1')
     expect(form.get('quality')).toBe('medium')
-    expect(form.get('response_format')).toBe('b64_json')
+    expect(form.get('response_format')).toBeNull()
     expect(form.get('background')).toBe('transparent')
     const uploaded = form.get('image')
     expect(uploaded).toBeInstanceOf(Blob)

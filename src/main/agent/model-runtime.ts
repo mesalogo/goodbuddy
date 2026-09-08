@@ -1793,7 +1793,12 @@ export class ModelAgentRuntime implements AgentRuntime {
     images: NonNullable<AgentExecutionRequest['images']>
   ): FormData {
     const form = new FormData()
-    const fields = this.createImageGenerationRequest(prompt)
+    const fields = this.createRequestBody({
+      model: this.options.model,
+      prompt: prompt.slice(0, 100_000),
+      n: 1,
+      quality: this.options.imageGenerationQuality ?? 'auto'
+    })
     for (const [name, value] of Object.entries(fields)) {
       form.append(
         name,
