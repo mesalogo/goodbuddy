@@ -663,24 +663,6 @@ describe('ActivityPanel', () => {
     expect(screen.getByText('活动 500')).toBeInTheDocument()
   })
 
-  it('warns when the migrated legacy history may already be incomplete', () => {
-    render(
-      <ActivityPanel
-        legacyHistoryMayBeIncomplete
-        onClear={vi.fn()}
-        onOpenConversation={vi.fn()}
-        records={[makeRecord(1)]}
-        tokenUsage={makeTokenUsage()}
-      />
-    )
-
-    expect(
-      screen.getByText(
-        '旧版本曾限制本机运行记录的数量和详情长度，因此更早的记录或部分详情可能已经丢失。新记录会完整保存。'
-      )
-    ).toHaveAttribute('role', 'status')
-  })
-
   it('shows totals without double-counting cache tokens', () => {
     render(
       <ActivityPanel

@@ -115,8 +115,6 @@ export const activity = {
     unknownTime: 'Unknown time',
     interruptedOnRestart:
       'This activity had not finished when the app restarted.',
-    legacyHistoryMayBeIncomplete:
-      'Older versions limited local run history and detail length, so earlier records or parts of their details may already be missing. New records are saved in full.',
     unavailableScope:
       'The scope could not be determined when this activity was recorded.',
     conversation: 'Conversation: {{title}}',

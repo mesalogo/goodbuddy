@@ -10600,9 +10600,6 @@ function App(): React.JSX.Element {
                       }
                     >
                       <ActivityPanel
-                        legacyHistoryMayBeIncomplete={
-                          legacyActivityHistoryMayBeIncomplete
-                        }
                         onClear={() => {
                           legacyActivityHistoryMayBeIncompleteRef.current = false;
                           setLegacyActivityHistoryMayBeIncomplete(false);

@@ -35,7 +35,6 @@ type ActivityActorKind =
 const activityRenderBatchSize = 500
 
 export type ActivityPanelProps = {
-  legacyHistoryMayBeIncomplete?: boolean
   projects?: readonly AssistantProject[]
   records: readonly ActivityRecord[]
   tokenUsage: TokenUsageSummary
@@ -240,7 +239,6 @@ function groupActivityRecordsByProject(
 }
 
 export function ActivityPanel({
-  legacyHistoryMayBeIncomplete = false,
   projects = [],
   records,
   tokenUsage,
@@ -702,12 +700,6 @@ export function ActivityPanel({
         scope={{ kind: 'all-projects' }}
         title={t('header.title')}
       />
-      {legacyHistoryMayBeIncomplete && (
-        <p className="activity-panel__legacy-warning" role="status">
-          {t('records.legacyHistoryMayBeIncomplete')}
-        </p>
-      )}
-
       <PageTabs
         ariaLabel={t('tabs.ariaLabel')}
         idPrefix="activity-view"

@@ -10639,7 +10639,7 @@ describe("App", () => {
     );
   });
 
-  it("migrates legacy activity and keeps its possible-loss warning visible", async () => {
+  it("migrates legacy activity", async () => {
     localStorage.setItem(
       ACTIVITY_STORAGE_KEY,
       JSON.stringify([
@@ -10673,14 +10673,6 @@ describe("App", () => {
       expect(localStorage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
-    expect(
-      await screen.findByText(
-        "旧版本曾限制本机运行记录的数量和详情长度，因此更早的记录或部分详情可能已经丢失。新记录会完整保存。",
-        {},
-        { timeout: 3_000 },
-      ),
-    ).toBeInTheDocument();
   });
 
   it("marks the current primary navigation page and hides decorative icons", async () => {

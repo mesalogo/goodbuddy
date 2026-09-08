@@ -13960,15 +13960,6 @@ details.settings-section > :not(summary) + :not(summary) {
   padding: var(--space-4) 0;
 }
 
-.activity-panel__legacy-warning {
-  margin: var(--space-3) 0 0;
-  padding: var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-  color: var(--text-secondary);
-}
-
 .activity-panel__load-more {
   align-self: center;
   margin-top: var(--space-3);
