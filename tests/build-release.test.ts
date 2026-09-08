@@ -888,6 +888,12 @@ describe('release build arguments', () => {
     const integrity = 'sha512-test-integrity'
     const executable = Buffer.from('desktop runtime')
     try {
+      const configPlugin = join(
+        projectRoot, '.runtime-resources', 'opencode-config',
+        'node_modules', '@opencode-ai', 'plugin'
+      )
+      mkdirSync(configPlugin, { recursive: true })
+      writeFileSync(join(configPlugin, 'package.json'), JSON.stringify({ version: '1.18.29' }))
       mkdirSync(join(projectRoot, 'out', 'main'), {
         recursive: true
       })

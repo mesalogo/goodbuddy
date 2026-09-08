@@ -37,6 +37,7 @@ const MAXIMUM_ARCHIVE_BYTES = 512 * 1024 * 1024
 const MAXIMUM_EXPANDED_BYTES = 1024 * 1024 * 1024
 const MAXIMUM_ENTRY_BYTES = 384 * 1024 * 1024
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
+const MAXIMUM_DESCRIPTOR_BYTES = 4 * 1024 * 1024
 const MAXIMUM_ENTRIES = 50_002
 const MAXIMUM_CENTRAL_BYTES = 32 * 1024 * 1024
 const ZIP_LOCAL = 0x04034b50
@@ -480,7 +481,9 @@ function streamEntry(
   destination?: string
 ): { sha256: string; crc32: number; bytes?: Buffer } {
   const wantedBytes =
-    destination === undefined && entry.size <= MAXIMUM_METADATA_BYTES
+    destination === undefined && entry.size <= (
+      entry.name === PACKAGE_DESCRIPTOR ? MAXIMUM_DESCRIPTOR_BYTES : MAXIMUM_METADATA_BYTES
+    )
       ? Buffer.allocUnsafe(entry.size)
       : undefined
   let output: number | undefined
@@ -549,7 +552,10 @@ function writeFileChunk(handle: number, bytes: Buffer, offset: number): number {
 
 function readEntry(handle: number, entries: Map<string, ZipEntry>, name: string): Buffer {
   const entry = entries.get(name)
-  if (entry === undefined || entry.size > MAXIMUM_METADATA_BYTES) {
+  const maximumBytes = name === PACKAGE_DESCRIPTOR
+    ? MAXIMUM_DESCRIPTOR_BYTES
+    : MAXIMUM_METADATA_BYTES
+  if (entry === undefined || entry.size > maximumBytes) {
     throw new Error(`Agent package metadata is missing or too large: ${name}`)
   }
   const actual = streamEntry(handle, entry)
@@ -1656,7 +1662,9 @@ function writePreparedFile(
 ): void {
   if (
     bytes.byteLength <= 0 ||
-    bytes.byteLength > MAXIMUM_METADATA_BYTES
+    bytes.byteLength > (
+      name === PACKAGE_DESCRIPTOR ? MAXIMUM_DESCRIPTOR_BYTES : MAXIMUM_METADATA_BYTES
+    )
   ) {
     throw new Error(`Prepared package metadata is invalid: ${name}`)
   }
@@ -2392,7 +2400,7 @@ export function commitPackage(options: InstallerOptions): PackageInstallerResult
   )
   const descriptorBytes = readBoundedRegularFile(
     join(preparedRoot, PACKAGE_DESCRIPTOR),
-    MAXIMUM_METADATA_BYTES,
+    MAXIMUM_DESCRIPTOR_BYTES,
     'Prepared Agent package descriptor',
     '0600'
   )

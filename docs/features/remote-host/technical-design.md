@@ -69,6 +69,10 @@ Detached GoodBuddy Agent
 ## Agent 安装与生命周期
 
 - Agent bundle 通过 manifest、Ed25519 签名、payload digest、平台和架构校验。
+- 外层 `agent-package.json` 描述符上限为 4 MiB，覆盖包含 OpenCode 离线依赖的实际包
+  （2026-09-08 Linux x64 验证包为 1,101,863 字节）。Desktop 解包、Host prepare/commit
+  与目录生成器使用相同上限；其余元数据仍为 1 MiB，签名、文件数量、归档大小和完整性校验不变。
+- Runtime 组包使用的 OpenCode 离线依赖缓存按插件版本复用，安装与替换规则见 [Runtime 资源](../../../BUILD.md#runtime-资源)。复制进 Runtime 包的依赖仍属于签名 manifest 的 payload。
 - 安装使用当前 SSH 用户目录中的 GoodBuddy-owned 路径和 side-by-side digest 目录。
 - Agent 代码与固定 Node Runtime 一起位于签名 compound payload。显式安装或重装从本次
   已完整校验的准备目录原子发布整个 Agent，不扫描旧安装、不创建跨版本 Node 硬链接；
@@ -94,6 +98,9 @@ Detached GoodBuddy Agent
 - Agent 是按需启动的 detached process，不注册开机服务，不依赖 systemd、D-Bus 或 Linger。
 - 每个模型桥 helper 都为 loopback HTTP 入口生成一次性随机路径 capability；只有写入当前 OpenCode 子进程配置的 URL 可以访问该入口，其他本机用户即使发现临时端口也不能提交模型请求。
 - Agent 监听当前用户拥有的私有 Unix socket。SSH 中断只关闭 relay，不拥有 Agent 和活动 Runtime 的生命周期。
+- 私有握手的 HMAC 响应按固定 32 字节的规范 Base64URL 校验，不套用要求字母数字开头
+  的应用 ID 规则；health nonce 使用固定前缀。读取握手时，流结束或关闭都立即失败，
+  不留下未结算 Promise；Host Key、同 UID 校验和 HMAC 验证保持不变。
 - SSH Host 设置通过固定探针和有界 SFTP 显示 Host 已登记的 Agent/OpenCode 版本，并与当前
   GoodBuddy 所需版本比较。进入或切回该设置页只读取本地 Host 列表，不连接任何 Host；
   用户点击“刷新版本”后才探测对应 Host，探测不安装或切换远端组件。项目切换与此按钮
@@ -195,6 +202,10 @@ Ask 与 Execute 一样直接启动已签名 Runtime，不要求 Host 安装额�
 - Ask 启动时同时注入 OpenCode 顶层和 build Agent 的 `permission: "ask"`；Agent
   工具权限分发边界只批准上述原生读取请求。该双重边界不另加文件系统 confinement，
   也不改变 Runtime 的直接启动方式。
+- Execute 的直接启动与模型桥启动均显式设置顶层和 build Agent 的 `permission: "allow"`，
+  避免继承 OpenCode 默认的 `external_directory` 询问；项目目录只是默认工作目录。
+  原生子代理同样使用当前 SSH 账号可访问的路径。仍出现的 ACP 权限请求由 Agent 按
+  当前 Prompt 模式自动答复，不增加 Desktop 人工审批，也不依赖日志解析。
 
 ### Execute
 
@@ -371,6 +382,28 @@ model bridge，以及生命周期和恢复逻辑。单元测试、mock、fixture
 停止或修改远端进程前必须先核对其启动身份、PID/进程组和 GoodBuddy 归属。若两个入口均
 不可达，应立即把真实 Host 验证报告为开发阻塞，保持该验证未完成，不能把 Agent 改动表述
 为已完成，也不能把首次真实验证推迟到发布阶段。
+
+## 离线配置缓存简化验证（2026-09-08）
+
+`npm test -- tests/opencode-config.test.ts src/main/agent/opencode-runtime.test.ts src/main/agent/bundled-runtimes.test.ts tests/remote-runtime-bundle.test.ts tests/agent-bundle.test.ts --testTimeout=30000` 通过 108 项；`npm run typecheck`、`npm run lint` 和 `npm run build` 通过。
+全量 `npm test -- --testTimeout=30000 --hookTimeout=120000` 当次结果为 3556 项通过、28 项失败、58 项跳过；其中离线配置路径断言随后修正并通过上述聚焦测试，未重跑全量。其余失败涉及 Agent 包元数据大小限制、Darwin 组包超时、Runtime 探测、DSH 和打包夹具。
+测试 Host 的 SSH 端口可达，但候选复合包验证受元数据大小限制阻塞，未部署或执行实机安装/更新验收；本次真实模型调用 0 次。
+以上为缓存简化阶段的历史记录，不代表后续发布前修复的最终结果。
+
+## 发布前修复实机验证（2026-09-08）
+
+共享 Linux x64 Host 上使用当前源码、锁定 Node 与 OpenCode `1.18.29`、进程内临时签名
+身份组包，签名目录读取、生产 `preparePackage/commitPackage`、adopt、Runtime activate
+与 health 通过。所有写入位于独立 GoodBuddy 测试 HOME，未修改共享安装。
+
+真实 Desktop 协议客户端已通过 Ask 文本回复、Execute 原生 Task 子代理在 Workspace 外
+的专用测试目录写文件、读回校验、关闭连接后重连同一 daemon，以及 stop/bootstrap 后
+health。首轮发现握手 Base64URL 误拒绝后完成上述修复；最终源码复测通过，独立 Unix
+endpoint 连续 20 次握手也通过。两轮模型账本各 5 次 completed，本轮合计 10 次真实文本
+模型调用，没有发布工件、签名目录或 release tag。
+
+最终自动化回归与尚未覆盖的系统休眠场景见
+[工作栏进度](../assistant-workbar/progress.md)。
 
 ## 已完成的 E2E 验收记录
 
@@ -605,7 +638,8 @@ goodbuddy-agent diagnostics --installation-id <installationId>
 1. `npm test`
 2. `npm run typecheck`
 3. `npm run lint`
-4. `npm run build`
+4. 发布候选的生产构建由 main 分支 CI 验证；发布前不在本地执行生产构建或打包，详见
+   [发布手册](../../development/release-runbook.md)。
 5. 用测试签名复合包验证在线下载源选择和离线导入/导出；正式 Agent 候选还需公开校验
    双架构 production 包与签名目录。
 6. 在已固定 Host Key 的 Linux x64 测试 Host 上验证 attach-or-bootstrap。

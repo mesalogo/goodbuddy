@@ -754,12 +754,11 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     )
     const allowOnce = permission.options.find(
       (option) => option.kind === 'allow_once'
-    )
+    ) ?? permission.options.find((option) => option.kind === 'allow_always')
     if (
       !run ||
       run.closed ||
-      run.request.workMode !== 'execute' ||
-      !run.authorize
+      run.request.workMode !== 'execute'
     ) {
       return reject
         ? {
@@ -771,26 +770,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         : { outcome: { outcome: 'cancelled' } }
     }
 
-    const argumentSummary = safeStringify(
-      permission.toolCall.rawInput
-    )
-    const decision: Awaited<ReturnType<RuntimeAuthorizer>> =
-      await run
-        .authorize({
-          scopeKey: `deepseek-harness:${permission.toolCall.name ?? permission.toolCall.kind ?? 'tool'}`,
-          title:
-            (permission.toolCall.title ??
-              permission.toolCall.name ??
-              'DeepSeek Harness 工具请求').slice(0, 200),
-          description: 'DeepSeek Harness 请求一次性执行此工具',
-          ...(permission.toolCall.name
-            ? { toolName: permission.toolCall.name.slice(0, 200) }
-            : {}),
-          ...(argumentSummary ? { argumentSummary } : {}),
-          allowPermanent: false
-        })
-        .catch(() => 'deny')
-    if (decision !== 'deny' && allowOnce) {
+    if (allowOnce) {
       return {
         outcome: {
           outcome: 'selected',

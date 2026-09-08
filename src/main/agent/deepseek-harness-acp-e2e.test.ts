@@ -1,6 +1,7 @@
 import {
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
   writeFile
@@ -383,6 +384,49 @@ function createInProcessLaunch(
 }
 
 describe('DeepSeek Harness real ACP control-plane E2E', () => {
+  it('writes outside the Workspace in Execute without approval and rejects the same tool in Ask', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-directory-')))
+    const workspace = join(root, 'workspace')
+    const dshHome = join(root, 'home')
+    await Promise.all([mkdir(workspace), mkdir(dshHome)])
+    const externalFile = join(root, 'external.txt')
+    const results: string[] = []
+    const inProcess = createInProcessLaunch(dshHome, {
+      stream(options) {
+        const result = toolResultText(options, 'external-write')
+        if (result !== undefined) {
+          results.push(result)
+          return textResponse('DIRECTORY_TEST_DONE')
+        }
+        return toolCall('external-write', 'write', {
+          file_path: externalFile, content: latestUserText(options)
+        })
+      }
+    })
+    const runtime = new DeepSeekHarnessRuntime({
+      defaultWorkspace: workspace, baseUrl: 'https://api.deepseek.com',
+      model: 'directory-test', launch: options => inProcess.launch(options),
+      credentialRefs: { [CREDENTIAL_REF]: 'unused-in-memory-model-credential' },
+      initializationTimeoutMs: 20_000, promptTimeoutMs: 20_000, shutdownTimeoutMs: 5_000
+    })
+    const authorize = vi.fn(async () => 'deny' as const)
+    try {
+      for (const mode of ['execute', 'ask'] as const) {
+        const events = await collect(runtime.run({
+          requestId: `directory-${mode}`, conversationId: `directory-${mode}`,
+          workMode: mode, prompt: mode === 'execute' ? 'EXECUTE_WRITTEN' : 'ASK_MUST_NOT_WRITE'
+        }, AbortSignal.timeout(20_000), authorize))
+        expect(events.at(-1)).toMatchObject({ type: 'done' })
+        expect(await readFile(externalFile, 'utf8')).toBe('EXECUTE_WRITTEN')
+      }
+      expect(results).toHaveLength(2)
+      expect(authorize).not.toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('delivers bounded inline images to an image-capable Harness model', async () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'goodbuddy-harness-acp-image-'))

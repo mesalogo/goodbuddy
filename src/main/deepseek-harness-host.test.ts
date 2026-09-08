@@ -92,6 +92,8 @@ describe('controlled DeepSeek Harness host', () => {
     })
 
     expect(host.context.fs.sandboxMode).toBeUndefined()
+    expect(host.context.get('sessionProjections')).toBeDefined()
+    expect(host.context.get('agentLoop')).toBeDefined()
     expect(host.context.shell.sandboxMode).toBeUndefined()
     expect(host.context.get('attachments')).toBeInstanceOf(
       GoodBuddyHarnessAttachmentStore

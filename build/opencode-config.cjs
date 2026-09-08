@@ -4,7 +4,6 @@ const {
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } = require("node:fs");
 const { join } = require("node:path");
@@ -24,41 +23,15 @@ function npmInvocation() {
   return { command: "npm", prefixArgs: [] };
 }
 
-function pluginIntegrity(projectDir) {
-  const lock = JSON.parse(
-    readFileSync(join(projectDir, "package-lock.json"), "utf8"),
-  );
-  const entry = lock.packages?.[`node_modules/${opencodePluginPackage}`];
-  if (
-    entry?.version !== opencodeVersion ||
-    typeof entry.integrity !== "string"
-  ) {
-    throw new Error(
-      `Missing locked ${opencodePluginPackage}@${opencodeVersion} integrity`,
-    );
-  }
-  return entry.integrity;
-}
-
 function prepareBundledOpenCodeConfig(projectDir) {
   const targetDirectory = join(
     projectDir,
     ".runtime-resources",
     "opencode-config",
   );
-  const identity = {
-    packageName: opencodePluginPackage,
-    version: opencodeVersion,
-    integrity: pluginIntegrity(projectDir),
-  };
-  const markerPath = join(targetDirectory, ".goodbuddy-ready.json");
   try {
-    const ready = JSON.parse(readFileSync(markerPath, "utf8"));
-    if (
-      ready.packageName === identity.packageName &&
-      ready.version === identity.version &&
-      ready.integrity === identity.integrity &&
-      statSync(
+    const installed = JSON.parse(
+      readFileSync(
         join(
           targetDirectory,
           "node_modules",
@@ -66,8 +39,10 @@ function prepareBundledOpenCodeConfig(projectDir) {
           "plugin",
           "package.json",
         ),
-      ).isFile()
-    ) {
+        "utf8",
+      ),
+    );
+    if (installed.version === opencodeVersion) {
       return targetDirectory;
     }
   } catch {
@@ -102,6 +77,7 @@ function prepareBundledOpenCodeConfig(projectDir) {
         ...npm.prefixArgs,
         "install",
         "--ignore-scripts",
+        "--bin-links=false",
         "--omit=dev",
         "--omit=optional",
         "--no-audit",
@@ -127,11 +103,6 @@ function prepareBundledOpenCodeConfig(projectDir) {
         }`,
       );
     }
-    writeFileSync(
-      join(stagingDirectory, ".goodbuddy-ready.json"),
-      `${JSON.stringify(identity)}\n`,
-      "utf8",
-    );
     rmSync(targetDirectory, { recursive: true, force: true });
     mkdirSync(join(targetDirectory, ".."), { recursive: true });
     renameSync(stagingDirectory, targetDirectory);

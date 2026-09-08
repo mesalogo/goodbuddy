@@ -10,6 +10,7 @@ import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import * as PiAiLlm from '@deepseek-ai/dsh-llm-pi-ai'
 import SessionStore from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import LocalSubprocess from '@deepseek-ai/dsh-subprocess-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -225,6 +226,7 @@ export async function startControlledDeepSeekHarnessHost(
   const specs: PluginSpec[] = [
     { plugin: LlmRuntime },
     { plugin: SessionStore },
+    { plugin: SessionProjectionRegistry },
     ...(config.supportsImageInput
       ? [{ plugin: GoodBuddyHarnessAttachmentStore }]
       : []),

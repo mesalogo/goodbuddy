@@ -119,8 +119,8 @@ otherwise.
   directories, and create Ask or Execute projects. Both modes start the
   signed Runtime directly without bubblewrap. Ask applies OpenCode's Ask
   permission configuration and permits only native read approvals at the
-  Agent tool-dispatch boundary, while Execute receives no such override and
-  retains all permissions of the selected SSH account. The Agent owns accepted Prompts,
+  Agent tool-dispatch boundary, while Execute explicitly allows native permissions
+  and retains all permissions of the selected SSH account. The Agent owns accepted Prompts,
   provider/tool rounds, Runtime processes, a stable model ledger, and a bounded
   semantic transcript over a private Unix socket and ACP v5. Work continues on
   the Host after Desktop exit, network loss, or local-process termination.
@@ -217,7 +217,13 @@ otherwise.
   code is not subject to Ask initialization isolation.
 - [x] **Ask and Execute work modes**: Ask remains read-only. Execute is the
   user's authorization for all tools, processes, network access, and writable
-  paths available to the current local or SSH account.
+  paths available to the current local or SSH account, including paths outside
+  the workspace and native subagent work.
+- [x] **Native Runtime interaction routing**: OpenCode and Continue questions
+  support choices, yes/no, free-text answers, and skipping through the existing
+  question card. OpenCode also routes questions from owned child sessions.
+  Execute permission confirmations are handled automatically rather than
+  waiting for another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
 - [x] **Experts and Subagents**: Supports explicit experts, team analysis, and
   up to three read-only experts running in parallel. Chat shows each
   expandable full expert response first and the main Agent's synthesis below,

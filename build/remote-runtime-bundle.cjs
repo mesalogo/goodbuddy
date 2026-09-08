@@ -764,9 +764,15 @@ function buildRuntimeBundle(options) {
       platform,
     );
     const configTemplate = prepareBundledOpenCodeConfig(projectRoot);
-    cpSync(configTemplate, join(staging, "config", "opencode"), {
+    const configDestination = join(staging, "config", "opencode");
+    cpSync(configTemplate, configDestination, {
       recursive: true,
+      // npm CLI shims are not used by the imported plugin and may be symlinks.
+      filter: (source) => basename(source) !== ".bin",
     });
+    for (const file of listFiles(configDestination)) {
+      chmodSync(file, 0o644);
+    }
     mkdirSync(join(staging, "licenses"), { mode: 0o700 });
     copyFileSync(
       join(projectRoot, "node_modules", "opencode-ai", "LICENSE"),

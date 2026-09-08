@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { c as createTar } from 'tar'
 import { unzipSync } from 'fflate'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createOpenCodeConfigFixture } from './support/opencode-config-fixture'
 
 const require = createRequire(import.meta.url)
 const ci = require('../build/agent-ci-bundle.cjs') as {
@@ -83,6 +84,7 @@ describe('Darwin arm64 Agent packages', () => {
 
   it('assembles deterministic Darwin packages and rejects cross-platform bundle selection', () => {
     const root = scratch()
+    createOpenCodeConfigFixture(root)
     const bundle = join(root, 'agent')
     const { lock, runtimeLock } = ci.readCiLocks('darwin', 'arm64')
     const { privateKey, publicKey } = generateKeyPairSync('ed25519')
@@ -128,6 +130,7 @@ describe('Darwin arm64 Agent packages', () => {
     runtimeLock.runtimes.opencode.targets['darwin-arm64']!.integrity =
       `sha512-${createHash('sha512').update(readFileSync(archive)).digest('base64')}`
     const built = runtime.buildRuntimeBundle({
+      projectRoot: root,
       platform: 'darwin', architecture: 'arm64', runtimeArchive: archive,
       outputRoot: join(root, 'runtime'), lock: runtimeLock, registry,
       testSigningIdentity: identity

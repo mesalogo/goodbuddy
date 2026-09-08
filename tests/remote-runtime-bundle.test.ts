@@ -6,6 +6,7 @@ import {
 } from 'node:crypto'
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -31,6 +32,7 @@ import {
   type RemoteRuntimeBundleManifest,
   type RemoteRuntimeLock
 } from '../src/shared/remote-runtime-launch-contracts'
+import { createOpenCodeConfigFixture } from './support/opencode-config-fixture'
 
 type VerifiedBundle = {
   bundleDirectory: string
@@ -110,6 +112,7 @@ beforeEach(() => {
   temporaryRoot = resolve(
     mkdtempSync(join(tmpdir(), 'goodbuddy-runtime-build-'))
   )
+  createOpenCodeConfigFixture(temporaryRoot)
   privateKey = createPrivateKey({
     key: Buffer.from(
       '302e020100300506032b657004220420202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f',
@@ -243,6 +246,14 @@ describe('Remote Runtime bundle tooling', () => {
       }
     })
     expect(first.manifest).not.toHaveProperty('quotas')
+    expect(first.manifest.files.some((file) => file.path.includes('/.bin/'))).toBe(false)
+    const pluginPath = 'config/opencode/node_modules/@opencode-ai/plugin/index.js'
+    expect(first.manifest.files).toContainEqual(expect.objectContaining({
+      path: pluginPath, mode: '0644'
+    }))
+    if (process.platform !== 'win32') {
+      expect(lstatSync(join(first.bundleDirectory, pluginPath)).mode & 0o777).toBe(0o644)
+    }
   })
 
   it('creates deterministic archives and imports only verified content', () => {
@@ -257,9 +268,9 @@ describe('Remote Runtime bundle tooling', () => {
       built.bundleDirectory,
       secondArchive
     )
-    expect(readFileSync(secondArchive)).toEqual(
+    expect(readFileSync(secondArchive).equals(
       readFileSync(firstArchive)
-    )
+    )).toBe(true)
 
     const imported = runtimeBundle.importRuntimeArchive(
       firstArchive,
@@ -335,7 +346,7 @@ describe('Remote Runtime bundle tooling', () => {
       }))
     }
     const built = runtimeBundle.buildRuntimeBundle({
-      projectRoot: process.cwd(),
+      projectRoot: temporaryRoot,
       architecture: 'x64',
       runtimeArchive,
       outputRoot: join(temporaryRoot, 'production'),
@@ -354,7 +365,7 @@ describe('Remote Runtime bundle tooling', () => {
 
 function build(outputRoot: string): VerifiedBundle {
   return runtimeBundle.buildRuntimeBundle({
-    projectRoot: process.cwd(),
+    projectRoot: temporaryRoot,
     architecture: 'x64',
     runtimeArchive,
     outputRoot,

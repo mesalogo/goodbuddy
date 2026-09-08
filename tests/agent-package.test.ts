@@ -53,6 +53,7 @@ import {
   AgentPackageManager,
   selectLatestCompatibleEntry
 } from '../src/main/remote-agent/agent-package-manager'
+import { createOpenCodeConfigFixture } from './support/opencode-config-fixture'
 
 type AgentBundleModule = {
   canonicalManifestBytes(manifest: unknown): Buffer
@@ -305,7 +306,7 @@ beforeAll(() => {
     architecture: 'x64' | 'arm64',
     archive: string
   ) => runtimeBundle.buildRuntimeBundle({
-    projectRoot: process.cwd(),
+    projectRoot: temporaryRoot,
     architecture,
     runtimeArchive: archive,
     outputRoot: join(temporaryRoot, 'runtime'),
@@ -317,6 +318,7 @@ beforeAll(() => {
     },
     enforceFilesystemMode: false
   })
+  createOpenCodeConfigFixture(temporaryRoot)
   const builtRuntime = buildRuntime('x64', runtimeInput)
   const builtArm64Runtime = buildRuntime(
     'arm64',
@@ -367,6 +369,58 @@ afterAll(() => {
 })
 
 describe('compound Agent packages', () => {
+  it('verifies and installs offline dependency inventories larger than one MiB', async () => {
+    const projectRoot = join(temporaryRoot, 'large-offline-config')
+    const config = createOpenCodeConfigFixture(projectRoot)
+    const inventory = join(config, 'inventory')
+    mkdirSync(inventory)
+    for (let index = 0; index < 3000; index++) {
+      const path = join(inventory, `${String(index).padStart(4, '0')}-${'x'.repeat(100)}.js`)
+      writeFileSync(path, '// fixture\n')
+    }
+    const runtime = runtimeBundle.buildRuntimeBundle({
+      projectRoot, architecture: 'x64',
+      runtimeArchive: createRuntimeInput('x64'),
+      outputRoot: join(projectRoot, 'runtime'),
+      lock: remoteRuntimeLock, registry,
+      testSigningIdentity: { keyId: 'agent-package-fixture', privateKey },
+      enforceFilesystemMode: false
+    })
+    const archive = join(projectRoot, agentPackageArchiveName(agentLock.agentVersion, 'x64'))
+    const result = agentPackage.assembleAgentPackage({
+      projectRoot, architecture: 'x64', minimumDesktopVersion: '0.11.0',
+      output: archive, agentBundle: join(temporaryRoot, 'agent'),
+      runtimeBundle: runtime.bundleDirectory, agentLock, runtimeLock: remoteRuntimeLock,
+      registry, testSigningIdentity: { keyId: 'agent-package-fixture', privateKey }
+    })
+    const descriptorBytes = agentPackage.descriptorBytes(result.descriptor)
+    expect(descriptorBytes.length).toBeGreaterThan(1024 * 1024)
+    expect(descriptorBytes.length).toBeLessThan(4 * 1024 * 1024)
+    expect(agentCatalog.readPackageMetadata(archive, registry).sha256).toBe(result.sha256)
+    await expect(extractAndVerifyAgentPackage({
+      archivePath: archive, destinationDirectory: join(projectRoot, 'verified'),
+      architecture: 'x64', desktopVersion: '0.11.0', trustedRegistry: registry
+    })).resolves.toMatchObject({ descriptor: { contentDigest: result.descriptor.contentDigest } })
+    const options = {
+      operationRoot: join(projectRoot, 'operation'), archive,
+      expectedSha256: result.sha256, homeDirectory: join(projectRoot, 'home')
+    }
+    mkdirSync(options.homeDirectory, { mode: 0o700 })
+    expect(packageInstaller.preparePackage(options).status).toBe('prepared')
+    expect(packageInstaller.commitPackage(options).status).toBe('committed')
+  }, 60_000)
+
+  it('still rejects descriptors larger than four MiB before parsing', async () => {
+    const archive = join(temporaryRoot, 'oversized-descriptor.zip')
+    writeFileSync(archive, zipSync({
+      'agent-package.json': new Uint8Array(4 * 1024 * 1024 + 1)
+    }, { level: 0 }))
+    await expect(extractAndVerifyAgentPackage({
+      archivePath: archive, destinationDirectory: join(temporaryRoot, 'oversized-descriptor'),
+      desktopVersion: '0.11.0', trustedRegistry: registry
+    })).rejects.toThrow(/limit|large/iu)
+  })
+
   it('assembles deterministic signed archives with private extraction', async () => {
     const secondRoot = join(temporaryRoot, 'second')
     mkdirSync(secondRoot)
@@ -456,9 +510,9 @@ describe('compound Agent packages', () => {
     expect(second.archive).toBe(
       agentPackageArchiveName(agentLock.agentVersion, 'x64')
     )
-    expect(readFileSync(secondPath)).toEqual(
+    expect(readFileSync(secondPath).equals(
       readFileSync(packagePath)
-    )
+    )).toBe(true)
   })
 
   it('prepares and commits a format-v1 package without an embedded installer', () => {

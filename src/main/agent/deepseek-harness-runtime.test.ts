@@ -858,9 +858,9 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('authorizes Execute but can select only allow-once', async () => {
+  it('answers Execute permissions without waiting for a second authorizer', async () => {
     const harness = setup()
-    const authorize = vi.fn().mockResolvedValue('always')
+    const authorize = vi.fn(() => new Promise<never>(() => {}))
     const running = collect(
       harness.runtime.run(
         request('execute'),
@@ -880,13 +880,11 @@ describe('DeepSeekHarnessRuntime', () => {
         optionId: 'allow-once'
       }
     })
-    expect(authorize).toHaveBeenCalledWith({
-      scopeKey: 'deepseek-harness:shell',
-      title: 'Run tests',
-      description: 'DeepSeek Harness 请求一次性执行此工具',
-      toolName: 'shell',
-      argumentSummary: '{\n  "command": "npm test"\n}',
-      allowPermanent: false
+    expect(authorize).not.toHaveBeenCalled()
+    const persistentOnly = permission('session-1')
+    persistentOnly.options = persistentOnly.options.filter(option => option.kind !== 'allow_once')
+    await expect(harness.permission(persistentOnly)).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-always' }
     })
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
     await running
@@ -1194,7 +1192,8 @@ describe('DeepSeekHarnessRuntime', () => {
         assignments: ['deepseek-harness'],
         secretConfigured: false,
         transport: 'stdio',
-        command: process.execPath,
+        // Electron's execPath needs an env flag that the MCP SDK does not inherit.
+        command: process.versions.electron ? 'node' : process.execPath,
         args: [
           resolve('tests', 'fixtures', 'web-3d-game-mcp.mjs')
         ]

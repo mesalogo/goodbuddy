@@ -50,6 +50,7 @@ const maximumPackageEntries = 50_002
 const maximumPackageEntryBytes = 384 * 1024 * 1024
 const maximumExpandedPackageBytes = 1024 * 1024 * 1024
 const maximumMetadataBytes = 1024 * 1024
+const maximumDescriptorBytes = 4 * 1024 * 1024
 const maximumCentralDirectoryBytes = 32 * 1024 * 1024
 const maximumCatalogEntries = 200
 const windowsReservedNamePattern =
@@ -412,7 +413,10 @@ function streamPackageMetadata(archivePath) {
         entry.name === 'agent-package.json' ||
         entry.name === 'agent-package.sig'
       const size = entry.recordEnd - entry.dataOffset
-      if (wanted && size > maximumMetadataBytes) {
+      const maximum = entry.name === 'agent-package.json'
+        ? maximumDescriptorBytes
+        : maximumMetadataBytes
+      if (wanted && size > maximum) {
         throw new Error('Agent package metadata exceeds its limit')
       }
       return {

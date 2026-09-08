@@ -1971,7 +1971,12 @@ describe('ContinueHostAdapter', () => {
     expect(inventory.detail).toContain('不提供 Resources')
   })
 
-  it('bridges authenticated QuizService questions and cleans answered mappings', async () => {
+  it.each([
+    { options: ['Safe', 'Fast'], answer: [['Safe']], submitted: 'Safe', custom: false },
+    { options: ['yes', 'no'], answer: [['no']], submitted: 'no', custom: false },
+    { options: [], answer: [['Free text']], submitted: 'Free text', custom: true },
+    { options: ['yes', 'no'], answer: undefined, submitted: 'User declined to answer this question.', custom: true }
+  ])('bridges QuizService answers $submitted and cleans mappings', async (scenario) => {
     const distribution = await createDistribution()
     const configPath = join(
       distribution.cacheRoot,
@@ -2017,11 +2022,9 @@ describe('ContinueHostAdapter', () => {
               goodbuddyQuestion: {
                 requestId: 'quiz-123',
                 timestamp: Date.now(),
-                question: {
-                  question: 'Choose safely',
-                  options: ['Safe', 'Fast'],
-                  defaultAnswer: 'Safe'
-                }
+                question: 'Choose safely',
+                options: scenario.options,
+                defaultAnswer: 'Safe'
               }
             })
           }
@@ -2072,7 +2075,7 @@ describe('ContinueHostAdapter', () => {
             if (event.type === 'question') {
               await adapter.respondToQuestion(
                 event.questionId,
-                [['Safe']]
+                scenario.answer
               )
             }
           }
@@ -2087,10 +2090,7 @@ describe('ContinueHostAdapter', () => {
         questions: [
           expect.objectContaining({
             question: 'Choose safely',
-            options: [
-              { label: 'Safe', description: '' },
-              { label: 'Fast', description: '' }
-            ]
+            options: scenario.options.map(label => ({ label, description: '' }))
           })
         ]
       })
@@ -2098,8 +2098,8 @@ describe('ContinueHostAdapter', () => {
     expect(answerBodies).toEqual([
       {
         requestId: 'quiz-123',
-        answer: 'Safe',
-        isCustomAnswer: false
+        answer: scenario.submitted,
+        isCustomAnswer: scenario.custom
       }
     ])
     await expect(

@@ -185,6 +185,7 @@ function runClient(events: Record<string, unknown>[]) {
   });
   const client = {
     session: {
+      get: vi.fn().mockResolvedValue({ data: { id: "unrelated-session" } }),
       list: vi.fn().mockResolvedValue({ data: [], error: undefined }),
       create: vi.fn().mockResolvedValue({
         data: { id: "session-1" },
@@ -598,6 +599,7 @@ describe("OpenCodeRuntime embedded launcher", () => {
           urls: [],
         },
         permission: {
+          "*": "allow",
           skill: {
             "*": "deny",
             "longdoc-docx": "allow",
@@ -620,6 +622,33 @@ describe("OpenCodeRuntime embedded launcher", () => {
     await expect(stat(registrationRoot)).rejects.toThrow();
   });
 
+  it.each(["1.18.29", "0.0.1"])("handles cached plugin %s without ready markers", async (cachedVersion) => {
+    const root = await mkdtemp(join(tmpdir(), "goodbuddy-opencode-version-"));
+    const bundledConfigPath = join(root, "bundle");
+    const sharedCacheRoot = join(root, "cache");
+    const target = join(sharedCacheRoot, "config", "opencode");
+    const packagePath = join("node_modules", "@opencode-ai", "plugin", "package.json");
+    for (const [directory, version] of [[bundledConfigPath, "1.18.29"], [target, cachedVersion]]) {
+      await mkdir(join(directory!, "node_modules", "@opencode-ai", "plugin"), { recursive: true });
+      await writeFile(join(directory!, packagePath), JSON.stringify({ version }));
+    }
+    await writeFile(join(target, "cached-only"), "old cache");
+    const { deps } = dependencies(fakeChild());
+    const runtime = new OpenCodeRuntime(options({ bundledConfigPath, sharedCacheRoot }), deps);
+    try {
+      await expect(runtime.testConnection()).resolves.toMatchObject({ available: true });
+      expect(JSON.parse(await readFile(join(target, packagePath), "utf8")).version).toBe("1.18.29");
+      if (cachedVersion === "1.18.29") {
+        await expect(readFile(join(target, "cached-only"), "utf8")).resolves.toBe("old cache");
+      } else {
+        await expect(stat(join(target, "cached-only"))).rejects.toThrow();
+      }
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("reuses shared OpenCode config and content-addressed Skills across projects", async () => {
     const sourceRoot = await mkdtemp(
       join(tmpdir(), "goodbuddy-opencode-shared-skill-source-"),
@@ -633,11 +662,6 @@ describe("OpenCodeRuntime embedded launcher", () => {
     await mkdir(
       join(bundledConfigPath, "node_modules", "@opencode-ai", "plugin"),
       { recursive: true },
-    );
-    await writeFile(
-      join(bundledConfigPath, ".goodbuddy-ready.json"),
-      '{"version":"1.18.29"}\n',
-      "utf8",
     );
     await writeFile(
       join(
@@ -1877,14 +1901,14 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     },
   );
 
-  it("parses OpenCode questions and sends the selected answers back", async () => {
+  it.each(["parent", "child"] as const)("parses %s OpenCode questions and sends selected answers back", async (owner) => {
     const setup = runClient([
       {
         id: "question-event",
         type: "question.asked",
         properties: {
           id: "question-1",
-          sessionID: "session-1",
+          sessionID: owner === "parent" ? "session-1" : "child-session",
           questions: [
             {
               header: "实现方式",
@@ -1915,6 +1939,9 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         properties: { sessionID: "session-1" },
       },
     ]);
+    vi.mocked(setup.client.session.get).mockResolvedValue({
+      data: { id: "child-session", parentID: "session-1" },
+    } as never);
     const runtime = embeddedRuntime(setup.client);
     const stream = runtime.run(
       {
@@ -3261,6 +3288,45 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       ],
     ]);
     await runtime.dispose();
+  });
+
+  it.each(["ask", "execute"] as const)("settles owned descendant directory permissions in %s without touching peer sessions", async (mode) => {
+    const { client, permissionReply } = runClient([
+      permissionEvent({ id: "peer-permission", sessionID: "peer-session" }),
+      permissionEvent({
+        id: "child-permission", sessionID: "grandchild-session",
+        permission: "external_directory", patterns: ["/tmp/logs/*"],
+      }),
+      permissionEvent({
+        id: "child-permission", sessionID: "grandchild-session",
+        permission: "external_directory", patterns: ["/tmp/logs/*"],
+      }),
+      {
+        id: "event-idle", type: "session.idle",
+        properties: { sessionID: "session-1" },
+      },
+    ]);
+    const sessionGet = vi.fn(async ({ sessionID }: { sessionID: string }) => ({
+      data: {
+        id: sessionID,
+        parentID: sessionID === "grandchild-session" ? "child-session"
+          : sessionID === "child-session" ? "session-1" : undefined,
+      },
+    }));
+    client.session.get = sessionGet as unknown as typeof client.session.get;
+    const runtime = embeddedRuntime(client);
+    try {
+      const events = await collectRun(runtime, mode);
+      expect(events.at(-1)).toMatchObject({ type: "done" });
+      expect(events.filter((event) => event.type === "tool")).toEqual([]);
+      expect(permissionReply).toHaveBeenCalledExactlyOnceWith({
+        requestID: "child-permission", directory: process.cwd(),
+        reply: mode === "execute" ? "once" : "reject",
+      }, { signal: expect.any(AbortSignal) });
+      expect(sessionGet).toHaveBeenCalledTimes(3);
+    } finally {
+      await runtime.dispose();
+    }
   });
 
   it("fails the run when a tool reports an error before session idle", async () => {

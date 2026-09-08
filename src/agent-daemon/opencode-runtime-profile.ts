@@ -10,15 +10,6 @@ import {
 } from "../shared/model-bridge-contracts";
 import { assertAbsoluteManagedPath } from "./managed-paths";
 
-const OPEN_CODE_ASK_CONFIG = JSON.stringify({
-  permission: "ask",
-  agent: {
-    build: {
-      permission: "ask",
-    },
-  },
-});
-
 const OPEN_CODE_RUNTIME_ENVIRONMENT = Object.freeze({
   OPENCODE_DISABLE_AUTOUPDATE: "1",
   OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: "1",
@@ -151,13 +142,14 @@ export function createOpenCodeLaunchProfile(input: {
     ...OPEN_CODE_RUNTIME_ENVIRONMENT,
     OPENCODE_CONFIG_DIR: join(bundleDirectory, "config", "opencode"),
   };
-  const environment =
-    input.workMode === "ask"
-      ? {
-          ...environmentBase,
-          OPENCODE_CONFIG_CONTENT: OPEN_CODE_ASK_CONFIG,
-        }
-      : environmentBase;
+  const permission = input.workMode === "ask" ? "ask" : "allow";
+  const environment = {
+    ...environmentBase,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      permission,
+      agent: { build: { permission } },
+    }),
+  };
   return {
     ...runtimeCommand,
     processExecutable: runtimeCommand.executable,

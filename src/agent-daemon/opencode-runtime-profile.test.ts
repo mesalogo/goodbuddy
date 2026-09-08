@@ -102,6 +102,10 @@ describe('OpenCode direct launch profile', () => {
         )
     })
     expect(execute.args).not.toContain('--unshare-all')
+    expect(JSON.parse(execute.env.OPENCODE_CONFIG_CONTENT!)).toMatchObject({
+      permission: 'allow',
+      agent: { build: { permission: 'allow' } }
+    })
   })
 
   it('keeps Runtime arguments credential-free and rejects a changed manifest', () => {

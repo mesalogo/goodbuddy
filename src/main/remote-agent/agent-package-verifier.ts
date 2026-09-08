@@ -60,6 +60,7 @@ const MAXIMUM_ARCHIVE_BYTES = 512 * 1024 * 1024
 const MAXIMUM_EXPANDED_BYTES = 1024 * 1024 * 1024
 const MAXIMUM_FILE_BYTES = 384 * 1024 * 1024
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
+const MAXIMUM_DESCRIPTOR_BYTES = 4 * 1024 * 1024
 const MAXIMUM_ENTRIES = 50_002
 const PRIVATE_DIRECTORY_MODE = 0o700
 const SIGNATURE_DOMAIN = Buffer.from(
@@ -115,7 +116,7 @@ export async function verifyExtractedAgentPackage(options: {
     await Promise.all([
       readBoundedFile(
         join(rootDirectory, DESCRIPTOR_NAME),
-        MAXIMUM_METADATA_BYTES
+        MAXIMUM_DESCRIPTOR_BYTES
       ),
       readBoundedFile(
         join(rootDirectory, SIGNATURE_NAME),
@@ -321,9 +322,11 @@ async function extractArchive(
       }
       seen.add(name)
       const maximum =
-        name === DESCRIPTOR_NAME || name === SIGNATURE_NAME
-          ? MAXIMUM_METADATA_BYTES
-          : MAXIMUM_FILE_BYTES
+        name === DESCRIPTOR_NAME
+          ? MAXIMUM_DESCRIPTOR_BYTES
+          : name === SIGNATURE_NAME
+            ? MAXIMUM_METADATA_BYTES
+            : MAXIMUM_FILE_BYTES
       if (
         file.originalSize !== undefined &&
         (

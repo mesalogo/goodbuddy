@@ -48,13 +48,13 @@ export const MODEL_BRIDGE_SDK_AUTH_SENTINEL =
 
 export type OpenCodeModelBridgeProviderConfig = {
   model: string
-  permission?: 'ask'
+  permission: 'ask' | 'allow'
   agent: {
     title: {
       disable: true
     }
-    build?: {
-      permission: 'ask'
+    build: {
+      permission: 'ask' | 'allow'
     }
   }
   provider: Record<
@@ -521,11 +521,7 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   const baseURL = `${origin}/v1`
   return {
     model: openCodeModelBridgeModelId(input.protocol, model),
-    ...(input.workMode === 'ask'
-      ? {
-          permission: 'ask' as const
-        }
-      : {}),
+    permission: input.workMode === 'ask' ? 'ask' : 'allow',
     // GoodBuddy owns conversation titles. A first-prompt title request can
     // race the real ACP prompt, abandon its Provider response, and correctly
     // poison the no-replay ledger before the user request can run.
@@ -533,13 +529,9 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
       title: {
         disable: true
       },
-      ...(input.workMode === 'ask'
-        ? {
-            build: {
-              permission: 'ask' as const
-            }
-          }
-        : {})
+      build: {
+        permission: input.workMode === 'ask' ? 'ask' : 'allow'
+      }
     },
     provider: {
       [providerId]: {

@@ -168,7 +168,7 @@ Runtime
 - 建立统一范围、执行空间、生命周期、成果和控制契约。
 - 复用现有 Project、Conversation、Task、Artifact、Activity 和 Approval 数据。
 - 保持 Renderer 无任意文件、进程、PTY、SSH 或 Electron API 能力。
-- 保持 Ask 只读、Execute 审批、取消、超时、输出边界和活动审计。
+- 保持 Ask 只读、Execute 账号完整授权、取消、超时、输出边界和活动审计。
 - 为本机与远程能力提供一致 UI，同时准确表达能力差异。
 
 ## 5. 非目标
@@ -209,8 +209,9 @@ Runtime
 
 - 每项始终显示稳定图标，并提供可见标签或可持续查看的工具提示。
 - 已打开实例使用 `tablist`、`tab`、`tabpanel`；“+”是位于 `tablist` 外的普通命令按钮。
-- 应用注册表声明 `single` 或 `multiple`。重复选择单实例应用时聚焦已有实例；选择多实例
-  应用时每次创建新实例。
+- 应用注册表声明 `single` 或 `multiple`。在工作栏“+”目录中重复选择单实例应用时聚焦已有
+  实例；选择多实例应用时每次创建新实例。主侧栏系统工具快捷入口可以聚焦当前执行空间中
+  最近使用的终端，额外终端仍从“+”目录创建。
 - 支持方向键、Home、End、Enter、Space、关闭面板和正确焦点恢复。
 - 徽标显示未解决数量、等待审批或失败状态，并同时提供文字或可访问名称。
 - 用户调整目录顺序、打开实例、停靠位置和尺寸后持久化；关闭实例后能力仍可从目录重新打开。
@@ -795,7 +796,7 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 
 1. 工作栏能力目录项和面板实例不授予任何能力；权限只由 Main 中的范围和控制契约产生。
 2. Ask 在本机和远程 Runtime 边界保持只读。
-3. Execute 继续经过现有 Runtime 和审批控制，工作栏不能直接放宽。
+3. Execute 使用当前执行账号的完整权限，不另加目录或逐工具审批；工作栏不能绕过 Main、Preload 与用户数据边界。
 4. 用户终端和 Agent 工具执行使用不同身份和事件来源。
 5. 进程面板只控制 GoodBuddy 受管对象，不接受任意 PID。
 6. 本机和远程路径分别在对应文件系统上 canonicalize 并验证符号链接边界。
@@ -897,8 +898,9 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - 签名、side-by-side GoodBuddy Agent 安装和按需 detached Daemon。
 - SSH connection pool、固定 attach relay、Agent 控制协议、Agent 本地 ACP 日志和断线重连同步。
 - 远程工作区、Git、终端和受管进程。
-- 先完成签名 OpenCode bundle、Ask bubblewrap、Execute 直接进程、官方 ACP channel、
-  Main 模型网关、取消、超时和活动记录。
+- 当前签名 OpenCode bundle 的 Ask/Execute 均直接启动，Ask 在工具边界保持只读，
+  Execute 使用账号完整权限；官方 ACP channel、Agent 本地模型网关、取消、超时和活动记录
+  以[远程主机技术设计](../remote-host/technical-design.md)为准。
 - OpenCode 闭环稳定后，Continue 与 DeepSeek Harness 复用相同面板和通道契约逐个接入。
 - 新增或重新验证 Host 时只保存并探测 Agent/Runtime，不自动安装。用户在 Host 卡片用
   单一主按钮启动，并用次级控件选择自动、Host 下载或 GoodBuddy 传输；Host 保存与环境

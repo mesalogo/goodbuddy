@@ -51,7 +51,8 @@ const challengeResponsePacketSchema = z
     controllerId: agentIdentifierSchema,
     clientNonce: agentIdentifierSchema,
     protocol: protocolVersionSchema,
-    response: agentIdentifierSchema
+    // A SHA-256 HMAC is canonical Base64URL, not an application identifier.
+    response: z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/u)
   })
   .strict()
 
@@ -400,7 +401,7 @@ export async function probeAuthenticatedEndpoint(options: {
     const challenge = challengePacketSchema.parse(await readPacket(socket))
     const verifier = new InstallationChallengeVerifier(options.secret)
     const controllerId = 'lifecycle-health'
-    const clientNonce = randomBytes(24).toString('base64url')
+    const clientNonce = `health-${randomBytes(24).toString('base64url')}`
     await writePacket(socket, {
       type: 'response',
       version: 1,
@@ -559,6 +560,9 @@ async function readExactly(socket: Socket, byteLength: number): Promise<Buffer> 
       remaining -= chunk.byteLength
       continue
     }
+    if (socket.destroyed || socket.readableEnded) {
+      throw new Error('Attach socket closed during handshake')
+    }
     await new Promise<void>((resolve, reject) => {
       const onReadable = (): void => {
         cleanup()
@@ -575,10 +579,12 @@ async function readExactly(socket: Socket, byteLength: number): Promise<Buffer> 
       const cleanup = (): void => {
         socket.off('readable', onReadable)
         socket.off('end', onEnd)
+        socket.off('close', onEnd)
         socket.off('error', onError)
       }
       socket.once('readable', onReadable)
       socket.once('end', onEnd)
+      socket.once('close', onEnd)
       socket.once('error', onError)
     })
   }
@@ -588,6 +594,8 @@ async function readExactly(socket: Socket, byteLength: number): Promise<Buffer> 
 async function readExactlyFromStream(
   stream: NodeJS.ReadableStream & {
     read(size?: number): Buffer | null
+    destroyed?: boolean
+    readableEnded?: boolean
   },
   byteLength: number
 ): Promise<Buffer> {
@@ -600,6 +608,9 @@ async function readExactlyFromStream(
       chunks.push(bytes)
       remaining -= bytes.byteLength
       continue
+    }
+    if (stream.destroyed || stream.readableEnded) {
+      throw new Error('Attach relay input closed during preface')
     }
     await new Promise<void>((resolve, reject) => {
       const onReadable = (): void => {
@@ -617,10 +628,12 @@ async function readExactlyFromStream(
       const cleanup = (): void => {
         stream.removeListener('readable', onReadable)
         stream.removeListener('end', onEnd)
+        stream.removeListener('close', onEnd)
         stream.removeListener('error', onError)
       }
       stream.once('readable', onReadable)
       stream.once('end', onEnd)
+      stream.once('close', onEnd)
       stream.once('error', onError)
     })
   }

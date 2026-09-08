@@ -625,6 +625,7 @@ function createOpenCodeSkillConfig(
 ): {
   skills: { paths: string[]; urls: never[] };
   permission: {
+    "*": "allow";
     skill: Record<string, "allow" | "deny">;
   };
 } {
@@ -634,6 +635,7 @@ function createOpenCodeSkillConfig(
       urls: [],
     },
     permission: {
+      "*": "allow",
       skill: createSkillPermissionConfig(skillIds),
     },
   };
@@ -961,12 +963,20 @@ export class OpenCodeRuntime implements AgentRuntime {
     }
     const preparation = (async () => {
       const source = resolve(bundledConfigPath);
-      const markerName = ".goodbuddy-ready.json";
-      const sourceMarker = await readFile(join(source, markerName), "utf8");
+      const packagePath = join(
+        "node_modules",
+        "@opencode-ai",
+        "plugin",
+        "package.json",
+      );
+      const sourcePackage = JSON.parse(
+        await readFile(join(source, packagePath), "utf8"),
+      ) as { version: string };
       try {
-        if (
-          (await readFile(join(target, markerName), "utf8")) === sourceMarker
-        ) {
+        const installed = JSON.parse(
+          await readFile(join(target, packagePath), "utf8"),
+        ) as { version?: string };
+        if (installed.version === sourcePackage.version) {
           return;
         }
       } catch {
@@ -2399,6 +2409,29 @@ export class OpenCodeRuntime implements AgentRuntime {
         prompt.catch(() => undefined);
 
         const repliedPermissionIds = new Set<string>();
+        const ownedSessions = new Set([sessionId]);
+        const ownsSession = async (candidate: string): Promise<boolean> => {
+          const visited = new Set<string>();
+          let current: string | undefined = candidate;
+          while (current && !visited.has(current)) {
+            if (ownedSessions.has(current)) {
+              for (const id of visited) ownedSessions.add(id);
+              return true;
+            }
+            visited.add(current);
+            const result = await this.controlRequest(
+              "确认子会话权限归属",
+              (controlSignal) => client.session.get(
+                { sessionID: current!, directory },
+                { signal: controlSignal },
+              ),
+              signal,
+            );
+            if (result.error || !result.data) return false;
+            current = result.data.parentID;
+          }
+          return false;
+        };
         const reportedMessageIds = new Set<string>();
         for await (const event of subscription.stream) {
           const childProgress = subagentProgress.update(event);
@@ -2563,11 +2596,11 @@ export class OpenCodeRuntime implements AgentRuntime {
 
           if (
             event.type === "question.asked" &&
-            event.properties.sessionID === sessionId
+            await ownsSession(event.properties.sessionID)
           ) {
             const questionRequest = parseQuestionRequest(
               event.properties,
-              sessionId,
+              event.properties.sessionID,
             );
             if (
               questionRequest &&
@@ -2575,7 +2608,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             ) {
               const publicQuestionId = createPublicQuestionId(
                 request.requestId,
-                sessionId,
+                event.properties.sessionID,
                 questionRequest.id,
               );
               if (this.pendingQuestions.has(publicQuestionId)) {
@@ -2609,7 +2642,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           if (
             (event.type === "question.replied" ||
               event.type === "question.rejected") &&
-            event.properties.sessionID === sessionId
+            reportedQuestionIds.has(event.properties.requestID)
           ) {
             const publicQuestionId = reportedQuestionIds.get(
               event.properties.requestID,
@@ -2624,17 +2657,19 @@ export class OpenCodeRuntime implements AgentRuntime {
             event.type === "permission.asked"
           ) {
             const properties = event.properties as unknown;
+            const permissionSessionId = isRecord(properties) &&
+              typeof properties.sessionID === "string"
+              ? properties.sessionID
+              : sessionId;
             if (
-              isRecord(properties) &&
-              typeof properties.sessionID === "string" &&
-              properties.sessionID !== sessionId
+              !await ownsSession(permissionSessionId)
             ) {
               continue;
             }
 
             let permissionRequest: PermissionRequest;
             try {
-              const parsed = parsePermissionRequest(properties, sessionId);
+              const parsed = parsePermissionRequest(properties, permissionSessionId);
               if (!parsed) {
                 throw new Error("OpenCode 权限请求格式无效");
               }
@@ -2680,15 +2715,17 @@ export class OpenCodeRuntime implements AgentRuntime {
             const callId =
               permissionRequest.tool?.callID ?? permissionRequest.id;
             const toolName = permissionRequest.permission.slice(0, 200);
-            toolStates.set(callId, { name: toolName, state: "pending" });
-            yield {
-              requestId: request.requestId,
-              type: "tool",
-              callId,
-              name: toolName,
-              state: "pending",
-              summary: `OpenCode 工具：${toolName}`,
-            };
+            if (permissionSessionId === sessionId) {
+              toolStates.set(callId, { name: toolName, state: "pending" });
+              yield {
+                requestId: request.requestId,
+                type: "tool",
+                callId,
+                name: toolName,
+                state: "pending",
+                summary: `OpenCode 工具：${toolName}`,
+              };
+            }
             const allowKnowledge =
               request.workMode === "ask" &&
               knowledgeToolIds.includes(permissionRequest.permission);

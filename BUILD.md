@@ -56,6 +56,14 @@ OpenCode/Continue 用例默认读取 `dist/harness-package-probe/win-unpacked`�
 调用。测试不会输出 API Key，文件操作在临时工作区中执行。文件包含经 Main 回环
 broker 调用已分配自定义 MCP 的真实 OpenCode 和 Continue 用例。
 
+不使用外部模型的 Runtime 原生交互回归位于
+`src/main/agent/opencode-runtime-permissions.test.ts`、
+`src/main/agent/continue-runtime-permissions.test.ts` 和
+`src/main/agent/deepseek-harness-acp-e2e.test.ts`。它们用本地确定性模型驱动真实 Runtime
+或固定 Host，覆盖工作区外访问、原生问答及 Ask 边界。OpenCode 用例默认使用开发缓存
+二进制；可通过 `GOODBUDDY_TEST_OPENCODE_BINARY` 指定已经安装的候选二进制，避免把
+仍在运行的旧缓存版本当作候选版本验证。这不替代当前源码 Agent 的 Linux Host 验收。
+
 ## 生产构建
 
 生成 Electron Main、Preload 和 Renderer 生产文件：
@@ -211,6 +219,8 @@ package format v1 归档已经包含固定 Agent 和 Node，可直接用于 Host
 桌面包会携带经过版本与完整性校验的 OpenCode、Continue 和 DSH 插件安装 Runtime：
 
 - OpenCode 平台二进制来自 `.runtime-resources/<arch>`。
+- OpenCode 离线配置位于 `.runtime-resources/opencode-config`，构建时按已安装 `@opencode-ai/plugin/package.json` 的版本复用，不依赖根 lockfile 或自定义 ready/integrity 标记。缺失、不可读或版本不匹配时，在 staging 中执行精确版本 npm 安装，成功后替换缓存；安装失败保留旧缓存并清理 staging。本机共享配置同样比较随包插件与缓存插件的版本，版本不同时通过 staging 替换。
+- 离线依赖安装禁用 npm bin links；远程 Runtime 组包排除不使用的 `.bin` 命令链接，并把复制后的普通依赖文件统一为 `0644`，OpenCode 入口仍为 `0755`。目录元数据、每个依赖文件及许可证继续纳入签名校验。
 - Continue Runtime 来自锁定版本的 `@continuedev/cli`。
 - DSH 插件安装使用精确锁定并从 `app.asar` 解包的 npm CLI，通过当前 Electron 的 Node 模式运行；最终用户不需要另装 Node.js 或 npm。
 - DSH 图片输入使用精确锁定的 `@napi-rs/canvas` 完整解码 JPEG/PNG。通用包与目标平台、目标架构的 Skia 原生包必须从 `app.asar` 解包；当打包 Runner 的架构与目标架构不同时，发布脚本会根据 lockfile 的精确版本、下载地址和 integrity 临时暂存目标原生包，完成后清理。发布校验会检查版本、目标架构和 MIT 许可证。

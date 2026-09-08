@@ -134,7 +134,7 @@ describe('model bridge loopback helper', () => {
       expect(options.env.NODE_OPTIONS).toBeUndefined()
       const config = JSON.parse(options.env.OPENCODE_CONFIG_CONTENT!)
       expect(config.model).toBe('goodbuddy-anthropic/private-model')
-      expect(config.permission).toBe(workMode === 'ask' ? 'ask' : undefined)
+      expect(config.permission).toBe(workMode === 'ask' ? 'ask' : 'allow')
       expect(config.plugin).toHaveLength(1)
     }
   )
@@ -594,7 +594,7 @@ describe('model bridge loopback helper', () => {
     }
   )
 
-  it('leaves Execute provider permissions unchanged', () => {
+  it('explicitly allows Execute permissions instead of inheriting directory prompts', () => {
     const config = createOpenCodeModelBridgeProviderConfig({
       protocol: 'openai-responses',
       model: 'private-model',
@@ -603,8 +603,8 @@ describe('model bridge loopback helper', () => {
       workMode: 'execute'
     })
 
-    expect(config).not.toHaveProperty('permission')
-    expect(config.agent).not.toHaveProperty('build')
+    expect(config.permission).toBe('allow')
+    expect(config.agent.build.permission).toBe('allow')
   })
 })
 

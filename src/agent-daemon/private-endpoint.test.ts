@@ -29,6 +29,7 @@ import { InstallationChallengeVerifier } from './installation-challenge'
 import {
   attachRelay,
   PrivateEndpoint,
+  probeAuthenticatedEndpoint,
   type PeerIdentity
 } from './private-endpoint'
 import { AgentProtocolServer } from './protocol-server'
@@ -51,6 +52,57 @@ afterEach(() => {
 })
 
 describe('private endpoint lifecycle', () => {
+  runOnUnix.each(['-', '_'])('accepts a valid HMAC beginning with %s', async (prefix) => {
+    const root = privateTemporaryDirectory()
+    const verifier = new InstallationChallengeVerifier(Buffer.alloc(32, 7))
+    const attached = vi.fn()
+    const endpoint = new PrivateEndpoint({
+      socketPath: join(root, 'agent.sock'),
+      peerIdentity: currentPeerIdentity(), challenge: verifier,
+      controllers: new ControllerRegistry(), ...endpointIdentity, onAttach: attached
+    })
+    await endpoint.listen()
+    const client = createConnection(join(root, 'agent.sock'))
+    try {
+      await onceConnected(client)
+      const challenge = await readPacket(client)
+      let clientNonce = ''
+      let response = ''
+      for (let index = 0; index < 4096 && !response.startsWith(prefix); index++) {
+        clientNonce = `client-${index}`
+        response = verifier.createResponse({
+          serverNonce: String(challenge.serverNonce), clientNonce, controllerId: 'controller-a'
+        })
+      }
+      expect(response.startsWith(prefix)).toBe(true)
+      await writePacket(client, {
+        type: 'response', version: 1, controllerId: 'controller-a', clientNonce,
+        protocol: AGENT_PROTOCOL_VERSION, response
+      })
+      expect(attachWelcomeSchema.parse(await readPacket(client)).installationId).toBe('installation-a')
+      await vi.waitFor(() => expect(attached).toHaveBeenCalledOnce())
+    } finally {
+      client.destroy()
+      await endpoint.close()
+    }
+  })
+
+  runOnUnix('rejects a failed health handshake instead of leaving an unsettled read', async () => {
+    const root = privateTemporaryDirectory()
+    const socketPath = join(root, 'agent.sock')
+    const endpoint = new PrivateEndpoint({
+      socketPath, peerIdentity: currentPeerIdentity(),
+      challenge: new InstallationChallengeVerifier(Buffer.alloc(32, 7)),
+      controllers: new ControllerRegistry(), ...endpointIdentity, onAttach: vi.fn()
+    })
+    await endpoint.listen()
+    try {
+      await expect(probeAuthenticatedEndpoint({
+        socketPath, secret: Buffer.alloc(32, 8), ...endpointIdentity
+      })).rejects.toThrow('closed during handshake')
+    } finally { await endpoint.close() }
+  })
+
   runOnUnix(
     'never pre-unlinks an endpoint that may still be live',
     async () => {
@@ -346,6 +398,20 @@ describe('private endpoint lifecycle', () => {
 })
 
 describe('attach relay preface validation', () => {
+  it.each(['before', 'during'])('rejects a stream destroyed %s its preface arrives', async (when) => {
+    const input = new PassThrough()
+    if (when === 'before') input.destroy()
+    const relay = attachRelay({
+      socketPath: resolve('missing-agent.sock'), secret: Buffer.alloc(32, 7),
+      input, output: new PassThrough()
+    })
+    const rejection = expect(relay).rejects.toThrow('closed during preface')
+    if (when === 'during') input.destroy()
+    await rejection
+    expect(input.listenerCount('readable')).toBe(0)
+    expect(input.listenerCount('close')).toBe(0)
+  })
+
   it('rejects unknown Main preface fields before opening an endpoint', async () => {
     const input = new PassThrough()
     const output = new PassThrough()

@@ -114,14 +114,16 @@ describe('bundled skills', () => {
       service.getRuntimeSkillContext('deepseek-harness')
     ).resolves.toMatchObject({
       packages: expect.arrayContaining([
-        {
+        expect.objectContaining({
           id: 'deai-writing',
-          directory: join(builtinSkillsRoot, 'deai-writing')
-        },
-        {
+          directory: join(builtinSkillsRoot, 'deai-writing'),
+          digest: expect.stringMatching(/^[a-f0-9]{64}$/u)
+        }),
+        expect.objectContaining({
           id: 'longdoc-docx',
-          directory: join(builtinSkillsRoot, 'longdoc-docx')
-        }
+          directory: join(builtinSkillsRoot, 'longdoc-docx'),
+          digest: expect.stringMatching(/^[a-f0-9]{64}$/u)
+        })
       ])
     })
   })

@@ -55,6 +55,12 @@ describe('bundled runtime paths', () => {
         'opencode',
         'opencode.exe'
       ),
+      opencodeConfig: join(
+        'installed',
+        'resources',
+        'runtimes',
+        'opencode-config'
+      ),
       continue: join(
         'installed',
         'resources',

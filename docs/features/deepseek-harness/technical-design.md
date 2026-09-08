@@ -139,6 +139,8 @@ Harness 子进程内控制面不能取代 Main 控制面，Main 控制面也不�
 - GoodBuddy 在 Runtime 重启后可以用现有的有界历史创建新 Harness Session。
 
 Harness Session 只在当前 Runtime 进程生命周期内存在。释放 GoodBuddy 会话时必须同步释放对应 Harness Agent。
+固定 Host 显式加载 `dsh-session-projection` 的内存 SessionProjectionRegistry，这是
+`0.1.2-rc.1` AgentLoop 的必需依赖；不加载 Session persistence，也不新增磁盘会话副本。
 
 ## 6. 总体架构
 
@@ -289,6 +291,10 @@ GoodBuddy 的工作模式属于每个请求，不属于 Runtime 进程全局状�
 4. `session/prompt` 只能消费匹配且尚未使用的准备状态。
 5. 缺少准备状态、重复使用、请求标识不匹配时，Control Plane 直接拒绝请求。
 6. 同一 Session 只允许一个 Prompt 在途。
+
+若 Runtime 回传 ACP 权限请求，Main 只按活跃 Session 的当前模式答复：Execute 优先选择
+`allow_once`，缺少时使用提供的 `allow_always`，不调用第二次人工 authorizer；
+Ask、已关闭或未知 Session 拒绝。这里不写入永久授权规则，也不把业务问答当作权限确认。
 
 ### 8.5 事件模型
 

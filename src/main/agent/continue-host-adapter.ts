@@ -122,16 +122,12 @@ const continueHostQuestionSchema = z
   .object({
     requestId: z.string().min(1).max(128),
     timestamp: z.number().finite().optional(),
-    question: z
-      .object({
-        question: z.string().trim().min(1).max(2_000),
-        options: z
-          .array(z.string().trim().min(1).max(200))
-          .max(20)
-          .optional(),
-        defaultAnswer: z.string().trim().max(2_000).optional()
-      })
-      .passthrough()
+    question: z.string().trim().min(1).max(2_000),
+    options: z
+      .array(z.string().trim().min(1).max(200))
+      .max(20)
+      .optional(),
+    defaultAnswer: z.string().trim().max(2_000).optional()
   })
   .strict()
 
@@ -812,6 +808,7 @@ export class ContinueHostAdapter {
       origin: string
       token: string
       signal: AbortSignal
+      options: readonly string[]
     }
   >()
   private preparation?: Promise<PreparedHost>
@@ -1111,7 +1108,7 @@ export class ContinueHostAdapter {
         throw new Error('Continue 提问回答数量不匹配')
       }
       answer = answers[0][0].trim()
-      isCustomAnswer = false
+      isCustomAnswer = !pending.options.includes(answer)
     }
     await this.request(
       pending.origin,
@@ -1711,7 +1708,8 @@ export class ContinueHostAdapter {
           this.pendingQuestions.set(pendingQuestion.requestId, {
             origin,
             token,
-            signal: executionSignal
+            signal: executionSignal,
+            options: pendingQuestion.options ?? []
           })
           await runOptions.onEvent?.({
             type: 'question',
@@ -1719,9 +1717,9 @@ export class ContinueHostAdapter {
             questions: [
               {
                 header: 'Continue',
-                question: pendingQuestion.question.question,
+                question: pendingQuestion.question,
                 options: (
-                  pendingQuestion.question.options ?? []
+                  pendingQuestion.options ?? []
                 ).map((option) => ({
                   label: option,
                   description: ''
