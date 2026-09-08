@@ -116,11 +116,11 @@ describe('ChatTimeline', () => {
     expect(rule).not.toContain('contain-intrinsic')
   })
 
-  it('places message identity above the message body', () => {
+  it.each(['assistant', 'user'] as const)('places the %s avatar outside the header and body', (role) => {
     const messages: Message[] = [
       {
         id: 'assistant-message',
-        role: 'assistant',
+        role,
         content: 'Answer',
         createdAt: 1_775_000_000_000,
         state: 'complete'
@@ -145,9 +145,11 @@ describe('ChatTimeline', () => {
     const header = message?.querySelector('.message__header')
     const body = message?.querySelector('.message__body')
 
-    expect(header).toContainElement(message?.querySelector('.message__avatar') ?? null)
+    const avatar = message?.querySelector('.message__avatar')
+
+    expect(avatar).toHaveAttribute('aria-hidden', 'true')
     expect(header).toContainElement(message?.querySelector('.message__meta') ?? null)
-    expect(Array.from(message?.children ?? [])).toEqual([header, body])
+    expect(Array.from(message?.children ?? [])).toEqual([avatar, header, body])
   })
 
   it('enables HTML rendering only for completed Agent output', () => {

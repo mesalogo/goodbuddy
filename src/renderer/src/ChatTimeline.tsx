@@ -553,14 +553,14 @@ function ChatMessageRowView({
       ref={(element) => onArticleRef(message.id, element)}
       tabIndex={-1}
     >
+      <div aria-hidden="true" className="message__avatar">
+        {message.role === 'assistant' ? (
+          <Bot size={18} />
+        ) : (
+          <UserRound size={18} />
+        )}
+      </div>
       <div className="message__header">
-        <div className="message__avatar">
-          {message.role === 'assistant' ? (
-            <Bot size={18} />
-          ) : (
-            <UserRound size={18} />
-          )}
-        </div>
         <div className="message__meta">
           <strong>
             {message.role === 'assistant' ? 'GoodBuddy' : t('chat.user')}

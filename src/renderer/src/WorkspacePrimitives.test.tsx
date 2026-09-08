@@ -248,7 +248,7 @@ describe('WorkspacePrimitives', () => {
       /@media \(max-width: 719px\)\s*\{(?:[^{}]|\{[^{}]*\})*?\.assistant-sidebar/u
     )
     expect(stylesheet).toMatch(
-      /\.composer-wrap\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*padding:\s*var\(--space-3\)\s*max\(var\(--page-gutter\),\s*calc\(\(100% - var\(--content-reading\)\) \/ 2\)\)\s*var\(--space-2\);/u
+      /\.composer-wrap\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*min-width:\s*0;[^}]*padding:\s*var\(--space-3\)\s*var\(--chat-inline-padding\)\s*var\(--space-2\);/u
     )
     expect(stylesheet).toMatch(
       /\.assistant-sidebar__tabs\s*\{[^}]*grid-template-columns:\s*repeat\(5,\s*minmax\(max-content,\s*1fr\)\);/u

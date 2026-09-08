@@ -5190,12 +5190,21 @@ button > svg {
   display: none;
 }
 
+.chat,
+.composer-wrap {
+  --message-avatar-size: 29px;
+  --chat-inline-padding: max(
+    calc(var(--space-4) + var(--message-avatar-size) + var(--space-2)),
+    calc((100cqw - var(--content-reading)) / 2)
+  );
+}
+
 .chat {
   height: 100%;
   min-height: 0;
   padding:
     var(--page-gutter)
-    max(var(--page-gutter), calc((100% - var(--content-reading)) / 2))
+    0
     10px;
   overflow-y: auto;
   background: var(--surface-raised);
@@ -5333,6 +5342,13 @@ button > svg {
   line-height: 1.5;
 }
 
+.chat > .welcome,
+.message-list {
+  /* Keep the scrollbar inside the outer gutter without adding trailing scroll padding. */
+  width: calc(100cqw - 2 * var(--chat-inline-padding));
+  margin-left: var(--chat-inline-padding);
+}
+
 .message-list {
   display: flex;
   min-width: 0;
@@ -5363,9 +5379,10 @@ button > svg {
 }
 
 .message {
+  position: relative;
   display: flex;
   min-width: 0;
-  padding: 17px 8px;
+  padding: 17px 0;
   flex-direction: column;
   gap: 8px;
 }
@@ -5373,6 +5390,7 @@ button > svg {
 .message__header {
   display: flex;
   min-width: 0;
+  min-height: var(--message-avatar-size);
   align-items: center;
   gap: 12px;
 }
@@ -5434,10 +5452,13 @@ button > svg {
 }
 
 .message__avatar {
+  position: absolute;
+  top: 17px;
+  left: calc(-1 * (var(--message-avatar-size) + var(--space-2)));
   display: grid;
   flex: 0 0 auto;
-  width: 29px;
-  height: 29px;
+  width: var(--message-avatar-size);
+  height: var(--message-avatar-size);
   place-items: center;
   border: 1px solid var(--border-default);
   border-radius: 9px;
@@ -5446,6 +5467,8 @@ button > svg {
 }
 
 .message--user .message__avatar {
+  right: calc(-1 * (var(--message-avatar-size) + var(--space-2)));
+  left: auto;
   border-color: var(--accent-selected);
   background: var(--accent-subtle);
   color: var(--accent);
@@ -6511,7 +6534,7 @@ button > svg {
   min-width: 0;
   padding:
     var(--space-3)
-    max(var(--page-gutter), calc((100% - var(--content-reading)) / 2))
+    var(--chat-inline-padding)
     var(--space-2);
   background: var(--surface-raised);
 }
