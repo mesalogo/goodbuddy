@@ -3456,6 +3456,81 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
+  it("preserves markdown boundaries between native reasoning parts", async () => {
+    const setup = runClient([
+      {
+        id: "reasoning-part-1",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "session-1",
+          part: {
+            id: "reasoning-1",
+            sessionID: "session-1",
+            messageID: "message-1",
+            type: "reasoning",
+            text: "",
+            time: { start: 1 },
+          },
+        },
+      },
+      {
+        id: "reasoning-delta-1",
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "message-1",
+          partID: "reasoning-1",
+          field: "text",
+          delta: "**Evaluating request limits**",
+        },
+      },
+      {
+        id: "reasoning-part-2",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "session-1",
+          part: {
+            id: "reasoning-2",
+            sessionID: "session-1",
+            messageID: "message-1",
+            type: "reasoning",
+            text: "",
+            time: { start: 2 },
+          },
+        },
+      },
+      {
+        id: "reasoning-delta-2",
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "message-1",
+          partID: "reasoning-2",
+          field: "text",
+          delta: "**Planning limit removals**",
+        },
+      },
+      {
+        id: "idle",
+        type: "session.idle",
+        properties: { sessionID: "session-1" },
+      },
+    ]);
+    const runtime = embeddedRuntime(setup.client);
+
+    const events = await collectRun(runtime);
+
+    expect(
+      events
+        .filter((event) => event.type === "reasoning")
+        .map((event) => event.type === "reasoning" ? event.delta : ""),
+    ).toEqual([
+      "**Evaluating request limits**",
+      "\n\n**Planning limit removals**",
+    ]);
+    await runtime.dispose();
+  });
+
   it("auto-allows bounded fallback permission requests without GoodBuddy approval", async () => {
     const { client, permissionReply } = runClient([
       permissionEvent(),

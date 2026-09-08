@@ -2348,6 +2348,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         }
       >();
       const reasoningPartIds = new Set<string>();
+      let lastReasoningPartId: string | undefined;
       const subagentProgress = new OpenCodeSubagentProgress(
         request.requestId,
         sessionId,
@@ -2516,7 +2517,16 @@ export class OpenCodeRuntime implements AgentRuntime {
               ) {
                 hasResponseTextAfterFailure = true;
               }
-              const retained = retainOutputDelta(event.properties.delta);
+              const delta =
+                reasoning &&
+                lastReasoningPartId !== undefined &&
+                lastReasoningPartId !== event.properties.partID
+                  ? `\n\n${event.properties.delta}`
+                  : event.properties.delta;
+              if (reasoning) {
+                lastReasoningPartId = event.properties.partID;
+              }
+              const retained = retainOutputDelta(delta);
               if (retained.delta) {
                 yield {
                   requestId: request.requestId,
