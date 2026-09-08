@@ -1397,6 +1397,74 @@
   padding: var(--space-4);
 }
 
+.magic-todo-source-entry {
+  display: grid;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-2);
+}
+
+.magic-todo-source-entry > header {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  gap: var(--space-2);
+}
+
+.magic-todo-source-entry > header > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.magic-todo-source-entry > header strong {
+  color: var(--text-primary);
+  font-size: var(--font-body);
+}
+
+.magic-todo-source-entry > header small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.magic-todo-source-entry > header time {
+  flex: none;
+}
+
+.magic-todo-source-entry > .magic-note-content {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.magic-todo-source-entry > .magic-note-content .ql-editor {
+  padding: var(--space-3);
+}
+
+.magic-todo-source-entry > .magic-notes-muted {
+  padding-inline: 0;
+}
+
+.magic-todo-source-entry__error {
+  display: grid;
+  color: var(--danger);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+  gap: var(--space-2);
+}
+
+.magic-todo-source-entry__error .secondary-button {
+  width: fit-content;
+}
+
 .magic-notes-ai-controls {
   display: grid;
   padding: var(--space-3) 0;

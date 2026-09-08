@@ -108,6 +108,11 @@ export const magicNotes = {
     emptySelectionTitle: '还没有选择待办',
     emptySelectionDescription: '从左侧选择待办；待办统一来自笔记中的清单。',
     sourceNote: '来自笔记：{{title}}',
+    sourceEntryLabel: '对应的笔记记录',
+    sourceEntryHeading: '对应记录',
+    loadingSourceEntry: '正在加载对应记录…',
+    sourceEntryMissing: '未找到这条待办对应的笔记记录。',
+    sourceEntryLoadFailed: '对应记录加载失败：{{error}}',
     defaultInstructions: '此待办来自笔记正文中的待办清单。',
     markComplete: '标记为已完成：{{title}}',
     markIncomplete: '标记为未完成：{{title}}'

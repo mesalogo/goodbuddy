@@ -463,6 +463,11 @@ describe('MagicNotesWorkspace', () => {
     expect(
       screen.getByRole('button', { name: '打开原笔记修改' })
     ).toBeInTheDocument()
+    const sourceEntry = screen.getByRole('region', {
+      name: '对应的笔记记录'
+    })
+    expect(within(sourceEntry).getByText('发布笔记')).toBeInTheDocument()
+    expect(within(sourceEntry).getByText('记录正文')).toBeInTheDocument()
   })
 
   it('keeps history editing contained and de-emphasizes note deletion', async () => {
@@ -1169,7 +1174,7 @@ describe('MagicNotesWorkspace', () => {
     expect(
       screen.queryByRole('group', { name: '待办列表方式' })
     ).not.toBeInTheDocument()
-    expect(screen.getByText('发布笔记')).toBeInTheDocument()
+    expect(screen.getAllByText('发布笔记')).not.toHaveLength(0)
     expect(screen.getByText('演示笔记')).toBeInTheDocument()
     expect(screen.getByText('准备演示')).toBeInTheDocument()
   })
@@ -1203,6 +1208,11 @@ describe('MagicNotesWorkspace', () => {
         message: '待办已完成'
       })
     )
+    expect(
+      within(
+        screen.getByRole('region', { name: '对应的笔记记录' })
+      ).getByTestId('magic-note-checklist-state')
+    ).toHaveTextContent('checked')
 
     fireEvent.click(screen.getByRole('tab', { name: '笔记' }))
     expect(

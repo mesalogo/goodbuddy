@@ -115,6 +115,11 @@ export const magicNotes = {
     emptySelectionDescription:
       'Select a to-do on the left. All to-dos come from note checklists.',
     sourceNote: 'From note: {{title}}',
+    sourceEntryLabel: 'Related note entry',
+    sourceEntryHeading: 'Related entry',
+    loadingSourceEntry: 'Loading the related entry…',
+    sourceEntryMissing: 'The note entry for this to-do could not be found.',
+    sourceEntryLoadFailed: 'Could not load the related entry: {{error}}',
     defaultInstructions: 'This to-do comes from a checklist in a note.',
     markComplete: 'Mark complete: {{title}}',
     markIncomplete: 'Mark incomplete: {{title}}'
