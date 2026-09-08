@@ -21,7 +21,7 @@ otherwise.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.12.8. See the
+  releases and automatic updates; no preview is planned for 0.12.9. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -174,7 +174,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.21`, while the current Desktop release candidate is `0.12.8`; formal
+  `0.11.21`, while the current Desktop release candidate is `0.12.9`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in

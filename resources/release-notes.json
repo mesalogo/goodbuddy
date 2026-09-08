@@ -2,6 +2,42 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.9",
+      "releasedAt": "2026-09-08",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**待办来源记录**：在魔法笔记的待办视图选择事项后，可直接查看对应的来源记录。遇到读取失败可以重试，不必来回切换查找笔记。"
+          ],
+          "fixes": [
+            "**消息状态更准确**：回复底部会区分准备请求、等待重试、开始重试、工具活动和等待回答，本机 OpenCode 还会显示原生重试次数与计划时间。没有新进展时不再用闪烁暗示模型仍在工作，会话列表闪点及发送、停止按钮保持不变。",
+            "**并行 OpenCode 会话**：修复开启另一条本机会话时，已有会话可能一直等待的问题。服务异常退出时会明确提示失败，不会自动重复执行已运行的命令。",
+            "**参考图编辑**：修复部分兼容图像服务商拒绝图片编辑请求的问题。使用参考图修改图片时，不再附带只适用于生成接口的默认参数。",
+            "**原生问答与长上下文**：修复 OpenCode、Continue 的较长问题、较多选项或较长自定义回答被截断或拒绝的问题，并提高 Continue 的请求正文容量。用户可以继续通过现有问答卡片回答，较长上下文不再受旧的小容量限制阻断。",
+            "**推理排版**：修复 OpenCode 流式推理片段拼接时丢失 Markdown 分段的问题。推理过程中的段落和换行会按原始内容保留。",
+            "**运行记录提示**：移除常驻的旧版活动历史截断警告，减少与当前执行无关的提示。此调整不会恢复旧版本已经丢失的历史记录。"
+          ],
+          "notices": []
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Todo source entries**: Select an item in the Magic Notes todo view to read its source entry directly. Failed reads can be retried without switching back and forth to find the original note."
+          ],
+          "fixes": [
+            "**More accurate message status**: The reply footer distinguishes request preparation, retry waiting, retry dispatch, tool activity, and pending answers; local OpenCode also reports native retry attempts and scheduled times. The footer no longer pulses to imply progress when none is reported, while conversation-list indicators and send/stop buttons remain unchanged.",
+            "**Parallel OpenCode conversations**: Fixed an issue where opening another local conversation could leave an existing one waiting indefinitely. Unexpected server exits now produce an explicit failure without automatically replaying commands that already ran.",
+            "**Reference-image editing**: Fixed editing requests rejected by some compatible image providers. Reference-image edits no longer include default parameters that belong only to the generation endpoint.",
+            "**Native questions and longer context**: Fixed longer questions, larger option lists, and longer custom answers being truncated or rejected in OpenCode and Continue, and increased Continue's request-body capacity. Users can keep answering through the existing question card without longer context hitting the previous small request limit.",
+            "**Reasoning formatting**: Fixed lost Markdown boundaries when streamed OpenCode reasoning fragments were joined. Paragraphs and line breaks now retain their original structure.",
+            "**Run-history notices**: Removed the persistent legacy activity-history truncation warning to reduce notices unrelated to current work. This does not restore history already lost in older versions."
+          ],
+          "notices": []
+        }
+      }
+    },
+    {
       "version": "0.12.8",
       "releasedAt": "2026-09-08",
       "notes": {
