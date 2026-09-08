@@ -924,7 +924,7 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       serverMarker,
-      'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"20mb"})),j.post("/goodbuddy/question-answer",(we,Te)=>{let{requestId:ue,answer:ce,isCustomAnswer:de}=we.body??{};typeof ue==="string"&&ue.length>0&&typeof ce==="string"&&ce.length>0?Lbe.answerQuestion(ue,ce,de===!0)?Te.json({success:!0}):Te.status(404).json({error:"Question not pending"}):Te.status(400).json({error:"Invalid question answer"})}),j.get("/state"'
+      'let j=(0,atn.default)();if(!process.env.GOODBUDDY_CONTINUE_HOST_TOKEN)throw new Error("Missing GoodBuddy host token");j.use((we,Te,ue)=>{we.headers.authorization===`Bearer ${process.env.GOODBUDDY_CONTINUE_HOST_TOKEN}`?ue():Te.status(401).json({error:"Unauthorized"})}),j.use(atn.default.json({limit:"100mb"})),j.post("/goodbuddy/question-answer",(we,Te)=>{let{requestId:ue,answer:ce,isCustomAnswer:de}=we.body??{};typeof ue==="string"&&ue.length>0&&typeof ce==="string"&&ce.length>0?Lbe.answerQuestion(ue,ce,de===!0)?Te.json({success:!0}):Te.status(404).json({error:"Question not pending"}):Te.status(400).json({error:"Invalid question answer"})}),j.get("/state"'
     )
     patched = replaceExactly(
       patched,

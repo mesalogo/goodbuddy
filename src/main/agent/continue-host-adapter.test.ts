@@ -143,7 +143,7 @@ describe('ContinueHostAdapter', () => {
       'isHeadless:e.interactivePermissions?!1:e.headless'
     )
     expect(bundle).toContain('GOODBUDDY_CONTINUE_HOST_TOKEN')
-    expect(bundle).toContain('json({limit:"20mb"})')
+    expect(bundle).toContain('json({limit:"100mb"})')
     expect(bundle).toContain('listen(i,"127.0.0.1"')
     expect(bundle).toContain(
       'GOODBUDDY_DISABLE_CONTINUE_UPDATES'
