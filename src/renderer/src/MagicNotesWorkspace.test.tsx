@@ -466,6 +466,10 @@ describe('MagicNotesWorkspace', () => {
     const sourceEntry = screen.getByRole('region', {
       name: '对应的笔记记录'
     })
+    const todoDetail = screen.getByRole('region', { name: '待办详情' })
+    const aiComments = screen.getByRole('complementary', { name: 'AI 评论' })
+    expect(todoDetail).toContainElement(sourceEntry)
+    expect(aiComments).not.toContainElement(sourceEntry)
     expect(within(sourceEntry).getByText('发布笔记')).toBeInTheDocument()
     expect(within(sourceEntry).getByText('记录正文')).toBeInTheDocument()
   })

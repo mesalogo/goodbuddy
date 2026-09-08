@@ -1399,9 +1399,7 @@
 
 .magic-todo-source-entry {
   display: grid;
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--border-subtle);
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .magic-todo-source-entry > header {
@@ -1438,11 +1436,9 @@
 }
 
 .magic-todo-source-entry > .magic-note-content {
-  max-height: 240px;
-  overflow: auto;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
-  background: var(--surface-raised);
+  background: var(--surface-subtle);
 }
 
 .magic-todo-source-entry > .magic-note-content .ql-editor {
@@ -1451,18 +1447,6 @@
 
 .magic-todo-source-entry > .magic-notes-muted {
   padding-inline: 0;
-}
-
-.magic-todo-source-entry__error {
-  display: grid;
-  color: var(--danger);
-  font-size: var(--font-caption);
-  line-height: 1.5;
-  gap: var(--space-2);
-}
-
-.magic-todo-source-entry__error .secondary-button {
-  width: fit-content;
 }
 
 .magic-notes-ai-controls {

@@ -485,10 +485,6 @@ export function MagicNotesWorkspace({
   const [detail, setDetail] = useState<MagicNoteDetail>()
   const [todoSourceDetail, setTodoSourceDetail] =
     useState<MagicNoteDetail>()
-  const [todoSourceError, setTodoSourceError] = useState<{
-    message: string
-    noteId: string
-  }>()
   const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState('')
   const [refreshError, setRefreshError] = useState('')
@@ -1408,30 +1404,6 @@ export function MagicNotesWorkspace({
   const selectedTodoNoteId = selectedTodo?.noteId
   const selectedTodoEntryId = selectedTodo?.entryId
 
-  const loadTodoSource = useCallback(
-    async (noteId: string): Promise<void> => {
-      const requestId = ++todoSourceRequestRef.current
-      try {
-        const sourceDetail = await window.goodbuddy.magicNotes.get(noteId)
-        if (todoSourceRequestRef.current === requestId) {
-          setTodoSourceDetail(sourceDetail)
-          setTodoSourceError(undefined)
-        }
-      } catch (sourceError) {
-        if (todoSourceRequestRef.current === requestId) {
-          setTodoSourceError({
-            message: errorMessage(
-              sourceError,
-              tRef.current('errors.operationFailed')
-            ),
-            noteId
-          })
-        }
-      }
-    },
-    []
-  )
-
   useEffect(() => {
     if (libraryView !== 'todos' || !selectedTodoNoteId) {
       return
@@ -1442,41 +1414,27 @@ export function MagicNotesWorkspace({
       .then((sourceDetail) => {
         if (todoSourceRequestRef.current === requestId) {
           setTodoSourceDetail(sourceDetail)
-          setTodoSourceError(undefined)
         }
       })
       .catch((sourceError: unknown) => {
         if (todoSourceRequestRef.current === requestId) {
-          setTodoSourceError({
-            message: errorMessage(
-              sourceError,
-              tRef.current('errors.operationFailed')
-            ),
-            noteId: selectedTodoNoteId
-          })
+          notifyError(sourceError)
         }
       })
     return () => {
       todoSourceRequestRef.current += 1
     }
-  }, [libraryView, selectedTodoNoteId])
+  }, [libraryView, notifyError, selectedTodoNoteId])
 
   const selectedTodoSourceEntry = useMemo(
     () =>
-      todoSourceDetail?.entries.find(
-        (entry) => entry.id === selectedTodoEntryId
-      ),
-    [selectedTodoEntryId, todoSourceDetail]
+      todoSourceDetail && todoSourceDetail.id === selectedTodoNoteId
+        ? todoSourceDetail.entries.find(
+            (entry) => entry.id === selectedTodoEntryId
+          )
+        : undefined,
+    [selectedTodoEntryId, selectedTodoNoteId, todoSourceDetail]
   )
-  const selectedTodoSourceError =
-    todoSourceError && todoSourceError.noteId === selectedTodoNoteId
-      ? todoSourceError.message
-      : ''
-  const todoSourceLoading =
-    Boolean(selectedTodoNoteId) &&
-    todoSourceDetail?.id !== selectedTodoNoteId &&
-    !selectedTodoSourceError
-
   const reloadTodos = useCallback(async (): Promise<void> => {
     const snapshot = await window.goodbuddy.magicNotes.listTodos()
     setTodos(snapshot.todos)
@@ -1574,7 +1532,6 @@ export function MagicNotesWorkspace({
       if (selectedTodoId === todo.id) {
         todoSourceRequestRef.current += 1
         setTodoSourceDetail(result.note)
-        setTodoSourceError(undefined)
       }
       if (requestedNoteIdRef.current === result.note.id) {
         applyDetail(result.note)
@@ -2767,6 +2724,31 @@ export function MagicNotesWorkspace({
                   {t('actions.openSourceNote')}
                 </button>
               </div>
+              <section
+                aria-label={t('todos.sourceEntryLabel')}
+                className="magic-todo-source-entry"
+              >
+                <header>
+                  <div>
+                    <strong>{t('todos.sourceEntryHeading')}</strong>
+                    <small>{selectedTodo.noteTitle}</small>
+                  </div>
+                  {selectedTodoSourceEntry && (
+                    <time dateTime={selectedTodoSourceEntry.updatedAt}>
+                      {dateFormatter.format(
+                        new Date(selectedTodoSourceEntry.updatedAt)
+                      )}
+                    </time>
+                  )}
+                </header>
+                {selectedTodoSourceEntry ? (
+                  <MagicNoteContent content={selectedTodoSourceEntry.content} />
+                ) : (
+                  <p className="magic-notes-muted">
+                    {t('todos.sourceEntryMissing')}
+                  </p>
+                )}
+              </section>
             </section>
           )}
         </section>
@@ -2838,55 +2820,6 @@ export function MagicNotesWorkspace({
               <PanelRightClose aria-hidden="true" size={15} />
             </button>
           </div>
-          {libraryView === 'todos' && selectedTodo && (
-            <section
-              aria-label={t('todos.sourceEntryLabel')}
-              className="magic-todo-source-entry"
-            >
-              <header>
-                <div>
-                  <strong>{t('todos.sourceEntryHeading')}</strong>
-                  <small>{selectedTodo.noteTitle}</small>
-                </div>
-                {selectedTodoSourceEntry && (
-                  <time dateTime={selectedTodoSourceEntry.updatedAt}>
-                    {dateFormatter.format(
-                      new Date(selectedTodoSourceEntry.updatedAt)
-                    )}
-                  </time>
-                )}
-              </header>
-              {todoSourceLoading ? (
-                <p className="magic-notes-muted">
-                  {t('todos.loadingSourceEntry')}
-                </p>
-              ) : selectedTodoSourceError ? (
-                <div className="magic-todo-source-entry__error" role="alert">
-                  <span>
-                    {t('todos.sourceEntryLoadFailed', {
-                      error: selectedTodoSourceError
-                    })}
-                  </span>
-                  <button
-                    className="secondary-button"
-                    onClick={() => {
-                      setTodoSourceError(undefined)
-                      void loadTodoSource(selectedTodo.noteId)
-                    }}
-                    type="button"
-                  >
-                    {t('actions.retry')}
-                  </button>
-                </div>
-              ) : selectedTodoSourceEntry ? (
-                <MagicNoteContent content={selectedTodoSourceEntry.content} />
-              ) : (
-                <p className="magic-notes-muted">
-                  {t('todos.sourceEntryMissing')}
-                </p>
-              )}
-            </section>
-          )}
           <div className="magic-notes-ai-controls">
             <label>
               <span>{t('comments.directionLabel')}</span>
