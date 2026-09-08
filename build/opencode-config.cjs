@@ -8,20 +8,10 @@ const {
 } = require("node:fs");
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { npmInvocation } = require("./npm-invocation.cjs");
 
 const opencodeVersion = "1.18.29";
 const opencodePluginPackage = "@opencode-ai/plugin";
-
-function npmInvocation() {
-  const npmCli = process.env.npm_execpath;
-  if (npmCli) {
-    return { command: process.execPath, prefixArgs: [npmCli] };
-  }
-  if (process.platform === "win32") {
-    throw new Error("npm_execpath is required to prepare OpenCode config");
-  }
-  return { command: "npm", prefixArgs: [] };
-}
 
 function prepareBundledOpenCodeConfig(projectDir) {
   const targetDirectory = join(
@@ -68,7 +58,7 @@ function prepareBundledOpenCodeConfig(projectDir) {
       "utf8",
     );
     writeFileSync(join(stagingDirectory, ".gitignore"), "node_modules\n");
-    const npm = npmInvocation();
+    const npm = npmInvocation(projectDir);
     const environment = { ...process.env };
     delete environment.NODE_TLS_REJECT_UNAUTHORIZED;
     const result = spawnSync(

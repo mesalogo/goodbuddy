@@ -17,6 +17,7 @@ const {
   opencodeVersion,
   prepareBundledOpenCodeConfig,
 } = require("./opencode-config.cjs");
+const { npmInvocation } = require("./npm-invocation.cjs");
 
 const architectureNames = {
   1: "x64",
@@ -48,23 +49,6 @@ async function lockedIntegrity(projectDir, packageName) {
   return entry.integrity;
 }
 
-function npmInvocation() {
-  const npmCli = process.env.npm_execpath;
-  if (npmCli) {
-    return {
-      command: process.execPath,
-      prefixArgs: [npmCli],
-    };
-  }
-  if (process.platform === "win32") {
-    throw new Error("npm_execpath is required to prepare bundled runtimes");
-  }
-  return {
-    command: "npm",
-    prefixArgs: [],
-  };
-}
-
 async function downloadPackage(projectDir, packageName, integrity) {
   const cacheDirectory = join(projectDir, ".runtime-resources", "cache");
   await mkdir(cacheDirectory, { recursive: true });
@@ -80,7 +64,7 @@ async function downloadPackage(projectDir, packageName, integrity) {
     await rm(archivePath, { force: true });
   }
 
-  const npm = npmInvocation();
+  const npm = npmInvocation(projectDir);
   const result = spawnSync(
     npm.command,
     [
