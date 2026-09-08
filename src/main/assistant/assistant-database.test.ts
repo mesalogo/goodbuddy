@@ -1965,8 +1965,10 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('returns the latest 500 remote messages in chronological order', async () => {
-    const database = await createDatabase()
+  it('returns the latest 500 remote messages in chronological order', () => {
+    // Exercise the query boundary without 502 disk-synchronized fixture writes.
+    const database = new AssistantDatabase(':memory:')
+    database.initialize('C:\\Workspace')
     const project = database.ensureChannelProjects(
       'C:\\Users\\test',
       channelDefaultProfileId

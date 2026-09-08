@@ -621,8 +621,11 @@ describe('KnowledgeDatabase', () => {
     })
   })
 
-  it('lists every active task in addition to the terminal history limit', async () => {
-    const { database } = await createDatabase()
+  it('lists every active task in addition to the terminal history limit', () => {
+    // This checks retention, not the disk latency of 502 independent writes.
+    const database = new KnowledgeDatabase(':memory:')
+    database.initialize()
+    openDatabases.push(database)
     const library = database.createKnowledgeBase({
       name: 'Task listing',
       storageMode: 'reference'
