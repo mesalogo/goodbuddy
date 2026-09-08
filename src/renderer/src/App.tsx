@@ -4431,6 +4431,7 @@ function App(): React.JSX.Element {
             ...message,
             tools,
             blocks,
+            status: undefined,
           };
         });
       } else if (event.type === "subagent") {
@@ -7015,7 +7016,7 @@ function App(): React.JSX.Element {
       blocks: [],
       createdAt: Date.now(),
       state: "streaming",
-      status: t("runtime.connecting"),
+      status: t("chat.status.preparingRequest"),
     };
 
     activeRuns.current.set(requestId, {

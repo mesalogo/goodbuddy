@@ -335,6 +335,13 @@ export const app = {
     loadEarlierMessages: 'Load earlier messages ({{count}} remaining)',
     scrollToBottom: 'Scroll to bottom',
     status: {
+      preparingRequest: 'Preparing request',
+      waitingForProgress: 'Waiting for further progress',
+      waitingForAnswer: 'Waiting for your answer',
+      waitingForApproval: 'Waiting for your confirmation',
+      pendingTool: 'Tool pending: {{name}}',
+      runningTool: 'Tool running: {{name}}',
+      waitingForSubagent: 'Waiting for subtasks to finish',
       responseTruncated: 'The response was too long and was truncated locally',
       displayCaptureTruncated:
         'Later activity details were not retained locally; the Runtime task continued',

@@ -1898,13 +1898,22 @@ export class ModelAgentRuntime implements AgentRuntime {
         requestId,
         type: 'status',
         message:
-          `模型网络请求失败，正在重试（${retryCount + 1}/` +
-          `${modelRequestRetryDelaysMs.length}）`
+          `模型网络请求失败，等待重试（${retryCount + 1}/` +
+          `${modelRequestRetryDelaysMs.length}，` +
+          `${modelRequestRetryDelaysMs[retryCount]! / 1_000} 秒后）`
       }
       await waitForModelRetry(
         modelRequestRetryDelaysMs[retryCount]!,
         signal
       )
+      signal.throwIfAborted()
+      yield {
+        requestId,
+        type: 'status',
+        message:
+          `${this.options.model} 正在重试请求（${retryCount + 1}/` +
+          `${modelRequestRetryDelaysMs.length}），等待响应`
+      }
     }
     throw new Error('模型请求重试状态无效')
   }
@@ -3957,7 +3966,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     yield {
       requestId: request.requestId,
       type: 'status',
-      message: `${this.options.model} 正在思考`
+      message: `${this.options.model} 请求处理中`
     }
 
     const system = [

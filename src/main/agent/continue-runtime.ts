@@ -504,7 +504,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
     yield {
       requestId: request.requestId,
       type: 'status',
-      message: 'Continue 正在生成回复'
+      message: 'Continue 正在处理请求'
     }
 
     const execute = request.workMode === 'execute'

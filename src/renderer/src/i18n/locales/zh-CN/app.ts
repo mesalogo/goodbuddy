@@ -318,6 +318,13 @@ export const app = {
     loadEarlierMessages: '加载更早的消息（还剩 {{count}} 条）',
     scrollToBottom: '到底部',
     status: {
+      preparingRequest: '正在准备请求',
+      waitingForProgress: '等待后续进展',
+      waitingForAnswer: '等待你的回答',
+      waitingForApproval: '等待你的确认',
+      pendingTool: '工具待执行：{{name}}',
+      runningTool: '工具执行中：{{name}}',
+      waitingForSubagent: '等待子任务完成',
       responseTruncated: '回答过长，已在本地截断显示',
       displayCaptureTruncated:
         '活动记录过多，后续详情未在本地保留；Runtime 任务仍继续执行',

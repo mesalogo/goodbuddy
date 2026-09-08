@@ -133,6 +133,10 @@ describe('ContinueAgentRuntime', () => {
 
     const events = await collectEvents(runtime)
 
+    expect(events[0]).toMatchObject({
+      type: 'status',
+      message: 'Continue 正在处理请求'
+    })
     expect(mocks.detectRuntimeBinary).toHaveBeenCalledWith({
       binaryPath: '',
       bundledPath: undefined,

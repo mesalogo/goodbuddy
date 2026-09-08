@@ -525,6 +525,27 @@ function ChatMessageRowView({
           ? t('chat.contextCompression.agentFailed')
           : t('chat.contextCompression.failed')
 
+  const activeTool = message.tools?.find((tool) =>
+    tool.state === 'pending' || tool.state === 'running')
+  const activeSubagent = message.subagents?.some((subagent) =>
+    subagent.state === 'queued' || subagent.state === 'running')
+  const activeCompression = compressionMarkers.find((marker) =>
+    marker.state === 'compressing')
+  const statusText = message.role === 'assistant' && message.state === 'streaming'
+    ? message.question
+      ? t('chat.status.waitingForAnswer')
+      : message.approval
+        ? t('chat.status.waitingForApproval')
+        : activeCompression
+          ? undefined
+          : message.status || (activeTool
+            ? t(activeTool.state === 'running'
+              ? 'chat.status.runningTool' : 'chat.status.pendingTool', { name: activeTool.name })
+            : activeSubagent
+              ? t('chat.status.waitingForSubagent')
+              : t('chat.status.waitingForProgress'))
+    : message.status
+
   return (
     <>
     <article
@@ -1024,10 +1045,10 @@ function ChatMessageRowView({
             {t('chat.status.displayCaptureTruncated')}
           </div>
         )}
-        {message.status && (
+        {statusText && (
           <div
             aria-atomic="true"
-            aria-label={message.status}
+            aria-label={statusText}
             aria-live={
               message.knowledgeRetrieval || compressionMarkers.length > 0
                 ? undefined
@@ -1050,13 +1071,9 @@ function ChatMessageRowView({
           >
             <span
               aria-hidden="true"
-              className={
-                message.state === 'streaming'
-                  ? 'message__status-dot message__status-dot--active'
-                  : 'message__status-dot'
-              }
+              className="message__status-dot"
             />
-            {message.status}
+            {statusText}
           </div>
         )}
         {canRetry && (

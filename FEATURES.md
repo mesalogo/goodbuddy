@@ -251,6 +251,12 @@ otherwise.
   results without reconstructing missing progress.
 - [x] **OpenCode event-stream cleanup**: Each completed or cancelled request
   closes its own subscription without cancelling parallel conversations.
+- [x] **Accurate message-footer status**: Distinguishes request preparation,
+  retry waiting, retry dispatch, tool activity, pending answers, and terminal
+  states. Local OpenCode reports native retry attempts and scheduled times;
+  direct models report their own backoff phase. Footer dots are static, and
+  unsupported Runtime retry details are not invented. Conversation-list
+  indicators and send/stop behavior remain unchanged.
 - [x] **Role-bound model connections**: Each role can inherit the default model
   or select an independent text-model connection. Invalid connections safely
   fall back to the default; the synthesis role always inherits the default.
@@ -432,7 +438,9 @@ otherwise.
   demand or before every response, show zero-result, degraded, failed, and
   cancelled states, and expose cited context or safely open its source.
 - [x] **Magic Notes**: A local-first notes and todo workbench with scope
-  management, editing, filtering, and controlled AI comments. The left
+  management, editing, filtering, and controlled AI comments. The todo view
+  displays the selected item's source entry, with loading, retryable failure,
+  and missing-source feedback. The left
   navigation can show the incomplete-todo count, and create, save, and comment
   results use application-wide notifications.
 - [ ] **MCP Server Control Plane** (planned): Unified MCP lifecycle, health
@@ -449,8 +457,8 @@ otherwise.
   duplicate chat Markdown is hidden from the artifact list but not physically
   deleted. Run history is stored in Main SQLite without the previous 500-item,
   4,000-character, or 2 MB Renderer limits; the page renders it in batches,
-  and a persistent warning remains when a migrated legacy cache may already
-  have lost older records or detail. Token usage is grouped by Runtime and
+  without a persistent legacy-cache truncation warning; previously lost
+  history is not restored. Token usage is grouped by Runtime and
   model and normalizes the different OpenAI-compatible and Anthropic Messages
   cache-reporting semantics when showing cache hit rate. Activity is grouped
   by conversation and collapsed by default so long histories do not fill the

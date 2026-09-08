@@ -66,6 +66,48 @@ describe('ChatTimeline', () => {
     vi.clearAllMocks()
   })
 
+  it('shows only known waiting and tool states in a static message footer', () => {
+    const props = {
+      artifactById: new Map(), conversationId: 'status-conversation',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, ...callbacks, retryContent: '', totalMessageCount: 1
+    }
+    const message: Message = {
+      id: 'status-message', role: 'assistant', content: '已有内容',
+      createdAt: Date.now(), state: 'streaming'
+    }
+    const { rerender } = render(<ChatTimeline {...props} messages={[message]} />)
+    expect(screen.getByRole('status', { name: '等待后续进展' })).toBeVisible()
+    expect(document.querySelector('.message__status-dot--active')).toBeNull()
+    const tool = { callId: 'read-1', name: 'read', summary: 'Read file' }
+    rerender(<ChatTimeline {...props} messages={[{
+      ...message, tools: [{ ...tool, state: 'pending' }]
+    }]} />)
+    expect(screen.getByRole('status', { name: '工具待执行：read' })).toBeVisible()
+    rerender(<ChatTimeline {...props} messages={[{
+      ...message, tools: [{ ...tool, state: 'running' }]
+    }]} />)
+    expect(screen.getByRole('status', { name: '工具执行中：read' })).toBeVisible()
+    rerender(<ChatTimeline {...props} messages={[{
+      ...message, tools: [{ ...tool, state: 'completed' }]
+    }]} />)
+    expect(screen.getByRole('status', { name: '等待后续进展' })).toBeVisible()
+    rerender(<ChatTimeline {...props} messages={[{
+      ...message, status: 'OpenCode 正在处理请求',
+      question: {
+        requestId: 'question-request', type: 'question', questionId: 'q-1',
+        questions: [{ header: '确认', question: '继续吗？', options: [], custom: true, multiple: false }]
+      }
+    }]} />)
+    expect(screen.getByRole('status', { name: '等待你的回答' })).toBeVisible()
+    expect(screen.queryByText('OpenCode 正在处理请求')).not.toBeInTheDocument()
+    rerender(<ChatTimeline {...props} messages={[{
+      ...message, state: 'error', status: '模型请求失败'
+    }]} />)
+    expect(screen.getByRole('alert', { name: '模型请求失败' })).toBeVisible()
+    expect(screen.queryByText('等待后续进展')).not.toBeInTheDocument()
+  })
+
   it('uses actual message heights for the conversation scroll range', () => {
     const rule = stylesheet.match(/\.message\s*\{([^}]*)\}/u)?.[1]
 

@@ -2466,6 +2466,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           return false;
         };
         const reportedMessageIds = new Set<string>();
+        let waitingForRetry = false;
         for await (const event of subscription.stream) {
           const childProgress = subagentProgress.update(event);
           if (
@@ -2478,6 +2479,32 @@ export class OpenCodeRuntime implements AgentRuntime {
               : undefined;
             if (task) task.subagent = childProgress;
             yield childProgress;
+          }
+          if (
+            event.type === "session.status" &&
+            event.properties.sessionID === sessionId
+          ) {
+            const status = event.properties.status;
+            if (status.type === "retry") {
+              waitingForRetry = true;
+              const scheduled = Number.isSafeInteger(status.next) && status.next > 0
+                ? `（计划 ${new Date(status.next).toLocaleTimeString("zh-CN", { hour12: false })}）`
+                : "";
+              yield {
+                requestId: request.requestId,
+                type: "status",
+                message: `OpenCode 等待第 ${status.attempt} 次重试${scheduled}：${
+                  safeToolErrorDetail(status.message, 1_000) || "模型请求失败"
+                }`,
+              };
+            } else if (status.type === "busy" && waitingForRetry) {
+              waitingForRetry = false;
+              yield {
+                requestId: request.requestId,
+                type: "status",
+                message: "OpenCode 已开始重试，等待后续进展",
+              };
+            }
           }
           if (
             event.type === "message.updated" &&

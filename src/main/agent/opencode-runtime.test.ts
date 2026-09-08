@@ -288,6 +288,52 @@ async function collectRun(
 }
 
 describe("OpenCodeRuntime embedded launcher", () => {
+  it("forwards retry scheduling and resumes only on a matching native busy event", async () => {
+    const next = Date.now() + 120_000;
+    const setup = runClient([
+      {
+        type: "session.status",
+        properties: { sessionID: "another-session", status: {
+          type: "retry", attempt: 9, message: "Unrelated retry", next,
+        } },
+      },
+      {
+        type: "session.status",
+        properties: { sessionID: "session-1", status: {
+          type: "retry", attempt: 2, message: "HTTP 503", next,
+        } },
+      },
+      {
+        type: "session.status",
+        properties: { sessionID: "another-session", status: { type: "busy" } },
+      },
+      {
+        type: "session.status",
+        properties: { sessionID: "session-1", status: { type: "busy" } },
+      },
+      {
+        type: "session.status",
+        properties: { sessionID: "session-1", status: { type: "busy" } },
+      },
+      { type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    const runtime = embeddedRuntime(setup.client);
+    try {
+      const events = await collectRun(runtime);
+      const statuses = events.filter((event) => event.type === "status");
+      expect(statuses.map((event) => event.message)).toEqual([
+        "OpenCode 正在处理请求",
+        `OpenCode 等待第 2 次重试（计划 ${
+          new Date(next).toLocaleTimeString("zh-CN", { hour12: false })
+        }）：HTTP 503`,
+        "OpenCode 已开始重试，等待后续进展",
+      ]);
+      expect(events.at(-1)).toMatchObject({ type: "done" });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("checks embedded availability without starting OpenCode", async () => {
     const child = fakeChild();
     const {

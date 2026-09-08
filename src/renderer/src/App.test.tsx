@@ -3378,9 +3378,9 @@ describe("App", () => {
     });
     expect(
       screen
-        .getByText("正在连接 Agent Runtime")
+        .getByText("正在准备请求")
         .querySelector(".message__status-dot"),
-    ).toHaveClass("message__status-dot--active");
+    ).not.toHaveClass("message__status-dot--active");
     const userMessage = screen
       .getAllByText("帮我分析项目")
       .map((element) => element.closest("article"))
@@ -3824,6 +3824,41 @@ describe("App", () => {
     expect(screen.getByText("正在分析真实推理内容")).toBeVisible();
   });
 
+  it("keeps request status truthful through retry, progress, and completion", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "检查请求状态" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const request = run.mock.calls[0]![0];
+    const retry = "OpenCode 等待第 2 次重试（计划 12:34:56）：HTTP 503";
+    expect(screen.getByRole("status", { name: "正在准备请求" })).toBeVisible();
+    act(() => agentListener?.({
+      requestId: request.requestId, type: "status", message: retry,
+    }));
+    const footer = screen.getByRole("status", { name: retry });
+    expect(footer).toBeVisible();
+    expect(footer.querySelector(".message__status-dot--active")).toBeNull();
+    expect(screen.queryByText("正在准备请求")).not.toBeInTheDocument();
+    act(() => agentListener?.({
+      requestId: request.requestId, type: "text", delta: "恢复后的实际回复",
+    }));
+    expect(screen.queryByText(retry)).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "等待后续进展" })).toBeVisible();
+    act(() => agentListener?.({
+      requestId: request.requestId, type: "done",
+    }));
+    expect(screen.queryByText("等待后续进展")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "任务执行完成" })).toBeVisible();
+    act(() => agentListener?.({
+      requestId: request.requestId, type: "status", message: retry,
+    }));
+    expect(screen.queryByText(retry)).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "任务执行完成" })).toBeVisible();
+  });
+
   it("updates context usage after model responses and keeps compression status", async () => {
     const settings = await api.settings.getRuntime();
     vi.mocked(api.settings.getRuntime).mockResolvedValueOnce({
@@ -3903,11 +3938,11 @@ describe("App", () => {
       agentListener?.({
         requestId: request.requestId,
         type: "status",
-        message: "sonnet-5 正在思考",
+        message: "sonnet-5 请求处理中",
       });
     });
     expect(screen.getByText("正在压缩较早对话…")).toBeInTheDocument();
-    expect(screen.getByText("sonnet-5 正在思考")).toBeInTheDocument();
+    expect(screen.queryByText("sonnet-5 请求处理中")).not.toBeInTheDocument();
 
     act(() => {
       agentListener?.({
@@ -6281,9 +6316,9 @@ describe("App", () => {
       }
       expect(
         screen
-          .getByText("正在连接 Agent Runtime")
+          .getByText("正在准备请求")
           .querySelector(".message__status-dot"),
-      ).toHaveClass("message__status-dot--active");
+      ).not.toHaveClass("message__status-dot--active");
       expect(screen.getByLabelText("加入待发送队列")).toBeInTheDocument();
       vi.mocked(api.conversationQueue.ready).mockClear();
       return {
@@ -6350,7 +6385,7 @@ describe("App", () => {
       ).toBeInTheDocument();
       await waitFor(() =>
         expect(
-          screen.queryByText("正在连接 Agent Runtime"),
+          screen.queryByText("正在准备请求"),
         ).not.toBeInTheDocument(),
       );
       expect(document.querySelector(".message__status-dot--active")).toBeNull();
@@ -6397,7 +6432,7 @@ describe("App", () => {
         await screen.findByText("远端 Agent 执行失败"),
       ).toBeInTheDocument();
       expect(
-        screen.queryByText("正在连接 Agent Runtime"),
+        screen.queryByText("正在准备请求"),
       ).not.toBeInTheDocument();
       expect(document.querySelector(".message__status-dot--active")).toBeNull();
       await waitFor(() =>
@@ -6427,7 +6462,7 @@ describe("App", () => {
         expect(api.conversations.list).toHaveBeenCalledTimes(2),
       );
       // The local streaming copy still wins over a non-terminal snapshot.
-      expect(screen.getByText("正在连接 Agent Runtime")).toBeInTheDocument();
+      expect(screen.getByText("正在准备请求")).toBeInTheDocument();
       expect(screen.getByLabelText("加入待发送队列")).toBeInTheDocument();
       expect(api.conversationQueue.ready).not.toHaveBeenCalled();
 
@@ -6447,7 +6482,7 @@ describe("App", () => {
         await screen.findByText("聚焦后读到的最终回复"),
       ).toBeInTheDocument();
       expect(
-        screen.queryByText("正在连接 Agent Runtime"),
+        screen.queryByText("正在准备请求"),
       ).not.toBeInTheDocument();
       await waitFor(() =>
         expect(api.conversationQueue.ready).toHaveBeenCalledWith(

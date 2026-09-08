@@ -1483,9 +1483,16 @@ describe('ModelAgentRuntime', () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           type: 'status',
-          message: '模型网络请求失败，正在重试（1/3）'
+          message: '模型网络请求失败，等待重试（1/3，0.5 秒后）'
         })
       )
+      const retryWaiting = events.findIndex((event) =>
+        event.type === 'status' && event.message.includes('等待重试'))
+      const retryStarted = events.findIndex((event) =>
+        event.type === 'status' && event.message.includes('正在重试请求'))
+      const responseStarted = events.findIndex((event) => event.type === 'text')
+      expect(retryStarted).toBeGreaterThan(retryWaiting)
+      expect(responseStarted).toBeGreaterThan(retryStarted)
       expect(events).toContainEqual(
         expect.objectContaining({
           type: 'text',
@@ -1561,7 +1568,7 @@ describe('ModelAgentRuntime', () => {
     )
     expect(events).not.toContainEqual(
       expect.objectContaining({
-        message: expect.stringContaining('正在重试')
+        message: expect.stringContaining('等待重试')
       })
     )
   })
@@ -1598,7 +1605,7 @@ describe('ModelAgentRuntime', () => {
     expect(fetcher).toHaveBeenCalledOnce()
     expect(events).not.toContainEqual(
       expect.objectContaining({
-        message: expect.stringContaining('正在重试')
+        message: expect.stringContaining('等待重试')
       })
     )
   })
@@ -1628,12 +1635,12 @@ describe('ModelAgentRuntime', () => {
     )
 
     await expect(stream.next()).resolves.toMatchObject({
-      value: { type: 'status', message: 'sonnet-5 正在思考' }
+      value: { type: 'status', message: 'sonnet-5 请求处理中' }
     })
     await expect(stream.next()).resolves.toMatchObject({
       value: {
         type: 'status',
-        message: '模型网络请求失败，正在重试（1/3）'
+        message: '模型网络请求失败，等待重试（1/3，0.5 秒后）'
       }
     })
     const pendingRetry = stream.next()
@@ -2051,7 +2058,7 @@ describe('ModelAgentRuntime', () => {
       expect(events).toContainEqual(
         expect.objectContaining({
           type: 'status',
-          message: '模型网络请求失败，正在重试（1/3）'
+          message: '模型网络请求失败，等待重试（1/3，0.5 秒后）'
         })
       )
       expect(events).toContainEqual(
