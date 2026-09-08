@@ -20,6 +20,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type {
   AgentQuestionAnswer,
@@ -168,6 +169,8 @@ type OpenCodeProviderDescriptor = {
 type OpenCodeServer = {
   url: string;
   authorization: string;
+  signal: AbortSignal;
+  activeRequests: number;
   close: () => Promise<void>;
 };
 
@@ -285,6 +288,14 @@ function executionDeadlineLabel(milliseconds: number): string {
   return milliseconds % 60_000 === 0
     ? `${milliseconds / 60_000} 分钟`
     : `${milliseconds} 毫秒`;
+}
+
+function eventSubscriptionOptions(signal: AbortSignal) {
+  return {
+    signal,
+    sseSleepFn: (milliseconds: number) =>
+      delay(milliseconds, undefined, { signal }),
+  };
 }
 
 function awaitWithAbort<T>(
@@ -1171,10 +1182,24 @@ export class OpenCodeRuntime implements AgentRuntime {
           }
           stdout?.resume();
           stderr?.resume();
+          const lifetime = new AbortController();
+          child.once("close", (code: number | null) => {
+            lifetime.abort(new Error(
+              `OpenCode 服务已退出（code ${code ?? "unknown"}），请重试当前请求`,
+            ));
+          });
+          child.once("error", () => {
+            lifetime.abort(new Error(
+              "OpenCode 服务发生错误并已关闭，请重试当前请求",
+            ));
+          });
           resolveServer({
             url,
             authorization,
+            signal: lifetime.signal,
+            activeRequests: 0,
             close: async () => {
+              lifetime.abort(new Error("OpenCode 服务已关闭，请重试当前请求"));
               try {
                 const exited = this.waitForExit(child);
                 this.terminate(child);
@@ -1315,6 +1340,10 @@ export class OpenCodeRuntime implements AgentRuntime {
     signal?: AbortSignal,
   ): Promise<OpencodeClient> {
     if (this.client && this.server) {
+      // A short probe must not replace a server still serving another request.
+      if (this.server.activeRequests > 0 && !this.server.signal.aborted) {
+        return this.client;
+      }
       const probeSignal = AbortSignal.any([
         ...(signal ? [signal] : []),
         AbortSignal.timeout(STARTUP_PROBE_TIMEOUT_MS),
@@ -2027,6 +2056,27 @@ export class OpenCodeRuntime implements AgentRuntime {
       throw new Error("当前模型连接未启用图像输入");
     }
     const client = await this.getClient(signal);
+    const server = this.server;
+    const requestSignal = server
+      ? AbortSignal.any([signal, server.signal])
+      : signal;
+    if (server) server.activeRequests += 1;
+    try {
+      requestSignal.throwIfAborted();
+      yield* this.runWithClient(request, requestSignal, client);
+    } catch (error) {
+      requestSignal.throwIfAborted();
+      throw error;
+    } finally {
+      if (server) server.activeRequests -= 1;
+    }
+  }
+
+  private async *runWithClient(
+    request: AgentExecutionRequest,
+    signal: AbortSignal,
+    client: OpencodeClient,
+  ): AsyncGenerator<RuntimeEvent, void, void> {
     const directory = this.options.defaultWorkspace;
     const runtimeControl =
       request.runtimeControl?.provider === "opencode"
@@ -2290,7 +2340,10 @@ export class OpenCodeRuntime implements AgentRuntime {
       const subscription = await this.controlRequest(
         "订阅事件流",
         (controlSignal) =>
-          client.event.subscribe({ directory }, { signal: controlSignal }),
+          client.event.subscribe(
+            { directory },
+            eventSubscriptionOptions(controlSignal),
+          ),
         AbortSignal.any([signal, subscriptionController.signal]),
       );
 
@@ -2942,10 +2995,11 @@ export class OpenCodeRuntime implements AgentRuntime {
             configuredTimeout,
           );
     deadlineTimer?.unref?.();
-    const executionSignal = deadline
+    let executionSignal = deadline
       ? AbortSignal.any([signal, deadline.signal])
       : signal;
     let releaseConversation: (() => void) | undefined;
+    let server: OpenCodeServer | undefined;
     try {
       releaseConversation = await this.acquireConversationRun(
         request.conversationId,
@@ -2954,6 +3008,13 @@ export class OpenCodeRuntime implements AgentRuntime {
       const client = this.sessions.has(request.conversationId)
         ? await this.getClient(executionSignal)
         : undefined;
+      if (client) {
+        server = this.server;
+        if (server) {
+          server.activeRequests += 1;
+          executionSignal = AbortSignal.any([executionSignal, server.signal]);
+        }
+      }
       const sessionId = this.sessions.get(request.conversationId);
       if (!sessionId || !client) {
         return {
@@ -3012,7 +3073,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         (controlSignal) =>
           client.event.subscribe(
             { directory: this.options.defaultWorkspace },
-            { signal: controlSignal },
+            eventSubscriptionOptions(controlSignal),
           ),
         subscriptionSignal,
       );
@@ -3094,11 +3155,13 @@ export class OpenCodeRuntime implements AgentRuntime {
       if (deadline?.signal.aborted && !signal.aborted) {
         throw deadline.signal.reason;
       }
+      executionSignal.throwIfAborted();
       throw error;
     } finally {
       if (deadlineTimer) {
         clearTimeout(deadlineTimer);
       }
+      if (server) server.activeRequests -= 1;
       releaseConversation?.();
     }
   }

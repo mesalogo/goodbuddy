@@ -1227,6 +1227,179 @@ describe("OpenCodeRuntime embedded launcher", () => {
     }
   });
 
+  it("does not replace a shared server while another conversation is running", async () => {
+    const setup = runClient([
+      { type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(setup.event.subscribe).mockImplementationOnce(async () => ({
+      stream: (async function* () {
+        await gate;
+        yield { type: "session.idle", properties: { sessionID: "session-1" } };
+      })(),
+    }) as never);
+    const child = fakeChild();
+    const replacement = fakeChild(43);
+    const { deps, checkServerHealth, spawnMock } = dependencies(child, {
+      createClient: () => setup.client,
+    });
+    spawnMock.mockReturnValueOnce(child).mockReturnValue(replacement);
+    const runtime = new OpenCodeRuntime(options(), deps);
+    const first = collectRun(runtime);
+    try {
+      await vi.waitFor(() => expect(setup.session.promptAsync).toHaveBeenCalledOnce());
+      checkServerHealth.mockResolvedValueOnce(false);
+      const peerEvents: RuntimeEvent[] = [];
+      for await (const event of runtime.run(
+        {
+          requestId: "peer", conversationId: "peer-conversation",
+          prompt: "test", workMode: "execute",
+        },
+        new AbortController().signal,
+      )) peerEvents.push(event);
+      await expect(runtime.testConnection()).resolves.toMatchObject({ available: true });
+      expect(peerEvents.at(-1)).toMatchObject({ type: "done" });
+      expect(checkServerHealth).toHaveBeenCalledOnce();
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(spawnMock).toHaveBeenCalledOnce();
+      release();
+      await expect(first).resolves.toContainEqual(expect.objectContaining({ type: "done" }));
+      await expect(runtime.testConnection()).resolves.toMatchObject({ available: true });
+      expect(child.kill).toHaveBeenCalledOnce();
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      await first.catch(() => undefined);
+      await runtime.dispose();
+    }
+  });
+
+  it.each(["exit", "dispose"])(
+    "settles an active request when its embedded server ends through %s",
+    async (ending) => {
+      const setup = runClient([]);
+      vi.mocked(setup.event.subscribe).mockImplementation(async (_input, options) => ({
+        stream: (async function* () {
+          const signal = options!.signal!;
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+          yield { type: "session.idle", properties: { sessionID: "session-1" } };
+        })(),
+      }) as never);
+      const child = fakeChild();
+      const { deps } = dependencies(child, { createClient: () => setup.client });
+      const runtime = new OpenCodeRuntime(options(), deps);
+      const controller = new AbortController();
+      let settled = false;
+      const events: RuntimeEvent[] = [];
+      const result = (async () => {
+        try {
+          for await (const event of runtime.run(
+            { requestId: "active", conversationId: "active", prompt: "test", workMode: "execute" },
+            controller.signal,
+          )) events.push(event);
+        } catch (error) {
+          return error;
+        } finally {
+          settled = true;
+        }
+      })();
+      try {
+        await vi.waitFor(() => expect(setup.session.promptAsync).toHaveBeenCalledOnce());
+        if (ending === "exit") closeChild(child, 1);
+        else await runtime.dispose();
+        await vi.waitFor(() => expect(settled).toBe(true), { timeout: 300 });
+        await expect(result).resolves.toMatchObject({
+          message: expect.stringMatching(/OpenCode 服务.*(?:退出|关闭)/u),
+        });
+        expect(controller.signal.aborted).toBe(false);
+        expect(events.some((event) => event.type === "done")).toBe(false);
+      } finally {
+        controller.abort();
+        await result;
+        await runtime.dispose();
+      }
+    },
+  );
+
+  it("cancels an event-stream retry delay when its server exits", async () => {
+    const setup = runClient([]);
+    let retrying = false;
+    vi.mocked(setup.event.subscribe).mockImplementation(async (_input, options) => ({
+      stream: (async function* () {
+        retrying = true;
+        await (options as { sseSleepFn: (milliseconds: number) => Promise<void> })
+          .sseSleepFn(30_000);
+        yield { type: "session.idle", properties: { sessionID: "session-1" } };
+      })(),
+    }) as never);
+    const child = fakeChild();
+    const { deps } = dependencies(child, { createClient: () => setup.client });
+    const runtime = new OpenCodeRuntime(options(), deps);
+    const result = collectRun(runtime).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(retrying).toBe(true));
+      closeChild(child, 1);
+      await expect(result).resolves.toMatchObject({
+        message: expect.stringContaining("OpenCode 服务已退出"),
+      });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each(["complete", "exit"])(
+    "protects an active Compact until it ends through %s",
+    async (ending) => {
+      const setup = runClient([
+        { type: "session.idle", properties: { sessionID: "session-1" } },
+      ]);
+      let release!: () => void;
+      const summarize = vi.fn((_input, options: { signal: AbortSignal }) =>
+        new Promise((resolve, reject) => {
+          release = () => resolve({ data: true });
+          options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+        }));
+      Object.assign(setup.client, {
+        v2: { session: { context: vi.fn().mockResolvedValue({
+          data: { data: [{ type: "assistant", model: { providerID: "test", id: "test" } }] },
+        }) } },
+      });
+      Object.assign(setup.client.session, { summarize });
+      const child = fakeChild();
+      const { deps, checkServerHealth } = dependencies(child, { createClient: () => setup.client });
+      const runtime = new OpenCodeRuntime(options(), deps);
+      try {
+        await collectRun(runtime);
+        const compact = runtime.compactConversation({
+          requestId: "compact", conversationId: "conversation-1",
+          runtimeSelection: { provider: "opencode" }, history: [], historyMessageIds: [],
+        }, new AbortController().signal).catch((error: unknown) => error);
+        await vi.waitFor(() => expect(summarize).toHaveBeenCalledOnce());
+        const probes = checkServerHealth.mock.calls.length;
+        await expect(runtime.testConnection()).resolves.toMatchObject({ available: true });
+        expect(checkServerHealth).toHaveBeenCalledTimes(probes);
+        expect(child.kill).not.toHaveBeenCalled();
+        if (ending === "exit") {
+          closeChild(child, 1);
+          await expect(compact).resolves.toMatchObject({
+            message: expect.stringContaining("OpenCode 服务已退出"),
+          });
+        } else {
+          release();
+          await expect(compact).resolves.toMatchObject({ result: { compacted: true } });
+          await runtime.testConnection();
+          expect(checkServerHealth).toHaveBeenCalledTimes(probes + 1);
+        }
+      } finally {
+        release?.();
+        await runtime.dispose();
+      }
+    },
+  );
+
   it.each(["unhealthy", "rejected", "hung"])(
     "replaces a %s cached server once for concurrent callers",
     async (failure) => {
