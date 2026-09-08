@@ -288,6 +288,41 @@ async function collectRun(
 }
 
 describe("OpenCodeRuntime embedded launcher", () => {
+  it.each(["native", "profile"] as const)(
+    "disables unused automatic Git snapshots with %s model configuration",
+    async (configuration) => {
+      const { deps, spawnMock } = dependencies(fakeChild());
+      const runtime = new OpenCodeRuntime(
+        options({
+          modelProfile: configuration === "profile"
+            ? {
+                id: "00000000-0000-4000-8000-000000000011",
+                name: "Test model",
+                baseUrl: "https://model.example/v1",
+                modelName: "test-model",
+                protocol: "openai-responses",
+                authentication: "none",
+                supportsImageInput: false,
+              }
+            : undefined,
+        }),
+        deps,
+      );
+      try {
+        await expect(runtime.testConnection()).resolves.toMatchObject({
+          available: true,
+        });
+        const config = JSON.parse(
+          spawnMock.mock.calls[0]?.[2]?.env?.OPENCODE_CONFIG_CONTENT ?? "{}",
+        );
+        expect(config.snapshot).toBe(false);
+        expect(config.permission["*"]).toBe("allow");
+      } finally {
+        await runtime.dispose();
+      }
+    },
+  );
+
   it("forwards retry scheduling and resumes only on a matching native busy event", async () => {
     const next = Date.now() + 120_000;
     const setup = runClient([
@@ -640,6 +675,7 @@ describe("OpenCodeRuntime embedded launcher", () => {
         spawnOptions?.env?.OPENCODE_CONFIG_CONTENT ?? "{}",
       ) as Record<string, unknown>;
       expect(config).toEqual({
+        snapshot: false,
         skills: {
           paths: [join(configDirectory!, "skills")],
           urls: [],

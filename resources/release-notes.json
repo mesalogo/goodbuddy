@@ -2,6 +2,42 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.10",
+      "releasedAt": "2026-09-09",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**OpenCode 并行执行更顺畅**：修复批量改写文件或转换换行符后，原生自动 Git 快照计算可能拖住其他会话的问题。GoodBuddy 托管的本机与远端 OpenCode 不再生成界面未使用的自动快照，文件工具、子代理和工作区 Git 差异仍然可用。",
+            "**Continue 输出不再堵住宿主**：修复控制台输出较多时可能填满子进程管道、使请求无法继续的问题。现在会持续排空不用展示的输出，正常回复、工具进度和取消仍沿用原有通道。",
+            "**聊天内容与输入框对齐**：头像移到消息正文外侧，消息边缘与输入框保持一致。滚动条空间留在外侧，避免聊天区域出现多余的横向滚动。",
+            "**待办来源就在详情里**：魔法笔记把来源记录放入所选待办的详情区域，查看事项和原文不必再找底部面板。切换待办时不会混入上一项的来源内容，读取失败通过应用通知提示。",
+            "**便携包构建**：修复 Windows 打包准备 Runtime 时依赖特定 npm 环境变量的问题。构建流程现在也能使用项目内 npm 或系统 npm，避免因此中断便携包构建。"
+          ],
+          "notices": [
+            "本机修复随升级并重启 Desktop 生效；远程项目请先升级 Desktop 至 0.12.10，再更新 Agent 至 0.11.22。已运行的旧 Runtime 不会热更新，外部 OpenCode Server 的配置不受此调整影响。",
+            "本次使用 Windows、macOS、Linux 的 x64/arm64 六平台桌面发布矩阵，不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Smoother parallel OpenCode execution**: Fixed automatic native Git snapshot calculations that could stall other conversations after broad file rewrites or line-ending conversions. GoodBuddy-managed local and remote OpenCode no longer generate snapshots unused by the interface; file tools, subagents, and workspace Git diffs remain available.",
+            "**Continue output no longer blocks its host**: Fixed larger console output filling a child-process pipe and preventing requests from progressing. Unused output is now continuously drained, while replies, tool progress, and cancellation keep using their existing channels.",
+            "**Aligned messages and composer**: Avatars now sit outside message content, with message edges aligned to the composer. Scrollbar space stays in the outer gutter to avoid unnecessary horizontal scrolling in the chat area.",
+            "**Todo sources inside their details**: Magic Notes now shows the source entry within the selected todo's detail area instead of a separate bottom panel. Switching todos cannot show the previous item's source content, and failed reads use application notifications.",
+            "**Portable package builds**: Fixed Windows Runtime preparation depending on a particular npm environment variable. Builds can now also use the project's bundled npm or the system npm instead of failing portable packaging for that reason."
+          ],
+          "notices": [
+            "Local fixes take effect after upgrading and restarting Desktop. For remote projects, upgrade Desktop to 0.12.10 before updating Agent to 0.11.22. Already-running Runtimes are not hot-updated, and external OpenCode Server configuration is unchanged.",
+            "This release uses the six standard Windows, macOS, and Linux x64/arm64 desktop targets, without a LoongArch experimental preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.9",
       "releasedAt": "2026-09-08",
       "notes": {

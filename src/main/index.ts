@@ -389,6 +389,7 @@ const launchContinueHost: ContinueHostLauncher = (
     get pid() {
       return utilityChild.pid
     },
+    stdout: utilityChild.stdout,
     stderr: utilityChild.stderr,
     kill: () => utilityChild.kill(),
     onExit: (listener) => {

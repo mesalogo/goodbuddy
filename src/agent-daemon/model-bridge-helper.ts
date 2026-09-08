@@ -48,6 +48,7 @@ export const MODEL_BRIDGE_SDK_AUTH_SENTINEL =
 
 export type OpenCodeModelBridgeProviderConfig = {
   model: string
+  snapshot: false
   permission: 'ask' | 'allow'
   agent: {
     title: {
@@ -521,6 +522,7 @@ export function createOpenCodeModelBridgeProviderConfig(input: {
   const baseURL = `${origin}/v1`
   return {
     model: openCodeModelBridgeModelId(input.protocol, model),
+    snapshot: false,
     permission: input.workMode === 'ask' ? 'ask' : 'allow',
     // GoodBuddy owns conversation titles. A first-prompt title request can
     // race the real ACP prompt, abandon its Provider response, and correctly

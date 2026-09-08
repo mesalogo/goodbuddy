@@ -146,6 +146,8 @@ export function createOpenCodeLaunchProfile(input: {
   const environment = {
     ...environmentBase,
     OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      // Native snapshot summaries are not consumed by GoodBuddy.
+      snapshot: false,
       permission,
       agent: { build: { permission } },
     }),

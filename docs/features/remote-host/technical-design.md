@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录截至 2026-09-05 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+本文记录截至 2026-09-09 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
 Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
 详细事务与验收边界见
 [SSH Host 远程环境准备与直连下载设计](./environment-provisioning-technical-design.md)；
@@ -11,8 +11,9 @@ Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Ho
 Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
-`0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前未发布
-Agent 源码 lock 为已发布的 `0.11.21`，Desktop 候选为 `0.12.8`；本次桌面打包修复不重发 Agent。
+`0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前源码
+候选为 Agent `0.11.22`、Desktop `0.12.10`，包含托管 OpenCode 自动快照策略修复。
+正式发布状态以 Agent 与 Desktop 独立发布渠道为准。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
 
@@ -67,6 +68,10 @@ Detached GoodBuddy Agent
 - Host 地址、用户或 Host Key generation 变化时关闭旧连接，并定向退役依赖旧 Host identity 的 Workspace 和 Runtime 会话。下一次选择使用 Host 管理的当前连接记录解析 current Agent/Runtime，不读取项目中的旧 revision 或组件 identity；当前 registry、连接或 capability 无效时才要求显式修复。
 
 ## Agent 安装与生命周期
+- 托管 OpenCode 的直接 ACP profile 与模型桥最终配置都设置 `snapshot: false`，避免
+  GoodBuddy 不使用的自动 Git 快照摘要阻塞原生执行；策略和保留的文件、Git、子代理能力
+  见 [Runtime 并行与输出边界](../assistant-workbar/runtime-interactions.md#托管-runtime-的并行与输出)。
+  此设置随新启动的 Agent Runtime 生效，不改写用户仓库或已运行进程的配置。
 
 - Agent bundle 通过 manifest、Ed25519 签名、payload digest、平台和架构校验。
 - 外层 `agent-package.json` 描述符上限为 4 MiB，覆盖包含 OpenCode 离线依赖的实际包
@@ -346,6 +351,14 @@ Execute 直接启动已签名 Runtime：
   block metadata 与 canonical 消息正文保持一致。
 
 ## Agent 开发期间的真实 Host 验证
+
+2026-09-09 已在隔离 Linux x64 Host 验证当前源码的快照配置修复：桌面
+`ManagedRemoteExecutionServices` 经 managed ACP、真实 detached Agent 和模型桥启动
+OpenCode `1.18.29`，Ask 完成原生读取，Execute 完成 4,000 行文件的 CRLF → LF 转换。
+4 次实际 Provider 请求全部为 HTTP 200，最终原生配置在两种模式均为 `snapshot: false`，
+权限仍为 `ask`/`allow`，transcript ACK 分别为 15/15 和 12/12。测试 Agent、模型桥、
+Runtime 与 relay 均已回收，原有 Host registry 未改变。这是实际链路和关闭验证，
+不是 Linux 前后性能对照，也未注入取消；不代替正式发布资产校验。
 
 任何会改变已部署 GoodBuddy Agent 或桌面到 Agent 生产链路的源码改动，都必须在开发期间
 使用共享 Linux x64 真实测试 Host 验证。适用范围包括 Agent daemon、Agent protocol

@@ -24,6 +24,19 @@ afterEach(() => {
 })
 
 describe('OpenCode direct launch profile', () => {
+  it.each(['ask', 'execute'] as const)(
+    'disables unused automatic Git snapshots for %s',
+    (workMode) => {
+      const profile = createOpenCodeLaunchProfile({
+        ...createFixture(),
+        workMode
+      })
+      const config = JSON.parse(profile.env.OPENCODE_CONFIG_CONTENT!)
+      expect(config.snapshot).toBe(false)
+      expect(config.permission).toBe(workMode === 'ask' ? 'ask' : 'allow')
+    }
+  )
+
   it('runs Ask directly in the Workspace', () => {
     const fixture = createFixture()
     const profile = createOpenCodeLaunchProfile({

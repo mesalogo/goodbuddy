@@ -134,6 +134,7 @@ describe('model bridge loopback helper', () => {
       expect(options.env.NODE_OPTIONS).toBeUndefined()
       const config = JSON.parse(options.env.OPENCODE_CONFIG_CONTENT!)
       expect(config.model).toBe('goodbuddy-anthropic/private-model')
+      expect(config.snapshot).toBe(false)
       expect(config.permission).toBe(workMode === 'ask' ? 'ask' : 'allow')
       expect(config.plugin).toHaveLength(1)
     }

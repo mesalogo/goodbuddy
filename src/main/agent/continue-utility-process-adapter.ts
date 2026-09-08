@@ -8,6 +8,7 @@ type UtilityErrorListener = (
 
 export type ContinueUtilityProcessSource = {
   readonly pid?: number
+  readonly stdout?: Pick<NodeJS.ReadableStream, 'resume'> | null
   readonly stderr?: ContinueHostChild['stderr']
   kill(): boolean
   onExit(listener: (code: number) => void): void
@@ -20,6 +21,8 @@ export type ContinueUtilityProcessSource = {
 export function createContinueUtilityProcessChild(
   utility: ContinueUtilityProcessSource
 ): ContinueHostChild {
+  // Responses arrive over HTTP, but an unread console pipe can block the host.
+  utility.stdout?.resume()
   let exitCode: number | null = null
   let killed = false
   const closeListeners = new Map<

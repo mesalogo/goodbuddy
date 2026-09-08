@@ -71,6 +71,8 @@ it.skipIf(!existsSync(binaryPath))(
             if (!closed) openEventBodies--
             closed = true
           }
+          // The wrapper may stay full after fetch aborts, with no further pull.
+          void reader.closed.then(close, close)
           return new Response(new ReadableStream({
             async pull(controller) {
               try {

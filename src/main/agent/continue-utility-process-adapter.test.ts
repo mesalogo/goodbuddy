@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createContinueUtilityProcessChild,
@@ -6,11 +7,12 @@ import {
 } from './continue-utility-process-adapter'
 import { waitForProcessExit } from './child-process-termination'
 
-function createSource(): ContinueUtilityProcessSource & EventEmitter {
+function createSource(stdout?: PassThrough): ContinueUtilityProcessSource & EventEmitter {
   const emitter =
     new EventEmitter() as ContinueUtilityProcessSource & EventEmitter
   Object.defineProperties(emitter, {
     pid: { value: 42 },
+    stdout: { value: stdout },
     stderr: { value: undefined }
   })
   emitter.kill = vi.fn(() => true)
@@ -33,6 +35,17 @@ function createSource(): ContinueUtilityProcessSource & EventEmitter {
 }
 
 describe('Continue utility process adapter', () => {
+  it('drains unused stdout so native output cannot block the host', async () => {
+    const stdout = new PassThrough({ highWaterMark: 1024 })
+    createContinueUtilityProcessChild(createSource(stdout))
+
+    expect(stdout.readableFlowing).toBe(true)
+    await new Promise<void>((resolve) => {
+      stdout.end(Buffer.alloc(128 * 1024), resolve)
+    })
+    expect(stdout.readableLength).toBe(0)
+  })
+
   it('maps Electron exit to close and completes helper waits immediately', async () => {
     const source = createSource()
     const child = createContinueUtilityProcessChild(source)

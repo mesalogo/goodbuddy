@@ -21,7 +21,7 @@ otherwise.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.12.9. See the
+  releases and automatic updates; no preview is planned for 0.12.10. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -95,8 +95,8 @@ otherwise.
   absolute, relative, or symbolic-link directories outside the workspace;
   the workspace stays the default and relative-path base. Ask remains read-only.
 - [x] **OpenCode and Continue**: Use isolated child processes, an environment
-  variable allowlist, unified configuration, cancellation, total execution
-  limits, bounded streaming output, and activity records. Shared process
+  variable allowlist, unified configuration, cancellation, startup and control-request
+  deadlines, bounded streaming output, and activity records. Shared process
   cleanup preserves complete Windows process-tree termination and terminates
   POSIX process groups when a child uses an independent process group. Chat
   status checks use a one-shot Runtime probe that is immediately cleaned up
@@ -112,7 +112,12 @@ otherwise.
   requests in the same conversation ordered, while different conversations in
   the same project and different projects can run in parallel. Request-scoped
   dynamic MCP tools remain isolated through default wildcard disablement and
-  explicit current-request enablement. OpenCode and Continue runs do not stop
+  explicit current-request enablement. Managed local and remote OpenCode skip
+  unused automatic Git snapshots to avoid synchronous diff stalls; file tools,
+  subagents, and workspace Git diffs remain available. Continue continuously
+  drains unused utility-host stdout so console output cannot fill its pipe.
+  These changes apply to newly started Runtimes, not external OpenCode Servers.
+  OpenCode and Continue runs do not stop
   at a fixed tool-call or activity count, and every observed tool and Subagent
   activity remains in the local conversation instead of being discarded while
   the native task continues.
@@ -174,7 +179,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.21`, while the current Desktop release candidate is `0.12.9`; formal
+  `0.11.22`, while the current Desktop release candidate is `0.12.10`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -439,8 +444,9 @@ otherwise.
   cancelled states, and expose cited context or safely open its source.
 - [x] **Magic Notes**: A local-first notes and todo workbench with scope
   management, editing, filtering, and controlled AI comments. The todo view
-  displays the selected item's source entry, with loading, retryable failure,
-  and missing-source feedback. The left
+  displays the source entry inside the selected item's details, without
+  showing the previous item's source after a selection change. Failed reads
+  use application notifications, and missing sources have an explicit fallback. The left
   navigation can show the incomplete-todo count, and create, save, and comment
   results use application-wide notifications.
 - [ ] **MCP Server Control Plane** (planned): Unified MCP lifecycle, health

@@ -1089,14 +1089,12 @@ export class OpenCodeRuntime implements AgentRuntime {
       env.XDG_DATA_HOME = join(registration.root, "xdg-data");
       env.XDG_STATE_HOME = join(registration.root, "xdg-state");
       const skillConfig = createOpenCodeSkillConfig(registration, skillIds);
-      env.OPENCODE_CONFIG_CONTENT = JSON.stringify(
-        profile
-          ? {
-              ...createOpenCodeProviderConfig(profile),
-              ...skillConfig,
-            }
-          : skillConfig,
-      );
+      // GoodBuddy does not use native Git snapshots or their synchronous diffs.
+      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+        ...(profile ? createOpenCodeProviderConfig(profile) : {}),
+        ...skillConfig,
+        snapshot: false,
+      });
       if (!profile && this.options.configPath.trim()) {
         env.OPENCODE_CONFIG = resolve(this.options.configPath);
       }
