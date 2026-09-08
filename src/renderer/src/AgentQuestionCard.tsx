@@ -122,7 +122,6 @@ export function AgentQuestionCard({
               <span>{t('question.otherAnswer')}</span>
               <input
                 disabled={submitting}
-                maxLength={2_000}
                 onChange={(event) => {
                   const answer = event.target.value
                   setCustom((current) =>

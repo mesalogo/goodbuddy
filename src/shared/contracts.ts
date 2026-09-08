@@ -305,13 +305,12 @@ export const workspaceOpenPathRequestSchema = z
   .strict()
 
 export const agentQuestionAnswerSchema = z
-  .array(z.string().trim().min(1).max(2_000))
-  .max(20)
+  .array(z.string().trim().min(1))
 
 export const agentQuestionResponseSchema = z
   .object({
-    questionId: z.string().trim().min(1).max(128),
-    answers: z.array(agentQuestionAnswerSchema).max(4)
+    questionId: z.string().trim().min(1),
+    answers: z.array(agentQuestionAnswerSchema)
   })
   .strict()
 

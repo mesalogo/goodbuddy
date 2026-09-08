@@ -2075,7 +2075,26 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
   );
 
   it.each(["parent", "child"] as const)("parses %s OpenCode questions and sends selected answers back", async (owner) => {
+    const longQuestion = `请选择实现方式\n${"发布说明内容。".repeat(6_000)}`;
     const setup = runClient([
+      {
+        id: "question-tool-running",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "session-1",
+          part: {
+            id: "part-question-1",
+            callID: "call-question-1",
+            type: "tool",
+            tool: "question",
+            state: {
+              status: "running",
+              input: { questions: [] },
+              time: { start: 1 },
+            },
+          },
+        },
+      },
       {
         id: "question-event",
         type: "question.asked",
@@ -2085,7 +2104,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           questions: [
             {
               header: "实现方式",
-              question: "请选择实现方式",
+              question: longQuestion,
               options: [
                 {
                   label: "直接修改",
@@ -2103,6 +2122,25 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
           tool: {
             messageID: "message-1",
             callID: "call-question-1",
+          },
+        },
+      },
+      {
+        id: "question-tool-completed",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "session-1",
+          part: {
+            id: "part-question-1",
+            callID: "call-question-1",
+            type: "tool",
+            tool: "question",
+            state: {
+              status: "completed",
+              input: { questions: [] },
+              output: "Answered",
+              time: { start: 1, end: 2 },
+            },
           },
         },
       },
@@ -2136,7 +2174,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       questions: [
         {
           header: "实现方式",
-          question: "请选择实现方式",
+          question: longQuestion,
           multiple: false,
           custom: true,
         },

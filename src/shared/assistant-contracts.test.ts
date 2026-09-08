@@ -15,7 +15,10 @@ import {
   projectExecutionSpaceSchema,
   projectUpdateSchema
 } from './assistant-contracts'
-import { subagentEventSchema } from './contracts'
+import {
+  agentQuestionResponseSchema,
+  subagentEventSchema
+} from './contracts'
 
 const untouchedProject: AssistantProject = {
   id: '00000000-0000-4000-8000-000000000101',
@@ -33,6 +36,25 @@ const untouchedProject: AssistantProject = {
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z'
 }
+
+describe('agent question contracts', () => {
+  it('does not impose GoodBuddy-specific question answer limits', () => {
+    const answers = Array.from({ length: 5 }, (_, questionIndex) =>
+      Array.from(
+        { length: 21 },
+        (_, optionIndex) =>
+          `${questionIndex}:${optionIndex}:${'回答内容'.repeat(600)}`
+      )
+    )
+
+    expect(
+      agentQuestionResponseSchema.parse({
+        questionId: `question-${'id'.repeat(100)}`,
+        answers
+      }).answers
+    ).toEqual(answers)
+  })
+})
 
 describe('activity history contracts', () => {
   it('accepts more than 500 records and details longer than 4,000 characters', () => {

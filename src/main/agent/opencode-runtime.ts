@@ -81,9 +81,6 @@ const MAX_PERMISSION_PATTERN_LENGTH = 1_024;
 const MAX_PERMISSION_PATTERNS_BYTES = 8 * 1_024;
 const MAX_PERMISSION_METADATA_BYTES = 8 * 1_024;
 const MAX_EXECUTION_OUTPUT_BYTES = 1024 * 1024;
-const MAX_QUESTION_REQUEST_BYTES = 32 * 1_024;
-const MAX_QUESTIONS_PER_REQUEST = 4;
-const MAX_QUESTION_OPTIONS = 20;
 const MAX_NATIVE_AGENTS = runtimeNativeInventoryLimits.agents;
 const MAX_NATIVE_TOOLS = runtimeNativeInventoryLimits.tools;
 const MAX_NATIVE_COMMANDS = runtimeNativeInventoryLimits.commands;
@@ -384,29 +381,22 @@ function parseQuestionRequest(
   if (
     typeof id !== "string" ||
     id.length === 0 ||
-    id.length > MAX_PERMISSION_NAME_LENGTH ||
     !Array.isArray(questions) ||
     questions.length === 0 ||
-    questions.length > MAX_QUESTIONS_PER_REQUEST ||
     !questions.every(
       (question) =>
         isRecord(question) &&
         typeof question.question === "string" &&
         question.question.trim().length > 0 &&
-        question.question.length <= 2_000 &&
         typeof question.header === "string" &&
         question.header.trim().length > 0 &&
-        question.header.length <= 120 &&
         Array.isArray(question.options) &&
-        question.options.length <= MAX_QUESTION_OPTIONS &&
         question.options.every(
           (option) =>
             isRecord(option) &&
             typeof option.label === "string" &&
             option.label.trim().length > 0 &&
-            option.label.length <= 200 &&
-            typeof option.description === "string" &&
-            option.description.length <= 1_000,
+            typeof option.description === "string",
         ) &&
         (question.multiple === undefined ||
           typeof question.multiple === "boolean") &&
@@ -416,21 +406,10 @@ function parseQuestionRequest(
       (!isRecord(tool) ||
         typeof tool.messageID !== "string" ||
         tool.messageID.length === 0 ||
-        tool.messageID.length > 256 ||
         typeof tool.callID !== "string" ||
-        tool.callID.length === 0 ||
-        tool.callID.length > 256))
+        tool.callID.length === 0))
   ) {
     throw new Error("OpenCode 提问请求格式无效");
-  }
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(properties);
-  } catch {
-    throw new Error("OpenCode 提问请求无法序列化");
-  }
-  if (!byteLengthWithin(serialized, MAX_QUESTION_REQUEST_BYTES)) {
-    throw new Error("OpenCode 提问请求超过安全限制");
   }
   return properties as QuestionRequest;
 }
@@ -2569,6 +2548,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                 throw new Error("OpenCode 工具调用 ID 格式无效");
               }
               const toolName = part.tool.slice(0, 200);
+              const nativeControlTool = toolName.trim().toLowerCase() === "question";
               const state =
                 part.state.status === "error" ? "failed" : part.state.status;
               if (state === "failed") {
@@ -2609,7 +2589,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                 const retained = subagentProgress.retain(subagent);
                 toolStates.get(callId)!.subagent = retained;
                 yield retained;
-              } else {
+              } else if (!nativeControlTool) {
                 yield {
                   requestId: request.requestId,
                   type: "tool",
