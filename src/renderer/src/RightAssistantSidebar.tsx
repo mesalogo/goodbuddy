@@ -234,6 +234,10 @@ function measureSplitLayoutWidth(
   if (!sidebar || !workspace) {
     return fallbackWidth
   }
+  const layoutWidth = sidebar.parentElement?.getBoundingClientRect().width ?? 0
+  if (layoutWidth > 0) {
+    return layoutWidth
+  }
   const measuredWidth =
     workspace.getBoundingClientRect().width +
     sidebar.getBoundingClientRect().width
@@ -698,7 +702,6 @@ export function RightAssistantSidebar({
   )
   const [isResizing, setIsResizing] = useState(false)
   const [browserFullscreen, setBrowserFullscreen] = useState(false)
-  const browserRestoreRatio = useRef(sidebarRatio)
   const sidebarRef = useRef<HTMLElement>(null)
   const wasOpen = useRef(false)
   const sidebarWidth = clampSidebarWidth(
@@ -804,9 +807,12 @@ export function RightAssistantSidebar({
     }),
     []
   )
+  const browserFullscreenActive =
+    open && activeWorkbarApp === 'browser' && browserFullscreen
   const sidebarWidthLimits = getSidebarWidthLimits(splitLayoutWidth)
   const canResize =
     open &&
+    !browserFullscreenActive &&
     sidebarWidthLimits.maximum > sidebarWidthLimits.minimum
   const topLevelTasks = useMemo(
     () => tasks.filter((task) => !task.parentTaskId),
@@ -853,26 +859,9 @@ export function RightAssistantSidebar({
     }
   }, [tab, workbarInstances])
 
-  const browserFullscreenActive =
-    open && activeWorkbarApp === 'browser' && browserFullscreen
   const toggleBrowserFullscreen = useCallback((): void => {
-    if (browserFullscreen) {
-      setSidebarRatio(browserRestoreRatio.current)
-      setBrowserFullscreen(false)
-      return
-    }
-    const layoutWidth = measureSplitLayoutWidth(
-      sidebarRef.current,
-      splitLayoutWidth
-    )
-    browserRestoreRatio.current = sidebarRatio
-    setSidebarRatio(
-      layoutWidth > 0
-        ? getSidebarWidthLimits(layoutWidth).maximum / layoutWidth
-        : sidebarRatio
-    )
-    setBrowserFullscreen(true)
-  }, [browserFullscreen, sidebarRatio, splitLayoutWidth])
+    setBrowserFullscreen((current) => !current)
+  }, [])
 
   useEffect(() => {
     if (!browserFullscreenActive) {

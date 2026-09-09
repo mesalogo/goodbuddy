@@ -277,16 +277,25 @@ describe('RightAssistantSidebar resizing', () => {
     )
     expect(sidebar).toHaveClass('assistant-sidebar--browser-fullscreen')
     expect(
+      sidebar.style.getPropertyValue('--assistant-sidebar-width')
+    ).toBe('420px')
+    expect(
       screen.getByRole('button', { name: '退出浏览器全屏' })
     ).toHaveAttribute('aria-pressed', 'true')
     expect(
       screen.getByRole('separator', { name: '调整助手工作栏宽度' })
-    ).toHaveAttribute('aria-disabled', 'false')
+    ).toHaveAttribute('aria-disabled', 'true')
+    expect(
+      screen.getByRole('separator', { name: '调整助手工作栏宽度' })
+    ).toHaveAttribute('tabindex', '-1')
 
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(sidebar).not.toHaveClass(
       'assistant-sidebar--browser-fullscreen'
     )
+    expect(
+      sidebar.style.getPropertyValue('--assistant-sidebar-width')
+    ).toBe('420px')
   })
 
   it('keeps the docked sidebar non-modal', () => {

@@ -244,6 +244,9 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).toMatch(
       /\.assistant-sidebar--open\s*\{[^}]*width:\s*var\(--assistant-sidebar-width,\s*30%\);[^}]*flex-basis:\s*var\(--assistant-sidebar-width,\s*30%\);/u
     )
+    expect(stylesheet).toMatch(
+      /\.assistant-sidebar--browser-fullscreen\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*4;[^}]*width:\s*100%;[^}]*inset:\s*0;/u
+    )
     expect(stylesheet).not.toMatch(
       /@media \(max-width: 719px\)\s*\{(?:[^{}]|\{[^{}]*\})*?\.assistant-sidebar/u
     )
