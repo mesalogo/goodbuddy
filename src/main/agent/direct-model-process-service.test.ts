@@ -5,7 +5,6 @@ import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LocalWorkspaceAccess } from '../workspace'
 import {
-  DIRECT_MODEL_PROCESS_TRUNCATION_MARKER,
   LocalDirectModelProcessService,
   buildDirectModelProcessEnvironment,
   type DirectModelProcessChild,
@@ -277,7 +276,7 @@ describe('LocalDirectModelProcessService', () => {
     await service.dispose()
   })
 
-  it('returns nonzero exits normally and bounds stdout and stderr by retaining both edges', async () => {
+  it('returns nonzero exits with bounded previews and retains full output for paging', async () => {
     const { access } = await workspace()
     const child = new FakeChild()
     let now = 1_000
@@ -310,12 +309,19 @@ describe('LocalDirectModelProcessService', () => {
     expect(result.durationMs).toBe(125)
     expect(result.stdoutTruncated).toBe(true)
     expect(result.stdout).toBe(
-      `${'A'.repeat(48 * 1024)}` +
-        DIRECT_MODEL_PROCESS_TRUNCATION_MARKER +
-        'Z'.repeat(48 * 1024)
+      'A'.repeat(48 * 1024) + 'M'.repeat(10) + 'Z'.repeat(48 * 1024 - 10)
     )
     expect(result.stderr).toBe('ordinary error output')
     expect(result.stderrTruncated).toBe(false)
+    expect(result.stderrReference).toBeUndefined()
+    const reference = result.stdoutReference!
+    expect(reference.totalBytes).toBe(96 * 1024 + 10)
+    await expect(service.readOutput('output', reference.handle, reference.nextCursor)).resolves.toMatchObject({
+      content: 'Z'.repeat(10), eof: true, nextCursor: reference.totalBytes
+    })
+    await expect(service.readOutput('other', reference.handle)).rejects.toThrow()
+    await service.releaseConversation('output')
+    await expect(service.readOutput('output', reference.handle)).rejects.toThrow()
     await service.dispose()
   })
 
@@ -439,14 +445,18 @@ describe('LocalDirectModelProcessService', () => {
         }
       )
     const first = run('first')
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce())
     const second = run('second')
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(2))
+    firstChild.stdout.emit('data', 'x'.repeat(120000))
+    secondChild.stderr.emit('data', 'y'.repeat(120000))
 
     await service.releaseConversation('first')
     expect(terminated).toHaveLength(1)
     await expect(first).resolves.toMatchObject({
       terminationReason: 'cancelled'
     })
+    await expect(service.readOutput('first', (await first).stdoutReference!.handle)).rejects.toThrow()
     const replacementChild = new FakeChild()
     children.push(replacementChild)
     const replacement = run('first')
@@ -464,6 +474,7 @@ describe('LocalDirectModelProcessService', () => {
     await expect(second).resolves.toMatchObject({
       terminationReason: 'cancelled'
     })
+    await expect(service.readOutput('second', (await second).stderrReference!.handle)).rejects.toThrow()
     await service.dispose()
   })
 
@@ -495,5 +506,38 @@ describe('LocalDirectModelProcessService', () => {
     expect(result.stdout).toContain('ready')
     expect(result.stderr).toContain('warn')
     await service.dispose()
+  })
+
+  it('pages complete stdout and stderr from a real shell', async () => {
+    const { access } = await workspace()
+    const service = new LocalDirectModelProcessService()
+    try {
+      expect((await service.getCapability()).available).toBe(true)
+      const command = process.platform === 'win32'
+        ? "[Console]::Out.Write(('x' * 120000) + 'stdout-end'); [Console]::Error.Write(('y' * 120000) + 'stderr-end')"
+        : "printf '%120000sstdout-end' '' | tr ' ' x; printf '%120000sstderr-end' '' | tr ' ' y >&2"
+      const result = await service.execute({ command }, {
+        conversationId: 'real-pages', workspace: access,
+        signal: new AbortController().signal
+      })
+      for (const [preview, reference, expected] of [
+        [result.stdout, result.stdoutReference, 'x'.repeat(120000) + 'stdout-end'],
+        [result.stderr, result.stderrReference, 'y'.repeat(120000) + 'stderr-end']
+      ] as const) {
+        expect(reference).toBeDefined()
+        let output = preview
+        let cursor = reference!.nextCursor
+        while (cursor < reference!.totalBytes) {
+          const page = await service.readOutput('real-pages', reference!.handle, cursor, 4096)
+          output += page.content
+          cursor = page.nextCursor
+        }
+        expect(output).toBe(expected)
+      }
+      await service.dispose()
+      await expect(service.readOutput('real-pages', result.stdoutReference!.handle)).rejects.toThrow()
+    } finally {
+      await service.dispose()
+    }
   })
 })

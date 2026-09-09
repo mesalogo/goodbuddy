@@ -2625,24 +2625,8 @@ export class ModelAgentRuntime implements AgentRuntime {
     conversationId: string,
     messages: ConversationMessage[]
   ): void {
-    const retained: ConversationMessage[] = []
-    let bytes = 0
-    const compressionEnabled =
-      this.options.contextCompression?.settings.enabled === true
-    const maximumMessages = compressionEnabled ? 500 : 20
-    const maximumBytes = compressionEnabled
-      ? 2 * 1024 * 1024
-      : 512 * 1024
-    for (const message of messages.slice(-maximumMessages).reverse()) {
-      const messageBytes = Buffer.byteLength(message.content)
-      if (bytes + messageBytes > maximumBytes) {
-        break
-      }
-      retained.unshift(message)
-      bytes += messageBytes
-    }
     this.conversations.delete(conversationId)
-    this.conversations.set(conversationId, retained)
+    this.conversations.set(conversationId, [...messages])
     while (this.conversations.size > 50) {
       const oldest = this.conversations.keys().next().value
       if (oldest) {
@@ -2658,9 +2642,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       request.history && request.history.length > 0
         ? request.history
         : this.conversations.get(request.conversationId) ?? []
-    return this.options.contextCompression?.settings.enabled
-      ? history
-      : history.slice(-20)
+    return history
   }
 
   private async *runImageGeneration(
@@ -3381,6 +3363,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     }
     const toolContext: ModelToolCallContext = {
       conversationId: request.conversationId,
+      browserTabId: request.browserTabId,
       workMode: request.workMode ?? 'ask',
       requestId: request.requestId,
       runtimeTarget: 'model',

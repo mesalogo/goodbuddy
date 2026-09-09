@@ -12,6 +12,7 @@ import {
   MAX_BROWSER_INPUT_LENGTH as MAX_INPUT_LENGTH,
   MAX_BROWSER_SELECT_LENGTH as MAX_SELECT_LENGTH
 } from './browser-limits'
+import type { BrowserTabId } from '../../shared/contracts'
 
 const MAX_REF_LENGTH = 64
 
@@ -195,6 +196,7 @@ export type BrowserToolService = Pick<
 export type BrowserModelToolsOptions = {
   service: BrowserToolService
   conversationId: string
+  browserTabId: BrowserTabId
 }
 
 function createTextResult(value: unknown): ModelToolResult {
@@ -218,10 +220,12 @@ function navigationLabel(url: URL): string {
 export class BrowserModelTools {
   private readonly service: BrowserToolService
   private readonly conversationId: string
+  private readonly browserTabId: BrowserTabId
 
   constructor(options: BrowserModelToolsOptions) {
     this.service = options.service
     this.conversationId = options.conversationId
+    this.browserTabId = options.browserTabId
     if (!this.conversationId || this.conversationId.length > 500) {
       throw new Error('浏览器对话标识无效')
     }
@@ -249,7 +253,7 @@ export class BrowserModelTools {
       throw new Error(`未知浏览器工具：${name}`)
     }
     const currentOrigin = safeOrigin(
-      this.service.getOrigin(this.conversationId)
+      this.service.getOrigin(this.conversationId, this.browserTabId)
     )
     let description: string
     let argumentSummary: string
@@ -320,18 +324,32 @@ export class BrowserModelTools {
     if (name === 'browser_navigate') {
       const input = browserNavigateInputSchema.parse(argumentsValue)
       return createTextResult(
-        await this.service.navigate(this.conversationId, input.url, signal)
+        await this.service.navigate(
+          this.conversationId,
+          input.url,
+          signal,
+          this.browserTabId
+        )
       )
     }
     if (name === 'browser_snapshot') {
       browserSnapshotInputSchema.parse(argumentsValue)
       return createTextResult(
-        await this.service.snapshot(this.conversationId, signal)
+        await this.service.snapshot(
+          this.conversationId,
+          signal,
+          this.browserTabId
+        )
       )
     }
     if (name === 'browser_click') {
       const input = browserClickInputSchema.parse(argumentsValue)
-      await this.service.click(this.conversationId, input.ref, signal)
+      await this.service.click(
+        this.conversationId,
+        input.ref,
+        signal,
+        this.browserTabId
+      )
       return createTextResult({ clicked: input.ref })
     }
     if (name === 'browser_type') {
@@ -340,7 +358,8 @@ export class BrowserModelTools {
         this.conversationId,
         input.ref,
         input.text,
-        signal
+        signal,
+        this.browserTabId
       )
       return createTextResult({
         typed: input.ref,
@@ -354,20 +373,26 @@ export class BrowserModelTools {
         this.conversationId,
         input.ref,
         input.value,
-        signal
+        signal,
+        this.browserTabId
       )
       return createTextResult({ selected: input.ref, value: '[已隐藏]' })
     }
     if (name === 'browser_back') {
       browserBackInputSchema.parse(argumentsValue)
       return createTextResult(
-        await this.service.back(this.conversationId, signal)
+        await this.service.back(
+          this.conversationId,
+          signal,
+          this.browserTabId
+        )
       )
     }
     browserScreenshotInputSchema.parse(argumentsValue)
     const screenshot = await this.service.screenshot(
       this.conversationId,
-      signal
+      signal,
+      this.browserTabId
     )
     return {
       parts: [

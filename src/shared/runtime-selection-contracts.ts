@@ -10,7 +10,7 @@ export const agentRuntimeSelectionSchema = z.discriminatedUnion(
     z
       .object({
         provider: z.literal('model'),
-        profileId: runtimeSelectionProfileIdSchema
+        profileId: runtimeSelectionProfileIdSchema.optional()
       })
       .strict(),
     z
@@ -48,17 +48,21 @@ export type RuntimeSelectionRepairSettings = {
   }>
   defaultModelProfileId: string
   opencodeModelSource:
+    | { kind: 'default' }
     | { kind: 'platform' }
     | { kind: 'profile'; profileId: string }
   continueModelSource:
+    | { kind: 'default' }
     | { kind: 'platform' }
     | { kind: 'profile'; profileId: string }
   deepseekHarnessModelSource?:
+    | { kind: 'default' }
     | { kind: 'platform' }
     | { kind: 'profile'; profileId: string }
 }
 
 type RuntimeModelSource =
+  | { kind: 'default' }
   | { kind: 'platform' }
   | { kind: 'profile'; profileId: string }
 
@@ -79,34 +83,9 @@ type ChannelModelProfile = RuntimeSelectionRepairSettings['modelProfiles'][numbe
 
 export function getRuntimeSelectionForProvider(
   provider: Exclude<AgentRuntimeSelection['provider'], 'auto'>,
-  settings: RuntimeSelectionDefaultSettings
+  _settings: RuntimeSelectionDefaultSettings
 ): AgentRuntimeSelection {
-  if (provider === 'model') {
-    return {
-      provider,
-      profileId: settings.defaultModelProfileId
-    }
-  }
-  const source =
-    provider === 'opencode'
-      ? settings.opencodeModelSource
-      : provider === 'continue'
-        ? settings.continueModelSource
-        : settings.deepseekHarnessModelSource
-  const resolvedProfile =
-    provider === 'opencode'
-      ? settings.opencodeModelProfile
-      : provider === 'continue'
-        ? settings.continueModelProfile
-        : settings.deepseekHarnessModelProfile
-  return {
-    provider,
-    ...(source?.kind === 'profile'
-      ? { profileId: source.profileId }
-      : !source && resolvedProfile
-        ? { profileId: resolvedProfile.id }
-      : {})
-  }
+  return { provider }
 }
 
 export function getDefaultRuntimeSelection(
@@ -119,6 +98,20 @@ export function getDefaultRuntimeSelection(
   return settings.opencodeBaseUrl || settings.opencodeEmbedded
     ? getRuntimeSelectionForProvider('opencode', settings)
     : getRuntimeSelectionForProvider('model', settings)
+}
+
+// Resolve only for presentation or request diagnostics, never for persisted defaults.
+export function getRuntimeSelectionProfileId(
+  selection: AgentRuntimeSelection,
+  settings: RuntimeSelectionDefaultSettings
+): string | undefined {
+  if (selection.provider === 'auto') return undefined
+  if (selection.profileId) return selection.profileId
+  if (selection.provider === 'model') return settings.defaultModelProfileId
+  const source = selection.provider === 'opencode' ? settings.opencodeModelSource
+    : selection.provider === 'continue' ? settings.continueModelSource : settings.deepseekHarnessModelSource
+  return source?.kind === 'default' ? settings.defaultModelProfileId
+    : source?.kind === 'profile' ? source.profileId : undefined
 }
 
 export function isChannelModelProfileUsable(
@@ -162,11 +155,7 @@ export function repairChannelRuntimeSelection(
         isChannelModelProfileUsable(profile)
     ) ??
     settings.modelProfiles.find(isChannelModelProfileUsable)
-  const defaultDirectSelection: AgentRuntimeSelection = {
-    provider: 'model',
-    profileId:
-      defaultDirectProfile?.id ?? settings.defaultModelProfileId
-  }
+  const defaultDirectSelection: AgentRuntimeSelection = { provider: 'model' }
   if (selection.provider === 'auto') {
     return defaultDirectSelection
   }
@@ -196,7 +185,7 @@ export function repairChannelRuntimeSelection(
     return repaired
   }
   const profile = settings.modelProfiles.find(
-    (candidate) => candidate.id === repaired.profileId
+    (candidate) => candidate.id === (repaired.profileId ?? defaultDirectProfile?.id)
   )
   return profile && isChannelModelProfileUsable(profile)
     ? repaired
@@ -217,29 +206,15 @@ export function repairAgentRuntimeSelection(
     return selection
   }
   if (selection.provider === 'model') {
-    return {
-      provider: 'model',
-      profileId: settings.defaultModelProfileId
-    }
+    return { provider: 'model' }
   }
-  const source =
-    selection.provider === 'opencode'
-      ? settings.opencodeModelSource
-      : selection.provider === 'continue'
-        ? settings.continueModelSource
-        : settings.deepseekHarnessModelSource ?? { kind: 'platform' }
-  return {
-    provider: selection.provider,
-    ...(source.kind === 'profile'
-      ? { profileId: source.profileId }
-      : {})
-  }
+  return { provider: selection.provider }
 }
 
 export function agentRuntimeSelectionKey(
   selection: AgentRuntimeSelection
 ): string {
   return `${selection.provider}:${'profileId' in selection
-    ? selection.profileId ?? 'platform'
+    ? selection.profileId ?? 'default'
     : 'default'}`
 }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import {
   mkdtemp,
   readFile,
@@ -13,7 +14,12 @@ import type {
   AssistantProject,
   ConversationQueueItem
 } from '../shared/assistant-contracts'
-import type { AgentEvent, BrowserLiveState } from '../shared/contracts'
+import {
+  browserTabIdSchema,
+  type AgentEvent,
+  type BrowserLiveState,
+  type BrowserTabId
+} from '../shared/contracts'
 import type {
   SshHostAgentConnectionStatus
 } from '../shared/ssh-host-contracts'
@@ -391,12 +397,13 @@ describe('registerIpcHandlers computer capabilities', () => {
   })
 
   it('validates computer capability requests and restricts them to the trusted renderer', async () => {
-    const webContents = {
+    const webContents = Object.assign(new EventEmitter(), {
+      id: 7,
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       isDestroyed: vi.fn(() => false),
       send: vi.fn()
-    }
+    })
     const window = {
       webContents,
       isDestroyed: vi.fn(() => false),
@@ -444,6 +451,36 @@ describe('registerIpcHandlers computer capabilities', () => {
     const stopLoading = vi.fn(async () => true)
     const setViewport = vi.fn()
     const releaseConversation = vi.fn(async () => {})
+    const createTab = vi.fn(async (conversationId: string) => ({
+      conversationId,
+      tabId: '4d7886c3-4c9c-4e84-bf65-1a4a841f5296'
+    }))
+    const listTabs = vi.fn(() => [])
+    const getVisibleTabId = vi.fn(() => undefined)
+    const acquireTabUsage = vi.fn(
+      (conversationId: string, tabId: BrowserTabId, owner: string) => ({
+        conversationId,
+        tabId,
+        owner,
+        signal: new AbortController().signal,
+        release: vi.fn()
+      })
+    )
+    const closeTab = vi.fn(async () => {})
+    const snapshotBrowser = vi.fn(async () => ({
+      url: 'https://example.com/',
+      title: 'Example',
+      nodes: [],
+      truncated: false
+    }))
+    const clickBrowser = vi.fn(async () => {})
+    const typeBrowser = vi.fn(async () => {})
+    const selectBrowser = vi.fn(async () => {})
+    const screenshotBrowser = vi.fn(async () => ({
+      type: 'image' as const,
+      mimeType: 'image/jpeg' as const,
+      data: '/9j/2Q=='
+    }))
     const selectFiles = vi.fn(
       async (
         _window: unknown,
@@ -505,9 +542,19 @@ describe('registerIpcHandlers computer capabilities', () => {
       onRuntimeSettingsChanged,
       undefined,
       {
+        createTab,
+        listTabs,
+        getVisibleTabId,
+        acquireTabUsage,
+        closeTab,
         navigate,
         back,
         reload,
+        snapshot: snapshotBrowser,
+        click: clickBrowser,
+        type: typeBrowser,
+        select: selectBrowser,
+        screenshot: screenshotBrowser,
         stopLoading,
         setViewport,
         releaseConversation,
@@ -649,8 +696,16 @@ describe('registerIpcHandlers computer capabilities', () => {
       )?.(event, 'unsupported')
     ).rejects.toThrow()
 
+    const browserTabId = browserTabIdSchema.parse(
+      '4d7886c3-4c9c-4e84-bf65-1a4a841f5296'
+    )
+    const siblingBrowserTabId = browserTabIdSchema.parse(
+      '0387bd61-3a12-40ce-98d7-ef5d14cc8251'
+    )
     browserStateListener?.({
       conversationId: 'browser-conversation',
+      tabId: browserTabId,
+      ownerWindowId: 7,
       status: 'ready',
       sessionActive: true,
       isLoading: false,
@@ -665,8 +720,22 @@ describe('registerIpcHandlers computer capabilities', () => {
         status: 'ready'
       })
     )
+    const ownedStateSendCount = webContents.send.mock.calls.length
+    browserStateListener?.({
+      conversationId: 'foreign-conversation',
+      tabId: browserTabId,
+      ownerWindowId: 8,
+      status: 'ready',
+      sessionActive: true,
+      isLoading: false,
+      canGoBack: false,
+      updatedAt: 1
+    })
+    expect(webContents.send).toHaveBeenCalledTimes(ownedStateSendCount)
     browserStateListener?.({
       conversationId: 'browser-conversation',
+      tabId: browserTabId,
+      ownerWindowId: 7,
       status: 'acting',
       sessionActive: true,
       isLoading: false,
@@ -678,6 +747,22 @@ describe('registerIpcHandlers computer capabilities', () => {
     expect(repeatedFramePayload).not.toHaveProperty('frameDataUrl')
     browserStateListener?.({
       conversationId: 'browser-conversation',
+      tabId: siblingBrowserTabId,
+      ownerWindowId: 7,
+      status: 'ready',
+      sessionActive: true,
+      isLoading: false,
+      canGoBack: false,
+      frameDataUrl: 'data:image/jpeg;base64,frame',
+      updatedAt: 2
+    })
+    expect(webContents.send.mock.calls.at(-1)?.[1]).toHaveProperty(
+      'frameDataUrl'
+    )
+    browserStateListener?.({
+      conversationId: 'browser-conversation',
+      tabId: browserTabId,
+      ownerWindowId: 7,
       status: 'stopped',
       sessionActive: false,
       isLoading: false,
@@ -686,6 +771,8 @@ describe('registerIpcHandlers computer capabilities', () => {
     })
     browserStateListener?.({
       conversationId: 'browser-conversation',
+      tabId: browserTabId,
+      ownerWindowId: 7,
       status: 'ready',
       sessionActive: true,
       isLoading: false,
@@ -703,7 +790,37 @@ describe('registerIpcHandlers computer capabilities', () => {
       })
     ).resolves.toBeUndefined()
     expect(releaseConversation).toHaveBeenCalledWith(
-      'browser-conversation'
+      'browser-conversation',
+      7
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserCreateTab)?.(event, {
+        conversationId: 'browser-conversation',
+        workbarInstanceId: siblingBrowserTabId
+      })
+    ).resolves.toMatchObject({ tabId: browserTabId })
+    expect(createTab).toHaveBeenCalledWith(
+      'browser-conversation',
+      7,
+      expect.any(AbortSignal),
+      siblingBrowserTabId
+    )
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserListTabs)?.(event, {
+        conversationId: 'browser-conversation'
+      })
+    ).resolves.toEqual([])
+    expect(listTabs).toHaveBeenCalledWith('browser-conversation', 7)
+    await expect(
+      electronMocks.handlers.get(ipcChannels.browserCloseTab)?.(event, {
+        conversationId: 'browser-conversation',
+        tabId: browserTabId
+      })
+    ).resolves.toBeUndefined()
+    expect(closeTab).toHaveBeenCalledWith(
+      'browser-conversation',
+      browserTabId,
+      7
     )
     await expect(
       electronMocks.handlers.get(ipcChannels.browserNavigate)?.(event, {
@@ -714,7 +831,9 @@ describe('registerIpcHandlers computer capabilities', () => {
     expect(navigate).toHaveBeenCalledWith(
       'browser-conversation',
       'https://example.com/',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      undefined,
+      7
     )
     await expect(
       electronMocks.handlers.get(ipcChannels.browserBack)?.(event, {
@@ -723,7 +842,9 @@ describe('registerIpcHandlers computer capabilities', () => {
     ).resolves.toBeUndefined()
     expect(back).toHaveBeenCalledWith(
       'browser-conversation',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      undefined,
+      7
     )
     await expect(
       electronMocks.handlers.get(ipcChannels.browserReload)?.(event, {
@@ -732,7 +853,9 @@ describe('registerIpcHandlers computer capabilities', () => {
     ).resolves.toBeUndefined()
     expect(reload).toHaveBeenCalledWith(
       'browser-conversation',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      undefined,
+      7
     )
     await expect(
       electronMocks.handlers.get(ipcChannels.browserStopLoading)?.(
@@ -740,23 +863,55 @@ describe('registerIpcHandlers computer capabilities', () => {
         { conversationId: 'browser-conversation' }
       )
     ).resolves.toBeUndefined()
-    expect(stopLoading).toHaveBeenCalledWith('browser-conversation')
+    expect(stopLoading).toHaveBeenCalledWith(
+      'browser-conversation',
+      undefined,
+      7
+    )
     expect(
       electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {
         conversationId: 'browser-conversation',
+        leaseToken: siblingBrowserTabId,
         bounds: { x: 900, y: 120, width: 320, height: 600 }
       })
     ).toBeUndefined()
-    expect(setViewport).toHaveBeenCalledWith('browser-conversation', {
-      x: 900,
-      y: 120,
-      width: 320,
-      height: 600
-    })
+    expect(setViewport).toHaveBeenCalledWith(
+      'browser-conversation',
+      { x: 900, y: 120, width: 320, height: 600 },
+      undefined,
+      siblingBrowserTabId,
+      7
+    )
     expect(
-      electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {})
+      electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {
+        leaseToken: siblingBrowserTabId
+      })
     ).toBeUndefined()
-    expect(setViewport).toHaveBeenLastCalledWith()
+    expect(setViewport).toHaveBeenLastCalledWith(
+      undefined,
+      undefined,
+      undefined,
+      siblingBrowserTabId,
+      7
+    )
+    navigate.mockImplementationOnce(
+      async (...args: unknown[]) =>
+        new Promise<never>((_resolve, reject) => {
+          const signal = args[2] as AbortSignal
+          signal.addEventListener('abort', () => reject(signal.reason), {
+            once: true
+          })
+        })
+    )
+    const abandonedNavigation = electronMocks.handlers.get(
+      ipcChannels.browserNavigate
+    )?.(event, {
+      conversationId: 'browser-conversation',
+      url: 'https://example.com/abandoned'
+    }) as Promise<void>
+    await vi.waitFor(() => expect(webContents.listenerCount('destroyed')).toBe(1))
+    webContents.emit('destroyed')
+    await expect(abandonedNavigation).rejects.toThrow('所属窗口已关闭')
     navigate.mockRejectedValueOnce(new BrowserNavigationStoppedError())
     await expect(
       electronMocks.handlers.get(ipcChannels.browserNavigate)?.(event, {
@@ -4878,7 +5033,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     knowledgeGateway?: Record<string, unknown>,
     magicNotesEnabled = false,
     goodbuddyConfigService?: Record<string, unknown>,
-    capabilityServiceOverride?: Record<string, unknown>
+    capabilityServiceOverride?: Record<string, unknown>,
+    browserControl?: Record<string, unknown>
   ) {
     const assistantDatabase = {
       createTask: vi.fn(),
@@ -4990,6 +5146,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       }))
     }
     const webContents = {
+      id: 9,
       mainFrame: { url: 'file:///goodbuddy/index.html' },
       getURL: vi.fn(() => 'file:///goodbuddy/index.html'),
       send: vi.fn()
@@ -5068,7 +5225,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       {} as never,
       onRuntimeSettingsChanged,
       onBeforeClearLocalData,
-      undefined,
+      browserControl as never,
       subagentService as never,
       undefined,
       {
@@ -7230,6 +7387,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       requestId: string
       knowledgeCapabilityToken?: string
       trustedInstructions?: string
+      browserTabId?: BrowserTabId
     }> = []
     const runtime = {
       runtimeId: 'opencode',
@@ -7240,6 +7398,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         requestId: string
         knowledgeCapabilityToken?: string
         trustedInstructions?: string
+        browserTabId?: BrowserTabId
       }) {
         receivedRequests.push(request)
         yield { requestId: request.requestId, type: 'done' }
@@ -7257,6 +7416,30 @@ describe('registerIpcHandlers agent terminal state', () => {
     const getEnabledBuiltinMcpServerIds = vi.fn(async () => [
       'builtin-browser'
     ])
+    const primaryTabId = browserTabIdSchema.parse(
+      '00000000-0000-4000-8000-000000000401'
+    )
+    const siblingTabId = browserTabIdSchema.parse(
+      '00000000-0000-4000-8000-000000000402'
+    )
+    const browserControl = {
+      listTabs: vi.fn(() => [
+        { tabId: siblingTabId, primary: false },
+        { tabId: primaryTabId, primary: true }
+      ]),
+      getVisibleTabId: vi.fn(() => undefined),
+      acquireTabUsage: vi.fn(
+        (conversationId: string, tabId: BrowserTabId, owner: string) => ({
+          conversationId,
+          tabId,
+          owner,
+          signal: new AbortController().signal,
+          release: vi.fn()
+        })
+      ),
+      createTab: vi.fn(),
+      onState: vi.fn(() => () => undefined)
+    }
     const harness = createHarness(
       runtime,
       undefined,
@@ -7268,7 +7451,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       knowledgeGateway,
       false,
       undefined,
-      { getEnabledBuiltinMcpServerIds }
+      { getEnabledBuiltinMcpServerIds },
+      browserControl
     )
     const event = trustedEvent(harness.webContents)
     const askRequestId = '00000000-0000-4000-8000-000000000026'
@@ -7308,15 +7492,228 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect.any(AbortSignal),
       'none',
       undefined,
-      'browser-execute'
+      'browser-execute',
+      primaryTabId,
+      expect.objectContaining({
+        conversationId: 'browser-execute',
+        tabId: primaryTabId,
+        owner: executeRequestId
+      })
     )
     expect(receivedRequests[0]?.knowledgeCapabilityToken).toBeUndefined()
     expect(receivedRequests[1]).toMatchObject({
       knowledgeCapabilityToken: 'browser-capability',
+      browserTabId: primaryTabId,
       trustedInstructions: expect.stringContaining('browser_navigate')
     })
+    expect(browserControl.listTabs).toHaveBeenCalledWith(
+      'browser-execute',
+      harness.webContents.id
+    )
+    expect(browserControl.createTab).not.toHaveBeenCalled()
+    expect(browserControl.acquireTabUsage).toHaveBeenCalledWith(
+      'browser-execute',
+      primaryTabId,
+      executeRequestId,
+      harness.webContents.id
+    )
     await harness.dispose()
   })
+
+  it('prefers the owner window visible browser tab over the primary tab', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000028'
+    const primaryTabId = browserTabIdSchema.parse(
+      '00000000-0000-4000-8000-000000000411'
+    )
+    const visibleTabId = browserTabIdSchema.parse(
+      '00000000-0000-4000-8000-000000000412'
+    )
+    const received: Array<{ browserTabId?: BrowserTabId }> = []
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string; browserTabId?: BrowserTabId }) {
+        received.push(request)
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const release = vi.fn()
+    const knowledgeGateway = {
+      grant: vi.fn(() => 'browser-capability'),
+      getAvailableToolNames: vi.fn(() => ['browser_navigate']),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn()
+    }
+    const browserControl = {
+      listTabs: vi.fn(() => [
+        { tabId: primaryTabId, primary: true },
+        { tabId: visibleTabId, primary: false }
+      ]),
+      getVisibleTabId: vi.fn(() => visibleTabId),
+      acquireTabUsage: vi.fn(
+        (conversationId: string, tabId: BrowserTabId, owner: string) => ({
+          conversationId,
+          tabId,
+          owner,
+          signal: new AbortController().signal,
+          release
+        })
+      ),
+      createTab: vi.fn(),
+      onState: vi.fn(() => () => undefined)
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      false,
+      undefined,
+      { getEnabledBuiltinMcpServerIds: vi.fn(async () => ['builtin-browser']) },
+      browserControl
+    )
+
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId,
+      conversationId: 'visible-browser',
+      prompt: '使用当前网页',
+      workMode: 'execute',
+      knowledgeLibraryIds: []
+    })
+    await vi.waitFor(() =>
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+    )
+
+    expect(received[0]?.browserTabId).toBe(visibleTabId)
+    expect(browserControl.acquireTabUsage).toHaveBeenCalledWith(
+      'visible-browser',
+      visibleTabId,
+      requestId,
+      harness.webContents.id
+    )
+    expect(browserControl.createTab).not.toHaveBeenCalled()
+    await harness.dispose()
+  })
+
+  it.each(['error', 'cancel'] as const)(
+    'releases a request-created browser tab lease on runtime %s',
+    async (outcome) => {
+      const requestId = outcome === 'error'
+        ? '00000000-0000-4000-8000-000000000029'
+        : '00000000-0000-4000-8000-000000000030'
+      const tabId = browserTabIdSchema.parse(
+        outcome === 'error'
+          ? '00000000-0000-4000-8000-000000000421'
+          : '00000000-0000-4000-8000-000000000422'
+      )
+      let markStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve
+      })
+      const runtime = {
+        runtimeId: 'model',
+        capability: 'chat',
+        supportsToolExecution: true,
+        async *run(request: { requestId: string }, signal: AbortSignal) {
+          markStarted()
+          if (outcome === 'error') throw new Error('runtime failed')
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), {
+              once: true
+            })
+          })
+          yield { requestId: request.requestId, type: 'done' }
+        }
+      }
+      const release = vi.fn()
+      let grantedLease:
+        | { release(): void }
+        | undefined
+      const knowledgeGateway = {
+        grant: vi.fn((...args: unknown[]) => {
+          grantedLease = args[7] as { release(): void }
+          return 'browser-capability'
+        }),
+        getAvailableToolNames: vi.fn(() => ['browser_navigate']),
+        drainReferences: vi.fn(() => []),
+        revoke: vi.fn(() => grantedLease?.release())
+      }
+      const createTab = vi.fn<
+        (
+          conversationId: string,
+          ownerWindowId?: number,
+          signal?: AbortSignal,
+          workbarInstanceId?: string
+        ) => Promise<{ tabId: BrowserTabId }>
+      >(async () => ({ tabId }))
+      const browserControl = {
+        listTabs: vi.fn(() => []),
+        getVisibleTabId: vi.fn(() => undefined),
+        createTab,
+        acquireTabUsage: vi.fn(
+          (conversationId: string, acquiredTabId: BrowserTabId, owner: string) => ({
+            conversationId,
+            tabId: acquiredTabId,
+            owner,
+            signal: new AbortController().signal,
+            release
+          })
+        ),
+        onState: vi.fn(() => () => undefined)
+      }
+      const harness = createHarness(
+        runtime,
+        undefined,
+        'always',
+        undefined,
+        false,
+        undefined,
+        undefined,
+        knowledgeGateway,
+        false,
+        undefined,
+        { getEnabledBuiltinMcpServerIds: vi.fn(async () => ['builtin-browser']) },
+        browserControl
+      )
+      const event = trustedEvent(harness.webContents)
+
+      await harness.handler?.(event, {
+        requestId,
+        conversationId: `browser-${outcome}`,
+        prompt: '使用浏览器',
+        workMode: 'execute',
+        knowledgeLibraryIds: []
+      })
+      await started
+      if (outcome === 'cancel') {
+        harness.cancelHandler?.(event, requestId)
+      }
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+
+      const workbarInstanceId = createTab.mock.calls[0]?.[3]
+      expect(workbarInstanceId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+      )
+      expect(browserControl.acquireTabUsage).toHaveBeenCalledWith(
+        `browser-${outcome}`,
+        tabId,
+        requestId,
+        harness.webContents.id
+      )
+      expect(knowledgeGateway.revoke).toHaveBeenCalledWith(
+        'browser-capability'
+      )
+      await harness.dispose()
+    }
+  )
 
   it.each(['ask', 'execute'] as const)(
     'does not grant or advertise scoped data tools to external OpenCode in %s mode',
@@ -9400,7 +9797,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         ) => Promise<string>
       ) {
         authorization = await authorize({
-          scopeKey: 'model:builtin:workspace_write_text',
+          scopeKey: 'model:builtin:workspace_apply_patch',
           title: '写入文件',
           description: '写入 README.md'
         })

@@ -1,5 +1,29 @@
 # 工作栏实现与验证进度
 
+## 2026-09-10 固定基础页签与浏览器多实例
+
+- 工作栏注册表已分别声明实例策略、默认上下文、默认打开、必须存在、可关闭和排序属性。
+  任务中心与工作区保持默认存在且不可关闭；浏览器改为当前 Conversation 上下文的多实例。
+  布局加载按 `required` 补回缺失的基础页签，并修复失效活动实例。
+- 任务中心增加“当前项目”“全局任务”“全部项目”范围，默认跟随活动项目；任务和审批按
+  Conversation 所属项目过滤，范围模式随工作栏布局持久化。
+- 浏览器服务已拆分 Conversation Context 与 Browser Tab。每个 Tab 拥有独立页面、Driver、
+  操作队列、状态和元素引用空间，同一 Conversation 的 Tab 共享 partition、代理和 Cookie。
+- Renderer 使用工作栏实例 UUID 原子创建或恢复 Browser Tab，并以 UUID viewport token 防止
+  延迟 cleanup 隐藏新活动 Tab。关闭单个实例只释放对应 Tab。
+- 直连模型和请求级 MCP capability 在请求开始时优先绑定可见 Tab，其次绑定 primary Tab，
+  并持有使用租约。请求结束或 capability 撤销前，绑定 Tab 拒绝关闭；工具参数未增加模型可见
+  `tabId`，已有浏览器工具 schema 保持不变。
+- 聚焦回归命令覆盖 Shared、BrowserService、Electron Session、IPC、Preload、MCP、Renderer
+  和 Workbar，13 个测试文件共 453 项通过；`npm run lint` 与 Web TypeScript 检查通过。
+- `node build/run-browser-tabs-electron-e2e.cjs` 通过。该测试启动真实 Electron/Chromium 和本地
+  HTTP 页面，创建两个 `WebContentsView`，验证页面隔离、同 Conversation Cookie 共享、真实
+  loopback MCP 的固定 Tab 导航与快照、使用租约关闭保护，以及单 Tab 和最终 Context 清理。
+- `npm run typecheck`、`npm run lint`、`npm run build:bundle` 和 `git diff --check` 通过。
+- 本轮整库 `npm test` 为 3686 项通过、61 项跳过、4 项失败。失败位于 portable/release 的
+  ASAR 元数据 fixture、Runtime 版本探测和 DeepSeek Harness 的本地 MCP fixture；定向复跑仍
+  失败。本次工作栏、浏览器、IPC 和 MCP 聚焦回归均通过，不将整库结果记为通过。
+
 ## 2026-09-09 移动目录选择与 Git 控件修正
 
 - 本轮在已有文件管理改动上修正 [FR-W3、FR-W4、FR-W6](./prd.md#76-工作区)：

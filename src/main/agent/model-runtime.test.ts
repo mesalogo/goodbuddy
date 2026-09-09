@@ -18,6 +18,40 @@ const toolPng = Buffer.from([
   0x0d, 0x0a, 0x1a, 0x0a
 ]).toString('base64')
 
+it('preserves full supplied and cached history beyond message and byte caps', async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(
+    createEventStream('reply'),
+    { headers: { 'content-type': 'text/event-stream' } }
+  ))
+  const runtime = new ModelAgentRuntime({
+    apiKey: 'test-key',
+    baseUrl: 'https://example.test',
+    model: 'test-model',
+    protocol: 'anthropic-messages',
+    authentication: 'api-key',
+    fetcher
+  })
+  const history = Array.from({ length: 502 }, (_, index) => ({
+    role: index % 2 ? 'assistant' as const : 'user' as const,
+    content: `${index}: ${'x'.repeat(4_200)}`
+  }))
+  for (const suppliedHistory of [history, undefined]) {
+    for await (const event of runtime.run({
+      requestId: crypto.randomUUID(),
+      conversationId: 'full-history',
+      prompt: 'next',
+      history: suppliedHistory
+    }, new AbortController().signal)) {
+      expect(event).toBeDefined()
+    }
+  }
+  for (const [, init] of fetcher.mock.calls) {
+    const body = JSON.parse(String(init?.body))
+    expect(body.messages.slice(0, history.length)).toEqual(history)
+  }
+  expect(fetcher).toHaveBeenCalledTimes(2)
+})
+
 function createTextToolResult(text: string): ModelToolResult {
   return {
     parts: [{ type: 'text', text }],

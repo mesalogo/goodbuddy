@@ -24,6 +24,7 @@ import type {
 } from './runtime'
 import {
   BrowserModelTools,
+  browserToolNames,
   type BrowserToolService
 } from '../browser/browser-model-tools'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
@@ -45,12 +46,12 @@ import {
   directModelSubagentInputSchema
 } from '../assistant/direct-model-subagent-service'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment'
+import type { BrowserTabId } from '../../shared/contracts'
 import { searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
 import { applyWorkspacePatch } from './workspace-apply-patch'
 import { readWorkspaceLines } from './workspace-read-lines'
 
 const MAX_MODEL_TOOLS = 100
-const MAX_MCP_SERVERS = 16
 const MAX_TOOL_RESULT_BYTES = 256 * 1024
 const MCP_TIMEOUT_MS = 30_000
 const MCP_CALL_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
@@ -269,6 +270,7 @@ export type ModelToolResult = {
 
 export type ModelToolCallContext = {
   conversationId: string
+  browserTabId?: BrowserTabId
   workMode: 'ask' | 'execute'
   requestId?: string
   runtimeTarget?: 'model'
@@ -635,7 +637,10 @@ function normalizeMcpResult(result: unknown): ModelToolResult {
 }
 
 export class ModelToolProvider implements ModelToolProviderLike {
-  private mcpConnections?: Promise<ConnectedMcp[]>
+  private readonly mcpConnections = new Map<
+    ResolvedMcpServer,
+    Promise<ConnectedMcp | undefined>
+  >()
   private webSearchBindings?: Promise<Map<string, McpToolBinding>>
   private readonly clients = new Set<Client>()
   private readonly customMcpClients = new Set<Client>()
@@ -708,10 +713,13 @@ export class ModelToolProvider implements ModelToolProviderLike {
   private getBrowserTools(
     context: ModelToolCallContext
   ): BrowserModelTools | undefined {
-    return this.browserService && context.workMode === 'execute'
+    return this.browserService &&
+      context.workMode === 'execute' &&
+      context.browserTabId
       ? new BrowserModelTools({
           service: this.browserService,
-          conversationId: context.conversationId
+          conversationId: context.conversationId,
+          browserTabId: context.browserTabId
         })
       : undefined
   }
@@ -719,7 +727,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
   private getReservedToolCount(): number {
     return (
       this.getBuiltinTools().length +
-      (this.browserService ? 7 : 0) +
+      (this.browserService ? browserToolNames.length : 0) +
       (this.webSearchEnabled ? 2 : 0) +
       (this.programming.processService ? 1 : 0) +
       (this.programming.subagentService ? 1 : 0) +
@@ -1077,23 +1085,27 @@ export class ModelToolProvider implements ModelToolProviderLike {
     signal: AbortSignal,
     refreshDynamic = false
   ): Promise<Map<string, McpToolBinding>> {
-    if (this.mcpServers.length > MAX_MCP_SERVERS) {
-      throw new Error('直连模型最多可加载 16 个 MCP Server')
-    }
-    this.mcpConnections ??= Promise.all(
-      this.mcpServers.map((server) => this.connectMcpServer(server, signal))
-    )
-      .catch(async (error) => {
-        this.mcpConnections = undefined
-        const clients = [...this.customMcpClients]
-        this.customMcpClients.clear()
-        clients.forEach((client) => this.clients.delete(client))
-        await Promise.allSettled(
-          clients.map((client) => client.close())
-        )
-        throw error
+    signal.throwIfAborted()
+    const loaded = await Promise.all(
+      this.mcpServers.map((server) => {
+        let pending = this.mcpConnections.get(server)
+        if (!pending) {
+          pending = this.connectMcpServer(server, signal).catch((error) => {
+            this.mcpConnections.delete(server)
+            if (!signal.aborted) {
+              console.warn(`MCP discovery failed: ${server.name}`, error)
+            }
+            return undefined
+          })
+          this.mcpConnections.set(server, pending)
+        }
+        return pending
       })
-    const connections = await this.mcpConnections
+    )
+    signal.throwIfAborted()
+    const connections = loaded.filter(
+      (connection): connection is ConnectedMcp => connection !== undefined
+    )
     if (refreshDynamic) {
       await Promise.all(
         connections.map(async (connection) => {
@@ -1123,14 +1135,18 @@ export class ModelToolProvider implements ModelToolProviderLike {
             )
           } catch (error) {
             connection.dynamicToolsChanged = true
-            throw new Error(
-              `无法刷新 MCP Server「${connection.server.name}」的工具`,
-              { cause: error }
-            )
+            connection.tools = []
+            if (!signal.aborted) {
+              console.warn(
+                `MCP refresh failed: ${connection.server.name}`,
+                error
+              )
+            }
           }
         })
       )
     }
+    signal.throwIfAborted()
     const bindings = new Map<string, McpToolBinding>()
     const reservedToolCount = this.getReservedToolCount()
     for (const connection of connections) {
@@ -1782,7 +1798,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     this.clients.clear()
     this.customMcpClients.clear()
     this.webSearchClients.clear()
-    this.mcpConnections = undefined
+    this.mcpConnections.clear()
     this.webSearchBindings = undefined
     await Promise.allSettled([
       ...clients.map((client) => client.close()),
@@ -1794,12 +1810,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
 
   async releaseConversation(conversationId: string): Promise<void> {
     await Promise.allSettled([
-      this.browserService
-        ? new BrowserModelTools({
-            service: this.browserService,
-            conversationId
-          }).release()
-        : undefined,
+      this.browserService?.releaseConversation(conversationId),
       this.programming.processService?.releaseConversation(
         conversationId
       ),

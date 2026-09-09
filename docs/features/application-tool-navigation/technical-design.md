@@ -26,7 +26,8 @@ type WorkspaceView =
 ```
 
 文件、浏览器和终端已经由 `RightAssistantSidebar`、`WorkbarShell` 与 `workbar-contracts.ts`
-承载。工作区与浏览器是单实例应用，终端是多实例应用。代码中尚无资源指标采集和资源监控
+承载。工作区是不可关闭的单实例应用，浏览器和终端是多实例应用。浏览器多实例的跨进程
+实现以[浏览器多实例技术设计](../assistant-workbar/browser-tabs-technical-design.md)为准。代码中尚无资源指标采集和资源监控
 面板。现有侧栏底部 `user-card` 整行打开设置，并显示“本地工作区”和平台架构。
 
 本次改动增加入口编排、从主侧栏到工作栏的命令通道，以及本机资源监控的 Main/Preload/
@@ -78,22 +79,27 @@ type WorkbarOpenIntent = {
   requestId: number
   appId: 'workspace' | 'terminal' | 'browser' | 'resources'
   reason: 'sidebar-system-tool'
+  context?: { conversationId?: string; projectId?: string }
 }
 ```
 
 `requestId` 使连续点击同一工具仍能被消费。不要仅设置 `assistantSidebarTab`，因为用户可能已
 关闭对应实例，且终端需要按执行空间寻找实例。
 
-建议由 `RightAssistantSidebar` 在消费意图后通过现有 `WorkbarShell` 控制接口完成。文件和浏览器
-已有实例时只激活实例，保留其“跟随当前上下文”或“固定到指定对象”状态：
+建议由 `RightAssistantSidebar` 在消费意图后通过现有 `WorkbarShell` 控制接口完成。控制器必须
+接收上下文和调用原因，不能只按 `appId` 查找第一个实例：
 
 ```ts
 type WorkbarController = {
-  openOrActivate(appId: WorkbarAppId): Promise<WorkbarTabInstance>
+  openOrActivate(intent: WorkbarOpenIntent): Promise<WorkbarTabInstance>
 }
 ```
 
 若当前 `WorkbarShell` 没有命令式入口，先增加窄的回调或受控请求 Props，不引入全局事件总线。
+
+工作区意图始终激活注册表中的不可关闭单实例；仅在迁移或布局损坏时补回。浏览器意图按
+`conversationId` 激活最近使用的匹配实例，没有匹配实例时创建一个。工作栏“+”不走该去重
+路径，选择浏览器时始终创建新实例。
 
 ### 3.3 终端匹配
 
@@ -330,7 +336,7 @@ resourceMonitor.getLocalSnapshot(input: {
 - 固定入口顺序不受三个应用显隐组合影响。
 - 运行记录和设置没有显隐控件。
 - 四个系统工具按钮具有名称、工具提示、键盘行为和选中状态。
-- 文件和浏览器复用单实例；终端优先聚焦当前执行空间实例。
+- 文件复用不可关闭单实例；浏览器和终端按当前上下文聚焦匹配实例，工作栏“+”允许显式多实例。
 - 工具按钮展开工作栏但不改变当前主页面。
 - 显隐更新成功后主导航立即变化，失败时 Switch 和主导航恢复原状态。
 - 窄窗口下工具按钮不重叠，焦点恢复正确。
@@ -370,7 +376,7 @@ resourceMonitor.getLocalSnapshot(input: {
 3. 增加资源快照契约、Main 采集服务和 Preload API。
 4. 为工作栏增加 `resources` 单实例和 `ResourceMonitorPanel`。
 5. 拆分侧栏底部设置按钮，加入四个系统工具按钮。
-6. 为工作栏增加 `openOrActivate` 意图接口和终端匹配规则。
+6. 为工作栏增加带上下文的 `openOrActivate` 意图接口，以及浏览器和终端匹配规则。
 7. 接入选中状态、焦点恢复、无障碍文案和响应式样式。
 8. 完成 Renderer、契约、迁移和跨平台回归测试。
 

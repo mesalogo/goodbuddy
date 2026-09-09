@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { browserTabIdSchema } from '../../shared/contracts'
 import {
   BrowserModelTools,
   browserBackInputSchema,
@@ -42,12 +43,16 @@ function createService(): BrowserToolService {
 
 const signal = new AbortController().signal
 const ref = 'b_abcdefghijklmnop'
+const browserTabId = browserTabIdSchema.parse(
+  '00000000-0000-4000-8000-000000000101'
+)
 
 describe('BrowserModelTools', () => {
   it('publishes seven strict, bounded builtin tool definitions', () => {
     const tools = new BrowserModelTools({
       service: createService(),
-      conversationId: 'conversation'
+      conversationId: 'conversation',
+      browserTabId
     })
     const definitions = tools.listTools()
     expect(definitions.map((definition) => definition.name)).toEqual([
@@ -93,7 +98,8 @@ describe('BrowserModelTools', () => {
   it('creates dynamic origin-scoped navigation approvals without exposing query values', () => {
     const tools = new BrowserModelTools({
       service: createService(),
-      conversationId: 'conversation'
+      conversationId: 'conversation',
+      browserTabId
     })
     const approval = tools.getApproval('browser_navigate', {
       url: 'https://example.com/path?token=top-secret'
@@ -115,7 +121,8 @@ describe('BrowserModelTools', () => {
     const service = createService()
     const tools = new BrowserModelTools({
       service,
-      conversationId: 'conversation'
+      conversationId: 'conversation',
+      browserTabId
     })
     const first = tools.getApproval('browser_type', {
       ref,
@@ -139,7 +146,8 @@ describe('BrowserModelTools', () => {
       'conversation',
       ref,
       'top-secret',
-      signal
+      signal,
+      browserTabId
     )
     expect(JSON.stringify(result)).not.toContain('top-secret')
     expect(result.parts[0]).toMatchObject({
@@ -158,7 +166,8 @@ describe('BrowserModelTools', () => {
     const service = createService()
     const tools = new BrowserModelTools({
       service,
-      conversationId: 'conversation'
+      conversationId: 'conversation',
+      browserTabId
     })
     const navigate = await tools.callTool(
       'browser_navigate',
@@ -189,12 +198,40 @@ describe('BrowserModelTools', () => {
     })
     await tools.release()
     expect(service.releaseConversation).toHaveBeenCalledWith('conversation')
+    expect(service.navigate).toHaveBeenCalledWith(
+      'conversation',
+      'https://example.com/',
+      signal,
+      browserTabId
+    )
+    expect(service.snapshot).toHaveBeenCalledWith(
+      'conversation',
+      signal,
+      browserTabId
+    )
+    expect(service.click).toHaveBeenCalledWith(
+      'conversation',
+      ref,
+      signal,
+      browserTabId
+    )
+    expect(service.back).toHaveBeenCalledWith(
+      'conversation',
+      signal,
+      browserTabId
+    )
+    expect(service.screenshot).toHaveBeenCalledWith(
+      'conversation',
+      signal,
+      browserTabId
+    )
   })
 
   it('rejects unknown tools, extra fields, malformed refs, and cancellation', async () => {
     const tools = new BrowserModelTools({
       service: createService(),
-      conversationId: 'conversation'
+      conversationId: 'conversation',
+      browserTabId
     })
     expect(() =>
       tools.getApproval('browser_click', { ref, extra: true })

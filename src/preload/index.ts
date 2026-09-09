@@ -7,7 +7,23 @@ import {
   type AgentRuntimeDetection,
   type AgentRuntimeStatus,
   type AppInfo,
+  type BrowserBackRequest,
+  type BrowserClickRequest,
+  type BrowserCloseTabRequest,
+  type BrowserCreateTabRequest,
   type BrowserLiveState,
+  type BrowserListTabsRequest,
+  type BrowserNavigateRequest,
+  type BrowserReloadRequest,
+  type BrowserScreenshotRequest,
+  type BrowserScreenshotResult,
+  type BrowserSelectRequest,
+  type BrowserSetViewportRequest,
+  type BrowserSnapshotRequest,
+  type BrowserSnapshotResult,
+  type BrowserStopLoadingRequest,
+  type BrowserTabSummary,
+  type BrowserTypeRequest,
   type ContextAttachment,
   type ContextFileSelectionProgress,
   type DesktopApi,
@@ -187,6 +203,7 @@ import type {
   TerminalWriteRequest
 } from '../shared/terminal-contracts'
 
+
 const desktopApi: DesktopApi = {
   app: {
     getInfo: () => ipcRenderer.invoke(ipcChannels.appInfo) as Promise<AppInfo>,
@@ -307,32 +324,77 @@ const desktopApi: DesktopApi = {
     }
   },
   browser: {
-    navigate: async (conversationId: string, url: string) => {
-      await ipcRenderer.invoke(ipcChannels.browserNavigate, {
-        conversationId,
-        url
-      })
+    createTab: (request: BrowserCreateTabRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.browserCreateTab,
+        request
+      ) as Promise<BrowserTabSummary>,
+    listTabs: (request: BrowserListTabsRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.browserListTabs,
+        request
+      ) as Promise<BrowserTabSummary[]>,
+    closeTab: async (request: BrowserCloseTabRequest) => {
+      await ipcRenderer.invoke(ipcChannels.browserCloseTab, request)
     },
-    back: async (conversationId: string) => {
-      await ipcRenderer.invoke(ipcChannels.browserBack, {
-        conversationId
-      })
+    navigate: async (
+      requestOrConversation: BrowserNavigateRequest | string,
+      url?: string
+    ) => {
+      await ipcRenderer.invoke(
+        ipcChannels.browserNavigate,
+        typeof requestOrConversation === 'string'
+          ? { conversationId: requestOrConversation, url }
+          : requestOrConversation
+      )
     },
-    reload: async (conversationId: string) => {
-      await ipcRenderer.invoke(ipcChannels.browserReload, {
-        conversationId
-      })
+    back: async (requestOrConversation: BrowserBackRequest | string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.browserBack,
+        typeof requestOrConversation === 'string'
+          ? { conversationId: requestOrConversation }
+          : requestOrConversation
+      )
     },
-    stopLoading: async (conversationId: string) => {
-      await ipcRenderer.invoke(ipcChannels.browserStopLoading, {
-        conversationId
-      })
+    reload: async (requestOrConversation: BrowserReloadRequest | string) => {
+      await ipcRenderer.invoke(
+        ipcChannels.browserReload,
+        typeof requestOrConversation === 'string'
+          ? { conversationId: requestOrConversation }
+          : requestOrConversation
+      )
     },
-    setViewport: async (conversationId, bounds) => {
-      await ipcRenderer.invoke(ipcChannels.browserSetViewport, {
-        ...(conversationId ? { conversationId } : {}),
-        ...(bounds ? { bounds } : {})
-      })
+    stopLoading: async (
+      requestOrConversation: BrowserStopLoadingRequest | string
+    ) => {
+      await ipcRenderer.invoke(
+        ipcChannels.browserStopLoading,
+        typeof requestOrConversation === 'string'
+          ? { conversationId: requestOrConversation }
+          : requestOrConversation
+      )
+    },
+    snapshot: (request: BrowserSnapshotRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.browserSnapshot,
+        request
+      ) as Promise<BrowserSnapshotResult>,
+    click: async (request: BrowserClickRequest) => {
+      await ipcRenderer.invoke(ipcChannels.browserClick, request)
+    },
+    type: async (request: BrowserTypeRequest) => {
+      await ipcRenderer.invoke(ipcChannels.browserType, request)
+    },
+    select: async (request: BrowserSelectRequest) => {
+      await ipcRenderer.invoke(ipcChannels.browserSelect, request)
+    },
+    screenshot: (request: BrowserScreenshotRequest) =>
+      ipcRenderer.invoke(
+        ipcChannels.browserScreenshot,
+        request
+      ) as Promise<BrowserScreenshotResult>,
+    setViewport: async (request: BrowserSetViewportRequest) => {
+      await ipcRenderer.invoke(ipcChannels.browserSetViewport, request)
     },
     stop: async (conversationId: string) => {
       await ipcRenderer.invoke(

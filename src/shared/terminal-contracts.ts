@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { workbarTargetRefSchema } from './workbar-contracts'
+import { workbarExecutionTargetRefSchema } from './workbar-contracts'
 
 export const TERMINAL_LIMITS = {
   maximumSessionsPerWindow: 12,
@@ -35,7 +35,7 @@ export type TerminalSessionId = z.infer<
   typeof terminalSessionIdSchema
 >
 
-export const terminalTargetSchema = workbarTargetRefSchema
+export const terminalTargetSchema = workbarExecutionTargetRefSchema
 export type TerminalTarget = z.infer<typeof terminalTargetSchema>
 
 export const terminalSessionStateSchema = z.enum([

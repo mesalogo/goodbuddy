@@ -11,10 +11,12 @@ import {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
+    reject = rejectPromise
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function createHarness() {
@@ -346,6 +348,65 @@ describe('ElectronBrowserSession', () => {
     expect(parentWindow.contentView.removeChildView).toHaveBeenCalledWith(
       harness.window.nativeView
     )
+  })
+
+  it('creates sibling views in the same partition and cleans shared state after the final tab', async () => {
+    const first = createHarness()
+    const second = createHarness()
+    const createPartition = vi.fn(async () => first.partition)
+    const createView = vi
+      .fn<(options: Record<string, unknown>) => Promise<BrowserViewHandle>>()
+      .mockResolvedValueOnce(first.window)
+      .mockResolvedValueOnce(second.window)
+    const root = await ElectronBrowserSession.create({
+      policy: first.policy,
+      createPartition,
+      createView,
+      createProxy: () => first.proxy
+    })
+
+    const sibling = await root.createTab(new AbortController().signal)
+
+    expect(createPartition).toHaveBeenCalledOnce()
+    expect(sibling.partition).toBe(root.partition)
+    expect(
+      (createView.mock.calls[1]?.[0].webPreferences as Record<string, unknown>)
+        .partition
+    ).toBe(root.partition)
+    await root.dispose()
+    expect(first.partition.clearData).not.toHaveBeenCalled()
+    expect(first.proxy.dispose).not.toHaveBeenCalled()
+    await sibling.dispose()
+    expect(first.partition.clearData).toHaveBeenCalledOnce()
+    expect(first.partition.closeAllConnections).toHaveBeenCalledOnce()
+    expect(first.proxy.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('cleans shared state once when sibling creation fails after root disposal', async () => {
+    const first = createHarness()
+    const second = createHarness()
+    const setupGate = deferred<Record<string, never>>()
+    second.sendCommand.mockImplementationOnce(() => setupGate.promise)
+    const createView = vi
+      .fn<(options: Record<string, unknown>) => Promise<BrowserViewHandle>>()
+      .mockResolvedValueOnce(first.window)
+      .mockResolvedValueOnce(second.window)
+    const root = await ElectronBrowserSession.create({
+      policy: first.policy,
+      createPartition: async () => first.partition,
+      createView,
+      createProxy: () => first.proxy
+    })
+
+    const sibling = root.createTab(new AbortController().signal)
+    await vi.waitFor(() => expect(second.sendCommand).toHaveBeenCalled())
+    await root.dispose()
+    setupGate.reject(new Error('debugger failed'))
+    await expect(sibling).rejects.toThrow('无法创建浏览器标签页')
+
+    expect(first.partition.clearData).toHaveBeenCalledOnce()
+    expect(first.partition.closeAllConnections).toHaveBeenCalledOnce()
+    expect(first.proxy.dispose).toHaveBeenCalledOnce()
   })
 
   it('detaches listeners and clears isolated data on idempotent disposal', async () => {

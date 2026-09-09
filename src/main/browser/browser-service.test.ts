@@ -31,6 +31,8 @@ function deferred<T>() {
 
 function createHarness(options: {
   maximumSessions?: number
+  maximumTabsPerConversation?: number
+  maximumTabsPerWindow?: number
   idleTimeoutMs?: number
   cleanupTimeoutMs?: number
   dispose?: () => Promise<void>
@@ -145,6 +147,8 @@ function createHarness(options: {
   const service = new BrowserService({
     policy: new BrowserUrlPolicy(dnsResolver),
     maximumSessions: options.maximumSessions,
+    maximumTabsPerConversation: options.maximumTabsPerConversation,
+    maximumTabsPerWindow: options.maximumTabsPerWindow,
     idleTimeoutMs: options.idleTimeoutMs,
     cleanupTimeoutMs: options.cleanupTimeoutMs,
     liveFrameDelayMs: 0,
@@ -165,12 +169,21 @@ afterEach(() => {
 })
 
 describe('BrowserService', () => {
+  const firstLeaseToken = '7d201980-0ad4-4670-81d4-dc2bf79f03b2'
+  const secondLeaseToken = 'db8a2c28-43a6-4aab-93e0-1c01b9374dca'
+  const workbarInstanceId = '0387bd61-3a12-40ce-98d7-ef5d14cc8251'
+
   it('presents one session in the shared viewport and tracks user navigation', async () => {
     const harness = createHarness()
     const bounds = { x: 900, y: 120, width: 420, height: 640 }
     const states: BrowserLiveState[] = []
     harness.service.onState((state) => states.push(state))
-    harness.service.setViewport('conversation', bounds)
+    harness.service.setViewport(
+      'conversation',
+      bounds,
+      undefined,
+      firstLeaseToken
+    )
 
     await harness.service.navigate(
       'conversation',
@@ -196,7 +209,12 @@ describe('BrowserService', () => {
       'https://example.com'
     )
 
-    harness.service.setViewport()
+    harness.service.setViewport(
+      undefined,
+      undefined,
+      undefined,
+      firstLeaseToken
+    )
     expect(slot?.session.setViewport).toHaveBeenLastCalledWith(undefined)
     await harness.service.dispose()
   })
@@ -222,6 +240,7 @@ describe('BrowserService', () => {
 
     expect(states.map((state) => state.status)).toEqual([
       'creating',
+      'ready',
       'loading',
       'ready',
       'acting',
@@ -242,7 +261,7 @@ describe('BrowserService', () => {
       isLoading: false,
       canGoBack: false
     })
-    expect(states.find((state) => state.status === 'ready')?.frameDataUrl).toBe(
+    expect(states.filter((state) => state.status === 'ready').at(-1)?.frameDataUrl).toBe(
       'data:image/jpeg;base64,/9j/2Q=='
     )
     expect(states.at(-1)?.frameDataUrl).toBeUndefined()
@@ -435,6 +454,253 @@ describe('BrowserService', () => {
     await harness.service.dispose()
   })
 
+  it('owns independent tabs inside one conversation and closes only the requested tab', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    await harness.service.navigate('conversation', 'https://first.example/', signal)
+    const [primary] = harness.service.listTabs('conversation', 11)
+    const sibling = await harness.service.createTab('conversation', 11, signal)
+
+    await harness.service.navigate(
+      'conversation',
+      'https://second.example/',
+      signal,
+      sibling.tabId,
+      11
+    )
+    await harness.service.snapshot(
+      'conversation',
+      signal,
+      sibling.tabId,
+      11
+    )
+
+    expect(harness.service.getSessionCount()).toBe(1)
+    expect(harness.service.getTabCount('conversation')).toBe(2)
+    expect(harness.slots[0]?.driver.snapshot).not.toHaveBeenCalled()
+    expect(harness.slots[1]?.driver.snapshot).toHaveBeenCalledOnce()
+    await harness.service.closeTab('conversation', sibling.tabId, 11)
+    expect(harness.service.getTabCount('conversation')).toBe(1)
+    expect(harness.slots[1]?.session.dispose).toHaveBeenCalledOnce()
+    expect(harness.slots[0]?.session.dispose).not.toHaveBeenCalled()
+    expect(harness.service.listTabs('conversation', 11)[0]?.tabId).toBe(
+      primary?.tabId
+    )
+    await harness.service.dispose()
+  })
+
+  it('blocks closing a leased tab until every request releases it', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    const primary = await harness.service.createTab('conversation', 11, signal)
+    const sibling = await harness.service.createTab('conversation', 11, signal)
+    const first = harness.service.acquireTabUsage(
+      'conversation',
+      primary.tabId,
+      'request-one',
+      11
+    )
+    const second = harness.service.acquireTabUsage(
+      'conversation',
+      primary.tabId,
+      'request-two',
+      11
+    )
+
+    await expect(
+      harness.service.closeTab('conversation', primary.tabId, 11)
+    ).rejects.toThrow('浏览器标签页正在被活动请求使用，无法关闭')
+    await expect(
+      harness.service.closeTab('conversation', sibling.tabId, 11)
+    ).resolves.toBeUndefined()
+    first.release()
+    first.release()
+    await expect(
+      harness.service.closeTab('conversation', primary.tabId, 11)
+    ).rejects.toThrow('浏览器标签页正在被活动请求使用，无法关闭')
+    second.release()
+    await expect(
+      harness.service.closeTab('conversation', primary.tabId, 11)
+    ).resolves.toBeUndefined()
+    await harness.service.dispose()
+  })
+
+  it('reports only the visible tab owned by the requesting window', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    const primary = await harness.service.createTab('conversation', 21, signal)
+    const sibling = await harness.service.createTab('conversation', 21, signal)
+
+    expect(harness.service.getVisibleTabId('conversation', 21)).toBeUndefined()
+    harness.service.setViewport(
+      'conversation',
+      { x: 0, y: 0, width: 320, height: 480 },
+      sibling.tabId,
+      firstLeaseToken,
+      21
+    )
+    expect(harness.service.getVisibleTabId('conversation', 21)).toBe(
+      sibling.tabId
+    )
+    expect(primary.tabId).not.toBe(sibling.tabId)
+    expect(() => harness.service.getVisibleTabId('conversation', 22)).toThrow(
+      '不属于当前窗口'
+    )
+    await harness.service.dispose()
+  })
+
+  it('aborts active tab leases when a conversation is force-released', async () => {
+    const harness = createHarness()
+    const tab = await harness.service.createTab('conversation', 21)
+    const lease = harness.service.acquireTabUsage(
+      'conversation',
+      tab.tabId,
+      'request',
+      21
+    )
+
+    await harness.service.releaseConversation('conversation', 21)
+
+    expect(lease.signal.aborted).toBe(true)
+    expect(harness.service.getTabCount('conversation')).toBe(0)
+    lease.release()
+    await harness.service.dispose()
+  })
+
+  it('enforces conversation/window ownership, tab limits, and opaque viewport leases', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    const primary = await harness.service.createTab('conversation', 21, signal)
+    const sibling = await harness.service.createTab('conversation', 21, signal)
+    const bounds = { x: 10, y: 20, width: 300, height: 400 }
+
+    expect(
+      harness.service.setViewport(
+        'conversation',
+        bounds,
+        sibling.tabId,
+        firstLeaseToken,
+        21
+      )
+    ).toBe(true)
+    expect(harness.slots[1]?.session.setViewport).toHaveBeenLastCalledWith(
+      bounds
+    )
+    expect(
+      harness.service.setViewport(
+        undefined,
+        undefined,
+        undefined,
+        secondLeaseToken,
+        21
+      )
+    ).toBe(false)
+    expect(harness.slots[1]?.session.setViewport).toHaveBeenLastCalledWith(
+      bounds
+    )
+    await expect(
+      harness.service.navigate(
+        'conversation',
+        'https://example.com/',
+        signal,
+        primary.tabId,
+        22
+      )
+    ).rejects.toThrow('不属于当前窗口')
+    await harness.service.dispose()
+
+    const conversationLimited = createHarness({
+      maximumTabsPerConversation: 2
+    })
+    await conversationLimited.service.createTab('limited', 31, signal)
+    await conversationLimited.service.createTab('limited', 31, signal)
+    await expect(
+      conversationLimited.service.createTab('limited', 31, signal)
+    ).rejects.toThrow('2 个上限')
+    await conversationLimited.service.dispose()
+
+    const windowLimited = createHarness({ maximumTabsPerWindow: 2 })
+    await windowLimited.service.createTab('first', 41, signal)
+    await windowLimited.service.createTab('second', 41, signal)
+    await expect(
+      windowLimited.service.createTab('third', 41, signal)
+    ).rejects.toThrow('2 个上限')
+    await windowLimited.service.dispose()
+  })
+
+  it('returns one live tab for concurrent requests from the same workbar instance', async () => {
+    const gate = deferred<void>()
+    const harness = createHarness({ sessionGate: gate.promise })
+    const signal = new AbortController().signal
+
+    const first = harness.service.createTab(
+      'conversation',
+      21,
+      signal,
+      workbarInstanceId
+    )
+    const duplicate = harness.service.createTab(
+      'conversation',
+      21,
+      signal,
+      workbarInstanceId
+    )
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
+    gate.resolve()
+
+    const [firstTab, duplicateTab] = await Promise.all([first, duplicate])
+    expect(duplicateTab.tabId).toBe(firstTab.tabId)
+    expect(harness.service.getTabCount('conversation')).toBe(1)
+    expect(harness.service.getOwnerWindowId('conversation')).toBe(21)
+    await harness.service.dispose()
+  })
+
+  it('disposes a tab creation that resolves after its context is closed', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    const primary = await harness.service.createTab('conversation', 21, signal)
+    const gate = deferred<void>()
+    const implementation = harness.createSession.getMockImplementation()!
+    harness.createSession.mockImplementationOnce(async (...args) => {
+      await gate.promise
+      return implementation(...args)
+    })
+
+    const pending = harness.service.createTab(
+      'conversation',
+      21,
+      signal,
+      'c22e845b-4bc8-4246-9543-dd18dbf20782'
+    )
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledTimes(2))
+    await harness.service.closeTab('conversation', primary.tabId, 21)
+    gate.resolve()
+
+    await expect(pending).rejects.toThrow()
+    expect(harness.service.getSessionCount()).toBe(0)
+    expect(harness.slots[1]?.session.dispose).toHaveBeenCalledOnce()
+    await harness.service.dispose()
+  })
+
+  it('reserves window capacity while tab contexts are still being created', async () => {
+    const gate = deferred<void>()
+    const harness = createHarness({
+      maximumTabsPerWindow: 1,
+      sessionGate: gate.promise
+    })
+    const signal = new AbortController().signal
+    const first = harness.service.createTab('first', 51, signal)
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
+
+    await expect(
+      harness.service.createTab('second', 51, signal)
+    ).rejects.toThrow('1 个上限')
+    expect(harness.createSession).toHaveBeenCalledOnce()
+    gate.resolve()
+    await first
+    await harness.service.dispose()
+  })
+
   it('enforces a hard maximum of three sessions', async () => {
     const harness = createHarness({ maximumSessions: 3 })
     const signal = new AbortController().signal
@@ -622,6 +888,42 @@ describe('BrowserService', () => {
     await vi.waitFor(() => expect(harness.service.getSessionCount()).toBe(0))
     expect(harness.slots[0]?.driver.dispose).toHaveBeenCalledOnce()
     expect(harness.slots[0]?.session.dispose).toHaveBeenCalledOnce()
+    await harness.service.dispose()
+  })
+
+  it('does not expire a session while a serialized operation is active', async () => {
+    vi.useFakeTimers()
+    const harness = createHarness({ idleTimeoutMs: 100 })
+    const signal = new AbortController().signal
+    await harness.service.navigate('conversation', 'https://a.example/', signal)
+    const gate = deferred<void>()
+    vi.mocked(harness.slots[0]!.driver.click).mockImplementationOnce(async () => gate.promise)
+
+    const click = harness.service.click('conversation', 'button_ref', signal)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(harness.service.getSessionCount()).toBe(1)
+    gate.resolve()
+    await click
+    await vi.advanceTimersByTimeAsync(101)
+    expect(harness.service.getSessionCount()).toBe(0)
+    await harness.service.dispose()
+  })
+
+  it('ignores stale viewport cleanup tokens', async () => {
+    const harness = createHarness()
+    const tab = await harness.service.createTab('conversation', 21)
+    const bounds = { x: 1, y: 2, width: 300, height: 400 }
+    harness.service.setViewport('conversation', bounds, tab.tabId, firstLeaseToken, 21)
+    harness.service.setViewport('conversation', bounds, tab.tabId, secondLeaseToken, 21)
+
+    expect(
+      harness.service.setViewport(undefined, undefined, undefined, firstLeaseToken, 21)
+    ).toBe(false)
+    expect(harness.slots[0]?.session.setViewport).toHaveBeenLastCalledWith(bounds)
+    expect(
+      harness.service.setViewport(undefined, undefined, undefined, secondLeaseToken, 21)
+    ).toBe(true)
+    expect(harness.slots[0]?.session.setViewport).toHaveBeenLastCalledWith(undefined)
     await harness.service.dispose()
   })
 
@@ -905,10 +1207,19 @@ describe('BrowserService', () => {
       'https://example.com/',
       new AbortController().signal
     )
+    const [tab] = harness.service.listTabs('conversation')
+    harness.service.setViewport(
+      'conversation',
+      { x: 1, y: 2, width: 300, height: 400 },
+      tab!.tabId,
+      firstLeaseToken
+    )
     await expect(
       harness.service.releaseConversation('conversation')
     ).rejects.toThrow('清理超时')
     expect(harness.service.getSessionCount()).toBe(0)
+    expect(harness.service.listTabs('conversation')).toEqual([])
+    expect(harness.slots[0]?.session.setViewport).toHaveBeenLastCalledWith(undefined)
     await harness.service.releaseConversation('conversation')
     await harness.service.dispose()
     await harness.service.dispose()

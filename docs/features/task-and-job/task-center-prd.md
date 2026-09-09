@@ -4,19 +4,23 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | Scheduled Task 首期已实现；Goal/Event Task 与完整操作待实施 |
-| 版本 | 0.3 |
-| 日期 | 2026-08-19 |
+| 状态 | Scheduled Task 与项目范围跟随已实现；Goal/Event Task 与完整操作待实施 |
+| 版本 | 0.4 |
+| 日期 | 2026-09-10 |
 | 依赖 | [Task 与 Job 统一领域模型](./task-and-job-model.md) |
 | 界面归属 | [通用助手工作栏与执行空间](../assistant-workbar/prd.md) |
 
 ## 1. 产品定义
 
-Task Center 是所有产品级 Task 的应用级单例索引，不是 Automation Center，也不复制
-Conversation 内容。点击条目打开其关联 Conversation，并定位或展开对应 Task。
+Task Center 是工作栏中的单实例 Task 索引，默认跟随当前项目。它不是 Automation Center，
+也不复制 Conversation 内容。点击条目打开其关联 Conversation，并定位或展开对应 Task。
 
 每个 Task 只关联一条 Conversation；一条 Conversation 可以关联零个、一个或多个 Task。
 Conversation 不因为关联 Task 而改变对象类型。
+
+“单实例”和“项目范围”是两个独立属性：应用内只有一个 Task Center Tab，但该 Tab 默认展示
+当前项目的 Task。用户可以在同一 Tab 内切换到“全局任务”或“全部项目”，不能为每个项目创建
+独立 Task Center 实例。
 
 ## 2. 收录边界
 
@@ -53,7 +57,19 @@ Job/Subjob/Run 树、独立详情或路由。
 
 Task 行只显示聚合后的用户状态，不要求用户理解内部 Job/Run。
 
-## 4. 交互
+## 4. 范围
+
+范围控件提供：
+
+- `当前项目`：默认值，跟随活动项目变化，只显示 `projectId` 匹配的 Task。
+- `全局任务`：只显示没有 `projectId` 的 Task。
+- `全部项目`：显示当前用户可见的项目 Task 和全局 Task，并保留每行的项目或 Global 标识。
+
+没有活动项目时，“当前项目”显示明确空状态，并允许切换到“全局任务”或“全部项目”；系统不
+自动改变用户已经选择的范围。范围模式作为工作栏公开偏好持久化，但“当前项目”模式不保存
+具体项目 ID；重启后继续跟随届时的活动项目。
+
+## 5. 交互
 
 - 点击条目打开关联 Conversation，并定位到该 Task。
 - 支持按需要关注、进行中、已暂停、已结束筛选。
@@ -63,7 +79,7 @@ Task 行只显示聚合后的用户状态，不要求用户理解内部 Job/Run�
 - 完整消息留在 Conversation；工具、审批和错误可以在活动或 Runtime 中按 Task 查看；
   独立交付物在成果中查看。
 
-## 5. 左侧 Conversation Task 列表
+## 6. 左侧 Conversation Task 列表
 
 左侧最近会话列表承担轻量 Task 发现，不替代 Task Center：
 
@@ -88,7 +104,7 @@ Task 行只显示聚合后的用户状态，不要求用户理解内部 Job/Run�
 - 后台状态变化不强制展开；Task 状态持续显示在展开后的子项和 Task Center 中。
 - 默认最多显示 3 个 Task；“查看全部 N 个任务”打开该 Conversation 的完整任务区。
 
-## 6. Conversation 任务区
+## 7. Conversation 任务区
 
 包含 Task 的 Conversation 顶部显示可折叠任务区：
 
@@ -100,14 +116,14 @@ Task 行只显示聚合后的用户状态，不要求用户理解内部 Job/Run�
 选择 Task 后显示名称、模式、聚合状态、计划、下次执行、最近结果和 Task 级操作。工具、审批、
 错误和成果通过 Task 关联显示，但不暴露 Job/Run 层级。
 
-## 7. 删除关系
+## 8. 删除关系
 
 - 删除 Schedule 只停止后续触发，不删除 Task、Conversation 或历史。
 - 删除 Task 停止其计划并移除关联，默认保留 Conversation 和既有消息。
 - 删除最后一个 Task 后，左侧 Conversation 的展开按钮消失。
 - 删除 Conversation 前必须显示关联 Task 数量，并先停止或结算活动执行。
 
-## 8. 验收标准
+## 9. 验收标准
 
 - [x] Task Center 只展示产品级 Task。
 - [x] 一条 Conversation 可以关联并展开多个 Task。
@@ -118,3 +134,6 @@ Task 行只显示聚合后的用户状态，不要求用户理解内部 Job/Run�
 - [x] 普通模型请求和工具调用不会误显示为 Task。
 - [ ] 删除 Task 默认保留 Conversation 和既有消息。
 - [x] Smart Heartbeat 不进入 Task Center。
+- [x] Task Center 默认只显示当前项目的 Task，切换项目后在同一 Tab 更新列表。
+- [x] “全局任务”只显示无项目 Task，“全部项目”显示所有可见 Task 并标注所属范围。
+- [x] 范围切换不创建第二个 Task Center Tab；任务中心保持默认存在且不可关闭。

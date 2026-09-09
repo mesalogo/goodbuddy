@@ -302,6 +302,13 @@ export const workspace = {
       startedAt: '{{time}} 开始',
       nextRunAt: '下次运行：{{time}}',
       notStarted: '尚未运行',
+      scope: {
+        ariaLabel: '任务范围',
+        currentProject: '当前项目',
+        global: '全局',
+        allProjects: '所有项目',
+        noCurrentProject: '没有活动项目。请选择其他任务范围或先打开一个项目。'
+      },
       filters: {
         ariaLabel: '筛选任务',
         attention: '待关注',
@@ -355,6 +362,7 @@ export const workspace = {
     },
     browser: {
       title: '实时浏览器',
+      unbound: '未绑定会话',
       interact: '交互',
       interacting: '交互中',
       close: '关闭浏览器',
@@ -397,6 +405,8 @@ export const workspace = {
       backBrowser: '返回上一页失败',
       reloadBrowser: '刷新网页失败',
       stopLoadingBrowser: '停止加载失败',
+      closeBrowser: '关闭此浏览器 Tab 失败',
+      browserControlUnavailable: '浏览器 Tab 控制不可用',
       interactBrowser: '打开浏览器交互窗口失败',
       stopBrowser: '关闭浏览器失败'
     }

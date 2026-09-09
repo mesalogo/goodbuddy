@@ -22,6 +22,7 @@ import {
   KnowledgeMcpGateway,
   type MagicNotesDatabase
 } from './knowledge-mcp-gateway'
+import { browserTabIdSchema } from '../../shared/contracts'
 
 const firstLibraryId = '11111111-1111-4111-8111-111111111111'
 const secondLibraryId = '22222222-2222-4222-8222-222222222222'
@@ -185,6 +186,28 @@ function testTool(name: string): Tool {
 }
 
 const gateways: KnowledgeMcpGateway[] = []
+
+it('honors a requested knowledge result count above eight', async () => {
+  const { service, searchHybridMany } = createService()
+  const [sample] = await searchHybridMany([firstLibraryId])
+  searchHybridMany.mockClear()
+  searchHybridMany.mockResolvedValue(Array.from({ length: 12 }, (_, index) => ({
+    ...sample!,
+    result: {
+      ...sample!.result,
+      chunk: { ...sample!.result.chunk, id: crypto.randomUUID() },
+      rank: index + 1
+    }
+  })))
+  const gateway = new KnowledgeMcpGateway(service)
+  gateways.push(gateway)
+  const controller = new AbortController()
+  const token = gateway.grant('large-search', [firstLibraryId], controller.signal)!
+  const references = await gateway.search(token, { query: 'evidence', limit: 12 })
+  expect(references).toHaveLength(12)
+  expect(searchHybridMany).toHaveBeenCalledWith([firstLibraryId], 'evidence', 12, controller.signal)
+  await expect(gateway.search(token, { query: 'evidence', limit: 101 })).rejects.toThrow()
+})
 const databases: AssistantDatabase[] = []
 const temporaryDirectories: string[] = []
 const httpServers: Server[] = []
@@ -210,6 +233,22 @@ afterEach(async () => {
 describe('KnowledgeMcpGateway', () => {
   it('exposes the assigned browser through a request-scoped conversation', async () => {
     const { service } = createService()
+    const browserTabId = browserTabIdSchema.parse(
+      '00000000-0000-4000-8000-000000000301'
+    )
+    const primaryBrowserTabId = browserTabIdSchema.parse(
+      '00000000-0000-4000-8000-000000000302'
+    )
+    const releaseBrowserUsage = vi.fn()
+    const acquireTabUsage = vi.fn(
+      (conversationId: string, tabId: typeof browserTabId, owner: string) => ({
+        conversationId,
+        tabId,
+        owner,
+        signal: new AbortController().signal,
+        release: releaseBrowserUsage
+      })
+    )
     const browserService = {
       getOrigin: vi.fn(() => undefined),
       navigate: vi.fn(async () => ({
@@ -222,21 +261,63 @@ describe('KnowledgeMcpGateway', () => {
       select: vi.fn(),
       back: vi.fn(),
       screenshot: vi.fn(),
-      releaseConversation: vi.fn(async () => undefined)
+      releaseConversation: vi.fn(async () => undefined),
+      acquireTabUsage,
+      listTabs: vi.fn(() => [
+        {
+          conversationId: 'browser-conversation',
+          tabId: primaryBrowserTabId,
+          primary: true,
+          status: 'ready' as const,
+          isLoading: false,
+          canGoBack: false,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          conversationId: 'browser-conversation',
+          tabId: browserTabId,
+          primary: false,
+          status: 'ready' as const,
+          isLoading: false,
+          canGoBack: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ])
     }
     const gateway = new KnowledgeMcpGateway(service, {
       browserService
     })
     gateways.push(gateway)
     await gateway.start()
+    expect(() =>
+      gateway.grant(
+        'wrong-browser-tab',
+        [],
+        new AbortController().signal,
+        'none',
+        undefined,
+        'browser-conversation',
+        browserTabIdSchema.parse(
+          '00000000-0000-4000-8000-000000000399'
+        )
+      )
+    ).toThrow('浏览器标签页不存在或不属于当前对话')
     const token = gateway.grant(
       'browser-request',
       [],
       new AbortController().signal,
       'none',
       undefined,
-      'browser-conversation'
+      'browser-conversation',
+      browserTabId
     )!
+    expect(acquireTabUsage).toHaveBeenCalledWith(
+      'browser-conversation',
+      browserTabId,
+      'browser-request'
+    )
     expect(gateway.getAvailableToolNames(token)).toEqual(browserToolNames)
     const client = new Client({
       name: 'browser-loopback-test',
@@ -276,8 +357,32 @@ describe('KnowledgeMcpGateway', () => {
       expect(browserService.navigate).toHaveBeenCalledWith(
         'browser-conversation',
         'https://example.com',
-        expect.any(AbortSignal)
+        expect.any(AbortSignal),
+        browserTabId
       )
+      expect(browserService.listTabs).toHaveBeenCalledTimes(2)
+      vi.mocked(browserService.click).mockRejectedValueOnce(
+        new Error('浏览器标签页不存在或不属于当前对话')
+      )
+      await expect(
+        client.callTool({
+          name: 'browser_click',
+          arguments: { ref: 'b_boundTabReference' }
+        })
+      ).resolves.toMatchObject({ isError: true })
+      expect(browserService.click).toHaveBeenCalledWith(
+        'browser-conversation',
+        'b_boundTabReference',
+        expect.any(AbortSignal),
+        browserTabId
+      )
+      expect(browserService.listTabs).toHaveBeenCalledTimes(2)
+      gateway.revoke(token)
+      gateway.revoke(token)
+      expect(releaseBrowserUsage).toHaveBeenCalledOnce()
+      await expect(
+        client.callTool({ name: 'browser_snapshot', arguments: {} })
+      ).rejects.toThrow()
     } finally {
       await client.close()
     }

@@ -47,16 +47,40 @@ describe('sandboxed preload', () => {
         /browser: \{(?<body>[\s\S]*?)\r?\n {2}\},\r?\n {2}terminal:/u
       )?.groups?.body ?? ''
     for (const method of [
+      'createTab:',
+      'listTabs:',
+      'closeTab:',
       'navigate:',
       'back:',
       'reload:',
       'stopLoading:',
-      'interact:',
+      'snapshot:',
+      'click:',
+      'type:',
+      'select:',
+      'screenshot:',
+      'setViewport:',
       'stop:',
       'onState:'
     ]) {
       expect(browser).toContain(method)
     }
+    for (const channel of [
+      'browserCreateTab',
+      'browserListTabs',
+      'browserCloseTab',
+      'browserSnapshot',
+      'browserClick',
+      'browserType',
+      'browserSelect',
+      'browserScreenshot',
+      'browserSetViewport'
+    ]) {
+      expect(browser).toContain(`ipcChannels.${channel}`)
+    }
+    expect(browser).toContain('requestOrConversation: BrowserNavigateRequest')
+    expect(browser).toContain('setViewport: async (request: BrowserSetViewportRequest)')
+    expect(browser).not.toContain('leaseId')
     expect(browser).not.toMatch(
       /\b(?:webContents|debugger|session|partition|cookie)\b/iu
     )

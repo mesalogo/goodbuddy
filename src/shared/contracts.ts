@@ -30,8 +30,6 @@ import {
   actorConversationSubagentActivitySchema,
   legacyConversationSubagentActivitySchema,
   legacyWorkModeSchema,
-  maximumConversationHistoryCharacters,
-  maximumConversationHistoryMessages,
   type AssistantProject,
   type AssistantArtifact,
   type AssistantMemory,
@@ -346,11 +344,9 @@ export const agentRequestSchema = z
     contextIds: z.array(z.string().uuid()).max(8).optional(),
     history: z
       .array(conversationHistoryMessageSchema)
-      .max(maximumConversationHistoryMessages)
       .optional(),
     historyMessageIds: z
       .array(z.string().uuid())
-      .max(maximumConversationHistoryMessages)
       .optional(),
     currentUserMessageId: z.string().uuid().optional(),
     currentAssistantMessageId: z.string().uuid().optional(),
@@ -359,18 +355,6 @@ export const agentRequestSchema = z
   })
   .strict()
   .superRefine((request, context) => {
-    const historyLength =
-      request.history?.reduce(
-        (total, message) => total + message.content.length,
-        0
-      ) ?? 0
-    if (historyLength > maximumConversationHistoryCharacters) {
-      context.addIssue({
-        code: 'custom',
-        path: ['history'],
-        message: `会话历史总长度不能超过 ${maximumConversationHistoryCharacters.toLocaleString()} 个字符`
-      })
-    }
     if (
       request.historyMessageIds &&
       request.historyMessageIds.length !==
@@ -683,6 +667,7 @@ const embeddingConnectionInputSchema = z.discriminatedUnion('kind', [
 ])
 
 export const runtimeModelSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('default') }).strict(),
   z.object({ kind: z.literal('platform') }).strict(),
   z
     .object({
@@ -1373,18 +1358,28 @@ export type AppInfo = {
   shortcutStatus?: GlobalShortcutRegistrationStatus
 }
 
+export const browserTabIdSchema = z.string().uuid().brand<'BrowserTabId'>()
+export type BrowserTabId = z.infer<typeof browserTabIdSchema>
+
+export const browserWorkbarInstanceIdSchema = z.string().uuid()
+export const browserViewportLeaseTokenSchema = z.string().uuid()
+
+const browserStatusSchema = z.enum([
+  'creating',
+  'loading',
+  'ready',
+  'acting',
+  'interactive',
+  'failed',
+  'stopped'
+])
+
 export const browserLiveStateSchema = z
   .object({
     conversationId: conversationIdSchema,
-    status: z.enum([
-      'creating',
-      'loading',
-      'ready',
-      'acting',
-      'interactive',
-      'failed',
-      'stopped'
-    ]),
+    tabId: browserTabIdSchema,
+    ownerWindowId: z.number().int().nonnegative().optional(),
+    status: browserStatusSchema,
     sessionActive: z.boolean(),
     isLoading: z.boolean(),
     canGoBack: z.boolean(),
@@ -1404,19 +1399,73 @@ export const browserLiveStateSchema = z
 
 export type BrowserLiveState = z.infer<typeof browserLiveStateSchema>
 
+export const browserTabSummarySchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    tabId: browserTabIdSchema,
+    primary: z.boolean(),
+    status: browserStatusSchema.exclude(['stopped']),
+    isLoading: z.boolean(),
+    canGoBack: z.boolean(),
+    url: z.string().max(8_192).optional(),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative()
+  })
+  .strict()
+
+export type BrowserTabSummary = z.infer<typeof browserTabSummarySchema>
+
+export const browserCreateTabRequestSchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    workbarInstanceId: browserWorkbarInstanceIdSchema
+  })
+  .strict()
+export type BrowserCreateTabRequest = z.infer<typeof browserCreateTabRequestSchema>
+
+export const browserListTabsRequestSchema = z
+  .object({ conversationId: conversationIdSchema })
+  .strict()
+export type BrowserListTabsRequest = z.infer<typeof browserListTabsRequestSchema>
+
+export const browserTabRequestSchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    tabId: browserTabIdSchema
+  })
+  .strict()
+export type BrowserTabRequest = z.infer<typeof browserTabRequestSchema>
+
+export const browserCloseTabRequestSchema = browserTabRequestSchema
+export type BrowserCloseTabRequest = BrowserTabRequest
+
 export const browserStopRequestSchema = z
   .object({
     conversationId: conversationIdSchema
   })
   .strict()
 
-export const browserBackRequestSchema = browserStopRequestSchema
-export const browserReloadRequestSchema = browserStopRequestSchema
-export const browserStopLoadingRequestSchema = browserStopRequestSchema
+const browserCompatibleTabRequestSchema = z
+  .object({
+    conversationId: conversationIdSchema,
+    tabId: browserTabIdSchema.optional()
+  })
+  .strict()
+
+export const browserBackTabRequestSchema = browserCompatibleTabRequestSchema
+export const browserReloadTabRequestSchema = browserCompatibleTabRequestSchema
+export const browserStopLoadingTabRequestSchema = browserCompatibleTabRequestSchema
+export const browserBackRequestSchema = browserBackTabRequestSchema
+export const browserReloadRequestSchema = browserReloadTabRequestSchema
+export const browserStopLoadingRequestSchema = browserStopLoadingTabRequestSchema
+export const browserSnapshotRequestSchema = browserCompatibleTabRequestSchema
+export const browserScreenshotRequestSchema = browserCompatibleTabRequestSchema
 
 export const browserSetViewportRequestSchema = z
   .object({
     conversationId: conversationIdSchema.optional(),
+    tabId: browserTabIdSchema.optional(),
+    leaseToken: browserViewportLeaseTokenSchema,
     bounds: z
       .object({
         x: z.number().int().nonnegative(),
@@ -1429,7 +1478,9 @@ export const browserSetViewportRequestSchema = z
   })
   .strict()
   .refine(
-    (value) => Boolean(value.conversationId) === Boolean(value.bounds),
+    (value) =>
+      (!value.conversationId && !value.tabId && !value.bounds) ||
+      Boolean(value.conversationId && value.bounds),
     '浏览器视口参数不完整'
   )
 
@@ -1440,9 +1491,89 @@ export type BrowserViewportBounds = NonNullable<
 export const browserNavigateRequestSchema = z
   .object({
     conversationId: conversationIdSchema,
+    tabId: browserTabIdSchema.optional(),
     url: z.string().min(1).max(8_192)
   })
   .strict()
+
+export type BrowserNavigateRequest = Omit<
+  z.infer<typeof browserNavigateRequestSchema>,
+  'tabId'
+> & { tabId: BrowserTabId }
+
+export const browserClickRequestSchema = browserCompatibleTabRequestSchema
+  .extend({ ref: z.string().min(1).max(256) })
+  .strict()
+export const browserTypeRequestSchema = browserCompatibleTabRequestSchema
+  .extend({
+    ref: z.string().min(1).max(256),
+    text: z.string().max(16_384)
+  })
+  .strict()
+export const browserSelectRequestSchema = browserCompatibleTabRequestSchema
+  .extend({
+    ref: z.string().min(1).max(256),
+    value: z.string().max(1_024)
+  })
+  .strict()
+
+type BrowserOwnedRequest<T extends { tabId?: BrowserTabId }> = Omit<T, 'tabId'> & {
+  tabId: BrowserTabId
+}
+
+export type BrowserBackRequest = BrowserOwnedRequest<
+  z.infer<typeof browserBackTabRequestSchema>
+>
+export type BrowserReloadRequest = BrowserOwnedRequest<
+  z.infer<typeof browserReloadTabRequestSchema>
+>
+export type BrowserStopLoadingRequest = BrowserOwnedRequest<
+  z.infer<typeof browserStopLoadingTabRequestSchema>
+>
+export type BrowserSnapshotRequest = BrowserOwnedRequest<
+  z.infer<typeof browserSnapshotRequestSchema>
+>
+export type BrowserScreenshotRequest = BrowserOwnedRequest<
+  z.infer<typeof browserScreenshotRequestSchema>
+>
+export type BrowserClickRequest = BrowserOwnedRequest<
+  z.infer<typeof browserClickRequestSchema>
+>
+export type BrowserTypeRequest = BrowserOwnedRequest<
+  z.infer<typeof browserTypeRequestSchema>
+>
+export type BrowserSelectRequest = BrowserOwnedRequest<
+  z.infer<typeof browserSelectRequestSchema>
+>
+export type BrowserSetViewportRequest =
+  | {
+      conversationId: string
+      tabId: BrowserTabId
+      bounds: BrowserViewportBounds
+      leaseToken: string
+    }
+  | { leaseToken: string }
+
+export type BrowserSnapshotResult = {
+  url: string
+  title: string
+  nodes: Array<{
+    ref: string
+    role: string
+    name: string
+    value?: string
+    disabled?: boolean
+    focused?: boolean
+    editable?: boolean
+  }>
+  truncated: boolean
+}
+
+export type BrowserScreenshotResult = {
+  type: 'image'
+  mimeType: 'image/jpeg'
+  data: string
+}
 
 export const knowledgeIdSchema = z.string().uuid()
 export const knowledgeCreateSchema = z
@@ -1637,14 +1768,31 @@ export type DesktopApi = {
     onEvent: (listener: (event: AgentEvent) => void) => () => void
   }
   browser: {
-    navigate: (conversationId: string, url: string) => Promise<void>
-    back: (conversationId: string) => Promise<void>
-    reload: (conversationId: string) => Promise<void>
-    stopLoading: (conversationId: string) => Promise<void>
-    setViewport: (
-      conversationId?: string,
-      bounds?: BrowserViewportBounds
-    ) => Promise<void>
+    createTab?: (request: BrowserCreateTabRequest) => Promise<BrowserTabSummary>
+    listTabs?: (request: BrowserListTabsRequest) => Promise<BrowserTabSummary[]>
+    closeTab?: (request: BrowserCloseTabRequest) => Promise<void>
+    navigate: {
+      (request: BrowserNavigateRequest): Promise<void>
+      (conversationId: string, url: string): Promise<void>
+    }
+    back: {
+      (request: BrowserBackRequest): Promise<void>
+      (conversationId: string): Promise<void>
+    }
+    reload: {
+      (request: BrowserReloadRequest): Promise<void>
+      (conversationId: string): Promise<void>
+    }
+    stopLoading: {
+      (request: BrowserStopLoadingRequest): Promise<void>
+      (conversationId: string): Promise<void>
+    }
+    snapshot?: (request: BrowserSnapshotRequest) => Promise<BrowserSnapshotResult>
+    click?: (request: BrowserClickRequest) => Promise<void>
+    type?: (request: BrowserTypeRequest) => Promise<void>
+    select?: (request: BrowserSelectRequest) => Promise<void>
+    screenshot?: (request: BrowserScreenshotRequest) => Promise<BrowserScreenshotResult>
+    setViewport: (request: BrowserSetViewportRequest) => Promise<void>
     stop: (conversationId: string) => Promise<void>
     onState: (listener: (state: BrowserLiveState) => void) => () => void
   }

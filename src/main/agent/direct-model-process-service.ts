@@ -15,15 +15,17 @@ import {
   type WaitableProcessTreeChild
 } from './child-process-termination'
 import { buildCredentialFilteredUserEnvironment } from './process-environment'
+import {
+  PagedOutputStore,
+  type PagedOutputPage,
+  type PagedOutputReference,
+  type PagedOutputWriter
+} from './paged-output-store'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAXIMUM_TIMEOUT_MS = 10 * 60_000
 const MAXIMUM_OUTPUT_BYTES = 96 * 1024
-const RETAINED_OUTPUT_EDGE_BYTES = MAXIMUM_OUTPUT_BYTES / 2
 const TERMINATION_WAIT_MS = 2_000
-
-export const DIRECT_MODEL_PROCESS_TRUNCATION_MARKER =
-  '\n...[GoodBuddy output truncated]...\n'
 
 export const processExecuteInputSchema = z
   .object({
@@ -70,6 +72,8 @@ export type ProcessExecuteResult = {
   stderr: string
   stdoutTruncated: boolean
   stderrTruncated: boolean
+  stdoutReference?: PagedOutputReference
+  stderrReference?: PagedOutputReference
 }
 
 export type DirectModelProcessCapability =
@@ -94,6 +98,7 @@ export interface DirectModelProcessService {
     input: ProcessExecuteInput,
     context: DirectModelProcessExecutionContext
   ): Promise<ProcessExecuteResult>
+  readOutput(ownerId: string, handle: string, cursor?: number, limitBytes?: number): Promise<PagedOutputPage>
   releaseConversation(conversationId: string): Promise<void>
   dispose(): Promise<void>
 }
@@ -271,67 +276,6 @@ async function resolveProcessShell(
   return undefined
 }
 
-class BoundedProcessOutput {
-  private prefix = Buffer.alloc(0)
-  private suffix = Buffer.alloc(0)
-  private totalBytes = 0
-
-  append(chunk: Buffer | string): void {
-    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    this.totalBytes += value.byteLength
-
-    if (this.prefix.byteLength < RETAINED_OUTPUT_EDGE_BYTES) {
-      const remaining =
-        RETAINED_OUTPUT_EDGE_BYTES - this.prefix.byteLength
-      this.prefix = Buffer.concat([
-        this.prefix,
-        value.subarray(0, remaining)
-      ])
-    }
-
-    if (value.byteLength >= RETAINED_OUTPUT_EDGE_BYTES) {
-      this.suffix = Buffer.from(
-        value.subarray(value.byteLength - RETAINED_OUTPUT_EDGE_BYTES)
-      )
-      return
-    }
-    const combined = Buffer.concat([this.suffix, value])
-    this.suffix =
-      combined.byteLength <= RETAINED_OUTPUT_EDGE_BYTES
-        ? combined
-        : Buffer.from(
-            combined.subarray(
-              combined.byteLength - RETAINED_OUTPUT_EDGE_BYTES
-            )
-          )
-  }
-
-  result(): { text: string; truncated: boolean } {
-    if (this.totalBytes > MAXIMUM_OUTPUT_BYTES) {
-      return {
-        text: Buffer.concat([
-          this.prefix,
-          Buffer.from(DIRECT_MODEL_PROCESS_TRUNCATION_MARKER),
-          this.suffix
-        ]).toString('utf8'),
-        truncated: true
-      }
-    }
-    const overlap = Math.max(
-      0,
-      this.prefix.byteLength +
-        this.suffix.byteLength -
-        this.totalBytes
-    )
-    return {
-      text: Buffer.concat([
-        this.prefix,
-        this.suffix.subarray(overlap)
-      ]).toString('utf8'),
-      truncated: false
-    }
-  }
-}
 function shellArguments(
   shell: ResolvedProcessShell,
   command: string
@@ -399,6 +343,7 @@ export class LocalDirectModelProcessService
   implements DirectModelProcessService
 {
   private readonly activeCalls = new Map<string, Set<ActiveCall>>()
+  private readonly outputs = new PagedOutputStore('process')
   private readonly shell: Promise<ResolvedProcessShell | undefined>
   private disposed = false
   private disposePromise?: Promise<void>
@@ -496,31 +441,46 @@ export class LocalDirectModelProcessService
       platform
     )
     const startedAt = (this.options.now ?? Date.now)()
-    let child: DirectModelProcessChild
-    try {
-      child = (
-        this.options.spawnProcess ??
-        (spawn as unknown as DirectModelProcessSpawn)
-      )(shell.executable, shellArguments(shell, input.command), {
-        cwd: workingDirectory.canonicalPath,
-        detached: platform !== 'win32',
-        env: environment,
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true
-      })
-    } catch (error) {
-      throw new Error('无法启动命令 Shell', { cause: error })
-    }
-
-    return await this.waitForProcess(
-      child,
-      shell,
-      workingDirectory.displayPath,
-      input.timeoutMs,
-      signal,
-      startedAt
+    const stdout = await this.outputs.create(
+      context.conversationId, MAXIMUM_OUTPUT_BYTES
     )
+    let stderr: PagedOutputWriter | undefined
+    try {
+      stderr = await this.outputs.create(
+        context.conversationId, MAXIMUM_OUTPUT_BYTES
+      )
+      signal.throwIfAborted()
+      let child: DirectModelProcessChild
+      try {
+        child = (
+          this.options.spawnProcess ??
+          (spawn as unknown as DirectModelProcessSpawn)
+        )(shell.executable, shellArguments(shell, input.command), {
+          cwd: workingDirectory.canonicalPath,
+          detached: platform !== 'win32',
+          env: environment,
+          shell: false,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true
+        })
+      } catch (error) {
+        throw new Error('无法启动命令 Shell', { cause: error })
+      }
+
+      return await this.waitForProcess(
+        child,
+        shell,
+        workingDirectory.displayPath,
+        input.timeoutMs,
+        signal,
+        startedAt,
+        stdout,
+        stderr
+      )
+    } catch (error) {
+      await Promise.all([stdout.abort(), stderr?.abort()])
+      throw error
+    }
   }
 
   private waitForProcess(
@@ -529,10 +489,10 @@ export class LocalDirectModelProcessService
     cwd: string,
     timeoutMs: number,
     cancellationSignal: AbortSignal,
-    startedAt: number
+    startedAt: number,
+    stdout: PagedOutputWriter,
+    stderr: PagedOutputWriter
   ): Promise<ProcessExecuteResult> {
-    const stdout = new BoundedProcessOutput()
-    const stderr = new BoundedProcessOutput()
     child.stdout?.on('data', (chunk) => stdout.append(chunk))
     child.stderr?.on('data', (chunk) => stderr.append(chunk))
 
@@ -550,9 +510,9 @@ export class LocalDirectModelProcessService
         child.stdout?.removeListener?.('error', failFromOutput)
         child.stderr?.removeListener?.('error', failFromOutput)
       }
-      const result = (): ProcessExecuteResult => {
-        const stdoutResult = stdout.result()
-        const stderrResult = stderr.result()
+      const result = async (): Promise<ProcessExecuteResult> => {
+        const stdoutResult = await stdout.finish()
+        const stderrResult = await stderr.finish()
         return {
           shell: { kind: shell.kind, label: shell.label },
           cwd,
@@ -566,7 +526,9 @@ export class LocalDirectModelProcessService
           stdout: stdoutResult.text,
           stderr: stderrResult.text,
           stdoutTruncated: stdoutResult.truncated,
-          stderrTruncated: stderrResult.truncated
+          stderrTruncated: stderrResult.truncated,
+          ...(stdoutResult.reference ? { stdoutReference: stdoutResult.reference } : {}),
+          ...(stderrResult.reference ? { stderrReference: stderrResult.reference } : {})
         }
       }
       const finishResult = (): void => {
@@ -682,6 +644,11 @@ export class LocalDirectModelProcessService
       call.controller.abort(abortError('对话进程资源已释放'))
     }
     await Promise.all(calls.map((call) => call.done))
+    await this.outputs.releaseOwner(conversationId)
+  }
+
+  readOutput(ownerId: string, handle: string, cursor?: number, limitBytes?: number): Promise<PagedOutputPage> {
+    return this.outputs.read(ownerId, handle, cursor, limitBytes)
   }
 
   dispose(): Promise<void> {
@@ -698,5 +665,6 @@ export class LocalDirectModelProcessService
       call.controller.abort(abortError('进程执行服务已关闭'))
     }
     await Promise.all(calls.map((call) => call.done))
+    await this.outputs.dispose()
   }
 }

@@ -17,7 +17,7 @@ function harnessSettings(
 }
 
 describe('DeepSeek Harness runtime selection', () => {
-  it('uses the configured Chat Completions profile', () => {
+  it('references the Runtime configuration without copying its profile', () => {
     const selection = getRuntimeSelectionForProvider(
       'deepseek-harness',
       harnessSettings({
@@ -27,8 +27,7 @@ describe('DeepSeek Harness runtime selection', () => {
     )
 
     expect(selection).toEqual({
-      provider: 'deepseek-harness',
-      profileId: harnessProfileId
+      provider: 'deepseek-harness'
     } satisfies Record<string, string>)
   })
 

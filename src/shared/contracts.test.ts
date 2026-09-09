@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentRequestSchema,
+  browserCloseTabRequestSchema,
+  browserCreateTabRequestSchema,
   browserLiveStateSchema,
   browserNavigateRequestSchema,
+  browserSetViewportRequestSchema,
   browserStopLoadingRequestSchema,
   builtinEmbeddingConnectionId,
   clipboardTextSchema,
@@ -23,9 +26,14 @@ describe('clipboard text contract', () => {
 })
 
 describe('browser control contracts', () => {
+  const tabId = '4d7886c3-4c9c-4e84-bf65-1a4a841f5296'
+  const workbarInstanceId = '0387bd61-3a12-40ce-98d7-ef5d14cc8251'
+  const leaseToken = '7d201980-0ad4-4670-81d4-dc2bf79f03b2'
+
   it('requires authoritative toolbar metadata and accepts committed URLs up to 8192 characters', () => {
     const base = {
       conversationId: 'conversation',
+      tabId,
       status: 'ready' as const,
       sessionActive: true,
       isLoading: false,
@@ -51,10 +59,12 @@ describe('browser control contracts', () => {
     expect(
       browserNavigateRequestSchema.parse({
         conversationId: 'conversation',
+        tabId,
         url: 'https://example.com/'
       })
     ).toEqual({
       conversationId: 'conversation',
+      tabId,
       url: 'https://example.com/'
     })
     expect(
@@ -69,6 +79,48 @@ describe('browser control contracts', () => {
         conversationId: 'conversation'
       }).success
     ).toBe(true)
+  })
+
+  it('uses opaque tab IDs and validates complete viewport ownership leases', () => {
+    expect(
+      browserCreateTabRequestSchema.parse({
+        conversationId: 'conversation',
+        workbarInstanceId
+      })
+    ).toEqual({ conversationId: 'conversation', workbarInstanceId })
+    expect(
+      browserCloseTabRequestSchema.safeParse({
+        conversationId: 'conversation',
+        tabId
+      }).success
+    ).toBe(true)
+    expect(
+      browserCloseTabRequestSchema.safeParse({
+        conversationId: 'conversation',
+        tabId: 'predictable-tab-name'
+      }).success
+    ).toBe(false)
+    expect(
+      browserSetViewportRequestSchema.safeParse({
+        conversationId: 'conversation',
+        tabId,
+        leaseToken,
+        bounds: { x: 1, y: 2, width: 300, height: 400 }
+      }).success
+    ).toBe(true)
+    expect(
+      browserSetViewportRequestSchema.safeParse({ tabId, leaseToken }).success
+    ).toBe(false)
+    expect(
+      browserLiveStateSchema.safeParse({
+        conversationId: 'conversation',
+        status: 'ready',
+        sessionActive: true,
+        isLoading: false,
+        canGoBack: false,
+        updatedAt: 1
+      }).success
+    ).toBe(false)
   })
 })
 

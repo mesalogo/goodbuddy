@@ -61,7 +61,7 @@ export type WorkbarShellProps = {
   activeInstanceId: string | null
   renderPanel: (instance: WorkbarTabInstance) => ReactNode
   renderTabAdornment?: (instance: WorkbarTabInstance) => ReactNode
-  onActiveInstanceChange: (instanceId: string) => void
+  onActiveInstanceChange: (instanceId: string | null) => void
   onCreateInstance: (request: WorkbarInstanceCreateRequest) => void
   onCloseInstance: (
     instance: WorkbarTabInstance
@@ -289,6 +289,12 @@ export function WorkbarShell({
   const handleClose = async (
     instance: WorkbarTabInstance
   ): Promise<void> => {
+    const definition = appDefinitions.find(
+      (candidate) => candidate.id === instance.appId
+    )
+    if (definition?.closable !== true) {
+      return
+    }
     const closingIndex = instances.findIndex(
       (candidate) => candidate.id === instance.id
     )
@@ -299,19 +305,18 @@ export function WorkbarShell({
         null)
       : activeInstance
 
-    const closeResult = onCloseInstance(instance)
-    const closeAccepted =
-      closeResult &&
-      typeof (closeResult as PromiseLike<boolean | void>).then ===
-        'function'
-        ? await closeResult
-        : closeResult
+    let closeAccepted: boolean | void
+    try {
+      closeAccepted = await onCloseInstance(instance)
+    } catch {
+      return
+    }
     if (closeAccepted === false) {
       return
     }
     pendingTabFocusRef.current = nextActive?.id ?? null
-    if (nextActive && nextActive.id !== activeInstanceId) {
-      onActiveInstanceChange(nextActive.id)
+    if (isActive && nextActive?.id !== activeInstanceId) {
+      onActiveInstanceChange(nextActive?.id ?? null)
     }
   }
 
@@ -331,6 +336,10 @@ export function WorkbarShell({
               const selected =
                 !catalogOpen && instance.id === activeInstanceId
               const AppIcon = WORKBAR_APP_ICONS[instance.appId]
+              const closable =
+                appDefinitions.find(
+                  (definition) => definition.id === instance.appId
+                )?.closable === true
               return (
                 <div
                   className={joinClassNames(
@@ -376,19 +385,21 @@ export function WorkbarShell({
                     </span>
                     {renderTabAdornment?.(instance)}
                   </button>
-                  <button
-                    aria-label={t('sidebar.workbar.close', {
-                      title: instance.title
-                    })}
-                    className="workbar-shell__tab-close"
-                    onClick={() => void handleClose(instance)}
-                    title={t('sidebar.workbar.close', {
-                      title: instance.title
-                    })}
-                    type="button"
-                  >
-                    <X aria-hidden="true" />
-                  </button>
+                  {closable ? (
+                    <button
+                      aria-label={t('sidebar.workbar.close', {
+                        title: instance.title
+                      })}
+                      className="workbar-shell__tab-close"
+                      onClick={() => void handleClose(instance)}
+                      title={t('sidebar.workbar.close', {
+                        title: instance.title
+                      })}
+                      type="button"
+                    >
+                      <X aria-hidden="true" />
+                    </button>
+                  ) : null}
                 </div>
               )
             })}

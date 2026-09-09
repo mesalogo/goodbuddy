@@ -126,6 +126,30 @@ type Listener = {
   listener: BrowserEventListener
 }
 
+type SharedBrowserResources = {
+  partition: string
+  partitionSession: BrowserPartitionSession
+  proxy: FilteringProxyLike
+  createView: (options: Record<string, unknown>) => Promise<BrowserViewHandle>
+  setupTimeoutMs: number
+  cleanupTimeoutMs: number
+  references: number
+  cleanup?: Promise<void>
+}
+
+async function releaseSharedResources(
+  resources: SharedBrowserResources
+): Promise<void> {
+  resources.references -= 1
+  if (resources.references !== 0) return
+  resources.cleanup ??= cleanupIsolatedState(
+    resources.partitionSession,
+    resources.proxy,
+    resources.cleanupTimeoutMs
+  )
+  await resources.cleanup
+}
+
 function managedBrowserUserAgent(): string {
   const platform =
     process.platform === 'win32'
@@ -243,14 +267,12 @@ export class ElectronBrowserSession {
 
   private constructor(
     private readonly policy: BrowserUrlPolicy,
-    private readonly partitionSession: BrowserPartitionSession,
     private readonly view: BrowserViewHandle,
-    private readonly proxy: FilteringProxyLike,
-    partition: string,
-    private readonly cleanupTimeoutMs: number,
-    private readonly parentWindow?: BrowserParentWindowHandle
+    private readonly resources: SharedBrowserResources,
+    private readonly parentWindow?: BrowserParentWindowHandle,
+    private readonly listenForPartitionEvents = true
   ) {
-    this.partition = partition
+    this.partition = resources.partition
     this.webContents = view.webContents
   }
 
@@ -369,11 +391,16 @@ export class ElectronBrowserSession {
       )
       result = new ElectronBrowserSession(
         options.policy,
-        partitionSession,
         view,
-        managedProxy,
-        partition,
-        cleanupTimeoutMs,
+        {
+          partition,
+          partitionSession,
+          proxy: managedProxy,
+          createView,
+          setupTimeoutMs,
+          cleanupTimeoutMs,
+          references: 1
+        },
         options.parentWindow
       )
       setupStage = '初始化浏览器协议'
@@ -480,14 +507,16 @@ export class ElectronBrowserSession {
         this.emitNavigation(url)
       }
     })
-    this.listen(
-      this.partitionSession,
-      'will-download',
-      (event: { preventDefault(): void }, item: { cancel?(): void }) => {
-        event.preventDefault()
-        item.cancel?.()
-      }
-    )
+    if (this.listenForPartitionEvents) {
+      this.listen(
+        this.resources.partitionSession,
+        'will-download',
+        (event: { preventDefault(): void }, item: { cancel?(): void }) => {
+          event.preventDefault()
+          item.cancel?.()
+        }
+      )
+    }
     contents.debugger.attach('1.3')
     await contents.debugger.sendCommand('Page.enable')
     this.assertOpen()
@@ -625,6 +654,83 @@ export class ElectronBrowserSession {
     this.approvedOrigin = target.origin
   }
 
+  async createTab(signal: AbortSignal): Promise<ElectronBrowserSession> {
+    this.assertOpen()
+    const resources = this.resources
+    resources.references += 1
+    let view: BrowserViewHandle | undefined
+    let viewAttached = false
+    let tab: ElectronBrowserSession | undefined
+    try {
+      view = await boundedSetup(
+        resources.createView({
+          webPreferences: {
+            partition: resources.partition,
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+            nodeIntegrationInSubFrames: false,
+            nodeIntegrationInWorker: false,
+            backgroundThrottling: false,
+            webSecurity: true,
+            allowRunningInsecureContent: false,
+            plugins: false,
+            devTools: false,
+            safeDialogs: true
+          }
+        }),
+        signal,
+        resources.setupTimeoutMs,
+        (lateView) => {
+          if (!lateView.webContents.isDestroyed()) {
+            lateView.webContents.close?.({ waitForBeforeUnload: false })
+            if (!lateView.webContents.isDestroyed()) {
+              lateView.webContents.destroy()
+            }
+          }
+        }
+      )
+      if (this.parentWindow?.contentView && view.nativeView) {
+        this.parentWindow.contentView.addChildView(view.nativeView)
+        viewAttached = true
+      }
+      if (!view.webContents.loadURL) {
+        throw new Error('浏览器视图导航不可用')
+      }
+      await boundedSetup(
+        view.webContents.loadURL('about:blank'),
+        signal,
+        resources.setupTimeoutMs
+      )
+      tab = new ElectronBrowserSession(
+        this.policy,
+        view,
+        resources,
+        this.parentWindow
+      )
+      await boundedSetup(tab.initialize(), signal, resources.setupTimeoutMs)
+      return tab
+    } catch (error) {
+      if (tab) {
+        await tab.dispose().catch(() => undefined)
+      } else {
+        if (view) {
+          if (viewAttached && view.nativeView) {
+            this.parentWindow?.contentView?.removeChildView(view.nativeView)
+          }
+          if (!view.webContents.isDestroyed()) {
+            view.webContents.close?.({ waitForBeforeUnload: false })
+            if (!view.webContents.isDestroyed()) {
+              view.webContents.destroy()
+            }
+          }
+        }
+        await releaseSharedResources(resources).catch(() => undefined)
+      }
+      throw new Error('无法创建浏览器标签页', { cause: error })
+    }
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) {
       return
@@ -650,10 +756,6 @@ export class ElectronBrowserSession {
         this.webContents.destroy()
       }
     }
-    await cleanupIsolatedState(
-      this.partitionSession,
-      this.proxy,
-      this.cleanupTimeoutMs
-    )
+    await releaseSharedResources(this.resources)
   }
 }

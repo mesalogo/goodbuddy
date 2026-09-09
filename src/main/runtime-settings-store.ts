@@ -515,12 +515,10 @@ const defaultSettings: StoredSettings = {
   ],
   defaultModelProfileId,
   opencodeModelSource: {
-    kind: 'profile',
-    profileId: defaultModelProfileId
+    kind: 'default'
   },
   continueModelSource: {
-    kind: 'profile',
-    profileId: defaultModelProfileId
+    kind: 'default'
   },
   opencodeBaseUrl: defaultRuntimeSettings.opencodeBaseUrl,
   opencodeEmbedded: defaultRuntimeSettings.opencodeEmbedded,
@@ -820,7 +818,7 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
   const normalizeSource = (
     source: RuntimeSettings['opencodeModelSource']
   ): RuntimeSettings['opencodeModelSource'] => {
-    if (source.kind === 'platform') {
+    if (source.kind !== 'profile') {
       return source
     }
     const profile = modelProfiles.find(
@@ -839,6 +837,7 @@ function normalizeStoredSettings(settings: StoredSettings): StoredSettings {
     if (!source || source.kind === 'platform') {
       return { kind: 'platform' }
     }
+    if (source.kind === 'default') return source
     const profile = modelProfiles.find(
       (candidate) => candidate.id === source.profileId
     )
@@ -1431,6 +1430,9 @@ export class RuntimeSettingsStore {
     modelProfiles: readonly ResolvedModelProfile[]
   ): ResolvedModelProfile | undefined {
     const source = settings.deepseekHarnessModelSource
+    if (source.kind === 'default') {
+      return modelProfiles.find((profile) => profile.id === settings.defaultModelProfileId)
+    }
     if (source.kind === 'profile') {
       return modelProfiles.find(
         (profile) => profile.id === source.profileId
@@ -1936,12 +1938,14 @@ export class RuntimeSettingsStore {
     )
     const opencodeModelProfile =
       !agent.opencodeBaseUrl &&
-      settings.opencodeModelSource.kind === 'profile'
-        ? profilesById.get(settings.opencodeModelSource.profileId)
+      settings.opencodeModelSource.kind !== 'platform'
+        ? profilesById.get(settings.opencodeModelSource.kind === 'default'
+          ? settings.defaultModelProfileId : settings.opencodeModelSource.profileId)
         : undefined
     const continueModelProfile =
-      settings.continueModelSource.kind === 'profile'
-        ? profilesById.get(settings.continueModelSource.profileId)
+      settings.continueModelSource.kind !== 'platform'
+        ? profilesById.get(settings.continueModelSource.kind === 'default'
+          ? settings.defaultModelProfileId : settings.continueModelSource.profileId)
         : undefined
     const deepseekHarnessModelProfile =
       this.resolveDeepSeekHarnessModelProfile(settings, modelProfiles)
@@ -2362,7 +2366,7 @@ export class RuntimeSettingsStore {
       source: RuntimeSettings['opencodeModelSource'],
       runtimeLabel: 'OpenCode' | 'Continue'
     ): void => {
-      if (source.kind === 'platform') {
+      if (source.kind !== 'profile') {
         return
       }
       const profile = modelProfiles.find(
@@ -2386,7 +2390,7 @@ export class RuntimeSettingsStore {
     const repairRuntimeSource = (
       source: RuntimeSettings['opencodeModelSource']
     ): RuntimeSettings['opencodeModelSource'] => {
-      if (source.kind === 'platform') {
+      if (source.kind !== 'profile') {
         return source
       }
       const profile = modelProfiles.find(

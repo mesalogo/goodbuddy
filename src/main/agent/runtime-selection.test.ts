@@ -229,7 +229,7 @@ describe('runtime selection', () => {
       })
     ).toEqual({
       provider: 'opencode',
-      profileId: secondProfileId
+      profileId: defaultProfileId
     })
     expect(
       resolveConfiguredAgentRuntimeSelection(configured, {

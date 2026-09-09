@@ -38,7 +38,8 @@ export type WorkbarInstancePolicy = z.infer<
 
 export const workbarDefaultContextSchema = z.enum([
   'application',
-  'current-project'
+  'current-project',
+  'current-conversation'
 ])
 export type WorkbarDefaultContext = z.infer<
   typeof workbarDefaultContextSchema
@@ -78,7 +79,11 @@ export const workbarAppDefinitionSchema = z
     ),
     instancePolicy: workbarInstancePolicySchema,
     defaultContext: workbarDefaultContextSchema,
+    visibleAcrossContextSwitches: z.boolean(),
     defaultOpen: z.boolean(),
+    required: z.boolean(),
+    closable: z.boolean(),
+    reorderable: z.boolean(),
     availability: workbarAvailabilitySchema
   })
   .strict()
@@ -93,62 +98,95 @@ export type WorkbarAppDefinition = z.infer<
 export const WORKBAR_APP_DEFINITIONS = [
   {
     id: 'tasks',
+    visibleAcrossContextSwitches: true,
     label: '任务中心',
     icon: 'tasks',
     description: '查看和管理当前任务。',
     instancePolicy: 'single',
     defaultContext: 'current-project',
     defaultOpen: true,
+    required: true,
+    closable: false,
+    reorderable: true,
     availability: { state: 'available' }
   },
   {
     id: 'workspace',
+    visibleAcrossContextSwitches: true,
     label: '工作区',
     icon: 'workspace',
     description: '查看当前项目的工作区。',
     instancePolicy: 'single',
     defaultContext: 'current-project',
     defaultOpen: true,
+    required: true,
+    closable: false,
+    reorderable: true,
     availability: { state: 'available' }
   },
   {
     id: 'browser',
+    visibleAcrossContextSwitches: true,
     label: '浏览器',
     icon: 'browser',
     description: '浏览任务相关内容。',
-    instancePolicy: 'single',
-    defaultContext: 'application',
+    instancePolicy: 'multiple',
+    defaultContext: 'current-conversation',
     defaultOpen: true,
+    required: false,
+    closable: true,
+    reorderable: true,
     availability: { state: 'available' }
   },
   {
     id: 'results',
+    visibleAcrossContextSwitches: true,
     label: '成果',
     icon: 'results',
     description: '查看任务生成的成果。',
     instancePolicy: 'single',
     defaultContext: 'current-project',
     defaultOpen: true,
+    required: false,
+    closable: true,
+    reorderable: true,
     availability: { state: 'available' }
   },
   {
     id: 'terminal',
+    visibleAcrossContextSwitches: true,
     label: '终端',
     icon: 'terminal',
     description: '打开当前项目的用户终端。',
     instancePolicy: 'multiple',
     defaultContext: 'current-project',
     defaultOpen: false,
+    required: false,
+    closable: true,
+    reorderable: true,
     availability: { state: 'available' }
   }
 ] as const satisfies readonly WorkbarAppDefinition[]
 
-export const workbarTargetRefSchema = z.discriminatedUnion('type', [
+export const workbarExecutionTargetRefSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('local') }).strict(),
   z
     .object({
       type: z.literal('project'),
       projectId: z.string().uuid()
+    })
+    .strict()
+])
+export type WorkbarExecutionTargetRef = z.infer<
+  typeof workbarExecutionTargetRefSchema
+>
+
+export const workbarTargetRefSchema = z.union([
+  workbarExecutionTargetRefSchema,
+  z
+    .object({
+      type: z.literal('conversation'),
+      conversationId: z.string().min(1).max(128)
     })
     .strict()
 ])
@@ -165,11 +203,35 @@ export const workbarTabInstanceSchema = z
   })
   .strict()
   .superRefine((instance, context) => {
-    if (instance.appId === 'terminal' && !instance.targetRef) {
+    if (
+      instance.appId === 'terminal' &&
+      (!instance.targetRef || instance.targetRef.type === 'conversation')
+    ) {
       context.addIssue({
         code: 'custom',
         path: ['targetRef'],
         message: 'Terminal instances require a public target reference'
+      })
+    }
+    if (
+      instance.appId === 'browser' &&
+      instance.targetRef &&
+      instance.targetRef.type !== 'conversation'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['targetRef'],
+        message: 'Browser instances only accept conversation bindings'
+      })
+    }
+    if (
+      instance.appId !== 'browser' &&
+      instance.targetRef?.type === 'conversation'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['targetRef'],
+        message: 'Conversation bindings are reserved for browser instances'
       })
     }
   })
@@ -183,7 +245,14 @@ const singleInstanceAppIds = new Set<WorkbarAppId>(
   ).map((definition) => definition.id)
 )
 
-export const workbarLayoutPreferencesSchema = z
+export const workbarTaskScopeSchema = z.enum([
+  'current-project',
+  'global',
+  'all-projects'
+])
+export type WorkbarTaskScope = z.infer<typeof workbarTaskScopeSchema>
+
+const workbarLayoutShapeSchema = z
   .object({
     instances: z
       .array(workbarTabInstanceSchema)
@@ -191,9 +260,12 @@ export const workbarLayoutPreferencesSchema = z
     activeInstanceId: z.string().uuid().nullable(),
     expanded: z.boolean(),
     dock: z.literal('right'),
-    widthRatio: z.number().finite().gt(0).lt(1)
+    widthRatio: z.number().finite().gt(0).lt(1),
+    taskScope: workbarTaskScopeSchema.default('current-project')
   })
   .strict()
+
+export const workbarLayoutPreferencesSchema = workbarLayoutShapeSchema
   .superRefine((layout, context) => {
     const instanceIds = new Set<string>()
     const seenSingleApps = new Set<WorkbarAppId>()
@@ -244,3 +316,77 @@ export const workbarLayoutPreferencesSchema = z
 export type WorkbarLayoutPreferences = z.infer<
   typeof workbarLayoutPreferencesSchema
 >
+
+export function normalizeWorkbarLayoutPreferences(
+  value: unknown,
+  defaultInstances: readonly WorkbarTabInstance[]
+): WorkbarLayoutPreferences | undefined {
+  const parsed = workbarLayoutShapeSchema.safeParse(value)
+  if (!parsed.success) {
+    return undefined
+  }
+
+  const instanceIds = new Set<string>()
+  const seenSingleApps = new Set<WorkbarAppId>()
+  const instances: WorkbarTabInstance[] = []
+  for (const instance of parsed.data.instances) {
+    if (
+      instanceIds.has(instance.id) ||
+      (singleInstanceAppIds.has(instance.appId) &&
+        seenSingleApps.has(instance.appId))
+    ) {
+      continue
+    }
+    instanceIds.add(instance.id)
+    if (singleInstanceAppIds.has(instance.appId)) {
+      seenSingleApps.add(instance.appId)
+    }
+    instances.push(instance)
+  }
+
+  for (const defaultInstance of defaultInstances) {
+    const definition = WORKBAR_APP_DEFINITIONS.find(
+      (candidate) => candidate.id === defaultInstance.appId
+    )
+    if (
+      definition?.required !== true ||
+      instances.some(
+        (instance) => instance.appId === defaultInstance.appId
+      )
+    ) {
+      continue
+    }
+    const collidingIdIndex = instances.findIndex(
+      (instance) => instance.id === defaultInstance.id
+    )
+    if (collidingIdIndex >= 0) {
+      const [removed] = instances.splice(collidingIdIndex, 1)
+      if (removed && singleInstanceAppIds.has(removed.appId)) {
+        seenSingleApps.delete(removed.appId)
+      }
+    }
+    instances.splice(
+      WORKBAR_APP_DEFINITIONS.findIndex(
+        (candidate) => candidate.id === defaultInstance.appId
+      ),
+      0,
+      defaultInstance
+    )
+  }
+
+  const boundedInstances = instances.slice(
+    0,
+    WORKBAR_LIMITS.maximumOpenInstances
+  )
+  const activeInstanceId = boundedInstances.some(
+    (instance) => instance.id === parsed.data.activeInstanceId
+  )
+    ? parsed.data.activeInstanceId
+    : boundedInstances[0]?.id ?? null
+
+  return workbarLayoutPreferencesSchema.parse({
+    ...parsed.data,
+    instances: boundedInstances,
+    activeInstanceId
+  })
+}

@@ -5,7 +5,7 @@
 ## 权威文档
 
 1. [Task 与 Job 统一领域模型](./task-and-job-model.md)：术语、身份和对象关系。
-2. [Task Center PRD](./task-center-prd.md)：Task 的应用级索引。
+2. [Task Center PRD](./task-center-prd.md)：Task 的单实例项目跟随索引与范围切换。
 3. [Scheduled Task PRD](./scheduled-task-prd.md)：时间或事件触发的 Task。
 4. [Goal Task PRD](./goal-task-prd.md)：围绕可验证结果有界推进的 Task。
 5. [Job 与 Subjob PRD](./job-and-subjob-prd.md)：Task 内部串行、并行和委派执行。

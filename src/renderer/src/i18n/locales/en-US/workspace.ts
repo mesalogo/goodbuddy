@@ -310,6 +310,14 @@ export const workspace = {
       startedAt: 'Started {{time}}',
       nextRunAt: 'Next run: {{time}}',
       notStarted: 'Not run yet',
+      scope: {
+        ariaLabel: 'Task scope',
+        currentProject: 'Current project',
+        global: 'Global',
+        allProjects: 'All projects',
+        noCurrentProject:
+          'No project is active. Choose another task scope or open a project.'
+      },
       filters: {
         ariaLabel: 'Filter tasks',
         attention: 'Attention',
@@ -365,6 +373,7 @@ export const workspace = {
     },
     browser: {
       title: 'Live browser',
+      unbound: 'No conversation',
       interact: 'Interact',
       interacting: 'Interacting',
       close: 'Close browser',
@@ -407,6 +416,8 @@ export const workspace = {
       backBrowser: 'Could not go back',
       reloadBrowser: 'Could not refresh the web page',
       stopLoadingBrowser: 'Could not stop loading the page',
+      closeBrowser: 'Could not close this browser tab',
+      browserControlUnavailable: 'Browser tab controls are unavailable',
       interactBrowser: 'Could not open the browser interaction window',
       stopBrowser: 'Could not close the browser'
     }

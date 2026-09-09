@@ -4,7 +4,8 @@ import {
   clipboard,
   dialog,
   ipcMain,
-  shell
+  shell,
+  type IpcMainInvokeEvent
 } from 'electron'
 import {
   lstat,
@@ -13,7 +14,7 @@ import {
   realpath,
   stat
 } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
@@ -27,11 +28,19 @@ import {
   agentQuestionResponseSchema,
   agentRequestSchema,
   browserBackRequestSchema,
+  browserClickRequestSchema,
+  browserCloseTabRequestSchema,
+  browserCreateTabRequestSchema,
+  browserListTabsRequestSchema,
   browserNavigateRequestSchema,
   browserReloadRequestSchema,
+  browserScreenshotRequestSchema,
+  browserSelectRequestSchema,
   browserSetViewportRequestSchema,
+  browserSnapshotRequestSchema,
   browserStopLoadingRequestSchema,
   browserStopRequestSchema,
+  browserTypeRequestSchema,
   clipboardTextSchema,
   conversationQueueUserInputSchema,
   defaultRuntimeSettings,
@@ -62,6 +71,7 @@ import {
   type AgentRequest,
   type AppInfo,
   type BrowserLiveState,
+  type BrowserTabId,
   type ConversationQueueDispatch,
   type ConversationQueueUserInput,
   type KnowledgeSearchReference,
@@ -442,10 +452,102 @@ function runtimeTargetFor(
 type ScopedDataCapability = {
   token?: string
   toolNames: readonly string[]
+  browserTabId?: BrowserTabId
 }
 
-function grantScopedDataCapability(input: {
+type BrowserRequestTabUsageLease = {
+  readonly conversationId: string
+  readonly tabId: BrowserTabId
+  readonly owner: string
+  readonly signal: AbortSignal
+  release(): void
+}
+
+type BrowserCapabilityControl = {
+  createTab(
+    conversationId: string,
+    ownerWindowId?: number,
+    signal?: AbortSignal,
+    workbarInstanceId?: string
+  ): Promise<{ tabId: BrowserTabId }>
+  listTabs(
+    conversationId: string,
+    ownerWindowId?: number
+  ): Array<{ tabId: BrowserTabId; primary: boolean }>
+  getVisibleTabId(
+    conversationId: string,
+    ownerWindowId?: number
+  ): BrowserTabId | undefined
+  acquireTabUsage(
+    conversationId: string,
+    tabId: BrowserTabId,
+    owner: string,
+    ownerWindowId?: number
+  ): BrowserRequestTabUsageLease
+}
+
+function requestWorkbarInstanceId(owner: string): string {
+  const bytes = createHash('sha256')
+    .update('goodbuddy:browser-request-workbar:')
+    .update(owner)
+    .digest()
+    .subarray(0, 16)
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80
+  const hex = bytes.toString('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+async function bindBrowserTab(input: {
+  control?: BrowserCapabilityControl
+  conversationId: string
+  browserTabId?: BrowserTabId
+  owner: string
+  ownerWindowId?: number
+  signal: AbortSignal
+}): Promise<BrowserRequestTabUsageLease> {
+  if (!input.control) {
+    throw new Error('GoodBuddy 内置浏览器服务不可用')
+  }
+  const tabs = input.control.listTabs(
+    input.conversationId,
+    input.ownerWindowId
+  )
+  let tabId: BrowserTabId
+  if (input.browserTabId) {
+    if (!tabs.some((tab) => tab.tabId === input.browserTabId)) {
+      throw new Error('浏览器标签页不存在或不属于当前对话')
+    }
+    tabId = input.browserTabId
+  } else {
+    const visibleTabId = input.control.getVisibleTabId(
+      input.conversationId,
+      input.ownerWindowId
+    )
+    const primary = tabs.find((tab) => tab.primary)
+    tabId = visibleTabId && tabs.some((tab) => tab.tabId === visibleTabId)
+      ? visibleTabId
+      : primary?.tabId ??
+        (
+          await input.control.createTab(
+            input.conversationId,
+            input.ownerWindowId,
+            input.signal,
+            requestWorkbarInstanceId(input.owner)
+          )
+        ).tabId
+  }
+  return input.control.acquireTabUsage(
+    input.conversationId,
+    tabId,
+    input.owner,
+    input.ownerWindowId
+  )
+}
+
+async function grantScopedDataCapability(input: {
   gateway?: KnowledgeMcpGateway
+  browserControl?: BrowserCapabilityControl
   runtime: AgentRuntime
   enabledServers: readonly BuiltinMcpServerId[]
   requestId: string
@@ -454,12 +556,15 @@ function grantScopedDataCapability(input: {
   configAccess?: MagicNotesCapabilityAccess
   workspacePath?: string
   browserConversationId?: string
+  browserTabId?: BrowserTabId
+  ownerWindowId?: number
   authorizeConfigApply?: (
     event: GoodBuddyConfigApplyEvent,
     signal: AbortSignal
   ) => Promise<boolean>
   signal: AbortSignal
-}): ScopedDataCapability {
+  abort?: (reason: unknown) => void
+}): Promise<ScopedDataCapability> {
   const enabledServers = new Set(input.enabledServers)
   const libraryIds = enabledServers.has('knowledge-base')
     ? input.libraryIds
@@ -485,6 +590,22 @@ function grantScopedDataCapability(input: {
   if (!input.gateway) {
     throw new Error('GoodBuddy 内置工具服务不可用')
   }
+  const browserUsageLease = browserConversationId
+    ? await bindBrowserTab({
+        control: input.browserControl,
+        conversationId: browserConversationId,
+        browserTabId: input.browserTabId,
+        owner: input.requestId,
+        ownerWindowId: input.ownerWindowId,
+        signal: input.signal
+      })
+    : undefined
+  const browserTabId = browserUsageLease?.tabId
+  browserUsageLease?.signal.addEventListener(
+    'abort',
+    () => input.abort?.(browserUsageLease.signal.reason),
+    { once: true }
+  )
   const config =
     configAccess !== 'none' && input.workspacePath
       ? {
@@ -500,7 +621,9 @@ function grantScopedDataCapability(input: {
         input.signal,
         magicNotesAccess,
         config,
-        browserConversationId
+        browserConversationId,
+        browserTabId,
+        browserUsageLease
       )
     : config
       ? input.gateway.grant(
@@ -518,6 +641,7 @@ function grantScopedDataCapability(input: {
         )
   return {
     token,
+    browserTabId,
     toolNames: token
       ? input.gateway.getAvailableToolNames(token)
       : []
@@ -1086,25 +1210,98 @@ export function registerIpcHandlers(
   onRuntimeSettingsChanged: () => Promise<void>,
   onBeforeClearLocalData?: () => Promise<void>,
   browserControl?: {
+    createTab(
+      conversationId: string,
+      ownerWindowId?: number,
+      signal?: AbortSignal,
+      workbarInstanceId?: string
+    ): Promise<unknown>
+    listTabs(
+      conversationId: string,
+      ownerWindowId?: number
+    ): unknown[]
+    getVisibleTabId(
+      conversationId: string,
+      ownerWindowId?: number
+    ): BrowserTabId | undefined
+    acquireTabUsage(
+      conversationId: string,
+      tabId: BrowserTabId,
+      owner: string,
+      ownerWindowId?: number
+    ): BrowserRequestTabUsageLease
+    closeTab(
+      conversationId: string,
+      tabId: BrowserTabId,
+      ownerWindowId?: number
+    ): Promise<void>
     navigate(
       conversationId: string,
       url: string,
-      signal: AbortSignal
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
     ): Promise<{ url: string; origin: string }>
     back(
       conversationId: string,
-      signal: AbortSignal
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
     ): Promise<{ url: string; origin: string }>
     reload(
       conversationId: string,
-      signal: AbortSignal
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
     ): Promise<{ url: string; origin: string }>
-    stopLoading(conversationId: string): boolean | Promise<boolean>
+    snapshot(
+      conversationId: string,
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
+    ): Promise<unknown>
+    click(
+      conversationId: string,
+      ref: string,
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
+    ): Promise<void>
+    type(
+      conversationId: string,
+      ref: string,
+      text: string,
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
+    ): Promise<void>
+    select(
+      conversationId: string,
+      ref: string,
+      value: string,
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
+    ): Promise<void>
+    screenshot(
+      conversationId: string,
+      signal: AbortSignal,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
+    ): Promise<unknown>
+    stopLoading(
+      conversationId: string,
+      tabId?: BrowserTabId,
+      ownerWindowId?: number
+    ): boolean | Promise<boolean>
     setViewport(
       conversationId?: string,
-      bounds?: { x: number; y: number; width: number; height: number }
-    ): void
-    releaseConversation(conversationId: string): Promise<void>
+      bounds?: { x: number; y: number; width: number; height: number },
+      tabId?: BrowserTabId,
+      leaseToken?: string,
+      ownerWindowId?: number
+    ): boolean | void
+    releaseConversation(conversationId: string, ownerWindowId?: number): Promise<void>
     onState(listener: (state: BrowserLiveState) => void): () => void
   },
   subagentService?: SubagentService,
@@ -1378,21 +1575,22 @@ export function registerIpcHandlers(
   window.on('unmaximize', notifyMaximizedChanged)
   const lastSentBrowserFrames = new Map<string, string>()
   const removeBrowserStateListener = browserControl?.onState((state) => {
-    if (!window.isDestroyed()) {
+    if (!window.isDestroyed() && state.ownerWindowId === window.webContents.id) {
+      const tabStateKey = `${state.conversationId}\u0000${state.tabId}`
       const frame = state.frameDataUrl
       let payload: BrowserLiveState = state
       if (
         frame &&
-        lastSentBrowserFrames.get(state.conversationId) === frame
+        lastSentBrowserFrames.get(tabStateKey) === frame
       ) {
         payload = { ...state }
         delete payload.frameDataUrl
       }
       if (frame) {
-        lastSentBrowserFrames.set(state.conversationId, frame)
+        lastSentBrowserFrames.set(tabStateKey, frame)
       }
       if (state.status === 'stopped') {
-        lastSentBrowserFrames.delete(state.conversationId)
+        lastSentBrowserFrames.delete(tabStateKey)
       }
       window.webContents.send(ipcChannels.browserState, payload)
     }
@@ -2343,8 +2541,9 @@ export function registerIpcHandlers(
               (id) => id !== 'builtin-browser'
             )
         : []
-      const notesCapability = grantScopedDataCapability({
+      const notesCapability = await grantScopedDataCapability({
         gateway: knowledgeGateway,
+        browserControl: browserControl as BrowserCapabilityControl | undefined,
         runtime: requestRuntime,
         enabledServers: enabledBuiltinMcpServers,
         requestId,
@@ -2358,7 +2557,9 @@ export function registerIpcHandlers(
           schedule.workMode === 'execute'
             ? runtimeConversationId
             : undefined,
-        signal: controller.signal
+        ownerWindowId: window.webContents.id,
+        signal: controller.signal,
+        abort: (reason) => controller.abort(reason)
       })
       knowledgeCapabilityToken = notesCapability.token
       const noteTools = notesCapability.toolNames
@@ -2456,6 +2657,9 @@ export function registerIpcHandlers(
         trustedInstructions,
         ...(knowledgeCapabilityToken
           ? { knowledgeCapabilityToken }
+          : {}),
+        ...(notesCapability.browserTabId
+          ? { browserTabId: notesCapability.browserTabId }
           : {})
       }
       for await (const agentEvent of requestRuntime.run(
@@ -3467,7 +3671,7 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     const request = browserStopRequestSchema.parse(input)
     await Promise.allSettled([
-      browserControl?.releaseConversation(request.conversationId),
+      browserControl?.releaseConversation(request.conversationId, event.sender.id),
       selectedRuntimes
         ? selectedRuntimes.releaseConversation(request.conversationId)
         : runtime.releaseConversation?.(request.conversationId)
@@ -3490,7 +3694,45 @@ export function registerIpcHandlers(
     return browserControl
   }
 
+  const runBrowserOperation = async <T>(
+    event: IpcMainInvokeEvent,
+    operation: (signal: AbortSignal) => Promise<T>,
+    timeoutMs = 30_000
+  ): Promise<T> => {
+    const controller = new AbortController()
+    const sender = event.sender
+    const senderDestroyed = (): void => {
+      controller.abort(new Error('浏览器请求所属窗口已关闭'))
+    }
+    if (sender.isDestroyed()) senderDestroyed()
+    else sender.once?.('destroyed', senderDestroyed)
+    try {
+      const signal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(timeoutMs)
+      ])
+      signal.throwIfAborted()
+      return await new Promise<T>((resolve, reject) => {
+        const aborted = (): void => reject(signal.reason)
+        signal.addEventListener('abort', aborted, { once: true })
+        void operation(signal).then(
+          (value) => {
+            signal.removeEventListener('abort', aborted)
+            resolve(value)
+          },
+          (error: unknown) => {
+            signal.removeEventListener('abort', aborted)
+            reject(error)
+          }
+        )
+      })
+    } finally {
+      sender.removeListener?.('destroyed', senderDestroyed)
+    }
+  }
+
   const runUiBrowserNavigation = async (
+    event: IpcMainInvokeEvent,
     operation: (
       control: NonNullable<typeof browserControl>,
       signal: AbortSignal
@@ -3498,7 +3740,7 @@ export function registerIpcHandlers(
   ): Promise<void> => {
     try {
       const control = await requireBrowserControl()
-      await operation(control, new AbortController().signal)
+      await runBrowserOperation(event, (signal) => operation(control, signal))
     } catch (error) {
       if (!(error instanceof BrowserNavigationStoppedError)) {
         throw error
@@ -3507,15 +3749,55 @@ export function registerIpcHandlers(
   }
 
   registerHandler(
+    ipcChannels.browserCreateTab,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserCreateTabRequestSchema.parse(input)
+      const control = await requireBrowserControl()
+      return runBrowserOperation(event, (signal) =>
+        control.createTab(
+          request.conversationId,
+          event.sender.id,
+          signal,
+          request.workbarInstanceId
+        )
+      )
+    }
+  )
+
+  registerHandler(ipcChannels.browserListTabs, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = browserListTabsRequestSchema.parse(input)
+    const control = await requireBrowserControl()
+    return control.listTabs(request.conversationId, event.sender.id)
+  })
+
+  registerHandler(
+    ipcChannels.browserCloseTab,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserCloseTabRequestSchema.parse(input)
+      const control = await requireBrowserControl()
+      await control.closeTab(
+        request.conversationId,
+        request.tabId,
+        event.sender.id
+      )
+    }
+  )
+
+  registerHandler(
     ipcChannels.browserNavigate,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const request = browserNavigateRequestSchema.parse(input)
-      await runUiBrowserNavigation((control, signal) =>
+      await runUiBrowserNavigation(event, (control, signal) =>
         control.navigate(
           request.conversationId,
           request.url,
-          signal
+          signal,
+          request.tabId,
+          event.sender.id
         )
       )
     }
@@ -3526,10 +3808,12 @@ export function registerIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const request = browserBackRequestSchema.parse(input)
-      await runUiBrowserNavigation((control, signal) =>
+      await runUiBrowserNavigation(event, (control, signal) =>
         control.back(
           request.conversationId,
-          signal
+          signal,
+          request.tabId,
+          event.sender.id
         )
       )
     }
@@ -3540,10 +3824,12 @@ export function registerIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const request = browserReloadRequestSchema.parse(input)
-      await runUiBrowserNavigation((control, signal) =>
+      await runUiBrowserNavigation(event, (control, signal) =>
         control.reload(
           request.conversationId,
-          signal
+          signal,
+          request.tabId,
+          event.sender.id
         )
       )
     }
@@ -3554,7 +3840,79 @@ export function registerIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const request = browserStopLoadingRequestSchema.parse(input)
-      await browserControl?.stopLoading(request.conversationId)
+      await browserControl?.stopLoading(
+        request.conversationId,
+        request.tabId,
+        event.sender.id
+      )
+    }
+  )
+
+  registerHandler(ipcChannels.browserSnapshot, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = browserSnapshotRequestSchema.parse(input)
+    const control = await requireBrowserControl()
+    return runBrowserOperation(event, (signal) => control.snapshot(
+      request.conversationId,
+      signal,
+      request.tabId,
+      event.sender.id
+    ))
+  })
+
+  registerHandler(ipcChannels.browserClick, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = browserClickRequestSchema.parse(input)
+    const control = await requireBrowserControl()
+    await runBrowserOperation(event, (signal) => control.click(
+      request.conversationId,
+      request.ref,
+      signal,
+      request.tabId,
+      event.sender.id
+    ))
+  })
+
+  registerHandler(ipcChannels.browserType, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = browserTypeRequestSchema.parse(input)
+    const control = await requireBrowserControl()
+    await runBrowserOperation(event, (signal) => control.type(
+      request.conversationId,
+      request.ref,
+      request.text,
+      signal,
+      request.tabId,
+      event.sender.id
+    ))
+  })
+
+  registerHandler(ipcChannels.browserSelect, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = browserSelectRequestSchema.parse(input)
+    const control = await requireBrowserControl()
+    await runBrowserOperation(event, (signal) => control.select(
+      request.conversationId,
+      request.ref,
+      request.value,
+      signal,
+      request.tabId,
+      event.sender.id
+    ))
+  })
+
+  registerHandler(
+    ipcChannels.browserScreenshot,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserScreenshotRequestSchema.parse(input)
+      const control = await requireBrowserControl()
+      return runBrowserOperation(event, (signal) => control.screenshot(
+        request.conversationId,
+        signal,
+        request.tabId,
+        event.sender.id
+      ))
     }
   )
 
@@ -3789,8 +4147,9 @@ export function registerIpcHandlers(
             : undefined
           : resolvedRuntimeSettings?.workspacePath
     const controller = new AbortController()
-    const scopedCapability = grantScopedDataCapability({
+    const scopedCapability = await grantScopedDataCapability({
       gateway: knowledgeGateway,
+      browserControl: browserControl as BrowserCapabilityControl | undefined,
       runtime: selectedRuntime,
       enabledServers: enabledBuiltinMcpServers,
       requestId: enrichedRequest.requestId,
@@ -3807,7 +4166,9 @@ export function registerIpcHandlers(
         enrichedRequest.workMode === 'execute'
           ? enrichedRequest.conversationId
           : undefined,
-      signal: controller.signal
+      ownerWindowId: event.sender.id,
+      signal: controller.signal,
+      abort: (reason) => controller.abort(reason)
     })
     const knowledgeCapabilityToken = scopedCapability.token
     const availableTools = [
@@ -3846,6 +4207,9 @@ export function registerIpcHandlers(
     const request: AgentExecutionRequest = knowledgeCapabilityToken
       ? { ...baseRequest, knowledgeCapabilityToken }
       : baseRequest
+    if (scopedCapability.browserTabId) {
+      request.browserTabId = scopedCapability.browserTabId
+    }
     const managedSshExecution =
       agentRuntimeSelected &&
       configExecutionSpace?.kind === 'ssh'
@@ -4649,7 +5013,6 @@ export function registerIpcHandlers(
           (message) =>
             message.state === 'complete' && message.content.trim()
         )
-        .slice(-500)
       if (
         persistedHistory.length !== request.history.length ||
         persistedHistory.some(
@@ -6639,7 +7002,13 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       const request = browserSetViewportRequestSchema.parse(input)
       if (!request.conversationId || !request.bounds) {
-        browserControl?.setViewport()
+        browserControl?.setViewport(
+          undefined,
+          undefined,
+          undefined,
+          request.leaseToken,
+          event.sender.id
+        )
         return
       }
       browserControl?.setViewport(request.conversationId, {
@@ -6647,7 +7016,7 @@ export function registerIpcHandlers(
         y: request.bounds.y,
         width: request.bounds.width,
         height: request.bounds.height
-      })
+      }, request.tabId, request.leaseToken, event.sender.id)
     }
   )
   registerHandler(

@@ -7,9 +7,11 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { rgPath } from '@vscode/ripgrep'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import { browserTabIdSchema } from '../../shared/contracts'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
 import {
   LocalWorkspaceAccess,
@@ -64,8 +66,15 @@ const png = Buffer.from([
   0x0d, 0x0a, 0x1a, 0x0a
 ]).toString('base64')
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')
+const firstBrowserTabId = browserTabIdSchema.parse(
+  '00000000-0000-4000-8000-000000000201'
+)
+const secondBrowserTabId = browserTabIdSchema.parse(
+  '00000000-0000-4000-8000-000000000202'
+)
 const toolContext = {
   conversationId: 'provider-test-conversation',
+  browserTabId: firstBrowserTabId,
   workMode: 'execute'
 } satisfies ModelToolCallContext
 
@@ -177,18 +186,159 @@ describe('ModelToolProvider', () => {
     await provider.dispose()
   })
 
-  it('provides bounded workspace read, list, and atomic write tools', async () => {
+  it.each(['connect', 'listTools'] as const)(
+    'isolates MCP %s failures and retries without reconnecting healthy servers',
+    async (failureMethod) => {
+      const workspace = await createWorkspace()
+      const failure = new Error('server unavailable')
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const failedClient = {
+        ...mocks.client,
+        connect: vi.fn().mockResolvedValue(undefined),
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        close: vi.fn().mockResolvedValue(undefined)
+      }
+      failedClient[failureMethod].mockRejectedValueOnce(failure)
+      mocks.Client.mockImplementationOnce(function () { return failedClient })
+      mocks.client.listTools.mockResolvedValue({
+        tools: [{ name: 'search', inputSchema: { type: 'object' } }]
+      })
+      const provider = new ModelToolProvider(workspace, [
+        createMcpServer(),
+        { ...createMcpServer(), id: 'healthy', name: 'Healthy' }
+      ], createBrowserService())
+      const signal = new AbortController().signal
+
+      try {
+        const tools = await provider.listTools(toolContext, signal)
+        expect(tools).toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: 'workspace_read_text' }),
+          expect.objectContaining({ name: 'browser_snapshot' }),
+          expect.objectContaining({ serverName: 'Healthy' })
+        ]))
+        expect(tools.filter((tool) => tool.source === 'mcp')).toHaveLength(1)
+        expect(failedClient.close).toHaveBeenCalledOnce()
+        expect(mocks.client.close).not.toHaveBeenCalled()
+        expect(warning).toHaveBeenCalledWith(
+          expect.stringContaining('Search MCP'), expect.any(Error)
+        )
+
+        const recovered = await provider.listTools(toolContext, signal)
+        expect(recovered.filter((tool) => tool.source === 'mcp')).toHaveLength(2)
+        expect(mocks.Client).toHaveBeenCalledTimes(3)
+        expect(mocks.client.connect).toHaveBeenCalledTimes(2)
+        await provider.callTool(
+          tools.find((tool) => tool.serverName === 'Healthy')!.name,
+          {}, signal, toolContext
+        )
+        expect(mocks.client.callTool).toHaveBeenCalledOnce()
+      } finally {
+        await provider.dispose()
+        warning.mockRestore()
+      }
+    }
+  )
+
+  it('loads tools from more than sixteen MCP servers', async () => {
+    mocks.client.listTools.mockResolvedValue({
+      tools: [{ name: 'search', inputSchema: { type: 'object' } }]
+    })
+    const provider = new ModelToolProvider(await createWorkspace(),
+      Array.from({ length: 17 }, (_, index) => ({
+        ...createMcpServer(), id: `server-${index}`, name: `Server ${index}`
+      }))
+    )
+    try {
+      const tools = await provider.listTools(toolContext, new AbortController().signal)
+      expect(tools.filter((tool) => tool.source === 'mcp')).toHaveLength(17)
+      expect(mocks.client.connect).toHaveBeenCalledTimes(17)
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it('preserves cancellation during MCP discovery and permits a later retry', async () => {
+    const controller = new AbortController()
+    const reason = new Error('cancel discovery')
+    mocks.client.connect.mockImplementationOnce(async () => {
+      controller.abort(reason)
+      throw reason
+    })
+    const provider = new ModelToolProvider(await createWorkspace(), [createMcpServer()])
+    try {
+      await expect(provider.listTools(toolContext, controller.signal)).rejects.toBe(reason)
+      expect(mocks.client.close).toHaveBeenCalledOnce()
+      await expect(provider.listTools(toolContext, new AbortController().signal))
+        .resolves.toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: 'workspace_read_text' })
+        ]))
+      expect(mocks.client.connect).toHaveBeenCalledTimes(2)
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it('omits failed dynamic catalogs and retries refresh while healthy tools remain usable', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.client.getServerCapabilities.mockReturnValue({ tools: { listChanged: true } })
+    mocks.client.listTools.mockResolvedValue({
+      tools: [{ name: 'search', inputSchema: { type: 'object' } }]
+    })
+    const provider = new ModelToolProvider(await createWorkspace(), [
+      createMcpServer(true),
+      { ...createMcpServer(), id: 'healthy', name: 'Healthy' }
+    ])
+    const signal = new AbortController().signal
+    try {
+      await provider.listTools(toolContext, signal)
+      const options = mocks.Client.mock.calls[0]![1] as {
+        listChanged: { tools: { onChanged(error: Error | null): void } }
+      }
+      options.listChanged.tools.onChanged(null)
+      mocks.client.listTools.mockRejectedValueOnce(new Error('refresh unavailable'))
+      const tools = await provider.listTools(toolContext, signal)
+      expect(tools.filter((tool) => tool.source === 'mcp')).toEqual([
+        expect.objectContaining({ serverName: 'Healthy' })
+      ])
+      expect(mocks.client.close).not.toHaveBeenCalled()
+      const recovered = await provider.listTools(toolContext, signal)
+      expect(recovered.filter((tool) => tool.source === 'mcp')).toHaveLength(2)
+      expect(mocks.client.connect).toHaveBeenCalledTimes(2)
+
+      options.listChanged.tools.onChanged(null)
+      const controller = new AbortController()
+      const reason = new Error('cancel refresh')
+      mocks.client.listTools.mockImplementationOnce(async () => {
+        controller.abort(reason)
+        throw reason
+      })
+      await expect(provider.listTools(toolContext, controller.signal)).rejects.toBe(reason)
+    } finally {
+      await provider.dispose()
+      warning.mockRestore()
+    }
+  })
+
+  it('provides ripgrep, paged reads, and patch tools', async () => {
     const workspace = await createWorkspace()
     await mkdir(join(workspace, 'docs'))
     await writeFile(join(workspace, 'docs', 'note.txt'), 'hello', 'utf8')
-    const provider = new ModelToolProvider(workspace)
+    await writeFile(join(workspace, 'docs', 'search.txt'), '中target\n', 'utf8')
+    const provider = new ModelToolProvider(
+      workspace,
+      [],
+      undefined,
+      undefined,
+      false,
+      { ripgrepExecutablePath: rgPath }
+    )
     const signal = new AbortController().signal
 
     await expect(provider.listTools(toolContext, signal)).resolves.toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ name: 'workspace_rg' }),
         expect.objectContaining({ name: 'workspace_read_text' }),
-        expect.objectContaining({ name: 'workspace_list_directory' }),
-        expect.objectContaining({ name: 'workspace_write_text' })
+        expect.objectContaining({ name: 'workspace_apply_patch' })
       ])
     )
     await expect(
@@ -198,32 +348,50 @@ describe('ModelToolProvider', () => {
         signal,
         toolContext
       )
-    ).resolves.toEqual({
-      parts: [{ type: 'text', text: 'hello' }],
-      contextBytes: 5
+    ).resolves.toMatchObject({
+      parts: [{ type: 'text', text: expect.stringContaining('1: hello') }]
     })
     const listing = await provider.callTool(
-      'workspace_list_directory',
-      { path: 'docs' },
+      'workspace_rg',
+      { path: 'docs', filesOnly: true },
       signal,
       toolContext
     )
     expect(listing.parts).toEqual([
       expect.objectContaining({
         type: 'text',
-        text: expect.stringContaining('"note.txt"')
+        text: expect.stringContaining('docs/note.txt')
+      })
+    ])
+    const matches = await provider.callTool(
+      'workspace_rg',
+      { path: 'docs', pattern: 'target' },
+      signal,
+      toolContext
+    )
+    expect(matches.parts).toEqual([
+      expect.objectContaining({
+        type: 'text',
+        text: expect.stringContaining('docs/search.txt:1:2:中target')
       })
     ])
     const written = await provider.callTool(
-      'workspace_write_text',
-      { path: 'docs/output.txt', content: 'saved' },
+      'workspace_apply_patch',
+      {
+        patch: [
+          '*** Begin Patch',
+          '*** Add File: docs/output.txt',
+          '+saved',
+          '*** End Patch'
+        ].join('\n')
+      },
       signal,
       toolContext
     )
     expect(written.parts).toEqual([
       expect.objectContaining({
         type: 'text',
-        text: expect.stringContaining('"bytesWritten":5')
+        text: expect.stringContaining('docs/output.txt')
       })
     ])
     await expect(
@@ -231,12 +399,15 @@ describe('ModelToolProvider', () => {
     ).resolves.toBe('saved')
   })
 
-  it('delegates workspace tools and disposal to WorkspaceAccess', async () => {
+  it('delegates paged workspace reads and disposal to WorkspaceAccess', async () => {
     const readText = vi.fn(async () => ({
       path: 'remote.txt',
       name: 'remote.txt',
       content: 'remote content',
-      size: 14
+      size: 14,
+      offsetBytes: 0,
+      bytesRead: 14,
+      truncated: false
     }))
     const listDirectory = vi.fn(async () => ({
       path: '',
@@ -270,43 +441,19 @@ describe('ModelToolProvider', () => {
         signal,
         toolContext
       )
-    ).resolves.toEqual({
-      parts: [{ type: 'text', text: 'remote content' }],
-      contextBytes: 14
+    ).resolves.toMatchObject({
+      parts: [{ type: 'text', text: expect.stringContaining('1: remote content') }]
     })
-    await provider.callTool(
-      'workspace_list_directory',
-      {},
-      signal,
-      toolContext
-    )
-    await provider.callTool(
-      'workspace_write_text',
-      { path: 'output.txt', content: 'saved' },
-      signal,
-      toolContext
-    )
     expect(readText).toHaveBeenCalledWith(
       expect.objectContaining({
         path: 'remote.txt',
-        maximumBytes: 256 * 1024,
+        maximumBytes: 128 * 1024,
+        allowTruncated: true,
         signal
       })
     )
-    expect(listDirectory).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: '.',
-        maximumEntries: 200,
-        includeOther: true,
-        signal
-      })
-    )
-    expect(writeTextAtomic).toHaveBeenCalledWith({
-      path: 'output.txt',
-      content: 'saved',
-      maximumBytes: 512 * 1024,
-      signal
-    })
+    expect(listDirectory).not.toHaveBeenCalled()
+    expect(writeTextAtomic).not.toHaveBeenCalled()
     await provider.dispose()
     expect(dispose).toHaveBeenCalledOnce()
   })
@@ -361,8 +508,8 @@ describe('ModelToolProvider', () => {
 
     for (const [name, argumentsValue] of [
       [
-        'workspace_write_text',
-        { path: 'output.txt', content: 'blocked' }
+        'workspace_apply_patch',
+        { patch: '*** Begin Patch\n*** End Patch' }
       ],
       ['browser_click', { ref: 'b_target' }],
       ['note_create', { title: 'blocked' }],
@@ -389,8 +536,8 @@ describe('ModelToolProvider', () => {
     expect(mocks.Client).not.toHaveBeenCalled()
 
     const writeTool = {
-      name: 'workspace_write_text',
-      displayName: '写入工作区文本',
+      name: 'workspace_apply_patch',
+      displayName: '应用工作区补丁',
       description: 'write',
       inputSchema: {},
       source: 'builtin'
@@ -398,7 +545,7 @@ describe('ModelToolProvider', () => {
     expect(() =>
       provider.getApproval(
         writeTool,
-        { path: 'output.txt', content: 'blocked' },
+        { patch: '*** Begin Patch\n*** End Patch' },
         'output.txt',
         askContext
       )
@@ -425,20 +572,10 @@ describe('ModelToolProvider', () => {
         askContext
       )
     ).resolves.toMatchObject({
-      parts: [{ type: 'text', text: 'remote content' }]
-    })
-    await expect(
-      provider.callTool(
-        'workspace_list_directory',
-        {},
-        signal,
-        askContext
-      )
-    ).resolves.toMatchObject({
-      parts: [{ type: 'text', text: expect.any(String) }]
+      parts: [{ type: 'text', text: expect.stringContaining('1: remote content') }]
     })
     expect(readText).toHaveBeenCalledOnce()
-    expect(listDirectory).toHaveBeenCalledOnce()
+    expect(listDirectory).not.toHaveBeenCalled()
   })
 
   it('exposes scoped reads in Ask and Magic Notes writes only in Execute', async () => {
@@ -499,6 +636,7 @@ describe('ModelToolProvider', () => {
 
     const askTools = await provider.listTools(askContext, signal)
     expect(askTools.map((tool) => tool.name)).toEqual([
+      'workspace_read_text',
       'knowledge_list',
       'knowledge_search',
       'note_list',
@@ -578,7 +716,11 @@ describe('ModelToolProvider', () => {
         },
         signal
       )
-    ).resolves.toEqual([])
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'workspace_read_text' })
+      ])
+    )
     const executeTools = await provider.listTools(
       { ...askContext, workMode: 'execute' },
       signal
@@ -586,8 +728,7 @@ describe('ModelToolProvider', () => {
     expect(executeTools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         'workspace_read_text',
-        'workspace_list_directory',
-        'workspace_write_text',
+        'workspace_apply_patch',
         'knowledge_list',
         'knowledge_search',
         'note_search',
@@ -705,7 +846,9 @@ describe('ModelToolProvider', () => {
       workspace,
       [createMcpServer()],
       undefined,
-      gateway
+      gateway,
+      false,
+      { ripgrepExecutablePath: rgPath }
     )
     await expect(
       validProvider.listTools(context, new AbortController().signal)
@@ -719,14 +862,16 @@ describe('ModelToolProvider', () => {
       workspace,
       [createMcpServer()],
       undefined,
-      gateway
+      gateway,
+      false,
+      { ripgrepExecutablePath: rgPath }
     )
     await expect(
       overflowingProvider.listTools(
         context,
         new AbortController().signal
       )
-    ).rejects.toThrow('无法加载 MCP Server')
+    ).resolves.toHaveLength(18)
     await overflowingProvider.dispose()
   })
 
@@ -799,6 +944,7 @@ describe('ModelToolProvider', () => {
         stdoutTruncated: false,
         stderrTruncated: false
       })),
+      readOutput: vi.fn(),
       releaseConversation: vi.fn(async () => undefined),
       dispose: vi.fn(async () => undefined)
     } satisfies DirectModelProcessService
@@ -994,10 +1140,12 @@ describe('ModelToolProvider', () => {
     const provider = new ModelToolProvider(workspace, [], browserService)
     const firstContext = {
       conversationId: 'browser-conversation-one',
+      browserTabId: firstBrowserTabId,
       workMode: 'execute'
     } satisfies ModelToolCallContext
     const secondContext = {
       conversationId: 'browser-conversation-two',
+      browserTabId: secondBrowserTabId,
       workMode: 'execute'
     } satisfies ModelToolCallContext
     const signal = new AbortController().signal
@@ -1051,12 +1199,14 @@ describe('ModelToolProvider', () => {
     expect(browserService.screenshot).toHaveBeenNthCalledWith(
       1,
       firstContext.conversationId,
-      signal
+      signal,
+      firstBrowserTabId
     )
     expect(browserService.screenshot).toHaveBeenNthCalledWith(
       2,
       secondContext.conversationId,
-      signal
+      signal,
+      secondBrowserTabId
     )
 
     await provider.releaseConversation(firstContext.conversationId)
@@ -1088,6 +1238,63 @@ describe('ModelToolProvider', () => {
       message: '浏览器元素引用已失效，请重新获取快照',
       nextAction: expect.stringContaining('browser_snapshot')
     })
+  })
+
+  it('keeps a request on its bound tab when another tab changes or closes', async () => {
+    const workspace = await createWorkspace()
+    const browserService = createBrowserService()
+    const provider = new ModelToolProvider(workspace, [], browserService)
+    const conversationId = 'two-tab-conversation'
+    const firstRequest = {
+      conversationId,
+      browserTabId: firstBrowserTabId,
+      workMode: 'execute',
+      requestId: 'first-tab-request'
+    } satisfies ModelToolCallContext
+    const secondRequest = {
+      conversationId,
+      browserTabId: secondBrowserTabId,
+      workMode: 'execute',
+      requestId: 'second-tab-request'
+    } satisfies ModelToolCallContext
+    const signal = new AbortController().signal
+
+    await provider.callTool('browser_snapshot', {}, signal, firstRequest)
+    await provider.callTool('browser_snapshot', {}, signal, secondRequest)
+    expect(browserService.snapshot).toHaveBeenNthCalledWith(
+      1,
+      conversationId,
+      signal,
+      firstBrowserTabId
+    )
+    expect(browserService.snapshot).toHaveBeenNthCalledWith(
+      2,
+      conversationId,
+      signal,
+      secondBrowserTabId
+    )
+
+    vi.mocked(browserService.click).mockImplementation(
+      async (_conversationId, _ref, _signal, tabId) => {
+        if (tabId === firstBrowserTabId) {
+          throw new Error('浏览器标签页不存在或不属于当前对话')
+        }
+      }
+    )
+    await expect(
+      provider.callTool(
+        'browser_click',
+        { ref: 'b_closedTabReference' },
+        signal,
+        firstRequest
+      )
+    ).rejects.toThrow('浏览器标签页不存在或不属于当前对话')
+    expect(browserService.click).toHaveBeenCalledWith(
+      conversationId,
+      'b_closedTabReference',
+      signal,
+      firstBrowserTabId
+    )
   })
 
   it('exposes only allowlisted read-only Exa tools in Ask and Execute', async () => {
@@ -1130,18 +1337,20 @@ describe('ModelToolProvider', () => {
       workMode: 'ask'
     } satisfies ModelToolCallContext
 
-    await expect(provider.listTools(askContext, signal)).resolves.toEqual([
-      expect.objectContaining({
-        name: 'web_search',
-        displayName: '联网搜索',
-        source: 'builtin'
-      }),
-      expect.objectContaining({
-        name: 'web_fetch',
-        displayName: '读取网页',
-        source: 'builtin'
-      })
-    ])
+    await expect(provider.listTools(askContext, signal)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'web_search',
+          displayName: '联网搜索',
+          source: 'builtin'
+        }),
+        expect.objectContaining({
+          name: 'web_fetch',
+          displayName: '读取网页',
+          source: 'builtin'
+        })
+      ])
+    )
     await provider.callTool(
       'web_search',
       { query: 'GoodBuddy current release', numResults: 3 },

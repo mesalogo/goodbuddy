@@ -49,6 +49,7 @@ export function resolveConfiguredAgentRuntimeSelection(
   settings: ResolvedRuntimeSettings,
   selection: AgentRuntimeSelection
 ): AgentRuntimeSelection {
+  if ('profileId' in selection && selection.profileId) return selection
   if (
     selection.provider !== 'opencode' &&
     selection.provider !== 'continue' &&
@@ -87,7 +88,7 @@ export function applyRuntimeSelection(
   }
 
   if (selection.provider === 'model') {
-    const profile = requireProfile(settings, selection.profileId)
+    const profile = requireProfile(settings, selection.profileId ?? settings.defaultModelProfileId)
     return {
       target: 'model',
       settings: {
@@ -108,7 +109,11 @@ export function applyRuntimeSelection(
 
   const profile = selection.profileId
     ? requireProfile(settings, selection.profileId)
-    : undefined
+    : selection.provider === 'opencode'
+      ? settings.opencodeModelProfile
+      : selection.provider === 'continue'
+        ? settings.continueModelProfile
+        : settings.deepseekHarnessModelProfile
   if (selection.provider === 'opencode') {
     if (profile && !isAgentRuntimeModelProtocol(profile.protocol)) {
       throw new Error(

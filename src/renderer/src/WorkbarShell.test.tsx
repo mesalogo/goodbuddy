@@ -39,12 +39,14 @@ const stylesheet = readFileSync(
 function ControlledShell({
   initialInstances = DEFAULT_WORKBAR_INSTANCES,
   onCreate = vi.fn(),
+  onClose,
   onTerminalTarget = vi.fn((): WorkbarTargetRef => ({
     type: 'local'
   }))
 }: {
   initialInstances?: readonly WorkbarTabInstance[]
   onCreate?: (request: WorkbarInstanceCreateRequest) => void
+  onClose?: (instance: WorkbarTabInstance) => boolean | void | Promise<boolean | void>
   onTerminalTarget?: () =>
     | WorkbarTargetRef
     | Promise<WorkbarTargetRef>
@@ -55,19 +57,27 @@ function ControlledShell({
   )
 
   return (
-    <WorkbarShell
-      activeInstanceId={activeId}
-      instances={instances}
-      onActiveInstanceChange={setActiveId}
-      onCloseInstance={(instance) =>
-        setInstances((current) =>
-          current.filter((candidate) => candidate.id !== instance.id)
-        )
-      }
-      onCreateInstance={onCreate}
-      onResolveTerminalTarget={onTerminalTarget}
-      renderPanel={(instance) => <p>{instance.title}内容</p>}
-    />
+    <>
+      <output data-testid="active-workbar-instance">
+        {activeId ?? 'none'}
+      </output>
+      <WorkbarShell
+        activeInstanceId={activeId}
+        instances={instances}
+        onActiveInstanceChange={setActiveId}
+        onCloseInstance={async (instance) => {
+          const accepted = await onClose?.(instance)
+          if (accepted === false) return false
+          setInstances((current) =>
+            current.filter((candidate) => candidate.id !== instance.id)
+          )
+          return true
+        }}
+        onCreateInstance={onCreate}
+        onResolveTerminalTarget={onTerminalTarget}
+        renderPanel={(instance) => <p>{instance.title}内容</p>}
+      />
+    </>
   )
 }
 
@@ -87,7 +97,7 @@ describe('WorkbarShell', () => {
     )
   })
 
-  it('provides four default single-instance tabs and keeps add outside the tablist', () => {
+  it('provides fixed defaults plus a browser tab and keeps add outside the tablist', () => {
     render(<ControlledShell />)
 
     const tablist = screen.getByRole('tablist', {
@@ -111,6 +121,20 @@ describe('WorkbarShell', () => {
     expect(
       screen.getByRole('tab', { name: '工作区' }).parentElement
     ).not.toHaveClass('workbar-shell__tab-item--active')
+  })
+
+  it('does not expose close controls for fixed tabs', () => {
+    render(<ControlledShell />)
+
+    expect(
+      screen.queryByRole('button', { name: '关闭任务中心' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '关闭工作区' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '关闭浏览器' })
+    ).toBeInTheDocument()
   })
 
   it('opens the catalog, focuses its first choice, and restores add-button focus on Escape', async () => {
@@ -196,6 +220,22 @@ describe('WorkbarShell', () => {
     )
   })
 
+  it('allows another browser instance to be requested', () => {
+    const onCreate = vi.fn()
+    render(<ControlledShell onCreate={onCreate} />)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '打开工作栏应用' })
+    )
+    fireEvent.click(
+      screen.getByText('浏览器', { selector: 'strong' }).closest('button')!
+    )
+
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ appId: 'browser' })
+    )
+  })
+
   it('supports roving Arrow, Home, and End navigation', () => {
     render(<ControlledShell />)
     const tasks = screen.getByRole('tab', { name: '任务中心' })
@@ -214,19 +254,23 @@ describe('WorkbarShell', () => {
     expect(tasks).toHaveFocus()
   })
 
-  it('closes the active tab, activates its right neighbor, and restores focus', async () => {
-    render(<ControlledShell />)
-    const workspace = screen.getByRole('tab', { name: '工作区' })
-    fireEvent.click(workspace)
+  it('closes an active closable tab, activates its neighbor, and restores focus', async () => {
+    render(
+      <ControlledShell
+        initialInstances={[...DEFAULT_WORKBAR_INSTANCES, terminalOne]}
+      />
+    )
+    const browser = screen.getByRole('tab', { name: '浏览器' })
+    fireEvent.click(browser)
     fireEvent.click(
-      screen.getByRole('button', { name: '关闭工作区' })
+      screen.getByRole('button', { name: '关闭浏览器' })
     )
 
-    const browser = screen.getByRole('tab', { name: '浏览器' })
-    await waitFor(() => expect(browser).toHaveFocus())
-    expect(browser).toHaveAttribute('aria-selected', 'true')
+    const results = screen.getByRole('tab', { name: '成果' })
+    await waitFor(() => expect(results).toHaveFocus())
+    expect(results).toHaveAttribute('aria-selected', 'true')
     expect(
-      screen.queryByRole('tab', { name: '工作区' })
+      screen.queryByRole('tab', { name: '浏览器' })
     ).not.toBeInTheDocument()
   })
 
@@ -234,19 +278,39 @@ describe('WorkbarShell', () => {
     render(<ControlledShell />)
     const tasks = screen.getByRole('tab', { name: '任务中心' })
     fireEvent.click(
-      screen.getByRole('button', { name: '关闭成果' })
+      screen.getByRole('button', { name: '关闭浏览器' })
     )
 
     await waitFor(() => expect(tasks).toHaveFocus())
     expect(tasks).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('retains an instance when its close operation rejects', async () => {
+    const onClose = vi.fn(async () => {
+      throw new Error('Close denied')
+    })
+    render(
+      <ControlledShell
+        initialInstances={[terminalOne]}
+        onClose={onClose}
+      />
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: `关闭${terminalOne.title}` })
+    )
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(screen.getByRole('tab', { name: terminalOne.title }))
+      .toBeInTheDocument()
+  })
+
   it('shows the empty state while preserving the add command after the last close', async () => {
     render(
-      <ControlledShell initialInstances={[DEFAULT_WORKBAR_INSTANCES[0]!]} />
+      <ControlledShell initialInstances={[terminalOne]} />
     )
     fireEvent.click(
-      screen.getByRole('button', { name: '关闭任务中心' })
+      screen.getByRole('button', { name: `关闭${terminalOne.title}` })
     )
 
     const addButton = screen.getByRole('button', {
@@ -256,6 +320,9 @@ describe('WorkbarShell', () => {
     expect(
       screen.getByText('还没有打开的工作栏应用')
     ).toBeInTheDocument()
+    expect(screen.getByTestId('active-workbar-instance')).toHaveTextContent(
+      'none'
+    )
     expect(addButton).toBeVisible()
   })
 })

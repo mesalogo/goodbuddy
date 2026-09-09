@@ -19,7 +19,11 @@ import {
   type Tool
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
-import type { KnowledgeSearchReference } from '../../shared/contracts'
+import type {
+  BrowserTabId,
+  BrowserTabSummary,
+  KnowledgeSearchReference
+} from '../../shared/contracts'
 import { stripKnowledgeHighlightTags } from '../../shared/knowledge-text'
 import {
   knowledgeToolNames,
@@ -70,6 +74,7 @@ import {
   type BrowserToolName,
   type BrowserToolService
 } from '../browser/browser-model-tools'
+import type { BrowserTabUsageLease } from '../browser/browser-service'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
 import { safeToolErrorDetail } from './approval-summary'
 
@@ -185,6 +190,8 @@ type Capability = {
   configWorkspacePath?: string
   authorizeConfigApply?: GoodBuddyConfigApplyAuthorizer
   browserConversationId?: string
+  browserTabId?: BrowserTabId
+  browserUsageLease?: BrowserTabUsageLease
   expiresAt: number
   signal: AbortSignal
   brokerController: AbortController
@@ -230,7 +237,14 @@ export type KnowledgeMcpGatewayOptions = {
   now?: () => number
   magicNotesDatabase?: MagicNotesDatabase
   configService?: GoodBuddyConfigService
-  browserService?: BrowserToolService
+  browserService?: BrowserToolService & {
+    listTabs(conversationId: string): BrowserTabSummary[]
+    acquireTabUsage(
+      conversationId: string,
+      tabId: BrowserTabId,
+      owner: string
+    ): BrowserTabUsageLease
+  }
   launchEnvironmentProvider?: LaunchEnvironmentProvider
 }
 
@@ -356,7 +370,14 @@ export class KnowledgeMcpGateway {
   private readonly maximumBodyBytes: number
   private readonly magicNotesDatabase?: MagicNotesDatabase
   private readonly configService?: GoodBuddyConfigService
-  private readonly browserService?: BrowserToolService
+  private readonly browserService?: BrowserToolService & {
+    listTabs(conversationId: string): BrowserTabSummary[]
+    acquireTabUsage(
+      conversationId: string,
+      tabId: BrowserTabId,
+      owner: string
+    ): BrowserTabUsageLease
+  }
   private readonly launchEnvironmentProvider?: LaunchEnvironmentProvider
   private server?: Server
   private endpoint?: string
@@ -432,7 +453,9 @@ export class KnowledgeMcpGateway {
       workspacePath: string
       authorizeApply?: GoodBuddyConfigApplyAuthorizer
     },
-    browserConversationId?: string
+    browserConversationId?: string,
+    browserTabId?: BrowserTabId,
+    browserUsageLease?: BrowserTabUsageLease
   ): string | undefined {
     const effectiveMagicNotesAccess = this.magicNotesDatabase
       ? magicNotesAccess
@@ -443,6 +466,39 @@ export class KnowledgeMcpGateway {
     const effectiveBrowserConversationId = this.browserService
       ? browserConversationId
       : undefined
+    const effectiveBrowserTabId = effectiveBrowserConversationId
+      ? browserTabId
+      : undefined
+    if (
+      effectiveBrowserConversationId &&
+      (!effectiveBrowserTabId ||
+        !this.browserService!
+          .listTabs(effectiveBrowserConversationId)
+          .some((tab) => tab.tabId === effectiveBrowserTabId))
+    ) {
+      throw new Error('浏览器标签页不存在或不属于当前对话')
+    }
+    let effectiveBrowserUsageLease: BrowserTabUsageLease | undefined
+    if (effectiveBrowserConversationId && effectiveBrowserTabId) {
+      effectiveBrowserUsageLease = browserUsageLease ??
+        this.browserService!.acquireTabUsage(
+          effectiveBrowserConversationId,
+          effectiveBrowserTabId,
+          requestId
+        )
+      if (
+        effectiveBrowserUsageLease.conversationId !==
+          effectiveBrowserConversationId ||
+        effectiveBrowserUsageLease.tabId !== effectiveBrowserTabId ||
+        effectiveBrowserUsageLease.owner !== requestId
+      ) {
+        effectiveBrowserUsageLease.release()
+        throw new Error('浏览器标签页使用租约与当前请求不匹配')
+      }
+    } else if (browserUsageLease) {
+      browserUsageLease.release()
+      throw new Error('浏览器标签页使用租约与当前请求不匹配')
+    }
     if (
       authorizedLibraryIds.length === 0 &&
       effectiveMagicNotesAccess === 'none' &&
@@ -452,21 +508,28 @@ export class KnowledgeMcpGateway {
       return undefined
     }
     signal.throwIfAborted()
-    return this.storeCapability({
-      requestId,
-      libraryIds: Object.freeze([...new Set(authorizedLibraryIds)]),
-      magicNotesAccess: effectiveMagicNotesAccess,
-      configAccess: effectiveConfigAccess,
-      browserConversationId: effectiveBrowserConversationId,
-      ...(effectiveConfigAccess !== 'none'
-        ? {
-            configWorkspacePath: config?.workspacePath,
-            authorizeConfigApply: config?.authorizeApply
-          }
-        : {}),
-      signal,
-      customMcpServers: []
-    })
+    try {
+      return this.storeCapability({
+        requestId,
+        libraryIds: Object.freeze([...new Set(authorizedLibraryIds)]),
+        magicNotesAccess: effectiveMagicNotesAccess,
+        configAccess: effectiveConfigAccess,
+        browserConversationId: effectiveBrowserConversationId,
+        browserTabId: effectiveBrowserTabId,
+        browserUsageLease: effectiveBrowserUsageLease,
+        ...(effectiveConfigAccess !== 'none'
+          ? {
+              configWorkspacePath: config?.workspacePath,
+              authorizeConfigApply: config?.authorizeApply
+            }
+          : {}),
+        signal,
+        customMcpServers: []
+      })
+    } catch (error) {
+      effectiveBrowserUsageLease?.release()
+      throw error
+    }
   }
 
   grantCustomMcp(
@@ -517,14 +580,27 @@ export class KnowledgeMcpGateway {
     const abort = (): void => {
       this.revoke(token)
     }
+    const abortFromBrowser = (): void => {
+      this.revoke(token)
+    }
     value.signal.addEventListener('abort', abort, { once: true })
+    value.browserUsageLease?.signal.addEventListener(
+      'abort',
+      abortFromBrowser,
+      { once: true }
+    )
     this.capabilities.set(token, {
       ...value,
       expiresAt: this.now() + this.capabilityTtlMs,
       brokerController,
       references: new Map(),
-      removeAbortListener: () =>
+      removeAbortListener: () => {
         value.signal.removeEventListener('abort', abort)
+        value.browserUsageLease?.signal.removeEventListener(
+          'abort',
+          abortFromBrowser
+        )
+      }
     })
     return token
   }
@@ -542,6 +618,7 @@ export class KnowledgeMcpGateway {
     capability.brokerController.abort(
       new Error('MCP capability was revoked')
     )
+    capability.browserUsageLease?.release()
     for (const session of this.downstreamMcpSessions.values()) {
       if (session.token === token) {
         void this.closeDownstreamMcpSession(session)
@@ -724,7 +801,7 @@ export class KnowledgeMcpGateway {
       ...(capability.configAccess === 'write'
         ? goodbuddyConfigWriteToolNames
         : []),
-      ...(capability.browserConversationId
+      ...(capability.browserConversationId && capability.browserTabId
         ? browserToolNames
         : [])
     ]
@@ -1518,10 +1595,11 @@ export class KnowledgeMcpGateway {
           }
         )
         const capability = this.getCapability(token)
-        const browserTools = capability.browserConversationId
+        const browserTools = capability.browserConversationId && capability.browserTabId
           ? new BrowserModelTools({
               service: this.browserService!,
-              conversationId: capability.browserConversationId
+              conversationId: capability.browserConversationId,
+              browserTabId: capability.browserTabId
             })
           : undefined
         const browserDefinitions = browserTools
@@ -1579,10 +1657,11 @@ export class KnowledgeMcpGateway {
             }
           }
           const capability = this.getCapability(token)
-          const browserTools = capability.browserConversationId
+          const browserTools = capability.browserConversationId && capability.browserTabId
             ? new BrowserModelTools({
                 service: this.browserService!,
-                conversationId: capability.browserConversationId
+                conversationId: capability.browserConversationId,
+                browserTabId: capability.browserTabId
               })
             : undefined
           if (browserTools?.ownsTool(name)) {

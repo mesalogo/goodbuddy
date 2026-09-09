@@ -4,6 +4,7 @@ import type {
   AgentQuestionAnswer,
   AgentRequest,
   AgentRuntimeStatus,
+  BrowserTabId,
   RuntimeConversationCompactInput,
   RuntimeConversationCompactResult,
   RuntimeNativeSnapshot
@@ -137,6 +138,8 @@ export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   trustedInstructions?: string
   /** Main-process-only request-scoped authorization for built-in data tools. */
   knowledgeCapabilityToken?: string
+  /** Main-process-only browser tab fixed for this request. */
+  browserTabId?: BrowserTabId
   /**
    * Main-process recovery cursor for an Agent-owned semantic prompt.
    * It is never sent as prompt content and is ignored by local runtimes.
