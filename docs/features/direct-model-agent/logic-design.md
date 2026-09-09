@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 已实施 |
-| 版本 | 0.3 |
-| 日期 | 2026-09-03 |
+| 版本 | 0.4 |
+| 日期 | 2026-09-09 |
 | 关联 PRD | [PRD](./prd.md) |
 | 关联故事 | [User Stories](./user-stories.md) |
 
@@ -24,6 +24,9 @@
 10. OpenCode、Continue 和 DeepSeek Harness 的原生能力不被本功能替换或包装。
 11. 直连模型只在尚未显示文本或推理内容时自动重试瞬时网络错误或请求超时，最多重试
     3 次；用户取消和已显示的部分输出禁止重放。
+12. Ask 可调用 `workspace_rg` 和 `workspace_read_text`，但不能调用
+    `workspace_apply_patch`；Execute 可调用三者。
+13. 工作区搜索固定使用随包 ripgrep 的结构化输出，不把任意 ripgrep 参数转成命令执行。
 
 ## 2. 状态维度
 
@@ -39,13 +42,13 @@
 
 ## 3. 工具可见性决策表
 
-| Runtime | 模式 | 执行空间 | `process_execute` | `subagent_delegate` |
-| --- | --- | --- | --- | --- |
-| `model` | Ask | 本机 | 隐藏 | 提供，只读继承 |
-| `model` | Execute | 本机且 Shell 可用 | 提供 | 提供，Execute 继承 |
-| `model` | Execute | 本机但 Shell 不可用 | 隐藏并报告诊断 | 提供，但子级同样没有进程工具 |
-| `model` | Ask/Execute | SSH，远端后端未实现 | 隐藏 | 当前远端直连模型产品入口不开放 |
-| 其他 Runtime | 任意 | 任意 | 隐藏 | 隐藏 |
+| Runtime | 模式 | 工作区读/搜索 | 补丁 | `process_execute` | `subagent_delegate` |
+| --- | --- | --- | --- | --- | --- |
+| `model` | Ask | 提供 | 隐藏 | 隐藏 | 提供，只读继承 |
+| `model` | Execute，本机 Shell 可用 | 提供 | 提供 | 提供 | 提供，Execute 继承 |
+| `model` | Execute，本机 Shell 不可用 | 提供 | 提供 | 隐藏并报告诊断 | 提供 |
+| `model` | SSH，远端后端未实现 | 当前入口不开放 | 当前入口不开放 | 隐藏 | 隐藏 |
+| 其他 Runtime | 任意 | 不注入本功能工具 | 不注入 | 不注入 | 不注入 |
 
 工具清单隐藏不是最终授权边界。`callTool` 仍须重新验证 Runtime、工作模式、执行空间和父请求
 是否活动，以拒绝旧快照或伪造调用。

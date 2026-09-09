@@ -380,6 +380,7 @@ export function createAgentRuntime(
       workspaceAccess: getWorkspaceAccess(),
       directModelSubagentScheduler:
         capabilities.directModelSubagentScheduler,
+      ripgrepExecutablePath: capabilities.bundledRuntimePaths?.ripgrep,
       launchEnvironmentProvider:
         capabilities.launchEnvironmentProvider
     })

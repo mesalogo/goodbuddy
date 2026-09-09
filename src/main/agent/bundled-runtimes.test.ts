@@ -8,7 +8,8 @@ describe('bundled runtime paths', () => {
       appPath: join('workspace', 'app'),
       resourcesPath: join('electron', 'resources'),
       packaged: false,
-      platform: 'linux'
+      platform: 'linux',
+      arch: 'x64'
     })
 
     expect(paths).toEqual({
@@ -19,6 +20,15 @@ describe('bundled runtime paths', () => {
         'opencode-ai',
         'bin',
         'opencode.exe'
+      ),
+      ripgrep: join(
+        'workspace',
+        'app',
+        'node_modules',
+        '@vscode',
+        'ripgrep-linux-x64',
+        'bin',
+        'rg'
       ),
       continue: join(
         'workspace',
@@ -60,6 +70,13 @@ describe('bundled runtime paths', () => {
         'resources',
         'runtimes',
         'opencode-config'
+      ),
+      ripgrep: join(
+        'installed',
+        'resources',
+        'runtimes',
+        'opencode',
+        'rg.exe'
       ),
       continue: join(
         'installed',

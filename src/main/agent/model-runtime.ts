@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { dirname } from 'node:path'
 import type {
   ApprovalDecision,
   AgentRuntimeStatus,
@@ -269,6 +270,7 @@ export type ModelRuntimeOptions = {
   maximumOutputTokens?: number
   directModelSubagentScheduler?: SubagentScheduler
   launchEnvironmentProvider?: LaunchEnvironmentProvider
+  ripgrepExecutablePath?: string
 }
 
 function getErrorMessage(value: unknown): string | undefined {
@@ -1654,8 +1656,14 @@ export class ModelAgentRuntime implements AgentRuntime {
         options.knowledgeGateway,
         options.webSearchEnabled,
         {
-          processService: new LocalDirectModelProcessService(),
-          subagentService: directModelSubagentService
+          processService: new LocalDirectModelProcessService({
+            environment: options.launchEnvironmentProvider?.(),
+            ...(options.ripgrepExecutablePath
+              ? { toolBinDirectory: dirname(options.ripgrepExecutablePath) }
+              : {})
+          }),
+          subagentService: directModelSubagentService,
+          ripgrepExecutablePath: options.ripgrepExecutablePath
         },
         options.launchEnvironmentProvider
       )

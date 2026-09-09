@@ -8,24 +8,25 @@ export type BuiltinModelToolSummary = {
 
 export const builtinModelTools = [
   {
+    name: 'workspace_rg',
+    displayName: '搜索工作区',
+    description:
+      '使用 GoodBuddy 内置 ripgrep 搜索工作区内容或列出文件，返回带路径和行号的紧凑结果。',
+    access: 'read',
+    group: 'filesystem'
+  },
+  {
     name: 'workspace_read_text',
     displayName: '读取工作区文本',
-    description: '读取当前工作区内不超过 256KB 的 UTF-8 文本文件。',
+    description: '按行分页读取当前工作区内的 UTF-8 文本文件。',
     access: 'read',
     group: 'filesystem'
   },
   {
-    name: 'workspace_list_directory',
-    displayName: '列出工作区目录',
-    description: '列出当前工作区内目录的直属内容，最多返回 200 项。',
-    access: 'read',
-    group: 'filesystem'
-  },
-  {
-    name: 'workspace_write_text',
-    displayName: '写入工作区文本',
+    name: 'workspace_apply_patch',
+    displayName: '应用工作区补丁',
     description:
-      '在当前工作区内新建或覆盖不超过 512KB 的 UTF-8 文本文件，父目录必须已存在。',
+      '使用 apply_patch 格式在当前工作区内新增、修改或删除 UTF-8 文本文件。',
     access: 'write',
     group: 'filesystem'
   },
@@ -115,9 +116,9 @@ export const builtinModelTools = [
 export const builtinModelToolGroups = [
   {
     id: 'filesystem',
-    name: '文件系统操作',
+    name: '工作区文件',
     description:
-      '在 Execute 模式下读取、列出或写入当前工作区范围内的文件。',
+      '搜索和分页读取工作区文件；Execute 模式还可通过补丁新增、修改或删除文件。',
     tools: builtinModelTools.filter((tool) => tool.group === 'filesystem')
   },
   {
@@ -129,9 +130,9 @@ export const builtinModelToolGroups = [
   },
   {
     id: 'programming',
-    name: '编程能力',
+    name: '开发工具',
     description:
-      '直连模型可运行项目命令，或将聚焦任务委派给继承当前模式的 Subagent。',
+      '直连模型可运行项目命令，或将聚焦的开发任务委派给继承当前模式的 Subagent。',
     tools: builtinModelTools.filter((tool) => tool.group === 'programming')
   }
 ] as const

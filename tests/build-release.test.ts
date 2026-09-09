@@ -243,6 +243,7 @@ function portableDirectory(parent: string): string {
     join(directory, 'resources', 'runtimes', 'opencode'),
     { recursive: true }
   )
+  mkdirSync(join(directory, 'resources', 'licenses'), { recursive: true })
   mkdirSync(
     join(directory, 'resources', 'runtimes', 'continue'),
     { recursive: true }
@@ -283,6 +284,8 @@ function portableDirectory(parent: string): string {
       '{"artifacts":[]}'
     ],
     ['resources/runtimes/opencode/opencode.exe', 'MZ'],
+    ['resources/runtimes/opencode/rg.exe', 'MZ'],
+    ['resources/licenses/vscode-ripgrep-MIT.txt', 'MIT'],
     ['resources/runtimes/continue/package.json', '{}'],
     [
       'resources/runtimes/npm/bin/npm-cli.js',
@@ -891,6 +894,9 @@ describe('release build arguments', () => {
     const packageName = 'opencode-windows-x64-baseline'
     const integrity = 'sha512-test-integrity'
     const executable = Buffer.from('desktop runtime')
+    const ripgrepPackageName = '@vscode/ripgrep-win32-x64'
+    const ripgrepIntegrity = 'sha512-ripgrep-test-integrity'
+    const ripgrepExecutable = Buffer.from('ripgrep runtime')
     try {
       const configPlugin = join(
         projectRoot, '.runtime-resources', 'opencode-config',
@@ -909,7 +915,8 @@ describe('release build arguments', () => {
         join(projectRoot, 'package.json'),
         JSON.stringify({
           dependencies: {
-            '@deepseek-ai/dsh-llm': '0.1.2-rc.1'
+            '@deepseek-ai/dsh-llm': '0.1.2-rc.1',
+            '@vscode/ripgrep': '1.18.0'
           }
         })
       )
@@ -920,6 +927,10 @@ describe('release build arguments', () => {
             [`node_modules/${packageName}`]: {
               version: '1.18.29',
               integrity
+            },
+            [`node_modules/${ripgrepPackageName}`]: {
+              version: '1.18.0',
+              integrity: ripgrepIntegrity
             }
           }
         })
@@ -946,6 +957,21 @@ describe('release build arguments', () => {
           integrity,
           executableSha256: createHash('sha256')
             .update(executable)
+            .digest('hex')
+        })
+      )
+      writeFileSync(
+        join(projectRoot, '.runtime-resources', 'x64', 'rg.exe'),
+        ripgrepExecutable
+      )
+      writeFileSync(
+        join(projectRoot, '.runtime-resources', 'x64', '.ripgrep-ready.json'),
+        JSON.stringify({
+          packageName: ripgrepPackageName,
+          version: '1.18.0',
+          integrity: ripgrepIntegrity,
+          executableSha256: createHash('sha256')
+            .update(ripgrepExecutable)
             .digest('hex')
         })
       )

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 export type BundledRuntimePaths = {
   opencode: string
   opencodeConfig?: string
+  ripgrep: string
   continue: string
   deepseekHarness: string
 }
@@ -15,11 +16,14 @@ export function resolveBundledRuntimePaths(input: {
   resourcesPath: string
   packaged: boolean
   platform?: NodeJS.Platform
+  arch?: NodeJS.Architecture
 }): BundledRuntimePaths {
   const packagedExecutable =
     (input.platform ?? process.platform) === 'win32'
       ? 'opencode.exe'
       : 'opencode'
+  const ripgrepExecutable =
+    (input.platform ?? process.platform) === 'win32' ? 'rg.exe' : 'rg'
   if (input.packaged) {
     return {
       opencode: join(
@@ -32,6 +36,12 @@ export function resolveBundledRuntimePaths(input: {
         input.resourcesPath,
         'runtimes',
         'opencode-config'
+      ),
+      ripgrep: join(
+        input.resourcesPath,
+        'runtimes',
+        'opencode',
+        ripgrepExecutable
       ),
       continue: join(
         input.resourcesPath,
@@ -57,6 +67,14 @@ export function resolveBundledRuntimePaths(input: {
       'opencode-ai',
       'bin',
       'opencode.exe'
+    ),
+    ripgrep: join(
+      input.appPath,
+      'node_modules',
+      '@vscode',
+      `ripgrep-${input.platform ?? process.platform}-${input.arch ?? process.arch}`,
+      'bin',
+      ripgrepExecutable
     ),
     continue: join(
       input.appPath,

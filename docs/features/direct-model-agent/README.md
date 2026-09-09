@@ -1,8 +1,9 @@
 # 直连模型 Agent 能力
 
 本目录是 GoodBuddy“直连模型 Agent 能力”的唯一文档入口。本功能为直连文本模型补齐
-跨平台进程执行和编程 Subagent，使其能够在 Execute 模式完成读取、修改、运行和验证组成的
-编程闭环，同时避免向已经拥有原生 Shell 或 Agent 能力的 Runtime 重复注入工具。
+高效工作区搜索、分页读取、补丁编辑、跨平台进程执行和编程 Subagent，使其能够完成
+“搜索、读取、修改、运行、验证”的开发闭环，同时避免向已经拥有原生 Shell 或 Agent
+能力的 Runtime 重复注入工具。
 
 ## 文档导航
 
@@ -21,6 +22,8 @@
 | --- | --- |
 | 直连模型 | Runtime provider 为 `model`、由 GoodBuddy 直接调用模型协议的文本模型 |
 | 进程执行 | GoodBuddy 在当前执行空间启动一个前台 Shell 命令并返回有界结果 |
+| 工作区搜索 | 通过安装包内置 ripgrep 搜索内容或列出文件，并返回紧凑结果 |
+| 工作区补丁 | 通过 `*** Begin Patch` 格式新增、修改或删除工作区文本文件 |
 | 平台 Shell | Windows 上的 PowerShell，macOS/Linux 上的 Bash 或 POSIX Sh |
 | 编程 Subagent | 由直连模型临时委派、使用直连模型 Runtime 执行一个有界子任务的执行者 |
 | 父请求 | 发起进程调用或 Subagent 委派的当前直连模型请求 |
@@ -32,11 +35,13 @@ Task、Job、Subjob、Run 和 Subagent 的对象关系以
 
 ## 功能边界
 
-- `process_execute` 和 `subagent_delegate` 是 GoodBuddy 直连模型内置工具，不是外部 MCP。
+- `workspace_rg`、`workspace_read_text`、`workspace_apply_patch`、`process_execute` 和
+  `subagent_delegate` 是 GoodBuddy 直连模型内置工具，不是外部 MCP。
 - 直连文本模型的普通问答、工具轮次和上下文摘要会在尚无可见输出时，对瞬时网络错误或
   单次请求超时最多自动重试 3 次。
 - OpenCode、Continue 和 DeepSeek Harness 继续使用各自原生执行与委派能力。
-- Ask 不允许进程执行；Subagent 若在 Ask 中使用，只能继承 Ask 的只读能力。
+- Ask 可搜索和分页读取工作区，但不允许补丁写入或进程执行；Subagent 若在 Ask 中使用，
+  只能继承 Ask 的只读能力。
 - Execute 表示用户授权当前执行空间账号的完整能力，不增加第二套工具审批或权限档位。
 - 首版跨平台指桌面本机 Windows、macOS 和 Linux。托管 SSH 项目当前继续使用远端
   OpenCode；未来若向远端直连模型开放本工具，命令必须由 Host Agent 执行，绝不能回退到

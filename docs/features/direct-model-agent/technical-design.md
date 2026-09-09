@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 已实施 |
-| 版本 | 0.3 |
-| 日期 | 2026-09-03 |
+| 版本 | 0.4 |
+| 日期 | 2026-09-09 |
 | 关联 PRD | [PRD](./prd.md) |
 | 功能逻辑 | [功能逻辑设计](./logic-design.md) |
 | 相关架构 | [助手工作栏与执行空间](../assistant-workbar/prd.md)、[本机工具环境](../local-tool-environment/technical-design.md) |
@@ -17,6 +17,7 @@
 
 - `ModelAgentRuntime` 的多轮工具调用、上下文压缩、取消、用量和有界结果处理。
 - `ModelToolProvider` 的直连模型内置工具、浏览器、Web、知识和自定义 MCP 聚合。
+- `workspace_rg`、分页 `workspace_read_text` 和 `workspace_apply_patch` 工作区工具。
 - `WorkspaceAccess` 的本机和远端工作区抽象。
 - 跨平台子进程树终止辅助函数。
 - 面向用户专家协作的 `SubagentScheduler` 和状态事件。专家使用具备已启用本机能力的
@@ -68,6 +69,29 @@ type BuiltinModelToolSummary = {
 - `callTool` 不依赖静态 `access` 单独授权，必须检查父请求上下文。
 
 工具总数和 schema 总字节继续计入直连模型现有 100 个工具与 512 KiB 上限。
+
+## 工作区工具契约
+
+### 工具输入与执行
+
+- `workspace_rg` 接受 `pattern`、相对目录、glob、固定字符串、忽略大小写、文件列表模式和
+  最大结果数。Main 固定追加 `--no-config`，内容搜索读取 `--json`，对模型返回紧凑文本。
+- `workspace_read_text` 接受 `path`、从 1 开始的 `offset` 和 `limit`，通过现有
+  `WorkspaceAccess.readText` 字节分页组装带行号结果；`offsetBytes` 提供原始字节续读，
+  覆盖跨多个页面的超长单行。
+- `workspace_apply_patch` 接受一个 `*** Begin Patch` 文本，支持 `Add File`、`Update File`
+  和 `Delete File`。全部操作先解析并验证；更新文件保留原换行和权限位，单文件原子替换。
+- Ask 只注册前两个只读工具；Execute 注册全部三个工具。旧的目录列表和整文件覆盖不再进入
+  新工具清单。
+- 输入和目标文件不设固定总量上限。单次工具结果仍遵守直连模型上下文边界；读取返回续读
+  位置，搜索截断时要求模型缩小路径、glob 或表达式。
+
+### ripgrep 打包
+
+固定依赖 `@vscode/ripgrep`，构建钩子根据 Electron 目标选择对应 Windows、macOS 或 Linux
+x64/arm64 平台包，使用 lockfile integrity 校验后提取 `rg`。安装包只复制当前目标二进制和
+MIT 许可证。运行时通过 `BundledRuntimePaths.ripgrep` 使用绝对路径，并将所在目录放到直连
+模型进程 PATH 前部。
 
 ## 4. 进程工具契约
 
@@ -303,7 +327,7 @@ DeepSeek Harness 的 Main 工具代理必须使用仅包含分配 MCP 和 Web �
 
 复用现有 `subagent` 公开事件和消息块，增加 `routingMode: 'native'` 表示模型主动委派。
 `expertId` 不再作为编程 Subagent 必填身份；共享 schema 应改为执行者 discriminated union，
-而不是伪造一个专家记录：
+不得以专家记录代替该执行者：
 
 ```ts
 type SubagentActor =

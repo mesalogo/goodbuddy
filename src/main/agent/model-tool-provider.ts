@@ -45,12 +45,13 @@ import {
   directModelSubagentInputSchema
 } from '../assistant/direct-model-subagent-service'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment'
+import { searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
+import { applyWorkspacePatch } from './workspace-apply-patch'
+import { readWorkspaceLines } from './workspace-read-lines'
 
 const MAX_MODEL_TOOLS = 100
 const MAX_MCP_SERVERS = 16
 const MAX_TOOL_RESULT_BYTES = 256 * 1024
-const MAX_READ_BYTES = 256 * 1024
-const MAX_WRITE_BYTES = 512 * 1024
 const MCP_TIMEOUT_MS = 30_000
 const MCP_CALL_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
 const MCP_TASK_CANCEL_TIMEOUT_MS = 5_000
@@ -71,11 +72,15 @@ const EXA_TOOL_NAMES = new Set([
   'web_search_exa',
   'web_fetch_exa'
 ])
-const [
-  workspaceReadTextTool,
-  workspaceListDirectoryTool,
-  workspaceWriteTextTool
-] = builtinModelTools
+const workspaceRipgrepTool = builtinModelTools.find(
+  (tool) => tool.name === 'workspace_rg'
+)!
+const workspaceReadTextTool = builtinModelTools.find(
+  (tool) => tool.name === 'workspace_read_text'
+)!
+const workspaceApplyPatchTool = builtinModelTools.find(
+  (tool) => tool.name === 'workspace_apply_patch'
+)!
 const webSearchTool = builtinModelTools.find(
   (tool) => tool.name === 'web_search'
 )!
@@ -117,26 +122,48 @@ const workspacePathSchema = z
   .string()
   .trim()
   .min(1)
-  .max(4_096)
   .refine((value) => !isAbsolute(value), '路径必须相对于工作区')
   .refine((value) => !value.includes('\0'), '路径包含无效字符')
 
 const readInputSchema = z
   .object({
-    path: workspacePathSchema
-  })
-  .strict()
-
-const listInputSchema = z
-  .object({
-    path: z.string().max(4_096).default('.')
-  })
-  .strict()
-
-const writeInputSchema = z
-  .object({
     path: workspacePathSchema,
-    content: z.string().max(MAX_WRITE_BYTES)
+    offset: z.number().int().min(1).default(1),
+    limit: z.number().int().min(1).default(200),
+    offsetBytes: z.number().int().min(0).optional()
+  })
+  .strict()
+
+const searchPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => !isAbsolute(value), '路径必须相对于工作区')
+  .refine((value) => !value.includes('\0'), '路径包含无效字符')
+  .refine(
+    (value) => !value.split(/[\\/]+/u).includes('..'),
+    '路径不能超出工作区'
+  )
+
+const ripgrepInputSchema = z
+  .object({
+    pattern: z.string().optional(),
+    path: searchPathSchema.default('.'),
+    glob: z.array(z.string().min(1)).default([]),
+    fixedStrings: z.boolean().default(false),
+    ignoreCase: z.boolean().default(false),
+    filesOnly: z.boolean().default(false),
+    maxResults: z.number().int().min(1).default(200)
+  })
+  .refine(
+    (input) => input.filesOnly || Boolean(input.pattern),
+    '内容搜索必须提供 pattern'
+  )
+  .strict()
+
+const applyPatchInputSchema = z
+  .object({
+    patch: z.string().min(1)
   })
   .strict()
 
@@ -264,6 +291,7 @@ export type ModelSubagentBridge = {
 export type ModelToolProviderProgrammingOptions = {
   processService?: DirectModelProcessService
   subagentService?: DirectModelSubagentService<ModelSubagentRequestContext>
+  ripgrepExecutablePath?: string
 }
 
 export function createDirectModelSubagentCallId(
@@ -757,17 +785,69 @@ export class ModelToolProvider implements ModelToolProviderLike {
   }
 
   private getBuiltinTools(): ModelToolDefinition[] {
-    return [
+    const tools: ModelToolDefinition[] = [
+      {
+        name: workspaceRipgrepTool.name,
+        displayName: workspaceRipgrepTool.displayName,
+        description:
+          'Search workspace contents or list files with bundled ripgrep. Returns compact path:line:column:text output. Use filesOnly to discover files. Paths are relative to the workspace.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            pattern: {
+              type: 'string',
+              description: 'ripgrep 正则；filesOnly 为 false 时必填'
+            },
+            path: {
+              type: 'string',
+              description: '相对于工作区的搜索目录，默认为 .'
+            },
+            glob: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '可选 ripgrep glob，例如 **/*.ts 或 !dist/**'
+            },
+            fixedStrings: { type: 'boolean', default: false },
+            ignoreCase: { type: 'boolean', default: false },
+            filesOnly: { type: 'boolean', default: false },
+            maxResults: {
+              type: 'integer',
+              minimum: 1,
+              default: 200
+            }
+          },
+          additionalProperties: false
+        },
+        source: 'builtin'
+      },
       {
         name: workspaceReadTextTool.name,
         displayName: workspaceReadTextTool.displayName,
-        description: workspaceReadTextTool.description,
+        description:
+          'Read any size UTF-8 workspace file. Use offset and limit for line pages, or offsetBytes to continue raw byte pages including very long lines.',
         inputSchema: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
               description: '相对于当前工作区的文件路径'
+            },
+            offset: {
+              type: 'integer',
+              minimum: 1,
+              default: 1,
+              description: '从第几行开始读取，行号从 1 开始'
+            },
+            limit: {
+              type: 'integer',
+              minimum: 1,
+              default: 200,
+              description: '最多返回多少行'
+            },
+            offsetBytes: {
+              type: 'integer',
+              minimum: 0,
+              description: '可选原始字节起点，用于连续读取超长行'
             }
           },
           required: ['path'],
@@ -776,43 +856,38 @@ export class ModelToolProvider implements ModelToolProviderLike {
         source: 'builtin'
       },
       {
-        name: workspaceListDirectoryTool.name,
-        displayName: workspaceListDirectoryTool.displayName,
-        description: workspaceListDirectoryTool.description,
+        name: workspaceApplyPatchTool.name,
+        displayName: workspaceApplyPatchTool.displayName,
+        description:
+          'Apply one *** Begin Patch block to add, update, or delete UTF-8 files in the workspace. Update hunks use @@ and lines prefixed with space, +, or -. Validate context before applying.',
         inputSchema: {
           type: 'object',
           properties: {
-            path: {
+            patch: {
               type: 'string',
-              description: '相对于当前工作区的目录路径，默认为 .'
+              description: 'apply_patch 格式的完整补丁文本'
             }
           },
-          additionalProperties: false
-        },
-        source: 'builtin'
-      },
-      {
-        name: workspaceWriteTextTool.name,
-        displayName: workspaceWriteTextTool.displayName,
-        description: workspaceWriteTextTool.description,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            path: {
-              type: 'string',
-              description: '相对于当前工作区的文件路径'
-            },
-            content: {
-              type: 'string',
-              description: '要写入的完整 UTF-8 文本'
-            }
-          },
-          required: ['path', 'content'],
+          required: ['patch'],
           additionalProperties: false
         },
         source: 'builtin'
       }
     ]
+    return this.programming.ripgrepExecutablePath
+      ? tools
+      : tools.filter((tool) => tool.name !== 'workspace_rg')
+  }
+
+  private async getWorkspaceTools(
+    signal: AbortSignal
+  ): Promise<ModelToolDefinition[]> {
+    signal.throwIfAborted()
+    const tools = this.getBuiltinTools()
+    const identity = await this.workspaceAccess.getIdentity()
+    return identity.kind === 'local'
+      ? tools
+      : tools.filter((tool) => tool.name === 'workspace_read_text')
   }
 
   private async getProcessTool(
@@ -1139,14 +1214,22 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ? this.getWebSearchDefinitions()
       : []
     const subagentTools = this.getSubagentTool(context)
+    const workspaceTools = await this.getWorkspaceTools(signal)
     if (context.workMode !== 'execute') {
-      return [...webTools, ...subagentTools, ...scopedTools]
+      return [
+        ...workspaceTools.filter(
+          (tool) => builtinModelToolAccessByName.get(tool.name) === 'read'
+        ),
+        ...webTools,
+        ...subagentTools,
+        ...scopedTools
+      ]
     }
     const processTools = await this.getProcessTool(context, signal)
     const bindings = await this.getMcpBindings(signal, true)
     const browserTools = this.getBrowserTools(context)
     return [
-      ...this.getBuiltinTools(),
+      ...workspaceTools,
       ...processTools,
       ...subagentTools,
       ...(browserTools?.listTools() ?? []),
@@ -1548,60 +1631,30 @@ export class ModelToolProvider implements ModelToolProviderLike {
         throw error
       }
     }
+    if (name === 'workspace_rg') {
+      if (!this.programming.ripgrepExecutablePath) {
+        throw new Error('GoodBuddy 内置 ripgrep 不可用')
+      }
+      const input = ripgrepInputSchema.parse(argumentsValue)
+      return createTextToolResult(
+        await searchWorkspaceWithRipgrep(
+          this.programming.ripgrepExecutablePath,
+          input,
+          this.workspaceAccess,
+          signal
+        )
+      )
+    }
     if (name === 'workspace_read_text') {
       const input = readInputSchema.parse(argumentsValue)
       return createTextToolResult(
-        (
-          await this.workspaceAccess.readText({
-            path: input.path,
-            maximumBytes: MAX_READ_BYTES,
-            tooLargeMessage: '工作区文本文件超过 256KB 安全限制',
-            invalidUtf8Message: '工作区读取目标不是有效 UTF-8 文本',
-            signal
-          })
-        ).content
+        await readWorkspaceLines(this.workspaceAccess, input, signal)
       )
     }
-    if (name === 'workspace_list_directory') {
-      const input = listInputSchema.parse(argumentsValue)
-      const listing = await this.workspaceAccess.listDirectory({
-        path: input.path,
-        maximumEntries: 200,
-        includeGit: true,
-        includeOther: true,
-        signal
-      })
+    if (name === 'workspace_apply_patch') {
+      const input = applyPatchInputSchema.parse(argumentsValue)
       return createTextToolResult(
-        boundedJson(
-          {
-            entries: listing.entries
-              .sort((left, right) => left.name.localeCompare(right.name))
-              .map((entry) => ({
-                name: entry.name,
-                type: entry.type
-              })),
-            truncated: listing.truncated
-          },
-          '工作区目录结果无法序列化'
-        )
-      )
-    }
-    if (name === 'workspace_write_text') {
-      const input = writeInputSchema.parse(argumentsValue)
-      if (Buffer.byteLength(input.content) > MAX_WRITE_BYTES) {
-        throw new Error('写入内容超过 512KB 安全限制')
-      }
-      const written = await this.workspaceAccess.writeTextAtomic({
-        path: input.path,
-        content: input.content,
-        maximumBytes: MAX_WRITE_BYTES,
-        signal
-      })
-      return createTextToolResult(
-        boundedJson(
-          written,
-          '工作区写入结果无法序列化'
-        )
+        await applyWorkspacePatch(input.patch, this.workspaceAccess, signal)
       )
     }
     if (name === 'process_execute') {

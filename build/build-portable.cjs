@@ -145,6 +145,13 @@ function portableRequiredPaths(directory) {
       directory,
       'resources',
       'runtimes',
+      'opencode',
+      'rg.exe'
+    ),
+    join(
+      directory,
+      'resources',
+      'runtimes',
       'continue',
       'package.json'
     )

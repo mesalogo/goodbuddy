@@ -124,7 +124,9 @@
         "to": "runtimes/opencode",
         "filter": [
           "opencode",
-          "opencode.exe"
+          "opencode.exe",
+          "rg",
+          "rg.exe"
         ]
       },
       {
@@ -137,6 +139,10 @@
       {
         "from": "node_modules/opencode-ai/LICENSE",
         "to": "licenses/opencode-ai-LICENSE"
+      },
+      {
+        "from": "node_modules/@vscode/ripgrep/LICENSE",
+        "to": "licenses/vscode-ripgrep-MIT.txt"
       },
       {
         "from": "node_modules/@deepseek-ai/dsh-agent/LICENSE",
@@ -299,6 +305,7 @@
     "@napi-rs/canvas": "1.0.3",
     "@opencode-ai/plugin": "1.18.29",
     "@opencode-ai/sdk": "1.18.29",
+    "@vscode/ripgrep": "1.18.0",
     "@wecom/aibot-node-sdk": "^1.0.6",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",

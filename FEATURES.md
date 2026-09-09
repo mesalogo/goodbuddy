@@ -247,6 +247,10 @@ otherwise.
   user's authorization for all tools, processes, network access, and writable
   paths available to the current local or SSH account, including paths outside
   the workspace and native subagent work.
+- [x] **Efficient direct-model workspace tools**: Direct models use bundled
+  ripgrep for compact file discovery and content search, read large UTF-8 files
+  by line, and apply multi-file patches in Execute. Ask can search and read but
+  cannot patch or run commands; packaged ripgrep does not require a system install.
 - [x] **Native Runtime interaction routing**: OpenCode and Continue questions
   support choices, yes/no, free-text answers, and skipping through the existing
   question card. OpenCode also routes questions from owned child sessions.

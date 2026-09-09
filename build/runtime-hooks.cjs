@@ -33,28 +33,28 @@ function sha512Integrity(contents) {
   return `sha512-${createHash("sha512").update(contents).digest("base64")}`;
 }
 
-async function lockedIntegrity(projectDir, packageName) {
+async function lockedIntegrity(projectDir, packageName, version) {
   const lock = JSON.parse(
     await readFile(join(projectDir, "package-lock.json"), "utf8"),
   );
   const entry = lock.packages?.[`node_modules/${packageName}`];
   if (
-    entry?.version !== opencodeVersion ||
+    entry?.version !== version ||
     typeof entry.integrity !== "string"
   ) {
     throw new Error(
-      `Missing locked ${packageName}@${opencodeVersion} integrity`,
+      `Missing locked ${packageName}@${version} integrity`,
     );
   }
   return entry.integrity;
 }
 
-async function downloadPackage(projectDir, packageName, integrity) {
+async function downloadPackage(projectDir, packageName, version, integrity) {
   const cacheDirectory = join(projectDir, ".runtime-resources", "cache");
   await mkdir(cacheDirectory, { recursive: true });
   const archivePath = join(
     cacheDirectory,
-    `${packageName}-${opencodeVersion}.tgz`,
+    `${packageName.replaceAll("/", "-").replaceAll("@", "")}-${version}.tgz`,
   );
   if (existsSync(archivePath)) {
     const cached = await readFile(archivePath);
@@ -70,7 +70,7 @@ async function downloadPackage(projectDir, packageName, integrity) {
     [
       ...npm.prefixArgs,
       "pack",
-      `${packageName}@${opencodeVersion}`,
+      `${packageName}@${version}`,
       "--ignore-scripts",
       "--json",
       "--pack-destination",
@@ -108,6 +108,68 @@ async function downloadPackage(projectDir, packageName, integrity) {
   return archivePath;
 }
 
+async function prepareRipgrep(
+  projectDir,
+  targetDirectory,
+  platform,
+  architecture,
+  version,
+) {
+  const packageName = `@vscode/ripgrep-${platform}-${architecture}`;
+  const integrity = await lockedIntegrity(projectDir, packageName, version);
+  const executable = platform === "win32" ? "rg.exe" : "rg";
+  const preparedPath = join(targetDirectory, executable);
+  const readyPath = join(targetDirectory, ".ripgrep-ready.json");
+  const identity = { packageName, version, integrity };
+  try {
+    const ready = JSON.parse(await readFile(readyPath, "utf8"));
+    if (
+      ready.packageName === identity.packageName &&
+      ready.version === identity.version &&
+      ready.integrity === identity.integrity &&
+      typeof ready.executableSha256 === "string" &&
+      (platform === "win32" || ((await stat(preparedPath)).mode & 0o111) !== 0) &&
+      (await sha256File(preparedPath)) === ready.executableSha256
+    ) {
+      return;
+    }
+  } catch {
+    // Rebuild an incomplete or stale ripgrep cache.
+  }
+
+  const archivePath = await downloadPackage(
+    projectDir,
+    packageName,
+    version,
+    integrity,
+  );
+  const stagingDirectory = `${targetDirectory}.ripgrep-staging-${process.pid}`;
+  await rm(stagingDirectory, { recursive: true, force: true });
+  await mkdir(stagingDirectory, { recursive: true });
+  try {
+    await tar.x({
+      file: archivePath,
+      cwd: stagingDirectory,
+      strip: 1,
+    });
+    const sourcePath = join(stagingDirectory, "bin", executable);
+    const executableSha256 = await sha256File(sourcePath);
+    if (platform !== "win32") {
+      await chmod(sourcePath, 0o755);
+    }
+    await mkdir(targetDirectory, { recursive: true });
+    await rm(preparedPath, { force: true });
+    await rename(sourcePath, preparedPath);
+    await writeFile(
+      readyPath,
+      JSON.stringify({ ...identity, executableSha256 }),
+      "utf8",
+    );
+  } finally {
+    await rm(stagingDirectory, { recursive: true, force: true });
+  }
+}
+
 module.exports = async function prepareBundledRuntimes(context) {
   const platform = context.electronPlatformName;
   const architecture = architectureNames[context.arch];
@@ -126,6 +188,10 @@ module.exports = async function prepareBundledRuntimes(context) {
   const projectPackage = JSON.parse(
     await readFile(join(projectDir, "package.json"), "utf8"),
   );
+  const ripgrepVersion = projectPackage.dependencies["@vscode/ripgrep"];
+  if (typeof ripgrepVersion !== "string" || !/^\d+\.\d+\.\d+$/u.test(ripgrepVersion)) {
+    throw new Error("Missing exact @vscode/ripgrep dependency version");
+  }
   await writeFile(
     join(projectDir, "out", "main", "package.json"),
     `${JSON.stringify(
@@ -140,7 +206,7 @@ module.exports = async function prepareBundledRuntimes(context) {
     )}\n`,
     "utf8",
   );
-  const integrity = await lockedIntegrity(projectDir, packageName);
+  const integrity = await lockedIntegrity(projectDir, packageName, opencodeVersion);
   const targetDirectory = join(projectDir, ".runtime-resources", architecture);
   const readyPath = join(targetDirectory, ".ready.json");
   const executable = platform === "win32" ? "opencode.exe" : "opencode";
@@ -161,13 +227,25 @@ module.exports = async function prepareBundledRuntimes(context) {
         ((await stat(preparedPath)).mode & 0o111) !== 0) &&
       (await sha256File(preparedPath)) === ready.executableSha256
     ) {
+      await prepareRipgrep(
+        projectDir,
+        targetDirectory,
+        platform,
+        architecture,
+        ripgrepVersion,
+      );
       return;
     }
   } catch {
     // Rebuild an incomplete or stale runtime cache.
   }
 
-  const archivePath = await downloadPackage(projectDir, packageName, integrity);
+  const archivePath = await downloadPackage(
+    projectDir,
+    packageName,
+    opencodeVersion,
+    integrity,
+  );
   const stagingDirectory = `${targetDirectory}.staging-${process.pid}`;
   await rm(stagingDirectory, { recursive: true, force: true });
   await mkdir(stagingDirectory, { recursive: true });
@@ -194,4 +272,11 @@ module.exports = async function prepareBundledRuntimes(context) {
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }
+  await prepareRipgrep(
+    projectDir,
+    targetDirectory,
+    platform,
+    architecture,
+    ripgrepVersion,
+  );
 };

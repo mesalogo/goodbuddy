@@ -94,6 +94,8 @@ const portableRequiredFiles = [
   'resources/tray-icon.png',
   'resources/tool-environment/managed-python-artifacts.json',
   'resources/runtimes/opencode/opencode.exe',
+  'resources/runtimes/opencode/rg.exe',
+  'resources/licenses/vscode-ripgrep-MIT.txt',
   'resources/runtimes/opencode-config/node_modules/@opencode-ai/plugin/package.json',
   'resources/runtimes/opencode-config/node_modules/@opencode-ai/plugin/dist/index.js',
   'resources/runtimes/continue/package.json',
@@ -128,7 +130,8 @@ const platformDefinitions = {
     supportedFormats: ['nsis', 'portable'],
     unpackedPattern: /^win(?:-.+)?-unpacked$/u,
     executable: [`${productName}.exe`],
-    runtimeExecutable: 'opencode.exe'
+    runtimeExecutable: 'opencode.exe',
+    ripgrepExecutable: 'rg.exe'
   },
   macos: {
     builderFlag: '--mac',
@@ -141,7 +144,8 @@ const platformDefinitions = {
       'MacOS',
       productName
     ],
-    runtimeExecutable: 'opencode'
+    runtimeExecutable: 'opencode',
+    ripgrepExecutable: 'rg'
   },
   linux: {
     builderFlag: '--linux',
@@ -149,7 +153,8 @@ const platformDefinitions = {
     supportedFormats: ['AppImage', 'deb', 'rpm'],
     unpackedPattern: /^linux(?:-.+)?-unpacked$/u,
     executable: [packageJson.name],
-    runtimeExecutable: 'opencode'
+    runtimeExecutable: 'opencode',
+    ripgrepExecutable: 'rg'
   }
 }
 const formatExtensions = {
@@ -1070,6 +1075,12 @@ function verifyUnpackedOutput(directory, options) {
     'opencode',
     definition.runtimeExecutable
   )
+  const ripgrepExecutable = join(
+    resources,
+    'runtimes',
+    'opencode',
+    definition.ripgrepExecutable
+  )
   assertFile(applicationExecutable, '应用主程序')
   assertFile(join(resources, 'app.asar'), '应用 ASAR')
   assertFile(join(resources, 'release-notes.json'), '版本更新说明')
@@ -1094,6 +1105,7 @@ function verifyUnpackedOutput(directory, options) {
     'Remote Runtime 锁定清单'
   )
   assertFile(runtimeExecutable, 'OpenCode Runtime')
+  assertFile(ripgrepExecutable, 'ripgrep Runtime')
   verifyOpenCodeConfig(
     resources,
     join(root, '.runtime-resources', 'opencode-config')
@@ -1125,7 +1137,8 @@ function verifyUnpackedOutput(directory, options) {
   verifyHarnessPackage(resources, options)
   for (const [filePath, label] of [
     [applicationExecutable, '应用主程序'],
-    [runtimeExecutable, 'OpenCode Runtime']
+    [runtimeExecutable, 'OpenCode Runtime'],
+    [ripgrepExecutable, 'ripgrep Runtime']
   ]) {
     const actualArchitecture = binaryArchitecture(filePath)
     if (actualArchitecture !== options.arch) {

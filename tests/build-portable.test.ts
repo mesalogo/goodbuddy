@@ -46,6 +46,15 @@ describe('Portable package resources', () => {
       join(
         directory,
         'resources',
+        'runtimes',
+        'opencode',
+        'rg.exe'
+      )
+    )
+    expect(requiredPaths).toContain(
+      join(
+        directory,
+        'resources',
         'remote-runtime-lock.json'
       )
     )

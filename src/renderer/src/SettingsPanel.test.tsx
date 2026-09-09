@@ -5255,12 +5255,12 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(
       within(mcpTabs).getByRole('tab', { name: '直连模型' })
     )
-    expect(await screen.findByText('文件系统操作')).toBeInTheDocument()
+    expect(await screen.findByText('工作区文件')).toBeInTheDocument()
     expect(screen.queryByText('内置浏览器')).not.toBeInTheDocument()
     expect(screen.getByText('联网搜索')).toBeInTheDocument()
-    expect(screen.getByText('编程能力')).toBeInTheDocument()
+    expect(screen.getByText('开发工具')).toBeInTheDocument()
     const programmingToggle = screen.getByRole('button', {
-      name: '展开工具组 编程能力'
+      name: '展开工具组 开发工具'
     })
     fireEvent.click(programmingToggle)
     expect(screen.getByText('进程执行')).toBeInTheDocument()
@@ -5369,12 +5369,12 @@ describe('SettingsPanel runtime files', () => {
       within(mcpTabs).getByRole('tab', { name: '直连模型' })
     )
     const filesystemToggle = screen.getByRole('button', {
-      name: '展开工具组 文件系统操作'
+      name: '展开工具组 工作区文件'
     })
     fireEvent.click(filesystemToggle)
+    expect(screen.getByText('搜索工作区')).toBeInTheDocument()
     expect(screen.getByText('读取工作区文本')).toBeInTheDocument()
-    expect(screen.getByText('列出工作区目录')).toBeInTheDocument()
-    expect(screen.getByText('写入工作区文本')).toBeInTheDocument()
+    expect(screen.getByText('应用工作区补丁')).toBeInTheDocument()
     expect(screen.queryByText('浏览器导航')).not.toBeInTheDocument()
     expect(
       screen.getAllByRole('button', { name: /工具组/u })
