@@ -77,6 +77,14 @@ otherwise.
   attachments and knowledge remain in the conversation composer, while memory,
   when implemented, and historical execution context belong to the associated Task. See
   the [Feature PRD](./docs/features/assistant-workbar/prd.md).
+- [ ] **ShareServer Office co-editing** (design): Uses an optional ShareServer
+  integration with ONLYOFFICE Docs to open multiple filename-labelled document
+  tabs in the assistant workbar. The planned scope covers DOCX, XLSX, and PPTX
+  manual editing, save and undo, source-file conflict protection, and later AI
+  selection edits. The selected ShareServer and editor process document content;
+  Desktop neither bundles nor starts Document Server and does not claim offline
+  editing when no service is configured. See the
+  [design](./docs/features/office-document-editing/README.md).
 
 ### Agent Runtimes and model connections
 

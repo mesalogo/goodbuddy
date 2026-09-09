@@ -9,3 +9,7 @@
 | [文档解析与本地 OCR PRD](./prd.md) | 产品范围、解析策略、OCR 模型管理和验收 |
 
 当前尚无独立 User Stories、功能逻辑、UI、技术设计和进度文档。
+
+Office 文件的浏览器内人工编辑、AI 选区修改、保存和撤销不属于文档解析职责，由
+[Office 协同编辑](../office-document-editing/README.md)负责。文档处理仍负责内容提取、OCR、
+旧格式转换和供模型消费的统一结构。

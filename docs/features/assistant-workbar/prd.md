@@ -36,8 +36,8 @@ Runtime 统一抽象为“执行空间”。
 ### 2.1 助手工作栏
 
 助手工作栏是 GoodBuddy 中始终可访问的应用级工具容器。它提供稳定能力目录，用户从中
-查看任务中心，并按需打开一个或多个监督、Runtime、终端、进程、工作区、浏览器、资源监控
-和成果面板实例。稳定的是能力的可发现性，不是九个同时占据界面的固定面板。
+查看任务中心，并按需打开一个或多个监督、Runtime、终端、进程、工作区、浏览器、资源监控、
+成果和文档面板实例。稳定的是能力的可发现性，不是十个同时占据界面的固定面板。
 
 工作栏不是：
 
@@ -85,6 +85,7 @@ Runtime
 浏览器
 资源监控
 成果
+文档
 ```
 
 - 应用不得根据当前项目、会话、Runtime、主机或探测结果无提示地增删能力目录项。
@@ -109,6 +110,7 @@ Runtime
   使用本机 Home。
 - 工作区默认显示当前项目目录，用户可以打开其他本机目录或远程目录。
 - 成果默认使用当前范围，用户可以切换到项目、全局或其他允许范围。
+- 文档创建时固定到用户明确打开的文件和 ShareServer 编辑会话，不提供跟随模式。
 - 下一次请求的附件和知识库由当前 Composer 展示与管理，不作为工作栏能力。历史执行上下文
   随关联 Task 查看；记忆功能实现后也归入任务中心，而不是新增独立上下文面板。
 
@@ -203,7 +205,7 @@ Runtime
 
 ### 6.2 能力目录与面板实例
 
-能力目录不等于同时打开九个面板。当前产品采用“已打开实例 Tab + 持久新增按钮”的工作栏
+能力目录不等于同时打开十个面板。当前产品采用“已打开实例 Tab + 持久新增按钮”的工作栏
 模型：Tab 行只显示已打开实例，行末“+”始终可见；点击后在工作栏内容区打开稳定能力目录，
 用户再创建或激活应用实例。详细交互以
 [助手工作栏多终端页签 PRD](./terminal-tabs-prd.md) 为准。
@@ -473,7 +475,20 @@ Task 呈现来源，不把 Run 作为导航对象。
 - 不使用 `dangerouslySetInnerHTML`，不启用 Electron `webviewTag`。
 - 外部打开是明确的用户操作，并说明外部浏览器可能执行脚本或联网。
 
-### 7.10 Composer 与任务上下文
+### 7.10 文档
+
+文档是可创建多个实例的工作栏应用。用户从工作区、成果或会话文件引用打开受支持的 Office
+文件时新增文档 Tab；每个实例固定到一个 ShareServer 编辑会话，不随当前 Conversation 或
+Project 切换。Tab 使用文档文件名，同名实例增加序号，完整来源通过 Tooltip 和页签内信息
+显示。编辑器、保存、冲突、AI 选区修改和关闭行为以
+[Office 协同编辑](../office-document-editing/README.md)为准。
+
+完整编辑器需要至少 `720px` 可用宽度；低于 `480px` 时不把第三方工具栏压缩到重叠，而显示
+摘要和“展开编辑”命令。展开到主内容区、底部或独立窗口继续使用同一页签实例和编辑会话。
+文档编辑依赖用户明确配置且声明健康能力的 ShareServer；不可用时保留入口和原因，不回退为
+未经说明的远程服务。本地默认应用打开仍是独立用户操作。
+
+### 7.11 Composer 与任务上下文
 
 工作栏不提供独立“上下文”能力。用户准备下一次模型请求时：
 
@@ -499,6 +514,7 @@ type WorkbarCapabilityId =
   | 'browser'
   | 'resources'
   | 'results'
+  | 'document'
 
 type WorkbarTargetRef =
   | { type: 'conversation'; id: string }
@@ -511,6 +527,7 @@ type WorkbarTargetRef =
   | { type: 'managed-process'; id: string }
   | { type: 'browser-session'; id: string }
   | { type: 'artifact'; id: string }
+  | { type: 'document-session'; id: string }
 ```
 
 Renderer 选择目标后，Main 必须重新验证对象存在、归属范围和当前用户可见性。不能把目标 ID
@@ -941,7 +958,7 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 
 ### 17.1 稳定能力目录与用户控制
 
-- [ ] 九个标准能力在所有主要页面的目录中始终可发现，但不会默认同时打开。
+- [ ] 十个标准能力在所有主要页面的目录中始终可发现，但不会默认同时打开。
 - [ ] Task Center 继续作为 Task 的单例索引，不删除入口、不复制会话，也不混入 Job、Run 或心跳事项。
 - [ ] 项目、会话、Runtime 或主机变化不会无提示地增删能力目录项。
 - [ ] 用户可以按需打开、关闭、排序和停靠面板实例。
@@ -956,6 +973,8 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - [ ] 监督可以作用于普通 Conversation、Task 和后续实验对象，不假设编程语境。
 - [ ] 工作区不是 Git 仓库时仍可浏览文件。
 - [ ] Runtime 不支持某项原生能力时仍可从目录打开面板并获得准确说明。
+- [ ] 文档能力可以打开多个以文件名命名的固定实例；未配置健康 ShareServer 时显示原因，
+  不把系统默认应用或静态预览冒充内置编辑。
 
 ### 17.3 安全与控制
 
@@ -999,6 +1018,7 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - [ ] 创建中、Agent 操作中和完整交互期间禁用浏览器其余工具栏控件；活动加载仍可单独停止，
   且停止加载不会关闭会话或释放 Runtime 上下文。
 - [ ] 活动 Conversation 没有浏览器会话时，可从同一地址栏按 Agent 相同 URL 策略启动会话。
+- [ ] 文档编辑器在右侧宽度不足时不发生工具栏或正文重叠，并可使用同一会话展开到可编辑布局。
 
 ## 18. 相关文档的职责
 
@@ -1015,8 +1035,10 @@ Electron、ChildProcess、PTY、SSH Client、Socket 或文件句柄。
 - [DeepSeek Harness Runtime 设计](../deepseek-harness/technical-design.md) 定义该 Runtime 的具体适配边界。
 - [SSH Host 远程环境准备与直连下载设计](../remote-host/environment-provisioning-technical-design.md)
   定义 Host 级组件获取、首次准备、更新、回退和项目只验证边界。
+- [Office 协同编辑](../office-document-editing/README.md) 定义文档多实例、ShareServer 编辑会话、
+  保存、冲突和 AI 选区修改。
 - [统一界面设计系统](../../../UI-DESIGN.md) 定义视觉、语义、响应式和无障碍规则。
 
-若其他文档把工作栏描述为九个同时固定显示的栏目、根据项目或 Runtime 自动裁剪的动态入口，
+若其他文档把工作栏描述为十个同时固定显示的栏目、根据项目或 Runtime 自动裁剪的动态入口，
 或仅属于当前聊天的附属区域，以本文“能力目录稳定、面板实例由用户打开、当前上下文只提供
 默认值”的产品决策为准。

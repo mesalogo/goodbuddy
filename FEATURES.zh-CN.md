@@ -25,6 +25,7 @@
 - [ ] **项目 Agent Space**（规划中）：在 Project 中统一角色、知识、Skills/MCP、模型、审批策略、预算和超时，并支持模板复用。
 - [ ] **应用导航与系统工具快捷入口**（仅设计）：规划固定系统入口、内置应用显隐和打开现有工作栏的底部工具按钮；尚未实现新界面。详见[设计文档](./docs/features/application-tool-navigation/README.md)。
 - [ ] **通用助手工作栏与执行空间后续能力**（规划中）：在现有工作栏和多终端基础上继续加入监督、统一 Runtime、受管进程、静态安全 HTML 预览、可固定目标的工作区/浏览器/成果实例、底部停靠与独立窗口。Task Center 保持 Task 的单例索引，附件与知识库继续由会话输入区管理，未来的记忆与历史执行上下文归入关联 Task。详见 [Feature PRD](./docs/features/assistant-workbar/prd.md)。
+- [ ] **ShareServer Office 协同编辑**（设计中）：通过可选 ShareServer 集成 ONLYOFFICE Docs，在助手工作栏中以文件名打开多个文档 Tab，支持 DOCX、XLSX、PPTX 的人工编辑、保存、撤销、源文件冲突保护和后续 AI 选区修改。Office 正文会由所选 ShareServer 和编辑引擎处理；Desktop 不内置或启动 Document Server，未配置服务时不宣称离线编辑。详见[设计文档](./docs/features/office-document-editing/README.md)。
 
 ### Agent Runtime 与模型连接
 

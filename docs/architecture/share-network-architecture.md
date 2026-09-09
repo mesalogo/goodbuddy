@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 设计中 |
-| 版本 | 0.1 |
-| 日期 | 2026-09-03 |
+| 版本 | 0.2 |
+| 日期 | 2026-09-09 |
 | 适用范围 | GoodBuddy 桌面端、ShareServer、网关间联邦协议 |
 | 桌面端设计 | [设备发现与共享](../features/device-sharing/README.md) |
 | 服务端设计 | [ShareServer](../../../goodbuddy-shareserver/docs/features/share-server/README.md) |
@@ -26,7 +26,7 @@
 1. **GoodBuddy Desktop** 在设置中提供“设备发现与共享”，默认使用局域网发现与直连，也可
    由用户额外连接一个或多个 ShareServer。
 2. **ShareServer** 是独立部署、独立升级的 Web 服务，提供组织、设备、能力、权限、更新、
-   联邦、中继和审计管理。它不运行在 Electron Main 中，也不由桌面端代为启动。
+   联邦、中继、Office 编辑和审计管理。它不运行在 Electron Main 中，也不由桌面端代为启动。
 
 ### 2.2 能力优先，来源可见
 
@@ -55,6 +55,17 @@ ShareServer 负责身份、目录、策略、任务路由、更新和审计。�
 直接建立；网络条件不允许时，可按组织策略使用 ShareServer 中继。是否允许中继、正文是否
 端到端加密、是否允许跨组织，由本次任务冻结的策略共同决定。
 
+### 2.6 Office 编辑是 ShareServer 托管服务
+
+ShareServer 可以把 ONLYOFFICE Docs、工作副本存储、保存回调和编辑会话作为一个可选部署
+能力提供给 Desktop。Desktop 只连接用户已明确配置的 ShareServer，不直接配置 Document
+Server，也不在本机启动服务。Office 文档内容会由 ShareServer 和编辑引擎处理，因此不能沿用
+“控制面默认不读取正文”的数据面假设；创建编辑会话前必须明确显示服务端、数据去向和保留期。
+
+编辑后的本地或 SSH 源文件仍由 Desktop 或远程 GoodBuddy Agent 持有和原子回写。ShareServer
+是工作副本及服务端保存检查点的权威，不是源文件最终写入成功的权威。完整设计见
+[Office 协同编辑](../features/office-document-editing/README.md)。
+
 ## 3. 术语
 
 | 术语 | 定义 |
@@ -71,6 +82,7 @@ ShareServer 负责身份、目录、策略、任务路由、更新和审计。�
 | `Task` | 一次远程能力调用及其输入、执行、输出和终态 |
 | `Package` | 可下载到本机安装的签名能力工件 |
 | `FederationTrust` | 两个组织网关之间经管理员确认的双边信任关系 |
+| `DocumentEditSession` | ShareServer 托管的单文档短期编辑会话、工作副本和保存检查点 |
 
 “网关”是 ShareServer 的网络角色；产品名称为 `ShareServer`，独立仓库为
 `goodbuddy-shareserver`。
@@ -83,6 +95,10 @@ GoodBuddy Desktop A <-- mDNS 发现 + 配对后 TLS 直连 --> GoodBuddy Desktop
 
 单组织：
 GoodBuddy Desktop A -- 出站连接 --> ShareServer <-- 出站连接 -- Provider Device B
+
+Office 编辑：
+GoodBuddy Desktop --> ShareServer --> ONLYOFFICE Docs
+                         └-------> 临时工作副本与保存检查点
 
 跨组织：
 Desktop A --> ShareServer A <== 联邦信任 ==> ShareServer B <-- Provider Device B
@@ -121,6 +137,7 @@ Desktop A --> ShareServer A <== 联邦信任 ==> ShareServer B <-- Provider Devi
 - 计算组织强制策略，签发短期任务授权。
 - 路由任务、维护在线状态，并在允许时中继数据。
 - 管理签名包、发布通道、更新策略和撤销。
+- 可选管理 Office 编辑会话、ONLYOFFICE 接入、工作副本、保存回调、保留和清理。
 - 建立双边联邦关系并限制跨组织可见性与调用。
 - 保存有界审计元数据、用量和管理操作。
 
@@ -339,6 +356,16 @@ created/awaiting_approval/queued/connecting -> rejected | expired | cancelled
 - 未识别字段在声明允许扩展的位置忽略，安全与授权枚举中的未知值一律拒绝。
 - 联邦只交换双方共同支持的能力和策略表达式，不降低任一方策略。
 
+### 11.5 Office 编辑协议
+
+Office 编辑使用独立的 HTTPS 会话、文件和事件 API，不复用普通远程能力 Task 表达长生命周期
+编辑器。Desktop 通过设备凭据创建会话和传输源文件；编辑器使用一次性启动授权；ONLYOFFICE
+使用独立短期 JWT 获取工作副本并提交保存回调。三类凭据使用不同 audience，不能互换。
+
+文档页签可以长期存在，但启动 URL、文件 URL、callback token 和编辑 Cookie 必须短期、单用途
+并可撤销。跨端会话、保存和冲突规则见
+[Office 协同编辑技术设计](../features/office-document-editing/technical-design.md)。
+
 ## 12. 数据与审计
 
 ### 12.1 最小审计事件
@@ -358,6 +385,8 @@ created/awaiting_approval/queued/connecting -> rejected | expired | cancelled
 
 - 桌面端是本地配对、本机共享偏好和本地活动记录的权威。
 - ShareServer 是组织成员、设备注册、组织策略、发布目录和组织审计的权威。
+- ShareServer 是 Office 工作副本、服务端保存检查点、编辑会话和保留清理的权威；Desktop 或
+  远程 GoodBuddy Agent 是源文件是否成功回写的权威。
 - 能力提供者是运行中任务及结果是否产生的权威。
 - 联邦两端各自保存本组织审计，不复制对方完整成员目录或内部策略。
 
@@ -376,6 +405,10 @@ ShareServer 可以部署到公网，因此公网连接、外部组织和服务�
 8. 密钥只进入对应安全存储，诊断和审计使用固定字段与脱敏错误码。
 9. 限制握手、清单、帧、文件、并发、速率、任务时长和审计查询大小。
 10. 撤销设备、用户、Grant、Publication、Package 或 FederationTrust 后停止签发新令牌。
+11. Office 编辑器使用固定 origin 和隔离会话，不获得 Electron、文件系统、Shell、Runtime 或
+    普通 ShareServer 管理 API；Document Server 默认禁止任意出站网络和未批准插件。
+12. Office 文件正文由服务端实际处理，组织策略必须定义允许格式、大小、保留和内容访问角色，
+    Desktop 在上传前显示这些事实。
 
 ## 14. 建议领域实体
 
@@ -401,6 +434,8 @@ PackageRelease
 FederationTrust
 AuditEvent
 Revocation
+DocumentEditSession
+DocumentCheckpoint
 ```
 
 共享协议只定义跨端 DTO 和状态，不规定桌面 SQLite 与 ShareServer 数据库使用相同表结构。
@@ -442,6 +477,10 @@ ShareServer 不反向依赖桌面端 `src/shared`，构建和运行不要求桌�
 - [ ] 跨组织调用同时满足两端策略；联邦撤销后不能创建新任务。
 - [ ] 审计默认只保存必要元数据，不保存正文、文件、密钥或认证信息。
 - [ ] ShareServer 可独立部署和升级，不由 Electron 启动，也不影响桌面端离线使用。
+- [ ] 启用 Office 服务后，Desktop 可在多实例文档页签中编辑 DOCX、XLSX 和 PPTX；保存回调、
+  源文件冲突或网络故障均不会破坏原文件。
+- [ ] Office 会话的启动、文件和 callback 凭据不可互换，过期或撤销后不能重用；临时工作副本
+  按策略清理，默认审计不保存文档正文或 AI 选区内容。
 
 ## 17. 相关设计
 
@@ -453,5 +492,6 @@ ShareServer 不反向依赖桌面端 `src/shared`，构建和运行不要求桌�
 - [ShareServer 功能逻辑](../../../goodbuddy-shareserver/docs/features/share-server/logic-design.md)
 - [ShareServer 管理界面](../../../goodbuddy-shareserver/docs/features/share-server/ui-design.md)
 - [ShareServer 技术设计](../../../goodbuddy-shareserver/docs/features/share-server/technical-design.md)
+- [Office 协同编辑](../features/office-document-editing/README.md)
 - [SSH 远程主机与 Agent](../features/remote-host/README.md)
 - [GoodBuddy 统一界面设计系统](../../UI-DESIGN.md)

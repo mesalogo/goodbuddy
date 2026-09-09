@@ -251,6 +251,11 @@ ZIP 根目录包含模型文件和 `goodbuddy-model.json`。清单格式为 `goo
 
 ## 8. Office 与转换
 
+本节只定义 Office 文件的语义解析和格式转换，不提供可视化编辑器、编辑会话、选区、撤销或
+保存回写。通过 ShareServer 集成浏览器编辑器的设计见
+[Office 协同编辑](../office-document-editing/README.md)。编辑服务可以复用转换产物，但不能
+替代本地优先的聊天附件和知识库解析路径。
+
 ### 8.1 新格式
 
 - DOCX：正文、标题、表格、批注和图片关系；
