@@ -137,7 +137,7 @@ describe('WorkspaceRegistry', () => {
     ).rejects.toMatchObject({ code: 'workspace-not-found' })
   })
 
-  linuxIt('enforces read-only policy, caps, and symlink-root rejection', async () => {
+  linuxIt('supports writable handles while enforcing caps and symlink-root rejection', async () => {
     const root = temporaryDirectory()
     const linked = join(tmpdir(), `goodbuddy-linked-${Date.now()}`)
     symlinkSync(root, linked, 'dir')
@@ -149,16 +149,20 @@ describe('WorkspaceRegistry', () => {
       maximumControllerHandles: 1,
       inspectGit: async () => 'not-a-repository'
     })
-    await expect(
-      registry.validate(
-        {
-          remoteRootPath: root,
-          requestedAccess: 'read-write',
-          requiredCapabilities: []
-        },
-        controller
-      )
-    ).rejects.toMatchObject({ code: 'read-only' })
+    const writable = await registry.validate(
+      {
+        remoteRootPath: root,
+        requestedAccess: 'read-write',
+        requiredCapabilities: []
+      },
+      controller
+    )
+    expect(writable.handle.access).toBe('read-write')
+    await registry.close(
+      writable.handle.workspaceId,
+      writable.handle.generation,
+      controller
+    )
     await expect(
       registry.validate(
         {
