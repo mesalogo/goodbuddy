@@ -3507,7 +3507,6 @@ describe("App", () => {
     expect(request?.prompt).toBe("帮我分析项目");
     expect(request?.runtimeSelection).toEqual({
       provider: "model",
-      profileId: modelProfileId,
     });
     expect(
       screen
@@ -6267,7 +6266,7 @@ describe("App", () => {
         name: /^OpenCode · 默认模型.*sonnet-5$/u,
       }),
     ).toBeInTheDocument();
-    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(1);
+    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(2);
     expect(within(runtimeMenu).queryByText("直连模型")).not.toBeInTheDocument();
     expect(
       within(runtimeMenu).queryByText("Continue Runtime"),
@@ -8411,7 +8410,7 @@ describe("App", () => {
     expect(openCodeModel).toBeEnabled();
     expect(continueModel).toBeEnabled();
     expect(deepseekHarness).toBeEnabled();
-    expect(screen.getAllByRole("menuitemradio")).toHaveLength(5);
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(10);
     expect(within(runtimeMenu).getAllByRole("separator")).toHaveLength(4);
     expect(within(runtimeMenu).queryByRole("menu")).not.toBeInTheDocument();
     expect(
@@ -8428,7 +8427,9 @@ describe("App", () => {
       screen.queryByRole("menuitem", { name: /Agent Runtime/u }),
     ).not.toBeInTheDocument();
 
-    await waitFor(() => expect(directModel).toHaveFocus());
+    const defaultDirect = screen.getByRole("menuitemradio", { name: /^直连 · 跟随全局默认模型/u });
+    await waitFor(() => expect(defaultDirect).toHaveFocus());
+    fireEvent.keyDown(defaultDirect, { key: "ArrowDown" });
     expect(directModel).toHaveAttribute("tabindex", "0");
     expect(secondDirectModel).toHaveAttribute("tabindex", "-1");
     fireEvent.keyDown(directModel, { key: "ArrowDown" });
@@ -8453,7 +8454,6 @@ describe("App", () => {
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
         provider: "opencode",
-        profileId: modelProfileId,
       }),
     );
 
@@ -8475,7 +8475,6 @@ describe("App", () => {
     await waitFor(() =>
       expect(api.agent.getStatus).toHaveBeenLastCalledWith({
         provider: "continue",
-        profileId: modelProfileId,
       }),
     );
   });
@@ -8499,7 +8498,7 @@ describe("App", () => {
 
     fireEvent.click(runtimeButton);
     const selectedModel = screen.getByRole("menuitemradio", {
-      name: /^默认模型.*sonnet-5$/u,
+      name: /^直连 · 跟随全局默认模型/u,
     });
     await waitFor(() => expect(selectedModel).toHaveFocus());
     fireEvent.keyDown(selectedModel, { key: "Tab" });
@@ -9313,7 +9312,6 @@ describe("App", () => {
           rootPath: project.rootPath,
           runtimeSelection: {
             provider: "continue",
-            profileId: modelProfileId,
           },
         }),
       ),

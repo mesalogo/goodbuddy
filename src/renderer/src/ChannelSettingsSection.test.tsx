@@ -497,8 +497,7 @@ describe('ChannelSettingsSection', () => {
     )
     expect(backend).toHaveValue(
       agentRuntimeSelectionKey({
-        provider: 'model',
-        profileId: directProfileId
+        provider: 'model'
       })
     )
     expect(

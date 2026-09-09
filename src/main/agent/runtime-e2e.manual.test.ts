@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
+  browserTabIdSchema,
   defaultContextCompressionSettings,
   modelProtocolSchema
 } from '../../shared/contracts'
@@ -1612,6 +1613,7 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         url,
         origin: new URL(url).origin
       }))
+      const browserTabId = browserTabIdSchema.parse(crypto.randomUUID())
       const browserService = {
         getOrigin: vi.fn(() => undefined),
         navigate,
@@ -1621,7 +1623,19 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         select: vi.fn(),
         back: vi.fn(),
         screenshot: vi.fn(),
-        releaseConversation: vi.fn(async () => undefined)
+        releaseConversation: vi.fn(async () => undefined),
+        listTabs: vi.fn(() => [
+          {
+            conversationId,
+            tabId: browserTabId,
+            primary: true,
+            status: 'ready' as const,
+            isLoading: false,
+            canGoBack: false,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          }
+        ])
       }
       const gateway = new KnowledgeMcpGateway({} as never, {
         browserService: browserService as never
@@ -1635,7 +1649,8 @@ describe.runIf(enabled)('runtime end-to-end', () => {
         controller.signal,
         'none',
         undefined,
-        conversationId
+        conversationId,
+        browserTabId
       )!
       const common = {
         modelProfile: {

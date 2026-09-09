@@ -7,7 +7,7 @@ import {
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 interface PortableBuilderModule {
   assertPortableOutput(directory: string): void
@@ -20,6 +20,16 @@ const portableBuilder = require(
 ) as PortableBuilderModule
 
 let directory: string
+const electronProcess = process as NodeJS.Process & { noAsar?: boolean }
+const originalNoAsar = electronProcess.noAsar
+
+beforeAll(() => {
+  electronProcess.noAsar = true
+})
+
+afterAll(() => {
+  electronProcess.noAsar = originalNoAsar
+})
 
 beforeEach(() => {
   directory = mkdtempSync(

@@ -5240,22 +5240,19 @@ describe('AssistantDatabase', () => {
     expect(
       database.getProject(imageChannelProject.id).runtimeSelection
     ).toEqual({
-      provider: 'model',
-      profileId: defaultProfileId
+      provider: 'model'
     })
     expect(
       database.getProject(automaticChannelProject.id).runtimeSelection
     ).toEqual({
-      provider: 'model',
-      profileId: defaultProfileId
+      provider: 'model'
     })
     expect(
       database.getConversation(
         automaticRemoteConversation.id
       ).runtimeSelection
     ).toEqual({
-      provider: 'model',
-      profileId: defaultProfileId
+      provider: 'model'
     })
     database.close()
   })

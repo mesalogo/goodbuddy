@@ -832,6 +832,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   conversationId:
                     run?.request.conversationId ??
                     'deepseek-harness-tool-catalog',
+                  browserTabId: run?.request.browserTabId,
                   workMode:
                     run?.request.workMode === 'ask'
                       ? ('ask' as const)
@@ -873,6 +874,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 }
                 const context = {
                   conversationId: run.request.conversationId,
+                  browserTabId: run.request.browserTabId,
                   workMode:
                     run.request.workMode === 'execute'
                       ? ('execute' as const)

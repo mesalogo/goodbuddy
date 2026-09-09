@@ -327,7 +327,7 @@ describe('RemoteProjectSaveService', () => {
     ])
   })
 
-  it('persists the resolved Runtime selection', async () => {
+  it('validates a resolved Runtime but persists the requested reference', async () => {
     const selection = {
       provider: 'opencode' as const,
       profileId: '00000000-0000-4000-8000-000000000099'
@@ -341,7 +341,7 @@ describe('RemoteProjectSaveService', () => {
       draft
     })
 
-    expect(value.writes[0]?.project.runtimeSelection).toEqual(selection)
+    expect(value.writes[0]?.project.runtimeSelection).toEqual(draft.runtimeSelection)
   })
 
   it('uses the preflight project revision for updates', async () => {

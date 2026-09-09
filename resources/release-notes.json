@@ -2,6 +2,50 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.11",
+      "releasedAt": "2026-09-10",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**工作栏直接管理项目文件与 Git**：可在右侧工作区创建、重命名、移动和删除文件或目录，并查看属性。Git 工具新增分支搜索、新建与切换、手动 Fetch、提交历史和单文件差异，返回文件预览后仍保留目录展开、滚动位置和焦点。",
+            "**多个独立浏览器页签**：可在工作栏中同时打开多个浏览器，每个页签分别保留页面、导航和操作状态，并支持直接交互和全屏显示。同一对话的页签共享登录状态，模型浏览器工具固定使用请求开始时绑定的页签，不会因用户切换页签而改投其他页面。",
+            "**直连模型获得完整开发工具**：安装包随附 ripgrep，直连模型可搜索项目文件和内容、分页读取大型 UTF-8 文本，并通过多文件补丁修改代码。Ask 可搜索和读取，Execute 还可修改文件和运行命令。",
+            "**长任务保留更多上下文**：移除历史消息、长回复和文档解析文本的固定截断限制，并允许模型分页续读较长的命令与 Subagent 输出。浏览器快照和知识库单次可选结果范围也已扩大，实际可用上下文仍受所选模型窗口限制。",
+            "**任务中心可切换范围**：任务中心默认跟随当前项目，也可切换到全局任务或全部项目。所选范围会随工作栏布局保存，切换项目时不必重复调整。"
+          ],
+          "fixes": [
+            "**计划任务状态及时同步**：排队和运行中的计划任务会及时刷新状态。当前 occurrence 完成前“立即运行”保持禁用，避免同一计划重复入队。",
+            "**Runtime 与模型选择保持原意**：未固定连接的项目、通道、对话和 Agent Runtime 会继续跟随当前兼容的全局推荐连接，显式选择的连接保持固定；远程项目保存后也会保留用户选择的 Runtime。切换全局默认连接后，新请求使用新配置，已经开始的请求不受影响。",
+            "**远程 Runtime 元数据兼容**：有效的 Runtime 锁定 JSON 不再仅因空白或缩进格式不同而被误判为无效。签名、Schema、版本和完整性校验保持不变。"
+          ],
+          "notices": [
+            "删除文件或目录在确认后永久执行；移动范围限制在当前工作区内，Git 分支切换不会自动暂存或丢弃冲突改动。",
+            "本次仅发布 Desktop `0.12.11`，Agent 保持 `0.11.22`；新版远端限额相关源码不作为当前 Agent 已交付能力。标准发布使用 Windows、macOS、Linux 的 x64/arm64 六平台矩阵，不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Manage project files and Git from the workbar**: Create, rename, move, and delete files or directories in the right workspace panel, and inspect their properties. Git tools now support branch search, creation and switching, explicit Fetch, commit history, and per-file diffs, while returning from a preview preserves expansion, scroll position, and focus.",
+            "**Multiple independent browser tabs**: Open several browsers in the workbar, each with its own page, navigation, and interaction state, plus direct interaction and fullscreen display. Tabs in one conversation share login state; model browser tools stay bound to the tab selected when the request starts, and later UI switches do not change that target.",
+            "**Complete development tools for direct models**: Packaged ripgrep lets direct models search project files and content, read large UTF-8 files in pages, and modify code with multi-file patches. Ask can search and read; Execute can additionally edit files and run commands.",
+            "**More context for long tasks**: Fixed truncation limits on message history, long replies, and parsed document text have been removed, and models can page through longer command and Subagent output. Browser snapshots and selectable knowledge-search result ranges are also larger, while the selected model's context window still applies.",
+            "**Switchable Task Center scopes**: Task Center follows the current project by default and can switch to Global Tasks or All Projects. The selected scope is saved with the workbar layout, so project switches do not require repeated adjustment."
+          ],
+          "fixes": [
+            "**Prompt scheduled-task status**: Queued and running schedules now refresh their status promptly. Run Now remains disabled until the active occurrence finishes, preventing duplicate queue entries for the same schedule.",
+            "**Runtime and model selections keep their intent**: Projects, channels, conversations, and Agent Runtimes without a pinned connection continue following the currently compatible global recommendation, while explicit selections remain fixed; remote projects also retain the Runtime chosen during save. New requests use a changed global default, while requests already in progress remain unchanged.",
+            "**Compatible remote Runtime metadata**: Valid Runtime lock JSON is no longer rejected solely because whitespace or indentation differs. Signature, schema, version, and integrity validation remain unchanged."
+          ],
+          "notices": [
+            "File and directory deletion is permanent after confirmation; moves remain inside the current workspace, and Git branch switching does not automatically stash or discard conflicting changes.",
+            "This release publishes Desktop `0.12.11` only; Agent remains at `0.11.22`, and source changes to newer remote limits are not claimed as delivered Agent behavior. The standard Windows, macOS, and Linux x64/arm64 matrix is used without a LoongArch experimental preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.10",
       "releasedAt": "2026-09-09",
       "notes": {

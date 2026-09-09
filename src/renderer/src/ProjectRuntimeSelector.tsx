@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import type { RuntimeSettings } from '../../shared/contracts'
 import {
   agentRuntimeSelectionKey,
-  getDefaultRuntimeSelection,
   getRuntimeSelectionForProvider,
   isChannelModelProfileUsable,
   repairChannelRuntimeSelection,
@@ -27,7 +26,7 @@ function runtimeSelectionDescription(
 ): string {
   if (selection.provider === 'model') {
     const profile = settings.modelProfiles.find(
-      (candidate) => candidate.id === selection.profileId
+      (candidate) => candidate.id === (selection.profileId ?? settings.defaultModelProfileId)
     )
     if (!profile) {
       return t('channels.project.missingSelection')
@@ -71,13 +70,11 @@ export function ProjectRuntimeSelector({
 }: ProjectRuntimeSelectorProps): React.JSX.Element {
   const { t } = useTranslation('integrations')
   const initialSelection =
-    selection ?? getDefaultRuntimeSelection(runtimeSettings)
+    selection ?? { provider: 'auto' as const }
   const runtimeSelection =
     selectionMode === 'channel'
       ? repairChannelRuntimeSelection(initialSelection, runtimeSettings)
-      : initialSelection.provider === 'auto'
-        ? getDefaultRuntimeSelection(runtimeSettings)
-        : initialSelection
+      : initialSelection
   const directProfiles = runtimeSettings.modelProfiles.filter(
     isChannelModelProfileUsable
   )
@@ -99,9 +96,6 @@ export function ProjectRuntimeSelector({
     'deepseek-harness'
   ] as const
   const runtimeSelections = runtimeProviders.map((provider) => {
-    if (runtimeSelection.provider === provider) {
-      return runtimeSelection
-    }
     return selectionMode === 'channel'
       ? ({ provider } as AgentRuntimeSelection)
       : getRuntimeSelectionForProvider(provider, runtimeSettings)
@@ -110,7 +104,14 @@ export function ProjectRuntimeSelector({
     provider: 'model' as const,
     profileId: profile.id
   }))
-  const selections = [...directSelections, ...runtimeSelections]
+  const inheritedSelections: AgentRuntimeSelection[] = [
+    ...(selectionMode === 'configured' ? [{ provider: 'auto' as const }] : []),
+    { provider: 'model' }
+  ]
+  const fixedRuntimeSelection = runtimeSelection.provider !== 'model' &&
+    'profileId' in runtimeSelection && runtimeSelection.profileId ? runtimeSelection : undefined
+  const selections = [...inheritedSelections, ...directSelections, ...runtimeSelections,
+    ...(fixedRuntimeSelection ? [fixedRuntimeSelection] : [])]
   const selectionByKey = new Map(
     selections.map((candidate) => [
       agentRuntimeSelectionKey(candidate),
@@ -132,6 +133,16 @@ export function ProjectRuntimeSelector({
         }}
         value={agentRuntimeSelectionKey(runtimeSelection)}
       >
+        {inheritedSelections.map((candidate) => (
+          <option key={candidate.provider} value={agentRuntimeSelectionKey(candidate)}>
+            {t(candidate.provider === 'auto' ? 'channels.project.automaticDescription' : 'channels.project.defaultDirect')}
+          </option>
+        ))}
+        {fixedRuntimeSelection && (
+          <option value={agentRuntimeSelectionKey(fixedRuntimeSelection)}>
+            {fixedRuntimeSelection.provider} · {runtimeSettings.modelProfiles.find((profile) => profile.id === fixedRuntimeSelection.profileId)?.name ?? t('channels.project.missingProfile')}
+          </option>
+        )}
         <optgroup label={t('channels.project.directModels')}>
           {selectedDirectUnavailable && (
             <option

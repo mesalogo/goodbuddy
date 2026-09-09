@@ -69,6 +69,7 @@ type RuntimeModelSource =
 export type RuntimeSelectionDefaultSettings = {
   provider: AgentRuntimeSelection['provider']
   defaultModelProfileId: string
+  modelProfiles?: RuntimeSelectionRepairSettings['modelProfiles']
   opencodeBaseUrl: string
   opencodeEmbedded: boolean
   opencodeModelSource?: RuntimeModelSource
@@ -85,6 +86,7 @@ export function getRuntimeSelectionForProvider(
   provider: Exclude<AgentRuntimeSelection['provider'], 'auto'>,
   _settings: RuntimeSelectionDefaultSettings
 ): AgentRuntimeSelection {
+  void _settings
   return { provider }
 }
 
@@ -110,8 +112,25 @@ export function getRuntimeSelectionProfileId(
   if (selection.provider === 'model') return settings.defaultModelProfileId
   const source = selection.provider === 'opencode' ? settings.opencodeModelSource
     : selection.provider === 'continue' ? settings.continueModelSource : settings.deepseekHarnessModelSource
-  return source?.kind === 'default' ? settings.defaultModelProfileId
-    : source?.kind === 'profile' ? source.profileId : undefined
+  if (source?.kind === 'profile') return source.profileId
+  if (source?.kind !== 'default') return undefined
+  const profiles = settings.modelProfiles ?? []
+  const isCompatible = (profile: ChannelModelProfile): boolean =>
+    selection.provider === 'deepseek-harness'
+      ? profile.protocol === 'openai-chat-completions' &&
+        profile.authentication === 'api-key' &&
+        Boolean(profile.baseUrl) &&
+        isDeepSeekHarnessModelProfile({
+          baseUrl: profile.baseUrl!,
+          protocol: profile.protocol,
+          authentication: profile.authentication
+        })
+      : Boolean(profile.protocol) &&
+        profile.protocol !== 'openai-images-generations'
+  return profiles.find(
+    (profile) =>
+      profile.id === settings.defaultModelProfileId && isCompatible(profile)
+  )?.id ?? profiles.find(isCompatible)?.id
 }
 
 export function isChannelModelProfileUsable(

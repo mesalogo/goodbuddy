@@ -3146,7 +3146,7 @@ describe('SettingsPanel runtime files', () => {
     const source = screen.getByLabelText(
       'DeepSeek Harness OpenAI 兼容模型连接'
     )
-    expect(source).toHaveValue('')
+    expect(source).toHaveValue('platform')
     fireEvent.change(source, {
       target: { value: runtimeSettings.modelProfiles[0]!.id }
     })
@@ -3155,7 +3155,7 @@ describe('SettingsPanel runtime files', () => {
     await waitFor(() =>
       expect(updateRuntime).toHaveBeenCalledWith(
         expect.objectContaining({
-          deepseekHarnessModelSource: { kind: 'platform' }
+          deepseekHarnessModelSource: { kind: 'profile', profileId: runtimeSettings.defaultModelProfileId }
         })
       )
     )
@@ -4215,11 +4215,11 @@ describe('SettingsPanel runtime files', () => {
         defaultModelProfileId: nextDefault?.id,
         opencodeModelSource: {
           kind: 'profile',
-          profileId: nextDefault?.id
+          profileId: runtimeSettings.defaultModelProfileId
         },
         continueModelSource: {
           kind: 'profile',
-          profileId: nextDefault?.id
+          profileId: runtimeSettings.defaultModelProfileId
         }
       })
     )

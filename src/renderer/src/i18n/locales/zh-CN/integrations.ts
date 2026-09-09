@@ -38,7 +38,8 @@ export const integrations = {
         '所选直连模型尚未配置密钥，请先到模型连接中完成配置。',
       directDescription:
         '直接使用 {{name}}（{{modelName}}）处理消息。',
-      automaticDescription: '使用模型设置中的默认直连模型处理消息。',
+      automaticDescription: '跟随全局 Runtime 默认设置',
+      defaultDirect: '直连 · 跟随全局默认模型',
       runtimeDescription:
         '通过 {{runtime}} Agent Runtime 运行，并跟随“Agent Runtime”设置中的全局 {{runtime}} 配置。',
       defaultMode: '默认模式',

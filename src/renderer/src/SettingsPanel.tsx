@@ -1440,12 +1440,6 @@ export function SettingsPanel({
         profileInputs.find(
           (profile) => profile.id === defaultProfile.id
         ) ?? profileInputs[0]!
-      const normalizedDeepseekHarnessModelSource =
-        deepseekHarnessModelSource.kind === 'profile' &&
-        deepseekHarnessModelSource.profileId === defaultProfile.id &&
-        defaultProfile.credentialSource === 'environment'
-          ? { kind: 'platform' as const }
-          : deepseekHarnessModelSource
       const value = await window.goodbuddy.settings.updateRuntime({
         provider,
         modelBaseUrl: defaultProfileInput.baseUrl,
@@ -1514,8 +1508,7 @@ export function SettingsPanel({
         defaultModelProfileId: defaultProfile.id,
         opencodeModelSource,
         continueModelSource,
-        deepseekHarnessModelSource:
-          normalizedDeepseekHarnessModelSource,
+        deepseekHarnessModelSource,
         contextCompression: contextCompressionInput,
         toolApproval,
         subagentSmartRoutingEnabled
@@ -1897,44 +1890,12 @@ export function SettingsPanel({
   const selectDefaultModelProfile = (
     profile: ModelProfileDraft
   ): void => {
-    const previousDefaultProfileId = defaultModelProfileId
-    const compatibleProfile = findPreferredCompatibleModelProfile(
-      modelProfiles,
-      profile.id,
-      (candidate) =>
-        isAgentRuntimeModelProtocol(candidate.protocol)
-    )
-    const nextRuntimeSource: RuntimeModelSource = compatibleProfile
-      ? { kind: 'profile', profileId: compatibleProfile.id }
-      : { kind: 'platform' }
     setDefaultModelProfileId(profile.id)
-    if (
-      opencodeModelSource.kind === 'profile' &&
-      opencodeModelSource.profileId === previousDefaultProfileId
-    ) {
-      setOpencodeModelSource(nextRuntimeSource)
-    }
-    if (
-      continueModelSource.kind === 'profile' &&
-      continueModelSource.profileId === previousDefaultProfileId
-    ) {
-      setContinueModelSource(nextRuntimeSource)
-    }
-    if (
-      deepseekHarnessModelSource.kind === 'profile' &&
-      deepseekHarnessModelSource.profileId === previousDefaultProfileId &&
-      profile.protocol === 'openai-chat-completions'
-    ) {
-      setDeepseekHarnessModelSource({
-        kind: 'profile',
-        profileId: profile.id
-      })
-    }
   }
 
   const parseModelSource = (value: string): RuntimeModelSource =>
-    value === 'platform'
-      ? { kind: 'platform' }
+    value === 'platform' || value === 'default'
+      ? { kind: value }
       : { kind: 'profile', profileId: value }
 
   const isOpenCodeCompatible = (
@@ -1981,7 +1942,11 @@ export function SettingsPanel({
               ? isDeepseekHarnessCompatible(profile)
               : isAgentRuntimeModelProtocol(profile.protocol))
         )
-      : undefined
+      : activeRuntimeModelSource.kind === 'default'
+        ? agentRuntimeType === 'deepseek-harness'
+          ? defaultDeepseekHarnessModelProfile
+          : defaultTextModelProfile
+        : undefined
   const savedRoleModelProfiles = (settings?.modelProfiles ?? [])
     .filter((profile) =>
       isAgentRuntimeModelProtocol(profile.protocol)
@@ -2386,14 +2351,13 @@ export function SettingsPanel({
                   <legend>{t('runtime.sourceLegend')}</legend>
                   <label>
                     <input
-                      checked={opencodeModelSource.kind === 'profile'}
+                      checked={opencodeModelSource.kind !== 'platform'}
                       disabled={!defaultTextModelProfile}
                       name="opencode-model-source"
                       onChange={() => {
                         if (defaultTextModelProfile) {
                           setOpencodeModelSource({
-                            kind: 'profile',
-                            profileId: defaultTextModelProfile.id
+                            kind: 'default'
                           })
                           setOpencodeBaseUrl('')
                         }
@@ -2401,7 +2365,7 @@ export function SettingsPanel({
                       type="radio"
                     />
                     <span>
-                      <strong>{t('runtime.followRecommended')}</strong>
+                      <strong>{t('runtime.goodBuddyModelSource')}</strong>
                       <small>
                         {t('runtime.opencode.followDescription')}
                       </small>
@@ -2428,14 +2392,14 @@ export function SettingsPanel({
                     </span>
                   </label>
                 </fieldset>
-                {opencodeModelSource.kind === 'profile' && (
+                {opencodeModelSource.kind !== 'platform' && (
                   <label className="field">
                     <span>{t('runtime.goodBuddyConnection')}</span>
                     <select
                       aria-label={`OpenCode ${t(
                         'runtime.goodBuddyConnection'
                       )}`}
-                      value={opencodeModelSource.profileId}
+                      value={opencodeModelSource.kind === 'default' ? 'default' : opencodeModelSource.profileId}
                       onChange={(event) => {
                         setOpencodeModelSource(
                           parseModelSource(event.target.value)
@@ -2443,6 +2407,7 @@ export function SettingsPanel({
                         setOpencodeBaseUrl('')
                       }}
                     >
+                      <option value="default">{t('runtime.followRecommended')}</option>
                       {modelProfiles.map((profile) => (
                         <option
                           disabled={!isOpenCodeCompatible(profile)}
@@ -2617,21 +2582,20 @@ export function SettingsPanel({
                   <legend>{t('runtime.sourceLegend')}</legend>
                   <label>
                     <input
-                      checked={continueModelSource.kind === 'profile'}
+                      checked={continueModelSource.kind !== 'platform'}
                       disabled={!defaultTextModelProfile}
                       name="continue-model-source"
                       onChange={() => {
                         if (defaultTextModelProfile) {
                           setContinueModelSource({
-                            kind: 'profile',
-                            profileId: defaultTextModelProfile.id
+                            kind: 'default'
                           })
                         }
                       }}
                       type="radio"
                     />
                     <span>
-                      <strong>{t('runtime.followRecommended')}</strong>
+                      <strong>{t('runtime.goodBuddyModelSource')}</strong>
                       <small>
                         {t('runtime.continue.followDescription')}
                       </small>
@@ -2658,20 +2622,21 @@ export function SettingsPanel({
                     </span>
                   </label>
                 </fieldset>
-                {continueModelSource.kind === 'profile' && (
+                {continueModelSource.kind !== 'platform' && (
                   <label className="field">
                     <span>{t('runtime.goodBuddyConnection')}</span>
                     <select
                       aria-label={`Continue ${t(
                         'runtime.goodBuddyConnection'
                       )}`}
-                      value={continueModelSource.profileId}
+                      value={continueModelSource.kind === 'default' ? 'default' : continueModelSource.profileId}
                       onChange={(event) =>
                         setContinueModelSource(
                           parseModelSource(event.target.value)
                         )
                       }
                     >
+                      <option value="default">{t('runtime.followRecommended')}</option>
                       {modelProfiles.map((profile) => (
                         <option
                           disabled={!isContinueCompatible(profile)}
@@ -2822,14 +2787,11 @@ export function SettingsPanel({
                   value={
                     deepseekHarnessModelSource.kind === 'profile'
                       ? deepseekHarnessModelSource.profileId
-                      : ''
+                      : deepseekHarnessModelSource.kind
                   }
                 >
-                  <option disabled value="">
-                    {t(
-                      'runtime.deepseekHarness.connectionPlaceholder'
-                    )}
-                  </option>
+                  <option value="default">{t('runtime.followRecommended')}</option>
+                  <option value="platform">{t('runtime.ownConfiguration', { runtime: 'DeepSeek Harness' })}</option>
                   {modelProfiles.map((profile) => (
                     <option
                       disabled={!isDeepseekHarnessCompatible(profile)}

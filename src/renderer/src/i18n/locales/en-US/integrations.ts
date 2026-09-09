@@ -45,8 +45,9 @@ export const integrations = {
         'The selected direct model has no credential. Configure it under Model connections first.',
       directDescription:
         'Process messages directly with {{name}} ({{modelName}}).',
+      defaultDirect: 'Direct · Follow the global default model',
       automaticDescription:
-        'Process messages with the default direct model from Model settings.',
+        'Follow the global default Runtime setting.',
       runtimeDescription:
         'Run through the {{runtime}} Agent Runtime using the global {{runtime}} configuration under Agent Runtime settings.',
       defaultMode: 'Default mode',

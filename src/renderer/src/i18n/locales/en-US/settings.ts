@@ -347,7 +347,8 @@ export const settings = {
     },
     advanced: 'Advanced settings',
     sourceLegend: 'Model configuration source',
-    followRecommended: 'Follow the GoodBuddy model (recommended)',
+    followRecommended: 'Follow the global default model',
+    goodBuddyModelSource: 'Use a GoodBuddy model connection',
     goodBuddyConnection: 'GoodBuddy model connection',
     pinConnectionDescription:
       'You can pin this Runtime to another GoodBuddy text model connection.',

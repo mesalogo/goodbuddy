@@ -100,6 +100,30 @@ function settings(
 }
 
 describe('runtime selection', () => {
+  it('resolves direct defaults per request while fixed selections and started requests stay unchanged', () => {
+    const before = settings()
+    const started = applyRuntimeSelection(before, { provider: 'model' })
+    const after = settings({ defaultModelProfileId: secondProfileId })
+    expect(applyRuntimeSelection(after, { provider: 'model' }).settings.defaultModelProfileId).toBe(secondProfileId)
+    expect(applyRuntimeSelection(after, { provider: 'model', profileId: defaultProfileId }).settings.defaultModelProfileId).toBe(defaultProfileId)
+    expect(started.settings.defaultModelProfileId).toBe(defaultProfileId)
+  })
+
+  it.each(['opencode', 'continue', 'deepseek-harness'] as const)(
+    'resolves %s references from its current configuration and preserves explicit overrides', (provider) => {
+      const base = settings()
+      const first = base.modelProfiles[4]!
+      const second = { ...first, id: responsesProfileId }
+      const key = provider === 'opencode' ? 'opencodeModelProfile' : provider === 'continue' ? 'continueModelProfile' : 'deepseekHarnessModelProfile'
+      const configured = settings({ [key]: first })
+      const started = applyRuntimeSelection(configured, { provider })
+      const changed = settings({ [key]: second })
+      expect(applyRuntimeSelection(changed, { provider }).settings[key]?.id).toBe(second.id)
+      expect(applyRuntimeSelection(changed, { provider, profileId: first.id }).settings[key]?.id).toBe(first.id)
+      expect(started.settings[key]?.id).toBe(first.id)
+    }
+  )
+
   it('selects an independent direct model profile without changing defaults', () => {
     const original = settings()
     const selected = applyRuntimeSelection(original, {

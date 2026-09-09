@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录截至 2026-09-09 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+本文记录截至 2026-09-10 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
 Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
 详细事务与验收边界见
 [SSH Host 远程环境准备与直连下载设计](./environment-provisioning-technical-design.md)；
@@ -12,7 +12,7 @@ Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
 `0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前源码
-候选为 Agent `0.11.22`、Desktop `0.12.10`，包含托管 OpenCode 自动快照策略修复。
+候选为 Agent `0.11.22`、Desktop `0.12.11`，包含托管 OpenCode 自动快照策略修复。
 正式发布状态以 Agent 与 Desktop 独立发布渠道为准。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。

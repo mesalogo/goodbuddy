@@ -1431,7 +1431,13 @@ export class RuntimeSettingsStore {
   ): ResolvedModelProfile | undefined {
     const source = settings.deepseekHarnessModelSource
     if (source.kind === 'default') {
-      return modelProfiles.find((profile) => profile.id === settings.defaultModelProfileId)
+      return (
+        modelProfiles.find(
+          (profile) =>
+            profile.id === settings.defaultModelProfileId &&
+            isDeepSeekHarnessModelProfile(profile)
+        ) ?? modelProfiles.find(isDeepSeekHarnessModelProfile)
+      )
     }
     if (source.kind === 'profile') {
       return modelProfiles.find(
@@ -1939,13 +1945,19 @@ export class RuntimeSettingsStore {
     const opencodeModelProfile =
       !agent.opencodeBaseUrl &&
       settings.opencodeModelSource.kind !== 'platform'
-        ? profilesById.get(settings.opencodeModelSource.kind === 'default'
-          ? settings.defaultModelProfileId : settings.opencodeModelSource.profileId)
+        ? profilesById.get(
+            settings.opencodeModelSource.kind === 'default'
+              ? compatibleTextProfileId(settings) ?? ''
+              : settings.opencodeModelSource.profileId
+          )
         : undefined
     const continueModelProfile =
       settings.continueModelSource.kind !== 'platform'
-        ? profilesById.get(settings.continueModelSource.kind === 'default'
-          ? settings.defaultModelProfileId : settings.continueModelSource.profileId)
+        ? profilesById.get(
+            settings.continueModelSource.kind === 'default'
+              ? compatibleTextProfileId(settings) ?? ''
+              : settings.continueModelSource.profileId
+          )
         : undefined
     const deepseekHarnessModelProfile =
       this.resolveDeepSeekHarnessModelProfile(settings, modelProfiles)
@@ -2366,12 +2378,22 @@ export class RuntimeSettingsStore {
       source: RuntimeSettings['opencodeModelSource'],
       runtimeLabel: 'OpenCode' | 'Continue'
     ): void => {
-      if (source.kind !== 'profile') {
+      if (source.kind === 'platform') {
         return
       }
-      const profile = modelProfiles.find(
-        (candidate) => candidate.id === source.profileId
-      )
+      const profile =
+        source.kind === 'default'
+          ? (modelProfiles.find(
+              (candidate) =>
+                candidate.id === defaultModelProfileId &&
+                isAgentRuntimeModelProtocol(candidate.protocol)
+            ) ??
+            modelProfiles.find((candidate) =>
+              isAgentRuntimeModelProtocol(candidate.protocol)
+            ))
+          : modelProfiles.find(
+              (candidate) => candidate.id === source.profileId
+            )
       if (!profile) {
         throw new Error(`${runtimeLabel} 引用的模型连接不存在`)
       }
@@ -2417,11 +2439,18 @@ export class RuntimeSettingsStore {
     const requestedDeepSeekHarnessSource =
       input.deepseekHarnessModelSource ??
       current.deepseekHarnessModelSource
-    if (requestedDeepSeekHarnessSource.kind === 'profile') {
-      const profile = modelProfiles.find(
-        (candidate) =>
-          candidate.id === requestedDeepSeekHarnessSource.profileId
-      )
+    if (requestedDeepSeekHarnessSource.kind !== 'platform') {
+      const profile =
+        requestedDeepSeekHarnessSource.kind === 'default'
+          ? (modelProfiles.find(
+              (candidate) =>
+                candidate.id === defaultModelProfileId &&
+                isDeepSeekHarnessModelProfile(candidate)
+            ) ?? modelProfiles.find(isDeepSeekHarnessModelProfile))
+          : modelProfiles.find(
+              (candidate) =>
+                candidate.id === requestedDeepSeekHarnessSource.profileId
+            )
       if (!profile) {
         throw new Error('DeepSeek Harness 引用的模型连接不存在')
       }

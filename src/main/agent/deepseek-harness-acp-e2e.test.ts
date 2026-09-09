@@ -677,7 +677,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
           assignments: ['deepseek-harness'],
           secretConfigured: false,
           transport: 'stdio',
-          command: process.execPath,
+          command: process.versions.electron ? 'node' : process.execPath,
           args: [
             resolve(
               'tests',

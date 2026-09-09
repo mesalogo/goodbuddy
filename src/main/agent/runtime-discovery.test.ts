@@ -75,7 +75,7 @@ describe('runtime discovery', () => {
     await expect(validation).resolves.toEqual({ valid: false })
   })
 
-  it('canonicalizes and validates a configured ordinary file first', async () => {
+  it('canonicalizes a configured ordinary file without launching it', async () => {
     process.env.PATH = ''
     process.env.Path = ''
 
@@ -90,7 +90,7 @@ describe('runtime discovery', () => {
       path: await realpath(process.execPath),
       source: 'configured'
     })
-    expect(detection.version).toMatch(/^\d+\.\d+\.\d+/u)
+    expect(detection.version).toBeUndefined()
   })
 
   it('trusts a configured execution path without reading or launching it', async () => {

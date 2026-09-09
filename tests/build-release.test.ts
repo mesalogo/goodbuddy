@@ -11,7 +11,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 interface ReleaseOptions {
   platform: 'windows' | 'macos' | 'linux'
@@ -204,6 +204,16 @@ const windowsOptions: ReleaseOptions = {
   unsigned: false,
   help: false
 }
+const electronProcess = process as NodeJS.Process & { noAsar?: boolean }
+const originalNoAsar = electronProcess.noAsar
+
+beforeAll(() => {
+  electronProcess.noAsar = true
+})
+
+afterAll(() => {
+  electronProcess.noAsar = originalNoAsar
+})
 
 function pe(machine: number): Buffer {
   const buffer = Buffer.alloc(256)

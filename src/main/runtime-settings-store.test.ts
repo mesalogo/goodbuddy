@@ -80,6 +80,89 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('persists default references separately from fixed profiles and resolves each settings generation', async () => {
+    const { store, filePath } = await createStore()
+    const firstId = '00000000-0000-4000-8000-000000000041'
+    const secondId = '00000000-0000-4000-8000-000000000042'
+    const modelProfiles = [firstId, secondId].map((id) => ({
+      id, name: id, baseUrl: 'https://gateway.example/v1', modelName: id,
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const, imageGenerationQuality: 'auto' as const,
+      apiKey: { action: 'keep' as const }
+    }))
+    await store.update(settings({ modelProfiles, defaultModelProfileId: firstId,
+      opencodeModelSource: { kind: 'default' },
+      continueModelSource: { kind: 'profile', profileId: firstId },
+      deepseekHarnessModelSource: { kind: 'default' }
+    }))
+    const started = await store.getResolvedSettings()
+    await store.update(settings({ defaultModelProfileId: secondId, deepseekHarnessModelSource: { kind: 'default' } }))
+    const reloaded = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(reloaded.getPublicSettings()).resolves.toMatchObject({
+      opencodeModelSource: { kind: 'default' },
+      continueModelSource: { kind: 'profile', profileId: firstId },
+      deepseekHarnessModelSource: { kind: 'default' }
+    })
+    await expect(reloaded.getResolvedSettings()).resolves.toMatchObject({
+      opencodeModelProfile: { id: secondId },
+      continueModelProfile: { id: firstId },
+      deepseekHarnessModelProfile: { id: secondId }
+    })
+    expect(started.opencodeModelProfile?.id).toBe(firstId)
+  })
+
+  it('falls back to compatible profiles when the global default is incompatible with a Runtime', async () => {
+    const { store } = await createStore()
+    const textId = '00000000-0000-4000-8000-000000000043'
+    const imageId = '00000000-0000-4000-8000-000000000044'
+    const anthropicId = '00000000-0000-4000-8000-000000000045'
+    const modelProfiles = [
+      {
+        id: textId, name: 'OpenAI text', baseUrl: 'https://gateway.example/v1', modelName: 'text',
+        protocol: 'openai-chat-completions' as const, authentication: 'api-key' as const,
+        imageGenerationQuality: 'auto' as const, apiKey: { action: 'keep' as const }
+      },
+      {
+        id: imageId, name: 'Image', baseUrl: 'https://gateway.example/v1', modelName: 'image',
+        protocol: 'openai-images-generations' as const, authentication: 'api-key' as const,
+        imageGenerationQuality: 'auto' as const, apiKey: { action: 'keep' as const }
+      },
+      {
+        id: anthropicId, name: 'Anthropic text', baseUrl: 'https://gateway.example/v1', modelName: 'text',
+        protocol: 'anthropic-messages' as const, authentication: 'api-key' as const,
+        imageGenerationQuality: 'auto' as const, apiKey: { action: 'keep' as const }
+      }
+    ]
+    const runtimeDefaults = settings({
+      modelProfiles,
+      defaultModelProfileId: textId,
+      opencodeModelSource: { kind: 'default' },
+      continueModelSource: { kind: 'default' },
+      deepseekHarnessModelSource: { kind: 'default' }
+    })
+    await store.update(runtimeDefaults)
+
+    await store.update({
+      ...runtimeDefaults,
+      defaultModelProfileId: imageId
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      opencodeModelProfile: { id: textId },
+      continueModelProfile: { id: textId },
+      deepseekHarnessModelProfile: { id: textId }
+    })
+
+    await store.update({
+      ...runtimeDefaults,
+      defaultModelProfileId: anthropicId
+    })
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      opencodeModelProfile: { id: anthropicId },
+      continueModelProfile: { id: anthropicId },
+      deepseekHarnessModelProfile: { id: textId }
+    })
+  })
+
   it('seeds a local provider-neutral model connection', async () => {
     const { store } = await createStore()
 
@@ -491,12 +574,10 @@ describe('RuntimeSettingsStore', () => {
     await expect(store.getPublicSettings()).resolves.toMatchObject({
       opencodeEmbedded: true,
       opencodeModelSource: {
-        kind: 'profile',
-        profileId: '00000000-0000-4000-8000-000000000001'
+        kind: 'default'
       },
       continueModelSource: {
-        kind: 'profile',
-        profileId: '00000000-0000-4000-8000-000000000001'
+        kind: 'default'
       }
     })
     await expect(store.getResolvedSettings()).resolves.toMatchObject({

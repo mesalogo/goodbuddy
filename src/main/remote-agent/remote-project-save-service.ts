@@ -320,7 +320,7 @@ export class RemoteProjectSaveService {
     signal.throwIfAborted()
     runtimeLease.assertCurrent()
     return {
-      runtimeSelection,
+      runtimeSelection: draft.runtimeSelection,
       target,
       installation,
       connection,

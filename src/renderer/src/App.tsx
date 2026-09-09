@@ -1491,7 +1491,8 @@ function getProjectDefaultRuntimeSelection(
   settings: RuntimeSettings,
 ): AgentRuntimeSelection {
   if (isManagedSshProject(project)) {
-    return getRuntimeSelectionForProvider("opencode", settings);
+    return project.runtimeSelection?.provider === "opencode"
+      ? project.runtimeSelection : getRuntimeSelectionForProvider("opencode", settings);
   }
   const selection = project?.runtimeSelection;
   return !selection || selection.provider === "auto"
@@ -3634,7 +3635,7 @@ function App(): React.JSX.Element {
       requestAnimationFrame(() => inputRef.current?.focus());
       return true;
     },
-    [notify, projects, runtimeSettings, setActiveId, setView],
+    [notify, projects, setActiveId, setView],
   );
   const activeProjectDisplayName = activeProject
     ? getProjectDisplayText(activeProject, tWorkspace).name
@@ -7209,7 +7210,9 @@ function App(): React.JSX.Element {
                   ...conversation,
                   contextCompressionState: state,
                   contextMetrics: {
-                    runtimeSelectionKey: activeRuntimeSelectionKey,
+                    runtimeSelectionKey: agentRuntimeSelectionKey(runtimeSettings
+                      ? resolveContextMetricsRuntimeSelection(activeRuntimeSelection, runtimeSettings)
+                      : activeRuntimeSelection),
                     contextTokens: estimatedAfterTokens,
                     source: "estimated",
                     basis: "conversation",
