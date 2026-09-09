@@ -102,6 +102,21 @@ describe('remote Runtime verification metadata loader', () => {
     })
   })
 
+  it('canonicalizes equivalent Runtime lock formatting', async () => {
+    const fixture = await createFixture()
+    await writeFile(
+      fixture.paths.runtimeLockPath,
+      JSON.stringify(runtimeLock)
+    )
+
+    await expect(
+      loadRemoteRuntimeVerificationMetadata(fixture.paths)
+    ).resolves.toMatchObject({
+      runtimeLock,
+      canonicalRemoteRuntimeLockBytes: canonical(runtimeLock)
+    })
+  })
+
   it.each([
     { bytes: Buffer.from('not json\n'), error: 'invalid JSON' },
     {

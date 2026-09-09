@@ -100,8 +100,7 @@ export async function loadRemoteRuntimeVerificationMetadata(
     readCanonicalMetadata(
       paths.keyRegistryPath,
       { parse: parseAgentReleaseKeyRegistry },
-      'Runtime release-key registry',
-      true
+      'Runtime release-key registry'
     ),
     readCanonicalMetadata(
       paths.runtimeLockPath,
@@ -133,8 +132,7 @@ function assertSafeVerificationInjection(
 async function readCanonicalMetadata<T>(
   filePathInput: string,
   schema: { parse(value: unknown): T },
-  label: string,
-  acceptEquivalentJsonFormatting = false
+  label: string
 ): Promise<CanonicalMetadata<T>> {
   const filePath = resolve(filePathInput)
   const pathStat = await lstat(filePath)
@@ -207,12 +205,6 @@ async function readCanonicalMetadata<T>(
     `${JSON.stringify(value, null, 2)}\n`,
     'utf8'
   )
-  if (
-    !acceptEquivalentJsonFormatting &&
-    !canonicalBytes.equals(bytes)
-  ) {
-    throw new Error(`${label} is not canonical`)
-  }
   return { bytes: canonicalBytes, value }
 }
 
