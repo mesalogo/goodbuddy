@@ -1965,7 +1965,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('returns the latest 500 remote messages in chronological order', () => {
+  it('returns all remote messages in chronological order beyond 500', () => {
     // Exercise the query boundary without 502 disk-synchronized fixture writes.
     const database = new AssistantDatabase(':memory:')
     database.initialize('C:\\Workspace')
@@ -1992,8 +1992,8 @@ describe('AssistantDatabase', () => {
     }
 
     const messages = database.getConversation(conversation.id).messages
-    expect(messages).toHaveLength(500)
-    expect(messages[0]?.content).toBe('消息 2')
+    expect(messages).toHaveLength(502)
+    expect(messages[0]?.content).toBe('消息 0')
     expect(messages.at(-1)?.content).toBe('消息 501')
     database.close()
   })
@@ -3708,6 +3708,9 @@ describe('AssistantDatabase', () => {
       recurrence: 'daily',
       nextRunAt: '2026-08-20T09:00:00.000Z'
     })
+    const taskStatus = (): string | undefined =>
+      database.listTasks().find((task) => task.id === schedule.taskId)?.status
+    expect(taskStatus()).toBe('idle')
 
     const [dueItem] = database.queueDueSchedules(
       new Date('2026-08-20T09:01:00.000Z')
@@ -3718,6 +3721,10 @@ describe('AssistantDatabase', () => {
       scheduleId: schedule.id,
       taskId: schedule.taskId
     })
+    expect(taskStatus()).toBe('queued')
+    expect(() => database.queueScheduleNow(schedule.id)).toThrow(
+      '定时任务已有一次运行正在进行'
+    )
     expect(database.listConversationQueueItems()).toEqual([
       expect.objectContaining({ id: dueItem!.id })
     ])
@@ -3737,18 +3744,28 @@ describe('AssistantDatabase', () => {
       schedule: { id: schedule.id },
       runId: dueItem!.id
     })
+    expect(taskStatus()).toBe('running')
+    database.updateTaskStatus(schedule.taskId, 'waiting_approval')
+    expect(taskStatus()).toBe('waiting_approval')
+    database.updateTaskStatus(schedule.taskId, 'running')
+    expect(taskStatus()).toBe('running')
     database.completeScheduleRun(
       dueItem!.id,
       'completed',
       new Date('2026-08-20T09:02:00.000Z')
     )
+    expect(taskStatus()).toBe('idle')
 
+    database.setScheduleEnabled(schedule.id, false)
+    expect(taskStatus()).toBe('paused')
     const manualItem = database.queueScheduleNow(schedule.id)
+    expect(taskStatus()).toBe('queued')
     expect(manualItem).toMatchObject({
       source: 'schedule',
       scheduleId: schedule.id
     })
     database.cancelConversationQueueItem(manualItem.id)
+    expect(taskStatus()).toBe('paused')
     expect(database.listConversationQueueItems()).toEqual([])
     database.close()
   })
@@ -4781,7 +4798,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('keeps incremental local conversation storage bounded to 500 messages', async () => {
+  it('preserves history beyond 500 messages across incremental saves', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-bounded-local-conversation-')
     )
@@ -4832,8 +4849,9 @@ describe('AssistantDatabase', () => {
     ])
 
     const restored = database.getConversation(conversationId)
-    expect(restored.messages).toHaveLength(500)
-    expect(restored.messages[0]?.id).toBe(messageId(1))
+    expect(restored.messages).toHaveLength(501)
+    expect(restored.messages[0]?.id).toBe(messageId(0))
+    expect(database.listConversations().find((item) => item.id === conversationId)?.messages).toHaveLength(501)
     expect(restored.messages.at(-1)?.id).toBe(newestMessageId)
     const raw = new DatabaseSync(databasePath)
     expect(
@@ -4846,8 +4864,8 @@ describe('AssistantDatabase', () => {
         )
         .get(conversationId)
     ).toEqual({
-      count: 500,
-      minimum: 1,
+      count: 501,
+      minimum: 0,
       maximum: 500
     })
     raw.close()

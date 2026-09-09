@@ -31,6 +31,7 @@ type TaskScheduleActionsProps = {
     enabled: boolean
   ) => Promise<void>
   schedule: AssistantSchedule
+  taskStatus: AssistantTask['status']
   taskTitle: string
 }
 
@@ -40,6 +41,7 @@ export function TaskScheduleActions({
   onRunSchedule,
   onSetScheduleEnabled,
   schedule,
+  taskStatus,
   taskTitle
 }: TaskScheduleActionsProps): React.JSX.Element {
   const { t } = useTranslation('workspace')
@@ -64,7 +66,12 @@ export function TaskScheduleActions({
   return (
     <>
       <button
-        disabled={busy}
+        disabled={
+          busy ||
+          taskStatus === 'queued' ||
+          taskStatus === 'running' ||
+          taskStatus === 'waiting_approval'
+        }
         onClick={() =>
           void runAction(
             () => onRunSchedule(schedule.id),

@@ -178,6 +178,7 @@ type TaskRow = {
   instructions: string
   origin: AssistantTask['origin']
   status: AssistantTask['status']
+  active_run_status?: 'pending' | 'running' | null
   work_mode: LegacyWorkMode
   progress: number | null
   created_at: string
@@ -576,6 +577,14 @@ function readProject(
   return toProject(row)
 }
 
+const taskSelect = `SELECT tasks.*,
+  (SELECT status FROM schedule_runs
+   WHERE schedule_id = tasks.schedule_id
+     AND status IN ('pending', 'running')
+   ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END
+   LIMIT 1) AS active_run_status
+  FROM tasks`
+
 function toTask(row: TaskRow): AssistantTask {
   return {
     id: row.id,
@@ -589,9 +598,15 @@ function toTask(row: TaskRow): AssistantTask {
     instructions: row.instructions,
     origin: row.origin,
     status:
-      row.origin === 'schedule' && row.status === 'queued'
-        ? 'idle'
-        : row.status,
+      row.active_run_status === 'pending'
+        ? 'queued'
+        : row.active_run_status === 'running'
+          ? row.status === 'waiting_approval'
+            ? 'waiting_approval'
+            : 'running'
+          : row.origin === 'schedule' && row.status === 'queued'
+            ? 'idle'
+            : row.status,
     workMode: normalizeInteractiveWorkMode(row.work_mode),
     progress: row.progress ?? undefined,
     createdAt: row.created_at,
@@ -1168,8 +1183,6 @@ function serializeConversationMessageMetadata(
   })
 }
 
-const maximumRecoveredMessageLength = 1_000_000
-
 function appendRecoveredMessageBlock(
   blocks: ConversationMessageBlock[] | undefined,
   type: 'text' | 'reasoning',
@@ -1183,16 +1196,13 @@ function appendRecoveredMessageBlock(
   if (previous?.type === type) {
     current[current.length - 1] = {
       ...previous,
-      content: `${previous.content}${delta}`.slice(
-        0,
-        maximumRecoveredMessageLength
-      )
+      content: `${previous.content}${delta}`
     }
   } else {
     current.push({
       id: randomUUID(),
       type,
-      content: delta.slice(0, maximumRecoveredMessageLength)
+      content: delta
     })
   }
   return current
@@ -1296,11 +1306,7 @@ function reduceRecoveredAgentEvent(
 ): ConversationMessage {
   let next: ConversationMessage = message
   if (event.type === 'text') {
-    const remaining = Math.max(
-      0,
-      maximumRecoveredMessageLength - message.content.length
-    )
-    const delta = event.delta.slice(0, remaining)
+    const delta = event.delta
     const blocks = appendRecoveredMessageBlock(
       message.blocks,
       'text',
@@ -1310,17 +1316,11 @@ function reduceRecoveredAgentEvent(
       ...message,
       content: `${message.content}${delta}`,
       blocks,
-      status:
-        event.delta.length > remaining
-          ? '回答过长，已在本地截断显示'
-          : undefined
+      status: undefined
     }
   } else if (event.type === 'reasoning') {
     const reasoning = message.reasoning ?? ''
-    const delta = event.delta.slice(
-      0,
-      Math.max(0, maximumRecoveredMessageLength - reasoning.length)
-    )
+    const delta = event.delta
     const blocks = appendRecoveredMessageBlock(
       message.blocks,
       'reasoning',
@@ -1493,7 +1493,7 @@ function reduceRecoveredAgentEvent(
         : ('interrupted' as const)
     const fallback =
       event.type === 'error' && !represented && !message.content
-        ? event.message.slice(0, maximumRecoveredMessageLength)
+        ? event.message
         : ''
     next = {
       ...message,
@@ -2604,7 +2604,6 @@ export class AssistantDatabase {
          FROM messages
          WHERE conversation_id = ?
          ORDER BY sequence DESC
-         LIMIT 500
        )
        ORDER BY sequence ASC`
     )
@@ -2643,7 +2642,6 @@ export class AssistantDatabase {
            FROM messages
            WHERE conversation_id = ?
            ORDER BY sequence DESC
-           LIMIT 500
          )
          ORDER BY sequence ASC`
       )
@@ -2782,7 +2780,6 @@ export class AssistantDatabase {
           updatedAt
         )
         for (const [sequence, message] of conversation.messages
-          .slice(-500)
           .entries()) {
           insertMessage.run(
             message.id,
@@ -2851,16 +2848,6 @@ export class AssistantDatabase {
        SET content = ?, state = ?, metadata_json = ?
        WHERE id = ?`
     )
-    const trimMessages = database.prepare(
-      `DELETE FROM messages
-       WHERE id IN (
-         SELECT id
-         FROM messages
-         WHERE conversation_id = ?
-         ORDER BY sequence DESC
-         LIMIT -1 OFFSET 500
-       )`
-    )
 
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -2910,7 +2897,6 @@ export class AssistantDatabase {
         let sequence = (
           nextSequence.get(header.id) as { sequence: number }
         ).sequence
-        let insertedMessage = false
         for (const message of save.messages) {
           const existingMessage = findMessage.get(message.id) as
             | {
@@ -2948,10 +2934,6 @@ export class AssistantDatabase {
             new Date(message.createdAt).toISOString()
           )
           sequence += 1
-          insertedMessage = true
-        }
-        if (insertedMessage) {
-          trimMessages.run(header.id)
         }
       }
       database.exec('COMMIT')
@@ -3316,23 +3298,6 @@ export class AssistantDatabase {
           }),
           new Date(now).toISOString()
         )
-      database
-        .prepare(
-          `DELETE FROM messages
-           WHERE id IN (
-             SELECT id
-             FROM messages
-             WHERE conversation_id = ?
-             ORDER BY sequence DESC
-             LIMIT -1 OFFSET 500
-       )
-         AND NOT EXISTS (
-           SELECT 1 FROM tasks
-           WHERE tasks.id = messages.request_id
-             AND tasks.remote_recoverable = 1
-         )`
-        )
-        .run(input.conversationId)
       database
         .prepare(
           'UPDATE conversations SET updated_at = ? WHERE id = ?'
@@ -4207,7 +4172,7 @@ export class AssistantDatabase {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)))
     const rows = this.requireDatabase()
       .prepare(
-        `SELECT * FROM tasks
+        `${taskSelect}
          WHERE visible = 1
          ORDER BY created_at DESC
          LIMIT ?`
@@ -7698,7 +7663,7 @@ export class AssistantDatabase {
 
   private getTask(taskId: string): AssistantTask {
     const row = this.requireDatabase()
-      .prepare('SELECT * FROM tasks WHERE id = ?')
+      .prepare(`${taskSelect} WHERE tasks.id = ?`)
       .get(taskId) as TaskRow | undefined
     if (!row) {
       throw new Error('任务不存在')

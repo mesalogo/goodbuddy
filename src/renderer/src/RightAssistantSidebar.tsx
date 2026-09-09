@@ -38,7 +38,8 @@ import type {
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type {
   ApprovalDecision,
-  BrowserLiveState
+  BrowserLiveState,
+  BrowserTabId
 } from '../../shared/contracts'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 import { SegmentedControl } from './WorkspacePrimitives'
@@ -51,8 +52,11 @@ import type {
 } from '../../shared/terminal-contracts'
 import {
   WORKBAR_APP_DEFINITIONS,
+  WORKBAR_LIMITS,
+  normalizeWorkbarLayoutPreferences,
   workbarLayoutPreferencesSchema,
   type WorkbarAppDefinition,
+  type WorkbarTaskScope,
   type WorkbarTabInstance,
   type WorkbarTargetRef
 } from '../../shared/workbar-contracts'
@@ -85,6 +89,7 @@ export type SidebarArtifact = {
 
 export type PendingSidebarApproval = {
   conversationId: string
+  projectId?: string
   messageId: string
   approvalId: string
   title: string
@@ -105,13 +110,13 @@ type RightAssistantSidebarProps = {
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
   activeConversationId?: string
-  browserState?: BrowserLiveState
+  browserStates?: Readonly<Record<string, Readonly<Record<string, BrowserLiveState>>>>
   currentProject?: AssistantProject
   restoreFocusRef?: { current: HTMLElement | null }
-  onBackBrowser?: () => Promise<void>
-  onNavigateBrowser?: (url: string) => Promise<void>
-  onReloadBrowser?: () => Promise<void>
-  onStopLoadingBrowser?: () => Promise<void>
+  onBackBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
+  onNavigateBrowser?: (conversationId: string, tabId: BrowserTabId, url: string) => Promise<void>
+  onReloadBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
+  onStopLoadingBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
   onCreateCustomTask: () => void
   onImportArtifacts: () => Promise<void>
   onLoadArtifact: (artifactId: string) => Promise<void>
@@ -162,7 +167,10 @@ function loadPersistedWorkbarLayout(): ReturnType<
     if (!value || value.length > 100_000) {
       return undefined
     }
-    return workbarLayoutPreferencesSchema.parse(JSON.parse(value))
+    return normalizeWorkbarLayoutPreferences(
+      JSON.parse(value),
+      DEFAULT_WORKBAR_INSTANCES
+    )
   } catch {
     return undefined
   }
@@ -172,7 +180,8 @@ function persistWorkbarLayout(
   instances: readonly WorkbarTabInstance[],
   activeInstanceId: string | null,
   expanded: boolean,
-  widthRatio: number
+  widthRatio: number,
+  taskScope: WorkbarTaskScope
 ): void {
   try {
     localStorage.setItem(
@@ -183,7 +192,8 @@ function persistWorkbarLayout(
           activeInstanceId,
           expanded,
           dock: 'right',
-          widthRatio
+          widthRatio,
+          taskScope
         })
       )
     )
@@ -472,10 +482,12 @@ function BrowserToolbar({
 function BrowserViewport({
   browserState,
   conversationId,
+  tabId,
   visible
 }: {
   browserState?: BrowserLiveState
   conversationId?: string
+  tabId?: BrowserTabId
   visible: boolean
 }): React.JSX.Element {
   const { t } = useTranslation('workspace')
@@ -484,9 +496,10 @@ function BrowserViewport({
   useLayoutEffect(() => {
     const host = hostRef.current
     const browserApi = window.goodbuddy?.browser
-    if (!host || !conversationId || !browserApi?.setViewport) {
+    if (!host || !conversationId || !tabId || !visible || !browserApi?.setViewport) {
       return
     }
+    const leaseToken = crypto.randomUUID()
     let animationFrame: number | undefined
     let lastRequest = ''
     let resizeObserver: ResizeObserver | undefined
@@ -512,13 +525,17 @@ function BrowserViewport({
               height: Math.round(rect.height)
             }
           : undefined
-        const request = JSON.stringify({ conversationId, bounds })
+        const request = JSON.stringify({ conversationId, tabId, bounds })
         if (request === lastRequest) {
           return
         }
         lastRequest = request
         void browserApi
-          .setViewport(isVisible ? conversationId : undefined, bounds)
+          .setViewport(
+            isVisible
+              ? { conversationId, tabId, leaseToken, bounds: bounds! }
+              : { leaseToken }
+          )
           .catch(() => undefined)
       })
     }
@@ -554,9 +571,9 @@ function BrowserViewport({
       mutationObserver.disconnect()
       window.removeEventListener('resize', syncViewport)
       window.removeEventListener('scroll', syncViewport, true)
-      void browserApi.setViewport().catch(() => undefined)
+      void browserApi.setViewport({ leaseToken }).catch(() => undefined)
     }
-  }, [conversationId, visible])
+  }, [conversationId, tabId, visible])
 
   return (
     <div
@@ -594,7 +611,7 @@ export function RightAssistantSidebar({
   workspaceChanges,
   workspaceProjectId,
   activeConversationId,
-  browserState,
+  browserStates = {},
   currentProject,
   restoreFocusRef,
   onBackBrowser = async () => {},
@@ -670,30 +687,53 @@ export function RightAssistantSidebar({
   )
   const [workbarInstances, setWorkbarInstances] = useState<
     WorkbarTabInstance[]
-  >(() =>
-    (initialLayout?.instances ?? defaultInstances).map((instance) =>
-      instance.appId === 'terminal'
-        ? instance
-        : {
-            ...instance,
-            title:
-              localizedAppDefinitions.find(
-                (definition) => definition.id === instance.appId
-              )?.label ?? instance.title
-          }
+  >(() => {
+    const instances = (initialLayout?.instances ?? defaultInstances).map(
+      (instance) => {
+        if (instance.appId === 'terminal') {
+          return instance
+        }
+        const label =
+          localizedAppDefinitions.find(
+            (definition) => definition.id === instance.appId
+          )?.label ?? instance.title
+        if (instance.appId !== 'browser') {
+          return { ...instance, title: label }
+        }
+        const conversationId =
+          instance.targetRef?.type === 'conversation'
+            ? instance.targetRef.conversationId
+            : !initialLayout
+              ? activeConversationId
+              : undefined
+        return {
+          ...instance,
+          ...(conversationId
+            ? {
+                title: `${label} · ${conversationTitles.get(conversationId) ?? conversationId}`,
+                targetRef: {
+                  type: 'conversation' as const,
+                  conversationId
+                }
+              }
+            : { title: `${label} · ${t('sidebar.browser.unbound')}` })
+        }
+      }
     )
-  )
+    return instances
+  })
   const [activeWorkbarInstanceId, setActiveWorkbarInstanceId] =
     useState<string | null>(
       () =>
         initialLayout?.activeInstanceId ??
-        defaultInstances.find((instance) => instance.appId === tab)?.id ??
-        defaultInstances[0]?.id ??
+        workbarInstances.find((instance) => instance.appId === tab)?.id ??
+        workbarInstances[0]?.id ??
         null
     )
-  const activeWorkbarApp = workbarInstances.find(
+  const activeWorkbarInstance = workbarInstances.find(
     (instance) => instance.id === activeWorkbarInstanceId
-  )?.appId
+  )
+  const activeWorkbarApp = activeWorkbarInstance?.appId
   const [splitLayoutWidth, setSplitLayoutWidth] = useState(
     window.innerWidth
   )
@@ -701,7 +741,17 @@ export function RightAssistantSidebar({
     initialLayout?.widthRatio ?? defaultSidebarRatio
   )
   const [isResizing, setIsResizing] = useState(false)
-  const [browserFullscreen, setBrowserFullscreen] = useState(false)
+  const [browserFullscreenInstanceId, setBrowserFullscreenInstanceId] =
+    useState<string>()
+  const [browserTabIds, setBrowserTabIds] = useState<
+    Record<string, BrowserTabId>
+  >({})
+  const browserTabIdsRef = useRef<Record<string, BrowserTabId>>({})
+  const pendingBrowserTabsRef = useRef<
+    Map<string, Promise<{ conversationId: string; tabId: BrowserTabId } | undefined>>
+  >(new Map())
+  const browserMruRef = useRef<Record<string, number>>({})
+  const nextBrowserMruRef = useRef(0)
   const sidebarRef = useRef<HTMLElement>(null)
   const wasOpen = useRef(false)
   const sidebarWidth = clampSidebarWidth(
@@ -748,6 +798,9 @@ export function RightAssistantSidebar({
   const [taskFilter, setTaskFilter] = useState<
     'attention' | 'active' | 'paused' | 'finished'
   >('active')
+  const [taskScope, setTaskScope] = useState<WorkbarTaskScope>(
+    initialLayout?.taskScope ?? 'current-project'
+  )
   const [actionError, setActionError] = useState('')
   const [terminalSessionIds, setTerminalSessionIds] = useState<
     Record<string, string>
@@ -808,15 +861,36 @@ export function RightAssistantSidebar({
     []
   )
   const browserFullscreenActive =
-    open && activeWorkbarApp === 'browser' && browserFullscreen
+    open &&
+    activeWorkbarApp === 'browser' &&
+    browserFullscreenInstanceId === activeWorkbarInstanceId
   const sidebarWidthLimits = getSidebarWidthLimits(splitLayoutWidth)
   const canResize =
     open &&
     !browserFullscreenActive &&
     sidebarWidthLimits.maximum > sidebarWidthLimits.minimum
+  const taskMatchesScope = useCallback(
+    (projectId?: string): boolean => {
+      if (taskScope === 'all-projects') {
+        return true
+      }
+      if (taskScope === 'global') {
+        return !projectId
+      }
+      return Boolean(currentProject && projectId === currentProject.id)
+    },
+    [currentProject, taskScope]
+  )
+  const scopedApprovals = useMemo(
+    () => approvals.filter((approval) => taskMatchesScope(approval.projectId)),
+    [approvals, taskMatchesScope]
+  )
   const topLevelTasks = useMemo(
-    () => tasks.filter((task) => !task.parentTaskId),
-    [tasks]
+    () =>
+      tasks.filter(
+        (task) => !task.parentTaskId && taskMatchesScope(task.projectId)
+      ),
+    [taskMatchesScope, tasks]
   )
   const filteredTasks = useMemo(
     () =>
@@ -844,24 +918,46 @@ export function RightAssistantSidebar({
   )
 
   useEffect(() => {
+    // Context switches preserve the selected instance and its pinned binding.
+    // Only an explicit external tab change requests a different selection.
     if (lastExternalTabRef.current === tab) {
       return
     }
     lastExternalTabRef.current = tab
-    const requested = workbarInstances.find(
-      (instance) => instance.appId === tab
-    )
+    const defaultBrowserId = DEFAULT_WORKBAR_INSTANCES.find(
+      (instance) => instance.appId === 'browser'
+    )?.id
+    const requested =
+      tab === 'browser'
+        ? workbarInstances
+            .filter(
+              (instance) =>
+                instance.appId === 'browser' &&
+                (!activeConversationId ||
+                  (instance.targetRef?.type === 'conversation' &&
+                    instance.targetRef.conversationId === activeConversationId) ||
+                  (instance.id === defaultBrowserId &&
+                    instance.targetRef?.type !== 'conversation')
+                )
+            )
+            .sort(
+              (left, right) =>
+                (browserMruRef.current[right.id] ?? 0) -
+                (browserMruRef.current[left.id] ?? 0)
+            )[0]
+        : workbarInstances.find((instance) => instance.appId === tab)
     if (requested) {
-      // This effect intentionally mirrors the legacy external tab prop into
-      // the dynamic workbar only when that prop actually changes.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveWorkbarInstanceId(requested.id)
     }
-  }, [tab, workbarInstances])
+  }, [activeConversationId, tab, workbarInstances])
 
   const toggleBrowserFullscreen = useCallback((): void => {
-    setBrowserFullscreen((current) => !current)
-  }, [])
+    setBrowserFullscreenInstanceId((current) =>
+      current === activeWorkbarInstanceId
+        ? undefined
+        : activeWorkbarInstanceId ?? undefined
+    )
+  }, [activeWorkbarInstanceId])
 
   useEffect(() => {
     if (!browserFullscreenActive) {
@@ -881,12 +977,14 @@ export function RightAssistantSidebar({
       workbarInstances,
       activeWorkbarInstanceId,
       open,
-      sidebarRatio
+      sidebarRatio,
+      taskScope
     )
   }, [
     activeWorkbarInstanceId,
     open,
     sidebarRatio,
+    taskScope,
     workbarInstances
   ])
 
@@ -905,8 +1003,12 @@ export function RightAssistantSidebar({
   )
 
   const updateActiveWorkbarInstance = useCallback(
-    (instanceId: string): void => {
+    (instanceId: string | null): void => {
       setActiveWorkbarInstanceId(instanceId)
+      setBrowserFullscreenInstanceId(undefined)
+      if (!instanceId) {
+        return
+      }
       const instance = workbarInstances.find(
         (candidate) => candidate.id === instanceId
       )
@@ -914,6 +1016,9 @@ export function RightAssistantSidebar({
         instance &&
         instance.appId !== 'terminal'
       ) {
+        if (instance.appId === 'browser') {
+          browserMruRef.current[instance.id] = ++nextBrowserMruRef.current
+        }
         onTabChange(instance.appId)
       }
     },
@@ -928,21 +1033,51 @@ export function RightAssistantSidebar({
       if (!definition) {
         return
       }
+      if (
+        workbarInstances.length >= WORKBAR_LIMITS.maximumOpenInstances ||
+        (definition.instancePolicy === 'single' &&
+          workbarInstances.some(
+            (instance) => instance.appId === request.appId
+          ))
+      ) {
+        return
+      }
       const sameTargetTerminals = workbarInstances.filter(
         (instance) =>
           instance.appId === 'terminal' &&
           JSON.stringify(instance.targetRef) ===
             JSON.stringify(request.targetRef)
       ).length
+      const conversationTarget =
+        request.appId === 'browser' && activeConversationId
+          ? {
+              type: 'conversation' as const,
+              conversationId: activeConversationId
+            }
+          : undefined
+      const sameConversationBrowsers = conversationTarget
+        ? workbarInstances.filter(
+            (candidate) =>
+              candidate.appId === 'browser' &&
+              candidate.targetRef?.type === 'conversation' &&
+              candidate.targetRef.conversationId ===
+                conversationTarget.conversationId
+          ).length
+        : 0
+      const conversationTitle = activeConversationId
+        ? conversationTitles.get(activeConversationId) ?? activeConversationId
+        : undefined
       const instance: WorkbarTabInstance = {
         id: crypto.randomUUID(),
         appId: request.appId,
         title:
           request.appId === 'terminal'
             ? `${definition.label} ${sameTargetTerminals + 1}`
+            : request.appId === 'browser' && conversationTitle
+              ? `${definition.label} · ${conversationTitle}${sameConversationBrowsers > 0 ? ` · ${sameConversationBrowsers + 1}` : ''}`
             : definition.label,
-        ...(request.targetRef
-          ? { targetRef: request.targetRef }
+        ...(request.targetRef || conversationTarget
+          ? { targetRef: request.targetRef ?? conversationTarget }
           : {})
       }
       setWorkbarInstances((current) => {
@@ -958,7 +1093,72 @@ export function RightAssistantSidebar({
       })
       setActiveWorkbarInstanceId(instance.id)
     },
-    [localizedAppDefinitions, workbarInstances]
+    [activeConversationId, conversationTitles, localizedAppDefinitions, workbarInstances]
+  )
+
+  const ensureBrowserTab = useCallback(
+    (
+      instance: WorkbarTabInstance
+    ): Promise<
+      { conversationId: string; tabId: BrowserTabId } | undefined
+    > => {
+      const existingTabId = browserTabIdsRef.current[instance.id]
+      const conversationId =
+        instance.targetRef?.type === 'conversation'
+          ? instance.targetRef.conversationId
+          : activeConversationId
+      if (existingTabId && conversationId) {
+        return Promise.resolve({ conversationId, tabId: existingTabId })
+      }
+      const pending = pendingBrowserTabsRef.current.get(instance.id)
+      if (pending) {
+        return pending
+      }
+      if (!conversationId) {
+        return Promise.resolve(undefined)
+      }
+
+      const request = (async () => {
+        const browserApi = window.goodbuddy.browser
+        if (!browserApi.createTab) {
+          throw new Error(t('sidebar.errors.browserControlUnavailable'))
+        }
+        if (instance.targetRef?.type !== 'conversation') {
+          const conversationTitle =
+            conversationTitles.get(conversationId) ?? conversationId
+          setWorkbarInstances((current) =>
+            current.map((candidate) =>
+              candidate.id === instance.id
+                ? {
+                    ...candidate,
+                    title: `${t('sidebar.tabs.browser.label')} · ${conversationTitle}`,
+                    targetRef: { type: 'conversation', conversationId }
+                  }
+                : candidate
+            )
+          )
+        }
+
+        const tab = await browserApi.createTab({
+          conversationId,
+          workbarInstanceId: instance.id
+        })
+        const next = {
+          ...browserTabIdsRef.current,
+          [instance.id]: tab.tabId
+        }
+        browserTabIdsRef.current = next
+        setBrowserTabIds(next)
+        return { conversationId, tabId: tab.tabId }
+      })()
+      pendingBrowserTabsRef.current.set(instance.id, request)
+      void request.then(
+        () => pendingBrowserTabsRef.current.delete(instance.id),
+        () => pendingBrowserTabsRef.current.delete(instance.id)
+      )
+      return request
+    },
+    [activeConversationId, conversationTitles, t]
   )
 
   const removeWorkbarInstance = useCallback(
@@ -976,12 +1176,59 @@ export function RightAssistantSidebar({
         delete next[instanceId]
         return next
       })
+      const nextBrowserTabIds = { ...browserTabIdsRef.current }
+      delete nextBrowserTabIds[instanceId]
+      browserTabIdsRef.current = nextBrowserTabIds
+      setBrowserTabIds(nextBrowserTabIds)
+      pendingBrowserTabsRef.current.delete(instanceId)
     },
     []
   )
 
   const requestCloseWorkbarInstance = useCallback(
     async (instance: WorkbarTabInstance): Promise<boolean> => {
+      const definition = localizedAppDefinitions.find(
+        (candidate) => candidate.id === instance.appId
+      )
+      if (definition?.closable !== true) {
+        return false
+      }
+      if (instance.appId === 'browser') {
+        let tabId = browserTabIdsRef.current[instance.id]
+        let conversationId =
+          instance.targetRef?.type === 'conversation'
+            ? instance.targetRef.conversationId
+            : undefined
+        const pending = pendingBrowserTabsRef.current.get(instance.id)
+        if (!tabId && pending) {
+          try {
+            const binding = await pending
+            tabId = binding?.tabId
+            conversationId = binding?.conversationId
+          } catch (reason) {
+            setActionError(
+              reason instanceof Error
+                ? reason.message
+                : t('sidebar.errors.closeBrowser')
+            )
+            return false
+          }
+        }
+        if (tabId && conversationId) {
+          try {
+            await window.goodbuddy.browser.closeTab?.({ conversationId, tabId })
+          } catch (reason) {
+            setActionError(
+              reason instanceof Error
+                ? reason.message
+                : t('sidebar.errors.closeBrowser')
+            )
+            return false
+          }
+        }
+        removeWorkbarInstance(instance.id)
+        return true
+      }
       if (instance.appId !== 'terminal') {
         removeWorkbarInstance(instance.id)
         return true
@@ -1015,9 +1262,11 @@ export function RightAssistantSidebar({
     },
     [
       removeWorkbarInstance,
+      localizedAppDefinitions,
       terminalAdapter,
       terminalSessionIds,
-      terminalSnapshots
+      terminalSnapshots,
+      t
     ]
   )
 
@@ -1191,7 +1440,7 @@ export function RightAssistantSidebar({
       return
     }
     event.preventDefault()
-    setBrowserFullscreen(false)
+    setBrowserFullscreenInstanceId(undefined)
     const width = clampSidebarWidth(nextWidth, layoutWidth)
     setSidebarRatio(
       layoutWidth > 0 ? width / layoutWidth : defaultSidebarRatio
@@ -1319,6 +1568,19 @@ export function RightAssistantSidebar({
     }
   }
 
+  useEffect(() => {
+    if (!open || activeWorkbarInstance?.appId !== 'browser') {
+      return
+    }
+    void ensureBrowserTab(activeWorkbarInstance).catch((reason: unknown) => {
+      setActionError(
+        reason instanceof Error
+          ? reason.message
+          : t('sidebar.errors.browserControlUnavailable')
+      )
+    })
+  }, [activeWorkbarInstance, ensureBrowserTab, open, t])
+
   return (
     <aside
       ref={sidebarRef}
@@ -1372,7 +1634,7 @@ export function RightAssistantSidebar({
             return
           }
           event.preventDefault()
-          setBrowserFullscreen(false)
+          setBrowserFullscreenInstanceId(undefined)
           resizePointerId.current = event.pointerId
           event.currentTarget.setPointerCapture(event.pointerId)
           resizeFromClientX(event.clientX, true)
@@ -1402,12 +1664,12 @@ export function RightAssistantSidebar({
         onCreateInstance={createWorkbarInstance}
         onResolveTerminalTarget={resolveTerminalTarget}
         renderTabAdornment={(instance) =>
-          instance.appId === 'tasks' && approvals.length > 0 ? (
+          instance.appId === 'tasks' && scopedApprovals.length > 0 ? (
             <span
-              aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${approvals.length}`}
+              aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${scopedApprovals.length}`}
               className="assistant-sidebar__badge"
             >
-              {approvals.length}
+              {scopedApprovals.length}
             </span>
           ) : null
         }
@@ -1420,7 +1682,9 @@ export function RightAssistantSidebar({
             {actionError}
           </p>
         ) : null}
-        {instance.appId === 'terminal' && instance.targetRef ? (
+        {instance.appId === 'terminal' &&
+        instance.targetRef &&
+        instance.targetRef.type !== 'conversation' ? (
           <Suspense
             fallback={
               <section
@@ -1465,16 +1729,43 @@ export function RightAssistantSidebar({
         ) : null}
         {instance.appId === 'tasks' && (
           <section className="assistant-sidebar__section">
+            <div className="task-center__filters">
+              <SegmentedControl
+                ariaLabel={t('sidebar.tasks.scope.ariaLabel')}
+                onChange={setTaskScope}
+                options={[
+                  {
+                    value: 'current-project',
+                    label: t('sidebar.tasks.scope.currentProject')
+                  },
+                  {
+                    value: 'global',
+                    label: t('sidebar.tasks.scope.global')
+                  },
+                  {
+                    value: 'all-projects',
+                    label: t('sidebar.tasks.scope.allProjects')
+                  }
+                ]}
+                value={taskScope}
+              />
+            </div>
+            {taskScope === 'current-project' && !currentProject ? (
+              <p className="assistant-sidebar__empty">
+                {t('sidebar.tasks.scope.noCurrentProject')}
+              </p>
+            ) : (
+              <>
             <h3>
               <ShieldAlert size={15} />
               {t('sidebar.tasks.approvalsTitle')}
             </h3>
-            {approvals.length === 0 ? (
+            {scopedApprovals.length === 0 ? (
               <p className="assistant-sidebar__empty">
                 {t('sidebar.tasks.noApprovals')}
               </p>
             ) : (
-              approvals.map((approval) => (
+              scopedApprovals.map((approval) => (
                 <article
                   aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${
                     approval.toolName ?? approval.title
@@ -1641,6 +1932,7 @@ export function RightAssistantSidebar({
                           onRunSchedule={onRunSchedule}
                           onSetScheduleEnabled={onSetScheduleEnabled}
                           schedule={schedule}
+                          taskStatus={task.status}
                           taskTitle={task.title}
                         />
                       </div>
@@ -1648,6 +1940,8 @@ export function RightAssistantSidebar({
                   </article>
                 )
               })
+            )}
+              </>
             )}
           </section>
         )}
@@ -1916,33 +2210,71 @@ export function RightAssistantSidebar({
         {instance.appId === 'browser' && (
           <section
             className="assistant-sidebar__browser"
-            key={activeConversationId}
+            key={instance.id}
           >
             <BrowserToolbar
-              activeConversationId={activeConversationId}
-              browserState={browserState}
+              activeConversationId={
+                instance.targetRef?.type === 'conversation'
+                  ? instance.targetRef.conversationId
+                  : activeConversationId
+              }
+              browserState={
+                instance.targetRef?.type === 'conversation' &&
+                browserTabIds[instance.id]
+                  ? browserStates[instance.targetRef.conversationId]?.[
+                      browserTabIds[instance.id]!
+                    ]
+                  : undefined
+              }
               fullscreen={browserFullscreenActive}
               onBack={() =>
                 runAction(
-                  onBackBrowser,
+                  async () => {
+                    const binding = await ensureBrowserTab(instance)
+                    if (binding) {
+                      await onBackBrowser(binding.conversationId, binding.tabId)
+                    }
+                  },
                   t('sidebar.errors.backBrowser')
                 )
               }
               onNavigate={(url) =>
                 runAction(
-                  () => onNavigateBrowser(url),
+                  async () => {
+                    const binding = await ensureBrowserTab(instance)
+                    if (binding) {
+                      await onNavigateBrowser(
+                        binding.conversationId,
+                        binding.tabId,
+                        url
+                      )
+                    }
+                  },
                   t('sidebar.errors.navigateBrowser')
                 )
               }
               onReload={() =>
                 runAction(
-                  onReloadBrowser,
+                  async () => {
+                    const binding = await ensureBrowserTab(instance)
+                    if (binding) {
+                      await onReloadBrowser(binding.conversationId, binding.tabId)
+                    }
+                  },
                   t('sidebar.errors.reloadBrowser')
                 )
               }
               onStopLoading={() =>
                 runAction(
-                  onStopLoadingBrowser,
+                  async () => {
+                    const binding = await ensureBrowserTab(instance)
+                    if (binding) {
+                      await onStopLoadingBrowser(
+                        binding.conversationId,
+                        binding.tabId
+                      )
+                    }
+                  },
                   t('sidebar.errors.stopLoadingBrowser')
                 )
               }
@@ -1951,9 +2283,21 @@ export function RightAssistantSidebar({
               }
             />
             <BrowserViewport
-              browserState={browserState}
-              conversationId={activeConversationId}
-              visible={open}
+              browserState={
+                instance.targetRef?.type === 'conversation' &&
+                browserTabIds[instance.id]
+                  ? browserStates[instance.targetRef.conversationId]?.[
+                      browserTabIds[instance.id]!
+                    ]
+                  : undefined
+              }
+              conversationId={
+                instance.targetRef?.type === 'conversation'
+                  ? instance.targetRef.conversationId
+                  : undefined
+              }
+              tabId={browserTabIds[instance.id]}
+              visible={open && instance.id === activeWorkbarInstanceId}
             />
           </section>
         )}

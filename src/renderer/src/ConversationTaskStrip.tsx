@@ -185,6 +185,7 @@ export function ConversationTaskStrip({
                     onRunSchedule={onRunSchedule}
                     onSetScheduleEnabled={onSetScheduleEnabled}
                     schedule={selectedSchedule}
+                    taskStatus={selectedTask.status}
                     taskTitle={selectedTask.title}
                   />
                 </div>

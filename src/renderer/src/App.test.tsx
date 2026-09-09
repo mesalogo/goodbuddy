@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentEvent,
   BrowserLiveState,
+  BrowserTabId,
   ContextAttachment,
   ConversationQueueDispatch,
   DesktopApi,
@@ -143,6 +144,9 @@ const removeMaximizedChangedListener = vi.fn();
 const removeProjectRecoveryListener = vi.fn();
 const run = vi.fn<DesktopApi["agent"]["run"]>();
 const modelProfileId = "00000000-0000-4000-8000-000000000001";
+const browserTabId = "00000000-0000-4000-8000-000000000701" as BrowserTabId;
+const otherBrowserTabId =
+  "00000000-0000-4000-8000-000000000702" as BrowserTabId;
 const projectId = "00000000-0000-4000-8000-000000000101";
 const project = {
   id: projectId,
@@ -246,6 +250,18 @@ const api: DesktopApi = {
     }),
   },
   browser: {
+    createTab: vi.fn(async ({ conversationId }) => ({
+      conversationId,
+      tabId: browserTabId,
+      primary: true,
+      status: "ready" as const,
+      isLoading: false,
+      canGoBack: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })),
+    listTabs: vi.fn(async () => []),
+    closeTab: vi.fn(async () => {}),
     navigate: vi.fn(async () => {}),
     back: vi.fn(async () => {}),
     reload: vi.fn(async () => {}),
@@ -976,6 +992,7 @@ function createBrowserState(
 ): BrowserLiveState {
   return {
     conversationId,
+    tabId: browserTabId,
     status: "ready",
     sessionActive: true,
     isLoading: false,
@@ -1107,12 +1124,21 @@ describe("App", () => {
       .mockReset()
       .mockResolvedValue();
     vi.mocked(api.conversationQueue.ready).mockReset().mockResolvedValue();
+    const queueChangeListeners = new Set<
+      Parameters<DesktopApi["conversationQueue"]["onChanged"]>[0]
+    >();
     vi.mocked(api.conversationQueue.onChanged)
       .mockReset()
       .mockImplementation((listener) => {
-        conversationQueueChangeListener = listener;
+        queueChangeListeners.add(listener);
+        conversationQueueChangeListener = (conversationId) => {
+          queueChangeListeners.forEach((callback) => callback(conversationId));
+        };
         return () => {
-          conversationQueueChangeListener = undefined;
+          queueChangeListeners.delete(listener);
+          if (queueChangeListeners.size === 0) {
+            conversationQueueChangeListener = undefined;
+          }
         };
       });
     vi.mocked(api.conversationQueue.onDispatch)
@@ -1665,6 +1691,112 @@ describe("App", () => {
       name: "当前会话的任务",
     });
     expect(within(taskRegion).getByText("Execute")).toBeInTheDocument();
+  });
+
+  it("refreshes scheduled Task state on queue-only events and guards manual runs through completion", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000821";
+    const task: AssistantTask = {
+      id: "00000000-0000-4000-8000-000000000822",
+      projectId,
+      conversationId,
+      scheduleId: "00000000-0000-4000-8000-000000000823",
+      title: "Scheduled lifecycle regression",
+      instructions: "Check scheduled task lifecycle",
+      origin: "schedule",
+      status: "idle",
+      createdAt: "2026-08-19T00:00:00.000Z",
+    };
+    const schedule: AssistantSchedule = {
+      id: task.scheduleId!,
+      projectId,
+      taskId: task.id,
+      conversationId,
+      title: task.title,
+      prompt: task.instructions,
+      workMode: "execute",
+      recurrence: "weekly",
+      nextRunAt: "2026-08-21T09:00:00.000Z",
+      enabled: true,
+      createdAt: task.createdAt,
+      updatedAt: task.createdAt,
+    };
+    vi.mocked(api.conversations.list).mockResolvedValue([
+      {
+        id: conversationId,
+        projectId,
+        title: "Scheduled lifecycle conversation",
+        updatedAt: Date.now(),
+        messages: [],
+      },
+    ]);
+    vi.mocked(api.tasks.list).mockResolvedValue([task]);
+    vi.mocked(api.schedules.list).mockResolvedValue([schedule]);
+
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByLabelText(
+        "展开或折叠“Scheduled lifecycle conversation”中的 1 个任务",
+      ),
+    );
+    fireEvent.click(
+      (await screen.findByText(task.title, {
+        selector: ".conversation-task-child__title",
+      })).closest("button")!,
+    );
+    const taskRegion = await screen.findByRole("region", {
+      name: "当前会话的任务",
+    });
+    const runNow = within(taskRegion).getByRole("button", { name: "立即运行" });
+    expect(runNow).toBeEnabled();
+
+    const runRequest = deferred<
+      Awaited<ReturnType<DesktopApi["schedules"]["runNow"]>>
+    >();
+    const taskRefresh = deferred<AssistantTask[]>();
+    vi.mocked(api.schedules.runNow).mockReturnValueOnce(runRequest.promise);
+    vi.mocked(api.tasks.list).mockReturnValueOnce(taskRefresh.promise);
+    vi.mocked(api.tasks.list).mockClear();
+    fireEvent.click(runNow);
+    expect(runNow).toBeDisabled();
+    expect(api.schedules.runNow).toHaveBeenCalledWith(schedule.id);
+    expect(api.tasks.list).not.toHaveBeenCalled();
+
+    await act(async () => {
+      runRequest.resolve(undefined);
+    });
+    expect(api.tasks.list).toHaveBeenCalledOnce();
+    expect(within(taskRegion).getByText("空闲")).toBeInTheDocument();
+    expect(runNow).toBeDisabled();
+
+    await act(async () => {
+      taskRefresh.resolve([{ ...task, status: "queued" }]);
+    });
+    expect(taskRegion.querySelector(".task-status-dot")).toHaveClass(
+      "task-status-dot--queued",
+    );
+    expect(runNow).toBeDisabled();
+
+    for (const [status, label] of [
+      ["running", "运行中"],
+      ["waiting_approval", "等待审批"],
+      ["completed", "已完成"],
+    ] as const) {
+      vi.mocked(api.tasks.list).mockResolvedValue([{ ...task, status }]);
+      vi.mocked(api.schedules.list).mockClear();
+      act(() => {
+        conversationQueueChangeListener?.(conversationId);
+      });
+      expect(await within(taskRegion).findByText(label)).toBeInTheDocument();
+      expect(api.schedules.list).toHaveBeenCalled();
+      if (status === "completed") {
+        expect(runNow).toBeEnabled();
+      } else {
+        expect(runNow).toBeDisabled();
+        fireEvent.click(runNow);
+      }
+    }
+    expect(api.schedules.runNow).toHaveBeenCalledOnce();
   });
 
   it("keeps completed Conversation Task metadata compact and accessible", async () => {
@@ -3696,11 +3828,12 @@ describe("App", () => {
     await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalled());
     vi.mocked(api.conversations.saveLocal).mockClear();
 
+    const fullOutput = `streamed ${"x".repeat(1_000_001)} tail`;
     act(() => {
       agentListener?.({
         requestId: request.requestId,
         type: "text",
-        delta: "流式增量",
+        delta: fullOutput,
       });
     });
 
@@ -3714,7 +3847,7 @@ describe("App", () => {
         expect(batch?.[0]?.messages).toEqual([
           expect.objectContaining({
             role: "assistant",
-            content: "流式增量",
+            content: fullOutput,
             state: "streaming",
           }),
         ]);
@@ -4451,6 +4584,33 @@ describe("App", () => {
       currentUserMessageId: expect.any(String),
       currentAssistantMessageId: expect.any(String),
     });
+  });
+
+  it("sends all persisted history beyond 500 messages", async () => {
+    const messages = Array.from({ length: 502 }, (_, index) => ({
+      id: crypto.randomUUID(),
+      role: index % 2 ? "assistant" as const : "user" as const,
+      content: `history ${index}`,
+      createdAt: 1_775_000_000_000 + index,
+      state: "complete" as const,
+    }));
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{
+      id: crypto.randomUUID(), projectId, title: "Full history",
+      updatedAt: 1_775_000_000_502, messages,
+    }]);
+    render(<App />);
+    await screen.findByText("history 501");
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "Continue" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0].history).toEqual(
+      messages.map(({ role, content }) => ({ role, content })),
+    );
+    expect(run.mock.calls[0]?.[0].historyMessageIds).toEqual(
+      messages.map(({ id }) => id),
+    );
   });
 
   it("keeps a tool failure in details and hides retry after continuing", async () => {
@@ -9132,7 +9292,6 @@ describe("App", () => {
     expect(within(dialog).getByLabelText("新对话默认 Runtime")).toHaveValue(
       agentRuntimeSelectionKey({
         provider: "model",
-        profileId: modelProfileId,
       }),
     );
     fireEvent.change(within(dialog).getByLabelText("说明"), {
@@ -9142,7 +9301,6 @@ describe("App", () => {
       target: {
         value: agentRuntimeSelectionKey({
           provider: "continue",
-          profileId: modelProfileId,
         }),
       },
     });
@@ -9940,13 +10098,9 @@ describe("App", () => {
       "aria-selected",
       "true",
     );
-    const taskIndexHeading = screen.getByRole("heading", {
-      name: "任务索引",
-    });
-    const newTaskButton = screen.getByRole("button", {
-      name: "新建任务",
-    });
-    expect(taskIndexHeading.parentElement).toContainElement(newTaskButton);
+    expect(
+      screen.getByText("没有活动项目。请选择其他任务范围或先打开一个项目。"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("region", { name: "当前会话的任务" }),
     ).not.toBeInTheDocument();
@@ -9968,7 +10122,7 @@ describe("App", () => {
     expect(
       screen.queryByText(/选择文件后在当前工作区内预览/),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "浏览器" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^浏览器/u }));
     expect(screen.queryByText("实时浏览器")).not.toBeInTheDocument();
     expect(screen.getByLabelText("浏览器页面")).toBeInTheDocument();
     expect(screen.getByText(/Agent 打开网页后/)).toBeInTheDocument();
@@ -9983,7 +10137,12 @@ describe("App", () => {
     expect(exitFullscreen).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(exitFullscreen);
     expect(sidebar).not.toHaveClass("assistant-sidebar--browser-fullscreen");
-    fireEvent.click(screen.getByRole("tab", { name: "成果" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "打开工作栏应用" }),
+    );
+    fireEvent.click(
+      screen.getByText("成果", { selector: "strong" }).closest("button")!,
+    );
     expect(
       screen.getByRole("button", { name: "导入 PDF、图片或网页" }),
     ).toBeInTheDocument();
@@ -10027,7 +10186,12 @@ describe("App", () => {
     expect(await screen.findByText("这是一条普通聊天回复")).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("切换助手工作栏"));
-    fireEvent.click(screen.getByRole("tab", { name: "成果" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "打开工作栏应用" }),
+    );
+    fireEvent.click(
+      screen.getByText("成果", { selector: "strong" }).closest("button")!,
+    );
     const sidebar = screen.getByLabelText("助手工作栏");
     expect(
       within(sidebar).queryByText("这是一条普通聊天回复"),
@@ -10043,7 +10207,12 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByLabelText("切换助手工作栏"));
-    fireEvent.click(screen.getByRole("tab", { name: "浏览器" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^浏览器/u }));
+    await waitFor(() => expect(api.browser.createTab).toHaveBeenCalledOnce());
+    expect(api.browser.createTab).toHaveBeenCalledWith({
+      conversationId: expect.any(String),
+      workbarInstanceId: "10000000-0000-4000-8000-000000000003",
+    });
 
     const toolbar = screen.getByRole("form", {
       name: "浏览器工具栏",
@@ -10074,8 +10243,11 @@ describe("App", () => {
     fireEvent.click(go);
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
-        expect.any(String),
-        "https://example.com/start",
+        expect.objectContaining({
+          conversationId: expect.any(String),
+          tabId: browserTabId,
+          url: "https://example.com/start",
+        }),
       ),
     );
     expect(address).toHaveValue("https://example.com/start");
@@ -10086,8 +10258,11 @@ describe("App", () => {
     fireEvent.keyDown(address, { key: "Enter" });
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
-        expect.any(String),
-        "http://example.com/enter",
+        expect.objectContaining({
+          conversationId: expect.any(String),
+          tabId: browserTabId,
+          url: "http://example.com/enter",
+        }),
       ),
     );
     expect(address).toHaveValue("http://example.com/enter");
@@ -10098,8 +10273,11 @@ describe("App", () => {
     fireEvent.keyDown(address, { key: "Enter" });
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
-        expect.any(String),
-        "mailto:user@example.com",
+        expect.objectContaining({
+          conversationId: expect.any(String),
+          tabId: browserTabId,
+          url: "mailto:user@example.com",
+        }),
       ),
     );
 
@@ -10109,11 +10287,52 @@ describe("App", () => {
     fireEvent.keyDown(address, { key: "Enter" });
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenLastCalledWith(
-        expect.any(String),
-        "http://localhost:3000/path",
+        expect.objectContaining({
+          conversationId: expect.any(String),
+          tabId: browserTabId,
+          url: "http://localhost:3000/path",
+        }),
       ),
     );
     expect(api.browser.navigate).toHaveBeenCalledTimes(4);
+  });
+
+  it("removes stopped browser state from the rendered tab", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+    fireEvent.click(screen.getByRole("tab", { name: /^浏览器/u }));
+    await waitFor(() => expect(api.browser.createTab).toHaveBeenCalledOnce());
+    const createRequest = vi.mocked(api.browser.createTab!).mock.calls[0]?.[0];
+    if (!createRequest) {
+      throw new Error("Missing browser create request");
+    }
+    const address = screen.getByRole("textbox", { name: "浏览器地址" });
+
+    act(() => {
+      browserListener?.(
+        createBrowserState(createRequest.conversationId, {
+          url: "https://stopped.example/",
+          updatedAt: Date.now(),
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(address).toHaveValue("https://stopped.example/"),
+    );
+
+    act(() => {
+      browserListener?.(
+        createBrowserState(createRequest.conversationId, {
+          status: "stopped",
+          sessionActive: false,
+          updatedAt: Date.now() + 1,
+        }),
+      );
+    });
+
+    await waitFor(() => expect(address).toHaveValue(""));
+    expect(screen.getByText(/输入地址并前往可打开页面/u)).toBeInTheDocument();
   });
 
   it("suppresses duplicate browser actions while keeping stop loading available", async () => {
@@ -10122,7 +10341,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByLabelText("切换助手工作栏"));
-    fireEvent.click(screen.getByRole("tab", { name: "浏览器" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^浏览器/u }));
 
     const toolbar = screen.getByRole("form", {
       name: "浏览器工具栏",
@@ -10138,9 +10357,12 @@ describe("App", () => {
     fireEvent.click(go);
     fireEvent.keyDown(address, { key: "Enter" });
 
-    expect(api.browser.navigate).toHaveBeenCalledOnce();
-    const conversationId =
-      vi.mocked(api.browser.navigate).mock.calls[0]?.[0] ?? "";
+    await waitFor(() => expect(api.browser.navigate).toHaveBeenCalledOnce());
+    const firstNavigationRequest =
+      vi.mocked(api.browser.navigate).mock.calls[0]?.[0] as unknown as
+        | { conversationId: string }
+        | undefined;
+    const conversationId = firstNavigationRequest?.conversationId ?? "";
     act(() => {
       browserListener?.(
         createBrowserState(conversationId, {
@@ -10168,7 +10390,9 @@ describe("App", () => {
     });
     expect(stopLoading).toBeEnabled();
     fireEvent.click(stopLoading);
-    expect(api.browser.stopLoading).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(api.browser.stopLoading).toHaveBeenCalledOnce(),
+    );
 
     await act(async () => {
       navigation.resolve();
@@ -10189,7 +10413,7 @@ describe("App", () => {
     expect(back).toBeEnabled();
     fireEvent.click(back);
     fireEvent.click(back);
-    expect(api.browser.back).toHaveBeenCalledOnce();
+    await waitFor(() => expect(api.browser.back).toHaveBeenCalledOnce());
 
     await act(async () => {
       backNavigation.resolve();
@@ -10224,7 +10448,7 @@ describe("App", () => {
     expect(screen.getByLabelText("助手工作栏")).toHaveClass(
       "assistant-sidebar--open",
     );
-    expect(screen.getByRole("tab", { name: "浏览器" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: /^浏览器/u })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -10236,8 +10460,19 @@ describe("App", () => {
       name: "浏览器地址",
     });
     const back = within(toolbar).getByRole("button", { name: "返回" });
-    expect(address).toHaveValue("https://example.com/");
+    await waitFor(() => expect(address).toHaveValue("https://example.com/"));
     expect(back).toBeDisabled();
+
+    act(() => {
+      browserListener?.(
+        createBrowserState(conversationId ?? "", {
+          tabId: otherBrowserTabId,
+          url: "https://other-tab.example/",
+          updatedAt: Date.now() + 1,
+        }),
+      );
+    });
+    expect(address).toHaveValue("https://example.com/");
 
     fireEvent.focus(address);
     fireEvent.change(address, {
@@ -10261,12 +10496,12 @@ describe("App", () => {
     expect(back).toBeEnabled();
     fireEvent.click(back);
     await waitFor(() =>
-      expect(api.browser.back).toHaveBeenCalledWith(conversationId),
+      expect(api.browser.back).toHaveBeenCalledWith({ conversationId, tabId: browserTabId }),
     );
 
     fireEvent.click(within(toolbar).getByRole("button", { name: "刷新" }));
     await waitFor(() =>
-      expect(api.browser.reload).toHaveBeenCalledWith(conversationId),
+      expect(api.browser.reload).toHaveBeenCalledWith({ conversationId, tabId: browserTabId }),
     );
     fireEvent.change(address, {
       target: { value: "https://example.com/manual" },
@@ -10274,8 +10509,7 @@ describe("App", () => {
     fireEvent.click(within(toolbar).getByRole("button", { name: "前往" }));
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenCalledWith(
-        conversationId,
-        "https://example.com/manual",
+        { conversationId, tabId: browserTabId, url: "https://example.com/manual" },
       ),
     );
     expect(address).toHaveValue("https://example.com/redirected");
@@ -10296,8 +10530,7 @@ describe("App", () => {
     fireEvent.click(within(toolbar).getByRole("button", { name: "前往" }));
     await waitFor(() =>
       expect(api.browser.navigate).toHaveBeenCalledWith(
-        conversationId,
-        "https://example.com/canonical",
+        { conversationId, tabId: browserTabId, url: "https://example.com/canonical" },
       ),
     );
     expect(address).toHaveValue("https://example.com/canonical/");
@@ -10374,7 +10607,7 @@ describe("App", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(stopLoading);
     await waitFor(() =>
-      expect(api.browser.stopLoading).toHaveBeenCalledWith(conversationId),
+      expect(api.browser.stopLoading).toHaveBeenCalledWith({ conversationId, tabId: browserTabId }),
     );
 
     act(() => {
@@ -10950,7 +11183,7 @@ describe("App", () => {
           { timeout: 3000 },
         ),
       ).toBeInTheDocument();
-      expect(screen.getByText("全局")).toBeInTheDocument();
+      expect(screen.getByLabelText("全局")).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "新建笔记" }),
       ).toBeInTheDocument();

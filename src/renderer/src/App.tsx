@@ -76,6 +76,8 @@ import type {
 } from "../../shared/contracts";
 import {
   defaultContextCompressionSettings,
+  isAgentRuntimeModelProtocol,
+  isDeepSeekHarnessModelProfile,
   maximumPastedImageBytes,
 } from "../../shared/contracts";
 import {
@@ -87,6 +89,7 @@ import {
 import {
   agentRuntimeSelectionKey,
   agentRuntimeSelectionSchema,
+  getRuntimeSelectionProfileId,
   type AgentRuntimeSelection,
 } from "../../shared/runtime-selection-contracts";
 import {
@@ -538,8 +541,6 @@ const maximumPrimarySidebarWidth = 420;
 const minimumPrimaryWorkspaceWidth = 480;
 const primarySidebarKeyboardResizeStep = 16;
 
-const maxMessageContentLength = 1_000_000;
-
 function getPrimarySidebarWidthLimits(viewportWidth: number): {
   minimum: number;
   maximum: number;
@@ -598,14 +599,14 @@ function appendMessageContentBlock(
   if (previous?.type === type) {
     current[current.length - 1] = {
       ...previous,
-      content: `${previous.content}${delta}`.slice(0, maxMessageContentLength),
+      content: `${previous.content}${delta}`,
     };
     return current;
   }
   current.push({
     id: crypto.randomUUID(),
     type,
-    content: delta.slice(0, maxMessageContentLength),
+    content: delta,
   });
   return current;
 }
@@ -1181,7 +1182,7 @@ function loadConversations(
           conversation.contextMetrics === undefined
             ? undefined
             : parseConversationContextMetrics(conversation.contextMetrics),
-        messages: conversation.messages.slice(-500).map((message) =>
+        messages: conversation.messages.map((message) =>
           message.state === "streaming"
             ? {
                 ...message,
@@ -1250,7 +1251,6 @@ function isConversation(value: unknown): value is Conversation {
           assistantIdSchema.safeParse(entry.queueItemId).success) &&
         (entry.role === "user" || entry.role === "assistant") &&
         typeof entry.content === "string" &&
-        entry.content.length <= 1_000_000 &&
         (entry.reasoning === undefined ||
           typeof entry.reasoning === "string") &&
         (entry.blocks === undefined ||
@@ -1316,7 +1316,7 @@ function toConversationSnapshots(
       ...(conversation.branch ? { branch: conversation.branch } : {}),
       title: conversation.title,
       updatedAt: conversation.updatedAt,
-      messages: conversation.messages.slice(-500).map(toConversationMessage),
+      messages: conversation.messages.map(toConversationMessage),
     }));
 }
 
@@ -1388,7 +1388,6 @@ function createLocalConversationSaveBatch(
       header: toLocalConversationHeader(conversation),
       messages: conversation.messages
         .filter((message) => previousMessages.get(message.id) !== message)
-        .slice(-500)
         .map(toConversationMessage),
     });
     acknowledgements.push(conversation);
@@ -1472,7 +1471,7 @@ function mergePersistedConversations(
         return localMessage;
       }),
       ...local.messages.filter((message) => !serverMessageIds.has(message.id)),
-    ].slice(-500);
+    ];
     const next = localIsNewer
       ? { ...local, messages }
       : { ...conversation, messages };
@@ -1543,13 +1542,12 @@ function resolveContextMetricsRuntimeSelection(
   selection: AgentRuntimeSelection,
   settings: RuntimeSettings,
 ): AgentRuntimeSelection {
-  if (selection.provider !== "auto") {
-    return selection;
-  }
-  return getRuntimeSelectionForProvider(
+  const effective = selection.provider !== "auto" ? selection : getRuntimeSelectionForProvider(
     settings.provider === "auto" ? "opencode" : settings.provider,
     settings,
   );
+  const profileId = getRuntimeSelectionProfileId(effective, settings);
+  return profileId && effective.provider !== "auto" ? { ...effective, profileId } : effective;
 }
 
 function getRuntimeSelectionLabel(
@@ -1566,10 +1564,11 @@ function getRuntimeSelectionLabel(
   if (!selection || !settings) {
     return status?.label ?? "Runtime";
   }
+  const profileId = getRuntimeSelectionProfileId(selection, settings);
   const profile =
-    "profileId" in selection && selection.profileId
+    profileId
       ? settings.modelProfiles.find(
-          (candidate) => candidate.id === selection.profileId,
+          (candidate) => candidate.id === profileId,
         )
       : undefined;
   const requestedProfileMissing =
@@ -1619,11 +1618,11 @@ function getConfiguredAgentRuntimeSource(
     useOwnConfiguration: (runtime: string) => string;
   },
 ): { label: string; detail: string } {
-  const selection = getRuntimeSelectionForProvider(provider, settings);
+  const profileId = getRuntimeSelectionProfileId({ provider }, settings);
   const profile =
-    "profileId" in selection
+    profileId
       ? settings.modelProfiles.find(
-          (candidate) => candidate.id === selection.profileId,
+          (candidate) => candidate.id === profileId,
         )
       : undefined;
   const runtimeLabel =
@@ -1632,7 +1631,7 @@ function getConfiguredAgentRuntimeSource(
       : provider === "continue"
         ? "Continue"
         : "DeepSeek Harness";
-  if ("profileId" in selection) {
+  if (profileId) {
     return {
       label: `${runtimeLabel} · ${profile?.name ?? labels.modelUnavailable}`,
       detail: profile?.modelName ?? labels.selectModel,
@@ -2288,7 +2287,7 @@ function App(): React.JSX.Element {
   const [assistantSidebarTab, setAssistantSidebarTab] =
     useState<AssistantSidebarTab>("tasks");
   const [browserStates, setBrowserStates] = useState<
-    Record<string, BrowserLiveState>
+    Record<string, Record<string, BrowserLiveState>>
   >({});
   const [view, setViewState] = useState<WorkspaceView>("chat");
   const settingsEntryFocusRef = useRef<HTMLElement | undefined>(undefined);
@@ -3151,9 +3150,9 @@ function App(): React.JSX.Element {
     () =>
       activeConversation?.runtimeSelection ??
       (runtimeSettings
-        ? getDefaultRuntimeSelection(runtimeSettings)
+        ? getProjectDefaultRuntimeSelection(activeProject, runtimeSettings)
         : undefined),
-    [activeConversation?.runtimeSelection, runtimeSettings],
+    [activeConversation?.runtimeSelection, activeProject, runtimeSettings],
   );
   const activeRuntimeSelectionKey = activeRuntimeSelection
     ? agentRuntimeSelectionKey(activeRuntimeSelection)
@@ -3621,9 +3620,7 @@ function App(): React.JSX.Element {
       }
       const conversation = createConversation(
         projectId,
-        runtimeSettings
-          ? getProjectDefaultRuntimeSelection(project, runtimeSettings)
-          : undefined,
+        undefined,
         tRef.current("conversation.greeting"),
       );
       const nextConversations = [conversation, ...navigation.conversations];
@@ -3722,6 +3719,7 @@ function App(): React.JSX.Element {
             ? [
                 {
                   conversationId: conversation.id,
+                  projectId: conversation.projectId,
                   messageId: message.id,
                   approvalId: message.approval.id,
                   title: message.approval.title,
@@ -4264,41 +4262,29 @@ function App(): React.JSX.Element {
 
       if (event.type === "text") {
         updateMessage(run.conversationId, run.messageId, (message) => {
-          const remaining = Math.max(
-            0,
-            maxMessageContentLength - message.content.length,
-          );
-          const acceptedDelta = event.delta.slice(0, remaining);
           const blocks = appendMessageContentBlock(
             message.blocks,
             "text",
-            acceptedDelta,
+            event.delta,
           );
           return {
             ...message,
-            content: `${message.content}${acceptedDelta}`,
+            content: `${message.content}${event.delta}`,
             blocks,
-            status:
-              event.delta.length > remaining
-                ? tRef.current("chat.status.responseTruncated")
-                : undefined,
+            status: undefined,
           };
         });
       } else if (event.type === "reasoning") {
         updateMessage(run.conversationId, run.messageId, (message) => {
           const currentReasoning = message.reasoning ?? "";
-          const acceptedDelta = event.delta.slice(
-            0,
-            Math.max(0, maxMessageContentLength - currentReasoning.length),
-          );
           const blocks = appendMessageContentBlock(
             message.blocks,
             "reasoning",
-            acceptedDelta,
+            event.delta,
           );
           return {
             ...message,
-            reasoning: `${currentReasoning}${acceptedDelta}`,
+            reasoning: `${currentReasoning}${event.delta}`,
             status: undefined,
             blocks,
           };
@@ -4736,7 +4722,7 @@ function App(): React.JSX.Element {
               : ("interrupted" as const);
           const fallbackError =
             event.type === "error" && !representedToolError && !message.content
-              ? event.message.slice(0, maxMessageContentLength)
+              ? event.message
               : "";
           return {
             ...message,
@@ -5108,6 +5094,8 @@ function App(): React.JSX.Element {
       }
     };
     const remove = window.goodbuddy.conversations.onChanged(queueRefresh);
+    const removeQueueListener =
+      window.goodbuddy.conversationQueue.onChanged(queueRefresh);
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
@@ -5116,6 +5104,7 @@ function App(): React.JSX.Element {
         window.clearTimeout(refreshTimer);
       }
       remove();
+      removeQueueListener();
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
@@ -6015,19 +6004,35 @@ function App(): React.JSX.Element {
       return;
     }
     return browserApi.onState((state) => {
+      const tabId = state.tabId;
       setBrowserStates((current) => {
-        const previous = current[state.conversationId];
+        const conversationStates = current[state.conversationId] ?? {};
+        if (state.status === "stopped") {
+          if (!(tabId in conversationStates)) {
+            return current;
+          }
+          const nextConversationStates = { ...conversationStates };
+          delete nextConversationStates[tabId];
+          const next = { ...current };
+          if (Object.keys(nextConversationStates).length === 0) {
+            delete next[state.conversationId];
+          } else {
+            next[state.conversationId] = nextConversationStates;
+          }
+          return next;
+        }
+        const previous = conversationStates[tabId];
         return {
           ...current,
-          [state.conversationId]:
-            state.status === "stopped" ||
-            state.frameDataUrl ||
-            !previous?.frameDataUrl
-              ? state
-              : {
-                  ...state,
-                  frameDataUrl: previous.frameDataUrl,
-                },
+          [state.conversationId]: {
+            ...conversationStates,
+            [tabId]: state.frameDataUrl || !previous?.frameDataUrl
+                ? state
+                : {
+                    ...state,
+                    frameDataUrl: previous.frameDataUrl,
+                  },
+          },
         };
       });
       if (
@@ -6101,9 +6106,7 @@ function App(): React.JSX.Element {
     } else {
       const created = createConversation(
         selected.id,
-        runtimeSettings
-          ? getProjectDefaultRuntimeSelection(selected, runtimeSettings)
-          : undefined,
+        undefined,
         t("conversation.greeting"),
       );
       setConversations((current) => [created, ...current]);
@@ -6139,9 +6142,7 @@ function App(): React.JSX.Element {
     setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode));
     const conversation = createConversation(
       project.id,
-      runtimeSettings
-        ? getProjectDefaultRuntimeSelection(project, runtimeSettings)
-        : undefined,
+      undefined,
       t("conversation.greeting"),
     );
     setConversations((current) => [conversation, ...current]);
@@ -6482,9 +6483,7 @@ function App(): React.JSX.Element {
     }
     const replacement = createConversation(
       activeProjectId || undefined,
-      runtimeSettings
-        ? getProjectDefaultRuntimeSelection(activeProject, runtimeSettings)
-        : undefined,
+      undefined,
       t("conversation.greeting"),
     );
     setConversations((current) => [replacement, ...current]);
@@ -6863,11 +6862,9 @@ function App(): React.JSX.Element {
       8,
     );
     const historySnapshot = conversationSnapshot.messages;
-    const retainedHistorySnapshot = historySnapshot
-      .filter(
+    const retainedHistorySnapshot = historySnapshot.filter(
         (message) => message.state === "complete" && message.content.trim(),
-      )
-      .slice(-500);
+      );
     const projectIdSnapshot = queuedInput
       ? queuedInput.projectId
       : activeProjectId || undefined;
@@ -7165,11 +7162,9 @@ function App(): React.JSX.Element {
     ) {
       return;
     }
-    const history = activeConversation.messages
-      .filter(
+    const history = activeConversation.messages.filter(
         (message) => message.state === "complete" && message.content.trim(),
-      )
-      .slice(-500);
+      );
     if (history.length < 2) {
       notify({
         tone: "info",
@@ -7799,6 +7794,7 @@ function App(): React.JSX.Element {
 
   const runAssistantSchedule = async (scheduleId: string): Promise<void> => {
     await window.goodbuddy.schedules.runNow(scheduleId);
+    setAssistantTasks(await window.goodbuddy.tasks.list());
     notify({
       tone: "success",
       message: t("notices.scheduleStarted"),
@@ -7846,9 +7842,7 @@ function App(): React.JSX.Element {
       await window.goodbuddy.app.clearLocalData();
       const conversation = createConversation(
         activeProjectId || undefined,
-        runtimeSettings
-          ? getProjectDefaultRuntimeSelection(activeProject, runtimeSettings)
-          : undefined,
+        undefined,
         t("conversation.greeting"),
       );
       conversationsRef.current = [conversation];
@@ -8044,12 +8038,8 @@ function App(): React.JSX.Element {
   const runBrowserCommand = async (
     command: (
       browserApi: NonNullable<typeof window.goodbuddy.browser>,
-      conversationId: string,
     ) => Promise<void>,
   ): Promise<void> => {
-    if (!activeId) {
-      return;
-    }
     const browserApi = window.goodbuddy.browser;
     if (!browserApi) {
       notify({
@@ -8058,7 +8048,7 @@ function App(): React.JSX.Element {
       });
       return;
     }
-    await command(browserApi, activeId);
+    await command(browserApi);
   };
 
   return (
@@ -9580,6 +9570,16 @@ function App(): React.JSX.Element {
                                           <strong role="presentation">
                                             {t("runtime.directModels")}
                                           </strong>
+                                          <button
+                                            aria-checked={activeRuntimeSelectionKey === "model:default"}
+                                            onClick={() => void switchRuntime({ provider: "model" })}
+                                            role="menuitemradio"
+                                            tabIndex={activeRuntimeSelectionKey === "model:default" ? 0 : -1}
+                                            type="button"
+                                          >
+                                            <span>{t("runtime.defaultDirect")}</span>
+                                            <small>{runtimeSettings?.modelProfiles.find((profile) => profile.id === runtimeSettings.defaultModelProfileId)?.name}</small>
+                                          </button>
                                           {runtimeSettings?.modelProfiles.map(
                                             (profile) => (
                                               <button
@@ -9765,6 +9765,26 @@ function App(): React.JSX.Element {
                                       >
                                         <span>{t("runtime.manage")}</span>
                                       </button>
+                                      {runtimeSettings && (
+                                        <>
+                                          <strong role="presentation">{t("runtime.fixedRuntimeModel")}</strong>
+                                          {(["opencode", "continue", "deepseek-harness"] as const).flatMap((provider) =>
+                                            runtimeSettings.modelProfiles.filter((profile) =>
+                                              (!activeProjectUsesManagedSsh || provider === "opencode") &&
+                                              (provider === "deepseek-harness" ? isDeepSeekHarnessModelProfile(profile) : isAgentRuntimeModelProtocol(profile.protocol))
+                                            ).map((profile) => {
+                                              const selection = { provider, profileId: profile.id };
+                                              const selected = activeRuntimeSelectionKey === agentRuntimeSelectionKey(selection);
+                                              return <button key={`${provider}:${profile.id}`} type="button" role="menuitemradio"
+                                                aria-checked={selected} tabIndex={selected ? 0 : -1}
+                                                onClick={() => void switchRuntime(selection)}>
+                                                <span>{t("runtime.fixedModel")} · {provider === "opencode" ? "OpenCode" : provider === "continue" ? "Continue" : "DeepSeek Harness"} · {profile.name}</span>
+                                                <small>{profile.modelName}</small>
+                                              </button>;
+                                            })
+                                          )}
+                                        </>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -10735,7 +10755,7 @@ function App(): React.JSX.Element {
             activeConversationId={activeId}
             approvals={pendingSidebarApprovals}
             artifacts={sidebarArtifacts}
-            browserState={browserStates[activeId]}
+            browserStates={browserStates}
             conversationTitles={conversationTitles}
             currentProject={activeProject}
             onCreateCustomTask={() => openCustomTaskDialog("current")}
@@ -10743,24 +10763,24 @@ function App(): React.JSX.Element {
             selectedTaskId={selectedAssistantTaskId}
             tasks={productAssistantTasks}
             projectNames={projectNames}
-            onBackBrowser={() =>
-              runBrowserCommand((browserApi, conversationId) =>
-                browserApi.back(conversationId),
+            onBackBrowser={(conversationId, tabId) =>
+              runBrowserCommand((browserApi) =>
+                browserApi.back({ conversationId, tabId }),
               )
             }
-            onNavigateBrowser={(url) =>
-              runBrowserCommand((browserApi, conversationId) =>
-                browserApi.navigate(conversationId, url),
+            onNavigateBrowser={(conversationId, tabId, url) =>
+              runBrowserCommand((browserApi) =>
+                browserApi.navigate({ conversationId, tabId, url }),
               )
             }
-            onReloadBrowser={() =>
-              runBrowserCommand((browserApi, conversationId) =>
-                browserApi.reload(conversationId),
+            onReloadBrowser={(conversationId, tabId) =>
+              runBrowserCommand((browserApi) =>
+                browserApi.reload({ conversationId, tabId }),
               )
             }
-            onStopLoadingBrowser={() =>
-              runBrowserCommand((browserApi, conversationId) =>
-                browserApi.stopLoading(conversationId),
+            onStopLoadingBrowser={(conversationId, tabId) =>
+              runBrowserCommand((browserApi) =>
+                browserApi.stopLoading({ conversationId, tabId }),
               )
             }
             onImportArtifacts={async () => {
