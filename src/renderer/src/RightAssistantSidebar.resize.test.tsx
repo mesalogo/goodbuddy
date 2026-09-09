@@ -78,14 +78,12 @@ function renderSidebar({
         onLoadWorkspaceFile={onLoadWorkspaceFile}
         onLoadWorkspaceDiff={vi.fn()}
         onOpenWorkspaceEntry={vi.fn(async () => undefined)}
-        onInteractBrowser={vi.fn(async () => undefined)}
         onRefreshChanges={vi.fn(async () => undefined)}
         onRemoveSchedule={vi.fn(async () => undefined)}
         onRespondApproval={vi.fn()}
         onRunSchedule={vi.fn(async () => undefined)}
         onSetScheduleEnabled={vi.fn(async () => undefined)}
         onOpenTask={vi.fn()}
-        onStopBrowser={vi.fn(async () => undefined)}
         onTabChange={vi.fn()}
         open
         restoreFocusRef={restoreFocusRef}
@@ -101,7 +99,7 @@ function renderSidebar({
 }
 
 describe('RightAssistantSidebar resizing', () => {
-  it('resizes with pointer capture and preserves equal pane minima', () => {
+  it('resizes with pointer capture and preserves compact pane minima', () => {
     const sidebar = renderSidebar()
     const separator = screen.getByRole('separator', {
       name: '调整助手工作栏宽度'
@@ -128,9 +126,9 @@ describe('RightAssistantSidebar resizing', () => {
     expect(sidebar).toHaveClass('assistant-sidebar--resizing')
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('1100px')
-    expect(separator).toHaveAttribute('aria-valuemin', '300')
-    expect(separator).toHaveAttribute('aria-valuemax', '1100')
+    ).toBe('1240px')
+    expect(separator).toHaveAttribute('aria-valuemin', '160')
+    expect(separator).toHaveAttribute('aria-valuemax', '1240')
 
     fireEvent.pointerUp(separator, { pointerId: 7 })
     expect(releasePointerCapture).toHaveBeenCalledWith(7)
@@ -152,12 +150,12 @@ describe('RightAssistantSidebar resizing', () => {
     fireEvent.keyDown(separator, { key: 'Home' })
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('300px')
+    ).toBe('160px')
 
     fireEvent.keyDown(separator, { key: 'End' })
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('1100px')
+    ).toBe('1240px')
   })
 
   it('remains resizable when the sidebar docks in a medium window', () => {
@@ -191,7 +189,7 @@ describe('RightAssistantSidebar resizing', () => {
     ).toBe('424px')
   })
 
-  it('keeps the equal minimum dock resizable in a narrow window', () => {
+  it('keeps the compact dock resizable in a narrow window', () => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 680
@@ -203,16 +201,16 @@ describe('RightAssistantSidebar resizing', () => {
 
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('300px')
+    ).toBe('204px')
     expect(sidebar).not.toHaveAttribute('aria-modal')
     expect(separator).toHaveAttribute('tabindex', '0')
-    expect(separator).toHaveAttribute('aria-valuemin', '300')
-    expect(separator).toHaveAttribute('aria-valuemax', '380')
+    expect(separator).toHaveAttribute('aria-valuemin', '160')
+    expect(separator).toHaveAttribute('aria-valuemax', '520')
 
     fireEvent.keyDown(separator, { key: 'End' })
     expect(
       sidebar.style.getPropertyValue('--assistant-sidebar-width')
-    ).toBe('380px')
+    ).toBe('520px')
   })
 
   it('excludes the primary sidebar from the equal pane limits', async () => {
@@ -242,13 +240,13 @@ describe('RightAssistantSidebar resizing', () => {
         name: '调整助手工作栏宽度'
       })
       await waitFor(() =>
-        expect(separator).toHaveAttribute('aria-valuemax', '600')
+        expect(separator).toHaveAttribute('aria-valuemax', '740')
       )
 
       fireEvent.keyDown(separator, { key: 'End' })
       expect(
         sidebar.style.getPropertyValue('--assistant-sidebar-width')
-      ).toBe('600px')
+      ).toBe('740px')
     } finally {
       getBoundingClientRect.mockRestore()
     }
@@ -263,6 +261,32 @@ describe('RightAssistantSidebar resizing', () => {
     expect(
       screen.queryByRole('tab', { name: '预览' })
     ).not.toBeInTheDocument()
+  })
+
+  it('uses the browser panel for only the toolbar and page viewport', () => {
+    const sidebar = renderSidebar({ tab: 'browser' })
+    const viewport = screen.getByLabelText('浏览器页面')
+    const browserPanel = viewport.parentElement
+
+    expect(browserPanel).toHaveClass('assistant-sidebar__browser')
+    expect(browserPanel?.children).toHaveLength(2)
+    expect(screen.queryByText('实时浏览器')).not.toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '全屏显示浏览器' })
+    )
+    expect(sidebar).toHaveClass('assistant-sidebar--browser-fullscreen')
+    expect(
+      screen.getByRole('button', { name: '退出浏览器全屏' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      screen.getByRole('separator', { name: '调整助手工作栏宽度' })
+    ).toHaveAttribute('aria-disabled', 'false')
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(sidebar).not.toHaveClass(
+      'assistant-sidebar--browser-fullscreen'
+    )
   })
 
   it('keeps the docked sidebar non-modal', () => {
@@ -369,7 +393,7 @@ describe('RightAssistantSidebar resizing', () => {
     rejectPreview?.(new Error('临时网络错误'))
     const error = await screen.findByRole('alert')
     expect(error).toHaveTextContent('临时网络错误')
-    expect(screen.getByText('README.md')).toBeInTheDocument()
+    expect(screen.getByText('README.md', { selector: 'strong' })).toBeVisible()
     fireEvent.click(
       within(error).getByRole('button', { name: '刷新' })
     )
@@ -382,6 +406,91 @@ describe('RightAssistantSidebar resizing', () => {
       'README.md',
       0
     )
+  })
+
+  it('returns to the expanded directory, selected file and scroll position without reloading', async () => {
+    const onListWorkspaceDirectory = vi.fn(async (path: string) => ({
+      path,
+      entries: path === ''
+        ? [{ name: 'src', path: 'src', type: 'directory' as const }]
+        : [{ name: 'nested.txt', path: 'src/nested.txt', type: 'file' as const }],
+      truncated: false
+    }))
+    renderSidebar({
+      tab: 'workspace',
+      workspaceProjectId: 'project-1',
+      onListWorkspaceDirectory,
+      onLoadWorkspaceFile: vi.fn().mockResolvedValue({
+        path: 'src/nested.txt', name: 'nested.txt', content: 'Nested content',
+        mimeType: 'text/plain', size: 14, offsetBytes: 0, nextOffsetBytes: 14, truncated: false
+      })
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'src' }))
+    const file = await screen.findByRole('button', { name: 'nested.txt' })
+    const body = file.closest('.assistant-sidebar__body') as HTMLElement
+    body.scrollTop = 240
+    fireEvent.click(file)
+    expect(await screen.findByText('Nested content')).toBeVisible()
+    expect(file).not.toBeVisible()
+    expect(body.scrollTop).toBe(0)
+    body.scrollTop = 80
+    fireEvent.click(screen.getByRole('button', { name: '返回工作区' }))
+    expect(screen.getByRole('button', { name: 'src' })).toHaveAttribute('aria-expanded', 'true')
+    expect(file).toBeVisible()
+    expect(file).toHaveAttribute('aria-current', 'true')
+    expect(file).toHaveFocus()
+    expect(body.scrollTop).toBe(240)
+    expect(onListWorkspaceDirectory).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps preview content and reading position when refreshing fails', async () => {
+    const onLoadWorkspaceFile = vi.fn().mockResolvedValueOnce({
+      path: 'README.md', name: 'README.md', content: '# Original heading',
+      mimeType: 'text/markdown', size: 18, offsetBytes: 0, nextOffsetBytes: 18, truncated: false
+    }).mockRejectedValueOnce(new Error('Refresh unavailable'))
+    renderSidebar({
+      tab: 'workspace', workspaceProjectId: 'project-1', onLoadWorkspaceFile,
+      onListWorkspaceDirectory: vi.fn(async (path: string) => ({
+        path, entries: [{ name: 'README.md', path: 'README.md', type: 'file' as const }], truncated: false
+      }))
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'README.md' }))
+    const heading = await screen.findByRole('heading', { name: 'Original heading' })
+    const body = heading.closest('.assistant-sidebar__body') as HTMLElement
+    body.scrollTop = 120
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Refresh unavailable')
+    expect(heading).toBeVisible()
+    expect(body.scrollTop).toBe(120)
+    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    expect(screen.getByText('# Original heading')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Original heading' })).not.toBeInTheDocument()
+  })
+
+  it('discards an unfinished file preview when switching projects', async () => {
+    let resolveRead: (value: WorkspaceFilePreview) => void = () => undefined
+    const props = {
+      open: true, tab: 'workspace' as const, approvals: [], artifacts: [], schedules: [], tasks: [],
+      conversationTitles: new Map(), projectNames: new Map(),
+      onCreateCustomTask: vi.fn(), onImportArtifacts: vi.fn(), onLoadArtifact: vi.fn(),
+      onLoadWorkspaceFile: vi.fn(() => new Promise<WorkspaceFilePreview>((resolve) => { resolveRead = resolve })),
+      onLoadWorkspaceDiff: vi.fn(), onOpenWorkspaceEntry: vi.fn(),
+      onRefreshChanges: vi.fn(), onRemoveSchedule: vi.fn(), onRespondApproval: vi.fn(),
+      onRunSchedule: vi.fn(), onSetScheduleEnabled: vi.fn(), onOpenTask: vi.fn(), onTabChange: vi.fn(),
+      onListWorkspaceDirectory: vi.fn(async (path: string) => ({
+        path, entries: [{ name: 'file.txt', path: 'file.txt', type: 'file' as const }], truncated: false
+      }))
+    }
+    const { rerender } = render(<RightAssistantSidebar {...props} workspaceProjectId="A" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'file.txt' }))
+    expect(screen.getByRole('status', { name: '正在读取文件…' })).toBeVisible()
+    rerender(<RightAssistantSidebar {...props} workspaceProjectId="B" />)
+    resolveRead({ path: 'file.txt', name: 'file.txt', content: 'Stale preview', mimeType: 'text/plain', size: 13, offsetBytes: 0, nextOffsetBytes: 13, truncated: false })
+    await screen.findByRole('button', { name: 'file.txt' })
+    rerender(<RightAssistantSidebar {...props} workspaceProjectId="A" />)
+    expect(await screen.findByRole('button', { name: 'file.txt' })).toBeVisible()
+    expect(screen.queryByRole('status', { name: '正在读取文件…' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Stale preview')).not.toBeInTheDocument()
   })
 
   it('loads and appends the rest of a large workspace file', async () => {

@@ -429,7 +429,6 @@ describe('registerIpcHandlers computer capabilities', () => {
       }))
     }
     const onRuntimeSettingsChanged = vi.fn(async () => {})
-    const interact = vi.fn(async () => {})
     const navigate = vi.fn(async () => ({
       url: 'https://example.com/',
       origin: 'https://example.com'
@@ -443,6 +442,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       origin: 'https://example.com'
     }))
     const stopLoading = vi.fn(async () => true)
+    const setViewport = vi.fn()
     const releaseConversation = vi.fn(async () => {})
     const selectFiles = vi.fn(
       async (
@@ -509,7 +509,7 @@ describe('registerIpcHandlers computer capabilities', () => {
         back,
         reload,
         stopLoading,
-        interact,
+        setViewport,
         releaseConversation,
         onState: (listener) => {
           browserStateListener = listener
@@ -741,16 +741,22 @@ describe('registerIpcHandlers computer capabilities', () => {
       )
     ).resolves.toBeUndefined()
     expect(stopLoading).toHaveBeenCalledWith('browser-conversation')
-    await expect(
-      electronMocks.handlers.get(ipcChannels.browserInteract)?.(event, {
-        conversationId: 'browser-conversation'
+    expect(
+      electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {
+        conversationId: 'browser-conversation',
+        bounds: { x: 900, y: 120, width: 320, height: 600 }
       })
-    ).resolves.toBeUndefined()
-    expect(interact).toHaveBeenCalledWith(
-      'browser-conversation',
-      expect.any(AbortSignal)
-    )
-
+    ).toBeUndefined()
+    expect(setViewport).toHaveBeenCalledWith('browser-conversation', {
+      x: 900,
+      y: 120,
+      width: 320,
+      height: 600
+    })
+    expect(
+      electronMocks.handlers.get(ipcChannels.browserSetViewport)?.(event, {})
+    ).toBeUndefined()
+    expect(setViewport).toHaveBeenLastCalledWith()
     navigate.mockRejectedValueOnce(new BrowserNavigationStoppedError())
     await expect(
       electronMocks.handlers.get(ipcChannels.browserNavigate)?.(event, {

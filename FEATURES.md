@@ -575,9 +575,10 @@ otherwise.
   draft, diagnostic choice, and request ID. Conversations, Prompts,
   credentials, file contents, paths, raw provider responses, and remote Agent
   logs are never attached.
-- [x] **Private-network compatibility mode**: Enabled by default and permits
-  in-app HTTP plus invalid, self-signed, or expired HTTPS certificates.
-  Disabling it restores strict address and certificate validation.
+- [x] **Private-network compatibility**: Permits in-app HTTP plus invalid,
+  self-signed, or expired HTTPS certificates. Fixed platform services such as
+  feedback and WeChat credential or media endpoints retain strict certificate
+  validation.
 
 ### Open source, builds, and releases
 

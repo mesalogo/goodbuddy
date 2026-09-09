@@ -4,22 +4,24 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  Copy,
   ExternalLink,
   FileText,
   ClockFading,
-  Monitor,
+  Maximize2,
+  Minimize2,
   Plus,
   RefreshCw,
   ShieldAlert,
   Square,
-  Upload,
-  X
+  Upload
 } from 'lucide-react'
 import {
   lazy,
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -107,11 +109,9 @@ type RightAssistantSidebarProps = {
   currentProject?: AssistantProject
   restoreFocusRef?: { current: HTMLElement | null }
   onBackBrowser?: () => Promise<void>
-  onInteractBrowser: () => Promise<void>
   onNavigateBrowser?: (url: string) => Promise<void>
   onReloadBrowser?: () => Promise<void>
   onStopLoadingBrowser?: () => Promise<void>
-  onStopBrowser: () => Promise<void>
   onCreateCustomTask: () => void
   onImportArtifacts: () => Promise<void>
   onLoadArtifact: (artifactId: string) => Promise<void>
@@ -150,7 +150,7 @@ const tabIds: AssistantSidebarTab[] = [
 ]
 const emptyChangedFiles: WorkspaceChanges['files'] = []
 const defaultSidebarRatio = 0.3
-const minimumPaneWidth = 300
+const minimumPaneWidth = 160
 const keyboardResizeStep = 16
 const workbarStorageKey = 'goodbuddy.workbar-layout.v1'
 
@@ -255,20 +255,20 @@ function addDefaultBrowserProtocol(address: string): string {
 function BrowserToolbar({
   activeConversationId,
   browserState,
+  fullscreen,
   onBack,
-  onInteract,
+  onToggleFullscreen,
   onNavigate,
   onReload,
-  onStop,
   onStopLoading
 }: {
   activeConversationId?: string
   browserState?: BrowserLiveState
+  fullscreen: boolean
   onBack: () => Promise<boolean>
-  onInteract: () => Promise<boolean>
+  onToggleFullscreen: () => void
   onNavigate: (url: string) => Promise<boolean>
   onReload: () => Promise<boolean>
-  onStop: () => Promise<boolean>
   onStopLoading: () => Promise<boolean>
 }): React.JSX.Element {
   const { t } = useTranslation('workspace')
@@ -305,15 +305,6 @@ function BrowserToolbar({
     browserState?.canGoBack !== true ||
     addressDisabled
   const refreshDisabled =
-    operationBlocked ||
-    !sessionActive ||
-    isLoading
-  const interactDisabled =
-    operationBlocked ||
-    !sessionActive ||
-    isLoading ||
-    (status !== 'ready' && status !== 'failed')
-  const closeDisabled =
     operationBlocked ||
     !sessionActive ||
     isLoading
@@ -449,28 +440,140 @@ function BrowserToolbar({
         <span>{t('sidebar.browser.toolbar.go')}</span>
       </button>
       <button
-        aria-label={t('sidebar.browser.interact')}
-        className="secondary-button assistant-sidebar__browser-interact"
-        disabled={interactDisabled}
-        onClick={() => void runToolbarAction(onInteract)}
-        title={t('sidebar.browser.interact')}
+        aria-label={
+          fullscreen
+            ? t('sidebar.browser.toolbar.exitFullscreen')
+            : t('sidebar.browser.toolbar.fullscreen')
+        }
+        aria-pressed={fullscreen}
+        className="secondary-button assistant-sidebar__browser-tool-button assistant-sidebar__browser-fullscreen-button"
+        onClick={onToggleFullscreen}
+        title={
+          fullscreen
+            ? t('sidebar.browser.toolbar.exitFullscreen')
+            : t('sidebar.browser.toolbar.fullscreen')
+        }
         type="button"
       >
-        <ExternalLink aria-hidden="true" size={12} />
-        <span>{t('sidebar.browser.interact')}</span>
-      </button>
-      <button
-        aria-label={t('sidebar.browser.close')}
-        className="danger-ghost assistant-sidebar__browser-close"
-        disabled={closeDisabled}
-        onClick={() => void runToolbarAction(onStop)}
-        title={t('sidebar.browser.close')}
-        type="button"
-      >
-        <X aria-hidden="true" size={12} />
-        <span>{t('sidebar.browser.close')}</span>
+        {fullscreen ? (
+          <Minimize2 aria-hidden="true" size={14} />
+        ) : (
+          <Maximize2 aria-hidden="true" size={14} />
+        )}
       </button>
     </form>
+  )
+}
+
+function BrowserViewport({
+  browserState,
+  conversationId,
+  visible
+}: {
+  browserState?: BrowserLiveState
+  conversationId?: string
+  visible: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation('workspace')
+  const hostRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const host = hostRef.current
+    const browserApi = window.goodbuddy?.browser
+    if (!host || !conversationId || !browserApi?.setViewport) {
+      return
+    }
+    let animationFrame: number | undefined
+    let lastRequest = ''
+    let resizeObserver: ResizeObserver | undefined
+    const panel = host.closest<HTMLElement>('[role="tabpanel"]')
+    const syncViewport = (): void => {
+      if (animationFrame !== undefined) {
+        cancelAnimationFrame(animationFrame)
+      }
+      animationFrame = requestAnimationFrame(() => {
+        animationFrame = undefined
+        const rect = host.getBoundingClientRect()
+        const isVisible =
+          visible &&
+          Boolean(conversationId) &&
+          panel?.hidden !== true &&
+          rect.width >= 1 &&
+          rect.height >= 1
+        const bounds = isVisible
+          ? {
+              x: Math.max(0, Math.round(rect.left)),
+              y: Math.max(0, Math.round(rect.top)),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height)
+            }
+          : undefined
+        const request = JSON.stringify({ conversationId, bounds })
+        if (request === lastRequest) {
+          return
+        }
+        lastRequest = request
+        void browserApi
+          .setViewport(isVisible ? conversationId : undefined, bounds)
+          .catch(() => undefined)
+      })
+    }
+
+    const updateObservation = (): void => {
+      if (panel?.hidden !== false) {
+        resizeObserver?.disconnect()
+        resizeObserver = undefined
+        syncViewport()
+        return
+      }
+      if (!resizeObserver && typeof ResizeObserver === 'function') {
+        resizeObserver = new ResizeObserver(syncViewport)
+        resizeObserver.observe(host)
+      }
+      syncViewport()
+    }
+    const mutationObserver = new MutationObserver(updateObservation)
+    if (panel) {
+      mutationObserver.observe(panel, {
+        attributes: true,
+        attributeFilter: ['hidden']
+      })
+    }
+    window.addEventListener('resize', syncViewport)
+    window.addEventListener('scroll', syncViewport, true)
+    updateObservation()
+    return () => {
+      if (animationFrame !== undefined) {
+        cancelAnimationFrame(animationFrame)
+      }
+      resizeObserver?.disconnect()
+      mutationObserver.disconnect()
+      window.removeEventListener('resize', syncViewport)
+      window.removeEventListener('scroll', syncViewport, true)
+      void browserApi.setViewport().catch(() => undefined)
+    }
+  }, [conversationId, visible])
+
+  return (
+    <div
+      aria-label={t('sidebar.browser.viewport')}
+      aria-busy={
+        browserState?.status === 'creating' ||
+        browserState?.status === 'loading'
+      }
+      className="assistant-sidebar__browser-viewport"
+      ref={hostRef}
+    >
+      {browserState?.sessionActive !== true ? (
+        <div className="assistant-sidebar__browser-placeholder">
+          {browserState?.status === 'creating'
+            ? t('sidebar.browser.statuses.creating')
+            : browserState?.status === 'failed'
+              ? browserState.error ?? t('sidebar.browser.statuses.failed')
+              : t('sidebar.browser.empty')}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -491,11 +594,9 @@ export function RightAssistantSidebar({
   currentProject,
   restoreFocusRef,
   onBackBrowser = async () => {},
-  onInteractBrowser,
   onNavigateBrowser = async () => {},
   onReloadBrowser = async () => {},
   onStopLoadingBrowser = async () => {},
-  onStopBrowser,
   onCreateCustomTask,
   onImportArtifacts,
   onLoadArtifact,
@@ -586,6 +687,9 @@ export function RightAssistantSidebar({
         defaultInstances[0]?.id ??
         null
     )
+  const activeWorkbarApp = workbarInstances.find(
+    (instance) => instance.id === activeWorkbarInstanceId
+  )?.appId
   const [splitLayoutWidth, setSplitLayoutWidth] = useState(
     window.innerWidth
   )
@@ -593,6 +697,8 @@ export function RightAssistantSidebar({
     initialLayout?.widthRatio ?? defaultSidebarRatio
   )
   const [isResizing, setIsResizing] = useState(false)
+  const [browserFullscreen, setBrowserFullscreen] = useState(false)
+  const browserRestoreRatio = useRef(sidebarRatio)
   const sidebarRef = useRef<HTMLElement>(null)
   const wasOpen = useRef(false)
   const sidebarWidth = clampSidebarWidth(
@@ -626,6 +732,12 @@ export function RightAssistantSidebar({
       }
   >()
   const workspacePreviewRequest = useRef(0)
+  const workspaceListRef = useRef<HTMLElement>(null)
+  const workspaceBackRef = useRef<HTMLButtonElement>(null)
+  const workspaceReturnPosition = useRef<{ scrollTop: number; trigger?: HTMLElement }>({ scrollTop: 0 })
+  const workspaceTrigger = useRef<HTMLElement | undefined>(undefined)
+  const [workspacePreviewRefreshing, setWorkspacePreviewRefreshing] = useState(false)
+  const [workspaceSource, setWorkspaceSource] = useState(false)
   const [workspacePreviewLoadingMore, setWorkspacePreviewLoadingMore] =
     useState(false)
   const [workspacePreviewLoadMoreError, setWorkspacePreviewLoadMoreError] =
@@ -655,6 +767,29 @@ export function RightAssistantSidebar({
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
       : undefined
+  if (workspacePreview && workspacePreview.projectId !== workspaceProjectId) {
+    setWorkspacePreview(undefined)
+    setWorkspacePreviewRefreshing(false)
+    setWorkspacePreviewLoadingMore(false)
+    setWorkspacePreviewLoadMoreError('')
+  }
+  const workspacePreviewVisible = Boolean(currentWorkspacePreview)
+  useLayoutEffect(() => {
+    const body = workspaceListRef.current?.closest('.assistant-sidebar__body')
+    if (!body) return
+    if (workspacePreviewVisible) {
+      body.scrollTop = 0
+      workspaceBackRef.current?.focus({ preventScroll: true })
+    } else {
+      body.scrollTop = workspaceReturnPosition.current.scrollTop
+      workspaceReturnPosition.current.trigger?.focus({ preventScroll: true })
+    }
+  }, [workspacePreviewVisible])
+  useEffect(() => () => {
+    workspacePreviewRequest.current += 1
+    workspaceReturnPosition.current = { scrollTop: 0 }
+    workspaceTrigger.current = undefined
+  }, [workspaceProjectId])
   const terminalAdapter = useMemo<TerminalAdapter>(
     () => ({
       create: (request) => window.goodbuddy.terminal.create(request),
@@ -717,6 +852,40 @@ export function RightAssistantSidebar({
       setActiveWorkbarInstanceId(requested.id)
     }
   }, [tab, workbarInstances])
+
+  const browserFullscreenActive =
+    open && activeWorkbarApp === 'browser' && browserFullscreen
+  const toggleBrowserFullscreen = useCallback((): void => {
+    if (browserFullscreen) {
+      setSidebarRatio(browserRestoreRatio.current)
+      setBrowserFullscreen(false)
+      return
+    }
+    const layoutWidth = measureSplitLayoutWidth(
+      sidebarRef.current,
+      splitLayoutWidth
+    )
+    browserRestoreRatio.current = sidebarRatio
+    setSidebarRatio(
+      layoutWidth > 0
+        ? getSidebarWidthLimits(layoutWidth).maximum / layoutWidth
+        : sidebarRatio
+    )
+    setBrowserFullscreen(true)
+  }, [browserFullscreen, sidebarRatio, splitLayoutWidth])
+
+  useEffect(() => {
+    if (!browserFullscreenActive) {
+      return
+    }
+    const exitFullscreen = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        toggleBrowserFullscreen()
+      }
+    }
+    window.addEventListener('keydown', exitFullscreen)
+    return () => window.removeEventListener('keydown', exitFullscreen)
+  }, [browserFullscreenActive, toggleBrowserFullscreen])
 
   useEffect(() => {
     persistWorkbarLayout(
@@ -1033,17 +1202,26 @@ export function RightAssistantSidebar({
       return
     }
     event.preventDefault()
+    setBrowserFullscreen(false)
     const width = clampSidebarWidth(nextWidth, layoutWidth)
     setSidebarRatio(
       layoutWidth > 0 ? width / layoutWidth : defaultSidebarRatio
     )
   }
 
-  const openWorkspaceFile = (path: string): void => {
+  const openWorkspaceFile = (path: string, refresh = false): void => {
+    if (!currentWorkspacePreview) {
+      workspaceReturnPosition.current = {
+        scrollTop: workspaceListRef.current?.closest('.assistant-sidebar__body')?.scrollTop ?? 0,
+        trigger: workspaceTrigger.current
+      }
+      setWorkspaceSource(false)
+    }
     const requestId = workspacePreviewRequest.current + 1
     workspacePreviewRequest.current = requestId
     const projectId = workspaceProjectId
-    setWorkspacePreview({ projectId, path, state: 'loading' })
+    if (!refresh) setWorkspacePreview({ projectId, path, state: 'loading' })
+    setWorkspacePreviewRefreshing(refresh)
     setWorkspacePreviewLoadingMore(false)
     setWorkspacePreviewLoadMoreError('')
     setActionError('')
@@ -1059,8 +1237,15 @@ export function RightAssistantSidebar({
           setSelectedArtifactId(undefined)
         }
       })
+      .finally(() => {
+        if (workspacePreviewRequest.current === requestId) setWorkspacePreviewRefreshing(false)
+      })
       .catch((reason: unknown) => {
         if (workspacePreviewRequest.current === requestId) {
+          if (refresh) {
+            setWorkspacePreviewLoadMoreError(reason instanceof Error ? reason.message : t('sidebar.errors.workspacePreview'))
+            return
+          }
           setWorkspacePreview({
             path,
             projectId,
@@ -1079,7 +1264,7 @@ export function RightAssistantSidebar({
     if (
       preview?.state !== 'ready' ||
       !preview.file.truncated ||
-      workspacePreviewLoadingMore
+      workspacePreviewLoadingMore || workspacePreviewRefreshing
     ) {
       return
     }
@@ -1152,7 +1337,7 @@ export function RightAssistantSidebar({
       aria-hidden={!open}
       className={
         open
-          ? `assistant-sidebar assistant-sidebar--open${isResizing && canResize ? ' assistant-sidebar--resizing' : ''}`
+          ? `assistant-sidebar assistant-sidebar--open${isResizing && canResize ? ' assistant-sidebar--resizing' : ''}${browserFullscreenActive ? ' assistant-sidebar--browser-fullscreen' : ''}`
           : 'assistant-sidebar'
       }
       id="assistant-sidebar"
@@ -1198,6 +1383,7 @@ export function RightAssistantSidebar({
             return
           }
           event.preventDefault()
+          setBrowserFullscreen(false)
           resizePointerId.current = event.pointerId
           event.currentTarget.setPointerCapture(event.pointerId)
           resizeFromClientX(event.clientX, true)
@@ -1237,7 +1423,9 @@ export function RightAssistantSidebar({
           ) : null
         }
         renderPanel={(instance) => (
-          <div className="assistant-sidebar__body">
+          <div
+            className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : ''}`}
+          >
         {actionError ? (
           <p className="settings-error" role="alert">
             {actionError}
@@ -1476,19 +1664,22 @@ export function RightAssistantSidebar({
         )}
 
         {instance.appId === 'workspace' && (
-          currentWorkspacePreview ? (
+          <>
+          {currentWorkspacePreview && (
             <section
-              aria-busy={currentWorkspacePreview.state === 'loading'}
+              aria-busy={currentWorkspacePreview.state === 'loading' || workspacePreviewRefreshing}
               className="assistant-sidebar__preview"
             >
               <header>
                 <button
+                  ref={workspaceBackRef}
                   aria-label={t('sidebar.workspace.back')}
                   className="assistant-sidebar__back"
                   onClick={() => {
                     workspacePreviewRequest.current += 1
                     setWorkspacePreview(undefined)
                     setWorkspacePreviewLoadingMore(false)
+                    setWorkspacePreviewRefreshing(false)
                     setWorkspacePreviewLoadMoreError('')
                     setActionError('')
                   }}
@@ -1498,7 +1689,7 @@ export function RightAssistantSidebar({
                   {t('sidebar.workspace.title')}
                 </button>
                 <span>
-                  <strong>{currentWorkspacePreview.path}</strong>
+                  <strong title={currentWorkspacePreview.path}>{currentWorkspacePreview.path}</strong>
                   <small>
                     {currentWorkspacePreview.state === 'ready'
                       ? t('sidebar.workspace.fileSize', {
@@ -1511,6 +1702,27 @@ export function RightAssistantSidebar({
                   </small>
                 </span>
               </header>
+              <div className="workspace-files__toolbar workspace-files__preview-actions">
+                {currentProject?.executionSpace?.kind !== 'ssh' && (
+                  <button className="secondary-button" type="button" onClick={() => {
+                    void runAction(() => onOpenWorkspaceEntry(currentWorkspacePreview.path, 'file'), t('files.errors.openFile'))
+                  }}><ExternalLink size={14} />{t('sidebar.workspace.openFile')}</button>
+                )}
+                <button className="secondary-button" type="button" onClick={() => {
+                  void runAction(() => window.goodbuddy.clipboard.writeText(currentWorkspacePreview.path), t('sidebar.workspace.copyError'))
+                }}><Copy size={14} />{t('sidebar.workspace.copyPath')}</button>
+                {currentWorkspacePreview.state === 'ready' && (
+                  <button className="secondary-button" disabled={workspacePreviewRefreshing || workspacePreviewLoadingMore} type="button" onClick={() => openWorkspaceFile(currentWorkspacePreview.path, true)}>
+                    <RefreshCw size={14} />{t(workspacePreviewRefreshing ? 'sidebar.workspace.refreshing' : 'sidebar.workspace.refresh')}
+                  </button>
+                )}
+                {currentWorkspacePreview.file?.mimeType === 'text/markdown' && (
+                  <SegmentedControl ariaLabel={t('sidebar.workspace.title')} value={workspaceSource ? 'source' : 'preview'} onChange={(value) => setWorkspaceSource(value === 'source')} options={[
+                    { value: 'preview', label: t('sidebar.workspace.preview') },
+                    { value: 'source', label: t('sidebar.workspace.source') }
+                  ]} />
+                )}
+              </div>
               {currentWorkspacePreview.state === 'loading' ? (
                 <p
                   aria-label={t('sidebar.workspace.reading')}
@@ -1538,7 +1750,7 @@ export function RightAssistantSidebar({
                 <>
                   <div className="markdown-body markdown-content">
                     {currentWorkspacePreview.file.mimeType ===
-                    'text/markdown' ? (
+                    'text/markdown' && !workspaceSource ? (
                       <MarkdownRenderer>
                         {currentWorkspacePreview.file.content}
                       </MarkdownRenderer>
@@ -1560,7 +1772,7 @@ export function RightAssistantSidebar({
                       </p>
                       <button
                         className="secondary-button"
-                        disabled={workspacePreviewLoadingMore}
+                        disabled={workspacePreviewLoadingMore || workspacePreviewRefreshing}
                         onClick={loadMoreWorkspaceFile}
                         type="button"
                       >
@@ -1581,27 +1793,16 @@ export function RightAssistantSidebar({
                 </>
               )}
             </section>
-          ) : (
-            <section className="assistant-sidebar__section">
-              <div className="workspace-files__toolbar">
-                <button
-                  aria-label={t('sidebar.workspace.refreshAriaLabel')}
-                  className="icon-button"
-                  disabled={!workspaceProjectId}
-                  onClick={() => {
-                    void runAction(
-                      onRefreshChanges,
-                      t('sidebar.errors.refreshWorkspace')
-                    )
-                  }}
-                  title={t('sidebar.workspace.refresh')}
-                  type="button"
-                >
-                  <RefreshCw size={14} />
-                </button>
-              </div>
+          )}
+            <section ref={workspaceListRef} hidden={workspacePreviewVisible} className="assistant-sidebar__section workspace-files__navigation" onClickCapture={(event) => {
+              if (event.target instanceof Element) workspaceTrigger.current = event.target.closest('button') ?? undefined
+            }}>
               <WorkspaceFilesPanel
+                rootPath={currentProject?.rootPath}
+                onRefresh={onRefreshChanges}
                 changedFiles={workspaceChanges?.files ?? emptyChangedFiles}
+                gitError={workspaceChanges?.error}
+                isRepository={workspaceChanges?.available}
                 key={workspaceProjectId ?? 'none'}
                 refreshToken={workspaceChanges}
                 onLoadDiff={onLoadWorkspaceDiff}
@@ -1610,15 +1811,8 @@ export function RightAssistantSidebar({
                 onOpenFile={openWorkspaceFile}
                 projectId={workspaceProjectId}
               />
-              {workspaceChanges?.error && (
-                <p className="workspace-files__status">
-                  {t('sidebar.workspace.gitUnavailable', {
-                    error: workspaceChanges.error
-                  })}
-                </p>
-              )}
             </section>
-          )
+          </>
         )}
 
         {instance.appId === 'results' && (
@@ -1738,16 +1932,11 @@ export function RightAssistantSidebar({
             <BrowserToolbar
               activeConversationId={activeConversationId}
               browserState={browserState}
+              fullscreen={browserFullscreenActive}
               onBack={() =>
                 runAction(
                   onBackBrowser,
                   t('sidebar.errors.backBrowser')
-                )
-              }
-              onInteract={() =>
-                runAction(
-                  onInteractBrowser,
-                  t('sidebar.errors.interactBrowser')
                 )
               }
               onNavigate={(url) =>
@@ -1762,77 +1951,21 @@ export function RightAssistantSidebar({
                   t('sidebar.errors.reloadBrowser')
                 )
               }
-              onStop={() =>
-                runAction(
-                  onStopBrowser,
-                  t('sidebar.errors.stopBrowser')
-                )
-              }
               onStopLoading={() =>
                 runAction(
                   onStopLoadingBrowser,
                   t('sidebar.errors.stopLoadingBrowser')
                 )
               }
+              onToggleFullscreen={() =>
+                toggleBrowserFullscreen()
+              }
             />
-            <header>
-              <span>
-                <Monitor size={15} />
-                <strong>{t('sidebar.browser.title')}</strong>
-              </span>
-            </header>
-            {!browserState ? (
-              <p className="assistant-sidebar__empty">
-                {t('sidebar.browser.empty')}
-              </p>
-            ) : (
-              <>
-                <div
-                  aria-live={
-                    browserState.status === 'failed'
-                      ? 'assertive'
-                      : 'polite'
-                  }
-                  className={`assistant-sidebar__browser-status assistant-sidebar__browser-status--${browserState.status}`}
-                  role={
-                    browserState.status === 'failed' ? 'alert' : 'status'
-                  }
-                >
-                  {browserState.status === 'creating'
-                    ? t('sidebar.browser.statuses.creating')
-                    : browserState.status === 'loading'
-                      ? t('sidebar.browser.statuses.loading')
-                      : browserState.status === 'acting'
-                        ? t('sidebar.browser.statuses.acting')
-                        : browserState.status === 'interactive'
-                          ? t(
-                              'sidebar.browser.statuses.interactive'
-                            )
-                        : browserState.status === 'ready'
-                          ? t('sidebar.browser.statuses.ready')
-                          : browserState.status === 'failed'
-                            ? browserState.error ??
-                              t('sidebar.browser.statuses.failed')
-                            : t('sidebar.browser.statuses.stopped')}
-                </div>
-                {browserState.frameDataUrl ? (
-                  <img
-                    alt={t('sidebar.browser.frameAlt')}
-                    className="assistant-sidebar__browser-frame"
-                    src={browserState.frameDataUrl}
-                  />
-                ) : (
-                  <div className="assistant-sidebar__browser-placeholder">
-                    <Monitor size={28} />
-                    <span>
-                      {browserState.status === 'failed'
-                        ? t('sidebar.browser.noFrame')
-                        : t('sidebar.browser.waitingFrame')}
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
+            <BrowserViewport
+              browserState={browserState}
+              conversationId={activeConversationId}
+              visible={open}
+            />
           </section>
         )}
           </div>

@@ -4050,7 +4050,9 @@ function App(): React.JSX.Element {
         workspaceChangesRequestRef.current === requestId &&
         activeProjectIdRef.current === projectId
       ) {
-        setWorkspaceChanges(changes);
+        setWorkspaceChanges((current) => changes.error && current?.available
+          ? { ...current, error: changes.error }
+          : changes);
       }
     },
     [],
@@ -10746,11 +10748,6 @@ function App(): React.JSX.Element {
                 browserApi.back(conversationId),
               )
             }
-            onInteractBrowser={() =>
-              runBrowserCommand((browserApi, conversationId) =>
-                browserApi.interact(conversationId),
-              )
-            }
             onNavigateBrowser={(url) =>
               runBrowserCommand((browserApi, conversationId) =>
                 browserApi.navigate(conversationId, url),
@@ -10764,11 +10761,6 @@ function App(): React.JSX.Element {
             onStopLoadingBrowser={() =>
               runBrowserCommand((browserApi, conversationId) =>
                 browserApi.stopLoading(conversationId),
-              )
-            }
-            onStopBrowser={() =>
-              runBrowserCommand((browserApi, conversationId) =>
-                browserApi.stop(conversationId),
               )
             }
             onImportArtifacts={async () => {

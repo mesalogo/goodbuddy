@@ -399,6 +399,10 @@ function formatChangedFiles(files: WorkspaceChangedFile[]): string {
 }
 
 export class LocalWorkspaceAccess implements WorkspaceAccess {
+  async manage(action: import('../../shared/workspace-management-contracts').WorkspaceManagementAction, signal?: AbortSignal): Promise<import('../../shared/workspace-management-contracts').WorkspaceManagementResult> {
+    const { manageWorkspace } = await import('./workspace-management')
+    return manageWorkspace(await this.getWorkspace(), action, signal)
+  }
   private canonicalWorkspace?: Promise<string>
 
   constructor(private readonly rootPath: string) {}

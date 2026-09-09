@@ -1,14 +1,178 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { changeUiLocale } from './i18n'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { gitStatusLetter, WorkspaceFilesPanel } from './WorkspaceFilesPanel'
+
+beforeEach(() => vi.stubGlobal('goodbuddy', { workspace: { manage: vi.fn(async () => ({ kind: 'branches', current: 'main', branches: [] })) } }))
 
 afterEach(async () => {
   cleanup()
+  vi.unstubAllGlobals()
   await changeUiLocale('zh-CN')
 })
 
 describe('WorkspaceFilesPanel', () => {
+  it('keeps directory navigation and compact actions bounded independently', () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    expect(css.match(/\.workspace-files__actions\s*\{([^}]*)\}/)?.[1]).toContain('flex-wrap: nowrap')
+    expect(css.match(/\.workspace-files__breadcrumb-parts\s*\{([^}]*)\}/)?.[1]).toContain('overflow-x: auto')
+    expect(css.match(/\.workspace-files__breadcrumb-parts button\s*\{([^}]*)\}/)?.[1]).toContain('text-overflow: ellipsis')
+    const menu = css.match(/\.workspace-files__menu\s*\{([^}]*)\}/)?.[1]
+    expect(menu).toContain('position: fixed')
+    expect(menu).toContain('max-width: calc(100vw - 16px)')
+    expect(menu).toContain('max-height: calc(100vh - 16px)')
+    const more = css.match(/\.workspace-files__more\s*\{([^}]*)\}/)?.[1]
+    expect(more).toContain('position: absolute')
+    expect(more).toContain('top: 50%')
+    expect(css).toMatch(/\.workspace-files__menu button\s*\{[^}]*justify-content: flex-start/)
+    expect(css.match(/^\.workspace-git__commit\s*\{([^}]*)\}/m)?.[1]).toContain('grid-template-columns: minmax(0, 1fr)')
+    expect(css).toMatch(/\.workspace-git__toolbar\s*\{[^}]*flex-wrap: wrap;[^}]*gap: var\(--space-2\)/)
+    expect(css).toMatch(/\.workspace-files__view-switch\s*\{[^}]*align-self: flex-start/)
+    expect(css).toMatch(/\.workspace-git__toolbar > \.segmented-control\s*\{[^}]*width: max-content;[^}]*border: 0/)
+    expect(css).toMatch(/\.workspace-git__branch-trigger\s*\{[^}]*width: auto;[^}]*height: 32px;[^}]*flex: 0 1 auto;[^}]*text-align: left/)
+  })
+
+  it.each([
+    ['D:\\project', 'd:\\project\\target', 'target/notes.txt'],
+    ['/project', '/project', 'notes.txt'],
+    ['/', '/target', 'target/notes.txt']
+  ])('moves into the native directory selection inside %s', async (rootPath, directory, destination) => {
+    const selectWorkspace = vi.fn(async () => directory)
+    const manage = vi.fn(async () => ({ kind: 'done' }))
+    vi.stubGlobal('goodbuddy', { projects: { list: vi.fn(async () => [{ id: 'project', rootPath }]) }, settings: { selectWorkspace }, workspace: { manage } })
+    render(<WorkspaceFilesPanel projectId="project" rootPath={rootPath} changedFiles={[]}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [{ name: 'notes.txt', path: 'source/notes.txt', type: 'file' as const }], truncated: false }))}
+      onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'notes.txt 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动' }))
+    const dialog = screen.getByRole('dialog', { name: '移动' })
+    expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '取消' })).toHaveClass('secondary-button')
+    expect(within(dialog).getByRole('button', { name: '移动' })).toBeDisabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: '目标目录 选择目录' }))
+    await within(dialog).findByText(directory)
+    expect(selectWorkspace).toHaveBeenCalledOnce()
+    fireEvent.click(within(dialog).getByRole('button', { name: '移动' }))
+    await waitFor(() => expect(manage).toHaveBeenCalledWith('project', { kind: 'move', path: 'source/notes.txt', destination }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('keeps native picker cancellation and outside-workspace choices from moving files', async () => {
+    const selectWorkspace = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce('D:\\project-other').mockResolvedValueOnce('D:\\project\\..\\outside')
+    const manage = vi.fn()
+    vi.stubGlobal('goodbuddy', { projects: { list: vi.fn(async () => [{ id: 'project', rootPath: 'D:\\project' }]) }, settings: { selectWorkspace }, workspace: { manage } })
+    render(<WorkspaceFilesPanel projectId="project" changedFiles={[]}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [{ name: 'notes.txt', path: 'notes.txt', type: 'file' as const }], truncated: false }))}
+      onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'notes.txt 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动' }))
+    const choose = screen.getByRole('button', { name: '目标目录 选择目录' })
+    fireEvent.click(choose)
+    await waitFor(() => expect(choose).toBeEnabled())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      fireEvent.click(choose)
+      expect(await screen.findByRole('alert')).toHaveTextContent('暂不支持移动到此工作区之外')
+      await waitFor(() => expect(choose).toBeEnabled())
+      expect(screen.getByRole('button', { name: '移动' })).toBeDisabled()
+    }
+    expect(manage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('browses remote move destinations on the project host and maps the selected directory', async () => {
+    const browseDirectories = vi.fn(async (_host: string, path: string) => ({ path, parentPath: '/remote', entries: path === '/remote/project' ? [{ name: 'target', path: '/remote/project/target' }] : [] }))
+    const cancelDirectoryBrowse = vi.fn(async () => undefined)
+    const selectWorkspace = vi.fn()
+    const manage = vi.fn(async () => ({ kind: 'done' }))
+    vi.stubGlobal('goodbuddy', { projects: { list: vi.fn(async () => [{ id: 'project', executionSpace: { kind: 'ssh', hostId: 'host', remoteRootPath: '/remote/project' } }]) }, settings: { selectWorkspace }, sshHosts: { browseDirectories, cancelDirectoryBrowse }, workspace: { manage } })
+    render(<WorkspaceFilesPanel projectId="project" changedFiles={[]}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [{ name: 'notes.txt', path: 'notes.txt', type: 'file' as const }], truncated: false }))}
+      onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'notes.txt 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动' }))
+    fireEvent.click(screen.getByRole('button', { name: '目标目录 选择目录' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'target' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '选择此目录' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '选择此目录' }))
+    fireEvent.click(screen.getByRole('button', { name: '移动' }))
+    await waitFor(() => expect(manage).toHaveBeenCalledWith('project', { kind: 'move', path: 'notes.txt', destination: 'target/notes.txt' }))
+    expect(browseDirectories.mock.calls).toEqual([['host', '/remote/project'], ['host', '/remote/project/target']])
+    expect(selectWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('uses shared Git controls and opens compact commit rows into file details', async () => {
+    const manage = vi.fn(async (_project: string, action: { kind: string }) => action.kind === 'history'
+      ? { kind: 'history', commits: [{ oid: 'a'.repeat(40), subject: 'Initial commit', author: 'Author', time: '2026-09-09T10:00:00Z', refs: 'HEAD -> main' }], hasMore: false }
+      : action.kind === 'commitFiles' ? { kind: 'commitFiles', files: [{ path: 'notes.txt', status: 'A' }] }
+        : { kind: 'branches', current: 'main', branches: [] })
+    vi.stubGlobal('goodbuddy', { workspace: { manage } })
+    render(<WorkspaceFilesPanel projectId="project" isRepository changedFiles={[]}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [], truncated: false }))} onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    expect(await screen.findByRole('button', { name: 'main' })).toHaveClass('model-button')
+    expect(screen.getByRole('button', { name: 'Fetch' })).toHaveClass('secondary-button')
+    expect(screen.getByRole('button', { name: 'Fetch' })).toHaveAttribute('title', 'Fetch')
+    const toolbar = screen.getByRole('button', { name: 'main' }).closest('.workspace-git__toolbar')!
+    expect(within(toolbar as HTMLElement).getByRole('button', { name: '列表' })).toHaveClass('segmented-control__option')
+    const history = screen.getByRole('button', { name: '提交历史' })
+    expect(history).toHaveClass('workspace-files__changed-row')
+    expect(history).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(history)
+    const commit = (await screen.findByText('Initial commit')).closest('button')!
+    expect(commit).toHaveClass('workspace-files__changed-row', 'workspace-git__commit')
+    fireEvent.click(commit)
+    expect(await screen.findByRole('button', { name: /notes\.txt/ })).toHaveClass('workspace-files__changed-row')
+  })
+
+  it('cancels an in-flight remote directory browse without moving or reopening the dialog', async () => {
+    let resolveBrowse!: (value: unknown) => void
+    const browseDirectories = vi.fn(() => new Promise(resolve => { resolveBrowse = resolve }))
+    const cancelDirectoryBrowse = vi.fn(async () => undefined)
+    const manage = vi.fn()
+    vi.stubGlobal('goodbuddy', { projects: { list: vi.fn(async () => [{ id: 'project', executionSpace: { kind: 'ssh', hostId: 'host', remoteRootPath: '/project' } }]) }, sshHosts: { browseDirectories, cancelDirectoryBrowse }, workspace: { manage } })
+    render(<WorkspaceFilesPanel projectId="project" changedFiles={[]}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [{ name: 'notes.txt', path: 'notes.txt', type: 'file' as const }], truncated: false }))}
+      onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'notes.txt 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动' }))
+    fireEvent.click(screen.getByRole('button', { name: '目标目录 选择目录' }))
+    await waitFor(() => expect(browseDirectories).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(cancelDirectoryBrowse).toHaveBeenCalledOnce()
+    await act(async () => resolveBrowse({ path: '/project', entries: [] }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(manage).not.toHaveBeenCalled()
+  })
+
+  it('portals and clamps the row menu, supports keyboard navigation and restores focus', async () => {
+    const { container } = render(<WorkspaceFilesPanel projectId="project" changedFiles={[]}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [{ name: 'notes.txt', path: 'notes.txt', type: 'file' as const }], truncated: false }))}
+      onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    const trigger = await screen.findByRole('button', { name: 'notes.txt 的更多操作' })
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({ right: window.innerWidth + 50, bottom: window.innerHeight + 50 } as DOMRect)
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const menu = screen.getByRole('menu', { name: 'notes.txt' })
+    expect(container).not.toContainElement(menu)
+    expect(menu.parentElement).toBe(document.body)
+    expect(parseFloat(menu.style.left)).toBeLessThanOrEqual(window.innerWidth - 8)
+    expect(parseFloat(menu.style.top)).toBeLessThanOrEqual(window.innerHeight - 8)
+    expect(within(menu).getByRole('menuitem', { name: '重命名' })).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(within(menu).getByRole('menuitem', { name: '删除' })).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'Home' })
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(within(menu).getByRole('menuitem', { name: '移动' })).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
   it.each([['??', 'U'], [' M', 'M'], ['A ', 'A'], [' D', 'D'], ['R ', 'R'], ['C ', 'C'], ['UU', 'U'], ['AM', 'AM'], [' T', 'T']])('maps %s to %s without calling every new file added', (status, letter) => {
     expect(gitStatusLetter(status)).toBe(letter)
   })
@@ -57,7 +221,7 @@ describe('WorkspaceFilesPanel', () => {
       />
     )
 
-    expect(await screen.findByText('当前工作区')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '当前工作区' })).toHaveAttribute('aria-current', 'location')
     fireEvent.click(await screen.findByRole('button', { name: 'docs' }))
     fireEvent.click(
       await screen.findByRole('button', { name: 'guide.md' })
@@ -66,17 +230,11 @@ describe('WorkspaceFilesPanel', () => {
     expect(onListDirectory).toHaveBeenCalledWith('')
     expect(onListDirectory).toHaveBeenCalledWith('docs')
     expect(onOpenFile).toHaveBeenCalledWith('docs/guide.md')
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: '使用默认应用打开文件 guide.md'
-      })
-    )
+    fireEvent.click(screen.getByLabelText('guide.md 的更多操作'))
+    fireEvent.click(within(screen.getByRole('menu', { name: 'guide.md' })).getByRole('menuitem', { name: '使用默认应用打开' }))
     expect(onOpenEntry).toHaveBeenCalledWith('docs/guide.md', 'file')
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: '在系统资源管理器中打开文件夹 docs'
-      })
-    )
+    fireEvent.click(screen.getByLabelText('docs 的更多操作'))
+    fireEvent.click(within(screen.getByRole('menu', { name: 'docs' })).getByRole('menuitem', { name: '使用默认应用打开' }))
     expect(onOpenEntry).toHaveBeenCalledWith('docs', 'directory')
     expect(screen.getAllByText('M')).not.toHaveLength(0)
   })
@@ -138,7 +296,7 @@ describe('WorkspaceFilesPanel', () => {
     }))
 
     render(
-      <WorkspaceFilesPanel
+      <WorkspaceFilesPanel isRepository
         onLoadDiff={vi.fn()}
         changedFiles={[{ path: 'notes.txt', status: ' M' }]}
         onListDirectory={onListDirectory}
@@ -148,18 +306,18 @@ describe('WorkspaceFilesPanel', () => {
       />
     )
 
-    await screen.findByText('当前工作区')
+    await screen.findByText('工作区为空。')
     expect(onListDirectory).toHaveBeenCalledOnce()
     await changeUiLocale('en-US')
 
     expect(
-      await screen.findByText('Current workspace')
+      await screen.findByRole('button', { name: 'Current workspace' })
     ).toBeInTheDocument()
-    expect(screen.getByText('Uncommitted changes')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Git Workspace' }))
     expect(screen.getByText('M')).toBeInTheDocument()
     expect(onListDirectory).toHaveBeenCalledOnce()
   })
-  it('refreshes expanded directories and drops collapsed caches without remounting', async () => {
+  it('refreshes expanded directories and reloads collapsed directories when reopened', async () => {
     let version = 0
     const onListDirectory = vi.fn(async (path: string) => ({
       path,
@@ -188,15 +346,17 @@ describe('WorkspaceFilesPanel', () => {
   it('opens a deleted file diff rather than reading the missing file', async () => {
     const onLoadDiff = vi.fn(async () => ({ rootPath: '/project', available: true, files: [], status: '', patch: '-deleted content', stagedPatch: '-staged content', truncated: true }))
     const onOpenFile = vi.fn()
-    render(<WorkspaceFilesPanel projectId="project" changedFiles={[{ path: 'deleted.txt', status: ' D' }]}
+    render(<WorkspaceFilesPanel isRepository projectId="project" changedFiles={[{ path: 'deleted.txt', status: ' D' }]}
       onListDirectory={vi.fn(async () => ({ path: '', entries: [], truncated: false }))}
       onLoadDiff={onLoadDiff} onOpenFile={onOpenFile} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
     fireEvent.click(screen.getByRole('button', { name: /deleted.txt/ }))
     await screen.findByText('-deleted content')
     expect(screen.getByText('-staged content')).toBeInTheDocument()
     expect(screen.getByText('差异内容已截断。')).toBeInTheDocument()
     expect(onLoadDiff).toHaveBeenCalledWith('deleted.txt')
     expect(onOpenFile).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '查看当前文件' })).not.toBeInTheDocument()
   })
 
   it('reloads the selected diff on refresh and ignores an older pending response', async () => {
@@ -206,12 +366,13 @@ describe('WorkspaceFilesPanel', () => {
       .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
       .mockResolvedValue(value)
     const props = {
-      projectId: 'project', changedFiles: [{ path: 'seed.txt', status: ' M' }],
+      isRepository: true, projectId: 'project', changedFiles: [{ path: 'seed.txt', status: ' M' }],
       onListDirectory: vi.fn(async () => ({ path: '', entries: [], truncated: false })),
       onLoadDiff, onOpenFile: vi.fn()
     }
     const view = render(<WorkspaceFilesPanel {...props} refreshToken={0} />)
     await waitFor(() => expect(props.onListDirectory).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
     fireEvent.click(screen.getByRole('button', { name: /seed.txt/ }))
     view.rerender(<WorkspaceFilesPanel {...props} refreshToken={1} />)
     await screen.findByText('+fresh')
@@ -225,16 +386,125 @@ describe('WorkspaceFilesPanel', () => {
       rootPath: '/project', available: true, files: [], status: '',
       patch: '-last deleted', stagedPatch: '', truncated: false
     }))
-    render(<WorkspaceFilesPanel
+    render(<WorkspaceFilesPanel isRepository
       projectId="project"
       changedFiles={Array.from({ length: 51 }, (_, index) => ({ path: `deleted-${index}.txt`, status: ' D' }))}
       onListDirectory={vi.fn(async () => ({ path: '', entries: [], truncated: false }))}
       onLoadDiff={onLoadDiff} onOpenFile={vi.fn()}
     />)
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
     expect(screen.queryByRole('button', { name: /deleted-50.txt/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '加载更多变更（剩余 1 个）' }))
     fireEvent.click(screen.getByRole('button', { name: /deleted-50.txt/ }))
     await screen.findByText('-last deleted')
     expect(onLoadDiff).toHaveBeenCalledWith('deleted-50.txt')
+  })
+
+  it('preserves mounted rows, expansion, selection, view and scroll when returning from a diff', async () => {
+    const onListDirectory = vi.fn(async (path: string) => ({ path, truncated: false,
+      entries: path ? [{ name: 'guide.md', path: 'docs/guide.md', type: 'file' as const }]
+        : [{ name: 'docs', path: 'docs', type: 'directory' as const }] }))
+    const onOpenFile = vi.fn()
+    const props = { isRepository: true, projectId: 'project', changedFiles: [{ path: 'docs/guide.md', status: ' M' }], onListDirectory,
+      onLoadDiff: vi.fn(async () => ({ rootPath: '/project', available: true, files: [], status: '', patch: '+updated', truncated: false })), onOpenFile }
+    const { container, rerender } = render(<div className="assistant-sidebar__body"><section><WorkspaceFilesPanel {...props} /></section></div>)
+    expect(screen.getByRole('button', { name: '文件' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }))
+    const fileRow = (await screen.findByText('guide.md')).closest('button')!
+    fireEvent.click(fileRow)
+    expect(fileRow).toHaveAttribute('aria-current', 'true')
+    rerender(<div className="assistant-sidebar__body"><section hidden><WorkspaceFilesPanel {...props} /></section></div>)
+    // Simulate the parent hiding its existing section without unmounting the panel.
+    rerender(<div className="assistant-sidebar__body"><section><WorkspaceFilesPanel {...props} /></section></div>)
+    expect(screen.getByText('guide.md').closest('button')).toBe(fileRow)
+    expect(fileRow).toHaveAttribute('aria-current', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    const changedRow = screen.getByRole('button', { name: /docs\/guide\.md/ })
+    const treeRow = container.querySelector('.workspace-files__row[title="docs/guide.md"]')
+    const scroller = container.firstElementChild as HTMLElement
+    scroller.scrollTop = 340
+    scroller.scrollLeft = 12
+    fireEvent.click(changedRow)
+    await screen.findByText('+updated')
+    expect(treeRow).toBeInTheDocument()
+    expect(changedRow).not.toBeVisible()
+    expect(scroller.scrollTop).toBe(0)
+    expect(screen.getByRole('button', { name: '返回未提交更改' })).toHaveFocus()
+    scroller.scrollTop = 90
+    fireEvent.click(screen.getByRole('button', { name: '返回未提交更改' }))
+    expect(changedRow).toHaveFocus()
+    expect(changedRow).toHaveAttribute('aria-current', 'true')
+    expect(scroller.scrollTop).toBe(340)
+    expect(scroller.scrollLeft).toBe(12)
+    expect(screen.getByRole('button', { name: 'Git 工作区' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('guide.md').closest('button')).toBe(treeRow)
+  })
+
+  it('retains root and expanded listings on refresh failure and retries each directory locally', async () => {
+    let fail = false
+    const onListDirectory = vi.fn(async (path: string) => {
+      if (fail) throw new Error(`Cannot read ${path || 'root'}`)
+      return { path, truncated: false, entries: path
+        ? [{ name: 'guide.md', path: 'docs/guide.md', type: 'file' as const }]
+        : [{ name: 'docs', path: 'docs', type: 'directory' as const }] }
+    })
+    const props = { projectId: 'project', changedFiles: [], onListDirectory, onLoadDiff: vi.fn(), onOpenFile: vi.fn() }
+    const { rerender } = render(<WorkspaceFilesPanel {...props} refreshToken={0} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }))
+    const row = await screen.findByRole('button', { name: 'guide.md' })
+    fail = true
+    rerender(<WorkspaceFilesPanel {...props} refreshToken={1} />)
+    await screen.findByText('Cannot read root')
+    expect(screen.getByText('Cannot read docs')).toBeInTheDocument()
+    expect(row).toBeVisible()
+    fail = false
+    const calls = onListDirectory.mock.calls.length
+    fireEvent.click(screen.getByText('Cannot read docs').querySelector('button')!)
+    await waitFor(() => expect(screen.queryByText('Cannot read docs')).not.toBeInTheDocument())
+    expect(onListDirectory).toHaveBeenCalledTimes(calls + 1)
+    expect(onListDirectory).toHaveBeenLastCalledWith('docs')
+    fireEvent.click(screen.getByText('Cannot read root').querySelector('button')!)
+    await waitFor(() => expect(screen.queryByText('Cannot read root')).not.toBeInTheDocument())
+    expect(onListDirectory).toHaveBeenLastCalledWith('')
+  })
+
+  it('shows Git errors and empty states only in changes view', async () => {
+    const props = { projectId: 'project', changedFiles: [], onListDirectory: vi.fn(async () => ({ path: '', entries: [], truncated: false })), onLoadDiff: vi.fn(), onOpenFile: vi.fn() }
+    const { rerender } = render(<WorkspaceFilesPanel {...props} gitError="Git offline" />)
+    await screen.findByText('工作区为空。')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Git 工作区' })).not.toBeInTheDocument()
+    rerender(<WorkspaceFilesPanel {...props} isRepository={false} />)
+    expect(screen.queryByRole('button', { name: 'Git 工作区' })).not.toBeInTheDocument()
+    rerender(<WorkspaceFilesPanel {...props} isRepository />)
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    expect(screen.getByText(/没有未提交的更改/)).toBeVisible()
+    rerender(<WorkspaceFilesPanel {...props} isRepository={false} gitError="Git offline" />)
+    expect(screen.getByRole('button', { name: 'Git 工作区' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent('Git offline')
+  })
+
+  it('views the current file, refreshes a diff and copies its relative path with recoverable errors', async () => {
+    const writeText = vi.fn().mockRejectedValueOnce(new Error('Clipboard busy')).mockResolvedValue(undefined)
+    vi.stubGlobal('goodbuddy', { ...window.goodbuddy, clipboard: { writeText } })
+    const onOpenFile = vi.fn()
+    const onLoadDiff = vi.fn(async () => ({ rootPath: '/project', available: true, files: [], status: '', patch: '+content', truncated: false }))
+    const onListDirectory = vi.fn(async () => ({ path: '', entries: [], truncated: false }))
+    render(<WorkspaceFilesPanel isRepository projectId="project" changedFiles={[{ path: 'docs/a.md', status: ' M' }]} onOpenFile={onOpenFile} onLoadDiff={onLoadDiff} onListDirectory={onListDirectory} />)
+    await waitFor(() => expect(onListDirectory).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: /docs\/a\.md/ }))
+    await screen.findByText('+content')
+    fireEvent.click(screen.getByRole('button', { name: '查看当前文件' }))
+    expect(onOpenFile).toHaveBeenCalledWith('docs/a.md')
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: '复制相对路径' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('复制路径失败。 Clipboard busy')
+    fireEvent.click(screen.getByRole('button', { name: '复制相对路径' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(writeText).toHaveBeenLastCalledWith('docs/a.md')
   })
 })

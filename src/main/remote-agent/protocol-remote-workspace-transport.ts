@@ -247,6 +247,8 @@ function createLease(state: LeaseState): RemoteWorkspaceTransportLease {
       await request('git/status', value, signal),
     getGitDiff: async (value, signal) =>
       await request('git/diff', value, signal),
+    manageWorkspace: async (value, signal) =>
+      await request('workspace/manage', value, signal),
     release: () => {
       if (released) {
         return
@@ -282,6 +284,7 @@ function releaseLeaseResources(
 }
 
 type WorkspaceReadProtocolMethod =
+  | 'workspace/manage'
   | 'workspace/validate'
   | 'workspace/close'
   | 'workspace/list'

@@ -3822,14 +3822,22 @@ button > svg {
   transition: none;
 }
 
+.assistant-sidebar--browser-fullscreen {
+  transition: none;
+}
+
+.assistant-sidebar--browser-fullscreen .workbar-shell__tab-row {
+  display: none;
+}
+
 .assistant-sidebar__resize-handle {
   position: absolute;
   z-index: 2;
   top: 0;
   bottom: 0;
-  left: -5px;
+  left: -8px;
   display: none;
-  width: 10px;
+  width: 12px;
   padding: 0;
   cursor: col-resize;
   touch-action: none;
@@ -3843,7 +3851,7 @@ button > svg {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 4px;
+  left: 7px;
   width: 2px;
   background: transparent;
   content: '';
@@ -4344,7 +4352,104 @@ button > svg {
 
 .workspace-files__toolbar {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   justify-content: flex-end;
+}
+
+.assistant-sidebar__body--browser {
+  overflow: hidden;
+}
+
+.workspace-files__navigation[hidden],
+.workspace-files__list[hidden] {
+  display: none;
+}
+
+.workspace-files__list:not([hidden]) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.workspace-files__project {
+  display: block;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-caption);
+}
+
+.workspace-files__breadcrumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.workspace-files__breadcrumb-parts {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  align-items: center;
+}
+
+.workspace-files__breadcrumb-parts button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  overflow: hidden;
+  background: transparent;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: var(--radius-control);
+}
+
+.workspace-files__breadcrumb-parts button + button::before {
+  content: '/';
+  margin-right: var(--space-2);
+  color: var(--text-muted);
+}
+
+.workspace-files__breadcrumb-parts button:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.workspace-files__actions {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: var(--space-1);
+}
+
+.workspace-files__actions .icon-button,
+.workspace-files__breadcrumbs > .icon-button {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+}
+
+.workspace-files__preview-actions {
+  justify-content: flex-start;
+  margin-block: var(--space-3);
+}
+
+.workspace-files__refreshing {
+  animation: workspace-refresh-spin 1s linear infinite;
+}
+
+@keyframes workspace-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-files__refreshing { animation: none; }
 }
 
 .workspace-files__diff [data-line="added"] {
@@ -4863,40 +4968,28 @@ button > svg {
 
 .assistant-sidebar__browser {
   display: flex;
+  height: 100%;
   min-width: 0;
-  padding: var(--space-4);
+  min-height: 0;
+  padding: 0;
   flex-direction: column;
-  gap: var(--space-3);
-}
-
-.assistant-sidebar__browser > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.assistant-sidebar__browser > header > span {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
+  gap: 0;
+  container-type: inline-size;
 }
 
 .assistant-sidebar__browser-toolbar {
   display: flex;
   min-width: 0;
   align-items: center;
-  flex-wrap: wrap;
-  padding-bottom: var(--space-3);
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  padding: var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
   gap: var(--space-1);
 }
 
 .assistant-sidebar__browser-tool-button,
-.assistant-sidebar__browser-go,
-.assistant-sidebar__browser-interact,
-.assistant-sidebar__browser-close {
+.assistant-sidebar__browser-go {
   gap: var(--space-1);
 }
 
@@ -4907,8 +5000,38 @@ button > svg {
 }
 
 .assistant-sidebar__browser-address {
-  min-width: 112px;
+  min-width: 0;
   flex: 1 1 128px;
+}
+
+@container (max-width: 280px) {
+  .assistant-sidebar__browser-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .assistant-sidebar__browser-toolbar > button:nth-of-type(1),
+  .assistant-sidebar__browser-toolbar > button:nth-of-type(2),
+  .assistant-sidebar__browser-fullscreen-button {
+    order: 1;
+  }
+
+  .assistant-sidebar__browser-address,
+  .assistant-sidebar__browser-go {
+    order: 2;
+  }
+
+  .assistant-sidebar__browser-address {
+    flex-basis: calc(100% - var(--control-height) - var(--space-1));
+  }
+
+  .assistant-sidebar__browser-go {
+    width: var(--control-height);
+    padding: 0;
+  }
+
+  .assistant-sidebar__browser-go > span {
+    display: none;
+  }
 }
 
 .assistant-sidebar__browser-address input {
@@ -4930,16 +5053,13 @@ button > svg {
   box-shadow: var(--focus-ring);
 }
 
-.assistant-sidebar__browser-go,
-.assistant-sidebar__browser-interact,
-.assistant-sidebar__browser-close {
+.assistant-sidebar__browser-go {
   padding: 0 var(--space-2);
   flex: 0 0 auto;
 }
 
 .assistant-sidebar__browser-tool-button:hover:not(:disabled),
-.assistant-sidebar__browser-go:hover:not(:disabled),
-.assistant-sidebar__browser-interact:hover:not(:disabled) {
+.assistant-sidebar__browser-go:hover:not(:disabled) {
   border-color: var(--accent-selected);
   background: var(--accent-subtle);
   color: var(--accent);
@@ -4950,45 +5070,22 @@ button > svg {
   opacity: 0.55;
 }
 
-.assistant-sidebar__browser-toolbar
-  .assistant-sidebar__browser-close {
-  padding: 0 var(--space-2);
-  border-color: var(--danger-border);
-  margin-left: var(--space-1);
-  color: var(--danger);
-}
-
-.assistant-sidebar__browser-status {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
-  color: var(--text-secondary);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.assistant-sidebar__browser-status--failed {
-  border-color: var(--danger-border);
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.assistant-sidebar__browser-frame,
+.assistant-sidebar__browser-viewport,
 .assistant-sidebar__browser-placeholder {
   width: 100%;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
   background: var(--surface-subtle);
 }
 
-.assistant-sidebar__browser-frame {
-  display: block;
-  height: auto;
+.assistant-sidebar__browser-viewport {
+  position: relative;
+  min-height: 220px;
+  flex: 1;
+  overflow: hidden;
 }
 
 .assistant-sidebar__browser-placeholder {
   display: flex;
+  height: 100%;
   min-height: 220px;
   align-items: center;
   justify-content: center;
@@ -4996,6 +5093,8 @@ button > svg {
   flex-direction: column;
   gap: var(--space-2);
   font-size: 10px;
+  padding: var(--space-4);
+  text-align: center;
 }
 
 .assistant-sidebar__preview > header {
@@ -5197,6 +5296,13 @@ button > svg {
     calc(var(--space-4) + var(--message-avatar-size) + var(--space-2)),
     calc((100cqw - var(--content-reading)) / 2)
   );
+}
+
+.workspace-files__row[aria-current="true"],
+.workspace-files__changed-row[aria-current="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .chat {
@@ -11789,7 +11895,8 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: 2px;
 }
 
-.conversation-actions button {
+.conversation-actions button,
+.workspace-files__menu button {
   display: flex;
   min-height: 30px;
   align-items: center;
@@ -11803,7 +11910,8 @@ details.settings-section > :not(summary) + :not(summary) {
   text-align: left;
 }
 
-.conversation-actions button:hover {
+.conversation-actions button:hover,
+.workspace-files__menu button:hover {
   background: var(--accent-subtle);
   color: var(--accent);
 }
@@ -16278,7 +16386,6 @@ details.settings-section > :not(summary) + :not(summary) {
 .assistant-sidebar__approval-actions button,
 .assistant-sidebar__badge,
 .assistant-sidebar__browser-placeholder,
-.assistant-sidebar__browser-status,
 .assistant-sidebar__diff,
 .assistant-sidebar__empty,
 .assistant-sidebar__import,
@@ -17221,3 +17328,103 @@ details.settings-section > :not(summary) + :not(summary) {
     margin-right: 0;
   }
 }
+.workspace-files__more {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  width: 28px;
+  height: 28px;
+  transform: translateY(-50%);
+  opacity: 0;
+}
+.workspace-files__entry:hover .workspace-files__more,
+.workspace-files__entry:focus-within .workspace-files__more,
+.workspace-files__more[aria-expanded="true"] { opacity: 1; }
+.workspace-files__menu {
+  position: fixed;
+  z-index: calc(var(--z-dialog) - 1);
+  display: grid;
+  width: max-content;
+  min-width: 160px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: var(--space-1);
+  gap: var(--space-1);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-dialog);
+}
+.workspace-files__menu button { min-height: 32px; justify-content: flex-start; font-size: var(--font-body); }
+.workspace-files__menu .danger-ghost { color: var(--danger); }
+.workspace-files__menu .danger-ghost:hover { color: var(--danger-strong); background: var(--danger-subtle); }
+.workspace-files__menu [role="separator"] { border-top: 1px solid var(--border-subtle); }
+.workspace-files__path { overflow-wrap: anywhere; }
+.workspace-files__directory-picker { display: grid; min-width: 0; gap: var(--space-2); }
+.workspace-files__directory-picker .remote-directory-picker__content { max-height: 240px; }
+.workspace-git__working { display: flex; flex-direction: column; min-height: 0; gap: var(--space-2); }
+.workspace-git__working[hidden] { display: none; }
+.workspace-files__view-switch { align-self: flex-start; max-width: 100%; }
+.workspace-files__view-switch > .segmented-control,
+.workspace-git__toolbar > .segmented-control {
+  width: max-content;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  gap: var(--space-1);
+}
+.workspace-files__view-switch .segmented-control__option,
+.workspace-git__toolbar .segmented-control__option {
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+}
+.workspace-files__view-switch .segmented-control__option--active,
+.workspace-git__toolbar .segmented-control__option--active {
+  background: var(--accent-subtle);
+  box-shadow: none;
+}
+.workspace-git__toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.workspace-git__repository-actions {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+}
+.workspace-git__branch-trigger {
+  width: auto;
+  max-width: 160px;
+  height: 32px;
+  flex: 0 1 auto;
+  text-align: left;
+}
+.workspace-git__branch-trigger > svg { flex: 0 0 auto; }
+.workspace-git__fetch {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  flex: 0 0 32px;
+  border-color: var(--border-default);
+}
+.workspace-git__branches { display: grid; min-width: 0; gap: var(--space-2); padding-bottom: var(--space-2); }
+.workspace-git__branches input { min-width: 0; width: 100%; }
+.workspace-git__history-toggle { margin-top: var(--space-2); font-weight: 650; }
+.workspace-git__branches > div { display: grid; max-height: 240px; overflow: auto; }
+.workspace-git__branches label, .workspace-git__commit { display: grid; text-align: left; }
+.workspace-git__history { display: flex; flex-direction: column; flex: 0 0 auto; min-height: 120px; max-height: 600px; border-top: 1px solid var(--border-default); }
+.workspace-git__history[hidden] { display: none; }
+.workspace-git__history > [role="separator"] { height: var(--space-2); flex: 0 0 auto; cursor: ns-resize; touch-action: none; }
+.workspace-git__history-scroll { overflow: auto; min-height: 0; }
+.workspace-git__commit { width: 100%; padding: var(--space-2); grid-template-columns: minmax(0, 1fr); gap: var(--space-1); border-bottom: 1px solid var(--border-subtle); }
+.workspace-git__commit strong, .workspace-git__commit small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-git__commit span, .workspace-git__commit small { color: var(--text-secondary); font-size: var(--font-caption); }
+@media (hover: none), (pointer: coarse) { .workspace-files__more { opacity: 1; } }

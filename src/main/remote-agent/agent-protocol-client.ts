@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { workspaceManagementResultSchema } from '../../shared/workspace-management-contracts'
 import {
   AGENT_PROTOCOL_LIMITS,
   AGENT_PROTOCOL_VERSION,
@@ -43,6 +44,7 @@ import {
   remoteSemanticTranscriptAckResultSchema,
   remoteSemanticTranscriptPageRequestSchema,
   remoteSemanticTranscriptPageResultSchema,
+  remoteWorkspaceManageRequestSchema,
   remoteGitDiffRequestSchema,
   remoteGitDiffResultSchema,
   remoteGitStatusRequestSchema,
@@ -148,6 +150,10 @@ export const AGENT_PROTOCOL_METHODS = {
   'git/status': {
     params: remoteGitStatusRequestSchema,
     result: remoteGitStatusResultSchema
+  },
+  'workspace/manage': {
+    params: remoteWorkspaceManageRequestSchema,
+    result: workspaceManagementResultSchema
   },
   'git/diff': {
     params: remoteGitDiffRequestSchema,

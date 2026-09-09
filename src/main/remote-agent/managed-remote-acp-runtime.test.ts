@@ -89,6 +89,7 @@ function descriptor(): SshExecutionSpaceDescriptor {
     cacheIdentity: 'cache-1',
     routeIdentity: 'route-1',
     workspaceAccess: {
+      manage: vi.fn(),
       getIdentity: vi.fn(),
       listDirectory: vi.fn(),
       stat: vi.fn(),

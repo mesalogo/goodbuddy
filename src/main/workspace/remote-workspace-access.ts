@@ -1,6 +1,7 @@
 import {
   REMOTE_WORKSPACE_READ_CAPABILITIES,
   REMOTE_WORKSPACE_LIMITS,
+  remoteWorkspaceManageRequestSchema,
   remoteGitDiffRequestSchema,
   remoteGitDiffResultSchema,
   remoteGitStatusRequestSchema,
@@ -80,6 +81,7 @@ export type RemoteWorkspaceTransportBinding = {
  * exposes neither an SSH connection nor a generic JSON-RPC method.
  */
 export interface RemoteWorkspaceTransportLease {
+  manageWorkspace(request: import('zod').infer<typeof remoteWorkspaceManageRequestSchema>, signal?: AbortSignal): Promise<import('../../shared/workspace-management-contracts').WorkspaceManagementResult>
   readonly binding: RemoteWorkspaceTransportBinding
   validateWorkspace(
     request: RemoteWorkspaceValidateRequest,
@@ -266,6 +268,16 @@ function formatChangedFiles(files: WorkspaceChangedFile[]): string {
 }
 
 export class RemoteWorkspaceAccess implements WorkspaceAccess {
+  async manage(action: import('../../shared/workspace-management-contracts').WorkspaceManagementAction, signal?: AbortSignal): Promise<import('../../shared/workspace-management-contracts').WorkspaceManagementResult> {
+    const opened = await this.open(signal)
+    const validation = remoteWorkspaceValidateResultSchema.parse(await opened.lease.validateWorkspace({ remoteRootPath: this.binding.remoteRootPath, requestedAccess: 'read-write', requiredCapabilities: [] }, signal))
+    const handle = validation.handle
+    try {
+      return await opened.lease.manageWorkspace(remoteWorkspaceManageRequestSchema.parse({ workspaceId: handle.workspaceId, generation: handle.generation, action }), signal)
+    } finally {
+      await opened.lease.closeWorkspace({ workspaceId: handle.workspaceId, generation: handle.generation })
+    }
+  }
   private opening?: Promise<OpenRemoteWorkspace>
   private opened?: OpenRemoteWorkspace
   private disposed = false

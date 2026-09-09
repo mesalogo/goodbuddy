@@ -2,6 +2,18 @@ import type { TranslationShape } from '../../resource-types'
 import type { workspace as chineseWorkspace } from '../zh-CN/workspace'
 
 export const workspace = {
+  management: {
+    gitWorkspace: 'Git Workspace', more: 'More actions for {{name}}', browse: 'Browse directory', parent: 'Parent directory',
+    createFile: 'New file', createDirectory: 'New directory', rename: 'Rename', move: 'Move', delete: 'Delete', properties: 'Properties',
+    defaultOpen: 'Open with default application', name: 'Name', nameOnly: 'Name cannot contain path separators', destination: 'Destination directory',
+    chooseDirectory: 'Choose directory', moveHelp: 'Choose a directory inside the current workspace. The file or folder keeps its name.',
+    destinationOutside: 'Choose a directory inside the current workspace: {{root}}. Moving outside this workspace is not supported.',
+    destinationUnavailable: 'The project directory is unavailable. Reopen the workspace and try again.',
+    path: 'Path', type: 'Type', size: 'Size', modified: 'Modified', cancel: 'Cancel', deleteWarning: 'Permanently delete this entry and all directory contents. This cannot be undone.',
+    branch: 'Branch', searchBranch: 'Search local or remote branches / new branch name', createBranch: 'Create and switch branch', fetch: 'Fetch', local: 'Local', remote: 'Remote',
+    history: 'Commit history', resizeHistory: 'Resize commit history', noCommits: 'No commits on this branch', loadMore: 'Load more commits', backHistory: 'Back to history', backCommit: 'Back to commit files',
+    changedView: 'Changed files view', list: 'List', tree: 'Tree'
+  },
   builtInDefaultProject: {
     name: 'Default project',
     description: 'GoodBuddy default workspace'
@@ -321,6 +333,12 @@ export const workspace = {
       }
     },
     workspace: {
+      copyPath: 'Copy relative path',
+      openFile: 'Open with default app',
+      refreshing: 'Refreshing…',
+      preview: 'Preview',
+      source: 'Source',
+      copyError: 'Unable to copy path.',
       back: 'Back to workspace',
       title: 'Files',
       projectTitle: 'Project workspace',
@@ -350,6 +368,7 @@ export const workspace = {
       interact: 'Interact',
       interacting: 'Interacting',
       close: 'Close browser',
+      viewport: 'Browser page',
       empty:
         'Enter an address to open a page. The same live view appears here when the Agent uses the browser.',
       toolbar: {
@@ -359,7 +378,9 @@ export const workspace = {
         stopLoading: 'Stop loading',
         address: 'Browser address',
         addressPlaceholder: 'Enter a web address',
-        go: 'Go'
+        go: 'Go',
+        fullscreen: 'Show browser fullscreen',
+        exitFullscreen: 'Exit browser fullscreen'
       },
       statuses: {
         creating: 'Starting browser…',
@@ -432,6 +453,13 @@ export const workspace = {
     taskList: 'Task list'
   },
   files: {
+    view: 'Workspace view',
+    filesView: 'Files',
+    changesView: 'Uncommitted changes ({{count}})',
+    backToChanges: 'Back to uncommitted changes',
+    viewCurrentFile: 'View current file',
+    noChanges: 'No uncommitted changes. Edit project files to review their differences here.',
+    notRepository: 'This directory is not a Git repository. You can still browse project files in the Files view.',
     staged: 'Staged changes',
     unstaged: 'Working tree changes',
     noDiff: 'No textual differences (the file may be empty or only its status changed).',

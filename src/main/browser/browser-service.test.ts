@@ -14,6 +14,7 @@ type HarnessSlot = {
   currentUrl?: string
   approvedOrigin?: string
   emitLoading(isLoading: boolean): void
+  emitNavigation(url: string): void
   session: BrowserSessionLike
   driver: BrowserDriverLike
 }
@@ -55,6 +56,7 @@ function createHarness(options: {
       getURL: () => slot.currentUrl ?? `${slot.currentOrigin}/page`
     } as BrowserWebContents
     const loadingListeners = new Set<(isLoading: boolean) => void>()
+    const navigationListeners = new Set<(url: string) => void>()
     let isLoading = false
     const session: BrowserSessionLike = {
       webContents,
@@ -67,7 +69,11 @@ function createHarness(options: {
         loadingListeners.add(listener)
         return () => loadingListeners.delete(listener)
       }),
-      openInteraction: vi.fn(async () => undefined),
+      onNavigationChange: vi.fn((listener) => {
+        navigationListeners.add(listener)
+        return () => navigationListeners.delete(listener)
+      }),
+      setViewport: vi.fn(),
       stopLoading: vi.fn(),
       ...(options.captureScreenshot
         ? { captureScreenshot: vi.fn(options.captureScreenshot) }
@@ -123,6 +129,13 @@ function createHarness(options: {
         for (const listener of loadingListeners) {
           listener(loading)
         }
+      },
+      emitNavigation: (url: string) => {
+        slot.currentUrl = url
+        slot.currentOrigin = canonicalizeBrowserUrl(url).origin
+        for (const listener of navigationListeners) {
+          listener(url)
+        }
       }
     })
     slots.push(slot)
@@ -152,6 +165,42 @@ afterEach(() => {
 })
 
 describe('BrowserService', () => {
+  it('presents one session in the shared viewport and tracks user navigation', async () => {
+    const harness = createHarness()
+    const bounds = { x: 900, y: 120, width: 420, height: 640 }
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    harness.service.setViewport('conversation', bounds)
+
+    await harness.service.navigate(
+      'conversation',
+      'https://example.com/',
+      new AbortController().signal
+    )
+    const slot = harness.slots[0]
+    expect(slot?.session.setViewport).toHaveBeenCalledWith(bounds)
+
+    vi.mocked(slot!.driver.getNavigationMetadata).mockResolvedValueOnce({
+      url: 'https://example.com/account',
+      canGoBack: true
+    })
+    slot?.emitNavigation('https://example.com/account')
+    await vi.waitFor(() => {
+      expect(states.at(-1)).toMatchObject({
+        status: 'ready',
+        url: 'https://example.com/account',
+        canGoBack: true
+      })
+    })
+    expect(harness.service.getOrigin('conversation')).toBe(
+      'https://example.com'
+    )
+
+    harness.service.setViewport()
+    expect(slot?.session.setViewport).toHaveBeenLastCalledWith(undefined)
+    await harness.service.dispose()
+  })
+
   it('publishes browser status and live frames through session cleanup', async () => {
     const harness = createHarness()
     const states: Array<{
@@ -461,58 +510,6 @@ describe('BrowserService', () => {
       'https://b.example/',
       expect.any(AbortSignal)
     )
-    await harness.service.dispose()
-  })
-
-  it('pauses agent operations while the user interacts with the same session', async () => {
-    const harness = createHarness()
-    const signal = new AbortController().signal
-    const states: BrowserLiveState[] = []
-    harness.service.onState((state) => states.push(state))
-    await harness.service.navigate(
-      'conversation',
-      'https://a.example/',
-      signal
-    )
-    const interactionGate = deferred<
-      Awaited<ReturnType<BrowserSessionLike['openInteraction']>>
-    >()
-    const slot = harness.slots[0]
-    if (!slot) {
-      throw new Error('slot missing')
-    }
-    vi.mocked(slot.session.openInteraction).mockReturnValueOnce(
-      interactionGate.promise
-    )
-
-    const interaction = harness.service.interact(
-      'conversation',
-      signal
-    )
-    await vi.waitFor(() =>
-      expect(slot.session.openInteraction).toHaveBeenCalledOnce()
-    )
-    const snapshot = harness.service.snapshot('conversation', signal)
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(slot.driver.snapshot).not.toHaveBeenCalled()
-
-    interactionGate.resolve({
-      type: 'image',
-      mimeType: 'image/jpeg',
-      data: 'closing-frame'
-    })
-    await interaction
-    expect(states.slice(-2).map((state) => state.status)).toEqual([
-      'interactive',
-      'ready'
-    ])
-    expect(states.at(-1)?.frameDataUrl).toBe(
-      'data:image/jpeg;base64,closing-frame'
-    )
-    expect(harness.service.getSessionCount()).toBe(1)
-    expect(slot.session.dispose).not.toHaveBeenCalled()
-    await snapshot
-    expect(slot.driver.snapshot).toHaveBeenCalledOnce()
     await harness.service.dispose()
   })
 

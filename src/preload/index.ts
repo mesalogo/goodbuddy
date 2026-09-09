@@ -328,11 +328,11 @@ const desktopApi: DesktopApi = {
         conversationId
       })
     },
-    interact: async (conversationId: string) => {
-      await ipcRenderer.invoke(
-        ipcChannels.browserInteract,
-        { conversationId }
-      )
+    setViewport: async (conversationId, bounds) => {
+      await ipcRenderer.invoke(ipcChannels.browserSetViewport, {
+        ...(conversationId ? { conversationId } : {}),
+        ...(bounds ? { bounds } : {})
+      })
     },
     stop: async (conversationId: string) => {
       await ipcRenderer.invoke(
@@ -1089,6 +1089,7 @@ const desktopApi: DesktopApi = {
     }
   },
   workspace: {
+    manage: (projectId, action) => ipcRenderer.invoke(ipcChannels.workspaceManage, { projectId, action }),
     getFileDiff: (projectId: string, path: string) =>
       ipcRenderer.invoke(ipcChannels.workspaceFileDiff, {
         projectId,

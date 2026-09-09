@@ -27,6 +27,8 @@ implements WorkspaceAccess {
     throw new Error(this.message)
   }
 
+  async manage(): Promise<never> { return this.unsupported() }
+
   async getIdentity(): Promise<WorkspaceIdentity> {
     return this.unsupported()
   }

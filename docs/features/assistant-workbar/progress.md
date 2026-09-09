@@ -1,5 +1,59 @@
 # 工作栏实现与验证进度
 
+## 2026-09-09 移动目录选择与 Git 控件修正
+
+- 本轮在已有文件管理改动上修正 [FR-W3、FR-W4、FR-W6](./prd.md#76-工作区)：
+  本机移动调用创建项目使用的 `settings.selectWorkspace()`；远程移动调用
+  `sshHosts.browseDirectories()`，按项目 Host 浏览。所选目录映射为工作区相对目标，
+  保留原名；取消不提交移动，外部目录在弹窗内提示限制。
+- 取消、分支、Fetch、历史展开和提交行接入共享控件样式；删除菜单项左对齐。
+  远程目录列表限制滚动高度，保留加载、空目录、失败和截断提示。
+- `npm test -- src/renderer/src/WorkspaceFilesPanel.test.tsx src/renderer/src/RightAssistantSidebar.resize.test.tsx src/main/workspace/workspace-management.test.ts src/main/ssh/ssh-host-directory-browser.test.ts`
+  通过 56 项，覆盖本机目录选择桥接、Windows 与 POSIX 目标映射、取消与越界选择、
+  远程 Host 和目录参数、取消未完成的浏览，以及 Git 控件与真实文件管理服务。
+- `npm test -- src/renderer/src/App.test.tsx -t "workspace|stale Git|opens the global assistant sidebar"`
+  通过 12 项。工作栏切换测试改为等待项目目录加载后出现刷新按钮。
+- `npm run typecheck`、`npm run lint` 和 `git diff --check` 通过。
+- 本轮整库 `npm test` 完整运行 944 秒，3642 项通过、61 项跳过、6 项失败。
+  工作栏加载时序断言已修正并定向复测通过；其余 5 项涉及 Agent 离线依赖测试超时、
+  DeepSeek Harness MCP 加载、Runtime 版本探测，以及 portable/release 打包产物检查。
+  未再次运行整库测试，不记为整库通过。
+- 隔离 Electron 窗口加载当前源码组件和 CSS，检查浅色、深色主题下 300px、420px 工作栏：
+  无横向溢出，分支与 Fetch 同行，提交行左对齐；移动弹窗没有路径输入框，取消为次按钮，
+  删除项计算样式为左对齐。截图保留于本机临时验证目录。此检查使用桥接替身，未自动操作
+  系统原生目录对话框，也不替代完整应用中的人工验收。
+- 尝试从隔离 Electron 配置调用真实 SSH 目录浏览服务时，已有凭据在
+  `safeStorage.decryptString` 解密失败，尚未建立 Host 连接。真实远程目录选择验收仍受阻；
+  未修改用户配置或远端文件，本轮未调用真实模型。
+
+## 2026-09-09 文件管理与 Git 工作区扩展
+
+- 已只读核对根目录规范、UI 设计系统、目录浏览组件、WorkspaceAccess 与 Agent 协议。
+  本轮范围定义于 [PRD 工作区 FR-W1 至 FR-W6](./prd.md#76-工作区)。
+- 当前生产路径具备目录、属性、文本预览和工作树 Diff；Agent 的写入及 Git operation
+  仍是只读拒绝接口。文件管理、分支与提交历史尚未实现或验证，不能视为完成。
+- 待完成源码实现、整库 test/typecheck/lint、真实桌面路径与当前源码 Linux Host 验证。
+  本轮开始前已有浏览器与工作区未提交改动，保留这些改动；不提交或推送。
+
+## 2026-09-09 工作区页签交互
+
+- 已核对当前工作树中的 `RightAssistantSidebar.tsx` 和 `WorkspaceFilesPanel.tsx` 差异：
+  文件预览期间目录树保持挂载，接入返回位置与焦点恢复、文件与未提交更改分段视图、
+  目录就地重试，以及文件预览和 Diff 操作。行为定义见 [PRD 工作区](./prd.md#76-工作区)。
+- `npm test -- src/renderer/src/RightAssistantSidebar.resize.test.tsx src/renderer/src/WorkspaceFilesPanel.test.tsx`
+  通过 35 项，覆盖目录展开、返回位置与焦点、视图选择、刷新失败保留内容、Markdown
+  源码切换，以及切换项目后丢弃未完成的文件预览。
+- `npm test -- src/renderer/src/App.test.tsx -t "workspace|stale Git"` 通过 11 项，
+  覆盖应用中的文件预览、路径复制、默认应用打开、返回和任务结束刷新。
+- 本轮 `npm test` 完整运行结果为 3629 通过、61 跳过、5 失败。失败位于 Agent 离线
+  依赖打包超时、DeepSeek Harness MCP 加载、Runtime 版本探测，以及两个打包产物检查，
+  不将该结果记为整库回归通过。
+- `npm run lint` 和差异空白检查通过。最新 `npm run typecheck` 被同时进行的浏览器
+  接口变更阻塞：测试替身缺少 `hide`、`setBounds`、`setViewport`，部分侧栏测试仍传递
+  已移除的浏览器回调。该轮类型检查未通过，未改动另一项任务的接口或测试替身。
+- 尚未进行真实桌面视觉验收；组件测试的滚动断言不代替实际窗口中的布局和滚动检查。
+- 范围仅限工作区页签，不包含项目文件搜索或其他页签改动。
+
 ## 2026-09-09 托管 Runtime 并行阻塞
 
 - Windows 完整隔离测试程序通过界面发送 OpenCode 原生双子代理、直连与 Continue 文件

@@ -9,6 +9,7 @@ import type { BrowserScreenshot } from './browser-screenshot'
 import {
   ElectronBrowserSession,
   type BrowserParentWindowHandle,
+  type BrowserWindowBounds,
   type BrowserWebContents
 } from './electron-browser-session'
 import type { BrowserLiveState } from '../../shared/contracts'
@@ -31,7 +32,8 @@ export type BrowserSessionLike = {
   getCurrentOrigin(): string | undefined
   isLoading(): boolean
   onLoadingChange(listener: (isLoading: boolean) => void): () => void
-  openInteraction(): Promise<BrowserScreenshot | undefined>
+  onNavigationChange?(listener: (url: string) => void): () => void
+  setViewport?(bounds?: BrowserWindowBounds): void
   stopLoading(): void
   captureScreenshot?(signal: AbortSignal): Promise<BrowserScreenshot>
   dispose(): Promise<void>
@@ -84,6 +86,7 @@ type BrowserSlot = {
   isLoading: boolean
   stopLoadingRequested: boolean
   removeLoadingListener: () => void
+  removeNavigationListener: () => void
   idleTimer?: ReturnType<typeof setTimeout>
   lastUsedAt: number
   released: boolean
@@ -172,6 +175,8 @@ export class BrowserService {
     (state: BrowserLiveState) => void
   >()
   private readonly liveStates = new Map<string, BrowserLiveState>()
+  private visibleConversationId?: string
+  private viewportBounds?: BrowserWindowBounds
   private lifecycle = new AbortController()
   private clearOperation?: Promise<void>
   private clearing = false
@@ -218,6 +223,19 @@ export class BrowserService {
     }
     return () => {
       this.stateListeners.delete(listener)
+    }
+  }
+
+  setViewport(
+    conversationId?: string,
+    bounds?: BrowserWindowBounds
+  ): void {
+    this.visibleConversationId = conversationId
+    this.viewportBounds = bounds
+    for (const [id, slot] of this.slots) {
+      slot.session.setViewport?.(
+        id === conversationId ? bounds : undefined
+      )
     }
   }
 
@@ -500,10 +518,16 @@ export class BrowserService {
       isLoading: session.isLoading(),
       stopLoadingRequested: false,
       removeLoadingListener: () => undefined,
+      removeNavigationListener: () => undefined,
       lastUsedAt: Date.now(),
       released: false
     }
     this.slots.set(conversationId, slot)
+    slot.session.setViewport?.(
+      this.visibleConversationId === conversationId
+        ? this.viewportBounds
+        : undefined
+    )
     slot.removeLoadingListener = session.onLoadingChange((isLoading) => {
       if (!isLoading) {
         slot.stopLoadingRequested = false
@@ -518,9 +542,49 @@ export class BrowserService {
       slot.isLoading = isLoading
       const current = this.liveStates.get(conversationId)
       if (current) {
-        this.emitState(conversationId, current.status, { isLoading })
+        const status =
+          slot.active?.status ??
+          (isLoading
+            ? 'loading'
+            : current.status === 'loading'
+              ? 'ready'
+              : current.status)
+        this.emitState(conversationId, status, { isLoading })
       }
     })
+    slot.removeNavigationListener =
+      session.onNavigationChange?.((url) => {
+        if (slot.released || this.slots.get(conversationId) !== slot) {
+          return
+        }
+        try {
+          const target = canonicalizeBrowserUrl(url)
+          slot.origin = target.origin
+          slot.lastUsedAt = Date.now()
+          this.scheduleIdleExpiry(slot)
+          const status = slot.active?.status ?? 'ready'
+          this.emitState(conversationId, status, { url: target.href })
+          void slot.driver
+            .getNavigationMetadata(AbortSignal.timeout(2_000))
+            .then((metadata) => {
+              if (
+                slot.released ||
+                this.slots.get(conversationId) !== slot ||
+                canonicalizeBrowserUrl(metadata.url).href !== target.href
+              ) {
+                return
+              }
+              this.emitState(
+                conversationId,
+                slot.active?.status ?? 'ready',
+                { url: target.href, canGoBack: metadata.canGoBack }
+              )
+            })
+            .catch(() => undefined)
+        } catch {
+          // The session rejects unsupported top-level URLs.
+        }
+      }) ?? (() => undefined)
     this.scheduleIdleExpiry(slot)
     return slot
   }
@@ -878,37 +942,6 @@ export class BrowserService {
     )
   }
 
-  async interact(
-    conversationId: string,
-    signal: AbortSignal
-  ): Promise<void> {
-    await this.runInSession(
-      conversationId,
-      signal,
-      'interactive',
-      false,
-      '浏览器交互',
-      async (slot, effectiveSignal) => {
-        await this.verifyCurrentOriginOrRelease(slot)
-        const closingFrame = await waitFor(
-          slot.session.openInteraction(),
-          effectiveSignal
-        )
-        const currentUrl = canonicalizeBrowserUrl(
-          slot.session.webContents.getURL()
-        )
-        slot.origin = currentUrl.origin
-        await this.captureFrame(
-          conversationId,
-          slot,
-          effectiveSignal,
-          currentUrl.href,
-          closingFrame
-        )
-      }
-    )
-  }
-
   async stopLoading(conversationId: string): Promise<boolean> {
     const slot = this.slots.get(conversationId)
     const active = slot?.active
@@ -1043,6 +1076,7 @@ export class BrowserService {
       slot.idleTimer = undefined
     }
     slot.removeLoadingListener()
+    slot.removeNavigationListener()
     slot.active?.controller.abort(new Error('浏览器会话已释放'))
     try {
       slot.driver.dispose()

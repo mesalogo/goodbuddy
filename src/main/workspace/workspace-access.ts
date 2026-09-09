@@ -95,6 +95,7 @@ export type WorkspaceChangesInput = {
 export type { WorkspaceChanges, WorkspaceChangedFile }
 
 export interface WorkspaceAccess {
+  manage(action: import('../../shared/workspace-management-contracts').WorkspaceManagementAction, signal?: AbortSignal): Promise<import('../../shared/workspace-management-contracts').WorkspaceManagementResult>
   getIdentity(): Promise<WorkspaceIdentity>
   listDirectory(input: WorkspaceDirectoryInput): Promise<DirectoryPage>
   stat(input: WorkspacePathInput): Promise<WorkspaceEntry>

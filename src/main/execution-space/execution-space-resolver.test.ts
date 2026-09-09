@@ -50,6 +50,7 @@ describe('ExecutionSpaceResolver', () => {
 
   it('binds remote access only to the configured Host and path', () => {
     const workspaceAccess = {
+      manage: vi.fn(),
       getIdentity: vi.fn(),
       listDirectory: vi.fn(),
       stat: vi.fn(),

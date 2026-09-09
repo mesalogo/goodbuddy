@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { workspaceManagementActionSchema } from './workspace-management-contracts'
 import {
   acpFrameDirectionSchema,
   agentIdentifierSchema,
@@ -571,6 +572,11 @@ const remoteWorkspaceReferenceFields = {
   workspaceId: agentIdentifierSchema,
   generation: workspaceGenerationSchema
 } as const
+
+export const remoteWorkspaceManageRequestSchema = z.object({
+  ...remoteWorkspaceReferenceFields,
+  action: workspaceManagementActionSchema
+}).strict()
 
 const remoteWorkspacePathFields = {
   ...remoteWorkspaceReferenceFields,

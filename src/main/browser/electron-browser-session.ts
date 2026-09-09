@@ -39,6 +39,7 @@ export type BrowserWebContents = {
     handler: (details: { url: string }) => { action: 'deny' }
   ): void
   capturePage?(): Promise<BrowserCapturedImage>
+  loadURL?(url: string): Promise<unknown>
   getURL(): string
   isLoadingMainFrame?(): boolean
   stop(): void
@@ -47,24 +48,26 @@ export type BrowserWebContents = {
   isDestroyed(): boolean
 }
 
-export type BrowserWindowHandle = {
+export type BrowserViewHandle = {
   webContents: BrowserWebContents
-  loadURL(url: string): Promise<unknown>
-  show(): void
-  minimize(): void
-  restore(): void
-  isMinimized(): boolean
-  focus(): void
-  on(event: string, listener: BrowserEventListener): unknown
-  off(event: string, listener: BrowserEventListener): unknown
-  destroy(): void
-  isDestroyed(): boolean
+  nativeView?: unknown
+  setVisible(visible: boolean): void
+  setBounds(bounds: BrowserWindowBounds): void
 }
 
 export type BrowserParentWindowHandle = {
-  setEnabled?(enabled: boolean): void
-  focus?(): void
+  contentView?: {
+    addChildView(view: unknown): void
+    removeChildView(view: unknown): void
+  }
   isDestroyed?(): boolean
+}
+
+export type BrowserWindowBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 export type BrowserPartitionSession = {
@@ -110,9 +113,9 @@ export type ElectronBrowserSessionOptions = {
   cleanupTimeoutMs?: number
   setupTimeoutMs?: number
   createPartition?: (partition: string) => Promise<BrowserPartitionSession>
-  createWindow?: (
+  createView?: (
     options: Record<string, unknown>
-  ) => Promise<BrowserWindowHandle>
+  ) => Promise<BrowserViewHandle>
   createProxy?: (policy: BrowserUrlPolicy) => FilteringProxyLike
   parentWindow?: BrowserParentWindowHandle
 }
@@ -214,11 +217,18 @@ async function defaultCreatePartition(
   ) as unknown as BrowserPartitionSession
 }
 
-async function defaultCreateWindow(
+async function defaultCreateView(
   options: Record<string, unknown>
-): Promise<BrowserWindowHandle> {
+): Promise<BrowserViewHandle> {
   const electron = await import('electron')
-  return new electron.BrowserWindow(options) as unknown as BrowserWindowHandle
+  const view = new electron.WebContentsView(options)
+  view.setVisible(false)
+  return {
+    nativeView: view,
+    webContents: view.webContents as unknown as BrowserWebContents,
+    setVisible: (visible) => view.setVisible(visible),
+    setBounds: (bounds) => view.setBounds(bounds)
+  }
 }
 
 export class ElectronBrowserSession {
@@ -226,26 +236,22 @@ export class ElectronBrowserSession {
   readonly webContents: BrowserWebContents
   private approvedOrigin?: string
   private readonly listeners: Listener[] = []
-  private interaction?: {
-    promise: Promise<BrowserScreenshot | undefined>
-    resolve(frame?: BrowserScreenshot): void
-  }
-  private interactionClosing?: Promise<void>
   private readonly loadingListeners = new Set<(isLoading: boolean) => void>()
+  private readonly navigationListeners = new Set<(url: string) => void>()
   private loading = false
   private disposed = false
 
   private constructor(
     private readonly policy: BrowserUrlPolicy,
     private readonly partitionSession: BrowserPartitionSession,
-    private readonly window: BrowserWindowHandle,
+    private readonly view: BrowserViewHandle,
     private readonly proxy: FilteringProxyLike,
     partition: string,
     private readonly cleanupTimeoutMs: number,
     private readonly parentWindow?: BrowserParentWindowHandle
   ) {
     this.partition = partition
-    this.webContents = window.webContents
+    this.webContents = view.webContents
   }
 
   static async create(
@@ -254,7 +260,7 @@ export class ElectronBrowserSession {
   ): Promise<ElectronBrowserSession> {
     const partition = `browser-${randomUUID()}`
     const createPartition = options.createPartition ?? defaultCreatePartition
-    const createWindow = options.createWindow ?? defaultCreateWindow
+    const createView = options.createView ?? defaultCreateView
     const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 5_000
     const setupTimeoutMs = options.setupTimeoutMs ?? 15_000
     if (!Number.isSafeInteger(cleanupTimeoutMs) || cleanupTimeoutMs < 1) {
@@ -275,7 +281,8 @@ export class ElectronBrowserSession {
       }
     }
     let partitionSession: BrowserPartitionSession | undefined
-    let window: BrowserWindowHandle | undefined
+    let view: BrowserViewHandle | undefined
+    let viewAttached = false
     let result: ElectronBrowserSession | undefined
     let setupStage = '启动代理'
     try {
@@ -318,19 +325,9 @@ export class ElectronBrowserSession {
         signal,
         setupTimeoutMs
       )
-      setupStage = '创建浏览器窗口'
-      window = await boundedSetup(
-        createWindow({
-          show: false,
-          width: 1280,
-          height: 900,
-          title: 'GoodBuddy 浏览器交互',
-          autoHideMenuBar: true,
-          ...(options.parentWindow
-            ? {
-                parent: options.parentWindow
-              }
-            : {}),
+      setupStage = '创建浏览器视图'
+      view = await boundedSetup(
+        createView({
           webPreferences: {
             partition,
             sandbox: true,
@@ -348,24 +345,32 @@ export class ElectronBrowserSession {
         }),
         signal,
         setupTimeoutMs,
-        (lateWindow) => {
-          if (!lateWindow.isDestroyed()) {
-            lateWindow.destroy()
-          } else if (!lateWindow.webContents.isDestroyed()) {
-            lateWindow.webContents.destroy()
+        (lateView) => {
+          if (!lateView.webContents.isDestroyed()) {
+            lateView.webContents.close?.({ waitForBeforeUnload: false })
+            if (!lateView.webContents.isDestroyed()) {
+              lateView.webContents.destroy()
+            }
           }
         }
       )
+      if (options.parentWindow?.contentView && view.nativeView) {
+        options.parentWindow.contentView.addChildView(view.nativeView)
+        viewAttached = true
+      }
       setupStage = '加载初始页面'
+      if (!view.webContents.loadURL) {
+        throw new Error('浏览器视图导航不可用')
+      }
       await boundedSetup(
-        window.loadURL('about:blank'),
+        view.webContents.loadURL('about:blank'),
         signal,
         setupTimeoutMs
       )
       result = new ElectronBrowserSession(
         options.policy,
         partitionSession,
-        window,
+        view,
         managedProxy,
         partition,
         cleanupTimeoutMs,
@@ -377,8 +382,16 @@ export class ElectronBrowserSession {
     } catch (error) {
       if (result) {
         await result.dispose().catch(() => undefined)
-      } else if (window && !window.isDestroyed()) {
-        window.destroy()
+      } else if (view) {
+        if (viewAttached && view.nativeView) {
+          options.parentWindow?.contentView?.removeChildView(view.nativeView)
+        }
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.close?.({ waitForBeforeUnload: false })
+          if (!view.webContents.isDestroyed()) {
+            view.webContents.destroy()
+          }
+        }
         await cleanupIsolatedState(
           partitionSession,
           managedProxy,
@@ -422,21 +435,6 @@ export class ElectronBrowserSession {
     this.listen(contents, 'did-stop-loading', () => {
       this.setLoading(contents.isLoadingMainFrame?.() ?? false)
     })
-    this.listen(
-      this.window,
-      'close',
-      (event: { preventDefault(): void }) => {
-        if (this.disposed) {
-          return
-        }
-        event.preventDefault()
-        if (this.interaction) {
-          void this.captureAndFinishInteraction()
-        } else {
-          this.window.minimize()
-        }
-      }
-    )
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     this.listen(contents, 'will-navigate', (event: { preventDefault(): void }, details: { url?: string } | string) => {
       const url = typeof details === 'string' ? details : details.url
@@ -471,6 +469,15 @@ export class ElectronBrowserSession {
     this.listen(contents, 'did-navigate', (_event: unknown, url: string) => {
       if (url && !this.updateOriginFromUrl(url)) {
         contents.stop()
+        return
+      }
+      if (url) {
+        this.emitNavigation(url)
+      }
+    })
+    this.listen(contents, 'did-navigate-in-page', (_event: unknown, url: string) => {
+      if (url) {
+        this.emitNavigation(url)
       }
     })
     this.listen(
@@ -553,6 +560,30 @@ export class ElectronBrowserSession {
     }
   }
 
+  onNavigationChange(listener: (url: string) => void): () => void {
+    this.assertOpen()
+    this.navigationListeners.add(listener)
+    return () => {
+      this.navigationListeners.delete(listener)
+    }
+  }
+
+  private emitNavigation(url: string): void {
+    for (const listener of this.navigationListeners) {
+      listener(url)
+    }
+  }
+
+  setViewport(bounds?: BrowserWindowBounds): void {
+    this.assertOpen()
+    if (!bounds) {
+      this.view.setVisible(false)
+      return
+    }
+    this.view.setBounds(bounds)
+    this.view.setVisible(true)
+  }
+
   private setLoading(isLoading: boolean): void {
     if (this.loading === isLoading) {
       return
@@ -594,91 +625,6 @@ export class ElectronBrowserSession {
     this.approvedOrigin = target.origin
   }
 
-  openInteraction(): Promise<BrowserScreenshot | undefined> {
-    this.assertOpen()
-    if (this.interaction) {
-      this.setParentEnabled(false)
-      if (this.window.isMinimized()) {
-        this.window.restore()
-      }
-      this.window.show()
-      this.window.focus()
-      return this.interaction.promise
-    }
-    let resolve!: (frame?: BrowserScreenshot) => void
-    const promise = new Promise<BrowserScreenshot | undefined>(
-      (resolvePromise) => {
-        resolve = resolvePromise
-      }
-    )
-    this.interaction = { promise, resolve }
-    this.setParentEnabled(false)
-    try {
-      if (this.window.isMinimized()) {
-        this.window.restore()
-      }
-      this.window.show()
-      this.window.focus()
-    } catch (error) {
-      this.finishInteraction()
-      throw error
-    }
-    return promise
-  }
-
-  private captureAndFinishInteraction(): Promise<void> {
-    if (this.interactionClosing) {
-      return this.interactionClosing
-    }
-    const operation = (async (): Promise<void> => {
-      let frame: BrowserScreenshot | undefined
-      try {
-        frame = await this.captureScreenshot(AbortSignal.timeout(2_000))
-      } catch {
-        // The session remains usable even if the final visible frame fails.
-      }
-      try {
-        if (!this.disposed && !this.window.isDestroyed()) {
-          this.window.minimize()
-        }
-      } catch {
-        // Resolving interaction must not depend on native minimize success.
-      }
-      this.finishInteraction(frame)
-    })()
-    this.interactionClosing = operation
-    void operation.finally(() => {
-      if (this.interactionClosing === operation) {
-        this.interactionClosing = undefined
-      }
-    })
-    return operation
-  }
-
-  private finishInteraction(frame?: BrowserScreenshot): void {
-    const interaction = this.interaction
-    this.interaction = undefined
-    this.setParentEnabled(true)
-    interaction?.resolve(frame)
-  }
-
-  private setParentEnabled(enabled: boolean): void {
-    try {
-      if (
-        !this.parentWindow ||
-        this.parentWindow.isDestroyed?.() === true
-      ) {
-        return
-      }
-      this.parentWindow.setEnabled?.(enabled)
-      if (enabled) {
-        this.parentWindow.focus?.()
-      }
-    } catch {
-      // Parent-window state must not break browser-session cleanup.
-    }
-  }
-
   async dispose(): Promise<void> {
     if (this.disposed) {
       return
@@ -686,7 +632,7 @@ export class ElectronBrowserSession {
     this.disposed = true
     this.approvedOrigin = undefined
     this.loadingListeners.clear()
-    this.finishInteraction()
+    this.navigationListeners.clear()
     for (const { target, event, listener } of this.listeners.splice(0)) {
       target.off(event, listener)
     }
@@ -694,10 +640,15 @@ export class ElectronBrowserSession {
       this.webContents.debugger.detach()
     }
     this.webContents.stop()
-    if (!this.window.isDestroyed()) {
-      this.window.destroy()
-    } else if (!this.webContents.isDestroyed()) {
-      this.webContents.destroy()
+    this.view.setVisible(false)
+    if (this.view.nativeView) {
+      this.parentWindow?.contentView?.removeChildView(this.view.nativeView)
+    }
+    if (!this.webContents.isDestroyed()) {
+      this.webContents.close?.({ waitForBeforeUnload: false })
+      if (!this.webContents.isDestroyed()) {
+        this.webContents.destroy()
+      }
     }
     await cleanupIsolatedState(
       this.partitionSession,

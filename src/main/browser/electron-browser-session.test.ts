@@ -5,7 +5,7 @@ import {
   ElectronBrowserSession,
   type BrowserPartitionSession,
   type BrowserWebContents,
-  type BrowserWindowHandle,
+  type BrowserViewHandle,
   type FilteringProxyLike
 } from './electron-browser-session'
 
@@ -21,7 +21,6 @@ function createHarness() {
   const debuggerEvents = new EventEmitter()
   const contentEvents = new EventEmitter()
   const partitionEvents = new EventEmitter()
-  const windowEvents = new EventEmitter()
   let currentUrl = ''
   let loadingMainFrame = false
   let openHandler: ((details: { url: string }) => { action: 'deny' }) | undefined
@@ -63,34 +62,20 @@ function createHarness() {
       openHandler = handler
     }),
     capturePage: vi.fn(async () => capturedImage),
+    loadURL: vi.fn(async (url: string) => {
+      currentUrl = url
+    }),
     getURL: vi.fn(() => currentUrl),
     isLoadingMainFrame: vi.fn(() => loadingMainFrame),
     stop: vi.fn(),
     destroy: vi.fn(),
     isDestroyed: vi.fn(() => false)
   }
-  const window: BrowserWindowHandle = {
+  const view: BrowserViewHandle = {
+    nativeView: {},
     webContents,
-    loadURL: vi.fn(async (url: string) => {
-      currentUrl = url
-    }),
-    show: vi.fn(),
-    minimize: vi.fn(),
-    restore: vi.fn(),
-    isMinimized: vi.fn(() => false),
-    focus: vi.fn(),
-    on: (event, listener) =>
-      windowEvents.on(
-        event,
-        listener as (...argumentsValue: unknown[]) => void
-      ),
-    off: (event, listener) =>
-      windowEvents.off(
-        event,
-        listener as (...argumentsValue: unknown[]) => void
-      ),
-    destroy: vi.fn(),
-    isDestroyed: vi.fn(() => false)
+    setVisible: vi.fn(),
+    setBounds: vi.fn(),
   }
   let permissionCheck: ((...values: unknown[]) => boolean) | undefined
   let permissionRequest:
@@ -143,13 +128,12 @@ function createHarness() {
     contentEvents,
     debuggerEvents,
     partitionEvents,
-    windowEvents,
     partition,
     proxy,
     policy,
     sendCommand,
     webContents,
-    window,
+    window: view,
     setCurrentUrl(value: string) {
       currentUrl = value
     },
@@ -166,7 +150,7 @@ function createHarness() {
 describe('ElectronBrowserSession', () => {
   it('creates an isolated sandboxed partition and denies privileged capabilities', async () => {
     const harness = createHarness()
-    const createWindow = vi.fn(async (options: Record<string, unknown>) => {
+    const createView = vi.fn(async (options: Record<string, unknown>) => {
       const preferences = options.webPreferences as Record<string, unknown>
       expect(preferences).toMatchObject({
         sandbox: true,
@@ -181,7 +165,7 @@ describe('ElectronBrowserSession', () => {
     const session = await ElectronBrowserSession.create({
       policy: harness.policy,
       createPartition: vi.fn(async () => harness.partition),
-      createWindow,
+      createView,
       createProxy: () => harness.proxy
     })
 
@@ -208,9 +192,9 @@ describe('ElectronBrowserSession', () => {
     expect(harness.getOpenHandler()?.({ url: 'https://example.com' })).toEqual({
       action: 'deny'
     })
-    expect(harness.window.loadURL).toHaveBeenCalledWith('about:blank')
+    expect(harness.webContents.loadURL).toHaveBeenCalledWith('about:blank')
     expect(
-      vi.mocked(harness.window.loadURL).mock.invocationCallOrder[0]
+      vi.mocked(harness.webContents.loadURL!).mock.invocationCallOrder[0]
     ).toBeLessThan(
       vi.mocked(harness.webContents.debugger.attach).mock
         .invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
@@ -230,6 +214,16 @@ describe('ElectronBrowserSession', () => {
     })
     session.stopLoading()
     expect(harness.webContents.stop).toHaveBeenCalledOnce()
+    session.setViewport({ x: 900, y: 120, width: 420, height: 640 })
+    expect(harness.window.setBounds).toHaveBeenCalledWith({
+      x: 900,
+      y: 120,
+      width: 420,
+      height: 640
+    })
+    expect(harness.window.setVisible).toHaveBeenLastCalledWith(true)
+    session.setViewport()
+    expect(harness.window.setVisible).toHaveBeenLastCalledWith(false)
 
     const downloadEvent = { preventDefault: vi.fn() }
     const item = { cancel: vi.fn() }
@@ -256,7 +250,7 @@ describe('ElectronBrowserSession', () => {
     const session = await ElectronBrowserSession.create({
       policy: harness.policy,
       createPartition: async () => harness.partition,
-      createWindow: async () => harness.window,
+      createView: async () => harness.window,
       createProxy: () => harness.proxy
     })
     const target = await harness.policy.validate(
@@ -306,7 +300,7 @@ describe('ElectronBrowserSession', () => {
     const session = await ElectronBrowserSession.create({
       policy: harness.policy,
       createPartition: async () => harness.partition,
-      createWindow: async () => harness.window,
+      createView: async () => harness.window,
       createProxy: () => harness.proxy
     })
     expect(session.isLoading()).toBe(true)
@@ -328,72 +322,30 @@ describe('ElectronBrowserSession', () => {
     await session.dispose()
   })
 
-  it('restores the browser for interaction and minimizes it on close', async () => {
+  it('attaches the browser view to the parent content tree and removes it on dispose', async () => {
     const harness = createHarness()
     const parentWindow = {
-      setEnabled: vi.fn(),
-      focus: vi.fn(),
+      contentView: {
+        addChildView: vi.fn(),
+        removeChildView: vi.fn()
+      },
       isDestroyed: vi.fn(() => false)
     }
-    let createdWindowOptions: Record<string, unknown> | undefined
-    const createWindow = vi.fn(
-      async (options: Record<string, unknown>) => {
-        createdWindowOptions = options
-        return harness.window
-      }
-    )
     const session = await ElectronBrowserSession.create({
       policy: harness.policy,
       parentWindow,
       createPartition: async () => harness.partition,
-      createWindow,
+      createView: async () => harness.window,
       createProxy: () => harness.proxy
     })
 
-    expect(createWindow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        parent: parentWindow,
-        show: false,
-        title: 'GoodBuddy 浏览器交互'
-      })
+    expect(parentWindow.contentView.addChildView).toHaveBeenCalledWith(
+      harness.window.nativeView
     )
-    expect(createdWindowOptions?.modal).toBeUndefined()
-    const interaction = session.openInteraction()
-    expect(parentWindow.setEnabled).toHaveBeenCalledWith(false)
-    expect(harness.window.show).toHaveBeenCalledOnce()
-    expect(harness.window.focus).toHaveBeenCalledOnce()
-    const closeEvent = { preventDefault: vi.fn() }
-    harness.windowEvents.emit('close', closeEvent)
-
-    await expect(interaction).resolves.toEqual({
-      type: 'image',
-      mimeType: 'image/jpeg',
-      data: '/9j/2Q=='
-    })
-    expect(closeEvent.preventDefault).toHaveBeenCalledOnce()
-    expect(harness.webContents.capturePage).toHaveBeenCalledOnce()
-    expect(harness.window.minimize).toHaveBeenCalledOnce()
-    expect(parentWindow.setEnabled).toHaveBeenLastCalledWith(true)
-    expect(parentWindow.focus).toHaveBeenCalledOnce()
-    expect(
-      vi.mocked(harness.webContents.capturePage!).mock
-        .invocationCallOrder[0]
-    ).toBeLessThan(
-      vi.mocked(harness.window.minimize).mock.invocationCallOrder[0] ??
-        Number.POSITIVE_INFINITY
-    )
-    const repeatedCloseEvent = { preventDefault: vi.fn() }
-    harness.windowEvents.emit('close', repeatedCloseEvent)
-    expect(repeatedCloseEvent.preventDefault).toHaveBeenCalledOnce()
-    expect(harness.window.minimize).toHaveBeenCalledTimes(2)
-    expect(harness.window.destroy).not.toHaveBeenCalled()
-    vi.mocked(harness.window.isMinimized).mockReturnValue(true)
-    const reopenedInteraction = session.openInteraction()
-    expect(harness.window.restore).toHaveBeenCalledOnce()
-    harness.windowEvents.emit('close', { preventDefault: vi.fn() })
-    await reopenedInteraction
     await session.dispose()
-    expect(harness.window.destroy).toHaveBeenCalledOnce()
+    expect(parentWindow.contentView.removeChildView).toHaveBeenCalledWith(
+      harness.window.nativeView
+    )
   })
 
   it('detaches listeners and clears isolated data on idempotent disposal', async () => {
@@ -401,14 +353,14 @@ describe('ElectronBrowserSession', () => {
     const session = await ElectronBrowserSession.create({
       policy: harness.policy,
       createPartition: async () => harness.partition,
-      createWindow: async () => harness.window,
+      createView: async () => harness.window,
       createProxy: () => harness.proxy
     })
     await session.dispose()
     await session.dispose()
 
     expect(harness.webContents.debugger.detach).toHaveBeenCalledOnce()
-    expect(harness.window.destroy).toHaveBeenCalledOnce()
+    expect(harness.webContents.destroy).toHaveBeenCalledOnce()
     expect(harness.partition.closeAllConnections).toHaveBeenCalledOnce()
     expect(harness.partition.clearData).toHaveBeenCalledOnce()
     expect(harness.proxy.dispose).toHaveBeenCalledOnce()
@@ -423,11 +375,11 @@ describe('ElectronBrowserSession', () => {
       ElectronBrowserSession.create({
         policy: harness.policy,
         createPartition: async () => harness.partition,
-        createWindow: async () => harness.window,
+        createView: async () => harness.window,
         createProxy: () => harness.proxy
       })
     ).rejects.toThrow('无法创建安全浏览器会话')
-    expect(harness.window.destroy).toHaveBeenCalled()
+    expect(harness.webContents.destroy).toHaveBeenCalled()
     expect(harness.partition.clearData).toHaveBeenCalled()
     expect(harness.proxy.dispose).toHaveBeenCalled()
   })
@@ -439,7 +391,7 @@ describe('ElectronBrowserSession', () => {
       policy: harness.policy,
       setupTimeoutMs: 5,
       createPartition: () => partitionGate.promise,
-      createWindow: async () => harness.window,
+      createView: async () => harness.window,
       createProxy: () => harness.proxy
     })
 
@@ -451,20 +403,22 @@ describe('ElectronBrowserSession', () => {
     expect(harness.partition.closeAllConnections).toHaveBeenCalledOnce()
   })
 
-  it('destroys a hidden window that resolves after setup times out', async () => {
+  it('destroys a detached view that resolves after setup times out', async () => {
     const harness = createHarness()
-    const windowGate = deferred<BrowserWindowHandle>()
+    const viewGate = deferred<BrowserViewHandle>()
     const creation = ElectronBrowserSession.create({
       policy: harness.policy,
       setupTimeoutMs: 5,
       createPartition: async () => harness.partition,
-      createWindow: () => windowGate.promise,
+      createView: () => viewGate.promise,
       createProxy: () => harness.proxy
     })
 
     await expect(creation).rejects.toThrow('无法创建安全浏览器会话')
-    windowGate.resolve(harness.window)
-    await vi.waitFor(() => expect(harness.window.destroy).toHaveBeenCalledOnce())
+    viewGate.resolve(harness.window)
+    await vi.waitFor(() =>
+      expect(harness.webContents.destroy).toHaveBeenCalledOnce()
+    )
     expect(harness.partition.clearData).toHaveBeenCalledOnce()
     expect(harness.proxy.dispose).toHaveBeenCalledOnce()
   })
@@ -480,7 +434,7 @@ describe('ElectronBrowserSession', () => {
       policy: harness.policy,
       setupTimeoutMs: 5,
       createPartition: async () => harness.partition,
-      createWindow: async () => harness.window,
+      createView: async () => harness.window,
       createProxy: () => proxy
     })
 

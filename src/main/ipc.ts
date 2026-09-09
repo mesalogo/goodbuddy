@@ -27,9 +27,9 @@ import {
   agentQuestionResponseSchema,
   agentRequestSchema,
   browserBackRequestSchema,
-  browserInteractRequestSchema,
   browserNavigateRequestSchema,
   browserReloadRequestSchema,
+  browserSetViewportRequestSchema,
   browserStopLoadingRequestSchema,
   browserStopRequestSchema,
   clipboardTextSchema,
@@ -1100,10 +1100,10 @@ export function registerIpcHandlers(
       signal: AbortSignal
     ): Promise<{ url: string; origin: string }>
     stopLoading(conversationId: string): boolean | Promise<boolean>
-    interact(
-      conversationId: string,
-      signal: AbortSignal
-    ): Promise<void>
+    setViewport(
+      conversationId?: string,
+      bounds?: { x: number; y: number; width: number; height: number }
+    ): void
     releaseConversation(conversationId: string): Promise<void>
     onState(listener: (state: BrowserLiveState) => void): () => void
   },
@@ -3640,19 +3640,6 @@ export function registerIpcHandlers(
       return manager.close(
         event.sender.id,
         request.sessionId
-      )
-    }
-  )
-
-  registerHandler(
-    ipcChannels.browserInteract,
-    async (event, input: unknown) => {
-      assertTrustedSender(event, window)
-      const request = browserInteractRequestSchema.parse(input)
-      const control = await requireBrowserControl()
-      await control.interact(
-        request.conversationId,
-        new AbortController().signal
       )
     }
   )
@@ -6595,6 +6582,19 @@ export function registerIpcHandlers(
     }
   )
 
+  registerHandler(ipcChannels.workspaceManage, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { workspaceManagementRequestSchema, workspaceManagementResultSchema } = await import('../shared/workspace-management-contracts')
+    const value = workspaceManagementRequestSchema.parse(input)
+    const project = assistantDatabase.getProject(value.projectId)
+    if (project.executionSpace?.kind === 'ssh') await requireRemoteProjectsEnabled()
+    const executionSpace = spaceResolver.resolveProject(project)
+    try {
+      return workspaceManagementResultSchema.parse(await executionSpace.workspaceAccess.manage(value.action))
+    } finally {
+      await executionSpace.workspaceAccess.dispose()
+    }
+  })
   registerHandler(
     ipcChannels.workspaceChangesGet,
     async (event, input: unknown) => {
@@ -6630,6 +6630,24 @@ export function registerIpcHandlers(
       } finally {
         await executionSpace.workspaceAccess.dispose()
       }
+    }
+  )
+
+  registerHandler(
+    ipcChannels.browserSetViewport,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const request = browserSetViewportRequestSchema.parse(input)
+      if (!request.conversationId || !request.bounds) {
+        browserControl?.setViewport()
+        return
+      }
+      browserControl?.setViewport(request.conversationId, {
+        x: request.bounds.x,
+        y: request.bounds.y,
+        width: request.bounds.width,
+        height: request.bounds.height
+      })
     }
   )
   registerHandler(

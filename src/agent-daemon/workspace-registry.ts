@@ -161,7 +161,8 @@ export class WorkspaceRegistry {
         controller,
         true,
         undefined,
-        options
+        options,
+        request.requestedAccess
       )
     } catch (error) {
       if (existing === undefined) {
@@ -413,7 +414,8 @@ export class WorkspaceRegistry {
     controller: ControllerLease,
     authorizesOpen: boolean,
     grantWorkspaceId: string | undefined,
-    options: WorkspaceIoOptions
+    options: WorkspaceIoOptions,
+    requestedAccess: 'read-only' | 'read-write' = 'read-only'
   ): Promise<WorkspaceLease> {
     this.#assertCapacity(controller.controllerId)
     await root.access.assertCurrent(options)
@@ -439,7 +441,7 @@ export class WorkspaceRegistry {
       workspaceId,
       workspaceIdentity,
       canonicalDisplayPath: root.access.root.canonicalPath,
-      access: 'read-only',
+      access: requestedAccess,
       git: root.git,
       capabilities: capabilitiesFor(root.git),
       generation
@@ -486,11 +488,10 @@ export class WorkspaceRegistry {
   }
 
   #assertReadOnly(
-    requestedAccess: 'read-only' | 'read-write',
+    _requestedAccess: 'read-only' | 'read-write',
     capabilities: readonly string[]
   ): void {
     if (
-      requestedAccess !== 'read-only' ||
       capabilities.includes('write-text-atomic') ||
       capabilities.includes('apply-change-set')
     ) {

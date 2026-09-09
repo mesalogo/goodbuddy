@@ -36,6 +36,7 @@ function createLease(
   overrides: Partial<RemoteWorkspaceTransportLease> = {}
 ): RemoteWorkspaceTransportLease {
   return {
+    manageWorkspace: vi.fn(),
     binding: {
       hostId: binding.hostId,
       hostRevision: 2,

@@ -1,4 +1,5 @@
 import {
+  remoteWorkspaceManageRequestSchema,
   remoteGitDiffRequestSchema,
   remoteGitDiffResultSchema,
   remoteGitStatusRequestSchema,
@@ -25,6 +26,8 @@ import type {
   ProtocolMethodHandler
 } from './protocol-server'
 import type { WorkspaceGitService } from './workspace-git-service'
+import { manageWorkspace } from '../main/workspace/workspace-management'
+import { workspaceManagementResultSchema } from '../shared/workspace-management-contracts'
 import type { WorkspaceRegistry } from './workspace-registry'
 import {
   WorkspaceServiceError,
@@ -35,6 +38,7 @@ const DEFAULT_WORKSPACE_REQUEST_TIMEOUT_MS = 30_000
 const MAXIMUM_WORKSPACE_REQUEST_TIMEOUT_MS = 120_000
 
 export const WORKSPACE_PROTOCOL_METHODS = [
+  'workspace/manage',
   'workspace/validate',
   'workspace/open',
   'workspace/resume',
@@ -77,6 +81,15 @@ export function createWorkspaceProtocolMethods(options: {
   }
 
   return {
+    'workspace/manage': async (params, context) => {
+      const request = remoteWorkspaceManageRequestSchema.parse(params)
+      return await invoke(context, async (io) => {
+        const workspace = await options.workspaces.get(request.workspaceId, request.generation, context.controller, io)
+        if (workspace.handle.access !== 'read-write') throw new WorkspaceServiceError('Workspace management requires read-write access', 'read-only')
+        await workspace.access.assertCurrent(io)
+        return workspaceManagementResultSchema.parse(await manageWorkspace(workspace.access.root.canonicalPath, request.action, io.signal))
+      })
+    },
     'workspace/validate': async (params, context) =>
       await invoke(context, async (io) =>
         remoteWorkspaceValidateResultSchema.parse(

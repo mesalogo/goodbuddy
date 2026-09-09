@@ -1410,10 +1410,32 @@ export const browserStopRequestSchema = z
   })
   .strict()
 
-export const browserInteractRequestSchema = browserStopRequestSchema
 export const browserBackRequestSchema = browserStopRequestSchema
 export const browserReloadRequestSchema = browserStopRequestSchema
 export const browserStopLoadingRequestSchema = browserStopRequestSchema
+
+export const browserSetViewportRequestSchema = z
+  .object({
+    conversationId: conversationIdSchema.optional(),
+    bounds: z
+      .object({
+        x: z.number().int().nonnegative(),
+        y: z.number().int().nonnegative(),
+        width: z.number().int().positive().max(8_192),
+        height: z.number().int().positive().max(8_192)
+      })
+      .strict()
+      .optional()
+  })
+  .strict()
+  .refine(
+    (value) => Boolean(value.conversationId) === Boolean(value.bounds),
+    '浏览器视口参数不完整'
+  )
+
+export type BrowserViewportBounds = NonNullable<
+  z.infer<typeof browserSetViewportRequestSchema>['bounds']
+>
 
 export const browserNavigateRequestSchema = z
   .object({
@@ -1619,7 +1641,10 @@ export type DesktopApi = {
     back: (conversationId: string) => Promise<void>
     reload: (conversationId: string) => Promise<void>
     stopLoading: (conversationId: string) => Promise<void>
-    interact: (conversationId: string) => Promise<void>
+    setViewport: (
+      conversationId?: string,
+      bounds?: BrowserViewportBounds
+    ) => Promise<void>
     stop: (conversationId: string) => Promise<void>
     onState: (listener: (state: BrowserLiveState) => void) => () => void
   }
@@ -1891,6 +1916,7 @@ export type DesktopApi = {
     ) => () => void
   }
   workspace: {
+    manage: (projectId: string, action: import('./workspace-management-contracts').WorkspaceManagementAction) => Promise<import('./workspace-management-contracts').WorkspaceManagementResult>
     getChanges: (projectId: string) => Promise<WorkspaceChanges>
     getFileDiff: (projectId: string, path: string) => Promise<WorkspaceChanges>
     listDirectory: (

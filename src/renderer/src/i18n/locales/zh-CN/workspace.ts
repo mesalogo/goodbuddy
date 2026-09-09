@@ -1,4 +1,16 @@
 export const workspace = {
+  management: {
+    gitWorkspace: 'Git 工作区', more: '{{name}} 的更多操作', browse: '浏览此目录', parent: '返回父目录',
+    createFile: '新建文件', createDirectory: '新建目录', rename: '重命名', move: '移动', delete: '删除', properties: '属性',
+    defaultOpen: '使用默认应用打开', name: '名称', nameOnly: '名称不能包含路径分隔符', destination: '目标目录',
+    chooseDirectory: '选择目录', moveHelp: '请选择当前工作区内的目录，移动后保留文件或目录原名。',
+    destinationOutside: '请选择当前工作区 {{root}} 内的目录，暂不支持移动到此工作区之外。',
+    destinationUnavailable: '项目目录不可用，请重新打开工作区后重试。',
+    path: '路径', type: '类型', size: '大小', modified: '修改时间', cancel: '取消', deleteWarning: '将永久删除该对象及目录内全部内容，无法撤销。',
+    branch: '分支', searchBranch: '搜索本地或远程分支 / 新分支名称', createBranch: '创建并切换分支', fetch: 'Fetch', local: '本地', remote: '远程',
+    history: '提交历史', resizeHistory: '调整提交历史高度', noCommits: '当前分支没有提交', loadMore: '加载更多提交', backHistory: '返回提交历史', backCommit: '返回提交文件',
+    changedView: '更改显示方式', list: '列表', tree: '目录树'
+  },
   builtInDefaultProject: {
     name: '默认项目',
     description: 'GoodBuddy 默认工作区'
@@ -312,6 +324,12 @@ export const workspace = {
       }
     },
     workspace: {
+      copyPath: '复制相对路径',
+      openFile: '用默认应用打开',
+      refreshing: '正在刷新…',
+      preview: '预览',
+      source: '源码',
+      copyError: '复制路径失败。',
       back: '返回工作区',
       title: '工作区',
       projectTitle: '项目工作区',
@@ -340,6 +358,7 @@ export const workspace = {
       interact: '交互',
       interacting: '交互中',
       close: '关闭浏览器',
+      viewport: '浏览器页面',
       empty:
         '输入地址并前往可打开页面；Agent 打开网页后，同一会话的实时画面也会显示在这里。',
       toolbar: {
@@ -349,7 +368,9 @@ export const workspace = {
         stopLoading: '停止加载',
         address: '浏览器地址',
         addressPlaceholder: '输入网址',
-        go: '前往'
+        go: '前往',
+        fullscreen: '全屏显示浏览器',
+        exitFullscreen: '退出浏览器全屏'
       },
       statuses: {
         creating: '正在启动浏览器…',
@@ -422,6 +443,13 @@ export const workspace = {
     taskList: '任务列表'
   },
   files: {
+    view: '工作区视图',
+    filesView: '文件',
+    changesView: '未提交更改（{{count}}）',
+    backToChanges: '返回未提交更改',
+    viewCurrentFile: '查看当前文件',
+    noChanges: '没有未提交的更改。修改项目文件后，可在这里查看差异。',
+    notRepository: '当前目录不是 Git 仓库。仍可在文件视图中浏览项目文件。',
     staged: '已暂存更改',
     unstaged: '工作树更改',
     noDiff: '没有文本差异（文件可能为空，或仅状态发生变化）。',

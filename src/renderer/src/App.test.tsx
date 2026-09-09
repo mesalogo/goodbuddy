@@ -250,7 +250,7 @@ const api: DesktopApi = {
     back: vi.fn(async () => {}),
     reload: vi.fn(async () => {}),
     stopLoading: vi.fn(async () => {}),
-    interact: vi.fn(async () => {}),
+    setViewport: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     onState: vi.fn((listener) => {
       browserListener = listener;
@@ -508,6 +508,7 @@ const api: DesktopApi = {
     }),
   },
   workspace: {
+    manage: vi.fn(async () => ({ kind: 'branches' as const, current: 'main', branches: [] })),
     getFileDiff: vi.fn(),
     getChanges: vi.fn(async () => ({
       rootPath: "C:\\Workspace",
@@ -5469,6 +5470,14 @@ describe("App", () => {
       "README.md",
       0,
     );
+    fireEvent.click(screen.getByRole("button", { name: "复制相对路径" }));
+    await waitFor(() =>
+      expect(api.clipboard.writeText).toHaveBeenCalledWith("README.md"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "用默认应用打开" }));
+    await waitFor(() =>
+      expect(api.workspace.openPath).toHaveBeenCalledWith(projectId, "README.md", "file"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
     expect(
       await screen.findByRole("button", { name: "README.md" }),
@@ -5515,16 +5524,10 @@ describe("App", () => {
 
     fireEvent.click(screen.getByLabelText("切换助手工作栏"));
     fireEvent.click(await screen.findByRole("tab", { name: "工作区" }));
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "在系统资源管理器中打开文件夹 docs",
-      }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "使用默认应用打开文件 README.md",
-      }),
-    );
+    fireEvent.click(await screen.findByLabelText("docs 的更多操作"));
+    fireEvent.click(within(screen.getByRole("menu", { name: "docs" })).getByRole("menuitem", { name: "使用默认应用打开" }));
+    fireEvent.click(screen.getByLabelText("README.md 的更多操作"));
+    fireEvent.click(within(screen.getByRole("menu", { name: "README.md" })).getByRole("menuitem", { name: "使用默认应用打开" }));
     await waitFor(() =>
       expect(api.workspace.openPath).toHaveBeenCalledWith(
         projectId,
@@ -9960,14 +9963,26 @@ describe("App", () => {
       screen.queryByRole("heading", { name: "项目工作区" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "刷新工作区文件" }),
+      await screen.findByRole("button", { name: "刷新工作区文件" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/选择文件后在当前工作区内预览/),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "浏览器" }));
-    expect(screen.getByText("实时浏览器")).toBeInTheDocument();
+    expect(screen.queryByText("实时浏览器")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("浏览器页面")).toBeInTheDocument();
     expect(screen.getByText(/Agent 打开网页后/)).toBeInTheDocument();
+    const fullscreen = screen.getByRole("button", {
+      name: "全屏显示浏览器",
+    });
+    fireEvent.click(fullscreen);
+    expect(sidebar).toHaveClass("assistant-sidebar--browser-fullscreen");
+    const exitFullscreen = screen.getByRole("button", {
+      name: "退出浏览器全屏",
+    });
+    expect(exitFullscreen).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(exitFullscreen);
+    expect(sidebar).not.toHaveClass("assistant-sidebar--browser-fullscreen");
     fireEvent.click(screen.getByRole("tab", { name: "成果" }));
     expect(
       screen.getByRole("button", { name: "导入 PDF、图片或网页" }),
@@ -10044,11 +10059,11 @@ describe("App", () => {
       within(toolbar).getByRole("button", { name: "刷新" }),
     ).toBeDisabled();
     expect(
-      within(toolbar).getByRole("button", { name: "交互" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "交互" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "关闭浏览器" }),
+    ).not.toBeInTheDocument();
     expect(go).toBeDisabled();
     expect(screen.getByText(/输入地址并前往可打开页面/u)).toBeInTheDocument();
 
@@ -10143,11 +10158,11 @@ describe("App", () => {
     expect(address).toBeDisabled();
     expect(go).toBeDisabled();
     expect(
-      within(toolbar).getByRole("button", { name: "交互" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "交互" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "关闭浏览器" }),
+    ).not.toBeInTheDocument();
     const stopLoading = within(toolbar).getByRole("button", {
       name: "停止加载",
     });
@@ -10213,10 +10228,7 @@ describe("App", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByAltText("Agent 实时浏览器画面")).toHaveAttribute(
-      "src",
-      "data:image/jpeg;base64,/9j/2Q==",
-    );
+    expect(screen.getByLabelText("浏览器页面")).toBeInTheDocument();
     const toolbar = screen.getByRole("form", {
       name: "浏览器工具栏",
     });
@@ -10241,10 +10253,7 @@ describe("App", () => {
       );
     });
     expect(address).toHaveValue("https://typed.example/draft");
-    expect(screen.getByAltText("Agent 实时浏览器画面")).toHaveAttribute(
-      "src",
-      "data:image/jpeg;base64,/9j/2Q==",
-    );
+    expect(screen.getByLabelText("浏览器页面")).toBeInTheDocument();
 
     fireEvent.keyDown(address, { key: "Escape" });
     expect(address).toHaveValue("https://example.com/redirected");
@@ -10292,10 +10301,7 @@ describe("App", () => {
       ),
     );
     expect(address).toHaveValue("https://example.com/canonical/");
-    fireEvent.click(within(toolbar).getByRole("button", { name: "交互" }));
-    await waitFor(() =>
-      expect(api.browser.interact).toHaveBeenCalledWith(conversationId),
-    );
+    expect(screen.getByLabelText("浏览器页面")).toBeInTheDocument();
 
     act(() => {
       browserListener?.(
@@ -10314,11 +10320,11 @@ describe("App", () => {
     ).toBeDisabled();
     expect(address).toBeDisabled();
     expect(
-      within(toolbar).getByRole("button", { name: "交互" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "交互" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "关闭浏览器" }),
+    ).not.toBeInTheDocument();
 
     act(() => {
       browserListener?.(
@@ -10339,11 +10345,11 @@ describe("App", () => {
       within(toolbar).getByRole("button", { name: "前往" }),
     ).toBeDisabled();
     expect(
-      within(toolbar).getByRole("button", { name: "交互" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "交互" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "关闭浏览器" }),
+    ).not.toBeInTheDocument();
 
     act(() => {
       browserListener?.(
@@ -10364,8 +10370,8 @@ describe("App", () => {
     });
     expect(stopLoading).toBeEnabled();
     expect(
-      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "关闭浏览器" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(stopLoading);
     await waitFor(() =>
       expect(api.browser.stopLoading).toHaveBeenCalledWith(conversationId),
@@ -10387,11 +10393,11 @@ describe("App", () => {
     ).toBeDisabled();
     expect(address).toBeDisabled();
     expect(
-      within(toolbar).getByRole("button", { name: "交互" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "交互" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
-    ).toBeDisabled();
+      within(toolbar).queryByRole("button", { name: "关闭浏览器" }),
+    ).not.toBeInTheDocument();
 
     act(() => {
       browserListener?.(
@@ -10402,12 +10408,6 @@ describe("App", () => {
         }),
       );
     });
-    fireEvent.click(
-      within(toolbar).getByRole("button", { name: "关闭浏览器" }),
-    );
-    await waitFor(() =>
-      expect(api.browser.stop).toHaveBeenCalledWith(conversationId),
-    );
   });
 
   it("opens Smart Heartbeat as a first-class workspace", async () => {
