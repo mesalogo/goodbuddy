@@ -329,13 +329,27 @@ Execute 直接启动已签名 Runtime：
   Agent，因此 Desktop 断电后可以继续下一轮。
 - Agent 校验固定 model、协议和 API path，拒绝 background/store、provider web search、
   provider MCP、持久 conversation、非文本 modality 和其他可独立计费能力；请求/响应 body
-  各限制 768 KiB，响应同时核对声明长度与短读。每个
+  各保留 64 MiB 的内存传输上限，用于容纳长上下文和图片输入，响应同时核对声明长度与短读。
+  Desktop blob 模型桥保留已发布 v1 的 canonical JSON 字节，不添加尾随换行。单条消息按
+  最多 2 MiB 的帧发送，接收端逐帧消费流量额度，跟踪 JSON 结构并在消息上限内组装；
+  已发布端的单帧消息可直接接收，多帧大消息要求两端均使用更新后的实现。每个
   `(binding, operation, roundIndex)` 只 dispatch 一次；已 dispatch 但未证明完整交付的调用
   变为 `outcome-unknown`，不会自动重试。
 - Agent 不按固定模型调用次数或 Prompt 累计输出 Token 数停止 Runtime；每次 Provider
-  请求仍遵循所选模型 profile 的单次输出设置和独立请求超时。模型桥协议不包含 Prompt
+  请求遵循所选模型 profile 的单次输出设置；未设置时保留 Runtime 请求中的 Token 参数，
+  更新后的 Agent 不补入固定 32,000 Token，也不再按 60 秒或桥接层的 120/150/180 秒
+  总时长中止请求。它通过非 critical 的 `runtime/model-bridge-optional-limits` v1 capability
+  声明支持省略 profile limits；Main 在建立托管 Runtime 时按实际连接的 capability 选择
+  profile。锁定的已发布 Agent `0.11.22` 不支持省略这两个字段，Main 对该路径保留原有
+  32,000 Token、60,000 ms 默认值及 1,000,000 Token、300,000 ms schema 上界；这些兼容
+  值不应用于声明支持省略 limits 的 Agent。
+  显式请求超时、Prompt deadline、用户取消和连接关闭仍会中止对应操作。模型桥协议不包含 Prompt
   调用次数或累计 Token 配额字段。实际 usage 在语义 transcript 中同步回 Desktop 的
   usage/task 数据。
+- 新组包的 Runtime manifest 将 `maximumPromptRuntimeMilliseconds` 设为 `0`，表示由
+  Prompt 自身的 deadline 决定时长，不再额外截为十分钟。旧 manifest 中的正数限制仍按其
+  声明执行。进程 owner 使用真实剩余时长安排 Prompt deadline；启动与停止等待的有界
+  超时不再缩短 Prompt。
 - helper 可以接收同一 Prompt 内并发到达的模型桥请求；它在单一稳定模型桥上按到达
   顺序等待并交付，不返回本地 `bridge-busy`，每个响应只有在 HTTP 完整 flush 后才
   发送 delivery ACK。
@@ -351,6 +365,30 @@ Execute 直接启动已签名 Runtime：
   block metadata 与 canonical 消息正文保持一致。
 
 ## Agent 开发期间的真实 Host 验证
+
+2026-09-10 已发布模型桥兼容修复：从 `agent-v0.11.22` 读取的源码与当前源码分别在共享
+Linux x64 Host 启动隔离 Agent daemon。当前 Main 的 `createManagedRemoteAcpRuntime`
+经真实 SSH attach、Agent protocol、OpenCode 和 Agent gateway，在两版 Agent 上各完成
+一次 Ask、一次 Execute，均返回 `OK`；模型账本共 4 次调用，全部 completed 且已交付。
+旧 Agent 未声明 optional-limits capability，当前 Agent 声明该能力。使用既有加密设置和
+固定 Host identity，凭据仅经协议进入内存；测试 daemon、Runtime 和运行目录已回收。
+本次覆盖托管 Runtime 入口，未执行 UI 点击、安装升级或长时间 Provider 等待。
+6 个聚焦测试文件共 77 项通过；另用真实 tag codec 验证四种消息双向互通。typecheck、lint
+通过；全量 `npm test` 为 3,739 项通过、4 项失败、64 项跳过，失败涉及发布/便携包夹具、
+DSH MCP 暴露和 Runtime 发现，未扩展修复范围。
+
+2026-09-10 模型桥限制修复：共享 Linux x64 Host 使用当前源码构建的 gateway、Unix
+broker 和 loopback helper，通过 2 MiB 请求/响应往返，并确认客户端取消传到 broker。
+使用 GoodBuddy 加密设置中的模型凭据、既有固定 SSH identity 和 OpenCode `1.18.29`
+运行 Ask、Execute，两个模式均收到 HTTP 200 并返回 `OK`。共发出 3 次真实 Provider
+请求：Ask 成功，首次 Execute 的最终结果因本地命令采集超时未保留，单独复测 Execute
+成功。运行中测试凭据只经 SSH stdin 进入内存；测试进程和临时目录由测试运行回收。
+本次实机检查覆盖当前源码的模型桥与 Runtime helper；未重装共享 Agent，也未重跑完整
+Desktop attach/bootstrap。Prompt 长时运行和精确 deadline 使用假时钟回归验证。
+最终聚焦回归为 14 个文件、193 项通过、5 项平台跳过；typecheck、lint 和开发 build
+通过。此前全量 `npm test` 为 3,703 项通过、22 项失败、63 项跳过，失败分布在 Runtime
+发现、发布/便携包夹具、DSH ACP、模型设置和内置工具分类；该次全量结果来自并行修改中的
+工作区，未据此修改其他任务的文件，也未把聚焦通过等同于全量通过。
 
 2026-09-09 已在隔离 Linux x64 Host 验证当前源码的快照配置修复：桌面
 `ManagedRemoteExecutionServices` 经 managed ACP、真实 detached Agent 和模型桥启动

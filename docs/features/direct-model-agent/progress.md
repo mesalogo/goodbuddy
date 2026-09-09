@@ -13,9 +13,10 @@
 ## 当前结论
 
 本机生产路径已经完成源码接线：直连模型 Execute 可运行平台 Shell，Ask/Execute 均可按
-父模式委派单层编程 Subagent；OpenCode、Continue、DeepSeek Harness 和托管 SSH 路径不注入
-这两个工具。Windows 本机、真实模型和全量项目验证已通过；macOS 与 Linux 真机验证仍需
-由对应平台完成。
+父模式委派单层编程 Subagent；长输出可通过 `output_read` 续读。OpenCode、Continue、
+DeepSeek Harness 和托管 SSH 路径不注入这些工具。既有功能的 Windows 本机、真实模型和
+全量项目验证已通过；本次分页验证记录见下方 2026-09-10 条目。macOS 与 Linux 真机验证
+仍需由对应平台完成。
 
 ## 已确认的当前基线
 
@@ -181,6 +182,26 @@
 - `npx vitest run src/main/agent/model-runtime.test.ts`：`74 passed, 1 skipped`。
 - 全量 `npm test`：`3493 passed, 55 skipped`。
 - `npm run typecheck`、`npm run lint` 和 `npm run build`：通过。
+
+## 2026-09-10 进程与 Subagent 完整输出续读
+
+- FR-7 / US-A6：`PagedOutputStore` 完整写入临时输出文件，进程和 Subagent 返回前缀预览
+  与续读引用。JSON 转义计入预览预算，避免 Provider 二次裁剪后丢失续读位置。
+- `ModelToolProvider` 已注册并分发 `output_read`，Ask/Execute 均可读取所属会话输出。
+  工具数量预留一个槽位，页结果不再裁剪。详细字段以 [技术设计](./technical-design.md#44-输出续读)
+  为准。
+- Provider、进程、Subagent、分页存储及共享工具目录五个测试文件共 `73 passed`。
+  覆盖真实 PowerShell stdout/stderr、Subagent 父会话归属、JSON 转义、Unicode 小页面前进、
+  句柄失效、活动调用取消和资源清理。`npm run typecheck`、`npm run lint` 通过。
+- `runtime-e2e.manual.test.ts` 新增真实模型边界场景：运行一次输出超过 96 KiB 的 Node
+  脚本，随机中间与结尾标记均不在预览中；模型经 `output_read` 读到 EOF 后准确返回两个标记。
+  最终带报告的运行 `1 passed, 19 skipped`，上游模型请求精确为 4 次，进程调用 1 次，续读
+  调用 2 次。先前同场景也通过，但其控制台计数未保留，不据此推算两次运行的精确累计调用数。
+- 真实调用使用现有 `RuntimeSettingsStore` 与 Electron `safeStorage` 解密已配置文本连接，
+  凭据仅经测试子进程环境传递。`GOODBUDDY_E2E_OUTPUT_REPORT` 可记录不含凭据、Prompt
+  或输出正文的调用计数；测试工作区和输出存储在结束后释放。
+- 本目录中文文档已按 `deai-writing` 审校，扫描阻断项为 0；保留技术枚举、权限限制和历史
+  验证记录中的明确边界。本次未运行全量测试或生产构建，也不作为其他平台真机验收。
 
 ## 进度维护要求
 

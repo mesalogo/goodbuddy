@@ -534,6 +534,11 @@ describe('AgentProtocolServer connection bounds', () => {
           name: 'runtime/model-bridge',
           version: 1,
           critical: true
+        },
+        {
+          name: 'runtime/model-bridge-optional-limits',
+          version: 1,
+          critical: false
         }
       ]
     })

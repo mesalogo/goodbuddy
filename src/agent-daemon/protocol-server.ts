@@ -1,4 +1,5 @@
 import type { Socket } from 'node:net'
+import { MODEL_BRIDGE_OPTIONAL_LIMITS_CAPABILITY } from '../shared/model-bridge-contracts'
 import {
   AGENT_PROTOCOL_LIMITS,
   AGENT_PROTOCOL_VERSION,
@@ -256,6 +257,11 @@ export class AgentProtocolServer {
                             version:
                               RUNTIME_MODEL_BRIDGE_CAPABILITY_VERSION,
                             critical: true
+                          },
+                          {
+                            name: MODEL_BRIDGE_OPTIONAL_LIMITS_CAPABILITY,
+                            version: 1,
+                            critical: false
                           }
                         ]
                       : [])

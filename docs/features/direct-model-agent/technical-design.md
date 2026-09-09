@@ -24,7 +24,7 @@
   直连模型 Runtime，继承父请求 Ask/Execute 及 authorizer，工具事件记入子任务；
   Ask 保持只读，不把这些本机工具表述为远程 OpenCode 子会话。
 - OpenCode、Continue 和 DeepSeek Harness 各自的 Shell/Agent 能力。
-- 直连模型 `process_execute` 和 `subagent_delegate`。
+- 直连模型 `process_execute`、`subagent_delegate` 和 `output_read`。
 - 不创建顶层 Task/Conversation 的编程 Subagent actor 与活动归并。
 
 ## 2. 总体架构
@@ -138,6 +138,8 @@ type ProcessExecuteResult = {
   stderr: string
   stdoutTruncated: boolean
   stderrTruncated: boolean
+  stdoutReference?: PagedOutputReference
+  stderrReference?: PagedOutputReference
 }
 ```
 
@@ -146,11 +148,30 @@ type ProcessExecuteResult = {
 
 ### 4.3 输出边界
 
-- stdout 和 stderr 各最多 96 KiB。
-- 超限时分别保留前 48 KiB 与最后 48 KiB，中间插入固定截断标记。
+- stdout 和 stderr 各返回最多 96 KiB 的前缀预览，JSON 转义后的内容也计入预览预算。
+- `PagedOutputStore` 将流式输出完整写入系统临时目录，内存只保留预览；超限后继续写盘。
+  存储失败明确报错，不把缺失内容标记为完整结果。
+- 预览省略内容时返回 `stdoutReference` 或 `stderrReference`，包含 `handle`、`nextCursor`
+  和 `totalBytes`。短输出返回完整文本并删除临时文件，不附带句柄。
 - JSON 结果加上元数据后必须低于 `ModelToolProvider` 现有 256 KiB 工具结果上限。
-- 流式读取在收到数据时执行边界，不先积累无界 Buffer。
 - 输出按 UTF-8 解码，无效序列使用替换字符并保留字节计数。
+
+### 4.4 输出续读
+
+`output_read` 接受严格对象 `{ handle, cursor?, limitBytes? }`：`cursor` 为从 0 开始的 UTF-8
+字节位置，省略时从头读取；`limitBytes` 为 1 至 32,768 的整数，默认 32,768。页面返回
+`{ handle, content, cursor, nextCursor, totalBytes, eof }`，模型沿 `nextCursor` 读取至 `eof`。
+页面在字符边界结束；若请求大小容不下首个完整字符，最多扩展到 4 字节，保证续读前进。
+位于 UTF-8 延续字节的输入 cursor、负数、越界和未知字段均拒绝。
+
+Provider 根据 `process:` 或 `subagent:` 前缀选择服务，以当前 `conversationId` 校验所有者，
+不接受模型另传 owner。Ask/Execute 均可用，工具总数为此预留一个槽位；不要求本轮能够启动
+命令或再次委派。分页结果直接 JSON 序列化，不进行二次文本裁剪，以免 cursor 与内容不一致。
+32 KiB 的页面即使全部需要 JSON 转义，也能保留在现有工具结果容量内。
+
+进程输出归属调用会话，Subagent 最终输出归属父会话。子级临时会话释放后，父模型仍能续读
+Subagent 结果。会话释放会等待活动调用结算再删除所属文件；服务退出关闭写入句柄并删除临时
+目录。输出不写入 SQLite，不跨 Runtime 重启恢复。
 
 ## 5. 平台执行
 
@@ -265,7 +286,8 @@ type DirectModelSubagentContext = {
 - 复用 `SubagentScheduler` 的取消、并发和队列模式。
 - 全局最大并发 3，队列最大 20。
 - 单个子任务最长 10 分钟；父请求更早取消时立即停止。
-- 文本结果最多 192 KiB，错误最多 2 KiB，连同结构化字段保持在 256 KiB 工具结果上限内。
+- 文本预览最多 192 KiB，JSON 转义也计入预算；错误最多 2 KiB。省略的正文通过
+  `outputReference` 续读，字段与生命周期沿用第 4.4 节，完整输出不受预览容量限制。
 - 模型用量逐事件归属父请求和 `childRunId`，不能只算入父模型最后一轮。
 - 子级失败和取消返回结构化终态及部分输出，让父模型决定下一步。
 
@@ -320,8 +342,8 @@ DeepSeek Harness 的 Main 工具代理必须使用仅包含分配 MCP 和 Web �
 - `failed`：启动或契约失败。
 - `cancelled`：父请求取消。
 
-结果摘要包含 Shell、工作目录、退出码、耗时和截断标记。完整有界 stdout/stderr 进入工具
-输出字段，不写应用诊断日志。
+结果包含 Shell、工作目录、退出码、耗时、输出预览和续读引用，不写应用诊断日志。
+通用工具活动仍显示有界摘要，模型通过 `output_read` 取得的页面记为后续工具活动。
 
 ### 9.2 Subagent 事件
 
@@ -363,10 +385,15 @@ type SubagentActor =
 结果总量都由请求超时、取消和上下文压缩控制，长回复和大工具结果不会被中断。图像生成
 响应仍按可解码图片大小校验。
 
+会话历史在请求校验、Renderer 发送与保存、SQLite 读写和直连模型缓存中均保留完整消息，
+不按消息条数、单条文本长度或累计文本量裁剪。上下文大小由现有压缩策略和模型上下文窗口
+处理。Continue 接收完整历史，已有有效摘要只替换其覆盖的前缀，剩余消息全部交给原生
+Runtime；GoodBuddy 不再额外保留最后 20 条或限制为 128,000 字符。
+
 ## 11. 性能
 
 - Shell 探测按执行服务实例缓存，不在每轮模型调用重复探测。
-- stdout/stderr 边读边界定，避免大日志进入内存后再截断。
+- stdout/stderr 边读边写入临时文件，内存仅保存有界预览；续读每次只读取一页。
 - 子级共享父请求已解析的模型配置和工具服务，不复制 MCP 配置或持久状态。
 - 不增加持久 Shell、后台 daemon、工作区快照或恢复状态机。
 - 命令执行不使用 PTY，避免普通构建和测试承担终端渲染成本。
@@ -380,6 +407,8 @@ type SubagentActor =
 - Windows PowerShell、POSIX Bash/Sh 选择和参数。
 - cwd 默认、相对子目录、绝对路径、工作区外目录、指向外部的符号链接和不存在的目录。
 - exit 0、非零退出、spawn 失败、超时、取消和输出截断。
+- 输出预览加分页能还原全文，包括 JSON 转义文本、中文、表情和字面替换字符；覆盖一字节
+  页面前进、跨会话拒绝、活动调用释放、短输出删除及服务退出清理。
 - 环境筛选、本机工具 PATH 优先且模型凭据不进入进程。
 - 子级模式、模型、项目、执行空间和能力继承。
 - 深度 1 过滤、并发 3、队列 20、取消传播和部分输出。
@@ -410,6 +439,11 @@ type SubagentActor =
 5. 父模型读取子级结果并给出最终结论。
 
 每个平台一次完整场景即可，不进行批量或高成本调用。记录准确模型调用次数，不记录 API Key。
+
+输出边界场景复用 `runtime-e2e.manual.test.ts`：真实模型运行一次专用 Node 脚本，输出超过
+96 KiB，并在预览之后生成随机中间与结尾标记。模型必须通过生产 `output_read` 连续读到 EOF，
+最终回答包含两个标记。测试限制工具为进程与续读，记录上游请求数和工具调用数；凭据由现有
+加密设置解密后仅在内存及测试子进程环境中传递。
 
 ### 12.4 项目验证
 

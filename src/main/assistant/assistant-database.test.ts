@@ -3124,16 +3124,17 @@ describe('AssistantDatabase', () => {
         eventIndex,
         event
       })
+    const recoveredText = `${'x'.repeat(1_000_001)} recovered tail`
     const textEvent = {
       requestId: taskId,
       type: 'text' as const,
-      delta: '已恢复'
+      delta: recoveredText
     }
     expect(append('1', 0, textEvent)).toBe(true)
     expect(append('1', 0, textEvent)).toBe(false)
     expect(
       database.getConversation(conversationId).messages[1]?.content
-    ).toBe('已恢复')
+    ).toBe(recoveredText)
     expect(() =>
       append('1', 0, {
         requestId: taskId,
@@ -3143,7 +3144,7 @@ describe('AssistantDatabase', () => {
     ).toThrow('provenance conflicts')
     expect(
       database.getConversation(conversationId).messages[1]?.content
-    ).toBe('已恢复')
+    ).toBe(recoveredText)
 
     append('2', 0, {
       requestId: taskId,
@@ -3217,7 +3218,7 @@ describe('AssistantDatabase', () => {
     ).toBe('completed')
     expect(database.listRecoverableRemoteTasks()).toEqual([])
     expect(recoveredMessage).toMatchObject({
-      content: '已恢复',
+      content: recoveredText,
       reasoning: '先验证状态',
       state: 'complete',
       artifactIds: [
@@ -3239,7 +3240,7 @@ describe('AssistantDatabase', () => {
       blocks: [
         expect.objectContaining({
           type: 'text',
-          content: '已恢复'
+          content: recoveredText
         }),
         expect.objectContaining({
           type: 'reasoning',
@@ -3297,7 +3298,7 @@ describe('AssistantDatabase', () => {
       }),
       expect.objectContaining({
         id: assistantMessageId,
-        content: '已恢复',
+        content: recoveredText,
         state: 'complete'
       })
     ])
@@ -3313,7 +3314,7 @@ describe('AssistantDatabase', () => {
       reopened.getConversation(conversationId).messages[1]
     ).toMatchObject({
       id: assistantMessageId,
-      content: '已恢复',
+      content: recoveredText,
       state: 'complete'
     })
     reopened.failRecoverableRemoteTask(
@@ -3330,7 +3331,7 @@ describe('AssistantDatabase', () => {
       reopened.getConversation(conversationId).messages[1]
     ).toMatchObject({
       id: assistantMessageId,
-      content: '已恢复',
+      content: recoveredText,
       state: 'error',
       status: '远端请求已不存在'
     })

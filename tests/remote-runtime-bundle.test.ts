@@ -240,7 +240,7 @@ describe('Remote Runtime bundle tooling', () => {
       },
       formatVersion: 2,
       limits: {
-        maximumPromptRuntimeMilliseconds: 10 * 60 * 1000,
+        maximumPromptRuntimeMilliseconds: 0,
         maximumPromptInputBytes: 16 * 1024 * 1024,
         maximumPromptOutputBytes: 8 * 1024 * 1024
       }

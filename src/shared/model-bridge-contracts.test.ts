@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { canonicalJson } from './agent-protocol/canonical'
 import {
   MODEL_BRIDGE_LIMITS,
   MODEL_BRIDGE_PROTOCOL,
   ModelBridgeCodecError,
+  ModelBridgeMessageBuffer,
   createModelBridgeRequestMessage,
   decodeModelBridgeMessage,
   digestModelBridgeRequest,
@@ -46,6 +48,31 @@ const request = {
 } as const
 
 describe('model bridge contracts and codec', () => {
+  it('preserves released v1 canonical bytes and accepts a released single-frame message immediately', async () => {
+    const message = await createModelBridgeRequestMessage({ identity, policy, request })
+    const released = Buffer.from(canonicalJson(message))
+    expect(Buffer.from(await encodeModelBridgeMessage(message))).toEqual(released)
+    const buffer = new ModelBridgeMessageBuffer()
+    await expect(decodeModelBridgeMessage(buffer.push(released)!)).resolves.toEqual(message)
+    await expect(decodeModelBridgeMessage(Buffer.concat([released, Buffer.from('\n')]))).rejects.toMatchObject({ code: 'invalid-message' })
+  })
+
+  it('reassembles v1 across arbitrary frame boundaries including escaped strings and resets for the ACK', async () => {
+    const message = modelBridgeErrorMessageSchema.parse({
+      protocol: MODEL_BRIDGE_PROTOCOL, kind: 'error', identity,
+      requestDigest: await digestModelBridgeRequest(request),
+      error: { code: 'test', message: 'nested { [ \\"quoted\\" ] } and \\ slash', retryable: false, poisoned: false, outcomeUnknown: false }
+    })
+    const bytes = await encodeModelBridgeMessage(message)
+    const buffer = new ModelBridgeMessageBuffer()
+    for (let index = 0; index < bytes.length - 1; index += 1) {
+      expect(buffer.push(bytes.subarray(index, index + 1))).toBeUndefined()
+    }
+    await expect(decodeModelBridgeMessage(buffer.push(bytes.subarray(-1))!)).resolves.toEqual(message)
+    const ack = { protocol: MODEL_BRIDGE_PROTOCOL, kind: 'response-delivered', identity, requestDigest: message.requestDigest }
+    await expect(decodeModelBridgeMessage(buffer.push(await encodeModelBridgeMessage(ack))!)).resolves.toEqual(ack)
+  })
+
   it('round trips one bounded request message with an exact digest', async () => {
     const message = await createModelBridgeRequestMessage({
       identity,

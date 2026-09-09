@@ -523,7 +523,7 @@ describe('ContinueAgentRuntime', () => {
     expect(prompt.length).toBeGreaterThan(24_000)
   })
 
-  it('reports oversized Skill payloads instead of dropping them silently', async () => {
+  it('passes large Skill payloads to Continue without a product character cap', async () => {
     const runtime = new ContinueAgentRuntime({
       binaryPath: '',
       configPath: 'C:\\safe config\\continue.yaml',
@@ -537,8 +537,8 @@ describe('ContinueAgentRuntime', () => {
       })
     })
 
-    await expect(collectEvents(runtime)).rejects.toThrow('超过 Continue')
-    expect(mocks.runHost).not.toHaveBeenCalled()
+    await collectEvents(runtime)
+    expect(String(mocks.runHost.mock.calls[0]?.[0])).toContain('巨'.repeat(130_000))
   })
 
   it('blocks anonymous platform fallback without an explicit model configuration', async () => {
@@ -596,6 +596,26 @@ describe('ContinueAgentRuntime', () => {
     )
     expect(prompt).toContain('Answer the CURRENT USER REQUEST now.')
     expect(prompt).not.toContain('\n')
+  })
+
+  it('passes every history message and its complete text to the native host', async () => {
+    const history = Array.from({ length: 502 }, (_, index) => ({
+      role: index % 2 ? 'assistant' as const : 'user' as const,
+      content: `history-${index} ${index === 0 ? 'x'.repeat(130_000) : 'text'}`
+    }))
+    const runtime = createRuntime()
+    for await (const event of runtime.run({
+      requestId: crypto.randomUUID(),
+      conversationId: 'full-history',
+      prompt: 'current request',
+      history
+    }, new AbortController().signal)) {
+      expect(event).toBeDefined()
+    }
+    const prompt = String(mocks.runHost.mock.calls[0]?.[0])
+    for (const message of history) {
+      expect(prompt).toContain(message.content)
+    }
   })
 
   it('ignores the synthetic greeting when there is no prior user turn', async () => {

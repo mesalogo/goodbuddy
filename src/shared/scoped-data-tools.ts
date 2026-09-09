@@ -23,7 +23,7 @@ const knowledgeListInputSchema = z.object({}).strict()
 const knowledgeSearchInputSchema = z
   .object({
     query: z.string().trim().min(1).max(4_000),
-    limit: z.number().int().min(1).max(8).default(6)
+    limit: z.number().int().min(1).max(100).default(6)
   })
   .strict()
 

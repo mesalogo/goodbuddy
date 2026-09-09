@@ -33,7 +33,7 @@ describe('built-in model tool catalog', () => {
       builtinModelToolGroups
         .find((group) => group.id === 'programming')
         ?.tools.map((tool) => tool.name)
-    ).toEqual(['process_execute', 'subagent_delegate'])
+    ).toEqual(['process_execute', 'output_read', 'subagent_delegate'])
   })
 
   it('classifies programming tool access for mode filtering', () => {
@@ -45,6 +45,7 @@ describe('built-in model tool catalog', () => {
 
     expect(programmingAccess).toEqual({
       process_execute: 'write',
+      output_read: 'read',
       subagent_delegate: 'read'
     })
   })

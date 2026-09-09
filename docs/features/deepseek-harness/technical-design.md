@@ -136,7 +136,7 @@ Harness 子进程内控制面不能取代 Main 控制面，Main 控制面也不�
 
 - GoodBuddy 已经持久化对话、消息、活动、工具事件和用量。
 - 再写一份 Harness 日志会扩大敏感数据副本和清理范围。
-- GoodBuddy 在 Runtime 重启后可以用现有的有界历史创建新 Harness Session。
+- GoodBuddy 在 Runtime 重启后可以用现有会话历史创建新 Harness Session。
 
 Harness Session 只在当前 Runtime 进程生命周期内存在。释放 GoodBuddy 会话时必须同步释放对应 Harness Agent。
 固定 Host 显式加载 `dsh-session-projection` 的内存 SessionProjectionRegistry，这是
@@ -332,7 +332,7 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 
 - 首次请求创建 Session。
 - 已有 Session 只发送当前 Prompt。
-- 进程重启或映射失效时，创建新 Session，并只在这一次加入 GoodBuddy 提供的有界历史。
+- 进程重启或映射失效时，创建新 Session，并只在这一次加入 GoodBuddy 提供的会话历史。
 - 历史以明确的“不可信会话数据”结构传入，不能拼接成系统指令。
 - 用户分配的 Skill 只通过 Main 校验的包路径进入 Host，并在 Agent scope 注册；不得把 Skill 内容伪装成用户 Prompt。
 
@@ -477,7 +477,8 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
 | 单图尺寸 / 单条消息解码像素 | 单边最长 8,192 px 且 1,600 万像素 / 3,200 万像素 |
 | Host 临时图片存储 | 32 MiB 且最多 256 个唯一对象 |
 | 单个文本或推理事件 | 64 KiB |
-| 单次请求累计协议输出 | 4 MiB |
+| 单次请求累计协议输出 | 无固定总量上限，继续校验单帧和待处理队列 |
+| 单轮模型输出 Token | 由 Harness SDK 与 Provider 决定，GoodBuddy 不固定覆盖为 16K |
 | 工具输入摘要 | 4,000 字符 |
 | 工具输出摘要 | 4,000 字符 |
 | 待处理事件数 | 1,000 |

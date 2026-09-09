@@ -1,7 +1,9 @@
 import { isDeepStrictEqual } from 'node:util'
+import { AGENT_PROTOCOL_LIMITS } from '../../shared/agent-protocol/contracts'
 import {
   MODEL_BRIDGE_LIMITS,
   MODEL_BRIDGE_PROTOCOL,
+  ModelBridgeMessageBuffer,
   decodeModelBridgeMessage,
   encodeModelBridgeMessage,
   modelBridgeErrorMessageSchema,
@@ -22,7 +24,6 @@ import {
   type MainModelBridgePoison
 } from './main-model-bridge-dispatcher'
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 180_000
 const DEFAULT_CLOSE_TIMEOUT_MS = 2_000
 
 export type MainModelBridgeSessionIdentity = {
@@ -73,7 +74,7 @@ export class MainModelBridgeSession {
   readonly #onDelivered: MainModelBridgeDelivered
   readonly #finalizePrompt: MainModelBridgeFinalizePrompt
   readonly #poisonCallback: MainModelBridgePoison
-  readonly #requestTimeoutMs: number
+  readonly #requestTimeoutMs: number | undefined
   readonly #closeTimeoutMs: number
   readonly #lifetime = new AbortController()
   readonly #closedResolve: (
@@ -100,10 +101,9 @@ export class MainModelBridgeSession {
     this.#onDelivered = options.onDelivered
     this.#finalizePrompt = options.finalizePrompt
     this.#poisonCallback = options.poison
-    this.#requestTimeoutMs = boundedTimeout(
-      options.requestTimeoutMs,
-      DEFAULT_REQUEST_TIMEOUT_MS
-    )
+    this.#requestTimeoutMs = options.requestTimeoutMs === undefined
+      ? undefined
+      : boundedTimeout(options.requestTimeoutMs, options.requestTimeoutMs)
     this.#closeTimeoutMs = boundedTimeout(
       options.closeTimeoutMs,
       DEFAULT_CLOSE_TIMEOUT_MS
@@ -173,7 +173,7 @@ export class MainModelBridgeSession {
 
         this.#active = { request, phase: 'dispatching' }
         const controller = new AbortController()
-        const timeout = setTimeout(() => {
+        const timeout = this.#requestTimeoutMs === undefined ? undefined : setTimeout(() => {
           controller.abort(
             new DOMException(
               'Remote model bridge request timed out',
@@ -181,7 +181,7 @@ export class MainModelBridgeSession {
             )
           )
         }, this.#requestTimeoutMs)
-        timeout.unref?.()
+        timeout?.unref?.()
         const abort = (): void => controller.abort(this.#lifetime.signal.reason)
         this.#lifetime.signal.addEventListener('abort', abort, {
           once: true
@@ -302,25 +302,33 @@ export class MainModelBridgeSession {
     expectedIdentity?: ModelBridgeIdentity,
     expectedRequestDigest?: string
   ) {
-    const frame = await this.#channel.receive(this.#lifetime.signal)
-    if (expectedIdentity === undefined) {
-      this.#receivingRequest = true
-    }
-    try {
-      this.#assertCurrent()
-      const message = await decodeModelBridgeMessage(frame.payload, {
-        expectedIdentity,
-        expectedRequestDigest,
-        maximumMessageBytes: MODEL_BRIDGE_LIMITS.maximumMessageBytes
-      })
-      await frame.consume()
+    const buffer = new ModelBridgeMessageBuffer()
+    while (true) {
+      const frame = await this.#channel.receive(this.#lifetime.signal)
       if (expectedIdentity === undefined) {
-        this.#receivingRequest = false
+        this.#receivingRequest = true
       }
-      return message
-    } catch (error) {
-      await frame.consume().catch(() => undefined)
-      throw error
+      try {
+        this.#assertCurrent()
+        const payload = buffer.push(frame.payload)
+        if (payload === undefined) {
+          await frame.consume()
+          continue
+        }
+        const message = await decodeModelBridgeMessage(payload, {
+          expectedIdentity,
+          expectedRequestDigest,
+          maximumMessageBytes: MODEL_BRIDGE_LIMITS.maximumMessageBytes
+        })
+        await frame.consume()
+        if (expectedIdentity === undefined) {
+          this.#receivingRequest = false
+        }
+        return message
+      } catch (error) {
+        await frame.consume().catch(() => undefined)
+        throw error
+      }
     }
   }
 
@@ -369,7 +377,13 @@ export class MainModelBridgeSession {
   ): Promise<void> {
     const payload = await encodeModelBridgeMessage(message)
     this.#assertCurrent()
-    await this.#channel.send(payload, signal)
+    for (let offset = 0; offset < payload.byteLength; offset += AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes) {
+      this.#assertCurrent()
+      await this.#channel.send(
+        payload.subarray(offset, offset + AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes),
+        signal
+      )
+    }
   }
 
   #assertCurrent(): void {
@@ -529,7 +543,7 @@ function boundedTimeout(
   if (
     !Number.isSafeInteger(timeout) ||
     timeout < 1 ||
-    timeout > 300_000
+    timeout > 0x7fff_ffff
   ) {
     throw new RangeError('Model bridge timeout is invalid')
   }

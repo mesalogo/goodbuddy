@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -42,6 +42,9 @@ import {
   createOpenAIResponsesUrl
 } from './openai-endpoint'
 import { createModelRequestProbe } from '../../../tests/support/model-request-probe'
+import { ModelToolProvider } from './model-tool-provider'
+import { LocalDirectModelProcessService, type ProcessExecuteResult } from './direct-model-process-service'
+import type { PagedOutputPage } from './paged-output-store'
 
 const enabled = process.env.GOODBUDDY_RUN_RUNTIME_E2E === '1'
 const apiKey =
@@ -348,6 +351,43 @@ describe.runIf(enabled)('runtime end-to-end', () => {
     }
   })
 
+  it.each(['model', 'continue'] as const)(
+    'recalls history older than twenty messages through real %s',
+    async (provider) => {
+      const upstreamUrl = protocol === 'anthropic-messages'
+        ? createAnthropicMessagesUrl(baseUrl)
+        : protocol === 'openai-responses'
+          ? createOpenAIResponsesUrl(baseUrl)
+          : createOpenAIChatCompletionsUrl(baseUrl)
+      const probe = await createModelRequestProbe({ upstreamUrl, headerName: 'x-goodbuddy-history-test' })
+      const runtime = provider === 'model'
+        ? new ModelAgentRuntime({ apiKey, baseUrl: probe.baseUrl, model: modelName, protocol, authentication: 'api-key' })
+        : new ContinueAgentRuntime({
+          binaryPath: '', bundledBinaryPath: bundledContinuePath, configPath: '',
+          defaultWorkspace: workspace, hostCacheRoot: join(workspace, '.history-continue-host'),
+          modelProfile: { id: crypto.randomUUID(), name: 'History boundary', baseUrl: probe.baseUrl, modelName, apiKey, protocol, authentication: 'api-key' }
+        })
+      const marker = `HISTORY_${crypto.randomUUID()}`
+      const history = Array.from({ length: 24 }, (_, index) => ({
+        role: index % 2 ? 'assistant' as const : 'user' as const,
+        content: index === 0 ? `The verification code is ${marker}. Remember it.` : 'Acknowledged.'
+      }))
+      try {
+        const output = await collectText(runtime.run({
+          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode: 'ask',
+          prompt: 'Reply only with the verification code from the beginning of this conversation. Do not use tools.', history
+        }, new AbortController().signal))
+        expect(output).toContain(marker)
+        expect(probe.observations).toHaveLength(1)
+      } finally {
+        console.info(JSON.stringify({ boundary: 'history', provider, realModelCalls: probe.observations.length }))
+        await runtime.dispose()
+        await probe.close()
+      }
+    },
+    120_000
+  )
+
   it(
     'streams a complete response through the direct model runtime',
     async () => {
@@ -440,6 +480,101 @@ describe.runIf(enabled)('runtime end-to-end', () => {
   )
 
   it(
+    'recovers hidden process output markers through real-model output_read pagination',
+    async () => {
+      await writeFile(join(workspace, 'paged-output-e2e.cjs'), [
+        "const { randomUUID } = require('node:crypto')",
+        "process.stdout.write('x'.repeat(96 * 1024))",
+        "process.stdout.write('\\nMIDDLE=' + randomUUID() + '\\n')",
+        "process.stdout.write('y'.repeat(40 * 1024))",
+        "process.stdout.write('\\nTAIL=' + randomUUID() + '\\n')"
+      ].join('\n'))
+      const upstreamUrl = protocol === 'anthropic-messages'
+        ? createAnthropicMessagesUrl(baseUrl)
+        : protocol === 'openai-responses'
+          ? createOpenAIResponsesUrl(baseUrl)
+          : createOpenAIChatCompletionsUrl(baseUrl)
+      const probe = await createModelRequestProbe({ upstreamUrl, headerName: 'x-goodbuddy-output-test' })
+      const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, {
+        processService: new LocalDirectModelProcessService()
+      })
+      const listTools = provider.listTools.bind(provider)
+      vi.spyOn(provider, 'listTools').mockImplementation(async (context, signal) =>
+        (await listTools(context, signal)).filter((tool) => ['process_execute', 'output_read'].includes(tool.name)))
+      const callTool = provider.callTool.bind(provider)
+      const observed: Array<{ name: string; result: ProcessExecuteResult | PagedOutputPage }> = []
+      vi.spyOn(provider, 'callTool').mockImplementation(async (name, args, signal, context) => {
+        if (observed.length >= 5 || (name === 'process_execute' &&
+          (observed.length > 0 || args.command !== 'node paged-output-e2e.cjs'))) {
+          throw new Error('Boundary test permits one fixture command and at most four output reads')
+        }
+        const result = await callTool(name, args, signal, context)
+        const part = result.parts[0]
+        if (part?.type === 'text') observed.push({ name, result: JSON.parse(part.text) })
+        return result
+      })
+      const runtime = new ModelAgentRuntime({
+        apiKey, baseUrl: probe.baseUrl, model: modelName, protocol,
+        authentication: 'api-key', defaultWorkspace: workspace,
+        maximumOutputTokens: 1024, toolProvider: provider
+      })
+      const events: RuntimeEvent[] = []
+      try {
+        for await (const event of runtime.run({
+          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode: 'execute',
+          prompt: [
+            'Verify output pagination using only the supplied tools.',
+            'Run exactly this command once with process_execute: node paged-output-e2e.cjs',
+            'The output exceeds 96 KiB and contains random MIDDLE and TAIL markers beyond the preview.',
+            'Use output_read with stdoutReference.handle and stdoutReference.nextCursor, leaving limitBytes at its default.',
+            'Continue with each returned nextCursor until eof is true. Do not rerun the command or guess markers.',
+            'Reply only with the exact MIDDLE and TAIL lines recovered from the output pages.'
+          ].join('\n')
+        }, AbortSignal.timeout(180000), async () => 'once')) {
+          events.push(event)
+          if (probe.observations.length > 6) throw new Error('Boundary test exceeded six model requests')
+        }
+        expect(observed.filter((item) => item.name === 'process_execute')).toHaveLength(1)
+        const processResult = observed[0]!.result as ProcessExecuteResult
+        expect(processResult.exitCode).toBe(0)
+        expect(processResult.stdoutTruncated).toBe(true)
+        expect(processResult.stdout).not.toMatch(/MIDDLE=|TAIL=/u)
+        const reference = processResult.stdoutReference!
+        let cursor = reference.nextCursor
+        let recovered = ''
+        const pages = observed.filter((item) => item.name === 'output_read')
+        expect(pages.length).toBeGreaterThanOrEqual(2)
+        for (const item of pages) {
+          const page = item.result as PagedOutputPage
+          expect(page.handle).toBe(reference.handle)
+          expect(page.cursor).toBe(cursor)
+          expect(page.nextCursor).toBeGreaterThan(cursor)
+          recovered += page.content
+          cursor = page.nextCursor
+        }
+        expect(cursor).toBe(reference.totalBytes)
+        expect(pages.at(-1)!.result).toMatchObject({ eof: true })
+        const markers = recovered.match(/(?:MIDDLE|TAIL)=[0-9a-f-]{36}/gu) ?? []
+        expect(markers).toHaveLength(2)
+        const answer = events.filter((event) => event.type === 'text').map((event) => event.delta).join('')
+        for (const marker of markers) expect(answer).toContain(marker)
+        expect(events.at(-1)).toMatchObject({ type: 'done' })
+      } finally {
+        const report = { boundary: 'process-output-pagination', realModelCalls: probe.observations.length,
+          processCalls: observed.filter((item) => item.name === 'process_execute').length,
+          outputReadCalls: observed.filter((item) => item.name === 'output_read').length }
+        console.info(JSON.stringify(report))
+        await runtime.dispose()
+        await probe.close()
+        if (process.env.GOODBUDDY_E2E_OUTPUT_REPORT) {
+          await writeFile(process.env.GOODBUDDY_E2E_OUTPUT_REPORT, JSON.stringify(report))
+        }
+      }
+    },
+    200000
+  )
+
+  it(
     'uses real direct-model process execution and a programming Subagent to repair and verify code',
     async () => {
       const scheduler = new SubagentScheduler({
@@ -466,9 +601,9 @@ describe.runIf(enabled)('runtime end-to-end', () => {
             workMode: 'execute',
             prompt: [
               'Complete this verification entirely with GoodBuddy tools.',
-              '1. Use workspace_write_text to create programming-e2e.cjs with an intentional failing Node assertion.',
+              '1. Use workspace_apply_patch to create programming-e2e.cjs with an intentional failing Node assertion.',
               '2. Use process_execute to run `node programming-e2e.cjs` and observe a non-zero exit.',
-              '3. Use workspace_write_text to replace it with a passing program that prints exactly PROGRAMMING_E2E_OK.',
+              '3. Use workspace_apply_patch to fix it so it prints exactly PROGRAMMING_E2E_OK.',
               '4. Use process_execute again and observe exit code 0 plus PROGRAMMING_E2E_OK.',
               '5. Use subagent_delegate exactly once. Ask the programming Subagent to independently run the final file with process_execute and verify its output. Do not ask it to delegate.',
               '6. After the Subagent completes, reply with exactly REAL_PROGRAMMING_E2E_OK.',

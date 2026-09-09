@@ -66,8 +66,6 @@ export {
 } from './deepseek-harness-protocol'
 
 const DEFAULT_MAX_EVENT_CHARACTERS = 64 * 1024
-const DEFAULT_MAX_REQUEST_CHARACTERS = 4 * 1024 * 1024
-export const GOODBUDDY_HARNESS_MAX_STEP_TOKENS = 16 * 1024
 const DELTA_BATCH_CHARACTERS = 4 * 1024
 const DELTA_BATCH_INTERVAL_MS = 100
 const MAX_SUMMARY_CHARACTERS = 4_000
@@ -121,7 +119,6 @@ export type GoodBuddyHarnessControlConfig = {
   trustedAskToolDefinitions?: ReadonlyMap<string, ToolDefinition>
   stream?: Stream
   maxEventCharacters?: number
-  maxRequestCharacters?: number
 }
 
 type Preparation = {
@@ -150,7 +147,6 @@ type OwnedSession = {
     turnError?: unknown
     resolve: (reason: string) => void
     reject: (error: unknown) => void
-    emittedCharacters: number
     eventTail: Promise<void>
     eventError?: unknown
     pendingDelta?: {
@@ -466,7 +462,6 @@ export class GoodBuddyHarnessControlPlane {
   private readonly sessions = new Map<string, OwnedSession>()
   private readonly allowedCredentialRefs: ReadonlySet<string>
   private readonly maxEventCharacters: number
-  private readonly maxRequestCharacters: number
   private connection?: AcpAgentConnection
   private credentialProvider?: GoodBuddyCredentialProvider
   private handshaken = false
@@ -481,9 +476,6 @@ export class GoodBuddyHarnessControlPlane {
     this.allowedCredentialRefs = new Set(config.credentialRefs)
     this.maxEventCharacters =
       config.maxEventCharacters ?? DEFAULT_MAX_EVENT_CHARACTERS
-    this.maxRequestCharacters =
-      config.maxRequestCharacters ??
-      DEFAULT_MAX_REQUEST_CHARACTERS
   }
 
   bindCredentialProvider(
@@ -576,15 +568,6 @@ export class GoodBuddyHarnessControlPlane {
     if (text.length > this.maxEventCharacters) {
       throw new Error(
         'GoodBuddy Harness control event exceeds safety limit'
-      )
-    }
-    inflight.emittedCharacters += text.length
-    if (
-      inflight.emittedCharacters > this.maxRequestCharacters
-    ) {
-      record.handle.agent.cancel({ kind: 'user' })
-      throw new Error(
-        'GoodBuddy Harness control request output exceeds safety limit'
       )
     }
     await this.connection.extNotification(GOODBUDDY_EVENT, params)
@@ -1164,8 +1147,7 @@ export class GoodBuddyHarnessControlPlane {
           meta: { cwd: params.cwd },
           agentOptions: {
             provider: this.config.provider,
-            model: this.config.model,
-            maxTokens: GOODBUDDY_HARNESS_MAX_STEP_TOKENS
+            model: this.config.model
           },
           setup: async (agentCtx) => {
             agentCtx.systemPrompt.section({
@@ -1281,7 +1263,6 @@ export class GoodBuddyHarnessControlPlane {
               mode: preparation.mode,
               resolve,
               reject,
-              emittedCharacters: 0,
               eventTail: Promise.resolve()
             }
             try {

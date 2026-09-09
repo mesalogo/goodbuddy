@@ -46,7 +46,6 @@ function setup(
     promptTimeoutMs?: number
     useProductionPromptTimeout?: boolean
     maxEventCharacters?: number
-    maxRequestOutputCharacters?: number
     supportsImageInput?: boolean
     requestHeaders?: Record<string, string>
     advertisedImageInput?: boolean
@@ -263,8 +262,6 @@ function setup(
     shutdownTimeoutMs: 10,
     maxStderrBytes: 16,
     maxEventCharacters: options.maxEventCharacters,
-    maxRequestOutputCharacters:
-      options.maxRequestOutputCharacters,
     toolProvider: options.toolProvider,
     skillPackages: options.skillPackages,
     extensionPackages: options.extensionPackages
@@ -759,10 +756,9 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('enforces the cumulative bridge limit against complete wire events', async () => {
+  it('streams beyond 4 MiB without cancelling the task', async () => {
     const harness = setup({
-      maxEventCharacters: 1_000,
-      maxRequestOutputCharacters: 180
+      maxEventCharacters: 100_000
     })
     const running = collect(
       harness.runtime.run(
@@ -774,23 +770,18 @@ describe('DeepSeekHarnessRuntime', () => {
       expect(harness.promptGates).toHaveLength(1)
     )
 
-    await harness.notify('goodbuddy/session/event', {
-      sessionId: 'session-1',
-      requestId: 'request-output-limit',
-      type: 'reasoning',
-      delta: 'x'.repeat(40)
-    })
-    await harness.notify('goodbuddy/session/event', {
-      sessionId: 'session-1',
-      requestId: 'request-output-limit',
-      type: 'reasoning',
-      delta: 'y'.repeat(40)
-    })
+    for (let index = 0; index < 65; index++) {
+      await harness.notify('goodbuddy/session/event', {
+        sessionId: 'session-1',
+        requestId: 'request-output-limit',
+        type: 'reasoning',
+        delta: 'x'.repeat(65_536)
+      })
+    }
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
 
-    await expect(running).rejects.toThrow(
-      '请求累计输出超过安全限制'
-    )
+    const events = await running
+    expect(events.filter((event) => event.type === 'reasoning')).toHaveLength(65)
     await harness.runtime.dispose()
   })
 

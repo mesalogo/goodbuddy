@@ -5368,6 +5368,7 @@ describe('registerIpcHandlers agent terminal state', () => {
   })
 
   it('reuses a scheduled Task and writes text results to its Conversation', async () => {
+    const fullOutput = `${'x'.repeat(1_000_001)} scheduled tail`
     const taskId = '00000000-0000-4000-8000-000000000701'
     const conversationId =
       '00000000-0000-4000-8000-000000000702'
@@ -5398,7 +5399,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         yield {
           requestId: request.requestId,
           type: 'text',
-          delta: '每日状态正常'
+          delta: fullOutput
         } as const
         yield {
           requestId: request.requestId,
@@ -5470,7 +5471,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     ).toHaveBeenCalledWith({
       conversationId,
       role: 'assistant',
-      content: '每日状态正常',
+      content: fullOutput,
       status: '定时任务',
       task: {
         id: taskId,

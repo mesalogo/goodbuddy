@@ -50,6 +50,10 @@ import type { BrowserTabId } from '../../shared/contracts'
 import { searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
 import { applyWorkspacePatch } from './workspace-apply-patch'
 import { readWorkspaceLines } from './workspace-read-lines'
+import {
+  PAGED_OUTPUT_DEFAULT_PAGE_BYTES,
+  PAGED_OUTPUT_MAX_PAGE_BYTES
+} from './paged-output-store'
 
 const MAX_MODEL_TOOLS = 100
 const MAX_TOOL_RESULT_BYTES = 256 * 1024
@@ -93,6 +97,9 @@ const processExecuteTool = builtinModelTools.find(
 )!
 const subagentDelegateTool = builtinModelTools.find(
   (tool) => tool.name === 'subagent_delegate'
+)!
+const outputReadTool = builtinModelTools.find(
+  (tool) => tool.name === 'output_read'
 )!
 const magicNoteWriteToolNameSet = new Set<string>(
   magicNoteWriteToolNames
@@ -165,6 +172,19 @@ const ripgrepInputSchema = z
 const applyPatchInputSchema = z
   .object({
     patch: z.string().min(1)
+  })
+  .strict()
+
+const outputReadInputSchema = z
+  .object({
+    handle: z.string().min(1)
+      .describe('The handle returned in an output reference.'),
+    cursor: z.number().int().min(0).default(0)
+      .describe('UTF-8 byte offset. Use the returned nextCursor to continue, or 0 to reread.'),
+    limitBytes: z.number().int().min(1)
+      .max(PAGED_OUTPUT_MAX_PAGE_BYTES)
+      .default(PAGED_OUTPUT_DEFAULT_PAGE_BYTES)
+      .describe('Maximum page bytes; a tiny limit may expand to fit one complete UTF-8 character.')
   })
   .strict()
 
@@ -451,7 +471,8 @@ function toModelToolJsonSchema(
   schema: z.ZodType
 ): Record<string, unknown> {
   const value = z.toJSONSchema(schema, {
-    target: 'draft-7'
+    target: 'draft-7',
+    io: 'input'
   }) as Record<string, unknown>
   Reflect.deleteProperty(value, '$schema')
   return value
@@ -731,6 +752,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
       (this.webSearchEnabled ? 2 : 0) +
       (this.programming.processService ? 1 : 0) +
       (this.programming.subagentService ? 1 : 0) +
+      (this.programming.processService || this.programming.subagentService
+        ? 1 : 0) +
       (this.knowledgeGateway ? maximumScopedToolCount : 0)
     )
   }
@@ -929,7 +952,9 @@ export class ModelToolProvider implements ModelToolProviderLike {
         displayName: processExecuteTool.displayName,
         description:
           `Run one foreground command in the current workspace with current-user permissions using ${capability.shell.label}. ` +
-          'Returns bounded stdout, stderr, exit status, duration, and truncation state. Non-zero exit codes are command results.',
+          'Returns stdout/stderr prefix previews, exit status, duration, and truncation state. ' +
+          'Full output is retained until conversation release. When stdoutReference or stderrReference is present, ' +
+          'call output_read with its handle and nextCursor to continue; follow page nextCursor until eof. Non-zero exit codes are command results.',
         inputSchema: toModelToolJsonSchema(
           processExecuteInputSchema
         ),
@@ -955,10 +980,36 @@ export class ModelToolProvider implements ModelToolProviderLike {
         displayName: subagentDelegateTool.displayName,
         description:
           'Delegate one focused task to a temporary direct-model Subagent. ' +
-          'The child inherits the current model, workspace, work mode, and enabled tools, cannot delegate again, and returns bounded output to the parent.',
+          'The child inherits the current model, workspace, work mode, and enabled tools, cannot delegate again, and returns an output prefix preview to the parent. ' +
+          'When outputReference is present, call output_read with its handle and nextCursor to read the rest, including partial output from failed or cancelled runs. ' +
+          'Full output remains available until the parent conversation is released.',
         inputSchema: toModelToolJsonSchema(
           directModelSubagentInputSchema
         ),
+        source: 'builtin'
+      }
+    ]
+  }
+
+  private getOutputReadTool(
+    context: ModelToolCallContext
+  ): ModelToolDefinition[] {
+    if (
+      context.runtimeTarget !== 'model' ||
+      (!this.programming.processService && !this.programming.subagentService)
+    ) {
+      return []
+    }
+    return [
+      {
+        name: outputReadTool.name,
+        displayName: outputReadTool.displayName,
+        description:
+          'Read retained process or Subagent output from this conversation. ' +
+          'Use the reference handle and nextCursor to continue a preview, or cursor 0 to reread. ' +
+          'Follow each page nextCursor until eof; cursors are UTF-8 byte offsets. ' +
+          'Read-only in Ask and Execute. Handles expire when the conversation or runtime is released.',
+        inputSchema: toModelToolJsonSchema(outputReadInputSchema),
         source: 'builtin'
       }
     ]
@@ -1230,6 +1281,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ? this.getWebSearchDefinitions()
       : []
     const subagentTools = this.getSubagentTool(context)
+    const outputTools = this.getOutputReadTool(context)
     const workspaceTools = await this.getWorkspaceTools(signal)
     if (context.workMode !== 'execute') {
       return [
@@ -1238,6 +1290,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         ),
         ...webTools,
         ...subagentTools,
+        ...outputTools,
         ...scopedTools
       ]
     }
@@ -1248,6 +1301,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ...workspaceTools,
       ...processTools,
       ...subagentTools,
+      ...outputTools,
       ...(browserTools?.listTools() ?? []),
       ...webTools,
       ...[...bindings.values()].map((binding) => binding.definition),
@@ -1317,6 +1371,16 @@ export class ModelToolProvider implements ModelToolProviderLike {
         title: '允许运行项目命令？',
         description:
           '该命令会在指定目录（默认当前工作区）中使用当前用户权限运行，并可访问该账号有权访问的主机资源。',
+        toolName: tool.displayName,
+        argumentSummary,
+        allowPermanent: false
+      }
+    }
+    if (tool.name === 'output_read') {
+      return {
+        scopeKey: 'model:builtin:output_read',
+        title: '允许续读工具输出？',
+        description: '读取当前会话已保留的进程或 Subagent 输出，不运行新命令。',
         toolName: tool.displayName,
         argumentSummary,
         allowPermanent: false
@@ -1672,6 +1736,24 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return createTextToolResult(
         await applyWorkspacePatch(input.patch, this.workspaceAccess, signal)
       )
+    }
+    if (name === 'output_read') {
+      if (context.runtimeTarget !== 'model') {
+        throw new Error('当前请求不允许续读工具输出')
+      }
+      const input = outputReadInputSchema.parse(argumentsValue)
+      const service = input.handle.startsWith('process:')
+        ? this.programming.processService
+        : input.handle.startsWith('subagent:')
+          ? this.programming.subagentService
+          : undefined
+      if (!service) {
+        throw new Error('分页输出句柄无效或服务不可用')
+      }
+      const page = await service.readOutput(
+        context.conversationId, input.handle, input.cursor, input.limitBytes
+      )
+      return createTextToolResult(boundedJson(page, '分页输出无法序列化'))
     }
     if (name === 'process_execute') {
       if (

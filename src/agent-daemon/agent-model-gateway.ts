@@ -358,11 +358,12 @@ export class AgentModelGateway {
       requestDigest
     })
     const timeout = new AbortController()
-    const timer = setTimeout(
+    const timeoutMilliseconds = context.profile.limits.requestTimeoutMilliseconds
+    const timer = timeoutMilliseconds === undefined ? undefined : setTimeout(
       () => timeout.abort(new Error('provider timeout')),
-      context.profile.limits.requestTimeoutMilliseconds
+      timeoutMilliseconds
     )
-    timer.unref?.()
+    timer?.unref?.()
     let response: Response
     try {
       response = await this.#fetch(prepared.url, {
@@ -395,10 +396,13 @@ export class AgentModelGateway {
       })
     } catch (error) {
       clearTimeout(timer)
-      const code =
-        error instanceof BoundedResponseTooLargeError
-          ? 'response-too-large'
-          : 'outcome-unknown'
+      const code = signal.aborted
+        ? 'cancelled'
+        : timeout.signal.aborted
+          ? 'timeout'
+          : error instanceof BoundedResponseTooLargeError
+            ? 'response-too-large'
+            : 'outcome-unknown'
       this.#ledger.outcomeUnknown(callId, code)
       throw error instanceof AgentModelGatewayError
         ? error
@@ -481,7 +485,7 @@ export function createAgentModelCallId(
 function prepareProviderRequest(
   profile: AgentPromptModelProfile,
   request: RemoteModelGatewayRequest,
-  maximumOutputTokens: number
+  maximumOutputTokens: number | undefined
 ): {
   url: URL
   headers: Record<string, string>
@@ -550,10 +554,12 @@ function prepareProviderRequest(
       'Provider request has an invalid output token limit'
     )
   }
-  normalized[outputField] =
-    requestedOutput === undefined
-      ? maximumOutputTokens
-      : Math.min(requestedOutput as number, maximumOutputTokens)
+  if (maximumOutputTokens !== undefined) {
+    normalized[outputField] =
+      requestedOutput === undefined
+        ? maximumOutputTokens
+        : Math.min(requestedOutput as number, maximumOutputTokens)
+  }
   const body = Buffer.from(canonicalJson(normalized), 'utf8')
   if (
     body.byteLength >

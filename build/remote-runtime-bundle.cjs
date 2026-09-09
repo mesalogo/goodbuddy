@@ -50,7 +50,8 @@ const profileDigests = Object.freeze({
   acp: "sha256:0e3764ab897258bc0234162357c2eefc3faeb9918080ae81b60e2084ed7996a6",
 });
 const fixedLimits = Object.freeze({
-  maximumPromptRuntimeMilliseconds: 10 * 60 * 1000,
+  // Zero leaves prompt duration to its requested deadline and cancellation.
+  maximumPromptRuntimeMilliseconds: 0,
   maximumPromptInputBytes: 16 * 1024 * 1024,
   maximumPromptOutputBytes: 8 * 1024 * 1024,
 });
@@ -384,7 +385,7 @@ function validateManifestShape(manifest) {
   }
   if (
     !Number.isSafeInteger(manifest.limits?.maximumPromptRuntimeMilliseconds) ||
-    manifest.limits.maximumPromptRuntimeMilliseconds < 1 ||
+    manifest.limits.maximumPromptRuntimeMilliseconds < 0 ||
     !Number.isSafeInteger(manifest.limits.maximumPromptInputBytes) ||
     manifest.limits.maximumPromptInputBytes < 1 ||
     !Number.isSafeInteger(manifest.limits.maximumPromptOutputBytes) ||

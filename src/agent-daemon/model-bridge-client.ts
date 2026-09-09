@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { UNBOUNDED_REMOTE_PROMPT_DEADLINE } from '../shared/remote-agent-contracts'
 import {
   AGENT_PROTOCOL_VERSION,
+  AGENT_PROTOCOL_LIMITS,
   agentIdentifierSchema,
   type AgentFrame
 } from '../shared/agent-protocol'
@@ -9,6 +11,7 @@ import {
   decodeModelBridgeMessage,
   encodeModelBridgeMessage,
   modelBridgeDeliveryAckMessageSchema,
+  ModelBridgeMessageBuffer,
   type ModelBridgeError,
   type ModelBridgeIdentity,
   type ModelBridgePolicy,
@@ -18,8 +21,6 @@ import type {
   RemoteModelGatewayRequest,
   RemoteModelGatewayResponse
 } from '../shared/remote-model-gateway-contracts'
-
-const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 export type ModelBridgeClientBinding = {
   bindingId: string
@@ -66,7 +67,7 @@ type ActiveRequest = {
   requestDigest: string
   resolve: (message: ModelBridgeResponseMessage) => void
   reject: (error: unknown) => void
-  timeout: NodeJS.Timeout
+  timeout: NodeJS.Timeout | undefined
   responseReceived: boolean
   providerDispatchPossible: boolean
   settled: boolean
@@ -77,13 +78,14 @@ export class ModelBridgeBlobClient {
   readonly #sendBlobFrame: (frame: AgentFrame) => Promise<void>
   readonly #onPoison: (error: ModelBridgeClientError) => void | Promise<void>
   readonly #now: () => number
-  readonly #requestTimeoutMs: number
+  readonly #requestTimeoutMs: number | undefined
   readonly #randomMessageId: () => string
   #nextRoundIndex = 0
   #nextOutboundSequence = 1n
   #active?: ActiveRequest
   #closed = false
   #poisoned = false
+  readonly #responseBuffer = new ModelBridgeMessageBuffer()
 
   constructor(options: {
     binding: ModelBridgeClientBinding
@@ -97,9 +99,9 @@ export class ModelBridgeBlobClient {
     this.#sendBlobFrame = options.sendBlobFrame
     this.#onPoison = options.onPoison
     this.#now = options.now ?? Date.now
-    this.#requestTimeoutMs = boundedTimeout(
-      options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
-    )
+    this.#requestTimeoutMs = options.requestTimeoutMs === undefined
+      ? undefined
+      : boundedTimeout(options.requestTimeoutMs)
     this.#randomMessageId =
       options.randomMessageId ??
       (() => `bridge-${randomUUID()}`)
@@ -151,13 +153,23 @@ export class ModelBridgeBlobClient {
 
     const response = new Promise<ModelBridgeResponseMessage>(
       (resolve, reject) => {
-        const remaining = Math.max(
-          1,
-          Date.parse(this.binding.deadlineAt) - this.#now()
+        const deadline = Math.min(
+          this.binding.deadlineAt === UNBOUNDED_REMOTE_PROMPT_DEADLINE
+            ? Infinity
+            : Date.parse(this.binding.deadlineAt),
+          this.#requestTimeoutMs === undefined
+            ? Infinity
+            : this.#now() + this.#requestTimeoutMs
         )
-        const timeout = setTimeout(() => {
+        const expire = (): void => {
           const active = this.#active
           if (active?.identity.messageId !== messageId) {
+            return
+          }
+          const remaining = deadline - this.#now()
+          if (remaining > 0) {
+            active.timeout = setTimeout(expire, Math.min(remaining, 0x7fff_ffff))
+            active.timeout.unref?.()
             return
           }
           const error = new ModelBridgeClientError(
@@ -169,8 +181,12 @@ export class ModelBridgeBlobClient {
           active.settled = true
           active.reject(error)
           void this.#poison(error)
-        }, Math.min(this.#requestTimeoutMs, remaining))
-        timeout.unref?.()
+        }
+        const timeout = deadline === Infinity ? undefined : setTimeout(
+          expire,
+          Math.max(1, Math.min(deadline - this.#now(), 0x7fff_ffff))
+        )
+        timeout?.unref?.()
         this.#active = {
           identity,
           requestDigest: message.requestDigest,
@@ -339,7 +355,9 @@ export class ModelBridgeBlobClient {
       )
     }
     try {
-      const message = await decodeModelBridgeMessage(frame.payload, {
+      const payload = this.#responseBuffer.push(frame.payload)
+      if (payload === undefined) return
+      const message = await decodeModelBridgeMessage(payload, {
         expectedIdentity: active.identity,
         expectedRequestDigest: active.requestDigest
       })
@@ -438,29 +456,34 @@ export class ModelBridgeBlobClient {
   }
 
   async #send(payload: Uint8Array): Promise<void> {
-    const sequence = this.#nextOutboundSequence.toString()
-    await this.#sendBlobFrame({
-      header: {
-        protocolMajor: AGENT_PROTOCOL_VERSION.major,
-        protocolMinor: AGENT_PROTOCOL_VERSION.minor,
-        connectionId: this.binding.connectionId,
-        generation: this.binding.controllerGeneration,
-        channelId: this.binding.channelId,
-        channelEpoch: this.binding.channelEpoch,
-        direction: 'agent-to-main',
-        sequence,
-        kind: 'blob',
-        payloadLength: payload.byteLength
-      },
-      payload
-    })
-    this.#nextOutboundSequence += 1n
+    for (let offset = 0; offset < payload.byteLength; offset += AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes) {
+      this.#assertAvailable()
+      const chunk = payload.subarray(offset, offset + AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes)
+      const sequence = this.#nextOutboundSequence.toString()
+      await this.#sendBlobFrame({
+        header: {
+          protocolMajor: AGENT_PROTOCOL_VERSION.major,
+          protocolMinor: AGENT_PROTOCOL_VERSION.minor,
+          connectionId: this.binding.connectionId,
+          generation: this.binding.controllerGeneration,
+          channelId: this.binding.channelId,
+          channelEpoch: this.binding.channelEpoch,
+          direction: 'agent-to-main',
+          sequence,
+          kind: 'blob',
+          payloadLength: chunk.byteLength
+        },
+        payload: chunk
+      })
+      this.#nextOutboundSequence += 1n
+    }
   }
 
   #clearActive(active: ActiveRequest): void {
     clearTimeout(active.timeout)
     if (this.#active === active) {
       this.#active = undefined
+      this.#responseBuffer.clear()
     }
   }
 
@@ -511,7 +534,7 @@ function boundedTimeout(value: number): number {
   if (
     !Number.isSafeInteger(value) ||
     value < 1 ||
-    value > 300_000
+    value > 0x7fff_ffff
   ) {
     throw new RangeError('Invalid model bridge timeout')
   }

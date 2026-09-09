@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { UNBOUNDED_REMOTE_PROMPT_DEADLINE } from '../shared/remote-agent-contracts'
 import {
   decodeModelBridgeMessage,
   encodeModelBridgeMessage,
@@ -7,6 +8,7 @@ import {
 } from '../shared/model-bridge-contracts'
 import {
   AGENT_PROTOCOL_VERSION,
+  AGENT_PROTOCOL_LIMITS,
   type AgentFrame
 } from '../shared/agent-protocol'
 import {
@@ -65,8 +67,12 @@ async function outboundRequest(
   sent: AgentFrame[],
   index = 0
 ): Promise<ModelBridgeRequestMessage> {
-  await waitFor(() => sent.length > index)
-  const decoded = await decodeModelBridgeMessage(sent[index]!.payload)
+  await waitFor(() => {
+    if (sent.length <= index) return false
+    try { JSON.parse(Buffer.concat(sent.slice(index).map(frame => frame.payload)).toString()); return true }
+    catch { return false }
+  })
+  const decoded = await decodeModelBridgeMessage(Buffer.concat(sent.slice(index).map(frame => frame.payload)))
   if (decoded.kind !== 'request') {
     throw new Error('Expected request')
   }
@@ -78,9 +84,7 @@ async function deliverResponse(
   outbound: ModelBridgeRequestMessage,
   bodyBytes = 12
 ): Promise<void> {
-  await client.onBlobFrame(
-    incomingFrame(
-      await encodeModelBridgeMessage({
+  const payload = await encodeModelBridgeMessage({
         protocol: 'goodbuddy-model-bridge-v1',
         kind: 'response',
         identity: outbound.identity,
@@ -90,13 +94,45 @@ async function deliverResponse(
           headers: { 'content-type': 'application/json' },
           bodyBase64: Buffer.alloc(bodyBytes, 2).toString('base64')
         }
-      }),
-      1
-    )
-  )
+      })
+  for (let offset = 0; offset < payload.length; offset += AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes) {
+    await client.onBlobFrame(incomingFrame(
+      payload.subarray(offset, offset + AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes),
+      offset / AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes + 1
+    ))
+  }
 }
 
 describe('Agent model bridge blob client', () => {
+  it.each(['finite', 'unbounded'])('waits for the prompt deadline without a fixed provider timeout: %s', async (kind) => {
+    vi.useFakeTimers()
+    try {
+      const fixture = createHarness()
+      fixture.client.binding.deadlineAt = kind === 'finite'
+        ? new Date(Date.now() + 60 * 60_000).toISOString()
+        : UNBOUNDED_REMOTE_PROMPT_DEADLINE
+      const controller = new AbortController()
+      const pending = fixture.client.exchange(request, {
+        requestId: 'request-long', signal: controller.signal
+      })
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: kind === 'finite' ? 'timeout' : 'cancelled'
+      })
+      await vi.waitFor(() => expect(fixture.sent).toHaveLength(1))
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      expect(fixture.poisoned).not.toHaveBeenCalled()
+      if (kind === 'finite') {
+        await vi.advanceTimersByTimeAsync(50 * 60_000)
+      } else {
+        controller.abort()
+      }
+      await rejected
+      await fixture.client.close({ poisonIfActive: false })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses exact sequential identities and two-phase delivery', async () => {
     const fixture = createHarness()
     const pending = fixture.client.exchange(request, {
@@ -133,30 +169,30 @@ describe('Agent model bridge blob client', () => {
     expect(fixture.poisoned).not.toHaveBeenCalled()
   })
 
-  it('receives a maximum legal response in one message', async () => {
+  it('receives a response across bounded blob frames', async () => {
     const fixture = createHarness()
     const pending = fixture.client.exchange(request, {
       requestId: 'request-large-response',
       signal: new AbortController().signal
     })
     const outbound = await outboundRequest(fixture.sent)
-    await deliverResponse(fixture.client, outbound, 768 * 1024)
+    await deliverResponse(fixture.client, outbound, 2 * 1024 * 1024)
 
     const exchange = await pending
     expect(
       Buffer.from(exchange.response.bodyBase64, 'base64').byteLength
-    ).toBe(768 * 1024)
+    ).toBe(2 * 1024 * 1024)
     await exchange.acknowledgeDelivery()
     expect(fixture.sent).toHaveLength(2)
     expect(fixture.poisoned).not.toHaveBeenCalled()
   })
 
-  it('sends a large request as one bounded message', async () => {
+  it('sends a large request across bounded blob frames', async () => {
     const fixture = createHarness()
     const pending = fixture.client.exchange(
       {
         ...request,
-        bodyBase64: Buffer.alloc(700_000, 1).toString('base64')
+        bodyBase64: Buffer.alloc(2 * 1024 * 1024, 1).toString('base64')
       },
       {
         requestId: 'request-large',
@@ -164,7 +200,8 @@ describe('Agent model bridge blob client', () => {
       }
     )
     const outbound = await outboundRequest(fixture.sent)
-    expect(fixture.sent).toHaveLength(1)
+    expect(fixture.sent.length).toBeGreaterThan(1)
+    expect(fixture.sent.every(frame => frame.payload.length <= AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes)).toBe(true)
     expect(outbound.identity.roundIndex).toBe(0)
     await fixture.client.close({ poisonIfActive: false })
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
@@ -319,7 +356,7 @@ describe('Agent model bridge blob client', () => {
     await outboundRequest(fixture.sent)
     await expect(
       fixture.client.onBlobFrame(
-        incomingFrame(Buffer.from('{ "not": "canonical" }'), 1)
+        incomingFrame(Buffer.from('{ "not": "canonical" }\n'), 1)
       )
     ).rejects.toBeInstanceOf(Error)
     await expect(pending).rejects.toBeInstanceOf(Error)

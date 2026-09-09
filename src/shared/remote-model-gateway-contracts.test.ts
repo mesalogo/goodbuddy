@@ -16,6 +16,12 @@ const validRequest = {
 } as const
 
 describe('remote model gateway contracts', () => {
+  it('accepts request and response bodies above the old 768 KiB ceiling', () => {
+    const bodyBase64 = Buffer.alloc(2 * 1024 * 1024, 'x').toString('base64')
+    expect(remoteModelGatewayRequestSchema.parse({ ...validRequest, bodyBase64 }).bodyBase64).toBe(bodyBase64)
+    expect(remoteModelGatewayResponseSchema.parse({ status: 200, headers: {}, bodyBase64 }).bodyBase64).toBe(bodyBase64)
+  })
+
   it('accepts only POST requests to fixed provider API paths', () => {
     expect(remoteModelGatewayRequestSchema.parse(validRequest)).toEqual(
       validRequest

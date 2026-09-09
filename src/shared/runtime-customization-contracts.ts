@@ -2,9 +2,7 @@ import { z } from 'zod'
 import {
   assistantIdSchema,
   conversationContextCompressionStateSchema,
-  conversationHistoryMessageSchema,
-  maximumConversationHistoryCharacters,
-  maximumConversationHistoryMessages
+  conversationHistoryMessageSchema
 } from './assistant-contracts'
 import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
 
@@ -466,12 +464,8 @@ export const runtimeConversationCompactInputSchema = z
     conversationId: assistantIdSchema,
     projectId: assistantIdSchema.optional(),
     runtimeSelection: agentRuntimeSelectionSchema,
-    history: z
-      .array(conversationHistoryMessageSchema)
-      .max(maximumConversationHistoryMessages),
-    historyMessageIds: z
-      .array(assistantIdSchema)
-      .max(maximumConversationHistoryMessages),
+    history: z.array(conversationHistoryMessageSchema),
+    historyMessageIds: z.array(assistantIdSchema),
     contextCompressionState:
       conversationContextCompressionStateSchema.optional()
   })
@@ -494,18 +488,6 @@ export const runtimeConversationCompactInputSchema = z
         code: 'custom',
         path: ['historyMessageIds'],
         message: '会话历史消息 ID 不得重复'
-      })
-    }
-    if (
-      request.history.reduce(
-        (total, message) => total + message.content.length,
-        0
-    ) > maximumConversationHistoryCharacters
-    ) {
-      context.addIssue({
-        code: 'custom',
-        path: ['history'],
-        message: `会话历史总长度不能超过 ${maximumConversationHistoryCharacters.toLocaleString()} 个字符`
       })
     }
   })

@@ -39,6 +39,61 @@ afterEach(async () => {
 })
 
 describe('ContextManager', () => {
+  it('preserves the tail of a real DOCX larger than the former extracted-text cap', async () => {
+    const content = `${'word text '.repeat(30_000)}DOCX_TAIL`
+    const data = Buffer.from(zipSync({
+      'word/document.xml': strToU8(`<w:document><w:p><w:t>${content}</w:t></w:p></w:document>`)
+    }))
+    const manager = new ContextManager()
+    const attachment = await manager.ingestRemoteAttachment({
+      name: 'large.docx', mimeType: 'application/octet-stream',
+      kind: 'file', size: data.byteLength, dataBase64: data.toString('base64')
+    })
+    expect(attachment.size).toBeGreaterThan(256 * 1024)
+    expect(manager.enrichRequest({
+      requestId: crypto.randomUUID(), conversationId: 'native-docx',
+      prompt: 'Read the tail', contextIds: [attachment.id]
+    }).prompt).toContain(content)
+  })
+
+  it.each(['docx', 'pdf', 'pptx', 'xlsx'])('keeps full parsed %s content through local and channel enrichment', async (extension) => {
+    const content = `${'document text '.repeat(90_000)}DOCUMENT_TAIL`
+    const parseDocument = vi.fn(async () => ({
+      title: 'Large document',
+      sourceFormat: extension,
+      content,
+      warnings: [],
+      sections: [{ locator: 'page 1', content }]
+    }))
+    const manager = new ContextManager({ parseDocument })
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-full-document-'))
+    temporaryDirectories.push(directory)
+    const name = `document.${extension}`
+    const filePath = join(directory, name)
+    const data = Buffer.from('parser fixture')
+    await writeFile(filePath, data)
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [filePath] })
+    const [local] = await manager.selectFiles({} as BrowserWindow)
+    const channel = await manager.ingestRemoteAttachment({
+      name,
+      mimeType: 'application/octet-stream',
+      size: data.byteLength,
+      kind: 'file',
+      dataBase64: data.toString('base64')
+    })
+    for (const attachment of [local!, channel]) {
+      expect(attachment.size).toBe(Buffer.byteLength(`[page 1]\n${content}`))
+      const enriched = manager.enrichRequest({
+        requestId: crypto.randomUUID(),
+        conversationId: 'full-document',
+        prompt: 'read the ending',
+        contextIds: [attachment.id]
+      })
+      expect(enriched.prompt).toContain(content)
+      expect(enriched.prompt).toContain('DOCUMENT_TAIL')
+    }
+  })
+
   it('stores pasted renderer image bytes without rereading the clipboard', () => {
     const image = {
       isEmpty: () => false,

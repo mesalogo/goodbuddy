@@ -2,14 +2,29 @@ import { createHash } from 'node:crypto'
 import { canonicalJson } from '../../shared/agent-protocol/canonical'
 import {
   agentPromptModelProfileSchema,
+  MODEL_BRIDGE_OPTIONAL_LIMITS_CAPABILITY,
   modelBridgePolicySchema,
   type AgentPromptModelProfile,
   type ModelBridgePolicy
 } from '../../shared/model-bridge-contracts'
 import type { ResolvedModelProfile } from '../runtime-settings-store'
 
-const DEFAULT_MAXIMUM_OUTPUT_TOKENS = 32_000
-const MODEL_REQUEST_TIMEOUT_MILLISECONDS = 60_000
+export function modelProfileForAgent(
+  profile: AgentPromptModelProfile,
+  capabilities: ReadonlyArray<{ name: string; version: number }>
+): AgentPromptModelProfile {
+  if (capabilities.some(capability =>
+    capability.name === MODEL_BRIDGE_OPTIONAL_LIMITS_CAPABILITY && capability.version === 1
+  )) return structuredClone(profile)
+  // Released Agent 0.11.22 requires both fields and enforces these bounds.
+  return {
+    ...structuredClone(profile),
+    limits: {
+      maximumOutputTokens: Math.min(profile.limits.maximumOutputTokens ?? 32_000, 1_000_000),
+      requestTimeoutMilliseconds: Math.min(profile.limits.requestTimeoutMilliseconds ?? 60_000, 300_000)
+    }
+  }
+}
 
 /**
  * Prompt-scoped model material passed directly to the Agent. The policy is
@@ -58,14 +73,6 @@ export function createManagedModelBridge(options: {
       'Managed remote OpenCode requires a usable text model profile'
     )
   }
-  const maximumOutputTokens = Math.min(
-    1_000_000,
-    Math.max(
-      1,
-      selected.maximumOutputTokens ??
-        DEFAULT_MAXIMUM_OUTPUT_TOKENS
-    )
-  )
   const modelProfileDigest =
     createResolvedModelProfileDigest(selected)
   const profile = agentPromptModelProfileSchema.parse({
@@ -94,9 +101,9 @@ export function createManagedModelBridge(options: {
       imageInput: selected.supportsImageInput === true
     },
     limits: {
-      maximumOutputTokens,
-      requestTimeoutMilliseconds:
-        MODEL_REQUEST_TIMEOUT_MILLISECONDS
+      ...(selected.maximumOutputTokens === undefined
+        ? {}
+        : { maximumOutputTokens: selected.maximumOutputTokens })
     }
   })
   const policy = modelBridgePolicySchema.parse({

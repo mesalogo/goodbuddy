@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentPromptModelProfile } from '../shared/model-bridge-contracts'
+import { REMOTE_MODEL_GATEWAY_LIMITS } from '../shared/remote-model-gateway-contracts'
 import {
   AgentModelCallLedger,
   AgentModelGateway
@@ -65,6 +66,49 @@ afterEach(() => {
 })
 
 describe('AgentModelGateway', () => {
+  it('keeps a slow provider request alive past 60 seconds and still cancels it', async () => {
+    vi.useFakeTimers()
+    let providerSignal: AbortSignal | undefined
+    const { gateway, ledger } = setup(vi.fn<typeof fetch>(async (_url, init) => {
+      providerSignal = init!.signal!
+      return await new Promise<Response>((_resolve, reject) => {
+        providerSignal!.addEventListener('abort', () => reject(providerSignal!.reason), { once: true })
+      })
+    }))
+    try {
+      const controller = new AbortController()
+      const pending = gateway.dispatch({ ...context, profile: { ...profile, limits: {} } }, request, controller.signal)
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(providerSignal?.aborted).toBe(false)
+      controller.abort()
+      await rejected
+    } finally {
+      ledger.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([undefined, 128_000])('preserves runtime output hints without an invented token default: %s', async (tokens) => {
+    const payload = { model: 'model-1', ...(tokens === undefined ? {} : { max_output_tokens: tokens }) }
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual(payload)
+      return new Response('x'.repeat(1024 * 1024))
+    })
+    const { gateway, ledger } = setup(fetcher)
+    try {
+      const result = await gateway.dispatch(
+        { ...context, profile: { ...profile, limits: {} } },
+        { ...request, bodyBase64: Buffer.from(JSON.stringify(payload)).toString('base64') },
+        new AbortController().signal
+      )
+      expect(Buffer.from(result.response.bodyBase64, 'base64').length).toBe(1024 * 1024)
+      await result.acknowledgeDelivery()
+    } finally {
+      ledger.close()
+    }
+  })
+
   it('dispatches a stable call exactly once and records delivery ACK without persisting credentials', async () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
       expect(new Headers(init?.headers).get('authorization')).toBe(
@@ -281,7 +325,7 @@ describe('AgentModelGateway', () => {
       new Response('{}', {
         status: 200,
         headers: {
-          'content-length': String(768 * 1024 + 1)
+          'content-length': String(REMOTE_MODEL_GATEWAY_LIMITS.maximumResponseBodyBytes + 1)
         }
       })
     )

@@ -24,6 +24,7 @@
 | 进程执行 | GoodBuddy 在当前执行空间启动一个前台 Shell 命令并返回有界结果 |
 | 工作区搜索 | 通过安装包内置 ripgrep 搜索内容或列出文件，并返回紧凑结果 |
 | 工作区补丁 | 通过 `*** Begin Patch` 格式新增、修改或删除工作区文本文件 |
+| 输出续读 | 通过 `output_read` 分页读取当前会话保留的进程或 Subagent 输出 |
 | 平台 Shell | Windows 上的 PowerShell，macOS/Linux 上的 Bash 或 POSIX Sh |
 | 编程 Subagent | 由直连模型临时委派、使用直连模型 Runtime 执行一个有界子任务的执行者 |
 | 父请求 | 发起进程调用或 Subagent 委派的当前直连模型请求 |
@@ -35,13 +36,15 @@ Task、Job、Subjob、Run 和 Subagent 的对象关系以
 
 ## 功能边界
 
-- `workspace_rg`、`workspace_read_text`、`workspace_apply_patch`、`process_execute` 和
-  `subagent_delegate` 是 GoodBuddy 直连模型内置工具，不是外部 MCP。
+- `workspace_rg`、`workspace_read_text`、`workspace_apply_patch`、`process_execute`、
+  `subagent_delegate` 和 `output_read` 是 GoodBuddy 直连模型内置工具，不是外部 MCP。
 - 直连文本模型的普通问答、工具轮次和上下文摘要会在尚无可见输出时，对瞬时网络错误或
   单次请求超时最多自动重试 3 次。
 - OpenCode、Continue 和 DeepSeek Harness 继续使用各自原生执行与委派能力。
 - Ask 可搜索和分页读取工作区，但不允许补丁写入或进程执行；Subagent 若在 Ask 中使用，
   只能继承 Ask 的只读能力。
+- 进程和 Subagent 的长输出返回预览与续读位置，完整内容保留到所属会话或 Runtime 释放。
+  Ask 和 Execute 均可续读当前会话已取得的输出，详见 [输出契约](./technical-design.md#43-输出边界)。
 - Execute 表示用户授权当前执行空间账号的完整能力，不增加第二套工具审批或权限档位。
 - 首版跨平台指桌面本机 Windows、macOS 和 Linux。托管 SSH 项目当前继续使用远端
   OpenCode；未来若向远端直连模型开放本工具，命令必须由 Host Agent 执行，绝不能回退到

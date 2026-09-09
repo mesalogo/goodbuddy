@@ -18,7 +18,17 @@ import {
   type WorkspaceAccess
 } from '../workspace'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
-import type { DirectModelProcessService } from './direct-model-process-service'
+import {
+  LocalDirectModelProcessService,
+  type DirectModelProcessService,
+  type ProcessExecuteResult
+} from './direct-model-process-service'
+import {
+  DirectModelSubagentService,
+  type DirectModelSubagentResult
+} from '../assistant/direct-model-subagent-service'
+import { SubagentScheduler } from '../assistant/subagent-scheduler'
+import type { PagedOutputPage } from './paged-output-store'
 
 const mocks = vi.hoisted(() => {
   const tasks = {
@@ -57,7 +67,9 @@ vi.mock('../capabilities/mcp-client-transport', () => ({
 
 import {
   ModelToolProvider,
-  type ModelToolCallContext
+  type ModelToolCallContext,
+  type ModelSubagentRequestContext,
+  type ModelToolResult
 } from './model-tool-provider'
 
 const temporaryDirectories: string[] = []
@@ -1042,6 +1054,137 @@ describe('ModelToolProvider', () => {
     )
     await provider.dispose()
     expect(processService.dispose).toHaveBeenCalledOnce()
+  })
+
+  it.each(['process', 'subagent'] as const)('exposes %s output reads in Ask and Execute independently of shell availability and delegation depth', async (source) => {
+    const workspace = await createWorkspace()
+    const scheduler = new SubagentScheduler({ concurrency: 1, queueLimit: 1, timeoutMs: 10000 })
+    const programming = source === 'process'
+      ? { processService: new LocalDirectModelProcessService({ executableExists: async () => false }) }
+      : { subagentService: new DirectModelSubagentService<ModelSubagentRequestContext>({
+        scheduler, runChild: async () => {}, releaseConversation: async () => {}
+      }) }
+    const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, programming)
+    const unconfigured = new ModelToolProvider(workspace)
+    const signal = new AbortController().signal
+    try {
+      for (const workMode of ['ask', 'execute'] as const) {
+        const context = { ...toolContext, runtimeTarget: 'model' as const, workMode, delegationDepth: 1 as const }
+        const tools = await provider.listTools(context, signal)
+        const tool = tools.find((item) => item.name === 'output_read')!
+        expect(tool).toMatchObject({
+          source: 'builtin',
+          inputSchema: {
+            type: 'object', additionalProperties: false, required: ['handle'],
+            properties: {
+              cursor: { type: 'integer', minimum: 0, default: 0 },
+              limitBytes: { type: 'integer', minimum: 1, maximum: 32768, default: 32768 }
+            }
+          }
+        })
+        expect(provider.getApproval(tool, { handle: 'process:test' }, 'read', context)).toMatchObject({
+          scopeKey: 'model:builtin:output_read', description: expect.stringContaining('当前会话')
+        })
+        expect(tools.some((item) => item.name === 'process_execute')).toBe(false)
+        expect((await unconfigured.listTools(context, signal)).some((item) => item.name === 'output_read')).toBe(false)
+        await expect(unconfigured.callTool('output_read', { handle: 'process:test' }, signal, context)).rejects.toThrow('服务不可用')
+      }
+      expect((await provider.listTools(toolContext, signal)).some((item) => item.name === 'output_read')).toBe(false)
+      await expect(provider.callTool('output_read', { handle: 'process:test' }, signal, toolContext)).rejects.toThrow('不允许')
+    } finally {
+      await provider.dispose()
+      await unconfigured.dispose()
+      scheduler.dispose()
+    }
+  })
+
+  it('preserves complete escaped process and Subagent output through provider pagination and owner cleanup', async () => {
+    const workspace = await createWorkspace()
+    const processService = new LocalDirectModelProcessService()
+    const scheduler = new SubagentScheduler({ concurrency: 1, queueLimit: 2, timeoutMs: 10000 })
+    const fullStdout = '\0'.repeat(110000) + '\u4f60\ud83d\ude00\ufffdstdout-tail'
+    const fullStderr = 'y'.repeat(110000) + 'stderr-tail'
+    const fullSubagent = '\u4f60'.repeat(70000) + 'subagent-tail'
+    const subagentService = new DirectModelSubagentService<ModelSubagentRequestContext>({
+      scheduler,
+      runChild: async (input) => { input.onOutput(fullSubagent) },
+      releaseConversation: async (conversationId) => { await provider.releaseConversation(conversationId) }
+    })
+    const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, { processService, subagentService })
+    const context = {
+      ...toolContext, runtimeTarget: 'model' as const, requestId: 'paged-provider-request',
+      executionSpaceIdentity: (await new LocalWorkspaceAccess(workspace).getIdentity()).id,
+      subagentBridge: { requestContext: { emitEvent: vi.fn() } }
+    }
+    const askContext = { ...context, workMode: 'ask' as const }
+    const signal = new AbortController().signal
+    const parse = (result: ModelToolResult) => {
+      expect(result.contextBytes).toBeLessThan(256 * 1024)
+      const part = result.parts[0]!
+      expect(part.type).toBe('text')
+      if (part.type !== 'text') throw new Error('Expected JSON result')
+      return JSON.parse(part.text)
+    }
+    try {
+      await writeFile(join(workspace, 'output-pages.cjs'),
+        `process.stdout.write(${JSON.stringify(fullStdout)}); process.stderr.write(${JSON.stringify(fullStderr)})`)
+      const processResult = parse(await provider.callTool('process_execute', { command: 'node output-pages.cjs' }, signal, context)) as ProcessExecuteResult
+      expect(processResult.exitCode).toBe(0)
+      const subagentResult = parse(await provider.callTool('subagent_delegate', { task: 'Return the fixture output' }, signal, askContext)) as DirectModelSubagentResult
+      expect(subagentResult.status).toBe('completed')
+      for (const [preview, reference, expected] of [
+        [processResult.stdout, processResult.stdoutReference!, fullStdout],
+        [processResult.stderr, processResult.stderrReference!, fullStderr],
+        [subagentResult.output, subagentResult.outputReference!, fullSubagent]
+      ] as const) {
+        expect(reference).toBeDefined()
+        let output = preview
+        let cursor = reference.nextCursor
+        while (cursor < reference.totalBytes) {
+          const page = parse(await provider.callTool('output_read', { handle: reference.handle, cursor }, signal, askContext)) as PagedOutputPage
+          expect(page.nextCursor).toBeGreaterThan(cursor)
+          output += page.content
+          cursor = page.nextCursor
+          expect(page.eof).toBe(cursor === reference.totalBytes)
+        }
+        expect(output).toBe(expected)
+        const first = parse(await provider.callTool('output_read', { handle: reference.handle, limitBytes: 1 }, signal, context)) as PagedOutputPage
+        expect(first.cursor).toBe(0)
+        expect(first.nextCursor).toBeGreaterThan(0)
+        await expect(provider.callTool('output_read', { handle: reference.handle }, signal, { ...askContext, conversationId: 'other-owner' })).rejects.toThrow('不属于')
+      }
+      const handle = processResult.stdoutReference!.handle
+      for (const args of [
+        { handle, cursor: -1 }, { handle, cursor: 0.5 }, { handle, limitBytes: 0 },
+        { handle, limitBytes: 32769 }, { handle, extra: true }, { handle: '' }, { handle: 'unknown:test' }
+      ]) {
+        await expect(provider.callTool('output_read', args, signal, context)).rejects.toThrow()
+      }
+      await expect(provider.callTool('output_read', { handle }, AbortSignal.abort(), context)).rejects.toThrow()
+      await provider.releaseConversation(context.conversationId)
+      for (const reference of [processResult.stdoutReference!, processResult.stderrReference!, subagentResult.outputReference!]) {
+        await expect(provider.callTool('output_read', { handle: reference.handle }, signal, askContext)).rejects.toThrow('不存在')
+      }
+    } finally {
+      await provider.dispose()
+      scheduler.dispose()
+    }
+  })
+
+  it('reserves the output_read slot when loading a full MCP catalog', async () => {
+    const workspace = await createWorkspace()
+    const processService = new LocalDirectModelProcessService()
+    const provider = new ModelToolProvider(workspace, [createMcpServer()], undefined, undefined, false, { processService })
+    mocks.client.listTools.mockResolvedValueOnce({ tools: Array.from({ length: 96 }, (_, index) => ({
+      name: `remote_${index}`, inputSchema: { type: 'object', properties: {} }
+    })) })
+    try {
+      const tools = await provider.listTools({ ...toolContext, runtimeTarget: 'model' }, new AbortController().signal)
+      expect(tools).toHaveLength(100)
+      expect(tools.filter((tool) => tool.name === 'output_read')).toHaveLength(1)
+    } finally {
+      await provider.dispose()
+    }
   })
 
   it('refreshes a dynamic MCP change announced during initial listing', async () => {

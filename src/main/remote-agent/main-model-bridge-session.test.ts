@@ -172,12 +172,13 @@ async function sentMessage(
   channel: FakeBlobChannel,
   offset = 0
 ) {
-  await vi.waitFor(() =>
+  await vi.waitFor(() => {
     expect(channel.sent.length).toBeGreaterThan(offset)
-  )
+    expect(() => JSON.parse(Buffer.concat(channel.sent.slice(offset)).toString())).not.toThrow()
+  })
   return {
-    message: await decodeModelBridgeMessage(channel.sent[offset]!),
-    nextOffset: offset + 1
+    message: await decodeModelBridgeMessage(Buffer.concat(channel.sent.slice(offset))),
+    nextOffset: channel.sent.length
   }
 }
 
@@ -315,7 +316,7 @@ describe('MainModelBridgeSession', () => {
     })
   })
 
-  it('delivers a maximum-sized response in one bounded message', async () => {
+  it('delivers a maximum-sized response across bounded transport frames', async () => {
     const channel = new FakeBlobChannel()
     const largeResponse = {
       ...response,
@@ -331,11 +332,11 @@ describe('MainModelBridgeSession', () => {
     })
     const requestMessage = await pushRequest(channel, 0)
     const outgoing = await sentMessage(channel)
-    expect(outgoing.nextOffset).toBe(1)
-    expect(channel.sent).toHaveLength(1)
-    expect(channel.sent[0]!.byteLength).toBeLessThanOrEqual(
-      AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes
-    )
+    expect(outgoing.nextOffset).toBe(channel.sent.length)
+    expect(channel.sent.length).toBeGreaterThan(1)
+    for (const frame of channel.sent) {
+      expect(frame.byteLength).toBeLessThanOrEqual(AGENT_PROTOCOL_LIMITS.maximumBlobFrameBytes)
+    }
     expect(outgoing.message).toMatchObject({
       kind: 'response',
       response: largeResponse

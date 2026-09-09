@@ -207,14 +207,14 @@ export const conversationMessageBlockSchema = z.discriminatedUnion('type', [
     .object({
       id: assistantIdSchema,
       type: z.literal('text'),
-      content: z.string().min(1).max(1_000_000)
+      content: z.string().min(1)
     })
     .strict(),
   z
     .object({
       id: assistantIdSchema,
       type: z.literal('reasoning'),
-      content: z.string().min(1).max(1_000_000)
+      content: z.string().min(1)
     })
     .strict(),
   z
@@ -314,7 +314,7 @@ export const conversationMessageSchema = z
     id: assistantIdSchema,
     queueItemId: assistantIdSchema.optional(),
     role: z.enum(['user', 'assistant']),
-    content: z.string().max(1_000_000),
+    content: z.string(),
     reasoning: z.string().optional(),
     blocks: conversationMessageBlocksSchema.optional(),
     displayCaptureTruncated: z.boolean().optional(),
@@ -402,16 +402,11 @@ export type ConversationMessage = z.infer<
   typeof conversationMessageSchema
 >
 
-export const maximumConversationHistoryMessages = 500
-export const maximumConversationHistoryCharacters = 2_000_000
 export const conversationHistoryMessageSchema =
   conversationMessageSchema
     .pick({
       role: true,
       content: true
-    })
-    .extend({
-      content: z.string().max(100_000)
     })
     .strict()
 
@@ -452,7 +447,7 @@ export type ConversationContextMetrics = z.infer<
 export const conversationContextCompressionStateSchema = z
   .object({
     coveredHistoryDigest: z.string().regex(/^[0-9a-f]{64}$/u),
-    coveredMessageCount: z.number().int().nonnegative().max(500),
+    coveredMessageCount: z.number().int().nonnegative(),
     coveredFromMessageId: assistantIdSchema.optional(),
     coveredThroughMessageId: assistantIdSchema.optional(),
     summary: z.string().trim().min(1).max(100_000)
@@ -502,9 +497,7 @@ export const conversationSnapshotSchema = z
     branch: conversationBranchSchema.optional(),
     title: z.string().trim().min(1).max(200),
     updatedAt: z.number().int().nonnegative(),
-    messages: z
-      .array(conversationMessageSchema)
-      .max(500)
+    messages: z.array(conversationMessageSchema)
   })
   .strict()
 
@@ -528,7 +521,7 @@ export type LocalConversationHeader = z.infer<
 export const localConversationSaveSchema = z
   .object({
     header: localConversationHeaderSchema,
-    messages: z.array(conversationMessageSchema).max(500)
+    messages: z.array(conversationMessageSchema)
   })
   .strict()
 

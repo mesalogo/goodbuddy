@@ -361,10 +361,48 @@ describe('CdpBrowserDriver', () => {
     expect(snapshot.truncated).toBe(true)
     expect(snapshot.nodes.length).toBeGreaterThan(0)
     expect(snapshot.nodes.length).toBeLessThan(500)
-    expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeLessThanOrEqual(
+    expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeGreaterThan(
       128 * 1024
     )
+    expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeLessThanOrEqual(
+      512 * 1024
+    )
     driver.dispose()
+  })
+
+  it('keeps useful nodes beyond 500 and their actionable references within the byte budget', async () => {
+    const nodes = Array.from({ length: 3_000 }, (_, index) => ({
+      nodeId: `node-${index}`,
+      backendDOMNodeId: index + 100,
+      role: { value: 'button' },
+      name: { value: `Item ${index} ${'x'.repeat(50)}` }
+    }))
+    const harness = createHarness((method, parameters) =>
+      method === 'Accessibility.getFullAXTree'
+        ? Promise.resolve({ nodes: [
+            ...Array.from({ length: 600 }, (_, index) => ({
+              nodeId: `ignored-${index}`, ignored: true
+            })),
+            ...nodes
+          ] })
+        : standardCommand(method, parameters)
+    )
+    const driver = new CdpBrowserDriver(harness.webContents)
+    try {
+      const signal = new AbortController().signal
+      const snapshot = await driver.snapshot(signal)
+      expect(snapshot.truncated).toBe(false)
+      expect(snapshot.nodes).toHaveLength(3_000)
+      const bytes = Buffer.byteLength(JSON.stringify(snapshot))
+      expect(bytes).toBeGreaterThan(128 * 1024)
+      expect(bytes).toBeLessThanOrEqual(512 * 1024)
+      await driver.click(snapshot.nodes.at(-1)!.ref, signal)
+      expect(harness.sendCommand).toHaveBeenCalledWith('DOM.describeNode', {
+        backendNodeId: 3_099, depth: 0, pierce: false
+      })
+    } finally {
+      driver.dispose()
+    }
   })
 
   it('rejects a snapshot crossed by main-frame navigation', async () => {

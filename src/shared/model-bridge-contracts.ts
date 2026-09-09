@@ -33,6 +33,8 @@ export const MODEL_BRIDGE_LIMITS = {
 } as const
 
 export const MODEL_BRIDGE_PROTOCOL = 'goodbuddy-model-bridge-v1' as const
+export const MODEL_BRIDGE_OPTIONAL_LIMITS_CAPABILITY =
+  'runtime/model-bridge-optional-limits' as const
 
 export const modelBridgeModelProtocolSchema = z.enum([
   'anthropic-messages',
@@ -131,12 +133,13 @@ export const agentPromptModelProfileSchema = z
       .strict(),
     limits: z
       .object({
-        maximumOutputTokens: z.number().int().min(1).max(1_000_000),
+        maximumOutputTokens: z.number().int().positive().safe().optional(),
         requestTimeoutMilliseconds: z
           .number()
           .int()
           .min(1)
-          .max(300_000)
+          .max(0x7fff_ffff)
+          .optional()
       })
       .strict()
   })
@@ -383,6 +386,45 @@ export type ModelBridgeDecodeOptions = {
   expectedIdentity?: ModelBridgeIdentity
   expectedRequestDigest?: string
   maximumMessageBytes?: number
+}
+
+// Keep the released v1 bytes unchanged, including for single-frame peers.
+export class ModelBridgeMessageBuffer {
+  #chunks: Uint8Array[] = []
+  #bytes = 0
+  #depth = 0
+  #inString = false
+  #escaped = false
+
+  push(chunk: Uint8Array): Uint8Array | undefined {
+    this.#bytes += chunk.byteLength
+    if (this.#bytes > MODEL_BRIDGE_LIMITS.maximumMessageBytes) {
+      this.clear()
+      throw new ModelBridgeCodecError('oversized', 'Model bridge message exceeds its byte limit')
+    }
+    this.#chunks.push(chunk)
+    for (const byte of chunk) {
+      if (this.#inString) {
+        if (this.#escaped) this.#escaped = false
+        else if (byte === 92) this.#escaped = true
+        else if (byte === 34) this.#inString = false
+      } else if (byte === 34) this.#inString = true
+      else if (byte === 123 || byte === 91) this.#depth += 1
+      else if (byte === 125 || byte === 93) this.#depth -= 1
+    }
+    if (this.#inString || this.#depth > 0) return undefined
+    const payload = Buffer.concat(this.#chunks, this.#bytes)
+    this.clear()
+    return payload
+  }
+
+  clear(): void {
+    this.#chunks = []
+    this.#bytes = 0
+    this.#depth = 0
+    this.#inString = false
+    this.#escaped = false
+  }
 }
 
 export async function decodeModelBridgeMessage(

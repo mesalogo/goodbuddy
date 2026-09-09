@@ -212,7 +212,7 @@ describe('direct Linux stdio Runtime ownership', () => {
     registry.close()
   })
 
-  it('does not stop an active prompt at the unbounded Runtime deadline', async () => {
+  it.each([UNBOUNDED_REMOTE_PROMPT_DEADLINE, 'finite'])('respects the requested Runtime deadline: %s', async (deadline) => {
     vi.useFakeTimers()
     try {
       const registry = createRegistry()
@@ -220,12 +220,14 @@ describe('direct Linux stdio Runtime ownership', () => {
       const launched = identity()
       const sendSignal = vi.fn<typeof process.kill>(() => true)
       const owner = await launchDirectLinuxStdioProcessOwner({
-        manifest: manifest(),
+        manifest: { ...manifest(), limits: { ...manifest().limits, maximumPromptRuntimeMilliseconds: 0 } },
         profile: profile(),
         identity: { launchId: 'launch-long', processId: 'process-long' },
         installationId: 'installation-1',
         registry,
-        deadlineAt: UNBOUNDED_REMOTE_PROMPT_DEADLINE,
+        deadlineAt: deadline === 'finite'
+          ? new Date(Date.now() + 26 * 60 * 60_000).toISOString()
+          : deadline,
         maximumInputBytes: 1024,
         platform: 'linux',
         spawn: () => {
@@ -244,6 +246,10 @@ describe('direct Linux stdio Runtime ownership', () => {
         state: 'running',
         processTree: 'running'
       })
+      if (deadline === 'finite') {
+        await vi.advanceTimersByTimeAsync(60 * 60_000)
+        expect(sendSignal).toHaveBeenCalledWith(-launched.processGroupId, 'SIGTERM')
+      }
       await owner.stop({
         reason: 'user-cancelled',
         deadlineAt: new Date(Date.now() + 10_000).toISOString()

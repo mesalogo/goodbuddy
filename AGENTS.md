@@ -99,6 +99,14 @@ additional hardening beyond the actual internal-network threat model:
   to that account. Do not add T2/T3 trust tiers, separate consent checklists,
   per-tool approvals, or a second "controlled execution" concept.
 - Preserve cancellation, timeout, bounded-output, and shutdown behavior.
+- When fixing Runtime behavior or limits, also inspect the remote Runtime path
+  through GoodBuddy Agent (`gbagent`). Verify whether local and remote execution
+  actually share the affected control logic; do not assume that a desktop fix
+  covers the Agent, bridge, launcher, or bundled Runtime. Fix any affected
+  remote-specific implementation and validate it under the GoodBuddy Agent
+  development validation rules below. If no separate remote fix is needed,
+  record which shared implementation covers it or why the remote path is
+  unaffected.
 - Keep model/provider credentials in Main, but do not otherwise reduce Execute
   permissions with extra product policy gates. Keep child-process cleanup
   straightforward and reliable.

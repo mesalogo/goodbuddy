@@ -95,10 +95,11 @@ export const remoteRuntimeBundleFileSchema = z
 
 export const remoteRuntimeLimitsSchema = z
   .object({
+    // Zero adds no bundle-wide cap to the prompt's own deadline.
     maximumPromptRuntimeMilliseconds: z
       .number()
       .int()
-      .min(1)
+      .min(0)
       .max(REMOTE_RUNTIME_LAUNCH_LIMITS.maximumRuntimeMilliseconds),
     maximumPromptInputBytes: z
       .number()

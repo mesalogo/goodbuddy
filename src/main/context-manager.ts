@@ -45,7 +45,6 @@ const maximumDocumentFileSize = 20 * 1024 * 1024
 const maximumContextBytes = 12 * 1024 * 1024
 const maximumContextCount = 16
 const maximumAttachmentsPerMessage = 8
-const maximumPromptBytes = 1024 * 1024
 const supportedExtensions = new Set([
   '.c',
   '.cpp',
@@ -81,19 +80,6 @@ const supportedDocumentExtensions = new Set([
   '.pptx',
   '.xlsx'
 ])
-
-function truncateUtf8(value: string, maximumBytes: number): string {
-  const buffer = Buffer.from(value)
-  if (buffer.byteLength <= maximumBytes) {
-    return value
-  }
-  const marker = '\n\n[文档内容过长，已截断]'
-  const markerBytes = Buffer.byteLength(marker)
-  return `${buffer
-    .subarray(0, maximumBytes - markerBytes)
-    .toString('utf8')
-    .replace(/\uFFFD$/u, '')}${marker}`
-}
 
 function formatParsedDocument(
   sections: ParsedDocument['sections']
@@ -169,9 +155,6 @@ export class ContextManager {
     const size = Buffer.byteLength(content)
     if (size === 0) {
       throw new Error('所选内容为空')
-    }
-    if (size > maximumFileSize) {
-      throw new Error('文本内容不能超过 256KB')
     }
     this.assertCapacity(size)
     const context: StoredTextContext = {
@@ -271,10 +254,7 @@ export class ContextManager {
       )
       return this.storeText(
         name,
-        truncateUtf8(
-          formatParsedDocument(parsed.sections),
-          maximumFileSize
-        )
+        formatParsedDocument(parsed.sections)
       )
     }
     if (!supportedExtensions.has(extension)) {
@@ -387,10 +367,7 @@ export class ContextManager {
             attachments.push(
               this.storeText(
                 fileName,
-                truncateUtf8(
-                  formatParsedDocument(parsed.sections),
-                  maximumFileSize
-                )
+                formatParsedDocument(parsed.sections)
               )
             )
           } finally {
@@ -554,9 +531,6 @@ export class ContextManager {
             context
           ].join('\n')
         : request.prompt
-    if (Buffer.byteLength(prompt) > maximumPromptBytes) {
-      throw new Error('问题和上下文总大小不能超过 1MB')
-    }
 
     const images = selected
       .filter(

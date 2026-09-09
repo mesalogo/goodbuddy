@@ -10,7 +10,6 @@ import type {
   Agent,
   CreateAgentOptions
 } from '@deepseek-ai/dsh-agent'
-import { GOODBUDDY_HARNESS_MAX_STEP_TOKENS } from './agent/goodbuddy-harness-control-plane'
 import { GoodBuddyHarnessAttachmentStore } from './agent/goodbuddy-harness-attachment-store'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -324,8 +323,7 @@ describe('controlled DeepSeek Harness host', () => {
       expect.objectContaining({
         agentOptions: {
           provider: 'goodbuddy',
-          model: 'deepseek-test',
-          maxTokens: GOODBUDDY_HARNESS_MAX_STEP_TOKENS
+          model: 'deepseek-test'
         }
       })
     )

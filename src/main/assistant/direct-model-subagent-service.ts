@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { RuntimeModelUsageEvent } from '../agent/runtime'
 import { safeToolErrorDetail } from '../agent/approval-summary'
+import {
+  PagedOutputStore,
+  type PagedOutputPage,
+  type PagedOutputReference,
+  type PagedOutputWriter
+} from '../agent/paged-output-store'
 import { SubagentScheduler } from './subagent-scheduler'
 
 export const DIRECT_MODEL_SUBAGENT_TASK_MAX_LENGTH = 100_000
@@ -51,6 +57,7 @@ export type DirectModelSubagentEvent = {
   reason: string
   output?: string
   outputTruncated?: boolean
+  outputReference?: PagedOutputReference
   error?: string
   errorTruncated?: boolean
 }
@@ -68,6 +75,7 @@ export type DirectModelSubagentResult = {
   conversationId: string
   output: string
   outputTruncated: boolean
+  outputReference?: PagedOutputReference
   error?: string
   errorTruncated?: boolean
   modelUsage?: {
@@ -167,7 +175,9 @@ function addTokenCount(current: number, value: number): number {
 
 export class DirectModelSubagentService<TRequestContext = unknown> {
   private readonly ownerRuns = new Map<string, Set<OwnerRun>>()
+  private readonly outputs = new PagedOutputStore('subagent')
   private disposed = false
+  private disposePromise?: Promise<void>
 
   constructor(
     private readonly dependencies:
@@ -229,25 +239,30 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
     reason = '编程 Subagent 所属会话已释放'
   ): Promise<void> {
     const runs = [...(this.ownerRuns.get(ownerId) ?? [])]
-    if (runs.length === 0) {
-      return
-    }
     for (const run of runs) {
       run.controller.abort(new Error(reason))
     }
     await Promise.allSettled(runs.map((run) => run.settled))
+    await this.outputs.releaseOwner(ownerId)
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) {
-      return
-    }
+  readOutput(ownerId: string, handle: string, cursor?: number, limitBytes?: number): Promise<PagedOutputPage> {
+    return this.outputs.read(ownerId, handle, cursor, limitBytes)
+  }
+
+  dispose(): Promise<void> {
+    this.disposePromise ??= this.disposeOnce()
+    return this.disposePromise
+  }
+
+  private async disposeOnce(): Promise<void> {
     this.disposed = true
     await Promise.allSettled(
       [...this.ownerRuns.keys()].map((ownerId) =>
         this.releaseOwner(ownerId, '编程 Subagent 服务已关闭')
       )
     )
+    await this.outputs.dispose()
   }
 
   private async execute(
@@ -257,8 +272,9 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
     signal: AbortSignal
   ): Promise<DirectModelSubagentResult> {
     let output = ''
-    let outputBytes = 0
     let outputTruncated = false
+    let outputReference: PagedOutputReference | undefined
+    let writer: PagedOutputWriter | undefined
     let inputTokens = 0
     let outputTokens = 0
     let usageReported = false
@@ -289,6 +305,7 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
           ? {
               output,
               outputTruncated,
+              ...(outputReference ? { outputReference } : {}),
               ...(outcome?.error
                 ? {
                     error: outcome.error,
@@ -320,8 +337,10 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
       const scheduled = this.dependencies.scheduler.schedule(
         async (scheduledSignal) => {
           started = true
-          emit('running')
           try {
+            writer = await this.outputs.create(input.ownerId, DIRECT_MODEL_SUBAGENT_OUTPUT_MAX_BYTES)
+            scheduledSignal.throwIfAborted()
+            emit('running')
             await this.dependencies.runChild({
               task,
               context,
@@ -333,16 +352,7 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
                     '编程 Subagent 输出必须是字符串'
                   )
                 }
-                if (outputTruncated) {
-                  return
-                }
-                const remaining =
-                  DIRECT_MODEL_SUBAGENT_OUTPUT_MAX_BYTES -
-                  outputBytes
-                const bounded = truncateUtf8(delta, remaining)
-                output += bounded.value
-                outputBytes += Buffer.byteLength(bounded.value)
-                outputTruncated = bounded.truncated
+                writer!.append(delta)
               },
               onModelUsage: (usage) => {
                 usageReported = true
@@ -425,13 +435,25 @@ export class DirectModelSubagentService<TRequestContext = unknown> {
       outcome.status = 'failed'
     }
 
-    emit(outcome.status, outcome)
+    try {
+      if (writer) {
+        const saved = await writer.finish()
+        output = saved.text
+        outputTruncated = saved.truncated
+        outputReference = saved.reference
+      }
+      emit(outcome.status, outcome)
+    } catch (error) {
+      await writer?.abort()
+      throw error
+    }
     return {
       status: outcome.status,
       childRunId: context.childRunId,
       conversationId: context.conversationId,
       output,
       outputTruncated,
+      ...(outputReference ? { outputReference } : {}),
       ...(outcome.error
         ? {
             error: outcome.error,

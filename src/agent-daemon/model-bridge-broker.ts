@@ -39,7 +39,7 @@ export const MODEL_BRIDGE_BROKER_SOCKET_NAME =
 
 const BROKER_PROTOCOL_VERSION = 1
 const DEFAULT_MAXIMUM_CONNECTIONS = 8
-const DEFAULT_REQUEST_TIMEOUT_MS = 150_000
+const DEFAULT_REQUEST_TIMEOUT_MS = 0
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 const CLOSE_TIMEOUT_MS = 2_000
 const MAXIMUM_UNIX_SOCKET_PATH_BYTES = 107
@@ -192,8 +192,8 @@ export class ModelBridgeBrokerServer {
     )
     this.#requestTimeoutMs = boundedInteger(
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-      1,
-      300_000,
+      0,
+      0x7fff_ffff,
       'Model bridge request timeout'
     )
   }
@@ -298,12 +298,12 @@ export class ModelBridgeBrokerServer {
       )
     }
     socket.once('close', onClose)
-    const timeout = setTimeout(() => {
+    const timeout = this.#requestTimeoutMs === 0 ? undefined : setTimeout(() => {
       cancellation.abort(
         new ModelBridgeBrokerError('request-timeout')
       )
     }, this.#requestTimeoutMs)
-    timeout.unref?.()
+    timeout?.unref?.()
 
     let requestId = `invalid-${randomUUID()}`
     let dispatched: ModelBridgeExchangeResult | undefined
@@ -383,8 +383,8 @@ export function createUnixModelBridgeExchange(options: {
   )
   const requestTimeoutMs = boundedInteger(
     options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-    1,
-    300_000,
+    0,
+    0x7fff_ffff,
     'Model bridge request timeout'
   )
 
@@ -394,13 +394,13 @@ export function createUnixModelBridgeExchange(options: {
     context.signal.throwIfAborted()
     const socket = createConnection(socketPath)
     const timeoutController = new AbortController()
-    const timeout = setTimeout(() => {
+    const timeout = requestTimeoutMs === 0 ? undefined : setTimeout(() => {
       timeoutController.abort(
         new ModelBridgeBrokerError('request-timeout')
       )
       socket.destroy()
     }, requestTimeoutMs)
-    timeout.unref?.()
+    timeout?.unref?.()
     const onAbort = (): void => {
       socket.destroy()
     }

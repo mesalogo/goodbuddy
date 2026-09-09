@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 const remoteHarness = vi.hoisted(() => ({
   instances: [] as Array<{
     options: {
+      modelProfile?: import('../../shared/model-bridge-contracts').AgentPromptModelProfile
       identity: {
         controllerGeneration: number
         daemonBootIdAtOpen: string
@@ -31,6 +32,7 @@ vi.mock('../agent/acp-remote-runtime', () => ({
 
     constructor(
       readonly options: {
+        modelProfile?: import('../../shared/model-bridge-contracts').AgentPromptModelProfile
         identity: {
           controllerGeneration: number
           daemonBootIdAtOpen: string
@@ -243,6 +245,19 @@ function harness(
 }
 
 describe('createManagedRemoteAcpRuntime', () => {
+  it.each([false, true])('selects prompt limits from the connected Agent capability (optional=%s)', async (optional) => {
+    const fixture = harness()
+    fixture.options.modelBridge.profile.limits = {}
+    if (optional) fixture.connection.capabilities.capabilities.push({
+      name: 'runtime/model-bridge-optional-limits', version: 1, critical: false
+    })
+    const runtime = await createManagedRemoteAcpRuntime(fixture.options)
+    expect(remoteHarness.instances[0]!.options.modelProfile?.limits).toEqual(optional ? {} : {
+      maximumOutputTokens: 32_000, requestTimeoutMilliseconds: 60_000
+    })
+    await runtime.dispose()
+  })
+
   it('accepts the current OpenCode model profile independently of persisted validation', async () => {
     const fixture = harness({
       selection: {

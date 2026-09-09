@@ -2,8 +2,9 @@ import { z } from 'zod'
 import { utf8StringSchema } from './agent-protocol/contracts'
 
 export const REMOTE_MODEL_GATEWAY_LIMITS = {
-  maximumRequestBodyBytes: 768 * 1024,
-  maximumResponseBodyBytes: 768 * 1024,
+  // Whole-body JSON transport needs a memory bound, including image input.
+  maximumRequestBodyBytes: 64 * 1024 * 1024,
+  maximumResponseBodyBytes: 64 * 1024 * 1024,
   maximumHeaderValueBytes: 1_024
 } as const
 
@@ -35,7 +36,7 @@ function boundedCanonicalBase64Schema(maximumBytes: number) {
     .string()
     .max(Math.ceil(maximumBytes / 3) * 4)
     .regex(
-      /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u,
+      /^[A-Za-z0-9+/]*={0,2}$/u,
       'Body must use canonical base64'
     )
     .refine(

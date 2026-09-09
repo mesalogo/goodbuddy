@@ -31,7 +31,6 @@ import {
   type DeepSeekHarnessChild,
   type DeepSeekHarnessLaunchOptions
 } from './deepseek-harness-runtime'
-import { GOODBUDDY_HARNESS_MAX_STEP_TOKENS } from './goodbuddy-harness-control-plane'
 import { DshNpmExtensionInstaller } from './dsh-extension-marketplace'
 import { DEEPSEEK_HARNESS_MAX_FRAME_BYTES } from './deepseek-harness-control-protocol'
 import { createOpenAIChatCompletionsUrl } from './openai-endpoint'
@@ -510,7 +509,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
   })
 
   it(
-    'coalesces micro reasoning deltas without losing content and caps each model step',
+    'coalesces micro reasoning deltas without losing content or overriding model output tokens',
     async () => {
       const root = await realpath(
         await mkdtemp(join(tmpdir(), 'goodbuddy-harness-acp-deltas-'))
@@ -559,9 +558,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
           > => event.type === 'reasoning'
         )
 
-        expect(observedRequest?.maxTokens).toBe(
-          GOODBUDDY_HARNESS_MAX_STEP_TOKENS
-        )
+        expect(observedRequest?.maxTokens).toBeUndefined()
         expect(observedRequest?.system).toContain(
           'act through the available tools'
         )

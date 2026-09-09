@@ -20,7 +20,7 @@ import {
 } from '../../shared/remote-agent-contracts'
 import { createProtocolRemoteRuntimeChannel } from './protocol-remote-runtime-channel'
 import type { RemoteAgentServices } from './remote-agent-services'
-import type { ManagedModelBridge } from './managed-model-bridge'
+import { modelProfileForAgent, type ManagedModelBridge } from './managed-model-bridge'
 import type { AgentInstallationIdentity } from './agent-installation-manager'
 import type {
   RemoteRuntimeInstallationIdentity,
@@ -157,7 +157,10 @@ export async function createManagedRemoteAcpRuntime(
           resources.openChannel(transport, bindingId),
         bindingStore: options.bindingStore,
         modelBridgePolicy: options.modelBridge.policy,
-        modelProfile: options.modelBridge.profile,
+        modelProfile: modelProfileForAgent(
+          options.modelBridge.profile,
+          activeConnection.capabilities.capabilities
+        ),
         assertHostCurrent: (identity) => {
           if (
             identity.controllerId !== controllerId ||

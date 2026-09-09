@@ -2821,8 +2821,8 @@ export function registerIpcHandlers(
                 : 'failed'
           })
         }
-        if (taskEvent.type === 'text' && output.length < 1_000_000) {
-          output += taskEvent.delta.slice(0, 1_000_000 - output.length)
+        if (taskEvent.type === 'text') {
+          output += taskEvent.delta
         } else if (
           taskEvent.type === 'tool' &&
           schedule.workMode !== 'execute' &&

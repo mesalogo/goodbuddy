@@ -1166,7 +1166,7 @@ function assertRuntimeManifest(
     sourcePackage.integrity !== lockedTarget.integrity ||
     !sha256Pattern.test(String(entrypoint.sha256)) ||
     !Number.isSafeInteger(limits.maximumPromptRuntimeMilliseconds) ||
-    Number(limits.maximumPromptRuntimeMilliseconds) < 1 ||
+    Number(limits.maximumPromptRuntimeMilliseconds) < 0 ||
     !Number.isSafeInteger(limits.maximumPromptInputBytes) ||
     Number(limits.maximumPromptInputBytes) < 1 ||
     !Number.isSafeInteger(limits.maximumPromptOutputBytes) ||

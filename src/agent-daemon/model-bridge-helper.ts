@@ -111,7 +111,7 @@ export type ModelBridgeHelperSpawn = (
 
 const LOOPBACK_HOST = '127.0.0.1'
 const DEFAULT_MAXIMUM_CONNECTIONS = 8
-const DEFAULT_REQUEST_TIMEOUT_MS = 180_000
+const DEFAULT_REQUEST_TIMEOUT_MS = 0
 const RESPONSE_CLOSE_TIMEOUT_MS = 2_000
 const MAXIMUM_HTTP_HEADER_BYTES = 16 * 1024
 const MAXIMUM_HTTP_HEADER_COUNT = 32
@@ -162,8 +162,8 @@ export class ModelBridgeLoopbackProxy {
     )
     this.#requestTimeoutMs = boundedInteger(
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-      1,
-      300_000,
+      0,
+      0x7fff_ffff,
       'Model bridge loopback request timeout'
     )
   }
@@ -295,12 +295,12 @@ export class ModelBridgeLoopbackProxy {
     }
     incoming.once('aborted', onAborted)
     outgoing.once('close', onResponseClose)
-    const timeout = setTimeout(() => {
+    const timeout = this.#requestTimeoutMs === 0 ? undefined : setTimeout(() => {
       cancellation.abort(
         new ModelBridgeBrokerError('request-timeout')
       )
     }, this.#requestTimeoutMs)
-    timeout.unref?.()
+    timeout?.unref?.()
 
     try {
       const request = await parseHttpRequest(

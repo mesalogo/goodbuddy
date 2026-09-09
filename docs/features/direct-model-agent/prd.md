@@ -113,8 +113,8 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
 
 ### FR-1 直连模型专属可用性
 
-- 两个工具只由 Runtime provider `model` 注册。
-- Agent Runtime 切换为 OpenCode、Continue 或 DeepSeek Harness 后不再显示这两个工具。
+- 进程、编程 Subagent 和输出续读工具只由 Runtime provider `model` 注册。
+- Agent Runtime 切换为 OpenCode、Continue 或 DeepSeek Harness 后不再显示这些工具。
 - 图像生成连接不获得文本 Agent 工具。
 - 能力不可用时返回准确原因，不以其他 Runtime 或本机 Shell 静默代替。
 
@@ -159,8 +159,10 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
 
 - 父请求取消必须传播到活动 Subagent 和其当前进程。
 - Runtime 替换、会话释放和应用退出必须停止 GoodBuddy 创建的活动子进程。
-- 命令、标准输出、标准错误、Subagent 提示、结果、队列和并发全部有界。
-- 截断必须明确标记，不能把不完整输出伪装为完整结果。
+- 命令、Subagent 提示、单次返回的输出预览、队列和并发有界；完整输出不因超过预览容量而丢弃。
+- 预览省略内容时明确标记并提供续读位置。模型可用 `output_read` 逐页取得完整日志及
+  Subagent 结果，包括失败或取消前已取得的部分输出。
+- Ask 和 Execute 均可续读当前会话的输出。会话或 Runtime 释放后，临时输出删除，旧句柄失效。
 
 ### FR-8 环境和凭据
 
@@ -212,6 +214,7 @@ Ask 禁止命令和写入。Execute 是用户对当前执行空间账号的完�
 - [ ] Subagent 不能递归委派，不能切换父请求工作区、模式或模型。
 - [ ] 切换到 OpenCode、Continue 或 DeepSeek Harness 后不出现本功能工具。
 - [ ] 非零退出、超时、取消和输出截断均准确展示。
+- [ ] 模型能续读长输出中未出现在预览内的中间与结尾内容，中文和表情不会导致分页停滞。
 - [ ] 取消父请求和退出应用后没有残留 GoodBuddy 命令进程。
 - [ ] 本机工具环境选择对新命令生效，Main 持有的模型凭据不进入子进程。
 - [ ] 子任务不进入 Task Center，不创建独立可导航 Conversation。

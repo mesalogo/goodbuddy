@@ -43,7 +43,6 @@ const DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024
 const DEFAULT_MAX_EVENT_CHARACTERS = 64 * 1024
-const DEFAULT_MAX_REQUEST_OUTPUT_CHARACTERS = 4 * 1024 * 1024
 const MAX_QUEUED_UPDATES = 1_000
 const MAX_APPROVAL_DETAIL_CHARACTERS = 4_000
 const MAX_MCP_PROXY_TOOLS = 100
@@ -199,7 +198,6 @@ export type DeepSeekHarnessRuntimeOptions = {
   shutdownTimeoutMs?: number
   maxStderrBytes?: number
   maxEventCharacters?: number
-  maxRequestOutputCharacters?: number
   credentialRefs?: Readonly<Record<string, string>>
   skillPackages?: RuntimeSkillPackage[]
   extensionPackages?: ControlledHarnessExtensionPackage[]
@@ -215,7 +213,6 @@ type ActiveRun = {
   toolNames: Map<string, string>
   wake?: () => void
   closed: boolean
-  outputCharacters: number
 }
 
 type HarnessState = {
@@ -498,13 +495,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     )
   }
 
-  private get maxRequestOutputCharacters(): number {
-    return (
-      this.options.maxRequestOutputCharacters ??
-      DEFAULT_MAX_REQUEST_OUTPUT_CHARACTERS
-    )
-  }
-
   private async terminate(
     child: DeepSeekHarnessChild
   ): Promise<void> {
@@ -611,15 +601,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     if (eventLength > this.maxEventCharacters) {
       this.fail(
         new Error('DeepSeek Harness 扩展事件超过安全限制')
-      )
-      return
-    }
-    run.outputCharacters += eventLength
-    if (
-      run.outputCharacters > this.maxRequestOutputCharacters
-    ) {
-      this.fail(
-        new Error('DeepSeek Harness 请求累计输出超过安全限制')
       )
       return
     }
@@ -1460,8 +1441,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         authorize,
         updates: [],
         toolNames: new Map(),
-        closed: false,
-        outputCharacters: 0
+        closed: false
       }
       this.activeRuns.set(sessionId, run)
       yield {

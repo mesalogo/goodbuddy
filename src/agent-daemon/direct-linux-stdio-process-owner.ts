@@ -521,11 +521,17 @@ export class DirectLinuxStdioProcessOwner {
       this.#clearDeadline()
       return
     }
-    const remaining = remainingMilliseconds(deadlineAt, this.#now())
+    const now = this.#now()
+    remainingMilliseconds(deadlineAt, now)
+    const remaining = Date.parse(deadlineAt) - now
     this.#clearDeadline()
     const generation = this.#promptGeneration
     this.#deadlineTimer = setTimeout(() => {
       if (!this.#promptActive || generation !== this.#promptGeneration) return
+      if (Date.parse(deadlineAt) > this.#now()) {
+        this.#scheduleDeadline(deadlineAt)
+        return
+      }
       void this.stop({
         reason: 'deadline-exceeded',
         deadlineAt: new Date(this.#now() + DEFAULT_STOP_TIMEOUT_MS).toISOString()
@@ -1096,7 +1102,9 @@ function boundedPromptDeadline(
     )
   }
   return new Date(
-    Math.min(requested, now + maximumRuntimeMilliseconds)
+    maximumRuntimeMilliseconds === 0
+      ? requested
+      : Math.min(requested, now + maximumRuntimeMilliseconds)
   ).toISOString()
 }
 

@@ -79,8 +79,7 @@ function stubAgentContext() {
     execution: { mode: 'host' },
     credentialRefs: ['GOODBUDDY_API_KEY'],
     skills: [],
-    maxEventCharacters: 10_000,
-    maxRequestCharacters: 180
+    maxEventCharacters: 100_000
   })
   const internals = subject as unknown as {
     connection: {
@@ -97,7 +96,6 @@ function stubAgentContext() {
           mode: 'ask' | 'execute'
           resolve: (reason: string) => void
           reject: (error: unknown) => void
-          emittedCharacters: number
           eventTail: Promise<void>
           eventError?: unknown
         }
@@ -115,7 +113,6 @@ function stubAgentContext() {
       mode: 'ask',
       resolve: vi.fn(),
       reject: vi.fn(),
-      emittedCharacters: 0,
       eventTail: Promise.resolve()
     }
   })
@@ -337,55 +334,51 @@ describe('GoodBuddy Harness internal control plane', () => {
     ).rejects.toThrow('output frame exceeds')
   })
 
-  it('counts the complete emitted envelope against the request limit', async () => {
+  it('delivers more than 4 MiB of cumulative output without cancelling', async () => {
     const { listeners, extNotification, handle, internals } =
       stubAgentContext()
     const sessionEvent = listeners.get('session/event')!
-    sessionEvent(
-      handle.agent.session,
-      {
-        type: 'assistant/chunk',
-        data: {
-          chunk: {
-            type: 'text-delta',
-            text: 'x'.repeat(80)
-          }
-        }
-      }
-    )
-    sessionEvent(
-      handle.agent.session,
-      {
-        type: 'assistant/chunk',
-        data: {
-          chunk: {
-            type: 'usage',
-            usage: {
-              inputTokens: 1,
-              outputTokens: 1,
-              cacheReadTokens: 0,
-              cacheWriteTokens: 0
+    for (let index = 0; index < 65; index++) {
+      sessionEvent(
+        handle.agent.session,
+        {
+          type: 'assistant/chunk',
+          data: {
+            chunk: {
+              type: 'text-delta',
+              text: 'x'.repeat(65_536)
             }
           }
         }
-      }
-    )
-    await internals.sessions.get('session-output')!.inflight.eventTail
+      )
+      sessionEvent(
+        handle.agent.session,
+        {
+          type: 'assistant/chunk',
+          data: {
+            chunk: {
+              type: 'usage',
+              usage: {
+                inputTokens: 1,
+                outputTokens: 1,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0
+              }
+            }
+          }
+        }
+      )
+      await internals.sessions.get('session-output')!.inflight.eventTail
+    }
 
-    expect(extNotification).toHaveBeenCalledTimes(1)
-    expect(handle.agent.cancel).toHaveBeenCalledWith({
-      kind: 'user'
-    })
+    expect(extNotification.mock.calls.reduce((total, call) => {
+      const event = (call as unknown as [string, { delta?: string }])[1]
+      return total + (event.delta?.length ?? 0)
+    }, 0)).toBe(65 * 65_536)
+    expect(handle.agent.cancel).not.toHaveBeenCalled()
     expect(
       internals.sessions.get('session-output')!.inflight.eventError
-    ).toEqual(
-      new Error(
-        'GoodBuddy Harness control request output exceeds safety limit'
-      )
-    )
-    expect(
-      internals.sessions.get('session-output')!.inflight.emittedCharacters
-    ).toBeGreaterThan(180)
+    ).toBeUndefined()
   })
 
   it('allows genuine read, skill, and web definitions but rejects plugin name spoofs in Ask', async () => {

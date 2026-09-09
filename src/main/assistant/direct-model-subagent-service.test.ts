@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeModelUsageEvent } from '../agent/runtime'
 import {
   DIRECT_MODEL_SUBAGENT_ERROR_MAX_BYTES,
@@ -15,6 +15,11 @@ import { SubagentScheduler } from './subagent-scheduler'
 type RequestContext = {
   authorizationSnapshot: string
 }
+
+const services: DirectModelSubagentService<RequestContext>[] = []
+afterEach(async () => {
+  await Promise.all(services.splice(0).map((service) => service.dispose()))
+})
 
 const parent: DirectModelSubagentParent<RequestContext> = {
   requestId: 'parent-request',
@@ -41,6 +46,7 @@ function createHarness(
     runChild,
     releaseConversation
   })
+  services.push(service)
   const run = (
     overrides: Partial<Parameters<typeof service.run>[0]> = {}
   ) =>
@@ -176,6 +182,19 @@ describe('DirectModelSubagentService', () => {
       DIRECT_MODEL_SUBAGENT_OUTPUT_MAX_BYTES
     )
     expect(harness.events.at(-1)?.outputTruncated).toBe(true)
+    const reference = result.outputReference!
+    let fullOutput = result.output
+    let cursor = reference.nextCursor
+    while (cursor < reference.totalBytes) {
+      const page = await harness.service.readOutput('owner', reference.handle, cursor)
+      expect(page.nextCursor).toBeGreaterThan(cursor)
+      fullOutput += page.content
+      cursor = page.nextCursor
+    }
+    expect(fullOutput).toBe('你'.repeat(100_000) + 'late output')
+    expect(harness.events.at(-1)?.outputReference).toEqual(reference)
+    await harness.service.releaseOwner('owner')
+    await expect(harness.service.readOutput('owner', reference.handle)).rejects.toThrow()
     harness.scheduler.dispose()
   })
 
@@ -207,6 +226,25 @@ describe('DirectModelSubagentService', () => {
     })
     expect(harness.events.at(-1)?.state).toBe('cancelled')
     expect(harness.releaseConversation).toHaveBeenCalledOnce()
+    harness.scheduler.dispose()
+  })
+
+  it.each(['failed', 'cancelled'] as const)('retains all partial output after a %s run until disposal', async (status) => {
+    const controller = new AbortController()
+    const text = 'x'.repeat(DIRECT_MODEL_SUBAGENT_OUTPUT_MAX_BYTES) + 'tail'
+    const harness = createHarness(async (input) => {
+      input.onOutput(text)
+      if (status === 'cancelled') controller.abort(new Error('cancelled'))
+      throw new Error('failed')
+    })
+    const result = await harness.run({ signal: controller.signal })
+    expect(result.status).toBe(status)
+    const reference = result.outputReference!
+    await expect(harness.service.readOutput('owner', reference.handle, reference.nextCursor)).resolves.toMatchObject({
+      content: 'tail', eof: true
+    })
+    await harness.service.dispose()
+    await expect(harness.service.readOutput('owner', reference.handle)).rejects.toThrow()
     harness.scheduler.dispose()
   })
 

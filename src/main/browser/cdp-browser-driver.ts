@@ -16,9 +16,8 @@ import {
 } from './browser-limits'
 
 const DEFAULT_TIMEOUT_MS = 15_000
-const MAX_AX_NODES = 500
 const MAX_AX_DEPTH = 20
-const MAX_SNAPSHOT_BYTES = 128 * 1024
+const MAX_SNAPSHOT_BYTES = 512 * 1024
 const SELECT_OPTION_FUNCTION = `function (expectedValue) {
   const options = Array.from(this.options);
   const option = options.find((candidate) => candidate.value === expectedValue);
@@ -228,7 +227,7 @@ export class CdpBrowserDriver {
   ) {
     this.debugger = webContents.debugger
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    this.maximumAxNodes = options.maximumAxNodes ?? MAX_AX_NODES
+    this.maximumAxNodes = options.maximumAxNodes ?? Infinity
     this.maximumAxDepth = options.maximumAxDepth ?? MAX_AX_DEPTH
     this.maximumSnapshotBytes =
       options.maximumSnapshotBytes ?? MAX_SNAPSHOT_BYTES

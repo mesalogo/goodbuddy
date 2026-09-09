@@ -99,15 +99,22 @@ export const builtinModelTools = [
     name: 'process_execute',
     displayName: '进程执行',
     description:
-      '使用当前用户权限运行 PowerShell、Bash 或 Sh 命令，默认在工作区执行，也可指定其他工作目录。',
+      '使用当前用户权限运行 PowerShell、Bash 或 Sh 命令，可指定工作目录；长输出保留完整内容并支持分页续读。',
     access: 'write',
+    group: 'programming'
+  },
+  {
+    name: 'output_read',
+    displayName: '续读工具输出',
+    description: '按 cursor 分页读取当前会话已保留的进程或 Subagent 输出；会话释放后失效。',
+    access: 'read',
     group: 'programming'
   },
   {
     name: 'subagent_delegate',
     displayName: '编程 Subagent',
     description:
-      '将聚焦任务委派给同一模型连接；继承当前工作模式和工作区。',
+      '将聚焦任务委派给同一模型连接，继承当前工作模式和工作区；长输出可分页续读。',
     access: 'read',
     group: 'programming'
   }
