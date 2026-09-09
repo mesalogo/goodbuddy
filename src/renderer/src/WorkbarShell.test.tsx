@@ -81,6 +81,12 @@ describe('WorkbarShell', () => {
     )
   })
 
+  it('keeps the close control background transparent when a tab reveals it', () => {
+    expect(stylesheet).toMatch(
+      /\.workbar-shell__tab-close\s*\{[^}]*background:\s*transparent;/u
+    )
+  })
+
   it('provides four default single-instance tabs and keeps add outside the tablist', () => {
     render(<ControlledShell />)
 

@@ -4010,7 +4010,7 @@ button > svg {
   width: 24px;
   min-width: 24px;
   height: 24px;
-  background: var(--surface-raised);
+  background: transparent;
   opacity: 0;
   pointer-events: none;
   transform: translateY(-50%) scale(0.86);
