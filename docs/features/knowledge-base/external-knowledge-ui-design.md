@@ -258,6 +258,33 @@ Rerank 用量。`
 图谱状态”并禁用。Knowledge Compilation 单独显示为 `包含 Knowledge Compilation`，默认
 关闭，不把它和旧 GraphRAG 合成同一开关。
 
+### 7.2 实测能力驱动的界面适配
+
+界面不能只按 Provider 名称展示全部开关，必须按实例和当前远端知识库的能力证据处理：
+
+| Provider | 已实测可启用 | 保持隐藏或禁用 | 界面依据 |
+| --- | --- | --- | --- |
+| Dify `0.15.8` | 使用知识库默认配置；展示 `retrieval_model_dict` 中已出现的检索方式、Top K、阈值和 Rerank 配置 | Metadata、多模态、摘要和 Pipeline 状态 | 目录项能力；该版本详情 GET 返回 405，不能把详情失败显示成实例不可用 |
+| Dify `1.17.0` | 默认配置、当前完整配置；详情中的文档统计、摘要索引、多模态、Metadata 和 Pipeline 只读状态 | 当前库没有字段定义时禁用 Metadata 条件；远端 Pipeline 和摘要配置不可编辑 | 详情 GET 和 3 条非空检索结果已实测；`child_chunks/files/summary` 仅按结果实际存在显示 |
+| FastGPT 当前实例 | embedding、全文召回、混合召回；Rerank | 查询扩展、扩展模型和背景文本 | 三种模式和 Rerank 均有 200 非空实测；查询扩展会调用模型，初始版本不启用 |
+| RAGFlow 当前实例 | 相似度、向量权重、KNN Top K；具备完成证据时启用图谱检索 | 没有独立配置证据时禁用 Knowledge Compilation；Metadata 条件仍隐藏 | `graphrag_task_finish_at` 有效才启用图谱；`compilation_template_group_id` 有效才启用 Knowledge Compilation |
+
+RAGFlow 列表项应区分三个图谱状态：“未配置”“构建中或未完成”“可用于图谱检索”。不能
+仅因 `parser_config.graphrag.use_graphrag = true` 就显示为可用。当前实测中 17 个库配置了
+GraphRAG，只有 15 个存在完成证据。
+
+Knowledge Compilation 的请求被服务器接受但当前没有库提供配置证据，因此开关显示为禁用，
+说明为“当前知识库未配置 Knowledge Compilation”。返回 200 或零结果都不能改变此状态。
+
+Dify 实例行持续显示探测版本。`0.15.8` 的详情请求返回 405 时显示“此版本从目录读取配置”，
+不显示错误状态；`1.17.0` 详情页增加只读能力行：文档可用数、Metadata 字段数、多模态、
+摘要索引和 Knowledge Pipeline。没有配置的能力显示“未配置”，不隐藏成未知，也不提供会
+写回 Dify 的编辑操作。
+
+Dify 1.x 的 Metadata 条件使用受控字段编辑器：先从 `doc_metadata` 选择字段，再按字段类型
+提供比较操作和值输入。当前库字段数为 0 时控件禁用并显示“当前知识库没有 Metadata 字段”。
+不得允许自由 JSON，也不得把 `attachment_ids`、Pipeline 或摘要 Prompt 暴露为检索输入。
+
 ## 8. 外部知识库详情
 
 选中外部绑定后，现有详情区按来源类型裁剪：

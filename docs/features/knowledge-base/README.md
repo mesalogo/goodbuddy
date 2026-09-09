@@ -1,8 +1,8 @@
 # 知识库
 
 知识库已提供本地资料导入、解析、分块、索引、检索、图谱和带来源的知识问答。
-将 Dify、FastGPT 和 RAGFlow 中已有知识库接入同一检索范围仍处于规划阶段，不属于
-当前已提供能力。
+将 Dify、FastGPT 和 RAGFlow 中已有知识库接入同一检索范围已完成 Main 进程适配器和
+真实接口验证，但实例管理、绑定、统一检索和界面尚未接通，因此仍不属于当前已提供能力。
 
 ## 文档导航
 
@@ -19,6 +19,7 @@
 | [外部知识库逻辑设计](./external-knowledge-logic-design.md) | 状态、不变量、配置优先级和失败规则 |
 | [外部知识库 UI 设计](./external-knowledge-ui-design.md) | 知识库页面、外部实例管理和创建向导交互 |
 | [外部知识库技术设计](./external-knowledge-technical-design.md) | Provider Adapter、凭据、持久化、IPC 和检索标准化 |
+| [外部知识库实测基线](./external-knowledge-probe-baseline.json) | 脱敏记录真实实例的接口状态、字段结构、特色能力和耗时 |
 
 ## 术语
 

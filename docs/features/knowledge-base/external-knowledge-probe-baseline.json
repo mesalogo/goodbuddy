@@ -1,0 +1,910 @@
+{
+  "schemaVersion": 1,
+  "probedAt": "2026-09-09T16:25:05.512Z",
+  "mode": "extended-read-only",
+  "queryCharacters": 3,
+  "privacy": "No credentials, origins, IDs, names, queries, or content are included.",
+  "providers": [
+    {
+      "provider": "dify",
+      "profile": "0.x",
+      "detectedVersion": "0.15.8",
+      "transport": {
+        "protocol": "https:",
+        "tlsVerificationDisabled": true
+      },
+      "catalog": {
+        "count": 3,
+        "total": 3,
+        "itemKeys": [
+          "app_count",
+          "created_at",
+          "created_by",
+          "data_source_type",
+          "description",
+          "doc_form",
+          "document_count",
+          "embedding_available",
+          "embedding_model",
+          "embedding_model_provider",
+          "external_knowledge_info",
+          "external_retrieval_model",
+          "id",
+          "indexing_technique",
+          "name",
+          "permission",
+          "provider",
+          "retrieval_model_dict",
+          "tags",
+          "updated_at",
+          "updated_by",
+          "word_count"
+        ],
+        "retrievalModelKeys": [
+          "reranking_enable",
+          "reranking_mode",
+          "reranking_model",
+          "score_threshold",
+          "score_threshold_enabled",
+          "search_method",
+          "top_k",
+          "weights"
+        ],
+        "indexingTechniques": [
+          "high_quality"
+        ],
+        "metadataSchemaCount": 0,
+        "multimodalCount": 0,
+        "pipelineConfiguredCount": 0,
+        "summaryIndexConfiguredCount": 0
+      },
+      "detail": {
+        "keys": [
+          "code",
+          "message",
+          "status"
+        ]
+      },
+      "retrievals": [
+        {
+          "mode": "dataset-defaults",
+          "count": 0,
+          "itemKeys": [],
+          "segmentKeys": [],
+          "documentKeys": [],
+          "childChunkKeys": [],
+          "fileKeys": [],
+          "contentPresent": false,
+          "childContentPresent": false,
+          "summaryPresent": false
+        },
+        {
+          "mode": "explicit-current-config",
+          "count": 0,
+          "itemKeys": [],
+          "segmentKeys": [],
+          "documentKeys": [],
+          "childChunkKeys": [],
+          "fileKeys": [],
+          "contentPresent": false,
+          "childContentPresent": false,
+          "summaryPresent": false
+        }
+      ],
+      "features": {
+        "datasetDefaults": true,
+        "detailSupported": false,
+        "retrievalOverrideObserved": true,
+        "retrievalOverrideProbed": true,
+        "nonEmptyResultObserved": false
+      },
+      "operations": [
+        {
+          "name": "catalog",
+          "method": "GET",
+          "path": "/v1/datasets",
+          "status": 200,
+          "durationMs": 288,
+          "responseKeys": [
+            "data",
+            "has_more",
+            "limit",
+            "page",
+            "total"
+          ]
+        },
+        {
+          "name": "detail",
+          "method": "GET",
+          "path": "/v1/datasets/{id}",
+          "status": 405,
+          "durationMs": 111,
+          "responseKeys": [
+            "code",
+            "message",
+            "status"
+          ]
+        },
+        {
+          "name": "retrieve-defaults",
+          "method": "POST",
+          "path": "/v1/datasets/{id}/retrieve",
+          "status": 200,
+          "durationMs": 237,
+          "responseKeys": [
+            "query",
+            "records"
+          ]
+        },
+        {
+          "name": "retrieve-explicit-config",
+          "method": "POST",
+          "path": "/v1/datasets/{id}/retrieve",
+          "status": 200,
+          "durationMs": 160,
+          "responseKeys": [
+            "query",
+            "records"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "dify",
+      "profile": "1.x",
+      "detectedVersion": "1.17.0",
+      "transport": {
+        "protocol": "https:",
+        "tlsVerificationDisabled": true
+      },
+      "catalog": {
+        "count": 1,
+        "total": 1,
+        "itemKeys": [
+          "app_count",
+          "author_name",
+          "built_in_field_enabled",
+          "chunk_structure",
+          "created_at",
+          "created_by",
+          "data_source_type",
+          "description",
+          "doc_form",
+          "doc_metadata",
+          "document_count",
+          "embedding_available",
+          "embedding_model",
+          "embedding_model_provider",
+          "enable_api",
+          "external_knowledge_info",
+          "external_retrieval_model",
+          "icon_info",
+          "id",
+          "indexing_technique",
+          "is_multimodal",
+          "is_published",
+          "maintainer",
+          "name",
+          "permission",
+          "pipeline_id",
+          "provider",
+          "retrieval_model_dict",
+          "runtime_mode",
+          "summary_index_setting",
+          "tags",
+          "total_available_documents",
+          "total_documents",
+          "updated_at",
+          "updated_by",
+          "word_count"
+        ],
+        "retrievalModelKeys": [
+          "reranking_enable",
+          "reranking_mode",
+          "reranking_model",
+          "score_threshold",
+          "score_threshold_enabled",
+          "search_method",
+          "top_k",
+          "weights"
+        ],
+        "indexingTechniques": [
+          "high_quality"
+        ],
+        "metadataSchemaCount": 0,
+        "multimodalCount": 0,
+        "pipelineConfiguredCount": 0,
+        "summaryIndexConfiguredCount": 1
+      },
+      "detail": {
+        "keys": [
+          "app_count",
+          "author_name",
+          "built_in_field_enabled",
+          "chunk_structure",
+          "created_at",
+          "created_by",
+          "data_source_type",
+          "description",
+          "doc_form",
+          "doc_metadata",
+          "document_count",
+          "embedding_available",
+          "embedding_model",
+          "embedding_model_provider",
+          "enable_api",
+          "external_knowledge_info",
+          "external_retrieval_model",
+          "icon_info",
+          "id",
+          "indexing_technique",
+          "is_multimodal",
+          "is_published",
+          "maintainer",
+          "name",
+          "permission",
+          "pipeline_id",
+          "provider",
+          "retrieval_model_dict",
+          "runtime_mode",
+          "summary_index_setting",
+          "tags",
+          "total_available_documents",
+          "total_documents",
+          "updated_at",
+          "updated_by",
+          "word_count"
+        ]
+      },
+      "retrievals": [
+        {
+          "mode": "dataset-defaults",
+          "count": 3,
+          "itemKeys": [
+            "child_chunks",
+            "files",
+            "score",
+            "segment",
+            "summary",
+            "tsne_position"
+          ],
+          "segmentKeys": [
+            "answer",
+            "completed_at",
+            "content",
+            "created_at",
+            "created_by",
+            "disabled_at",
+            "disabled_by",
+            "document",
+            "document_id",
+            "enabled",
+            "error",
+            "hit_count",
+            "id",
+            "index_node_hash",
+            "index_node_id",
+            "indexing_at",
+            "keywords",
+            "position",
+            "sign_content",
+            "status",
+            "stopped_at",
+            "tokens",
+            "word_count"
+          ],
+          "documentKeys": [
+            "data_source_type",
+            "doc_metadata",
+            "doc_type",
+            "id",
+            "name"
+          ],
+          "childChunkKeys": [],
+          "fileKeys": [],
+          "contentPresent": true,
+          "childContentPresent": false,
+          "summaryPresent": false,
+          "scoreRange": {
+            "minimum": 0.5038624,
+            "maximum": 0.6006959
+          }
+        },
+        {
+          "mode": "explicit-current-config",
+          "count": 3,
+          "itemKeys": [
+            "child_chunks",
+            "files",
+            "score",
+            "segment",
+            "summary",
+            "tsne_position"
+          ],
+          "segmentKeys": [
+            "answer",
+            "completed_at",
+            "content",
+            "created_at",
+            "created_by",
+            "disabled_at",
+            "disabled_by",
+            "document",
+            "document_id",
+            "enabled",
+            "error",
+            "hit_count",
+            "id",
+            "index_node_hash",
+            "index_node_id",
+            "indexing_at",
+            "keywords",
+            "position",
+            "sign_content",
+            "status",
+            "stopped_at",
+            "tokens",
+            "word_count"
+          ],
+          "documentKeys": [
+            "data_source_type",
+            "doc_metadata",
+            "doc_type",
+            "id",
+            "name"
+          ],
+          "childChunkKeys": [],
+          "fileKeys": [],
+          "contentPresent": true,
+          "childContentPresent": false,
+          "summaryPresent": false,
+          "scoreRange": {
+            "minimum": 0.5038624,
+            "maximum": 0.6006959
+          }
+        }
+      ],
+      "features": {
+        "datasetDefaults": true,
+        "detailSupported": true,
+        "retrievalOverrideObserved": true,
+        "retrievalOverrideProbed": true,
+        "nonEmptyResultObserved": true
+      },
+      "operations": [
+        {
+          "name": "catalog",
+          "method": "GET",
+          "path": "/v1/datasets",
+          "status": 200,
+          "durationMs": 950,
+          "responseKeys": [
+            "data",
+            "has_more",
+            "limit",
+            "page",
+            "total"
+          ]
+        },
+        {
+          "name": "detail",
+          "method": "GET",
+          "path": "/v1/datasets/{id}",
+          "status": 200,
+          "durationMs": 616,
+          "responseKeys": [
+            "app_count",
+            "author_name",
+            "built_in_field_enabled",
+            "chunk_structure",
+            "created_at",
+            "created_by",
+            "data_source_type",
+            "description",
+            "doc_form",
+            "doc_metadata",
+            "document_count",
+            "embedding_available",
+            "embedding_model",
+            "embedding_model_provider",
+            "enable_api",
+            "external_knowledge_info",
+            "external_retrieval_model",
+            "icon_info",
+            "id",
+            "indexing_technique",
+            "is_multimodal",
+            "is_published",
+            "maintainer",
+            "name",
+            "permission",
+            "pipeline_id",
+            "provider",
+            "retrieval_model_dict",
+            "runtime_mode",
+            "summary_index_setting",
+            "tags",
+            "total_available_documents",
+            "total_documents",
+            "updated_at",
+            "updated_by",
+            "word_count"
+          ]
+        },
+        {
+          "name": "retrieve-defaults",
+          "method": "POST",
+          "path": "/v1/datasets/{id}/retrieve",
+          "status": 200,
+          "durationMs": 2468,
+          "responseKeys": [
+            "query",
+            "records"
+          ]
+        },
+        {
+          "name": "retrieve-explicit-config",
+          "method": "POST",
+          "path": "/v1/datasets/{id}/retrieve",
+          "status": 200,
+          "durationMs": 801,
+          "responseKeys": [
+            "query",
+            "records"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "fastgpt",
+      "transport": {
+        "protocol": "https:",
+        "tlsVerificationDisabled": true
+      },
+      "catalog": {
+        "count": 1,
+        "envelope": "data-array",
+        "itemKeys": [
+          "_id",
+          "avatar",
+          "createTime",
+          "inheritPermission",
+          "intro",
+          "name",
+          "permission",
+          "private",
+          "sourceMember",
+          "tmbId",
+          "type",
+          "updateTime",
+          "vectorModel"
+        ],
+        "itemTypes": [
+          "dataset"
+        ]
+      },
+      "detail": {
+        "keys": [
+          "_id",
+          "agentModel",
+          "agentModelId",
+          "avatar",
+          "deleteTime",
+          "inheritPermission",
+          "intro",
+          "name",
+          "parentId",
+          "permission",
+          "status",
+          "teamId",
+          "tmbId",
+          "type",
+          "updateTime",
+          "vectorModel",
+          "vectorModelId",
+          "vlmModel",
+          "vlmModelId"
+        ],
+        "vectorModelKeys": [
+          "avatar",
+          "charsPointsPrice",
+          "config",
+          "isActive",
+          "isCustom",
+          "model",
+          "modelId",
+          "name",
+          "provider",
+          "scope",
+          "testMode",
+          "type"
+        ]
+      },
+      "retrievals": [
+        {
+          "searchMode": "embedding",
+          "count": 8,
+          "itemKeys": [
+            "chunkIndex",
+            "collectionId",
+            "datasetId",
+            "id",
+            "q",
+            "score",
+            "sourceId",
+            "sourceName",
+            "updateTime"
+          ],
+          "contentPresent": true
+        },
+        {
+          "searchMode": "fullTextRecall",
+          "count": 2,
+          "itemKeys": [
+            "chunkIndex",
+            "collectionId",
+            "datasetId",
+            "id",
+            "q",
+            "score",
+            "sourceId",
+            "sourceName",
+            "updateTime"
+          ],
+          "contentPresent": true
+        },
+        {
+          "searchMode": "mixedRecall",
+          "count": 7,
+          "itemKeys": [
+            "chunkIndex",
+            "collectionId",
+            "datasetId",
+            "id",
+            "q",
+            "score",
+            "sourceId",
+            "sourceName",
+            "updateTime"
+          ],
+          "contentPresent": true
+        },
+        {
+          "searchMode": "mixedRecall",
+          "usingRerank": true,
+          "count": 9,
+          "itemKeys": [
+            "chunkIndex",
+            "collectionId",
+            "datasetId",
+            "id",
+            "q",
+            "score",
+            "sourceId",
+            "sourceName",
+            "updateTime"
+          ],
+          "contentPresent": true
+        }
+      ],
+      "features": {
+        "searchModes": [
+          "embedding",
+          "fullTextRecall",
+          "mixedRecall"
+        ],
+        "rerankProbed": true,
+        "extensionQueryProbed": false
+      },
+      "operations": [
+        {
+          "name": "catalog",
+          "method": "POST",
+          "path": "/api/core/dataset/list",
+          "status": 200,
+          "durationMs": 707,
+          "responseKeys": [
+            "code",
+            "data",
+            "message",
+            "statusText"
+          ]
+        },
+        {
+          "name": "detail",
+          "method": "GET",
+          "path": "/api/core/dataset/detail",
+          "status": 200,
+          "durationMs": 293,
+          "responseKeys": [
+            "code",
+            "data",
+            "message",
+            "statusText"
+          ]
+        },
+        {
+          "name": "retrieve-embedding",
+          "method": "POST",
+          "path": "/api/core/dataset/searchTest",
+          "status": 200,
+          "durationMs": 797,
+          "responseKeys": [
+            "code",
+            "data",
+            "message",
+            "statusText"
+          ]
+        },
+        {
+          "name": "retrieve-fullTextRecall",
+          "method": "POST",
+          "path": "/api/core/dataset/searchTest",
+          "status": 200,
+          "durationMs": 300,
+          "responseKeys": [
+            "code",
+            "data",
+            "message",
+            "statusText"
+          ]
+        },
+        {
+          "name": "retrieve-mixedRecall",
+          "method": "POST",
+          "path": "/api/core/dataset/searchTest",
+          "status": 200,
+          "durationMs": 1707,
+          "responseKeys": [
+            "code",
+            "data",
+            "message",
+            "statusText"
+          ]
+        },
+        {
+          "name": "retrieve-rerank",
+          "method": "POST",
+          "path": "/api/core/dataset/searchTest",
+          "status": 200,
+          "durationMs": 1727,
+          "responseKeys": [
+            "code",
+            "data",
+            "message",
+            "statusText"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "ragflow",
+      "transport": {
+        "protocol": "http:"
+      },
+      "catalog": {
+        "count": 28,
+        "total": 28,
+        "itemKeys": [
+          "artifact_task_finish_at",
+          "artifact_task_id",
+          "avatar",
+          "chunk_count",
+          "chunk_method",
+          "create_date",
+          "create_time",
+          "created_by",
+          "description",
+          "document_count",
+          "embedding_model",
+          "graphrag_task_finish_at",
+          "graphrag_task_id",
+          "id",
+          "language",
+          "mindmap_task_finish_at",
+          "mindmap_task_id",
+          "name",
+          "nickname",
+          "pagerank",
+          "parser_config",
+          "permission",
+          "pipeline_id",
+          "raptor_task_finish_at",
+          "raptor_task_id",
+          "similarity_threshold",
+          "skill_task_finish_at",
+          "skill_task_id",
+          "status",
+          "tenant_avatar",
+          "tenant_embd_id",
+          "tenant_id",
+          "token_num",
+          "update_date",
+          "update_time",
+          "vector_similarity_weight"
+        ],
+        "parserConfigKeys": [
+          "auto_keywords",
+          "auto_questions",
+          "built_in_metadata",
+          "children_delimiter",
+          "chunk_token_num",
+          "compilation_template_group_id",
+          "delimiter",
+          "enable_children",
+          "enable_metadata",
+          "ext",
+          "filename_embd_weight",
+          "graphrag",
+          "html4excel",
+          "image_context_size",
+          "image_table_context_window",
+          "layout_recognize",
+          "llm_id",
+          "metadata",
+          "mineru_formula_enable",
+          "mineru_lang",
+          "mineru_parse_method",
+          "mineru_table_enable",
+          "overlapped_percent",
+          "pages",
+          "parent_child",
+          "raptor",
+          "table_column_mode",
+          "table_column_names",
+          "table_column_roles",
+          "table_context_size",
+          "tag_kb_ids",
+          "task_page_size",
+          "tenant_llm_id",
+          "toc_extraction",
+          "topn_tags"
+        ],
+        "graphConfiguredCount": 17,
+        "graphCompletedCount": 15,
+        "knowledgeCompilationConfiguredCount": 0
+      },
+      "detail": {
+        "keys": [
+          "artifact_task_finish_at",
+          "artifact_task_id",
+          "avatar",
+          "chunk_count",
+          "chunk_method",
+          "create_date",
+          "create_time",
+          "created_by",
+          "description",
+          "document_count",
+          "embedding_model",
+          "graphrag_task_finish_at",
+          "graphrag_task_id",
+          "id",
+          "language",
+          "mindmap_task_finish_at",
+          "mindmap_task_id",
+          "name",
+          "nickname",
+          "pagerank",
+          "parser_config",
+          "permission",
+          "pipeline_id",
+          "raptor_task_finish_at",
+          "raptor_task_id",
+          "similarity_threshold",
+          "skill_task_finish_at",
+          "skill_task_id",
+          "status",
+          "tenant_avatar",
+          "tenant_embd_id",
+          "tenant_id",
+          "token_num",
+          "update_date",
+          "update_time",
+          "vector_similarity_weight"
+        ]
+      },
+      "retrievals": [
+        {
+          "feature": "baseline",
+          "count": 0,
+          "itemKeys": [],
+          "contentPresent": false
+        },
+        {
+          "feature": "graph",
+          "count": 1,
+          "itemKeys": [
+            "content",
+            "content_ltks",
+            "dataset_id",
+            "document_id",
+            "document_keyword",
+            "id",
+            "image_id",
+            "important_keywords",
+            "positions",
+            "similarity",
+            "term_similarity",
+            "vector_similarity"
+          ],
+          "contentPresent": true,
+          "scoreRange": {
+            "minimum": 1,
+            "maximum": 1
+          }
+        },
+        {
+          "feature": "knowledge-compilation",
+          "count": 0,
+          "itemKeys": [],
+          "contentPresent": false
+        }
+      ],
+      "features": {
+        "graphRetrievalProbed": true,
+        "knowledgeCompilationProbed": true,
+        "metadataConditionProbed": false
+      },
+      "operations": [
+        {
+          "name": "catalog",
+          "method": "GET",
+          "path": "/api/v1/datasets",
+          "status": 200,
+          "durationMs": 732,
+          "responseKeys": [
+            "code",
+            "data",
+            "total_datasets"
+          ]
+        },
+        {
+          "name": "detail",
+          "method": "GET",
+          "path": "/api/v1/datasets",
+          "status": 200,
+          "durationMs": 157,
+          "responseKeys": [
+            "code",
+            "data",
+            "total_datasets"
+          ]
+        },
+        {
+          "name": "retrieve-baseline",
+          "method": "POST",
+          "path": "/api/v1/retrieval",
+          "status": 200,
+          "durationMs": 417,
+          "responseKeys": [
+            "code",
+            "data"
+          ]
+        },
+        {
+          "name": "retrieve-graph",
+          "method": "POST",
+          "path": "/api/v1/retrieval",
+          "status": 200,
+          "durationMs": 478,
+          "responseKeys": [
+            "code",
+            "data"
+          ]
+        },
+        {
+          "name": "retrieve-knowledge-compilation",
+          "method": "POST",
+          "path": "/api/v1/retrieval",
+          "status": 200,
+          "durationMs": 331,
+          "responseKeys": [
+            "code",
+            "data"
+          ]
+        }
+      ]
+    }
+  ]
+}

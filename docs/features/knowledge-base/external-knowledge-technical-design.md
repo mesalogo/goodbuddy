@@ -358,11 +358,28 @@ knowledge:external-retrieval:test
 本节记录 2026-09-03 核对的初始公开接口。实施时应把每个受支持版本的真实响应保存为
 去敏 fixture，并以 fixture 和真实实例测试作为发布依据。
 
+### 9.0 真实实例验证基线
+
+2026-09-09 使用本机未入库的测试地址和 API Key 完成第一轮只读验证。验证只记录状态、
+字段名、数量和长度，不记录 API Key、知识库名称或片段正文。
+
+| Provider | 实例证据 | 目录实测 | 检索实测 | 当前结论 |
+| --- | --- | --- | --- | --- |
+| Dify `0.x` | 响应头 `x-version: 0.15.8` | 列表返回 200 和 3 项；详情 GET 返回 405 | 默认配置和显式当前配置均返回 200，结果为空 | 从目录项读取配置，手工 ID 通过检索验证；非空结果仍未验证 |
+| Dify `1.x` | 响应头 `x-version: 1.17.0` | 列表返回 200 和 1 项；详情 GET 返回 200 | 默认配置和显式当前配置均返回相同的 3 条非空结果 | 详情和 `records[].segment/document` 已验证；新增摘要索引、元数据、多模态和 Pipeline 能力字段 |
+| FastGPT | 响应未提供版本，只能确认当前托管实例 | 基址包含 `/api`；列表和详情均返回 200，列表 `data` 直接为数组，本次 1 个 Dataset | embedding 8 条、fullTextRecall 2 条、mixedRecall 7 条、mixedRecall + Rerank 9 条 | 三种检索模式和 Rerank 均已实测；当前结果包含 `q`，未包含 `a` |
+| RAGFlow | 响应未提供产品版本，Server 为 nginx，不能据此推断版本 | `GET /api/v1/datasets` 返回 200，共 28 项；17 项配置 GraphRAG，15 项有完成证据 | 选定已完成图谱的库，基础检索 0 条，`use_kg=true` 返回 1 条，Knowledge Compilation 0 条 | 图谱检索已产生区别于基础检索的结果；当前没有库具备 Knowledge Compilation 配置证据 |
+
+当前 Node 测试进程设置了 `NODE_TLS_REJECT_UNAUTHORIZED=0`，因此两个 HTTPS 实例的请求
+使用了放宽的证书校验。这只能证明接口在当前测试环境可用，不能证明严格 TLS 校验通过。
+产品实现不得读取该进程级设置作为隐式默认；实例测试和保存必须按 8.1 节处理传输风险。
+
 ### 9.1 Dify
 
 | 操作 | 接口 |
 | --- | --- |
 | 列表 | `GET /v1/datasets` |
+| 详情 | `GET /v1/datasets/{dataset_id}`，`0.15.8` 不支持、`1.17.0` 支持 |
 | 检索 | `POST /v1/datasets/{dataset_id}/retrieve` |
 | 认证 | `Authorization: Bearer <knowledge-api-key>` |
 
@@ -375,6 +392,26 @@ Adapter 只接受 Knowledge Service API Key，不调用应用 `/info`、Chat 或
 Dify 当前文档限制查询不超过 250 字符。GoodBuddy 不静默截断；超出时检索测试和聊天
 诊断返回 Provider 限制，并允许后续单独设计查询压缩策略。
 
+两个实测版本共同返回 `retrieval_model_dict`，键包括搜索方式、Top K、阈值、Rerank 和
+权重。显式原样复用该配置均返回 200，证明覆盖 envelope 可用，但 UI 编辑后的每种组合仍
+需单独契约测试。
+
+版本差异：
+
+| 能力 | `0.15.8` | `1.17.0` | Adapter 和 UI 规则 |
+| --- | --- | --- | --- |
+| Dataset 详情 | GET 返回 405 | GET 返回 200 | 能力探测后调用；旧版从目录项读取配置，不能把 405 视为实例故障 |
+| 非空检索结构 | 本次未命中 | 默认和显式配置均返回 3 条 | 1.17 已验证 `records[].segment.content`、`segment.document.id/name`、位置和分数映射 |
+| 元数据 | 无 `doc_metadata` | 字段存在，当前库定义数为 0 | 有实际字段定义时才显示受控元数据过滤器；不提供自由 JSON |
+| 多模态与附件 | 未返回能力字段 | `is_multimodal` 和 `files` 字段可用，当前库非多模态且结果无附件 | 只显示远端状态；仅在结果实际带 `files` 时显示附件引用 |
+| 父子分块 | 未验证 | 返回 `child_chunks` 数组，本次为空 | 仅在实际非空时显示子块证据，不补造父子关系 |
+| 摘要索引 | 未返回能力字段 | 当前库配置了 `summary_index_setting`，本次结果 `summary` 为空 | 概览显示只读状态；仅在结果实际返回摘要时展示 |
+| Knowledge Pipeline | 未返回能力字段 | `pipeline_id/runtime_mode` 存在，当前库未配置 Pipeline | 只读显示，不提供运行或编辑 Pipeline 的操作 |
+
+Dify 1.x 官方 RetrievalModel 还声明 `metadata_filtering_conditions`，并支持
+`keyword_search/semantic_search/full_text_search/hybrid_search`。当前实测库没有 Metadata
+字段，未执行空条件或猜测字段探测；该配置保持禁用，直到所选库详情返回可用字段定义。
+
 ### 9.2 FastGPT
 
 | 操作 | 接口 |
@@ -384,10 +421,17 @@ Dify 当前文档限制查询不超过 250 字符。GoodBuddy 不静默截断；
 | 检索 | `POST /api/core/dataset/searchTest` |
 | 认证 | `Authorization: Bearer <api-key>` |
 
-列表响应同时包含文件夹和知识库，只有 `type = dataset` 可以绑定。检索映射 `datasetId`、
+列表响应同时包含文件夹和知识库，只有 `type = dataset` 可以绑定。当前实测列表的
+`data` 直接为数组，不是 `data.list`；Adapter 可以仅对已经实测的这两种明确 envelope
+做版本化解析，不递归猜测任意嵌套。检索映射 `datasetId`、
 `text`、Token `limit`、`similarity`、`searchMode` 和 `usingReRank`。初始版本不发送查询优化
 字段，避免调用 FastGPT 配置的 LLM。
-响应从 `q`、`a`、`sourceName`、`sourceId`、`collectionId` 和 `score` 构造片段与引用。
+当前实测响应的 `data` 包含 `list/duration/limit/searchMode/usingReRank/similarity`；结果项
+包含 `q/id/datasetId/collectionId/sourceName/sourceId/chunkIndex/score`，未返回 `a`。
+Adapter 以 `q` 为必需片段，`a` 仅在远端实际返回时追加，不能要求 `a` 存在。
+当前实例的 embedding、fullTextRecall、mixedRecall 和 mixedRecall + Rerank 均返回 200 和
+非空结果，因此这四种界面组合可以启用。查询扩展会调用模型，仍不在初始界面和探测脚本中
+启用。
 
 FastGPT 4.15.0 起部署实例的 `/apidoc/devapi` 是接口事实来源，手工文档可能落后。支持矩阵
 必须按真实版本测试；不能因为健康页可访问就假定列表和检索 Schema 相同。`searchTest`
@@ -405,16 +449,28 @@ FastGPT 4.15.0 起部署实例的 `/apidoc/devapi` 是接口事实来源，手�
 检索映射 `question`、`dataset_ids`、`page_size`、`similarity_threshold`、
 `vector_similarity_weight`、`knn_top_k`、重排、`use_kg` 和
 `include_knowledge_compilation`。不发送已弃用的 `top_k`。响应从 `data.chunks` 和
-`data.doc_aggs` 提取片段、文档、位置和原始相似度。
+`data.doc_aggs` 提取片段、文档、位置和原始相似度。当前实测非空 chunk 使用
+`document_keyword` 表示文档名，并包含 `id/document_id/content/positions/similarity/`
+`term_similarity/vector_similarity`；初始 Adapter 应按该字段映射，不假定存在
+`document_name`。
 
 图谱规则：
 
-- `parser_config.graphrag` 或等价详情字段作为已有图谱的证据，不写回。
+- `parser_config.graphrag.use_graphrag = true` 只表示库配置了 GraphRAG；单独出现该配置不
+  表示图谱已经构建完成。
+- `graphrag_task_finish_at` 为有效非零时间才作为图谱完成证据，不写回。
 - `use_kg` 是检索时开关，只在已有图谱和受支持版本均确认后发送。
 - Knowledge Compilation 与旧 GraphRAG 分别建模。
 - `include_knowledge_compilation` 使用本地保存的显式布尔值，初始默认 false；即使服务端
   默认 true，也不依赖字段省略获得隐式行为。
+- `compilation_template_group_id` 或后续版本的等价受控字段作为 Knowledge Compilation 已
+  配置证据；仅仅请求返回 200 不能启用界面开关。
 - Provider 没有返回图节点或路径证据时，GoodBuddy 不生成图谱引用。
+
+当前实例 28 个库中 17 个配置 GraphRAG、15 个存在完成证据。对一个已完成库使用同一查询，
+基础检索返回 0 条，`use_kg=true` 返回 1 条且原始相似度为 1，说明图谱开关对实际结果有
+影响。当前 28 个库均没有 Knowledge Compilation 配置证据；该请求虽返回 200 和零结果，
+界面仍必须禁用开关并显示“当前知识库未配置 Knowledge Compilation”。
 
 ## 10. 检索编排
 
@@ -543,6 +599,39 @@ Adapter 可以保存少量受控事实，例如“目录接口可用”“详情
 - 查询、片段、引用和诊断的实际上限。
 
 Mock 或公开文档通过不能代替真实实例验收。
+
+2026-09-09 基线已完成 Dify `0.15.8`/`1.17.0` 目录、详情差异和 1.17 非空检索结构，
+FastGPT/RAGFlow 产品版本、严格 TLS、401/403/404/429、超时和取消尚未完成，因此不满足
+本节完整验收条件。
+
+### 14.6 可重复探测脚本
+
+仓库提供 `node scripts/external-knowledge-probe.mjs`。默认从进程环境变量读取
+`GOODBUDDY_<PROVIDER>_BASE_URL/API_KEY`，本地开发也兼容当前两行格式的 `.env.dify`、
+`.env.fastgpt` 和 `.env.ragflow`；Dify 文件还支持多个 `标签/URL/API Key` 三行配置块，用于
+同一次报告比较多个版本。输出不包含地址、凭据、远端 ID、名称、查询和正文。
+
+```text
+node scripts/external-knowledge-probe.mjs
+node scripts/external-knowledge-probe.mjs --provider=ragflow --extended
+node scripts/external-knowledge-probe.mjs --extended --output=<report.json>
+```
+
+默认模式覆盖目录、详情和基础检索。`--extended` 额外执行 Dify 当前配置覆盖、FastGPT
+Rerank、RAGFlow GraphRAG 和 Knowledge Compilation 检索。脚本只有固定 GET/POST 读取与
+检索端点，不实现或调用远端创建、更新、上传和删除。
+
+### 14.7 CRUD 验收边界
+
+| 对象 | Create | Read | Update | Delete | 验收方式 |
+| --- | --- | --- | --- | --- | --- |
+| GoodBuddy 外部实例 | 是 | 是 | 是 | 是 | SQLite、凭据存储、IPC 和 Renderer 集成测试 |
+| GoodBuddy 外部绑定 | 是 | 是 | 是 | 是 | SQLite、统一知识库列表、检索和删除确认测试 |
+| Provider 远端知识库与内容 | 否 | 目录、详情、检索 | 否 | 否 | 探测脚本确认只有只读端点；代码审查确认无写端点 |
+
+FastGPT 等 Provider 的公开 API 确实提供远端知识库、集合和数据 CRUD，但这不属于当前产品
+接入。若未来要验证远端 CRUD，必须先修改 PRD，并使用可删除的专用测试实例或命名空间；
+不能在本轮三个既有实例上执行破坏性测试。
 
 ## 15. 实施顺序
 
