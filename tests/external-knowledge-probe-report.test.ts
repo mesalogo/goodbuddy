@@ -23,18 +23,22 @@ type ProbeReport = {
   providers: ProbeProvider[]
 }
 
-async function report(): Promise<ProbeReport> {
+async function report(filename = 'external-knowledge-probe-baseline.json'): Promise<ProbeReport> {
   return JSON.parse(
     await readFile(
-      resolve('docs/features/knowledge-base/external-knowledge-probe-baseline.json'),
+      resolve('docs/features/knowledge-base', filename),
       'utf8'
     )
   ) as ProbeReport
 }
 
 describe('external knowledge probe baseline', () => {
-  it('contains no endpoint, credential, remote identifier, or mutation operation', async () => {
-    const value = await report()
+  it.each([
+    'external-knowledge-probe-baseline.json',
+    'external-knowledge-probe-2026-09-10-strict.json',
+    'external-knowledge-probe-2026-09-10-extended.json'
+  ])('%s contains no endpoint, credential, remote identifier, or mutation operation', async (filename) => {
+    const value = await report(filename)
     const serialized = JSON.stringify(value)
 
     expect(serialized).not.toMatch(/https?:\/\//)

@@ -20,7 +20,7 @@ type ProviderReport = {
     count?: number
     contentPresent?: boolean
   }>
-  features: { searchModes: string[]; rerankProbed: boolean; rerankSucceeded: boolean }
+  features: { searchModes: string[]; rerankProbed: boolean; rerankRequestSucceeded: boolean }
   operations: Array<{ name: string; status: number | 'failed' }>
 }
 
@@ -40,8 +40,10 @@ async function probe(
     globalThis.fetch = async (url, init) => {
       const path = new URL(url).pathname;
       let fixture;
-      if (path.endsWith('/list')) fixture = catalog;
-      else if (path.endsWith('/detail')) fixture = {body: {code: 200, data: {}}};
+      if (path === '/prefix/api/core/dataset/list') {
+        if (JSON.parse(init.body).parentId !== null) throw new Error('Invalid root parent');
+        fixture = catalog;
+      } else if (path.endsWith('/detail')) fixture = {body: {code: 200, data: {}}};
       else if (path.endsWith('/searchTest')) {
         const input = JSON.parse(init.body);
         fixture = fixtures[input.usingReRank ? 'rerank' : input.searchMode];
@@ -60,7 +62,7 @@ async function probe(
     {
       env: {
         ...process.env,
-        GOODBUDDY_FASTGPT_BASE_URL: 'http://fixture.invalid',
+        GOODBUDDY_FASTGPT_BASE_URL: 'http://fixture.invalid/prefix/api/core/dataset/',
         GOODBUDDY_FASTGPT_API_KEY: 'fixture-only-key'
       },
       timeout: 10_000
@@ -88,7 +90,7 @@ describe('FastGPT probe success evidence', () => {
       embedding: fixture, fullTextRecall: fixture, mixedRecall: fixture, rerank: fixture
     })
     expect(report.features).toEqual({
-      searchModes: [], rerankProbed: true, rerankSucceeded: false,
+      searchModes: [], rerankProbed: true, rerankRequestSucceeded: false,
       extensionQueryProbed: false
     })
     expect(report.retrievals).toHaveLength(4)
@@ -108,7 +110,7 @@ describe('FastGPT probe success evidence', () => {
     })
     expect(report.features).toMatchObject({
       searchModes: ['embedding', 'fullTextRecall'],
-      rerankProbed: true, rerankSucceeded: true
+      rerankProbed: true, rerankRequestSucceeded: true
     })
     expect(report.retrievals[0]).toMatchObject({ success: true, count: 0, contentPresent: false })
     expect(report.retrievals[1]).toMatchObject({ success: true, count: 0 })
@@ -126,8 +128,31 @@ describe('FastGPT probe success evidence', () => {
     expect(report.catalog).not.toHaveProperty('count')
     expect(report.retrievals).toEqual([])
     expect(report.features).toMatchObject({
-      searchModes: [], rerankProbed: false, rerankSucceeded: false
+      searchModes: [], rerankProbed: false, rerankRequestSucceeded: false
     })
     expect(report.operations).toHaveLength(1)
+  })
+
+  it('reports both retrieval envelopes, score structures and actual rerank response separately', async () => {
+    const report = await probe({
+      embedding: { body: { code: 200, data: [{ score: 0.6, q: 'private text' }] } },
+      fullTextRecall: { body: { code: 200, data: { list: [], usingReRank: true } } },
+      mixedRecall: success(),
+      rerank: { body: { code: 200, data: {
+        usingReRank: false,
+        list: [{ score: [{ type: 'private score type', value: 0.2, index: 1 }], q: 'private text' }]
+      } } }
+    })
+    expect(report.retrievals[0]).toMatchObject({
+      envelope: 'data-array', scoreTypes: ['number'], scoreRange: { minimum: 0.6, maximum: 0.6 }
+    })
+    expect(report.retrievals[3]).toMatchObject({
+      envelope: 'data-list', scoreTypes: ['array'], scoreItemKeys: ['index', 'type', 'value'],
+      scoreValueRange: { minimum: 0.2, maximum: 0.2 }, rerankEnabled: false
+    })
+    expect(report.retrievals[1]).toMatchObject({ rerankEnabled: true })
+    expect(report.retrievals[0]).not.toHaveProperty('rerankEnabled')
+    expect(report.features.rerankRequestSucceeded).toBe(true)
+    expect(JSON.stringify(report)).not.toContain('private')
   })
 })

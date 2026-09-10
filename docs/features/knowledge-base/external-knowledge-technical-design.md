@@ -355,8 +355,27 @@ knowledge:external-retrieval:test
 
 ## 9. Provider 映射
 
-本节记录 2026-09-03 核对的初始公开接口。实施时应把每个受支持版本的真实响应保存为
+本节依据 2026-09-10 核对的官方文档、官方源码和真实实例响应。实施时应把每个受支持版本的真实响应保存为
 去敏 fixture，并以 fixture 和真实实例测试作为发布依据。
+
+官方来源与版本边界：
+
+- Dify：[Knowledge API 与密钥范围](https://docs.dify.ai/en/api-reference/guides/knowledge)、
+  [列表](https://docs.dify.ai/en/api-reference/knowledge-bases/list-knowledge-bases)、
+  [详情](https://docs.dify.ai/en/api-reference/knowledge-bases/get-knowledge-base)、
+  [检索](https://docs.dify.ai/en/api-reference/knowledge-bases/retrieve-chunks-from-a-knowledge-base-test-retrieval)。
+  缺省配置顺序另对照[官方实现](https://github.com/langgenius/dify/blob/main/api/services/hit_testing_service.py)。
+- FastGPT：[API 说明](https://doc.fastgpt.io/zh-CN/openapi/intro)和
+  [已停止维护的手工接口页](https://doc.fastgpt.io/zh-CN/openapi/dataset)。当前契约对照
+  [生成文档 Schema](https://github.com/labring/FastGPT/blob/main/packages/global/openapi/core/dataset/api.ts)、
+  [检索处理器](https://github.com/labring/FastGPT/blob/main/projects/app/src/pages/api/core/dataset/searchTest.ts)和
+  [结果项 Schema](https://github.com/labring/FastGPT/blob/main/packages/global/core/dataset/type.ts)。
+  云端 `/apidoc/` 本次只取得应用壳，未读取渲染后的部署 Schema。
+- RAGFlow：[官网 HTTP API](https://ragflow.io/docs/dev/http_api_reference)正文未能有效提取，
+  采用[官方当前文档原文](https://github.com/infiniflow/ragflow/blob/main/docs/references/http_api_reference.md)，并与
+  [v0.24.0 固定版本](https://github.com/infiniflow/ragflow/blob/v0.24.0/docs/references/http_api_reference.md)比较。
+
+`main` 分支文档与源码会变化，不是部署版本凭据。FastGPT、RAGFlow 的实际产品版本仍未确认。
 
 ### 9.0 真实实例验证基线
 
@@ -370,9 +389,14 @@ knowledge:external-retrieval:test
 | FastGPT | 响应未提供版本，只能确认当前托管实例 | 基址包含 `/api`；列表和详情均返回 200，列表 `data` 直接为数组，本次 1 个 Dataset | embedding 8 条、fullTextRecall 2 条、mixedRecall 7 条、mixedRecall + Rerank 9 条 | 三种检索模式和 Rerank 均已实测；当前结果包含 `q`，未包含 `a` |
 | RAGFlow | 响应未提供产品版本，Server 为 nginx，不能据此推断版本 | `GET /api/v1/datasets` 返回 200，共 28 项；17 项配置 GraphRAG，15 项有完成证据 | 选定已完成图谱的库，基础检索 0 条，`use_kg=true` 返回 1 条，Knowledge Compilation 0 条 | 图谱检索已产生区别于基础检索的结果；当前没有库具备 Knowledge Compilation 配置证据 |
 
-当前 Node 测试进程设置了 `NODE_TLS_REJECT_UNAUTHORIZED=0`，因此两个 HTTPS 实例的请求
+2026-09-09 的 Node 测试进程设置了 `NODE_TLS_REJECT_UNAUTHORIZED=0`，因此当时 HTTPS 实例的请求
 使用了放宽的证书校验。这只能证明接口在当前测试环境可用，不能证明严格 TLS 校验通过。
 产品实现不得读取该进程级设置作为隐式默认；实例测试和保存必须按 8.1 节处理传输风险。
+
+2026-09-10 复测显式设置 `NODE_TLS_REJECT_UNAUTHORIZED=1`，两个 Dify 实例和 FastGPT
+均通过证书校验；RAGFlow 配置为 HTTP，不涉及 TLS。基础 14 次、扩展 19 次，共 33 次只读
+请求。每个实例从目录选择一个库检索，未遍历全部库；未调用聊天或生成端点，检索仍可能
+使用远端 Embedding、Rerank 并记录用量。两份报告与逐项结果见[实施进度](./progress.md)。
 
 ### 9.1 Dify
 
@@ -385,9 +409,14 @@ knowledge:external-retrieval:test
 
 Adapter 只接受 Knowledge Service API Key，不调用应用 `/info`、Chat 或 Workflow。默认不
 发送 `retrieval_model`，沿用远端知识库配置。用户选择覆盖时，Adapter 必须一次收集并验证
-当前接口要求的搜索方式、Top K、阈值、`reranking_mode`，以及相应的 Rerank Provider/模型
-或关键词/向量权重与 Embedding Provider/模型；缺少任何必填标识时不构造请求。响应从
+当前接口要求的 `search_method`、`reranking_enable`、`top_k`、`score_threshold_enabled`。
+开启重排时再验证 `reranking_mode`，以及该模式所需的 Provider、模型或权重；缺少必填
+标识时不构造请求。显式对象不会与知识库配置逐字段合并。省略整个对象时，服务端优先使用
+知识库配置，未保存配置时才使用内置默认。响应从
 `records[].segment`、`score`、文档名称和元数据提取标准化引用。
+
+当前官方文档说明限定知识库范围的 Key 不能调用列表，但可访问授权 ID 的详情和检索。
+列表 403 不足以认定密钥无效；本轮测试配置均能列目录，尚未验证 Scoped Key。
 
 Dify 当前文档限制查询不超过 250 字符。GoodBuddy 不静默截断；超出时检索测试和聊天
 诊断返回 Provider 限制，并允许后续单独设计查询压缩策略。
@@ -421,19 +450,25 @@ Dify 1.x 官方 RetrievalModel 还声明 `metadata_filtering_conditions`，并�
 | 检索 | `POST /api/core/dataset/searchTest` |
 | 认证 | `Authorization: Bearer <api-key>` |
 
-列表响应同时包含文件夹和知识库，只有 `type = dataset` 可以绑定。当前实测列表的
-`data` 直接为数组，不是 `data.list`；Adapter 可以仅对已经实测的这两种明确 envelope
-做版本化解析，不递归猜测任意嵌套。检索映射 `datasetId`、
+列表响应同时包含文件夹和知识库，只有 `type = dataset` 可以绑定。根列表请求发送
+`parentId: null`；文件夹需按父 ID 继续读取。当前实测列表为 `data[]`，检索为
+`data.list[]`，这是两个不同端点的结构。旧手工文档还展示检索 `data[]`，探测脚本接受
+该旧结构并单独记录 envelope；当前客户端只接受检索 `data.list[]`，旧结构尚未经过真实
+部署验证。不递归猜测任意嵌套。检索映射 `datasetId`、
 `text`、Token `limit`、`similarity`、`searchMode` 和 `usingReRank`。初始版本不发送查询优化
 字段，避免调用 FastGPT 配置的 LLM。
 当前实测响应的 `data` 包含 `list/duration/limit/searchMode/usingReRank/similarity`；结果项
 包含 `q/id/datasetId/collectionId/sourceName/sourceId/chunkIndex/score`，未返回 `a`。
 Adapter 以 `q` 为必需片段，`a` 仅在远端实际返回时追加，不能要求 `a` 存在。
+2026-09-10 实测 `score` 为 `{type, value, index}[]`，与当前官方结果 Schema 一致；
+旧手工文档中的数值分数不能作为当前统一映射依据。应保留评分类型或按明确规则选分，
+不能默认取第一项作为总分。当前客户端仅提取数值分数，数组评分的映射仍待实现。
 当前实例的 embedding、fullTextRecall、mixedRecall 和 mixedRecall + Rerank 均返回 200 和
 非空结果，因此这四种界面组合可以启用。查询扩展会调用模型，仍不在初始界面和探测脚本中
 启用。
 
-FastGPT 4.15.0 起部署实例的 `/apidoc/devapi` 是接口事实来源，手工文档可能落后。支持矩阵
+FastGPT 4.15.0 起应优先查阅部署实例的自动生成文档，`/apidoc/devapi` 与
+`/apidoc/systemopenapi` 的认证范围不同，Dev API 中出现不等于允许 API Key 调用。支持矩阵
 必须按真实版本测试；不能因为健康页可访问就假定列表和检索 Schema 相同。`searchTest`
 可能记录 `SEARCH_TEST` 等远端审计并更新 API Key 用量；Embedding 和 Rerank 也可能产生
 费用。GoodBuddy 将这些行为作为检索成本显示，不宣称该接口没有副作用。
@@ -448,7 +483,11 @@ FastGPT 4.15.0 起部署实例的 `/apidoc/devapi` 是接口事实来源，手�
 
 检索映射 `question`、`dataset_ids`、`page_size`、`similarity_threshold`、
 `vector_similarity_weight`、`knn_top_k`、重排、`use_kg` 和
-`include_knowledge_compilation`。不发送已弃用的 `top_k`。响应从 `data.chunks` 和
+`include_knowledge_compilation`。当前文档以 `knn_top_k` 取代 `top_k`；v0.24.0 文档只声明
+`top_k`，因此当前客户端不发送 `top_k` 的行为不能作为旧版本兼容承诺。
+`knn_top_k` 控制向量候选数量，`page_size` 控制返回数量；请求成功不能单独证明未知参数
+已生效。本轮未验证候选数参数的效果，也未确定新字段首次发布版本。
+HTTP 成功且业务 `code === 0` 才能解析结果。响应从 `data.chunks` 和
 `data.doc_aggs` 提取片段、文档、位置和原始相似度。当前实测非空 chunk 使用
 `document_keyword` 表示文档名，并包含 `id/document_id/content/positions/similarity/`
 `term_similarity/vector_similarity`；初始 Adapter 应按该字段映射，不假定存在
@@ -467,10 +506,13 @@ FastGPT 4.15.0 起部署实例的 `/apidoc/devapi` 是接口事实来源，手�
   配置证据；仅仅请求返回 200 不能启用界面开关。
 - Provider 没有返回图节点或路径证据时，GoodBuddy 不生成图谱引用。
 
-当前实例 28 个库中 17 个配置 GraphRAG、15 个存在完成证据。对一个已完成库使用同一查询，
+2026-09-09 实例 28 个库中 17 个配置 GraphRAG、15 个存在完成证据。对一个已完成库使用同一查询，
 基础检索返回 0 条，`use_kg=true` 返回 1 条且原始相似度为 1，说明图谱开关对实际结果有
-影响。当前 28 个库均没有 Knowledge Compilation 配置证据；该请求虽返回 200 和零结果，
+影响。当时 28 个库均没有 Knowledge Compilation 配置证据；该请求虽返回 200 和零结果，
 界面仍必须禁用开关并显示“当前知识库未配置 Knowledge Compilation”。
+2026-09-10 目录增至 29 项，18 项配置图谱、16 项有完成证据；所选库基础检索 2 条、
+图谱检索 3 条。Knowledge Compilation 开关请求返回 2 条，目录仍无配置证据，不能据此
+认定编译内容参与了检索。
 
 ## 10. 检索编排
 
@@ -601,8 +643,8 @@ Adapter 可以保存少量受控事实，例如“目录接口可用”“详情
 Mock 或公开文档通过不能代替真实实例验收。
 
 2026-09-09 基线已完成 Dify `0.15.8`/`1.17.0` 目录、详情差异和 1.17 非空检索结构，
-FastGPT/RAGFlow 产品版本、严格 TLS、401/403/404/429、超时和取消尚未完成，因此不满足
-本节完整验收条件。
+2026-09-10 补充验证了 HTTPS 实例的严格 TLS。FastGPT/RAGFlow 产品版本、真实实例
+401/403/404/429、超时和取消尚未完成，因此不满足本节完整验收条件。
 
 ### 14.6 可重复探测脚本
 
@@ -621,14 +663,18 @@ node scripts/external-knowledge-probe.mjs --extended --output=<report.json>
 Rerank、RAGFlow GraphRAG 和 Knowledge Compilation 检索。脚本只有固定 GET/POST 读取与
 检索端点，不实现或调用远端创建、更新、上传和删除。
 
-FastGPT 报告将请求成功与命中数量分开：HTTP 必须成功、业务 `code` 必须为 `200`，
-且 `data` 或 `data.list` 必须是数组，才记录 `success: true` 和 `count`。成功的空数组
+三家报告均将请求成功与命中数量分开：HTTP 必须成功，FastGPT 业务 `code` 必须为 `200`、
+RAGFlow 必须为 `0`，并分别校验 Dify `records`、FastGPT `data` 或 `data.list`、RAGFlow
+`data.chunks` 数组结构，才记录检索 `success: true` 和 `count`。成功的空数组
 记录 `count: 0`；HTTP、业务、响应结构、JSON 解析或网络失败记录 `success: false` 与
 固定失败类别，不用零命中代替失败。目录失败时不继续调用详情和检索。
 `features.searchModes` 只包含基础检索实际成功的模式；`rerankProbed` 表示实际尝试，
-`rerankSucceeded` 单独表示成功。历史基线保留原始证据，不追填未观测的成功字段。
-`tests/external-knowledge-probe-fastgpt.test.ts` 使用内存 fetch fixture 运行真实 CLI，
-覆盖错误、成功零命中和非空结果，不连接外部知识服务。
+`rerankRequestSucceeded` 表示请求成功，结果 `rerankEnabled` 单独记录远端实际返回的
+`usingReRank` 布尔值。FastGPT 另记录检索 envelope、分数类型和分数数组项结构；
+operation 保留 HTTP 状态、安全业务码及白名单网络错误码，不记录远端错误消息。
+历史基线保留原始证据，不追填未观测的成功字段。
+`tests/external-knowledge-probe-fastgpt.test.ts` 和 `tests/external-knowledge-probe-outcomes.test.ts`
+使用内存 fetch fixture 运行真实 CLI，覆盖错误、成功零命中和非空结果，不连接外部知识服务。
 
 ### 14.7 CRUD 验收边界
 

@@ -20,6 +20,8 @@
 | [外部知识库 UI 设计](./external-knowledge-ui-design.md) | 知识库页面、外部实例管理和创建向导交互 |
 | [外部知识库技术设计](./external-knowledge-technical-design.md) | Provider Adapter、凭据、持久化、IPC 和检索标准化 |
 | [外部知识库实测基线](./external-knowledge-probe-baseline.json) | 脱敏记录真实实例的接口状态、字段结构、特色能力和耗时 |
+| [2026-09-10 基础复测](./external-knowledge-probe-2026-09-10-strict.json) | 开启证书校验的目录、详情和基础检索结果 |
+| [2026-09-10 扩展复测](./external-knowledge-probe-2026-09-10-extended.json) | 配置覆盖、重排、图谱与知识编译开关的请求结果及结构 |
 
 ## 术语
 

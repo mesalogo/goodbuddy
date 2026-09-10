@@ -78,7 +78,10 @@ function baseUrl(provider, input) {
   }
   url.pathname = url.pathname.replace(/\/+$/, '')
   if (provider === 'dify') url.pathname = url.pathname.replace(/\/v1$/, '')
-  if (provider === 'fastgpt' && !url.pathname.endsWith('/api')) url.pathname += '/api'
+  if (provider === 'fastgpt') {
+    url.pathname = url.pathname.replace(/\/api\/core\/dataset$/, '/api')
+    if (!url.pathname.endsWith('/api')) url.pathname += '/api'
+  }
   if (provider === 'ragflow') url.pathname = url.pathname.replace(/\/api\/v1$/, '')
   return url
 }
@@ -97,8 +100,9 @@ async function boundedJson(response, maximumBytes = 5_000_000) {
 
 async function request(context, name, url, init = {}) {
   const startedAt = performance.now()
+  let response
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       ...init,
       redirect: 'error',
       signal: AbortSignal.timeout(15_000),
@@ -113,9 +117,14 @@ async function request(context, name, url, init = {}) {
       name,
       method: init.method ?? 'GET',
       path: url.pathname
+        .replace(/(\/datasets\/)[^/]+/, '$1{id}')
         .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '{id}')
         .replace(/[0-9a-f]{24}/gi, '{id}'),
       status: response.status,
+      businessCode: Number.isFinite(body?.code) || [
+        'invalid_param', 'unauthorized', 'forbidden', 'not_found',
+        'dataset_not_found', 'internal_server_error', 'rate_limit_exceeded'
+      ].includes(body?.code) ? body.code : undefined,
       durationMs: Math.round(performance.now() - startedAt),
       responseKeys: objectKeys(body)
     })
@@ -125,14 +134,57 @@ async function request(context, name, url, init = {}) {
       name,
       method: init.method ?? 'GET',
       path: url.pathname
+        .replace(/(\/datasets\/)[^/]+/, '$1{id}')
         .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '{id}')
         .replace(/[0-9a-f]{24}/gi, '{id}'),
-      status: 'failed',
+      status: response?.status ?? 'failed',
       durationMs: Math.round(performance.now() - startedAt),
-      error: error?.name ?? 'Error'
+      error: ['Error', 'TypeError', 'SyntaxError', 'TimeoutError', 'AbortError'].includes(error?.name)
+        ? error.name : 'Error',
+      causeCode: [
+        'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
+        'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'CERT_HAS_EXPIRED',
+        'CERT_NOT_YET_VALID', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+        'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_TLS_CERT_ALTNAME_INVALID',
+        'ERR_SSL_WRONG_VERSION_NUMBER'
+      ].includes(error?.cause?.code) ? error.cause.code : undefined
     })
-    return undefined
+    return response ? { response, body: undefined } : undefined
   }
+}
+
+function responseFailure(result, businessCode) {
+  if (!result) return { success: false, failure: 'request-failed' }
+  if (!result.response.ok) return { success: false, failure: 'http-error' }
+  if (result.body === undefined) return { success: false, failure: 'request-failed' }
+  if (businessCode !== undefined && asRecord(result.body)?.code !== businessCode) {
+    return { success: false, failure: 'business-error' }
+  }
+  return undefined
+}
+
+function difyOutcome(result, kind) {
+  const failure = responseFailure(result)
+  if (failure) return failure
+  const body = asRecord(result.body)
+  const valid = kind === 'detail'
+    ? typeof body?.id === 'string' && body.id.length > 0
+    : kind === 'catalog'
+      ? Array.isArray(body?.data) && body.data.every((item) => typeof asRecord(item)?.id === 'string')
+      : Array.isArray(body?.records) && body.records.every((item) => asRecord(asRecord(item)?.segment))
+  return valid ? { success: true } : { success: false, failure: 'invalid-shape' }
+}
+
+function ragflowOutcome(result, kind) {
+  const failure = responseFailure(result, 0)
+  if (failure) return failure
+  const data = asRecord(result.body)?.data
+  const valid = kind === 'retrieval'
+    ? Array.isArray(asRecord(data)?.chunks) && data.chunks.every((item) => asRecord(item))
+    : Array.isArray(data) && data.every((item) => typeof asRecord(item)?.id === 'string') &&
+      (kind !== 'detail' || data.length > 0)
+  return valid ? { success: true } : { success: false, failure: 'invalid-shape' }
 }
 
 function resultShape(items, scoreKey) {
@@ -192,7 +244,8 @@ async function probeDify(configuration_) {
   catalogUrl.searchParams.set('limit', '100')
   const catalog = await request(context, 'catalog', catalogUrl)
   const catalogBody = asRecord(catalog?.body)
-  const items = Array.isArray(catalogBody?.data) ? catalogBody.data : []
+  const catalogOutcome = difyOutcome(catalog, 'catalog')
+  const items = catalogOutcome.success ? catalogBody.data : []
   const first = asRecord(items[0])
   let detail
   const retrievals = []
@@ -209,8 +262,9 @@ async function probeDify(configuration_) {
       { method: 'POST', body: JSON.stringify({ query }) }
     )
     const retrievalBody = asRecord(retrieval?.body)
-    const records = Array.isArray(retrievalBody?.records) ? retrievalBody.records : []
-    retrievals.push({ mode: 'dataset-defaults', ...difyResultShape(records) })
+    const outcome = difyOutcome(retrieval, 'retrieval')
+    retrievals.push({ mode: 'dataset-defaults', ...outcome,
+      ...(outcome.success ? difyResultShape(retrievalBody.records) : {}) })
     if (extended && asRecord(first.retrieval_model_dict)) {
       const override = await request(
         context,
@@ -225,8 +279,9 @@ async function probeDify(configuration_) {
         }
       )
       const overrideBody = asRecord(override?.body)
-      const overrideRecords = Array.isArray(overrideBody?.records) ? overrideBody.records : []
-      retrievals.push({ mode: 'explicit-current-config', ...difyResultShape(overrideRecords) })
+      const overrideOutcome = difyOutcome(override, 'retrieval')
+      retrievals.push({ mode: 'explicit-current-config', ...overrideOutcome,
+        ...(overrideOutcome.success ? difyResultShape(overrideBody.records) : {}) })
     }
   }
   return {
@@ -240,24 +295,27 @@ async function probeDify(configuration_) {
         : undefined
     },
     catalog: {
-      count: items.length,
-      total: Number.isFinite(catalogBody?.total) ? catalogBody.total : undefined,
-      itemKeys: unionKeys(items),
-      retrievalModelKeys: unionKeys(items.map((item) => asRecord(item)?.retrieval_model_dict)),
-      indexingTechniques: [...new Set(items.map((item) => asRecord(item)?.indexing_technique).filter((value) => typeof value === 'string'))].sort(),
-      metadataSchemaCount: items.filter((item) => {
-        const value = asRecord(item)?.doc_metadata
-        return Array.isArray(value) && value.length > 0
-      }).length,
-      multimodalCount: items.filter((item) => asRecord(item)?.is_multimodal === true).length,
-      pipelineConfiguredCount: items.filter((item) => typeof asRecord(item)?.pipeline_id === 'string').length,
-      summaryIndexConfiguredCount: items.filter((item) => asRecord(item)?.summary_index_setting !== null && asRecord(item)?.summary_index_setting !== undefined).length
+      ...catalogOutcome,
+      ...(catalogOutcome.success ? {
+        count: items.length,
+        total: Number.isFinite(catalogBody?.total) ? catalogBody.total : undefined,
+        itemKeys: unionKeys(items),
+        retrievalModelKeys: unionKeys(items.map((item) => asRecord(item)?.retrieval_model_dict)),
+        indexingTechniques: [...new Set(items.map((item) => asRecord(item)?.indexing_technique).filter((value) => typeof value === 'string'))].sort(),
+        metadataSchemaCount: items.filter((item) => {
+          const value = asRecord(item)?.doc_metadata
+          return Array.isArray(value) && value.length > 0
+        }).length,
+        multimodalCount: items.filter((item) => asRecord(item)?.is_multimodal === true).length,
+        pipelineConfiguredCount: items.filter((item) => typeof asRecord(item)?.pipeline_id === 'string').length,
+        summaryIndexConfiguredCount: items.filter((item) => asRecord(item)?.summary_index_setting !== null && asRecord(item)?.summary_index_setting !== undefined).length
+      } : {})
     },
-    detail: { keys: objectKeys(detail?.body) },
+    detail: { ...(typeof first?.id === 'string' ? difyOutcome(detail, 'detail') : { success: false, failure: 'not-probed' }), keys: objectKeys(detail?.body) },
     retrievals,
     features: {
-      datasetDefaults: true,
-      detailSupported: detail?.response.ok === true,
+      datasetDefaults: retrievals.some((item) => item.mode === 'dataset-defaults' && item.success),
+      detailSupported: difyOutcome(detail, 'detail').success,
       retrievalOverrideObserved: items.some((item) => asRecord(item)?.retrieval_model_dict !== undefined),
       retrievalOverrideProbed: retrievals.some((item) => item.mode === 'explicit-current-config'),
       nonEmptyResultObserved: retrievals.some((item) => item.count > 0)
@@ -267,10 +325,9 @@ async function probeDify(configuration_) {
 }
 
 function fastGptListResult(result) {
-  if (!result) return { success: false, failure: 'request-failed' }
-  if (!result.response.ok) return { success: false, failure: 'http-error' }
+  const failure = responseFailure(result, 200)
+  if (failure) return failure
   const body = asRecord(result.body)
-  if (body?.code !== 200) return { success: false, failure: 'business-error' }
   const data = asRecord(body.data)
   const list = Array.isArray(body.data) ? body.data : data?.list
   if (!Array.isArray(list)) return { success: false, failure: 'invalid-shape' }
@@ -279,9 +336,23 @@ function fastGptListResult(result) {
 
 function fastGptRetrievalShape(result) {
   const { list, ...outcome } = fastGptListResult(result)
+  if (!outcome.success) return outcome
+  const data = asRecord(result.body.data)
+  const arrayScores = list.flatMap((item) => Array.isArray(asRecord(item)?.score) ? item.score : [])
+  const scoreValues = finiteNumbers(arrayScores.map((item) => asRecord(item)?.value))
   return {
     ...outcome,
-    ...(list ? resultShape(list, 'score') : {})
+    envelope: Array.isArray(result.body.data) ? 'data-array' : 'data-list',
+    ...resultShape(list, 'score'),
+    scoreTypes: [...new Set(list.flatMap((item) => {
+      const score = asRecord(item)?.score
+      return Number.isFinite(score) ? ['number'] : Array.isArray(score) ? ['array'] : []
+    }))].sort(),
+    scoreItemKeys: unionKeys(arrayScores),
+    scoreValueRange: scoreValues.length > 0
+      ? { minimum: Math.min(...scoreValues), maximum: Math.max(...scoreValues) }
+      : undefined,
+    rerankEnabled: typeof data?.usingReRank === 'boolean' ? data.usingReRank : undefined
   }
 }
 
@@ -292,7 +363,7 @@ async function probeFastGpt(configuration_) {
     context,
     'catalog',
     endpoint(base, '/core/dataset/list'),
-    { method: 'POST', body: JSON.stringify({ parentId: '' }) }
+    { method: 'POST', body: JSON.stringify({ parentId: null }) }
   )
   const catalogBody = asRecord(catalog?.body)
   const rawData = catalogBody?.data
@@ -375,7 +446,7 @@ async function probeFastGpt(configuration_) {
     features: {
       searchModes: [...new Set(retrievals.filter((item) => item.success && !item.usingRerank).map((item) => item.searchMode))],
       rerankProbed: retrievals.some((item) => item.usingRerank),
-      rerankSucceeded: retrievals.some((item) => item.usingRerank && item.success),
+      rerankRequestSucceeded: retrievals.some((item) => item.usingRerank && item.success),
       extensionQueryProbed: false
     },
     operations: context.operations
@@ -390,7 +461,8 @@ async function probeRagflow(configuration_) {
   catalogUrl.searchParams.set('page_size', '100')
   const catalog = await request(context, 'catalog', catalogUrl)
   const catalogBody = asRecord(catalog?.body)
-  const items = Array.isArray(catalogBody?.data) ? catalogBody.data : []
+  const catalogOutcome = ragflowOutcome(catalog, 'catalog')
+  const items = catalogOutcome.success ? catalogBody.data : []
   const graphConfiguredItems = items.filter((item) => {
     const record = asRecord(item)
     const graph = asRecord(asRecord(record?.parser_config)?.graphrag)
@@ -440,8 +512,9 @@ async function probeRagflow(configuration_) {
         }
       )
       const data = asRecord(asRecord(result?.body)?.data)
-      const chunks = Array.isArray(data?.chunks) ? data.chunks : []
-      retrievals.push({ feature: feature.name, ...resultShape(chunks, 'similarity') })
+      const outcome = ragflowOutcome(result, 'retrieval')
+      retrievals.push({ feature: feature.name, ...outcome,
+        ...(outcome.success ? resultShape(data.chunks, 'similarity') : {}) })
     }
   }
   const detailBody = asRecord(detail?.body)
@@ -457,19 +530,22 @@ async function probeRagflow(configuration_) {
         : undefined
     },
     catalog: {
-      count: items.length,
-      total: Number.isFinite(catalogBody?.total_datasets) ? catalogBody.total_datasets : undefined,
-      itemKeys: unionKeys(items),
-      parserConfigKeys: unionKeys(items.map((item) => asRecord(item)?.parser_config)),
-      graphConfiguredCount: graphConfiguredItems.length,
-      graphCompletedCount: graphCompletedItems.length,
-      knowledgeCompilationConfiguredCount: compilationConfiguredItems.length
+      ...catalogOutcome,
+      ...(catalogOutcome.success ? {
+        count: items.length,
+        total: Number.isFinite(catalogBody?.total_datasets) ? catalogBody.total_datasets : undefined,
+        itemKeys: unionKeys(items),
+        parserConfigKeys: unionKeys(items.map((item) => asRecord(item)?.parser_config)),
+        graphConfiguredCount: graphConfiguredItems.length,
+        graphCompletedCount: graphCompletedItems.length,
+        knowledgeCompilationConfiguredCount: compilationConfiguredItems.length
+      } : {})
     },
-    detail: { keys: objectKeys(detailData) },
+    detail: { ...(typeof first?.id === 'string' ? ragflowOutcome(detail, 'detail') : { success: false, failure: 'not-probed' }), keys: objectKeys(detailData) },
     retrievals,
     features: {
-      graphRetrievalProbed: extended,
-      knowledgeCompilationProbed: extended,
+      graphRetrievalProbed: retrievals.some((item) => item.feature === 'graph'),
+      knowledgeCompilationProbed: retrievals.some((item) => item.feature === 'knowledge-compilation'),
       metadataConditionProbed: false
     },
     operations: context.operations
