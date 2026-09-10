@@ -40,6 +40,7 @@ export const integrations = {
         '直接使用 {{name}}（{{modelName}}）处理消息。',
       automaticDescription: '跟随全局 Runtime 默认设置',
       defaultDirect: '直连 · 跟随全局默认模型',
+      fixedRuntimeDescription: '通过 {{runtime}} 运行，固定使用 {{name}}。',
       runtimeDescription:
         '通过 {{runtime}} Agent Runtime 运行，并跟随“Agent Runtime”设置中的全局 {{runtime}} 配置。',
       defaultMode: '默认模式',

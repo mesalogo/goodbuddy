@@ -1,5 +1,17 @@
 # 模型连接请求定制进度
 
+## 2026-09-11：发布前固定模型说明修复
+
+- 项目已保存固定 Runtime 模型时，恢复显示实际固定模型的帮助文字，保留简化后的菜单；
+  规则见 [会话与项目 Runtime 选择](./ui-design.md#会话与项目-runtime-选择)。
+- `npm exec vitest run src/renderer/src/ProjectRuntimeSelector.test.tsx`：2 项通过，
+  覆盖中英文下 OpenCode、Continue、DeepSeek Harness 的固定选项及恢复跟随操作。
+- `npm test`：343 个文件、3,911 项通过，66 项按平台或手工/真实服务条件跳过；
+  `npm run typecheck`、`npm run lint`、`npm run release:notes:verify` 通过。
+- 本次新增修复仅影响 Renderer 帮助文字，未修改共享模型解析、Desktop-to-Agent 请求、
+  Agent 或 Runtime 启动实现；不需要单独远程修复。真实模型调用 0 次，未运行真实 Host
+  或桌面端到端模型会话。本地未构建或打包，发布候选生产构建由主分支 CI 验证。
+
 ## 2026-09-10：配置准确性修复
 
 - 通道直连回退修复已按[技术设计第 8 节](./technical-design.md#8-通道直连模型选择修复)

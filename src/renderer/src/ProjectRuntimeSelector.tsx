@@ -54,6 +54,15 @@ function runtimeSelectionDescription(
       : selection.provider === 'continue'
         ? 'Continue'
         : 'DeepSeek Harness'
+  if (selection.profileId) {
+    const profile = settings.modelProfiles.find(
+      (candidate) => candidate.id === selection.profileId
+    )
+    return t('channels.project.fixedRuntimeDescription', {
+      runtime: runtimeLabel,
+      name: profile?.name ?? t('channels.project.missingProfile')
+    })
+  }
   return t('channels.project.runtimeDescription', {
     runtime: runtimeLabel
   })
