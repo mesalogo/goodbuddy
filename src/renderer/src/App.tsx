@@ -76,8 +76,6 @@ import type {
 } from "../../shared/contracts";
 import {
   defaultContextCompressionSettings,
-  isAgentRuntimeModelProtocol,
-  isDeepSeekHarnessModelProfile,
   maximumPastedImageBytes,
 } from "../../shared/contracts";
 import {
@@ -9802,26 +9800,6 @@ function App(): React.JSX.Element {
                                       >
                                         <span>{t("runtime.manage")}</span>
                                       </button>
-                                      {runtimeSettings && (
-                                        <>
-                                          <strong role="presentation">{t("runtime.fixedRuntimeModel")}</strong>
-                                          {(["opencode", "continue", "deepseek-harness"] as const).flatMap((provider) =>
-                                            runtimeSettings.modelProfiles.filter((profile) =>
-                                              (!activeProjectUsesManagedSsh || provider === "opencode") &&
-                                              (provider === "deepseek-harness" ? isDeepSeekHarnessModelProfile(profile) : isAgentRuntimeModelProtocol(profile.protocol))
-                                            ).map((profile) => {
-                                              const selection = { provider, profileId: profile.id };
-                                              const selected = activeRuntimeSelectionKey === agentRuntimeSelectionKey(selection);
-                                              return <button key={`${provider}:${profile.id}`} type="button" role="menuitemradio"
-                                                aria-checked={selected} tabIndex={selected ? 0 : -1}
-                                                onClick={() => void switchRuntime(selection)}>
-                                                <span>{t("runtime.fixedModel")} · {provider === "opencode" ? "OpenCode" : provider === "continue" ? "Continue" : "DeepSeek Harness"} · {profile.name}</span>
-                                                <small>{profile.modelName}</small>
-                                              </button>;
-                                            })
-                                          )}
-                                        </>
-                                      )}
                                     </div>
                                   )}
                                 </div>

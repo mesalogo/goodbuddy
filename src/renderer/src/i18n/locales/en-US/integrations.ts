@@ -46,8 +46,6 @@ export const integrations = {
       directDescription:
         'Process messages directly with {{name}} ({{modelName}}).',
       defaultDirect: 'Direct · Follow the global default model',
-      fixedRuntimeModels: 'Agent Runtime · Fixed model',
-      fixedRuntimeDescription: 'Run through {{runtime}} with the fixed model {{name}}.',
       automaticDescription:
         'Follow the global default Runtime setting.',
       runtimeDescription:

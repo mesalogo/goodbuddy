@@ -210,8 +210,6 @@ export const app = {
     picker: 'Runtime and model',
     directModels: 'Direct models',
     defaultDirect: 'Direct · Follow the global default model',
-    fixedRuntimeModel: 'Fixed Runtime model',
-    fixedModel: 'Fixed',
     deepseekHarnessGroup:
       'DeepSeek Harness (Developer preview · OpenAI-compatible)',
     manage: 'Manage Runtime and model connections',

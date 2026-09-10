@@ -197,8 +197,6 @@ export const app = {
     picker: 'Runtime 和模型',
     directModels: '直连模型',
     defaultDirect: '直连 · 跟随全局默认模型',
-    fixedRuntimeModel: '固定 Runtime 模型',
-    fixedModel: '固定',
     deepseekHarnessGroup:
       'DeepSeek Harness（开发者预览 · OpenAI 兼容）',
     manage: '管理 Runtime 和模型连接',

@@ -1,10 +1,6 @@
-import type { TFunction } from 'i18next'
+﻿import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import {
-  isAgentRuntimeModelProtocol,
-  isDeepSeekHarnessModelProfile,
-  type RuntimeSettings
-} from '../../shared/contracts'
+import type { RuntimeSettings } from '../../shared/contracts'
 import {
   agentRuntimeSelectionKey,
   getRuntimeSelectionForProvider,
@@ -58,15 +54,6 @@ function runtimeSelectionDescription(
       : selection.provider === 'continue'
         ? 'Continue'
         : 'DeepSeek Harness'
-  if (selection.profileId) {
-    const profile = settings.modelProfiles.find(
-      (candidate) => candidate.id === selection.profileId
-    )
-    return t('channels.project.fixedRuntimeDescription', {
-      runtime: runtimeLabel,
-      name: profile?.name ?? t('channels.project.missingProfile')
-    })
-  }
   return t('channels.project.runtimeDescription', {
     runtime: runtimeLabel
   })
@@ -121,22 +108,9 @@ export function ProjectRuntimeSelector({
     ...(selectionMode === 'configured' ? [{ provider: 'auto' as const }] : []),
     { provider: 'model' }
   ]
-  const fixedRuntimeSelections = selectionMode === 'configured'
-    ? runtimeProviders.flatMap((provider) =>
-        directProfiles.filter((profile) =>
-          provider === 'deepseek-harness'
-            ? isDeepSeekHarnessModelProfile(profile)
-            : isAgentRuntimeModelProtocol(profile.protocol)
-        ).map((profile) => ({ provider, profileId: profile.id }))
-      )
-    : []
   const fixedRuntimeSelection = runtimeSelection.provider !== 'model' &&
-    'profileId' in runtimeSelection && runtimeSelection.profileId &&
-    !fixedRuntimeSelections.some((candidate) =>
-      agentRuntimeSelectionKey(candidate) === agentRuntimeSelectionKey(runtimeSelection)
-    ) ? runtimeSelection : undefined
+    'profileId' in runtimeSelection && runtimeSelection.profileId ? runtimeSelection : undefined
   const selections = [...inheritedSelections, ...directSelections, ...runtimeSelections,
-    ...fixedRuntimeSelections,
     ...(fixedRuntimeSelection ? [fixedRuntimeSelection] : [])]
   const selectionByKey = new Map(
     selections.map((candidate) => [
@@ -216,19 +190,6 @@ export function ProjectRuntimeSelector({
             </option>
           ))}
         </optgroup>
-        {fixedRuntimeSelections.length > 0 && (
-          <optgroup label={t('channels.project.fixedRuntimeModels')}>
-            {fixedRuntimeSelections.map((candidate) => (
-              <option
-                key={agentRuntimeSelectionKey(candidate)}
-                value={agentRuntimeSelectionKey(candidate)}
-              >
-                {candidate.provider === 'opencode' ? 'OpenCode' : candidate.provider === 'continue' ? 'Continue' : 'DeepSeek Harness'}
-                {' · '}{runtimeSettings.modelProfiles.find((profile) => profile.id === candidate.profileId)?.name}
-              </option>
-            ))}
-          </optgroup>
-        )}
       </select>
       <small>
         {runtimeSelectionDescription(

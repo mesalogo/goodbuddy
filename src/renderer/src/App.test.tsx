@@ -6351,7 +6351,7 @@ describe("App", () => {
         name: /^OpenCode · 默认模型.*sonnet-5$/u,
       }),
     ).toBeInTheDocument();
-    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(2);
+    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(1);
     expect(within(runtimeMenu).queryByText("直连模型")).not.toBeInTheDocument();
     expect(
       within(runtimeMenu).queryByText("Continue Runtime"),
@@ -8539,7 +8539,7 @@ describe("App", () => {
     expect(openCodeModel).toBeEnabled();
     expect(continueModel).toBeEnabled();
     expect(deepseekHarness).toBeEnabled();
-    expect(screen.getAllByRole("menuitemradio")).toHaveLength(10);
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(6);
     expect(within(runtimeMenu).getAllByRole("separator")).toHaveLength(4);
     expect(within(runtimeMenu).queryByRole("menu")).not.toBeInTheDocument();
     expect(
