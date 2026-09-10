@@ -10086,8 +10086,8 @@ describe("App", () => {
     );
   });
 
-  it("renders and answers an OpenCode question request", async () => {
-    render(<App />);
+  it("renders, saves and reloads OpenCode answers across question rounds", async () => {
+    const view = render(<App />);
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "需要确认的任务" },
     });
@@ -10135,7 +10135,113 @@ describe("App", () => {
       ]),
     );
     expect(screen.queryByText("OpenCode 需要补充信息")).not.toBeInTheDocument();
+    expect(screen.getByText("请选择实现方式")).toBeInTheDocument();
+    expect(screen.getByText("先写测试")).toBeInTheDocument();
+    act(() => {
+      agentListener?.({
+        requestId: request.requestId,
+        type: "question",
+        questionId: "question-2",
+        questions: [{
+          header: "补充", question: "还有补充要求吗？", options: [],
+          multiple: false, custom: true,
+        }],
+      });
+    });
+    expect(screen.getByText("先写测试")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "跳过" }));
+    expect(await screen.findByText("已跳过", { exact: true })).toBeInTheDocument();
+    act(() => agentListener?.({ requestId: request.requestId, type: "done" }));
+    await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({
+        messages: expect.arrayContaining([expect.objectContaining({
+          state: "complete",
+          answeredQuestions: [
+            expect.objectContaining({ questionId: "question-1", questions: [
+              expect.objectContaining({ question: "请选择实现方式", answer: ["先写测试"] }),
+            ] }),
+            expect.objectContaining({ questionId: "question-2", skipped: true }),
+          ],
+        })]),
+      })]),
+    ));
+    const saved = vi.mocked(api.conversations.saveLocal).mock.calls
+      .flatMap(([batch]) => batch)
+      .findLast((entry) => entry.messages.some((message) =>
+        message.state === "complete" && message.answeredQuestions?.length === 2));
+    if (!saved) throw new Error("Missing saved question reviews");
+    view.unmount();
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      { ...saved.header, messages: saved.messages },
+    ]);
+    render(<App />);
+    expect(await screen.findByText("先写测试")).toBeInTheDocument();
+    expect(screen.getByText("请选择实现方式")).toBeInTheDocument();
+    expect(screen.getByText("还有补充要求吗？")).toBeInTheDocument();
+    expect(screen.getByText("已跳过", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "提交回答" })).not.toBeInTheDocument();
   });
+
+  it.each(["done", "question", "failure"] as const)(
+    "preserves question state when %s occurs during answer submission",
+    async (outcome) => {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      vi.mocked(api.agent.respondQuestion).mockImplementationOnce(() => new Promise<void>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      }));
+      render(<App />);
+      fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+        target: { value: "确认执行范围" },
+      });
+      fireEvent.click(await screen.findByLabelText("发送"));
+      await waitFor(() => expect(run).toHaveBeenCalledOnce());
+      const request = run.mock.calls[0]![0];
+      const questions = [{
+        header: "范围", question: "执行哪些检查？", options: [],
+        multiple: false, custom: true,
+      }];
+      act(() => agentListener?.({
+        requestId: request.requestId, type: "question", questionId: "first", questions,
+      }));
+      fireEvent.change(screen.getByRole("textbox", { name: "其他回答" }), {
+        target: { value: "保留完整自定义回答\n" + "检查".repeat(600) },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+      await waitFor(() => expect(api.agent.respondQuestion).toHaveBeenCalled());
+      await act(async () => {
+        if (outcome === "failure") {
+          reject(new Error("Answer delivery failed"));
+        } else {
+          agentListener?.(outcome === "done"
+            ? { requestId: request.requestId, type: "done" }
+            : { requestId: request.requestId, type: "question", questionId: "second",
+                questions: [{ ...questions[0]!, question: "是否继续下一步？" }] });
+          resolve();
+        }
+      });
+      if (outcome === "failure") {
+        expect(screen.getByRole("alert")).toHaveTextContent("Answer delivery failed");
+        expect(screen.getByRole("button", { name: "提交回答" })).toBeEnabled();
+        expect(screen.queryByText("问题与回答")).not.toBeInTheDocument();
+      } else {
+        expect(screen.getByText("问题与回答")).toBeInTheDocument();
+        await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalledWith(
+          expect.arrayContaining([expect.objectContaining({
+            messages: expect.arrayContaining([expect.objectContaining({
+              ...(outcome === "done" ? { state: "complete", status: "任务执行完成" } : {}),
+              answeredQuestions: [expect.objectContaining({ questionId: "first" })],
+            })]),
+          })]),
+        ));
+        if (outcome === "question") {
+          expect(screen.getByText("是否继续下一步？")).toBeInTheDocument();
+          expect(screen.getByRole("button", { name: "提交回答" })).toBeInTheDocument();
+        }
+      }
+    },
+  );
 
   it("configures a runtime without reading an existing API key", async () => {
     render(<App />);

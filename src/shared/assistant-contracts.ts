@@ -309,6 +309,38 @@ export type ConversationContextCompressionMarker = z.infer<
   typeof conversationContextCompressionMarkerSchema
 >
 
+export const conversationAnsweredQuestionSchema = z
+  .object({
+    questionId: z.string().min(1),
+    skipped: z.boolean().optional(),
+    questions: z
+      .array(
+        z
+          .object({
+            header: z.string(),
+            question: z.string(),
+            options: z
+              .array(
+                z
+                  .object({
+                    label: z.string(),
+                    description: z.string()
+                  })
+                  .strict()
+              ),
+            multiple: z.boolean(),
+            custom: z.boolean(),
+            answer: z.array(z.string()).optional()
+          })
+          .strict()
+      )
+  })
+  .strict()
+
+export type ConversationAnsweredQuestion = z.infer<
+  typeof conversationAnsweredQuestionSchema
+>
+
 export const conversationMessageSchema = z
   .object({
     id: assistantIdSchema,
@@ -397,7 +429,8 @@ export const conversationMessageSchema = z
     attachments: z
       .array(conversationAttachmentSchema)
       .max(8)
-      .optional()
+      .optional(),
+    answeredQuestions: z.array(conversationAnsweredQuestionSchema).optional()
   })
   .strict()
 

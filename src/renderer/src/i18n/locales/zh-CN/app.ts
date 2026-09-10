@@ -384,6 +384,11 @@ export const app = {
         cancelled: '已取消'
       }
     },
+    questionReview: {
+      title: '问题与回答',
+      answerLabel: '你的回答：',
+      skipped: '已跳过'
+    },
     approval: {
       waiting: '等待审批：{{tool}}',
       deny: '拒绝',

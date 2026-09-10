@@ -273,6 +273,116 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it('retains answeredQuestions through replacement, incremental saves, and reopening', async () => {
+    const database = await createDatabase()
+    const header = {
+      id: '00000000-0000-4000-8000-000000000921',
+      title: 'Answered questions',
+      updatedAt: 1
+    }
+    const customAnswer = `Custom answer: ${'x'.repeat(1_001)}\nEnd of answer.`
+    const answeredQuestions = [
+      {
+        questionId: 'question-choices',
+        skipped: false,
+        questions: [
+          {
+            header: 'Targets',
+            question: 'Which platforms should be supported?',
+            options: [
+              { label: 'Windows', description: 'Windows desktop' },
+              { label: 'Linux', description: 'Linux desktop' }
+            ],
+            multiple: true,
+            custom: false,
+            answer: ['Windows', 'Linux']
+          },
+          {
+            header: 'Details',
+            question: 'What else should be included?',
+            options: [],
+            multiple: false,
+            custom: true,
+            answer: [customAnswer]
+          }
+        ]
+      },
+      {
+        questionId: 'question-skipped',
+        skipped: true,
+        questions: [
+          {
+            header: 'Timing',
+            question: 'When should this ship?',
+            options: [{ label: 'Now', description: 'Ship immediately' }],
+            multiple: false,
+            custom: true
+          }
+        ]
+      }
+    ]
+    const message = {
+      id: '00000000-0000-4000-8000-000000000922',
+      role: 'assistant' as const,
+      content: 'Recorded answers',
+      createdAt: 1,
+      state: 'complete' as const,
+      answeredQuestions
+    }
+
+    try {
+      database.replaceConversations([{ ...header, messages: [message] }])
+      expect(database.getConversation(header.id).messages).toEqual([message])
+      database.close()
+      database.initialize('C:\\Workspace')
+      expect(database.getConversation(header.id).messages).toEqual([message])
+
+      const updatedMessage = {
+        ...message,
+        answeredQuestions: [
+          ...answeredQuestions,
+          {
+            questionId: 'question-follow-up',
+            skipped: false,
+            questions: [
+              {
+                header: 'Confirm',
+                question: 'Proceed with the selected platforms?',
+                options: [{ label: 'Yes', description: 'Proceed' }],
+                multiple: false,
+                custom: false,
+                answer: ['Yes']
+              }
+            ]
+          }
+        ]
+      }
+      const insertedMessage = {
+        ...message,
+        id: '00000000-0000-4000-8000-000000000923',
+        createdAt: 2
+      }
+      database.saveLocalConversations([
+        {
+          header: { ...header, updatedAt: 2 },
+          messages: [updatedMessage, insertedMessage]
+        }
+      ])
+      expect(database.getConversation(header.id).messages).toEqual([
+        updatedMessage,
+        insertedMessage
+      ])
+      database.close()
+      database.initialize('C:\\Workspace')
+      expect(database.getConversation(header.id).messages).toEqual([
+        updatedMessage,
+        insertedMessage
+      ])
+    } finally {
+      database.close()
+    }
+  })
+
   it('persists complete Run history beyond the former Renderer limits', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-activity-history-')

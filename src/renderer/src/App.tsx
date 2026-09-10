@@ -1342,6 +1342,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     imageContextNotice: message.imageContextNotice,
     task: message.task,
     attachments: message.attachments,
+    answeredQuestions: message.answeredQuestions,
   };
 }
 
@@ -7365,13 +7366,34 @@ function App(): React.JSX.Element {
       questionId: string,
       answers?: AgentQuestionAnswer[],
     ): Promise<void> => {
+      const question = conversationsRef.current
+        .find((conversation) => conversation.id === conversationId)
+        ?.messages.find((message) => message.id === messageId)?.question;
+      if (!question || question.questionId !== questionId) {
+        return;
+      }
       await window.goodbuddy.agent.respondQuestion(questionId, answers);
       updateMessage(conversationId, messageId, (message) => ({
         ...message,
-        question: undefined,
-        status: answers
-          ? tRef.current("chat.status.answerSubmitted")
-          : tRef.current("chat.status.questionSkipped"),
+        answeredQuestions: [
+          ...(message.answeredQuestions ?? []),
+          {
+            questionId,
+            skipped: answers === undefined,
+            questions: question.questions.map((item, index) => ({
+              ...item,
+              answer: answers?.[index],
+            })),
+          },
+        ],
+        question: message.question?.questionId === questionId
+          ? undefined
+          : message.question,
+        status: message.question?.questionId === questionId && message.state === "streaming"
+          ? answers
+            ? tRef.current("chat.status.answerSubmitted")
+            : tRef.current("chat.status.questionSkipped")
+          : message.status,
       }));
     },
     [updateMessage],

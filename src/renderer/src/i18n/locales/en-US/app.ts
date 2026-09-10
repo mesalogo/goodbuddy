@@ -403,6 +403,11 @@ export const app = {
         cancelled: 'Cancelled'
       }
     },
+    questionReview: {
+      title: 'Questions and answers',
+      answerLabel: 'Your answer:',
+      skipped: 'Skipped'
+    },
     approval: {
       waiting: 'Awaiting approval: {{tool}}',
       deny: 'Deny',

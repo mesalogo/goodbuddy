@@ -275,6 +275,7 @@ type MessageMetadata = {
   imageContextNotice?: ConversationSnapshot['messages'][number]['imageContextNotice']
   task?: ConversationSnapshot['messages'][number]['task']
   attachments?: ConversationSnapshot['messages'][number]['attachments']
+  answeredQuestions?: ConversationSnapshot['messages'][number]['answeredQuestions']
 }
 
 const MAX_CHANNEL_OUTBOX_RETRY_BYTES = 20 * 1024 * 1024
@@ -1163,7 +1164,8 @@ function toConversationSnapshot(
         artifactIds: metadata.artifactIds,
         imageContextNotice: metadata.imageContextNotice,
         task: metadata.task,
-        attachments: metadata.attachments
+        attachments: metadata.attachments,
+        answeredQuestions: metadata.answeredQuestions
       }
     })
   }
@@ -1189,7 +1191,8 @@ function serializeConversationMessageMetadata(
     artifactIds: message.artifactIds,
     imageContextNotice: message.imageContextNotice,
     task: message.task,
-    attachments: message.attachments
+    attachments: message.attachments,
+    answeredQuestions: message.answeredQuestions
   })
 }
 
@@ -4633,7 +4636,8 @@ export class AssistantDatabase {
         knowledgeRetrieval: metadata.knowledgeRetrieval,
         artifactIds: metadata.artifactIds,
         task: metadata.task,
-        attachments: metadata.attachments
+        attachments: metadata.attachments,
+        answeredQuestions: metadata.answeredQuestions
       })
       const failed = reduceRecoveredAgentEvent(current, {
         requestId: taskId,
@@ -5041,7 +5045,8 @@ export class AssistantDatabase {
         knowledgeRetrieval: metadata.knowledgeRetrieval,
         artifactIds: metadata.artifactIds,
         task: metadata.task,
-        attachments: metadata.attachments
+        attachments: metadata.attachments,
+        answeredQuestions: metadata.answeredQuestions
       })
       const reduced = reduceRecoveredAgentEvent(message, publicEvent)
       const messageUpdate = database

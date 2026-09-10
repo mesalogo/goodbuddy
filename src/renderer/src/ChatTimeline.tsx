@@ -2,6 +2,7 @@ import {
   Bot,
   CheckCircle2,
   ChevronRight,
+  CircleHelp,
   Clock3,
   Copy,
   Download,
@@ -69,6 +70,7 @@ export type Message = {
     allowPermanent?: boolean
   }
   question?: Extract<AgentEvent, { type: 'question' }>
+  answeredQuestions?: ConversationMessage['answeredQuestions']
   sources?: string[]
   sourceReferences?: KnowledgeSearchReference[]
   knowledgeRetrieval?: KnowledgeRetrievalStatus
@@ -1033,6 +1035,33 @@ function ChatMessageRowView({
             value={message.question}
           />
         )}
+        {message.answeredQuestions?.map((review) => (
+          <div className="agent-question-review" key={review.questionId}>
+            <header>
+              <CircleHelp aria-hidden="true" size={16} />
+              <strong>{t('chat.questionReview.title')}</strong>
+            </header>
+            {review.questions.map((question, index) => (
+              <div
+                className="agent-question-review__item"
+                key={`${review.questionId}:${index}`}
+              >
+                <p className="agent-question-review__question">
+                  <span>{question.header}</span>
+                  {question.question}
+                </p>
+                <p className="agent-question-review__answer">
+                  <span>{t('chat.questionReview.answerLabel')}</span>
+                  {review.skipped ||
+                  !question.answer ||
+                  question.answer.length === 0
+                    ? t('chat.questionReview.skipped')
+                    : question.answer.join('、')}
+                </p>
+              </div>
+            ))}
+          </div>
+        ))}
         {message.role === 'assistant' && message.imageContextNotice && (
           <p className="message__image-context-note">
             {t(`chat.images.contextNotice.${message.imageContextNotice}`)}
