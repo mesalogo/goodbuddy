@@ -110,6 +110,10 @@ below.
   and are separate from desktop `v${package.version}` releases. Confirm the
   exact Agent release commit and tag with the user before creating or pushing
   either.
+- Store approved bilingual Agent release notes in
+  `resources/agent-release-notes/<agentVersion>.md`. The Agent publication job
+  reads that exact file instead of generating a generic release description;
+  keep it aligned with the approved version and source range.
 - The tagged commit must be reachable from protected `main`. The three native
   jobs build Linux x64, Linux arm64, and Darwin arm64 packages from the same source and locks;
   the catalog job rejects missing architectures, changed bytes for an existing

@@ -40,8 +40,16 @@ otherwise.
   context only after explicit user selection.
 - [x] **Per-file workspace diffs**: Changed files expose separate staged and
   unstaged diffs, including deleted, renamed, and untracked files. Refresh
-  reloads the selected diff and expanded directories; more than 50 changes
+  reloads the selected diff, browsed directory, and expanded directories; more than 50 changes
   remain accessible through incremental loading.
+- [x] **Workspace file and Git management**: Create, rename, move, and delete
+  files or directories, inspect properties, search and switch local or remote
+  branches, create branches, explicitly Fetch, and browse commit history and
+  per-file commit diffs. File and Git controls are grouped by view, branch
+  search uses the shared compact form style, and subdirectories retain text
+  breadcrumbs without an isolated root icon. Moves stay inside the workspace,
+  deletion requires confirmation, and branch conflicts never trigger automatic
+  stash or discard. Managed SSH operations require Agent `0.11.23`.
 - [x] **Rich responses**: Supports GitHub Flavored Markdown, LaTeX math,
   constrained Mermaid diagrams, and static in-conversation HTML previews.
   Complete HTML and HTML code blocks can be previewed in place after an Agent
@@ -55,6 +63,9 @@ otherwise.
   Preload/Main clipboard path.
 - [x] **Assistant workbar, multiple terminals, and resizable layouts**: The
   right workbar uses a persistent “+” capability catalog and application tabs.
+  Task Center and Workspace are permanent singleton tabs; browser tabs are
+  independent instances. Task Center can show the current project, global
+  tasks, or all projects, and retains the selected scope with the layout.
   Users can open multiple independent terminals for the current local or
   managed SSH project with bounded output, resizing, termination, and explicit
   reconnection. Closing a terminal tab ends its Shell; restarting the app
@@ -187,11 +198,15 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.22`, while the current Desktop release candidate is `0.12.11`; formal
+  `0.11.23`, while the current Desktop release candidate is `0.12.11`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
   separate process groups on a real Host; this does not imply publication.
+  Agent `0.11.23` adds remote workspace management and optional model limits;
+  its bundled Runtime no longer imposes a fixed ten-minute Prompt deadline.
+  Unlimited request duration retains a separate connection timeout. Upgrade
+  Desktop to `0.12.11` before downloading and updating the Host's Agent.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
   read-only probes the shared Agent/Runtime. Saving a Host or opening a project
@@ -227,7 +242,8 @@ otherwise.
 - [x] **DeepSeek Harness (preview)**: Uses the fixed GoodBuddy Host and an
   OpenAI-compatible model connection. It prefers an administrator-provided
   connection, otherwise follows the compatible default model or first
-  compatible connection without requiring a duplicate selection. Ask permits
+  compatible connection without requiring a duplicate selection. Settings
+  displays the actual administrator or fallback model source. Ask permits
   only real Host-registered `read` and `skill` tools plus Main-managed Web
   Search/Fetch proxies, and rejects plugin impersonation of those names.
   Execute allows all enabled built-in and plugin tools with the current user's
@@ -251,6 +267,10 @@ otherwise.
   ripgrep for compact file discovery and content search, read large UTF-8 files
   by line, and apply multi-file patches in Execute. Ask can search and read but
   cannot patch or run commands; packaged ripgrep does not require a system install.
+- [x] **Long context and paged tool output**: Message history, long replies,
+  and parsed document text no longer use the previous fixed truncation limits.
+  Direct models can continue reading stored command and Subagent output in
+  pages; the selected model's context window and bounded transports still apply.
 - [x] **Native Runtime interaction routing**: OpenCode and Continue questions
   support choices, yes/no, free-text answers, and skipping through the existing
   question card. OpenCode also routes questions from owned child sessions.
@@ -411,8 +431,10 @@ otherwise.
   models, GoodBuddy-managed OpenCode, Continue Agent Execute, and DeepSeek
   Harness, and loads only in Execute. Agent child processes receive only
   per-request local-loopback authority; MCP addresses, commands, and
-  credentials remain in Main. Dynamic tools are still rediscovered and pass
-  through existing activity and permission boundaries.
+  credentials remain in Main. Dynamic tools pass through discovery and the
+  existing activity and permission boundaries; healthy direct-model
+  and Harness calls reuse the discovered request catalog instead of
+  rediscovering it before every call.
 - [x] **MCP Prompts and Resource metadata**: MCP testing discovers bounded
   Prompt, parameter, and Resource metadata only when the Server declares the
   corresponding capability and does not read Resource content. Supported
@@ -496,7 +518,10 @@ otherwise.
   Center remains the complete index rather than creating a separate Automation
   Center. Current schedules support one-time, daily, and weekly triggers;
   advanced time zones, Cron, event triggers, and retry governance remain
-  incremental PRD work. See the
+  incremental PRD work. Scheduled messages use the conversation's current
+  history, Runtime, work mode, and saved knowledge retrieval settings; task
+  details show the actual mode used, and an active occurrence blocks duplicate
+  Run Now actions. See the
   [Task Center PRD](./docs/features/task-and-job/task-center-prd.md) and
   [Scheduled Task PRD](./docs/features/task-and-job/scheduled-task-prd.md).
 - [x] **Memory and Smart Heartbeat**: Provides periodic review, suggested
@@ -539,6 +564,11 @@ otherwise.
   path, with Back, Refresh/Stop Loading, address entry, Go, Interaction, and
   Close actions. Stop Loading does not close the session, and user navigation
   changes the page the Agent sees next.
+  Multiple tabs in one conversation share login state while keeping separate
+  pages and navigation. Each model request retains its starting tab binding;
+  unused request reservations do not create browser resources. Released tabs
+  can be reopened, explicit screenshots remain available, and ordinary
+  operations no longer trigger unused automatic screenshot capture.
 - [x] **Client-computer control tools**: Managed separately from the built-in
   browser with scope, cancellation, timeout, output, and activity boundaries.
 - [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom, and
@@ -586,6 +616,9 @@ otherwise.
 
 ### Open source, builds, and releases
 
+- Current source candidates are Desktop `0.12.11` and Agent `0.11.23`, with
+  OpenCode pinned to `1.18.29`. Publication status follows the independent
+  Desktop and Agent release channels.
 - [x] **0BSD open-source license**: Original code can be freely used, copied,
   modified, distributed, and commercialized. Third-party components and
   resources retain their own licenses.

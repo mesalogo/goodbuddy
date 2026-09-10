@@ -12,7 +12,9 @@ Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
 `0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前源码
-候选为 Agent `0.11.22`、Desktop `0.12.11`，包含托管 OpenCode 自动快照策略修复。
+候选为 Agent `0.11.23`、Desktop `0.12.11`，新增远程文件/Git 管理接口和可选模型限额，
+并修复无限请求时长下的连接超时。Agent `0.11.23` 要求先升级至 Desktop `0.12.11`；
+新包内的 Runtime 不再设置固定十分钟 Prompt 时限，显式请求期限与取消仍有效。
 正式发布状态以 Agent 与 Desktop 独立发布渠道为准。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
@@ -372,6 +374,16 @@ Execute 直接启动已签名 Runtime：
   block metadata 与 canonical 消息正文保持一致。
 
 ## Agent 开发期间的真实 Host 验证
+
+2026-09-10 Desktop `0.12.11` / Agent `0.11.23` 候选复测：共享 Linux x64 Host 的当前
+源码通过工作区协议重命名保护、字面路径/重命名/合并提交差异、Unix 桥接 256 KiB 往返及取消，
+以及继承 Runtime 指标的数据库重开与去重。隔离 Agent 报告版本 `0.11.23`，桌面 managed ACP
+经真实 SSH、Agent 和既有已安装 OpenCode 各完成一次 Ask、Execute；共 2 次真实模型请求，
+全部 HTTP 200、completed 且已交付，指标持久化后未固定继承选择。首次连接准备超时，未发送
+模型请求；重试成功后清理测试进程与目录，并按本轮 bundle 摘要确认、清理一次遗留上传目录。
+本次为当前源码复测，不是正式 `0.11.23` 复合包安装验收；三个原生包由发布 CI 构建和验证。
+本地发布回归为 3845 项通过、66 项跳过，发布说明校验、typecheck、lint 通过；发布准备未执行
+本地桌面生产构建或打包。
 
 本轮 `020a9ad` 工作树修复使用当前源码在共享 Linux x64 Host 验证：默认 Unix broker
 完成 256 KiB 响应并传递取消；生产 AssistantDatabase 在临时库中写入继承项目的指标，

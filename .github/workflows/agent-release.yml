@@ -532,14 +532,8 @@ jobs:
           set -euo pipefail
           tag="agent-v$AGENT_VERSION"
           title="GoodBuddy Agent $AGENT_VERSION"
-          notes="$RUNNER_TEMP/agent-release-notes.md"
-          cat > "$notes" <<EOF
-          GoodBuddy Agent $AGENT_VERSION
-
-          此版本供 GoodBuddy 的“设置 > 平台功能 > 远程项目”手动下载。软件包包含 Agent、固定 Node 和 GoodBuddy 适配的远端 OpenCode Runtime。
-
-          This release is downloaded manually from GoodBuddy Settings > Platform Features > Remote Projects. Each package contains the Agent, pinned Node, and the GoodBuddy-adapted remote OpenCode Runtime.
-          EOF
+          notes="resources/agent-release-notes/$AGENT_VERSION.md"
+          test -s "$notes"
           if gh release view "$tag" >/dev/null 2>&1; then
             is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"
             if [[ "$is_draft" == true ]]; then

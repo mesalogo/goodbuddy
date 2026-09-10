@@ -50,6 +50,23 @@ function scripts(name: string): string {
 }
 
 describe('independent Agent release workflow', () => {
+  it('publishes the checked-in bilingual notes matching the Agent version', () => {
+    const { agentVersion } = JSON.parse(
+      readFileSync(join(process.cwd(), 'agent-runtime-lock.json'), 'utf8')
+    ) as { agentVersion: string }
+    const notes = readFileSync(
+      join(process.cwd(), 'resources/agent-release-notes', `${agentVersion}.md`), 'utf8'
+    )
+    expect(scripts('publish')).toContain('notes="resources/agent-release-notes/$AGENT_VERSION.md"')
+    expect(scripts('publish')).toContain('test -s "$notes"')
+    expect(notes).toContain(`# GoodBuddy Agent ${agentVersion} 更新内容`)
+    expect(notes).toContain(`# What's New in GoodBuddy Agent ${agentVersion}`)
+    expect(notes).toContain('## 功能更新')
+    expect(notes).toContain('## 问题修复')
+    expect(notes).toContain('## Features')
+    expect(notes).toContain('## Bug Fixes')
+  })
+
   it('uses a separate immutable agent-v tag and never enters desktop packaging', () => {
     expect(() => parse(workflow)).not.toThrow()
     expect(workflow).toContain("- 'agent-v*'")
