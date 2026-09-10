@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 import {
   WORKBAR_APP_DEFINITIONS,
   WORKBAR_LIMITS,
+  orderWorkbarInstances,
   type WorkbarAppDefinition,
   type WorkbarAppId,
   type WorkbarTabInstance,
@@ -102,7 +103,7 @@ export function WorkbarShell({
   activeInstanceId,
   appDefinitions = WORKBAR_APP_DEFINITIONS,
   className,
-  instances,
+  instances: unorderedInstances,
   onActiveInstanceChange,
   onCloseInstance,
   onCreateInstance,
@@ -111,6 +112,7 @@ export function WorkbarShell({
   renderPanel,
   renderTabAdornment
 }: WorkbarShellProps): React.JSX.Element {
+  const instances = orderWorkbarInstances(unorderedInstances)
   const { t } = useTranslation('workspace')
   const idPrefix = useId()
   const addButtonRef = useRef<HTMLButtonElement>(null)

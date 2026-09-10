@@ -104,6 +104,8 @@ describe('WorkbarShell', () => {
       name: '已打开的工作栏应用'
     })
     expect(within(tablist).getAllByRole('tab')).toHaveLength(4)
+    expect(within(tablist).getAllByRole('tab').map((tab) => tab.textContent))
+      .toEqual(DEFAULT_WORKBAR_INSTANCES.map((instance) => instance.title))
     expect(
       within(tablist).queryByRole('button', {
         name: '打开工作栏应用'
@@ -121,6 +123,27 @@ describe('WorkbarShell', () => {
     expect(
       screen.getByRole('tab', { name: '工作区' }).parentElement
     ).not.toHaveClass('workbar-shell__tab-item--active')
+  })
+
+  it('pins tasks and workspace in supplied layouts and navigates in displayed order', () => {
+    const [tasks, workspace, browser, results] = DEFAULT_WORKBAR_INSTANCES
+    render(
+      <ControlledShell
+        initialInstances={[terminalOne, workspace!, results!, tasks!, browser!]}
+      />
+    )
+
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual(
+      [tasks!, workspace!, terminalOne, results!, browser!].map((instance) => instance.title)
+    )
+    expect(tabs[2]).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(tabs[2]!, { key: 'Home' })
+    expect(tabs[0]).toHaveFocus()
+    fireEvent.keyDown(tabs[0]!, { key: 'ArrowRight' })
+    expect(tabs[1]).toHaveFocus()
+    fireEvent.keyDown(tabs[1]!, { key: 'ArrowRight' })
+    expect(tabs[2]).toHaveFocus()
   })
 
   it('does not expose close controls for fixed tabs', () => {

@@ -424,6 +424,7 @@ export const workspace = {
       interrupted: '已中断'
     },
     mode: {
+      conversation: '跟随会话设置',
       ask: 'Ask',
       execute: 'Execute',
       unavailable: '模式不可用'

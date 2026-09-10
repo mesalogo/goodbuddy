@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, webContents } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { KnowledgeService } from '../src/main/knowledge/knowledge-service'
@@ -13,7 +13,7 @@ const firstWorkbarId = '00000000-0000-4000-8000-000000000901'
 const secondWorkbarId = '00000000-0000-4000-8000-000000000902'
 
 function page(title: string, body = ''): string {
-  return `<!doctype html><html><body><h1>${title}</h1>${body}</body></html>`
+  return `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`
 }
 
 async function main(): Promise<void> {
@@ -50,12 +50,22 @@ async function main(): Promise<void> {
   let client: Client | undefined
   let token: string | undefined
   try {
+    await browser.navigate(conversationId, `${origin}/first`, controller.signal, undefined, window.webContents.id)
+    const [unownedPrimary] = browser.listTabs(conversationId, window.webContents.id)
+    assert(unownedPrimary)
     const first = await browser.createTab(
       conversationId,
       window.webContents.id,
       controller.signal,
       firstWorkbarId
     )
+    assert.notEqual(first.tabId, unownedPrimary.tabId)
+    assert.equal(first.url, undefined)
+    assert.match(JSON.stringify(await browser.snapshot(conversationId, controller.signal, unownedPrimary.tabId, window.webContents.id)), /First tab/u)
+    await browser.closeTab(conversationId, unownedPrimary.tabId, window.webContents.id)
+    console.log('New workbar ID did not adopt the existing navigated primary')
+    await browser.navigate(conversationId, `${origin}/first`, controller.signal, first.tabId, window.webContents.id)
+    const existingContents = new Set(webContents.getAllWebContents().map((contents) => contents.id))
     const second = await browser.createTab(
       conversationId,
       window.webContents.id,
@@ -63,8 +73,15 @@ async function main(): Promise<void> {
       secondWorkbarId
     )
     assert.notEqual(first.tabId, second.tabId)
+    assert.equal(second.url, undefined)
+    assert.equal(second.canGoBack, false)
+    const freshContents = webContents.getAllWebContents().filter((contents) => !existingContents.has(contents.id))
+    assert.equal(freshContents.length, 1)
+    assert.equal(freshContents[0]!.getURL(), 'about:blank')
+    assert.equal(freshContents[0]!.getTitle(), 'about:blank')
+    assert.equal(freshContents[0]!.navigationHistory.canGoBack(), false)
+    console.log('Fresh WebContents verified: about:blank, blank-page title, no history')
 
-    await browser.navigate(conversationId, `${origin}/first`, controller.signal, first.tabId, window.webContents.id)
     await browser.navigate(conversationId, `${origin}/second`, controller.signal, second.tabId, window.webContents.id)
     assert.match(JSON.stringify(await browser.snapshot(conversationId, controller.signal, first.tabId, window.webContents.id)), /First tab/u)
     assert.match(JSON.stringify(await browser.snapshot(conversationId, controller.signal, second.tabId, window.webContents.id)), /Second tab/u)
@@ -72,6 +89,7 @@ async function main(): Promise<void> {
     await browser.navigate(conversationId, `${origin}/set-cookie`, controller.signal, first.tabId, window.webContents.id)
     await browser.navigate(conversationId, `${origin}/cookie`, controller.signal, second.tabId, window.webContents.id)
     assert.match(JSON.stringify(await browser.snapshot(conversationId, controller.signal, second.tabId, window.webContents.id)), /shared-browser-tab=visible/u)
+    console.log('Independent pages and shared conversation cookies verified')
 
     await gateway.start()
     const usage = browser.acquireTabUsage(conversationId, first.tabId, 'electron-e2e', window.webContents.id)

@@ -25,8 +25,8 @@ describe('workbar contracts', () => {
         reorderable
       }))
     ).toEqual([
-      { id: 'tasks', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: true, closable: false, reorderable: true },
-      { id: 'workspace', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: true, closable: false, reorderable: true },
+      { id: 'tasks', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: true, closable: false, reorderable: false },
+      { id: 'workspace', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: true, closable: false, reorderable: false },
       { id: 'browser', instancePolicy: 'multiple', defaultContext: 'current-conversation', defaultOpen: true, required: false, closable: true, reorderable: true },
       { id: 'results', instancePolicy: 'single', defaultContext: 'current-project', defaultOpen: true, required: false, closable: true, reorderable: true },
       {
@@ -209,12 +209,44 @@ describe('workbar contracts', () => {
     expect(normalized?.instances.map(({ id, appId }) => ({ id, appId })))
       .toEqual([
         { id: taskId, appId: 'tasks' },
+        { id: workspaceId, appId: 'workspace' },
         { id: browserId, appId: 'browser' },
-        { id: secondBrowserId, appId: 'browser' },
-        { id: workspaceId, appId: 'workspace' }
+        { id: secondBrowserId, appId: 'browser' }
       ])
     expect(normalized?.activeInstanceId).toBe(taskId)
     expect(normalized?.taskScope).toBe('all-projects')
+  })
+
+  it('pins restored tasks and workspace without changing other order or selection', () => {
+    const workspace = {
+      id: '00000000-0000-4000-8000-000000000105',
+      appId: 'workspace', title: 'Workspace'
+    } as const
+    const tasks = { id: taskId, appId: 'tasks', title: 'Tasks' } as const
+    const terminal = {
+      id: terminalId, appId: 'terminal', title: 'Terminal',
+      targetRef: { type: 'local' }
+    } as const
+    const browser = {
+      id: '00000000-0000-4000-8000-000000000103',
+      appId: 'browser', title: 'Browser',
+      targetRef: { type: 'conversation', conversationId: 'conversation-a' }
+    } as const
+    const layout = {
+      instances: [terminal, workspace, browser, tasks],
+      activeInstanceId: browser.id,
+      expanded: true, dock: 'right', widthRatio: 0.4,
+      taskScope: 'all-projects'
+    } as const
+
+    const normalized = normalizeWorkbarLayoutPreferences(layout, [tasks, workspace])
+    expect(normalized).toEqual({
+      ...layout,
+      instances: [tasks, workspace, terminal, browser]
+    })
+    expect(layout.instances).toEqual([terminal, workspace, browser, tasks])
+    expect(normalizeWorkbarLayoutPreferences(normalized, [tasks, workspace]))
+      .toEqual(normalized)
   })
 
   it('preserves a valid empty layout with a null active instance', () => {

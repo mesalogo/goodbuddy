@@ -877,7 +877,7 @@ describe('RightAssistantSidebar resizing', () => {
       workbarInstanceId: expect.any(String)
     })
     expect(browserApi.createTab.mock.calls[1]![0].workbarInstanceId).not.toBe(ownerA)
-    expect(screen.getByRole('tab', { name: '浏览器 · conversation-b' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '浏览器 1 · conversation-b' })).toHaveAttribute('aria-selected', 'true')
     expect(browserA).toBeVisible()
     await waitFor(() => expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://b.example/'))
     fireEvent.click(screen.getByRole('button', { name: '前往' }))
@@ -889,6 +889,52 @@ describe('RightAssistantSidebar resizing', () => {
     expect(browserA).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://a.example/')
     expect(browserApi.createTab).toHaveBeenCalledTimes(2)
+  })
+
+  it('opens a blank browser from + without inheriting the old address or title', async () => {
+    const conversationId = 'old-conversation'
+    renderSidebar({
+      tab: 'browser',
+      activeConversationId: conversationId,
+      browserStates: {
+        [conversationId]: {
+          [firstBrowserTabId]: {
+            ...browserSummary(conversationId, firstBrowserTabId, true),
+            sessionActive: true,
+            url: 'https://old.example/'
+          }
+        }
+      }
+    })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://old.example/'))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    fireEvent.click(screen.getByText('浏览器', { selector: 'strong' }).closest('button')!)
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('tab', { name: '浏览器 1 · old-conversation' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('')
+    expect(screen.getByRole('button', { name: '返回' })).toBeDisabled()
+    const requests = browserApi.createTab.mock.calls.map(([request]) => request)
+    expect(requests[1]?.workbarInstanceId).not.toBe(requests[0]?.workbarInstanceId)
+    fireEvent.click(screen.getByRole('tab', { name: '浏览器 · old-conversation' }))
+    expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://old.example/')
+
+    browserApi.createTab.mockImplementation(async ({ conversationId }) =>
+      browserSummary(conversationId, crypto.randomUUID() as BrowserTabId, false)
+    )
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    fireEvent.click(screen.getByText('浏览器', { selector: 'strong' }).closest('button')!)
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledTimes(3))
+    expect(screen.getByRole('tab', { name: '浏览器 2 · old-conversation' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '关闭浏览器 1 · old-conversation' }))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: '浏览器 1 · old-conversation' })).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    fireEvent.click(screen.getByText('浏览器', { selector: 'strong' }).closest('button')!)
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledTimes(4))
+    expect(screen.getByRole('tab', { name: '浏览器 1 · old-conversation' })).toHaveAttribute('aria-selected', 'true')
+    cleanup()
+    renderSidebar({ activeConversationId: conversationId })
+    expect(screen.getByRole('tab', { name: '浏览器 1 · old-conversation' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '浏览器 2 · old-conversation' })).toBeVisible()
   })
 
   it('keeps two browser instances independent and closes only the selected Main tab', async () => {
@@ -976,7 +1022,7 @@ describe('RightAssistantSidebar resizing', () => {
     )
 
     fireEvent.click(
-      screen.getByRole('button', { name: /关闭浏览器 · conversation-a · 2/u })
+      screen.getByRole('button', { name: /关闭浏览器 1 · conversation-a/u })
     )
     await waitFor(() =>
       expect(browserApi.closeTab).toHaveBeenCalledWith({
@@ -987,7 +1033,7 @@ describe('RightAssistantSidebar resizing', () => {
     expect(
       screen.getByRole('tab', { name: '浏览器 · conversation-a' })
     ).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: /· 2$/u })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '浏览器 1 · conversation-a' })).not.toBeInTheDocument()
   })
 
   it('restores a browser by stable ownership and releases only its viewport lease', async () => {
@@ -1039,7 +1085,7 @@ describe('RightAssistantSidebar resizing', () => {
       expect(browserApi.createTab).not.toHaveBeenCalled()
 
       fireEvent.click(
-        screen.getByRole('tab', { name: `浏览器 · ${conversationId}` })
+        screen.getByRole('tab', { name: '浏览器 · 已恢复' })
       )
       await waitFor(() =>
         expect(browserApi.createTab).toHaveBeenCalledWith({
@@ -1082,7 +1128,7 @@ describe('RightAssistantSidebar resizing', () => {
       ).toBe(false)
 
       fireEvent.click(
-        screen.getByRole('tab', { name: `浏览器 · ${conversationId}` })
+        screen.getByRole('tab', { name: '浏览器 · 已恢复' })
       )
       await waitFor(() => {
         const acquisitions = browserApi.setViewport.mock.calls
@@ -1097,7 +1143,7 @@ describe('RightAssistantSidebar resizing', () => {
       cleanup()
       renderSidebar({ activeConversationId: 'different-conversation' })
       fireEvent.click(
-        screen.getByRole('tab', { name: `浏览器 · ${conversationId}` })
+        screen.getByRole('tab', { name: '浏览器 · 已恢复' })
       )
       await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledTimes(2))
       expect(browserApi.createTab).toHaveBeenLastCalledWith({

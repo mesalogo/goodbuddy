@@ -628,6 +628,28 @@ describe('BrowserService', () => {
     await windowLimited.service.dispose()
   })
 
+  it('creates a fresh tab instead of adopting a navigated unowned primary, and restores only the same owner', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    try {
+      await harness.service.navigate('conversation', 'https://old.example/', signal, undefined, 21)
+      const [primary] = harness.service.listTabs('conversation', 21)
+      const fresh = await harness.service.createTab('conversation', 21, signal, workbarInstanceId)
+      expect(fresh.tabId).not.toBe(primary!.tabId)
+      expect(fresh.url).toBeUndefined()
+      expect(fresh.canGoBack).toBe(false)
+      expect(harness.slots[1]!.driver.navigate).not.toHaveBeenCalled()
+      await harness.service.navigate('conversation', 'https://new.example/', signal, fresh.tabId, 21)
+      const restored = await harness.service.createTab('conversation', 21, signal, workbarInstanceId)
+      expect(restored.tabId).toBe(fresh.tabId)
+      expect(restored.url).toBe('https://new.example/')
+      expect(harness.service.listTabs('conversation', 21)[0]!.url).toBe('https://old.example/')
+      expect(harness.service.getTabCount('conversation')).toBe(2)
+    } finally {
+      await harness.service.dispose()
+    }
+  })
+
   it('returns one live tab for concurrent requests from the same workbar instance', async () => {
     const gate = deferred<void>()
     const harness = createHarness({ sessionGate: gate.promise })

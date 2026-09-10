@@ -710,13 +710,15 @@ export function RightAssistantSidebar({
           ...instance,
           ...(conversationId
             ? {
-                title: `${label} · ${conversationTitles.get(conversationId) ?? conversationId}`,
+                title: initialLayout
+                  ? instance.title
+                  : `${label} · ${conversationTitles.get(conversationId) ?? conversationId}`,
                 targetRef: {
                   type: 'conversation' as const,
                   conversationId
                 }
               }
-            : { title: `${label} · ${t('sidebar.browser.unbound')}` })
+            : { title: initialLayout ? instance.title : `${label} · ${t('sidebar.browser.unbound')}` })
         }
       }
     )
@@ -1055,26 +1057,23 @@ export function RightAssistantSidebar({
               conversationId: activeConversationId
             }
           : undefined
-      const sameConversationBrowsers = conversationTarget
-        ? workbarInstances.filter(
-            (candidate) =>
-              candidate.appId === 'browser' &&
-              candidate.targetRef?.type === 'conversation' &&
-              candidate.targetRef.conversationId ===
-                conversationTarget.conversationId
-          ).length
-        : 0
       const conversationTitle = activeConversationId
         ? conversationTitles.get(activeConversationId) ?? activeConversationId
         : undefined
+      let browserNumber = 1
+      const browserTitle = (): string =>
+        `${definition.label} ${browserNumber}${conversationTitle ? ` · ${conversationTitle}` : ''}`
+      while (workbarInstances.some((candidate) => candidate.title === browserTitle())) {
+        browserNumber += 1
+      }
       const instance: WorkbarTabInstance = {
         id: crypto.randomUUID(),
         appId: request.appId,
         title:
           request.appId === 'terminal'
             ? `${definition.label} ${sameTargetTerminals + 1}`
-            : request.appId === 'browser' && conversationTitle
-              ? `${definition.label} · ${conversationTitle}${sameConversationBrowsers > 0 ? ` · ${sameConversationBrowsers + 1}` : ''}`
+            : request.appId === 'browser'
+              ? browserTitle()
             : definition.label,
         ...(request.targetRef || conversationTarget
           ? { targetRef: request.targetRef ?? conversationTarget }
@@ -1124,14 +1123,14 @@ export function RightAssistantSidebar({
           throw new Error(t('sidebar.errors.browserControlUnavailable'))
         }
         if (instance.targetRef?.type !== 'conversation') {
-          const conversationTitle =
-            conversationTitles.get(conversationId) ?? conversationId
           setWorkbarInstances((current) =>
             current.map((candidate) =>
               candidate.id === instance.id
                 ? {
                     ...candidate,
-                    title: `${t('sidebar.tabs.browser.label')} · ${conversationTitle}`,
+                    ...(candidate.id === DEFAULT_WORKBAR_INSTANCES.find((item) => item.appId === 'browser')?.id
+                      ? { title: `${t('sidebar.tabs.browser.label')} · ${conversationTitles.get(conversationId) ?? conversationId}` }
+                      : {}),
                     targetRef: { type: 'conversation', conversationId }
                   }
                 : candidate
@@ -1895,7 +1894,7 @@ export function RightAssistantSidebar({
                       </span>
                       <span>
                         {schedule
-                          ? t(`task.mode.${schedule.workMode}`)
+                          ? t('task.mode.conversation')
                           : task.workMode
                             ? t(`task.mode.${task.workMode}`)
                             : t('task.mode.unavailable')}

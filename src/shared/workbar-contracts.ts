@@ -107,7 +107,7 @@ export const WORKBAR_APP_DEFINITIONS = [
     defaultOpen: true,
     required: true,
     closable: false,
-    reorderable: true,
+    reorderable: false,
     availability: { state: 'available' }
   },
   {
@@ -121,7 +121,7 @@ export const WORKBAR_APP_DEFINITIONS = [
     defaultOpen: true,
     required: true,
     closable: false,
-    reorderable: true,
+    reorderable: false,
     availability: { state: 'available' }
   },
   {
@@ -317,6 +317,18 @@ export type WorkbarLayoutPreferences = z.infer<
   typeof workbarLayoutPreferencesSchema
 >
 
+export function orderWorkbarInstances(
+  instances: readonly WorkbarTabInstance[]
+): WorkbarTabInstance[] {
+  return [
+    ...instances.filter((instance) => instance.appId === 'tasks'),
+    ...instances.filter((instance) => instance.appId === 'workspace'),
+    ...instances.filter(
+      (instance) => instance.appId !== 'tasks' && instance.appId !== 'workspace'
+    )
+  ]
+}
+
 export function normalizeWorkbarLayoutPreferences(
   value: unknown,
   defaultInstances: readonly WorkbarTabInstance[]
@@ -374,7 +386,7 @@ export function normalizeWorkbarLayoutPreferences(
     )
   }
 
-  const boundedInstances = instances.slice(
+  const boundedInstances = orderWorkbarInstances(instances).slice(
     0,
     WORKBAR_LIMITS.maximumOpenInstances
   )

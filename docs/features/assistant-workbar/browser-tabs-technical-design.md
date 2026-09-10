@@ -144,11 +144,19 @@ Browser Tab。
 - 没有活动 Conversation 时创建待绑定实例，不创建无归属 Main Browser Context。
 - 主侧栏浏览器快捷按钮优先激活绑定当前 Conversation 的最近使用实例；没有匹配实例时创建
   一个。没有活动 Conversation 时激活最近使用的浏览器实例；完全不存在时创建待绑定实例。
-- 每个实例标题至少区分 Conversation 和当前页面；完整目标通过提示和可访问名称提供。
+- New browser instances use a numbered browser label followed by the active Conversation title, when
+  available. The number avoids existing titles; restoring the layout preserves each saved title.
+  The address bar shows only that instance's page URL. Binding a numbered instance does not overwrite
+  its title; the default unbound browser receives the Conversation label when first bound.
 - 关闭工作栏 Browser Tab 只释放对应 Browser Tab。关闭浏览器上下文是独立危险操作，需要
   明确说明会影响该 Conversation 下的全部 Tab 和 Agent 浏览器状态。
 
 ## 8. 持久化与恢复
+
+`createTab` reuses a live tab only for the same Conversation and workbar instance ID. A new workbar
+instance can adopt the primary tab only when its request creates the Conversation context. An existing
+primary, including one opened by an Agent, is not adopted by a new instance. New sibling tabs start at
+`about:blank` with no navigation history and share the Conversation's cookie partition.
 
 持久化工作栏实例 ID、顺序、自定义标题和公开 Conversation 绑定，不持久化页面进程、CDP
 引用、snapshot、viewport lease、Cookie、Token 或 Main `BrowserTabId`。应用重启后实例显示

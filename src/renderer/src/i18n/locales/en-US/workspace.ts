@@ -435,6 +435,7 @@ export const workspace = {
       interrupted: 'Interrupted'
     },
     mode: {
+      conversation: 'Conversation settings',
       ask: 'Ask',
       execute: 'Execute',
       unavailable: 'Mode unavailable'
