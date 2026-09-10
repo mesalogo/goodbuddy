@@ -16,6 +16,42 @@ async function repository(): Promise<string> {
 function git(root: string, ...args: string[]): string {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', windowsHide: true }).trim()
 }
+function commitFixture(root: string, subject: string): string {
+  const tree = git(root, 'write-tree')
+  const branch = git(root, 'symbolic-ref', 'HEAD')
+  const parent = git(root, 'for-each-ref', '--format=%(objectname)', branch)
+  // Fixed object data, not a Git identity override: these tests read history
+  // and switch branches, and do not exercise Git's commit authoring command.
+  const input = [
+    `tree ${tree}`,
+    ...(parent ? [`parent ${parent}`] : []),
+    'author Workspace Test <workspace@example.invalid> 1788998400 +0000',
+    'committer Workspace Test <workspace@example.invalid> 1788998400 +0000',
+    '',
+    subject,
+    ''
+  ].join('\n')
+  const oid = execFileSync('git', ['-C', root, 'hash-object', '-t', 'commit', '-w', '--stdin'], {
+    input, encoding: 'utf8', windowsHide: true
+  }).trim()
+  git(root, 'update-ref', 'HEAD', oid)
+  return oid
+}
+it('creates valid fixture history without changing repository configuration or staging dirty content', async () => {
+  const root = await repository()
+  const configuration = await readFile(join(root, '.git/config'), 'utf8')
+  await writeFile(join(root, 'test.txt'), 'staged\n')
+  git(root, 'add', '.')
+  const first = commitFixture(root, 'initial')
+  await writeFile(join(root, 'test.txt'), 'dirty\n')
+  const second = commitFixture(root, 'empty')
+  expect(git(root, 'rev-parse', `${second}^`)).toBe(first)
+  expect(git(root, 'show', `${second}:test.txt`)).toBe('staged')
+  expect(await readFile(join(root, 'test.txt'), 'utf8')).toBe('dirty\n')
+  expect(git(root, 'log', '-1', '--format=%an')).toBe('Workspace Test')
+  expect(git(root, 'fsck', '--strict')).toBe('')
+  expect(await readFile(join(root, '.git/config'), 'utf8')).toBe(configuration)
+})
 it('creates, moves, inspects and deletes without overwriting an existing file', async () => {
   const root = await repository()
   await manageWorkspace(root, { kind: 'createDirectory', path: 'docs' })
@@ -33,9 +69,9 @@ it('reads unborn history, initial commit files and literal paths, and switches w
   await expect(manageWorkspace(root, { kind: 'history', offset: 0 })).resolves.toMatchObject({ commits: [] })
   await writeFile(join(root, '[test].txt'), 'initial\n')
   git(root, 'add', '.')
-  git(root, 'commit', '-m', 'Initial subject')
+  commitFixture(root, 'Initial subject')
   const oid = git(root, 'rev-parse', 'HEAD')
-  await expect(manageWorkspace(root, { kind: 'history', offset: 0 })).resolves.toMatchObject({ head: oid, commits: [{ subject: 'Initial subject', author: git(root, 'log', '-1', '--format=%an') }] })
+  await expect(manageWorkspace(root, { kind: 'history', offset: 0 })).resolves.toMatchObject({ head: oid, commits: [{ subject: 'Initial subject', author: 'Workspace Test' }] })
   await expect(manageWorkspace(root, { kind: 'commitFiles', oid })).resolves.toMatchObject({ files: [{ path: '[test].txt', status: 'A' }] })
   await expect(manageWorkspace(root, { kind: 'commitDiff', oid, path: '[test].txt' })).resolves.toMatchObject({ patch: expect.stringContaining('+initial') })
   await writeFile(join(root, '[test].txt'), 'dirty\n')
@@ -48,15 +84,15 @@ it('reads unborn history, initial commit files and literal paths, and switches w
 it('reports switch conflicts without discarding dirty content and pages stable history', async () => {
   const root = await repository()
   await writeFile(join(root, 'test.txt'), 'initial')
-  git(root, 'add', '.'); git(root, 'commit', '-m', 'initial')
+  git(root, 'add', '.'); commitFixture(root, 'initial')
   git(root, 'switch', '-c', 'other')
   await writeFile(join(root, 'test.txt'), 'other')
-  git(root, 'commit', '-am', 'other')
+  git(root, 'add', '.'); commitFixture(root, 'other')
   git(root, 'switch', 'main')
   await writeFile(join(root, 'test.txt'), 'dirty')
   await expect(manageWorkspace(root, { kind: 'switchBranch', branch: 'other', remote: false })).rejects.toThrow(/overwritten/)
   expect(await readFile(join(root, 'test.txt'), 'utf8')).toBe('dirty')
-  for (let index = 0; index < 51; index++) git(root, 'commit', '--allow-empty', '-m', `page ${index}`)
+  for (let index = 0; index < 51; index++) commitFixture(root, `page ${index}`)
   const first = await manageWorkspace(root, { kind: 'history', offset: 0 })
   expect(first.kind).toBe('history')
   if (first.kind !== 'history') return
@@ -73,11 +109,11 @@ it.each([false, true])('preserves rename metadata and actual edits in a literal 
   const original = Array.from({ length: 20 }, (_, index) => `original line ${index}\n`).join('')
   await writeFile(join(root, previousPath), original)
   await writeFile(join(root, 'unrelated.txt'), 'unrelated before\n')
-  git(root, 'add', '.'); git(root, 'commit', '-m', 'before rename')
+  git(root, 'add', '.'); commitFixture(root, 'before rename')
   await rename(join(root, previousPath), join(root, path))
   if (edited) await writeFile(join(root, path), original.replace('original line 10\n', 'edited line 10\n'))
   await writeFile(join(root, 'unrelated.txt'), 'unrelated after\n')
-  git(root, 'add', '.'); git(root, 'commit', '-m', 'rename')
+  git(root, 'add', '.'); commitFixture(root, 'rename')
   const oid = git(root, 'rev-parse', 'HEAD')
   const files = await manageWorkspace(root, { kind: 'commitFiles', oid })
   expect(files).toMatchObject({ files: expect.arrayContaining([{ path, previousPath, status: edited ? expect.stringMatching(/^R\d+$/) : 'R100' }]) })
