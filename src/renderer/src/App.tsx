@@ -2033,7 +2033,10 @@ function App(): React.JSX.Element {
   const assistantTasksRef = useRef(assistantTasks);
   const [tokenUsage, setTokenUsage] =
     useState<TokenUsageSummary>(emptyTokenUsage);
-  const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChanges>();
+  const [workspaceChanges, setWorkspaceChanges] = useState<{
+    projectId: string;
+    changes: WorkspaceChanges;
+  }>();
   const [assistantArtifacts, setAssistantArtifacts] = useState<
     AssistantArtifact[]
   >([]);
@@ -4060,9 +4063,15 @@ function App(): React.JSX.Element {
         workspaceChangesRequestRef.current === requestId &&
         activeProjectIdRef.current === projectId
       ) {
-        setWorkspaceChanges((current) => changes.error && current?.available
-          ? { ...current, error: changes.error }
-          : changes);
+        setWorkspaceChanges((current) => ({
+          projectId,
+          changes:
+            changes.error &&
+            current?.projectId === projectId &&
+            current.changes.available
+              ? { ...current.changes, error: changes.error }
+              : changes,
+        }));
       }
     },
     [],
@@ -5626,9 +5635,6 @@ function App(): React.JSX.Element {
   );
 
   useEffect(() => {
-    if (assistantSidebarTab !== "workspace") {
-      return;
-    }
     const timeout = setTimeout(() => {
       void refreshWorkspaceChanges().catch(() => {
         notify({
@@ -5638,7 +5644,7 @@ function App(): React.JSX.Element {
       });
     }, 0);
     return () => clearTimeout(timeout);
-  }, [assistantSidebarTab, refreshWorkspaceChanges]);
+  }, [refreshWorkspaceChanges]);
 
   useEffect(() => {
     void window.goodbuddy.experts
@@ -10857,7 +10863,11 @@ function App(): React.JSX.Element {
             open={assistantSidebarOpen}
             restoreFocusRef={assistantSidebarToggleRef}
             tab={assistantSidebarTab}
-            workspaceChanges={workspaceChanges}
+            workspaceChanges={
+              workspaceChanges?.projectId === activeProjectId
+                ? workspaceChanges.changes
+                : undefined
+            }
             workspaceProjectId={activeProjectId || undefined}
           />
         </div>

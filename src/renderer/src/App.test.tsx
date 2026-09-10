@@ -5843,6 +5843,115 @@ describe("App", () => {
     expect(await screen.findByText("tree-only.txt")).toBeInTheDocument();
   });
 
+  describe("Git project switch detection", () => {
+    const secondProject = {
+      ...project,
+      id: "00000000-0000-4000-8000-000000000102",
+      name: "Second project",
+      rootPath: "C:\\Second",
+      executionSpace: { kind: "local" as const, rootPath: "C:\\Second" },
+    };
+    const repositoryChanges = {
+      rootPath: project.rootPath,
+      available: true,
+      status: "?? first-only.md",
+      patch: "",
+      files: [{ path: "first-only.md", status: "??" }],
+      truncated: false,
+    };
+    const nonRepositoryChanges = {
+      rootPath: secondProject.rootPath,
+      available: false,
+      status: "",
+      patch: "",
+      files: [],
+      truncated: false,
+    };
+
+    beforeEach(() => {
+      localStorage.setItem("goodbuddy.active-project.v1", projectId);
+      localStorage.setItem("goodbuddy.workbar-layout.v1", JSON.stringify({
+        instances: [
+          { id: "10000000-0000-4000-8000-000000000001", appId: "tasks", title: "任务中心" },
+          { id: "10000000-0000-4000-8000-000000000002", appId: "workspace", title: "工作区" },
+        ],
+        activeInstanceId: "10000000-0000-4000-8000-000000000002",
+        expanded: true,
+        dock: "right",
+        widthRatio: 0.3,
+        taskScope: "current-project",
+      }));
+      vi.spyOn(api.projects, "list").mockResolvedValue([project, secondProject]);
+      vi.spyOn(api.workspace, "listDirectory").mockResolvedValue({
+        path: "", entries: [], truncated: false,
+      });
+    });
+
+    it("detects a Git project with restored workspace selection without refresh", async () => {
+      vi.spyOn(api.workspace, "getChanges")
+        .mockResolvedValueOnce({ ...nonRepositoryChanges, rootPath: project.rootPath })
+        .mockResolvedValueOnce({ ...repositoryChanges, rootPath: secondProject.rootPath });
+      render(<App />);
+      fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+      expect(await screen.findByRole("tab", { name: "工作区" })).toHaveAttribute("aria-selected", "true");
+      await waitFor(() => expect(api.workspace.getChanges).toHaveBeenCalledWith(projectId));
+      expect(screen.queryByRole("button", { name: "Git 工作区" })).not.toBeInTheDocument();
+
+      selectProjectOption(secondProject.name);
+
+      expect(await screen.findByRole("button", { name: "Git 工作区" })).toBeVisible();
+      expect(api.workspace.getChanges).toHaveBeenLastCalledWith(secondProject.id);
+      expect(api.workspace.getChanges).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(["non-repository", "error result", "rejection"] as const)(
+      "clears previous Git flags and files when switching to a %s",
+      async (outcome) => {
+        const next = deferred<Awaited<ReturnType<DesktopApi["workspace"]["getChanges"]>>>();
+        vi.spyOn(api.workspace, "getChanges")
+          .mockResolvedValueOnce(repositoryChanges)
+          .mockReturnValueOnce(next.promise);
+        render(<App />);
+        fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+        fireEvent.click(await screen.findByRole("button", { name: "Git 工作区" }));
+        expect(await screen.findByText("first-only.md")).toBeVisible();
+
+        selectProjectOption(secondProject.name);
+        await waitFor(() => expect(api.workspace.getChanges).toHaveBeenLastCalledWith(secondProject.id));
+        expect(screen.queryByRole("button", { name: "Git 工作区" })).not.toBeInTheDocument();
+        expect(screen.queryByText("first-only.md")).not.toBeInTheDocument();
+        await act(async () => {
+          if (outcome === "rejection") next.reject(new Error("Git offline"));
+          else next.resolve({ ...nonRepositoryChanges, ...(outcome === "error result" ? { error: "Git offline" } : {}) });
+        });
+
+        expect(screen.queryByRole("button", { name: "Git 工作区" })).not.toBeInTheDocument();
+        expect(screen.queryByText("first-only.md")).not.toBeInTheDocument();
+      },
+    );
+
+    it.each(["error result", "rejection"] as const)(
+      "preserves same-project Git flags and files after a refresh %s",
+      async (outcome) => {
+        const getChanges = vi.spyOn(api.workspace, "getChanges").mockResolvedValueOnce(repositoryChanges);
+        render(<App />);
+        fireEvent.click(screen.getByLabelText("切换助手工作栏"));
+        fireEvent.click(await screen.findByRole("button", { name: "Git 工作区" }));
+        expect(await screen.findByText("first-only.md")).toBeVisible();
+        if (outcome === "rejection") getChanges.mockRejectedValueOnce(new Error("Git offline"));
+        else getChanges.mockResolvedValueOnce({ ...nonRepositoryChanges, rootPath: project.rootPath, error: "Git offline" });
+
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name: "刷新工作区文件" }));
+        });
+
+        await waitFor(() => expect(getChanges).toHaveBeenCalledTimes(2));
+        expect(screen.getByRole("button", { name: "Git 工作区" })).toBeVisible();
+        expect(screen.getByText("first-only.md")).toBeVisible();
+      },
+    );
+  });
+
   it("ignores stale Git changes after switching projects", async () => {
     const secondProject = {
       ...project,
@@ -5904,13 +6013,15 @@ describe("App", () => {
     });
     fireEvent.click(screen.getByLabelText("切换助手工作栏"));
     expect(await screen.findByText("second.md")).toBeInTheDocument();
-    resolveFirst?.({
-      rootPath: project.rootPath,
-      available: true,
-      status: "?? stale.md",
-      patch: "",
-      files: [{ path: "stale.md", status: "??" }],
-      truncated: false,
+    await act(async () => {
+      resolveFirst?.({
+        rootPath: project.rootPath,
+        available: true,
+        status: "?? stale.md",
+        patch: "",
+        files: [{ path: "stale.md", status: "??" }],
+        truncated: false,
+      });
     });
 
     await waitFor(() =>

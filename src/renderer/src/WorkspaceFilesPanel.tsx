@@ -507,7 +507,7 @@ export function WorkspaceFilesPanel({
         {browsedPath.split('/').filter(Boolean).map((part, index, parts) => <button type="button" key={index} title={parts.slice(0, index + 1).join('/')} aria-current={index === parts.length - 1 ? 'location' : undefined} onClick={() => browse(parts.slice(0, index + 1).join('/'))}>{part}</button>)}
         </div>
       </nav>}
-        <div hidden={activeView !== 'changes'}>
+        <div className="workspace-files__git-view" hidden={activeView !== 'changes'}>
         {showGit && <WorkspaceGitTools key={projectId} projectId={projectId} refreshToken={refreshToken} onRefresh={refresh} viewControl={
           <SegmentedControl ariaLabel={t('management.changedView')} value={changeView} onChange={setChangeView} options={[{ value: 'list', label: t('management.list') }, { value: 'tree', label: t('management.tree') }]} />
         }>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronLeft, ChevronRight, Download, FileText, GitBranch } from 'lucide-react'
 import type { WorkspaceManagementAction, WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
@@ -16,7 +16,8 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
   const [error, setError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [history, setHistory] = useState<Result<'history'>>()
-  const [height, setHeight] = useState(240)
+  const [historySize, setHistorySize] = useState(50)
+  const workingRef = useRef<HTMLDivElement>(null)
   const [commit, setCommit] = useState<string>()
   const [files, setFiles] = useState<Result<'commitFiles'>>()
   const [patch, setPatch] = useState<Result<'commitDiff'>>()
@@ -65,6 +66,13 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
     } catch (reason) { if (generation === request.current) setError(String(reason)) }
     finally { if (generation === request.current) setBusy(false) }
   }
+  const refreshHistory = useEffectEvent(() => {
+    if (historyOpen && !commit && !busy) void loadHistory()
+  })
+  useEffect(() => {
+    const timeout = setTimeout(() => refreshHistory(), 0)
+    return () => clearTimeout(timeout)
+  }, [projectId, refreshToken])
   const loadCommit = async (oid: string, selectedPath?: string): Promise<void> => {
     const generation = ++request.current
     setBusy(true); setError('')
@@ -79,7 +87,9 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
   }
   return <div className="workspace-git">
     {error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => { if (commit) void loadCommit(commit, path); else void loadHistory() }}>{t('files.retry')}</button></p>}
-    <div hidden={Boolean(commit)} className="workspace-git__working">
+    {busy && <p role="status">{t('files.reading')}</p>}
+    <div ref={workingRef} hidden={Boolean(commit)} className="workspace-git__working">
+      <div className="workspace-git__current">
       <div className="workspace-git__toolbar">
         <div className="workspace-git__repository-actions">
         <button ref={branchTrigger} className="model-button workspace-git__branch-trigger" type="button" aria-expanded={branchOpen} onClick={() => setBranchOpen(!branchOpen)}><GitBranch size={14} aria-hidden="true" /><span className="model-button__label" title={branches?.current}>{branches?.current || t('management.branch')}</span><ChevronDown size={14} aria-hidden="true" /></button>
@@ -92,16 +102,18 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
         <div className="workspace-git__branch-list">{branches?.branches.filter((branch) => branch.name.toLowerCase().includes(query.toLowerCase())).map((branch) => <button className="workspace-files__changed-row" type="button" key={`${branch.remote}:${branch.name}`} disabled={busy} aria-current={!branch.remote && branches.current === branch.name ? 'true' : undefined} onClick={() => void run({ kind: 'switchBranch', branch: branch.name, remote: branch.remote })}><GitBranch size={14} aria-hidden="true" /><span title={branch.name}>{branch.name}</span><small>{t(branch.remote ? 'management.remote' : 'management.local')}</small></button>)}</div>
         <button className="secondary-button workspace-git__create-branch" type="button" disabled={busy || !query.trim()} onClick={() => void run({ kind: 'createBranch', branch: query })}>{t('management.createBranch')}</button>
       </div>}
-      {children}
+      <div className="workspace-git__changes">{children}</div>
+      </div>
+      <div className="workspace-git__history-dock" style={{ flexBasis: historyOpen ? `${historySize}%` : undefined }}>
+        {historyOpen && <div role="separator" tabIndex={0} aria-label={t('management.resizeHistory')} aria-orientation="horizontal" aria-valuemin={10} aria-valuemax={90} aria-valuenow={historySize} onKeyDown={(event) => {
+          if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { event.preventDefault(); setHistorySize((current) => event.key === 'Home' ? 10 : event.key === 'End' ? 90 : Math.max(10, Math.min(90, current + (event.key === 'ArrowUp' ? 5 : -5)))) }
+        }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); event.currentTarget.dataset.startY = String(event.clientY); event.currentTarget.dataset.startSize = String(historySize) }} onPointerMove={(event) => {
+          const availableHeight = workingRef.current?.getBoundingClientRect().height ?? 0
+          if (availableHeight > 0 && event.currentTarget.hasPointerCapture(event.pointerId)) setHistorySize(Math.max(10, Math.min(90, Number(event.currentTarget.dataset.startSize) + (Number(event.currentTarget.dataset.startY) - event.clientY) / availableHeight * 100)))
+        }} onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)} />}
       <button className="workspace-files__changed-row workspace-git__history-toggle" type="button" aria-expanded={historyOpen} onClick={() => { setHistoryOpen(!historyOpen); if (!historyOpen && !history) void loadHistory() }}>{historyOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}<span>{t('management.history')}</span></button>
-      <section hidden={!historyOpen} className="workspace-git__history" style={{ height }}>
-        <div role="separator" tabIndex={0} aria-label={t('management.resizeHistory')} aria-orientation="horizontal" aria-valuemin={120} aria-valuemax={600} aria-valuenow={height} onKeyDown={(event) => {
-          if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { event.preventDefault(); setHeight((current) => event.key === 'Home' ? 120 : event.key === 'End' ? 600 : Math.max(120, Math.min(600, current + (event.key === 'ArrowUp' ? 20 : -20)))) }
-        }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); event.currentTarget.dataset.startY = String(event.clientY); event.currentTarget.dataset.startHeight = String(height) }} onPointerMove={(event) => {
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) setHeight(Math.max(120, Math.min(600, Number(event.currentTarget.dataset.startHeight) + Number(event.currentTarget.dataset.startY) - event.clientY)))
-        }} onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)} />
+      <section hidden={!historyOpen} className="workspace-git__history">
         <div className="workspace-git__history-scroll">
-          <button className="secondary-button" type="button" disabled={busy} onClick={() => void loadHistory()}>{t('sidebar.workspace.refresh')}</button>
           {history?.commits.map((item) => <button type="button" className="workspace-files__changed-row workspace-git__commit" key={item.oid} disabled={busy} onClick={(event) => { returnTrigger.current = event.currentTarget; void loadCommit(item.oid) }}>
             <strong title={item.subject}>{item.subject}</strong><span title={`${item.author} · ${new Date(item.time).toLocaleString()}`}>{item.author} · {new Date(item.time).toLocaleString()}</span><small title={`${item.oid} ${item.refs}`}>{item.oid.slice(0, 8)} {item.refs}</small>
           </button>)}
@@ -109,6 +121,7 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
           {history?.hasMore && <button className="secondary-button" type="button" disabled={busy} onClick={() => void loadHistory(true)}>{t('management.loadMore')}</button>}
         </div>
       </section>
+      </div>
     </div>
     {commit && <section>
       <div hidden={Boolean(path)}>
@@ -121,6 +134,5 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
         {patch?.truncated && <p>{t('files.diffTruncated')}</p>}
       </div>}
     </section>}
-    {busy && <p role="status">{t('files.reading')}</p>}
   </div>
 }

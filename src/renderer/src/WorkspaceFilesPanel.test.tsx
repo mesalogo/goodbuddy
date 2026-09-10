@@ -209,6 +209,24 @@ describe('WorkspaceFilesPanel', () => {
     expect(css).toMatch(/\.workspace-git__create-branch\s*\{[^}]*justify-self: start/)
   })
 
+  it('docks history in both states with independently scrolling changes and commits', () => {
+    const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
+    const navigation = css.match(/\.workspace-files__navigation:has\(\.workspace-files__list:not\(\[hidden\]\) .*?\)\s*\{([^}]*)\}/)?.[1]
+    expect(navigation).toContain('height: 100%')
+    expect(navigation).toContain('padding-bottom: 0')
+    const history = css.match(/^\.workspace-git__history\s*\{([^}]*)\}/m)?.[1]
+    expect(history).toContain('flex: 1')
+    expect(history).toContain('min-height: 0')
+    expect(history).not.toContain('max-height')
+    expect(css).toMatch(/\.workspace-git__history-scroll\s*\{[^}]*flex: 1;[^}]*overflow: auto;[^}]*min-height: 0/)
+    expect(css).toMatch(/\.workspace-git__changes\s*\{[^}]*flex: 1;[^}]*min-height: 0;[^}]*overflow: auto/)
+    expect(css).toMatch(/\.workspace-git__history-dock\s*\{[^}]*flex: 0 0 auto;[^}]*min-height: 0/)
+    expect(css).toContain('min-height: min(80px, 50%)')
+    expect(css).toContain('max-height: max(50%, calc(100% - 80px))')
+    expect(css.match(/^\.workspace-files__changed\s*\{([^}]*)\}/m)?.[1]).not.toContain('border-bottom')
+    expect(css).toMatch(/\.workspace-git__history-toggle\s*\{[^}]*flex-shrink: 0/)
+  })
+
   it.each([
     ['D:\\project', 'd:\\project\\target', 'target/notes.txt'],
     ['/project', '/project', 'notes.txt'],
@@ -299,8 +317,35 @@ describe('WorkspaceFilesPanel', () => {
     fireEvent.click(history)
     const commit = (await screen.findByText('Initial commit')).closest('button')!
     expect(commit).toHaveClass('workspace-files__changed-row', 'workspace-git__commit')
+    expect(commit.closest('.workspace-files__git-view')).not.toHaveAttribute('hidden')
+    const separator = screen.getByRole('separator')
+    expect(separator.closest('.workspace-git__history-dock')).toHaveStyle({ flexBasis: '50%' })
+    fireEvent.keyDown(separator, { key: 'ArrowUp' })
+    expect(separator.closest('.workspace-git__history-dock')).toHaveStyle({ flexBasis: '55%' })
+    fireEvent.click(history)
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+    fireEvent.click(history)
+    expect(screen.getByRole('separator').closest('.workspace-git__history-dock')).toHaveStyle({ flexBasis: '55%' })
     fireEvent.click(commit)
     expect(await screen.findByRole('button', { name: /notes\.txt/ })).toHaveClass('workspace-files__changed-row')
+  })
+
+  it('refreshes expanded history from the shared workspace refresh without a duplicate button', async () => {
+    let version = 0
+    const manage = vi.fn(async (_project: string, action: { kind: string }) => action.kind === 'history'
+      ? { kind: 'history', commits: [{ oid: 'a'.repeat(40), subject: `Commit ${version}`, author: 'Author', time: '2026-09-09T10:00:00Z', refs: '' }], hasMore: false }
+      : { kind: 'branches', current: 'main', branches: [] })
+    vi.stubGlobal('goodbuddy', { workspace: { manage } })
+    const props = { projectId: 'project', isRepository: true, changedFiles: [], onListDirectory: vi.fn(async () => ({ path: '', entries: [], truncated: false })), onLoadDiff: vi.fn(), onOpenFile: vi.fn() }
+    const { rerender } = render(<WorkspaceFilesPanel {...props} refreshToken={version} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交历史' }))
+    const first = await screen.findByText('Commit 0')
+    expect(within(first.closest('section')!).queryByRole('button', { name: '刷新' })).not.toBeInTheDocument()
+    version++
+    rerender(<WorkspaceFilesPanel {...props} refreshToken={version} />)
+    await screen.findByText('Commit 1')
+    expect(screen.queryByText('Commit 0')).not.toBeInTheDocument()
   })
 
   it('cancels an in-flight remote directory browse without moving or reopening the dialog', async () => {
