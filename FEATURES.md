@@ -21,7 +21,7 @@ otherwise.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.12.11. See the
+  releases and automatic updates; no preview is planned for 0.12.12. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -47,7 +47,11 @@ otherwise.
   branches, create branches, explicitly Fetch, and browse commit history and
   per-file commit diffs. File and Git controls are grouped by view, branch
   search uses the shared compact form style, and subdirectories retain text
-  breadcrumbs without an isolated root icon. Moves stay inside the workspace,
+  breadcrumbs without an isolated root icon. Commit history stays docked at
+  the bottom, initially expands to half the Git content area, and supports
+  resizing with independently scrolling panes and one shared refresh action.
+  Project switches automatically detect Git without reusing another project's
+  status. Moves stay inside the workspace,
   deletion requires confirmation, and branch conflicts never trigger automatic
   stash or discard. Managed SSH operations require Agent `0.11.23`.
 - [x] **Rich responses**: Supports GitHub Flavored Markdown, LaTeX math,
@@ -203,7 +207,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.23`, while the current Desktop release candidate is `0.12.11`; formal
+  `0.11.23`, while the current Desktop release candidate is `0.12.12`; formal
   publication status follows the separate Agent and Desktop
   release channels. Current macOS source has passed native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -279,6 +283,9 @@ otherwise.
 - [x] **Native Runtime interaction routing**: OpenCode and Continue questions
   support choices, yes/no, free-text answers, and skipping through the existing
   question card. OpenCode also routes questions from owned child sessions.
+  Successful answers and skips retain the original questions and answers
+  across rounds and local conversation reloads; answers discarded by older
+  versions cannot be recovered.
   Execute permission confirmations are handled automatically rather than
   waiting for another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
 - [x] **Experts and Subagents**: Supports explicit experts, team analysis, and
@@ -299,6 +306,10 @@ otherwise.
   direct models report their own backoff phase. Footer dots are static, and
   unsupported Runtime retry details are not invented. Conversation-list
   indicators and send/stop behavior remain unchanged.
+- [x] **Simplified Runtime selection**: Conversation and project menus no
+  longer enumerate every Runtime/model combination. Configure Runtime models
+  in system settings; saved fixed project selections remain usable and
+  explicitly display their fixed model.
 - [x] **Role-bound model connections**: Each role can inherit the default model
   or select an independent text-model connection. Invalid connections safely
   fall back to the default; the synthesis role always inherits the default.
@@ -621,7 +632,7 @@ otherwise.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.12.11` and Agent `0.11.23`, with
+- Current source candidates are Desktop `0.12.12` and Agent `0.11.23`, with
   OpenCode pinned to `1.18.29`. Publication status follows the independent
   Desktop and Agent release channels.
 - [x] **0BSD open-source license**: Original code can be freely used, copied,

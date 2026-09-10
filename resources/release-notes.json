@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.12.12",
+      "releasedAt": "2026-09-11",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**连续改图保留上下文**：继续修改图片时，自动带上最近一次成功生成的图片与文字历史，重新打开已保存会话后仍可接着修改，本轮显式附图优先。上游明确不支持图片编辑时继续按文字生成，并在回复底部说明未使用参考图片；真实服务错误和取消仍正常显示。",
+            "**提交后仍可查看问题与回答**：OpenCode 等前台 Runtime 问答在回答或跳过成功后保留原问题与对应答案，多轮记录随本地会话保存。提交失败仍可重试，较晚返回的提交结果不会覆盖下一轮问题或任务终态。",
+            "**Runtime 与模型选择更清楚**：会话和项目菜单不再重复列出每个 Runtime 与模型的组合，需要调整 Runtime 模型时请进入系统设置。已保存的项目固定模型继续有效，帮助文字也会明确显示固定模型，而不是误报为跟随全局配置。",
+            "**Git 工作区切换与历史浏览更顺畅**：切换项目后自动识别 Git 工作区，不再需要手动刷新，也不会混入上一个项目的状态。提交历史默认贴底，首次展开占用一半内容区，支持拖动或键盘调整比例，上下列表独立滚动并统一使用顶部刷新。"
+          ],
+          "notices": [
+            "旧版本未保存的问题与答案无法恢复。本次不改变 Ask/Execute 权限，也不新增远程 ACP 问答能力。",
+            "Agent 保持 **0.11.23**，本次不重新发布 Agent。提供 Windows、macOS、Linux 的 x64/arm64 标准安装包，不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Keep context across image edits**: Follow-up image requests automatically include the latest successfully generated image and text history, even after reopening a saved conversation, while explicit attachments take priority. If the provider explicitly does not support image editing, generation continues from text with a footer explaining that reference images were not used; genuine service errors and cancellation remain visible.",
+            "**Review questions and answers after submission**: Foreground Runtime questions, including OpenCode questions, retain their original questions and answers after a successful answer or skip, with multiple rounds saved in the local conversation. Failed submissions remain retryable, and late submission results do not overwrite a newer question or the task's terminal state.",
+            "**Clearer Runtime and model selection**: Conversation and project menus no longer repeat every Runtime/model combination; change Runtime models in system settings. Saved fixed project models remain effective, and their help text explicitly identifies the fixed model instead of incorrectly claiming to follow global settings.",
+            "**Smoother Git project switching and history browsing**: Switching projects automatically detects the Git workspace without a manual refresh or another project's stale status. Commit history stays docked at the bottom, initially expands to half the content area, supports pointer and keyboard resizing, and uses independently scrolling panes with one shared refresh action."
+          ],
+          "notices": [
+            "Questions and answers not saved by older versions cannot be recovered. This release does not change Ask/Execute permissions or add remote ACP question support.",
+            "Agent remains at **0.11.23** and is not republished. Standard Windows, macOS, and Linux x64/arm64 packages are included, without a LoongArch experimental preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.11",
       "releasedAt": "2026-09-10",
       "notes": {
