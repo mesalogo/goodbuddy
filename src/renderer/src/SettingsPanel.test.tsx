@@ -2789,6 +2789,7 @@ describe('SettingsPanel runtime files', () => {
     const policy = await screen.findByLabelText(
       '直连模型工具安全策略'
     )
+    expect(policy).toHaveValue('always')
     expect(
       within(policy).getByRole('option', {
         name: 'Execute 自动授权已启用的工具'

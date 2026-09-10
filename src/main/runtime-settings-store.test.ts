@@ -80,6 +80,16 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('defaults to automatic Execute tool authorization and preserves an explicitly saved deny policy', async () => {
+    const { store, filePath } = await createStore()
+    await expect(store.getPublicSettings()).resolves.toMatchObject({ toolApproval: 'always' })
+    await expect(store.getPolicySettings()).resolves.toMatchObject({ toolApproval: 'always' })
+    await store.update(settings({ toolApproval: 'policy' }))
+    const reloaded = new RuntimeSettingsStore(filePath, cipher, {})
+    await expect(reloaded.getPublicSettings()).resolves.toMatchObject({ toolApproval: 'policy' })
+    await expect(reloaded.getPolicySettings()).resolves.toMatchObject({ toolApproval: 'policy' })
+  })
+
   it('persists default references separately from fixed profiles and resolves each settings generation', async () => {
     const { store, filePath } = await createStore()
     const firstId = '00000000-0000-4000-8000-000000000041'

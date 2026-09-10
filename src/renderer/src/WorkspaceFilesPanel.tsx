@@ -14,7 +14,6 @@ import {
   Trash2,
   FileText,
   Folder,
-  FolderRoot,
   FolderOpen
 } from 'lucide-react'
 import {
@@ -151,6 +150,7 @@ export function WorkspaceFilesPanel({
   const activeView = showGit ? view : 'files'
   const [selected, setSelected] = useState<{ projectId?: string; path: string }>()
   const panelRef = useRef<HTMLDivElement>(null)
+  const refreshRef = useRef<HTMLButtonElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
   const returnContext = useRef<{ scrollTop: number; scrollLeft: number; trigger: HTMLButtonElement } | undefined>(undefined)
   const requestGeneration = useRef(0)
@@ -352,6 +352,7 @@ export function WorkspaceFilesPanel({
   const browse = (path: string): void => {
     setBrowsedPath(path); setCreateTarget(path)
     void loadDirectory(path, requestGeneration.current)
+    if (!path) refreshRef.current?.focus({ preventScroll: true })
   }
   const entryMenu = (entry: WorkspaceDirectoryEntry): React.JSX.Element => (
     <button className="icon-button workspace-files__more" type="button"
@@ -450,6 +451,7 @@ export function WorkspaceFilesPanel({
   }
 
   const root = listings[browsedPath]
+  const rootName = rootPath?.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) || t('files.currentWorkspace')
   const renderPatch = (patch: string): React.JSX.Element => (
     <pre className="assistant-sidebar__diff workspace-files__diff">
       {patch.split('\n').map((line, index) => (
@@ -487,22 +489,24 @@ export function WorkspaceFilesPanel({
         </>}
     </section>}
     <div className="workspace-files__list" hidden={showingDiff}>
-      <nav className="workspace-files__breadcrumbs" aria-label={t('management.path')}>
-        {browsedPath && <button className="icon-button" type="button" aria-label={t('management.parent')} title={t('management.parent')} onClick={() => browse(browsedPath.split('/').slice(0, -1).join('/'))}><ChevronLeft size={14} /></button>}
+      <div className="workspace-files__header">
+        {showGit && <div className="workspace-files__view-switch"><SegmentedControl ariaLabel={t('files.view')} value={activeView} onChange={setView} options={[
+          { value: 'files', label: t('files.filesView') },
+          { value: 'changes', label: t('management.gitWorkspace') }
+        ]} /></div>}
+        <button ref={refreshRef} className="icon-button" type="button" disabled={refreshing} aria-label={t('sidebar.workspace.refreshAriaLabel')} title={t('sidebar.workspace.refresh')} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden="true" /></button>
+      </div>
+      {activeView === 'files' && root && <div className="workspace-files__toolbar workspace-files__actions">
+        <button className="icon-button" type="button" aria-label={t('management.createFile')} title={`${t('management.createFile')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createFile', path: createTarget })}><FilePlus size={14} aria-hidden="true" /></button>
+        <button className="icon-button" type="button" aria-label={t('management.createDirectory')} title={`${t('management.createDirectory')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createDirectory', path: createTarget })}><FolderPlus size={14} aria-hidden="true" /></button>
+      </div>}
+      {activeView === 'files' && browsedPath && <nav className="workspace-files__breadcrumbs" aria-label={t('management.path')}>
+        <button className="icon-button" type="button" aria-label={t('management.parent')} title={t('management.parent')} onClick={() => browse(browsedPath.split('/').slice(0, -1).join('/'))}><ChevronLeft size={14} aria-hidden="true" /></button>
         <div className="workspace-files__breadcrumb-parts">
-        <button className="icon-button" type="button" onClick={() => browse('')} aria-label={rootPath || t('files.currentWorkspace')} title={rootPath || t('files.currentWorkspace')} aria-current={!browsedPath ? 'location' : undefined}><FolderRoot size={14} aria-hidden="true" /></button>
+        <button type="button" onClick={() => browse('')} title={rootPath || t('files.currentWorkspace')}>{rootName}</button>
         {browsedPath.split('/').filter(Boolean).map((part, index, parts) => <button type="button" key={index} title={parts.slice(0, index + 1).join('/')} aria-current={index === parts.length - 1 ? 'location' : undefined} onClick={() => browse(parts.slice(0, index + 1).join('/'))}>{part}</button>)}
         </div>
-      </nav>
-      {root && <div className="workspace-files__toolbar workspace-files__actions">
-        <button className="icon-button" type="button" disabled={refreshing} aria-label={t('sidebar.workspace.refreshAriaLabel')} title={t('sidebar.workspace.refresh')} onClick={() => void refresh()}><RefreshCw size={14} /></button>
-        <button className="icon-button" type="button" aria-label={t('management.createFile')} title={`${t('management.createFile')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createFile', path: createTarget })}><FilePlus size={14} /></button>
-        <button className="icon-button" type="button" aria-label={t('management.createDirectory')} title={`${t('management.createDirectory')}: ${createTarget || '/'}`} onClick={() => setDialog({ kind: 'createDirectory', path: createTarget })}><FolderPlus size={14} /></button>
-      </div>}
-      {showGit && <div className="workspace-files__view-switch"><SegmentedControl ariaLabel={t('files.view')} value={activeView} onChange={setView} options={[
-        { value: 'files', label: t('files.filesView') },
-        { value: 'changes', label: t('management.gitWorkspace') }
-      ]} /></div>}
+      </nav>}
         <div hidden={activeView !== 'changes'}>
         {showGit && <WorkspaceGitTools key={projectId} projectId={projectId} refreshToken={refreshToken} onRefresh={refresh} viewControl={
           <SegmentedControl ariaLabel={t('management.changedView')} value={changeView} onChange={setChangeView} options={[{ value: 'list', label: t('management.list') }, { value: 'tree', label: t('management.tree') }]} />

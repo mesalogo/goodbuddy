@@ -15,6 +15,104 @@ afterEach(async () => {
 })
 
 describe('WorkspaceFilesPanel', () => {
+  it('groups view switching and refresh, and only shows actions for the active view', async () => {
+    const onRefresh = vi.fn(async () => undefined)
+    const { container } = render(<WorkspaceFilesPanel projectId="project" isRepository rootPath="D:\\workspace\\demo"
+      changedFiles={[]} onRefresh={onRefresh}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [], truncated: false }))}
+      onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    const createFile = await screen.findByRole('button', { name: '新建文件' })
+    const header = container.querySelector<HTMLElement>('.workspace-files__header')!
+    expect(within(header).getByRole('button', { name: '文件' })).toBeInTheDocument()
+    expect(within(header).getByRole('button', { name: 'Git 工作区' })).toBeInTheDocument()
+    expect(within(header).getByRole('button', { name: '刷新工作区文件' })).toBeInTheDocument()
+    expect(header).not.toContainElement(createFile)
+    expect(screen.queryByRole('navigation', { name: '路径' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'demo' })).not.toBeInTheDocument()
+    fireEvent.click(within(header).getByRole('button', { name: 'Git 工作区' }))
+    expect(await screen.findByRole('button', { name: 'main' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '新建文件' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '新建目录' })).not.toBeInTheDocument()
+    fireEvent.click(within(header).getByRole('button', { name: '刷新工作区文件' }))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce())
+    fireEvent.click(within(header).getByRole('button', { name: '文件' }))
+    expect(screen.getByRole('button', { name: '新建文件' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Fetch' })).not.toBeInTheDocument()
+  })
+
+  it.each(['D:\\workspace\\demo', '/workspace/demo'])('keeps text breadcrumbs only in subdirectories of %s', async (rootPath) => {
+    const onListDirectory = vi.fn(async (path: string) => ({
+      path, truncated: false,
+      entries: path ? [{ name: 'guide.md', path: 'docs/guide.md', type: 'file' as const }]
+        : [{ name: 'docs', path: 'docs', type: 'directory' as const }]
+    }))
+    render(<WorkspaceFilesPanel projectId="project" isRepository rootPath={rootPath} changedFiles={[]}
+      onListDirectory={onListDirectory} onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'docs 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '浏览此目录' }))
+    await screen.findByRole('button', { name: 'guide.md' })
+    const nav = screen.getByRole('navigation', { name: '路径' })
+    expect(within(nav).getByRole('button', { name: 'demo' })).toHaveAttribute('title', rootPath)
+    expect(within(nav).getByRole('button', { name: 'docs' })).toHaveAttribute('aria-current', 'location')
+    expect(screen.getByRole('button', { name: '新建文件' })).toHaveAttribute('title', '新建文件: docs')
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    expect(screen.queryByRole('navigation', { name: '路径' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-current', 'location')
+    fireEvent.click(screen.getByRole('button', { name: 'demo' }))
+    expect(screen.queryByRole('navigation', { name: '路径' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '刷新工作区文件' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: '新建文件' })).toHaveAttribute('title', '新建文件: /')
+    fireEvent.click(await screen.findByRole('button', { name: 'docs 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '浏览此目录' }))
+    fireEvent.click(screen.getByRole('button', { name: '返回父目录' }))
+    expect(screen.queryByRole('navigation', { name: '路径' })).not.toBeInTheDocument()
+  })
+
+  it('styles branch search as a shared field and preserves filtering, switching and creation', async () => {
+    let current = 'main'
+    const manage = vi.fn(async (_project: string, action: WorkspaceManagementAction): Promise<WorkspaceManagementResult> => {
+      if (action.kind === 'switchBranch' || action.kind === 'createBranch') {
+        current = action.branch
+        return { kind: 'done' }
+      }
+      return { kind: 'branches', current, branches: [
+        { name: 'main', remote: false },
+        { name: 'origin/topic', remote: true }
+      ] }
+    })
+    vi.stubGlobal('goodbuddy', { workspace: { manage } })
+    const onRefresh = vi.fn(async () => undefined)
+    render(<WorkspaceFilesPanel projectId="project" isRepository changedFiles={[]} onRefresh={onRefresh}
+      onListDirectory={vi.fn(async () => ({ path: '', entries: [], truncated: false }))}
+      onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    const trigger = await screen.findByRole('button', { name: 'main' })
+    fireEvent.click(trigger)
+    const search = screen.getByRole('textbox', { name: '搜索本地或远程分支 / 新分支名称' })
+    expect(search.closest('label')).toHaveClass('field')
+    expect(search.previousElementSibling?.tagName).toBe('SPAN')
+    expect(search).toHaveFocus()
+    expect(screen.getByRole('button', { name: '创建并切换分支' })).toBeDisabled()
+    fireEvent.change(search, { target: { value: 'topic' } })
+    expect(screen.queryByRole('button', { name: /main\s*本地/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /origin\/topic\s*远程/ }))
+    await waitFor(() => expect(manage).toHaveBeenCalledWith('project', { kind: 'switchBranch', branch: 'origin/topic', remote: true }))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    fireEvent.click(trigger)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'new-topic' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建并切换分支' }))
+    await waitFor(() => expect(manage).toHaveBeenCalledWith('project', { kind: 'createBranch', branch: 'new-topic' }))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(2))
+    fireEvent.click(trigger)
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' })
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(manage.mock.calls.some(([, action]) => action.kind === 'fetch')).toBe(false)
+  })
+
   it.each([false, true])('keeps Git operations usable when a task refresh occurs during history pagination (failure: %s)', async (fail) => {
     const head = 'a'.repeat(40)
     const initial = { oid: head, subject: 'Latest commit', author: 'Author', time: '2026-09-09T10:00:00Z', refs: 'HEAD -> main' }
@@ -105,6 +203,10 @@ describe('WorkspaceFilesPanel', () => {
     expect(css).toMatch(/\.workspace-files__view-switch\s*\{[^}]*align-self: flex-start/)
     expect(css).toMatch(/\.workspace-git__toolbar > \.segmented-control\s*\{[^}]*width: max-content;[^}]*border: 0/)
     expect(css).toMatch(/\.workspace-git__branch-trigger\s*\{[^}]*width: auto;[^}]*height: 32px;[^}]*flex: 0 1 auto;[^}]*text-align: left/)
+    expect(css).toMatch(/\.workspace-files__header\s*\{[^}]*justify-content: space-between/)
+    expect(css).toMatch(/\.workspace-git__branches\s*\{[^}]*width: min\(100%, 360px\);[^}]*border-radius: var\(--radius-control\)/)
+    expect(css).toMatch(/\.workspace-git__branch-list\s*\{[^}]*max-height: 240px;[^}]*overflow: auto/)
+    expect(css).toMatch(/\.workspace-git__create-branch\s*\{[^}]*justify-self: start/)
   })
 
   it.each([
@@ -294,7 +396,7 @@ describe('WorkspaceFilesPanel', () => {
       />
     )
 
-    expect(screen.getByRole('button', { name: '当前工作区' })).toHaveAttribute('aria-current', 'location')
+    expect(screen.queryByRole('navigation', { name: '路径' })).not.toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'docs' }))
     fireEvent.click(
       await screen.findByRole('button', { name: 'guide.md' })
@@ -384,7 +486,7 @@ describe('WorkspaceFilesPanel', () => {
     await changeUiLocale('en-US')
 
     expect(
-      await screen.findByRole('button', { name: 'Current workspace' })
+      await screen.findByRole('button', { name: 'Files' })
     ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Git Workspace' }))
     expect(screen.getByText('M')).toBeInTheDocument()
