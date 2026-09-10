@@ -375,6 +375,7 @@ import {
   analyzeMagicTodo
 } from './magic-notes/magic-note-analyzer'
 import { AgentEventBuffer } from './agent-event-buffer'
+import { withImageConversationContext } from './agent/image-conversation-context'
 import {
   ExecutionSpaceResolver,
   REMOTE_EXECUTION_SPACE_UNAVAILABLE
@@ -1666,7 +1667,10 @@ export function registerIpcHandlers(
       type: 'artifact',
       artifactId: artifact.id,
       kind: 'image',
-      title: artifact.title
+      title: artifact.title,
+      ...(event.imageContextNotice
+        ? { imageContextNotice: event.imageContextNotice }
+        : {})
     }
   }
 
@@ -3974,9 +3978,15 @@ export function registerIpcHandlers(
     }
     const imageGeneration =
       selectedRuntime.capability === 'image-generation'
-    const enrichedRequest = contextManager.enrichRequest(
+    const attachedRequest = contextManager.enrichRequest(
       parsedRequest
     )
+    const enrichedRequest = imageGeneration
+      ? withImageConversationContext(
+          attachedRequest,
+          (id) => assistantDatabase.getArtifact(id)
+        )
+      : attachedRequest
     if (activeRequests.has(enrichedRequest.requestId)) {
       throw new Error('请求正在执行')
     }

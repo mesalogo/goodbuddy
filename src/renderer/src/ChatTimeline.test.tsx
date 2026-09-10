@@ -61,6 +61,27 @@ function createMessages(): Message[] {
 }
 
 describe('ChatTimeline', () => {
+  it('shows an image context limitation as a quiet persistent footer, not an alert', () => {
+    const message: Message = {
+      id: 'image-message', role: 'assistant', content: '', createdAt: Date.now(),
+      state: 'complete', imageContextNotice: 'editing-unavailable'
+    }
+    const props = {
+      artifactById: new Map(), conversationId: 'image-conversation',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, ...callbacks, retryContent: '', totalMessageCount: 1
+    }
+    const { rerender } = render(<ChatTimeline {...props} messages={[message]} />)
+    const note = screen.getByText('上游不支持图片编辑，本次按文字要求生成，未使用参考图片。')
+    expect(note).toHaveClass('message__image-context-note')
+    expect(note).not.toHaveAttribute('aria-live')
+    expect(note).not.toHaveAttribute('role')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('重试')).not.toBeInTheDocument()
+    rerender(<ChatTimeline {...props} messages={[{ ...message, imageContextNotice: undefined }]} />)
+    expect(screen.queryByText(/上游不支持图片编辑/u)).not.toBeInTheDocument()
+  })
+
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()

@@ -4194,6 +4194,7 @@ describe('AssistantDatabase', () => {
             artifactIds: [
               '00000000-0000-4000-8000-000000000216'
             ],
+            imageContextNotice: 'editing-unavailable',
             sourceReferences: [
               {
                 libraryId: '00000000-0000-4000-8000-000000000214',
@@ -4254,6 +4255,7 @@ describe('AssistantDatabase', () => {
             role: 'assistant',
             state: 'streaming',
             reasoning: '先分析发布范围',
+            imageContextNotice: 'editing-unavailable',
             contextCompression: {
               state: 'completed',
               scope: 'conversation',

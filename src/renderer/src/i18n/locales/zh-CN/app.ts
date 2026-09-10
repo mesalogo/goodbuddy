@@ -254,6 +254,10 @@ export const app = {
     },
     exportSpeaker: '{{speaker}}：\n{{content}}',
     images: {
+      contextNotice: {
+        'reference-unavailable': '部分历史图片无法读取，本次仅使用可用的图片与文字上下文。',
+        'editing-unavailable': '上游不支持图片编辑，本次按文字要求生成，未使用参考图片。'
+      },
       view: '查看',
       download: '下载',
       viewNamed: '查看图片 {{title}}',

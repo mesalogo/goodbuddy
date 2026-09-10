@@ -73,6 +73,7 @@ export type Message = {
   sourceReferences?: KnowledgeSearchReference[]
   knowledgeRetrieval?: KnowledgeRetrievalStatus
   artifactIds?: string[]
+  imageContextNotice?: ConversationMessage['imageContextNotice']
   task?: ConversationMessage['task']
   attachments?: ConversationAttachment[]
 }
@@ -1031,6 +1032,11 @@ function ChatMessageRowView({
             }
             value={message.question}
           />
+        )}
+        {message.role === 'assistant' && message.imageContextNotice && (
+          <p className="message__image-context-note">
+            {t(`chat.images.contextNotice.${message.imageContextNotice}`)}
+          </p>
         )}
         {message.displayCaptureTruncated && (
           <div

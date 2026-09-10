@@ -9536,7 +9536,7 @@ describe("App", () => {
       .mockImplementation(() => {});
     vi.mocked(api.agent.getStatus).mockResolvedValueOnce({
       id: "model",
-      label: "gpt-image-2",
+      label: "sub-gpt-image-2",
       available: true,
       supportsToolExecution: false,
       detail: "OpenAI Images Generations",
@@ -9581,6 +9581,7 @@ describe("App", () => {
         artifactId,
         kind: "image",
         title: "生成一只蓝色的猫",
+        imageContextNotice: "editing-unavailable",
       });
     });
 
@@ -9615,6 +9616,17 @@ describe("App", () => {
     expect(
       screen.queryByRole("dialog", { name: "生成一只蓝色的猫" }),
     ).not.toBeInTheDocument();
+    expect(screen.getByText("上游不支持图片编辑，本次按文字要求生成，未使用参考图片。")).toBeVisible();
+    act(() => agentListener?.({ requestId: request.requestId, type: "done" }));
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "把猫改为红色" },
+    });
+    fireEvent.click(await screen.findByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]?.[0].imageContextArtifactIds).toEqual([artifactId]);
+    expect(run.mock.calls[1]?.[0].history).toContainEqual({
+      role: "user", content: "生成一只蓝色的猫",
+    });
     anchorClick.mockRestore();
   });
 

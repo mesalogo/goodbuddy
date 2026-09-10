@@ -11,6 +11,7 @@ import type {
 } from '../../shared/contracts'
 import type {
   ConversationSubagentActivity,
+  ConversationMessage,
   ConversationToolActivity,
   WorkMode
 } from '../../shared/assistant-contracts'
@@ -35,6 +36,7 @@ export type RuntimeGeneratedImageEvent = {
   mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
   data: string
   title: string
+  imageContextNotice?: ConversationMessage['imageContextNotice']
 }
 
 export type RuntimeModelUsageEvent = {
@@ -132,6 +134,7 @@ export type RemoteRecoveredSubagent =
 export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   workMode?: WorkMode
   images?: AgentImage[]
+  imageContextNotice?: ConversationMessage['imageContextNotice']
   /** Main-process-only recursion guard for direct-model programming delegation. */
   directModelDelegationDepth?: 0 | 1
   /** Main-process-only instructions placed in the model system layer. */

@@ -6079,6 +6079,11 @@ button > svg {
   margin-top: var(--space-1);
 }
 
+.message__image-context-note {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
 .message__status {
   display: flex;
   align-items: flex-start;

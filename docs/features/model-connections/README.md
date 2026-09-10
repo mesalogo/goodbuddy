@@ -46,5 +46,6 @@ User Stories 和逻辑设计；本页定义产品边界，技术设计定义唯�
 ## 相关功能
 
 - [直连模型 Agent](../direct-model-agent/README.md)
+- [图片生成与连续修改](../image-generation/README.md)
 - [DeepSeek Harness Runtime](../deepseek-harness/README.md)
 - [远程主机与远程执行](../remote-host/README.md)

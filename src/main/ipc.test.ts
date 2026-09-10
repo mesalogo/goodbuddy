@@ -5078,6 +5078,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         id: '00000000-0000-4000-8000-000000000499',
         title: '生成图片'
       })),
+      getArtifact: vi.fn(),
       listProjects: vi.fn<() => AssistantProject[]>(() => [
         {
           id: '00000000-0000-4000-8000-000000000401',
@@ -5346,6 +5347,47 @@ describe('registerIpcHandlers agent terminal state', () => {
     prompt: 'continue on Agent',
     workMode: 'execute' as const,
     knowledgeLibraryIds: []
+  })
+
+  it('restores image context at the IPC boundary and persists the quiet notice on its artifact event', async () => {
+    const png = 'iVBORw0KGgo='
+    const artifactId = '00000000-0000-4000-8000-000000000301'
+    const run = vi.fn(async function* (request: {
+      requestId: string
+      images?: Array<{ data: string }>
+    }) {
+      expect(request.images?.[0]?.data).toBe(png)
+      yield {
+        requestId: request.requestId, type: 'generated-image', mimeType: 'image/png',
+        data: png, title: '编辑图片', imageContextNotice: 'editing-unavailable'
+      }
+      yield { requestId: request.requestId, type: 'done' }
+    })
+    const harness = createHarness({
+      runtimeId: 'model', capability: 'image-generation',
+      supportsToolExecution: false, run
+    })
+    harness.assistantDatabase.getArtifact.mockReturnValue({
+      id: artifactId, kind: 'image', content: `data:image/png;base64,${png}`
+    })
+    try {
+      await harness.handler!(trustedEvent(harness.webContents), {
+        requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
+        prompt: '把圆改成蓝色', imageContextArtifactIds: [artifactId],
+        workMode: 'ask'
+      })
+      await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus)
+        .toHaveBeenCalledWith(expect.any(String), 'completed'))
+      expect(harness.assistantDatabase.getArtifact).toHaveBeenCalledWith(artifactId)
+      expect(harness.webContents.send).toHaveBeenCalledWith(
+        ipcChannels.agentEvent,
+        expect.objectContaining({
+          type: 'artifact', imageContextNotice: 'editing-unavailable'
+        })
+      )
+    } finally {
+      await harness.dispose()
+    }
   })
 
   it('defaults custom scheduled Tasks to Execute', async () => {

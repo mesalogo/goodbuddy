@@ -104,6 +104,11 @@ otherwise.
   editing through providers supporting the OpenAI-compatible image-editing
   endpoint. Editing sends attached images as multipart data and still requires
   validated inline image output rather than fetching provider-returned URLs.
+  Follow-up image requests reuse the latest successful image and conversation
+  text, including after reopening a saved conversation; explicit attachments
+  take priority. Missing editing support does not block text-based generation:
+  the affected reply shows a quiet footer explaining that reference images were
+  not used. See [image generation](./docs/features/image-generation/README.md).
 - [x] **Direct model programming agent**: Local direct text models can run the
   platform Shell in Execute mode and delegate one level of programming
   Subagent work while inheriting the parent request's mode, model, workspace,

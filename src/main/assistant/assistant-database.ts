@@ -272,6 +272,7 @@ type MessageMetadata = {
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
   knowledgeRetrieval?: ConversationSnapshot['messages'][number]['knowledgeRetrieval']
   artifactIds?: string[]
+  imageContextNotice?: ConversationSnapshot['messages'][number]['imageContextNotice']
   task?: ConversationSnapshot['messages'][number]['task']
   attachments?: ConversationSnapshot['messages'][number]['attachments']
 }
@@ -1160,6 +1161,7 @@ function toConversationSnapshot(
         sourceReferences: metadata.sourceReferences,
         knowledgeRetrieval: metadata.knowledgeRetrieval,
         artifactIds: metadata.artifactIds,
+        imageContextNotice: metadata.imageContextNotice,
         task: metadata.task,
         attachments: metadata.attachments
       }
@@ -1185,6 +1187,7 @@ function serializeConversationMessageMetadata(
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
     artifactIds: message.artifactIds,
+    imageContextNotice: message.imageContextNotice,
     task: message.task,
     attachments: message.attachments
   })
@@ -1443,6 +1446,7 @@ function reduceRecoveredAgentEvent(
       artifactIds: [
         ...new Set([...(message.artifactIds ?? []), event.artifactId])
       ].slice(-8),
+      imageContextNotice: event.imageContextNotice,
       status: '图片已生成，正在保存结果'
     }
   } else if (event.type === 'knowledge-retrieval') {

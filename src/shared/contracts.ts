@@ -342,6 +342,7 @@ export const agentRequestSchema = z
       .default([]),
     knowledgeRetrievalMode: knowledgeRetrievalModeSchema.default('auto'),
     contextIds: z.array(z.string().uuid()).max(8).optional(),
+    imageContextArtifactIds: z.array(assistantIdSchema).max(8).optional(),
     history: z
       .array(conversationHistoryMessageSchema)
       .optional(),
@@ -1324,6 +1325,7 @@ export type AgentEvent =
       artifactId: string
       kind: 'image'
       title: string
+      imageContextNotice?: ConversationSnapshot['messages'][number]['imageContextNotice']
     }
   | {
       requestId: string

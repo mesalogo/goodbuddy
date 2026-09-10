@@ -269,6 +269,10 @@ export const app = {
     },
     exportSpeaker: '{{speaker}}:\n{{content}}',
     images: {
+      contextNotice: {
+        'reference-unavailable': 'Some previous images could not be loaded. Only available images and text context were used.',
+        'editing-unavailable': 'The provider does not support image editing. This image was generated from text without the reference images.'
+      },
       view: 'View',
       download: 'Download',
       viewNamed: 'View image {{title}}',

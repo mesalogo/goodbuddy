@@ -1341,6 +1341,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
     artifactIds: message.artifactIds,
+    imageContextNotice: message.imageContextNotice,
     task: message.task,
     attachments: message.attachments,
   };
@@ -4605,6 +4606,7 @@ function App(): React.JSX.Element {
           artifactIds: [
             ...new Set([...(message.artifactIds ?? []), event.artifactId]),
           ].slice(-8),
+          imageContextNotice: event.imageContextNotice,
           status: tRef.current("chat.status.savingImage"),
         }));
       } else if (event.type === "knowledge-retrieval") {
@@ -7122,6 +7124,18 @@ function App(): React.JSX.Element {
         knowledgeLibraryIds: knowledgeLibraryIdsSnapshot,
         knowledgeRetrievalMode: knowledgeRetrievalModeSnapshot,
         contextIds: attachmentSnapshot.map((attachment) => attachment.id),
+        ...(runtimeSelectionSnapshot.provider === "model"
+          ? {
+              imageContextArtifactIds: [...historySnapshot]
+                .reverse()
+                .find(
+                  (message) =>
+                    message.role === "assistant" &&
+                    message.state === "complete" &&
+                    message.artifactIds?.length,
+                )?.artifactIds,
+            }
+          : {}),
         contextCompressionState: conversationSnapshot.contextCompressionState,
         history: retainedHistorySnapshot.map((message) => ({
           role: message.role,
