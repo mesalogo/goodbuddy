@@ -280,6 +280,10 @@ type DirectModelSubagentContext = {
 - 子级复用父 Provider；Main 写入的 `delegationDepth=1` 同时在清单和调用边界过滤
   `subagent_delegate`。
 - Ask 子级使用 Ask 清单；Execute 子级使用 Execute 清单。
+- Execute 子级经 `ModelSubagentRequestContext` 继承父 `browserTabId` 和浏览器所属
+  `browserConversationId`。后者只在 Main 内部请求与工具上下文中传递：浏览器操作使用父
+  Conversation，历史与分页输出仍使用子 Conversation。子级不新建标签页或申请使用租约，
+  结束时只释放自己的临时会话，父标签页和租约仍由父请求生命周期管理。
 
 ### 7.3 调度和结果
 
@@ -326,6 +330,25 @@ type ModelToolCallContext = {
 - `callTool` 再次检查 `runtimeTarget`、模式、执行空间 identity、深度和请求是否活动。
 - `releaseConversation` 取消并释放该会话拥有的浏览器、Subagent 和进程。
 - `dispose` 等待有界清理，不因模型或子进程不响应而阻塞应用退出。
+
+### 8.1 Ask 工具循环
+
+普通 Ask 请求进入工具循环，不再依赖知识、联网搜索或 Subagent 是否启用。Runtime 对
+`workspace_rg`、`workspace_read_text`、`output_read` 三个明确只读工具免去 Ask authorizer
+调用，避免生产 authorizer 的默认拒绝使已列出的只读工具无法执行。Execute 仍沿用既有
+authorizer；补丁、进程和其他写入不因此获准。Provider 按清单和调用边界继续校验模式，
+浏览器工具不加入 Ask 免审批集合。内部上下文摘要使用 `noModelTools`，保留无工具问答路径。
+
+### 8.2 MCP 发现与调用
+
+`listTools` 发现 MCP 并保存当前绑定快照；已知工具调用只查该快照，不在每次调用前重试
+其他失败服务器。未知名称直接失败。失败服务器只在下一次发现入口重试，动态清单刷新失败
+时从新快照中移除该服务器工具，下一次发现再刷新；健康连接继续复用。
+
+绑定只在 Provider 内存中存在，`dispose` 与连接缓存一起清空。MCP 配置保存通过
+`refreshCapabilities → onRuntimeSettingsChanged → reconfigureRuntimes` 替换 Runtime，
+`SelectedRuntimeManager.reset` 使后续请求创建新 Provider；退役 Runtime 按原有会话生命周期
+清理。没有新增持久缓存、失败重试日志或配置兼容层。
 
 DeepSeek Harness 的 Main 工具代理必须使用仅包含分配 MCP 和 Web 的 Provider 视图，不能因为
 共享 `ModelToolProvider` 类而自动看到直连模型编程工具。

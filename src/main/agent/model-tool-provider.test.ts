@@ -235,6 +235,19 @@ describe('ModelToolProvider', () => {
           expect.stringContaining('Search MCP'), expect.any(Error)
         )
 
+        const healthyName = tools.find((tool) => tool.serverName === 'Healthy')!.name
+        for (let index = 0; index < 2; index += 1) {
+          await provider.callTool(healthyName, {}, signal, toolContext)
+        }
+        await expect(provider.callTool('unknown_mcp', {}, signal, toolContext))
+          .rejects.toThrow('未知工具')
+        // No 30-second failed-server reconnect may precede a known healthy call.
+        expect(mocks.Client).toHaveBeenCalledTimes(2)
+        expect(mocks.client.connect).toHaveBeenCalledOnce()
+        expect(mocks.client.listTools).toHaveBeenCalledOnce()
+        expect(failedClient[failureMethod]).toHaveBeenCalledOnce()
+        expect(mocks.client.callTool).toHaveBeenCalledTimes(2)
+
         const recovered = await provider.listTools(toolContext, signal)
         expect(recovered.filter((tool) => tool.source === 'mcp')).toHaveLength(2)
         expect(mocks.Client).toHaveBeenCalledTimes(3)
@@ -243,13 +256,40 @@ describe('ModelToolProvider', () => {
           tools.find((tool) => tool.serverName === 'Healthy')!.name,
           {}, signal, toolContext
         )
-        expect(mocks.client.callTool).toHaveBeenCalledOnce()
+        expect(mocks.client.callTool).toHaveBeenCalledTimes(3)
       } finally {
         await provider.dispose()
         warning.mockRestore()
       }
     }
   )
+
+  it('clears discovered bindings on disposal and does not carry them to a replacement configuration', async () => {
+    const workspace = await createWorkspace()
+    mocks.client.listTools.mockResolvedValue({
+      tools: [{ name: 'search', inputSchema: { type: 'object' } }]
+    })
+    const provider = new ModelToolProvider(workspace, [createMcpServer()])
+    const replacement = new ModelToolProvider(workspace, [])
+    const signal = new AbortController().signal
+    try {
+      const tools = await provider.listTools(toolContext, signal)
+      const name = tools.find((tool) => tool.source === 'mcp')!.name
+      await provider.callTool(name, {}, signal, toolContext)
+      await provider.dispose()
+      await expect(provider.callTool(name, {}, signal, toolContext))
+        .rejects.toThrow('未知工具')
+      expect((await replacement.listTools(toolContext, signal))
+        .filter((tool) => tool.source === 'mcp')).toEqual([])
+      await expect(replacement.callTool(name, {}, signal, toolContext))
+        .rejects.toThrow('未知工具')
+      expect(mocks.client.callTool).toHaveBeenCalledOnce()
+      expect(mocks.Client).toHaveBeenCalledOnce()
+    } finally {
+      await provider.dispose()
+      await replacement.dispose()
+    }
+  })
 
   it('loads tools from more than sixteen MCP servers', async () => {
     mocks.client.listTools.mockResolvedValue({
@@ -302,7 +342,7 @@ describe('ModelToolProvider', () => {
     ])
     const signal = new AbortController().signal
     try {
-      await provider.listTools(toolContext, signal)
+      const originalTools = await provider.listTools(toolContext, signal)
       const options = mocks.Client.mock.calls[0]![1] as {
         listChanged: { tools: { onChanged(error: Error | null): void } }
       }
@@ -312,6 +352,15 @@ describe('ModelToolProvider', () => {
       expect(tools.filter((tool) => tool.source === 'mcp')).toEqual([
         expect.objectContaining({ serverName: 'Healthy' })
       ])
+      await expect(provider.callTool(
+        originalTools.find((tool) => tool.serverName === 'Search MCP')!.name,
+        {}, signal, toolContext
+      )).rejects.toThrow('未知工具')
+      await provider.callTool(
+        tools.find((tool) => tool.serverName === 'Healthy')!.name,
+        {}, signal, toolContext
+      )
+      expect(mocks.client.listTools).toHaveBeenCalledTimes(3)
       expect(mocks.client.close).not.toHaveBeenCalled()
       const recovered = await provider.listTools(toolContext, signal)
       expect(recovered.filter((tool) => tool.source === 'mcp')).toHaveLength(2)

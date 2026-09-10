@@ -472,9 +472,9 @@ export class KnowledgeMcpGateway {
     if (
       effectiveBrowserConversationId &&
       (!effectiveBrowserTabId ||
-        !this.browserService!
+        (!browserUsageLease && !this.browserService!
           .listTabs(effectiveBrowserConversationId)
-          .some((tab) => tab.tabId === effectiveBrowserTabId))
+          .some((tab) => tab.tabId === effectiveBrowserTabId)))
     ) {
       throw new Error('浏览器标签页不存在或不属于当前对话')
     }
@@ -507,8 +507,9 @@ export class KnowledgeMcpGateway {
     ) {
       return undefined
     }
-    signal.throwIfAborted()
     try {
+      signal.throwIfAborted()
+      effectiveBrowserUsageLease?.signal.throwIfAborted()
       return this.storeCapability({
         requestId,
         libraryIds: Object.freeze([...new Set(authorizedLibraryIds)]),

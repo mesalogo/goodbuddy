@@ -86,6 +86,12 @@ type ConversationMessage = {
   content: string
 }
 
+// Temporary Subagents retain separate history/output ownership while borrowing
+// the parent's browser tab and its owning conversation. They acquire no lease.
+type ModelExecutionRequest = AgentExecutionRequest & {
+  browserConversationId?: string
+}
+
 type ProviderConversationMessage = Pick<
   ConversationMessage,
   'role' | 'content'
@@ -120,6 +126,11 @@ type AgentRunCompressionState = {
 }
 
 const scopedReadToolNameSet = new Set<string>(scopedReadToolNames)
+const askWorkspaceReadToolNames = new Set([
+  'workspace_rg',
+  'workspace_read_text',
+  'output_read'
+])
 
 type AnthropicApiMessage = {
   role: 'user' | 'assistant'
@@ -1678,6 +1689,9 @@ export class ModelAgentRuntime implements AgentRuntime {
       {
         requestId: input.context.childRunId,
         conversationId: input.context.conversationId,
+        browserTabId: input.requestContext.browserTabId,
+        browserConversationId:
+          input.requestContext.browserConversationId,
         projectId: input.context.projectId,
         workMode: input.context.workMode,
         prompt: input.task,
@@ -3331,7 +3345,7 @@ export class ModelAgentRuntime implements AgentRuntime {
   }
 
   private async *runToolExecution(
-    request: AgentExecutionRequest,
+    request: ModelExecutionRequest,
     signal: AbortSignal,
     authorize: RuntimeAuthorizer | undefined,
     system: string,
@@ -3364,6 +3378,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     const toolContext: ModelToolCallContext = {
       conversationId: request.conversationId,
       browserTabId: request.browserTabId,
+      browserConversationId: request.browserConversationId,
       workMode: request.workMode ?? 'ask',
       requestId: request.requestId,
       runtimeTarget: 'model',
@@ -3376,6 +3391,9 @@ export class ModelAgentRuntime implements AgentRuntime {
             subagentBridge: {
               requestContext: {
                 authorize,
+                browserTabId: request.browserTabId,
+                browserConversationId:
+                  request.browserConversationId ?? request.conversationId,
                 knowledgeCapabilityToken:
                   request.knowledgeCapabilityToken,
                 emitEvent: emitNestedEvent
@@ -3730,6 +3748,8 @@ export class ModelAgentRuntime implements AgentRuntime {
         try {
           if (
             tool.name === 'subagent_delegate' ||
+            (toolContext.workMode === 'ask' &&
+              askWorkspaceReadToolNames.has(tool.name)) ||
             (scopedReadToolNameSet.has(tool.name) &&
               Boolean(request.knowledgeCapabilityToken)) ||
             tool.name === 'web_search' ||
@@ -3894,7 +3914,7 @@ export class ModelAgentRuntime implements AgentRuntime {
   }
 
   async *run(
-    request: AgentExecutionRequest,
+    request: ModelExecutionRequest,
     signal: AbortSignal,
     authorize?: RuntimeAuthorizer
   ): AsyncGenerator<RuntimeEvent, void, void> {
@@ -3952,7 +3972,10 @@ export class ModelAgentRuntime implements AgentRuntime {
       }
       yield result.value
     }
-    const executionRequest = prepared.request
+    const executionRequest: ModelExecutionRequest = {
+      ...prepared.request,
+      browserConversationId: request.browserConversationId
+    }
 
     yield {
       requestId: request.requestId,
@@ -3971,9 +3994,7 @@ export class ModelAgentRuntime implements AgentRuntime {
     if (
       executionRequest.workMode === 'execute' ||
       (executionRequest.workMode === 'ask' &&
-        (Boolean(executionRequest.knowledgeCapabilityToken) ||
-          this.options.webSearchEnabled === true ||
-          this.directModelSubagentEnabled))
+        this.toolProvider !== noModelTools)
     ) {
       yield* this.runToolExecution(
         executionRequest,

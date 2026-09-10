@@ -1,5 +1,23 @@
 # 模型连接请求定制进度
 
+## 2026-09-10：配置准确性修复
+
+- 通道直连回退修复已按[技术设计第 8 节](./technical-design.md#8-通道直连模型选择修复)
+  实现；测试把修复结果交给现有 Main resolver，不仅断言返回对象。
+- Harness 设置使用专用来源标签、关联帮助及 Main 直接从生产 resolver 派生的只读
+  `deepseekHarnessPlatformModel` 投影；准确区分完整管理员预置、兼容回退和无连接，
+  不再从通用环境凭据状态推断。投影不含地址、密钥或请求定制，也不写入设置文件。
+- 无兼容连接时管理员来源仍可选择；未保存候选与实际已保存来源分别展示。UI 验证涵盖
+  中英文、兼容默认、首个兼容回退、管理员覆盖、部分环境回退、无连接、草稿预览和保存动作。
+- 聚焦命令 `npx vitest run src/main/agent/runtime-selection-contracts.test.ts src/renderer/src/SettingsPanel.test.tsx`
+  对应的两个文件在本次五文件联合运行中全部通过，共 96 项。真实模型调用 0 次；
+  本次未运行全量测试、typecheck、lint 或真实 Harness 请求。
+  通道修复集成测试随后归入 Main 测试目录，避免 Shared/Web 类型项目导入主进程实现。
+- 后续聚焦验证 `npx vitest run src/main/runtime-settings-store.test.ts src/renderer/src/SettingsPanel.test.tsx`
+  全部通过：2 文件、181 项。Store 覆盖完整、部分与旧环境变量、默认/首个兼容回退、
+  无连接、精确字段白名单、非持久化以及不改变所选来源。真实模型/Host 调用均为 0；
+  未运行全量测试、构建、typecheck 或 lint。
+
 ## 2026-09-03
 
 ### 已完成

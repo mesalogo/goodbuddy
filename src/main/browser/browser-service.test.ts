@@ -151,7 +151,6 @@ function createHarness(options: {
     maximumTabsPerWindow: options.maximumTabsPerWindow,
     idleTimeoutMs: options.idleTimeoutMs,
     cleanupTimeoutMs: options.cleanupTimeoutMs,
-    liveFrameDelayMs: 0,
     createSession,
     createDriver: (contents) => {
       const slot = byContents.get(contents)
@@ -172,6 +171,185 @@ describe('BrowserService', () => {
   const firstLeaseToken = '7d201980-0ad4-4670-81d4-dc2bf79f03b2'
   const secondLeaseToken = 'db8a2c28-43a6-4aab-93e0-1c01b9374dca'
   const workbarInstanceId = '0387bd61-3a12-40ce-98d7-ef5d14cc8251'
+
+  it('reserves four unused requests without resources, events, or consuming session capacity', async () => {
+    const harness = createHarness({ maximumSessions: 3 })
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    const leases = ['one', 'two', 'three', 'four'].map((id) =>
+      harness.service.reserveRequestTab(id, `request-${id}`, 21)
+    )
+    expect(harness.service.getSessionCount()).toBe(0)
+    expect(harness.service.getTabCount()).toBe(0)
+    expect(harness.createSession).not.toHaveBeenCalled()
+    expect(states).toEqual([])
+    expect(harness.service.getOwnerWindowId('one')).toBe(21)
+    for (const lease of leases) {
+      lease.release()
+      lease.release()
+      expect(lease.signal.aborted).toBe(true)
+      expect(harness.service.getOwnerWindowId(lease.conversationId)).toBeUndefined()
+    }
+    const replacement = harness.service.reserveRequestTab('one', 'replacement', 22)
+    expect(replacement.tabId).not.toBe(leases[0]!.tabId)
+    await expect(harness.service.navigate('one', 'https://example.com/', new AbortController().signal, leases[0]!.tabId, 22))
+      .rejects.toThrow('不属于当前对话')
+    expect(harness.createSession).not.toHaveBeenCalled()
+    replacement.release()
+    await harness.service.dispose()
+  })
+
+  it('shares the reserved identity through navigation, workbar lookup, and all usage leases', async () => {
+    const harness = createHarness()
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    const first = harness.service.reserveRequestTab('conversation', 'first', 21)
+    const second = harness.service.reserveRequestTab('conversation', 'second', 21)
+    expect(second.tabId).toBe(first.tabId)
+    expect(() => harness.service.reserveRequestTab('conversation', 'wrong-window', 22)).toThrow('不属于当前窗口')
+    const signal = new AbortController().signal
+    await Promise.all([
+      harness.service.navigate('conversation', 'https://example.com/first', signal, first.tabId),
+      harness.service.navigate('conversation', 'https://example.com/second', signal, second.tabId)
+    ])
+    expect(harness.createSession).toHaveBeenCalledOnce()
+    expect(states[0]).toMatchObject({
+      status: 'creating',
+      tabId: first.tabId,
+      workbarInstanceId: first.tabId,
+      ownerWindowId: 21
+    })
+    expect(states.every((state) => state.workbarInstanceId === first.tabId)).toBe(true)
+    expect(harness.service.listTabs('conversation', 21)).toEqual([
+      expect.objectContaining({ tabId: first.tabId, workbarInstanceId: first.tabId })
+    ])
+    const restored = await harness.service.createTab('conversation', 21, signal, first.tabId)
+    expect(restored.tabId).toBe(first.tabId)
+    expect(harness.service.getTabCount()).toBe(1)
+    first.release()
+    await expect(harness.service.closeTab('conversation', first.tabId, 21)).rejects.toThrow('正在被活动请求使用')
+    second.release()
+    await harness.service.closeTab('conversation', first.tabId, 21)
+    await harness.service.closeTab('conversation', first.tabId, 21)
+    await harness.service.dispose()
+  })
+
+  it('keeps a fresh explicit workbar separate from a reserved request target', async () => {
+    const harness = createHarness()
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    const request = harness.service.reserveRequestTab('conversation', 'request', 21)
+    const signal = new AbortController().signal
+    const explicit = await harness.service.createTab('conversation', 21, signal, workbarInstanceId)
+    expect(explicit.tabId).not.toBe(request.tabId)
+    expect(explicit.workbarInstanceId).toBe(workbarInstanceId)
+    expect(harness.service.getTabCount()).toBe(1)
+    expect(states.every((state) => state.tabId === explicit.tabId)).toBe(true)
+    await harness.service.navigate('conversation', 'https://example.com/', signal, request.tabId, 21)
+    expect(harness.service.listTabs('conversation', 21)).toHaveLength(2)
+    expect(states.find((state) => state.tabId === request.tabId)).toMatchObject({
+      status: 'creating',
+      workbarInstanceId: request.tabId
+    })
+    expect(explicit.url).toBeUndefined()
+    request.release()
+    await harness.service.dispose()
+  })
+
+  it('publishes the explicit workbar identity from the first creating event', async () => {
+    const harness = createHarness()
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    const tab = await harness.service.createTab('conversation', 21, new AbortController().signal, workbarInstanceId)
+    expect(states[0]).toMatchObject({ status: 'creating', tabId: tab.tabId, workbarInstanceId })
+    expect(states.every((state) => state.workbarInstanceId === workbarInstanceId)).toBe(true)
+    expect(tab.workbarInstanceId).toBe(workbarInstanceId)
+    await expect(harness.service.createTab('conversation', 22, new AbortController().signal, workbarInstanceId)).rejects.toThrow('不属于当前窗口')
+    await harness.service.dispose()
+  })
+
+  it('cleans unused reservations on conversation release, service clear, and disposal', async () => {
+    const harness = createHarness()
+    const first = harness.service.reserveRequestTab('first', 'first', 21)
+    await expect(harness.service.releaseConversation('first', 22)).rejects.toThrow('不属于当前窗口')
+    expect(first.signal.aborted).toBe(false)
+    await harness.service.releaseConversation('first', 21)
+    expect(first.signal.aborted).toBe(true)
+    expect(harness.service.getOwnerWindowId('first')).toBeUndefined()
+    const second = harness.service.reserveRequestTab('second', 'second', 21)
+    await harness.service.clearSessions()
+    expect(second.signal.aborted).toBe(true)
+    const third = harness.service.reserveRequestTab('third', 'third', 21)
+    await harness.service.dispose()
+    expect(third.signal.aborted).toBe(true)
+    expect(harness.createSession).not.toHaveBeenCalled()
+    expect(() => harness.service.reserveRequestTab('fourth', 'fourth', 21)).toThrow('已关闭')
+  })
+
+  it('abandons materialization when the final request lease is released', async () => {
+    const gate = deferred<void>()
+    const harness = createHarness({ sessionGate: gate.promise })
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    const request = harness.service.reserveRequestTab('conversation', 'request', 21)
+    const navigation = harness.service.navigate('conversation', 'https://example.com/', new AbortController().signal, request.tabId)
+    const rejection = expect(navigation).rejects.toThrow('已取消')
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
+    request.release()
+    gate.resolve()
+    await rejection
+    expect(harness.service.getSessionCount()).toBe(0)
+    await vi.waitFor(() => expect(harness.slots[0]!.session.dispose).toHaveBeenCalledOnce())
+    expect(states.at(-1)?.status).toBe('stopped')
+    await harness.service.dispose()
+  })
+
+  it('preserves shared reserved materialization when one request cancels', async () => {
+    const gate = deferred<void>()
+    const harness = createHarness({ sessionGate: gate.promise })
+    const first = harness.service.reserveRequestTab('conversation', 'first', 21)
+    const second = harness.service.reserveRequestTab('conversation', 'second', 21)
+    const firstNavigation = harness.service.navigate('conversation', 'https://example.com/first', first.signal, first.tabId)
+    const canceled = expect(firstNavigation).rejects.toThrow('租约已终止')
+    const secondNavigation = harness.service.navigate('conversation', 'https://example.com/second', second.signal, second.tabId)
+    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
+    first.release()
+    await canceled
+    gate.resolve()
+    await secondNavigation
+    expect(harness.service.listTabs('conversation', 21)).toEqual([
+      expect.objectContaining({ tabId: second.tabId, workbarInstanceId: second.tabId, url: 'https://example.com/second' })
+    ])
+    expect(harness.slots[0]!.session.dispose).not.toHaveBeenCalled()
+    second.release()
+    await harness.service.dispose()
+  })
+
+  it('retains a materialized reserved tab until the request lease stops protecting it from idle expiry', async () => {
+    vi.useFakeTimers()
+    const harness = createHarness({ idleTimeoutMs: 100 })
+    const lease = harness.service.reserveRequestTab('conversation', 'request', 21)
+    await harness.service.navigate('conversation', 'https://example.com/', lease.signal, lease.tabId)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(harness.service.getSessionCount()).toBe(1)
+    lease.release()
+    await vi.advanceTimersByTimeAsync(101)
+    expect(harness.service.getSessionCount()).toBe(0)
+    await harness.service.dispose()
+  })
+
+  it('keeps stale close idempotent but rejects another conversation or window', async () => {
+    const harness = createHarness()
+    const first = await harness.service.createTab('first', 21)
+    const sibling = await harness.service.createTab('first', 21)
+    const other = await harness.service.createTab('other', 21)
+    await harness.service.closeTab('first', sibling.tabId, 21)
+    await harness.service.closeTab('first', sibling.tabId, 21)
+    await expect(harness.service.closeTab('first', sibling.tabId, 22)).rejects.toThrow('不属于当前窗口')
+    await expect(harness.service.closeTab('first', other.tabId, 21)).rejects.toThrow('不属于当前对话')
+    await expect(harness.service.closeTab('missing', first.tabId, 21)).rejects.toThrow('不属于当前对话')
+    await harness.service.dispose()
+  })
 
   it('presents one session in the shared viewport and tracks user navigation', async () => {
     const harness = createHarness()
@@ -219,7 +397,7 @@ describe('BrowserService', () => {
     await harness.service.dispose()
   })
 
-  it('publishes browser status and live frames through session cleanup', async () => {
+  it('publishes lightweight browser status through session cleanup', async () => {
     const harness = createHarness()
     const states: Array<{
       status: string
@@ -261,9 +439,7 @@ describe('BrowserService', () => {
       isLoading: false,
       canGoBack: false
     })
-    expect(states.filter((state) => state.status === 'ready').at(-1)?.frameDataUrl).toBe(
-      'data:image/jpeg;base64,/9j/2Q=='
-    )
+    expect(states.every((state) => state.frameDataUrl === undefined)).toBe(true)
     expect(states.at(-1)?.frameDataUrl).toBeUndefined()
     const replayed: string[] = []
     const removeReplayListener = harness.service.onState((state) => {
@@ -275,163 +451,55 @@ describe('BrowserService', () => {
     await harness.service.dispose()
   })
 
-  it('does not publish ready after a session is stopped during frame capture', async () => {
+  it('ordinary actions only refresh navigation metadata and never capture images', async () => {
+    const nativeCapture = vi.fn(async () => {
+      throw new Error('native capture unavailable while hidden')
+    })
+    const harness = createHarness({ captureScreenshot: nativeCapture })
+    const signal = new AbortController().signal
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    await harness.service.navigate('conversation', 'https://example.com/', signal)
+    await harness.service.snapshot('conversation', signal)
+    await harness.service.click('conversation', 'button_ref', signal)
+    await harness.service.type('conversation', 'input_ref', 'text', signal)
+    await harness.service.select('conversation', 'select_ref', 'value', signal)
+    await harness.service.reload('conversation', signal)
+    await harness.service.back('conversation', signal)
+    const slot = harness.slots[0]!
+    expect(nativeCapture).not.toHaveBeenCalled()
+    expect(slot.driver.screenshot).not.toHaveBeenCalled()
+    expect(slot.driver.getNavigationMetadata).toHaveBeenCalledTimes(7)
+    expect(states.at(-1)?.status).toBe('ready')
+    expect(states.every((state) => !('frameDataUrl' in state))).toBe(true)
+
+    const screenshot = await harness.service.screenshot('conversation', signal)
+    expect(screenshot.data).toBe('/9j/2Q==')
+    expect(nativeCapture).toHaveBeenCalledOnce()
+    expect(slot.driver.screenshot).toHaveBeenCalledOnce()
+    expect(states.at(-1)?.status).toBe('ready')
+    expect(states.every((state) => !('frameDataUrl' in state))).toBe(true)
+    await harness.service.dispose()
+  })
+
+  it('does not publish ready after a session is stopped during metadata refresh', async () => {
     const harness = createHarness()
     const signal = new AbortController().signal
     const states: BrowserLiveState[] = []
     harness.service.onState((state) => states.push(state))
-    await harness.service.navigate(
-      'conversation',
-      'https://example.com/',
-      signal
+    await harness.service.navigate('conversation', 'https://example.com/', signal)
+    const slot = harness.slots[0]!
+    vi.mocked(slot.driver.getNavigationMetadata).mockImplementationOnce(
+      async (operationSignal) => new Promise<never>((_resolve, reject) => {
+        operationSignal.addEventListener('abort', () => reject(operationSignal.reason), { once: true })
+      })
     )
-    const slot = harness.slots[0]
-    if (!slot) {
-      throw new Error('slot missing')
-    }
-    vi.mocked(slot.driver.screenshot).mockImplementationOnce(
-      async (operationSignal) =>
-        new Promise<never>((_resolve, reject) => {
-          operationSignal.addEventListener(
-            'abort',
-            () => reject(operationSignal.reason),
-            { once: true }
-          )
-        })
-    )
-
-    const click = harness.service.click(
-      'conversation',
-      'button_ref',
-      signal
-    )
-    await vi.waitFor(() =>
-      expect(slot.driver.screenshot).toHaveBeenCalledTimes(2)
-    )
+    const click = harness.service.click('conversation', 'button_ref', signal)
+    const rejected = expect(click).rejects.toThrow('浏览器会话已释放')
+    await vi.waitFor(() => expect(slot.driver.getNavigationMetadata).toHaveBeenCalledTimes(2))
     await harness.service.releaseConversation('conversation')
-
-    await expect(click).rejects.toThrow('浏览器会话已释放')
+    await rejected
     expect(states.at(-1)?.status).toBe('stopped')
-  })
-
-  it('falls back to CDP when native capture cannot produce the live frame', async () => {
-    const nativeCapture = vi.fn(async () => {
-      throw new Error('native capture unavailable while hidden')
-    })
-    const harness = createHarness({
-      captureScreenshot: nativeCapture
-    })
-    const states: BrowserLiveState[] = []
-    harness.service.onState((state) => states.push(state))
-
-    await harness.service.navigate(
-      'conversation',
-      'https://example.com/',
-      new AbortController().signal
-    )
-
-    expect(nativeCapture).toHaveBeenCalledOnce()
-    expect(harness.slots[0]?.driver.screenshot).toHaveBeenCalledOnce()
-    expect(states.at(-1)).toMatchObject({
-      status: 'ready',
-      frameDataUrl: 'data:image/jpeg;base64,/9j/2Q=='
-    })
-    await harness.service.dispose()
-  })
-
-  it('retries live capture while a newly committed page starts painting', async () => {
-    let attempts = 0
-    const harness = createHarness({
-      captureScreenshot: async () => {
-        attempts += 1
-        if (attempts === 1) {
-          throw new Error('page has not painted yet')
-        }
-        return {
-          type: 'image',
-          mimeType: 'image/jpeg',
-          data: '/9j/2Q=='
-        }
-      },
-      driverScreenshot: async () => {
-        throw new Error('CDP frame not ready')
-      }
-    })
-    const states: BrowserLiveState[] = []
-    harness.service.onState((state) => states.push(state))
-
-    await harness.service.navigate(
-      'conversation',
-      'https://example.com/',
-      new AbortController().signal
-    )
-
-    expect(attempts).toBe(2)
-    expect(states.at(-1)).toMatchObject({
-      status: 'ready',
-      frameDataUrl: 'data:image/jpeg;base64,/9j/2Q=='
-    })
-    await harness.service.dispose()
-  })
-
-  it('reports a live-frame failure instead of waiting indefinitely', async () => {
-    const harness = createHarness({
-      captureScreenshot: async () => {
-        throw new Error('native capture failed')
-      },
-      driverScreenshot: async () => {
-        throw new Error('CDP capture failed')
-      }
-    })
-    const states: BrowserLiveState[] = []
-    harness.service.onState((state) => states.push(state))
-
-    await harness.service.navigate(
-      'conversation',
-      'https://example.com/',
-      new AbortController().signal
-    )
-
-    expect(states.at(-1)).toMatchObject({
-      status: 'failed',
-      error: '页面已就绪，但实时画面捕获失败，请重试浏览器操作'
-    })
-    await harness.service.dispose()
-  })
-
-  it('keeps the last frame when a later refresh cannot capture a minimized window', async () => {
-    let nativeAttempts = 0
-    const harness = createHarness({
-      captureScreenshot: async () => {
-        nativeAttempts += 1
-        if (nativeAttempts === 1) {
-          return {
-            type: 'image',
-            mimeType: 'image/jpeg',
-            data: '/9j/2Q=='
-          }
-        }
-        throw new Error('minimized native capture unavailable')
-      },
-      driverScreenshot: async () => {
-        throw new Error('minimized CDP capture unavailable')
-      }
-    })
-    const states: BrowserLiveState[] = []
-    harness.service.onState((state) => states.push(state))
-    const signal = new AbortController().signal
-    await harness.service.navigate(
-      'conversation',
-      'https://example.com/',
-      signal
-    )
-
-    await harness.service.click('conversation', 'button_ref', signal)
-
-    expect(states.at(-1)).toMatchObject({
-      status: 'ready',
-      frameDataUrl: 'data:image/jpeg;base64,/9j/2Q=='
-    })
     await harness.service.dispose()
   })
 
@@ -1180,7 +1248,7 @@ describe('BrowserService', () => {
     await harness.service.dispose()
   })
 
-  it('does not resolve DNS again while refreshing frame metadata', async () => {
+  it('does not resolve DNS again while refreshing navigation metadata', async () => {
     const harness = createHarness()
     const signal = new AbortController().signal
     await harness.service.navigate(

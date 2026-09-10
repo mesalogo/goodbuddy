@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises'
+import { basename, dirname, resolve } from 'node:path'
 import { workspaceManagementActionSchema, type WorkspaceManagementAction, type WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
 import { getCanonicalWorkspace, isPathInside } from '../workspace-file-access'
 
@@ -18,6 +18,18 @@ export async function manageWorkspace(rootPath: string, input: WorkspaceManageme
       else resolveOutput(stdout)
     })
   })
+  const commitFiles = async (oid: string): Promise<Extract<WorkspaceManagementResult, { kind: 'commitFiles' }>> => {
+    const output = await git(['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', '-m', '--first-parent', '-M', '-z', oid])
+    const fields = output.split('\0')
+    const files: Extract<WorkspaceManagementResult, { kind: 'commitFiles' }>['files'] = []
+    for (let index = 0; index + 1 < fields.length;) {
+      const status = fields[index++]!
+      const first = fields[index++]!
+      const renamed = /^[RC]/.test(status)
+      files.push({ status, path: renamed ? fields[index++]! : first, ...(renamed ? { previousPath: first } : {}) })
+    }
+    return { kind: 'commitFiles', files }
+  }
   if (['createFile', 'createDirectory', 'move', 'delete', 'properties'].includes(action.kind) && 'path' in action) {
     const target = resolve(root, action.path)
     const parent = await realpath(dirname(target))
@@ -36,13 +48,24 @@ export async function manageWorkspace(rootPath: string, input: WorkspaceManageme
         const destination = resolve(root, action.destination)
         const destinationParent = await realpath(dirname(destination))
         if (!isPathInside(root, destinationParent) || !isPathInside(root, destination) || destination === root) throw new Error('Destination is outside the workspace')
-        try { await lstat(destination) } catch (error) {
+        const destinationMetadata = await lstat(destination).catch((error: unknown) => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-          signal?.throwIfAborted()
-          await rename(target, destination)
-          return { kind: 'done' }
+          return undefined
+        })
+        if (destinationMetadata) {
+          const sourceName = basename(target)
+          const destinationName = basename(destination)
+          // Equal inodes alone also match separate hard links. Permit only a
+          // differently cased alias of the same entry, not an existing name.
+          const caseAlias = parent === destinationParent && sourceName !== destinationName &&
+            sourceName.toLowerCase() === destinationName.toLowerCase() &&
+            metadata.dev === destinationMetadata.dev && metadata.ino === destinationMetadata.ino
+          const names = caseAlias ? await readdir(parent) : []
+          if (!caseAlias || !names.includes(sourceName) || names.includes(destinationName)) throw new Error('Destination already exists')
         }
-        throw new Error('Destination already exists')
+        signal?.throwIfAborted()
+        await rename(target, destination)
+        return { kind: 'done' }
       }
     }
     return { kind: 'done' }
@@ -86,20 +109,12 @@ export async function manageWorkspace(rootPath: string, input: WorkspaceManageme
       for (let index = 0; index + 4 < fields.length; index += 5) commits.push({ oid: fields[index]!.trim(), subject: fields[index + 1]!, author: fields[index + 2]!, time: fields[index + 3]!, refs: fields[index + 4]! })
       return { kind: 'history', head, commits: commits.slice(0, 50), hasMore: commits.length > 50 }
     }
-    case 'commitFiles': {
-      const output = await git(['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', '-m', '--first-parent', '-M', '-z', action.oid])
-      const fields = output.split('\0')
-      const files: Extract<WorkspaceManagementResult, { kind: 'commitFiles' }>['files'] = []
-      for (let index = 0; index + 1 < fields.length;) {
-        const status = fields[index++]!
-        const first = fields[index++]!
-        const renamed = /^[RC]/.test(status)
-        files.push({ status, path: renamed ? fields[index++]! : first, ...(renamed ? { previousPath: first } : {}) })
-      }
-      return { kind: 'commitFiles', files }
-    }
+    case 'commitFiles':
+      return commitFiles(action.oid)
     case 'commitDiff': {
-      const patch = await git(['show', '--format=', '--first-parent', '--diff-merges=first-parent', '--no-ext-diff', '--no-textconv', action.oid, '--', action.path])
+      const file = (await commitFiles(action.oid)).files.find((file) => file.path === action.path)
+      const paths = file?.previousPath ? [file.previousPath, file.path] : [action.path]
+      const patch = await git(['show', '--format=', '--first-parent', '--diff-merges=first-parent', '-M', '--no-ext-diff', '--no-textconv', action.oid, '--', ...paths])
       return { kind: 'commitDiff', patch: patch.slice(0, 256 * 1024), truncated: patch.length > 256 * 1024 }
     }
     default: throw new Error('Unsupported workspace action')

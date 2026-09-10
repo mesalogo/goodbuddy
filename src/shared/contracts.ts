@@ -1113,6 +1113,12 @@ export type RuntimeSettings = {
   continueModelSource: RuntimeModelSource
   deepseekHarnessModelSource?: RuntimeModelSource
   secureStorageAvailable: boolean
+  /** Read-only resolution of the platform option against the saved settings. Never persisted. */
+  readonly deepseekHarnessPlatformModel?: Readonly<
+    | { source: 'environment'; name: string; modelName: string }
+    | { source: 'profile'; profileId: string; name: string; modelName: string }
+    | { source: 'unavailable' }
+  >
   toolApproval: RuntimeSettingsInput['toolApproval']
   configured?: ConfiguredRuntimeSettings
   warnings?: SettingsWarning[]
@@ -1383,20 +1389,13 @@ export const browserLiveStateSchema = z
   .object({
     conversationId: conversationIdSchema,
     tabId: browserTabIdSchema,
+    workbarInstanceId: browserWorkbarInstanceIdSchema.optional(),
     ownerWindowId: z.number().int().nonnegative().optional(),
     status: browserStatusSchema,
     sessionActive: z.boolean(),
     isLoading: z.boolean(),
     canGoBack: z.boolean(),
     url: z.string().max(8_192).optional(),
-    frameDataUrl: z
-      .string()
-      .max(400_000)
-      .refine(
-        (value) => value.startsWith('data:image/jpeg;base64,'),
-        '浏览器画面格式无效'
-      )
-      .optional(),
     error: z.string().min(1).max(240).optional(),
     updatedAt: z.number().int().nonnegative()
   })
@@ -1408,6 +1407,7 @@ export const browserTabSummarySchema = z
   .object({
     conversationId: conversationIdSchema,
     tabId: browserTabIdSchema,
+    workbarInstanceId: browserWorkbarInstanceIdSchema.optional(),
     primary: z.boolean(),
     status: browserStatusSchema.exclude(['stopped']),
     isLoading: z.boolean(),

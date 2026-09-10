@@ -669,8 +669,9 @@ GoodBuddy 是可调整窗口大小的桌面应用。响应式设计优先保证�
   成果查看器，不撑高列表，也不显示 Job/Run 树。
 - “新建定制任务”使用共享 Modal，明确选择当前或新 Conversation。聊天入口默认当前
   Conversation，Task Center 入口默认新 Conversation；选择必须持续可见。
-- 创建 Modal 默认 Execute，并允许主动切换 Ask。Execute 持续显示实际 Runtime、Project、
-  工作目录、工具和审批摘要；不支持工具时不得静默降级。
+- 定时消息创建 Modal 使用关联 Conversation 的 Runtime 与 Ask/Execute 模式，不再提供独立
+  模式开关。未运行计划的详情显示会话当前模式，已运行任务显示该次执行记录的模式；
+  不得用旧计划字段表示下一次执行权限。不支持工具时不得静默降级。
 
 ### 13.6 运行记录
 

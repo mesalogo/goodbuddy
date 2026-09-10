@@ -36,3 +36,20 @@ OpenCode 与 DeepSeek Harness 不使用该值。
 - 无效状态不能只依赖颜色，必须同时提供错误文字和 `aria-invalid`。
 - 文本域遵循标准键盘编辑、选择、复制和粘贴行为；保存继续使用设置页唯一的主保存操作。
 - 焦点边框、字体、间距、颜色和深浅主题全部复用全局语义令牌。
+
+## Harness 模型来源展示
+
+DeepSeek Harness 的 `platform` 选项命名为“管理员环境优先，回退 GoodBuddy 兼容连接”，
+不能沿用 OpenCode/Continue 的“Runtime 自有配置”标签。来源规则以
+[Harness 模型配置](../deepseek-harness/technical-design.md#121-配置来源)为准。
+帮助文字与选择器通过 `aria-describedby` 关联，并明确此选项不加载用户 profile 或
+配置文件；无兼容 GoodBuddy 连接时仍可选择管理员环境来源。
+
+概览使用 Main 提供的[平台来源投影](./technical-design.md#9-harness-平台来源公开投影)，
+明确显示实际管理员预置模型，或“未配置完整的管理员预置”及已保存兼容回退的名称与模型；
+没有可解析连接时显示明确空状态，但保留 `platform` 选项。不得从通用模型名称或
+`credentialSource` 猜测管理员来源，也不得显示密钥或读取 Main 环境。
+
+没有管理员覆盖且草稿兼容候选发生变化时，额外显示“草稿兼容候选（未保存）”，保留实际
+已保存来源；草稿失去兼容连接时也明确说明。管理员覆盖生效时不把草稿回退显示为实际模型。
+保存完成后以 Main 重新解析的投影刷新概览。

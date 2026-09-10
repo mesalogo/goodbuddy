@@ -12,6 +12,10 @@ Provider 要求的附加元数据；GoodBuddy 只在直连链路或 Runtime 明�
 | [技术设计](./technical-design.md) | 契约、持久化、合并优先级、Runtime 支持矩阵和验证 |
 | [功能进度](./progress.md) | 已验证实现、剩余工作和验证证据 |
 
+模型连接选择准确性也在本目录维护：技术设计第 8 节定义通道直连回退修复，
+UI 设计末节定义 Harness 来源标签和公开设置展示；Harness 的实际解析顺序由其
+[技术设计](../deepseek-harness/technical-design.md#121-配置来源)唯一维护。
+
 本次改动是现有模型连接的有界扩展，不新增独立业务对象或工作流，因此不单独建立 PRD、
 User Stories 和逻辑设计；本页定义产品边界，技术设计定义唯一的请求合并规则。
 

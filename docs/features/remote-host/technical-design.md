@@ -302,6 +302,10 @@ Execute 直接启动已签名 Runtime：
   时提交 Task 终态；事务成功后生成器才继续并向 Agent ACK。断电发生在同一 sequence
   中间时会重读该 sequence，已写事件按 `(binding, operation, sequence, eventIndex)` 去重，
   未写事件继续归并，不会重复 Provider 或工具执行。
+- 远程 context metrics 与对话级压缩后的估算值按本次请求实际使用的 Runtime 选择写入
+  `context_state_json`。实时接收与恢复入口都传入请求的选择；数据库在未传入时按对话、
+  项目、auto 顺序解析。继承项目设置的对话保持 `runtime_selection_json = NULL`，
+  不为接收 usage 固定对话 Runtime；去重和消息/指标写入仍在同一 SQLite 事务中完成。
 - ACK 后 Agent 删除已确认事件，只保留小型操作终态与游标用于幂等核对；未 ACK 输出继续
   保留。Main 按 transcript page 的最高连续 sequence ACK，终态仍立即 ACK。单事件、单页、
   单 Prompt 总字节和事件数都有上限；Agent 始终为唯一终态预留一个事件和最大事件字节，
@@ -360,11 +364,27 @@ Execute 直接启动已签名 Runtime：
 - Unix socket 接收端按 `readableLength` 中已经缓冲的字节增量排空一个声明长度的帧，
   不会在部分大响应到达时反复请求尚未缓冲的完整剩余长度；短读、连接结束、错误和取消
   都会使当前交换失败。原生 Linux 回归覆盖至少 256 KiB 的 broker 响应。
+- Unix broker 的请求超时 `0` 表示不设置请求总时限，不等于零毫秒连接等待。
+  连接仍有独立的默认 5 秒超时；只有显式正数请求时限才与连接时限取较小值，
+  用户取消仍关闭连接并中止 dispatch。
 - Renderer 把相邻 text/reasoning delta 合并为消息 block 时始终替换最后一个 block，
   不修改既有 React state 对象。这样开发环境 StrictMode 重复调用 state updater 时，
   block metadata 与 canonical 消息正文保持一致。
 
 ## Agent 开发期间的真实 Host 验证
+
+本轮 `020a9ad` 工作树修复使用当前源码在共享 Linux x64 Host 验证：默认 Unix broker
+完成 256 KiB 响应并传递取消；生产 AssistantDatabase 在临时库中写入继承项目的指标，
+重开后去重重放，未固定对话选择。当前 Workspace 协议的目标存在/同名/硬链接重命名
+保护、字面路径 diff、重命名 diff 和 merge commit diff 均通过，Git 使用 Host 已配置身份。
+当前 Desktop `createManagedRemoteAcpRuntime` 经真实 SSH attach、隔离 Agent、OpenCode
+和 Agent gateway 完成 Ask 与 Execute，均得到两字符回答和 done。Execute 的真实
+model-usage 转换为指标后通过生产数据库持久化与去重，继承设置保持未固定。
+共 3 次真实 Provider 调用（2 次 Ask、1 次 Execute），均 HTTP 200、completed 且已交付；
+前两次运行在模型完成后被测试 harness 的 usage 元数据/事件名断言拦截，并非产品失败。
+未修改产品来适配 harness：构建时直接解析 ACP SDK 的 ESM 入口，凭据只通过既有
+safeStorage 与模型控制协议使用。各次隔离 Agent 停止后剩余所属进程数为 0，测试目录和
+上传文件均已回收，原 Host registry 与已安装组件未改变。此次不覆盖 UI 点击或安装升级。
 
 2026-09-10 已发布模型桥兼容修复：从 `agent-v0.11.22` 读取的源码与当前源码分别在共享
 Linux x64 Host 启动隔离 Agent daemon。当前 Main 的 `createManagedRemoteAcpRuntime`

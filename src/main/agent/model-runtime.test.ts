@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import { rgPath } from '@vscode/ripgrep'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  ModelToolProvider,
   RecoverableModelToolError,
   type ModelToolDefinition,
   type ModelToolProviderLike,
@@ -12,6 +14,10 @@ import {
 import { ModelAgentRuntime } from './model-runtime'
 import type { RuntimeEvent } from './runtime'
 import { SubagentScheduler } from '../assistant/subagent-scheduler'
+import { LocalWorkspaceAccess } from '../workspace'
+import { LocalDirectModelProcessService } from './direct-model-process-service'
+import { browserTabIdSchema } from '../../shared/contracts'
+import type { BrowserToolService } from '../browser/browser-model-tools'
 
 const toolPng = Buffer.from([
   0x89, 0x50, 0x4e, 0x47,
@@ -2193,38 +2199,150 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
-  it('keeps browser and workspace tools out of Ask mode', async () => {
-      const fetcher = vi.fn<typeof fetch>(async () =>
-        new Response('data: {"choices":[{"delta":{"content":"只读回答"}}]}\n\ndata: [DONE]\n\n', {
-          status: 200,
-          headers: { 'content-type': 'text/event-stream' }
-        })
+  it('runs Ask workspace search, text reads and output paging with the production deny authorizer and no optional capabilities', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-ask-tools-'))
+    const workspaceAccess = new LocalWorkspaceAccess(workspace)
+    const processService = new LocalDirectModelProcessService()
+    const toolProvider = new ModelToolProvider(
+      workspaceAccess, [], undefined, undefined, false,
+      { processService, ripgrepExecutablePath: rgPath }
+    )
+    const signal = new AbortController().signal
+    const conversationId = 'conversation-ask'
+    const responses: unknown[] = []
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json(responses.shift()))
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'https://example.test/v1',
+      model: 'test-model',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider,
+      workspaceAccess
+    })
+    const authorize = vi.fn(async () => 'deny' as const)
+    try {
+      await writeFile(join(workspace, 'README.md'), 'readonly-marker\n')
+      await writeFile(join(workspace, 'output.cjs'),
+        "process.stdout.write('x'.repeat(110000) + 'retained-tail')")
+      // Seed output as a preceding Execute operation in the same conversation.
+      const previous = await processService.execute(
+        { command: 'node output.cjs', timeoutMs: 10_000 },
+        { conversationId, workspace: workspaceAccess, signal }
       )
-      const toolProvider = createToolProvider()
-      const runtime = new ModelAgentRuntime({
-        baseUrl: 'http://127.0.0.1:11434/v1',
-        model: 'qwen3',
-        protocol: 'openai-chat-completions',
-        authentication: 'none',
-        fetcher,
-        toolProvider
+      expect(previous.exitCode).toBe(0)
+      const reference = previous.stdoutReference!
+      expect(reference).toBeDefined()
+      const calls = [
+        { name: 'workspace_rg', arguments: { pattern: 'readonly-marker', glob: ['README.md'] } },
+        { name: 'workspace_read_text', arguments: { path: 'README.md' } },
+        { name: 'output_read', arguments: { handle: reference.handle, cursor: reference.nextCursor } }
+      ]
+      responses.push({
+        choices: [{ message: {
+          role: 'assistant', content: null,
+          tool_calls: calls.map((call, index) => ({
+            id: `ask-${index}`, type: 'function',
+            function: { name: call.name, arguments: JSON.stringify(call.arguments) }
+          }))
+        } }]
+      }, { choices: [{ message: { role: 'assistant', content: '只读完成' } }] })
+      const events: RuntimeEvent[] = []
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(), conversationId,
+        prompt: '搜索并读取文件，续读已有输出', workMode: 'ask'
+      }, signal, authorize)) events.push(event)
+
+      const firstBody = JSON.parse(String(fetcher.mock.calls[0]![1]!.body))
+      expect(firstBody.tools.map((tool: { function: { name: string } }) =>
+        tool.function.name)).toEqual(['workspace_rg', 'workspace_read_text', 'output_read'])
+      const secondBody = JSON.parse(String(fetcher.mock.calls[1]![1]!.body))
+      const results = secondBody.messages.filter(
+        (message: { role: string }) => message.role === 'tool'
+      )
+      expect(results).toHaveLength(3)
+      expect(results[0].content).toContain('README.md:1:1:readonly-marker')
+      expect(results[1].content).toContain('readonly-marker')
+      expect(JSON.parse(results[2].content)).toMatchObject({
+        content: expect.stringContaining('retained-tail'), eof: true
       })
-
-      for await (const _event of runtime.run(
-        {
-          requestId: crypto.randomUUID(),
-          conversationId: 'conversation-ask',
-          prompt: '只读',
-          workMode: 'ask'
-        },
-        new AbortController().signal
-      )) {
-        void _event
-      }
-
-      expect(toolProvider.listTools).not.toHaveBeenCalled()
-      expect(toolProvider.callTool).not.toHaveBeenCalled()
+      expect(authorize).not.toHaveBeenCalled()
+      expect(events.filter((event) =>
+        event.type === 'tool' && event.state === 'completed')).toHaveLength(3)
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+      expect(await readFile(join(workspace, 'README.md'), 'utf8')).toBe('readonly-marker\n')
+    } finally {
+      await runtime.dispose()
+      await rm(workspace, { recursive: true, force: true })
+    }
   })
+
+  it.each(['workspace_apply_patch', 'workspace_write_text', 'process_execute', 'browser_snapshot'])(
+    'rejects unlisted %s in Ask at the runtime boundary',
+    async (name) => {
+      const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-ask-denial-'))
+      const fetcher = vi.fn<typeof fetch>(async () => Response.json({
+        choices: [{ message: {
+          role: 'assistant', content: null,
+          tool_calls: [{ id: 'spoof', type: 'function', function: {
+            name, arguments: JSON.stringify({
+              path: 'forbidden.txt', content: 'forbidden',
+              patch: '*** Begin Patch\n*** Add File: forbidden.txt\n+forbidden\n*** End Patch',
+              command: 'echo forbidden'
+            })
+          } }]
+        } }]
+      }))
+      const runtime = new ModelAgentRuntime({
+        baseUrl: 'https://example.test/v1', model: 'test-model',
+        protocol: 'openai-chat-completions', authentication: 'none',
+        fetcher, defaultWorkspace: workspace
+      })
+      const authorize = vi.fn(async () => 'deny' as const)
+      try {
+        const consume = async () => {
+          for await (const event of runtime.run({
+            requestId: crypto.randomUUID(), conversationId: 'ask-denied',
+            prompt: '只读', workMode: 'ask'
+          }, new AbortController().signal, authorize)) void event
+        }
+        await expect(consume()).rejects.toThrow('未知工具')
+        expect(authorize).not.toHaveBeenCalled()
+        await expect(readFile(join(workspace, 'forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await runtime.dispose()
+        await rm(workspace, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['openai-chat-completions', 'openai-responses', 'anthropic-messages'] as const)(
+    'lists only workspace reads and retained output in plain Ask via %s',
+    async (protocol) => {
+      const fetcher = vi.fn<typeof fetch>(async () => Response.json(
+        protocol === 'anthropic-messages'
+          ? { content: [{ type: 'text', text: '只读回答' }], stop_reason: 'end_turn' }
+          : protocol === 'openai-responses'
+            ? { id: 'resp-ask', output: [{ type: 'message', content: [{ type: 'output_text', text: '只读回答' }] }] }
+            : { choices: [{ message: { role: 'assistant', content: '只读回答' } }] }
+      ))
+      const runtime = new ModelAgentRuntime({
+        baseUrl: 'https://example.test/v1', model: 'test-model',
+        protocol, authentication: 'none', fetcher
+      })
+      try {
+        for await (const event of runtime.run({
+          requestId: crypto.randomUUID(), conversationId: 'plain-ask',
+          prompt: '只读', workMode: 'ask'
+        }, new AbortController().signal, async () => 'deny')) void event
+        const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body))
+        expect(body.tools.map((tool: { name?: string; function?: { name: string } }) =>
+          tool.function?.name ?? tool.name)).toEqual(['workspace_read_text', 'output_read'])
+      } finally {
+        await runtime.dispose()
+      }
+    }
+  )
 
   it('uses the OpenAI Responses endpoint and streams output text', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
@@ -2602,6 +2720,94 @@ describe('ModelAgentRuntime', () => {
       }
     }
   )
+
+  it('lets an Execute Subagent borrow the parent browser tab without changing tab ownership', async () => {
+    const conversationId = 'parent-browser-owner'
+    const browserTabId = browserTabIdSchema.parse('00000000-0000-4000-8000-000000000203')
+    let parentReleased = false
+    const browserService: BrowserToolService = {
+      getOrigin: vi.fn(() => 'https://example.test'),
+      navigate: vi.fn(), click: vi.fn(), type: vi.fn(),
+      select: vi.fn(), back: vi.fn(), screenshot: vi.fn(),
+      snapshot: vi.fn(async (owner, _signal, tabId) => {
+        // BrowserService resolves tabs under their owning conversation, not
+        // merely by tab ID; a child's temporary conversation cannot own it.
+        expect(owner).toBe(conversationId)
+        expect(tabId).toBe(browserTabId)
+        expect(parentReleased).toBe(false)
+        return { url: 'https://example.test/', title: 'Parent page', nodes: [], truncated: false }
+      }),
+      releaseConversation: vi.fn(async (owner) => {
+        if (owner === conversationId) parentReleased = true
+      })
+    }
+    const toolResponse = (id: string, name: string, args: Record<string, unknown>) => ({
+      choices: [{ message: {
+        role: 'assistant', content: null,
+        tool_calls: [{ id, type: 'function', function: {
+          name, arguments: JSON.stringify(args)
+        } }]
+      } }]
+    })
+    const responses = [
+      toolResponse('delegate', 'subagent_delegate', { task: '读取父请求浏览器页面' }),
+      toolResponse('child-browser', 'browser_snapshot', {}),
+      { choices: [{ message: { role: 'assistant', content: '子级已读页面' } }] },
+      toolResponse('parent-browser', 'browser_snapshot', {}),
+      { choices: [{ message: { role: 'assistant', content: '父级继续使用同一页面' } }] }
+    ]
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json(responses.shift()))
+    const scheduler = new SubagentScheduler({ concurrency: 1, queueLimit: 1, timeoutMs: 10_000 })
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'https://example.test/v1', model: 'test-model',
+      protocol: 'openai-chat-completions', authentication: 'none',
+      fetcher, browserService, directModelSubagentScheduler: scheduler
+    })
+    const listTools = vi.spyOn(ModelToolProvider.prototype, 'listTools')
+    const callTool = vi.spyOn(ModelToolProvider.prototype, 'callTool')
+    try {
+      const events: RuntimeEvent[] = []
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(), conversationId, browserTabId,
+        prompt: '委派读取页面后继续使用页面', workMode: 'execute'
+      }, new AbortController().signal, async () => 'once')) events.push(event)
+      expect(fetcher).toHaveBeenCalledTimes(5)
+      const childContext = listTools.mock.calls.find(
+        ([context]) => context.delegationDepth === 1
+      )![0]
+      expect(childContext).toMatchObject({
+        workMode: 'execute', browserTabId,
+        browserConversationId: conversationId
+      })
+      expect(childContext.conversationId).not.toBe(conversationId)
+      const childBody = JSON.parse(String(fetcher.mock.calls[1]![1]!.body))
+      const childTools = childBody.tools.map(
+        (tool: { function: { name: string } }) => tool.function.name
+      )
+      expect(childTools).toEqual(expect.arrayContaining(['browser_navigate', 'browser_snapshot', 'browser_click']))
+      expect(childTools).not.toContain('subagent_delegate')
+      expect(callTool).toHaveBeenCalledWith(
+        'browser_snapshot', {}, expect.any(AbortSignal),
+        expect.objectContaining({
+          conversationId: childContext.conversationId,
+          browserConversationId: conversationId, browserTabId
+        })
+      )
+      expect(browserService.snapshot).toHaveBeenCalledTimes(2)
+      expect(browserService.releaseConversation).toHaveBeenCalledWith(childContext.conversationId)
+      expect(parentReleased).toBe(false)
+      expect(events.filter((event) => event.type === 'subagent').at(-1))
+        .toMatchObject({ state: 'completed' })
+      await runtime.releaseConversation(conversationId)
+      expect(parentReleased).toBe(true)
+    } finally {
+      listTools.mockRestore()
+      callTool.mockRestore()
+      await runtime.dispose()
+      scheduler.dispose()
+      await scheduler.waitForIdle()
+    }
+  })
 
   it('delegates one programming Subagent that can run a real project command without recursion', async () => {
     const command =

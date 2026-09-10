@@ -414,7 +414,9 @@ export function createUnixModelBridgeExchange(options: {
     try {
       await waitForConnection(
         socket,
-        Math.min(connectTimeoutMs, requestTimeoutMs),
+        requestTimeoutMs === 0
+          ? connectTimeoutMs
+          : Math.min(connectTimeoutMs, requestTimeoutMs),
         context.signal
       )
       await writePacket(socket, {

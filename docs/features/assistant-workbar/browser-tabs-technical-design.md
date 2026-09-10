@@ -76,6 +76,9 @@ Record<ConversationId, Record<BrowserTabId, BrowserLiveState>>
 
 非活动 Browser Tab 保持页面和状态，但隐藏 `WebContentsView` 并停止非必要画面采集。工作栏
 收起、切换主页面和窗口隐藏时采用相同规则，不销毁 Tab。
+普通导航、快照与页面操作只同步轻量导航状态，不自动截图、等待画面或传输 JPEG；只有显式
+`browser_screenshot` 调用生成图片。侧栏内终端关闭确认显示期间，同样隐藏原生浏览器视图，
+确认或取消后恢复当前实例，避免原生子视图遮挡 HTML 确认按钮。
 
 浏览器应用声明 `visibleAcrossContextSwitches: true`，打开的 Tab 跨项目、会话切换继续显示。
 切换活动 Conversation 不改变当前选中的浏览器或其 `targetRef.conversationId`；用户在会话 B
@@ -84,6 +87,11 @@ Record<ConversationId, Record<BrowserTabId, BrowserLiveState>>
 
 Tab 的跨会话可见性与 MCP 授权分开处理。B 的请求不能选择属于 A 的可见 Tab；A 已取得的
 capability 在用户切到 B 后仍固定路由至 A 的原 Tab，使用租约也继续阻止关闭该 Tab。
+内部点击实例只同步应用类型，不再次按当前 Conversation 改选实例。Main 状态携带对应的
+`workbarInstanceId`，Renderer 据此绑定请求创建的同一 Tab，而不是另建空白页。收到 `stopped`
+后清除该实例的旧 Tab 绑定，下一次使用通过原逻辑实例重新创建，保留地址草稿与错误反馈。
+请求创建的实例也遵守现有 32 个工作栏页签上限；满额时保留 Main 页面及其状态，并就地提示
+关闭一个可关闭页签。释放位置后再绑定该页面，不写入超限布局或丢弃 Agent 页面。
 
 ## 5. IPC 与服务接口
 
@@ -116,7 +124,12 @@ Browser Tab。
 
 1. 当前可见且绑定该 Conversation 的 Browser Tab。
 2. 该 Conversation 的 `primaryTabId`。
-3. 新建一个 primary Browser Tab。
+3. 预留 primary Browser Tab 身份，首次实际浏览器操作时才创建页面与 Conversation Context。
+
+未使用浏览器的请求只持有随请求释放的内存预留，不创建 Chromium 资源、不触发浏览器 UI、
+也不占用活动浏览器会话名额。物化后使用同一 Tab 身份和工作栏实例归属；取消、能力撤销及
+服务关闭释放未使用的预留，不保存到磁盘。编程 Subagent 继承父请求的 Browser Tab 与浏览器
+Conversation 归属，不新建租约或把页面重新归属到子级对话。
 
 直连模型上下文和请求级 MCP capability 同时保存 `conversationId` 与
 `boundBrowserTabId`。请求执行期间，用户切换、创建或关闭其他工作栏 Tab 不改变工具目标；

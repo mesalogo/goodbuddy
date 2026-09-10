@@ -10,6 +10,7 @@ import {
   isUntouchedBuiltInDefaultProject
 } from '../../shared/assistant-contracts'
 import { AssistantDatabase } from './assistant-database'
+import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 
 const temporaryDirectories: string[] = []
 const channelDefaultProfileId =
@@ -3106,6 +3107,79 @@ describe('AssistantDatabase', () => {
       { remote_semantic_sequence: '4', remote_event_index: 0 }
     ])
     inspected.close()
+  })
+
+  it('persists inherited remote metrics and replay without pinning the conversation', async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-inherited-remote-metrics-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    let database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const project = database.createSshProject(validatedSshProjectWrite())
+    const conversationId = '00000000-0000-4000-8000-000000000701'
+    const taskId = '00000000-0000-4000-8000-000000000702'
+    const assistantMessageId = '00000000-0000-4000-8000-000000000704'
+    database.saveLocalConversations([{
+      header: { id: conversationId, projectId: project.id, title: '继承', updatedAt: 0 },
+      messages: []
+    }])
+    database.createTask({
+      id: taskId, projectId: project.id, conversationId,
+      title: '继承', instructions: '回复', workMode: 'ask',
+      remoteRecovery: {
+        recoverable: true,
+        currentUserMessageId: '00000000-0000-4000-8000-000000000703',
+        currentAssistantMessageId: assistantMessageId
+      }
+    })
+    const provenance = {
+      taskId, conversationId, assistantMessageId,
+      bindingId: 'inherited-metrics', operationId: 'inherited-metrics', eventIndex: 0
+    }
+    const metrics = {
+      ...provenance, semanticSequence: '1',
+      event: {
+        requestId: taskId, type: 'context-metrics' as const,
+        contextTokens: 123, source: 'provider' as const,
+        effectiveTriggerTokens: 1000, compressionEnabled: false
+      }
+    }
+    expect(database.appendRemoteConversationTaskEventOnce(metrics)).toBe(true)
+    expect(database.getConversation(conversationId)).toMatchObject({
+      contextMetrics: { runtimeSelectionKey: agentRuntimeSelectionKey({ provider: 'opencode' }), contextTokens: 123 }
+    })
+    database.close()
+    database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    expect(database.appendRemoteConversationTaskEventOnce(metrics)).toBe(false)
+    const runtimeSelection = { provider: 'opencode' as const, profileId: channelDefaultProfileId }
+    expect(database.appendRemoteConversationTaskEventOnce({
+      ...metrics, semanticSequence: '2', runtimeSelection
+    })).toBe(true)
+    expect(database.getConversation(conversationId).contextMetrics?.runtimeSelectionKey)
+      .toBe(agentRuntimeSelectionKey(runtimeSelection))
+    expect(database.appendRemoteConversationTaskEventOnce({
+      ...provenance, semanticSequence: '3', runtimeSelection,
+      event: {
+        requestId: taskId, type: 'context-compression', state: 'completed',
+        scope: 'conversation', estimatedBeforeTokens: 123, estimatedAfterTokens: 45,
+        effectiveTriggerTokens: 1000, recentRawTokens: 45
+      }
+    })).toBe(true)
+    expect(database.getConversation(conversationId)).toMatchObject({
+      contextMetrics: {
+        runtimeSelectionKey: agentRuntimeSelectionKey(runtimeSelection),
+        contextTokens: 45, source: 'estimated', basis: 'conversation'
+      }
+    })
+    expect(database.getConversation(conversationId).runtimeSelection).toBeUndefined()
+    database.close()
+    const raw = new DatabaseSync(databasePath)
+    expect(raw.prepare('SELECT runtime_selection_json FROM conversations WHERE id = ?').get(conversationId))
+      .toEqual({ runtime_selection_json: null })
+    raw.close()
   })
 
   it('creates and recovers a remote-authoritative conversation task', async () => {

@@ -23,6 +23,7 @@ import {
   type MagicNotesDatabase
 } from './knowledge-mcp-gateway'
 import { browserTabIdSchema } from '../../shared/contracts'
+import { BrowserService } from '../browser/browser-service'
 
 const firstLibraryId = '11111111-1111-4111-8111-111111111111'
 const secondLibraryId = '22222222-2222-4222-8222-222222222222'
@@ -231,6 +232,81 @@ afterEach(async () => {
 })
 
 describe('KnowledgeMcpGateway', () => {
+  it('grants reserved parent and inherited child targets without materializing a browser', async () => {
+    const { service } = createService()
+    const createSession = vi.fn(async (): Promise<never> => {
+      throw new Error('unused requests must not create a browser')
+    })
+    const browserService = new BrowserService({ createSession })
+    const gateway = new KnowledgeMcpGateway(service, { browserService })
+    gateways.push(gateway)
+    const parentController = new AbortController()
+    const parent = browserService.reserveRequestTab('conversation', 'parent', 21)
+    const child = browserService.acquireTabUsage('conversation', parent.tabId, 'child', 21)
+    try {
+      expect(browserService.listTabs('conversation')).toEqual([])
+      expect(() => gateway.grant('unleased', [], parentController.signal, 'none', undefined, 'conversation', parent.tabId))
+        .toThrow('不属于当前对话')
+      const parentToken = gateway.grant('parent', [], parentController.signal, 'none', undefined, 'conversation', parent.tabId, parent)!
+      const childToken = gateway.grant('child', [], new AbortController().signal, 'none', undefined, 'conversation', child.tabId, child)!
+      expect(gateway.getAvailableToolNames(parentToken)).toEqual(browserToolNames)
+      expect(gateway.getAvailableToolNames(childToken)).toEqual(browserToolNames)
+      expect(createSession).not.toHaveBeenCalled()
+      parentController.abort()
+      expect(parent.signal.aborted).toBe(true)
+      expect(child.signal.aborted).toBe(false)
+      expect(browserService.getOwnerWindowId('conversation')).toBe(21)
+
+      await gateway.start()
+      const navigate = vi.spyOn(browserService, 'navigate').mockResolvedValue({
+        url: 'https://example.com/',
+        origin: 'https://example.com'
+      })
+      const client = new Client({ name: 'reserved-child-test', version: '1.0.0' })
+      try {
+        await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+          requestInit: { headers: { Authorization: `Bearer ${childToken}` } }
+        }))
+        await client.callTool({ name: 'browser_navigate', arguments: { url: 'https://example.com/' } })
+        expect(navigate).toHaveBeenCalledWith('conversation', 'https://example.com/', expect.any(AbortSignal), parent.tabId)
+        expect(createSession).not.toHaveBeenCalled()
+      } finally {
+        await client.close()
+      }
+      gateway.revoke(childToken)
+      expect(child.signal.aborted).toBe(true)
+      expect(browserService.getOwnerWindowId('conversation')).toBeUndefined()
+    } finally {
+      await gateway.dispose()
+      await browserService.dispose()
+    }
+  })
+
+  it('rejects mismatched or ended reservation leases and releases pre-canceled grants', async () => {
+    const { service } = createService()
+    const browserService = new BrowserService()
+    const gateway = new KnowledgeMcpGateway(service, { browserService })
+    gateways.push(gateway)
+    try {
+      const mismatch = browserService.reserveRequestTab('conversation', 'owner', 21)
+      expect(() => gateway.grant('other-owner', [], new AbortController().signal, 'none', undefined, 'conversation', mismatch.tabId, mismatch))
+        .toThrow('与当前请求不匹配')
+      expect(mismatch.signal.aborted).toBe(true)
+      const released = browserService.reserveRequestTab('conversation', 'released', 21)
+      released.release()
+      expect(() => gateway.grant('released', [], new AbortController().signal, 'none', undefined, 'conversation', released.tabId, released))
+        .toThrow('租约已终止')
+      const canceled = browserService.reserveRequestTab('conversation', 'canceled', 21)
+      expect(() => gateway.grant('canceled', [], AbortSignal.abort(new Error('request canceled')), 'none', undefined, 'conversation', canceled.tabId, canceled))
+        .toThrow('request canceled')
+      expect(canceled.signal.aborted).toBe(true)
+      expect(browserService.getOwnerWindowId('conversation')).toBeUndefined()
+      expect(browserService.getSessionCount()).toBe(0)
+    } finally {
+      await browserService.dispose()
+    }
+  })
+
   it('exposes the assigned browser through a request-scoped conversation', async () => {
     const { service } = createService()
     const browserTabId = browserTabIdSchema.parse(

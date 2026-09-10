@@ -55,6 +55,26 @@ describe('browser control contracts', () => {
     ).toBe(false)
   })
 
+  it('carries workbar ownership without the obsolete frame payload', () => {
+    const state = {
+      conversationId: 'conversation',
+      tabId,
+      workbarInstanceId,
+      status: 'creating',
+      sessionActive: false,
+      isLoading: true,
+      canGoBack: false,
+      updatedAt: 1
+    }
+    expect(browserLiveStateSchema.parse(state)).toEqual(state)
+    expect(browserLiveStateSchema.safeParse({
+      ...state, workbarInstanceId: 'not-a-uuid'
+    }).success).toBe(false)
+    expect(browserLiveStateSchema.safeParse({
+      ...state, frameDataUrl: 'data:image/jpeg;base64,obsolete'
+    }).success).toBe(false)
+  })
+
   it('keeps browser navigation and stop-loading requests narrow', () => {
     expect(
       browserNavigateRequestSchema.parse({

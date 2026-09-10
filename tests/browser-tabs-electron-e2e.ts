@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { KnowledgeService } from '../src/main/knowledge/knowledge-service'
 import { KnowledgeMcpGateway } from '../src/main/agent/knowledge-mcp-gateway'
 import { BrowserService } from '../src/main/browser/browser-service'
+import type { BrowserLiveState } from '../src/shared/contracts'
 
 const conversationId = 'browser-tabs-electron-e2e'
 const otherConversationId = 'browser-tabs-electron-e2e-other'
@@ -50,6 +51,54 @@ async function main(): Promise<void> {
   let client: Client | undefined
   let token: string | undefined
   try {
+    const beforeReservations = webContents.getAllWebContents().length
+    const states: BrowserLiveState[] = []
+    const removeStateListener = browser.onState((state) => states.push(state))
+    const unused = Array.from({ length: 4 }, (_, index) =>
+      browser.reserveRequestTab(`unused-request-${index}`, `request-${index}`, window.webContents.id)
+    )
+    assert.equal(browser.getSessionCount(), 0)
+    assert.equal(browser.getTabCount(), 0)
+    assert.equal(webContents.getAllWebContents().length, beforeReservations)
+    assert.equal(states.length, 0)
+    for (const lease of unused) {
+      lease.release()
+      assert.equal(browser.getOwnerWindowId(lease.conversationId), undefined)
+    }
+    console.log('Four unused request reservations created no Electron sessions, WebContents, or UI events')
+
+    const reserved = browser.reserveRequestTab(conversationId, 'reserved-request', window.webContents.id)
+    await gateway.start()
+    token = gateway.grant('reserved-request', [], controller.signal, 'none', undefined, conversationId, reserved.tabId, reserved)
+    assert(token)
+    client = new Client({ name: 'reserved-browser-electron-e2e', version: '1.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } }
+    }))
+    assert.equal(browser.getSessionCount(), 0)
+    const reservedNavigation = await client.callTool({ name: 'browser_navigate', arguments: { url: `${origin}/mcp` } })
+    assert.notEqual(reservedNavigation.isError, true)
+    assert.equal(browser.getSessionCount(), 1)
+    assert.equal(states[0]?.status, 'creating')
+    assert.equal(states[0]?.tabId, reserved.tabId)
+    assert.equal(states[0]?.workbarInstanceId, reserved.tabId)
+    assert(states.every((state) => state.workbarInstanceId === reserved.tabId && !('frameDataUrl' in state)))
+    const restoredRequestTab = await browser.createTab(conversationId, window.webContents.id, controller.signal, reserved.tabId)
+    assert.equal(restoredRequestTab.tabId, reserved.tabId)
+    assert.equal(restoredRequestTab.workbarInstanceId, reserved.tabId)
+    assert.equal(browser.getTabCount(), 1)
+    assert.match(JSON.stringify(await client.callTool({ name: 'browser_snapshot', arguments: {} })), /MCP target/u)
+    await assert.rejects(browser.closeTab(conversationId, reserved.tabId, window.webContents.id), /正在被.*请求使用/u)
+    gateway.revoke(token)
+    token = undefined
+    await client.close()
+    client = undefined
+    await browser.closeTab(conversationId, reserved.tabId, window.webContents.id)
+    await browser.closeTab(conversationId, reserved.tabId, window.webContents.id)
+    assert.equal(browser.getSessionCount(), 0)
+    removeStateListener()
+    console.log('MCP navigation materialized the exact reserved tab/workbar identity and released its request lease')
+
     await browser.navigate(conversationId, `${origin}/first`, controller.signal, undefined, window.webContents.id)
     const [unownedPrimary] = browser.listTabs(conversationId, window.webContents.id)
     assert(unownedPrimary)

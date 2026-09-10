@@ -374,6 +374,7 @@ export const workspace = {
     browser: {
       title: 'Live browser',
       unbound: 'No conversation',
+      workbarFull: 'The workbar has {{count}} open tabs. The Agent page is retained; close a closable tab to view it.',
       interact: 'Interact',
       interacting: 'Interacting',
       close: 'Close browser',

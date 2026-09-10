@@ -266,6 +266,25 @@ async function probeDify(configuration_) {
   }
 }
 
+function fastGptListResult(result) {
+  if (!result) return { success: false, failure: 'request-failed' }
+  if (!result.response.ok) return { success: false, failure: 'http-error' }
+  const body = asRecord(result.body)
+  if (body?.code !== 200) return { success: false, failure: 'business-error' }
+  const data = asRecord(body.data)
+  const list = Array.isArray(body.data) ? body.data : data?.list
+  if (!Array.isArray(list)) return { success: false, failure: 'invalid-shape' }
+  return { success: true, list }
+}
+
+function fastGptRetrievalShape(result) {
+  const { list, ...outcome } = fastGptListResult(result)
+  return {
+    ...outcome,
+    ...(list ? resultShape(list, 'score') : {})
+  }
+}
+
 async function probeFastGpt(configuration_) {
   const context = { apiKey: configuration_.apiKey, operations: [] }
   const base = baseUrl('fastgpt', configuration_.baseUrl)
@@ -277,12 +296,8 @@ async function probeFastGpt(configuration_) {
   )
   const catalogBody = asRecord(catalog?.body)
   const rawData = catalogBody?.data
-  const nestedData = asRecord(rawData)
-  const items = Array.isArray(rawData)
-    ? rawData
-    : Array.isArray(nestedData?.list)
-      ? nestedData.list
-      : []
+  const { list, ...catalogOutcome } = fastGptListResult(catalog)
+  const items = list ?? []
   const datasets = items.filter((item) => asRecord(item)?.type === 'dataset')
   const first = asRecord(datasets[0])
   let detail
@@ -308,14 +323,7 @@ async function probeFastGpt(configuration_) {
           })
         }
       )
-      const body = asRecord(result?.body)
-      const data = asRecord(body?.data)
-      const list = Array.isArray(body?.data)
-        ? body.data
-        : Array.isArray(data?.list)
-          ? data.list
-          : []
-      retrievals.push({ searchMode, ...resultShape(list, 'score') })
+      retrievals.push({ searchMode, ...fastGptRetrievalShape(result) })
     }
     if (extended) {
       const result = await request(
@@ -334,17 +342,10 @@ async function probeFastGpt(configuration_) {
           })
         }
       )
-      const body = asRecord(result?.body)
-      const data = asRecord(body?.data)
-      const list = Array.isArray(body?.data)
-        ? body.data
-        : Array.isArray(data?.list)
-          ? data.list
-          : []
       retrievals.push({
         searchMode: 'mixedRecall',
         usingRerank: true,
-        ...resultShape(list, 'score')
+        ...fastGptRetrievalShape(result)
       })
     }
   }
@@ -360,7 +361,8 @@ async function probeFastGpt(configuration_) {
         : undefined
     },
     catalog: {
-      count: datasets.length,
+      ...catalogOutcome,
+      ...(catalogOutcome.success ? { count: datasets.length } : {}),
       envelope: Array.isArray(rawData) ? 'data-array' : 'data-object',
       itemKeys: unionKeys(items),
       itemTypes: [...new Set(items.map((item) => asRecord(item)?.type).filter((value) => typeof value === 'string'))].sort()
@@ -371,8 +373,9 @@ async function probeFastGpt(configuration_) {
     },
     retrievals,
     features: {
-      searchModes: [...new Set(retrievals.filter((item) => item.count >= 0).map((item) => item.searchMode))],
-      rerankProbed: extended,
+      searchModes: [...new Set(retrievals.filter((item) => item.success && !item.usingRerank).map((item) => item.searchMode))],
+      rerankProbed: retrievals.some((item) => item.usingRerank),
+      rerankSucceeded: retrievals.some((item) => item.usingRerank && item.success),
       extensionQueryProbed: false
     },
     operations: context.operations

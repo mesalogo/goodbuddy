@@ -621,6 +621,15 @@ node scripts/external-knowledge-probe.mjs --extended --output=<report.json>
 Rerank、RAGFlow GraphRAG 和 Knowledge Compilation 检索。脚本只有固定 GET/POST 读取与
 检索端点，不实现或调用远端创建、更新、上传和删除。
 
+FastGPT 报告将请求成功与命中数量分开：HTTP 必须成功、业务 `code` 必须为 `200`，
+且 `data` 或 `data.list` 必须是数组，才记录 `success: true` 和 `count`。成功的空数组
+记录 `count: 0`；HTTP、业务、响应结构、JSON 解析或网络失败记录 `success: false` 与
+固定失败类别，不用零命中代替失败。目录失败时不继续调用详情和检索。
+`features.searchModes` 只包含基础检索实际成功的模式；`rerankProbed` 表示实际尝试，
+`rerankSucceeded` 单独表示成功。历史基线保留原始证据，不追填未观测的成功字段。
+`tests/external-knowledge-probe-fastgpt.test.ts` 使用内存 fetch fixture 运行真实 CLI，
+覆盖错误、成功零命中和非空结果，不连接外部知识服务。
+
 ### 14.7 CRUD 验收边界
 
 | 对象 | Create | Read | Update | Delete | 验收方式 |

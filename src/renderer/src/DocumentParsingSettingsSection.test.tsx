@@ -529,7 +529,7 @@ describe('DocumentParsingSettingsSection', () => {
     const close = screen.getByRole('button', {
       name: '关闭结果'
     })
-    expect(close).toHaveFocus()
+    await waitFor(() => expect(close).toHaveFocus())
     const backgroundSection = trigger.closest<HTMLElement>(
       '.settings-section'
     )
@@ -543,7 +543,7 @@ describe('DocumentParsingSettingsSection', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     )
-    expect(trigger).toHaveFocus()
+    await waitFor(() => expect(trigger).toHaveFocus())
     expect(backgroundSection?.inert).toBe(false)
     expect(test).toHaveBeenCalledWith('chat-attachment')
     expect(update).not.toHaveBeenCalled()

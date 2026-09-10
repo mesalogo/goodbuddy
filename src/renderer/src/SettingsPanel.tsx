@@ -1927,6 +1927,40 @@ export function SettingsPanel({
       defaultModelProfileId,
       isDeepseekHarnessCompatible
     )
+  const harnessPlatformModel = settings?.deepseekHarnessPlatformModel
+  const harnessDraftFallbackChanged =
+    harnessPlatformModel &&
+    harnessPlatformModel.source !== 'environment' &&
+    (harnessPlatformModel.source === 'profile'
+      ? harnessPlatformModel.profileId !== defaultDeepseekHarnessModelProfile?.id ||
+        harnessPlatformModel.name !== defaultDeepseekHarnessModelProfile?.name ||
+        harnessPlatformModel.modelName !== defaultDeepseekHarnessModelProfile?.modelName
+      : Boolean(defaultDeepseekHarnessModelProfile))
+  const harnessPlatformSummary = [
+    !harnessPlatformModel
+      ? t('runtime.deepseekHarness.platformSourceUnavailable')
+      : harnessPlatformModel.source === 'environment'
+        ? t('runtime.deepseekHarness.environmentSource', {
+            model: harnessPlatformModel.modelName
+          })
+        : harnessPlatformModel.source === 'profile'
+          ? t('runtime.deepseekHarness.platformFallback', {
+              name: modelProfileDisplayName({
+                id: harnessPlatformModel.profileId,
+                name: harnessPlatformModel.name
+              }),
+              model: harnessPlatformModel.modelName
+            })
+          : t('runtime.deepseekHarness.platformNoFallback'),
+    harnessDraftFallbackChanged
+      ? defaultDeepseekHarnessModelProfile
+        ? t('runtime.deepseekHarness.platformDraftFallback', {
+            name: modelProfileDisplayName(defaultDeepseekHarnessModelProfile),
+            model: defaultDeepseekHarnessModelProfile.modelName
+          })
+        : t('runtime.deepseekHarness.platformDraftNoFallback')
+      : ''
+  ].filter(Boolean).join(' ')
   const activeRuntimeModelSource =
     agentRuntimeType === 'opencode'
       ? opencodeModelSource
@@ -2755,7 +2789,7 @@ export function SettingsPanel({
                 detecting={detecting}
                 modelConfiguration={
                   activeRuntimeModelSource.kind === 'platform'
-                    ? t('runtime.deepseekHarness.managedSource')
+                    ? harnessPlatformSummary
                     : activeRuntimeModelProfile
                       ? t('runtime.followGoodBuddy', {
                           name: modelProfileDisplayName(
@@ -2778,7 +2812,7 @@ export function SettingsPanel({
                   aria-label={`DeepSeek Harness ${t(
                     'runtime.deepseekHarness.connection'
                   )}`}
-                  disabled={!defaultDeepseekHarnessModelProfile}
+                  aria-describedby="deepseek-harness-connection-description"
                   onChange={(event) =>
                     setDeepseekHarnessModelSource(
                       parseModelSource(event.target.value)
@@ -2790,8 +2824,8 @@ export function SettingsPanel({
                       : deepseekHarnessModelSource.kind
                   }
                 >
-                  <option value="default">{t('runtime.followRecommended')}</option>
-                  <option value="platform">{t('runtime.ownConfiguration', { runtime: 'DeepSeek Harness' })}</option>
+                  <option disabled={!defaultDeepseekHarnessModelProfile} value="default">{t('runtime.followRecommended')}</option>
+                  <option value="platform">{t('runtime.deepseekHarness.platformSource')}</option>
                   {modelProfiles.map((profile) => (
                     <option
                       disabled={!isDeepseekHarnessCompatible(profile)}
@@ -2805,7 +2839,7 @@ export function SettingsPanel({
                     </option>
                   ))}
                 </select>
-                <small>
+                <small id="deepseek-harness-connection-description">
                   {t(
                     'runtime.deepseekHarness.connectionDescription'
                   )}

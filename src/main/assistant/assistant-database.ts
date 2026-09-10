@@ -113,6 +113,7 @@ export type RemoteConversationTaskEventInput = Omit<
 > & {
   conversationId: string
   assistantMessageId: string
+  runtimeSelection?: AgentRuntimeSelection
   event:
     | AgentEvent
     | {
@@ -4940,6 +4941,10 @@ export class AssistantDatabase {
     const assistantMessageId = assistantIdSchema.parse(
       input.assistantMessageId
     )
+    const requestRuntimeSelection =
+      input.runtimeSelection === undefined
+        ? undefined
+        : agentRuntimeSelectionSchema.parse(input.runtimeSelection)
     const publicEvent = stripRemoteEventProvenance(input.event)
     if (publicEvent.requestId !== input.taskId) {
       throw new Error('远程事件的请求 ID 与任务不匹配')
@@ -5054,13 +5059,16 @@ export class AssistantDatabase {
       }
       const conversation = database
         .prepare(
-          `SELECT runtime_selection_json, context_state_json
-           FROM conversations
-           WHERE id = ?`
+          `SELECT c.runtime_selection_json, c.context_state_json,
+                  p.runtime_selection_json AS project_runtime_selection_json
+           FROM conversations c
+           LEFT JOIN projects p ON p.id = c.project_id
+           WHERE c.id = ?`
         )
         .get(conversationId) as
         | {
             runtime_selection_json: string | null
+            project_runtime_selection_json: string | null
             context_state_json: string | null
           }
         | undefined
@@ -5070,13 +5078,12 @@ export class AssistantDatabase {
       let contextState = parseConversationContextState(
         conversation.context_state_json
       )
+      const runtimeSelection =
+        requestRuntimeSelection ??
+        parseRuntimeSelection(conversation.runtime_selection_json) ??
+        parseRuntimeSelection(conversation.project_runtime_selection_json) ??
+        { provider: 'auto' as const }
       if (publicEvent.type === 'context-metrics') {
-        const runtimeSelection = parseRuntimeSelection(
-          conversation.runtime_selection_json
-        )
-        if (!runtimeSelection) {
-          throw new Error('远程事件的对话缺少 Runtime 选择')
-        }
         contextState = {
           ...contextState,
           contextMetrics: {
@@ -5091,9 +5098,6 @@ export class AssistantDatabase {
         publicEvent.type === 'context-compression' &&
         publicEvent.scope !== 'agent-run'
       ) {
-        const runtimeSelection = parseRuntimeSelection(
-          conversation.runtime_selection_json
-        )
         const estimatedAfterTokens =
           publicEvent.estimatedAfterTokens
         contextState = {
@@ -5105,8 +5109,7 @@ export class AssistantDatabase {
               }
             : {}),
           ...(publicEvent.state === 'completed' &&
-          estimatedAfterTokens !== undefined &&
-          runtimeSelection
+          estimatedAfterTokens !== undefined
             ? {
                 contextMetrics: {
                   runtimeSelectionKey:

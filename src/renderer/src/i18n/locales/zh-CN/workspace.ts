@@ -363,6 +363,7 @@ export const workspace = {
     browser: {
       title: '实时浏览器',
       unbound: '未绑定会话',
+      workbarFull: '工作栏已打开 {{count}} 个页签。Agent 页面已保留，请关闭一个可关闭页签后查看。',
       interact: '交互',
       interacting: '交互中',
       close: '关闭浏览器',

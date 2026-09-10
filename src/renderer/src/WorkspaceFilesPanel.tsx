@@ -254,9 +254,8 @@ export function WorkspaceFilesPanel({
   )
 
   const refreshDirectories = useEffectEvent((generation: number) => {
-    const paths = expandedState.projectId === projectId ? [...expandedState.value] : []
+    const paths = new Set(['', browsedPath, ...(expandedState.projectId === projectId ? expandedState.value : [])])
     setLoadingState({ projectId, value: new Set() })
-    void loadDirectory('', generation)
     for (const path of paths) void loadDirectory(path, generation)
     if (diff) openDiff(diff.path)
   })
@@ -505,7 +504,7 @@ export function WorkspaceFilesPanel({
         { value: 'changes', label: t('management.gitWorkspace') }
       ]} /></div>}
         <div hidden={activeView !== 'changes'}>
-        {showGit && <WorkspaceGitTools projectId={projectId} refreshToken={refreshToken} onRefresh={refresh} viewControl={
+        {showGit && <WorkspaceGitTools key={projectId} projectId={projectId} refreshToken={refreshToken} onRefresh={refresh} viewControl={
           <SegmentedControl ariaLabel={t('management.changedView')} value={changeView} onChange={setChangeView} options={[{ value: 'list', label: t('management.list') }, { value: 'tree', label: t('management.tree') }]} />
         }>
         {gitError ? <p className="workspace-files__status" role="status">{t('sidebar.workspace.gitUnavailable', { error: gitError })}</p>

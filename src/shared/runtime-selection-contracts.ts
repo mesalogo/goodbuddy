@@ -174,7 +174,11 @@ export function repairChannelRuntimeSelection(
         isChannelModelProfileUsable(profile)
     ) ??
     settings.modelProfiles.find(isChannelModelProfileUsable)
-  const defaultDirectSelection: AgentRuntimeSelection = { provider: 'model' }
+  const defaultDirectSelection: AgentRuntimeSelection =
+    defaultDirectProfile &&
+    defaultDirectProfile.id !== settings.defaultModelProfileId
+      ? { provider: 'model', profileId: defaultDirectProfile.id }
+      : { provider: 'model' }
   if (selection.provider === 'auto') {
     return defaultDirectSelection
   }
@@ -204,7 +208,7 @@ export function repairChannelRuntimeSelection(
     return repaired
   }
   const profile = settings.modelProfiles.find(
-    (candidate) => candidate.id === (repaired.profileId ?? defaultDirectProfile?.id)
+    (candidate) => candidate.id === repaired.profileId
   )
   return profile && isChannelModelProfileUsable(profile)
     ? repaired

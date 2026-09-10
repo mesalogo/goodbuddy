@@ -1116,6 +1116,7 @@ describe('DeepSeekHarnessRuntime', () => {
     await vi.waitFor(() =>
       expect(harness.promptGates).toHaveLength(1)
     )
+    await harness.extension('goodbuddy/tools/list', { sessionId: 'session-1' })
 
     await expect(
       harness.extension('goodbuddy/tools/call', {
@@ -1145,6 +1146,8 @@ describe('DeepSeekHarnessRuntime', () => {
     await vi.waitFor(() =>
       expect(harness.promptGates).toHaveLength(1)
     )
+    await harness.extension('goodbuddy/tools/list', { sessionId: 'session-1' })
+    vi.mocked(provider.listTools).mockRejectedValue(new Error('unrelated server unavailable'))
 
     await expect(
       harness.extension('goodbuddy/tools/call', {
@@ -1158,6 +1161,7 @@ describe('DeepSeekHarnessRuntime', () => {
       ]
     })
     expect(authorize).toHaveBeenCalledTimes(1)
+    expect(provider.listTools).toHaveBeenCalledOnce()
     expect(provider.callTool).toHaveBeenCalledWith(
       mcpTool().name,
       { kind: 'cube' },
@@ -1283,6 +1287,7 @@ describe('DeepSeekHarnessRuntime', () => {
     await vi.waitFor(() =>
       expect(harness.promptGates).toHaveLength(1)
     )
+    await harness.extension('goodbuddy/tools/list', { sessionId: 'session-1' })
 
     await expect(
       harness.extension('goodbuddy/tools/call', {
@@ -1311,6 +1316,7 @@ describe('DeepSeekHarnessRuntime', () => {
     await vi.waitFor(() =>
       expect(harness.promptGates).toHaveLength(1)
     )
+    await harness.extension('goodbuddy/tools/list', { sessionId: 'session-1' })
 
     await expect(
       harness.extension('goodbuddy/tools/call', {

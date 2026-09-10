@@ -6032,17 +6032,11 @@ function App(): React.JSX.Element {
           }
           return next;
         }
-        const previous = conversationStates[tabId];
         return {
           ...current,
           [state.conversationId]: {
             ...conversationStates,
-            [tabId]: state.frameDataUrl || !previous?.frameDataUrl
-                ? state
-                : {
-                    ...state,
-                    frameDataUrl: previous.frameDataUrl,
-                  },
+            [tabId]: state,
           },
         };
       });
@@ -8989,6 +8983,14 @@ function App(): React.JSX.Element {
                         taskStrip={
                           !conversation.remote ? (
                             <ConversationTaskStrip
+                              conversationMode={
+                                conversation.id === activeId
+                                  ? effectiveWorkMode
+                                  : normalizeInteractiveWorkMode(
+                                      conversation.workMode ??
+                                      projects.find((project) => project.id === conversation.projectId)?.defaultWorkMode
+                                    )
+                              }
                               locale={locale}
                               onRemoveSchedule={removeAssistantSchedule}
                               onRunSchedule={runAssistantSchedule}

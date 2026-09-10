@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,6 +8,9 @@ import {
   waitFor
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { TerminalSnapshot } from '../../shared/terminal-contracts'
+import { workbarLayoutPreferencesSchema } from '../../shared/workbar-contracts'
+import { DEFAULT_WORKBAR_INSTANCES } from './WorkbarShell'
 import type {
   AssistantProject,
   AssistantTask,
@@ -26,18 +30,39 @@ import {
   type SidebarArtifact
 } from './RightAssistantSidebar'
 
+vi.mock('./TerminalPanel', () => ({
+  TerminalPanel: ({ onSessionChange }: {
+    onSessionChange?: (snapshot: TerminalSnapshot) => void
+  }) => (
+    <button
+      onClick={() => onSessionChange?.({
+        sessionId: '00000000-0000-4000-8000-000000000498',
+        state: 'running'
+      } as TerminalSnapshot)}
+      type="button"
+    >
+      Start test terminal
+    </button>
+  )
+}))
+
 afterEach(cleanup)
 
 const firstBrowserTabId =
   '00000000-0000-4000-8000-000000000401' as BrowserTabId
 const secondBrowserTabId =
   '00000000-0000-4000-8000-000000000402' as BrowserTabId
+const browserStateListeners = new Set<(state: BrowserLiveState) => void>()
 const browserApi = {
   createTab: vi.fn<(request: BrowserCreateTabRequest) => Promise<BrowserTabSummary>>(),
   closeTab: vi.fn(async () => undefined),
   setViewport: vi.fn<
     (request: BrowserSetViewportRequest) => Promise<void>
-  >(async () => undefined)
+  >(async () => undefined),
+  onState: (listener: (state: BrowserLiveState) => void) => {
+    browserStateListeners.add(listener)
+    return () => { browserStateListeners.delete(listener) }
+  }
 }
 
 function browserSummary(
@@ -59,6 +84,7 @@ function browserSummary(
 
 beforeEach(() => {
   localStorage.clear()
+  browserStateListeners.clear()
   Object.defineProperty(window, 'innerWidth', {
     configurable: true,
     value: 1400
@@ -115,7 +141,8 @@ function sidebarElement({
   onBackBrowser,
   onNavigateBrowser,
   onReloadBrowser,
-  onStopLoadingBrowser
+  onStopLoadingBrowser,
+  onTabChange = vi.fn()
 }: {
   tab?: AssistantSidebarTab
   approvals?: PendingSidebarApproval[]
@@ -146,6 +173,7 @@ function sidebarElement({
   onNavigateBrowser?: (conversationId: string, tabId: BrowserTabId, url: string) => Promise<void>
   onReloadBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
   onStopLoadingBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
+  onTabChange?: (tab: AssistantSidebarTab) => void
 } = {}): React.JSX.Element {
   return (
     <div>
@@ -177,7 +205,7 @@ function sidebarElement({
         onSetScheduleEnabled={vi.fn(async () => undefined)}
         onStopLoadingBrowser={onStopLoadingBrowser}
         onOpenTask={vi.fn()}
-        onTabChange={vi.fn()}
+        onTabChange={onTabChange}
         open
         restoreFocusRef={restoreFocusRef}
         tab={tab}
@@ -1176,5 +1204,167 @@ describe('RightAssistantSidebar resizing', () => {
     expect(
       screen.getByRole('tab', { name: '浏览器 · conversation-a' })
     ).toBeInTheDocument()
+  })
+
+  it('rebinds a released tab before retrying navigation and can close a released instance', async () => {
+    const conversationId = 'retry-browser'
+    const onNavigateBrowser = vi.fn(async () => undefined)
+    renderSidebar({ tab: 'browser', activeConversationId: conversationId, onNavigateBrowser })
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledOnce())
+    const owner = browserApi.createTab.mock.calls[0]![0].workbarInstanceId
+    const stopped: BrowserLiveState = {
+      ...browserSummary(conversationId, firstBrowserTabId, true),
+      status: 'stopped',
+      sessionActive: false
+    }
+    act(() => {
+      for (const listener of browserStateListeners) listener(stopped)
+    })
+    browserApi.createTab.mockResolvedValueOnce(browserSummary(conversationId, secondBrowserTabId, true))
+    fireEvent.change(screen.getByRole('textbox', { name: '浏览器地址' }), {
+      target: { value: 'https://retry.example/' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '前往' }))
+    await waitFor(() => expect(onNavigateBrowser).toHaveBeenCalledWith(
+      conversationId, secondBrowserTabId, 'https://retry.example/'
+    ))
+    expect(browserApi.createTab).toHaveBeenLastCalledWith({ conversationId, workbarInstanceId: owner })
+    act(() => {
+      for (const listener of browserStateListeners) listener({ ...stopped, tabId: secondBrowserTabId })
+    })
+    fireEvent.click(screen.getByRole('button', { name: '关闭浏览器 · retry-browser' }))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: '浏览器 · retry-browser' })).not.toBeInTheDocument())
+    expect(browserApi.closeTab).not.toHaveBeenCalled()
+  })
+
+  it('shows the request-created Main tab without creating a second blank page', async () => {
+    const conversationId = 'request-browser'
+    const workbarInstanceId = '00000000-0000-4000-8000-000000000499'
+    const onNavigateBrowser = vi.fn(async () => undefined)
+    renderSidebar({
+      tab: 'browser',
+      activeConversationId: conversationId,
+      onNavigateBrowser,
+      browserStates: {
+        [conversationId]: {
+          [firstBrowserTabId]: {
+            ...browserSummary(conversationId, firstBrowserTabId, true),
+            workbarInstanceId,
+            sessionActive: true,
+            url: 'https://agent.example/'
+          }
+        }
+      }
+    })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://agent.example/'))
+    expect(browserApi.createTab).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '前往' }))
+    await waitFor(() => expect(onNavigateBrowser).toHaveBeenCalledWith(
+      conversationId, firstBrowserTabId, 'https://agent.example/'
+    ))
+    expect(browserApi.createTab).not.toHaveBeenCalled()
+  })
+
+  it('retains a request page at layout capacity and binds it after a slot is closed', async () => {
+    const conversationId = 'full-workbar'
+    const instances = [
+      ...DEFAULT_WORKBAR_INSTANCES.filter((instance) => instance.appId === 'tasks' || instance.appId === 'workspace'),
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: crypto.randomUUID(),
+        appId: 'browser' as const,
+        title: `parked-${index}`,
+        targetRef: { type: 'conversation' as const, conversationId }
+      }))
+    ]
+    localStorage.setItem('goodbuddy.workbar-layout.v1', JSON.stringify({
+      instances, activeInstanceId: instances[0]!.id,
+      expanded: true, dock: 'right', widthRatio: 0.3,
+      taskScope: 'current-project'
+    }))
+    const workbarInstanceId = '00000000-0000-4000-8000-000000000497'
+    renderSidebar({
+      tab: 'browser', activeConversationId: conversationId,
+      browserStates: {
+        [conversationId]: {
+          [firstBrowserTabId]: {
+            ...browserSummary(conversationId, firstBrowserTabId, true),
+            workbarInstanceId, sessionActive: true, url: 'https://retained.example/'
+          }
+        }
+      }
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('请关闭一个可关闭页签')
+    expect(screen.getAllByRole('tab')).toHaveLength(32)
+    expect(browserApi.createTab).not.toHaveBeenCalled()
+    expect(workbarLayoutPreferencesSchema.safeParse(
+      JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
+    ).success).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '关闭parked-0' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://retained.example/'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('tab')).toHaveLength(32)
+    expect(browserApi.createTab).not.toHaveBeenCalled()
+    const restored = workbarLayoutPreferencesSchema.parse(
+      JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
+    )
+    expect(restored.instances.some((instance) => instance.id === workbarInstanceId)).toBe(true)
+    expect(restored.activeInstanceId).toBe(workbarInstanceId)
+  })
+
+  it('preserves an explicit cross-conversation tab selection when the external app follows it', async () => {
+    const onTabChange = vi.fn()
+    const view = render(sidebarElement({
+      tab: 'browser', activeConversationId: 'conversation-a', onTabChange
+    }))
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledOnce())
+    view.rerender(sidebarElement({
+      tab: 'browser', activeConversationId: 'conversation-b', onTabChange
+    }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    fireEvent.click(screen.getByText('浏览器', { selector: 'strong' }).closest('button')!)
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('tab', { name: '任务中心' }))
+    view.rerender(sidebarElement({
+      tab: 'tasks', activeConversationId: 'conversation-b', onTabChange
+    }))
+    const browserA = screen.getByRole('tab', { name: '浏览器 · conversation-a' })
+    fireEvent.click(browserA)
+    expect(onTabChange).toHaveBeenLastCalledWith('browser')
+    view.rerender(sidebarElement({
+      tab: 'browser', activeConversationId: 'conversation-b', onTabChange
+    }))
+    expect(browserA).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('releases the native browser viewport while confirming another terminal close', async () => {
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 500, height: 400, left: 900, right: 1300, top: 100,
+      width: 400, x: 900, y: 100, toJSON: () => ({})
+    })
+    try {
+      renderSidebar({ tab: 'browser', activeConversationId: 'modal-browser' })
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenCalledWith(
+        expect.objectContaining({ conversationId: 'modal-browser', bounds: expect.any(Object) })
+      ))
+      fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+      fireEvent.click(screen.getByText('终端', { selector: 'strong' }).closest('button')!)
+      fireEvent.click(await screen.findByRole('button', { name: 'Start test terminal' }))
+      fireEvent.click(screen.getByRole('tab', { name: '浏览器 · modal-browser' }))
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ conversationId: 'modal-browser', bounds: expect.any(Object) })
+      ))
+      const activeViewport = browserApi.setViewport.mock.calls.at(-1)![0]
+      fireEvent.click(screen.getByRole('button', { name: '关闭终端 1' }))
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith({
+        leaseToken: activeViewport.leaseToken
+      }))
+      const dialog = screen.getByRole('alertdialog')
+      fireEvent.click(within(dialog).getByRole('button', { name: /取消/u }))
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ conversationId: 'modal-browser', bounds: expect.any(Object) })
+      ))
+    } finally {
+      bounds.mockRestore()
+    }
   })
 })

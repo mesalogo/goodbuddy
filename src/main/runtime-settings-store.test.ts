@@ -732,6 +732,98 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
+  it.each([
+    { name: 'complete administrator override', environment: {
+      GOODBUDDY_MODEL_API_KEY: 'administrator-secret',
+      GOODBUDDY_MODEL_BASE_URL: 'https://administrator.example/v1?private=marker',
+      GOODBUDDY_MODEL_NAME: 'administrator-model'
+    }, compatibleDefault: true, expected: 'environment' },
+    { name: 'API key only with incompatible default', environment: {
+      GOODBUDDY_MODEL_API_KEY: 'administrator-secret'
+    }, compatibleDefault: false, expected: 'first' },
+    { name: 'API key only with compatible default', environment: {
+      GOODBUDDY_MODEL_API_KEY: 'administrator-secret'
+    }, compatibleDefault: true, expected: 'default' },
+    { name: 'address and model without API key', environment: {
+      GOODBUDDY_MODEL_BASE_URL: 'https://administrator.example/v1',
+      GOODBUDDY_MODEL_NAME: 'administrator-model'
+    }, compatibleDefault: false, expected: 'first' },
+    { name: 'legacy environment credentials', environment: {
+      GOODBUDDY_BIGTOKEN_API_KEY: 'legacy-secret',
+      GOODBUDDY_BIGTOKEN_BASE_URL: 'https://legacy.example/v1',
+      GOODBUDDY_BIGTOKEN_MODEL: 'legacy-model'
+    }, compatibleDefault: false, expected: 'first' },
+    { name: 'compatible saved default', environment: {},
+      compatibleDefault: true, expected: 'default' },
+    { name: 'first compatible saved connection', environment: {},
+      compatibleDefault: false, expected: 'first' },
+    { name: 'no compatible connection', environment: {},
+      compatibleDefault: false, expected: 'unavailable' }
+  ])('projects the actual Harness platform source: $name', async ({
+    environment, compatibleDefault, expected
+  }) => {
+    const { store, filePath } = await createStore(environment)
+    const firstId = '00000000-0000-4000-8000-000000000061'
+    const defaultId = '00000000-0000-4000-8000-000000000062'
+    const profile = {
+      name: 'First compatible', baseUrl: 'https://saved.example/v1?private=marker',
+      modelName: 'saved-model', protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const, imageGenerationQuality: 'auto' as const,
+      apiKey: { action: 'replace' as const, value: 'saved-secret' },
+      requestHeaders: { 'X-Private-Header': 'header-marker' },
+      requestBody: { privateMetadata: 'body-marker' }
+    }
+    const input = settings({
+      modelProfiles: [
+        ...(expected === 'unavailable' ? [] : [{ ...profile, id: firstId }]),
+        {
+          ...profile, id: defaultId, name: 'Preferred connection',
+          protocol: compatibleDefault ? 'openai-chat-completions' : 'anthropic-messages'
+        }
+      ],
+      defaultModelProfileId: defaultId
+    })
+    const publicSettings = await store.update(input)
+    const resolved = (await store.getResolvedSettings()).deepseekHarnessModelProfile
+    const projection = publicSettings.deepseekHarnessPlatformModel
+    if (expected === 'unavailable') {
+      expect(resolved).toBeUndefined()
+      expect(projection).toEqual({ source: 'unavailable' })
+    } else {
+      expect(resolved).toBeDefined()
+      expect(projection).toEqual({
+        source: expected === 'environment' ? 'environment' : 'profile',
+        ...(expected === 'environment'
+          ? {}
+          : { profileId: expected === 'default' ? defaultId : firstId }),
+        name: resolved!.name,
+        modelName: resolved!.modelName
+      })
+      if (expected === 'environment') {
+        expect(projection?.source).toBe('environment')
+        expect(resolved?.modelName).toBe('administrator-model')
+      }
+    }
+    const serialized = JSON.stringify(projection)
+    for (const excluded of [
+      'https://', 'apiKey', 'baseUrl', 'requestHeaders', 'requestBody',
+      'administrator-secret', 'saved-secret', 'legacy-secret', 'header-marker', 'body-marker'
+    ]) {
+      expect(serialized).not.toContain(excluded)
+    }
+    expect(await readFile(filePath, 'utf8')).not.toContain('deepseekHarnessPlatformModel')
+    expect((await store.getPublicSettings()).deepseekHarnessPlatformModel).toEqual(projection)
+
+    // Merely inspecting the platform option must not change a selected default rule.
+    if (expected !== 'unavailable') {
+      const followingDefault = await store.update({
+        ...input, deepseekHarnessModelSource: { kind: 'default' }
+      })
+      expect(followingDefault.deepseekHarnessModelSource).toEqual({ kind: 'default' })
+      expect(followingDefault.deepseekHarnessPlatformModel).toEqual(projection)
+    }
+  })
+
   it('resolves a controlled platform Harness profile without exposing its credential', async () => {
     const apiKey = 'platform-harness-secret'
     const { store } = await createStore({

@@ -14,7 +14,7 @@ import {
   realpath,
   stat
 } from 'node:fs/promises'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
@@ -464,12 +464,11 @@ type BrowserRequestTabUsageLease = {
 }
 
 type BrowserCapabilityControl = {
-  createTab(
+  reserveRequestTab(
     conversationId: string,
-    ownerWindowId?: number,
-    signal?: AbortSignal,
-    workbarInstanceId?: string
-  ): Promise<{ tabId: BrowserTabId }>
+    owner: string,
+    ownerWindowId?: number
+  ): BrowserRequestTabUsageLease
   listTabs(
     conversationId: string,
     ownerWindowId?: number
@@ -486,18 +485,6 @@ type BrowserCapabilityControl = {
   ): BrowserRequestTabUsageLease
 }
 
-function requestWorkbarInstanceId(owner: string): string {
-  const bytes = createHash('sha256')
-    .update('goodbuddy:browser-request-workbar:')
-    .update(owner)
-    .digest()
-    .subarray(0, 16)
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80
-  const hex = bytes.toString('hex')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
 async function bindBrowserTab(input: {
   control?: BrowserCapabilityControl
   conversationId: string
@@ -509,6 +496,7 @@ async function bindBrowserTab(input: {
   if (!input.control) {
     throw new Error('GoodBuddy 内置浏览器服务不可用')
   }
+  input.signal.throwIfAborted()
   const tabs = input.control.listTabs(
     input.conversationId,
     input.ownerWindowId
@@ -525,17 +513,17 @@ async function bindBrowserTab(input: {
       input.ownerWindowId
     )
     const primary = tabs.find((tab) => tab.primary)
-    tabId = visibleTabId && tabs.some((tab) => tab.tabId === visibleTabId)
+    const existingTabId = visibleTabId && tabs.some((tab) => tab.tabId === visibleTabId)
       ? visibleTabId
-      : primary?.tabId ??
-        (
-          await input.control.createTab(
-            input.conversationId,
-            input.ownerWindowId,
-            input.signal,
-            requestWorkbarInstanceId(input.owner)
-          )
-        ).tabId
+      : primary?.tabId
+    if (!existingTabId) {
+      return input.control.reserveRequestTab(
+        input.conversationId,
+        input.owner,
+        input.ownerWindowId
+      )
+    }
+    tabId = existingTabId
   }
   return input.control.acquireTabUsage(
     input.conversationId,
@@ -1573,26 +1561,9 @@ export function registerIpcHandlers(
   }
   window.on('maximize', notifyMaximizedChanged)
   window.on('unmaximize', notifyMaximizedChanged)
-  const lastSentBrowserFrames = new Map<string, string>()
   const removeBrowserStateListener = browserControl?.onState((state) => {
     if (!window.isDestroyed() && state.ownerWindowId === window.webContents.id) {
-      const tabStateKey = `${state.conversationId}\u0000${state.tabId}`
-      const frame = state.frameDataUrl
-      let payload: BrowserLiveState = state
-      if (
-        frame &&
-        lastSentBrowserFrames.get(tabStateKey) === frame
-      ) {
-        payload = { ...state }
-        delete payload.frameDataUrl
-      }
-      if (frame) {
-        lastSentBrowserFrames.set(tabStateKey, frame)
-      }
-      if (state.status === 'stopped') {
-        lastSentBrowserFrames.delete(tabStateKey)
-      }
-      window.webContents.send(ipcChannels.browserState, payload)
+      window.webContents.send(ipcChannels.browserState, state)
     }
   })
   const abortActiveRequests = (
@@ -2069,6 +2040,7 @@ export function registerIpcHandlers(
         assistantDatabase.appendRemoteConversationTaskEventOnce({
           taskId: task.taskId,
           conversationId: task.conversationId,
+          runtimeSelection,
           assistantMessageId: task.currentAssistantMessageId,
           bindingId: provenance.bindingId,
           operationId: provenance.operationId,
@@ -2513,7 +2485,12 @@ export function registerIpcHandlers(
         abort: (reason) => controller.abort(reason)
       })
       knowledgeCapabilityToken = notesCapability.token
-      const noteTools = notesCapability.toolNames
+      const noteTools = [
+        ...(!agentRuntimeSelected
+          ? ['workspace_rg', 'workspace_read_text', 'output_read', 'subagent_delegate']
+          : []),
+        ...notesCapability.toolNames
+      ]
       const noteToolSummary = noteTools.join(', ')
       const modeInstruction =
         schedule.workMode === 'execute'
@@ -4079,6 +4056,9 @@ export function registerIpcHandlers(
     const knowledgeCapabilityToken = scopedCapability.token
     const availableTools = [
       ...(webSearchEnabled ? ['web_search', 'web_fetch'] : []),
+      ...(!agentRuntimeSelected && !imageGeneration
+        ? ['workspace_rg', 'workspace_read_text', 'output_read', 'subagent_delegate']
+        : []),
       ...scopedCapability.toolNames
     ]
     const hasAvailableTools = availableTools.length > 0
@@ -4263,6 +4243,7 @@ export function registerIpcHandlers(
           ? assistantDatabase.appendRemoteConversationTaskEventOnce({
               taskId: request.requestId,
               conversationId: request.conversationId,
+              runtimeSelection: request.runtimeSelection ?? configProject?.runtimeSelection,
               assistantMessageId:
                 remoteConversationRecovery.currentAssistantMessageId,
               bindingId: provenance.bindingId,
@@ -4290,6 +4271,7 @@ export function registerIpcHandlers(
           ? assistantDatabase.appendRemoteConversationTaskEventOnce({
               taskId: request.requestId,
               conversationId: request.conversationId,
+              runtimeSelection: request.runtimeSelection ?? configProject?.runtimeSelection,
               assistantMessageId:
                 remoteConversationRecovery.currentAssistantMessageId,
               bindingId: provenance.bindingId,
@@ -4911,9 +4893,15 @@ export function registerIpcHandlers(
         request.conversationId
       )
       const settings = await settingsStore.getResolvedSettings()
+      const project = conversation.projectId
+        ? assistantDatabase.getProject(conversation.projectId)
+        : undefined
+      const savedRuntimeSelection =
+        conversation.runtimeSelection ?? project?.runtimeSelection
       const persistedRuntimeSelection =
-        conversation.runtimeSelection ??
-        getDefaultRuntimeSelection(settings)
+        savedRuntimeSelection && savedRuntimeSelection.provider !== 'auto'
+          ? savedRuntimeSelection
+          : getDefaultRuntimeSelection(settings)
       if (
         conversation.projectId !== request.projectId ||
         agentRuntimeSelectionKey(persistedRuntimeSelection) !==
@@ -4946,9 +4934,6 @@ export function registerIpcHandlers(
         settings,
         request.runtimeSelection
       )
-      const project = request.projectId
-        ? assistantDatabase.getProject(request.projectId)
-        : undefined
       if (project?.executionSpace?.kind === 'ssh') {
         await requireRemoteProjectsEnabled()
       }
@@ -8520,7 +8505,6 @@ export function registerIpcHandlers(
     removeLocalToolEnvironmentProgressListener?.()
     await localToolEnvironmentService?.dispose()
     removeBrowserStateListener?.()
-    lastSentBrowserFrames.clear()
     removeRemoteAgentConnectionStatusListener?.()
     clearInterval(scheduleInterval)
     for (const timeout of queueDispatchTimers.values()) {

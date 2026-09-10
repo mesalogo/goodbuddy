@@ -381,6 +381,9 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 - 工作区不是 containment 边界；绝对路径和命令可访问当前用户本来有权访问的主机资源。
 - 已启用插件注册的工具与内置工具使用同一分发路径；GoodBuddy 不增加插件权限矩阵或逐工具确认。
 - Main 代理的 MCP 工具继续执行分配、schema、活动请求、模式和 RuntimeAuthorizer 校验。
+  `goodbuddy/tools/list` 按 Session 保存本次发现的工具定义；`goodbuddy/tools/call` 复用该定义
+  校验参数与授权，不因调用健康工具而重新等待故障 MCP 的发现。发现重试留在清单刷新，
+  Session 释放及 Runtime dispose 清除内存定义，不持久化第二份能力状态。
 - 所有工具调用仍作为活动事件记录；Ask 和 delegation 路径继续固定拒绝。
 
 ### 10.4 Runtime OS 沙箱
@@ -446,8 +449,17 @@ DeepSeek Harness 首版只使用符合下列边界的 GoodBuddy 模型连接：
   任意 Body 配置入口，因此 DeepSeek Harness 不接收自定义 Body。完整支持矩阵和合并规则
   见[模型连接请求定制](../model-connections/technical-design.md)。
 - API Key 继续保存在 GoodBuddy 加密设置中。
-- 启动环境提供的部署连接只由 Main 自动解析，不在 Renderer 中显示为可选来源。
-- 未显式指定 Harness 模型且没有可用的管理员预置连接时，Main 优先使用当前默认的兼容 GoodBuddy 模型连接；默认连接不兼容时使用首个兼容连接。只有不存在任何兼容连接时才提示用户前往模型或 Runtime 设置。
+- `platform` 在设置页显示为“管理员环境优先，回退 GoodBuddy 兼容连接”，不是 Harness
+  自有配置文件。Main 优先读取完整的 `GOODBUDDY_MODEL_BASE_URL`、
+  `GOODBUDDY_MODEL_NAME` 和 `GOODBUDDY_MODEL_API_KEY` 环境预置；不完整时使用
+  当前默认兼容 GoodBuddy 连接，再回退首个兼容连接。
+- `default` 只跟随 GoodBuddy 默认兼容连接或首个兼容连接，跳过独立管理员预置；
+  `profile` 使用指定的兼容连接。没有兼容连接时，仍允许选择 `platform`，因为完整
+  管理员预置不依赖已保存连接的协议；运行时缺少实际连接才报告不可用。
+- Renderer 通过 Main 的只读平台来源投影展示实际管理员模型或兼容回退，不读取环境
+  或密钥，也不根据 `credentialSource` 猜测。投影直接复用本节所述的生产 resolver，
+  字段、非持久化与草稿展示边界见
+  [Harness 平台来源公开投影](../model-connections/technical-design.md#9-harness-平台来源公开投影)。
 
 不允许选择 Harness 自有的用户配置文件或自定义 Host。Runtime 始终使用随当前 GoodBuddy 版本发布的内置 Host，并通过完整内部能力握手。
 

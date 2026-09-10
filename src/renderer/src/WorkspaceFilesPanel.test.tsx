@@ -4,6 +4,7 @@ import { changeUiLocale } from './i18n'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { gitStatusLetter, WorkspaceFilesPanel } from './WorkspaceFilesPanel'
+import type { WorkspaceManagementAction, WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
 
 beforeEach(() => vi.stubGlobal('goodbuddy', { workspace: { manage: vi.fn(async () => ({ kind: 'branches', current: 'main', branches: [] })) } }))
 
@@ -14,6 +15,78 @@ afterEach(async () => {
 })
 
 describe('WorkspaceFilesPanel', () => {
+  it.each([false, true])('keeps Git operations usable when a task refresh occurs during history pagination (failure: %s)', async (fail) => {
+    const head = 'a'.repeat(40)
+    const initial = { oid: head, subject: 'Latest commit', author: 'Author', time: '2026-09-09T10:00:00Z', refs: 'HEAD -> main' }
+    let resolvePage!: (value: WorkspaceManagementResult) => void
+    let rejectPage!: (reason: Error) => void
+    const page = new Promise<WorkspaceManagementResult>((resolve, reject) => { resolvePage = resolve; rejectPage = reject })
+    const manage = vi.fn(async (_project: string, action: WorkspaceManagementAction): Promise<WorkspaceManagementResult> => {
+      if (action.kind === 'history') return action.offset
+        ? page
+        : { kind: 'history', head, commits: [initial], hasMore: true }
+      if (action.kind === 'fetch') return { kind: 'done' }
+      return { kind: 'branches', current: 'main', branches: [] }
+    })
+    vi.stubGlobal('goodbuddy', { workspace: { manage } })
+    const props = {
+      projectId: 'project', isRepository: true, changedFiles: [],
+      onListDirectory: vi.fn(async () => ({ path: '', entries: [], truncated: false })),
+      onLoadDiff: vi.fn(), onOpenFile: vi.fn(), onRefresh: vi.fn(async () => undefined)
+    }
+    const { rerender } = render(<WorkspaceFilesPanel {...props} refreshToken={0} />)
+    await waitFor(() => expect(props.onListDirectory).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'Git 工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交历史' }))
+    fireEvent.click(await screen.findByRole('button', { name: '加载更多提交' }))
+    expect(screen.getByRole('button', { name: 'Fetch' })).toBeDisabled()
+    expect(manage).toHaveBeenCalledWith('project', { kind: 'history', offset: 1, head })
+    rerender(<WorkspaceFilesPanel {...props} refreshToken={1} />)
+    await waitFor(() => expect(manage.mock.calls.filter(([, action]) => action.kind === 'branches')).toHaveLength(2))
+    await act(async () => {
+      if (fail) rejectPage(new Error('History temporarily unavailable'))
+      else resolvePage({ kind: 'history', head, commits: [{ ...initial, oid: 'b'.repeat(40), subject: 'Older commit' }], hasMore: false })
+    })
+    if (fail) {
+      expect(screen.getByRole('alert')).toHaveTextContent('History temporarily unavailable')
+      expect(screen.getByRole('button', { name: '重试' })).toBeEnabled()
+    } else expect(screen.getByText('Older commit')).toBeInTheDocument()
+    expect(screen.getByText('Latest commit')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Fetch' })).toBeEnabled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch' }))
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Fetch' })).toBeEnabled())
+    expect(manage).toHaveBeenCalledWith('project', { kind: 'fetch' })
+  })
+
+  it.each([false, true])('refreshes the browsed directory once even when its tree entry is not expanded (expanded: %s)', async (expanded) => {
+    let version = 0
+    const onListDirectory = vi.fn(async (path: string) => ({
+      path, truncated: false, entries: path
+        ? [{ name: `file-${version}.txt`, path: `${path}/file-${version}.txt`, type: 'file' as const }]
+        : [{ name: 'docs', path: 'docs', type: 'directory' as const }]
+    }))
+    const props = { projectId: 'project', changedFiles: [], onListDirectory, onLoadDiff: vi.fn(), onOpenFile: vi.fn() }
+    const { rerender } = render(<WorkspaceFilesPanel {...props} refreshToken={version} />)
+    const directory = await screen.findByRole('button', { name: 'docs' })
+    if (expanded) {
+      fireEvent.click(directory)
+      await screen.findByRole('button', { name: 'file-0.txt' })
+    } else expect(directory).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'docs 的更多操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '浏览此目录' }))
+    await screen.findByRole('button', { name: 'file-0.txt' })
+    expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-current', 'location')
+    const beforeRefresh = onListDirectory.mock.calls.length
+    version++
+    rerender(<WorkspaceFilesPanel {...props} refreshToken={version} />)
+    await screen.findByRole('button', { name: 'file-1.txt' })
+    expect(screen.queryByRole('button', { name: 'file-0.txt' })).not.toBeInTheDocument()
+    expect(onListDirectory.mock.calls.slice(beforeRefresh)).toEqual([[''], ['docs']])
+    expect(screen.getByRole('button', { name: 'docs' })).toHaveAttribute('aria-current', 'location')
+  })
+
   it('keeps directory navigation and compact actions bounded independently', () => {
     const css = readFileSync(join(process.cwd(), 'src/renderer/src/styles.css'), 'utf8')
     expect(css.match(/\.workspace-files__actions\s*\{([^}]*)\}/)?.[1]).toContain('flex-wrap: nowrap')

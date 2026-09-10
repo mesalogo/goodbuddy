@@ -16,7 +16,7 @@ import type {
   RuntimeAuthorizer,
   RuntimeEvent
 } from './runtime'
-import type { ModelToolProviderLike } from './model-tool-provider'
+import type { ModelToolDefinition, ModelToolProviderLike } from './model-tool-provider'
 import type { RuntimeSkillPackage } from '../capabilities/capability-service'
 import type { ControlledHarnessExtensionPackage } from './deepseek-harness-extension-loader'
 import {
@@ -449,6 +449,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   private fatalError?: Error
   private stderrBytes = 0
   private readonly sessions = new Map<string, string>()
+  private readonly proxyToolCatalogs = new Map<string, ModelToolDefinition[]>()
   private readonly sessionInitializations = new Map<
     string,
     Promise<string>
@@ -844,12 +845,11 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   context,
                   connection.signal
                 )
-                return {
-                  tools: boundedProxyToolCatalog(
-                    tools,
-                    context.workMode
-                  )
-                }
+                const catalog = boundedProxyToolCatalog(tools, context.workMode)
+                this.proxyToolCatalogs.set(params.sessionId, tools.filter(
+                  (tool) => tool.source === 'mcp' || isMainWebTool(tool)
+                ))
+                return { tools: catalog }
               }
               if (method === GOODBUDDY_TOOLS_CALL) {
                 const sessionId = params.sessionId
@@ -882,10 +882,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   knowledgeCapabilityToken:
                     run.request.knowledgeCapabilityToken
                 }
-                const tools = await this.options.toolProvider.listTools(
-                  context,
-                  run.toolController.signal
-                )
+                const tools = this.proxyToolCatalogs.get(sessionId as string) ?? []
                 const tool = tools.find(
                   (candidate) =>
                     candidate.name === name &&
@@ -1599,6 +1596,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   async releaseConversation(conversationId: string): Promise<void> {
     const sessionId = this.sessions.get(conversationId)
     this.sessions.delete(conversationId)
+    if (sessionId) this.proxyToolCatalogs.delete(sessionId)
     if (!sessionId || !this.state) {
       await this.options.toolProvider
         ?.releaseConversation(conversationId)
@@ -1646,6 +1644,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     }
     this.activeRuns.clear()
     this.sessions.clear()
+    this.proxyToolCatalogs.clear()
     this.sessionInitializations.clear()
     this.conversationTails.clear()
     if (!state) {

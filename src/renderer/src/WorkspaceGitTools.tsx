@@ -30,13 +30,16 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
   const commitBack = useRef<HTMLButtonElement>(null)
   const action = (value: WorkspaceManagementAction): Promise<WorkspaceManagementResult> => window.goodbuddy.workspace.manage(projectId, value)
   useEffect(() => {
-    const branchCounter = branchRequest
     const detailCounter = request
+    return () => { detailCounter.current++ }
+  }, [])
+  useEffect(() => {
+    const branchCounter = branchRequest
     const generation = ++branchRequest.current
     void window.goodbuddy.workspace.manage(projectId, { kind: 'branches' }).then((result) => {
       if (branchRequest.current === generation && result.kind === 'branches') setBranches(result)
     }).catch((reason: unknown) => { if (branchRequest.current === generation) setError(String(reason)) })
-    return () => { branchCounter.current++; detailCounter.current++ }
+    return () => { branchCounter.current++ }
   }, [projectId, refreshToken])
   useEffect(() => { if (path) diffBack.current?.focus(); else if (commit) commitBack.current?.focus() }, [path, commit])
   const run = async (value: WorkspaceManagementAction): Promise<void> => {

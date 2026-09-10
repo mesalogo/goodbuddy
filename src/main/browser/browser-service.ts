@@ -84,7 +84,6 @@ export type BrowserServiceOptions = {
   maximumTabsPerWindow?: number
   idleTimeoutMs?: number
   cleanupTimeoutMs?: number
-  liveFrameDelayMs?: number
   parentWindow?: BrowserParentWindowHandle
   createSession?: (
     policy: BrowserUrlPolicy,
@@ -134,9 +133,17 @@ type BrowserConversationSlot = {
 }
 
 type ConversationCreation = {
+  tabId: BrowserTabId
   controller: AbortController
   promise: Promise<BrowserConversationSlot>
   waiters: Set<symbol>
+  ownerWindowId?: number
+}
+
+type RequestTabReservation = Pick<
+  BrowserTabSlot,
+  'conversationId' | 'tabId' | 'usageLeases'
+> & {
   ownerWindowId?: number
 }
 
@@ -227,7 +234,6 @@ export class BrowserService {
   private readonly maximumTabsPerWindow: number
   private readonly idleTimeoutMs: number
   private readonly cleanupTimeoutMs: number
-  private readonly liveFrameDelayMs: number
   private readonly createSession: NonNullable<BrowserServiceOptions['createSession']>
   private readonly createDriver: NonNullable<BrowserServiceOptions['createDriver']>
   private readonly conversations = new Map<string, BrowserConversationSlot>()
@@ -238,6 +244,7 @@ export class BrowserService {
   private readonly stateListeners = new Set<(state: BrowserLiveState) => void>()
   private readonly liveStates = new Map<string, BrowserLiveState>()
   private readonly ownedTabCreations = new Map<string, OwnedTabCreation>()
+  private readonly requestTabs = new Map<string, RequestTabReservation>()
   private viewport?: ViewportLease
   private lifecycle = new AbortController()
   private clearOperation?: Promise<void>
@@ -253,7 +260,6 @@ export class BrowserService {
       options.maximumTabsPerWindow ?? DEFAULT_MAXIMUM_TABS_PER_WINDOW
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.cleanupTimeoutMs = options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS
-    this.liveFrameDelayMs = options.liveFrameDelayMs ?? 100
     this.createSession =
       options.createSession ??
       ((policy, signal) => defaultCreateSession(policy, signal, options.parentWindow))
@@ -268,9 +274,6 @@ export class BrowserService {
       if (!Number.isSafeInteger(value) || value < 1) {
         throw new Error('浏览器服务限制配置无效')
       }
-    }
-    if (!Number.isSafeInteger(this.liveFrameDelayMs) || this.liveFrameDelayMs < 0) {
-      throw new Error('浏览器服务限制配置无效')
     }
   }
 
@@ -292,7 +295,8 @@ export class BrowserService {
 
   getOwnerWindowId(conversationId: string): number | undefined {
     return this.conversations.get(conversationId)?.ownerWindowId ??
-      this.creations.get(conversationId)?.ownerWindowId
+      this.creations.get(conversationId)?.ownerWindowId ??
+      this.requestTabs.get(conversationId)?.ownerWindowId
   }
 
   onState(listener: (state: BrowserLiveState) => void): () => void {
@@ -349,9 +353,9 @@ export class BrowserService {
   }
 
   private emitState(
-    tab: Pick<BrowserTabSlot, 'conversationId' | 'tabId'>,
+    tab: Pick<BrowserTabSlot, 'conversationId' | 'tabId' | 'workbarInstanceId'>,
     status: BrowserLiveState['status'],
-    update: Partial<Pick<BrowserLiveState, 'url' | 'frameDataUrl' | 'error' | 'canGoBack' | 'isLoading'>> = {}
+    update: Partial<Pick<BrowserLiveState, 'url' | 'error' | 'canGoBack' | 'isLoading'>> = {}
   ): void {
     const key = stateKey(tab.conversationId, tab.tabId)
     const previous = this.liveStates.get(key)
@@ -359,6 +363,9 @@ export class BrowserService {
     const state: BrowserLiveState = {
       conversationId: tab.conversationId,
       tabId: tab.tabId,
+      ...((tab.workbarInstanceId ?? current?.workbarInstanceId ?? previous?.workbarInstanceId)
+        ? { workbarInstanceId: tab.workbarInstanceId ?? current?.workbarInstanceId ?? previous?.workbarInstanceId }
+        : {}),
       ...(current
         ? this.conversations.get(tab.conversationId)?.ownerWindowId !== undefined
           ? { ownerWindowId: this.conversations.get(tab.conversationId)!.ownerWindowId }
@@ -375,7 +382,6 @@ export class BrowserService {
         (status === 'creating' ? true : status === 'stopped' ? false : current?.isLoading ?? false),
       canGoBack: update.canGoBack ?? previous?.canGoBack ?? false,
       ...(previous?.url ? { url: previous.url } : {}),
-      ...(status !== 'stopped' && previous?.frameDataUrl ? { frameDataUrl: previous.frameDataUrl } : {}),
       ...update,
       updatedAt: Date.now()
     }
@@ -392,7 +398,7 @@ export class BrowserService {
   }
 
   private assertWindowOwner(
-    conversation: BrowserConversationSlot,
+    conversation: { ownerWindowId?: number },
     ownerWindowId?: number
   ): void {
     if (ownerWindowId === undefined) return
@@ -540,10 +546,18 @@ export class BrowserService {
   private async getOrCreateConversation(
     conversationId: string,
     signal: AbortSignal,
-    ownerWindowId?: number
+    ownerWindowId?: number,
+    workbarInstanceId?: string,
+    requestTabId?: BrowserTabId
   ): Promise<BrowserConversationSlot> {
+    signal.throwIfAborted()
     if (this.disposed || this.clearing || this.lifecycle.signal.aborted) {
       throw new Error('浏览器服务已关闭')
+    }
+    const requestTab = this.requestTabs.get(conversationId)
+    if (requestTab) {
+      this.assertWindowOwner(requestTab, ownerWindowId)
+      ownerWindowId ??= requestTab.ownerWindowId
     }
     const existing = this.conversations.get(conversationId)
     if (existing && !existing.released) {
@@ -562,23 +576,30 @@ export class BrowserService {
       const releaseReservation = this.reserveTab(conversationId, ownerWindowId)
       const controller = new AbortController()
       const waiters = new Set<symbol>()
-      const tabId = createTabId()
+      const tabId = requestTabId ?? createTabId()
+      const instanceId = workbarInstanceId ?? tabId
       const promise = this.createConversation(
         conversationId,
         tabId,
         ownerWindowId,
         AbortSignal.any([this.lifecycle.signal, controller.signal]),
-        () => waiters.size > 0
+        () => waiters.size > 0,
+        instanceId
       )
       void promise.finally(releaseReservation).catch(() => undefined)
-      creation = { controller, promise, waiters, ownerWindowId }
+      creation = { tabId, controller, promise, waiters, ownerWindowId }
       this.creations.set(conversationId, creation)
-      this.emitState({ conversationId, tabId }, 'creating')
+      this.emitState({ conversationId, tabId, workbarInstanceId: instanceId }, 'creating')
       const current = creation
       const remove = (): void => {
         if (this.creations.get(conversationId) === current) this.creations.delete(conversationId)
       }
-      void promise.then(remove, remove)
+      void promise.then(remove, () => {
+        remove()
+        if (this.liveStates.get(stateKey(conversationId, tabId))?.status === 'creating') {
+          this.emitState({ conversationId, tabId, workbarInstanceId: instanceId }, 'stopped')
+        }
+      })
     }
     const waiter = Symbol(conversationId)
     creation.waiters.add(waiter)
@@ -600,7 +621,8 @@ export class BrowserService {
     tabId: BrowserTabId,
     ownerWindowId: number | undefined,
     signal: AbortSignal,
-    hasWaiters: () => boolean
+    hasWaiters: () => boolean,
+    workbarInstanceId: string
   ): Promise<BrowserConversationSlot> {
     const session = await this.createSession(this.policy, signal)
     if (this.disposed || signal.aborted || !hasWaiters() || this.releaseRequests.has(conversationId)) {
@@ -618,13 +640,30 @@ export class BrowserService {
       lastUsedAt: Date.now(),
       released: false
     }
-    const tab = await this.createTabSlot(undefined, conversationId, session, tabId)
+    const tab = await this.createTabSlot(undefined, conversationId, session, tabId, workbarInstanceId)
+    if (signal.aborted || !hasWaiters() || this.releaseRequests.has(conversationId)) {
+      tab.removeLoadingListener()
+      tab.removeNavigationListener()
+      tab.driver.dispose()
+      await boundedCleanup(session.dispose(), this.cleanupTimeoutMs)
+      throw signal.reason ?? new Error('浏览器会话创建已取消')
+    }
+    this.adoptRequestTab(conversation, tab)
+    conversation.ownedTabs.set(workbarInstanceId, tabId)
     conversation.tabs.set(tabId, tab)
     this.conversations.set(conversationId, conversation)
     this.emitState(tab, 'ready')
     this.scheduleIdleExpiry(conversation)
     this.applyViewport()
     return conversation
+  }
+
+  private adoptRequestTab(conversation: BrowserConversationSlot, tab: BrowserTabSlot): void {
+    const reservation = this.requestTabs.get(conversation.conversationId)
+    if (reservation?.tabId !== tab.tabId) return
+    tab.usageLeases = reservation.usageLeases
+    conversation.ownerWindowId ??= reservation.ownerWindowId
+    this.requestTabs.delete(conversation.conversationId)
   }
 
   async createTab(
@@ -636,6 +675,9 @@ export class BrowserService {
     if (workbarInstanceId) {
       const key = ownershipKey(conversationId, workbarInstanceId)
       const existingConversation = this.conversations.get(conversationId)
+      if (existingConversation) this.assertWindowOwner(existingConversation, ownerWindowId)
+      const pendingConversation = this.creations.get(conversationId)
+      if (pendingConversation) this.assertWindowOwner(pendingConversation, ownerWindowId)
       const existingTabId = existingConversation?.ownedTabs.get(workbarInstanceId)
       const existingTab = existingTabId ? existingConversation?.tabs.get(existingTabId) : undefined
       if (existingTab && !existingTab.released) return this.summarizeTab(existingTab)
@@ -677,17 +719,13 @@ export class BrowserService {
     workbarInstanceId?: string
   ): Promise<BrowserTabSummary> {
     const existed = this.conversations.has(conversationId) || this.creations.has(conversationId)
-    const conversation = await this.getOrCreateConversation(conversationId, signal, ownerWindowId)
+    const reservation = this.requestTabs.get(conversationId)
+    const requestTabId = reservation && reservation.tabId === workbarInstanceId ? reservation.tabId : undefined
+    const conversation = await this.getOrCreateConversation(conversationId, signal, ownerWindowId, workbarInstanceId, requestTabId)
     if (workbarInstanceId) {
       const ownedTabId = conversation.ownedTabs.get(workbarInstanceId)
       const ownedTab = ownedTabId ? conversation.tabs.get(ownedTabId) : undefined
       if (ownedTab && !ownedTab.released) return this.summarizeTab(ownedTab)
-      const primary = conversation.tabs.get(conversation.primaryTabId)
-      if (primary && !primary.workbarInstanceId && !existed) {
-        primary.workbarInstanceId = workbarInstanceId
-        conversation.ownedTabs.set(workbarInstanceId, primary.tabId)
-        return this.summarizeTab(primary)
-      }
     } else if (!existed) {
       return this.summarizeTab(conversation.tabs.get(conversation.primaryTabId)!)
     }
@@ -709,9 +747,14 @@ export class BrowserService {
         await boundedCleanup(session.dispose(), this.cleanupTimeoutMs)
         throw effectiveSignal.reason ?? new Error('浏览器会话已关闭')
       }
-      const tabId = createTabId()
-      this.emitState({ conversationId, tabId }, 'creating')
+      const tabId = requestTabId ?? createTabId()
+      this.emitState({ conversationId, tabId, workbarInstanceId }, 'creating')
       const tab = await this.createTabSlot(conversation, conversationId, session, tabId, workbarInstanceId)
+      if (effectiveSignal.aborted || conversation.released) {
+        await this.releaseTab(conversation, tab)
+        throw effectiveSignal.reason ?? new Error('浏览器会话已关闭')
+      }
+      this.adoptRequestTab(conversation, tab)
       if (workbarInstanceId) conversation.ownedTabs.set(workbarInstanceId, tabId)
       this.touchConversation(conversationId)
       this.emitState(tab, 'ready')
@@ -748,6 +791,36 @@ export class BrowserService {
     return conversation.tabs.has(tabId) ? tabId : undefined
   }
 
+  reserveRequestTab(
+    conversationId: string,
+    owner: string,
+    ownerWindowId?: number
+  ): BrowserTabUsageLease {
+    if (this.disposed || this.clearing || this.releaseRequests.has(conversationId)) {
+      throw new Error('浏览器服务已关闭')
+    }
+    if (!owner || owner.length > 500) {
+      throw new Error('浏览器标签页使用租约所有者无效')
+    }
+    const conversation = this.conversations.get(conversationId)
+    let reservation = this.requestTabs.get(conversationId)
+    if (!reservation && conversation && !conversation.released) {
+      return this.acquireTabUsage(conversationId, conversation.primaryTabId, owner, ownerWindowId)
+    }
+    if (!reservation) {
+      const creation = this.creations.get(conversationId)
+      if (creation) this.assertWindowOwner(creation, ownerWindowId)
+      reservation = {
+        conversationId,
+        tabId: creation?.tabId ?? createTabId(),
+        ownerWindowId: ownerWindowId ?? creation?.ownerWindowId,
+        usageLeases: new Map()
+      }
+      this.requestTabs.set(conversationId, reservation)
+    }
+    return this.acquireTabUsage(conversationId, reservation.tabId, owner, ownerWindowId)
+  }
+
   acquireTabUsage(
     conversationId: string,
     tabId: BrowserTabId,
@@ -758,18 +831,18 @@ export class BrowserService {
       throw new Error('浏览器标签页使用租约所有者无效')
     }
     const conversation = this.conversations.get(conversationId)
-    if (!conversation || conversation.released) {
-      throw new Error('浏览器标签页不存在或不属于当前对话')
-    }
-    this.assertWindowOwner(conversation, ownerWindowId)
-    const tab = conversation.tabs.get(tabId)
-    if (!tab || tab.released) {
+    const reservation = this.requestTabs.get(conversationId)
+    if (conversation) this.assertWindowOwner(conversation, ownerWindowId)
+    if (reservation) this.assertWindowOwner(reservation, ownerWindowId)
+    const tab = conversation?.tabs.get(tabId) ??
+      (reservation?.tabId === tabId ? reservation : undefined)
+    if (!tab || conversation?.released) {
       throw new Error('浏览器标签页不存在或不属于当前对话')
     }
     const token = Symbol(owner)
     const controller = new AbortController()
     tab.usageLeases.set(token, { owner, controller })
-    if (conversation.idleTimer) {
+    if (conversation?.idleTimer) {
       clearTimeout(conversation.idleTimer)
       conversation.idleTimer = undefined
     }
@@ -782,9 +855,24 @@ export class BrowserService {
       release: (): void => {
         if (released) return
         released = true
-        if (tab.usageLeases.delete(token) && this.hasTab(tab)) {
-          this.touchConversation(conversationId)
+        if (tab.usageLeases.delete(token)) {
+          if (this.conversations.get(conversationId)?.tabs.has(tabId)) {
+            this.touchConversation(conversationId)
+          } else if (
+            tab.usageLeases.size === 0 &&
+            this.requestTabs.get(conversationId) === tab
+          ) {
+            this.requestTabs.delete(conversationId)
+            const creation = this.creations.get(conversationId)
+            if (creation?.tabId === tabId) {
+              creation.controller.abort(new Error('浏览器会话创建已取消'))
+            }
+            this.ownedTabCreations.get(ownershipKey(conversationId, tabId))?.controller.abort(
+              new Error('浏览器标签页创建已取消')
+            )
+          }
         }
+        controller.abort(new Error('浏览器标签页使用租约已终止'))
       }
     }
   }
@@ -794,6 +882,7 @@ export class BrowserService {
     return {
       conversationId: tab.conversationId,
       tabId: tab.tabId,
+      ...(tab.workbarInstanceId ? { workbarInstanceId: tab.workbarInstanceId } : {}),
       primary: this.conversations.get(tab.conversationId)?.primaryTabId === tab.tabId,
       status:
         state?.status && state.status !== 'stopped' ? state.status : 'ready',
@@ -807,12 +896,25 @@ export class BrowserService {
 
   async closeTab(conversationId: string, tabId: BrowserTabId, ownerWindowId?: number): Promise<void> {
     const conversation = this.conversations.get(conversationId)
-    if (!conversation || conversation.released) throw new Error('浏览器标签页不存在或不属于当前对话')
-    this.assertWindowOwner(conversation, ownerWindowId)
-    const tab = conversation.tabs.get(tabId)
-    if (!tab) throw new Error('浏览器标签页不存在或不属于当前对话')
+    if (conversation) this.assertWindowOwner(conversation, ownerWindowId)
+    const reservation = this.requestTabs.get(conversationId)
+    if (reservation) this.assertWindowOwner(reservation, ownerWindowId)
+    const creation = this.creations.get(conversationId)
+    if (creation) this.assertWindowOwner(creation, ownerWindowId)
+    const tab = conversation?.tabs.get(tabId)
+    if (!tab) {
+      if (
+        [...this.conversations.values()].some((slot) => slot.tabs.has(tabId)) ||
+        [...this.creations.entries()].some(([id, slot]) => slot.tabId === tabId && id !== conversationId) ||
+        [...this.requestTabs.values()].some((slot) => slot.tabId === tabId && slot.conversationId !== conversationId)
+      ) throw new Error('浏览器标签页不存在或不属于当前对话')
+      if (reservation?.tabId === tabId && reservation.usageLeases.size > 0) {
+        throw new Error(BROWSER_TAB_IN_USE_ERROR)
+      }
+      return
+    }
     if (tab.usageLeases.size > 0) throw new Error(BROWSER_TAB_IN_USE_ERROR)
-    await this.releaseTab(conversation, tab)
+    await this.releaseTab(conversation!, tab)
   }
 
   private requireTab(conversationId: string, tabId?: BrowserTabId, ownerWindowId?: number): BrowserTabSlot {
@@ -948,6 +1050,15 @@ export class BrowserService {
   ): Promise<{ url: string; origin: string }> {
     let tab: BrowserTabSlot | undefined
     try {
+      if (tabId) {
+        const knownTab = this.conversations.get(conversationId)?.tabs.has(tabId) ||
+          this.requestTabs.get(conversationId)?.tabId === tabId ||
+          this.creations.get(conversationId)?.tabId === tabId
+        if (!knownTab) throw new Error('浏览器标签页不存在或不属于当前对话')
+        if (this.requestTabs.get(conversationId)?.tabId === tabId) {
+          await this.createTab(conversationId, ownerWindowId, signal, tabId)
+        }
+      }
       const conversation = await this.getOrCreateConversation(conversationId, signal, ownerWindowId)
       tab = conversation.tabs.get(tabId ?? conversation.primaryTabId)
       if (!tab || tab.released) throw new Error('浏览器标签页不存在或不属于当前对话')
@@ -972,7 +1083,7 @@ export class BrowserService {
         if (conversation) await this.releaseTab(conversation, tab).catch(() => undefined)
         throw new Error('浏览器快照来源与当前会话不一致')
       }
-      await this.captureFrame(tab, effectiveSignal, target.href)
+      await this.refreshNavigationState(tab, effectiveSignal, target.href)
       return { ...snapshot, url: target.href }
     }, tabId, ownerWindowId)
   }
@@ -981,7 +1092,7 @@ export class BrowserService {
     await this.runInTab(conversationId, signal, 'acting', true, '浏览器点击', async (tab, effectiveSignal) => {
       await this.verifyCurrentOriginOrRelease(tab)
       await tab.driver.click(ref, effectiveSignal)
-      await this.captureFrame(tab, effectiveSignal)
+      await this.refreshNavigationState(tab, effectiveSignal)
     }, tabId, ownerWindowId)
   }
 
@@ -989,7 +1100,7 @@ export class BrowserService {
     await this.runInTab(conversationId, signal, 'acting', false, '浏览器输入', async (tab, effectiveSignal) => {
       await this.verifyCurrentOriginOrRelease(tab)
       await tab.driver.type(ref, text, effectiveSignal)
-      await this.captureFrame(tab, effectiveSignal)
+      await this.refreshNavigationState(tab, effectiveSignal)
     }, tabId, ownerWindowId)
   }
 
@@ -997,7 +1108,7 @@ export class BrowserService {
     await this.runInTab(conversationId, signal, 'acting', false, '浏览器选择', async (tab, effectiveSignal) => {
       await this.verifyCurrentOriginOrRelease(tab)
       await tab.driver.select(ref, value, effectiveSignal)
-      await this.captureFrame(tab, effectiveSignal)
+      await this.refreshNavigationState(tab, effectiveSignal)
     }, tabId, ownerWindowId)
   }
 
@@ -1030,7 +1141,7 @@ export class BrowserService {
         }
       }
       screenshot ??= await tab.driver.screenshot(effectiveSignal)
-      await this.captureFrame(tab, effectiveSignal, undefined, screenshot)
+      await this.refreshNavigationState(tab, effectiveSignal)
       return screenshot
     }, tabId, ownerWindowId)
   }
@@ -1082,7 +1193,7 @@ export class BrowserService {
       const finalTarget = await this.policy.validateRedirect(result.url, signal)
       if (tab.session.getCurrentOrigin() !== finalTarget.origin) throw new Error(originMismatchMessage)
       tab.origin = finalTarget.origin
-      await this.captureFrame(tab, signal, finalTarget.url.href)
+      await this.refreshNavigationState(tab, signal, finalTarget.url.href)
       return { url: finalTarget.url.href, origin: finalTarget.origin }
     } catch (error) {
       if (error instanceof BrowserNavigationStoppedError) {
@@ -1095,11 +1206,10 @@ export class BrowserService {
     }
   }
 
-  private async captureFrame(
+  private async refreshNavigationState(
     tab: BrowserTabSlot,
     signal: AbortSignal,
-    url?: string,
-    screenshot?: BrowserScreenshot
+    url?: string
   ): Promise<void> {
     let committedUrl = url
     const previous = this.liveStates.get(stateKey(tab.conversationId, tab.tabId))
@@ -1114,65 +1224,19 @@ export class BrowserService {
     } catch {
       signal.throwIfAborted()
     }
-    let frame = screenshot
-    if (!frame) {
-      if (this.liveFrameDelayMs > 0) {
-        await waitFor(new Promise<void>((resolve) => setTimeout(resolve, this.liveFrameDelayMs)), signal)
-      }
-      const deadline = AbortSignal.any([signal, AbortSignal.timeout(6_000)])
-      for (let attempt = 0; attempt < 3 && !frame; attempt += 1) {
-        if (attempt > 0) {
-          try {
-            await waitFor(new Promise<void>((resolve) => setTimeout(resolve, attempt * 150)), deadline)
-          } catch {
-            signal.throwIfAborted()
-            break
-          }
-        }
-        if (tab.session.captureScreenshot) {
-          try {
-            frame = await tab.session.captureScreenshot(AbortSignal.any([deadline, AbortSignal.timeout(1_500)]))
-          } catch {
-            signal.throwIfAborted()
-          }
-        }
-        if (!frame && !deadline.aborted) {
-          try {
-            frame = await tab.driver.screenshot(AbortSignal.any([deadline, AbortSignal.timeout(1_500)]))
-          } catch {
-            signal.throwIfAborted()
-          }
-        }
-      }
-    }
     signal.throwIfAborted()
     if (!this.hasTab(tab)) return
-    if (!frame) {
-      if (previous?.frameDataUrl) {
-        this.emitState(tab, 'ready', {
-          ...(committedUrl ? { url: committedUrl } : {}),
-          canGoBack,
-          frameDataUrl: previous.frameDataUrl
-        })
-      } else {
-        this.emitState(tab, 'failed', {
-          ...(committedUrl ? { url: committedUrl } : {}),
-          canGoBack,
-          error: '页面已就绪，但实时画面捕获失败，请重试浏览器操作'
-        })
-      }
-      return
-    }
     this.emitState(tab, 'ready', {
       ...(committedUrl ? { url: committedUrl } : {}),
-      canGoBack,
-      frameDataUrl: `data:${frame.mimeType};base64,${frame.data}`
+      canGoBack
     })
   }
 
   async releaseConversation(conversationId: string, ownerWindowId?: number): Promise<void> {
     const ownedConversation = this.conversations.get(conversationId)
     if (ownedConversation) this.assertWindowOwner(ownedConversation, ownerWindowId)
+    const reservation = this.requestTabs.get(conversationId)
+    if (reservation) this.assertWindowOwner(reservation, ownerWindowId)
     const creation = this.creations.get(conversationId)
     if (
       ownerWindowId !== undefined &&
@@ -1182,6 +1246,7 @@ export class BrowserService {
       throw new Error('浏览器对话不属于当前窗口')
     }
     this.releaseRequests.add(conversationId)
+    this.releaseRequestTab(conversationId)
     let emitted = false
     try {
       const pendingCreation = this.creations.get(conversationId)
@@ -1213,6 +1278,16 @@ export class BrowserService {
     } finally {
       if (!this.disposed) this.releaseRequests.delete(conversationId)
     }
+  }
+
+  private releaseRequestTab(conversationId: string): void {
+    const reservation = this.requestTabs.get(conversationId)
+    if (!reservation) return
+    this.requestTabs.delete(conversationId)
+    for (const lease of reservation.usageLeases.values()) {
+      lease.controller.abort(new Error('浏览器标签页使用租约已终止'))
+    }
+    reservation.usageLeases.clear()
   }
 
   private async releaseTab(conversation: BrowserConversationSlot, tab: BrowserTabSlot): Promise<void> {
@@ -1287,6 +1362,7 @@ export class BrowserService {
   private async performClearSessions(): Promise<void> {
     this.clearing = true
     this.lifecycle.abort(new Error('浏览器会话已清除'))
+    for (const id of this.requestTabs.keys()) this.releaseRequestTab(id)
     const requested = new Set(this.creations.keys())
     for (const id of requested) this.releaseRequests.add(id)
     try {
@@ -1308,6 +1384,7 @@ export class BrowserService {
     this.disposed = true
     this.clearing = true
     this.lifecycle.abort(new Error('浏览器服务已关闭'))
+    for (const id of this.requestTabs.keys()) this.releaseRequestTab(id)
     for (const [id, creation] of this.creations) {
       this.releaseRequests.add(id)
       creation.controller.abort(new Error('浏览器服务已关闭'))

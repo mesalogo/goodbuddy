@@ -291,6 +291,7 @@ export type ModelToolResult = {
 export type ModelToolCallContext = {
   conversationId: string
   browserTabId?: BrowserTabId
+  browserConversationId?: string
   workMode: 'ask' | 'execute'
   requestId?: string
   runtimeTarget?: 'model'
@@ -302,6 +303,8 @@ export type ModelToolCallContext = {
 
 export type ModelSubagentRequestContext = {
   authorize?: RuntimeAuthorizer
+  browserTabId?: BrowserTabId
+  browserConversationId?: string
   knowledgeCapabilityToken?: string
   emitEvent: (event: RuntimeEvent) => void
 }
@@ -663,6 +666,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     Promise<ConnectedMcp | undefined>
   >()
   private webSearchBindings?: Promise<Map<string, McpToolBinding>>
+  private mcpBindings = new Map<string, McpToolBinding>()
   private readonly clients = new Set<Client>()
   private readonly customMcpClients = new Set<Client>()
   private readonly webSearchClients = new Set<Client>()
@@ -739,7 +743,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
       context.browserTabId
       ? new BrowserModelTools({
           service: this.browserService,
-          conversationId: context.conversationId,
+          conversationId:
+            context.browserConversationId ?? context.conversationId,
           browserTabId: context.browserTabId
         })
       : undefined
@@ -1211,6 +1216,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         bindings.set(binding.definition.name, binding)
       }
     }
+    this.mcpBindings = bindings
     return bindings
   }
 
@@ -1823,7 +1829,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
       )
     }
 
-    const binding = (await this.getMcpBindings(signal)).get(name)
+    // Calls use the discovered catalog; only listTools retries failed servers.
+    const binding = this.mcpBindings.get(name)
     if (!binding) {
       throw new Error('模型请求了未知工具')
     }
@@ -1881,6 +1888,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     this.customMcpClients.clear()
     this.webSearchClients.clear()
     this.mcpConnections.clear()
+    this.mcpBindings.clear()
     this.webSearchBindings = undefined
     await Promise.allSettled([
       ...clients.map((client) => client.close()),

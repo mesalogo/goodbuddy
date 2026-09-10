@@ -1740,6 +1740,25 @@ export class RuntimeSettingsStore {
       }
     })
     const deepseekHarnessModelSource = settings.deepseekHarnessModelSource
+    const harnessPlatformProfile = this.resolveDeepSeekHarnessModelProfile(
+      { ...settings, deepseekHarnessModelSource: { kind: 'platform' } },
+      resolvedModelProfiles
+    )
+    const deepseekHarnessPlatformModel: RuntimeSettings['deepseekHarnessPlatformModel'] =
+      !harnessPlatformProfile
+        ? { source: 'unavailable' }
+        : harnessPlatformProfile.id === platformHarnessProfileId
+          ? {
+              source: 'environment',
+              name: harnessPlatformProfile.name,
+              modelName: harnessPlatformProfile.modelName
+            }
+          : {
+              source: 'profile',
+              profileId: harnessPlatformProfile.id,
+              name: harnessPlatformProfile.name,
+              modelName: harnessPlatformProfile.modelName
+            }
     const embeddingEnvironmentApiKey =
       this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim()
     const embeddingStoredApiKey = embeddingEnvironmentApiKey
@@ -1846,6 +1865,7 @@ export class RuntimeSettingsStore {
         : settings.opencodeModelSource,
       continueModelSource: settings.continueModelSource,
       deepseekHarnessModelSource,
+      deepseekHarnessPlatformModel,
       secureStorageAvailable: this.cipher.isAvailable(),
       toolApproval: settings.toolApproval,
       configured: {

@@ -125,6 +125,7 @@ import { UiLocaleProvider } from "./i18n/UiLocaleProvider";
 
 let agentListener: ((event: AgentEvent) => void) | undefined;
 let browserListener: ((state: BrowserLiveState) => void) | undefined;
+const browserListeners = new Set<(state: BrowserLiveState) => void>();
 let fileSelectionProgressListener:
   Parameters<DesktopApi["context"]["onFileSelectionProgress"]>[0] | undefined;
 let newConversationListener: (() => void) | undefined;
@@ -269,9 +270,12 @@ const api: DesktopApi = {
     setViewport: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     onState: vi.fn((listener) => {
-      browserListener = listener;
+      browserListeners.add(listener);
+      browserListener = (state) => {
+        for (const notify of browserListeners) notify(state);
+      };
       return () => {
-        browserListener = undefined;
+        browserListeners.delete(listener);
       };
     }),
   },
@@ -1161,6 +1165,7 @@ describe("App", () => {
     newConversationListener = undefined;
     beforeQuitListener = undefined;
     browserListener = undefined;
+    browserListeners.clear();
     fileSelectionProgressListener = undefined;
     maximizedChangedListener = undefined;
     speechRecognitionMocks.startPcmRecording.mockResolvedValue({
@@ -1690,7 +1695,7 @@ describe("App", () => {
     const taskRegion = await screen.findByRole("region", {
       name: "当前会话的任务",
     });
-    expect(within(taskRegion).getByText("Execute")).toBeInTheDocument();
+    expect(within(taskRegion).getByText("Ask")).toBeInTheDocument();
   });
 
   it("refreshes scheduled Task state on queue-only events and guards manual runs through completion", async () => {
@@ -10564,7 +10569,6 @@ describe("App", () => {
         createBrowserState(conversationId ?? "", {
           canGoBack: false,
           url: "https://example.com/",
-          frameDataUrl: "data:image/jpeg;base64,/9j/2Q==",
           updatedAt: Date.now(),
         }),
       );

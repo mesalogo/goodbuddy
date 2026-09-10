@@ -710,7 +710,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       sessionActive: true,
       isLoading: false,
       canGoBack: false,
-      frameDataUrl: 'data:image/jpeg;base64,frame',
+      workbarInstanceId: browserTabId,
       updatedAt: 1
     })
     expect(webContents.send).toHaveBeenCalledWith(
@@ -740,11 +740,12 @@ describe('registerIpcHandlers computer capabilities', () => {
       sessionActive: true,
       isLoading: false,
       canGoBack: false,
-      frameDataUrl: 'data:image/jpeg;base64,frame',
+      workbarInstanceId: browserTabId,
       updatedAt: 2
     })
     const repeatedFramePayload = webContents.send.mock.calls.at(-1)?.[1]
     expect(repeatedFramePayload).not.toHaveProperty('frameDataUrl')
+    expect(repeatedFramePayload).toHaveProperty('workbarInstanceId', browserTabId)
     browserStateListener?.({
       conversationId: 'browser-conversation',
       tabId: siblingBrowserTabId,
@@ -753,11 +754,11 @@ describe('registerIpcHandlers computer capabilities', () => {
       sessionActive: true,
       isLoading: false,
       canGoBack: false,
-      frameDataUrl: 'data:image/jpeg;base64,frame',
+      workbarInstanceId: siblingBrowserTabId,
       updatedAt: 2
     })
     expect(webContents.send.mock.calls.at(-1)?.[1]).toHaveProperty(
-      'frameDataUrl'
+      'workbarInstanceId', siblingBrowserTabId
     )
     browserStateListener?.({
       conversationId: 'browser-conversation',
@@ -777,12 +778,12 @@ describe('registerIpcHandlers computer capabilities', () => {
       sessionActive: true,
       isLoading: false,
       canGoBack: false,
-      frameDataUrl: 'data:image/jpeg;base64,frame',
+      workbarInstanceId: browserTabId,
       updatedAt: 4
     })
     expect(webContents.send.mock.calls.at(-1)?.[1]).toHaveProperty(
-      'frameDataUrl',
-      'data:image/jpeg;base64,frame'
+      'workbarInstanceId',
+      browserTabId
     )
     await expect(
       electronMocks.handlers.get(ipcChannels.browserStop)?.(event, {
@@ -4774,7 +4775,8 @@ describe('registerIpcHandlers Runtime customization', () => {
       listPendingConversationQueueIds: vi.fn(() => []),
       getProject: vi.fn(() => ({
         id: projectId,
-        rootPath: 'C:\\ProjectWorkspace'
+        rootPath: 'C:\\ProjectWorkspace',
+        runtimeSelection: undefined as { provider: 'opencode' } | undefined
       })),
       getConversation: vi.fn(() => ({
         id: conversationId,
@@ -4968,6 +4970,17 @@ describe('registerIpcHandlers Runtime customization', () => {
     ).rejects.toThrow('对话 Runtime 或 Project 已更改')
 
     persistedRuntimeSelection = undefined
+    settingsStore.getResolvedSettings.mockResolvedValue({
+      provider: 'model',
+      modelProfiles: [],
+      opencodeBaseUrl: '',
+      workspacePath: 'C:\\DefaultWorkspace'
+    })
+    assistantDatabase.getProject.mockReturnValue({
+      id: projectId,
+      rootPath: 'C:\\ProjectWorkspace',
+      runtimeSelection: { provider: 'opencode' }
+    })
     await expect(
       electronMocks.handlers.get(
         ipcChannels.agentCompactConversation
@@ -5885,6 +5898,83 @@ describe('registerIpcHandlers agent terminal state', () => {
         harness.assistantDatabase.updateTaskStatus
       ).toHaveBeenCalledWith(requestId, 'completed')
     )
+  })
+
+  it('persists remote usage with the inherited project Runtime without pinning the conversation', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000790'
+    const conversationId = 'inherited-remote-usage'
+    const selection = { provider: 'opencode', profileId: '00000000-0000-4000-8000-000000000791' } as const
+    const provenance = {
+      source: 'remote-semantic-transcript',
+      bindingId: 'inherited-usage',
+      operationId: requestId,
+      semanticSequence: '1',
+      eventIndex: 0
+    } as const
+    const selectedRuntime = {
+      runtimeId: 'opencode',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield {
+          requestId: request.requestId, type: 'context-metrics',
+          contextTokens: 42, effectiveTriggerTokens: 1000,
+          compressionEnabled: false, source: 'provider',
+          remoteProvenance: provenance
+        } as const
+        yield {
+          requestId: request.requestId, type: 'done',
+          remoteProvenance: { ...provenance, semanticSequence: '2' }
+        } as const
+      }
+    }
+    const { harness, projectId } = createManagedSshHarness(selectedRuntime)
+    const project = harness.assistantDatabase.getProject(projectId)
+    harness.assistantDatabase.getProject.mockReturnValue({ ...project, runtimeSelection: selection })
+    harness.assistantDatabase.getConversation.mockReturnValue({
+      id: conversationId, projectId, messages: []
+    })
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      ...managedSshRequest(projectId, requestId, conversationId),
+      runtimeSelection: undefined,
+      currentUserMessageId: '00000000-0000-4000-8000-000000000792',
+      currentAssistantMessageId: '00000000-0000-4000-8000-000000000793'
+    })
+    await vi.waitFor(() => expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).toHaveBeenCalledWith(
+      expect.objectContaining({ event: expect.objectContaining({ type: 'done' }) })
+    ))
+    expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId,
+        runtimeSelection: selection,
+        event: expect.objectContaining({ type: 'context-metrics', contextTokens: 42 })
+      })
+    )
+    expect(harness.assistantDatabase.getConversation(conversationId)).not.toHaveProperty('runtimeSelection')
+    await harness.dispose()
+  })
+
+  it('advertises read-only workspace and delegation tools in the production Ask instruction', async () => {
+    const received: string[] = []
+    const runtime = {
+      runtimeId: 'model', capability: 'chat', supportsToolExecution: true,
+      async *run(request: { requestId: string; trustedInstructions?: string }) {
+        received.push(request.trustedInstructions ?? '')
+        yield { type: 'done', requestId: request.requestId } as const
+      }
+    }
+    const harness = createHarness(runtime)
+    const requestId = '00000000-0000-4000-8000-000000000794'
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId, conversationId: 'ask-workspace', prompt: 'Read the source', workMode: 'ask'
+    })
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    for (const name of ['workspace_rg', 'workspace_read_text', 'output_read', 'subagent_delegate']) {
+      expect(received[0]).toContain(name)
+    }
+    expect(received[0]).not.toContain('workspace_apply_patch')
+    expect(received[0]).not.toContain('process_execute')
+    await harness.dispose()
   })
 
   it('durably commits remote text before resume, deduplicates it, and preserves its semantic payload', async () => {
@@ -7650,18 +7740,18 @@ describe('registerIpcHandlers agent terminal state', () => {
         drainReferences: vi.fn(() => []),
         revoke: vi.fn(() => grantedLease?.release())
       }
-      const createTab = vi.fn<
-        (
-          conversationId: string,
-          ownerWindowId?: number,
-          signal?: AbortSignal,
-          workbarInstanceId?: string
-        ) => Promise<{ tabId: BrowserTabId }>
-      >(async () => ({ tabId }))
+      const createTab = vi.fn()
       const browserControl = {
         listTabs: vi.fn(() => []),
         getVisibleTabId: vi.fn(() => undefined),
         createTab,
+        reserveRequestTab: vi.fn((conversationId: string, owner: string) => ({
+          conversationId,
+          tabId,
+          owner,
+          signal: new AbortController().signal,
+          release
+        })),
         acquireTabUsage: vi.fn(
           (conversationId: string, acquiredTabId: BrowserTabId, owner: string) => ({
             conversationId,
@@ -7702,13 +7792,10 @@ describe('registerIpcHandlers agent terminal state', () => {
       }
       await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
 
-      const workbarInstanceId = createTab.mock.calls[0]?.[3]
-      expect(workbarInstanceId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
-      )
-      expect(browserControl.acquireTabUsage).toHaveBeenCalledWith(
+      expect(createTab).not.toHaveBeenCalled()
+      expect(browserControl.acquireTabUsage).not.toHaveBeenCalled()
+      expect(browserControl.reserveRequestTab).toHaveBeenCalledWith(
         `browser-${outcome}`,
-        tabId,
         requestId,
         harness.webContents.id
       )

@@ -18,7 +18,20 @@ DeepSeek Harness 和托管 SSH 路径不注入这些工具。既有功能的 Win
 全量项目验证已通过；本次分页验证记录见下方 2026-09-10 条目。macOS 与 Linux 真机验证
 仍需由对应平台完成。
 
-## 已确认的当前基线
+## 2026-09-10 提交审查后的桌面 UI 验收
+
+- Windows 隔离配置使用本轮最终开发构建，通过普通输入框发送触发完整
+  App → Preload → Main → ModelAgentRuntime → ModelToolProvider 路径。
+- Ask 在已保存 `toolApproval: policy` 下完成实际 `workspace_read_text` 与 `workspace_rg`，
+  读取同一专用哨兵，24 字节测试文件与校验值保持不变。未放开 Ask 写工具。
+- 父请求调用实际编程 Subagent；子级在父浏览器归属下完成导航和快照，子级页面显示在
+  父级工作栏 Tab，没有额外空白原生页面。
+- 本组使用确定性 loopback 模型服务，不声称执行了桌面真实 Provider 推理。
+  请求计数、浏览器/终端 UI 场景、明确覆盖边界及清理结果统一记录在
+  [工作栏验收进度](../assistant-workbar/progress.md#2026-09-10-提交审查修复)。
+- 最终整库回归与静态检查结果同见该记录；测试进程已退出，不改变用户安装版或工作区。
+
+## 设计前基线（历史）
 
 - [x] 直连模型当前内置工作区读、目录列表和文本写入，但没有进程工具。
 - [x] 内置 MCP 当前没有 Shell；自定义 MCP 不能替代开箱即用的进程能力。
@@ -202,6 +215,26 @@ DeepSeek Harness 和托管 SSH 路径不注入这些工具。既有功能的 Win
   或输出正文的调用计数；测试工作区和输出存储在结束后释放。
 - 本目录中文文档已按 `deai-writing` 审校，扫描阻断项为 0；保留技术枚举、权限限制和历史
   验证记录中的明确边界。本次未运行全量测试或生产构建，也不作为其他平台真机验收。
+
+## 2026-09-10 直连工具接线回归修复
+
+- FR-4 / FR-12 / US-B0：普通 Ask 不再依赖可选能力才进入工具循环；明确允许工作区搜索、
+  文本读取和当前会话输出续读绕过 Ask 默认拒绝 authorizer，保留写入、补丁、进程和浏览器
+  的 Ask 拒绝。内部无工具摘要路径不变。
+- FR-5 / FR-7 / US-C1：编程 Subagent 继承父浏览器标签页及所属 Conversation；子级历史和
+  输出仍独立，浏览器资源不转移所有权。回归通过真实 Runtime、Provider 和 Subagent 服务，
+  浏览器使用校验父 Conversation/标签页身份的测试替身，并确认子级结束后父级可继续调用。
+- MCP 已发现工具调用不再触发其他失败服务器的发现重试；覆盖连接失败、清单失败、动态
+  刷新失效、健康调用、配置替换与 dispose 清空。发现重试仍只发生在下一次 `listTools`。
+- 验证命令：`npm test -- --run src/main/agent/model-tool-provider.test.ts src/main/agent/model-runtime.test.ts`。
+  最终结果为 `122 passed, 1 skipped`（Provider 36；Runtime 86 通过、1 跳过）。
+  Ask 回归实际执行随包 ripgrep、工作区分页读取和真实本机输出续读；模型响应均为测试夹具。
+- 本次真实模型调用精确为 0，没有外部网络或远端 Host 操作；未运行全量测试、类型检查、
+  Lint 或构建。桌面 IPC 提示词、浏览器租约生产入口和最小真实模型验收由集成工作继续验证，
+  以上聚焦测试不作为真实浏览器、真实模型或整条桌面路径验收。
+- 源码检查：GoodBuddy Agent 不导入这两个 Runtime/Provider；本机 DeepSeek Harness 的
+  MCP 代理复用 Provider 发现快照规则，托管 SSH Runtime 不经过该本机构造路径。本次未
+  修改远端 Agent、桥接或启动器。
 
 ## 进度维护要求
 

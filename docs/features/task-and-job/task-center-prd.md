@@ -116,6 +116,9 @@ Task 行只显示聚合后的用户状态，不要求用户理解内部 Job/Run�
 选择 Task 后显示名称、模式、聚合状态、计划、下次执行、最近结果和 Task 级操作。工具、审批、
 错误和成果通过 Task 关联显示，但不暴露 Job/Run 层级。
 
+模式来源遵循[Scheduled Task 的执行时配置](./scheduled-task-prd.md#62-执行时配置)：
+未运行计划跟随会话当前有效模式，已执行 Task 保留实际模式；计划旧值不得覆盖展示。
+
 ## 8. 删除关系
 
 - 删除 Schedule 只停止后续触发，不删除 Task、Conversation 或历史。

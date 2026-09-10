@@ -8,7 +8,8 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantSchedule,
-  AssistantTask
+  AssistantTask,
+  WorkMode
 } from '../../shared/assistant-contracts'
 import {
   findTaskSchedule,
@@ -16,6 +17,7 @@ import {
 } from './TaskScheduleActions'
 
 type ConversationTaskStripProps = {
+  conversationMode?: WorkMode
   locale: string
   onRemoveSchedule: (scheduleId: string) => Promise<void>
   onRunSchedule: (scheduleId: string) => Promise<void>
@@ -30,6 +32,7 @@ type ConversationTaskStripProps = {
 }
 
 export function ConversationTaskStrip({
+  conversationMode,
   locale,
   onRemoveSchedule,
   onRunSchedule,
@@ -51,6 +54,17 @@ export function ConversationTaskStrip({
   const selectedSchedule = selectedTask
     ? findTaskSchedule(selectedTask, schedules)
     : undefined
+  const unrunSchedule =
+    selectedSchedule &&
+    !selectedSchedule.lastRunAt &&
+    !selectedTask?.startedAt &&
+    !selectedTask?.completedAt &&
+    (selectedTask?.status === 'idle' ||
+      selectedTask?.status === 'queued' ||
+      selectedTask?.status === 'paused')
+  const selectedMode = unrunSchedule
+    ? conversationMode
+    : selectedTask?.workMode
   const expanded =
     manuallyExpanded ||
     (Boolean(selectedTaskId) && collapsedTaskId !== selectedTaskId)
@@ -136,11 +150,9 @@ export function ConversationTaskStrip({
                 <div>
                   <dt>{t('task.fields.mode')}</dt>
                   <dd>
-                    {selectedSchedule
-                      ? t(`task.mode.${selectedSchedule.workMode}`)
-                      : selectedTask.workMode
-                        ? t(`task.mode.${selectedTask.workMode}`)
-                        : t('task.mode.unavailable')}
+                    {selectedMode
+                      ? t(`task.mode.${selectedMode}`)
+                      : t('task.mode.unavailable')}
                   </dd>
                 </div>
                 <div>

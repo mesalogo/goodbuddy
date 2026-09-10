@@ -12,6 +12,8 @@ import {
   type RequestOptions
 } from 'node:http'
 import { tmpdir } from 'node:os'
+import net from 'node:net'
+import { Duplex } from 'node:stream'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -612,6 +614,47 @@ describe('model bridge loopback helper', () => {
 describe('model bridge Unix broker', () => {
   const runOnUnix = process.platform === 'win32' ? it.skip : it
 
+  it('allows a delayed connection with the default unlimited request timeout', async () => {
+    const socket = new Duplex({
+      read() {},
+      write(chunk: Buffer, _encoding, callback) {
+        const packet = JSON.parse(chunk.subarray(4).toString()) as {
+          type: string
+          requestId: string
+        }
+        const response = Buffer.from(JSON.stringify(
+          packet.type === 'model-request'
+            ? { version: 1, type: 'model-response', requestId: packet.requestId, ok: true, response: validResponse }
+            : { version: 1, type: 'delivery-accepted', requestId: packet.requestId }
+        ))
+        const frame = Buffer.alloc(4 + response.length)
+        frame.writeUInt32BE(response.length)
+        response.copy(frame, 4)
+        this.push(frame)
+        callback()
+      }
+    })
+    vi.spyOn(net.Socket.prototype, 'connect').mockReturnValueOnce(socket as net.Socket)
+    const connect = setTimeout(() => socket.emit('connect'), 30)
+    try {
+      const exchange = createUnixModelBridgeExchange({
+        socketPath: resolve(tmpdir(), 'delayed-model-bridge.sock'),
+        connectTimeoutMs: 500
+      })
+      const result = await exchange({
+        method: 'POST', path: '/v1/messages', headers: {}, bodyBase64: ''
+      }, { requestId: 'delayed-connect', signal: new AbortController().signal })
+      expect('response' in result).toBe(true)
+      if ('response' in result) {
+        expect(result.response).toEqual(validResponse)
+        await result.acknowledgeDelivery()
+      }
+    } finally {
+      clearTimeout(connect)
+      socket.destroy()
+    }
+  })
+
   runOnUnix('rejects a socket path beyond the Unix kernel limit', () => {
     const scratch = resolve(
       privateTemporaryDirectory(),
@@ -643,8 +686,7 @@ describe('model bridge Unix broker', () => {
       expect(lstatSync(socketPath).mode & 0o777).toBe(0o600)
 
       const exchange = createUnixModelBridgeExchange({
-        socketPath,
-        requestTimeoutMs: 1_000
+        socketPath
       })
       const request: RemoteModelGatewayRequest = {
         method: 'POST',

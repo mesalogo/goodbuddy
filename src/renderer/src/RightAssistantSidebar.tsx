@@ -1021,6 +1021,7 @@ export function RightAssistantSidebar({
         if (instance.appId === 'browser') {
           browserMruRef.current[instance.id] = ++nextBrowserMruRef.current
         }
+        lastExternalTabRef.current = instance.appId
         onTabChange(instance.appId)
       }
     },
@@ -1159,6 +1160,71 @@ export function RightAssistantSidebar({
     },
     [activeConversationId, conversationTitles, t]
   )
+
+  useEffect(() => window.goodbuddy.browser?.onState?.((state) => {
+    if (state.status !== 'stopped') return
+    const next = { ...browserTabIdsRef.current }
+    let changed = false
+    for (const [instanceId, tabId] of Object.entries(next)) {
+      if (tabId === state.tabId) {
+        delete next[instanceId]
+        changed = true
+      }
+    }
+    if (changed) {
+      browserTabIdsRef.current = next
+      setBrowserTabIds(next)
+    }
+  }), [])
+
+  useEffect(() => {
+    const liveTabs = Object.values(browserStates ?? {}).flatMap((states) =>
+      Object.values(states).filter((state) =>
+        state.workbarInstanceId &&
+        (state.sessionActive || state.status === 'creating')
+      )
+    )
+    const nextBindings = { ...browserTabIdsRef.current }
+    let changed = false
+    const newInstances: WorkbarTabInstance[] = []
+    for (const state of liveTabs) {
+      const instanceId = state.workbarInstanceId!
+      if (nextBindings[instanceId] !== state.tabId) {
+        nextBindings[instanceId] = state.tabId
+        changed = true
+      }
+      if (!workbarInstances.some((instance) => instance.id === instanceId)) {
+        newInstances.push({
+          id: instanceId,
+          appId: 'browser',
+          title: `${t('sidebar.tabs.browser.label')} · ${conversationTitles.get(state.conversationId) ?? state.conversationId}`,
+          targetRef: { type: 'conversation', conversationId: state.conversationId }
+        })
+      }
+    }
+    if (changed) {
+      browserTabIdsRef.current = nextBindings
+      setBrowserTabIds(nextBindings)
+    }
+    const additions = newInstances.slice(
+      0, Math.max(0, WORKBAR_LIMITS.maximumOpenInstances - workbarInstances.length)
+    )
+    if (additions.length > 0) {
+      setWorkbarInstances((current) => [
+        ...current,
+        ...additions
+          .filter((candidate) => !current.some((instance) => instance.id === candidate.id))
+          .slice(0, Math.max(0, WORKBAR_LIMITS.maximumOpenInstances - current.length))
+      ])
+      const requested = additions.find((instance) =>
+        instance.targetRef?.type === 'conversation' &&
+        instance.targetRef.conversationId === activeConversationId
+      )
+      if (requested && tab === 'browser') {
+        setActiveWorkbarInstanceId(requested.id)
+      }
+    }
+  }, [activeConversationId, browserStates, conversationTitles, tab, t, workbarInstances])
 
   const removeWorkbarInstance = useCallback(
     (instanceId: string): void => {
@@ -1567,10 +1633,20 @@ export function RightAssistantSidebar({
     }
   }
 
+  const hasUnboundRequestBrowser = Object.values(
+    browserStates?.[activeConversationId ?? ''] ?? {}
+  ).some((state) =>
+    state.workbarInstanceId &&
+    (state.sessionActive || state.status === 'creating') &&
+    !workbarInstances.some((instance) => instance.id === state.workbarInstanceId)
+  )
+
   useEffect(() => {
     if (!open || activeWorkbarInstance?.appId !== 'browser') {
       return
     }
+    // Bind a newly materialized request tab before opening a fallback instance.
+    if (hasUnboundRequestBrowser) return
     void ensureBrowserTab(activeWorkbarInstance).catch((reason: unknown) => {
       setActionError(
         reason instanceof Error
@@ -1578,7 +1654,7 @@ export function RightAssistantSidebar({
           : t('sidebar.errors.browserControlUnavailable')
       )
     })
-  }, [activeWorkbarInstance, ensureBrowserTab, open, t])
+  }, [activeWorkbarInstance, ensureBrowserTab, hasUnboundRequestBrowser, open, t])
 
   return (
     <aside
@@ -1676,6 +1752,12 @@ export function RightAssistantSidebar({
           <div
             className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : ''}`}
           >
+        {hasUnboundRequestBrowser &&
+          workbarInstances.length >= WORKBAR_LIMITS.maximumOpenInstances ? (
+          <p className="settings-error" role="alert">
+            {t('sidebar.browser.workbarFull', { count: WORKBAR_LIMITS.maximumOpenInstances })}
+          </p>
+        ) : null}
         {actionError ? (
           <p className="settings-error" role="alert">
             {actionError}
@@ -2296,7 +2378,7 @@ export function RightAssistantSidebar({
                   : undefined
               }
               tabId={browserTabIds[instance.id]}
-              visible={open && instance.id === activeWorkbarInstanceId}
+              visible={open && instance.id === activeWorkbarInstanceId && !terminalCloseConfirmation}
             />
           </section>
         )}

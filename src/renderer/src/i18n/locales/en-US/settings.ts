@@ -399,13 +399,24 @@ export const settings = {
       previewDescription: 'Developer preview · OpenAI-compatible',
       description:
         'GoodBuddy maintains the fixed Host and control protocol internally and uses pinned Harness libraries underneath. Ask can call native read/skill plus enabled Web Search/Fetch, while Execute can use every enabled tool and DSH plugin capability. Cancellation and workspace boundaries remain in place.',
-      managedSource:
-        'Automatic: prefer the administrator connection, otherwise follow a compatible current model',
+      platformSource: 'Administrator environment, then GoodBuddy fallback',
+      environmentSource:
+        'This option resolves to the administrator preset: {{model}}.',
+      platformFallback:
+        'No complete administrator preset; actual fallback in saved settings: {{name}} · {{model}}.',
+      platformNoFallback:
+        'No available administrator preset or compatible GoodBuddy connection.',
+      platformSourceUnavailable:
+        'Model source information is unavailable. Reload settings.',
+      platformDraftFallback:
+        'Draft compatible candidate (not saved): {{name}} · {{model}}. Saving resolves the source again against the administrator environment.',
+      platformDraftNoFallback:
+        'The unsaved draft has no compatible fallback connection.',
       connection: 'OpenAI-compatible model connection',
       connectionPlaceholder:
         'Automatically select a compatible model connection',
       connectionDescription:
-        'Optionally select a GoodBuddy model connection. Otherwise GoodBuddy uses the administrator connection, the compatible current default, or the first compatible connection. It must use OpenAI Chat Completions with API-key authentication.',
+        'Administrator environment first uses the deployment’s complete model URL, model name, and API key; otherwise it uses the compatible GoodBuddy default, then the first compatible connection. Follow the global default model skips the administrator preset; a named connection stays pinned. Connections must use OpenAI Chat Completions with API-key authentication. This does not load Harness user profiles or configuration files.',
       advancedDescription:
         'This Runtime always uses GoodBuddy’s bundled, version-pinned Host and does not load user profiles or custom Hosts. GoodBuddy manages enabled marketplace plugins and loads them with the Host.',
       marketplace: {

@@ -150,6 +150,7 @@ const runtimeSettings: RuntimeSettings = {
     profileId: modelProfileId
   },
   deepseekHarnessModelSource: { kind: 'platform' },
+  deepseekHarnessPlatformModel: { source: 'unavailable' },
   secureStorageAvailable: true,
   toolApproval: 'always'
 }
@@ -3085,7 +3086,9 @@ describe('SettingsPanel runtime files', () => {
     )
   })
 
-  it('keeps an environment-managed source compatible without exposing it as an option', async () => {
+  it.each(['environment', 'profile'] as const)(
+    'uses the Main-projected Harness %s source instead of guessing from environment credentials',
+    async (sourceKind) => {
     getRuntime.mockResolvedValueOnce({
       ...runtimeSettings,
       modelBaseUrl: 'https://gateway.example/openai/v1',
@@ -3101,6 +3104,9 @@ describe('SettingsPanel runtime files', () => {
         }
       ],
       deepseekHarnessModelSource: { kind: 'platform' },
+      deepseekHarnessPlatformModel: sourceKind === 'environment'
+        ? { source: 'environment', name: '管理员预置模型', modelName: 'actual-administrator-model' }
+        : { source: 'profile', profileId: modelProfileId, name: '默认模型', modelName: 'qwen-plus' },
       configured: {
         modelProfiles: [
           {
@@ -3138,15 +3144,26 @@ describe('SettingsPanel runtime files', () => {
       })
     )
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
-    expect(
-      screen.getByText(
-        '自动选择：优先使用管理员预置连接，否则跟随当前兼容模型'
-      )
-    ).toBeInTheDocument()
+    if (sourceKind === 'environment') {
+      expect(screen.getByText('此选项实际使用管理员预置：actual-administrator-model。')).toBeInTheDocument()
+      expect(screen.queryByText(/已保存配置中的实际回退/)).not.toBeInTheDocument()
+    } else {
+      expect(screen.getByText(/未配置完整的管理员预置；已保存配置中的实际回退：默认模型 · qwen-plus。/)).toBeInTheDocument()
+      expect(screen.queryByText(/此选项实际使用管理员预置/)).not.toBeInTheDocument()
+    }
     const source = screen.getByLabelText(
       'DeepSeek Harness OpenAI 兼容模型连接'
     )
     expect(source).toHaveValue('platform')
+    expect(screen.queryByText(/当前环境生效模型/)).not.toBeInTheDocument()
+    expect(
+      within(source).getByRole('option', {
+        name: '管理员环境优先，回退 GoodBuddy 兼容连接'
+      })
+    ).toHaveValue('platform')
+    expect(
+      within(source).queryByRole('option', { name: /自有配置/ })
+    ).not.toBeInTheDocument()
     fireEvent.change(source, {
       target: { value: runtimeSettings.modelProfiles[0]!.id }
     })
@@ -3159,6 +3176,127 @@ describe('SettingsPanel runtime files', () => {
         })
       )
     )
+  })
+
+  it.each([
+    ['zh-CN', true],
+    ['zh-CN', false],
+    ['en-US', true],
+    ['en-US', false]
+  ] as const)('shows the saved Harness fallback in %s (compatible default: %s)', async (locale, compatibleDefault) => {
+    await changeUiLocale(locale)
+    const firstCompatible = {
+      ...runtimeSettings.modelProfiles[0]!,
+      id: '00000000-0000-4000-8000-000000000052',
+      name: 'First compatible',
+      modelName: 'first-model',
+      protocol: 'openai-chat-completions' as const
+    }
+    const preferred = {
+      ...firstCompatible,
+      id: modelProfileId,
+      name: 'Preferred',
+      modelName: 'preferred-model',
+      protocol: compatibleDefault
+        ? 'openai-chat-completions' as const
+        : 'openai-images-generations' as const
+    }
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelProfiles: [firstCompatible, preferred],
+      deepseekHarnessModelSource: { kind: 'platform' },
+      deepseekHarnessPlatformModel: {
+        source: 'profile',
+        profileId: compatibleDefault ? preferred.id : firstCompatible.id,
+        name: compatibleDefault ? preferred.name : firstCompatible.name,
+        modelName: compatibleDefault ? preferred.modelName : firstCompatible.modelName
+      }
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+    fireEvent.click(await screen.findByRole('button', {
+      name: locale === 'zh-CN' ? 'DeepSeek Harness（预览）' : 'DeepSeek Harness (Preview)'
+    }))
+    const source = screen.getByLabelText(locale === 'zh-CN'
+      ? 'DeepSeek Harness OpenAI 兼容模型连接'
+      : 'DeepSeek Harness OpenAI-compatible model connection')
+    expect(source).toHaveValue('platform')
+    expect(within(source).getByRole('option', {
+      name: locale === 'zh-CN'
+        ? '管理员环境优先，回退 GoodBuddy 兼容连接'
+        : 'Administrator environment, then GoodBuddy fallback'
+    })).not.toBeDisabled()
+    const resolvedName = compatibleDefault ? 'Preferred · preferred-model' : 'First compatible · first-model'
+    expect(screen.getByText(locale === 'zh-CN'
+      ? `未配置完整的管理员预置；已保存配置中的实际回退：${resolvedName}。`
+      : `No complete administrator preset; actual fallback in saved settings: ${resolvedName}.`)).toBeInTheDocument()
+    expect(source).toHaveAccessibleDescription(/Harness/)
+  })
+
+  it.each([true, false])('keeps the Harness platform option usable without compatible saved profiles (administrator available: %s)', async (available) => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings, deepseekHarnessModelSource: { kind: 'default' },
+      deepseekHarnessPlatformModel: available
+        ? { source: 'environment', name: '管理员预置模型', modelName: 'administrator-model' }
+        : { source: 'unavailable' }
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'DeepSeek Harness（预览）' }))
+    const source = screen.getByLabelText('DeepSeek Harness OpenAI 兼容模型连接')
+    expect(source).not.toBeDisabled()
+    expect(within(source).getByRole('option', { name: '跟随全局默认模型' })).toBeDisabled()
+    fireEvent.change(source, { target: { value: 'platform' } })
+    expect(source).toHaveValue('platform')
+    expect(screen.getByText(available
+      ? '此选项实际使用管理员预置：administrator-model。'
+      : '没有可用的管理员预置或兼容的 GoodBuddy 连接。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(updateRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ deepseekHarnessModelSource: { kind: 'platform' } })
+    ))
+  })
+
+  it('keeps the actual saved Harness fallback separate from the unsaved draft preview', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelProfiles: [{
+        ...runtimeSettings.modelProfiles[0]!,
+        protocol: 'openai-chat-completions', modelName: 'saved-model'
+      }],
+      deepseekHarnessPlatformModel: {
+        source: 'profile', profileId: modelProfileId, name: '默认模型', modelName: 'saved-model'
+      }
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()} onSaved={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Draft connection' } })
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent Runtime' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'DeepSeek Harness（预览）' }))
+    expect(screen.getByText(/已保存配置中的实际回退：默认模型 · saved-model。/)).toBeInTheDocument()
+    expect(screen.getByText(/草稿兼容候选（未保存）：Draft connection · saved-model。/)).toBeInTheDocument()
+    expect(updateRuntime).not.toHaveBeenCalled()
   })
 
   it('selects, warns about, clears, and saves a custom binary', async () => {
