@@ -1049,6 +1049,7 @@ function interruptActiveToolBlocks(
 const conversationContextStateSchema = conversationSnapshotSchema.pick({
   workMode: true,
   knowledgeLibraryIds: true,
+  knowledgeRetrievalMode: true,
   contextMetrics: true,
   contextCompressionState: true
 })
@@ -1057,7 +1058,7 @@ function parseConversationContextState(
   value: string | null
 ): Pick<
   ConversationSnapshot,
-  'workMode' | 'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
+  'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'contextMetrics' | 'contextCompressionState'
 > {
   if (!value) {
     return {}
@@ -1075,15 +1076,18 @@ function parseConversationContextState(
 function serializeConversationContextState(
   conversation: Pick<
     ConversationSnapshot,
-    'workMode' | 'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
+    'workMode' | 'knowledgeLibraryIds' | 'knowledgeRetrievalMode' | 'contextMetrics' | 'contextCompressionState'
   >
 ): string | null {
-  return conversation.workMode !== undefined || conversation.knowledgeLibraryIds !== undefined ||
+  return conversation.workMode !== undefined ||
+    conversation.knowledgeLibraryIds !== undefined ||
+    conversation.knowledgeRetrievalMode !== undefined ||
     conversation.contextMetrics ||
     conversation.contextCompressionState
     ? JSON.stringify({
         workMode: conversation.workMode,
         knowledgeLibraryIds: conversation.knowledgeLibraryIds,
+        knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
         contextMetrics: conversation.contextMetrics,
         contextCompressionState: conversation.contextCompressionState
       })
@@ -5974,29 +5978,31 @@ export class AssistantDatabase {
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     try {
-    const result = database
-      .prepare(
-        `UPDATE conversation_queue_items
-         SET status = 'pending'
-         WHERE id = ? AND status = 'dispatching'`
-      )
-      .run(itemId)
-    if (
-      result.changes !== 1 &&
-      !this.requireDatabase()
+      const result = database
         .prepare(
-          `SELECT 1
-           FROM conversation_queue_items
-            WHERE id = ? AND status = 'pending'`
+          `UPDATE conversation_queue_items
+           SET status = 'pending'
+           WHERE id = ? AND status = 'dispatching'`
         )
-        .get(itemId)
-    ) {
-      throw new Error('待发送消息不存在或状态已变化')
-    }
-    database.prepare(`UPDATE schedule_runs SET status = 'pending'
-      WHERE id = (SELECT schedule_run_id FROM conversation_queue_items WHERE id = ?)
-        AND status = 'running'`).run(itemId)
-    database.exec('COMMIT')
+        .run(itemId)
+      if (
+        result.changes !== 1 &&
+        !database
+          .prepare(
+            `SELECT 1
+             FROM conversation_queue_items
+             WHERE id = ? AND status = 'pending'`
+          )
+          .get(itemId)
+      ) {
+        throw new Error('待发送消息不存在或状态已变化')
+      }
+      database.prepare(
+        `UPDATE schedule_runs SET status = 'pending'
+         WHERE id = (SELECT schedule_run_id FROM conversation_queue_items WHERE id = ?)
+           AND status = 'running'`
+      ).run(itemId)
+      database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
       throw error

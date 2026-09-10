@@ -148,6 +148,7 @@ describe('AssistantDatabase', () => {
     const { messages, ...header } = conversation
     database.saveLocalConversations([{ header: {
       ...header, workMode: 'execute',
+      knowledgeRetrievalMode: 'always',
       runtimeSelection: { provider: 'continue' }
     }, messages }])
     const existing = database.createSchedule({
@@ -159,7 +160,8 @@ describe('AssistantDatabase', () => {
     database.close()
     database.initialize('C:\\Workspace')
     expect(database.getConversation(conversation.id)).toMatchObject({
-      workMode: 'execute', runtimeSelection: { provider: 'continue' }
+      workMode: 'execute', runtimeSelection: { provider: 'continue' },
+      knowledgeRetrievalMode: 'always'
     })
     database.close()
   })

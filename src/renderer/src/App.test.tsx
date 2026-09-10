@@ -6403,7 +6403,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "Verify inherited model" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "发送", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => {
       const saved = vi.mocked(api.conversations.saveLocal).mock.calls
         .flatMap(([conversations]) => conversations)
