@@ -39,7 +39,7 @@ describe('CustomTaskDialog', () => {
     )
   })
 
-  it('defaults to Execute and keeps the current Conversation association', async () => {
+  it('queues a timed message without capturing conversation execution settings', async () => {
     const conversationId =
       '00000000-0000-4000-8000-000000000801'
     const onCreate = vi.fn(async (input) => ({
@@ -61,8 +61,6 @@ describe('CustomTaskDialog', () => {
         onCreate={onCreate}
         projectId="00000000-0000-4000-8000-000000000804"
         projectName="GoodBuddy Desktop"
-        runtimeLabel="OpenCode"
-        supportsToolExecution
         workspaceLabel="C:\\Workspace"
       />
     )
@@ -70,10 +68,7 @@ describe('CustomTaskDialog', () => {
     expect(
       screen.getByRole('dialog', { name: '新建定制任务' })
     ).toHaveAttribute('aria-modal', 'true')
-    expect(screen.getByRole('button', { name: 'Execute' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
+    expect(screen.queryByRole('button', { name: 'Execute' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '当前会话' })).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -97,13 +92,14 @@ describe('CustomTaskDialog', () => {
         conversationId,
         title: '每周项目总结',
         prompt: '总结完成和失败的工作',
-        workMode: 'execute',
         recurrence: 'once'
       })
     )
+    expect(onCreate.mock.calls[0]![0]).not.toHaveProperty('workMode')
+    expect(onCreate.mock.calls[0]![0]).not.toHaveProperty('runtimeSelection')
   })
 
-  it('uses Ask when the selected Runtime cannot execute tools', () => {
+  it('creates an independent conversation using normal defaults', () => {
     render(
       <CustomTaskDialog
         currentConversationAvailable={false}
@@ -111,17 +107,11 @@ describe('CustomTaskDialog', () => {
         onClose={vi.fn()}
         onCreate={vi.fn()}
         projectName="GoodBuddy Desktop"
-        runtimeLabel="Direct model"
-        supportsToolExecution={false}
         workspaceLabel="C:\\Workspace"
       />
     )
 
-    expect(screen.getByRole('button', { name: 'Execute' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Ask' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
+    expect(screen.queryByRole('button', { name: 'Ask' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '当前会话' })).toBeDisabled()
   })
 })

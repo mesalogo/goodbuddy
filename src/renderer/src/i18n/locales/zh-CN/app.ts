@@ -123,7 +123,7 @@ export const app = {
   customTask: {
     eyebrow: '定制任务',
     title: '新建定制任务',
-    description: '创建一个按计划自动运行，并持续记录在会话中的任务。',
+    description: '按计划向普通会话发送任务要求，回复和手动发送的消息一样保留在会话中。',
     close: '关闭新建定制任务',
     fields: {
       name: '任务名称',
@@ -136,8 +136,8 @@ export const app = {
     destination: {
       current: '当前会话',
       new: '新建会话',
-      currentHelp: '把任务关联到当前会话，不更改会话名称或普通聊天能力。',
-      newHelp: '为任务创建一条新会话，默认使用任务名称作为标题。',
+      currentHelp: '发送时使用当前会话的历史、Runtime、工作模式和已启用能力。',
+      newHelp: '创建独立的普通会话，使用项目默认设置，以任务名称作为标题。',
       currentUnavailable: '当前会话不能关联此任务，请选择新建会话。'
     },
     mode: {
@@ -151,6 +151,7 @@ export const app = {
       weekly: '每周'
     },
     scope: {
+      conversationSettings: '发送时使用目标会话的 Runtime、工作模式和已启用工具，可在会话中调整。',
       title: '执行范围',
       project: '项目',
       runtime: 'Runtime',

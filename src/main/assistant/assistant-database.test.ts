@@ -131,6 +131,80 @@ function claimManualScheduleQueueItem(
 }
 
 describe('AssistantDatabase', () => {
+  it('keeps timed messages independent of creation-time execution settings', async () => {
+    const database = await createDatabase()
+    const project = database.createProject({
+      name: 'Scheduled project', rootPath: 'C:\\Workspace', description: '',
+      defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' }
+    })
+    const schedule = database.createSchedule({
+      projectId: project.id, title: 'Timed message', prompt: 'Continue our work',
+      recurrence: 'daily', nextRunAt: '2026-09-10T00:00:00Z'
+    })
+    expect(schedule.runtimeSelection).toBeUndefined()
+    const conversation = database.getConversation(schedule.conversationId)
+    expect(conversation.runtimeSelection).toBeUndefined()
+    expect(conversation.workMode).toBeUndefined()
+    const { messages, ...header } = conversation
+    database.saveLocalConversations([{ header: {
+      ...header, workMode: 'execute',
+      runtimeSelection: { provider: 'continue' }
+    }, messages }])
+    const existing = database.createSchedule({
+      projectId: project.id, conversationId: conversation.id,
+      title: 'Second message', prompt: 'Continue', workMode: 'ask',
+      recurrence: 'once', nextRunAt: '2026-09-11T00:00:00Z'
+    })
+    expect(existing.runtimeSelection).toBeUndefined()
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.getConversation(conversation.id)).toMatchObject({
+      workMode: 'execute', runtimeSelection: { provider: 'continue' }
+    })
+    database.close()
+  })
+
+  it('releases scheduled dispatches for retry and completes accepted ordinary runs without replay on restart', async () => {
+    const database = await createDatabase()
+    const schedule = database.createSchedule({
+      title: 'Timed message', prompt: 'Continue', recurrence: 'daily',
+      nextRunAt: '2026-09-10T00:00:00Z'
+    })
+    const item = database.queueScheduleNow(schedule.id)
+    expect(database.claimConversationQueueItem(schedule.conversationId)?.source).toBe('schedule')
+    expect(database.isConversationUserQueueItemDispatching(item.id)).toBe(true)
+    database.releaseConversationUserQueueItem(item.id)
+    expect(database.claimConversationQueueItem(schedule.conversationId)?.source).toBe('schedule')
+    database.createTask({ id: item.scheduleRunId!, conversationId: schedule.conversationId,
+      title: 'Continue', instructions: 'Continue', workMode: 'execute', visible: false })
+    database.completeConversationUserQueueItem(item.id)
+    database.updateTaskStatus(item.scheduleRunId!, 'completed')
+    database.completeTaskScheduleRun(item.scheduleRunId!)
+    database.completeTaskScheduleRun(item.scheduleRunId!)
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.listConversationQueueItems(schedule.conversationId)).toEqual([])
+    expect(database.listSchedules().find(candidate => candidate.id === schedule.id)?.lastRunAt).toBeDefined()
+    database.close()
+  })
+
+  it('does not resend an accepted scheduled message interrupted by a local restart', async () => {
+    const database = await createDatabase()
+    const schedule = database.createSchedule({
+      title: 'Timed message', prompt: 'Continue', recurrence: 'once',
+      nextRunAt: '2026-09-10T00:00:00Z'
+    })
+    const item = database.queueScheduleNow(schedule.id)
+    database.claimConversationQueueItem(schedule.conversationId)
+    database.createTask({ id: item.scheduleRunId!, conversationId: schedule.conversationId,
+      title: 'Continue', instructions: 'Continue', workMode: 'execute', visible: false })
+    database.completeConversationUserQueueItem(item.id)
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.listConversationQueueItems(schedule.conversationId)).toEqual([])
+    expect(database.listTasks().find(task => task.id === schedule.taskId)?.status).toBe('failed')
+    database.close()
+  })
   it('rejects a newer unsupported schema without changing its version', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-future-')
@@ -5221,7 +5295,7 @@ describe('AssistantDatabase', () => {
         },
         continueModelSource: { kind: 'platform' }
       })
-    ).toBe(4)
+    ).toBe(3)
     expect(
       database
         .listConversations()
@@ -5235,7 +5309,8 @@ describe('AssistantDatabase', () => {
       { provider: 'model', profileId: runtimeProfileId }
     ])
     expect(database.getProject(channelProject.id).runtimeSelection).toEqual({
-      provider: 'opencode'
+      provider: 'opencode',
+      profileId: runtimeProfileId
     })
     expect(
       database.getProject(imageChannelProject.id).runtimeSelection

@@ -1739,20 +1739,7 @@ export class RuntimeSettingsStore {
         credentialSource: credential.source
       }
     })
-    const deepseekHarnessModelProfile =
-      this.resolveDeepSeekHarnessModelProfile(
-        settings,
-        resolvedModelProfiles
-      )
-    const deepseekHarnessModelSource =
-      settings.deepseekHarnessModelSource.kind === 'platform' &&
-      deepseekHarnessModelProfile &&
-      resolvedProfilesById.has(deepseekHarnessModelProfile.id)
-        ? {
-            kind: 'profile' as const,
-            profileId: deepseekHarnessModelProfile.id
-          }
-        : settings.deepseekHarnessModelSource
+    const deepseekHarnessModelSource = settings.deepseekHarnessModelSource
     const embeddingEnvironmentApiKey =
       this.environment.GOODBUDDY_EMBEDDING_API_KEY?.trim()
     const embeddingStoredApiKey = embeddingEnvironmentApiKey

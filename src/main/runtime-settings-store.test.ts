@@ -163,6 +163,30 @@ describe('RuntimeSettingsStore', () => {
     })
   })
 
+  it('round-trips the Harness platform rule without pinning its resolved fallback', async () => {
+    const { store, filePath } = await createStore()
+    const firstId = '00000000-0000-4000-8000-000000000041'
+    const secondId = '00000000-0000-4000-8000-000000000042'
+    const modelProfiles = [firstId, secondId].map((id) => ({
+      id, name: id, baseUrl: 'https://gateway.example/v1', modelName: id,
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const,
+      imageGenerationQuality: 'auto' as const,
+      apiKey: { action: 'keep' as const }
+    }))
+    await store.update(settings({ modelProfiles, defaultModelProfileId: firstId }))
+    const publicSettings = await store.getPublicSettings()
+    const started = await store.getResolvedSettings()
+    await store.update(settings({
+      defaultModelProfileId: secondId,
+      deepseekHarnessModelSource: publicSettings.deepseekHarnessModelSource
+    }))
+    const reloaded = new RuntimeSettingsStore(filePath, cipher, {})
+    expect((await reloaded.getPublicSettings()).deepseekHarnessModelSource).toEqual({ kind: 'platform' })
+    expect((await reloaded.getResolvedSettings()).deepseekHarnessModelProfile?.id).toBe(secondId)
+    expect(started.deepseekHarnessModelProfile?.id).toBe(firstId)
+  })
+
   it('seeds a local provider-neutral model connection', async () => {
     const { store } = await createStore()
 
@@ -613,7 +637,7 @@ describe('RuntimeSettingsStore', () => {
     )
 
     await expect(store.getPublicSettings()).resolves.toMatchObject({
-      deepseekHarnessModelSource: { kind: 'profile', profileId },
+      deepseekHarnessModelSource: { kind: 'platform' },
       configured: {
         deepseekHarnessModelSource: { kind: 'platform' }
       }

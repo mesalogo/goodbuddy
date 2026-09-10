@@ -397,8 +397,13 @@ export type ConversationQueueUserInput = z.infer<
 
 export type ConversationQueueDispatch = {
   item: ConversationQueueItem
-  input: ConversationQueueUserInput
-}
+} & (
+  | { scheduled?: false; input: ConversationQueueUserInput }
+  | {
+      scheduled: true
+      input: Pick<ConversationQueueUserInput, 'conversationId' | 'projectId' | 'prompt'>
+    }
+)
 
 export const runtimeProviderSchema = z.enum([
   'auto',

@@ -482,6 +482,7 @@ export const conversationSnapshotSchema = z
     projectId: assistantIdSchema.optional(),
     runtimeSelection: agentRuntimeSelectionSchema.optional(),
     knowledgeLibraryIds: z.array(assistantIdSchema).max(20).optional(),
+    workMode: workModeSchema.optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
     contextMetrics: conversationContextMetricsSchema.optional(),
     contextCompressionState:
@@ -721,9 +722,9 @@ export const scheduleCreateSchema = z
   })
   .strict()
 
-export type ScheduleCreateInput = z.infer<typeof scheduleCreateSchema>
+export type ScheduleCreateInput = z.input<typeof scheduleCreateSchema>
 
-export type AssistantSchedule = ScheduleCreateInput & {
+export type AssistantSchedule = z.output<typeof scheduleCreateSchema> & {
   id: string
   taskId: string
   conversationId: string

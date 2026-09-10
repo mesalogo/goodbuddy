@@ -293,11 +293,14 @@ Runtime 边界完成，用户可见结果通过所属 Task 汇入关联 Conversa
 - 普通消息在发送时冻结 Runtime、工作模式、专家/团队、知识范围和附件上下文，再以
   `source=user` 入队；附件内容使用有界序列化保存，应用重启后仍可恢复。
 - 到期或手动启动的 Scheduled Task 先建立 `schedule_run`，再以 `source=schedule` 进入同一
-  队列。Scheduler 不再绕过队列直接调用 Runtime。
+  队列，只派发任务要求和关联会话身份。执行时读取会话最新历史和配置，不保存任务上下文快照。
 - Main 对每条 Conversation 只保留一个活动请求或 Renderer 派发保留位。默认按 FIFO 认领；
-  全局 Scheduled Task 执行仍受最多 4 项并发限制。
-- 用户消息由 Main 派发给 Renderer，由 Renderer 建立用户消息和流式助手消息后调用
-  `agent.run`；Scheduled Task 由 Main 直接执行。两条路径共享同一 Conversation 活动锁。
+  Scheduled Task 不另设执行器或并发计数。
+- 两种来源均由 Main 派发给 Renderer，建立普通用户消息和流式助手消息后调用 `agent.run`。
+  Renderer 加载会话及设置后才声明队列可派发。SSH 项目同样通过该入口选择远程 Runtime，
+  使用普通请求的上下文、工具范围、取消和恢复流程。
+- `schedule_run.id` 作为普通请求 ID；普通请求终态同步该次计划运行与稳定产品 Task 的状态。
+  尚未接受的派发可释放重试；已经接受的运行在重启后按普通 Task 状态结算或恢复，不重新发送。
 - 当前执行到达终态后再认领下一项。删除只移除尚未执行的项；“立即中断并插入”取消当前
   请求并把所选项设为下一项，不重排其他项。
 - 每条 Conversation 最多保留 20 个用户可提交的待执行项。启动时将未完成的派发恢复为

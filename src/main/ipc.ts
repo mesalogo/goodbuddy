@@ -1479,14 +1479,14 @@ export function registerIpcHandlers(
     if (executionSpace?.kind === 'ssh' && !selectedRuntimes) {
       throw new Error(REMOTE_EXECUTION_SPACE_UNAVAILABLE)
     }
+    let selection = request.runtimeSelection ?? project?.runtimeSelection
     if (
       !selectedRuntimes ||
-      (!request.runtimeSelection && !executionSpace)
+      (!selection && !executionSpace)
     ) {
       return runtime
     }
-    let selection =
-      request.runtimeSelection ?? ({ provider: 'auto' } as const)
+    selection ??= { provider: 'auto' }
     if (request.followConfiguredAgentRuntime) {
       selection = resolveConfiguredAgentRuntimeSelection(
         await settingsStore.getResolvedSettings(),
@@ -2107,6 +2107,7 @@ export function registerIpcHandlers(
       throw error
     } finally {
       lease.release()
+      assistantDatabase.completeTaskScheduleRun(task.taskId)
     }
   }
   const startRemoteProjectRecovery = (
@@ -2235,8 +2236,6 @@ export function registerIpcHandlers(
     return conversationQueueUserInputSchema.parse(parsed)
   }
   const pumpingConversationQueues = new Set<string>()
-  const maximumConcurrentScheduleRuns = 4
-  let activeScheduleRuns = 0
 
   const isConversationExecuting = (
     conversationId: string
@@ -2272,14 +2271,7 @@ export function registerIpcHandlers(
       return
     }
     if (
-      pendingItem.source === 'user' &&
       !rendererReadyConversationQueues.has(conversationId)
-    ) {
-      return
-    }
-    if (
-      pendingItem.source === 'schedule' &&
-      activeScheduleRuns >= maximumConcurrentScheduleRuns
     ) {
       return
     }
@@ -2298,7 +2290,7 @@ export function registerIpcHandlers(
       readyConversationQueues.delete(conversationId)
       preferredConversationQueueItems.delete(conversationId)
       publishConversationQueueChange(conversationId)
-      if (claimed.source === 'user') {
+      {
         if (window.isDestroyed()) {
           assistantDatabase.releaseConversationUserQueueItem(
             claimed.item.id
@@ -2306,12 +2298,22 @@ export function registerIpcHandlers(
           readyConversationQueues.add(conversationId)
           return
         }
-        let input: ConversationQueueUserInput
+        let dispatch: ConversationQueueDispatch
         try {
-          input = parseConversationQueueUserPayload(
-            claimed.payloadJson,
-            true
-          )
+          dispatch = claimed.source === 'schedule'
+            ? {
+                item: claimed.item,
+                scheduled: true,
+                input: {
+                  conversationId,
+                  projectId: claimed.schedule.projectId,
+                  prompt: claimed.schedule.prompt
+                }
+              }
+            : {
+                item: claimed.item,
+                input: parseConversationQueueUserPayload(claimed.payloadJson, true)
+              }
         } catch {
           assistantDatabase.releaseConversationUserQueueItem(
             claimed.item.id
@@ -2340,7 +2342,7 @@ export function registerIpcHandlers(
           } catch {
             return
           }
-          for (const attachment of input.attachments) {
+          for (const attachment of dispatch.scheduled ? [] : dispatch.input.attachments) {
             contextManager.remove(attachment.id)
           }
           readyConversationQueues.add(conversationId)
@@ -2348,10 +2350,6 @@ export function registerIpcHandlers(
           void pumpConversationQueue(conversationId)
         }, 30_000)
         queueDispatchTimers.set(claimed.item.id, dispatchTimeout)
-        const dispatch: ConversationQueueDispatch = {
-          item: claimed.item,
-          input
-        }
         window.webContents.send(
           ipcChannels.conversationQueueDispatch,
           dispatch
@@ -2359,38 +2357,6 @@ export function registerIpcHandlers(
         return
       }
 
-      activeScheduleRuns += 1
-      const execution = (async () => {
-        const result = await executeTaskWork({
-          origin: 'schedule',
-          schedule: claimed.schedule,
-          scheduleRunId: claimed.runId
-        })
-        assistantDatabase.completeScheduleRun(
-          claimed.runId,
-          result.status
-        )
-        publishConversationChange()
-      })()
-      publishConversationChange()
-      void trackExecution(execution)
-        .catch(() => undefined)
-        .finally(() => {
-          activeScheduleRuns -= 1
-          readyConversationQueues.add(conversationId)
-          publishConversationQueueChange(conversationId)
-          void pumpConversationQueue(conversationId)
-          for (const pendingConversationId of
-            assistantDatabase.listPendingScheduleQueueConversationIds(
-              maximumConcurrentScheduleRuns
-            )) {
-            if (
-              readyConversationQueues.has(pendingConversationId)
-            ) {
-              void pumpConversationQueue(pendingConversationId)
-            }
-          }
-        })
     } finally {
       pumpingConversationQueues.delete(conversationId)
     }
@@ -2416,12 +2382,6 @@ export function registerIpcHandlers(
     resultFileRequested?: boolean
   }
   type TaskWorkExecution =
-    | {
-        origin: 'schedule'
-        schedule: AssistantSchedule
-        scheduleRunId: string
-        externalSignal?: AbortSignal
-      }
     | {
         origin: 'delegation'
         schedule: ExecutionTemplate
@@ -2454,13 +2414,10 @@ export function registerIpcHandlers(
       return { status: 'cancelled', error: '请求已取消' }
     }
     const taskId =
-      input.origin === 'schedule'
-        ? input.schedule.taskId
-        : input.origin === 'channel'
+      input.origin === 'channel'
           ? input.remoteContext.taskId
           : randomUUID()
-    const requestId =
-      input.origin === 'schedule' ? input.scheduleRunId : taskId
+    const requestId = taskId
     const controller = new AbortController()
     const abortFromExternal = (): void => {
       controller.abort(externalSignal?.reason)
@@ -2470,9 +2427,6 @@ export function registerIpcHandlers(
     })
     const runtimeConversationId =
       remoteContext?.conversationId ??
-      (input.origin === 'schedule'
-        ? input.schedule.conversationId
-        : undefined) ??
       `${origin}:${schedule.id}`
     const activeRequestLease = leaseActiveRequest(
       requestId,
@@ -2492,9 +2446,6 @@ export function registerIpcHandlers(
         origin: 'delegation',
         visible: false
       })
-    }
-    if (origin === 'schedule') {
-      publishConversationChange()
     }
     let output = ''
     let completed = false
@@ -2602,9 +2553,6 @@ export function registerIpcHandlers(
           taskId,
           'waiting_approval'
         )
-        if (origin === 'schedule') {
-          publishConversationChange()
-        }
         const settings = await settingsStore.getPolicySettings()
         try {
           return await approvalBroker.request(
@@ -2614,8 +2562,7 @@ export function registerIpcHandlers(
                 settings.toolApproval === 'policy'
                   ? 'policy'
                   : undefined,
-              requestId:
-                origin === 'schedule' ? taskId : requestId,
+              requestId,
               conversationId: runtimeConversationId
             },
             activeSignal,
@@ -2635,9 +2582,6 @@ export function registerIpcHandlers(
             !activeSignal.aborted
           ) {
             assistantDatabase.updateTaskStatus(taskId, 'running')
-            if (origin === 'schedule') {
-              publishConversationChange()
-            }
           }
         }
       }
@@ -2690,10 +2634,7 @@ export function registerIpcHandlers(
           persistModelUsage({
             ...agentEvent,
             requestId: taskId,
-            callId:
-              origin === 'schedule'
-                ? `${requestId}:${agentEvent.callId}`
-                : agentEvent.callId
+            callId: agentEvent.callId
           })
           if (provenance !== undefined) {
             assistantDatabase.appendRemoteTaskEventOnce({
@@ -2864,25 +2805,7 @@ export function registerIpcHandlers(
           })
         }
       }
-      if (
-        input.origin === 'schedule' &&
-        (output.trim() || artifactIds.length > 0)
-      ) {
-        assistantDatabase.appendConversationMessage({
-          conversationId: input.schedule.conversationId,
-          role: 'assistant',
-          content:
-            output.trim() ||
-            '任务已完成，独立成果已保存到成果工作栏。',
-          status: '定时任务',
-          ...(artifactIds.length > 0 ? { artifactIds } : {}),
-          task: {
-            id: taskId,
-            title: schedule.title
-          }
-        })
-        publishConversationChange()
-      } else if (origin === 'delegation' && output.trim()) {
+      if (origin === 'delegation' && output.trim()) {
         assistantDatabase.createTextArtifact({
           projectId: schedule.projectId,
           taskId,
@@ -2890,9 +2813,7 @@ export function registerIpcHandlers(
           content: output
         })
       }
-      if (origin !== 'schedule') {
-        assistantDatabase.updateTaskStatus(taskId, 'completed')
-      }
+      assistantDatabase.updateTaskStatus(taskId, 'completed')
       showDesktopNotificationWhenUnfocused(window, {
         title:
           origin === 'channel'
@@ -2901,9 +2822,7 @@ export function registerIpcHandlers(
         body:
           origin === 'channel'
             ? '结果已回复，并保存到远程通道会话。'
-            : origin === 'schedule'
-              ? '结果已写入关联对话。'
-              : '结果已保存到成果工作栏和委派记录。'
+            : '结果已保存到成果工作栏和委派记录。'
       })
       return {
         status: 'completed',
@@ -2925,20 +2844,6 @@ export function registerIpcHandlers(
         cancelled ? 'cancelled' : 'failed',
         message
       )
-      if (input.origin === 'schedule') {
-        assistantDatabase.appendConversationMessage({
-          conversationId: input.schedule.conversationId,
-          role: 'assistant',
-          content: message,
-          state: 'error',
-          status: cancelled ? '定时任务已取消' : '定时任务失败',
-          task: {
-            id: taskId,
-            title: schedule.title
-          }
-        })
-        publishConversationChange()
-      }
       showDesktopNotificationWhenUnfocused(window, {
         title:
           origin === 'channel'
@@ -4022,7 +3927,8 @@ export function registerIpcHandlers(
     if (
       parsedInput.queueItemId &&
       (!queuedItem ||
-        queuedItem.source !== 'user' ||
+        (queuedItem.source === 'schedule' &&
+          parsedInput.requestId !== queuedItem.scheduleRunId) ||
         queuedItem.conversationId !== parsedInput.conversationId ||
         !assistantDatabase.isConversationUserQueueItemDispatching(
           parsedInput.queueItemId
@@ -4265,6 +4171,9 @@ export function registerIpcHandlers(
         assistantDatabase.completeConversationUserQueueItem(
           parsedInput.queueItemId
         )
+        if (queuedItem?.source === 'schedule' && queuedItem.taskId) {
+          assistantDatabase.updateTaskStatus(queuedItem.taskId, 'running')
+        }
         publishConversationQueueChange(request.conversationId)
       } catch (error) {
         activeRequestLease.release()
@@ -4880,6 +4789,10 @@ export function registerIpcHandlers(
       } finally {
         eventBuffer.close()
         activeEventBuffers.delete(request.requestId)
+        if (queuedItem?.source === 'schedule' && !remoteRecoveryPending) {
+          assistantDatabase.completeTaskScheduleRun(request.requestId)
+          publishConversationChange()
+        }
         for (const [questionId, pending] of pendingAgentQuestions) {
           if (pending.requestId === request.requestId) {
             pendingAgentQuestions.delete(questionId)

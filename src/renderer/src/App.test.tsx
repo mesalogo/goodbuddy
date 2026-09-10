@@ -1684,7 +1684,7 @@ describe("App", () => {
     ).not.toBeInTheDocument();
     expect(
       taskChild?.querySelector(".conversation-task-child__meta"),
-    ).toHaveTextContent("Execute · 每周 · 空闲");
+    ).toHaveTextContent("每周 · 空闲");
     expect(screen.queryByText("Run")).not.toBeInTheDocument();
     fireEvent.click(taskChild!);
     const taskRegion = await screen.findByRole("region", {
@@ -1883,7 +1883,7 @@ describe("App", () => {
     expect(completedTask).toHaveAccessibleName(/已完成/u);
     expect(
       completedTask?.querySelector(".conversation-task-child__meta"),
-    ).toHaveTextContent("Ask · 仅一次");
+    ).toHaveTextContent("仅一次");
     expect(
       completedTask?.querySelector(".conversation-task-child__meta"),
     ).not.toHaveTextContent("已完成");
@@ -5040,6 +5040,86 @@ describe("App", () => {
     expect(runtimeButton).toBeEnabled();
   });
 
+  it("sends scheduled instructions with the target conversation's current settings and history", async () => {
+    const conversationId = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const knowledgeId = crypto.randomUUID();
+    const historyId = crypto.randomUUID();
+    vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce({
+      libraries: [{
+        id: knowledgeId, name: "Scheduled knowledge", description: "",
+        storageMode: "managed", graphEnabled: false, graphStrategy: "rules",
+        sourceCount: 1, documentCount: 1, indexedDocumentCount: 1,
+      }],
+      sources: [], documents: [], graphNodes: [], graphRelations: [], evidence: [],
+    });
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: conversationId, projectId, title: "Scheduled target", updatedAt: Date.now(),
+      runtimeSelection: { provider: "continue" }, workMode: "execute",
+      knowledgeLibraryIds: [knowledgeId], knowledgeRetrievalMode: "always",
+      messages: [{ id: historyId, role: "user", content: "Existing context", state: "complete", createdAt: Date.now() }],
+    }]);
+    render(<App />);
+    await waitFor(() => expect(api.conversationQueue.ready).toHaveBeenCalledWith(conversationId));
+    act(() => conversationQueueDispatchListener?.({
+      scheduled: true,
+      item: { id: runId, scheduleRunId: runId, conversationId, source: "schedule", label: "Timed message", createdAt: new Date().toISOString() },
+      input: { conversationId, projectId, prompt: "Use existing context" },
+    }));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]![0]).toMatchObject({
+      requestId: runId, queueItemId: runId, conversationId,
+      runtimeSelection: { provider: "continue" }, workMode: "execute",
+      knowledgeLibraryIds: [knowledgeId], knowledgeRetrievalMode: "always",
+      history: [{ role: "user", content: "Existing context" }], historyMessageIds: [historyId],
+      contextIds: [],
+    });
+    expect(api.conversationQueue.enqueueUser).not.toHaveBeenCalled();
+    expect(await screen.findByText("Use existing context")).toBeInTheDocument();
+    act(() => {
+      agentListener?.({ requestId: runId, type: "text", delta: "Latest reply" });
+      agentListener?.({ requestId: runId, type: "done" });
+    });
+    await screen.findByText("Latest reply");
+    const nextRunId = crypto.randomUUID();
+    act(() => conversationQueueDispatchListener?.({
+      scheduled: true,
+      item: { id: nextRunId, scheduleRunId: nextRunId, conversationId, source: "schedule", label: "Timed message", createdAt: new Date().toISOString() },
+      input: { conversationId, projectId, prompt: "Continue again" },
+    }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]![0]).toMatchObject({
+      conversationId,
+      history: [
+        { role: "user", content: "Existing context" },
+        { role: "user", content: "Use existing context" },
+        { role: "assistant", content: "Latest reply" },
+      ],
+    });
+  });
+
+  it("uses normal project defaults for a new scheduled conversation without another conversation's context", async () => {
+    const targetId = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    vi.mocked(api.projects.list).mockResolvedValueOnce([{ ...project, defaultWorkMode: "execute", runtimeSelection: { provider: "opencode" } }]);
+    vi.mocked(api.conversations.list).mockResolvedValue([
+      { id: crypto.randomUUID(), projectId, title: "Other conversation", updatedAt: Date.now(), workMode: "ask", runtimeSelection: { provider: "model" }, messages: [{ id: crypto.randomUUID(), role: "user", content: "Do not inherit this source history", state: "complete", createdAt: Date.now() }] },
+      { id: targetId, projectId, title: "New scheduled conversation", updatedAt: Date.now(), messages: [] },
+    ]);
+    render(<App />);
+    await waitFor(() => expect(api.conversationQueue.ready).toHaveBeenCalledWith(targetId));
+    act(() => conversationQueueDispatchListener?.({
+      scheduled: true,
+      item: { id: runId, scheduleRunId: runId, conversationId: targetId, source: "schedule", label: "Timed message", createdAt: new Date().toISOString() },
+      input: { conversationId: targetId, projectId, prompt: "Independent message" },
+    }));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]![0]).toMatchObject({
+      conversationId: targetId, runtimeSelection: { provider: "opencode" }, workMode: "execute",
+      history: [], knowledgeLibraryIds: [], contextIds: [],
+    });
+  });
+
   it("queues another ordinary message while the Conversation is running", async () => {
     render(<App />);
 
@@ -6287,6 +6367,50 @@ describe("App", () => {
         name: /OpenCode · 默认模型/u,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps an unselected SSH conversation inheriting the project's fixed model", async () => {
+    installRemoteProjectsSetting(true);
+    const remoteProject = {
+      ...project,
+      id: "00000000-0000-4000-8000-000000000119",
+      name: "Fixed remote model",
+      rootPath: "/srv/project",
+      runtimeSelection: { provider: "opencode" as const, profileId: modelProfileId },
+      executionSpace: {
+        kind: "ssh" as const,
+        hostId: "00000000-0000-4000-8000-000000000219",
+        remoteRootPath: "/srv/project",
+      },
+      builtInDefault: false,
+    };
+    const conversationId = "00000000-0000-4000-8000-000000000319";
+    vi.mocked(api.projects.list).mockResolvedValueOnce([project, remoteProject]);
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{
+      id: conversationId,
+      projectId: remoteProject.id,
+      title: "Inherited remote model",
+      updatedAt: 1_775_000_000_000,
+      messages: [],
+    }]);
+
+    render(<App />);
+    await screen.findByRole("button", { name: "当前项目" });
+    selectProjectOption(remoteProject.name);
+    await waitFor(() => expect(api.agent.getStatus).toHaveBeenCalledWith(
+      remoteProject.runtimeSelection,
+    ));
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "Verify inherited model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送", exact: true }));
+    await waitFor(() => {
+      const saved = vi.mocked(api.conversations.saveLocal).mock.calls
+        .flatMap(([conversations]) => conversations)
+        .filter((conversation) => conversation.header.id === conversationId);
+      expect(saved.length).toBeGreaterThan(0);
+      expect(saved.every((conversation) => conversation.header.runtimeSelection === undefined)).toBe(true);
+    });
   });
 
   it("keeps managed SSH histories visible while independently blocking recovery projects", async () => {
@@ -8956,6 +9080,9 @@ describe("App", () => {
     expect(
       await screen.findByRole("button", { name: /第二模型/u }),
     ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /新建对话/u }));
+    expect(screen.getByRole("button", { name: /第二模型/u })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "第二模型对话" },

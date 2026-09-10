@@ -1047,6 +1047,7 @@ function interruptActiveToolBlocks(
 }
 
 const conversationContextStateSchema = conversationSnapshotSchema.pick({
+  workMode: true,
   knowledgeLibraryIds: true,
   contextMetrics: true,
   contextCompressionState: true
@@ -1056,7 +1057,7 @@ function parseConversationContextState(
   value: string | null
 ): Pick<
   ConversationSnapshot,
-  'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
+  'workMode' | 'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
 > {
   if (!value) {
     return {}
@@ -1074,13 +1075,14 @@ function parseConversationContextState(
 function serializeConversationContextState(
   conversation: Pick<
     ConversationSnapshot,
-    'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
+    'workMode' | 'knowledgeLibraryIds' | 'contextMetrics' | 'contextCompressionState'
   >
 ): string | null {
-  return conversation.knowledgeLibraryIds !== undefined ||
+  return conversation.workMode !== undefined || conversation.knowledgeLibraryIds !== undefined ||
     conversation.contextMetrics ||
     conversation.contextCompressionState
     ? JSON.stringify({
+        workMode: conversation.workMode,
         knowledgeLibraryIds: conversation.knowledgeLibraryIds,
         contextMetrics: conversation.contextMetrics,
         contextCompressionState: conversation.contextCompressionState
@@ -1847,7 +1849,8 @@ export class AssistantDatabase {
           .prepare(
             `UPDATE schedule_runs
              SET status = 'pending'
-             WHERE status = 'running'`
+             WHERE status = 'running'
+               AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.id = schedule_runs.id)`
           )
           .run()
         database
@@ -1984,6 +1987,12 @@ export class AssistantDatabase {
       } catch (error) {
         database.exec('ROLLBACK')
         throw error
+      }
+      const startedSchedules = database.prepare(
+        `SELECT id FROM schedule_runs WHERE status = 'running'`
+      ).all() as Array<{ id: string }>
+      for (const run of startedSchedules) {
+        this.completeTaskScheduleRun(run.id)
       }
     } catch (error) {
       database.close()
@@ -5795,7 +5804,7 @@ export class AssistantDatabase {
         .prepare(
           `SELECT 1
            FROM conversation_queue_items
-           WHERE id = ? AND source = 'user' AND status = 'dispatching'`
+            WHERE id = ? AND status = 'dispatching'`
         )
         .get(itemId)
     )
@@ -5953,7 +5962,7 @@ export class AssistantDatabase {
     const result = this.requireDatabase()
       .prepare(
         `DELETE FROM conversation_queue_items
-         WHERE id = ? AND source = 'user' AND status = 'dispatching'`
+         WHERE id = ? AND status = 'dispatching'`
       )
       .run(itemId)
     if (result.changes !== 1) {
@@ -5962,11 +5971,14 @@ export class AssistantDatabase {
   }
 
   releaseConversationUserQueueItem(itemId: string): void {
-    const result = this.requireDatabase()
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+    const result = database
       .prepare(
         `UPDATE conversation_queue_items
          SET status = 'pending'
-         WHERE id = ? AND source = 'user' AND status = 'dispatching'`
+         WHERE id = ? AND status = 'dispatching'`
       )
       .run(itemId)
     if (
@@ -5975,11 +5987,19 @@ export class AssistantDatabase {
         .prepare(
           `SELECT 1
            FROM conversation_queue_items
-           WHERE id = ? AND source = 'user' AND status = 'pending'`
+            WHERE id = ? AND status = 'pending'`
         )
         .get(itemId)
     ) {
       throw new Error('待发送消息不存在或状态已变化')
+    }
+    database.prepare(`UPDATE schedule_runs SET status = 'pending'
+      WHERE id = (SELECT schedule_run_id FROM conversation_queue_items WHERE id = ?)
+        AND status = 'running'`).run(itemId)
+    database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
   }
 
@@ -6054,7 +6074,6 @@ export class AssistantDatabase {
     try {
       let projectId = parsed.projectId ?? null
       let conversationId = parsed.conversationId
-      let runtimeSelectionJson: string | null = null
       if (conversationId) {
         const conversation = database
           .prepare(
@@ -6083,7 +6102,6 @@ export class AssistantDatabase {
           throw new Error('任务项目与所选对话不一致')
         }
         projectId = conversation.project_id
-        runtimeSelectionJson = conversation.runtime_selection_json
       } else {
         if (projectId) {
           const project = database
@@ -6098,7 +6116,6 @@ export class AssistantDatabase {
           if (!project) {
             throw new Error('任务项目不存在或不可用')
           }
-          runtimeSelectionJson = project.runtime_selection_json
         }
         conversationId = randomUUID()
         database
@@ -6111,8 +6128,8 @@ export class AssistantDatabase {
           .run(
             conversationId,
             projectId,
-            runtimeSelectionJson,
-            parsed.workMode,
+            null,
+            'ask',
             parsed.title,
             now,
             now
@@ -6132,9 +6149,7 @@ export class AssistantDatabase {
           JSON.stringify({
             title: parsed.title,
             prompt: parsed.prompt,
-            workMode: parsed.workMode,
-            runtimeSelection:
-              parseRuntimeSelection(runtimeSelectionJson)
+            workMode: parsed.workMode
           }),
           JSON.stringify({ type: parsed.recurrence }),
           parsed.nextRunAt,
@@ -6423,6 +6438,19 @@ export class AssistantDatabase {
       throw error
     }
     return this.getConversationQueueItem(runId)!
+  }
+
+  completeTaskScheduleRun(taskId: string): void {
+    const run = this.requireDatabase().prepare(
+      `SELECT t.status, t.remote_recoverable FROM schedule_runs sr
+       INNER JOIN tasks t ON t.id = sr.id
+       WHERE sr.id = ? AND sr.status = 'running'`
+    ).get(taskId) as { status: string; remote_recoverable: number } | undefined
+    if (run && !(run.status === 'interrupted' && run.remote_recoverable === 1) &&
+      ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status)) {
+      this.completeScheduleRun(taskId,
+        run.status === 'completed' || run.status === 'cancelled' ? run.status : 'failed')
+    }
   }
 
   completeScheduleRun(

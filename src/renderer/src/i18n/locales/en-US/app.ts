@@ -131,7 +131,7 @@ export const app = {
     eyebrow: 'CUSTOM TASK',
     title: 'New custom task',
     description:
-      'Create a task that runs on schedule and keeps recording results in a conversation.',
+      'Send task instructions to an ordinary conversation on schedule. Replies stay in the conversation just like manually sent messages.',
     close: 'Close new custom task',
     fields: {
       name: 'Task name',
@@ -145,9 +145,9 @@ export const app = {
       current: 'Current conversation',
       new: 'New conversation',
       currentHelp:
-        'Associate the task with this conversation without renaming it or changing normal chat.',
+        'Use this conversation\'s history, Runtime, work mode, and enabled capabilities when the message is sent.',
       newHelp:
-        'Create a conversation for this task, using the task name as its initial title.',
+        'Create an independent ordinary conversation with project defaults and the task name as its title.',
       currentUnavailable:
         'The current conversation cannot host this task. Choose a new conversation.'
     },
@@ -163,6 +163,7 @@ export const app = {
       weekly: 'Weekly'
     },
     scope: {
+      conversationSettings: 'Use the target conversation\'s Runtime, work mode, and enabled tools at send time. Adjust them in the conversation.',
       title: 'Execution scope',
       project: 'Project',
       runtime: 'Runtime',

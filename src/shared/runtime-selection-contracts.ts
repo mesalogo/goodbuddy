@@ -182,7 +182,7 @@ export function repairChannelRuntimeSelection(
     selection.provider === 'opencode' ||
     selection.provider === 'continue'
   ) {
-    return { provider: selection.provider }
+    return repairAgentRuntimeSelection(selection, settings)
   }
   if (selection.provider === 'deepseek-harness') {
     const repaired = repairAgentRuntimeSelection(selection, settings)

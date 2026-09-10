@@ -1309,6 +1309,7 @@ function toConversationSnapshots(
       id: conversation.id,
       projectId: conversation.projectId,
       runtimeSelection: conversation.runtimeSelection,
+      workMode: conversation.workMode,
       knowledgeLibraryIds: conversation.knowledgeLibraryIds,
       knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
       contextMetrics: conversation.contextMetrics,
@@ -1352,6 +1353,7 @@ function toLocalConversationHeader(
     id: conversation.id,
     projectId: conversation.projectId,
     runtimeSelection: conversation.runtimeSelection,
+    workMode: conversation.workMode,
     knowledgeLibraryIds: conversation.knowledgeLibraryIds,
     knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
     contextMetrics: conversation.contextMetrics,
@@ -2093,7 +2095,6 @@ function App(): React.JSX.Element {
   >(undefined);
   const viewRef = useRef<WorkspaceView>("chat");
   const heartbeatLoadRequestRef = useRef(0);
-  const [workMode, setWorkMode] = useState<InteractiveWorkMode>("ask");
   const [conversationDrafts, setConversationDrafts] = useState<
     Record<string, string>
   >({});
@@ -2183,10 +2184,6 @@ function App(): React.JSX.Element {
   const toggleAppearanceTheme = useCallback((): void => {
     setAppearanceTheme(resolvedAppearanceTheme === "dark" ? "light" : "dark");
   }, [resolvedAppearanceTheme]);
-  const effectiveWorkMode =
-    workMode === "execute" && runtime?.supportsToolExecution === false
-      ? "ask"
-      : workMode;
   const setExpertMenuOpen = useCallback((open: boolean): void => {
     setComposerMenuOpen(open ? "expert" : undefined);
     if (open) {
@@ -2707,7 +2704,7 @@ function App(): React.JSX.Element {
   );
 
   useEffect(() => {
-    if (!conversationStoreReady || !projectRecoverySnapshotReady) {
+    if (!conversationStoreReady || !projectRecoverySnapshotReady || !runtimeSettings) {
       return;
     }
     const conversationIds = [
@@ -2738,7 +2735,7 @@ function App(): React.JSX.Element {
         dedupeKey: "conversation-queue-resume",
       });
     });
-  }, [conversationStoreReady, projectRecoverySnapshotReady]);
+  }, [conversationStoreReady, projectRecoverySnapshotReady, conversations.length, runtimeSettings]);
 
   useEffect(() => {
     const sweep = (): void => {
@@ -3118,6 +3115,20 @@ function App(): React.JSX.Element {
     [activeProjectId, projects],
   );
   const activeProjectUsesManagedSsh = isManagedSshProject(activeProject);
+  const workMode = normalizeInteractiveWorkMode(
+    activeConversation?.workMode ?? activeProject?.defaultWorkMode,
+  );
+  const effectiveWorkMode =
+    workMode === "execute" && runtime?.supportsToolExecution === false
+      ? "ask"
+      : workMode;
+  const setWorkMode = (mode: InteractiveWorkMode): void => {
+    setConversations((current) => current.map((conversation) =>
+      conversation.id === activeId
+        ? { ...conversation, workMode: mode, updatedAt: Date.now() }
+        : conversation,
+    ));
+  };
   const activeProjectRecovery =
     activeProjectUsesManagedSsh && activeProject
       ? projectRecoveryByProjectId[activeProject.id]
@@ -5435,7 +5446,6 @@ function App(): React.JSX.Element {
         throw new Error("没有可用的本地项目");
       }
       setActiveProjectId(project.id);
-      setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode));
       const persistedLocalConversations = persistedConversations.filter(
         (conversation) => !conversation.remote,
       );
@@ -6077,7 +6087,6 @@ function App(): React.JSX.Element {
     candidateConversations = conversationsRef.current,
   ): void => {
     setActiveProjectId(selected.id);
-    setWorkMode(normalizeInteractiveWorkMode(selected.defaultWorkMode));
     const conversation = candidateConversations.find(
       (candidate) =>
         candidate.projectId === selected.id &&
@@ -6086,11 +6095,12 @@ function App(): React.JSX.Element {
     if (conversation) {
       if (isManagedSshProject(selected)) {
         const runtimeSelection = runtimeSettings
-          ? getRuntimeSelectionForProvider("opencode", runtimeSettings)
+          ? getProjectDefaultRuntimeSelection(selected, runtimeSettings)
           : ({ provider: "opencode" } as const);
         setConversations((current) =>
           current.map((candidate) =>
             candidate.projectId === selected.id &&
+            candidate.runtimeSelection !== undefined &&
             candidate.runtimeSelection?.provider !== "opencode"
               ? {
                   ...candidate,
@@ -6140,7 +6150,6 @@ function App(): React.JSX.Element {
     const project = await window.goodbuddy.projects.create(input);
     setProjects((current) => [project, ...current]);
     setActiveProjectId(project.id);
-    setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode));
     const conversation = createConversation(
       project.id,
       undefined,
@@ -6162,9 +6171,6 @@ function App(): React.JSX.Element {
         candidate.id === project.id ? project : candidate,
       ),
     );
-    if (project.id === activeProjectId) {
-      setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode));
-    }
     return project;
   };
 
@@ -6766,7 +6772,36 @@ function App(): React.JSX.Element {
   const submit = async (
     queuedDispatch?: ConversationQueueDispatch,
   ): Promise<void> => {
-    const queuedInput = queuedDispatch?.input;
+    let queuedInput: ConversationQueueUserInput | undefined =
+      queuedDispatch && !queuedDispatch.scheduled ? queuedDispatch.input : undefined;
+    if (queuedDispatch?.scheduled) {
+      const conversation = conversationsRef.current.find(
+        (candidate) => candidate.id === queuedDispatch.input.conversationId,
+      );
+      const project = projectsRef.current.find(
+        (candidate) => candidate.id === conversation?.projectId,
+      );
+      const selection = conversation?.runtimeSelection ??
+        (runtimeSettings ? getProjectDefaultRuntimeSelection(project, runtimeSettings) : undefined);
+      if (!conversation || !selection) {
+        await window.goodbuddy.conversationQueue.releaseUser(queuedDispatch.item.id);
+        return;
+      }
+      const mode = normalizeInteractiveWorkMode(conversation.workMode ?? project?.defaultWorkMode);
+      queuedInput = {
+        conversationId: conversation.id,
+        projectId: conversation.projectId,
+        prompt: queuedDispatch.input.prompt,
+        runtimeSelection: selection,
+        workMode: mode,
+        includeMemoryContext: true,
+        attachments: [],
+        knowledgeLibraryIds: conversation.knowledgeLibraryIds ?? [],
+        knowledgeRetrievalMode: conversation.knowledgeRetrievalMode ?? "auto",
+        smartRouting: runtimeSettings?.subagentSmartRoutingEnabled === true &&
+          supportsSubagentSmartRouting(mode) ? true : undefined,
+      };
+    }
     const releaseQueuedItem = async (): Promise<void> => {
       if (!queuedDispatch) {
         return;
@@ -6856,7 +6891,9 @@ function App(): React.JSX.Element {
       return;
     }
 
-    const requestId = crypto.randomUUID();
+    const requestId = queuedDispatch?.scheduled
+      ? queuedDispatch.item.scheduleRunId!
+      : crypto.randomUUID();
     const conversationId = conversationSnapshot.id;
     const attachmentSnapshot = (queuedInput?.attachments ?? attachments).slice(
       0,
@@ -6970,7 +7007,7 @@ function App(): React.JSX.Element {
       return;
     }
 
-    if (dispatchedConversationQueueItems.current.has(queuedDispatch.item.id)) {
+    if (!queuedDispatch || dispatchedConversationQueueItems.current.has(queuedDispatch.item.id)) {
       return;
     }
     dispatchedConversationQueueItems.current.add(queuedDispatch.item.id);
@@ -7655,13 +7692,7 @@ function App(): React.JSX.Element {
       return;
     }
     if (conversation.projectId) {
-      const project = projects.find(
-        (candidate) => candidate.id === conversation.projectId,
-      );
       setActiveProjectId(conversation.projectId);
-      if (project) {
-        setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode));
-      }
     }
     setActiveId(conversationId);
     setUnreadConversationIds((current) => {
@@ -7694,13 +7725,7 @@ function App(): React.JSX.Element {
       return;
     }
     if (task.projectId) {
-      const project = projects.find(
-        (candidate) => candidate.id === task.projectId,
-      );
       setActiveProjectId(task.projectId);
-      if (project) {
-        setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode));
-      }
     }
     setSelectedAssistantTaskId(task.id);
     setExpandedTaskConversationIds((current) => {
@@ -7782,13 +7807,7 @@ function App(): React.JSX.Element {
       });
     }
     if (schedule.projectId) {
-      const project = projects.find(
-        (candidate) => candidate.id === schedule.projectId,
-      );
       setActiveProjectId(schedule.projectId);
-      if (project) {
-        setWorkMode(normalizeInteractiveWorkMode(project.defaultWorkMode));
-      }
     }
     setActiveId(schedule.conversationId);
     setView("chat");
@@ -8591,7 +8610,6 @@ function App(): React.JSX.Element {
                         );
                         const metadata = schedule
                           ? [
-                              tWorkspace(`task.mode.${schedule.workMode}`),
                               tWorkspace(
                                 `sidebar.tasks.schedule.recurrence.${schedule.recurrence}`,
                               ),
@@ -10747,8 +10765,6 @@ function App(): React.JSX.Element {
               onCreate={createCustomTask}
               projectId={activeProject.id}
               projectName={activeProjectDisplayName ?? activeProject.name}
-              runtimeLabel={activeRuntimeLabel}
-              supportsToolExecution={Boolean(runtime?.supportsToolExecution)}
               workspaceLabel={
                 activeProject.rootPath || t("customTask.scope.noWorkspace")
               }

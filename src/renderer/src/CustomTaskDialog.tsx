@@ -17,9 +17,7 @@ type CustomTaskDialogProps = {
   defaultDestination: CustomTaskDestination
   projectId?: string
   projectName: string
-  runtimeLabel: string
   workspaceLabel: string
-  supportsToolExecution: boolean
   onClose: () => void
   onCreate: (input: ScheduleCreateInput) => Promise<AssistantSchedule>
 }
@@ -35,9 +33,7 @@ export function CustomTaskDialog({
   defaultDestination,
   projectId,
   projectName,
-  runtimeLabel,
   workspaceLabel,
-  supportsToolExecution,
   onClose,
   onCreate
 }: CustomTaskDialogProps): React.JSX.Element {
@@ -51,10 +47,6 @@ export function CustomTaskDialog({
       ? 'current'
       : 'new'
   )
-  const [workMode, setWorkMode] =
-    useState<ScheduleCreateInput['workMode']>(
-      supportsToolExecution ? 'execute' : 'ask'
-    )
   const [recurrence, setRecurrence] =
     useState<ScheduleCreateInput['recurrence']>('once')
   const [nextRunAt, setNextRunAt] = useState(() =>
@@ -119,7 +111,6 @@ export function CustomTaskDialog({
           : {}),
         title: title.trim(),
         prompt: prompt.trim(),
-        workMode,
         recurrence,
         nextRunAt: runAt.toISOString()
       })
@@ -254,25 +245,6 @@ export function CustomTaskDialog({
           </div>
 
           <div className="custom-task-dialog__two-columns">
-            <div className="custom-task-dialog__choice">
-              <span>{t('customTask.fields.mode')}</span>
-              <SegmentedControl
-                ariaLabel={t('customTask.fields.mode')}
-                onChange={setWorkMode}
-                options={[
-                  {
-                    value: 'execute',
-                    label: t('customTask.mode.execute'),
-                    disabled: !supportsToolExecution
-                  },
-                  { value: 'ask', label: t('customTask.mode.ask') }
-                ]}
-                value={workMode}
-              />
-              {!supportsToolExecution && (
-                <small>{t('customTask.mode.executeUnavailable')}</small>
-              )}
-            </div>
             <label className="custom-task-dialog__field">
               <span>{t('customTask.fields.recurrence')}</span>
               <select
@@ -326,10 +298,6 @@ export function CustomTaskDialog({
                 <dd>{projectName}</dd>
               </div>
               <div>
-                <dt>{t('customTask.scope.runtime')}</dt>
-                <dd>{runtimeLabel}</dd>
-              </div>
-              <div>
                 <dt>{t('customTask.scope.workspace')}</dt>
                 <dd>{workspaceLabel}</dd>
               </div>
@@ -337,9 +305,7 @@ export function CustomTaskDialog({
                 <dt>{t('customTask.scope.tools')}</dt>
                 <dd>
                   <ShieldCheck aria-hidden="true" size={13} />
-                  {workMode === 'execute'
-                    ? t('customTask.scope.executeApproval')
-                    : t('customTask.scope.askReadOnly')}
+                  {t('customTask.scope.conversationSettings')}
                 </dd>
               </div>
             </dl>

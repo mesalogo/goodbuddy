@@ -3,6 +3,7 @@ import type { RuntimeSettings } from '../../shared/contracts'
 import {
   getDefaultRuntimeSelection,
   getRuntimeSelectionProfileId,
+  repairChannelRuntimeSelection,
   getRuntimeSelectionForProvider
 } from '../../shared/runtime-selection-contracts'
 
@@ -18,6 +19,26 @@ function harnessSettings(
 }
 
 describe('DeepSeek Harness runtime selection', () => {
+  it.each(['opencode', 'continue', 'deepseek-harness'] as const)(
+    'preserves an explicit %s channel profile even when it equals the old default', (provider) => {
+      const selection = { provider, profileId: harnessProfileId }
+      const settings = {
+        defaultModelProfileId: '00000000-0000-4000-8000-000000000072',
+        modelProfiles: [{
+          id: harnessProfileId,
+          baseUrl: 'https://gateway.example/v1',
+          protocol: 'openai-chat-completions',
+          authentication: 'api-key' as const,
+          apiKeyConfigured: true
+        }],
+        opencodeModelSource: { kind: 'default' as const },
+        continueModelSource: { kind: 'platform' as const }
+      }
+      expect(repairChannelRuntimeSelection(selection, settings)).toEqual(selection)
+      expect(repairChannelRuntimeSelection({ provider }, settings)).toEqual({ provider })
+    }
+  )
+
   it('references the Runtime configuration without copying its profile', () => {
     const selection = getRuntimeSelectionForProvider(
       'deepseek-harness',

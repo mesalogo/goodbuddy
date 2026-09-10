@@ -5112,6 +5112,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       queueDueSchedules: vi.fn(() => []),
       queueScheduleNow: vi.fn(),
       completeScheduleRun: vi.fn(),
+      completeTaskScheduleRun: vi.fn(),
       branchLocalConversation: vi.fn(() => ({
         id: '00000000-0000-4000-8000-000000000403',
         branch: {
@@ -5367,7 +5368,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('reuses a scheduled Task and writes text results to its Conversation', async () => {
+  it('dispatches scheduled messages through ordinary agent runs with current history and tools', async () => {
     const fullOutput = `${'x'.repeat(1_000_001)} scheduled tail`
     const taskId = '00000000-0000-4000-8000-000000000701'
     const conversationId =
@@ -5380,7 +5381,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       capability: 'chat',
       supportsToolExecution: true,
       async *run(
-        request: { requestId: string },
+        request: { requestId: string; history?: unknown; workMode?: string },
         _signal: AbortSignal,
         authorize: (
           input: {
@@ -5391,11 +5392,13 @@ describe('registerIpcHandlers agent terminal state', () => {
         ) => Promise<string>
       ) {
         expect(request.requestId).toBe(runId)
-        await authorize({
+        expect(request.history).toEqual([{ role: 'user', content: 'Earlier conversation' }])
+        expect(request.workMode).toBe('execute')
+        expect(await authorize({
           scopeKey: 'workspace.write',
           title: '写入工作区',
           description: '更新状态文件'
-        })
+        })).toBe('once')
         yield {
           requestId: request.requestId,
           type: 'text',
@@ -5408,6 +5411,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       }
     }
     const harness = createHarness(runtime)
+    await electronMocks.handlers.get(ipcChannels.conversationQueueReady)?.(
+      trustedEvent(harness.webContents), conversationId)
     const schedule = {
       id: scheduleId,
       projectId: '00000000-0000-4000-8000-000000000401',
@@ -5435,6 +5440,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.assistantDatabase.queueScheduleNow.mockReturnValue(
       queueItem
     )
+    harness.assistantDatabase.getConversationQueueItem.mockReturnValue(queueItem)
     harness.assistantDatabase.listConversationQueueItems
       .mockReturnValueOnce([queueItem])
       .mockReturnValue([])
@@ -5450,34 +5456,33 @@ describe('registerIpcHandlers agent terminal state', () => {
       ipcChannels.schedulesRunNow
     )?.(trustedEvent(harness.webContents), scheduleId)
 
+    expect(harness.assistantDatabase.createTask).not.toHaveBeenCalled()
+    expect(harness.webContents.send).toHaveBeenCalledWith(
+      ipcChannels.conversationQueueDispatch,
+      { item: queueItem, scheduled: true, input: {
+        conversationId, projectId: schedule.projectId, prompt: schedule.prompt
+      } })
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId: runId, conversationId, queueItemId: queueItem.id,
+      prompt: schedule.prompt, workMode: 'execute',
+      history: [{ role: 'user', content: 'Earlier conversation' }]
+    })
     await vi.waitFor(() =>
       expect(
-        harness.assistantDatabase.completeScheduleRun
-      ).toHaveBeenCalledWith(runId, 'completed')
+        harness.assistantDatabase.completeTaskScheduleRun
+      ).toHaveBeenCalledWith(runId)
     )
     expect(
       harness.assistantDatabase.updateTaskStatus
     ).toHaveBeenCalledWith(taskId, 'running')
-    expect(harness.approvalBroker.request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestId: taskId,
-        conversationId
-      }),
-      expect.any(AbortSignal),
-      expect.any(Function)
-    )
+    expect(harness.approvalBroker.request).not.toHaveBeenCalled()
     expect(
       harness.assistantDatabase.appendConversationMessage
-    ).toHaveBeenCalledWith({
-      conversationId,
-      role: 'assistant',
-      content: fullOutput,
-      status: '定时任务',
-      task: {
-        id: taskId,
-        title: '每日状态'
-      }
-    })
+    ).not.toHaveBeenCalled()
+    expect(harness.webContents.send).toHaveBeenCalledWith(
+      ipcChannels.agentEvent, expect.objectContaining({
+        requestId: runId, type: 'text', delta: fullOutput
+      }))
     expect(
       harness.assistantDatabase.createTextArtifact
     ).not.toHaveBeenCalled()
@@ -5487,7 +5492,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('fails scheduled runs promptly when a Runtime asks an interactive question', async () => {
+  it('allows scheduled messages to ask questions through the ordinary conversation UI', async () => {
     const taskId = '00000000-0000-4000-8000-000000000711'
     const conversationId =
       '00000000-0000-4000-8000-000000000712'
@@ -5515,10 +5520,12 @@ describe('registerIpcHandlers agent terminal state', () => {
             }
           ]
         } as const
-        await new Promise(() => undefined)
+        yield { requestId: request.requestId, type: 'done' } as const
       }
     }
     const harness = createHarness(runtime)
+    await electronMocks.handlers.get(ipcChannels.conversationQueueReady)?.(
+      trustedEvent(harness.webContents), conversationId)
     const schedule = {
       id: scheduleId,
       projectId: '00000000-0000-4000-8000-000000000401',
@@ -5546,6 +5553,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.assistantDatabase.queueScheduleNow.mockReturnValue(
       queueItem
     )
+    harness.assistantDatabase.getConversationQueueItem.mockReturnValue(queueItem)
     harness.assistantDatabase.listConversationQueueItems
       .mockReturnValueOnce([queueItem])
       .mockReturnValue([])
@@ -5560,25 +5568,20 @@ describe('registerIpcHandlers agent terminal state', () => {
       ipcChannels.schedulesRunNow
     )?.(trustedEvent(harness.webContents), scheduleId)
 
+    await harness.handler?.(trustedEvent(harness.webContents), {
+      requestId: runId, conversationId, queueItemId: queueItem.id,
+      prompt: schedule.prompt, workMode: 'execute'
+    })
     await vi.waitFor(() =>
       expect(
-        harness.assistantDatabase.completeScheduleRun
-      ).toHaveBeenCalledWith(runId, 'failed')
+        harness.assistantDatabase.completeTaskScheduleRun
+      ).toHaveBeenCalledWith(runId)
     )
-    expect(respondToQuestion).toHaveBeenCalledWith(
-      'opencode-background-question'
-    )
-    expect(
-      harness.assistantDatabase.appendConversationMessage
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        conversationId,
-        state: 'error',
-        status: '定时任务失败',
-        content:
-          '后台任务无法回答 Runtime 交互提问。请改为在 GoodBuddy 对话中运行，或调整提示词和工具配置以避免交互提问。'
-      })
-    )
+    expect(respondToQuestion).not.toHaveBeenCalled()
+    expect(harness.webContents.send).toHaveBeenCalledWith(
+      ipcChannels.agentEvent, expect.objectContaining({
+        type: 'question', questionId: 'opencode-background-question'
+      }))
     await harness.dispose()
   })
 
@@ -8403,6 +8406,42 @@ describe('registerIpcHandlers agent terminal state', () => {
       secondSelection,
       undefined
     )
+    await harness.dispose()
+  })
+
+  it('resolves the latest project rule for ordinary runs and lets explicit selections override it', async () => {
+    const requestRuntime = {
+      runtimeId: 'model', capability: 'chat', supportsToolExecution: true,
+      async *run(request: { requestId: string }) {
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    const selectedRuntimes = {
+      getRuntime: vi.fn(async () => requestRuntime),
+      releaseConversation: vi.fn(async () => undefined)
+    }
+    const harness = createHarness(requestRuntime, undefined, 'always', undefined, false, selectedRuntimes)
+    const projectId = '00000000-0000-4000-8000-000000000101'
+    const fixed = { provider: 'continue', profileId: '00000000-0000-4000-8000-000000000042' }
+    const project = { id: projectId, rootPath: 'C:\\ProjectWorkspace' }
+    harness.assistantDatabase.getProject.mockReturnValue({ ...project, runtimeSelection: { provider: 'opencode' } })
+    const event = trustedEvent(harness.webContents)
+    await harness.handler?.(event, {
+      projectId, conversationId: 'project-rule-one',
+      requestId: '00000000-0000-4000-8000-000000000011', prompt: 'one', workMode: 'ask'
+    })
+    expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith({ provider: 'opencode' }, expect.anything())
+    harness.assistantDatabase.getProject.mockReturnValue({ ...project, runtimeSelection: fixed })
+    await harness.handler?.(event, {
+      projectId, conversationId: 'project-rule-two',
+      requestId: '00000000-0000-4000-8000-000000000012', prompt: 'two', workMode: 'ask'
+    })
+    expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith(fixed, expect.anything())
+    await harness.handler?.(event, {
+      projectId, conversationId: 'project-rule-three', runtimeSelection: { provider: 'model' },
+      requestId: '00000000-0000-4000-8000-000000000013', prompt: 'three', workMode: 'ask'
+    })
+    expect(selectedRuntimes.getRuntime).toHaveBeenLastCalledWith({ provider: 'model' }, expect.anything())
     await harness.dispose()
   })
 
