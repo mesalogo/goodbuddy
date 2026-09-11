@@ -824,7 +824,7 @@ function ChatHistoryPane({
   conversationHtmlRenderingEnabled: boolean;
   conversation: Conversation;
   locale: TimeFormatLocale;
-  onCopyMessage: (content: string) => Promise<void>;
+  onCopyMessage: (content: string, kind?: 'tool') => Promise<void>;
   onDownloadImage: (item: ImageViewerItem) => void;
   onOpenCitationContext: (reference: KnowledgeSearchReference) => Promise<void>;
   onOpenCitationSource: (reference: KnowledgeSearchReference) => Promise<void>;
@@ -6623,8 +6623,8 @@ function App(): React.JSX.Element {
   };
 
   const copyMessage = useCallback(
-    (content: string): Promise<void> =>
-      writeClipboardText(content, t("notices.messageCopied")),
+    (content: string, kind?: 'tool'): Promise<void> =>
+      writeClipboardText(content, t(kind === 'tool' ? "chat.tools.copied" : "notices.messageCopied")),
     [t, writeClipboardText],
   );
 

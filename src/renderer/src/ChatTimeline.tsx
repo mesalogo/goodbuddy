@@ -1,5 +1,6 @@
 import {
   Bot,
+  Check,
   CheckCircle2,
   ChevronRight,
   CircleHelp,
@@ -11,7 +12,6 @@ import {
   ClockFading,
   LoaderCircle,
   ShieldCheck,
-  TerminalSquare,
   UserRound,
   XCircle
 } from 'lucide-react'
@@ -181,10 +181,46 @@ function MessageReasoning({
   )
 }
 
+type CopyContent = (content: string, kind?: 'tool') => Promise<void>
+
+function ToolDetail({ label, content, formatJson = false, onCopy }: {
+  label: string
+  content: string
+  formatJson?: boolean
+  onCopy: CopyContent
+}): React.JSX.Element {
+  const { t } = useTranslation('app')
+  let display = content
+  if (formatJson) {
+    try {
+      display = JSON.stringify(JSON.parse(content), null, 2)
+    } catch {
+      // Truncated JSON and plain-text arguments remain readable as received.
+    }
+  }
+
+  return (
+    <section className="tool-detail" aria-label={label}>
+      <header className="tool-detail__toolbar">
+        <strong>{label}</strong>
+        <button type="button" aria-label={t('chat.tools.copy', { label })} onClick={() => { void onCopy(content, 'tool') }}>
+          <Copy aria-hidden="true" size={13} />
+          {t('chat.tools.copyAction')}
+        </button>
+      </header>
+      <pre tabIndex={0} aria-label={label}>
+        {display}
+      </pre>
+    </section>
+  )
+}
+
 function ToolExecutionList({
-  tools
+  tools,
+  onCopy
 }: {
   tools: ToolActivity[]
+  onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
 
@@ -193,59 +229,63 @@ function ToolExecutionList({
       aria-label={t('chat.tools.region', { count: tools.length })}
       className="tool-execution-list"
     >
-      <header className="tool-execution-list__header">
-        <TerminalSquare aria-hidden="true" size={15} />
-        <strong>{t('chat.tools.title')}</strong>
-        <small>{t('chat.tools.count', { count: tools.length })}</small>
-      </header>
       <ol>
         {tools.map((tool) => {
-          const hasDetails = Boolean(
-            tool.input || tool.output || tool.error
+          const summary = tool.summary.trim()
+          // Only suppress known boilerplate; recovery hints and custom summaries remain visible.
+          const summaryIdentity = summary.replace(
+            /^(?:(?:OpenCode|Continue|DeepSeek Harness|远端 Runtime) 工具|直连模型工具(?:已完成|执行失败)?|正在执行直连模型工具)\s*[:：]\s*/u,
+            ''
           )
+          const hasSummary = summary.length > 0 && summaryIdentity !== tool.name.trim()
+          const StateIcon = tool.state === 'running' ? LoaderCircle
+            : tool.state === 'pending' ? Clock3
+              : tool.state === 'completed' ? Check : XCircle
           return (
             <li key={tool.callId ?? tool.name}>
               <details
                 className={`tool-execution tool-execution--${tool.state}`}
-                open={
-                  tool.state === 'pending' || tool.state === 'running'
-                    ? true
-                    : undefined
-                }
               >
                 <summary>
+                  <ChevronRight aria-hidden="true" size={14} className="tool-execution__chevron" />
                   <span className="tool-execution__identity">
-                    <strong>{tool.name}</strong>
-                    <span>{tool.summary}</span>
+                    <strong title={tool.name}>{tool.name}</strong>
+                    {hasSummary && <span title={tool.summary}>{tool.summary}</span>}
                   </span>
                   <small
                     aria-label={t(`chat.tools.states.${tool.state}`)}
+                    title={t(`chat.tools.states.${tool.state}`)}
+                    className="tool-execution__status"
                   >
-                    {t(`chat.tools.states.${tool.state}`)}
+                    <StateIcon aria-hidden="true" size={13} />
+                    {(tool.state === 'failed' || tool.state === 'recoverable' || tool.state === 'cancelled') && t(`chat.tools.states.${tool.state}`)}
                   </small>
                 </summary>
                 <div className="tool-execution__details">
-                  {tool.input && (
-                    <section>
-                      <strong>{t('chat.tools.input')}</strong>
-                      <pre>{tool.input}</pre>
-                    </section>
-                  )}
-                  {tool.output && (
-                    <section>
-                      <strong>{t('chat.tools.output')}</strong>
-                      <pre>{tool.output}</pre>
-                    </section>
-                  )}
+                  {hasSummary && <p className="tool-execution__full-summary">{tool.summary}</p>}
                   {tool.error && (
-                    <section className="tool-execution__error">
-                      <strong>{t('chat.tools.error')}</strong>
-                      <pre>{tool.error}</pre>
-                    </section>
+                    <div className="tool-execution__error">
+                      <ToolDetail label={t('chat.tools.error')} content={tool.error} onCopy={onCopy} />
+                    </div>
                   )}
-                  {!hasDetails && <p>{t('chat.tools.noDetails')}</p>}
+                  {tool.output ? (
+                    <ToolDetail label={t('chat.tools.output')} content={tool.output} onCopy={onCopy} />
+                  ) : !tool.error && (
+                    <p>{t(tool.state === 'running' ? 'chat.tools.waitingOutput'
+                      : tool.state === 'pending' ? 'chat.tools.waitingStart'
+                        : tool.state === 'completed' ? 'chat.tools.emptyOutput' : 'chat.tools.noDetails')}</p>
+                  )}
+                  {tool.input && (
+                    <details className="tool-execution__input">
+                      <summary>{t('chat.tools.input')}</summary>
+                      <ToolDetail label={t('chat.tools.input')} content={tool.input} formatJson onCopy={onCopy} />
+                    </details>
+                  )}
                 </div>
               </details>
+              {tool.error && (
+                <p className="tool-execution__error-preview" title={tool.error}>{tool.error}</p>
+              )}
             </li>
           )
         })}
@@ -256,10 +296,12 @@ function ToolExecutionList({
 
 const SubagentStatusCard = memo(function SubagentStatusCard({
   renderHtml,
-  subagent
+  subagent,
+  onCopy
 }: {
   renderHtml: boolean
   subagent: SubagentActivity
+  onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
   const [expanded, setExpanded] = useState(false)
@@ -349,7 +391,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
               <div className="subagent-status-card__progress">
                 {groupMessageBlocks(progress).map((item) =>
                   item.kind === 'tools' ? (
-                    <ToolExecutionList key={item.id} tools={item.tools.map((tool) =>
+                    <ToolExecutionList key={item.id} onCopy={onCopy} tools={item.tools.map((tool) =>
                       (tool.state === 'pending' || tool.state === 'running') &&
                       subagent.state !== 'queued' && subagent.state !== 'running'
                         ? { ...tool, state: subagent.state === 'cancelled' ? 'cancelled' : 'interrupted' }
@@ -403,10 +445,12 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
 
 function SubagentStatusList({
   renderHtml,
-  subagents
+  subagents,
+  onCopy
 }: {
   renderHtml: boolean
   subagents: SubagentActivity[]
+  onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
 
@@ -420,6 +464,7 @@ function SubagentStatusList({
           key={subagent.childTaskId}
           renderHtml={renderHtml}
           subagent={subagent}
+          onCopy={onCopy}
         />
       ))}
     </section>
@@ -435,7 +480,7 @@ type ChatMessageRowProps = {
   message: Message
   renderAssistantHtml?: boolean
   onArticleRef: (messageId: string, element: HTMLElement | null) => void
-  onCopyMessage: (content: string) => Promise<void>
+  onCopyMessage: CopyContent
   onDownloadImage: (item: ImageViewerItem) => void
   onOpenCitationContext: (
     reference: KnowledgeSearchReference
@@ -665,9 +710,10 @@ function ChatMessageRowView({
           <div className="message-blocks">
             {groupMessageBlocks(message.blocks).map((item) =>
               item.kind === 'tools' ? (
-                <ToolExecutionList key={item.id} tools={item.tools} />
+                <ToolExecutionList key={item.id} tools={item.tools} onCopy={onCopyMessage} />
               ) : item.kind === 'subagents' ? (
                 <SubagentStatusList
+                  onCopy={onCopyMessage}
                   key={item.id}
                   renderHtml={renderAssistantHtml}
                   subagents={item.childTaskIds.flatMap((childTaskId) => {
@@ -725,6 +771,7 @@ function ChatMessageRowView({
         )}
         {unorderedSubagents && unorderedSubagents.length > 0 && (
           <SubagentStatusList
+            onCopy={onCopyMessage}
             renderHtml={renderAssistantHtml}
             subagents={unorderedSubagents}
           />
@@ -929,7 +976,7 @@ function ChatMessageRowView({
         {(!message.blocks || message.blocks.length === 0) &&
           message.tools &&
           message.tools.length > 0 && (
-            <ToolExecutionList tools={message.tools} />
+            <ToolExecutionList tools={message.tools} onCopy={onCopyMessage} />
           )}
         {message.approval && (
           <div className="approval-card">
@@ -1187,7 +1234,7 @@ type ChatTimelineProps = {
   messageStartIndex: number
   messages: Message[]
   onArticleRef: (messageId: string, element: HTMLElement | null) => void
-  onCopyMessage: (content: string) => Promise<void>
+  onCopyMessage: CopyContent
   onDownloadImage: (item: ImageViewerItem) => void
   onOpenCitationContext: (
     reference: KnowledgeSearchReference

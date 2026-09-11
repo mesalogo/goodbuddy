@@ -7,6 +7,14 @@ if (typeof Element !== 'undefined') {
   Element.prototype.scrollTo = vi.fn()
 }
 
+if (typeof ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe = vi.fn()
+    unobserve = vi.fn()
+    disconnect = vi.fn()
+  }
+}
+
 beforeEach(async () => {
   clearSshHostRemoteEnvironmentCache()
   if (typeof localStorage === 'undefined' || typeof document === 'undefined') {

@@ -368,6 +368,12 @@ export const app = {
       output: 'Result',
       error: 'Error details',
       noDetails: 'No execution details are available yet.',
+      waitingStart: 'Waiting to start; no result yet.',
+      waitingOutput: 'Running; no result yet.',
+      emptyOutput: 'Completed with no returned content.',
+      copyAction: 'Copy',
+      copy: 'Copy {{label}}',
+      copied: 'Tool details copied',
       states: {
         pending: 'Pending',
         running: 'Running',

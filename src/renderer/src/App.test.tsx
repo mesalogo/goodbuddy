@@ -3631,11 +3631,11 @@ describe("App", () => {
     expect(orderedBlocks).toEqual([
       expect.stringContaining("这是回答内容"),
       expect.stringContaining("先检查项目结构"),
-      expect.stringContaining("OpenCode 工具：read"),
+      expect.stringContaining("read"),
       expect.stringContaining("再检查关键文件"),
       expect.stringContaining("最终结论"),
     ]);
-    expect(screen.getAllByText("OpenCode 工具：read")).toHaveLength(1);
+    expect(screen.queryByText("OpenCode 工具：read")).not.toBeInTheDocument();
     expect(
       screen.getByRole("region", { name: "工具执行，共 2 项" }),
     ).toBeInTheDocument();
@@ -3648,13 +3648,16 @@ describe("App", () => {
     ).not.toBeVisible();
     fireEvent.click(screen.getByText("read").closest("summary")!);
     expect(readTool).toHaveAttribute("open");
-    expect(within(readTool!).getByText("调用参数")).toBeVisible();
+    expect(within(readTool!).getByText("调用参数", { selector: "summary" })).toBeVisible();
     expect(
       within(readTool!).getByText(
         (_, element) => element?.textContent === rawToolOutput,
       ),
     ).toBeVisible();
     const activeReasoning = screen.getAllByText("正在推理");
+    fireEvent.click(within(readTool!).getByRole("button", { name: "复制执行结果" }));
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith(rawToolOutput));
+    expect(await screen.findByText("已复制工具详情")).toBeVisible();
     expect(activeReasoning).toHaveLength(2);
     for (const reasoning of activeReasoning) {
       expect(reasoning.closest("details")).toHaveAttribute("open");
@@ -4652,7 +4655,7 @@ describe("App", () => {
       });
     });
 
-    expect(screen.getByText(toolError)).toBeInTheDocument();
+    expect(screen.getByText(toolError, { selector: ".tool-execution__error-preview" })).toBeVisible();
     expect(screen.queryByText(runtimeError)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "重新编辑并发送" }),

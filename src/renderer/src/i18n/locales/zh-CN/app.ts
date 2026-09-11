@@ -350,6 +350,12 @@ export const app = {
       output: '执行结果',
       error: '错误详情',
       noDetails: '暂时没有可显示的执行详情。',
+      waitingStart: '等待执行，尚无结果。',
+      waitingOutput: '执行中，尚无结果。',
+      emptyOutput: '执行完成，无返回内容。',
+      copyAction: '复制',
+      copy: '复制{{label}}',
+      copied: '已复制工具详情',
       states: {
         pending: '等待中',
         running: '进行中',

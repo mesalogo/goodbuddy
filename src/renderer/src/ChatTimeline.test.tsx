@@ -61,6 +61,116 @@ function createMessages(): Message[] {
 }
 
 describe('ChatTimeline', () => {
+  it.each([
+    ['read', 'OpenCode 工具：read', false],
+    ['read', 'Continue 工具：read', false],
+    ['read', 'DeepSeek Harness 工具：read', false],
+    ['read', '远端 Runtime 工具：read', false],
+    ['浏览器导航', '直连模型工具：浏览器导航', false],
+    ['浏览器导航', '正在执行直连模型工具：浏览器导航', false],
+    ['浏览器导航', '直连模型工具已完成：浏览器导航', false],
+    ['浏览器导航', '直连模型工具执行失败：浏览器导航', false],
+    ['read', ' OpenCode 工具: read ', false],
+    ['read', 'OpenCode 工具：read README.md', true],
+    ['浏览器导航', '直连模型工具需要刷新后重试：浏览器导航', true],
+    ['浏览器导航', '用户拒绝了直连模型工具：浏览器导航', true],
+    ['read', 'Custom tool: read', true]
+  ])('deduplicates the tool heading for %s / %s', (name, summary, hasSummary) => {
+    const view = render(<ChatTimeline
+      artifactById={new Map()} conversationId="tools" hiddenMessageCount={0}
+      isUnusedConversation={false} locale="zh-CN" messageStartIndex={0}
+      {...callbacks} retryContent="" totalMessageCount={1}
+      messages={[{
+        id: 'tool-message', role: 'assistant', content: '', createdAt: 0, state: 'complete',
+        tools: [{ callId: 'call-1', name, summary, state: 'completed' }]
+      }]}
+    />)
+    const card = view.container.querySelector('.tool-execution')!
+    expect(view.container.querySelector('.tool-execution-list > header')).toBeNull()
+    const status = card.querySelector('.tool-execution__status')!
+    expect(status).toHaveAttribute('aria-label', '已完成')
+    expect(status).toHaveAttribute('title', '已完成')
+    expect(status.textContent).toBe('')
+    expect(card.querySelector('.tool-execution__identity strong')).toHaveTextContent(name)
+    expect(Boolean(card.querySelector('.tool-execution__identity > span'))).toBe(hasSummary)
+    fireEvent.click(card.querySelector('summary')!)
+    expect(Boolean(card.querySelector('.tool-execution__full-summary'))).toBe(hasSummary)
+  })
+
+  it('constrains tool grid columns so long summaries cannot clip controls', () => {
+    for (const selector of ['.tool-execution-list', '.tool-execution-list > ol',
+      '.tool-execution__details', '.tool-execution__details section']) {
+      const rule = stylesheet.slice(stylesheet.indexOf(`${selector} {`)).split('}')[0]
+      expect(rule).toContain('grid-template-columns: minmax(0, 1fr)')
+    }
+  })
+
+  it('keeps tool expansion under user control through streaming and completion', () => {
+    const props = {
+      artifactById: new Map(), conversationId: 'tools',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, ...callbacks, retryContent: '', totalMessageCount: 1
+    }
+    const message: Message = {
+      id: 'tool-message', role: 'assistant', content: '', createdAt: 0, state: 'streaming',
+      tools: [{ callId: 'read-1', name: 'read', summary: 'read', state: 'running' }]
+    }
+    const view = render(<ChatTimeline {...props} messages={[message]} />)
+    const card = view.container.querySelector('.tool-execution')!
+    expect(card).not.toHaveAttribute('open')
+    expect(within(card as HTMLElement).getAllByText('read')).toHaveLength(1)
+    fireEvent.click(card.querySelector('summary')!)
+    expect(card).toHaveAttribute('open')
+    expect(screen.getByText('执行中，尚无结果。')).toBeVisible()
+    view.rerender(<ChatTimeline {...props} messages={[{
+      ...message, tools: [{ ...message.tools![0]!, state: 'completed' }]
+    }]} />)
+    expect(card).toHaveAttribute('open')
+    expect(screen.getByText('执行完成，无返回内容。')).toBeVisible()
+    fireEvent.click(card.querySelector('summary')!)
+    view.rerender(<ChatTimeline {...props} messages={[{
+      ...message, tools: [{ ...message.tools![0]!, output: 'late result' }]
+    }]} />)
+    expect(card).not.toHaveAttribute('open')
+  })
+
+  it('prioritizes errors and results, folds JSON inputs and copies original content', () => {
+    const input = '{"path":"README.md","limit":20}'
+    const props = {
+      artifactById: new Map(), conversationId: 'tools',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, ...callbacks, retryContent: '', totalMessageCount: 1
+    }
+    const message: Message = {
+      id: 'tool-message', role: 'assistant', content: '', createdAt: 0, state: 'complete',
+      tools: [{ callId: 'read-1', name: 'read', summary: 'Read README.md', state: 'failed',
+        input, output: '<div>partial output</div>', error: 'Read failed\nMore context' }]
+    }
+    const view = render(<ChatTimeline {...props} messages={[message]} />)
+    const card = view.container.querySelector('.tool-execution')!
+    const preview = view.container.querySelector('.tool-execution__error-preview')!
+    expect(preview).toHaveTextContent('Read failed')
+    expect(card.querySelector('.tool-execution__status')).toHaveTextContent('失败')
+    fireEvent.click(card.querySelector('summary')!)
+    expect(Array.from(card.querySelectorAll('pre')).map((pre) => pre.textContent)).toEqual([
+      'Read failed\nMore context', '<div>partial output</div>', JSON.stringify(JSON.parse(input), null, 2)
+    ])
+    const inputCard = card.querySelector('.tool-execution__input')!
+    expect(inputCard).not.toHaveAttribute('open')
+    fireEvent.click(screen.getByRole('button', { name: '复制执行结果' }))
+    expect(callbacks.onCopyMessage).toHaveBeenLastCalledWith('<div>partial output</div>', 'tool')
+    const result = screen.getByRole('region', { name: '执行结果' })
+    expect(within(result).getAllByRole('button')).toHaveLength(1)
+    expect(within(result).getByRole('button', { name: '复制执行结果' })).toBeVisible()
+    fireEvent.click(inputCard.querySelector('summary')!)
+    fireEvent.click(screen.getByRole('button', { name: '复制调用参数' }))
+    expect(callbacks.onCopyMessage).toHaveBeenLastCalledWith(input, 'tool')
+    view.rerender(<ChatTimeline {...props} messages={[{
+      ...message, tools: [{ ...message.tools![0]!, input: '{"incomplete":' }]
+    }]} />)
+    expect(inputCard.querySelector('pre')?.textContent).toBe('{"incomplete":')
+  })
+
   it('shows an image context limitation as a quiet persistent footer, not an alert', () => {
     const message: Message = {
       id: 'image-message', role: 'assistant', content: '', createdAt: Date.now(),
