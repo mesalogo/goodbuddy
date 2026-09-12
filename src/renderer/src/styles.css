@@ -3373,10 +3373,12 @@ textarea:focus-visible {
 }
 
 .sidebar-search {
+  position: relative;
   display: flex;
   min-width: 248px;
   align-items: center;
   padding: 9px 11px;
+  padding-right: 40px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
   margin-bottom: 15px;
@@ -3386,6 +3388,7 @@ textarea:focus-visible {
 }
 
 .sidebar-search input {
+  min-width: 0;
   width: 100%;
   border: 0;
   outline: 0;
@@ -3396,6 +3399,19 @@ textarea:focus-visible {
 
 .sidebar-search input::placeholder {
   color: var(--text-muted);
+}
+
+.sidebar-search > svg {
+  flex-shrink: 0;
+}
+
+.sidebar-search .sidebar-search__clear {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  width: 24px;
+  height: 24px;
+  transform: translateY(-50%);
 }
 
 .primary-nav {

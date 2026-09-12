@@ -2448,6 +2448,7 @@ function App(): React.JSX.Element {
   ] = useState(true);
   const [incompleteMagicTodoCount, setIncompleteMagicTodoCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [searchConversationSnapshot, setSearchConversationSnapshot] =
     useState(conversations);
@@ -8181,10 +8182,25 @@ function App(): React.JSX.Element {
           <Search size={15} />
           <input
             aria-label={t("sidebar.searchLabel")}
+            ref={searchInputRef}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder={t("sidebar.searchPlaceholder")}
             value={searchQuery}
           />
+          {searchQuery.length > 0 && (
+            <button
+              aria-label={t("conversation.clearSearch")}
+              className="icon-button sidebar-search__clear"
+              onClick={() => {
+                setSearchQuery("");
+                searchInputRef.current?.focus();
+              }}
+              title={t("conversation.clearSearch")}
+              type="button"
+            >
+              <X aria-hidden="true" size={14} />
+            </button>
+          )}
         </div>
 
         <nav className="primary-nav" aria-label={t("navigation.label")}>

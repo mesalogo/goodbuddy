@@ -2183,6 +2183,10 @@ describe("App", () => {
     ]);
     const { container } = render(<App />);
     const search = await screen.findByLabelText("搜索对话");
+    const searchControls = within(search.parentElement!);
+    expect(
+      searchControls.queryByRole("button", { name: "清除搜索" }),
+    ).not.toBeInTheDocument();
     const conversationList =
       container.querySelector<HTMLElement>(".conversation-list");
     if (!conversationList) {
@@ -2218,6 +2222,33 @@ describe("App", () => {
         within(conversationList).queryByText("其他项目里的 Alpha"),
       ).not.toBeInTheDocument();
     });
+
+    const clearSearch = searchControls.getByRole("button", {
+      name: "清除搜索",
+    });
+    clearSearch.focus();
+    fireEvent.click(clearSearch);
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    expect(
+      searchControls.queryByRole("button", { name: "清除搜索" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        within(conversationList).getByText("标题里的 Alpha"),
+      ).toBeInTheDocument();
+      expect(
+        within(conversationList).getByText("正文命中的会话"),
+      ).toBeInTheDocument();
+      expect(
+        within(conversationList).queryByText("其他项目里的 Alpha"),
+      ).not.toBeInTheDocument();
+    });
+    fireEvent.change(search, { target: { value: "   " } });
+    fireEvent.click(
+      searchControls.getByRole("button", { name: "清除搜索" }),
+    );
+    expect(search).toHaveValue("");
 
     fireEvent.change(search, { target: { value: "missing topic" } });
     expect(
