@@ -321,6 +321,7 @@ function BrowserToolbar({
   const refreshDisabled =
     operationBlocked ||
     !sessionActive ||
+    !authoritativeUrl ||
     isLoading
   const goDisabled =
     actionPending ||
@@ -803,7 +804,23 @@ export function RightAssistantSidebar({
   const [taskScope, setTaskScope] = useState<WorkbarTaskScope>(
     initialLayout?.taskScope ?? 'current-project'
   )
-  const [actionError, setActionError] = useState('')
+  const [actionErrorState, setActionErrorState] = useState({
+    scope: { instanceId: activeWorkbarInstanceId, open },
+    message: ''
+  })
+  const actionErrorScope = actionErrorState.scope
+  const actionError = actionErrorState.message
+  if (actionErrorScope.instanceId !== activeWorkbarInstanceId || actionErrorScope.open !== open) {
+    setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: '' })
+  }
+  const setActionError = useCallback((message: string): void => {
+    // Old callbacks cannot restore an error after leaving and returning to a panel.
+    setActionErrorState((current) =>
+      current.scope === actionErrorScope && actionErrorScope.open
+        ? { ...current, message }
+        : current
+    )
+  }, [actionErrorScope])
   const [terminalSessionIds, setTerminalSessionIds] = useState<
     Record<string, string>
   >({})
@@ -1271,7 +1288,7 @@ export function RightAssistantSidebar({
             tabId = binding?.tabId
             conversationId = binding?.conversationId
           } catch (reason) {
-            setActionError(
+            if (instance.id === activeWorkbarInstanceId) setActionError(
               reason instanceof Error
                 ? reason.message
                 : t('sidebar.errors.closeBrowser')
@@ -1283,7 +1300,7 @@ export function RightAssistantSidebar({
           try {
             await window.goodbuddy.browser.closeTab?.({ conversationId, tabId })
           } catch (reason) {
-            setActionError(
+            if (instance.id === activeWorkbarInstanceId) setActionError(
               reason instanceof Error
                 ? reason.message
                 : t('sidebar.errors.closeBrowser')
@@ -1326,6 +1343,8 @@ export function RightAssistantSidebar({
       return true
     },
     [
+      activeWorkbarInstanceId,
+      setActionError,
       removeWorkbarInstance,
       localizedAppDefinitions,
       terminalAdapter,
@@ -1654,7 +1673,7 @@ export function RightAssistantSidebar({
           : t('sidebar.errors.browserControlUnavailable')
       )
     })
-  }, [activeWorkbarInstance, ensureBrowserTab, hasUnboundRequestBrowser, open, t])
+  }, [activeWorkbarInstance, ensureBrowserTab, hasUnboundRequestBrowser, open, setActionError, t])
 
   return (
     <aside

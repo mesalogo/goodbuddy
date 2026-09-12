@@ -122,6 +122,7 @@ const currentProject: AssistantProject = {
 }
 
 function sidebarElement({
+  open = true,
   tab = 'tasks',
   approvals = [],
   artifacts = [],
@@ -144,6 +145,7 @@ function sidebarElement({
   onStopLoadingBrowser,
   onTabChange = vi.fn()
 }: {
+  open?: boolean
   tab?: AssistantSidebarTab
   approvals?: PendingSidebarApproval[]
   artifacts?: SidebarArtifact[]
@@ -206,7 +208,7 @@ function sidebarElement({
         onStopLoadingBrowser={onStopLoadingBrowser}
         onOpenTask={vi.fn()}
         onTabChange={onTabChange}
-        open
+        open={open}
         restoreFocusRef={restoreFocusRef}
         tab={tab}
         workspaceProjectId={workspaceProjectId}
@@ -822,6 +824,112 @@ describe('RightAssistantSidebar resizing', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('requires a committed URL to reload a fresh active browser tab, but still allows Stop', async () => {
+    const conversationId = 'blank-browser'
+    const state: BrowserLiveState = {
+      ...browserSummary(conversationId, firstBrowserTabId, true),
+      sessionActive: true
+    }
+    const onReloadBrowser = vi.fn(async () => undefined)
+    const onStopLoadingBrowser = vi.fn(async () => undefined)
+    const props = {
+      tab: 'browser' as const,
+      activeConversationId: conversationId,
+      onReloadBrowser,
+      onStopLoadingBrowser
+    }
+    const withState = (browserState: BrowserLiveState) => sidebarElement({
+      ...props, browserStates: { [conversationId]: { [firstBrowserTabId]: browserState } }
+    })
+    const view = render(withState(state))
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledOnce())
+    expect(screen.getByRole('button', { name: '刷新' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox', { name: '浏览器地址' }), {
+      target: { value: 'https://draft.example/' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    expect(screen.getByRole('button', { name: '刷新' })).toBeDisabled()
+    expect(onReloadBrowser).not.toHaveBeenCalled()
+
+    view.rerender(withState({ ...state, status: 'loading', isLoading: true }))
+    expect(screen.getByRole('button', { name: '停止加载' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '停止加载' }))
+    await waitFor(() => expect(onStopLoadingBrowser).toHaveBeenCalledWith(conversationId, firstBrowserTabId))
+
+    view.rerender(withState({ ...state, url: 'https://committed.example/' }))
+    expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => expect(onReloadBrowser).toHaveBeenCalledWith(conversationId, firstBrowserTabId))
+  })
+
+  it.each(['close', 'switch', 'collapse'] as const)(
+    'clears a browser action error after %s without restoring it on return',
+    async (transition) => {
+      const props = {
+        tab: 'browser' as const,
+        activeConversationId: 'error-browser',
+        onNavigateBrowser: vi.fn().mockRejectedValue(new Error('Navigation failed'))
+      }
+      const view = render(sidebarElement(props))
+      await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledOnce())
+      fireEvent.change(screen.getByRole('textbox', { name: '浏览器地址' }), {
+        target: { value: 'https://example.com/' }
+      })
+      fireEvent.click(screen.getByRole('button', { name: '前往' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Navigation failed')
+
+      if (transition === 'close') {
+        fireEvent.click(screen.getByRole('button', { name: '关闭浏览器 · error-browser' }))
+        await waitFor(() => expect(screen.queryByRole('tab', { name: '浏览器 · error-browser' })).not.toBeInTheDocument())
+        fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+        fireEvent.click(screen.getByText('浏览器', { selector: 'strong' }).closest('button')!)
+        await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledTimes(2))
+      } else if (transition === 'switch') {
+        fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+        expect(screen.queryByText('Navigation failed')).not.toBeInTheDocument()
+        fireEvent.click(screen.getByRole('tab', { name: '浏览器 · error-browser' }))
+      } else {
+        view.rerender(sidebarElement({ ...props, open: false }))
+        view.rerender(sidebarElement(props))
+      }
+      expect(screen.queryByText('Navigation failed')).not.toBeInTheDocument()
+    }
+  )
+
+  it.each(['close', 'switch', 'collapse'] as const)(
+    'ignores a late browser action failure after %s',
+    async (transition) => {
+      let rejectNavigation!: (reason: Error) => void
+      const props = {
+        tab: 'browser' as const,
+        activeConversationId: 'late-browser',
+        onNavigateBrowser: vi.fn(() => new Promise<void>((_resolve, reject) => {
+          rejectNavigation = reject
+        }))
+      }
+      const view = render(sidebarElement(props))
+      await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledOnce())
+      fireEvent.change(screen.getByRole('textbox', { name: '浏览器地址' }), {
+        target: { value: 'https://example.com/' }
+      })
+      fireEvent.click(screen.getByRole('button', { name: '前往' }))
+      await waitFor(() => expect(props.onNavigateBrowser).toHaveBeenCalledOnce())
+
+      if (transition === 'close') {
+        fireEvent.click(screen.getByRole('button', { name: '关闭浏览器 · late-browser' }))
+        await waitFor(() => expect(screen.queryByRole('tab', { name: '浏览器 · late-browser' })).not.toBeInTheDocument())
+      } else if (transition === 'switch') {
+        fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+        fireEvent.click(screen.getByRole('tab', { name: '浏览器 · late-browser' }))
+      } else {
+        view.rerender(sidebarElement({ ...props, open: false }))
+      }
+      await act(async () => rejectNavigation(new Error('Late navigation failed')))
+      if (transition === 'collapse') view.rerender(sidebarElement(props))
+      expect(screen.queryByText('Late navigation failed')).not.toBeInTheDocument()
+    }
+  )
+
   it('keeps browser A selected and usable after switching to B, and binds a new browser to B', async () => {
     const onNavigateBrowser = vi.fn(async () => undefined)
     const onBackBrowser = vi.fn(async () => undefined)
@@ -1204,7 +1312,35 @@ describe('RightAssistantSidebar resizing', () => {
     expect(
       screen.getByRole('tab', { name: '浏览器 · conversation-a' })
     ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭浏览器 · conversation-a' }))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: '浏览器 · conversation-a' })).not.toBeInTheDocument())
+    expect(screen.queryByText('Close denied')).not.toBeInTheDocument()
   })
+
+  it.each(['create', 'close'] as const)(
+    'ignores a late browser %s failure after switching panels',
+    async (operation) => {
+      let rejectOperation!: (reason: Error) => void
+      const pending = new Promise<never>((_resolve, reject) => {
+        rejectOperation = reject
+      })
+      if (operation === 'create') browserApi.createTab.mockReturnValueOnce(pending)
+      else browserApi.closeTab.mockReturnValueOnce(pending)
+      renderSidebar({ tab: 'browser', activeConversationId: 'late-browser' })
+      await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledOnce())
+      if (operation === 'close') {
+        fireEvent.click(screen.getByRole('button', { name: '关闭浏览器 · late-browser' }))
+        await waitFor(() => expect(browserApi.closeTab).toHaveBeenCalledOnce())
+      }
+      fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+      await act(async () => rejectOperation(new Error('Late browser failure')))
+      expect(screen.queryByText('Late browser failure')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('tab', { name: '浏览器 · late-browser' }))
+      await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledTimes(operation === 'create' ? 2 : 1))
+      expect(screen.queryByText('Late browser failure')).not.toBeInTheDocument()
+    }
+  )
 
   it('rebinds a released tab before retrying navigation and can close a released instance', async () => {
     const conversationId = 'retry-browser'

@@ -89,7 +89,10 @@ Tab 的跨会话可见性与 MCP 授权分开处理。B 的请求不能选择属
 capability 在用户切到 B 后仍固定路由至 A 的原 Tab，使用租约也继续阻止关闭该 Tab。
 内部点击实例只同步应用类型，不再次按当前 Conversation 改选实例。Main 状态携带对应的
 `workbarInstanceId`，Renderer 据此绑定请求创建的同一 Tab，而不是另建空白页。收到 `stopped`
-后清除该实例的旧 Tab 绑定，下一次使用通过原逻辑实例重新创建，保留地址草稿与错误反馈。
+后清除该实例的旧 Tab 绑定，下一次使用通过原逻辑实例重新创建，保留地址草稿。
+刷新可用性读取 Main 的已提交 URL，不使用地址草稿或仅凭 `sessionActive` 判断。
+侧栏操作错误以当前工作栏实例和面板展开状态为作用域；切换或关闭时清空，旧作用域的
+异步回调不再写入错误，即使用户随后返回同一实例。
 请求创建的实例也遵守现有 32 个工作栏页签上限；满额时保留 Main 页面及其状态，并就地提示
 关闭一个可关闭页签。释放位置后再绑定该页面，不写入超限布局或丢弃 Agent 页面。
 
@@ -173,7 +176,7 @@ primary, including one opened by an Agent, is not adopted by a new instance. New
 
 持久化工作栏实例 ID、顺序、自定义标题和公开 Conversation 绑定，不持久化页面进程、CDP
 引用、snapshot、viewport lease、Cookie、Token 或 Main `BrowserTabId`。应用重启后实例显示
-未启动状态，首次导航或 Agent 使用时按原绑定创建新 Tab。
+未启动状态，展开浏览器面板或 Agent 首次使用时按原绑定创建新 Tab。
 
 绑定的 Conversation 已删除或不可见时保留实例并显示目标失效，不自动绑定当前 Conversation。
 

@@ -1,5 +1,21 @@
 # 工作栏实现与验证进度
 
+## 2026-09-12 浏览器刷新与关闭后的错误清理
+
+- 按 [浏览器工具栏规则](./prd.md#77-浏览器) 修复空白标签页允许刷新的问题；
+  刷新需要 Main 的已提交 URL，地址草稿不启用刷新，首次导航仍可停止加载。
+- 侧栏操作错误在切换面板、关闭当前页签或收起工作栏后清除；旧面板的异步失败不再回写。
+  作用域实现见 [浏览器多实例技术设计](./browser-tabs-technical-design.md#4-renderer-与-viewport)。
+- Sidebar 回归 38 项、App 浏览器筛选回归 5 项、BrowserService 回归 43 项通过。
+  `node build/run-browser-tabs-electron-e2e.cjs` 通过，验证真实空白页、导航、页面隔离和关闭；
+  该脚本不覆盖 Renderer 提示显示，提示清理由组件测试验证，本轮未手动操作完整桌面 UI。
+- `npm run typecheck` 和两份修改源码的 ESLint 检查通过。全量 `npm test` 在 Agent
+  离线依赖清单用例超时后，整轮达到 200 秒执行上限；包含完整 App 测试的补跑也达到该上限。
+  `npm run lint` 被工作区原有未跟踪的 `application-tool-navigation/navigation-demo.js`
+  中 27 项浏览器全局变量错误阻断，未修改该文件，不将整库校验记为全绿。
+- 本轮仅修改桌面 Renderer 控件与提示状态，未改 BrowserService、Runtime、Agent 或远程协议；
+  不需要单独的远程实现。无外部模型调用。
+
 ## 2026-09-10 提交后保留问答
 
 - 桌面端在提交成功后保留结构化问答回顾，支持多轮回答、跳过及本地会话重新加载；
