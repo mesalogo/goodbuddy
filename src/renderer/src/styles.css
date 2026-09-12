@@ -7187,41 +7187,131 @@ button > svg {
 }
 
 .composer__toolbar {
+  position: relative;
   display: flex;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 56px;
-  padding: 10px var(--space-3);
+  min-height: 48px;
+  padding: var(--space-2) var(--space-3);
   align-items: center;
-  border-top: 1px solid var(--border-default);
   border-radius: 0 0 calc(var(--radius-card) - 1px)
     calc(var(--radius-card) - 1px);
-  background: var(--surface-subtle);
-  gap: var(--space-3);
+  background: transparent;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
-.composer__toolbar--with-runtime-controls {
-  border-radius: 0;
+.composer__option-summary {
+  padding: var(--space-3) var(--space-4) 0;
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  overflow-wrap: anywhere;
+}
+
+.composer__options-trigger {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.composer__options-trigger:hover,
+.composer__options-trigger[aria-expanded="true"] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.composer__options {
+  position: absolute;
+  z-index: 25;
+  left: 0;
+  bottom: calc(100% + var(--space-2));
+  display: grid;
+  width: min(100%, 300px);
+  max-height: min(480px, 60vh);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  overflow-y: auto;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-dialog);
+  gap: var(--space-2);
+}
+
+.composer__options > strong {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+}
+
+.composer__options[hidden] {
+  display: none;
+}
+
+.composer__options :is(.runtime-picker__menu, .knowledge-scope__popover) {
+  position: static;
+  width: 100%;
+  max-height: none;
+  margin-top: var(--space-2);
+  box-shadow: none;
+}
+
+.composer__options .composer-picker,
+.composer__options .composer-picker > .model-button {
+  width: 100%;
+}
+
+.composer__options :is(.composer-picker > .model-button, .knowledge-scope > button) {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-color: transparent;
+  background: transparent;
+  font-size: var(--font-body);
+  font-weight: 400;
+  gap: var(--space-2);
+}
+
+.composer__options :is(.composer-picker > .model-button, .knowledge-scope > button):hover:not(:disabled),
+.composer__options :is(.composer-picker > .model-button, .knowledge-scope > button)[aria-expanded="true"] {
+  border-color: transparent;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.composer__options .composer__runtime-toolbar-label {
+  padding: var(--space-1) var(--space-2);
+  font-weight: 500;
+}
+
+.knowledge-scope__chevron {
+  margin-left: auto;
+}
+
+.knowledge-scope > button[aria-expanded="true"] > .knowledge-scope__chevron {
+  transform: rotate(180deg);
 }
 
 .composer__runtime-toolbar {
-  display: flex;
+  display: grid;
   min-width: 0;
-  min-height: 52px;
-  padding: var(--space-2) var(--space-3);
+  padding-top: var(--space-2);
   align-items: center;
-  border-top: 1px solid var(--border-default);
-  border-radius: 0 0 calc(var(--radius-card) - 1px)
-    calc(var(--radius-card) - 1px);
-  background: var(--surface-muted);
-  gap: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  gap: var(--space-2);
 }
 
 .composer__runtime-toolbar-label {
   min-width: 0;
-  padding-right: var(--space-3);
-  border-right: 1px solid var(--border-default);
   color: var(--text-secondary);
   font-size: var(--font-caption);
   font-weight: 650;
@@ -7242,8 +7332,8 @@ button > svg {
   min-width: 0;
   flex: 1;
   align-items: center;
-  flex-wrap: nowrap;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .composer__tool-group,
@@ -7319,8 +7409,7 @@ button > svg {
 
 .composer__configuration {
   min-width: 0;
-  padding-left: var(--space-3);
-  border-left: 1px solid var(--border-default);
+  flex-wrap: wrap;
 }
 
 .composer-picker--expert > .model-button {
@@ -7654,38 +7743,26 @@ button > svg {
     flex-wrap: wrap;
   }
 
+  .composer__controls,
   .composer__configuration {
-    width: 100%;
-    padding-left: 0;
-    padding-top: 10px;
-    border-top: 1px solid var(--border-default);
-    border-left: 0;
+    display: contents;
   }
 
-  .composer-picker,
-  .runtime-picker {
-    flex: 1 1 150px;
+  .composer__submit-actions {
+    margin-left: auto;
   }
 
-  .composer__runtime-toolbar {
-    align-items: stretch;
-    flex-direction: column;
+  .composer__toolbar > .composer__controls .runtime-picker__menu {
+    max-width: 100%;
   }
 
-  .composer__runtime-toolbar-label {
-    padding-right: 0;
-    padding-bottom: var(--space-2);
-    border-right: 0;
-    border-bottom: 1px solid var(--border-default);
+  .composer__configuration > .runtime-picker {
+    position: static;
   }
 
-  .composer__runtime-controls .composer-picker {
-    flex-basis: 220px;
-  }
-
-  .composer-picker > .model-button,
-  .model-button {
-    width: 100%;
+  .composer__configuration > .composer-picker > .composer-picker__menu {
+    right: 0;
+    left: auto;
   }
 
   .composer-context-meter {

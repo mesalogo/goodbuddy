@@ -450,6 +450,7 @@ export const app = {
     },
     removeAttachment: 'Remove {{name}}',
     settings: 'Conversation settings',
+    options: 'Options',
     expertLabel: 'Expert role',
     modeLabel: 'Work mode',
     runtimeControls: {

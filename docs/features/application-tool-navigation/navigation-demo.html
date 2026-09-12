@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoodBuddy · 应用中心设计实验</title>
+  <link rel="stylesheet" href="navigation-demo.css">
+  <script src="navigation-demo.js" defer></script>
+</head>
+<body>
+  <header class="lab-header">
+    <div><strong>GoodBuddy <span class="muted">/ 设计实验</span></strong><p>左下角应用中心 · 六个交互方案</p></div>
+    <div class="variants" role="group" aria-label="选择设计方案">
+      <button data-variant="dock" aria-pressed="true">A · 紧凑入口</button>
+      <button data-variant="grid" aria-pressed="false">B · 应用宫格</button>
+      <button data-variant="cards" aria-pressed="false">C · 应用预览</button>
+      <button data-variant="launcher" aria-pressed="false">D · 搜索启动台</button>
+      <button data-variant="favorites" aria-pressed="false">E · 常驻管理</button>
+      <button data-variant="scenes" aria-pressed="false">F · 商店发现</button>
+    </div>
+    <button id="theme">切换深色</button>
+  </header>
+  <div class="design-note"><span id="variant-label">A / 紧凑 Dock</span><p id="variant-description"></p><span>交互原型 · 商店与指标均为演示数据</span></div>
+  <main class="app" data-variant="dock">
+    <aside class="sidebar" aria-label="主侧栏">
+      <div class="brand"><span class="brand-mark">GB</span><strong>GoodBuddy</strong><span class="muted">个人空间</span></div>
+      <button class="new-chat" data-page="当前对话"><span>＋</span> 新对话</button>
+      <nav class="navigation" aria-label="应用导航">
+        <button class="selected" data-page="当前对话"><span data-icon="chat"></span>当前对话</button>
+      </nav>
+      <section class="resident-apps" aria-label="我的应用"><div class="section-label"><span>我的应用</span><div><button id="edit-apps">编辑</button><button data-catalog="apps" aria-label="管理常驻应用">＋</button></div></div><nav id="resident-list" aria-label="常驻应用"></nav><button class="all-apps" data-catalog="apps">全部应用 <span>›</span></button></section>
+      <div class="history"><span class="eyebrow">最近对话</span><button data-page="整理产品设计思路">整理产品设计思路</button><button data-page="本周工作计划">本周工作计划</button><button data-page="项目文档检索">项目文档检索</button></div>
+      <div class="fixed-entry"><button data-page="运行记录"><span data-icon="history"></span>运行记录</button></div>
+      <div class="sidebar-footer"><div id="center-entry"></div><button data-page="设置" aria-label="设置" title="设置"><span data-icon="settings"></span></button></div>
+    </aside>
+    <section class="workspace">
+      <header class="workspace-header"><span id="page-label">当前对话</span><div id="page-actions"></div><button id="toggle-workbar" aria-expanded="true" aria-controls="workbar">助手工作栏</button></header>
+      <div class="conversation" id="page-content">
+        <span class="eyebrow">LET'S MAKE SOMETHING</span>
+        <h1>从一个想法开始。</h1>
+        <p class="muted">对话留在这里，常用能力随手打开。</p>
+        <div class="suggestions"><button data-page="项目文档检索">查找项目资料 <span>↗</span></button><button data-page="整理产品设计思路">梳理一个想法 <span>↗</span></button></div>
+      </div>
+      <section class="composer-area" aria-label="会话输入">
+        <div id="demo-queue" aria-label="待发送消息" hidden></div>
+        <div class="composer">
+          <div id="composer-tags" aria-label="当前附件与选项" hidden></div>
+          <textarea id="message" aria-label="演示消息输入" placeholder="向 GoodBuddy 提问…&#10;Enter 发送 · Shift+Enter 换行"></textarea>
+          <div class="composer-toolbar">
+            <button id="attach" class="composer-icon" aria-label="添加附件" title="添加附件">＋</button>
+            <input id="attachment-input" type="file" multiple hidden>
+            <button id="voice" class="composer-icon" aria-label="模拟语音输入" aria-pressed="false" title="模拟语音输入"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg></button>
+            <label class="composer-select"><span class="sr-only">Runtime</span><select id="composer-runtime"><option>OpenCode</option><option>Continue</option><option>直连模型</option></select></label>
+            <label class="composer-select"><span class="sr-only">工作模式</span><select id="composer-mode"><option value="Execute">Execute</option><option value="Ask">Ask</option></select></label>
+            <button id="composer-options-trigger" popovertarget="composer-options" aria-expanded="false">选项 <span class="muted">⌃</span></button>
+            <div class="composer-actions"><button id="stop" hidden aria-label="停止演示回复">停止</button><button id="send" aria-label="发送演示消息" title="发送" disabled>↑</button></div>
+          </div>
+          <div id="composer-options" popover aria-label="会话选项">
+            <header><strong>会话选项</strong><button popovertarget="composer-options" popovertargetaction="hide" aria-label="关闭会话选项">×</button></header>
+            <label class="option-row">专家<select id="composer-expert"><option value="">默认助手</option><option>产品顾问</option><option>代码审查专家</option></select></label>
+            <fieldset><legend>知识范围</legend><label><input type="checkbox" data-knowledge="产品文档"> 产品文档</label><label><input type="checkbox" data-knowledge="团队知识"> 团队知识</label></fieldset>
+            <label class="option-row">检索方式<select id="composer-retrieval"><option value="auto">自动检索</option><option value="always">每次检索</option></select></label>
+            <div id="runtime-options"><label class="option-row"><span id="agent-label">Agent</span><select id="composer-agent"><option value="">默认</option><option value="plan">Plan</option><option value="review">Review</option></select></label><label class="option-row">快捷操作<select id="composer-command"><option value="">无</option><option value="prompt">填入总结模板</option><option value="command">原生命令 /init</option></select></label></div>
+            <p class="muted">非默认选项会显示在输入框上方。</p>
+          </div>
+        </div>
+        <div class="composer-meta"><span id="composer-status" role="status">交互演示 · 不调用 AI</span><button id="context-trigger" popovertarget="context-details">上下文 <span id="context-value">42%</span></button></div>
+        <div id="context-details" popover aria-label="上下文用量"><strong>上下文用量 · 示例</strong><p id="context-description">本次模型调用：84k / 200k tokens</p><progress id="context-progress" value="42" max="100"></progress><button id="compact">压缩上下文</button></div>
+      </section>
+    </section>
+    <aside class="workbar" id="workbar" aria-label="助手工作栏"><header><strong>助手工作栏</strong><button id="close-tool" aria-label="关闭工作栏">×</button></header><div class="tool-tabs" role="tablist" aria-label="系统工具"><button role="tab" id="tab-files" data-tool="files" aria-selected="true" aria-controls="tool-content">文件</button><button role="tab" id="tab-terminal" data-tool="terminal" aria-selected="false" aria-controls="tool-content" tabindex="-1">终端</button><button role="tab" id="tab-browser" data-tool="browser" aria-selected="false" aria-controls="tool-content" tabindex="-1">浏览器</button><button role="tab" id="tab-resources" data-tool="resources" aria-selected="false" aria-controls="tool-content" tabindex="-1">资源</button></div><div id="tool-content" role="tabpanel" aria-labelledby="tab-files" tabindex="0"></div></aside>
+  </main>
+  <footer class="lab-footer"><span id="design-tradeoff"></span><button id="reset">恢复默认应用</button></footer>
+  <div class="reference-note">设计参考：<a href="https://www.raycast.com/" target="_blank" rel="noreferrer">Raycast · 搜索与扩展</a><a href="https://www.notion.com/help/intro-to-workspaces" target="_blank" rel="noreferrer">Notion · 收藏与折叠分区</a><a href="https://code.visualstudio.com/docs/configure/profiles" target="_blank" rel="noreferrer">VS Code · Profiles</a><span>借鉴交互思路，保留 GoodBuddy 的视觉与入口分类。</span></div>
+  <dialog id="catalog" aria-labelledby="catalog-title"><button id="back-to-apps" hidden>‹ 返回应用中心</button><header><div><span class="eyebrow">GOODBUDDY COLLECTION</span><h2 id="catalog-title">应用中心</h2></div><button id="close-catalog" aria-label="关闭">×</button></header><p class="muted" id="catalog-description"></p><div class="center-switch" role="group" aria-label="应用中心视图"><button data-catalog="apps">我的应用</button><button data-catalog="store">商店</button></div><input id="search" type="search" aria-label="搜索应用" placeholder="搜索应用…"><div id="catalog-items"></div><section id="app-settings" aria-label="魔法笔记设置" hidden></section><footer>常驻只表示菜单入口，不表示后台运行。安装与内容均为演示。</footer></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

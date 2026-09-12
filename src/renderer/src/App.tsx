@@ -31,6 +31,7 @@ import {
   Settings,
   RefreshCw,
   ShieldCheck,
+  SlidersHorizontal,
   PanelRightClose,
   PanelRightOpen,
   Sparkles,
@@ -2134,6 +2135,10 @@ function App(): React.JSX.Element {
   const [runtimeStatusKey, setRuntimeStatusKey] = useState("");
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>();
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
+  const [knowledgeScopeOpen, setKnowledgeScopeOpen] = useState(false);
+  const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
+  const composerOptionsRef = useRef<HTMLDivElement>(null);
+  const composerOptionsTriggerRef = useRef<HTMLButtonElement>(null);
   const [composerMenuOpen, setComposerMenuOpen] = useState<
     | "expert"
     | "mode"
@@ -2191,30 +2196,36 @@ function App(): React.JSX.Element {
     setComposerMenuOpen(open ? "expert" : undefined);
     if (open) {
       setRuntimeMenuOpen(false);
+      setKnowledgeScopeOpen(false);
     }
   }, []);
   const setModeMenuOpen = useCallback((open: boolean): void => {
     setComposerMenuOpen(open ? "mode" : undefined);
     if (open) {
       setRuntimeMenuOpen(false);
+      setComposerOptionsOpen(false);
+      setKnowledgeScopeOpen(false);
     }
   }, []);
   const setRuntimeAgentMenuOpen = useCallback((open: boolean): void => {
     setComposerMenuOpen(open ? "runtime-agent" : undefined);
     if (open) {
       setRuntimeMenuOpen(false);
+      setKnowledgeScopeOpen(false);
     }
   }, []);
   const setRuntimeActionMenuOpen = useCallback((open: boolean): void => {
     setComposerMenuOpen(open ? "runtime-action" : undefined);
     if (open) {
       setRuntimeMenuOpen(false);
+      setKnowledgeScopeOpen(false);
     }
   }, []);
   const setRuntimePresetMenuOpen = useCallback((open: boolean): void => {
     setComposerMenuOpen(open ? "runtime-preset" : undefined);
     if (open) {
       setRuntimeMenuOpen(false);
+      setKnowledgeScopeOpen(false);
     }
   }, []);
   const assistantExpertOptions = useMemo<ComposerMenuOption<string>[]>(
@@ -2542,7 +2553,6 @@ function App(): React.JSX.Element {
   const knowledgeOperationCountRef = useRef(knowledgeOperationCount);
   const knowledgeLoadRequestRef = useRef(0);
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(undefined);
-  const [knowledgeScopeOpen, setKnowledgeScopeOpen] = useState(false);
   const knowledgeScopeTriggerRef = useRef<HTMLButtonElement>(null);
   const knowledgeScopePopoverRef = useRef<HTMLDivElement>(null);
   const [legacyActivityHistory] = useState(loadLegacyActivityHistory);
@@ -2876,7 +2886,7 @@ function App(): React.JSX.Element {
       }
     };
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") {
+      if (event.key !== "Escape" || event.defaultPrevented) {
         return;
       }
       event.preventDefault();
@@ -2891,6 +2901,32 @@ function App(): React.JSX.Element {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [knowledgeScopeOpen]);
+
+  useEffect(() => {
+    if (!composerOptionsOpen) {
+      return;
+    }
+    const isOptionsTarget = (target: EventTarget | null): boolean =>
+      target instanceof Node &&
+      (composerOptionsRef.current?.contains(target) === true ||
+        composerOptionsTriggerRef.current?.contains(target) === true);
+    const dismissOutside = (event: Event): void => {
+      if (!isOptionsTarget(event.target)) {
+        setComposerOptionsOpen(false);
+        setKnowledgeScopeOpen(false);
+      }
+    };
+    const frame = requestAnimationFrame(() => {
+      composerOptionsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    });
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("focusin", dismissOutside);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("focusin", dismissOutside);
+    };
+  }, [composerOptionsOpen]);
 
   useLayoutEffect(() => {
     conversationsRef.current = conversations;
@@ -7943,6 +7979,14 @@ function App(): React.JSX.Element {
     activeConversation?.messages.some(
       (message) => message.state === "streaming",
     ) ?? false;
+  const [composerContext, setComposerContext] = useState({ activeId, isRunning, view });
+  if (composerContext.activeId !== activeId || composerContext.isRunning !== isRunning || composerContext.view !== view) {
+    setComposerContext({ activeId, isRunning, view });
+    setComposerOptionsOpen(false);
+    setKnowledgeScopeOpen(false);
+    setComposerMenuOpen(undefined);
+    setRuntimeMenuOpen(false);
+  }
   const activeConversationQueueItems = useMemo(
     () =>
       conversationQueueItems.filter((item) => item.conversationId === activeId),
@@ -7999,6 +8043,26 @@ function App(): React.JSX.Element {
         runtime: runtimeControlsProvider,
       })
     : "";
+  const composerOptionSummary = [
+    selectedExpertId && runtime?.capability !== "image-generation"
+      ? assistantExpertOptions.find((option) => option.value === selectedExpertId)?.label
+      : undefined,
+    enabledKnowledgeLibraryIds.length > 0
+      ? t("composer.knowledge.select", { count: enabledKnowledgeLibraryIds.length })
+      : undefined,
+    activeConversation?.knowledgeRetrievalMode === "always"
+      ? t("composer.knowledge.always")
+      : undefined,
+    runtimeAgentControlAvailable && selectedRuntimeAgent
+      ? runtimeAgentOptions.find((option) => option.value === selectedRuntimeAgent)?.label
+      : undefined,
+    runtimePresetControlAvailable && selectedContinuePreset
+      ? runtimePresetOptions.find((option) => option.value === selectedContinuePreset)?.label
+      : undefined,
+    runtimeActionControlAvailable && selectedRuntimeCommand
+      ? runtimeActionOptions.find((option) => option.action?.type === "command" && option.action.id === selectedRuntimeCommand)?.label
+      : undefined,
+  ].filter(Boolean).join(" · ");
   const runtimeContextCompactAvailable =
     (activeRuntimeSelection?.provider === "opencode" ||
       activeRuntimeSelection?.provider === "continue") &&
@@ -9132,6 +9196,11 @@ function App(): React.JSX.Element {
                           running={conversationExecutionRunning}
                         />
                         <div className="composer">
+                          {composerOptionSummary && (
+                            <div className="composer__option-summary" aria-label={t("composer.settings")}>
+                              {composerOptionSummary}
+                            </div>
+                          )}
                           {(attachments.length > 0 ||
                             selectingContextFiles) && (
                             <div
@@ -9303,13 +9372,7 @@ function App(): React.JSX.Element {
                               }}
                             />
                           </div>
-                          <div
-                            className={`composer__toolbar${
-                              runtimeControlsProvider
-                                ? " composer__toolbar--with-runtime-controls"
-                                : ""
-                            }`}
-                          >
+                          <div className="composer__toolbar">
                             <div className="composer__controls">
                               <div
                                 aria-label={t("composer.addContent")}
@@ -9367,6 +9430,46 @@ function App(): React.JSX.Element {
                                   <Mic aria-hidden="true" size={18} />
                                 </button>
                               </div>
+                              <button
+                                aria-controls="composer-options"
+                                aria-expanded={composerOptionsOpen}
+                                aria-haspopup="dialog"
+                                aria-label={t("composer.options")}
+                                className="composer__options-trigger"
+                                onClick={() => {
+                                  setComposerOptionsOpen(!composerOptionsOpen);
+                                  setComposerMenuOpen(undefined);
+                                  setRuntimeMenuOpen(false);
+                                  setKnowledgeScopeOpen(false);
+                                }}
+                                ref={composerOptionsTriggerRef}
+                                title={t("composer.settings")}
+                                type="button"
+                              >
+                                <SlidersHorizontal aria-hidden="true" size={17} />
+                              </button>
+                              <div
+                                aria-label={t("composer.settings")}
+                                className="composer__options"
+                                id="composer-options"
+                                hidden={!composerOptionsOpen}
+                                ref={composerOptionsRef}
+                                role="dialog"
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Escape" || event.defaultPrevented) return;
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  if (knowledgeScopeOpen) {
+                                    setKnowledgeScopeOpen(false);
+                                    knowledgeScopeTriggerRef.current?.focus();
+                                  } else {
+                                    setComposerOptionsOpen(false);
+                                    setComposerMenuOpen(undefined);
+                                    composerOptionsTriggerRef.current?.focus();
+                                  }
+                                }}
+                              >
+                                <strong>{t("composer.settings")}</strong>
                               {knowledgeSnapshot.libraries.length > 0 && (
                                 <div
                                   className="knowledge-scope"
@@ -9388,11 +9491,13 @@ function App(): React.JSX.Element {
                                       count: enabledKnowledgeLibraryIds.length,
                                     })}
                                     aria-expanded={knowledgeScopeOpen}
-                                    onClick={() =>
+                                    onClick={() => {
+                                      setComposerMenuOpen(undefined);
+                                      setRuntimeMenuOpen(false);
                                       setKnowledgeScopeOpen(
                                         (current) => !current,
-                                      )
-                                    }
+                                      );
+                                    }}
                                     ref={knowledgeScopeTriggerRef}
                                     title={t("composer.knowledge.title")}
                                     type="button"
@@ -9404,6 +9509,11 @@ function App(): React.JSX.Element {
                                         {enabledKnowledgeLibraryIds.length}
                                       </strong>
                                     </span>
+                                    <ChevronDown
+                                      aria-hidden="true"
+                                      className="knowledge-scope__chevron"
+                                      size={14}
+                                    />
                                   </button>
                                   {knowledgeScopeOpen && (
                                     <div
@@ -9509,11 +9619,7 @@ function App(): React.JSX.Element {
                                   )}
                                 </div>
                               )}
-                              <div
-                                aria-label={t("composer.settings")}
-                                className="composer__configuration"
-                                role="group"
-                              >
+                              <div className="composer__configuration">
                                 <ComposerMenuSelect
                                   ariaLabel={t("composer.expertLabel")}
                                   className="composer-picker--expert"
@@ -9528,34 +9634,55 @@ function App(): React.JSX.Element {
                                   options={assistantExpertOptions}
                                   value={selectedExpertId}
                                 />
-                                <ComposerMenuSelect
-                                  ariaLabel={t("composer.modeLabel")}
-                                  className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
-                                  disabled={isRunning}
-                                  icon={
-                                    effectiveWorkMode === "execute" ? (
-                                      <ShieldCheck
-                                        aria-hidden="true"
-                                        size={15}
+                              </div>
+                              {runtimeControlsProvider && (
+                                <div aria-label={runtimeControlsLabel} className="composer__runtime-toolbar" role="group">
+                                  <strong className="composer__runtime-toolbar-label">{runtimeControlsLabel}</strong>
+                                  <div className="composer__runtime-controls">
+                                    {runtimeAgentControlAvailable && (
+                                      <ComposerMenuSelect
+                                        ariaLabel={t("composer.runtimeControls.agentLabel")}
+                                        className="composer-picker--runtime"
+                                        disabled={isRunning}
+                                        icon={<TerminalSquare aria-hidden="true" size={15} />}
+                                        menuOpen={composerMenuOpen === "runtime-agent"}
+                                        onChange={setSelectedRuntimeAgent}
+                                        onOpenChange={setRuntimeAgentMenuOpen}
+                                        options={runtimeAgentOptions}
+                                        value={selectedRuntimeAgent}
                                       />
-                                    ) : (
-                                      <CircleHelp
-                                        aria-hidden="true"
-                                        size={15}
+                                    )}
+                                    {runtimePresetControlAvailable && (
+                                      <ComposerMenuSelect
+                                        ariaLabel={t("composer.runtimeControls.presetLabel")}
+                                        className="composer-picker--runtime"
+                                        disabled={isRunning}
+                                        icon={<TerminalSquare aria-hidden="true" size={15} />}
+                                        menuOpen={composerMenuOpen === "runtime-preset"}
+                                        onChange={setSelectedContinuePreset}
+                                        onOpenChange={setRuntimePresetMenuOpen}
+                                        options={runtimePresetOptions}
+                                        value={selectedContinuePreset}
                                       />
-                                    )
-                                  }
-                                  menuOpen={composerMenuOpen === "mode"}
-                                  onChange={setWorkMode}
-                                  onOpenChange={setModeMenuOpen}
-                                  options={workModeOptions}
-                                  triggerLabel={
-                                    effectiveWorkMode === "execute"
-                                      ? "Execute"
-                                      : "Ask"
-                                  }
-                                  value={effectiveWorkMode}
-                                />
+                                    )}
+                                    {runtimeActionControlAvailable && (
+                                      <ComposerMenuSelect
+                                        ariaLabel={t("composer.runtimeControls.actionLabel")}
+                                        className="composer-picker--runtime-action"
+                                        disabled={isRunning}
+                                        icon={<TerminalSquare aria-hidden="true" size={15} />}
+                                        menuOpen={composerMenuOpen === "runtime-action"}
+                                        onChange={selectRuntimeAction}
+                                        onOpenChange={setRuntimeActionMenuOpen}
+                                        options={runtimeActionOptions}
+                                        value={runtimeActionOptions.find((option) => option.action?.type === "command" && option.action.id === selectedRuntimeCommand)?.value ?? ""}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                              </div>
+                              <div className="composer__configuration" role="group" aria-label={t("composer.settings")}>
                                 <div className="runtime-picker">
                                   <button
                                     aria-expanded={runtimeMenuOpen}
@@ -9563,6 +9690,8 @@ function App(): React.JSX.Element {
                                     className="model-button"
                                     disabled={isRunning || runtimeSwitching}
                                     onClick={() => {
+                                      setComposerOptionsOpen(false);
+                                      setKnowledgeScopeOpen(false);
                                       setComposerMenuOpen(undefined);
                                       setRuntimeMenuOpen(!runtimeMenuOpen);
                                     }}
@@ -9574,6 +9703,8 @@ function App(): React.JSX.Element {
                                           event.key === " ")
                                       ) {
                                         event.preventDefault();
+                                        setComposerOptionsOpen(false);
+                                        setKnowledgeScopeOpen(false);
                                         setComposerMenuOpen(undefined);
                                         setRuntimeMenuOpen(true);
                                       }
@@ -9847,6 +9978,24 @@ function App(): React.JSX.Element {
                                     </div>
                                   )}
                                 </div>
+                                <ComposerMenuSelect
+                                  ariaLabel={t("composer.modeLabel")}
+                                  className={`composer-picker--mode composer-picker--${effectiveWorkMode}`}
+                                  disabled={isRunning}
+                                  icon={
+                                    effectiveWorkMode === "execute" ? (
+                                      <ShieldCheck aria-hidden="true" size={15} />
+                                    ) : (
+                                      <CircleHelp aria-hidden="true" size={15} />
+                                    )
+                                  }
+                                  menuOpen={composerMenuOpen === "mode"}
+                                  onChange={setWorkMode}
+                                  onOpenChange={setModeMenuOpen}
+                                  options={workModeOptions}
+                                  triggerLabel={effectiveWorkMode === "execute" ? "Execute" : "Ask"}
+                                  value={effectiveWorkMode}
+                                />
                               </div>
                             </div>
                             <div className="composer__submit-actions">
@@ -9905,92 +10054,6 @@ function App(): React.JSX.Element {
                               </button>
                             </div>
                           </div>
-                          {runtimeControlsProvider && (
-                            <div
-                              aria-label={runtimeControlsLabel}
-                              className="composer__runtime-toolbar"
-                              role="group"
-                            >
-                              <strong className="composer__runtime-toolbar-label">
-                                {runtimeControlsLabel}
-                              </strong>
-                              <div className="composer__runtime-controls">
-                                {runtimeAgentControlAvailable && (
-                                  <ComposerMenuSelect
-                                    ariaLabel={t(
-                                      "composer.runtimeControls.agentLabel",
-                                    )}
-                                    className="composer-picker--runtime"
-                                    disabled={isRunning}
-                                    icon={
-                                      <TerminalSquare
-                                        aria-hidden="true"
-                                        size={15}
-                                      />
-                                    }
-                                    menuOpen={
-                                      composerMenuOpen === "runtime-agent"
-                                    }
-                                    onChange={setSelectedRuntimeAgent}
-                                    onOpenChange={setRuntimeAgentMenuOpen}
-                                    options={runtimeAgentOptions}
-                                    value={selectedRuntimeAgent}
-                                  />
-                                )}
-                                {runtimePresetControlAvailable && (
-                                  <ComposerMenuSelect
-                                    ariaLabel={t(
-                                      "composer.runtimeControls.presetLabel",
-                                    )}
-                                    className="composer-picker--runtime"
-                                    disabled={isRunning}
-                                    icon={
-                                      <TerminalSquare
-                                        aria-hidden="true"
-                                        size={15}
-                                      />
-                                    }
-                                    menuOpen={
-                                      composerMenuOpen === "runtime-preset"
-                                    }
-                                    onChange={setSelectedContinuePreset}
-                                    onOpenChange={setRuntimePresetMenuOpen}
-                                    options={runtimePresetOptions}
-                                    value={selectedContinuePreset}
-                                  />
-                                )}
-                                {runtimeActionControlAvailable && (
-                                  <ComposerMenuSelect
-                                    ariaLabel={t(
-                                      "composer.runtimeControls.actionLabel",
-                                    )}
-                                    className="composer-picker--runtime-action"
-                                    disabled={isRunning}
-                                    icon={
-                                      <TerminalSquare
-                                        aria-hidden="true"
-                                        size={15}
-                                      />
-                                    }
-                                    menuOpen={
-                                      composerMenuOpen === "runtime-action"
-                                    }
-                                    onChange={selectRuntimeAction}
-                                    onOpenChange={setRuntimeActionMenuOpen}
-                                    options={runtimeActionOptions}
-                                    value={
-                                      runtimeActionOptions.find(
-                                        (option) =>
-                                          option.action?.type === "command" &&
-                                          option.action.id ===
-                                            selectedRuntimeCommand,
-                                      )?.value ?? ""
-                                    }
-                                  />
-                                )}
-                              </div>
-                            </div>
-                          )}
                         </div>
                         <div
                           className={`composer-meta${

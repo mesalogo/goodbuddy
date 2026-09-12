@@ -430,6 +430,7 @@ export const app = {
     },
     removeAttachment: '移除 {{name}}',
     settings: '对话设置',
+    options: '选项',
     expertLabel: '专家角色',
     modeLabel: '工作模式',
     runtimeControls: {

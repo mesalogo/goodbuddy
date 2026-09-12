@@ -403,12 +403,12 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
-  it('separates Runtime-specific controls from the main composer toolbar', () => {
+  it('keeps composer options bounded with inline nested menus', () => {
     expect(stylesheet).toMatch(
-      /\.composer__toolbar--with-runtime-controls\s*\{[^}]*border-radius:\s*0;/u
+      /\.composer__options\s*\{[^}]*width:\s*min\(100%, 300px\);[^}]*max-height:\s*min\(480px, 60vh\);[^}]*overflow-y:\s*auto;/u
     )
     expect(stylesheet).toMatch(
-      /\.composer__runtime-toolbar\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*52px;[^}]*border-top:\s*1px solid var\(--border-default\);[^}]*background:\s*var\(--surface-muted\);/u
+      /\.composer__options :is\(\.runtime-picker__menu, \.knowledge-scope__popover\)\s*\{[^}]*position:\s*static;[^}]*width:\s*100%;/u
     )
     expect(stylesheet).toMatch(
       /\.composer__runtime-controls\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/u
@@ -417,7 +417,7 @@ describe('WorkspacePrimitives', () => {
       /\.composer-picker--runtime > \.model-button,\s*\.composer-picker--runtime-action > \.model-button\s*\{[^}]*width:\s*220px;/u
     )
     expect(stylesheet).toMatch(
-      /\.composer__runtime-controls \.composer-picker\s*\{[^}]*flex-basis:\s*220px;/u
+      /\.composer__options\[hidden\]\s*\{[^}]*display:\s*none;/u
     )
   })
 
