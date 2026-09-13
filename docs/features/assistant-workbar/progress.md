@@ -1,5 +1,53 @@
 # 工作栏实现与验证进度
 
+## 2026-09-13 OpenCode 事件流关闭顺序修复
+
+候选检查中的 lifecycle 失败已稳定复现，4 路并行后 `openEventBodies` 为 3 而不是 0。
+原因与统一修正规则见[复发缺陷记录](../../quality/recurring-defects.md#事件迭代结束前释放底层订阅)；
+聊天与 Compact 共用最小迭代器包装，不修改 OpenCode SDK、重试时限或现有断言时限。
+
+- 加强既有正常结束与消费方提前返回回归，修复前两项均失败，确认最终 `signal.aborted`
+  不能证明关闭顺序正确；修复后通过。
+- `npm test -- src/main/agent/opencode-runtime-lifecycle.test.ts
+  src/main/agent/opencode-runtime.test.ts src/main/agent/opencode-runtime-permissions.test.ts
+  src/main/agent/opencode-subagent.test.ts`：4 个文件、99 项通过。
+- Windows 当前源码配合真实 OpenCode `1.18.29`、真实 SDK/HTTP MCP 和 loopback 模型通过
+  1、4、8 路并行、取消一条而另一条正常结束，以及实际原生 Compact；各阶段打开的 SSE
+  响应流均归零。验证是生产 Runtime 入口，不是完整 Electron UI；真实服务商调用 0 次。
+- 已核对远端 `AcpRemoteRuntime` 的 Agent-owned transcript 轮询与
+  `AgentOwnedAcpPrompt` 的 ACP stdio 连接，不使用本机 `client.event.subscribe`。本次未改
+  Agent、远程桥或协议，不需要远端对应修复，也未将本机测试算作远程 Host 复验。
+- 最终 `npm test`：349 个文件通过、9 个跳过；4,089 项通过、66 项跳过、0 失败，
+  耗时 571.43 秒。`npm run release:notes:verify`、`npm run typecheck`、`npm run lint`
+  全部通过；下节失败结果保留为修复前记录，不再是当前本地回归结论。
+- 发布说明按 Desktop `v0.12.12`、Agent `agent-v0.11.23` 到最终候选的差异核对，
+  不按中间开发提交分别列出修正。用户明确不增加事件流条目，已批准中英文说明保持不变。
+- 本轮未提交、推送或打标签，未运行本地生产构建或打包；远程问答完整生产链路的真实
+  服务商验证及候选 CI/原生发布验证仍沿用各自待验收状态，不由本机 SSE 修复代替。
+
+## 2026-09-13 Desktop 0.13.0 / Agent 0.11.24 候选检查
+
+本轮仅准备本地候选：更新 Desktop 与 Agent 版本、用户批准的中英文发布说明及功能清单，
+远程原生问答按问题修复分类。Agent 发布说明测试允许仅有修复章节，同时检查中英文分类
+一致；未修改 Runtime、Agent 问答或事件流实现。Agent `0.11.24` 需要先升级 Desktop 至
+`0.13.0`，OpenCode 保持 `1.18.29`。
+
+- `npm run release:notes:verify`、`npm run typecheck`、`npm run lint`：通过。
+- `npm test`：348 个文件通过、1 个失败、9 个跳过；4,088 项通过、1 项失败、66 项跳过，
+  耗时 571.96 秒。唯一失败为 `opencode-runtime-lifecycle.test.ts:120`，并行请求结束后
+  `openEventBodies` 期望为 0、实际为 3，轮询未在时限内满足；该现象早已有记录，
+  本轮没有完成根因判断，也没有放宽断言或跳过测试。
+- 单独复跑上述 lifecycle 文件及 `agent-release-workflow.test.ts`、
+  `release-notes-source.test.ts`、`release-notes-service.test.ts`：发布相关 15 项通过，
+  lifecycle 同一断言再次失败。该结果不能替代一次全量通过。
+- 更早的一次全量运行在调整 Agent 发布说明章节断言前主动停止，未取得汇总，不计为通过。
+- 候选版本一致性、历史 Desktop 发布说明未改动、48 个 Markdown 相对链接目标和
+  `git diff --check` 已通过。
+- 本轮真实模型验证调用 0 次，未重跑真实 Host；既有 SSH/确定性模型证据见下文，
+  不将其扩写为完整生产 Main/Preload 配合真实服务商的验收。
+- 未提交、推送或创建标签，未运行本地生产构建、打包或 LoongArch 预览。
+  全量测试失败、完整远程生产链路及候选 CI/原生包验证仍未解决，候选不标记为可发布。
+
 ## 2026-09-13 SSH 问答 UI 复验与取消后续发
 
 在真实 Electron 窗口中使用当前 `App`、入口样式和主题函数，经测试 IPC 接入生产

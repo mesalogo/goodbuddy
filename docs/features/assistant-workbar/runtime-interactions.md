@@ -10,8 +10,9 @@
 | DeepSeek Harness | 固定 Host 的 Execute 文件与命令工具不询问目录权限；若收到 ACP 权限请求，活跃 Execute 直接选一次性允许，缺少该选项时使用 Runtime 提供的允许选项，Ask 拒绝，不等待额外 authorizer | 固定 Host 当前未提供通用原生业务问答服务，不把普通模型正文误识别成待答协议。模型以普通回复提问时，用户通过下一条消息回答 |
 
 托管 SSH OpenCode 的权限、原生问题事件与回复链路由
-[远程主机技术设计](../remote-host/technical-design.md)定义。远端业务问答需要包含此适配的
-Agent 和新启动的托管 Runtime；任意第三方 ACP 服务及旧 Agent 不因此获得通用问答接口。
+[远程主机技术设计](../remote-host/technical-design.md)定义。本次候选的远端业务问答需要
+Desktop `0.13.0`、Agent `0.11.24` 和新启动的托管 Runtime；请先升级 Desktop，再更新
+Host 环境。任意第三方 ACP 服务及旧 Agent 不因此获得通用问答接口，候选不表示已经发布。
 
 ## 运行与失败
 

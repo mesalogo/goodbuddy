@@ -12,9 +12,11 @@ Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
 `0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前源码
-候选为 Agent `0.11.23`、Desktop `0.12.11`，新增远程文件/Git 管理接口和可选模型限额，
-并修复无限请求时长下的连接超时。Agent `0.11.23` 要求先升级至 Desktop `0.12.11`；
-新包内的 Runtime 不再设置固定十分钟 Prompt 时限，显式请求期限与取消仍有效。
+候选为 Agent `0.11.24`、Desktop `0.13.0`，修复远端原生问答转交和取消待答后的同会话
+续发。Agent `0.11.24` 要求先升级至 Desktop `0.13.0`；候选尚未发布。远程文件/Git 管理、
+可选模型限额、无限请求时长下的独立连接超时和移除固定十分钟 Prompt 时限由
+Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源码的真实 SSH/确定性模型证据
+及完整生产链路验证边界见[工作栏进度](../assistant-workbar/progress.md)。
 正式发布状态以 Agent 与 Desktop 独立发布渠道为准。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
@@ -291,7 +293,9 @@ Execute 直接启动已签名 Runtime：
   不会被补造。
 - 本机 OpenCode SDK 路径允许不同会话并行，同一会话仍按请求顺序执行。每个请求独立拥有
   SSE 事件订阅，并在正常完成、错误、取消或消费方结束迭代时主动关闭自己的响应流，
-  不关闭其他会话的订阅或共享 Server。取消导致事件迭代结束时保留原取消原因，不改报
+  不关闭其他会话的订阅或共享 Server。聊天与原生 Compact 共用 `consumeEventSubscription`，
+  在结束 SDK 迭代器之前先取消对应订阅，避免 SDK 移除取消监听后留下仍有缓冲的响应流；
+  不改写 SDK 或提前取消其他请求。取消导致事件迭代结束时保留原取消原因，不改报
   “事件流意外结束”。这一清理规则属于本机 SDK 路径，不改变远端 Agent 持有 ACP Prompt
   的断线继续执行语义。
 - 同一 detached Agent 存活时，短暂 SSH 断线依次执行 `controller/resume`、`runtime/resumeAcpChannel` 和 `runtime/replayAcpChannel`，从 Main 已确认的 cursor 后只重放 Agent 到 Main 的已记录输出。重复 frame 会被确认但不会再次交给上层。若上一代连接只留下没有活动请求的 detached binding，完成精确 controller takeover 后会先有界停止并核对遗留 Runtime process，再用新 channel epoch 重新打开同一 binding 并恢复已有 ACP session；其他 controller、未证明 takeover 或仍有活动请求的 binding 仍被拒绝。

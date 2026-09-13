@@ -21,7 +21,7 @@ otherwise.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.12.12. See the
+  releases and automatic updates; no preview is planned for 0.13.0. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -36,6 +36,14 @@ otherwise.
   local, managed SSH, and remote messaging-channel projects. Managed SSH
   projects are grouped by Host, with the real Agent connection state on the
   Host heading and only the remote path on each project row.
+- [x] **Cross-project conversation activity**: A shared activity entry lists
+  running conversations and conversations needing attention across projects,
+  including older conversations with live work. Open the associated
+  conversation directly; project selection also shows activity counts.
+- [x] **Compact conversation controls**: Composer options share a compact
+  settings panel while Runtime, mode, sending, and queue controls remain
+  available. Conversation search has an inline clear action that restores the
+  scoped list and returns focus to the input.
 - [x] **File, screenshot, window, and clipboard context**: Added to model
   context only after explicit user selection.
 - [x] **Per-file workspace diffs**: Changed files expose separate staged and
@@ -207,15 +215,17 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.23`, while the current Desktop release candidate is `0.12.12`; formal
+  `0.11.24`, while the current Desktop release candidate is `0.13.0`; formal
   publication status follows the separate Agent and Desktop
-  release channels. Current macOS source has passed native package installation,
+  release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
   separate process groups on a real Host; this does not imply publication.
   Agent `0.11.23` adds remote workspace management and optional model limits;
   its bundled Runtime no longer imposes a fixed ten-minute Prompt deadline.
-  Unlimited request duration retains a separate connection timeout. Upgrade
-  Desktop to `0.12.11` before downloading and updating the Host's Agent.
+  Unlimited request duration retains a separate connection timeout. Agent
+  `0.11.23` requires Desktop `0.12.11` or later.
+  Agent `0.11.24` requires Desktop `0.13.0` and fixes native question routing
+  and sending another message after cancelling a pending question.
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
   read-only probes the shared Agent/Runtime. Saving a Host or opening a project
@@ -276,6 +286,9 @@ otherwise.
   ripgrep for compact file discovery and content search, read large UTF-8 files
   by line, and apply multi-file patches in Execute. Ask can search and read but
   cannot patch or run commands; packaged ripgrep does not require a system install.
+  Actionable read/search errors let the model correct its arguments and
+  continue. Partial search results remain available with an explicit
+  incomplete-coverage warning.
 - [x] **Long context and paged tool output**: Message history, long replies,
   and parsed document text no longer use the previous fixed truncation limits.
   Direct models can continue reading stored command and Subagent output in
@@ -283,11 +296,15 @@ otherwise.
 - [x] **Native Runtime interaction routing**: OpenCode and Continue questions
   support choices, yes/no, free-text answers, and skipping through the existing
   question card. Local and managed SSH OpenCode also route questions from
-  owned child sessions. Managed SSH requires the Agent question adapter;
+  owned child sessions. Managed SSH requires Desktop `0.13.0`, Agent `0.11.24`,
+  and a newly started managed Runtime;
   this does not extend question support to arbitrary ACP services.
   Successful answers and skips retain the original questions and answers
   across rounds and local conversation reloads; answers discarded by older
   versions cannot be recovered.
+  Concurrent questions wait in order, duplicate events preserve drafts, and
+  failed submissions remain retryable. Cancelling a pending managed SSH
+  question allows another message in the same conversation.
   Execute permission confirmations are handled automatically rather than
   waiting for another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
 - [x] **Experts and Subagents**: Supports explicit experts, team analysis, and
@@ -300,8 +317,10 @@ otherwise.
   text, reasoning, and tool progress separately from the final result. Remote
   live progress requires Agent `0.11.20`; older packages still expose final
   results without reconstructing missing progress.
-- [x] **OpenCode event-stream cleanup**: Each completed or cancelled request
-  closes its own subscription without cancelling parallel conversations.
+- [x] **OpenCode event-stream cleanup**: Chat requests and native context
+  compaction close their own subscriptions before ending event iteration,
+  including completion, failure, cancellation, and early consumer exit,
+  without cancelling parallel conversations.
 - [x] **Accurate message-footer status**: Distinguishes request preparation,
   retry waiting, retry dispatch, tool activity, pending answers, and terminal
   states. Local OpenCode reports native retry attempts and scheduled times;
@@ -465,14 +484,22 @@ otherwise.
   retrieval parameters are collapsed by default. Documents distinguish ready,
   processing, and failed states, with source opening, retry, and confirmation
   before source removal.
-- [ ] **External knowledge-base connections** (planned): Manage Dify, FastGPT,
-  and RAGFlow instances from the existing Knowledge page, then discover and
-  bind remote knowledge bases with provider-specific retrieval settings and
-  citations. External systems provide retrieval only: GoodBuddy does not use
+- [x] **External knowledge-base connections**: Manage Dify, FastGPT,
+  and RAGFlow instances from the Knowledge page, then discover remote
+  knowledge bases or enter their IDs and verify bindings with provider-specific
+  retrieval settings and citations. Conversations support on-demand and
+  required pre-answer retrieval. External systems provide retrieval only:
+  GoodBuddy does not use
   their App, Chat, Workflow, or Agent APIs, and does not bulk-sync, locally
   index, or modify remote content. Bounded cited snippets are retained locally
   with their conversations. See the
   [external knowledge-base PRD](./docs/features/knowledge-base/external-knowledge-prd.md).
+- [ ] **External knowledge-base acceptance**: All three providers have passed
+  real service, local HTTP MCP, and production-IPC short-answer checks; Dify
+  additionally passed the complete App composer-to-answer-and-citation path.
+  FastGPT/RAGFlow desktop-specific parameters, complex multi-library answers,
+  and remote pre-answer retrieval remain unverified. See the
+  [validation evidence and remaining work](./docs/features/knowledge-base/progress.md).
 - [x] **Knowledge graph**: Supports rule-based, model-based, and hybrid
   extraction plus entity, relationship, alias, and evidence maintenance.
 - [x] **Embedding configuration and retrieval**: Configures compatible
@@ -521,6 +548,9 @@ otherwise.
   cache-reporting semantics when showing cache hit rate. Activity is grouped
   by conversation and collapsed by default so long histories do not fill the
   page.
+- [x] **Compact conversation tool records**: Expand individual tool records
+  to read or copy results, errors, and input parameters. Conversation and
+  child-task progress use concise rows without repeated Runtime summaries.
 - [x] **Task and custom-task experience**: Each product-level Task belongs to
   one Conversation, while one Conversation can contain multiple Tasks. The
   left conversation list exposes Task children through a leading expand
@@ -587,6 +617,10 @@ otherwise.
   unused request reservations do not create browser resources. Released tabs
   can be reopened, explicit screenshots remain available, and ordinary
   operations no longer trigger unused automatic screenshot capture.
+  Tabs can be closed while an AI request uses them without cancelling the
+  whole request. A later explicit navigation creates a separate replacement
+  tab; blank pages cannot reload, and switching or closing panels clears stale
+  action errors.
 - [x] **Client-computer control tools**: Managed separately from the built-in
   browser with scope, cancellation, timeout, output, and activity boundaries.
 - [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom, and
@@ -634,9 +668,15 @@ otherwise.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.12.12` and Agent `0.11.23`, with
+- Current source candidates are Desktop `0.13.0` and Agent `0.11.24`, with
   OpenCode pinned to `1.18.29`. Publication status follows the independent
   Desktop and Agent release channels.
+- Candidate acceptance remains separate from version preparation. The current
+  remote-question source has passed real Linux x64 SSH and Electron question
+  tests with a deterministic loopback model, not the complete production
+  Main/Preload path with a real provider. That real-model path and candidate
+  native CI/package validation remain outstanding; see the
+  [remote-question evidence](./docs/features/assistant-workbar/progress.md).
 - [x] **0BSD open-source license**: Original code can be freely used, copied,
   modified, distributed, and commercialized. Third-party components and
   resources retain their own licenses.

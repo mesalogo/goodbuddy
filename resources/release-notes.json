@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.0",
+      "releasedAt": "2026-09-13",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**接入外部知识库**：在知识库页面配置 Dify、FastGPT 或 RAGFlow 实例，从目录选择或手工填写远端知识库 ID，验证后绑定到 GoodBuddy。对话可按需或每次回答前检索，并保留可查看的引用片段。连接、参数和移除操作只影响 GoodBuddy，不同步、索引或修改远端内容。",
+            "**跨项目查看活动**：无需逐个切换项目，即可集中查看正在运行和需要处理的对话。点击活动可直接进入对应会话，项目选择器也会显示活动数量。"
+          ],
+          "fixes": [
+            "**远程 OpenCode 原生问答**：托管 SSH 前台对话可以接收主会话及子会话的问题，通过选项、自由文本或跳过继续执行。需要配套 Agent `0.11.24`，不扩展到任意第三方 ACP 服务。",
+            "**并行提问不再相互覆盖**：同时到达的问题按顺序等待回答，重复事件不会清空草稿，提交失败可保留输入重试。配套更新 Agent 后，取消远程待答任务也可在同一会话继续发送，不再因旧操作绑定报错。",
+            "**工具记录更紧凑**：工具调用改为可展开的简洁记录，减少重复摘要。展开后可查看和复制结果、错误及输入参数。",
+            "**输入区与搜索更清楚**：会话选项收进紧凑设置面板，保留 Runtime、工作模式、发送和队列操作。搜索框可一键清除关键词，返回当前范围的会话列表。",
+            "**浏览器关闭与刷新更可靠**：AI 正在使用的页签也可关闭，不会因此取消整个请求；后续显式导航会创建独立新页。空白页不再错误启用刷新，切换或关闭面板后也不会残留旧错误。",
+            "**弹窗按钮恢复正常点击**：修复项目设置、反馈、知识库、MCP 编辑器和预览等弹窗与标题栏重叠时，控件无法悬停或点击的问题。项目对话框滚动后仍可关闭，关闭时恢复入口焦点。",
+            "**文件读取与搜索错误可继续处理**：直连模型遇到可修正的路径、读取或搜索参数错误时，可依据错误提示调整后继续。部分文件无法搜索时保留已有结果并明确提示覆盖不完整，不把缺失结果当作不存在。"
+          ],
+          "notices": [
+            "外部检索会把查询发送给所选知识服务，回答使用的片段会进入模型上下文并随会话保存在本机。知识服务的向量化、重排及模型回答可能产生服务商用量。",
+            "先升级 Desktop 至 **0.13.0**，再下载并更新 Host 上的 **Agent 0.11.24**；远程项目仍为技术预览，Ask/Execute 权限不变。本次提供标准六平台桌面安装包，不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Connect external knowledge bases**: Configure Dify, FastGPT, or RAGFlow on the Knowledge page, select a remote knowledge base from its catalog or enter its ID, then verify and bind it to GoodBuddy. Conversations can retrieve on demand or before every answer and retain readable citation snippets. Connection settings, retrieval parameters, and removal affect only GoodBuddy, without synchronizing, indexing, or modifying remote content.",
+            "**View activity across projects**: See running conversations and conversations needing attention without switching through projects individually. Open a conversation directly from its activity entry, with activity counts also shown in the project selector."
+          ],
+          "fixes": [
+            "**Native questions in remote OpenCode**: Foreground managed SSH conversations can receive questions from the main session and its child sessions, then continue through choices, free-text answers, or skipping. This requires Agent `0.11.24` and does not add support for arbitrary third-party ACP services.",
+            "**Concurrent questions no longer overwrite each other**: Questions arriving together wait in order, duplicate events preserve drafts, and failed submissions retain input for retry. With the matching Agent update, cancelling a pending remote question also allows another message in the same conversation without an old-operation binding error.",
+            "**More compact tool records**: Tool calls use concise expandable records with fewer repeated summaries. Expand a record to inspect and copy results, errors, and input parameters.",
+            "**Clearer composer and search**: Conversation options move into a compact settings panel while preserving Runtime, work mode, sending, and queue actions. Clear search keywords in one click to return to conversations in the current scope.",
+            "**More reliable browser closing and refresh**: Tabs in use by an AI request can be closed without cancelling the whole request; a later explicit navigation creates a separate replacement tab. Blank pages no longer incorrectly enable refresh, and switching or closing panels clears stale errors.",
+            "**Clickable dialog controls**: Fixed controls that could not respond to hover or clicks when project settings, feedback, knowledge, MCP editors, and previews overlapped the titlebar. Project dialogs remain closable after scrolling and restore focus to their entry point.",
+            "**Recoverable file-reading and search errors**: Direct models can correct actionable path, reading, or search-parameter errors and continue. When some files cannot be searched, available results are retained with an explicit incomplete-coverage warning rather than treating missing results as proof of absence."
+          ],
+          "notices": [
+            "External retrieval sends queries to the selected knowledge service, and snippets used in answers enter model context and are saved locally with the conversation. Embedding, reranking, and model answers may incur provider usage charges.",
+            "Upgrade Desktop to **0.13.0** before downloading and updating Hosts to **Agent 0.11.24**. Remote projects remain a technical preview, Ask/Execute permissions are unchanged, and this release includes the six standard desktop targets without a LoongArch experimental preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.12.12",
       "releasedAt": "2026-09-11",
       "notes": {
