@@ -209,7 +209,7 @@ function ActivityMenu({
             <small className={`project-activity__${activity.status === 'running' ? 'running' : 'attention'}`}>
               {t(`projectActivity.status.${activity.status}`)}
             </small>
-          </span><ChevronRight aria-hidden="true" size={14} />
+          </span>
         </button>)}
       </div>}
     </div>,

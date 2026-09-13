@@ -25,5 +25,5 @@ Windows Electron 视觉 fixture 使用当前 `ProjectActivity`、生产样式和
 `npm test` 在 240 秒后超时，超时前 `tests/agent-package.test.ts` 的
 `verifies and installs offline dependency inventories larger than one MiB` 用例失败，未取得完整结果。
 
-Demo 已按最新讨论隐藏空闲摘要并移除会话行箭头；本次提交的生产实现仍保留空闲摘要和
-会话行箭头，这两处尚未与 Demo 对齐。
+Demo 已按最新讨论隐藏空闲摘要并移除会话行箭头；生产实现仍保留空闲摘要，尚未与 Demo 对齐。
+后续界面修正已移除生产会话行箭头，并为活动摘要与下方新建会话增加 `8px` 间距。
