@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { toolOperationSummary } from './tool-operation-summary'
 import { dirname } from 'node:path'
 import type {
   ApprovalDecision,
@@ -3752,6 +3753,7 @@ export class ModelAgentRuntime implements AgentRuntime {
           tool?.name !== 'subagent_delegate'
         const displayName = tool?.displayName ?? call.name.slice(0, 128)
         const input = boundedToolDetail(call.arguments, 4_000)
+        const summary = toolOperationSummary(call.arguments) ?? `直连模型工具：${displayName}`
         roundSummary.push(
           [
             `TOOL_CALL: ${displayName}`,
@@ -3767,7 +3769,7 @@ export class ModelAgentRuntime implements AgentRuntime {
             callId: call.id,
             name: displayName,
             state: 'pending',
-            summary: `直连模型工具：${displayName}`,
+            summary,
             input
           }
         }
@@ -3844,7 +3846,7 @@ export class ModelAgentRuntime implements AgentRuntime {
             callId: call.id,
             name: displayName,
             state: 'running',
-            summary: `正在执行直连模型工具：${displayName}`,
+            summary,
             input
           }
         }
@@ -3925,7 +3927,7 @@ export class ModelAgentRuntime implements AgentRuntime {
             callId: call.id,
             name: displayName,
             state: 'completed',
-            summary: `直连模型工具已完成：${displayName}`,
+            summary,
             input,
             output: getToolResultPreview(result.parts)
           }

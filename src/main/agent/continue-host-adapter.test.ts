@@ -1603,7 +1603,7 @@ describe('ContinueHostAdapter', () => {
     expect(existsSync(globalDirectory)).toBe(false)
   })
 
-  it('uses auto mode and returns audit metadata for agent tools', async () => {
+  it.each(['completed', 'failed'] as const)('uses auto mode and retains streamed audit metadata on %s', async (toolState) => {
     const distribution = await createDistribution()
     let launchArgs: string[] = []
     const permissionBodies: unknown[] = []
@@ -1681,7 +1681,7 @@ describe('ContinueHostAdapter', () => {
                         toolCall: {
                           function: { name: 'Bash' }
                         },
-                        status: 'done'
+                        status: toolState
                       }
                     ]
                   }
@@ -1695,7 +1695,7 @@ describe('ContinueHostAdapter', () => {
                   type: 'tool',
                   callId: 'call-1',
                   name: 'Bash',
-                  state: 'completed',
+                  state: toolState,
                   output:
                     'Tests passed\nAuthorization: Bearer secret-token'
                 },
@@ -1737,9 +1737,10 @@ describe('ContinueHostAdapter', () => {
         {
           callId: 'call-1',
           name: 'Bash',
-          state: 'completed',
+          state: toolState,
           input:
             '{"command":"npm test","token":"secret-token"}',
+          summary: 'npm test',
           output:
             'Tests passed\nAuthorization: Bearer secret-token'
         }
@@ -1754,7 +1755,8 @@ describe('ContinueHostAdapter', () => {
           name: 'Bash',
           state: 'running',
           input:
-            '{"command":"npm test","token":"secret-token"}'
+            '{"command":"npm test","token":"secret-token"}',
+          summary: 'npm test'
         }
       },
       {
@@ -1762,9 +1764,11 @@ describe('ContinueHostAdapter', () => {
         tool: {
           callId: 'call-1',
           name: 'Bash',
-          state: 'completed',
+          state: toolState,
           output:
-            'Tests passed\nAuthorization: Bearer secret-token'
+            'Tests passed\nAuthorization: Bearer secret-token',
+          input: '{"command":"npm test","token":"secret-token"}',
+          summary: 'npm test'
         }
       },
       { type: 'text', delta: 'TOOLS_OK' }

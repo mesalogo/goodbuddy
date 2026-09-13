@@ -4,7 +4,8 @@ import type { ConversationMessageBlock } from '../../shared/assistant-contracts'
 import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
 import {
   compactSubagentPayload,
-  restoreSubagentPayload
+  restoreSubagentPayload,
+  SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
 export function upgradeAssistantStorage(
@@ -21,7 +22,10 @@ export function upgradeAssistantStorage(
     const version = database.prepare('PRAGMA user_version').get() as {
       user_version: number
     }
-    if (version.user_version < 1 || version.user_version >= 34) return
+    if (
+      version.user_version < 1 ||
+      version.user_version >= SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
+    ) return
     checkCancelled()
     const progress: AssistantStorageProgress = {
       stage: 'scanning', processed: 0, total: 0, bytesBefore
@@ -65,8 +69,9 @@ export function upgradeAssistantStorage(
             const compact = compactSubagentPayload(payload, blocks)
             // Replay mixed old/new rows on retry. Never delete events or provenance.
             restoreSubagentPayload(payload, blocks)
-            if (compact !== payload) {
-              update.run(JSON.stringify(compact), row.id)
+            const compactJson = JSON.stringify(compact)
+            if (compactJson !== row.payload_json) {
+              update.run(compactJson, row.id)
             }
             afterId = row.id
           }

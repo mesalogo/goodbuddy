@@ -53,6 +53,8 @@ Job、Subjob 和 Run 继续是内部对象，不创建树形 UI、独立路由�
 
 ### 3.1 标题与摘要
 
+正常执行状态的操作摘要遵循[工具操作摘要规则](../assistant-workbar/runtime-interactions.md#工具操作摘要)，从原始调用参数提取并在完成后保留；异常状态继续显示原有提示。
+
 ```text
 进程执行
 PowerShell · packages/app · npm test

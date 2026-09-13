@@ -1,4 +1,5 @@
 import spawn from 'cross-spawn'
+import { toolOperationSummary } from './tool-operation-summary'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   copyFile,
@@ -112,6 +113,7 @@ const continueHostStreamEventSchema = z.discriminatedUnion('type', [
       name: z.string().min(1).max(200),
       state: z.enum(['running', 'completed', 'failed']),
       input: z.string().max(4_000).optional(),
+      summary: z.string().max(240).optional(),
       output: z.string().max(16_000).optional(),
       error: z.string().max(1_000).optional()
     })
@@ -181,6 +183,7 @@ export type ContinueHostTool = {
   name: string
   state: 'pending' | 'running' | 'completed' | 'failed'
   input?: string
+  summary?: string
   output?: string
   error?: string
 }
@@ -729,6 +732,10 @@ function extractContinueTools(
         callId,
         name: name.trim().slice(0, 200),
         state: normalizedState,
+        summary: toolOperationSummary(
+          (toolFunction as Record<string, unknown>).arguments,
+          state.title
+        ),
         ...(input ? { input } : {}),
         ...(output ? { output } : {}),
         ...(error ? { error } : {})
@@ -749,6 +756,7 @@ function mergeContinueTools(
       ...previous,
       ...tool,
       input: tool.input ?? previous?.input,
+      summary: tool.summary ?? previous?.summary,
       output: tool.output ?? previous?.output,
       error: tool.error ?? previous?.error
     })
@@ -975,6 +983,11 @@ export class ContinueHostAdapter {
       patched,
       serverStateMarker,
       'pendingPermission:null,goodbuddyEvents:[],goodbuddyEventsBytes:0,goodbuddyEventsOverflow:!1},B='
+    )
+    patched = replaceExactly(
+      patched,
+      'state:"running",input:(()=>',
+      `state:"running",summary:(${toolOperationSummary.toString()})(l),input:(()=>`
     )
     patched = replaceExactly(
       patched,
@@ -1682,6 +1695,7 @@ export class ContinueHostAdapter {
             callId: event.callId,
             name: event.name,
             state: event.state,
+            summary: toolOperationSummary(event.input, event.summary),
             ...(event.input
               ? { input: boundedToolDetail(event.input, 4_000) }
               : {}),
@@ -1693,7 +1707,10 @@ export class ContinueHostAdapter {
               : {})
           }
           observedTools = mergeContinueTools(observedTools, [tool])
-          await runOptions.onEvent?.({ type: 'tool', tool })
+          await runOptions.onEvent?.({
+            type: 'tool',
+            tool: observedTools.find((item) => item.callId === tool.callId)!
+          })
         }
         const pendingQuestion = state.goodbuddyQuestion
         if (

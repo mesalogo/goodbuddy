@@ -116,7 +116,8 @@ otherwise.
   The first upgrade automatically converts existing history and reclaims disk
   space, with visible progress and quit/retry support. Chats, execution details,
   results, and remote event deduplication are preserved; older clients cannot
-  reopen the upgraded database. See
+  reopen the upgraded database. The unreleased schema-35 repair also handles
+  repeated tool blocks written after upgrading to 0.13.1, without deleting events. See
   [storage and upgrade behavior](./docs/features/assistant-workbar/execution-history-storage.md).
 
 - [x] **Direct model Runtime**: Supports question answering, knowledge

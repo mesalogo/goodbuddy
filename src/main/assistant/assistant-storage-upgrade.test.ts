@@ -7,11 +7,12 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ConversationMessageBlock } from '../../shared/assistant-contracts'
 import type { SubagentEvent } from '../../shared/contracts'
-import { AssistantDatabase } from './assistant-database'
+import { AssistantDatabase, ASSISTANT_DATABASE_SCHEMA_VERSION } from './assistant-database'
 import { upgradeAssistantStorage } from './assistant-storage-upgrade'
 import {
   compactSubagentPayload,
-  restoreSubagentPayload
+  restoreSubagentPayload,
+  SubagentProgressStorage
 } from './subagent-progress-storage'
 
 const directories: string[] = []
@@ -78,7 +79,10 @@ describe('subagent progress storage', () => {
     const event = subagent(fixtureData.taskId)
     const tool: ConversationMessageBlock = {
       id: randomUUID(), type: 'tool',
-      tool: { name: 'read', summary: 'Read', state: 'completed', output: 'x'.repeat(200_000) }
+      tool: {
+        name: 'read', summary: 'Read', state: 'completed',
+        input: undefined, output: 'x'.repeat(200_000), error: undefined
+      }
     }
     const textId = randomUUID()
     try {
@@ -102,8 +106,85 @@ describe('subagent progress storage', () => {
         const state = new Map<string, ConversationMessageBlock[]>()
         let restored: unknown
         for (const row of rows) restored = restoreSubagentPayload(JSON.parse(row.payload_json), state)
-        expect(restored).toEqual(event)
+        expect(restored).toStrictEqual(JSON.parse(JSON.stringify(event)))
       } finally { inspection.close() }
+    } finally { database.close() }
+  })
+
+  it('ignores omitted optional tool fields but preserves every actual field change', () => {
+    const event = subagent(randomUUID())
+    const block: ConversationMessageBlock = {
+      id: randomUUID(), type: 'tool',
+      tool: {
+        callId: 'read-1', name: 'read', summary: 'Read', state: 'completed',
+        input: undefined, output: 'unchanged', error: undefined
+      }
+    }
+    const state = new Map<string, ConversationMessageBlock[]>([
+      [event.childTaskId, JSON.parse(JSON.stringify([block]))]
+    ])
+    expect(compactSubagentPayload({ ...event, progress: [block] }, state))
+      .toMatchObject({ progressUpdates: [] })
+    for (const change of [
+      { callId: 'read-2' }, { name: 'write' }, { summary: 'Updated' },
+      { state: 'failed' as const }, { input: '' }, { output: 'changed' },
+      { error: 'failed' }, { output: undefined }
+    ]) {
+      const updated = { ...block, tool: { ...block.tool, ...change } }
+      const compact = compactSubagentPayload({ ...event, progress: [updated] }, state)
+      expect(compact).toMatchObject({
+        progressUpdates: [{ type: 'upsert', block: updated }]
+      })
+    }
+  })
+
+  it('releases terminal task caches without clearing peers, and rebuilds after rollback', () => {
+    const database = new DatabaseSync(':memory:')
+    database.exec(`CREATE TABLE task_events(
+      id INTEGER PRIMARY KEY, task_id TEXT, kind TEXT, payload_json TEXT
+    )`)
+    const storage = new SubagentProgressStorage(database)
+    const caches = (storage as unknown as { tasks: Map<string, unknown> }).tasks
+    const tool: ConversationMessageBlock = {
+      id: randomUUID(), type: 'tool',
+      tool: {
+        name: 'read', state: 'completed', summary: 'Read',
+        output: 'x'.repeat(200_000), error: undefined
+      }
+    }
+    let id = 0
+    const append = (taskId: string, kind: string, event: unknown) => {
+      const payload = storage.serialize(taskId, kind, event)
+      database.prepare('INSERT INTO task_events VALUES (?, ?, ?, ?)')
+        .run(++id, taskId, kind, payload)
+      storage.inserted(taskId, kind, id, payload)
+      return JSON.parse(payload) as { progressUpdates: unknown[] }
+    }
+    try {
+      const peer = subagent(randomUUID())
+      append(peer.requestId, 'subagent', { ...peer, progress: [tool] })
+      for (const [kind, payload] of [
+        ['done', {}], ['error', {}],
+        ...['completed', 'failed', 'cancelled', 'interrupted']
+          .map((status) => ['status', { status }])
+      ] as Array<[string, unknown]>) {
+        const event = { ...subagent(randomUUID()), progress: [tool] }
+        append(event.requestId, 'subagent', event)
+        expect(caches.size).toBe(2)
+        database.exec('BEGIN')
+        append(event.requestId, kind, payload)
+        expect(caches.has(event.requestId)).toBe(false)
+        expect(caches.has(peer.requestId)).toBe(true)
+        database.exec('ROLLBACK')
+        expect(append(event.requestId, 'subagent', event).progressUpdates).toEqual([])
+        append(event.requestId, kind, payload)
+        expect(caches.size).toBe(1)
+      }
+      for (let index = 0; index < 40; index++) {
+        const event = subagent(randomUUID())
+        append(event.requestId, 'subagent', { ...event, progress: [tool] })
+        expect(caches.size).toBeLessThanOrEqual(16)
+      }
     } finally { database.close() }
   })
 
@@ -111,14 +192,30 @@ describe('subagent progress storage', () => {
     const { database, taskId, path } = await fixture()
     const event = subagent(taskId)
     const textId = randomUUID()
+    const tool: ConversationMessageBlock = {
+      id: randomUUID(), type: 'tool',
+      tool: {
+        name: 'read', summary: 'Read', state: 'completed',
+        input: undefined, output: 'x'.repeat(20_000), error: undefined
+      }
+    }
     const provenance = { taskId, bindingId: 'binding', operationId: 'operation', eventIndex: 0, kind: 'subagent' }
-    const first = { ...event, progress: [{ id: textId, type: 'text' as const, content: 'seed' }] }
-    const second = { ...event, progress: [{ id: textId, type: 'text' as const, content: 'seed tail' }] }
+    const first = { ...event, progress: [tool, { id: textId, type: 'text' as const, content: 'seed' }] }
+    const second = { ...event, progress: [tool, { id: textId, type: 'text' as const, content: 'seed tail' }] }
     try {
       expect(database.appendRemoteTaskEventOnce({ ...provenance, semanticSequence: '1', payload: first })).toBe(true)
       expect(database.appendRemoteTaskEventOnce({ ...provenance, semanticSequence: '2', payload: second })).toBe(true)
       expect(database.appendRemoteTaskEventOnce({ ...provenance, semanticSequence: '1', payload: first })).toBe(false)
       expect(() => database.appendRemoteTaskEventOnce({ ...provenance, semanticSequence: '1', payload: second })).toThrow('conflicts')
+      database.appendTaskEvent(taskId, 'done', {})
+      const caches = (database as unknown as {
+        subagentProgress: { tasks: Map<string, unknown> }
+      }).subagentProgress.tasks
+      expect(caches.size).toBe(0)
+      expect(database.appendRemoteTaskEventOnce({
+        ...provenance, semanticSequence: '2', payload: second
+      })).toBe(false)
+      expect(caches.size).toBe(0)
     } finally { database.close() }
     const reopened = new AssistantDatabase(path)
     reopened.initialize(tmpdir())
@@ -208,7 +305,7 @@ describe('subagent progress storage', () => {
     } finally { inspection.close(); database.close() }
   })
 
-  it('converts legacy rows in batches, resumes after cancellation and actually shrinks the file', async () => {
+  it.each([33, 34])('converts schema %i rows, resumes and shrinks without losing provenance', async (sourceVersion) => {
     const { database, taskId, path } = await fixture()
     database.close()
     const event = subagent(taskId)
@@ -220,10 +317,12 @@ describe('subagent progress storage', () => {
     const legacy = new DatabaseSync(path)
     const expected: SubagentEvent[] = []
     try {
-      legacy.exec('PRAGMA user_version = 33; BEGIN')
+      legacy.exec(`PRAGMA user_version = ${sourceVersion}; BEGIN`)
       const insert = legacy.prepare(
-        `INSERT INTO task_events(task_id, kind, payload_json, created_at)
-         VALUES (?, 'subagent', ?, ?)`
+        `INSERT INTO task_events(
+          task_id, kind, payload_json, created_at, remote_binding_id,
+          remote_operation_id, remote_semantic_sequence, remote_event_index
+         ) VALUES (?, 'subagent', ?, ?, 'binding', 'operation', ?, 0)`
       )
       for (let index = 0; index < 150; index++) {
         const full = {
@@ -231,9 +330,17 @@ describe('subagent progress storage', () => {
           progress: [tool, { id: textId, type: 'text' as const, content: `seed${'中'.repeat(index)}` }]
         }
         expected.push(full)
-        insert.run(taskId, JSON.stringify(full), '2026-09-13T00:00:00Z')
+        const { progress, ...metadata } = full
+        const stored = sourceVersion === 34 ? {
+          ...metadata,
+          progressUpdates: progress.map((block) => ({ type: 'upsert', block }))
+        } : full
+        insert.run(taskId, JSON.stringify(stored), '2026-09-13T00:00:00Z', String(index + 1))
       }
-      legacy.exec('COMMIT')
+      legacy.exec(`COMMIT;
+        CREATE TRIGGER reject_unchanged_payload BEFORE UPDATE OF payload_json ON task_events
+        WHEN OLD.payload_json = NEW.payload_json
+        BEGIN SELECT RAISE(ABORT, 'unchanged payload rewritten'); END;`)
     } finally { legacy.close() }
     const before = (await stat(path)).size
     expect(before).toBeGreaterThan(40_000_000)
@@ -248,13 +355,25 @@ describe('subagent progress storage', () => {
     try {
       expect(inspected.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
       const rows = inspected.prepare(
-        `SELECT payload_json, created_at FROM task_events WHERE kind = 'subagent' ORDER BY id`
-      ).all() as Array<{ payload_json: string; created_at: string }>
+        `SELECT id, task_id, payload_json, created_at, remote_binding_id,
+           remote_operation_id, remote_semantic_sequence, remote_event_index
+         FROM task_events WHERE kind = 'subagent' ORDER BY id`
+      ).all() as Array<{
+        id: number; task_id: string; payload_json: string; created_at: string
+        remote_binding_id: string; remote_operation_id: string
+        remote_semantic_sequence: string; remote_event_index: number
+      }>
       expect(rows).toHaveLength(expected.length)
       const blocks = new Map<string, ConversationMessageBlock[]>()
       rows.forEach((row, index) => {
         expect(restoreSubagentPayload(JSON.parse(row.payload_json), blocks)).toEqual(expected[index])
         expect(row.created_at).toBe('2026-09-13T00:00:00Z')
+        expect(row.task_id).toBe(taskId)
+        expect(row.remote_binding_id).toBe('binding')
+        expect(row.remote_operation_id).toBe('operation')
+        expect(row.remote_semantic_sequence).toBe(String(index + 1))
+        expect(row.remote_event_index).toBe(0)
+        if (index > 0) expect(row.id).toBe(rows[index - 1]!.id + 1)
       })
     } finally { inspected.close() }
     const reopened = new AssistantDatabase(path)
@@ -263,5 +382,47 @@ describe('subagent progress storage', () => {
     const messages: unknown[] = []
     upgradeAssistantStorage(path, (value) => messages.push(value))
     expect(messages).toEqual([])
+    const latest = new DatabaseSync(path)
+    try {
+      expect(latest.prepare('PRAGMA user_version').get()).toEqual({
+        user_version: ASSISTANT_DATABASE_SCHEMA_VERSION
+      })
+    } finally { latest.close() }
   }, 30_000)
+
+  it('recompacts mixed full and delta events without changing corrections, resets or child state', () => {
+    const first = subagent(randomUUID())
+    const second = { ...subagent(first.requestId), state: 'completed' as const, output: 'Done' }
+    const textId = randomUUID()
+    const tool: ConversationMessageBlock = {
+      id: randomUUID(), type: 'tool',
+      tool: { name: 'read', state: 'completed', summary: 'Read', output: 'payload' }
+    }
+    const text: ConversationMessageBlock = { id: textId, type: 'text', content: 'seed' }
+    const stored = [
+      { ...first, progress: [tool, text] },
+      { ...second, progressUpdates: [{ type: 'upsert', block: text }] },
+      { ...first, progress: undefined, progressUpdates: [
+        { type: 'upsert', block: tool },
+        { type: 'append', id: textId, blockType: 'text', delta: ' tail' }
+      ] },
+      { ...first, progress: undefined, progressUpdates: [
+        { type: 'upsert', block: { ...text, content: 'corrected' } }
+      ] },
+      { ...first, progress: undefined, progressUpdates: [
+        { type: 'reset', blocks: [text, tool] }
+      ] },
+      { ...second, progressUpdates: [] },
+      { ...first, progress: [] },
+      { ...first, progress: [text] }
+    ]
+    const oldState = new Map<string, ConversationMessageBlock[]>()
+    const newState = new Map<string, ConversationMessageBlock[]>()
+    for (const input of stored) {
+      const event = JSON.parse(JSON.stringify(input))
+      const compact = compactSubagentPayload(event, oldState)
+      const expected = restoreSubagentPayload(event, oldState)
+      expect(restoreSubagentPayload(compact, newState)).toStrictEqual(expected)
+    }
+  })
 })

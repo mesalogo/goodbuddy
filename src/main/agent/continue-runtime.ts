@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { toolOperationSummary } from './tool-operation-summary'
 import type {
   AgentQuestionAnswer,
   AgentEvent,
@@ -88,7 +89,7 @@ function toContinueToolEvent(
         : terminalize && tool.state !== 'completed'
         ? 'failed'
         : tool.state,
-    summary: `Continue 工具：${tool.name}`,
+    summary: toolOperationSummary(tool.input, tool.summary) ?? `Continue 工具：${tool.name}`,
     ...(tool.input ? { input: tool.input } : {}),
     ...(tool.output ? { output: tool.output } : {}),
     ...(tool.error ? { error: tool.error } : {})

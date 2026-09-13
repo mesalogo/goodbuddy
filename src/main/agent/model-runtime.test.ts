@@ -2473,7 +2473,10 @@ describe('ModelAgentRuntime', () => {
     ).toMatch(/GOODBUDDY_MODEL_TEST_[A-F0-9]+/u)
   })
 
-  it('runs approved direct-model tools and returns their results to OpenAI', async () => {
+  it.each([false, true])('runs approved tools with summaries from raw arguments (long input: %s)', async (longInput) => {
+    const args = longInput
+      ? { content: 'x'.repeat(5_000), path: 'README.md' }
+      : { path: 'README.md' }
     const responses = [
       {
         model: 'qwen3',
@@ -2488,7 +2491,7 @@ describe('ModelAgentRuntime', () => {
                   type: 'function',
                   function: {
                     name: 'workspace_read_text',
-                    arguments: '{"path":"README.md"}'
+                    arguments: JSON.stringify(args)
                   }
                 }
               ]
@@ -2596,7 +2599,7 @@ describe('ModelAgentRuntime', () => {
     )
     expect(toolProvider.getApproval).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'workspace_read_text' }),
-      { path: 'README.md' },
+      args,
       expect.any(String),
       expect.objectContaining({
         conversationId: 'conversation-tools',
@@ -2605,7 +2608,7 @@ describe('ModelAgentRuntime', () => {
     )
     expect(toolProvider.callTool).toHaveBeenCalledWith(
       'workspace_read_text',
-      { path: 'README.md' },
+      args,
       expect.any(AbortSignal),
       expect.objectContaining({
         conversationId: 'conversation-tools',
@@ -2617,11 +2620,13 @@ describe('ModelAgentRuntime', () => {
         .filter((event) => event.type === 'tool')
         .map((event) => event.state)
     ).toEqual(['pending', 'running', 'completed'])
+    expect(events.filter((event) => event.type === 'tool').map((event) => event.summary))
+      .toEqual(['README.md', 'README.md', 'README.md'])
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool',
         state: 'completed',
-        input: '{\n  "path": "README.md"\n}',
+        input: longInput ? expect.any(String) : '{\n  "path": "README.md"\n}',
         output:
           'tool result\n\n[图片结果 1：image/png]'
       })

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { resolve } from 'node:path'
+import { realpath } from 'node:fs/promises'
 import type { RuntimeEvent } from './runtime'
 import {
   ModelToolProvider,
@@ -243,7 +244,7 @@ function setup(
       })
   )
   const runtime = new DeepSeekHarnessRuntime({
-    defaultWorkspace: 'C:\\workspace',
+    defaultWorkspace: process.cwd(),
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-test',
     supportsImageInput: options.supportsImageInput,
@@ -474,6 +475,7 @@ describe('DeepSeekHarnessRuntime', () => {
       })
 
       const status = harness.runtime.getStatus()
+      await vi.waitFor(() => expect(harness.launch).toHaveBeenCalledOnce())
       await vi.advanceTimersByTimeAsync(10_001)
 
       await expect(status).resolves.toMatchObject({
@@ -503,6 +505,7 @@ describe('DeepSeekHarnessRuntime', () => {
       })
 
       const status = harness.runtime.getStatus()
+      await vi.waitFor(() => expect(harness.launch).toHaveBeenCalledOnce())
       await vi.advanceTimersByTimeAsync(12_000)
 
       await expect(status).resolves.toMatchObject({
@@ -674,7 +677,7 @@ describe('DeepSeekHarnessRuntime', () => {
       harness.child.stdout
     )
     expect(harness.launch).toHaveBeenCalledWith({
-      cwd: 'C:\\workspace',
+      cwd: await realpath(process.cwd()),
       signal: expect.any(AbortSignal),
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-test',
@@ -710,7 +713,12 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('keeps the original tool name on generic completion updates', async () => {
+  it.each([
+    ['completed', undefined, 'GoodBuddy'],
+    ['failed', undefined, 'GoodBuddy'],
+    ['completed', 'Search the release notes', 'Search the release notes'],
+    ['failed', 'Search the release notes', 'Search the release notes']
+  ] as const)('keeps tool input and summary on incremental %s updates with title %s', async (status, title, summary) => {
     const harness = setup()
     const running = collect(
       harness.runtime.run(
@@ -725,6 +733,7 @@ describe('DeepSeekHarnessRuntime', () => {
       sessionUpdate: 'tool_call',
       toolCallId: 'call-web-search',
       name: 'web_search',
+      title,
       status: 'pending',
       rawInput: { query: 'GoodBuddy' }
     })
@@ -732,7 +741,7 @@ describe('DeepSeekHarnessRuntime', () => {
       sessionUpdate: 'tool_call_update',
       toolCallId: 'call-web-search',
       name: 'tool',
-      status: 'completed',
+      status,
       rawOutput: 'search result'
     })
     harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
@@ -743,13 +752,16 @@ describe('DeepSeekHarnessRuntime', () => {
           type: 'tool',
           callId: 'call-web-search',
           name: 'web_search',
-          state: 'pending'
+          state: 'pending',
+          summary
         }),
         expect.objectContaining({
           type: 'tool',
           callId: 'call-web-search',
           name: 'web_search',
-          state: 'completed'
+          state: status,
+          summary,
+          input: expect.stringContaining('GoodBuddy')
         })
       ])
     )

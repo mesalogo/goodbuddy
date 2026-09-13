@@ -4,8 +4,27 @@ import type { DatabaseSync } from 'node:sqlite'
 import {
   assistantIdSchema,
   conversationMessageBlockSchema,
-  type ConversationMessageBlock
+  conversationToolActivitySchema,
+  type ConversationMessageBlock,
+  type ConversationToolActivity
 } from '../../shared/assistant-contracts'
+
+export const SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION = 35
+
+const toolFields = Object.keys(conversationToolActivitySchema.shape) as
+  Array<keyof ConversationToolActivity>
+
+function sameProgressBlock(
+  previous: ConversationMessageBlock,
+  next: ConversationMessageBlock
+): boolean {
+  if (previous.type === 'tool' && next.type === 'tool') {
+    // JSON omits undefined optional fields. Compare their values, not key presence.
+    return previous.id === next.id &&
+      toolFields.every((field) => previous.tool[field] === next.tool[field])
+  }
+  return isDeepStrictEqual(previous, next)
+}
 
 export const subagentProgressUpdateSchema = z.discriminatedUnion('type', [
   z.object({
@@ -89,7 +108,7 @@ export function diffSubagentProgress(
           type: 'append', id: block.id, blockType: block.type, delta
         })
       }
-    } else if (!prior || !isDeepStrictEqual(prior, block)) {
+    } else if (!prior || !sameProgressBlock(prior, block)) {
       updates.push({ type: 'upsert', block })
     }
   }
@@ -114,12 +133,15 @@ export function compactSubagentPayload(
   progress: ReadonlyMap<string, ConversationMessageBlock[]>
 ): unknown {
   const event = asSubagent(payload)
-  if (!event || !Array.isArray(event.progress)) return payload
+  if (!event || (
+    !Array.isArray(event.progress) && !Array.isArray(event.progressUpdates)
+  )) return payload
+  const previous = progress.get(event.childTaskId) ?? []
   const compact = { ...event }
   delete compact.progress
   compact.progressUpdates = diffSubagentProgress(
-    progress.get(event.childTaskId) ?? [],
-    event.progress
+    previous,
+    applySubagentProgress(previous, event) ?? []
   )
   return compact
 }
@@ -158,7 +180,17 @@ export class SubagentProgressStorage {
   }
 
   inserted(taskId: string, kind: string, id: number, payloadJson: string): void {
-    if (kind !== 'subagent') return
+    if (kind !== 'subagent') {
+      if (
+        kind === 'done' || kind === 'error' ||
+        (kind === 'status' && [
+          'completed', 'failed', 'cancelled', 'interrupted'
+        ].includes((JSON.parse(payloadJson) as { status?: string }).status ?? ''))
+      ) {
+        this.tasks.delete(taskId)
+      }
+      return
+    }
     const task = this.tasks.get(taskId)
     if (!task) return
     restoreSubagentPayload(JSON.parse(payloadJson), task.blocks)

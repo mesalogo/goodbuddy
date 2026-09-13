@@ -1,3 +1,5 @@
+import { toolOperationSummary } from './tool-operation-summary'
+import { realpath } from 'node:fs/promises'
 import type {
   AgentRuntimeStatus,
   ModelRequestHeaders,
@@ -210,12 +212,16 @@ type ActiveRun = {
   toolController: AbortController
   authorize?: RuntimeAuthorizer
   updates: AcpSessionNotification['update'][]
-  toolNames: Map<string, string>
+  toolNames: Map<
+    string,
+    { name: string; input?: string; summary?: string; title?: string }
+  >
   wake?: () => void
   closed: boolean
 }
 
 type HarnessState = {
+  workspace: string
   child: DeepSeekHarnessChild
   connection: AcpConnection
   agent: AcpAgent
@@ -778,9 +784,10 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     this.launchController = launchController
     let child: DeepSeekHarnessChild | undefined
     try {
+      const workspace = await realpath(this.options.defaultWorkspace)
       child = await withTimeout(
         this.options.launch({
-          cwd: this.options.defaultWorkspace,
+          cwd: workspace,
           signal: launchController.signal,
           baseUrl: this.options.baseUrl,
           model: this.options.model,
@@ -977,6 +984,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         throw new Error('DeepSeek Harness ACP 客户端初始化失败')
       }
       const stateWithoutCapabilities = {
+        workspace,
         child,
         connection,
         agent
@@ -1306,7 +1314,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     }
     const creation = state.agent
       .newSession({
-        cwd: this.options.defaultWorkspace,
+        cwd: state.workspace,
         mcpServers: []
       })
       .then((response) => {
@@ -1336,7 +1344,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   private toRuntimeEvent(
     requestId: string,
     update: AcpSessionNotification['update'],
-    toolNames: Map<string, string>
+    toolNames: ActiveRun['toolNames']
   ): RuntimeEvent | undefined {
     if (update.goodBuddyEvent) {
       return this.toUsageEvent(
@@ -1378,16 +1386,23 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         'DeepSeek Harness 工具'
       ).slice(0, 200)
       const callId = update.toolCallId.slice(0, 256)
+      const previous = toolNames.get(callId)
       const name =
-        reportedName === 'tool'
-          ? toolNames.get(callId) ?? reportedName
+        reportedName === 'tool' || (!update.name && !update.title)
+          ? previous?.name ?? reportedName
           : reportedName
+      const title = toolOperationSummary(
+        undefined,
+        update.title === 'tool' || update.title === update.name || update.title === previous?.name
+          ? undefined : update.title
+      ) ?? previous?.title
+      const input = safeStringify(update.rawInput) ?? previous?.input
+      const summary = toolOperationSummary(update.rawInput, title) ?? previous?.summary
       if (state === 'pending' || state === 'running') {
-        toolNames.set(callId, name)
+        toolNames.set(callId, { name, input, summary, title })
       } else {
         toolNames.delete(callId)
       }
-      const input = safeStringify(update.rawInput)
       const output = safeStringify(update.rawOutput)
       return {
         requestId,
@@ -1395,7 +1410,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         callId,
         name,
         state,
-        summary: `DeepSeek Harness 工具：${name}`,
+        summary: summary ?? `DeepSeek Harness 工具：${name}`,
         ...(input ? { input } : {}),
         ...(output ? { output } : {})
       }

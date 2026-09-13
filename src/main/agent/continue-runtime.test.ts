@@ -1005,7 +1005,7 @@ describe('ContinueAgentRuntime', () => {
         type: 'tool',
         name: 'Bash',
         state: 'completed',
-        summary: 'Continue 工具：Bash',
+        summary: 'npm test',
         input: '{"command":"npm test"}',
         output: 'Tests passed'
       }),

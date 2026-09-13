@@ -35,6 +35,8 @@ import { DshNpmExtensionInstaller } from './dsh-extension-marketplace'
 import { DEEPSEEK_HARNESS_MAX_FRAME_BYTES } from './deepseek-harness-control-protocol'
 import { createOpenAIChatCompletionsUrl } from './openai-endpoint'
 import { createModelRequestProbe } from '../../../tests/support/model-request-probe'
+import { ExecutionSpaceResolver } from '../execution-space/execution-space-resolver'
+import { SelectedRuntimeManager } from './selected-runtime-manager'
 
 const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
 const SKILL_CALL_ID = 'e2e-skill-call'
@@ -383,6 +385,49 @@ function createInProcessLaunch(
 }
 
 describe('DeepSeek Harness real ACP control-plane E2E', () => {
+  it.skipIf(process.platform !== 'win32')('reuses a working runtime for mixed-separator and canonical Windows paths', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-path-')))
+    const workspace = join(root, 'workspace')
+    const dshHome = join(root, 'home')
+    await Promise.all([mkdir(workspace), mkdir(dshHome)])
+    const canonical = await realpath(workspace)
+    const mixed = `${root.replaceAll('\\', '/')}\\workspace`
+    const resolver = new ExecutionSpaceResolver()
+    const inProcess = createInProcessLaunch(dshHome, {
+      stream: () => textResponse('PATH_OK')
+    })
+    const launch = vi.fn(inProcess.launch)
+    const manager = new SelectedRuntimeManager(async (_selection, space) => {
+      if (space?.kind !== 'local') throw new Error('local workspace required')
+      return new DeepSeekHarnessRuntime({
+        defaultWorkspace: space.rootPath, baseUrl: 'https://api.deepseek.com',
+        model: 'path-test', launch,
+        credentialRefs: { [CREDENTIAL_REF]: 'unused-in-memory-model-credential' },
+        initializationTimeoutMs: 20_000, promptTimeoutMs: 20_000, shutdownTimeoutMs: 5_000
+      })
+    })
+    try {
+      expect(mixed).not.toBe(canonical)
+      expect(await realpath(mixed)).toBe(canonical)
+      const first = await manager.getRuntime({ provider: 'deepseek-harness' }, resolver.resolveLocal(mixed))
+      for (const [index, spelling] of [mixed, canonical].entries()) {
+        const runtime = await manager.getRuntime({ provider: 'deepseek-harness' }, resolver.resolveLocal(spelling))
+        expect(runtime).toBe(first)
+        const events = await collect(runtime.run({
+          requestId: `path-${index}`, conversationId: `path-${index}`,
+          workMode: 'ask', prompt: 'Return PATH_OK.'
+        }, AbortSignal.timeout(20_000)))
+        expect(events.at(-1)).toMatchObject({ type: 'done' })
+        expect(events.filter(event => event.type === 'text').map(event => event.delta).join('')).toBe('PATH_OK')
+      }
+      expect(launch).toHaveBeenCalledOnce()
+      expect(launch.mock.calls[0]?.[0].cwd).toBe(canonical)
+    } finally {
+      await manager.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('writes outside the Workspace in Execute without approval and rejects the same tool in Ask', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-directory-')))
     const workspace = join(root, 'workspace')

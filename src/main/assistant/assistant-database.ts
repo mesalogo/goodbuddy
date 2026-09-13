@@ -95,9 +95,12 @@ import {
   setMagicNoteChecklistCompletion
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
-import { SubagentProgressStorage } from './subagent-progress-storage'
+import {
+  SubagentProgressStorage,
+  SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
+} from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 34
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -5344,34 +5347,9 @@ export class AssistantDatabase {
     database: DatabaseSync,
     event: ValidatedRemoteTaskEvent
   ): boolean {
-    const payloadJson = this.subagentProgress!.serialize(
-      event.taskId, event.kind, JSON.parse(event.payloadJson)
-    )
-    const result = database
-      .prepare(
-        `INSERT OR IGNORE INTO task_events
-          (task_id, run_id, kind, payload_json, created_at,
-           remote_binding_id, remote_operation_id,
-           remote_semantic_sequence, remote_event_index)
-         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        event.taskId,
-        event.kind,
-        payloadJson,
-        new Date().toISOString(),
-        event.bindingId,
-        event.operationId,
-        event.semanticSequence,
-        event.eventIndex
-      )
-    if (result.changes === 1) {
-      this.subagentProgress!.inserted(
-        event.taskId, event.kind, Number(result.lastInsertRowid), payloadJson
-      )
-      return true
-    }
-    const existing = database
+    const findExisting = (): {
+      id: number; task_id: string; kind: string; payload_json: string
+    } | undefined => database
       .prepare(
         `SELECT id, task_id, kind, payload_json
          FROM task_events
@@ -5393,6 +5371,38 @@ export class AssistantDatabase {
           payload_json: string
         }
       | undefined
+    // Duplicate replay must not recreate a completed task's released write cache.
+    let existing = findExisting()
+    if (!existing) {
+      const payloadJson = this.subagentProgress!.serialize(
+        event.taskId, event.kind, JSON.parse(event.payloadJson)
+      )
+      const result = database
+        .prepare(
+          `INSERT OR IGNORE INTO task_events
+            (task_id, run_id, kind, payload_json, created_at,
+             remote_binding_id, remote_operation_id,
+             remote_semantic_sequence, remote_event_index)
+           VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          event.taskId,
+          event.kind,
+          payloadJson,
+          new Date().toISOString(),
+          event.bindingId,
+          event.operationId,
+          event.semanticSequence,
+          event.eventIndex
+        )
+      if (result.changes === 1) {
+        this.subagentProgress!.inserted(
+          event.taskId, event.kind, Number(result.lastInsertRowid), payloadJson
+        )
+        return true
+      }
+      existing = findExisting()
+    }
     if (
       existing?.task_id === event.taskId &&
       existing.kind === event.kind &&
@@ -9680,6 +9690,10 @@ export class AssistantDatabase {
         PRAGMA user_version = 34;
         COMMIT;
       `)
+    }
+    if (version.user_version < SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION) {
+      // Startup's worker has already compacted full and schema-34 delta events.
+      database.exec(`PRAGMA user_version = ${SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION}`)
     }
   }
 

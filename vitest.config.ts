@@ -7,6 +7,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/renderer/src/test-setup.ts'],
     exclude: [
+      '.agent-resources/**',
       'shareserver/**',
       '**/node_modules/**',
       '**/dist/**',

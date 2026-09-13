@@ -121,6 +121,12 @@ GoodBuddy 使用自己固定的 Harness Host 入口和只读组合模板，不�
 
 模型名称、服务地址、工作区、Skills、MCP schema 和已启用插件的规范化入口通过严格校验的 Main 配置传给 Host。API Key 只通过受控凭据通道按需提供，不写入 YAML、命令行、Renderer 或日志。插件配置只来自 GoodBuddy 受管状态，不合并用户 profile 或全局补丁。
 
+本机 Runtime 初始化时对工作区调用 `realpath`，将结果保存在该 Host 的运行状态中；
+Host 启动与 ACP `newSession.cwd` 共用这一路径。Host 仍校验目录并严格比较会话路径。
+Windows 混合分隔符与同目录规范写法可继续通过现有 execution-space identity 复用
+Runtime，无需更改缓存键或增加重试。远端 SSH 由 `ManagedRemoteAcpRuntime` /
+`AcpRemoteRuntime` 单独处理，不经过本机 DS Runtime 的目录解析。
+
 ### 5.3 双层内部控制面
 
 Harness 子进程内控制面不能取代 Main 控制面，Main 控制面也不能代替进程内的 Session/Tool 适配层：
@@ -307,6 +313,7 @@ Harness Control Plane 只发送 GoodBuddy 能稳定解释的字段：
 - `text`：已提交的助手文本分片。
 - `reasoning`：可选的有界推理摘要分片。
 - `tool`：工具 ID、名称、状态和有界输入/输出摘要。
+- 操作标题与增量完成事件的参数保留遵循[工具操作摘要规则](../assistant-workbar/runtime-interactions.md#工具操作摘要)，本机适配器按调用 ID 合并，详情上限保持不变。
 - `model-usage`：模型、提供方、输入、输出和缓存 Token。
 - `done`：停止原因和 Session ID。
 
