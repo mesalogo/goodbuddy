@@ -275,6 +275,9 @@ Execute 直接启动已签名 Runtime：
   `127.0.0.1` 的临时 HTTP 入口。该入口使用进程级随机路径，能力 URL 不写入语义记录。
   插件复用 OpenCode 注入客户端的进程内 HTTP 适配器调用 `/question/{id}/reply` 或
   `/reject`；空答案数组表示拒答，非空答案数量须与问题数量一致。问答不经过 ACP 权限审批。
+  用户取消托管 Prompt 时，Agent 同步记录语义终态和操作终态。Desktop 等待取消升级及
+  终态核对后关闭旧 binding、释放会话通道；同一对话的下一条消息使用新 binding，避免
+  将新请求写入仍携带旧 operation ID 的 binding。断线附加原请求的规则保持不变。
 - 语义记录分页另带 Agent 当前 `pendingQuestions`，用于附加同一存活 Prompt 后恢复待答
   问题；历史问答元数据不重新生成表单。原生已回答、拒答、会话空闲、取消、Prompt 终结
   和进程退出清除相应映射，迟到的回答报错。回复失败保留桌面输入供重试，答案不会跨连接

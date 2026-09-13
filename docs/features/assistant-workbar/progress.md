@@ -1,5 +1,71 @@
 # 工作栏实现与验证进度
 
+## 2026-09-13 SSH 问答 UI 复验与取消后续发
+
+在真实 Electron 窗口中使用当前 `App`、入口样式和主题函数，经测试 IPC 接入生产
+`createManagedRemoteAcpRuntime`。远端使用共享 Linux x64 Host、真实 SSH attach、当前源码
+Agent、原生 OpenCode 和生产模型桥；模型响应来自远端 loopback 确定性服务。配置、项目、
+队列和存储 API 复用 App 测试 fixture，因此本次证据范围为 App Renderer 到真实 SSH
+Runtime，未覆盖完整生产 Main/Preload、生产数据库持久化、发布安装或重启恢复。
+
+窗口测试发现待答期间取消后，同一对话立即发送会报
+`Active prompt operation identity cannot change before terminalization`。Agent 取消分支
+原先只写语义记录，重复终态写入失败后未留下可核对的操作终态；Desktop 也保留了旧
+binding。修复复用 Agent 的异常终态记录方法，并在 Desktop 显式取消后核对终态、关闭
+已终结 binding 和释放会话通道。新增两项回归验证 Agent 取消核对及同一对话续发。
+
+已通过的 UI 场景：父子问题同时待答、重复事件不丢草稿、自由文本回答、选项回答、注入
+一次回复失败后原输入重试、跳过、待答期间取消、取消后在同一对话发出新请求并正常完成。
+鼠标和输入使用 Electron 原生输入 API。重复问题和回复失败由驱动注入，其余问题、工具
+进展及完成事件来自真实远端 Runtime；驱动消费内部 checkpoint，并将取消映射为公开
+`error/status=cancelled` 事件，不把内部 Runtime 事件直接送给 Renderer。
+
+浅深主题各检查四组窗口尺寸，问题表单无横向溢出、草稿保留，提交按钮可滚动到可见位置。
+短窗口需纵向滚动查看问题与输入，未宣称整张卡片同时可见。检查目标为 1280×800、
+960×720、720×640、640×420，Windows 175% 缩放下实际 CSS 内容区各多 1 像素。
+临时驱动、JSON 测试报告、各轮日志及 PNG 保留在批准临时目录，使用
+`question-ui-*`、`remote-question-*` 和 `question-validation-*` 文件名前缀；驱动按
+[Electron UI 自动化规范](../../quality/electron-ui-automation.md)的现有启动方法重建，
+不是仓库通用 UI runner。SSH 测试结束后停止专属 daemon 并清理远端专属目录和上传文件。
+
+复现时在批准临时目录执行 `node question-ui-build.cjs`、
+`node remote-question-build.cjs`，随后设置 `GOODBUDDY_QUESTION_UI=1` 并执行
+`node remote-question-run.cjs`。脚本依赖本机既有加密 Host 配置和 Host 上的测试 Node
+依赖目录；不得将这些本机条件当作新环境已经满足。早期驱动的内部事件转发、原生输入
+等待和跨轮模型结果判断错误均已修正；它们与实际取消续发缺陷分别记录，未将失败轮次
+改记为通过。首轮窗口退出过早，未取得完整模型夹具计数，历史夹具请求累计数不完整；
+外部模型调用为 0。
+
+最终 SSH/UI 一轮完成 4 次输入区提交、2 次回答和 1 次跳过，收到 4 个原生问题，取消
+核对结果为 `terminal/cancelled/processTree=empty`，随后新请求完成。该轮模型夹具请求
+精确为 7 次，外部模型调用 0 次，Renderer 控制台错误 0 条，驱动退出码 0。最终定向
+回归分两条命令执行：`npm exec vitest run src/agent-daemon/runtime-acp-backend.test.ts
+src/main/agent/acp-remote-runtime.test.ts` 为 96 项通过；
+`npm exec vitest run src/agent-daemon/remote-question-binary.test.ts
+src/agent-daemon/opencode-subagent-plugin.test.ts src/agent-daemon/model-bridge.test.ts
+src/main/remote-agent/protocol-remote-runtime-channel.test.ts
+src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项通过、5 项跳过。
+`npm run typecheck`、`npm run lint` 和 `git diff --check` 通过。
+
+首轮默认并行 `npm test` 的打包测试超时，整轮随后被 120 秒工具时限中断；单 worker
+重跑为 4,084 项通过、66 项跳过，耗时 626,816 毫秒。此结果早于本节取消修复，
+不作为最终源码全量结果。
+
+取消修复后的全量命令为 `node node_modules/vitest/vitest.mjs run --maxWorkers=1
+--reporter=json --outputFile=<批准临时目录>/question-validation-final.json`，覆盖 358 份
+测试文件，结果为 4,087 项通过、1 项失败、66 项跳过，监督进程记录耗时 617,138 毫秒、
+退出码 1。唯一失败是 `tests/agent-package.test.ts:372` 的大清单安装用例，耗时
+63,366 毫秒，超过该用例 60 秒上限。随后
+`npm exec vitest run tests/agent-package.test.ts -- --maxWorkers=1` 单独复跑为
+22 项通过、1 项跳过，整文件耗时 60.08 秒；没有修改该打包测试或放宽超时。
+全量失败记录保留，不能将分次复跑结果写成单轮全绿。
+
+最终 UI 原始日志为 `question-ui-1789278503920.log`，8 张待答截图为
+`question-ui-{light,dark}-{1280,960,720,640}.png`，另有完成截图
+`question-ui-success.png`。已逐张打开待答 PNG 审阅字体、字段、按钮、焦点和短窗口
+滚动位置；未发现问题卡片遮挡或按钮不可达。尺寸切换等待 CSS 过渡结束后再截图，
+窗口使用独立临时 session partition。当前证据不覆盖全键盘导航或正式 profile 的清理。
+
 ## 2026-09-13 托管 SSH 原生问答
 
 - 当前源码支持前台托管 SSH OpenCode 的父、子孙会话原生问题、回答和拒答，复用已有
@@ -21,7 +87,7 @@
   Runtime、认证控制通道及托管入口测试。`npm run typecheck`、`npm run lint` 通过。
   本轮全量 `npm test -- --reporter=json --outputFile=<临时报告>` 为 4,081 项通过、
   0 项失败、66 项跳过；之后的插件身份与并发去重补充由最终定向回归和 Host 复测覆盖。
-- 当前验证未操作 Electron 窗口、重装共享 Agent 或模拟整机重启；问答队列的界面行为由
+- 本节早期验证未操作 Electron 窗口、重装共享 Agent 或模拟整机重启；问答队列的界面行为由
   既有 App/ChatTimeline 测试覆盖。同一存活 Prompt 的待答补发由 Runtime 回归验证，
   不把它描述成 Agent 进程重启后的问题恢复。旧 Agent 和任意第三方 ACP 服务的范围见
   [Runtime 交互边界](./runtime-interactions.md)。

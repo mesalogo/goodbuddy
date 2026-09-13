@@ -1337,6 +1337,25 @@ describe('RuntimeAcpBackend', () => {
     ).toEqual(['offline'])
   })
 
+  it('retains the owned cancellation outcome when the semantic terminal already exists', async () => {
+    const fixture = harness({ agentOwned: true })
+    let terminalWritten = false
+    fixture.semanticPrompts!.append.mockImplementation(() => {
+      if (terminalWritten) throw new Error('Prompt is already terminal')
+      terminalWritten = true
+    })
+    await open(fixture)
+    await invoke(fixture, 'runtime/preparePrompt', fixture.preparation())
+    await invoke(fixture, 'runtime/escalateCancellation', {
+      bindingId: 'binding-1', sessionId: 'session-1',
+      operationId: 'request-1', requestId: 'request-1', reason: 'requested'
+    })
+    await expect(invoke(fixture, 'runtime/reconcilePrompt', {
+      bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1'
+    })).resolves.toEqual({ status: 'terminal', terminalState: 'cancelled', processTree: 'empty' })
+    await fixture.backend.dispose()
+  })
+
   it('closes an idle model bridge on detach without poisoning or stopping Runtime work', async () => {
     const fixture = harness()
     await open(fixture)

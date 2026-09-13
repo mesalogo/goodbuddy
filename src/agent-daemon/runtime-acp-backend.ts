@@ -1847,20 +1847,11 @@ export class RuntimeAcpBackend {
           'Runtime prompt cancellation timed out'
         ).catch(() => undefined)
       }
-      try {
-        this.#options.semanticPrompts.append({
-          bindingId: binding.request.bindingId,
-          operationId: binding.activeOperationId,
-          kind: 'prompt-terminal',
-          payload: {
-            status: 'cancelled',
-            reason: escalation.reason
-          },
-          terminalState: 'cancelled'
-        })
-      } catch {
-        // A concurrently completed prompt already committed terminal evidence.
-      }
+      this.#appendAbnormalOwnedPromptTerminal(binding, {
+        status: 'cancelled',
+        name: 'PromptCancelled',
+        message: 'Prompt execution was cancelled'
+      })
     }
     await this.#stopAndReconcile(binding, 'user-cancelled')
     return { bindingId: escalation.bindingId, stopped: true }

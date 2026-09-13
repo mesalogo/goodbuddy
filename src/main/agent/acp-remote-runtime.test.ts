@@ -3115,6 +3115,25 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
   })
 
+  it('reconciles an owned cancellation before the next prompt in the same conversation', async () => {
+    const fixture = ownedChannel()
+    fixture.pageOwnedPromptTranscript.mockImplementationOnce(() => new Promise<never>(() => {}))
+    const controller = new AbortController()
+    const stream = fixture.instance.run(request, controller.signal)
+    await stream.next()
+    const pending = stream.next()
+    await vi.waitFor(() => expect(fixture.pageOwnedPromptTranscript).toHaveBeenCalledOnce())
+    controller.abort(new Error('cancel pending question'))
+    await expect(pending).rejects.toThrow('cancel pending question')
+    expect(await fixture.store.getByConversation(request.conversationId)).toBeUndefined()
+    const events = await collect(fixture.instance.run(
+      { ...request, requestId: 'after-cancel' }, new AbortController().signal
+    ))
+    expect(events.some(event => event.type === 'done')).toBe(true)
+    expect(fixture.startOwnedPrompt).toHaveBeenCalledTimes(2)
+    await fixture.instance.dispose()
+  })
+
   it('waits for the in-flight Agent cancellation before releasing its lease', async () => {
     let releaseEscalation!: () => void
     const escalation = new Promise<void>((resolve) => {

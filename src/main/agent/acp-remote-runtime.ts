@@ -2752,6 +2752,20 @@ export class AcpRemoteRuntime implements AgentRuntime {
             ? abortReason(signal)
             : new Error('远端 Runtime 事件消费提前结束')
         )
+        // Cancellation stops transcript polling, so reconcile before reusing
+        // this session for another prompt.
+        if (signal.aborted) {
+          const reconciled = await this.reconcilePromptOperation(
+            context,
+            binding
+          )
+          session.binding = reconciled.terminal
+            ? await this.persistClosedBinding(reconciled.binding)
+            : reconciled.binding
+          this.sessions.delete(request.conversationId)
+          this.contexts.delete(request.conversationId)
+          await this.closeContext(context).catch(() => undefined)
+        }
       }
       signal.removeEventListener('abort', cancel)
       prompt.open = false
