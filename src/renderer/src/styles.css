@@ -2878,7 +2878,6 @@ textarea:focus-visible {
   background: var(--overlay-backdrop);
   inset: 0;
   place-items: center;
-  -webkit-app-region: no-drag;
 }
 
 .project-create-card {
@@ -2895,7 +2894,6 @@ textarea:focus-visible {
   box-shadow: var(--shadow-dialog);
   flex-direction: column;
   gap: 10px;
-  -webkit-app-region: no-drag;
 }
 
 .project-create-card > header {
@@ -2906,7 +2904,6 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   flex: 0 0 auto;
-  -webkit-app-region: no-drag;
 }
 
 .project-create-card .project-create-card__close {
@@ -2915,7 +2912,6 @@ textarea:focus-visible {
   width: 40px;
   height: 40px;
   flex: 0 0 auto;
-  -webkit-app-region: no-drag;
 }
 
 .project-create-card__body {
@@ -3743,6 +3739,33 @@ textarea:focus-visible {
 .topbar :is(button, input, select),
 .topbar__actions,
 .window-controls {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * Overlays are portalled to document.body and cover the whole window, so they
+ * paint over the .brand and .topbar drag regions. Without no-drag the native
+ * titlebar keeps the pointer and their controls stop responding to hover and
+ * clicks. Every full-window overlay must match this selector; extend the list
+ * rather than adding a per-dialog copy.
+ */
+:is(
+  .project-create-backdrop,
+  .remote-directory-picker-backdrop,
+  .html-preview-viewer-backdrop,
+  .image-viewer-backdrop,
+  .release-notes-backdrop,
+  .settings-backdrop,
+  .channel-qr-backdrop,
+  .feedback-dialog-backdrop,
+  .document-parsing-diagnostic-backdrop,
+  .mcp-editor-backdrop,
+  .knowledge-confirm-dialog-backdrop,
+  .knowledge-library-dialog-backdrop,
+  .knowledge-dialog-backdrop,
+  .project-activity__backdrop,
+  .external-knowledge-modal
+) {
   -webkit-app-region: no-drag;
 }
 
@@ -5916,7 +5939,7 @@ button > svg {
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
-  inset: 38px 0 0;
+  inset: 0;
   place-items: center;
 }
 
@@ -6955,7 +6978,6 @@ button > svg {
 }
 
 .image-viewer-backdrop {
-  -webkit-app-region: no-drag;
   position: fixed;
   z-index: 80;
   display: grid;
@@ -9936,7 +9958,6 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .channel-qr-backdrop {
-  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -10062,7 +10083,6 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .feedback-dialog-backdrop {
-  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -10752,7 +10772,6 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .document-parsing-diagnostic-backdrop {
-  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -11881,7 +11900,7 @@ details.settings-section > :not(summary) + :not(summary) {
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
-  inset: 38px 0 0;
+  inset: 0;
   place-items: center;
 }
 
@@ -12798,7 +12817,6 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-confirm-dialog-backdrop {
-  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -12841,7 +12859,6 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-library-dialog-backdrop {
-  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -16662,7 +16679,7 @@ details.settings-section > :not(summary) + :not(summary) {
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
-  inset: 38px 0 0;
+  inset: 0;
   place-items: center;
 }
 

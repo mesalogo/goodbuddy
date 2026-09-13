@@ -127,6 +127,33 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('releases the native drag region for every full-window overlay', () => {
+    const noDragBlock = stylesheet.match(
+      /:is\(([^)]*(?:-backdrop|-modal)[^)]*)\)\s*\{\s*-webkit-app-region:\s*no-drag;\s*\}/u
+    )
+    expect(noDragBlock).not.toBeNull()
+    const covered = new Set(
+      noDragBlock![1]!.split(',').map((selector) => selector.trim())
+    )
+    // Any fixed overlay painting over .brand or .topbar must release the drag
+    // region, otherwise the native titlebar keeps the pointer and its controls
+    // stop responding to hover and clicks.
+    const overlays = [
+      ...stylesheet.matchAll(
+        /^(\.[\w-]*(?:backdrop|modal))\s*\{([^}]*)\}/gmu
+      )
+    ].filter(([, , body]) => /position:\s*fixed/u.test(body!))
+    expect(overlays.length).toBeGreaterThan(10)
+    for (const [, selector, body] of overlays) {
+      expect(covered, `${selector} must release the drag region`).toContain(
+        selector
+      )
+      expect(body, `${selector} must cover the whole window`).toMatch(
+        /inset:\s*0;/u
+      )
+    }
+  })
+
   it('uses bundled variable fonts and readable shared type tokens', () => {
     expect(rendererEntry).toContain(
       "@fontsource-variable/noto-sans-sc/wght.css"
