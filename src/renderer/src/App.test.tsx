@@ -1063,6 +1063,8 @@ describe("App", () => {
     delete document.documentElement.dataset.theme;
     document.documentElement.style.colorScheme = "";
     vi.clearAllMocks();
+    vi.mocked(api.agent.respondQuestion).mockReset().mockResolvedValue();
+    vi.mocked(api.agent.respondApproval).mockReset().mockResolvedValue();
     magicTodoStatusChangedListener = undefined;
     vi.mocked(api.magicNotes.getTodoStatus)
       .mockReset()
@@ -1378,8 +1380,9 @@ describe("App", () => {
 
     it.each(["question", "approval"] as const)("preserves live %s across snapshot refresh and clears persisted terminal prompts", async (kind) => {
       render(<App />);
-      await screen.findByRole("button", { name: /全项目活动/u });
+      await screen.findByLabelText("更多会话操作 Current discussion");
       fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Refresh pending prompt" } });
+      await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
       fireEvent.click(screen.getByLabelText("发送"));
       await waitFor(() => expect(run).toHaveBeenCalledOnce());
       const request = run.mock.calls[0]![0];
@@ -1439,8 +1442,9 @@ describe("App", () => {
       vi.mocked(kind === "question" ? api.agent.respondQuestion : api.agent.respondApproval)
         .mockImplementationOnce(() => new Promise<void>((yes, no) => { resolve = yes; reject = no; }));
       render(<App />);
-      await screen.findByRole("button", { name: /全项目活动/u });
+      await screen.findByLabelText("更多会话操作 Current discussion");
       fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Response activity" } });
+      await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
       fireEvent.click(screen.getByLabelText("发送"));
       await waitFor(() => expect(run).toHaveBeenCalledOnce());
       const request = run.mock.calls[0]![0];
@@ -1476,8 +1480,9 @@ describe("App", () => {
 
     it.each(["question", "approval"] as const)("groups pending %s ahead of running, deduplicates live and task activity, and clears terminal events", async (kind) => {
       render(<App />);
-      await screen.findByRole("button", { name: /全项目活动/u });
+      await screen.findByLabelText("更多会话操作 Current discussion");
       fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Track live activity" } });
+      await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
       fireEvent.click(screen.getByLabelText("发送"));
       await waitFor(() => expect(run).toHaveBeenCalledOnce());
       const request = run.mock.calls[0]![0];
@@ -10780,7 +10785,9 @@ describe("App", () => {
         ["先写测试"],
       ]),
     );
-    expect(screen.queryByText("OpenCode 需要补充信息")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("OpenCode 需要补充信息")).not.toBeInTheDocument(),
+    );
     expect(screen.getByText("请选择实现方式")).toBeInTheDocument();
     expect(screen.getByText("先写测试")).toBeInTheDocument();
     act(() => {

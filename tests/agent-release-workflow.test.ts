@@ -61,10 +61,11 @@ describe('independent Agent release workflow', () => {
     expect(scripts('publish')).toContain('test -s "$notes"')
     expect(notes).toContain(`# GoodBuddy Agent ${agentVersion} 更新内容`)
     expect(notes).toContain(`# What's New in GoodBuddy Agent ${agentVersion}`)
-    expect(notes).toMatch(/^## (?:功能更新|问题修复)$/mu)
-    expect(notes).toMatch(/^## (?:Features|Bug Fixes)$/mu)
+    expect(notes).toMatch(/^## (?:功能更新|问题修复|维护更新)$/mu)
+    expect(notes).toMatch(/^## (?:Features|Bug Fixes|Maintenance)$/mu)
     expect(notes.includes('## 功能更新')).toBe(notes.includes('## Features'))
     expect(notes.includes('## 问题修复')).toBe(notes.includes('## Bug Fixes'))
+    expect(notes.includes('## 维护更新')).toBe(notes.includes('## Maintenance'))
   })
 
   it('uses a separate immutable agent-v tag and never enters desktop packaging', () => {

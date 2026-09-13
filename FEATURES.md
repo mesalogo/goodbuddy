@@ -21,7 +21,7 @@ otherwise.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.13.1. See the
+  releases and automatic updates; no preview is planned for 0.13.2. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -38,8 +38,10 @@ otherwise.
   Host heading and only the remote path on each project row.
 - [x] **Cross-project conversation activity**: A shared activity entry lists
   running conversations and conversations needing attention across projects,
-  including older conversations with live work. Open the associated
-  conversation directly; project selection also shows activity counts.
+  including older conversations with live work. Anchored project-to-conversation
+  menus provide keyboard navigation and exact conversation opening without a
+  full activity dialog. The summary remains visible when idle, and project
+  selection continues to show activity counts.
 - [x] **Compact conversation controls**: Composer options share a compact
   settings panel while Runtime, mode, sending, and queue controls remain
   available. Conversation search has an inline clear action that restores the
@@ -116,8 +118,10 @@ otherwise.
   The first upgrade automatically converts existing history and reclaims disk
   space, with visible progress and quit/retry support. Chats, execution details,
   results, and remote event deduplication are preserved; older clients cannot
-  reopen the upgraded database. The unreleased schema-35 repair also handles
-  repeated tool blocks written after upgrading to 0.13.1, without deleting events. See
+  reopen the upgraded database. The 0.13.2 candidate's schema-35 repair also handles
+  repeated tool blocks written after upgrading to 0.13.1, without deleting events.
+  Terminal tasks release their write caches; duplicate remote replay does not
+  rebuild a released cache. See
   [storage and upgrade behavior](./docs/features/assistant-workbar/execution-history-storage.md).
 
 - [x] **Direct model Runtime**: Supports question answering, knowledge
@@ -224,7 +228,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.24`, while the current Desktop release candidate is `0.13.1`; formal
+  `0.11.25`, while the current Desktop release candidate is `0.13.2`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -278,7 +282,9 @@ otherwise.
   permissions. Image input follows the selected model connection's declared
   capability: text models reject images before Host or model invocation, while
   image-capable models receive bounded inline JPEG/PNG content through a
-  temporary Attachment Store.
+  temporary Attachment Store. On Windows, Host startup and ACP sessions share
+  one canonical workspace path, so equivalent path spellings reuse the same
+  working Runtime instead of failing session creation.
 - [x] **DSH npm plugin marketplace**: Disabled by default and searches public
   npm `dsh-plugin` packages only after explicit user enablement. It uses the
   bundled npm to install exact versions with ordinary lifecycle scripts and
@@ -560,6 +566,9 @@ otherwise.
 - [x] **Compact conversation tool records**: Expand individual tool records
   to read or copy results, errors, and input parameters. Conversation and
   child-task progress use concise rows without repeated Runtime summaries.
+  OpenCode, Continue, DeepSeek Harness, and direct models show available file
+  paths, commands, or search summaries and retain them through completion and
+  conversation reloads.
 - [x] **Task and custom-task experience**: Each product-level Task belongs to
   one Conversation, while one Conversation can contain multiple Tasks. The
   left conversation list exposes Task children through a leading expand
@@ -677,15 +686,18 @@ otherwise.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.1` and Agent `0.11.24`, with
+- Current source candidates are Desktop `0.13.2` and Agent `0.11.25`, with
   OpenCode pinned to `1.18.29`. Publication status follows the independent
   Desktop and Agent release channels.
-- Candidate acceptance remains separate from version preparation. The current
-  remote-question source has passed real Linux x64 SSH and Electron question
-  tests with a deterministic loopback model, not the complete production
-  Main/Preload path with a real provider. That real-model path and candidate
-  native CI/package validation remain outstanding; see the
-  [remote-question evidence](./docs/features/assistant-workbar/progress.md).
+- Agent `0.11.25` is a maintenance release without standalone remote feature
+  changes, and its packages require Desktop `0.13.2`. The desktop storage repair
+  also works with Agent `0.11.24`; updating Agent is not a substitute for updating Desktop.
+- Candidate acceptance remains separate from version preparation. Current-source
+  storage validation covers real local and Linux x64 Host tool workloads,
+  concurrent projects/conversations, cancellation, and lossless database migration.
+  Windows tool summaries and DeepSeek path handling have real full-App evidence;
+  the release candidate still requires main CI and native release packaging. See the
+  [validation evidence](./docs/features/assistant-workbar/progress.md).
 - [x] **0BSD open-source license**: Original code can be freely used, copied,
   modified, distributed, and commercialized. Third-party components and
   resources retain their own licenses.

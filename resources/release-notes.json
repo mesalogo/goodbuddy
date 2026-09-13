@@ -2,6 +2,42 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.2",
+      "releasedAt": "2026-09-14",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**修复升级后仍重复增长的执行记录**：修复 0.13.1 中子代理使用工具时，未变化的工具内容仍被重复保存的问题。首次启动会无损整理这些重复内容，保留会话、执行详情、结果和远程来源记录。任务结束后及时释放存储缓存，不清空其他正在运行会话的缓存。",
+            "**工具正在做什么更清楚**：OpenCode、Continue、DeepSeek Harness 和直连模型的工具记录可显示文件路径、命令或搜索摘要。工具完成后仍保留已有操作说明，展开记录或重新打开会话可继续查看输入、结果和错误。",
+            "**修复 Windows DeepSeek 工作区路径错误**：同一个目录使用不同分隔符或规范路径写法时，不再因为 Host 与会话路径不一致而导致请求失败。Host 启动和后续会话使用同一规范路径，保持原有工作区与权限边界。",
+            "**跨项目活动菜单更紧凑**：点击活动摘要后，可按“项目 → 会话”两级菜单直接进入需要处理的对话，不再打开整块活动弹窗。菜单支持键盘导航，并调整了入口间距和会话行指示，保留原有活动计数及跨项目定位。"
+          ],
+          "notices": [
+            "本次会再次整理已升级至 0.13.1 的数据库；大库可能需要时间和额外磁盘空间，支持退出后继续。升级后的数据库不能由旧客户端打开，需要回退时请使用升级前备份，不要手工修改数据库版本。",
+            "配套发布 **Agent 0.11.25** 维护版，需要先升级至 **Desktop 0.13.2**，再按需更新 Host 环境。存储补修由 Desktop 执行，不依赖升级 Agent；远程项目仍为技术预览，Ask/Execute 权限不变。",
+            "Desktop 提供 Windows、macOS、Linux 的 x64/arm64 标准安装包；本次不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Fix repeated execution-history growth after upgrading**: Fixed an issue in 0.13.1 where subagents using tools could repeatedly save unchanged tool content. The first launch compacts these duplicates without losing conversations, execution details, results, or remote provenance. Finished tasks release their storage caches without clearing caches for other active conversations.",
+            "**See what tools are doing**: Tool records from OpenCode, Continue, DeepSeek Harness, and direct models can show file paths, commands, or search summaries. Existing operation descriptions remain after completion, and expanded records or reopened conversations retain inputs, results, and errors.",
+            "**Fix Windows DeepSeek workspace-path errors**: Equivalent paths to the same directory no longer fail because the Host and session disagree about separators or canonical spelling. Host startup and subsequent sessions use the same canonical path while preserving workspace and permission boundaries.",
+            "**More compact cross-project activity navigation**: Open the activity summary and use a two-level project-to-conversation menu to reach conversations needing attention instead of opening a large activity dialog. Keyboard navigation, improved spacing, and simpler conversation indicators preserve activity counts and exact cross-project navigation."
+          ],
+          "notices": [
+            "This update also compacts databases already upgraded to 0.13.1; large databases may take time and require extra disk space, with quit-and-resume support. Older clients cannot open the upgraded database, so use a pre-upgrade backup for rollback rather than manually changing its version.",
+            "The accompanying **Agent 0.11.25** maintenance release requires **Desktop 0.13.2** before updating a Host environment. Desktop performs the storage repair without requiring an Agent update; remote projects remain a technical preview and Ask/Execute permissions are unchanged.",
+            "Desktop includes standard Windows, macOS, and Linux x64/arm64 packages, without a LoongArch experimental preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.1",
       "releasedAt": "2026-09-13",
       "notes": {
