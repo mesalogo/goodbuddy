@@ -1737,6 +1737,7 @@ describe("OpenCodeRuntime embedded launcher", () => {
       const setup = runClient([]);
       const controller = new AbortController();
       let subscriptionSignal: AbortSignal | undefined;
+      let abortedBeforeIteratorClose: boolean | undefined;
       const subscribe = setup.event.subscribe as unknown as ReturnType<
         typeof vi.fn
       >;
@@ -1745,15 +1746,19 @@ describe("OpenCodeRuntime embedded launcher", () => {
           subscriptionSignal = options.signal;
           return {
             stream: (async function* () {
-              if (outcome === "cancelled") {
-                controller.abort(new DOMException("Cancelled", "AbortError"));
-                return;
+              try {
+                if (outcome === "cancelled") {
+                  controller.abort(new DOMException("Cancelled", "AbortError"));
+                  return;
+                }
+                if (outcome === "failed") return;
+                yield {
+                  type: "session.idle",
+                  properties: { sessionID: "session-1" },
+                };
+              } finally {
+                abortedBeforeIteratorClose = subscriptionSignal?.aborted;
               }
-              if (outcome === "failed") return;
-              yield {
-                type: "session.idle",
-                properties: { sessionID: "session-1" },
-              };
             })(),
           };
         },
@@ -1784,6 +1789,9 @@ describe("OpenCodeRuntime embedded launcher", () => {
           await collect();
         }
         expect(subscriptionSignal?.aborted).toBe(true);
+        if (outcome !== "failed") {
+          expect(abortedBeforeIteratorClose).toBe(true);
+        }
         expect(controller.signal.aborted).toBe(outcome === "cancelled");
       } finally {
         await runtime.dispose();

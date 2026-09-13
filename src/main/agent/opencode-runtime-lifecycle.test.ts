@@ -15,7 +15,7 @@ const binaryPath = join(
 )
 
 it.skipIf(!existsSync(binaryPath))(
-  'closes real event streams after parallel runs without cancelling a peer',
+  'closes real event streams after parallel runs and compaction without cancelling a peer',
   async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-lifecycle-'))
     let cancelledController: AbortController | undefined
@@ -94,14 +94,18 @@ it.skipIf(!existsSync(binaryPath))(
         }
       })
     })
-    const run = async (controller = new AbortController(), cancel = false): Promise<string> => {
+    const run = async (
+      controller = new AbortController(),
+      cancel = false,
+      conversationId = crypto.randomUUID()
+    ): Promise<string> => {
       const requestId = crypto.randomUUID()
       const token = gateway.grant(requestId, [crypto.randomUUID()], controller.signal)!
       const deadline = setTimeout(() => controller.abort(), 30_000)
       let text = ''
       try {
         for await (const event of runtime.run({
-          requestId, conversationId: crypto.randomUUID(), workMode: 'ask',
+          requestId, conversationId, workMode: 'ask',
           prompt: cancel ? 'CANCEL_LIFECYCLE' : 'Reply LIFECYCLE_OK without tools.',
           knowledgeCapabilityToken: token
         }, controller.signal)) {
@@ -125,6 +129,18 @@ it.skipIf(!existsSync(binaryPath))(
         expect(cancelled).rejects.toMatchObject({ name: 'AbortError' }),
         expect(run()).resolves.toBe('LIFECYCLE_OK')
       ])
+      await expect.poll(() => openEventBodies).toBe(0)
+      const conversationId = crypto.randomUUID()
+      await expect(run(new AbortController(), false, conversationId)).resolves.toBe('LIFECYCLE_OK')
+      await expect(runtime.compactConversation({
+        requestId: crypto.randomUUID(),
+        conversationId,
+        runtimeSelection: { provider: 'opencode' },
+        history: [],
+        historyMessageIds: []
+      }, new AbortController().signal)).resolves.toMatchObject({
+        result: { compacted: true }
+      })
       await expect.poll(() => openEventBodies).toBe(0)
     } finally {
       await runtime.dispose()

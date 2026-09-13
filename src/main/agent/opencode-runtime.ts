@@ -295,6 +295,24 @@ function eventSubscriptionOptions(signal: AbortSignal) {
   };
 }
 
+async function* consumeEventSubscription<T>(
+  stream: AsyncGenerator<T, void, unknown>,
+  controller: AbortController,
+): AsyncGenerator<T, void, unknown> {
+  try {
+    while (true) {
+      const next = await stream.next();
+      if (next.done) return;
+      yield next.value;
+    }
+  } finally {
+    // The SDK removes its abort listener on iterator return without cancelling
+    // the reader. Abort first, while that listener can still close the body.
+    controller.abort();
+    await stream.return();
+  }
+}
+
 function awaitWithAbort<T>(
   operation: Promise<T>,
   signal: AbortSignal,
@@ -2466,7 +2484,10 @@ export class OpenCodeRuntime implements AgentRuntime {
         const reportedMessageIds = new Set<string>();
         const childTaskIdsBySession = new Map<string, string>();
         let waitingForRetry = false;
-        for await (const event of subscription.stream) {
+        for await (const event of consumeEventSubscription(
+          subscription.stream,
+          subscriptionController,
+        )) {
           const childProgress = subagentProgress.update(event);
           if (
             childProgress &&
@@ -3101,7 +3122,10 @@ export class OpenCodeRuntime implements AgentRuntime {
       const usageEvents: RuntimeModelUsageEvent[] = [];
       const reportedMessageIds = new Set<string>();
       const usageCapture = (async () => {
-        for await (const event of subscription.stream) {
+        for await (const event of consumeEventSubscription(
+          subscription.stream,
+          subscriptionController,
+        )) {
           if (
             event.type === "message.updated" &&
             event.properties.sessionID === sessionId &&

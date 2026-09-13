@@ -54,6 +54,26 @@
 `testQuery`，导致每次提问多一次 detail 请求，且 `EXTERNAL_KB_CAPABILITY_UNAVAILABLE`
 会出现在正常对话中。
 
+## 事件迭代结束前释放底层订阅
+
+**症状**：并行 OpenCode 会话已结束，但部分 SSE 响应流仍未关闭；只检查最终取消信号
+会误判回收成功。
+
+**原因**：OpenCode SDK `1.18.29` 在迭代器 `return()` 时移除取消监听并释放 reader lock，
+但不主动取消 reader。外层 `for await` 先结束 SDK 迭代器，外层 `finally` 再 abort 的
+顺序过晚，带缓冲的响应流可能继续存活。聊天和原生 Compact 均曾使用该顺序。
+
+**规则**：两条 SDK 消费路径共用 `consumeEventSubscription`，先 abort 对应订阅，再结束
+底层迭代器；请求取消和 Server 生命周期仍保留各自作用域。不要修改依赖包、放宽回收
+断言或关闭共享 Server 来代替单次订阅回收。
+
+**防复发**：Runtime 回归检查正常结束和消费方提前返回时，底层迭代器清理前取消已经发生。
+`opencode-runtime-lifecycle.test.ts` 使用真实二进制与 SDK，在 1、4、8 路并行、单请求
+取消和原生 Compact 后检查打开的响应流归零，并验证并行请求不被误取消。
+
+**历史**：`b03c256` 已增加请求级订阅取消；2026-09-13 候选检查仍复现 3 条响应流未关闭，
+复查发现聊天与 Compact 都需要调整上述顺序。
+
 ## 快照比对代替取消
 
 **症状**：为检测“操作期间配置被改动”而反复读回状态并 `JSON.stringify` 比较。
