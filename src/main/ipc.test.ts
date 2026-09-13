@@ -8459,7 +8459,7 @@ describe('registerIpcHandlers agent terminal state', () => {
   })
 
   it('returns no results for an explicitly empty knowledge search scope', async () => {
-    const searchHybridMany = vi.fn(() => {
+    const retrieveMany = vi.fn(() => {
       throw new Error('must not search')
     })
     const harness = createHarness(
@@ -8474,7 +8474,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       undefined,
       {
         database: { listKnowledgeBases: vi.fn(() => []) },
-        searchHybridMany
+        retrieveMany
       }
     )
     await expect(
@@ -8483,7 +8483,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         { libraryIds: [], query: 'anything' }
       )
     ).resolves.toEqual([])
-    expect(searchHybridMany).not.toHaveBeenCalled()
+    expect(retrieveMany).not.toHaveBeenCalled()
     await harness.dispose()
   })
 

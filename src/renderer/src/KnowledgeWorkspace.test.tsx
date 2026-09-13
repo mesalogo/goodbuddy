@@ -265,7 +265,7 @@ describe('KnowledgeWorkspace', () => {
   it('searches external names and instances and filters the unified library list', async () => {
     await i18n.changeLanguage('en-US')
     const external = { ...library, id: 'external-1', name: 'Company handbook', external: { knowledgeBaseId: 'external-1', instanceId: 'instance-1', provider: 'dify' as const, remoteKnowledgeBaseId: 'remote-1', remoteName: 'Remote policies', commonConfig: { resultLimit: 6, requestTimeoutMs: 15000, maxSnippetCharacters: 4000 }, providerConfig: { provider: 'dify' as const, useDatasetDefaults: true as const }, lastVerifiedAt: '2026-09-12' } }
-    const props = createProps({ libraries: [library, external], externalInstances: [{ id: 'instance-1', name: 'Enterprise service', provider: 'dify', baseUrl: 'https://knowledge.example', enabled: true, credentialStatus: 'configured', probeStatus: 'healthy', bindingCount: 1 }] })
+    const props = createProps({ libraries: [library, external], externalInstances: [{ id: 'instance-1', name: 'Enterprise service', provider: 'dify', baseUrl: 'https://knowledge.example', enabled: true, credentialStatus: 'configured', probeStatus: 'catalog-ready', bindingCount: 1 }] })
     render(<KnowledgeWorkspace {...props} />)
     const nav = screen.getByRole('navigation', { name: 'Library list' })
     for (const query of ['Remote policies', 'Enterprise service', 'dify']) {

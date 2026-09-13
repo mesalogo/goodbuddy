@@ -16,7 +16,7 @@ export const knowledge = {
     credentialNote: '凭据由本机加密保存，保存后不会回显。', showKey: '显示凭据', hideKey: '隐藏凭据',
     clearConfirm: '清除凭据后，使用此实例的知识库将无法检索。',
     transportNote: '此 HTTP 地址通过未加密连接传输凭据和查询。',
-    transportConfirm: '我了解并允许向此地址发送凭据', enabled: '启用实例',
+    enabled: '启用实例',
     testConnection: '测试连接', saveInstance: '保存实例', saved: '已保存', removed: '已从 GoodBuddy 移除',
     noInstances: '尚未配置外部实例', noInstancesHelp: '添加企业现有的 Dify、FastGPT 或 RAGFlow 服务。',
     selectInstance: '选择外部实例', remote: '远端知识库', remoteId: '远端知识库 ID', remoteName: '远端名称',
@@ -45,7 +45,7 @@ export const knowledge = {
     snapshot: '历史引用快照', documentId: '远端文档 ID', chunkId: '远端片段 ID', providerScore: 'Provider 分数',
     elapsed: '总耗时 {{ms}} ms', returned: '返回 {{returned}} 条 · 保留 {{kept}} 条', truncated: '结果已截断',
     allSources: '全部来源', searchLibraries: '搜索知识库', selectTarget: '选择远端知识库',
-    states: { ready: '远端可检索', untested: '未测试', 'instance-disabled': '实例已停用', 'credential-error': '凭据不可用', 'remote-missing': '远端目标不存在', 'config-invalid': '配置需要确认', 'temporarily-unavailable': '暂时无法连接' }
+    states: { ready: '远端可检索', untested: '未测试', 'instance-disabled': '实例已停用', 'credential-error': '凭据不可用', 'temporarily-unavailable': '暂时无法连接' }
   },
   page: {
     title: '知识库',

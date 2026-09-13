@@ -6,7 +6,7 @@ import type { ExternalKnowledgeInstanceSummary, ExternalKnowledgeCatalogPage } f
 import { ExternalBindingForm, ExternalInstanceManager, ExternalLibraryDetail, externalProviderDefaults } from './ExternalKnowledge'
 import i18n from './i18n'
 
-const instance: ExternalKnowledgeInstanceSummary = { id: 'instance-1', name: 'Company knowledge', provider: 'dify', baseUrl: 'https://knowledge.example', enabled: true, credentialStatus: 'configured', probeStatus: 'healthy', bindingCount: 0 }
+const instance: ExternalKnowledgeInstanceSummary = { id: 'instance-1', name: 'Company knowledge', provider: 'dify', baseUrl: 'https://knowledge.example', enabled: true, credentialStatus: 'configured', probeStatus: 'catalog-ready', bindingCount: 0 }
 const library: KnowledgeLibrary = { id: 'external-1', name: 'Handbook', description: '', storageMode: 'managed', graphEnabled: false, graphStrategy: 'model', sourceCount: 0, documentCount: 0, indexedDocumentCount: 0, external: { knowledgeBaseId: 'external-1', instanceId: instance.id, provider: 'dify', remoteKnowledgeBaseId: 'remote-1', remoteName: 'Handbook', commonConfig: { resultLimit: 6, requestTimeoutMs: 15000, maxSnippetCharacters: 4000 }, providerConfig: externalProviderDefaults('dify'), lastVerifiedAt: '2026-09-12' } }
 const snapshot: KnowledgeSnapshot = { libraries: [library], sources: [], documents: [], graphNodes: [], graphRelations: [], evidence: [] }
 const bridge = {

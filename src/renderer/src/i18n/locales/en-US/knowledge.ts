@@ -19,7 +19,7 @@ export const knowledge = {
     credentialNote: 'Credentials are encrypted locally and are never returned after saving.', showKey: 'Show credential', hideKey: 'Hide credential',
     clearConfirm: 'Clearing the credential makes libraries using this instance unavailable for retrieval.',
     transportNote: 'This HTTP address sends credentials and queries without transport encryption.',
-    transportConfirm: 'I understand and allow credentials to be sent to this address', enabled: 'Enable instance',
+    enabled: 'Enable instance',
     testConnection: 'Test connection', saveInstance: 'Save instance', saved: 'Saved', removed: 'Removed from GoodBuddy',
     noInstances: 'No external instances configured', noInstancesHelp: 'Add your existing Dify, FastGPT, or RAGFlow service.',
     selectInstance: 'Select an external instance', remote: 'Remote library', remoteId: 'Remote library ID', remoteName: 'Remote name',
@@ -48,7 +48,7 @@ export const knowledge = {
     snapshot: 'Historical citation snapshot', documentId: 'Remote document ID', chunkId: 'Remote snippet ID', providerScore: 'Provider score',
     elapsed: 'Total {{ms}} ms', returned: '{{returned}} returned · {{kept}} retained', truncated: 'Results truncated',
     allSources: 'All sources', searchLibraries: 'Search libraries', selectTarget: 'Select a remote library',
-    states: { ready: 'Remote retrieval ready', untested: 'Not tested', 'instance-disabled': 'Instance disabled', 'credential-error': 'Credential unavailable', 'remote-missing': 'Remote target missing', 'config-invalid': 'Settings need confirmation', 'temporarily-unavailable': 'Temporarily unavailable' }
+    states: { ready: 'Remote retrieval ready', untested: 'Not tested', 'instance-disabled': 'Instance disabled', 'credential-error': 'Credential unavailable', 'temporarily-unavailable': 'Temporarily unavailable' }
   },
   page: {
     title: 'Knowledge Base',

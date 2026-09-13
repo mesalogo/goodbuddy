@@ -143,6 +143,8 @@ export function ProjectActivity({
   const { t } = useTranslation('workspace')
   const [open, setOpen] = useState(false)
   if (!activities.length) {
+    // Adjusting state during render, guarded so it cannot loop: the dialog must
+    // not stay queued to reopen once the activity it listed has drained.
     if (open) setOpen(false)
     return null
   }
