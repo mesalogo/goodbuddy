@@ -2356,6 +2356,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         string,
         {
           name: string;
+          summary: string;
           state: "pending" | "running" | "completed" | "failed";
           input?: string;
           output?: string;
@@ -2605,6 +2606,11 @@ export class OpenCodeRuntime implements AgentRuntime {
                 throw new Error("OpenCode 工具调用 ID 格式无效");
               }
               const toolName = part.tool.slice(0, 200);
+              const title = "title" in part.state ? part.state.title : undefined;
+              const summary =
+                (typeof title === "string" ? title.trim().slice(0, 240) : "") ||
+                toolStates.get(callId)?.summary ||
+                `OpenCode 工具：${toolName}`;
               const nativeControlTool = toolName.trim().toLowerCase() === "question";
               const state =
                 part.state.status === "error" ? "failed" : part.state.status;
@@ -2636,6 +2642,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                   : undefined;
               toolStates.set(callId, {
                 name: toolName,
+                summary,
                 state,
                 ...(input ? { input } : {}),
                 ...(output ? { output } : {}),
@@ -2657,7 +2664,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                   callId,
                   name: toolName,
                   state,
-                  summary: `OpenCode 工具：${toolName}`,
+                  summary,
                   ...(input ? { input } : {}),
                   ...(output ? { output } : {}),
                   ...(error ? { error } : {}),
@@ -2811,14 +2818,15 @@ export class OpenCodeRuntime implements AgentRuntime {
               permissionRequest.tool?.callID ?? permissionRequest.id;
             const toolName = permissionRequest.permission.slice(0, 200);
             if (permissionSessionId === sessionId) {
-              toolStates.set(callId, { name: toolName, state: "pending" });
+              const summary = toolStates.get(callId)?.summary ?? `OpenCode 工具：${toolName}`;
+              toolStates.set(callId, { name: toolName, summary, state: "pending" });
               yield {
                 requestId: request.requestId,
                 type: "tool",
                 callId,
                 name: toolName,
                 state: "pending",
-                summary: `OpenCode 工具：${toolName}`,
+                summary,
               };
             }
             const allowKnowledge =
@@ -2939,7 +2947,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                 callId,
                 name: tool.name,
                 state: "failed",
-                summary: `OpenCode 工具：${tool.name}`,
+                summary: tool.summary,
                 ...(tool.input ? { input: tool.input } : {}),
                 ...(tool.output ? { output: tool.output } : {}),
                 ...(tool.error ? { error: tool.error } : {}),

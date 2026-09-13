@@ -2517,7 +2517,11 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
-  it("keeps non-Task tools with Task-shaped input as generic tools", async () => {
+  it.each([
+    ["  Custom delegate  ", "Custom delegate"],
+    ["", "OpenCode 工具：custom_delegate"],
+    ["x".repeat(300), "x".repeat(240)],
+  ])("keeps generic tool titles bounded: %s", async (title, summary) => {
     const setup = runClient([
       {
         id: "custom-tool-completed",
@@ -2536,7 +2540,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
                 prompt: "Inspect the complete source tree.",
               },
               output: "Custom tool result.",
-              title: "Custom delegate",
+              title,
               metadata: {},
               time: { start: 1, end: 2 },
             },
@@ -2559,9 +2563,70 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
         callId: "call-custom-1",
         name: "custom_delegate",
         state: "completed",
+        summary,
       }),
     );
     expect(events.some((event) => event.type === "subagent")).toBe(false);
+    await runtime.dispose();
+  });
+
+  it.each(["error", "interrupted"])("retains the running tool title after %s", async (ending) => {
+    const part = {
+      id: "part-read-1",
+      callID: "call-read-1",
+      type: "tool" as const,
+      tool: "read",
+    };
+    const setup = runClient([
+      {
+        id: "read-running",
+        type: "message.part.updated",
+        properties: {
+          sessionID: "session-1",
+          part: {
+            ...part,
+            state: {
+              status: "running",
+              input: { filePath: "README.md" },
+              title: "README.md",
+              time: { start: 1 },
+            },
+          },
+        },
+      },
+      ...(ending === "error" ? [{
+        id: "read-error",
+        type: "message.part.updated" as const,
+        properties: {
+          sessionID: "session-1",
+          part: {
+            ...part,
+            state: {
+              status: "error" as const,
+              input: { filePath: "README.md" },
+              error: "File not found",
+              time: { start: 1, end: 2 },
+            },
+          },
+        },
+      }] : []),
+    ]);
+    const runtime = embeddedRuntime(setup.client);
+    const events: RuntimeEvent[] = [];
+    await expect((async () => {
+      for await (const event of runtime.run({
+        requestId: "3f496642-f47d-4e0a-8944-a32c77b0d6ef",
+        conversationId: "conversation-1",
+        prompt: "Read README.md",
+        workMode: "execute",
+      }, new AbortController().signal)) {
+        events.push(event);
+      }
+    })()).rejects.toThrow();
+    expect(events.filter((event) => event.type === "tool")).toEqual([
+      expect.objectContaining({ state: "running", summary: "README.md" }),
+      expect.objectContaining({ state: "failed", summary: "README.md" }),
+    ]);
     await runtime.dispose();
   });
 
