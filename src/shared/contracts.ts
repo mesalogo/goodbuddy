@@ -1747,6 +1747,10 @@ export type KnowledgeSearchReference = {
 }
 
 export type DesktopApi = {
+  storageUpgrade: {
+    getProgress: () => Promise<import('./assistant-storage-contracts').AssistantStorageProgress>
+    act: (action: 'retry' | 'quit') => Promise<void>
+  }
   app: {
     getInfo: () => Promise<AppInfo>
     show: () => Promise<void>

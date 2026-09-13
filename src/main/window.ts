@@ -105,11 +105,19 @@ export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
   return window
 }
 
-export function loadMainWindow(window: BrowserWindow): void {
+export function loadMainWindow(
+  window: BrowserWindow,
+  storageUpgrade = false
+): void {
   if (process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
+    const url = new URL(process.env.ELECTRON_RENDERER_URL)
+    if (storageUpgrade) url.searchParams.set('storageUpgrade', '1')
+    void window.loadURL(url.href)
   } else {
-    void window.loadFile(join(currentDirectory, '../renderer/index.html'))
+    void window.loadFile(
+      join(currentDirectory, '../renderer/index.html'),
+      storageUpgrade ? { query: { storageUpgrade: '1' } } : undefined
+    )
   }
 }
 

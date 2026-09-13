@@ -42,6 +42,9 @@ Host 环境。任意第三方 ACP 服务及旧 Agent 不因此获得通用问答
 
 ## 托管 Runtime 的并行与输出
 
+子任务完整过程的显示与数据库差量存储相互独立，本机和托管 SSH 共用桌面存储层；
+旧库升级与空间回收规则见[执行记录存储与升级回收](./execution-history-storage.md)。
+
 - 本机和 Agent 管理的 OpenCode 启动配置都显式设置 `snapshot: false`。GoodBuddy 不消费
   原生自动 Git 快照、快照差异摘要或快照撤销；关闭这条内部路径，避免大行级差异的同步
   计算阻塞同一原生进程中的其他会话。

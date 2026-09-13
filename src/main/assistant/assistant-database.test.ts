@@ -10,7 +10,10 @@ import {
   conversationSnapshotSchema,
   isUntouchedBuiltInDefaultProject
 } from '../../shared/assistant-contracts'
-import { AssistantDatabase } from './assistant-database'
+import {
+  AssistantDatabase,
+  ASSISTANT_DATABASE_SCHEMA_VERSION
+} from './assistant-database'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 
 const temporaryDirectories: string[] = []
@@ -641,7 +644,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('migrates existing databases to schema version 33', async () => {
+  it('migrates existing databases to the current schema version', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-assistant-migration-')
     )
@@ -670,7 +673,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(33)
+    ).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
     expect(
       current
         .prepare(
@@ -840,7 +843,7 @@ describe('AssistantDatabase', () => {
       enableForeignKeyConstraints: true
     })
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 33
+      user_version: ASSISTANT_DATABASE_SCHEMA_VERSION
     })
     expect(
       inspected.prepare('SELECT * FROM projects ORDER BY rowid').all()
@@ -938,7 +941,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 33
+      user_version: ASSISTANT_DATABASE_SCHEMA_VERSION
     })
     expect(
       inspected
@@ -1015,7 +1018,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 33
+      user_version: ASSISTANT_DATABASE_SCHEMA_VERSION
     })
     expect(
       inspected
@@ -1265,7 +1268,7 @@ describe('AssistantDatabase', () => {
           user_version: number
         }
       ).user_version
-    ).toBe(33)
+    ).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
     expect(
       current
         .prepare(
@@ -1403,7 +1406,7 @@ describe('AssistantDatabase', () => {
     const inspected = new DatabaseSync(databasePath)
     expect(
       inspected.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 33 })
+    ).toEqual({ user_version: ASSISTANT_DATABASE_SCHEMA_VERSION })
     expect(
       inspected
         .prepare(
@@ -3102,7 +3105,7 @@ describe('AssistantDatabase', () => {
 
     const inspected = new DatabaseSync(databasePath)
     expect(inspected.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 33
+      user_version: ASSISTANT_DATABASE_SCHEMA_VERSION
     })
     expect(
       inspected.prepare('PRAGMA table_info(task_events)').all()

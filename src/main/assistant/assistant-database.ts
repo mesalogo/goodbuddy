@@ -95,8 +95,9 @@ import {
   setMagicNoteChecklistCompletion
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
+import { SubagentProgressStorage } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 33
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 34
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -1750,6 +1751,7 @@ function deleteProjectRecords(
 
 export class AssistantDatabase {
   private database?: DatabaseSync
+  private subagentProgress?: SubagentProgressStorage
   private channelEventWrites = 0
   private channelOutboxWrites = 0
 
@@ -1780,6 +1782,7 @@ export class AssistantDatabase {
       `)
       this.migrate(database)
       this.database = database
+      this.subagentProgress = new SubagentProgressStorage(database)
       this.channelEventWrites = (
         database
           .prepare('SELECT COUNT(*) AS count FROM channel_events')
@@ -2015,6 +2018,7 @@ export class AssistantDatabase {
   close(): void {
     this.database?.close()
     this.database = undefined
+    this.subagentProgress = undefined
   }
 
   clearAssistantData(): void {
@@ -4931,7 +4935,9 @@ export class AssistantDatabase {
     kind: string,
     payload: unknown
   ): void {
-    this.requireDatabase()
+    const database = this.requireDatabase()
+    const payloadJson = this.subagentProgress!.serialize(taskId, kind, payload)
+    const result = database
       .prepare(
         `INSERT INTO task_events
           (task_id, run_id, kind, payload_json, created_at)
@@ -4940,9 +4946,12 @@ export class AssistantDatabase {
       .run(
         taskId,
         kind.slice(0, 64),
-        JSON.stringify(payload),
+        payloadJson,
         new Date().toISOString()
       )
+    this.subagentProgress!.inserted(
+      taskId, kind, Number(result.lastInsertRowid), payloadJson
+    )
   }
 
   appendRemoteTaskEventOnce(input: RemoteTaskEventInput): boolean {
@@ -5335,6 +5344,9 @@ export class AssistantDatabase {
     database: DatabaseSync,
     event: ValidatedRemoteTaskEvent
   ): boolean {
+    const payloadJson = this.subagentProgress!.serialize(
+      event.taskId, event.kind, JSON.parse(event.payloadJson)
+    )
     const result = database
       .prepare(
         `INSERT OR IGNORE INTO task_events
@@ -5346,7 +5358,7 @@ export class AssistantDatabase {
       .run(
         event.taskId,
         event.kind,
-        event.payloadJson,
+        payloadJson,
         new Date().toISOString(),
         event.bindingId,
         event.operationId,
@@ -5354,11 +5366,14 @@ export class AssistantDatabase {
         event.eventIndex
       )
     if (result.changes === 1) {
+      this.subagentProgress!.inserted(
+        event.taskId, event.kind, Number(result.lastInsertRowid), payloadJson
+      )
       return true
     }
     const existing = database
       .prepare(
-        `SELECT task_id, kind, payload_json
+        `SELECT id, task_id, kind, payload_json
          FROM task_events
          WHERE remote_binding_id = ?
            AND remote_operation_id = ?
@@ -5372,6 +5387,7 @@ export class AssistantDatabase {
         event.eventIndex
       ) as
       | {
+          id: number
           task_id: string
           kind: string
           payload_json: string
@@ -5380,7 +5396,10 @@ export class AssistantDatabase {
     if (
       existing?.task_id === event.taskId &&
       existing.kind === event.kind &&
-      existing.payload_json === event.payloadJson
+      (existing.payload_json === event.payloadJson ||
+        (event.kind === 'subagent' && this.subagentProgress!.matches(
+          event.taskId, existing.id, JSON.parse(event.payloadJson)
+        )))
     ) {
       return false
     }
@@ -9650,6 +9669,15 @@ export class AssistantDatabase {
           (singleton, records_json, legacy_history_may_be_incomplete)
         VALUES (1, '[]', 0);
         PRAGMA user_version = 33;
+        COMMIT;
+      `)
+    }
+    if (version.user_version < 34) {
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE INDEX IF NOT EXISTS task_events_subagent_idx
+          ON task_events(task_id, id) WHERE kind = 'subagent';
+        PRAGMA user_version = 34;
         COMMIT;
       `)
     }

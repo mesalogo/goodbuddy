@@ -1,0 +1,18 @@
+.storage-upgrade {
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--surface-raised);
+}
+
+.storage-upgrade > .page-shell {
+  flex: 1;
+  min-height: 100vh;
+}
+
+.storage-upgrade progress {
+  display: block;
+  width: 100%;
+  height: var(--space-2);
+  accent-color: var(--accent-solid);
+}

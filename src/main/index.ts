@@ -37,6 +37,7 @@ import {
 } from './ipc'
 import { KnowledgeService } from './knowledge/knowledge-service'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { prepareAssistantStorage } from './assistant-storage-startup'
 import { createModelGraphExtractor } from './knowledge/model-extractor'
 import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
 import { embeddingProviderFingerprint } from './knowledge/embedding-provider-key'
@@ -512,6 +513,9 @@ function buildTray(): Tray {
   return nextTray
 }
 
+const storageUpgradeController = new AbortController()
+let storageUpgrade: Promise<void> | undefined
+
 if (hasSingleInstanceLock) {
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -544,6 +548,13 @@ if (hasSingleInstanceLock) {
     mainWindow = createMainWindow(() => isQuitting)
     registerDesktopNotificationActivation(mainWindow)
     tray = buildTray()
+    storageUpgrade = prepareAssistantStorage(
+      mainWindow,
+      join(app.getPath('userData'), 'assistant.sqlite'),
+      storageUpgradeController.signal
+    )
+    await storageUpgrade
+    if (storageUpgradeController.signal.aborted) return
     const defaultWorkspace = process.env.GOODBUDDY_WORKSPACE ?? homedir()
     const secureCipher = {
       isAvailable: () =>
@@ -1478,6 +1489,7 @@ let cleanupComplete = false
 
 app.on('before-quit', (event) => {
   isQuitting = true
+  storageUpgradeController.abort()
   if (cleanupComplete) {
     return
   }
@@ -1490,6 +1502,7 @@ app.on('before-quit', (event) => {
     try {
       const cleanup = settleCleanupPhases([
         [
+          () => storageUpgrade,
           () => feedbackService?.dispose(),
           () => removeFeedbackIpcHandler?.(),
           () => dshExtensionInstaller?.dispose(),

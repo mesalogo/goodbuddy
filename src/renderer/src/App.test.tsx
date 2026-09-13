@@ -181,6 +181,10 @@ const terminalSnapshot: TerminalSnapshot = {
 };
 
 const api: DesktopApi = {
+  storageUpgrade: {
+    getProgress: vi.fn(),
+    act: vi.fn(async () => undefined)
+  },
   app: {
     getInfo: vi.fn(async () => ({
       name: "GoodBuddy",

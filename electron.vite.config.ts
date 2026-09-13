@@ -112,6 +112,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/main/index.ts'),
+          'assistant-storage-worker': resolve('src/main/assistant-storage-worker.ts'),
           'wechat-sidecar': resolve(
             'src/main/channels/wechat-sidecar.ts'
           ),

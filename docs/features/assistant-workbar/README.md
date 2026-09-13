@@ -10,6 +10,7 @@
 | [多终端页签 PRD](./terminal-tabs-prd.md) | 工作栏应用的固定、可关闭、单实例和多实例策略，以及多终端生命周期 |
 | [浏览器多实例技术设计](./browser-tabs-technical-design.md) | 浏览器 Tab 身份、Conversation 绑定、IPC、BrowserService 和 MCP 路由 |
 | [实现与验证进度](./progress.md) | 工作区与 Runtime 相关改动的实现事实、验证证据与剩余阻塞 |
+| [执行记录存储与升级回收](./execution-history-storage.md) | 子任务过程差量存储、远程去重、旧库转换、空间回收及升级界面 |
 | [Runtime 交互边界](./runtime-interactions.md) | 原生权限、结构化问答、后台拒绝、终端交互、托管 Runtime 并行与输出及消息底部请求状态的适配范围 |
 
 当前尚未拆出独立 User Stories、功能逻辑和 UI 设计文档；相关内容仍保留在两份现有 PRD

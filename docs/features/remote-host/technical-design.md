@@ -41,6 +41,11 @@ profile 和凭据作为有界、逐 Prompt 的控制消息交给 Agent；该凭�
 
 ## 组件
 
+桌面保存托管 SSH 子任务事件时，共用
+[执行记录差量存储](../assistant-workbar/execution-history-storage.md)。
+Agent transcript 与公共 Runtime 事件不改变；桌面的来源去重、消息投影事务和恢复序号
+继续保留。该存储修复不要求单独升级 Agent。
+
 ```text
 Renderer
   -> 窄 Preload / Main IPC

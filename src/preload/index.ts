@@ -205,6 +205,12 @@ import type {
 
 
 const desktopApi: DesktopApi = {
+  storageUpgrade: {
+    getProgress: () => ipcRenderer.invoke(ipcChannels.storageUpgradeProgress),
+    act: async (action) => {
+      await ipcRenderer.invoke(ipcChannels.storageUpgradeAction, action)
+    }
+  },
   app: {
     getInfo: () => ipcRenderer.invoke(ipcChannels.appInfo) as Promise<AppInfo>,
     show: async () => {

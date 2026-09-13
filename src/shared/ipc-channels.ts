@@ -1,4 +1,6 @@
 export const ipcChannels = {
+  storageUpgradeProgress: 'app:storage-upgrade:progress',
+  storageUpgradeAction: 'app:storage-upgrade:action',
   externalInstancesList: 'knowledge:external-instances:list',
   externalInstancesSave: 'knowledge:external-instances:save',
   externalInstancesTest: 'knowledge:external-instances:test',

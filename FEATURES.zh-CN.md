@@ -14,7 +14,7 @@
 ### 桌面基础、工作空间与上下文
 
 - [x] **跨平台桌面应用**：支持 Windows、macOS、Linux，以及 `x64`、`arm64` 发布目标。
-- [x] **信创软硬件覆盖**：正式 Linux 安装包覆盖国产 `x64` 与 `arm64` 架构，可用于统信 UOS、银河麒麟及海光、兆芯、鲲鹏、飞腾等兼容环境。龙芯 LoongArch 另行提供 `loong64` 实验预览版，不属于正式发布矩阵，也未纳入自动更新；`0.13.0` 不构建该预览。这里的覆盖范围不等同于厂商或整机兼容认证，具体状态与限制见[龙芯预览版构建说明](./docs/development/loongarch-preview-build.md)。
+- [x] **信创软硬件覆盖**：正式 Linux 安装包覆盖国产 `x64` 与 `arm64` 架构，可用于统信 UOS、银河麒麟及海光、兆芯、鲲鹏、飞腾等兼容环境。龙芯 LoongArch 另行提供 `loong64` 实验预览版，不属于正式发布矩阵，也未纳入自动更新；`0.13.1` 不构建该预览。这里的覆盖范围不等同于厂商或整机兼容认证，具体状态与限制见[龙芯预览版构建说明](./docs/development/loongarch-preview-build.md)。
 - [x] **可配置全局快捷唤起**：在“平台功能 / 通用设置”中启停或录制 Electron accelerator；默认保留 `CommandOrControl+Shift+Space`，冲突或保存失败时继续使用上一组已注册快捷键，并显示可处理的状态。
 - [x] **Projects、独立对话与会话分支**：按项目隔离上下文，管理会话、附件和 Git 工作区变更；本地会话可在稳定状态下复制当前聊天内容到独立分支，分支持续显示来源徽标且不复制 Task、队列或成果归属；项目选择器区分本地、托管 SSH 与远程消息通道项目，托管 SSH 项目按 Host 分组并在 Host 标题显示真实 Agent 连接状态，项目行只保留远端路径。
 - [x] **跨项目会话活动**：统一入口汇总各项目正在运行和需要处理的对话，保留仍有活动的较早会话，可直接打开对应对话；项目选择器也显示活动数量。
@@ -31,6 +31,8 @@
 - [ ] **ShareServer Office 协同编辑**（设计中）：通过可选 ShareServer 集成 ONLYOFFICE Docs，在助手工作栏中以文件名打开多个文档 Tab，支持 DOCX、XLSX、PPTX 的人工编辑、保存、撤销、源文件冲突保护和后续 AI 选区修改。Office 正文会由所选 ShareServer 和编辑引擎处理；Desktop 不内置或启动 Document Server，未配置服务时不宣称离线编辑。详见[设计文档](./docs/features/office-document-editing/README.md)。
 
 ### Agent Runtime 与模型连接
+
+- [x] **子任务历史去重与空间回收**：本机与托管 SSH 子任务事件只存变化，不再反复保存完整进度。首次升级自动转换旧记录并回收空间，显示进度且支持退出重试；保留聊天、执行详情、结果和远程事件去重。旧客户端不能打开升级后的数据库，具体规则见[执行记录存储与升级回收](./docs/features/assistant-workbar/execution-history-storage.md)。
 
 - [x] **直连模型 Runtime**：支持问答、知识总结、受控工具执行、图像生成，以及通过支持 OpenAI 兼容图片编辑接口的服务商进行参考图编辑。连续请求自动复用最近一次成功生成的图片和文字历史，已保存会话重开后仍可继续修改，本轮显式附图优先；上游明确不支持编辑时继续按文字生成，仅在回复底部提示未使用参考图。编辑使用 multipart 上传图片，结果仍只接受经过校验的内联图片，不下载服务商返回的图片 URL。详见[图片生成与连续修改](./docs/features/image-generation/README.md)。
 - [x] **直连模型编程 Agent**：本机直连文本模型可在 Execute 模式运行平台 Shell，并可按父请求模式、模型、工作区和能力范围委派一层编程 Subagent；OpenCode、Continue、DeepSeek Harness 和托管 SSH 不重复注入这两个工具。Windows 本机命令与真实模型“修改、测试、修复、复核”闭环已通过，macOS 与 Linux 真机命令仍待对应平台验收。
@@ -119,7 +121,7 @@
 
 ### 开源、构建与发布
 
-- 当前源码候选为 Desktop `0.13.0`、Agent `0.11.24`，OpenCode 固定为 `1.18.29`；正式发布状态以 Desktop 与 Agent 的独立发布渠道为准。
+- 当前源码候选为 Desktop `0.13.1`、Agent `0.11.24`，OpenCode 固定为 `1.18.29`；正式发布状态以 Desktop 与 Agent 的独立发布渠道为准。
 - 候选验收与版本准备分别记录。当前远程问答源码已通过真实 Linux x64 SSH 与 Electron 问答测试，但模型为确定性 loopback 服务，不是完整生产 Main/Preload 配合真实服务商；该真实模型链路和候选原生 CI/打包验证仍待完成，详见[远程问答证据](./docs/features/assistant-workbar/progress.md)。
 - [x] **0BSD 开源许可**：原创代码可自由使用、复制、修改、分发和商用；第三方组件和资源仍遵循各自许可证。
 - [x] **可复现依赖安装与源码构建**：使用锁定依赖、Node.js 24 和统一的测试、类型检查、Lint、生产构建命令。

@@ -4,6 +4,7 @@ import '@fontsource-variable/noto-sans-sc/wght.css'
 import 'katex/dist/katex.min.css'
 import './markdown-math.css'
 import App from './App'
+import { StorageUpgrade } from './StorageUpgrade'
 import { installBundledUiFonts } from './fonts'
 import { changeUiLocale } from './i18n'
 import {
@@ -53,7 +54,9 @@ createRoot(root).render(
     <UiLocaleProvider
       initialPreference={initialUiLocalePreference}
     >
-      <App />
+      {new URLSearchParams(window.location.search).get('storageUpgrade') === '1'
+        ? <StorageUpgrade />
+        : <App />}
     </UiLocaleProvider>
   </StrictMode>
 )

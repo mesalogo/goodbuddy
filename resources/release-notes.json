@@ -2,6 +2,40 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.1",
+      "releasedAt": "2026-09-13",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**修复数据库异常膨胀**：长任务和子任务不再反复保存整份执行过程。首次启动自动整理旧记录并回收磁盘空间，保留聊天、执行详情和结果。",
+            "**浏览器不再遮挡弹窗**：打开项目设置、知识库实例等弹窗时，内置网页会正确让出显示区域。关闭弹窗后恢复原网页，不丢失页面状态。",
+            "**知识库配置更清楚**：长名称和长参数表单不再挤压来源选择控件。切换远端知识库时自动名称随之更新，手工填写的名称保持不变。",
+            "**更新说明恢复显示**：修复历史更新说明增长后，本次更新内容可能无法加载的问题。当前版本说明可正常显示并确认，重启后不再重复弹出。"
+          ],
+          "notices": [
+            "整理较大的历史数据库可能需要较长时间和额外磁盘空间，支持退出后下次继续。升级后的数据库不能由旧版客户端打开，需要回退时请保留升级前备份。",
+            "Agent 保持 **0.11.24**，本次不重新发布 Agent。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Fix excessive database growth**: Long-running tasks and subagents no longer repeatedly save the entire execution history. The first launch compacts existing records and reclaims disk space while preserving chats, execution details, and results.",
+            "**Keep dialogs above embedded webpages**: Embedded webpages now yield their display area when project settings, knowledge-instance dialogs, and other overlays open. Closing the overlay restores the original webpage without losing its state.",
+            "**Clearer knowledge configuration**: Long names and parameter forms no longer squeeze source-selection controls. Automatically filled names follow the selected remote knowledge base, while manually entered names are preserved.",
+            "**Restore release-note display**: Fixed an issue where growing historical release notes could prevent the current update notes from loading. Current-version notes can be displayed and acknowledged without appearing again after restart."
+          ],
+          "notices": [
+            "Large history databases may require substantial processing time and extra disk space; you can quit and continue on the next launch. Older clients cannot open the upgraded database, so retain a pre-upgrade backup if rollback is needed.",
+            "Agent remains at **0.11.24** and is not republished."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.0",
       "releasedAt": "2026-09-13",
       "notes": {

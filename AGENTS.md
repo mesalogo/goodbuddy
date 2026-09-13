@@ -120,6 +120,11 @@ additional hardening beyond the actual internal-network threat model:
 
 ## Data and Compatibility
 
+- Before changing released database schemas or large-data migrations, read
+  [`docs/development/database-migrations.md`](./docs/development/database-migrations.md).
+  Keep feature-specific storage rules and validation evidence in the owning
+  feature documents.
+
 - Preserve released user-owned data, migrations required by released data, and
   supported external contracts.
 - Compatibility does not apply to unshipped, branch-local, or safely disposable
