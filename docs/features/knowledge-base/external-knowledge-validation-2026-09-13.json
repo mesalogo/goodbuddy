@@ -1,0 +1,96 @@
+{
+  "date": "2026-09-13",
+  "kind": "sanitized-validation-summary",
+  "scopeNote": "Historical evidence before subsequent portal/control fixes and real-generation follow-up; not final regression evidence for the newer UI",
+  "followUpEvidence": "external-knowledge-follow-up-2026-09-13.json",
+  "sources": [
+    "kb-strict-validation/report.json",
+    "kb-desktop-ui-validation-20260913/report.json",
+    "goodbuddy-native-controls-fix-full.log",
+    "goodbuddy-native-controls-fix-full.result.json"
+  ],
+  "automatedChecks": {
+    "status": "passed-before-subsequent-ui-follow-up",
+    "authoritativeCounts": "progress.md",
+    "fullApp": { "status": "passed", "evidence": "owner handoff" },
+    "fullSuite": {
+      "command": "npm test -- --maxWorkers=1 --reporter=verbose",
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": ["goodbuddy-native-controls-fix-full.log", "goodbuddy-native-controls-fix-full.result.json"]
+    },
+    "typecheck": { "command": "npm run typecheck", "status": "passed", "evidence": "owner handoff after final code edits" },
+    "lint": { "command": "npm run lint", "status": "passed", "evidence": "owner handoff after final code edits" },
+    "diffCheck": { "status": "passed", "evidence": "owner handoff after final code edits" },
+    "sourceStability": {
+      "files": ["src/renderer/src/App.tsx", "src/renderer/src/App.test.tsx"],
+      "hashesStableThroughoutFullRun": true,
+      "evidence": "owner handoff"
+    },
+    "priorFailures": "resolved; exact intermediate and final counts are maintained only in progress.md"
+  },
+  "strictService": {
+    "boundary": "Production KnowledgeService/client and local HTTP MCP in real Electron; no interactive renderer or authenticated Linux execution",
+    "electronVersion": "43.2.0",
+    "safeStorageAvailable": true,
+    "safeStorageRoundTrip": true,
+    "retrievalHttpAttempts": 12,
+    "retrievalHttpResponses": 12,
+    "profiles": [
+      { "provider": "dify", "profile": 1, "scheme": "https:", "strictTls": true, "catalogPassed": true, "detailHttpStatus": 405, "bindingPassed": true, "persistedCredentialReopened": true, "responseSchemaValid": true, "retrievalResults": 0, "mcpToolSuccess": true, "mcpReferences": 0, "citationMappingValid": true, "retrievalHttpAttempts": 3 },
+      { "provider": "dify", "profile": 2, "scheme": "https:", "strictTls": true, "catalogPassed": true, "detailHttpStatus": 200, "bindingPassed": true, "persistedCredentialReopened": true, "responseSchemaValid": true, "retrievalResults": 2, "mcpToolSuccess": true, "mcpReferences": 2, "citationMappingValid": true, "retrievalHttpAttempts": 3 },
+      { "provider": "fastgpt", "profile": 1, "scheme": "https:", "strictTls": true, "catalogPassed": true, "detailHttpStatus": 200, "bindingPassed": true, "persistedCredentialReopened": true, "responseSchemaValid": true, "retrievalResults": 2, "mcpToolSuccess": true, "mcpReferences": 2, "citationMappingValid": true, "retrievalHttpAttempts": 3 },
+      { "provider": "ragflow", "profile": 1, "scheme": "http:", "strictTls": null, "catalogPassed": true, "detailHttpStatus": 200, "bindingPassed": true, "persistedCredentialReopened": true, "responseSchemaValid": true, "retrievalResults": 1, "mcpToolSuccess": true, "mcpReferences": 1, "citationMappingValid": true, "retrievalHttpAttempts": 3 }
+    ]
+  },
+  "desktop": {
+    "provider": "dify",
+    "phase": "completed",
+    "boundary": "Production electron-vite Main, preload, BrowserWindow, renderer and IPC; existing provider key substituted in Main at instance-save handler boundary",
+    "callsByKind": { "catalog": 4, "detail": 4, "retrieval": 6 },
+    "totalReadOnlyCalls": 14,
+    "allHttpStatus200": true,
+    "checks": [
+      "Instance saved through production IPC",
+      "Catalog selected and binding saved after live retrieval",
+      "Persisted binding reopened in isolated desktop profile",
+      "Local parameters saved through production binding update",
+      "Native ArrowRight moved focus and activated retrieval tab",
+      "Live search references persisted and reopened in production citation dialog"
+    ],
+    "measuredViewportWidths": [1439, 899, 699],
+    "bodyOverflowAtMeasuredWidths": [0, 0, 0],
+    "configColumnsAtMeasuredWidths": { "1439": 2, "699": 1 },
+    "mobileListVisible": true,
+    "savedCommonConfig": { "resultLimit": 2, "requestTimeoutMs": 15000, "maxSnippetCharacters": 200 },
+    "resultCount": 2,
+    "localContextButtons": false,
+    "window": { "sandbox": true, "contextIsolation": true, "nodeIntegration": false },
+    "encryptedCredential": { "scheme": "electron-safe-storage", "decryptMatches": true, "plaintextAbsent": true },
+    "citationPersisted": { "count": 1, "referenceCount": 2 },
+    "citationDialog": { "snapshot": true, "provider": true, "snippet": true, "openSource": false, "focusInside": true },
+    "citationMethod": "Production knowledge.search returned live references; harness saved a labeled test transcript through conversations.saveLocal and opened it after reload. No model answer generated",
+    "isolatedProfileAndBuildRemoved": true
+  },
+  "remote": {
+    "lanTcpConnected": true,
+    "vpnTcpConnected": true,
+    "savedCredentialSource": "unreadable",
+    "hostKeyState": "verified",
+    "blocker": "E_SAFE_STORAGE_DECRYPT_FAILED",
+    "forcedPreflightLive": "blocked-before-authenticated-ssh",
+    "authenticatedSshAttempts": 0
+  },
+  "sessionAccounting": {
+    "source": "Strict report historical bounds plus desktop report; confirmed by owner handoff",
+    "unsurfacedFirstPassRetrievalMinimum": 0,
+    "unsurfacedFirstPassRetrievalMaximum": 12,
+    "earlierConfirmedRetrievalCalls": 12,
+    "strictRetrievalCalls": 12,
+    "desktopRetrievalCalls": 6,
+    "totalRetrievalMinimum": 30,
+    "totalRetrievalMaximum": 42,
+    "generatedModelAnswers": 0,
+    "limitation": "First pass retained no diagnostics, so its exact retrieval count cannot be reconstructed. Provider-side embedding, reranking and audit usage is not counted as generated answers"
+  }
+}

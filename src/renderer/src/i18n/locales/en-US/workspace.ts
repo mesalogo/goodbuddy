@@ -2,6 +2,20 @@ import type { TranslationShape } from '../../resource-types'
 import type { workspace as chineseWorkspace } from '../zh-CN/workspace'
 
 export const workspace = {
+  projectActivity: {
+    title: 'All project activity',
+    close: 'Close project activity',
+    unassigned: 'No project',
+    attentionCount: '{{count}} need attention',
+    runningCount: '{{count}} running',
+    groups: { attention: 'Needs attention', running: 'Running' },
+    status: {
+      running: 'Running',
+      approval: 'Waiting for approval',
+      question: 'Waiting for your answer',
+      attention: 'Needs attention'
+    }
+  },
   management: {
     gitWorkspace: 'Git Workspace', more: 'More actions for {{name}}', browse: 'Browse directory', parent: 'Parent directory',
     createFile: 'New file', createDirectory: 'New directory', rename: 'Rename', move: 'Move', delete: 'Delete', properties: 'Properties',
@@ -506,6 +520,9 @@ export const workspace = {
     empty: 'The workspace is empty.'
   },
   question: {
+    task: 'Task: {{title}}',
+    pendingCount: '{{count}} pending questions. Answer them in order.',
+    locate: 'Go to question form',
     title: 'OpenCode needs more information',
     otherAnswer: 'Other answer',
     answerPlaceholder: 'Enter your answer',

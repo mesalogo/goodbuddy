@@ -29,32 +29,22 @@ const firstLibraryId = '11111111-1111-4111-8111-111111111111'
 const secondLibraryId = '22222222-2222-4222-8222-222222222222'
 
 function createService() {
-  const searchHybridMany = vi.fn(
+  const retrieveMany = vi.fn(
     async (libraryIds: readonly string[]) =>
       libraryIds.map((knowledgeBaseId, index) => ({
         knowledgeBaseId,
-        result: {
-          document: {
-            id: `33333333-3333-4333-8333-33333333333${index}`,
-            title: `文档 ${index}`
-          },
-          source: {
-            displayName: `来源 ${index}`,
-            location: `/private/${index}`
-          },
-          chunk: {
-            id: `44444444-4444-4444-8444-44444444444${index}`,
-            location: `第 ${index + 1} 段`
-          },
+        response: { diagnostics: {}, results: [{
+          knowledgeBaseId,
+          documentId: `33333333-3333-4333-8333-33333333333${index}`,
+          documentTitle: `文档 ${index}`,
+          sourceDisplayName: `来源 ${index}`,
+          chunkId: `44444444-4444-4444-8444-444444444440`,
+          location: `第 ${index + 1} 段`,
           snippet: `<mark>匹配</mark> ${index}`,
           rank: index + 1,
-          retrieval: {
-            score: 0.5,
-            channels: ['fts'] as const,
-            lexicalRank: 1,
-            evidenceIds: []
-          }
-        }
+          channels: ['fts'] as const,
+          scores: { fusedScore: 0.5, ftsRank: 1 }
+        }] }
       }))
   )
   const service = {
@@ -72,9 +62,9 @@ function createService() {
         }
       ]
     },
-    searchHybridMany
+    retrieveMany
   } as unknown as KnowledgeService
-  return { service, searchHybridMany }
+  return { service, retrieveMany }
 }
 
 function customMcpServer(
@@ -189,24 +179,19 @@ function testTool(name: string): Tool {
 const gateways: KnowledgeMcpGateway[] = []
 
 it('honors a requested knowledge result count above eight', async () => {
-  const { service, searchHybridMany } = createService()
-  const [sample] = await searchHybridMany([firstLibraryId])
-  searchHybridMany.mockClear()
-  searchHybridMany.mockResolvedValue(Array.from({ length: 12 }, (_, index) => ({
-    ...sample!,
-    result: {
-      ...sample!.result,
-      chunk: { ...sample!.result.chunk, id: crypto.randomUUID() },
-      rank: index + 1
-    }
-  })))
+  const { service, retrieveMany } = createService()
+  const [sample] = await retrieveMany([firstLibraryId])
+  retrieveMany.mockClear()
+  retrieveMany.mockResolvedValue([{ ...sample!, response: { diagnostics: {}, results: Array.from({ length: 12 }, (_, index) => ({
+    ...sample!.response.results[0]!, chunkId: crypto.randomUUID(), rank: index + 1
+  })) } }])
   const gateway = new KnowledgeMcpGateway(service)
   gateways.push(gateway)
   const controller = new AbortController()
   const token = gateway.grant('large-search', [firstLibraryId], controller.signal)!
   const references = await gateway.search(token, { query: 'evidence', limit: 12 })
   expect(references).toHaveLength(12)
-  expect(searchHybridMany).toHaveBeenCalledWith([firstLibraryId], 'evidence', 12, controller.signal)
+  expect(retrieveMany).toHaveBeenCalledWith([firstLibraryId], 'evidence', expect.any(AbortSignal))
   await expect(gateway.search(token, { query: 'evidence', limit: 101 })).rejects.toThrow()
 })
 const databases: AssistantDatabase[] = []
@@ -621,7 +606,7 @@ describe('KnowledgeMcpGateway', () => {
   })
 
   it('keeps scope server-side, strips markup, bounds model arguments, and drains references', async () => {
-    const { service, searchHybridMany } = createService()
+    const { service, retrieveMany } = createService()
     const gateway = new KnowledgeMcpGateway(service)
     gateways.push(gateway)
     const token = gateway.grant(
@@ -652,10 +637,9 @@ describe('KnowledgeMcpGateway', () => {
       limit: 1
     })
 
-    expect(searchHybridMany).toHaveBeenCalledWith(
+    expect(retrieveMany).toHaveBeenCalledWith(
       [secondLibraryId],
       '要找什么',
-      1,
       expect.any(AbortSignal)
     )
     expect(references).toEqual([

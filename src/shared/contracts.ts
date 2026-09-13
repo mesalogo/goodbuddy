@@ -1308,6 +1308,7 @@ export type AgentEvent =
       requestId: string
       type: 'question'
       questionId: string
+      childTaskId?: string
       questions: Array<{
         header: string
         question: string
@@ -1318,6 +1319,11 @@ export type AgentEvent =
         multiple: boolean
         custom: boolean
       }>
+    }
+  | {
+      requestId: string
+      type: 'question-resolved'
+      questionId: string
     }
   | {
       requestId: string
@@ -1633,6 +1639,8 @@ export const knowledgeRelationInputSchema = z
   .strict()
 
 export type KnowledgeLibrary = z.infer<typeof knowledgeCreateSchema> & {
+  kind?: 'local' | 'external'
+  external?: import('./external-knowledge-contracts').ExternalKnowledgeBinding
   id: string
   sourceCount: number
   documentCount: number
@@ -1717,9 +1725,11 @@ export type KnowledgeSnapshot = {
 }
 
 export type KnowledgeSearchReference = {
+  warnings?: string[]
+  external?: import('./external-knowledge-contracts').ExternalKnowledgeLocator
   libraryId: string
   libraryName: string
-  documentId: string
+  documentId?: string
   chunkId?: string
   documentName: string
   sourceName: string
@@ -2274,6 +2284,16 @@ export type DesktopApi = {
     onTodoStatusChanged: (listener: () => void) => () => void
   }
   knowledge: {
+    externalInstancesList: () => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary[]>
+    externalInstancesSave: (input: import('./external-knowledge-contracts').ExternalKnowledgeInstanceSaveInput) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary>
+    externalInstancesTest: (input: {instanceId:string}) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary>
+    externalInstancesSetEnabled: (input: {instanceId:string;enabled:boolean}) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary>
+    externalInstancesDelete: (input: {instanceId:string}) => Promise<void>
+    externalCatalogList: (input: {instanceId:string;page?:number;pageSize?:number;parentId?:string|null;search?:string}) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeCatalogPage>
+    externalCatalogGet: (input: {instanceId:string;remoteKnowledgeBaseId:string}) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeCatalogItem>
+    externalBindingsCreate: (input: import('./external-knowledge-contracts').ExternalKnowledgeBindingSaveInput) => Promise<KnowledgeSnapshot>
+    externalBindingsUpdate: (input: import('./external-knowledge-contracts').ExternalKnowledgeBindingSaveInput & {knowledgeBaseId:string}) => Promise<KnowledgeSnapshot>
+    externalRetrievalTest: (input: import('./external-knowledge-contracts').ExternalKnowledgeBindingTestInput) => Promise<import('./external-knowledge-contracts').ExternalKnowledgeTestResult>
     getSnapshot: (libraryId?: string) => Promise<KnowledgeSnapshot>
     createLibrary: (
       input: z.infer<typeof knowledgeCreateSchema>

@@ -33,6 +33,7 @@ export function KnowledgeCitationDialog({
   onOpenSource
 }: KnowledgeCitationDialogProps): React.JSX.Element {
   const { t } = useTranslation('app')
+  const { t: tk } = useTranslation('knowledge')
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const [opening, setOpening] = useState(false)
@@ -43,6 +44,7 @@ export function KnowledgeCitationDialog({
   }, [])
 
   const openSource = async (): Promise<void> => {
+    if (reference.external || !reference.documentId) return
     setOpening(true)
     setOpenError(undefined)
     try {
@@ -84,7 +86,7 @@ export function KnowledgeCitationDialog({
             <h2 id="knowledge-citation-dialog-title">
               {t('chat.citations.contextTitle')}
             </h2>
-            <p>{t('chat.citations.contextDescription')}</p>
+            <p>{reference.external ? tk('external.snapshot') : t('chat.citations.contextDescription')}</p>
           </div>
           <button
             aria-label={t('chat.citations.closeContext')}
@@ -99,13 +101,21 @@ export function KnowledgeCitationDialog({
         </header>
 
         <dl className="knowledge-citation-dialog__metadata">
+          {reference.external && <>
+            <div><dt>{tk('external.provider')}</dt><dd>{({ dify: 'Dify', fastgpt: 'FastGPT', ragflow: 'RAGFlow' })[reference.external.provider]}</dd></div>
+            <div><dt>{tk('external.instance')}</dt><dd>{reference.external.instanceId}</dd></div>
+            <div><dt>{tk('external.remoteId')}</dt><dd>{reference.external.remoteKnowledgeBaseId}</dd></div>
+            {reference.external.remoteDocumentId && <div><dt>{tk('external.documentId')}</dt><dd>{reference.external.remoteDocumentId}</dd></div>}
+            {reference.external.remoteChunkId && <div><dt>{tk('external.chunkId')}</dt><dd>{reference.external.remoteChunkId}</dd></div>}
+            <div><dt>{tk('external.providerScore')}</dt>{reference.external.providerScore !== undefined && <dd>{reference.external.providerScore}</dd>}{reference.external.providerScores?.map((score, index) => <dd key={index}>{score.type}{score.index === undefined ? '' : ` [${score.index}]`}: {score.value}</dd>)}</div>
+          </>}
           <div>
             <dt>{reference.documentName}</dt>
             <dd>{context?.sourceName ?? reference.sourceName}</dd>
           </div>
-          {(context?.locator ?? reference.locator) && (
+          {(context?.locator ?? reference.external?.location ?? reference.locator) && (
             <div>
-              <dt>{context?.locator ?? reference.locator}</dt>
+              <dt>{context?.locator ?? reference.external?.location ?? reference.locator}</dt>
               {reference.score !== undefined && (
                 <dd>
                   {t('chat.citations.score', {
@@ -117,7 +127,7 @@ export function KnowledgeCitationDialog({
           )}
         </dl>
 
-        {loading ? (
+        {reference.external ? <div className="knowledge-citation-dialog__content"><section><h3>{t('chat.citations.matchedChunk')}</h3><p>{reference.snippet}</p></section></div> : loading ? (
           <div
             aria-live="polite"
             className="knowledge-citation-dialog__state"
@@ -175,7 +185,7 @@ export function KnowledgeCitationDialog({
           >
             {t('chat.citations.closeContext')}
           </button>
-          <button
+          {!reference.external && reference.documentId && <button
             className="primary-button"
             disabled={opening}
             onClick={() => void openSource()}
@@ -187,7 +197,7 @@ export function KnowledgeCitationDialog({
               <ExternalLink aria-hidden="true" size={15} />
             )}
             {t('chat.citations.openSource')}
-          </button>
+          </button>}
         </footer>
       </section>
     </div>,

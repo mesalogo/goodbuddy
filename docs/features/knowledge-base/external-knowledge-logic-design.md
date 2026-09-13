@@ -4,345 +4,167 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 设计稿 |
-| 版本 | 0.1 |
-| 日期 | 2026-09-03 |
+| 状态 | 当前实现规则；三家短答案、Dify 完整 App 与当前 UI 自动回归已通过，远程待验收 |
+| 版本 | 0.2 |
+| 日期 | 2026-09-13 |
 | 关联需求 | [外部知识库接入 PRD](./external-knowledge-prd.md) |
 | 关联场景 | [外部知识库 User Stories](./external-knowledge-user-stories.md) |
+| 技术契约 | [技术设计](./external-knowledge-technical-design.md) |
 
 ## 1. 不变量
 
-### EK-I-01 单一知识库身份
-
-本地知识库和外部知识库都使用 GoodBuddy `knowledgeBaseId` 参与聊天范围、检索模式、
-工具授权和活动记录。Provider、实例 ID 和远端知识库 ID 不能替代该授权单位。
-
-对应：`EK-FR-10`、`EK-FR-11`、`EK-US-C1`。
-
-### EK-I-02 外部绑定只读
-
-GoodBuddy 对外部实例只执行连接测试、目录读取、详情读取和检索。添加、编辑、移除
-均只修改本机记录，不调用远端创建、更新、上传或删除接口。
-
-对应：`EK-FR-15`、`EK-US-A3`。
-
-### EK-I-03 凭据不离开 Main
-
-API Key 明文只在 Main 内完成解密并短暂进入请求头。Renderer、Preload 返回值、Runtime、
-Provider 配置、知识库元数据、诊断、日志和错误只能获得凭据状态。
-
-对应：`EK-FR-02`、`EK-FR-11`。
-
-### EK-I-04 Provider 不能定义界面
-
-远端响应只提供数据和能力证据。可显示字段、字段类型、范围、默认值和请求映射均来自
-GoodBuddy 内置、版本化的 Provider Adapter。
-
-对应：`EK-FR-09`、`EK-US-D1`。
-
-### EK-I-05 无静默切换
-
-请求固定使用绑定保存的实例、远端知识库和 Provider 配置。失败时不切换实例、公共云
-地址、认证方式或其他知识库。
-
-对应：`EK-FR-14`、`EK-FR-16`、`EK-US-C4`。
-
-### EK-I-06 零结果与失败分离
-
-成功响应经过过滤后没有片段才是零结果。超时、认证、权限、限流、目标不存在、服务错误
-和响应无效均为失败，不能折叠成零结果。
-
-对应：`EK-FR-14`、`EK-US-D4`。
-
-### EK-I-07 外部证据不可信
-
-Provider 返回的名称、内容、元数据、URL 和错误均视为不可信输入，经过长度、数量、类型
-和 URL 校验后才能显示或进入 Runtime。内容中的指令不能改变系统或工具权限。
-
-对应：`EK-FR-12`。
-
-### EK-I-08 Provider 配置不跨类型复用
-
-Dify、FastGPT 和 RAGFlow 使用各自的判别配置。切换知识库类型或实例 Provider 时，旧类型
-配置不参与新请求，也不能按同名字段自动迁移。
-
-对应：`EK-FR-06`、`EK-FR-09`。
+| 稳定 ID | 规则 | 对应需求 |
+| --- | --- | --- |
+| `EK-I-01` 单一知识库身份 | 本地与外部都以 GoodBuddy `knowledgeBaseId` 参与聊天范围与工具授权，实例和远端 ID 不扩大选中范围 | `EK-FR-10`、`EK-FR-11` |
+| `EK-I-02` 外部绑定只读 | 添加、配置和移除仅修改本机记录；请求限于目录、详情、检索 | `EK-FR-15` |
+| `EK-I-03` 凭据边界 | 新密钥在输入表单和保存 IPC 中短暂存在；加密后只在 Main 解密使用，摘要与引用不返回密钥 | `EK-FR-02`、`EK-FR-11` |
+| `EK-I-04` 本地定义界面 | Provider 只返回数据，控件和配置由本地共享契约及组件定义 | `EK-FR-09` |
+| `EK-I-05` 无静默切换 | 请求使用保存的实例、目标和配置；失败不更换实例、公共云地址或其他知识库 | `EK-FR-14`、`EK-FR-16` |
+| `EK-I-06` 零结果与失败分离 | 合法成功响应无片段是零命中；请求或响应失败保留失败信息 | `EK-FR-14` |
+| `EK-I-07` 外部证据不可信 | 标准化片段按已有知识证据边界进入 Runtime，不改变工具权限 | `EK-FR-12` |
+| `EK-I-08` 配置不跨类型复用 | Provider 配置必须与实例一致，类型切换不迁移同名字段 | `EK-FR-06`、`EK-FR-09` |
 
 ## 2. 对象关系
 
-```text
-ExternalKnowledgeInstance 1 ─── n ExternalKnowledgeBinding
-                                      │
-                                      │ 1:1
-                                      ▼
-                                KnowledgeBase
-```
+一个实例可以有零个或多个绑定；一个绑定对应一个 GoodBuddy 知识库和一个远端目标。
+同一实例与远端 ID 的组合唯一，不同实例可以使用相同 ID。本地知识库没有外部绑定。
+类型由绑定关系推导，旧本地知识库不需要改成另一套对象。
 
-- 实例可以没有绑定。
-- 外部知识库只能绑定一个实例和一个远端知识库 ID。
-- 同一实例的同一远端知识库默认只允许存在一个绑定，避免重复选择和重复检索。
-- 允许不同实例绑定同名或相同远端 ID，因为实例边界不同。
-- 本地知识库不存在 `ExternalKnowledgeBinding`。
+GoodBuddy 显示名称与 `remoteName` 分开保存。刷新详情仅更新当前视图，不自动改写本地
+名称或持久化远端名称；重新保存绑定时才写入当前表单使用的远端名称。
 
-## 3. 实例状态
+## 3. 实例状态与连接测试
 
-实例状态由启停、凭据和最近探测三个维度组成，不能用一个布尔值代替。
-
-### 3.1 持久状态
-
-| 维度 | 值 |
+| 状态维度 | 当前值与行为 |
 | --- | --- |
-| 启停 | `enabled`、`disabled` |
-| 凭据 | `configured`、`missing`、`unavailable` |
-| 探测 | `untested`、`catalog-ready`、`healthy`、`list-restricted`、`auth-failed`、`unreachable`、`incompatible`、`failed` |
+| 启停 | `enabled` 为 false 时 Main 拒绝目录和检索，并取消当前实例请求 |
+| 凭据 | `configured`、`missing`、`unavailable`；列表尝试解密判断可用性 |
+| 最近探测 | `untested`、`catalog-ready`、`healthy`、`list-restricted`、`auth-failed`、`unreachable`、`failed`；其中 `healthy` 在类型中保留，当前操作没有写入它 |
 
-`unavailable` 表示系统安全存储当前无法解密或保存凭据，与用户尚未配置的 `missing` 分开。
+实例先保存为 `untested`，不要求保存前完成网络或认证测试。保存、替换或清除凭据后
+重置探测状态。保存后的“测试连接”只尝试目录读取：成功写入 `catalog-ready`；403
+写入 `list-restricted`；401 写入 `auth-failed`；网络或超时写入 `unreachable`；其他错误
+写入 `failed`。时间和错误码随本次结果保存。
 
-### 3.2 派生可用性
+探测结果是最近一次观察，不是 Main 的永久禁用条件。Main 请求检查实例是否存在、启用
+和凭据能否解密；即使最近为 `auth-failed` 或 `failed`，仍可重新请求。UI 会据该状态
+显示不可用并禁用聊天勾选，用户可编辑或重新测试实例。
 
-| 条件 | 目录读取 | 已绑定知识库检索 | 页面状态 |
-| --- | --- | --- | --- |
-| disabled | 禁止 | 禁止 | 已停用 |
-| missing / unavailable | 禁止 | 禁止 | 缺少凭据 / 凭据不可用 |
-| auth-failed | 禁止 | 禁止 | 认证失效 |
-| unreachable | 可重试 | 可重试 | 无法连接 |
-| incompatible | 禁止 | 禁止 | 接口不兼容 |
-| list-restricted | 禁止 | 允许按 ID 验证与检索 | 需手工指定知识库 |
-| catalog-ready | 允许 | 创建绑定时验证 | 目录可用，检索待验证 |
-| healthy | 允许 | 允许 | 正常 |
-| untested | 允许测试 | 已有绑定可尝试检索 | 未测试 |
+绑定创建另做目标检索验证，成功零命中可保存。保存实例不代表目录可用，目录成功也不
+代表绑定检索或整个产品验收通过。
 
-保存新实例要求至少完成服务可达和认证验证。目录受限可以保存；检索接口尚未通过时，
-实例不能用于创建绑定。
+## 4. 目录与手工 ID
 
-## 4. 连接测试状态机
+目录每页最多 100 项，UI 当前请求 30 项，页码上限 500；当前没有“总目录最多 500 项”
+的累计限制。Dify/RAGFlow 由远端分页，搜索过滤当前页；FastGPT 按 `parentId` 读取
+当前父级，在返回结果内搜索和分页。文件夹只能进入浏览，不能作为目录绑定目标。
 
-```text
-idle
-  └─ test → connecting
-               ├─ network failure → unreachable
-               └─ connected → authenticating
-                                  ├─ 401 → auth-failed
-                                  ├─ incompatible response → incompatible
-                                   └─ authenticated → listing
-                                                         ├─ 403 / unsupported → list-restricted
-                                                         └─ success
-                                                              ├─ no target → catalog-ready
-                                                              └─ target selected → probing-retrieval
-                                                                                       ├─ success / empty → healthy
-                                                                                       └─ failure → failed
-```
+目录加载、空结果、搜索无结果和失败分别展示；失败提供重试，用户可主动切换手工 ID。
+已经绑定的目录项禁用。手工 ID 不依赖详情接口一定可用，但保存前仍必须通过实际检索。
+详情失败不阻断基础检索，例如旧 Dify 的详情 405。
 
-检索探测需要一个目标知识库。新增实例尚未选择目标时，目录成功即可把实例保存为“目录可用，
-检索待绑定验证”；创建绑定时补做真实检索。手工模式必须先填写目标 ID，再执行检索探测。
-检索请求正常完成但返回零条结果时，说明接口和目标可访问，可继续创建绑定；失败状态按错误
-分类处理。
+Renderer 丢弃已失效的目录、详情和测试响应，不把切换前的结果写回当前表单。它没有
+通过 IPC 取消已发出的目录请求，Main 请求仍受超时和服务生命周期管理。
 
-每次测试拥有 request ID 和取消信号。用户修改 Provider、地址、凭据或实例后，旧 request ID
-的结果作废。
+## 5. 创建与编辑
 
-## 5. 目录读取规则
+流程为选择 `local | dify | fastgpt | ragflow`，外部类型再选择实例、目录项或手工 ID、
+显示名称、配置与测试查询。表单测试成功后允许保存；服务保存前再次执行同一查询验证，
+检查实例、绑定和唯一性是否在等待期间改变，再写入数据库。
 
-1. 只有选定、启用且凭据可用的实例可以读取目录。
-2. Provider 列表接口按适配器定义分页，Main 最多向 Renderer 返回 500 个目录项。
-3. FastGPT 列表中的文件夹和知识库必须按类型区分；文件夹不可作为绑定目标。
-4. 列表搜索优先使用 Provider 支持的服务端过滤，不支持时只过滤已经有界加载的当前结果。
-5. 下拉列表以远端 ID 为值，以远端名称为标签；重名时追加短 ID 或父级名称。
-6. 已经绑定的目标显示“已添加”并禁止重复添加。
-7. 远端列表项名称变化不自动修改 GoodBuddy 显示名称，只更新远端名称快照。
-8. 刷新失败时可以保留上次成功目录供查看，但不得用旧目录完成新绑定，直到目标重新验证。
-
-## 6. 创建向导状态
-
-### 6.1 类型
-
-```text
-local | dify | fastgpt | ragflow
-```
-
-`local` 使用现有字段和验证。外部类型使用以下步骤状态：
-
-```text
-provider selected
-→ instance selected
-→ catalog loading / manual ID
-→ remote target selected
-→ configuration valid
-→ retrieval verified
-→ binding created
-```
-
-前置字段变化时，后续状态按下表失效：
-
-| 变化 | 必须清除或重新验证 |
+| 表单变化 | 当前失效规则 |
 | --- | --- |
-| 类型 | 实例、远端目标、全部 Provider 配置、测试结果 |
-| 实例 | 远端目标、能力快照、Provider 配置、测试结果 |
-| 远端目标 | 远端详情、能力适用性、测试结果 |
-| 通用或 Provider 配置 | 测试结果 |
-| 显示名称 | 不清除测试结果 |
+| Provider 类型 | 重新挂载绑定表单，清空旧类型状态 |
+| 实例 | 清空目标、详情、目录位置和搜索，恢复该 Provider 默认配置，清除测试结果 |
+| 远端目标、测试查询、通用或 Provider 参数 | 清除测试结果，需要重新测试 |
+| 显示名称 | 保留测试结果 |
+| 已保存实例摘要变化 | 旧测试结果不再视为有效 |
+| 更换现有绑定实例或远端目标 | 需要重新测试和重新绑定确认 |
 
-## 7. 配置模型
+成功新建后仅把新库加入当前对话选择，不重新启用已取消的其他知识库。当前表单保存期间
+禁用字段和操作；generation 检查用于避免旧响应更新 UI，不构成可取消的保存事务。
 
-### 7.1 通用配置
+## 6. 配置与优先级
 
-| 字段 | 范围 | 默认值 | 语义 |
-| --- | --- | --- | --- |
-| `resultLimit` | 1 至 20 | 6 | Provider 结果标准化后最多保留的片段数 |
-| `requestTimeoutMs` | 1,000 至 60,000 | 15,000 | 单次远端请求总时限 |
-| `maxSnippetCharacters` | 500 至 8,000 | 4,000 | 单片段进入 IPC 和 Runtime 前的字符上限 |
+当前配置的精确字段、数值范围和默认值由[技术设计第 3 节](./external-knowledge-technical-design.md#3-共享契约)
+对应的共享 Schema 定义。恢复默认只重置本地表单，保存成功后才影响该绑定后续请求。
 
-Provider 请求仍使用自己的候选数量或 Token 预算。`resultLimit` 只定义 GoodBuddy 最终保留
-上限，不改写 Provider 字段的单位。
+Dify `useDatasetDefaults=true` 时省略整个覆盖对象，使用远端当时配置；远端管理员修改
+默认值会影响后续结果。关闭后按完整覆盖对象发送，不与远端默认逐字段合并。
+FastGPT 使用本地保存的模式、Token 预算、相似度和重排开关，不开放查询优化。
 
-### 7.2 Dify 配置
+RAGFlow 图谱与知识编译分别保存且默认关闭。图谱完成时间有效才允许开启图谱；非空
+知识编译模板组 ID 才允许开启知识编译。服务在发送启用请求前重新读详情确认；仅配置
+GraphRAG 或请求返回 200 都不能替代对应能力证据。证据不足时 UI 仍允许关闭已保存的开关。
 
-| 字段 | 初始范围 | 说明 |
+当前没有自动版本识别、Adapter 版本矩阵或配置迁移状态。共享契约拒绝未知输入与
+Provider 错配，不能据此承诺所有部署版本均支持每个显式参数。
+
+## 7. 绑定可用性
+
+绑定只持久化配置和 `lastVerifiedAt`，没有独立 `binding_status`、最后成功检索时间或
+远端缺失状态字段。详情与列表当前按实例推导：
+
+| 条件 | UI 状态 |
+| --- | --- |
+| 实例不存在 | `temporarily-unavailable` |
+| 实例停用 | `instance-disabled` |
+| 凭据未配置、无法解密或最近认证失败 | `credential-error` |
+| 最近探测失败或不可达 | `temporarily-unavailable` |
+| 其余且绑定有验证时间 | `ready` |
+| 其余且无验证时间 | `untested` |
+
+聊天选择器保留已选 ID，但不可用行禁用勾选。检索时的 401、404、超时等通过本次失败
+报告，不自动写成持久 `remote-missing/config-invalid` 状态。`ready` 表示当前可尝试使用，
+不保证下一次请求成功。
+
+## 8. 多库检索与失败
+
+请求使用已冻结的 GoodBuddy ID 集合，`retrieveMany` 去重后并行检索各库。本地与外部
+共享入口，外部库不触发本地 Embedding。预算按各库结果的 rank 轮转分配，先各库第 1 条、
+再各库第 2 条，同 rank 按输入库顺序处理；不先耗尽整个库，也不比较 Provider 原始分数。
+当前没有每库最低字符配额。精确预算见
+[技术设计第 7 节](./external-knowledge-technical-design.md#7-检索编排)。
+
+成功零命中返回空 results 且无 failure。单库错误返回 `diagnostics.failure`，其他库
+仍可返回结果；上层据此区分部分失败与全部失败。MCP 在有失败且没有任何片段时返回
+工具错误，即使另有成功零命中的库；预检索则保留降级诊断。用户取消或服务关闭会向上
+传播取消，不把整次取消解释为成功零命中。
+
+客户端错误码包括 `NETWORK/TIMEOUT/CANCELLED/AUTH/FORBIDDEN/NOT_FOUND/RATE_LIMITED/`
+`INCOMPATIBLE/INVALID_RESPONSE/SERVER`，均以 `EXTERNAL_KB_` 为前缀。服务另报告凭据
+不可用、停用、配置变化、配置错配、能力不可用、重复绑定和实例被引用。远端错误正文
+不直接成为 UI 错误；部分本地校验错误仍是 Zod、TypeError 或 RangeError，不能承诺
+所有失败都已有独立本地化诊断。
+
+## 9. 删除与引用
+
+停用和清除凭据保留绑定，UI 清除凭据需要确认。有绑定的实例不能直接删除；管理界面
+列出受影响知识库并确认后，依次移除本地库再删实例。若中途失败，已成功移除的本地
+记录保持删除，刷新列表后显示当前状态。任何一步均不发送远端内容删除请求。
+
+历史引用保存当时的片段与外部定位，移除实例或绑定后仍能阅读。当前不重新读取远端
+片段，不打开来源 URL，不查询实例是否已删除；因此没有自动“连接已移除”标签。
+
+App 与 Main 引用处理共用 `knowledgeReferenceKey`，键包含远端库、文档和片段 ID、
+定位及正文，避免外部结果缺少本地 ID 时被错误合并。弹窗只显示优先选中的一个定位。
+早期 Dify 历史引用保存和重载检查使用测试会话；后续完整 App 已从实际输入区生成真实
+短答案并点击引用验证。两轮证据分别保留，不把测试会话当成模型回答。
+
+## 10. 需求追踪与完整性
+
+| 需求 | 规则 | 场景 |
 | --- | --- | --- |
-| `useDatasetDefaults` | boolean，默认 true | 开启时不发送 `retrieval_model` 覆盖 |
-| `searchMethod` | keyword / semantic / full-text / hybrid | 对应 Dataset Retrieve 检索方式 |
-| `providerTopK` | 1 至适配器上限 | Dify 返回候选数量 |
-| `scoreThresholdEnabled` | boolean | 是否向 Dify 发送分数阈值 |
-| `scoreThreshold` | 0 至 1 | 开启阈值后生效 |
-| `rerankingMode` | weighted-score / reranking-model | 覆盖检索配置时必填 |
-| `rerankingProvider`、`rerankingModel` | 受支持的远端标识 | 选择模型重排时必填 |
-| `keywordWeight`、`vectorWeight` | 0 至 1，总和为 1 | 加权混合模式时生效 |
-| `embeddingProvider`、`embeddingModel` | 受支持的远端标识 | Dify 要求时从知识库详情选择或填写 |
+| `EK-FR-01` 至 `EK-FR-05` | 实例状态、保存后测试、目录与手工 ID | `EK-US-A1`、`EK-US-A2`、`EK-US-B1`、`EK-US-B2` |
+| `EK-FR-06` 至 `EK-FR-10` | 对象关系、创建编辑、配置与优先级 | `EK-US-B3`、`EK-US-B4`、`EK-US-D1`、`EK-US-D3` |
+| `EK-FR-11` 至 `EK-FR-14` | 范围、可用性、结果与失败、引用 | `EK-US-C1` 至 `EK-US-C4`、`EK-US-D2`、`EK-US-D4` |
+| `EK-FR-15`、`EK-FR-16` | 只读生命周期、凭据与请求边界 | `EK-US-A3`、`EK-US-C2` |
 
-`useDatasetDefaults` 开启时，其余覆盖字段隐藏且不发送。关闭后必须收集当前 Dify 接口
-构造 `retrieval_model` 所需的完整字段，缺少 Provider 或模型标识时不能保存。
-
-### 7.3 FastGPT 配置
-
-| 字段 | 初始范围 | 说明 |
-| --- | --- | --- |
-| `searchMode` | embedding / fullTextRecall / mixedRecall | 搜索方式 |
-| `tokenLimit` | 适配器限制，最高 20,000 | Provider 返回内容预算，不等同结果条数 |
-| `similarity` | 0 至 1 | 最低相关度 |
-| `usingRerank` | boolean | 使用 FastGPT 重排 |
-
-初始版本不开放 FastGPT 查询优化字段，避免把查询发送给 FastGPT 配置的 LLM。检索和重排
-仍可能产生远端 Embedding、Rerank 用量及 API 审计记录，测试与保存配置时必须说明。
-
-### 7.4 RAGFlow 配置
-
-| 字段 | 初始范围 | 说明 |
-| --- | --- | --- |
-| `similarityThreshold` | 0 至 1 | 最低综合相似度 |
-| `vectorSimilarityWeight` | 0 至 1 | 向量分数权重 |
-| `knnTopK` | 1 至适配器上限 | KNN 候选数量，不使用已弃用 `top_k` |
-| `rerankCandidatesCount` | 0 或正整数 | 重排候选数量，实例支持时显示 |
-| `rerankId` | 可选受限字符串 | 远端重排模型 ID |
-| `useKg` | boolean，默认 false | 仅在已有图谱证据成立时允许开启 |
-| `includeKnowledgeCompilation` | boolean，默认 false | 实例支持时显式发送，禁止依赖服务端默认 true |
-| `metadataCondition` | 后续受控编辑器 | 初始版本不接受任意 JSON 文本 |
-
-`parser_config.graphrag.use_graphrag` 描述构建状态，不是检索参数。只有列表、详情或受控
-探测提供已有图谱的证据时，界面才允许开启 `useKg`。Knowledge Compilation 是另一项
-检索能力，必须与旧 GraphRAG 分别显示和保存。
-
-## 8. 配置优先级
-
-生效请求由以下信息组成：
-
-```text
-GoodBuddy 固定安全上限
-∩ 当前 Adapter 支持矩阵
-∩ 当前绑定保存的通用配置和 Provider 配置
-= 本次请求配置
-```
-
-- 固定安全上限不可被实例或用户扩大。
-- 显式保存 Provider 参数时，远端默认值只用于创建表单的建议值。Dify
-  `useDatasetDefaults=true` 是例外：每次请求省略 `retrieval_model`，沿用远端当时的配置；
-  远端管理员修改配置后，后续检索随之变化。本地不保存一份默认参数快照。
-- Provider 增加新字段不会自动启用。
-- 当前实例版本离开 Adapter 支持矩阵，或 Adapter 新版本无法解析已保存配置时，绑定标记
-  配置失效；用户确认前不重写配置。
-- 服务端忽略未知字段不能视为成功。Adapter 只发送已知且受支持的字段。
-
-## 9. 绑定状态
-
-| 状态 | 条件 | 可进入聊天范围 |
-| --- | --- | --- |
-| `ready` | 实例可用，目标最近验证成功，配置有效 | 是 |
-| `untested` | 迁移或新增后尚未完成真实检索 | 否 |
-| `instance-disabled` | 实例停用 | 否 |
-| `credential-error` | 凭据缺失、不可用或认证失败 | 否 |
-| `remote-missing` | 远端目标返回不存在 | 否 |
-| `config-invalid` | 已保存配置不再受支持 | 否 |
-| `temporarily-unavailable` | 超时、限流或服务错误 | 是，但本次显示失败并允许重试 |
-
-短暂故障不立即永久禁用绑定；认证失败、目标不存在和配置失效会改变持久状态。
-
-## 10. 多知识库检索
-
-1. 读取请求冻结的 GoodBuddy 知识库 ID 集合。
-2. 本地库进入本地检索，外部库按实例和绑定构造独立请求。
-3. 同一请求最多选择现有契约允许的 20 个知识库，并遵循全局并发上限。
-4. 每个库单独记录成功、零结果、失败、耗时和截断。
-5. 成功结果按知识库保留来源，不比较不同 Provider 的原始分数。
-6. 上下文拼装使用现有总字符预算，在各成功知识库间采用确定性配额。
-7. 全部失败时返回检索失败；至少一个成功时返回证据和部分失败诊断。
-
-初始版本不对跨 Provider 结果运行统一学习型重排。后续如增加，必须保留原始 Provider
-分数和重排来源，且单独定义评估数据。
-
-## 11. 错误分类
-
-| 稳定错误码 | 用户状态 | 持久影响 |
-| --- | --- | --- |
-| `EXTERNAL_KB_NETWORK` | 无法连接实例 | 无 |
-| `EXTERNAL_KB_TIMEOUT` | 检索超时 | 无 |
-| `EXTERNAL_KB_AUTH` | 认证失效 | 实例标记认证失败 |
-| `EXTERNAL_KB_FORBIDDEN` | 没有访问权限 | 目录或绑定按操作标记受限 |
-| `EXTERNAL_KB_NOT_FOUND` | 远端知识库不存在 | 绑定标记目标不存在 |
-| `EXTERNAL_KB_RATE_LIMITED` | 请求过于频繁 | 无，可显示建议等待 |
-| `EXTERNAL_KB_INCOMPATIBLE` | 接口或配置不兼容 | 实例或绑定标记不兼容 |
-| `EXTERNAL_KB_INVALID_RESPONSE` | 返回内容无法读取 | 无，记录脱敏诊断 |
-| `EXTERNAL_KB_SERVER` | 外部服务处理失败 | 无 |
-| `EXTERNAL_KB_CANCELLED` | 已取消 | 无 |
-
-Provider 原始正文不能直接成为用户错误。Adapter 将其映射为稳定错误码和有界短消息。
-
-## 12. 删除规则
-
-| 操作 | 无绑定 | 有绑定 |
-| --- | --- | --- |
-| 停用实例 | 直接停用 | 允许；绑定变为不可用 |
-| 清除凭据 | 直接清除 | 需要确认；绑定保留但不可用 |
-| 删除实例 | 直接删除 | 阻止直接删除，要求同时移除本地绑定 |
-| 移除绑定 | 删除本地绑定 | 不影响实例和远端知识库 |
-
-删除确认不得使用“删除远端知识库”等文案。
-
-## 13. 需求追踪
-
-| 需求 | 主要逻辑 | User Story |
-| --- | --- | --- |
-| `EK-FR-01` 至 `EK-FR-03` | 实例状态、连接测试状态机 | `EK-US-A1`、`EK-US-A2` |
-| `EK-FR-04`、`EK-FR-05` | 目录读取规则、手工目标验证 | `EK-US-B1`、`EK-US-B2` |
-| `EK-FR-06`、`EK-FR-07`、`EK-FR-08`、`EK-FR-09` | 创建向导状态、配置模型和优先级 | `EK-US-B3`、`EK-US-B4`、`EK-US-D1`、`EK-US-D3` |
-| `EK-FR-10` 至 `EK-FR-13` | 单一身份、多知识库检索和引用规则 | `EK-US-C1` 至 `EK-US-C3`、`EK-US-D2` |
-| `EK-FR-14` | 绑定状态、错误分类和部分失败 | `EK-US-C4`、`EK-US-D4` |
-| `EK-FR-15` | 对象关系和删除规则 | `EK-US-A3` |
-| `EK-FR-16` | 无静默切换、请求冻结和传输风险确认 | `EK-US-C2` |
-
-## 14. 逻辑完整性
-
-已确定：
-
-- 产品入口、对象关系、只读边界和凭据边界。
-- 目录读取与手工 ID 的切换条件。
-- 三种 Provider 的初始配置范围和 RAGFlow 图谱语义。
-- 多知识库部分失败、删除和版本变化规则。
-
-实施前仍需技术验证：
-
-- 已完成第一轮真实目录与最小检索验证，并确认 Dify `1.17.0` 非空结果结构；仍需确认
-  FastGPT、RAGFlow 产品版本和 Dify `0.15.8` 非空结果，再选定三者最低版本并形成固定
-  支持矩阵与去敏 fixture。当前实测详情见
-  [技术设计 9.0 节](./external-knowledge-technical-design.md#90-真实实例验证基线)。
-- 验证各版本检索探测的 API 审计、用量和内容修改行为。
-- 确定 Provider 返回 URL 的安全打开策略；未验证前只显示文本定位和远端 ID。
-- 依据真实延迟确定默认并发上限和跨知识库上下文配额。
+三家真实 Provider 的生产服务、本机 HTTP MCP、生产 IPC `always` 短答案，以及 Dify
+`auto` 与完整 App 输入区回答、引用已有证据，详见[实施进度](./progress.md)。`auto` 本轮
+使用进程内工具调用，不覆盖远程 ACP。FastGPT/RAGFlow 完整桌面、复杂问答和远程
+forced-preflight 仍待完成；远程已确认网络可达，但已有 SSH 凭据在验证程序内无法解密。
+后续 Portal 与控件修正后的聚焦测试、全量回归及相关检查已通过，精确结果由实施进度维护。
+原场景中的保存前分项测试、按地址
+传输确认、取消交互、版本能力状态和完整诊断尚不等同当前实现，不能把对应 User Story
+全部标为通过。是否调整这些验收要求由功能 owner 确认，本轮不增加新的状态框架。

@@ -1,0 +1,106 @@
+{
+  "date": "2026-09-13",
+  "kind": "sanitized-ui-and-real-generation-follow-up",
+  "sources": ["kb-real-generation/report.json", "kb-full-app-live/report.json", "external-visual-0913/results.json", "goodbuddy-binding-selector-fix-full.log", "goodbuddy-binding-selector-fix-full.result.json"],
+  "automatedChecks": {
+    "status": "passed-after-ui-follow-up",
+    "authoritativeCounts": "progress.md",
+    "focusedWholeAppAndTwoAgentTests": { "status": "passed", "evidence": "owner handoff" },
+    "fullSuite": {
+      "command": "npm test -- --maxWorkers=1 --reporter=verbose",
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": ["goodbuddy-binding-selector-fix-full.log", "goodbuddy-binding-selector-fix-full.result.json"]
+    },
+    "typecheck": { "command": "npm run typecheck", "status": "passed", "evidence": "owner handoff" },
+    "lint": { "command": "npm run lint", "status": "passed", "evidence": "owner handoff" },
+    "workingTreeDiffCheck": { "status": "passed", "evidence": "owner handoff" },
+    "stagedDiffCheck": { "status": "passed", "evidence": "owner handoff" },
+    "sourceStability": {
+      "scope": "App test, two Agent tests and ExternalKnowledge stable throughout final run",
+      "evidence": "owner handoff"
+    },
+    "lastTestAdjustment": "App test changed from obsolete native select interaction to actual accessible rich menu interaction; no product source change",
+    "agentFailureResolution": "resolved in concurrent owner's latest code; no edits by this docs task",
+    "furtherSourceChanges": "none planned per owner handoff"
+  },
+  "model": {
+    "configuration": "saved default model settings; credential resolved in Main using safeStorage",
+    "transport": "http",
+    "originalSettingsUnchangedInFullAppRun": true,
+    "redaction": "No endpoints, private profile identifiers, keys, business text, answer prose or content hashes retained"
+  },
+  "productionIpcGeneration": {
+    "realElectronPreloadIpcAndModelRuntime": true,
+    "fullAppRenderer": false,
+    "referenceDisplay": "isolated validation DOM receiving real preload events",
+    "persistence": "production task_events; text, single-library scope and external locators verified",
+    "scenarios": [
+      { "provider": "dify", "mode": "always", "passed": true },
+      { "provider": "fastgpt", "mode": "always", "passed": false, "groundedQuote": true, "citationMarker": true, "failure": "initial raw-string evidence assertion did not account for serialization" },
+      { "provider": "ragflow", "mode": "always", "passed": false, "groundedQuote": true, "citationMarker": true, "failure": "initial raw-string evidence assertion did not account for serialization" },
+      { "provider": "dify", "mode": "auto", "passed": true, "transport": "ModelToolProvider to KnowledgeMcpGateway in process; not HTTP MCP", "tool": "knowledge_search" },
+      { "provider": "fastgpt", "mode": "always", "passed": true, "evidenceCheck": "decoded provider body and embedded evidence JSON" },
+      { "provider": "ragflow", "mode": "always", "passed": true, "evidenceCheck": "decoded provider body and embedded evidence JSON" }
+    ],
+    "finalScenarioChecks": ["nonempty short answer", "grounded quote", "citation marker", "reference schema", "text and references persisted"],
+    "requests": { "model": 7, "kbTotal": 12, "kbRetrieval": 9, "kbCatalog": 3 },
+    "retrievalBreakdown": { "bindingVerification": 3, "forcedPreflight": 5, "autoScoped": 1 },
+    "runtimeModelRetries": 0,
+    "strictHttpsProviders": ["dify", "fastgpt"],
+    "httpProviders": ["ragflow"]
+  },
+  "fullApp": {
+    "provider": "dify",
+    "mode": "always",
+    "workMode": "ask",
+    "currentProductionMainPreloadRenderer": true,
+    "instanceAndPositiveBindingCreatedInUi": true,
+    "composerSelectionAndSendClicked": true,
+    "noFabricatedMessagesReferencesOrEvents": true,
+    "mainOnlyKbCredentialSubstitution": true,
+    "generationDone": true,
+    "answerPersisted": true,
+    "singleSelectedLibrary": true,
+    "liveEvidencePresentInModelInput": true,
+    "groundedShortAnswerWithCitation": true,
+    "citationClicked": true,
+    "citationSnippetDocumentAndChunkMatch": true,
+    "citationFocusInside": true,
+    "strictDifyHttps": true,
+    "modelHttp": true,
+    "requests": { "model": 1, "kbTotal": 5, "kbRetrieval": 3, "kbCatalog": 1, "kbDetail": 1 },
+    "setupVerificationRetrievals": 2,
+    "composerRetrievals": 1,
+    "toolExecutions": 0,
+    "portalEditor": { "themes": ["light", "dark"], "widthPx": 560, "sharedTypography": true, "withinViewport": true, "bodyOverflow": 0 },
+    "isolatedProfileAndBuildRemoved": true
+  },
+  "visualFixture": {
+    "boundary": "current source components and styles in real Electron with real body portal; fake local IPC data only",
+    "themes": ["light", "dark"],
+    "viewportSizes": [[1280, 800], [960, 720], [720, 640], [640, 420]],
+    "screenshots": 56,
+    "checksPassed": 138,
+    "errors": [],
+    "keyboardMethod": "native Chromium actions via Electron sendInputEvent and insertText",
+    "coverage": ["password reveal layout", "switch keyboard toggle", "sticky footer visibility", "focus wrap and restoration", "instance menu arrows and disabled items", "tabs", "credential replacement and clear confirmation", "selected hover", "empty state"]
+  },
+  "followUpRequestAccounting": {
+    "modelRequests": 8,
+    "kbRequests": 17,
+    "kbRetrievalRequests": 12,
+    "kbCatalogRequests": 4,
+    "kbDetailRequests": 1,
+    "boundary": "this follow-up only; app HTTP dispatches, not upstream proxy internals or provider embedding/reranking usage",
+    "cumulativeReportFieldsExcluded": "real-generation report cumulative fields omit prior desktop retrievals; not used"
+  },
+  "acceptanceBounds": {
+    "groundedShortAnswerPath": "passed for three providers through production IPC and Dify through full App composer",
+    "broadAnswerQuality": "not evaluated",
+    "fastgptRagflowFullAppAndProviderSpecificUi": "pending",
+    "linuxRemoteForcedPreflight": "still blocked by prior saved SSH credential decryption failure",
+    "fullRegressionAfterUiFollowUp": "passed",
+    "authoritativeAutomatedTestCounts": "progress.md"
+  }
+}

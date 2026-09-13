@@ -14,7 +14,7 @@ const cachedBinary = join(
 const binaryPath = process.env.GOODBUDDY_TEST_OPENCODE_BINARY || cachedBinary
 
 it.skipIf(!existsSync(binaryPath))(
-  'completes native Task external reads and structured yes/no and text questions while Ask disables tools',
+  'completes native Task external reads and concurrent structured questions while Ask disables tools',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-permissions-'))
     const workspace = join(root, 'workspace')
@@ -50,7 +50,8 @@ it.skipIf(!existsSync(binaryPath))(
             tool = { id: 'external-read', name: 'read', arguments: { filePath: externalFile } }
           }
         } else if (results.some(result => result.tool_call_id === 'native-question')) {
-          answerVerified = JSON.stringify(results).includes('Yes') && JSON.stringify(results).includes('Custom answer')
+          answerVerified = JSON.stringify(results).includes('Yes') && JSON.stringify(results).includes('Custom answer') &&
+            results.some(result => result.tool_call_id === 'parallel-question' && JSON.stringify(result.content).includes('Parallel answer'))
           content = 'PARENT_OK'
         } else if (results.some(result => result.tool_call_id === 'native-task')) {
           tool = { id: 'native-question', name: 'question', arguments: { questions: [
@@ -74,7 +75,11 @@ it.skipIf(!existsSync(binaryPath))(
             role: 'assistant',
             tool_calls: [{ index: 0, id: tool.id, type: 'function', function: {
               name: tool.name, arguments: JSON.stringify(tool.arguments)
-            } }]
+            } }, ...(tool.id === 'native-question' ? [{ index: 1, id: 'parallel-question', type: 'function', function: {
+              name: 'question', arguments: JSON.stringify({ questions: [
+                { header: 'Parallel', question: 'Another decision?', options: [], custom: true }
+              ] })
+            } }] : [])]
           } : { role: 'assistant', content }, null],
           [{}, tool ? 'tool_calls' : 'stop']
         ]) {
@@ -102,17 +107,24 @@ it.skipIf(!existsSync(binaryPath))(
     try {
       for (const mode of ['execute', 'ask'] as const) {
         let text = ''
+        const pending: Array<{ id: string; answers: string[][] }> = []
         for await (const event of runtime.run({
           requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(),
           workMode: mode, prompt: mode === 'execute' ? 'USE_NATIVE_TASK' : 'ASK_WITHOUT_TOOLS'
         }, AbortSignal.timeout(30_000))) {
           if (event.type === 'text') text += event.delta
           if (event.type === 'question') {
-            expect(event.questions).toHaveLength(2)
-            await runtime.respondToQuestion(event.questionId, [['Yes'], ['Custom answer']])
+            pending.push({ id: event.questionId, answers: event.questions.length === 2
+              ? [['Yes'], ['Custom answer']] : [['Parallel answer']] })
+            // Both native calls must reach the desktop before either is answered.
+            if (pending.length === 2) {
+              expect(pending[0]!.id).not.toBe(pending[1]!.id)
+              for (const question of pending) await runtime.respondToQuestion(question.id, question.answers)
+            }
           }
         }
         expect(text).toBe(mode === 'execute' ? 'PARENT_OK' : 'ASK_OK')
+        expect(pending).toHaveLength(mode === 'execute' ? 2 : 0)
       }
       expect(readVerified).toBe(true)
       expect(answerVerified).toBe(true)

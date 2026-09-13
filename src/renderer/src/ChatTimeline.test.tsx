@@ -225,10 +225,10 @@ describe('ChatTimeline', () => {
     expect(screen.getByRole('status', { name: '等待后续进展' })).toBeVisible()
     rerender(<ChatTimeline {...props} messages={[{
       ...message, status: 'OpenCode 正在处理请求',
-      question: {
+      pendingQuestions: [{
         requestId: 'question-request', type: 'question', questionId: 'q-1',
         questions: [{ header: '确认', question: '继续吗？', options: [], custom: true, multiple: false }]
-      }
+      }]
     }]} />)
     expect(screen.getByRole('status', { name: '等待你的回答' })).toBeVisible()
     expect(screen.queryByText('OpenCode 正在处理请求')).not.toBeInTheDocument()

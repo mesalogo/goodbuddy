@@ -2890,7 +2890,7 @@ textarea:focus-visible {
   padding: 14px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--surface-raised);
   box-shadow: var(--shadow-dialog);
   flex-direction: column;
@@ -2898,7 +2898,7 @@ textarea:focus-visible {
   -webkit-app-region: no-drag;
 }
 
-.project-create-card header {
+.project-create-card > header {
   position: relative;
   z-index: 1;
   display: flex;
@@ -2909,11 +2909,27 @@ textarea:focus-visible {
   -webkit-app-region: no-drag;
 }
 
-.project-create-card__close {
+.project-create-card .project-create-card__close {
   position: relative;
   z-index: 2;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
   -webkit-app-region: no-drag;
+}
+
+.project-create-card__body {
+  display: flex;
+  min-height: 0;
+  padding: 3px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-create-card__body > * {
+  flex-shrink: 0;
 }
 
 .project-create-card label {
@@ -2962,6 +2978,8 @@ textarea:focus-visible {
 
 .project-create-card__actions {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 7px;
 }
@@ -3787,7 +3805,7 @@ button > svg {
 }
 
 :is(
-  .project-create-card,
+  .project-create-card__body,
   .knowledge-citation-dialog__surface,
   .channel-qr-dialog,
   .document-parsing-diagnostic,

@@ -1,3 +1,5 @@
+import { ExternalKnowledgeService } from './external/external-knowledge-service'
+import { ExternalKnowledgeError } from './external/external-knowledge-client'
 import {
   cp,
   lstat,
@@ -144,6 +146,8 @@ export type KnowledgeSnapshot = {
 }
 
 export type KnowledgeServiceOptions = {
+  credentialCipher?: import('../settings-credential-cipher').SettingsCredentialCipher
+  externalFetcher?: typeof fetch
   databasePath: string
   managedRoot: string
   extractStructured?: ExtractStructured
@@ -208,6 +212,7 @@ function embedKnowledgeQuery(
 }
 
 export class KnowledgeService {
+  readonly external: ExternalKnowledgeService
   readonly database: KnowledgeDatabase
   private readonly managedRoot: string
   private readonly extractStructured?: ExtractStructured
@@ -255,6 +260,7 @@ export class KnowledgeService {
 
   constructor(options: KnowledgeServiceOptions) {
     this.database = new KnowledgeDatabase(options.databasePath)
+    this.external = new ExternalKnowledgeService(this.database, options.credentialCipher, options.externalFetcher)
     this.managedRoot = resolve(options.managedRoot)
     this.extractStructured = options.extractStructured
     this.urlImporter = options.urlImporter ?? new UrlImporter()
@@ -293,6 +299,7 @@ export class KnowledgeService {
   }
 
   async dispose(): Promise<void> {
+    this.external.dispose()
     this.lifecycleController.abort(
       new Error('Knowledge service is shutting down')
     )
@@ -440,6 +447,7 @@ export class KnowledgeService {
   private async getEmbeddingIndexCoordinator(
     knowledgeBaseId: string
   ): Promise<EmbeddingIndexCoordinator> {
+    this.requireLibrary(knowledgeBaseId)
     const existing = this.embeddingIndexCoordinators.get(knowledgeBaseId)
     if (existing) {
       return existing
@@ -1234,9 +1242,23 @@ export class KnowledgeService {
     signal?: AbortSignal,
     preparedQueryEmbedding?: PreparedQueryEmbedding
   ): Promise<KnowledgeRetrievalResponse> {
+    signal = signal ? AbortSignal.any([signal, this.lifecycleController.signal]) : this.lifecycleController.signal
+    signal.throwIfAborted()
     const input = knowledgeRetrieveInputSchema.parse(rawInput)
-    const library = this.requireLibrary(input.knowledgeBaseId)
+    const library = this.requireLibrary(input.knowledgeBaseId, false)
     const settings = input.settings ?? library.retrievalSettings
+    const binding = this.database.externalStore.listBindings().find(item => item.knowledgeBaseId === library.id)
+    if (binding) {
+      const response = await this.external.testRetrieval({instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId,commonConfig:binding.commonConfig,providerConfig:binding.providerConfig,testQuery:input.query}, signal)
+      signal.throwIfAborted()
+      if (JSON.stringify(this.database.externalStore.listBindings().find(item => item.knowledgeBaseId === library.id)) !== JSON.stringify(binding)) throw new Error('EXTERNAL_KB_CONFIG_CHANGED')
+      return {
+        query:input.query,durationMs:response.durationMs,settings,
+        diagnostics:{external:{provider:binding.provider,instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId},requestedChannels:[],usedChannels:[],degradedChannels:[],candidateCounts:{},channelDurationMs:{},vectorScannedCount:0,filteredByThresholdCount:0,filteredByBudgetCount:0,rerank:{requested:'none',used:'none',status:'skipped',candidateCount:0,durationMs:0}},
+        results:response.results.map((item,index)=>({knowledgeBaseId:library.id,documentTitle:item.documentTitle,sourceDisplayName:item.sourceDisplayName,snippet:item.snippet,rank:index+1,channels:[],scores:{fusedScore:0},external:{kind:'external' as const,provider:binding.provider,instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId,remoteDocumentId:item.remoteDocumentId,remoteChunkId:item.remoteChunkId,providerScore:item.providerScore,providerScores:item.providerScores,location:item.location,sourceUrl:item.sourceUrl}})),
+        context:{characterCount:response.results.reduce((sum,item)=>sum+item.snippet.length,0),truncated:false,groups:[]}
+      }
+    }
     const hasHanQuery = containsHanText(input.query)
     const startedAt = Date.now()
     const requestedChannels: Array<'fts' | 'cjk' | 'vector' | 'graph'> = []
@@ -1665,32 +1687,64 @@ export class KnowledgeService {
       response: KnowledgeRetrievalResponse
     }>
   > {
-    const libraries = knowledgeBaseIds.map((id) =>
-      this.requireLibrary(id)
+    signal = signal ? AbortSignal.any([signal, this.lifecycleController.signal]) : this.lifecycleController.signal
+    signal.throwIfAborted()
+    const libraries = [...new Set(knowledgeBaseIds)].map((id) =>
+      this.requireLibrary(id, false)
     )
     const preparedEmbedding = libraries.some(
-      (library) => library.retrievalSettings.vectorWeight > 0
+      (library) => !this.database.externalStore.listBindings().some(item=>item.knowledgeBaseId===library.id) && library.retrievalSettings.vectorWeight > 0
     )
       ? await this.prepareQueryEmbedding(query, signal)
       : undefined
     signal?.throwIfAborted()
-    return Promise.all(
-      libraries.map(async (library) => ({
-        knowledgeBaseId: library.id,
-        response: await this.retrieve(
+    const outcomes = await Promise.all(
+      libraries.map(async (library) => {
+        try { return { knowledgeBaseId: library.id, response: await this.retrieve(
           {
             knowledgeBaseId: library.id,
             query
           },
           signal,
           preparedEmbedding
-        )
-      }))
+        )} } catch(error) {
+          signal?.throwIfAborted()
+          const failure=error instanceof ExternalKnowledgeError ? error.code : error instanceof Error && /^EXTERNAL_KB_[A-Z_]+$/.test(error.message) ? error.message : 'Knowledge retrieval failed'
+          return {knowledgeBaseId:library.id,response:{query,durationMs:0,settings:library.retrievalSettings,diagnostics:{failure,requestedChannels:[],usedChannels:[],degradedChannels:[],candidateCounts:{},channelDurationMs:{},vectorScannedCount:0,filteredByThresholdCount:0,filteredByBudgetCount:0,rerank:{requested:'none',used:'none',status:'skipped',candidateCount:0,durationMs:0}},results:[],context:{characterCount:0,truncated:false,groups:[]}} as KnowledgeRetrievalResponse}
+        }
+      })
     )
+    let remaining = 48_000
+    let remainingContext = 48_000
+    // Spend the shared budget by rank so one library cannot crowd out later libraries.
+    const ranked = outcomes.flatMap(({ response }) =>
+      response.results.map(result => ({ response, result }))
+    ).sort((left, right) => left.result.rank - right.result.rank)
+    for (const { response, result } of ranked) {
+      const snippet = result.snippet.slice(0, remaining)
+      if (snippet.length < result.snippet.length) response.context.truncated = true
+      result.snippet = snippet
+      remaining -= snippet.length
+      const group = response.context.groups.find(item => item.resultChunkId === result.chunkId)
+      if (!group) continue
+      const content = group.content.slice(0, remainingContext)
+      if (content.length < group.content.length) response.context.truncated = true
+      group.content = content
+      remainingContext -= content.length
+    }
+    for (const { response } of outcomes) {
+      response.results = response.results.filter(result => result.snippet.length > 0)
+      response.context.groups = response.context.groups.filter(group => group.content.length > 0)
+      response.context.characterCount = response.context.groups.length
+        ? response.context.groups.reduce((sum, group) => sum + group.content.length, 0)
+        : response.results.reduce((sum, result) => sum + result.snippet.length, 0)
+    }
+    return outcomes
   }
 
   updateSettings(rawInput: KnowledgeSettingsUpdateInput): KnowledgeBase {
     const input = knowledgeSettingsUpdateInputSchema.parse(rawInput)
+    this.requireLibrary(input.knowledgeBaseId)
     return this.database.updateKnowledgeSettings(input)
   }
 
@@ -1704,6 +1758,7 @@ export class KnowledgeService {
     rawInput: KnowledgeChunkUpdateInput
   ): Promise<ReturnType<KnowledgeDatabase['updateChunk']>> {
     const input = knowledgeChunkUpdateInputSchema.parse(rawInput)
+    this.requireLibrary(input.knowledgeBaseId)
     return this.withDocumentMutation(input.documentId, async () => {
       const current = this.database.getChunkForReference(
         input.knowledgeBaseId,
@@ -1733,6 +1788,7 @@ export class KnowledgeService {
 
   async deleteChunk(rawInput: KnowledgeChunkDeleteInput): Promise<boolean> {
     const input = knowledgeChunkDeleteInputSchema.parse(rawInput)
+    this.requireLibrary(input.knowledgeBaseId)
     return this.withDocumentMutation(input.documentId, async () => {
       const deleted = this.database.deleteChunk(input)
       if (deleted) {
@@ -3806,7 +3862,10 @@ export class KnowledgeService {
       : candidate
   }
 
-  private requireLibrary(id: string): KnowledgeBase {
+  private requireLibrary(id: string, localOnly = true): KnowledgeBase {
+    if (localOnly && this.database.externalStore.listBindings().some(item => item.knowledgeBaseId === id)) {
+      throw new Error('EXTERNAL_KB_READ_ONLY')
+    }
     const library = this.database.getKnowledgeBase(id)
     if (!library) {
       throw new Error('知识库不存在')

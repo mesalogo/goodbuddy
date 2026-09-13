@@ -1,4 +1,18 @@
 export const workspace = {
+  projectActivity: {
+    title: '全项目活动',
+    close: '关闭全项目活动',
+    unassigned: '未归属项目',
+    attentionCount: '{{count}} 个待处理',
+    runningCount: '{{count}} 个运行中',
+    groups: { attention: '待处理', running: '运行中' },
+    status: {
+      running: '运行中',
+      approval: '等待审批',
+      question: '等待你的回答',
+      attention: '待处理'
+    }
+  },
   management: {
     gitWorkspace: 'Git 工作区', more: '{{name}} 的更多操作', browse: '浏览此目录', parent: '返回父目录',
     createFile: '新建文件', createDirectory: '新建目录', rename: '重命名', move: '移动', delete: '删除', properties: '属性',
@@ -493,6 +507,9 @@ export const workspace = {
     empty: '工作区为空。'
   },
   question: {
+    task: '任务：{{title}}',
+    pendingCount: '还有 {{count}} 个待答问题，请依次回答。',
+    locate: '前往问答表单',
     title: 'OpenCode 需要补充信息',
     otherAnswer: '其他回答',
     answerPlaceholder: '输入你的回答',

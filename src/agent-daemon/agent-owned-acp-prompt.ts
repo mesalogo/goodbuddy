@@ -10,6 +10,7 @@ import {
   type SessionNotification
 } from '@agentclientprotocol/sdk'
 import { canonicalJson } from '../shared/agent-protocol/canonical'
+import { remoteQuestionSchema, type RemoteQuestionResponse } from '../shared/remote-question-contracts'
 import type {
   RemoteOwnedPromptStartRequest,
   RemoteOwnedPromptStartResult
@@ -57,6 +58,10 @@ export class AgentOwnedAcpPrompt {
   #promptPromise?: Promise<void>
   #closed = false
   #initialized = false
+  readonly #questions = new Map<string, {
+    endpoint: string; operationId: string; questionCount: number; notification: SessionNotification
+  }>()
+  #acceptQuestions = false
   #active?: {
     operationId: string
   }
@@ -94,6 +99,8 @@ export class AgentOwnedAcpPrompt {
         return
       }
       const error = new Error('ACP Runtime process exited')
+      this.#acceptQuestions = false
+      this.#questions.clear()
       controller?.error(error)
       controller = undefined
       rejectProcessExit(error)
@@ -213,6 +220,7 @@ export class AgentOwnedAcpPrompt {
     this.#active = {
       operationId: request.operationId
     }
+    this.#acceptQuestions = true
     const begun = this.#options.transcript.begin({
       bindingId: this.#options.bindingId,
       operationId: request.operationId,
@@ -277,6 +285,8 @@ export class AgentOwnedAcpPrompt {
         }
       )
       .finally(() => {
+        this.#questions.clear()
+        this.#acceptQuestions = false
         this.#active = undefined
       })
     void this.#promptPromise.catch(() => undefined)
@@ -284,6 +294,8 @@ export class AgentOwnedAcpPrompt {
   }
 
   async cancel(): Promise<void> {
+    this.#acceptQuestions = false
+    this.#questions.clear()
     if (this.#sessionId !== undefined && !this.#closed) {
       await this.#connection.cancel({ sessionId: this.#sessionId })
     }
@@ -291,6 +303,29 @@ export class AgentOwnedAcpPrompt {
 
   close(): void {
     this.#clear()
+  }
+
+  async respondToQuestion(request: RemoteQuestionResponse): Promise<void> {
+    const pending = this.#questions.get(request.questionId)
+    if (this.#closed || !pending || this.#active?.operationId !== request.operationId ||
+      pending.operationId !== request.operationId || request.bindingId !== this.#options.bindingId) {
+      throw new Error('Remote question is no longer pending for this prompt')
+    }
+    if (request.answers.length !== 0 && request.answers.length !== pending.questionCount) {
+      throw new Error('Question answer count does not match')
+    }
+    const response = await fetch(pending.endpoint, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...request, sessionId: this.#sessionId }),
+      signal: AbortSignal.timeout(30_000), redirect: 'error'
+    })
+    if (!response.ok) throw new Error(`OpenCode question response failed (${response.status})`)
+    this.#questions.delete(request.questionId)
+  }
+
+  pendingQuestions(operationId: string): SessionNotification[] {
+    if (!this.#acceptQuestions || this.#active?.operationId !== operationId) return []
+    return [...this.#questions.values()].map(question => question.notification)
   }
 
   #client(): Client {
@@ -306,11 +341,37 @@ export class AgentOwnedAcpPrompt {
   }
 
   #handleSessionUpdate(notification: SessionNotification): void {
+    if (this.#closed || !this.#active) return
     if (
       notification.sessionId !== this.#sessionId &&
       this.#sessionId !== undefined
     ) {
       throw new Error('ACP session notification identity changed')
+    }
+    const resolved = notification.update._meta?.goodbuddyQuestionResolved
+    if (typeof resolved === 'string') {
+      this.#questions.delete(resolved)
+      return
+    }
+    const extension = notification.update._meta?.goodbuddyQuestion
+    if (extension !== undefined) {
+      if (!this.#acceptQuestions) return
+      if (!extension || typeof extension !== 'object') throw new Error('Invalid remote question')
+      const value = extension as { question?: unknown; endpoint?: unknown; childCallId?: unknown }
+      const question = remoteQuestionSchema.parse(value.question)
+      if (typeof value.endpoint !== 'string' ||
+        !/^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}$/u.test(value.endpoint)) {
+        throw new Error('Invalid remote question endpoint')
+      }
+      if (this.#questions.has(question.id)) return
+      // The process-local reply capability never enters the durable transcript.
+      notification = { ...notification, update: {
+        ...notification.update, _meta: { goodbuddyQuestion: {
+          question, ...(typeof value.childCallId === 'string' ? { childCallId: value.childCallId } : {})
+        } }
+      } }
+      this.#questions.set(question.id, { endpoint: value.endpoint, operationId: this.#active.operationId,
+        questionCount: question.questions.length, notification })
     }
     this.#options.transcript.append({
       bindingId: this.#options.bindingId,
@@ -371,6 +432,8 @@ export class AgentOwnedAcpPrompt {
       return
     }
     this.#closed = true
+    this.#acceptQuestions = false
+    this.#questions.clear()
     this.#unsubscribeOutput()
     this.#unsubscribeExit()
   }

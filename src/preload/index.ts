@@ -1609,6 +1609,16 @@ const desktopApi: DesktopApi = {
     }
   },
   knowledge: {
+    externalInstancesList: () => ipcRenderer.invoke(ipcChannels.externalInstancesList),
+    externalInstancesSave: (input) => ipcRenderer.invoke(ipcChannels.externalInstancesSave,input),
+    externalInstancesTest: (input) => ipcRenderer.invoke(ipcChannels.externalInstancesTest,input),
+    externalInstancesSetEnabled: (input) => ipcRenderer.invoke(ipcChannels.externalInstancesSetEnabled,input),
+    externalInstancesDelete: (input) => ipcRenderer.invoke(ipcChannels.externalInstancesDelete,input),
+    externalCatalogList: (input) => ipcRenderer.invoke(ipcChannels.externalCatalogList,input),
+    externalCatalogGet: (input) => ipcRenderer.invoke(ipcChannels.externalCatalogGet,input),
+    externalBindingsCreate: (input) => ipcRenderer.invoke(ipcChannels.externalBindingsCreate,input),
+    externalBindingsUpdate: (input) => ipcRenderer.invoke(ipcChannels.externalBindingsUpdate,input),
+    externalRetrievalTest: (input) => ipcRenderer.invoke(ipcChannels.externalRetrievalTest,input),
     getSnapshot: (libraryId?: string) =>
       ipcRenderer.invoke(
         ipcChannels.knowledgeSnapshot,

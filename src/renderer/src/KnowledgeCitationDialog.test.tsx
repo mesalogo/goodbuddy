@@ -30,6 +30,14 @@ afterEach(() => {
 })
 
 describe('KnowledgeCitationDialog', () => {
+  it('reads historical external snippets and typed scores without local source actions', () => {
+    const onOpenSource = vi.fn()
+    render(<KnowledgeCitationDialog reference={{ ...reference, documentId: undefined, chunkId: undefined, external: { kind: 'external', provider: 'fastgpt', instanceId: 'removed-instance', remoteKnowledgeBaseId: 'remote-library', providerScores: [{ type: 'embedding', value: 0.8, index: 2 }] } }} onClose={vi.fn()} onOpenSource={onOpenSource} />)
+    expect(screen.getByText(reference.snippet)).toBeInTheDocument()
+    expect(screen.getByText('embedding [2]: 0.8')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开来源' })).not.toBeInTheDocument()
+    expect(onOpenSource).not.toHaveBeenCalled()
+  })
   it('shows matched and surrounding context and restores close behavior', async () => {
     const onClose = vi.fn()
     const onOpenSource = vi.fn(async () => undefined)

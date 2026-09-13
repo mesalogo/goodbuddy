@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -18,6 +18,8 @@ import {
 import { ControllerRegistry, type ControllerLease } from './controller-registry'
 import { EventJournal } from './event-journal'
 import { AgentProtocolServer } from './protocol-server'
+import { WorkspacePathAccess } from './workspace-path-access'
+import { remoteWorkspaceReadTextRequestSchema } from '../shared/remote-agent-contracts'
 
 const temporaryPaths: string[] = []
 const closeMethod = 'channel/close'
@@ -339,6 +341,51 @@ describe('AgentProtocolServer connection bounds', () => {
       }
     })
     harness.close()
+  })
+
+  it('preserves ENOENT from a real workspace missing-file read', async () => {
+    const root = temporaryDirectory()
+    const metadata = statSync(root)
+    const workspace = new WorkspacePathAccess({
+      canonicalPath: root,
+      device: metadata.dev.toString(),
+      inode: metadata.ino.toString(),
+      workspaceIdentity: 'workspace-test'
+    })
+    const harness = createHarness({
+      methods: {
+        'workspace/readText': (params) =>
+          workspace.readText(remoteWorkspaceReadTextRequestSchema.parse(params))
+      }
+    })
+    try {
+      harness.socket.receive(
+        controlFrame(harness.controller, 'missing-file', '1', 1, {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'workspace/readText',
+          params: {
+            workspaceId: 'workspace-test',
+            generation: 1,
+            relativePath: 'missing.txt',
+            offsetBytes: 0,
+            maximumBytes: 100
+          }
+        })
+      )
+      await waitFor(() => harness.socket.writes.length === 2)
+      expect(jsonPayload(decodeAgentFrame(harness.socket.writes[0]!))).toEqual({
+        jsonrpc: '2.0',
+        id: 1,
+        error: {
+          code: -32000,
+          message: expect.stringContaining('ENOENT'),
+          data: { code: 'ENOENT' }
+        }
+      })
+    } finally {
+      harness.close()
+    }
   })
 
   it('returns strict status, doctor, and exact implemented capabilities', async () => {

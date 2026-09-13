@@ -50,6 +50,8 @@ import {
 } from './ChannelProjectSettingsFields'
 import { getProjectDisplayText } from './project-display'
 import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
+import { ProjectActivityCounts } from './ProjectActivity'
+import type { ConversationActivitySummary } from './conversation-activity'
 import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { displayErrorMessage } from './error-message'
@@ -57,6 +59,7 @@ import { displayErrorMessage } from './error-message'
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
   activeProjectId: string
+  activityByProjectId?: ConversationActivitySummary['byProjectId']
   remoteProjectsEnabled?: boolean
   runtimeSettings?: RuntimeSettings
   onArchive: (projectId: string) => Promise<void>
@@ -207,6 +210,7 @@ function isRemoteAbsolutePath(value: string): boolean {
 export function ProjectSwitcher({
   projects,
   activeProjectId,
+  activityByProjectId = {},
   remoteProjectsEnabled = false,
   runtimeSettings,
   onArchive,
@@ -281,6 +285,55 @@ export function ProjectSwitcher({
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [retryingRecoveryProjectId, setRetryingRecoveryProjectId] =
     useState<string>()
+  const [dismissedRecoveryByProjectId, setDismissedRecoveryByProjectId] =
+    useState<Record<string, string>>({})
+  const recoveryCompletionTimers = useRef(
+    new Map<string, { requestId: string; timer: ReturnType<typeof setTimeout> }>()
+  )
+
+  useEffect(() => {
+    const timers = recoveryCompletionTimers.current
+    for (const [projectId, entry] of timers) {
+      const state = recoveryByProjectId[projectId]
+      if (state?.stage !== 'completed' || state.requestId !== entry.requestId) {
+        clearTimeout(entry.timer)
+        timers.delete(projectId)
+      }
+    }
+    for (const [projectId, state] of Object.entries(recoveryByProjectId)) {
+      if (state.stage !== 'completed' || timers.has(projectId)) {
+        continue
+      }
+      // Keep the request entry after expiry so menu mounts and snapshots cannot replay it.
+      timers.set(projectId, {
+        requestId: state.requestId,
+        timer: setTimeout(() => {
+          setDismissedRecoveryByProjectId((current) => ({
+            ...current,
+            [projectId]: state.requestId
+          }))
+        }, 3_000)
+      })
+    }
+  }, [recoveryByProjectId])
+
+  useEffect(() => {
+    const timers = recoveryCompletionTimers.current
+    return () => {
+      for (const entry of timers.values()) {
+        clearTimeout(entry.timer)
+      }
+      timers.clear()
+    }
+  }, [])
+
+  const visibleRecoveryByProjectId = Object.fromEntries(
+    Object.entries(recoveryByProjectId).filter(
+      ([projectId, state]) =>
+        state.stage !== 'completed' ||
+        dismissedRecoveryByProjectId[projectId] !== state.requestId
+    )
+  )
   const applySshHostsSnapshot = useCallback(
     (
       snapshot: SshHostsSnapshot,
@@ -357,7 +410,7 @@ export function ProjectSwitcher({
     : undefined
   const activeProjectRecovery =
     activeProject?.executionSpace.kind === 'ssh'
-      ? recoveryByProjectId[activeProject.id]
+      ? visibleRecoveryByProjectId[activeProject.id]
       : undefined
   const settingsProject = projects.find(
     (project) => project.id === settingsProjectId
@@ -1019,7 +1072,7 @@ export function ProjectSwitcher({
     const projectDisplay = getProjectDisplayText(project, t)
     const recovery =
       project.executionSpace.kind === 'ssh'
-        ? recoveryByProjectId[project.id]
+        ? visibleRecoveryByProjectId[project.id]
         : undefined
     const detail =
       project.kind === 'channel'
@@ -1062,7 +1115,12 @@ export function ProjectSwitcher({
         >
           <ProjectIcon aria-hidden="true" size={16} />
           <span>
-            <b>{projectDisplay.name}</b>
+            <span className="project-switcher__project-heading">
+              <b>{projectDisplay.name}</b>
+              {activityByProjectId[project.id] && (
+                <ProjectActivityCounts {...activityByProjectId[project.id]!} />
+              )}
+            </span>
             <small>{detail}</small>
             {recovery && <ProjectRecoveryStatus state={recovery} />}
           </span>
@@ -1388,9 +1446,10 @@ export function ProjectSwitcher({
                 onClick={() => closeDialog()}
                 type="button"
               >
-                <X size={14} />
+                <X size={18} />
               </button>
             </header>
+            <div className="project-create-card__body">
             {dialogMode === 'settings' &&
             settingsProject?.kind === 'channel' &&
             runtimeSettings ? (
@@ -2019,6 +2078,7 @@ export function ProjectSwitcher({
                   )}
                 </section>
               )}
+            </div>
             <div className="project-create-card__actions">
               {dialogMode === 'settings' &&
                 settingsProject?.kind !== 'channel' &&

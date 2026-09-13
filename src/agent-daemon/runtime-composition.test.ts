@@ -170,6 +170,7 @@ describe('production Runtime composition', () => {
       'runtime/preparePrompt',
       'runtime/reconcilePrompt',
       'runtime/replayAcpChannel',
+      'runtime/respondToQuestion',
       'runtime/resumeAcpChannel',
       'runtime/startPrompt'
     ])

@@ -1113,6 +1113,42 @@ describe('KnowledgeService', () => {
     ).toBe(true)
   })
 
+  it('retains ranked evidence from each external library within the shared budget', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-knowledge-service-'))
+    temporaryDirectories.push(directory)
+    const service = new KnowledgeService({
+      databasePath: join(directory, 'knowledge.sqlite'),
+      managedRoot: join(directory, 'managed'),
+      credentialCipher: {
+        isAvailable: () => true,
+        encrypt: value => Buffer.from(value),
+        decrypt: value => value.toString()
+      },
+      externalFetcher: async () => Response.json({ records: Array.from({ length: 6 }, (_, index) => ({
+        segment: { id: `chunk-${index}`, content: 'e'.repeat(8000), document: { id: 'document', name: 'Handbook' } }
+      })) })
+    })
+    services.push(service)
+    await service.initialize()
+    const instance = service.external.saveInstance({
+      name: 'Test', provider: 'dify', baseUrl: 'https://kb.example', enabled: true,
+      credential: { action: 'replace', value: 'test-key' }
+    })
+    const bindings = []
+    for (const remoteKnowledgeBaseId of ['first', 'second']) {
+      bindings.push(await service.external.saveBinding({
+        instanceId: instance.id, remoteKnowledgeBaseId, name: remoteKnowledgeBaseId,
+        remoteName: remoteKnowledgeBaseId, testQuery: 'policy',
+        commonConfig: { resultLimit: 6, requestTimeoutMs: 1000, maxSnippetCharacters: 8000 },
+        providerConfig: { provider: 'dify', useDatasetDefaults: true }
+      }))
+    }
+    const outcomes = await service.retrieveMany(bindings.map(binding => binding.knowledgeBaseId), 'policy')
+    expect(outcomes.map(({ response }) => response.results.map(result => result.rank))).toEqual([[1, 2, 3], [1, 2, 3]])
+    expect(outcomes.map(({ response }) => response.context.characterCount)).toEqual([24000, 24000])
+    expect(outcomes.every(({ response }) => response.context.truncated)).toBe(true)
+  })
+
   it('reranks multiple libraries concurrently while preserving input order', async () => {
     let releaseReranks: (() => void) | undefined
     let startedReranks = 0

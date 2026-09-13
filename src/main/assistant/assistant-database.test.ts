@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -132,6 +133,148 @@ function claimManualScheduleQueueItem(
 }
 
 describe('AssistantDatabase', () => {
+  it.each([0, 1, 100, 500, 999])('keeps listTasks(%i) recent history plus old visible live tasks', async (limit) => {
+    const database = await createDatabase()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    try {
+      const projectId = database.listProjects()[0]!.id
+      const otherProject = database.createProject({
+        name: 'Other project', description: '', rootPath: 'C:\\Other',
+        defaultWorkMode: 'ask'
+      })
+      const active = ['running', 'waiting_approval'].map((status, index) =>
+        database.createTask({
+          id: randomUUID(), projectId: index ? otherProject.id : projectId,
+          title: status, instructions: '', workMode: 'execute',
+          status: status as 'running' | 'waiting_approval'
+        })
+      )
+      database.createTask({
+        id: randomUUID(), title: 'Hidden live task', instructions: '',
+        workMode: 'execute', visible: false
+      })
+      const history = Array.from({ length: 501 }, (_, index) => {
+        vi.setSystemTime(new Date(Date.UTC(2026, 1, 1) + index * 1000))
+        return database.createTask({
+          id: randomUUID(), projectId, title: `History ${index}`,
+          instructions: '', workMode: 'ask',
+          status: index === 500 ? 'running' : 'completed'
+        })
+      }).reverse()
+      const expected = [
+        ...history.slice(0, Math.max(1, Math.min(500, limit))),
+        ...active
+      ]
+      const tasks = database.listTasks(limit)
+      expect(tasks).toHaveLength(expected.length)
+      expect(new Set(tasks.map((task) => task.id))).toEqual(
+        new Set(expected.map((task) => task.id))
+      )
+      expect(tasks.slice(0, expected.length - active.length)).toEqual(
+        history.slice(0, Math.max(1, Math.min(500, limit)))
+      )
+      expect(tasks.find((task) => task.id === active[1]!.id)?.projectId)
+        .toBe(otherProject.id)
+      if (limit === 100) {
+        expect(database.listTasks()).toEqual(tasks)
+      }
+    } finally {
+      database.close()
+    }
+  })
+
+  it('includes old live schedule and streaming conversations beyond recent history without exposing hidden or archived entries', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-live-history-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    const raw = new DatabaseSync(databasePath)
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    try {
+      const projectId = database.listProjects()[0]!.id
+      const schedules = ['running', 'approval', 'pending', 'idle', 'hidden', 'archived']
+        .map((title) => database.createSchedule({
+          projectId, title, prompt: title, recurrence: 'daily',
+          nextRunAt: '2027-01-01T00:00:00Z'
+        }))
+      const [running, approval, pending, , hidden, archived] = schedules
+      for (const schedule of [running!, approval!, hidden!, archived!]) {
+        claimManualScheduleQueueItem(database, schedule.id)
+      }
+      database.updateTaskStatus(approval!.taskId, 'waiting_approval')
+      database.queueScheduleNow(pending!.id)
+      database.updateTaskStatus(pending!.taskId, 'running')
+      raw.prepare('UPDATE tasks SET visible = 0 WHERE id = ?').run(hidden!.taskId)
+      raw.prepare("UPDATE conversations SET status = 'archived' WHERE id = ?")
+        .run(archived!.conversationId)
+      // Queued schedule tasks normally read as idle, unless a run overrides them.
+      raw.prepare("UPDATE tasks SET status = 'queued' WHERE id = ?").run(running!.taskId)
+      expect(database.listTasks().find((task) => task.id === pending!.taskId)?.status)
+        .toBe('queued')
+      const liveConversations = ['running', 'waiting_approval'].map((status) => {
+        const id = randomUUID()
+        database.saveLocalConversations([{
+          header: { id, projectId, title: status, updatedAt: 1 }, messages: []
+        }])
+        database.createTask({
+          id: randomUUID(), projectId, conversationId: id,
+          title: status, instructions: '', workMode: 'execute',
+          status: status as 'running' | 'waiting_approval'
+        })
+        return id
+      })
+      const streamingId = randomUUID()
+      const streamingMessage = {
+        id: randomUUID(), role: 'assistant' as const, content: 'Still working',
+        state: 'streaming' as const, createdAt: 1
+      }
+      database.saveLocalConversations([{
+        header: { id: streamingId, projectId, title: 'Streaming', updatedAt: 1 },
+        messages: [streamingMessage]
+      }])
+      const recent = Array.from({ length: 101 }, (_, index) => ({
+        header: {
+          id: randomUUID(), projectId, title: `Recent ${index}`,
+          updatedAt: Date.UTC(2026, 1, 1) + index * 1000
+        },
+        messages: []
+      }))
+      database.saveLocalConversations(recent)
+      vi.setSystemTime(new Date('2026-02-01T00:00:00Z'))
+      const historyTask = database.createTask({
+        id: randomUUID(), projectId, title: 'Recent completed task',
+        instructions: '', workMode: 'ask', status: 'completed'
+      })
+      const tasks = database.listTasks(1)
+      expect(tasks).toHaveLength(6)
+      expect(tasks).toEqual(expect.arrayContaining([
+        historyTask,
+        expect.objectContaining({ id: running!.taskId, status: 'running' }),
+        expect.objectContaining({ id: approval!.taskId, status: 'waiting_approval' }),
+        expect.objectContaining({ id: archived!.taskId, status: 'running' })
+      ]))
+      const conversations = database.listConversations()
+      expect(conversations).toHaveLength(105)
+      expect(new Set(conversations.map((conversation) => conversation.id))).toEqual(
+        new Set([
+          ...recent.slice(1).map((conversation) => conversation.header.id),
+          running!.conversationId, approval!.conversationId, streamingId,
+          ...liveConversations
+        ])
+      )
+      expect(conversations.find((conversation) => conversation.id === streamingId))
+        .toMatchObject({ projectId, messages: [streamingMessage] })
+      expect(conversations.slice(0, 100).map((conversation) => conversation.id))
+        .toEqual(recent.slice(1).reverse().map((conversation) => conversation.header.id))
+    } finally {
+      raw.close()
+      database.close()
+    }
+  })
+
   it('keeps timed messages independent of creation-time execution settings', async () => {
     const database = await createDatabase()
     const project = database.createProject({
@@ -3460,7 +3603,13 @@ describe('AssistantDatabase', () => {
           snippet: '可以继续恢复。',
           rank: 1,
           retrievalChannels: ['fts']
-        }
+        },
+        ...['first', 'second', 'first'].map(remoteChunkId => ({
+          libraryId: '00000000-0000-4000-8000-000000000708',
+          libraryName: 'External', documentName: 'Remote', sourceName: 'Remote',
+          snippet: 'same excerpt', rank: 2,
+          external: { kind: 'external' as const, provider: 'dify' as const, instanceId: 'instance', remoteKnowledgeBaseId: 'dataset', remoteChunkId }
+        }))
       ]
     })
     append('8', 0, {
@@ -3489,7 +3638,9 @@ describe('AssistantDatabase', () => {
         resultCount: 1
       },
       sourceReferences: [
-        expect.objectContaining({ documentName: '恢复说明.md' })
+        expect.objectContaining({ documentName: '恢复说明.md' }),
+        expect.objectContaining({ external: expect.objectContaining({ remoteChunkId: 'first' }) }),
+        expect.objectContaining({ external: expect.objectContaining({ remoteChunkId: 'second' }) })
       ],
       subagents: [
         expect.objectContaining({

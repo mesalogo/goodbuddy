@@ -453,6 +453,10 @@ class ManagedRemoteAcpRuntime implements AgentRuntime {
     return this.remote.getStatus()
   }
 
+  respondToQuestion(questionId: string, answers: string[][] = []): Promise<void> {
+    return this.remote.respondToQuestion(questionId, answers)
+  }
+
   run(
     request: AgentExecutionRequest,
     signal: AbortSignal,

@@ -52,6 +52,7 @@ function runRipgrep(
         if (
           processError &&
           processError.code !== 1 &&
+          processError.code !== 2 &&
           processError.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
         ) {
           reject(
@@ -225,7 +226,17 @@ export async function searchWorkspaceWithRipgrep(
     identity.canonicalDisplayPath,
     signal
   )
-  return input.filesOnly
+  const incomplete = result.code === 2
+  if (
+    incomplete &&
+    (!result.stdout.trim() ||
+      /regex parse error|error parsing (?:regex|glob)|PCRE2: error compiling/iu.test(result.stderr))
+  ) {
+    throw new Error(
+      `ripgrep failed (exit code 2); search coverage is incomplete.\n${result.stderr.trim().slice(0, 2_000) || 'No search output was available.'}`
+    )
+  }
+  const formatted = input.filesOnly
     ? formatFileResults(
         result.stdout,
         input.maxResults,
@@ -236,4 +247,13 @@ export async function searchWorkspaceWithRipgrep(
         input.maxResults,
         result.truncated
       )
+  if (incomplete) {
+    const warning = '[warning: incomplete search coverage (ripgrep exit code 2). Some files or directories could not be searched; missing results do not establish absence.]'
+    const details = result.stderr.trim().slice(0, 2_000)
+    const partial = formatted
+      .replace(/^\[no matches found\]$/u, '[no matches found in searched files]')
+      .replace(/^\[no files found\]$/u, '[no files found in searched locations]')
+    return `${warning}\n${details ? `${details}\n` : ''}${partial}`
+  }
+  return formatted
 }

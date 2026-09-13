@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { knowledgeReferenceKey, toKnowledgeReference } from '../../shared/knowledge-reference'
 import {
   createServer,
   type IncomingMessage,
@@ -24,7 +25,6 @@ import type {
   BrowserTabSummary,
   KnowledgeSearchReference
 } from '../../shared/contracts'
-import { stripKnowledgeHighlightTags } from '../../shared/knowledge-text'
 import {
   knowledgeToolNames,
   knowledgeScopedDataToolCatalog,
@@ -273,13 +273,7 @@ function textContent(value: string): MagicNoteRichContent {
 }
 
 function referenceKey(reference: KnowledgeSearchReference): string {
-  return [
-    reference.libraryId,
-    reference.documentId,
-    reference.chunkId ?? '',
-    reference.locator ?? '',
-    reference.snippet
-  ].join('\0')
+  return knowledgeReferenceKey(reference)
 }
 
 function ensureBoundedCustomMcpResult(result: unknown): CallToolResult {
@@ -681,20 +675,22 @@ export class KnowledgeMcpGateway {
     const { query, limit } = knowledgeSearchTool.inputSchema.parse(
       input
     )
-    const effectiveSignal = signal
-      ? AbortSignal.any([signal, capability.signal])
-      : capability.signal
+    const effectiveSignal = AbortSignal.any([capability.signal, capability.brokerController.signal, ...(signal ? [signal] : [])])
     effectiveSignal.throwIfAborted()
     const libraries = this.knowledgeService.database.listKnowledgeBases(500)
     const libraryNames = new Map(
       libraries.map((library) => [library.id, library.name])
     )
-    const results = await this.knowledgeService.searchHybridMany(
+    const outcomes = await this.knowledgeService.retrieveMany(
       capability.libraryIds,
       query,
-      limit,
       effectiveSignal
     )
+    effectiveSignal.throwIfAborted()
+    const warnings = outcomes.flatMap(item => item.response.diagnostics.failure ? [item.response.diagnostics.failure] : [])
+    if (outcomes.length && warnings.length === outcomes.length) throw new Error(warnings.join('; '))
+    const results = outcomes.flatMap(item => item.response.results.map(result => ({ knowledgeBaseId: item.knowledgeBaseId, result })))
+    if (!results.length && warnings.length) throw new Error(warnings.join('; '))
     const references: KnowledgeSearchReference[] = []
     const seen = new Set<string>()
     for (const { knowledgeBaseId, result } of results.sort(
@@ -704,22 +700,8 @@ export class KnowledgeMcpGateway {
         break
       }
       const reference: KnowledgeSearchReference = {
-        libraryId: knowledgeBaseId,
-        libraryName: libraryNames.get(knowledgeBaseId) ?? '知识库',
-        documentId: result.document.id,
-        chunkId: result.chunk.id,
-        documentName: result.document.title.slice(0, 500),
-        sourceName: result.source.displayName.slice(0, 500),
-        locator: result.chunk.location?.slice(0, 1_000),
-        snippet: stripKnowledgeHighlightTags(result.snippet).slice(0, 12_000),
-        rank: result.rank,
-        score: result.retrieval.score,
-        lexicalRank: result.retrieval.lexicalRank,
-        vectorRank: result.retrieval.vectorRank,
-        graphRank: result.retrieval.graphRank,
-        similarity: result.retrieval.similarity,
-        retrievalChannels: result.retrieval.channels,
-        evidenceIds: result.retrieval.evidenceIds?.slice(0, 100)
+        ...toKnowledgeReference(result, libraryNames.get(knowledgeBaseId) ?? '知识库'),
+        ...(warnings.length ? { warnings } : {})
       }
       const key = referenceKey(reference)
       if (seen.has(key)) {
@@ -1473,13 +1455,14 @@ export class KnowledgeMcpGateway {
   private async callScopedTool(
     token: string,
     name: ScopedDataToolName,
-    input: unknown
+    input: unknown,
+    signal?: AbortSignal
   ): Promise<Record<string, unknown>> {
     switch (name) {
       case 'knowledge_list':
         return { libraries: this.listLibraries(token, input) }
       case 'knowledge_search':
-        return { references: await this.search(token, input) }
+        return { references: await this.search(token, input, signal) }
       case 'note_list':
         return { notes: this.listMagicNotes(token, input) }
       case 'note_get':
@@ -1641,7 +1624,8 @@ export class KnowledgeMcpGateway {
                     await this.callScopedTool(
                       token,
                       name as ScopedDataToolName,
-                      parsedInput
+                      parsedInput,
+                      extra.signal
                     )
                   )
                 }

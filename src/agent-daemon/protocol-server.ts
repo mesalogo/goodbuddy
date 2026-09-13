@@ -1137,7 +1137,7 @@ function typedErrorCode(error: unknown): string | undefined {
     typeof error !== 'object' ||
     !('code' in error) ||
     typeof error.code !== 'string' ||
-    !/^[a-z][a-z0-9-]{0,63}$/u.test(error.code)
+    !/^(?:[a-z][a-z0-9-]{0,63}|E[A-Z0-9]{1,63})$/u.test(error.code)
   ) {
     return undefined
   }

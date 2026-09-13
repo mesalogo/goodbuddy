@@ -18,6 +18,7 @@ import type {
   remoteSemanticTranscriptPageResultSchema,
 } from '../../shared/remote-agent-contracts'
 import type { z } from 'zod'
+import type { RemoteQuestionResponse } from '../../shared/remote-question-contracts'
 import type {
   ModelBridgePolicy
 } from '../../shared/model-bridge-contracts'
@@ -91,6 +92,7 @@ export interface RemoteModelBridgeSession {
  * The runtime intentionally receives no SSH client, socket or command API.
  */
 export interface RemoteRuntimeChannel {
+  respondToQuestion?(request: RemoteQuestionResponse): Promise<void>
   readonly input: ReadableStream<Uint8Array>
   readonly output: WritableStream<Uint8Array>
   readonly generation: number

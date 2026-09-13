@@ -69,7 +69,7 @@ export type Message = {
     argumentSummary?: string
     allowPermanent?: boolean
   }
-  question?: Extract<AgentEvent, { type: 'question' }>
+  pendingQuestions?: Extract<AgentEvent, { type: 'question' }>[]
   answeredQuestions?: ConversationMessage['answeredQuestions']
   sources?: string[]
   sourceReferences?: KnowledgeSearchReference[]
@@ -297,10 +297,12 @@ function ToolExecutionList({
 const SubagentStatusCard = memo(function SubagentStatusCard({
   renderHtml,
   subagent,
+  questionFormId,
   onCopy
 }: {
   renderHtml: boolean
   subagent: SubagentActivity
+  questionFormId?: string
   onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
@@ -371,11 +373,11 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
           </small>
         </span>
         <span
-          aria-label={t(`chat.subagents.states.${subagent.state}`)}
+          aria-label={questionFormId ? t('chat.status.waitingForAnswer') : t(`chat.subagents.states.${subagent.state}`)}
           className={`subagent-status-card__status subagent-status-card__status--${subagent.state}`}
         >
           <StateIcon aria-hidden="true" size={14} />
-          {t(`chat.subagents.states.${subagent.state}`)}
+          {questionFormId ? t('chat.status.waitingForAnswer') : t(`chat.subagents.states.${subagent.state}`)}
         </span>
         <ChevronRight
           aria-hidden="true"
@@ -385,6 +387,15 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
       </summary>
       {expanded && (
         <div className="subagent-status-card__details">
+          {questionFormId && (
+            <button className="secondary-button" type="button" onClick={() => {
+              const form = document.getElementById(questionFormId)
+              form?.scrollIntoView({ block: 'center' })
+              form?.focus({ preventScroll: true })
+            }}>
+              {t('workspace:question.locate')}
+            </button>
+          )}
           {progress && progress.length > 0 && (
             <section aria-label={t('chat.subagents.progress')}>
               <strong>{t('chat.subagents.progress')}</strong>
@@ -446,10 +457,14 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
 function SubagentStatusList({
   renderHtml,
   subagents,
+  pendingQuestions,
+  questionFormId,
   onCopy
 }: {
   renderHtml: boolean
   subagents: SubagentActivity[]
+  pendingQuestions?: Message['pendingQuestions']
+  questionFormId?: string
   onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
@@ -464,6 +479,7 @@ function SubagentStatusList({
           key={subagent.childTaskId}
           renderHtml={renderHtml}
           subagent={subagent}
+          questionFormId={pendingQuestions?.some((question) => question.childTaskId === subagent.childTaskId) ? questionFormId : undefined}
           onCopy={onCopy}
         />
       ))}
@@ -573,6 +589,9 @@ function ChatMessageRowView({
           ? t('chat.contextCompression.agentFailed')
           : t('chat.contextCompression.failed')
 
+  const question = message.pendingQuestions?.[0]
+  const questionTask = question?.childTaskId ? subagentsById.get(question.childTaskId) : undefined
+  const questionFormId = `agent-question-${message.id}`
   const activeTool = message.tools?.find((tool) =>
     tool.state === 'pending' || tool.state === 'running')
   const activeSubagent = message.subagents?.some((subagent) =>
@@ -580,7 +599,7 @@ function ChatMessageRowView({
   const activeCompression = compressionMarkers.find((marker) =>
     marker.state === 'compressing')
   const statusText = message.role === 'assistant' && message.state === 'streaming'
-    ? message.question
+    ? question
       ? t('chat.status.waitingForAnswer')
       : message.approval
         ? t('chat.status.waitingForApproval')
@@ -713,6 +732,8 @@ function ChatMessageRowView({
                 <ToolExecutionList key={item.id} tools={item.tools} onCopy={onCopyMessage} />
               ) : item.kind === 'subagents' ? (
                 <SubagentStatusList
+                  pendingQuestions={message.pendingQuestions}
+                  questionFormId={questionFormId}
                   onCopy={onCopyMessage}
                   key={item.id}
                   renderHtml={renderAssistantHtml}
@@ -771,6 +792,8 @@ function ChatMessageRowView({
         )}
         {unorderedSubagents && unorderedSubagents.length > 0 && (
           <SubagentStatusList
+            pendingQuestions={message.pendingQuestions}
+            questionFormId={questionFormId}
             onCopy={onCopyMessage}
             renderHtml={renderAssistantHtml}
             subagents={unorderedSubagents}
@@ -923,6 +946,7 @@ function ChatMessageRowView({
                         <small>{reference.locator}</small>
                       )}
                       <p>{reference.snippet}</p>
+                      {reference.external && <small>{reference.libraryName} · {reference.external.provider} · {reference.sourceName}</small>}
                       {reference.retrievalChannels && (
                         <small>
                           {t('chat.citations.retrieval')}
@@ -956,16 +980,16 @@ function ChatMessageRowView({
                         >
                           {t('chat.citations.viewContext')}
                         </button>
-                        <button
+                        {!reference.external && <button
                           className="secondary-button"
-                          disabled={!reference.chunkId}
+                          disabled={!reference.chunkId || !reference.documentId}
                           onClick={() =>
                             void onOpenCitationSource(reference)
                           }
                           type="button"
                         >
                           {t('chat.citations.openSource')}
-                        </button>
+                        </button>}
                       </div>
                     </li>
                   )
@@ -1061,25 +1085,29 @@ function ChatMessageRowView({
             )}
           </div>
         )}
-        {message.question && (
+        {question && (
           <AgentQuestionCard
-            key={message.question.questionId}
+            id={questionFormId}
+            pendingCount={message.pendingQuestions?.length}
+            taskTitle={questionTask?.reason ??
+              (questionTask && 'expertName' in questionTask ? questionTask.expertName : undefined) ?? message.task?.title}
+            key={question.questionId}
             onReject={() =>
               onRespondQuestion(
                 conversationId,
                 message.id,
-                message.question!.questionId
+                question.questionId
               )
             }
             onSubmit={(answers) =>
               onRespondQuestion(
                 conversationId,
                 message.id,
-                message.question!.questionId,
+                question.questionId,
                 answers
               )
             }
-            value={message.question}
+            value={question}
           />
         )}
         {message.answeredQuestions?.map((review) => (

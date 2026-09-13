@@ -854,6 +854,7 @@ if (hasSingleInstanceLock) {
           runtimeExtensionStore.markStartupFailed(extensionIds)
       })
     const startupKnowledgeService = new KnowledgeService({
+      credentialCipher: secureCipher,
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
       extractStructured: createModelGraphExtractor(settingsStore),

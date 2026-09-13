@@ -1,5 +1,62 @@
 # 工作栏实现与验证进度
 
+## 2026-09-13 托管 SSH 原生问答
+
+- 当前源码支持前台托管 SSH OpenCode 的父、子孙会话原生问题、回答和拒答，复用已有
+  Renderer 队列与 Task 归属。问题来源为原生 `question.asked`；模型正文和普通工具活动
+  不生成问答表单。协议、身份与生命周期规则见
+  [远程主机技术设计](../remote-host/technical-design.md#acp-与断线)。
+- 新增 `remote-question-binary.test.ts`，使用真实 OpenCode `1.18.29` ACP 进程、生产插件、
+  Agent Prompt owner 和 loopback 模型夹具，覆盖父问题、Task 子问题、拒答、取消、
+  跨 binding 回答拒绝、迟到回答拒绝，以及临时回复能力不进入语义记录。
+  插件测试另覆盖孙会话归属、并发重复事件、HTTP 路径认证、原生待答列表校验和端口关闭；
+  Runtime 测试覆盖已 ACK 记录后的待答补发、回复失败重试与已回答历史去重。
+- 共享 Linux x64 Host 使用既有加密凭据和固定 Host Key，经真实 SSH attach 启动当前源码
+  的隔离 Agent。生产 `createManagedRemoteAcpRuntime` 入口完成 Ask、Execute 并行父子
+  问答、拒答和待答期间取消；两个并行问题在首次回答前均到达 Desktop Runtime，子问题
+  带 Task 归属，回答后原生 Task 和父轮次正常完成。拒答结束原生轮次，取消后迟到回答
+  明确失败。最终一轮 7 次确定性模型夹具请求，外部模型调用 0 次；测试 daemon 停止，
+  测试目录与上传文件已清理，未修改 Host 原有 Runtime registry。
+- 最终定向回归：11 份测试文件，219 项通过、5 项平台跳过，包含 Agent、模型桥、ACP
+  Runtime、认证控制通道及托管入口测试。`npm run typecheck`、`npm run lint` 通过。
+  本轮全量 `npm test -- --reporter=json --outputFile=<临时报告>` 为 4,081 项通过、
+  0 项失败、66 项跳过；之后的插件身份与并发去重补充由最终定向回归和 Host 复测覆盖。
+- 当前验证未操作 Electron 窗口、重装共享 Agent 或模拟整机重启；问答队列的界面行为由
+  既有 App/ChatTimeline 测试覆盖。同一存活 Prompt 的待答补发由 Runtime 回归验证，
+  不把它描述成 Agent 进程重启后的问题恢复。旧 Agent 和任意第三方 ACP 服务的范围见
+  [Runtime 交互边界](./runtime-interactions.md)。
+
+## 2026-09-13 并行提问顺序回答
+
+- 修复同一前台请求的后续提问覆盖未回答问题：Renderer 按 ID 保存待答队列，逐次显示、
+  回答和跳过，保留失败重试输入；运行中快照刷新保留队列，终态清理全部待答项。
+  交互和归属限制见 [Runtime 交互边界](./runtime-interactions.md#运行与失败)。
+- 本机 SDK 使用已收到的 Task 子会话元数据传递可选 `childTaskId`；Task 卡片显示待答状态，
+  展开后可定位并聚焦队首表单。没有已知 Task 关联的问题仍能回答。
+- 六份相关测试文件共 346 项通过：`App.test.tsx`、`ChatTimeline.test.tsx`、
+  `conversation-activity.test.ts`、`opencode-runtime.test.ts`、
+  `opencode-runtime-permissions.test.ts`、`opencode-runtime-lifecycle.test.ts`。
+  覆盖并发到达、重复 ID、草稿保留、提交失败、队列推进、快照刷新及终态与回复竞态。
+- 真实本机 OpenCode 二进制配合 loopback 模型服务验证两次原生提问均在首次回答前到达，
+  随后分别回传并完成请求；同时保留 Task 文件读取和 Ask 工具限制验证。该用例每轮
+  6 次 loopback 模型请求，外部模型调用 0 次。完整桌面点击路径由 App 组件测试覆盖，
+  本轮未手动操作 Electron 窗口。
+- 首次 `npm test` 达到工具 200 秒上限；后台重跑 `npm test -- --reporter=verbose` 完成，
+  348 份测试文件通过、9 份跳过，4,069 项通过、66 项跳过，耗时 572.20 秒。
+  随后补充已回答 ID 的去重必须先于任务状态更新，最终 18 项问答及活动相关回归通过。
+- 独立评审补充同一 React 批次首次两次收到相同 ID 的回归：修复前显示两个待答项。
+  在消息函数式更新器内复核待答和已回答 ID，重复事件直接返回原消息，保留状态；外层
+  去重仍阻止重复事件改写任务状态。修复后 19 项定向回归、typecheck 和完整 lint 通过。
+- 最终 App 全文件复跑为 217 项通过、1 项失败；失败项为并行开发中的外部知识绑定测试
+  `adds a new external binding to the current selection without re-enabling an excluded library`，
+  “添加知识库”按钮未启用，定向复跑仍失败。本次未修改该测试或知识绑定逻辑。
+  `npm run typecheck` 与差异空白检查通过；早期完整 lint 通过，最终完整 lint 扫到并行
+  工作新增的 `.kb-app-live` 产物而失败。保持产物原样，使用
+  `npm run lint -- --ignore-pattern ".kb-app-live/**" --ignore-pattern ".kb-app-live*.cjs" --ignore-pattern ".kb-app-live*.ts"`
+  复跑通过。
+- 远程 `AcpRemoteRuntime` 仅接入权限请求，尚无业务问答桥；本次未修改 Agent、ACP
+  传输、共享子任务进度适配器或 SSE 订阅，不将本机问答验证算作远程覆盖。
+
 ## 2026-09-13 浏览器租用标签页关闭与显式恢复
 
 - 更新 `tests/browser-tabs-electron-e2e.ts`，移除两处租用期间拒绝关闭的旧断言。

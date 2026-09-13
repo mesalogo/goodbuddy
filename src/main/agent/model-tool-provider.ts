@@ -1731,25 +1731,74 @@ export class ModelToolProvider implements ModelToolProviderLike {
         throw error
       }
     }
-    if (name === 'workspace_rg') {
-      if (!this.programming.ripgrepExecutablePath) {
-        throw new Error('GoodBuddy 内置 ripgrep 不可用')
-      }
-      const input = ripgrepInputSchema.parse(argumentsValue)
-      return createTextToolResult(
-        await searchWorkspaceWithRipgrep(
-          this.programming.ripgrepExecutablePath,
-          input,
-          this.workspaceAccess,
-          signal
+    if (name === 'workspace_rg' || name === 'workspace_read_text') {
+      try {
+        if (name === 'workspace_rg') {
+          if (!this.programming.ripgrepExecutablePath) {
+            throw new Error('GoodBuddy 内置 ripgrep 不可用')
+          }
+          const input = ripgrepInputSchema.parse(argumentsValue)
+          return createTextToolResult(
+            await searchWorkspaceWithRipgrep(
+              this.programming.ripgrepExecutablePath,
+              input,
+              this.workspaceAccess,
+              signal
+            )
+          )
+        }
+        const input = readInputSchema.parse(argumentsValue)
+        return createTextToolResult(
+          await readWorkspaceLines(this.workspaceAccess, input, signal)
         )
-      )
-    }
-    if (name === 'workspace_read_text') {
-      const input = readInputSchema.parse(argumentsValue)
-      return createTextToolResult(
-        await readWorkspaceLines(this.workspaceAccess, input, signal)
-      )
+      } catch (error) {
+        signal.throwIfAborted()
+        if (!(error instanceof Error) || error.name === 'AbortError' ||
+          (error.cause instanceof Error && error.cause.name === 'AbortError')) {
+          throw error
+        }
+        const code = 'code' in error ? error.code : undefined
+        const data = 'data' in error ? error.data : undefined
+        const remoteCode = data && typeof data === 'object' && 'code' in data
+          ? data.code : undefined
+        const expectedOsCodes = ['ENOENT', 'ENOTDIR', 'EISDIR', 'EACCES', 'EPERM', 'ELOOP', 'ENAMETOOLONG']
+        const expectedWorkspaceError = [
+          '路径必须是工作区内的相对路径',
+          '路径必须是工作区内的相对路径，不能超出工作区',
+          '文件路径不能超出项目工作区',
+          '文件路径不能通过符号链接超出项目工作区',
+          '目标不是普通文件',
+          '目标不是目录',
+          '工作区读取目标不是有效 UTF-8 文本',
+          '工作区读取范围无效'
+        ].includes(error.message)
+        const rgExecutionError = name === 'workspace_rg' && (
+          (error.cause instanceof Error && 'code' in error.cause && error.cause.code === 2) ||
+          error.message.startsWith('ripgrep failed (exit code 2); search coverage is incomplete.\n')
+        )
+        if (!(error instanceof z.ZodError) &&
+          !(typeof code === 'string' && expectedOsCodes.includes(code)) &&
+          !(typeof remoteCode === 'string' && [
+            ...expectedOsCodes, 'invalid-path', 'invalid-utf8',
+            'not-directory', 'special-file', 'symlink-rejected'
+          ].includes(remoteCode)) &&
+          !expectedWorkspaceError && !rgExecutionError) {
+          throw error
+        }
+        let nextAction = name === 'workspace_rg'
+          ? 'Use workspace-relative paths; adjust the search path/globs or correct the pattern (use fixedStrings for literal text).'
+          : 'Use a workspace-relative path to an existing readable UTF-8 file; correct the path or offset/limit, and discover the filename if needed.'
+        nextAction += ' Do not retry identical arguments.'
+        if ((await this.getProcessTool(context, signal)).length > 0) {
+          nextAction += ' For files outside the workspace, use process_execute in local Execute mode.'
+        }
+        signal.throwIfAborted()
+        throw new RecoverableModelToolError(
+          `${name}: ${utf8Prefix(error.message, 2_000)}`,
+          nextAction,
+          { cause: error }
+        )
+      }
     }
     if (name === 'workspace_apply_patch') {
       const input = applyPatchInputSchema.parse(argumentsValue)

@@ -263,8 +263,24 @@ Execute 直接启动已签名 Runtime：
 - 本地 SDK 通过 Task `metadata.sessionId` 关联子会话，复用稳定消息块 ID 保存过程。
   固定 OpenCode 1.18.29 的 ACP 不转发子会话，因此 Agent 的模型桥 helper 在受管临时目录
   写入事件插件，并通过既有 ACP `session/update` 的 `_meta.goodbuddySubagentEvent`
-  转发到所属 Task；不新增端口，不修改签名 Runtime 包。插件文件随 helper 退出清理，
+  转发到所属 Task；不修改签名 Runtime 包。插件文件随 helper 退出清理，
   事件继续经过既有 Agent transcript、ACK 和 Desktop 消息持久化路径。
+- 托管 helper 显式设置 `OPENCODE_ENABLE_QUESTION_TOOL=true`，启用 ACP 默认隐藏的原生
+  问题工具。插件只处理 `question.asked`，通过 Session `parentID` 逐级确认根会话，并核对
+  `/question` 当前待答列表；不从工具进度或正文构造问题。父、子孙会话问题使用
+  `_meta.goodbuddyQuestion` 送到所属 ACP 会话，有原生 Task 关联时附带对应 call ID。
+- Agent 按当前 ACP 会话和 Prompt 保存待答映射，Desktop 公开 ID 包含 binding、operation
+  和原生问题 ID。回答与跳过经既有认证控制通道的 `runtime/respondToQuestion` 发送；后端
+  检查 controller、generation、connection、binding 和活动 operation，再调用插件仅绑定
+  `127.0.0.1` 的临时 HTTP 入口。该入口使用进程级随机路径，能力 URL 不写入语义记录。
+  插件复用 OpenCode 注入客户端的进程内 HTTP 适配器调用 `/question/{id}/reply` 或
+  `/reject`；空答案数组表示拒答，非空答案数量须与问题数量一致。问答不经过 ACP 权限审批。
+- 语义记录分页另带 Agent 当前 `pendingQuestions`，用于附加同一存活 Prompt 后恢复待答
+  问题；历史问答元数据不重新生成表单。原生已回答、拒答、会话空闲、取消、Prompt 终结
+  和进程退出清除相应映射，迟到的回答报错。回复失败保留桌面输入供重试，答案不会跨连接
+  自动重放。插件随 OpenCode 实例释放临时端口，helper 退出时删除插件文件。
+  以上只适用于当前 Agent 管理的 SSH OpenCode 生产路径，不声明任意 ACP 服务的问答兼容性。
+  真实二进制、SSH 传输和取消验证见[工作栏进度](../assistant-workbar/progress.md#2026-09-13-托管-ssh-原生问答)。
 - ACP 工具结果同时支持文本 `content` 和 `rawOutput.output`，移除 OpenCode 的
   `<task><task_result>` 外层包装后渲染正文。恢复已有子代理时使用 ACP 所带的所属
   `toolCallId` 继续路由，不等待新的父 Task metadata，也不重放模型请求。
@@ -321,6 +337,11 @@ Execute 直接启动已签名 Runtime：
   权威。启动后 Renderer 先订阅恢复进度，再触发每项目恢复。项目选择器依次显示网络、
   Agent、Runtime、cursor、完成或失败/重试；只阻塞受影响项目的发送和队列，已有历史与
   其他项目保持可用。
+- 完成提示是项目选择器内恢复进度的收尾反馈，首次收到该项目该 `requestId` 的完成状态后
+  显示 3 秒，然后从收起按钮和展开菜单同时隐藏；不另发全局成功通知。计时由
+  `ProjectSwitcher` 持有，切换项目、开合菜单或重复状态快照不延长期限，也不重放已隐藏的
+  提示；新 `requestId` 的恢复可以再次展示。进行中状态和失败/就地重试持续保留。
+  隐藏仅作用于展示层，`App` 保留完成业务状态，继续用于发送、队列恢复和事件顺序判断。
 - 正常应用退出对已接受托管 SSH 请求执行 detach，不等待远端完成；本地请求和尚未接受的
   请求仍按原行为取消。用户显式“停止”始终发送稳定 operation cancellation，并等待 Agent
   语义终态。已进入 Agent-owned `run` 但 start/attach 响应仍不确定的请求继续保留为

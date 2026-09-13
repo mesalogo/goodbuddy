@@ -2281,6 +2281,53 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await runtime.dispose();
   });
 
+  it("keeps concurrent child questions independently replyable and attributes only explicit task sessions", async () => {
+    const question = (id: string, sessionID: string) => ({
+      type: "question.asked", properties: { id, sessionID,
+        questions: [{ header: "Scope", question: `Choose ${id}`, options: [] }] },
+    });
+    const setup = runClient([
+      { type: "message.part.updated", properties: { sessionID: "session-1", part: {
+        id: "task-part", callID: "task-call", type: "tool", tool: "task",
+        state: { status: "running", input: { subagent_type: "general", prompt: "Inspect", description: "Inspect task" },
+          metadata: { sessionId: "child-session" }, time: { start: 1 } },
+      } } },
+      question("first", "child-session"),
+      question("second", "other-child"),
+      question("first", "child-session"),
+      { type: "message.part.updated", properties: { sessionID: "session-1", part: {
+        id: "task-part", callID: "task-call", type: "tool", tool: "task",
+        state: { status: "completed", input: { subagent_type: "general", prompt: "Inspect" },
+          output: "Finished", time: { start: 1, end: 2 } },
+      } } },
+      { type: "session.idle", properties: { sessionID: "session-1" } },
+    ]);
+    vi.mocked(setup.client.session.get).mockResolvedValue({ data: { parentID: "session-1" } } as never);
+    const runtime = embeddedRuntime(setup.client);
+    const stream = runtime.run({ requestId: crypto.randomUUID(), conversationId: "parallel",
+      prompt: "test", workMode: "execute" }, new AbortController().signal);
+    await stream.next();
+    const task = (await stream.next()).value;
+    expect(task?.type).toBe("subagent");
+    const first = (await stream.next()).value;
+    const second = (await stream.next()).value;
+    if (task?.type !== "subagent" || first?.type !== "question" || second?.type !== "question") throw new Error("Missing questions");
+    expect(first.childTaskId).toBe(task.childTaskId);
+    expect(second.childTaskId).toBeUndefined();
+    expect(first.questionId).not.toBe(second.questionId);
+    setup.questionReply.mockRejectedValueOnce(new Error("Reply failed"));
+    await expect(runtime.respondToQuestion(first.questionId, [["Answer"]])).rejects.toThrow("Reply failed");
+    await runtime.respondToQuestion(first.questionId, [["Answer"]]);
+    await runtime.respondToQuestion(second.questionId);
+    expect(setup.questionReply).toHaveBeenLastCalledWith(expect.objectContaining({ requestID: "first", answers: [["Answer"]] }), expect.anything());
+    expect(setup.questionReject).toHaveBeenCalledWith(expect.objectContaining({ requestID: "second" }), expect.anything());
+    const remaining = [];
+    for await (const event of stream) remaining.push(event);
+    expect(remaining.some((event) => event.type === "question")).toBe(false);
+    await expect(runtime.respondToQuestion(first.questionId, [["Late"]])).rejects.toThrow();
+    await runtime.dispose();
+  });
+
   it("namespaces identical upstream question IDs across concurrent external conversations", async () => {
     const setup = runClient([]);
     (

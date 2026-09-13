@@ -94,6 +94,10 @@ import {
 } from './KnowledgeRetrievalWorkbench'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { KnowledgeEmbeddingIndexSection } from './KnowledgeEmbeddingIndexSection'
+import { ExternalBindingForm, ExternalInstanceManager, ExternalLibraryDetail, externalProviderNames, externalLibraryStatus } from './ExternalKnowledge'
+import type { ExternalKnowledgeInstanceSummary, ExternalKnowledgeProvider } from '../../shared/external-knowledge-contracts'
+import type { KnowledgeSnapshot } from '../../shared/contracts'
+import type { AppNotificationInput } from './notifications'
 
 type KnowledgeGraphChartModule = typeof import('./KnowledgeGraphChart')
 
@@ -226,6 +230,9 @@ export type KnowledgeRelationInput = {
 }
 
 export type KnowledgeWorkspaceProps = {
+  externalInstances?: ExternalKnowledgeInstanceSummary[]
+  onExternalChanged?: (snapshot?: KnowledgeSnapshot, createdId?: string) => void | Promise<void>
+  notify?: (input: AppNotificationInput) => void
   libraries: readonly KnowledgeLibrary[]
   selectedLibraryId?: string
   sources: readonly KnowledgeSource[]
@@ -455,8 +462,9 @@ function toWorkbenchResponse(
       rerank: response.diagnostics.rerank
     },
     results: response.results.map((result) => {
-      const context = contextByChunkId.get(result.chunkId)
+      const context = result.chunkId ? contextByChunkId.get(result.chunkId) : undefined
       return {
+        external: result.external,
         chunkId: result.chunkId,
         documentId: result.documentId,
         rank: result.rank,
@@ -4302,6 +4310,9 @@ function GraphView({
 }
 
 export function KnowledgeWorkspace({
+  externalInstances = [],
+  onExternalChanged = () => {},
+  notify = () => {},
   libraries,
   selectedLibraryId,
   sources,
@@ -4354,6 +4365,15 @@ export function KnowledgeWorkspace({
   const { i18n, t } = useTranslation('knowledge')
   const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
   const [creating, setCreating] = useState(false)
+  const [creationType, setCreationType] = useState<'local' | ExternalKnowledgeProvider>('local')
+  const [managingExternal, setManagingExternal] = useState(false)
+  const [librarySearch, setLibrarySearch] = useState('')
+  const [librarySource, setLibrarySource] = useState('all')
+  const filteredLibraries = libraries.filter(library => {
+    if (librarySource !== 'all' && (library.external?.provider ?? 'local') !== librarySource) return false
+    const instanceName = externalInstances.find(instance => instance.id === library.external?.instanceId)?.name ?? ''
+    return [library.name, library.external?.remoteName, library.external?.provider ?? t('external.local'), instanceName].join(' ').toLocaleLowerCase(locale).includes(librarySearch.trim().toLocaleLowerCase(locale))
+  })
   const [mobileListOpen, setMobileListOpen] = useState(false)
   const [tab, setTab] = useState<WorkspaceTab>('documents')
   const [graphTab, setGraphTab] =
@@ -4505,9 +4525,11 @@ export function KnowledgeWorkspace({
 
   return (
     <div className="knowledge-page">
+      {managingExternal && <ExternalInstanceManager instances={externalInstances} libraries={libraries} onClose={() => setManagingExternal(false)} onChanged={onExternalChanged} notify={notify} />}
       <PageHeader
         actions={
-          libraries.length > 0 ? (
+          <>
+          <button type="button" className="secondary-button" onClick={() => setManagingExternal(true)}><Database size={16} />{t('external.manage')}</button>
           <button
             className="primary-button"
             disabled={loading}
@@ -4520,7 +4542,7 @@ export function KnowledgeWorkspace({
             <Plus aria-hidden="true" size={16} />
             {t('actions.newLibrary')}
           </button>
-          ) : undefined
+          </>
         }
         description={t('page.description')}
         headingId="knowledge-workspace-title"
@@ -4542,22 +4564,27 @@ export function KnowledgeWorkspace({
               <strong>{t('workspace.libraryList')}</strong>
             </span>
             <small>
-              {formatNumber(libraries.length, locale)}
+              {formatNumber(filteredLibraries.length, locale)}
             </small>
+          </div>
+          <div className="external-knowledge__filters">
+            <label className="knowledge-field">{t('external.searchLibraries')}<input type="search" value={librarySearch} onChange={event => setLibrarySearch(event.currentTarget.value)} /></label>
+            <label className="knowledge-field">{t('external.sourceFilter')}<select value={librarySource} onChange={event => setLibrarySource(event.currentTarget.value)}><option value="all">{t('external.allSources')}</option><option value="local">{t('external.local')}</option>{Object.entries(externalProviderNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           </div>
           <nav
             aria-label={t('workspace.libraryList')}
             className="knowledge-workspace__library-nav"
           >
-            {libraries.length === 0 ? (
+            {(loading || loadError) && libraries.length === 0 ? null : filteredLibraries.length === 0 ? (
               <div className="knowledge-workspace__library-empty">
-                {t('workspace.libraryListEmpty')}
+                {t(libraries.length ? 'external.noResults' : 'workspace.libraryListEmpty')}
+                {(librarySearch || librarySource !== 'all') && <button type="button" className="secondary-button" onClick={() => { setLibrarySearch(''); setLibrarySource('all') }}>{t('external.clearFilters')}</button>}
               </div>
             ) : (
               <ul className="knowledge-workspace__library-list">
-                {libraries.map((library) => {
+                {filteredLibraries.map((library) => {
                   const selected = library.id === selectedLibrary?.id
-                  const libraryMeta = t('workspace.libraryMeta', {
+                  const libraryMeta = library.external ? `${externalProviderNames[library.external.provider]} · ${externalInstances.find(instance => instance.id === library.external?.instanceId)?.name ?? library.external.instanceId} · ${t(`external.states.${externalLibraryStatus(library, externalInstances)}`)}` : t('workspace.libraryMeta', {
                     ready: formatNumber(
                       library.indexedDocumentCount,
                       locale
@@ -4658,27 +4685,24 @@ export function KnowledgeWorkspace({
             title={t('errors.loadTitle')}
           />
         ) : creating ? (
+          <>
+          <SegmentedControl ariaLabel={t('external.type')} value={creationType} onChange={setCreationType} options={[{ value: 'local', label: t('external.local') }, ...Object.entries(externalProviderNames).map(([value, label]) => ({ value: value as ExternalKnowledgeProvider, label }))]} />
+          {creationType === 'local' ?
           <CreateLibraryWizard
             onCancel={() => setCreating(false)}
             onCreate={onCreateLibrary}
           />
+          : <ExternalBindingForm key={creationType} provider={creationType} instances={externalInstances} libraries={libraries} onCancel={() => setCreating(false)} onChanged={onExternalChanged} notify={notify} onManage={() => setManagingExternal(true)} />}
+          </>
         ) : !selectedLibrary ? (
           <EmptyState
-            action={
-              <button
-                className="primary-button"
-                onClick={() => setCreating(true)}
-                type="button"
-              >
-                <Plus aria-hidden="true" size={16} />
-                {t('actions.newLibrary')}
-              </button>
-            }
             description={t('empty.description')}
             icon={<BookOpen size={34} />}
             level="page"
             title={t('empty.title')}
           />
+        ) : selectedLibrary.external ? (
+          <ExternalLibraryDetail key={selectedLibrary.id} library={selectedLibrary} instances={externalInstances} libraries={libraries} onChanged={onExternalChanged} notify={notify} onManage={() => setManagingExternal(true)} onUseInChat={onUseInChat} />
         ) : (
           <>
             <header
@@ -4948,6 +4972,7 @@ export function KnowledgeWorkspace({
           libraryName={selectedLibrary.name}
           onClose={() => setRetrievalOpen(false)}
           onOpenSource={(result) => {
+            if (result.external || !result.documentId || !result.chunkId) return
             void Promise.resolve(
               onOpenReferenceSource({
                 knowledgeBaseId: selectedLibrary.id,
@@ -5007,6 +5032,7 @@ export function KnowledgeWorkspace({
             }
           }}
           onViewContext={(result) => {
+            if (result.external || !result.documentId || !result.chunkId) return
             const document = libraryDocuments.find(
               (item) => item.id === result.documentId
             )

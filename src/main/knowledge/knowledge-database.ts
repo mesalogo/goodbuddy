@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { ExternalKnowledgeStore } from './external/external-knowledge-store'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import {
   embeddingIndexJobSchema,
@@ -80,7 +81,7 @@ import type {
   VectorSearchOptions
 } from './types'
 
-const DATABASE_VERSION = 11
+const DATABASE_VERSION = 12
 const MAX_ID_LENGTH = 128
 const MAX_NAME_LENGTH = 512
 const MAX_LOCATION_LENGTH = 8192
@@ -739,6 +740,7 @@ function mapKnowledgeTask(row: Row): KnowledgeTaskItem {
 }
 
 export class KnowledgeDatabase {
+  externalStore!: ExternalKnowledgeStore
   private database?: DatabaseSync
   private readonly taskPrunedLibraries = new Set<string>()
   private readonly taskPrunePending = new Set<string>()
@@ -765,6 +767,7 @@ export class KnowledgeDatabase {
       this.assertFts5(database)
       this.migrate(database)
       this.database = database
+      this.externalStore = new ExternalKnowledgeStore(database)
       this.interruptActiveKnowledgeTasks()
       database
         .prepare('DELETE FROM embedding_rebuild_staging')
@@ -903,11 +906,30 @@ export class KnowledgeDatabase {
     return row ? mapKnowledgeBase(row) : undefined
   }
 
+  saveExternalBinding(
+    binding: Omit<import('../../shared/external-knowledge-contracts').ExternalKnowledgeBinding, 'knowledgeBaseId'>,
+    metadata: { name: string; description?: string; knowledgeBaseId?: string }
+  ): import('../../shared/external-knowledge-contracts').ExternalKnowledgeBinding {
+    let saved!: import('../../shared/external-knowledge-contracts').ExternalKnowledgeBinding
+    this.transaction(this.requireDatabase(), () => {
+      const library = metadata.knowledgeBaseId
+        ? this.updateKnowledgeBase(metadata.knowledgeBaseId, { name: metadata.name, description: metadata.description })
+        : this.createKnowledgeBase({ name: metadata.name, description: metadata.description, storageMode: 'reference', graphEnabled: false })
+      saved = { ...binding, knowledgeBaseId: library.id }
+      this.externalStore.saveBinding(saved)
+    })
+    return saved
+  }
+
   updateKnowledgeBase(
     id: string,
     input: UpdateKnowledgeBaseInput
   ): KnowledgeBase {
     const current = this.requiredKnowledgeBase(id)
+    if (this.externalStore.listBindings().some(item => item.knowledgeBaseId === id) &&
+      (input.graphEnabled !== undefined || input.graphStrategy !== undefined || input.storageMode !== undefined)) {
+      throw new Error('EXTERNAL_KB_READ_ONLY')
+    }
     const name =
       input.name === undefined
         ? current.name
@@ -4586,6 +4608,19 @@ export class KnowledgeDatabase {
             'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
           )
           .run(11, new Date().toISOString())
+      }
+      if (currentVersion < 12) {
+        database.exec(`CREATE TABLE IF NOT EXISTS external_knowledge_instances (
+          id TEXT PRIMARY KEY, value_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS external_knowledge_bindings (
+          knowledge_base_id TEXT PRIMARY KEY REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+          instance_id TEXT NOT NULL REFERENCES external_knowledge_instances(id) ON DELETE RESTRICT,
+          remote_id TEXT NOT NULL, value_json TEXT NOT NULL,
+          UNIQUE(instance_id, remote_id)
+        );`)
+        database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(12, new Date().toISOString())
       }
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}`)
       database.exec('COMMIT')

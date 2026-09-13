@@ -871,7 +871,8 @@ function credentialFreeHelperEnvironment(
     'XDG_STATE_HOME'
   ] as const
   const environment: NodeJS.ProcessEnv = {
-    OPENCODE_CONFIG_CONTENT: config
+    OPENCODE_CONFIG_CONTENT: config,
+    OPENCODE_ENABLE_QUESTION_TOOL: 'true'
   }
   for (const name of allowed) {
     const value = source[name]

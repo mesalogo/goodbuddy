@@ -10,12 +10,18 @@ type AgentQuestion = Extract<AgentEvent, { type: 'question' }>
 
 type AgentQuestionCardProps = {
   value: AgentQuestion
+  id?: string
+  taskTitle?: string
+  pendingCount?: number
   onReject: () => Promise<void>
   onSubmit: (answers: AgentQuestionAnswer[]) => Promise<void>
 }
 
 export function AgentQuestionCard({
   value,
+  id,
+  taskTitle,
+  pendingCount = 1,
   onReject,
   onSubmit
 }: AgentQuestionCardProps): React.JSX.Element {
@@ -60,6 +66,8 @@ export function AgentQuestionCard({
   return (
     <form
       className="agent-question-card"
+      id={id}
+      tabIndex={-1}
       onSubmit={(event) => {
         event.preventDefault()
         if (complete) {
@@ -71,6 +79,8 @@ export function AgentQuestionCard({
         <CircleHelp aria-hidden="true" size={18} />
         <strong>{t('question.title')}</strong>
       </header>
+      {taskTitle && <p>{t('question.task', { title: taskTitle })}</p>}
+      {pendingCount > 1 && <p>{t('question.pendingCount', { count: pendingCount })}</p>}
       {value.questions.map((question, questionIndex) => (
         <fieldset key={`${question.header}:${questionIndex}`}>
           <legend>

@@ -68,6 +68,7 @@ vi.mock('../capabilities/mcp-client-transport', () => ({
 
 import {
   ModelToolProvider,
+  RecoverableModelToolError,
   type ModelToolCallContext,
   type ModelSubagentRequestContext,
   type ModelToolResult
@@ -459,6 +460,158 @@ describe('ModelToolProvider', () => {
     await expect(
       readFile(join(workspace, 'docs', 'output.txt'), 'utf8')
     ).resolves.toBe('saved')
+  })
+
+  it('recovers an absolute local path and reads the corrected relative path', async () => {
+    const workspace = await createWorkspace()
+    await writeFile(join(workspace, 'note.txt'), 'corrected read')
+    const provider = new ModelToolProvider(workspace)
+    const signal = new AbortController().signal
+    try {
+      await expect(provider.callTool('workspace_read_text', {
+        path: join(workspace, 'note.txt')
+      }, signal, toolContext)).rejects.toMatchObject({
+        name: 'RecoverableModelToolError',
+        nextAction: expect.stringContaining('workspace-relative path')
+      })
+      await expect(provider.callTool('workspace_read_text', { path: 'note.txt' }, signal, toolContext))
+        .resolves.toMatchObject({ parts: [{ type: 'text', text: expect.stringContaining('corrected read') }] })
+      await expect(provider.callTool('workspace_read_text', { path: 'missing.txt' }, signal, toolContext))
+        .rejects.toMatchObject({
+          name: 'RecoverableModelToolError', cause: { code: 'ENOENT' },
+          nextAction: expect.stringContaining('Do not retry identical arguments')
+        })
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it('recovers invalid search inputs and actual rg regex failures', async () => {
+    const workspace = await createWorkspace()
+    await writeFile(join(workspace, 'note.txt'), '[literal')
+    const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, { ripgrepExecutablePath: rgPath })
+    const signal = new AbortController().signal
+    try {
+      for (const args of [
+        { pattern: 'x', path: workspace }, { pattern: 'x', path: 'missing' },
+        { pattern: '[' }, { pattern: 'x', glob: ['['] }, { maxResults: 0 }
+      ]) {
+        await expect(provider.callTool('workspace_rg', args, signal, toolContext)).rejects.toMatchObject({
+          name: 'RecoverableModelToolError',
+          nextAction: expect.stringContaining('adjust the search path/globs')
+        })
+      }
+      await expect(provider.callTool('workspace_rg', { pattern: '[', fixedStrings: true }, signal, toolContext))
+        .resolves.toMatchObject({ parts: [{ type: 'text', text: expect.stringContaining('note.txt:1:1:') }] })
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it('bounds expected remote read errors without recovering disconnects or programmer errors', async () => {
+    const access = new LocalWorkspaceAccess(await createWorkspace())
+    const readText = vi.spyOn(access, 'readText')
+    const provider = new ModelToolProvider(access)
+    const signal = new AbortController().signal
+    try {
+      for (const code of ['ENOENT', 'EACCES', 'invalid-path', 'invalid-utf8', 'special-file']) {
+        const failure = Object.assign(new Error('detail'.repeat(1_000)), { data: { code } })
+        readText.mockRejectedValueOnce(failure)
+        const result = await provider.callTool('workspace_read_text', { path: 'note.txt' }, signal, toolContext)
+          .catch((error: unknown) => error)
+        expect(result).toBeInstanceOf(RecoverableModelToolError)
+        const error = result as RecoverableModelToolError
+        expect(Buffer.byteLength(error.message)).toBeLessThanOrEqual(2_021)
+        expect(error.cause).toBe(failure)
+        expect(error.nextAction).not.toContain('process_execute')
+      }
+      for (const failure of [
+        new TypeError('programmer error'), new Error('remote disconnected'),
+        Object.assign(new Error('closed'), { code: 'closed' }),
+        Object.assign(new Error('stale workspace'), { data: { code: 'stale-workspace' } })
+      ]) {
+        readText.mockRejectedValueOnce(failure)
+        await expect(provider.callTool('workspace_read_text', { path: 'note.txt' }, signal, toolContext))
+          .rejects.toBe(failure)
+      }
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it('recovers the wrapped rg exit code 2 but leaves a missing executable fatal', async () => {
+    const workspace = await createWorkspace()
+    const access = new LocalWorkspaceAccess(workspace)
+    const failure = new Error('regex parse error', {
+      cause: Object.assign(new Error('process failed'), { code: 2 })
+    })
+    vi.spyOn(access, 'stat').mockRejectedValueOnce(failure)
+    const provider = new ModelToolProvider(access, [], undefined, undefined, false, {
+      ripgrepExecutablePath: join(workspace, 'missing-rg.exe')
+    })
+    try {
+      await expect(provider.callTool('workspace_rg', { path: 'note.txt', pattern: '[' }, new AbortController().signal, toolContext))
+        .rejects.toMatchObject({ name: 'RecoverableModelToolError', cause: failure })
+      const error = await provider.callTool('workspace_rg', { pattern: 'x' }, new AbortController().signal, toolContext)
+        .catch((error: unknown) => error)
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toBeInstanceOf(RecoverableModelToolError)
+      expect(error).toMatchObject({ cause: { code: 'ENOENT' } })
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it.each(['workspace_read_text', 'workspace_rg'])('keeps %s cancellation fatal', async (name) => {
+    const access = new LocalWorkspaceAccess(await createWorkspace())
+    const provider = new ModelToolProvider(access, [], undefined, undefined, false, { ripgrepExecutablePath: rgPath })
+    const operation = name === 'workspace_rg' ? vi.spyOn(access, 'stat') : vi.spyOn(access, 'readText')
+    const args = { path: 'note.txt', ...(name === 'workspace_rg' ? { pattern: 'x' } : {}) }
+    try {
+      const abortError = new DOMException('cancelled', 'AbortError')
+      operation.mockRejectedValueOnce(abortError)
+      await expect(provider.callTool(name, args, new AbortController().signal, toolContext)).rejects.toBe(abortError)
+      const controller = new AbortController()
+      const reason = new Error('cancelled during access')
+      operation.mockImplementationOnce(async () => {
+        controller.abort(reason)
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      })
+      await expect(provider.callTool(name, args, controller.signal, toolContext)).rejects.toBe(reason)
+      await expect(provider.callTool(name, {}, controller.signal, toolContext)).rejects.toBe(reason)
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it('suggests process_execute only when available in local model Execute', async () => {
+    const workspace = await createWorkspace()
+    const access = new LocalWorkspaceAccess(workspace)
+    const identity = await access.getIdentity()
+    const processService = {
+      getCapability: vi.fn(async () => ({ available: true, shell: { kind: 'powershell', label: 'pwsh' } })),
+      dispose: vi.fn(async () => {})
+    } as unknown as DirectModelProcessService
+    const provider = new ModelToolProvider(access, [], undefined, undefined, false, { processService })
+    try {
+      for (const [context, available] of [
+        [{ ...toolContext, runtimeTarget: 'model' as const }, true],
+        [{ ...toolContext, runtimeTarget: 'model' as const, workMode: 'ask' as const }, false],
+        [toolContext, false],
+        [{ ...toolContext, runtimeTarget: 'model' as const, executionSpaceIdentity: `${identity.id}-other` }, false]
+      ] as const) {
+        const error = await provider.callTool('workspace_read_text', { path: workspace }, new AbortController().signal, context)
+          .catch((error: unknown) => error) as RecoverableModelToolError
+        expect(error).toBeInstanceOf(RecoverableModelToolError)
+        expect(error.nextAction.includes('process_execute')).toBe(available)
+      }
+      vi.mocked(processService.getCapability).mockResolvedValueOnce({ available: false, reason: 'unavailable' })
+      await expect(provider.callTool('workspace_read_text', { path: workspace }, new AbortController().signal, {
+        ...toolContext, runtimeTarget: 'model'
+      })).rejects.toMatchObject({ nextAction: expect.not.stringContaining('process_execute') })
+    } finally {
+      await provider.dispose()
+    }
   })
 
   it('delegates paged workspace reads and disposal to WorkspaceAccess', async () => {

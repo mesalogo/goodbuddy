@@ -121,9 +121,9 @@ describe('WorkspacePrimitives', () => {
     expect(capabilitiesTabs).toMatch(/flex:\s*0 0 auto;/u)
   })
 
-  it('keeps whole-surface dialog scrollbars outside close-button hitboxes', () => {
+  it('keeps dialog scrollbars outside close-button hitboxes', () => {
     expect(stylesheet).toMatch(
-      /:is\(\s*\.project-create-card,\s*\.knowledge-citation-dialog__surface,\s*\.channel-qr-dialog,\s*\.document-parsing-diagnostic,\s*\.mcp-editor\s*\)\s*\{[^}]*scrollbar-gutter:\s*stable;/u
+      /:is\(\s*\.project-create-card__body,\s*\.knowledge-citation-dialog__surface,\s*\.channel-qr-dialog,\s*\.document-parsing-diagnostic,\s*\.mcp-editor\s*\)\s*\{[^}]*scrollbar-gutter:\s*stable;/u
     )
   })
 

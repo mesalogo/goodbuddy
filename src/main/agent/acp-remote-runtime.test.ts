@@ -2872,6 +2872,82 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     ).not.toHaveProperty('modelBridge')
   })
 
+  it('restores live questions after transcript ACK, scopes replies and ignores answered history', async () => {
+    const fixture = ownedChannel()
+    const reply = vi.fn<NonNullable<RemoteRuntimeChannel['respondToQuestion']>>()
+      .mockRejectedValueOnce(new Error('temporary response failure'))
+      .mockResolvedValue(undefined)
+    fixture.channel.respondToQuestion = reply
+    let answered = false
+    let pages = 0
+    const question = { sessionId: 'owned-session', update: {
+      sessionUpdate: 'tool_call_update', toolCallId: 'native-question', _meta: {
+        goodbuddyQuestion: { question: { id: 'native-question', sessionID: 'owned-session',
+          questions: [{ header: 'Input', question: 'Which?', options: [] }] } }
+      }
+    } }
+    fixture.channel.pageOwnedPromptTranscript = async ({ bindingId, operationId }) => ({
+      bindingId, operationId, state: answered ? 'completed' : 'running', sessionId: 'owned-session',
+      latestSequence: answered ? '2' : '1', acknowledgedSequence: '1', hasMore: false,
+      pendingQuestions: answered ? [] : [question],
+      events: answered ? [
+        { sequence: '1', kind: 'session-update', payload: question, createdAt: 1 },
+        { sequence: '2', kind: 'prompt-terminal', payload: { status: 'completed', response: { stopReason: 'end_turn' } }, createdAt: 2 }
+      ] : (++pages === 1 ? [] : [{ sequence: '1', kind: 'session-update', payload: question, createdAt: 1 }])
+    })
+    let id: string | undefined
+    for await (const event of fixture.instance.run(request, new AbortController().signal)) {
+      if (event.type !== 'question') continue
+      expect(id).toBeUndefined()
+      id = event.questionId
+      expect(id).not.toBe('native-question')
+      expect(event.questions[0]).toMatchObject({ custom: true, multiple: false })
+      await expect(fixture.instance.respondToQuestion(id, [['A']])).rejects.toThrow('temporary response failure')
+      await fixture.instance.respondToQuestion(id, [['A']])
+      answered = true
+    }
+    expect(id).toBeDefined()
+    expect(reply).toHaveBeenLastCalledWith({ bindingId: expect.any(String), operationId: request.requestId,
+      questionId: 'native-question', answers: [['A']] })
+    await expect(fixture.instance.respondToQuestion(id!, [['late']])).rejects.toThrow('no longer pending')
+    expect(reply).toHaveBeenCalledTimes(2)
+    await fixture.instance.dispose()
+  })
+
+  it('drops reply mappings when the Agent resolves a question while the prompt remains active', async () => {
+    const fixture = ownedChannel()
+    const reply = vi.fn(async () => undefined)
+    fixture.channel.respondToQuestion = reply
+    let pages = 0
+    let answered = false
+    fixture.channel.pageOwnedPromptTranscript = async ({ bindingId, operationId }) => ({
+      bindingId, operationId, state: answered ? 'completed' : 'running', sessionId: 'owned-session',
+      latestSequence: answered ? '1' : '0', acknowledgedSequence: '0', hasMore: false,
+      pendingQuestions: answered ? [] : [{ sessionId: 'owned-session', update: {
+        sessionUpdate: 'tool_call_update', toolCallId: 'question', _meta: { goodbuddyQuestion: {
+          question: { id: ++pages === 1 ? 'first' : 'second', sessionID: 'owned-session',
+            questions: [{ header: 'Input', question: 'Which?', options: [] }] }
+        } }
+      } }],
+      events: answered ? [{ sequence: '1', kind: 'prompt-terminal', createdAt: 1,
+        payload: { status: 'completed', response: { stopReason: 'end_turn' } } }] : []
+    })
+    let previous: string | undefined
+    const resolved: string[] = []
+    for await (const event of fixture.instance.run(request, new AbortController().signal)) {
+      if (event.type === 'question-resolved') resolved.push(event.questionId)
+      if (event.type !== 'question') continue
+      if (!previous) { previous = event.questionId; continue }
+      await expect(fixture.instance.respondToQuestion(previous, [['stale']])).rejects.toThrow('no longer pending')
+      expect(reply).not.toHaveBeenCalled()
+      await fixture.instance.respondToQuestion(event.questionId)
+      answered = true
+    }
+    expect(reply).toHaveBeenCalledOnce()
+    expect(resolved).toEqual([previous])
+    await fixture.instance.dispose()
+  })
+
   it('freshly attaches an accepted prompt without resending it', async () => {
     const fixture = ownedChannel()
     const first = fixture.instance.run(

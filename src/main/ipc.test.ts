@@ -25,6 +25,7 @@ import type {
 } from '../shared/ssh-host-contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { KnowledgeService } from './knowledge/knowledge-service'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
 import {
   registerIpcHandlers,
@@ -3087,6 +3088,7 @@ describe('registerIpcHandlers knowledge snapshot ontology', () => {
   it('exposes per-library ontology settings and rebuild state', async () => {
     const libraryId = '11111111-1111-4111-8111-111111111111'
     const knowledgeService = {
+      database: { externalStore: { listBindings: () => [] } },
       snapshot: vi.fn(() => ({
         libraries: [
           {
@@ -8236,7 +8238,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('preflights always-retrieve mode and injects bounded untrusted evidence', async () => {
+  it.each([false, true])('preflights always-retrieve mode with external=%s and injects bounded untrusted evidence', async (external) => {
     const libraryId = '11111111-1111-4111-8111-111111111111'
     const documentId = '33333333-3333-4333-8333-333333333333'
     const chunkId = '44444444-4444-4444-8444-444444444444'
@@ -8291,15 +8293,16 @@ describe('registerIpcHandlers agent terminal state', () => {
       results: [
         {
           knowledgeBaseId: libraryId,
-          documentId,
-          sourceId: '55555555-5555-4555-8555-555555555555',
-          chunkId,
+          documentId: external ? undefined : documentId,
+          sourceId: external ? undefined : '55555555-5555-4555-8555-555555555555',
+          chunkId: external ? undefined : chunkId,
+          external: external ? { kind: 'external' as const, provider: 'dify' as const, instanceId: libraryId, remoteKnowledgeBaseId: 'remote-kb', remoteChunkId: 'remote-chunk', location: 'Remote section 3' } : undefined,
           documentTitle: '离线部署.md',
           sourceDisplayName: '产品手册',
           sourceType: 'file' as const,
           location: '第 2 节',
           snippet: '离线部署需要先校验安装包',
-          relevance: 0.9,
+          relevance: external ? undefined : 0.9,
           rank: 1,
           channels: ['fts' as const],
           scores: {
@@ -8323,6 +8326,10 @@ describe('registerIpcHandlers agent terminal state', () => {
         ]
       }
     }
+    if (external) {
+      retrievalResponse.context.groups = []
+      retrievalResponse.results.push({ ...retrievalResponse.results[0]!, rank: 2, external: { ...retrievalResponse.results[0]!.external!, remoteChunkId: 'second-chunk' } })
+    }
     const retrieveMany = vi.fn(async () => [
       { knowledgeBaseId: libraryId, response: retrievalResponse }
     ])
@@ -8337,6 +8344,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         runtimeId: 'model',
         capability: 'chat',
         supportsToolExecution: true,
+        supportsScopedDataTools: !external,
         run
       },
       undefined,
@@ -8387,20 +8395,19 @@ describe('registerIpcHandlers agent terminal state', () => {
         expect.objectContaining({
           type: 'knowledge-retrieval',
           state: 'succeeded',
-          resultCount: 1
+           resultCount: external ? 2 : 1
         }),
         expect.objectContaining({
           type: 'source-references',
-          references: [
-            expect.objectContaining({
-              chunkId,
-              documentId
-            })
-          ]
+          references: external ? expect.arrayContaining([
+            expect.objectContaining({ external: expect.objectContaining({ remoteChunkId: 'remote-chunk' }) }),
+            expect.objectContaining({ external: expect.objectContaining({ remoteChunkId: 'second-chunk' }) })
+          ]) : [expect.objectContaining({ chunkId, documentId })]
         })
       ])
     )
     expect(run).toHaveBeenCalledOnce()
+    if (external) expect(run.mock.calls[0]![0].prompt).toContain('"locator":"Remote section 3"')
     await harness.dispose()
   })
 
@@ -8478,6 +8485,52 @@ describe('registerIpcHandlers agent terminal state', () => {
     ).resolves.toEqual([])
     expect(searchHybridMany).not.toHaveBeenCalled()
     await harness.dispose()
+  })
+
+  it('routes external UI payloads through IPC, the production service and citation search', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-external-ipc-'))
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => Response.json(init?.method === 'POST'
+      ? { records: [{ score: 0.75, segment: { id: 'remote-chunk', content: 'Policy evidence', document: { id: 'remote-document', name: 'Policy' } } }] }
+      : { data: [{ id: 'dataset', name: 'Policy' }], has_more: false }))
+    const service = new KnowledgeService({
+      databasePath: join(directory, 'knowledge.sqlite'), managedRoot: join(directory, 'managed'),
+      externalFetcher: fetcher,
+      credentialCipher: { isAvailable: () => true, encrypt: value => Buffer.from(value), decrypt: value => value.toString() }
+    })
+    await service.initialize()
+    const harness = createHarness({ capability: 'chat' }, undefined, 'always', undefined, false, undefined, service as unknown as Record<string, unknown>)
+    const event = trustedEvent(harness.webContents)
+    const invoke = (channel: string, input?: unknown) => electronMocks.handlers.get(channel)!(event, input)
+    try {
+      const instance = await invoke(ipcChannels.externalInstancesSave, {
+        name: 'External instance', provider: 'dify', baseUrl: 'https://kb.example', enabled: true,
+        credential: { action: 'replace', value: 'test-key' }
+      }) as { id: string }
+      expect(instance).not.toHaveProperty('credential')
+      await expect(invoke(ipcChannels.externalCatalogList, { instanceId: instance.id })).resolves.toMatchObject({ items: [{ id: 'dataset' }] })
+      await expect(invoke(ipcChannels.externalBindingsCreate, { instanceId: instance.id })).rejects.toThrow()
+      const snapshot = await invoke(ipcChannels.externalBindingsCreate, {
+        instanceId: instance.id, remoteKnowledgeBaseId: 'dataset', name: 'Policy', remoteName: 'Policy',
+        testQuery: 'policy', commonConfig: { resultLimit: 6, requestTimeoutMs: 1000, maxSnippetCharacters: 4000 },
+        providerConfig: { provider: 'dify', useDatasetDefaults: true }
+      }) as { libraries: Array<{ id: string; kind: string }> }
+      expect(snapshot.libraries[0]?.kind).toBe('external')
+      const libraryId = snapshot.libraries[0]!.id
+      await expect(invoke(ipcChannels.knowledgeRetrieve, { knowledgeBaseId: libraryId, query: 'policy' })).resolves.toMatchObject({
+        results: [{ external: { remoteChunkId: 'remote-chunk' }, snippet: 'Policy evidence' }]
+      })
+      await expect(invoke(ipcChannels.knowledgeSearch, { libraryIds: [libraryId], query: 'policy' })).resolves.toMatchObject([
+        { libraryId, documentId: undefined, snippet: 'Policy evidence', external: { remoteDocumentId: 'remote-document', remoteChunkId: 'remote-chunk', providerScore: 0.75 } }
+      ])
+      await invoke(ipcChannels.externalInstancesSetEnabled, { instanceId: instance.id, enabled: false })
+      fetcher.mockClear()
+      await expect(invoke(ipcChannels.knowledgeSearch, { libraryIds: [libraryId], query: 'policy' })).rejects.toThrow('EXTERNAL_KB_DISABLED')
+      expect(fetcher).not.toHaveBeenCalled()
+    } finally {
+      await harness.dispose()
+      await service.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('routes status and concurrent conversations to their selected runtimes', async () => {

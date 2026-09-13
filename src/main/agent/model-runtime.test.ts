@@ -4084,6 +4084,104 @@ describe('ModelAgentRuntime', () => {
     expect(events.at(-1)).toMatchObject({ type: 'done' })
   })
 
+  it('recovers an absolute workspace read by retrying a relative path against the real filesystem', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'goodbuddy-read-recovery-'))
+    const workspaceAccess = new LocalWorkspaceAccess(workspace)
+    const toolProvider = new ModelToolProvider(workspaceAccess, [])
+    const absolutePath = join(workspace, 'README.md')
+    const marker = `read-recovery-${crypto.randomUUID()}`
+    const responses = [absolutePath, 'README.md'].map((path, index) => ({
+      choices: [{ message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: `read-${index}`,
+          type: 'function',
+          function: {
+            name: 'workspace_read_text',
+            arguments: JSON.stringify({ path })
+          }
+        }]
+      } }]
+    }))
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      const response = responses.shift()
+      return Response.json(response ?? {
+        choices: [{ message: { role: 'assistant', content: 'Read completed.' } }]
+      })
+    })
+    const runtime = new ModelAgentRuntime({
+      baseUrl: 'https://example.test/v1',
+      model: 'test-model',
+      protocol: 'openai-chat-completions',
+      authentication: 'none',
+      fetcher,
+      toolProvider,
+      workspaceAccess
+    })
+    const events: RuntimeEvent[] = []
+
+    try {
+      await writeFile(absolutePath, `${marker}\n`)
+      for await (const event of runtime.run({
+        requestId: crypto.randomUUID(),
+        conversationId: 'conversation-workspace-read-recovery',
+        prompt: 'Read README.md.',
+        workMode: 'ask'
+      }, new AbortController().signal, async () => 'deny')) {
+        events.push(event)
+      }
+
+      expect(fetcher).toHaveBeenCalledTimes(3)
+      const secondBody = JSON.parse(String(fetcher.mock.calls[1]![1]!.body)) as {
+        messages: Array<{ role: string; tool_call_id?: string; content: string }>
+      }
+      const correction = secondBody.messages.filter((message) => message.role === 'tool')
+      expect(correction).toHaveLength(1)
+      expect(correction[0]).toMatchObject({ tool_call_id: 'read-0' })
+      expect(JSON.parse(correction[0]!.content)).toEqual({
+        ok: false,
+        recoverable: true,
+        error: expect.stringMatching(/^workspace_read_text: [\s\S]*路径必须相对于工作区/u),
+        nextAction: 'Use a workspace-relative path to an existing readable UTF-8 file; correct the path or offset/limit, and discover the filename if needed. Do not retry identical arguments.'
+      })
+      expect(correction[0]!.content).not.toContain(marker)
+
+      const thirdBody = JSON.parse(String(fetcher.mock.calls[2]![1]!.body)) as {
+        messages: Array<{ role: string; tool_call_id?: string; content: string }>
+      }
+      expect(thirdBody.messages.filter((message) => message.role === 'tool')).toEqual([
+        correction[0],
+        expect.objectContaining({
+          tool_call_id: 'read-1',
+          content: expect.stringContaining(marker)
+        })
+      ])
+      const toolEvents = events.filter((event) => event.type === 'tool')
+      expect(toolEvents.map((event) => [event.callId, event.state])).toEqual([
+        ['read-0', 'pending'],
+        ['read-0', 'running'],
+        ['read-0', 'recoverable'],
+        ['read-1', 'pending'],
+        ['read-1', 'running'],
+        ['read-1', 'completed']
+      ])
+      expect(JSON.parse(toolEvents[0]!.input!)).toEqual({ path: absolutePath })
+      expect(toolEvents[2]).toMatchObject({
+        error: expect.stringContaining('路径必须相对于工作区')
+      })
+      expect(JSON.parse(toolEvents[3]!.input!)).toEqual({ path: 'README.md' })
+      expect(toolEvents[5]).toMatchObject({ output: expect.stringContaining(marker) })
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'text', delta: 'Read completed.'
+      }))
+      expect(events.at(-1)).toMatchObject({ type: 'done' })
+    } finally {
+      await runtime.dispose()
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('streams OpenAI Responses text and reasoning through tool rounds', async () => {
     const streams = [
       createSseEventStream([

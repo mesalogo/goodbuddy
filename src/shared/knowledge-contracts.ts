@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { externalKnowledgeLocatorSchema } from './external-knowledge-contracts'
 import {
   defaultKnowledgeOntologySettings,
   knowledgeOntologySettingsSchema
@@ -148,20 +149,21 @@ const channelScoresSchema = z
 export const knowledgeRetrievalResultSchema = z
   .object({
     knowledgeBaseId: idSchema,
-    documentId: idSchema,
-    sourceId: idSchema,
-    chunkId: idSchema,
+    documentId: idSchema.optional(),
+    sourceId: idSchema.optional(),
+    chunkId: idSchema.optional(),
+    external: externalKnowledgeLocatorSchema.optional(),
     parentChunkId: idSchema.optional(),
     documentTitle: z.string().max(512),
     sourceDisplayName: z.string().max(512),
-    sourceType: z.enum(['file', 'directory', 'url']),
+    sourceType: z.enum(['file', 'directory', 'url']).optional(),
     heading: z.string().max(512).optional(),
     location: z.string().max(8_192).optional(),
     snippet: z.string().max(8_000),
-    relevance: z.number().finite().min(0).max(1),
+    relevance: z.number().finite().min(0).max(1).optional(),
     rank: z.number().int().positive().max(20),
     preRerankRank: optionalRankSchema,
-    channels: z.array(knowledgeRetrievalChannelSchema).min(1).max(4),
+    channels: z.array(knowledgeRetrievalChannelSchema).max(4),
     scores: channelScoresSchema
   })
   .strict()
@@ -200,6 +202,8 @@ const channelTimingSchema = z
 
 export const knowledgeRetrievalDiagnosticsSchema = z
   .object({
+    external: z.object({provider:z.enum(['dify','fastgpt','ragflow']),instanceId:z.string(),remoteKnowledgeBaseId:z.string()}).strict().optional(),
+    failure: z.string().max(500).optional(),
     requestedChannels: z.array(knowledgeRetrievalChannelSchema).max(4),
     usedChannels: z.array(knowledgeRetrievalChannelSchema).max(4),
     degradedChannels: z

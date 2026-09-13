@@ -4,721 +4,309 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 设计稿 |
-| 版本 | 0.1 |
-| 日期 | 2026-09-03 |
+| 状态 | 三家生产 IPC 真实生成、Dify 完整 App 与当前 UI 自动回归已通过；远程待验收 |
+| 版本 | 0.2 |
+| 日期 | 2026-09-13 |
 | 产品需求 | [外部知识库接入 PRD](./external-knowledge-prd.md) |
-| 逻辑设计 | [外部知识库逻辑设计](./external-knowledge-logic-design.md) |
-| UI 设计 | [外部知识库 UI 设计](./external-knowledge-ui-design.md) |
+| 行为规则 | [外部知识库逻辑设计](./external-knowledge-logic-design.md) |
+| 界面 | [外部知识库 UI 设计](./external-knowledge-ui-design.md) |
+| 验证状态 | [实施进度](./progress.md) |
 
-## 1. 设计约束
+## 1. 实现边界
 
-1. 外部知识库扩展现有知识库领域，不建立独立检索工具、聊天范围或 Runtime 权限模型。
-2. 外部绑定使用远端检索，不落地远端文档、分块、向量和图谱。
-3. 所有网络、凭据、Provider 响应校验和结果标准化都在 Main 完成。
-4. Renderer 只能通过受限 IPC 管理实例、读取目录、保存绑定和发起测试。
-5. Dify、FastGPT、RAGFlow 使用独立 Adapter 和判别配置，不通过任意 JSON 请求模板实现。
-6. 首次实现只调用无内容修改语义的列表、详情和检索接口。
-7. Provider API 变化通过真实 fixture、Adapter 版本和能力快照处理，不通过猜测字段兼容。
+外部知识库复用 GoodBuddy 知识库 ID、聊天范围和检索入口。网络、凭据、响应读取和
+标准化在 Main 完成，Renderer 通过明确的 Preload 方法调用 IPC。远端只执行目录、详情和
+检索请求，不创建、修改、上传或删除远端内容，不调用外部 App、Chat、Workflow 或 Agent。
 
-## 2. 现有代码边界
+本地 `file | directory | url` 仍表示需要导入和索引的资料来源。外部绑定独立存储，
+不加入该枚举，也不生成本地文档、分块、向量或图谱。实际用于回答的片段随会话引用保存。
 
-当前实现中的主要扩展点：
+## 2. 当前模块
 
-| 边界 | 现有位置 | 需要的变化 |
-| --- | --- | --- |
-| 共享知识契约 | `src/shared/knowledge-contracts.ts`、`src/shared/contracts.ts` | 增加实例、绑定、Provider 配置和外部引用判别联合 |
-| IPC 名称 | `src/shared/ipc-channels.ts` | 增加实例和目录操作通道 |
-| Preload | `src/preload/index.ts` | 暴露受限、类型化的外部知识库 API |
-| Main IPC | `src/main/ipc.ts` | 校验输入、调用服务、投影脱敏结果 |
-| 知识服务 | `src/main/knowledge/knowledge-service.ts` | 按知识库来源分派本地或外部检索 |
-| 数据库 | `src/main/knowledge/knowledge-database.ts` | 增加实例、绑定和迁移 |
-| 内部类型 | `src/main/knowledge/types.ts` | 增加 Provider、实例、绑定和标准化结果类型 |
-| 知识页面 | `src/renderer/src/KnowledgeWorkspace.tsx` | 实例管理、创建向导类型和外部详情 |
-| 检索测试 | `src/renderer/src/KnowledgeRetrievalWorkbench.tsx` | 支持本地与外部诊断判别联合 |
-| 聊天预检索 | `src/main/ipc.ts` | 统一调用 Provider-aware 检索编排 |
-| Agent 知识工具 | `src/main/agent/knowledge-mcp-gateway.ts` | 与预检索复用同一编排和引用标准化 |
+| 文件 | 职责 |
+| --- | --- |
+| `src/main/knowledge/external/external-knowledge-client.ts` | 一个 `ExternalKnowledgeClient` 内按 Provider 分支处理固定端点、地址规范化、分页、HTTP 错误、超时、取消、响应上限和结果映射；同文件定义 `ExternalKnowledgeError` |
+| `src/main/knowledge/external/external-knowledge-service.ts` | 实例保存与测试、凭据加解密、目录与详情、检索测试、创建或更新绑定、请求生命周期与配置变化检查 |
+| `src/main/knowledge/external/external-knowledge-store.ts` | 在已有 SQLite 连接上读写实例 JSON 和绑定 JSON |
+| `src/main/knowledge/knowledge-database.ts` | v12 迁移、知识库与绑定事务、唯一约束及删除外键 |
+| `src/main/knowledge/knowledge-service.ts` | 本地与外部检索分派、混合检索和总字符预算；阻止外部绑定进入本地维护操作 |
+| `src/shared/external-knowledge-contracts.ts` | Provider 配置、实例与绑定输入、目录、测试结果和外部引用定位契约 |
+| `src/shared/knowledge-contracts.ts`、`contracts.ts`、`assistant-contracts.ts` | 现有知识结果、列表和会话引用增加外部字段 |
+| `src/shared/knowledge-reference.ts` | 预检索与 MCP 共用的引用转换和去重键 |
+| `src/main/ipc.ts`、`src/preload/index.ts`、`src/shared/ipc-channels.ts` | 可信发送方检查、Zod 输入解析、类型化跨进程调用 |
+| `src/renderer/src/ExternalKnowledge.tsx` | 实例 Modal、绑定表单、Provider 配置、外部详情与检索结果 |
+| `KnowledgeWorkspace.tsx`、`App.tsx`、`KnowledgeCitationDialog.tsx` | 统一列表、聊天选择、刷新及历史引用显示 |
 
-外部 Provider 不是 `KnowledgeSourceType`。现有 `file | directory | url` 表示会进入本地
-文档、分块和索引的资料来源；把远端绑定塞入该枚举会错误触发同步、分块和来源打开逻辑。
+`ExternalKnowledge.tsx` 的字段改用全局 `.field`，修正 body Portal 脱离知识库祖先后
+丢失 scoped 控件样式的问题。CSS 提供 560px 紧凑弹窗和粘附底部操作区；实例选择复用
+既有 picker 样式并实现菜单键盘行为。没有新增 Main 模块，具体控件规则由
+[UI 设计](./external-knowledge-ui-design.md#当前实现与验收边界)维护。
 
-## 3. 模块设计
+当前没有独立 Provider 文件、Adapter Registry、Normalizer、版本化能力清单或配置迁移框架。
+本文件按现有三个 Main 模块描述实现，不把旧草案中的拆分方案列为待建基础设施。
 
-建议增加：
+## 3. 共享契约
 
-```text
-src/main/knowledge/external/
-├─ external-knowledge-service.ts
-├─ external-knowledge-store.ts
-├─ external-knowledge-errors.ts
-├─ external-knowledge-http.ts
-├─ external-knowledge-registry.ts
-├─ external-knowledge-normalizer.ts
-└─ providers/
-   ├─ dify-adapter.ts
-   ├─ fastgpt-adapter.ts
-   └─ ragflow-adapter.ts
-```
+### 3.1 实例与绑定
 
-职责：
+实例输入包含 `id?`、`name`、`provider`、`baseUrl`、`enabled` 和
+`credential: keep | replace | clear`。实例摘要返回启停、凭据状态、`probeStatus`、绑定数、
+最近测试时间和错误码，不返回凭据 envelope。当前没有 `detectedVersion`、`adapterVersion`
+或 `transportSecurity` 字段。
 
-- `ExternalKnowledgeService`：实例、目录、绑定、测试和检索编排。
-- `ExternalKnowledgeStore`：实例和绑定持久化，凭据加解密。
-- `ExternalKnowledgeHttp`：超时、取消、大小限制、地址和响应读取。
-- `ExternalKnowledgeRegistry`：按 Provider 返回内置 Adapter，不接受运行时插件注册。
-- `ExternalKnowledgeNormalizer`：统一结果边界、截断和引用。
-- Adapter：构造固定端点与请求，解析 Provider 响应，声明静态配置和能力条件。
+绑定保存 `knowledgeBaseId`、`instanceId`、`provider`、`remoteKnowledgeBaseId`、
+`remoteName`、`commonConfig`、`providerConfig` 和 `lastVerifiedAt`。GoodBuddy 名称和描述
+保留在知识库记录。创建和更新输入都要求用户填写 `testQuery`；服务保存前重新执行检索，
+因此先点击“测试检索”再保存会产生两次检索请求。成功零命中允许保存。
 
-`KnowledgeService` 继续作为聊天、检索测试和 MCP 网关的统一入口。它根据
-`KnowledgeBase.kind` 调用现有本地检索或 `ExternalKnowledgeService.retrieve`。
+### 3.2 配置范围
 
-## 4. Provider Adapter
+| 配置 | 当前共享契约 |
+| --- | --- |
+| 通用 | `resultLimit` 1 至 20，默认 6；`requestTimeoutMs` 1,000 至 60,000，默认 15,000；`maxSnippetCharacters` 100 至 8,000，默认 4,000 |
+| Dify | 默认分支仅包含 `provider` 和 `useDatasetDefaults: true`；覆盖分支使用严格的 `retrievalModel` 对象，包含检索方式、Top K、阈值开关和重排开关，按启用条件校验阈值、重排模型或权重 |
+| FastGPT | `searchMode`、`tokenLimit`（1 至 30,000）、`similarity`、`usingRerank`；不发送查询优化参数 |
+| RAGFlow | `similarityThreshold`、`vectorSimilarityWeight`、`knnTopK`（1 至 2,048）、`useKg`、`includeKnowledgeCompilation`；当前无 Rerank、Metadata 编辑字段 |
 
-```ts
-type ExternalKnowledgeProvider = 'dify' | 'fastgpt' | 'ragflow'
+Provider 必须与实例一致。Dify 加权配置还在客户端检查权重和为 1。共享查询输入上限为
+4,000 字符，Dify 客户端另按 Unicode 码点拒绝超过 250 字符的查询，不静默压缩。
 
-interface ExternalKnowledgeAdapter<PersistedConfig, CapabilitySnapshot> {
-  readonly provider: ExternalKnowledgeProvider
-  readonly configVersion: number
+### 3.3 结果与引用
 
-  normalizeBaseUrl(input: string): URL
-  testConnection(context: AdapterContext): Promise<ConnectionTestResult>
-  listKnowledgeBases(
-    context: AdapterContext,
-    input: CatalogPageInput
-  ): Promise<CatalogPage>
-  getKnowledgeBase(
-    context: AdapterContext,
-    remoteKnowledgeBaseId: string
-  ): Promise<RemoteKnowledgeBaseSummary>
-  probeRetrieval(
-    context: AdapterContext,
-    input: ProviderRetrieveInput<PersistedConfig>
-  ): Promise<ProviderRetrieveResult>
-  retrieve(
-    context: AdapterContext,
-    input: ProviderRetrieveInput<PersistedConfig>
-  ): Promise<ProviderRetrieveResult>
-  parseCapabilities(input: unknown): CapabilitySnapshot
-  validateConfig(
-    input: unknown,
-    capabilities: CapabilitySnapshot
-  ): PersistedConfig
-}
-```
+现有 `KnowledgeRetrievalResult` 的本地 `documentId/sourceId/chunkId` 改为可选，增加
+`external?: ExternalKnowledgeLocator`，没有另建一套 `UnifiedKnowledgeRetrievalResult`。
+外部定位包含 Provider、实例 ID、远端库 ID，以及实际返回的文档 ID、片段 ID、位置和评分。
+FastGPT 数组评分存为 `providerScores: {type, value, index?}[]`，保留顺序与类型；数值评分
+存为 `providerScore`，不选取数组首项冒充总分。
 
-`probeRetrieval` 可以复用 `retrieve`，但必须使用用户在创建向导中明确输入的测试查询。
-不得生成会泄露组织信息的默认问题，不得调用 Provider 的 App 或模型问答接口，也不得
-修改远端知识内容。Provider 自身记录 API 审计或计算检索用量不属于内容修改，必须由界面
-提前说明。
+外部结果沿用旧结果容器的空 `channels` 和 `scores.fusedScore = 0`。该零值是结构占位，
+不表示质量；`toKnowledgeReference` 不把它写成引用总分。外部结果没有统一 `relevance`，
+不同 Provider 的原始分数不参与跨库混排。引用去重键包含外部定位和片段，不伪造本地 ID。
 
-Adapter 返回数据对象，不返回 React 组件、HTML 或远端 Schema。Renderer 中的配置定义
-由共享的 Provider 判别联合和本地字段描述生成。
+## 4. SQLite 与凭据
 
-## 5. 共享契约
-
-### 5.1 实例
-
-```ts
-type CredentialMutation =
-  | { action: 'keep' }
-  | { action: 'replace'; value: string }
-  | { action: 'clear' }
-
-interface ExternalKnowledgeInstanceSummary {
-  id: string
-  name: string
-  provider: 'dify' | 'fastgpt' | 'ragflow'
-  baseUrl: string
-  enabled: boolean
-  credentialStatus: 'configured' | 'missing' | 'unavailable'
-  probeStatus:
-    | 'untested'
-    | 'catalog-ready'
-    | 'healthy'
-    | 'list-restricted'
-    | 'auth-failed'
-    | 'unreachable'
-    | 'incompatible'
-    | 'failed'
-  detectedVersion?: string
-  bindingCount: number
-  lastTestedAt?: string
-  lastErrorCode?: string
-}
-```
-
-Renderer 输入使用 `CredentialMutation`，因此新密钥会在输入控件和该次 IPC 中短暂存在。
-Main 返回值永远没有 `credential`、`apiKey`、`authorization` 或加密 envelope。
-
-### 5.2 绑定
-
-```ts
-interface ExternalKnowledgeBinding {
-  knowledgeBaseId: string
-  instanceId: string
-  remoteKnowledgeBaseId: string
-  remoteName: string
-  remoteDescription?: string
-  commonConfig: ExternalKnowledgeCommonConfig
-  providerConfig: DifyConfig | FastGptConfig | RagflowConfig
-  providerConfigVersion: number
-  adapterVersion: number
-  lastVerifiedAt?: string
-}
-```
-
-`providerConfig` 必须带 `provider` 判别字段，且与实例 Provider 一致。`remoteName` 是用于
-显示和变化检测的快照，不是授权标识。
-
-### 5.3 标准化结果
-
-现有 `KnowledgeRetrievalResult` 假定结果映射到本地 `documentId/sourceId/chunkId`。需要改为
-引用定位的判别联合，同时保持现有调用方可按统一字段读取片段：
-
-```ts
-type KnowledgeReferenceLocator =
-  | {
-      kind: 'local'
-      documentId: string
-      sourceId: string
-      chunkId: string
-      parentChunkId?: string
-    }
-  | {
-      kind: 'external'
-      provider: ExternalKnowledgeProvider
-      instanceId: string
-      remoteKnowledgeBaseId: string
-      remoteDocumentId?: string
-      remoteChunkId?: string
-      providerScore?: number
-      location?: string
-      sourceUrl?: string
-      metadata?: Record<string, string | number | boolean | null>
-    }
-
-interface UnifiedKnowledgeRetrievalResult {
-  knowledgeBaseId: string
-  documentTitle: string
-  sourceDisplayName: string
-  snippet: string
-  relevance?: number
-  rank: number
-  locator: KnowledgeReferenceLocator
-}
-```
-
-`remoteDocumentId` 和 `remoteChunkId` 只保存 Provider 实际返回的标识，缺失时不得从标题、
-序号或内容哈希推导。`providerScore` 保留原始值，但不改名为统一 `relevance`。只有经过
-单独定义和验证的归一化算法才能填写跨 Provider `relevance`。初始跨库拼装按结果配额和
-稳定 Provider 顺序工作，不按原始分数混排。
-
-所有共享 Schema 使用严格对象并限制：
-
-- 查询不超过 4,000 字符；同时遵守 Provider 更小限制，例如 Dify 当前公开接口的
-  250 字符限制，超出时在发送前明确失败，不静默截断查询。
-- 单次目录页不超过 100 项，总目录最多 500 项。
-- 标准化结果最多 20 条，单片段最多 8,000 字符。
-- 标题、ID、定位、URL 和元数据键值均设独立上限。
-- Provider 原始响应总字节数设固定上限，超限立即取消读取。
-
-## 6. 持久化
-
-### 6.1 数据库变化
-
-保留现有 `knowledge_bases` 表，增加：
-
-```sql
-ALTER TABLE knowledge_bases
-  ADD COLUMN kind TEXT NOT NULL DEFAULT 'local'
-  CHECK (kind IN ('local', 'external'));
-```
-
-增加实例表：
+数据库 v12 增加两张表：
 
 ```sql
 CREATE TABLE external_knowledge_instances (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  provider TEXT NOT NULL CHECK (provider IN ('dify', 'fastgpt', 'ragflow')),
-  base_url TEXT NOT NULL,
-  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
-  credential_envelope_json TEXT,
-  probe_status TEXT NOT NULL,
-  detected_version TEXT,
-  capabilities_json TEXT NOT NULL,
-  transport_security TEXT NOT NULL,
-  transport_risk_accepted_url TEXT,
-  transport_risk_accepted_at TEXT,
-  last_tested_at TEXT,
-  last_error_code TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  value_json TEXT NOT NULL
 );
-```
-
-增加绑定表：
-
-```sql
 CREATE TABLE external_knowledge_bindings (
-  knowledge_base_id TEXT PRIMARY KEY
-    REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-  instance_id TEXT NOT NULL
-    REFERENCES external_knowledge_instances(id) ON DELETE RESTRICT,
-  remote_knowledge_base_id TEXT NOT NULL,
-  remote_name TEXT NOT NULL,
-  remote_description TEXT,
-  common_config_json TEXT NOT NULL,
-  provider_config_json TEXT NOT NULL,
-  provider_config_version INTEGER NOT NULL,
-  adapter_version INTEGER NOT NULL,
-  binding_status TEXT NOT NULL,
-  last_verified_at TEXT,
-  last_success_at TEXT,
-  last_error_code TEXT,
-  UNIQUE(instance_id, remote_knowledge_base_id)
+  knowledge_base_id TEXT PRIMARY KEY REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+  instance_id TEXT NOT NULL REFERENCES external_knowledge_instances(id) ON DELETE RESTRICT,
+  remote_id TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  UNIQUE(instance_id, remote_id)
 );
 ```
 
-已有知识库迁移为 `kind = 'local'`。外部知识库仍保留现有名称、描述和创建时间，但本地
-`storageMode`、图谱、分块和本地检索设置不进入外部请求；后续可以在数据库重构时再移除
-这些历史必填默认值，本功能不为此扩大迁移范围。
+没有向 `knowledge_bases` 增加 `kind` 列；IPC 快照根据是否存在绑定投影
+`KnowledgeLibrary.kind` 和 `external`。旧本地数据保留，知识库与绑定在同一事务中保存。
+外部库沿用本地表所需的默认字段，但这些字段不进入 Provider 请求。
 
-### 6.2 凭据
+Main 启动把已有 `secureCipher` 注入 `KnowledgeService`。服务复用
+`SettingsCredentialCipher` 和现有加密函数，把 envelope 放入实例 JSON；`replace` 要求
+安全存储可用，`keep` 保留已有 envelope，`clear` 移除凭据。列表会尝试解密以区分
+`configured/missing/unavailable`，请求前再次解密，没有独立明文凭据缓存。
 
-复用 `SettingsCredentialCipher` 和 Electron `safeStorage`：
+## 5. IPC 与生命周期
 
-- `replace`：Main 加密新值后在一个事务中替换 envelope。
-- `keep`：不读取、不重写现有 envelope。
-- `clear`：确认后删除 envelope，并把实例凭据状态设为缺失。
-- 安全存储不可用时拒绝新增或替换，不降级为明文。
-- 解密只发生在发起请求前；请求结束后不缓存明文。
+Preload 暴露实例 `List/Save/Test/SetEnabled/Delete`、目录 `List/Get`、绑定
+`Create/Update` 和 `externalRetrievalTest`。通道使用 `knowledge:external-*` 前缀，
+准确名称以 `ipc-channels.ts` 为准。移除绑定复用 `deleteLibrary`，没有独立 remove 通道。
 
-实例导出、诊断和数据库普通 JSON 视图均排除 `credential_envelope_json`。
+Handler 调用 `assertTrustedSender` 并解析共享输入；检索按实例 ID 在 Main 读取地址与凭据。
+实例先保存为 `untested`，列表上的连接测试调用目录请求并更新摘要，不测试未保存草稿。
+绑定检索测试是单独操作，不会把实例探测状态自动升级为 `healthy`。
 
-## 7. IPC 设计
+服务按实例记录 AbortController。保存实例、停用、删除以及服务关闭会取消相应请求；
+调用方取消信号与总超时合并。异步测试或保存完成前比较实例配置，变化时返回
+`EXTERNAL_KB_CONFIG_CHANGED`，绑定更新还检查保存期间绑定是否改变。共享 IPC 没有
+`requestId` 或取消方法；Renderer 用局部 generation/active 标记丢弃旧响应，这与中止
+Main 请求是两种行为。
 
-建议增加独立通道：
+删除仍被引用的实例返回 `EXTERNAL_KB_INSTANCE_IN_USE`。UI 确认后逐个调用本地
+`deleteLibrary`，再删除实例；这是顺序操作，发生中途失败会刷新已移除的绑定，不是跨调用事务。
 
-```text
-knowledge:external-instances:list
-knowledge:external-instances:test
-knowledge:external-instances:save
-knowledge:external-instances:set-enabled
-knowledge:external-instances:delete
-knowledge:external-catalog:list
-knowledge:external-catalog:get
-knowledge:external-bindings:create
-knowledge:external-bindings:update
-knowledge:external-bindings:remove
-knowledge:external-retrieval:test
-```
+## 6. HTTP 边界
 
-所有 Handler 必须：
+客户端只接受 HTTP(S)，拒绝地址内的用户名、密码、查询与片段；按 Provider 规范化 API
+路径，仅拼接内置端点。请求使用 Bearer 认证，`redirect: 'error'`，无自动重试或公共云回退。
+默认超时 15 秒，单个响应默认上限 5,000,000 字节；响应头和流式读取均检查上限，取消
+期间终止读取。解析后只投影需要的有界字段，最多返回 20 条、每片段 8,000 字符。
 
-1. `assertTrustedSender`。
-2. 用共享 Zod Schema 解析严格输入。
-3. 根据实例 ID 在 Main 读取地址和凭据，不接受 Renderer 在检索请求中重复传入。
-4. 使用稳定错误码返回脱敏错误。
-5. 对网络操作支持 AbortSignal、总超时和响应大小限制。
+当前使用 `fetcher ?? fetch`，没有单独连接全局内网兼容模式、证书例外或按地址保存传输
+确认。2026-09-13 当前生产服务在真实 Electron 中对两个 Dify 和 FastGPT HTTPS 配置完成
+严格证书校验，RAGFlow 使用 HTTP。此证据覆盖这些配置的请求，不表示旧 PRD 的地址确认
+或证书例外流程已实现；相关产品差异仍由功能 owner 核对。
 
-目录和测试请求返回 `requestId`。Renderer 仍需校验当前类型、实例和目标与响应关联，避免
-旧响应覆盖新表单。
+## 7. 检索编排
 
-## 8. HTTP 边界
+`KnowledgeService.retrieve` 查询本地绑定，存在绑定时调用
+`ExternalKnowledgeService.testRetrieval`，否则执行现有本地路径。外部结果附加
+`diagnostics.external`，不运行本地向量、全文或图谱检索。
 
-### 8.1 服务地址
+`retrieveMany` 对传入知识库 ID 去重并读取知识库，使用 `Promise.all` 逐库检索；只有选中
+需要向量的本地库时才准备本地查询 Embedding。当前没有额外的 Provider 并发队列。单库
+失败写入 `response.diagnostics.failure` 并保留空结果，成功零命中没有 failure；调用方
+取消仍向上传播。当前返回 `{knowledgeBaseId, response}[]`，没有独立的 Outcome 状态联合。
 
-- 只接受 `http:` 和 `https:`。
-- 拒绝用户名、密码、查询和片段。
-- Adapter 负责规范化 Provider 所需 API 根路径，避免用户填写完整操作端点。
-- 请求只能拼接 Adapter 内置相对路径，远端目录项或错误不能改变目标 URL。
-- 重定向默认拒绝；若某 Provider 的受支持部署确需重定向，只允许同源且不得跨跳转发送
-  Authorization。
-- 当前全局“内网兼容模式”决定是否允许 HTTP 和非标准 HTTPS 证书；操作开始后冻结该值。
-- HTTP 或实际使用证书例外时，Main 返回 `transportSecurity` 风险状态。用户必须针对规范化
-  后的当前地址明确确认，才能保存实例或发送 API Key；地址变化立即使旧确认失效。
-- 不进行公共云回退，不把自部署地址替换成 Provider 官方地址。
+服务测试先按绑定的结果数与单片段限制裁剪，并限制该次片段总量为 48,000 字符。
+`retrieveMany` 展平各库结果并按库内 rank 稳定排序，再轮转分配 48,000 字符的片段预算：
+先处理各库第 1 条，再处理各库第 2 条，同 rank 保持输入库顺序。不会先耗完整个库再轮到
+下一个库；仍没有固定的每库最低字符配额。关联的本地上下文 groups 随相应结果使用另一份
+48,000 字符预算。二次裁剪会标记 `context.truncated`，但第一次标准化裁剪不提供完整的
+远端原始条数与截断诊断。
 
-用户明确配置内网地址属于产品用途，因此不能采用禁止私网地址的通用 SSRF 规则。安全边界
-依靠显式实例配置、Main-only 请求、固定端点、无任意方法和无远端 URL 跟随。
+聊天预检索、检索测试相关 IPC 和 `KnowledgeMcpGateway` 已使用统一检索入口。引用转换
+复用 `knowledge-reference.ts`，聊天与 MCP 仍按现有授权范围和各自输出预算处理结果。
+MCP 在总预算裁剪后按库内 rank 交错选择结果，再应用工具条数和字节上限；有失败且
+没有任何片段时返回工具错误。预检索只在全部库失败时报告整体失败，成功零命中伴随其他
+库失败时保留降级诊断。这两种上层呈现并不完全相同。
 
-### 8.2 请求限制
+## 8. 引用显示与历史数据
 
-- 默认超时 15 秒，用户可在 1 至 60 秒内调整。
-- 目录、详情和检索分别设置响应字节上限。
-- JSON 解析后仍执行深度、数组数量、字符串长度和未知字段策略。
-- 默认不自动重试。用户重试或上层下一次检索会产生新请求。
-- 取消、应用关闭和实例删除立即终止相关请求。
-- 日志只记录 Provider、实例 ID、操作、状态码、稳定错误码、耗时和字节数。
+会话契约和数据库保存外部定位及有界片段。外部引用弹窗读取保存的片段，显示 Provider、
+实例 ID、远端库和实际返回的定位及评分；不请求本地 `referenceContext`，不显示本地
+`openSource` 操作。当前没有远端来源打开或引用刷新请求，`sourceUrl` 是可选契约字段，
+三家现有映射没有填充它。
+
+App 的 `source-references` 事件使用共享 `knowledgeReferenceKey` 去重传入引用，再合并
+尚未被替代的旧引用，最多保留 20 条。键包含 Provider、实例、远端库、远端文档和片段 ID、
+定位与片段正文；外部结果缺少本地 ID 时也不会仅因本地 ID 相同而被合并。引用弹窗按
+`context.locator ?? external.location ?? locator` 选择一个定位，只显示一次。
+
+移除绑定后历史片段仍可阅读；当前弹窗不查询实例状态，也不生成“连接已移除”标记。
+实例名称没有作为独立字段存入外部 locator，不能承诺删除实例后仍显示其名称。
+
+2026-09-13 Dify 桌面报告已验证实时搜索引用通过生产 `conversations.saveLocal` 保存、
+重载并打开弹窗。会话由验证程序标记为测试记录，没有模型生成答案；最终引用去重与定位
+修正后的回归状态单独记录在[实施进度](./progress.md)。
+
+后续 `kb-full-app-live` 则通过完整 App 输入区真实发送并保存模型答案，再点击引用。
+引用片段、远端文档和片段 ID 与真实检索记录一致，无伪造会话或事件；此证据覆盖 Dify
+单库短答案。三家生产 IPC 生成检查还验证了 `task_events` 中的文本、引用和选中库范围。
 
 ## 9. Provider 映射
 
-本节依据 2026-09-10 核对的官方文档、官方源码和真实实例响应。实施时应把每个受支持版本的真实响应保存为
-去敏 fixture，并以 fixture 和真实实例测试作为发布依据。
-
-官方来源与版本边界：
-
-- Dify：[Knowledge API 与密钥范围](https://docs.dify.ai/en/api-reference/guides/knowledge)、
-  [列表](https://docs.dify.ai/en/api-reference/knowledge-bases/list-knowledge-bases)、
-  [详情](https://docs.dify.ai/en/api-reference/knowledge-bases/get-knowledge-base)、
-  [检索](https://docs.dify.ai/en/api-reference/knowledge-bases/retrieve-chunks-from-a-knowledge-base-test-retrieval)。
-  缺省配置顺序另对照[官方实现](https://github.com/langgenius/dify/blob/main/api/services/hit_testing_service.py)。
-- FastGPT：[API 说明](https://doc.fastgpt.io/zh-CN/openapi/intro)和
-  [已停止维护的手工接口页](https://doc.fastgpt.io/zh-CN/openapi/dataset)。当前契约对照
-  [生成文档 Schema](https://github.com/labring/FastGPT/blob/main/packages/global/openapi/core/dataset/api.ts)、
-  [检索处理器](https://github.com/labring/FastGPT/blob/main/projects/app/src/pages/api/core/dataset/searchTest.ts)和
-  [结果项 Schema](https://github.com/labring/FastGPT/blob/main/packages/global/core/dataset/type.ts)。
-  云端 `/apidoc/` 本次只取得应用壳，未读取渲染后的部署 Schema。
-- RAGFlow：[官网 HTTP API](https://ragflow.io/docs/dev/http_api_reference)正文未能有效提取，
-  采用[官方当前文档原文](https://github.com/infiniflow/ragflow/blob/main/docs/references/http_api_reference.md)，并与
-  [v0.24.0 固定版本](https://github.com/infiniflow/ragflow/blob/v0.24.0/docs/references/http_api_reference.md)比较。
-
-`main` 分支文档与源码会变化，不是部署版本凭据。FastGPT、RAGFlow 的实际产品版本仍未确认。
+本节区分当前客户端行为与历史接口探测。历史响应和官方文档只说明当时观察到的接口，
+不证明当前桌面已完成验收。
 
 ### 9.0 真实实例验证基线
 
-2026-09-09 使用本机未入库的测试地址和 API Key 完成第一轮只读验证。验证只记录状态、
-字段名、数量和长度，不记录 API Key、知识库名称或片段正文。
+| 历史日期 | 证据与限制 |
+| --- | --- |
+| 2026-09-09 | [基线报告](./external-knowledge-probe-baseline.json)：累计 107 次只读请求，最终归档脚本 19 次；当时 HTTPS 放宽证书校验 |
+| 2026-09-10 | [基础报告](./external-knowledge-probe-2026-09-10-strict.json)与[扩展报告](./external-knowledge-probe-2026-09-10-extended.json)：共 33 次只读请求，其中检索 17 次；HTTPS 显式开启证书校验，RAGFlow 为 HTTP |
 
-| Provider | 实例证据 | 目录实测 | 检索实测 | 当前结论 |
-| --- | --- | --- | --- | --- |
-| Dify `0.x` | 响应头 `x-version: 0.15.8` | 列表返回 200 和 3 项；详情 GET 返回 405 | 默认配置和显式当前配置均返回 200，结果为空 | 从目录项读取配置，手工 ID 通过检索验证；非空结果仍未验证 |
-| Dify `1.x` | 响应头 `x-version: 1.17.0` | 列表返回 200 和 1 项；详情 GET 返回 200 | 默认配置和显式当前配置均返回相同的 3 条非空结果 | 详情和 `records[].segment/document` 已验证；新增摘要索引、元数据、多模态和 Pipeline 能力字段 |
-| FastGPT | 响应未提供版本，只能确认当前托管实例 | 基址包含 `/api`；列表和详情均返回 200，列表 `data` 直接为数组，本次 1 个 Dataset | embedding 8 条、fullTextRecall 2 条、mixedRecall 7 条、mixedRecall + Rerank 9 条 | 三种检索模式和 Rerank 均已实测；当前结果包含 `q`，未包含 `a` |
-| RAGFlow | 响应未提供产品版本，Server 为 nginx，不能据此推断版本 | `GET /api/v1/datasets` 返回 200，共 28 项；17 项配置 GraphRAG，15 项有完成证据 | 选定已完成图谱的库，基础检索 0 条，`use_kg=true` 返回 1 条，Knowledge Compilation 0 条 | 图谱检索已产生区别于基础检索的结果；当前没有库具备 Knowledge Compilation 配置证据 |
+历史结果包含 Dify 0.15.8 详情 405、检索零命中，Dify 1.17.0 详情成功及 3 条非空结果；
+FastGPT 三种模式和重排非空；RAGFlow 图谱开关产生不同结果，但 Knowledge Compilation
+没有配置证据。FastGPT/RAGFlow 产品版本、Dify 0.15.8 非空结构及真实错误矩阵仍未确认。
+逐项数量、脚本命令和当时测试结果由[实施进度](./progress.md#验证证据)维护。
 
-2026-09-09 的 Node 测试进程设置了 `NODE_TLS_REJECT_UNAUTHORIZED=0`，因此当时 HTTPS 实例的请求
-使用了放宽的证书校验。这只能证明接口在当前测试环境可用，不能证明严格 TLS 校验通过。
-产品实现不得读取该进程级设置作为隐式默认；实例测试和保存必须按 8.1 节处理传输风险。
-
-2026-09-10 复测显式设置 `NODE_TLS_REJECT_UNAUTHORIZED=1`，两个 Dify 实例和 FastGPT
-均通过证书校验；RAGFlow 配置为 HTTP，不涉及 TLS。基础 14 次、扩展 19 次，共 33 次只读
-请求。每个实例从目录选择一个库检索，未遍历全部库；未调用聊天或生成端点，检索仍可能
-使用远端 Embedding、Rerank 并记录用量。两份报告与逐项结果见[实施进度](./progress.md)。
+2026-09-13 新增当前产品证据：[生产验证摘要](./external-knowledge-validation-2026-09-13.json)
+记录真实 Electron safeStorage 持久化重开、生产服务与本机 HTTP MCP，以及 Dify 桌面。
+服务结果与 MCP 引用数分别为 Dify 配置 1 的 0/0、Dify 配置 2 的 2/2、FastGPT 的 2/2、
+RAGFlow 的 1/1。报告配置编号不是版本识别，历史版本差异不据此重新认证。
 
 ### 9.1 Dify
 
-| 操作 | 接口 |
-| --- | --- |
-| 列表 | `GET /v1/datasets` |
-| 详情 | `GET /v1/datasets/{dataset_id}`，`0.15.8` 不支持、`1.17.0` 支持 |
-| 检索 | `POST /v1/datasets/{dataset_id}/retrieve` |
-| 认证 | `Authorization: Bearer <knowledge-api-key>` |
+固定使用 `GET /v1/datasets`、`GET /v1/datasets/{id}` 和
+`POST /v1/datasets/{id}/retrieve`。默认省略整个 `retrieval_model`，远端优先使用知识库
+当时配置，未保存时由远端选默认；覆盖时发送完整的本地 `retrievalModel`，不逐字段合并。
+结果从 `records[].segment`、文档和分数取值。
 
-Adapter 只接受 Knowledge Service API Key，不调用应用 `/info`、Chat 或 Workflow。默认不
-发送 `retrieval_model`，沿用远端知识库配置。用户选择覆盖时，Adapter 必须一次收集并验证
-当前接口要求的 `search_method`、`reranking_enable`、`top_k`、`score_threshold_enabled`。
-开启重排时再验证 `reranking_mode`，以及该模式所需的 Provider、模型或权重；缺少必填
-标识时不构造请求。显式对象不会与知识库配置逐字段合并。省略整个对象时，服务端优先使用
-知识库配置，未保存配置时才使用内置默认。响应从
-`records[].segment`、`score`、文档名称和元数据提取标准化引用。
+客户端把详情 405 分类为不兼容，绑定表单允许详情失败后继续检索验证，不实现版本探测或
+自动遍历目录的详情回退。Scoped Key 可尝试手工 ID，但当前产品的真实受限密钥验收仍待完成。
+Metadata、多模态、摘要索引、子块、附件和 Pipeline 没有进入当前简化目录或结果映射。
 
-当前官方文档说明限定知识库范围的 Key 不能调用列表，但可访问授权 ID 的详情和检索。
-列表 403 不足以认定密钥无效；本轮测试配置均能列目录，尚未验证 Scoped Key。
-
-Dify 当前文档限制查询不超过 250 字符。GoodBuddy 不静默截断；超出时检索测试和聊天
-诊断返回 Provider 限制，并允许后续单独设计查询压缩策略。
-
-两个实测版本共同返回 `retrieval_model_dict`，键包括搜索方式、Top K、阈值、Rerank 和
-权重。显式原样复用该配置均返回 200，证明覆盖 envelope 可用，但 UI 编辑后的每种组合仍
-需单独契约测试。
-
-版本差异：
-
-| 能力 | `0.15.8` | `1.17.0` | Adapter 和 UI 规则 |
-| --- | --- | --- | --- |
-| Dataset 详情 | GET 返回 405 | GET 返回 200 | 能力探测后调用；旧版从目录项读取配置，不能把 405 视为实例故障 |
-| 非空检索结构 | 本次未命中 | 默认和显式配置均返回 3 条 | 1.17 已验证 `records[].segment.content`、`segment.document.id/name`、位置和分数映射 |
-| 元数据 | 无 `doc_metadata` | 字段存在，当前库定义数为 0 | 有实际字段定义时才显示受控元数据过滤器；不提供自由 JSON |
-| 多模态与附件 | 未返回能力字段 | `is_multimodal` 和 `files` 字段可用，当前库非多模态且结果无附件 | 只显示远端状态；仅在结果实际带 `files` 时显示附件引用 |
-| 父子分块 | 未验证 | 返回 `child_chunks` 数组，本次为空 | 仅在实际非空时显示子块证据，不补造父子关系 |
-| 摘要索引 | 未返回能力字段 | 当前库配置了 `summary_index_setting`，本次结果 `summary` 为空 | 概览显示只读状态；仅在结果实际返回摘要时展示 |
-| Knowledge Pipeline | 未返回能力字段 | `pipeline_id/runtime_mode` 存在，当前库未配置 Pipeline | 只读显示，不提供运行或编辑 Pipeline 的操作 |
-
-Dify 1.x 官方 RetrievalModel 还声明 `metadata_filtering_conditions`，并支持
-`keyword_search/semantic_search/full_text_search/hybrid_search`。当前实测库没有 Metadata
-字段，未执行空条件或猜测字段探测；该配置保持禁用，直到所选库详情返回可用字段定义。
+官方来源：[Knowledge API](https://docs.dify.ai/en/api-reference/guides/knowledge)、
+[列表](https://docs.dify.ai/en/api-reference/knowledge-bases/list-knowledge-bases)、
+[详情](https://docs.dify.ai/en/api-reference/knowledge-bases/get-knowledge-base)、
+[检索](https://docs.dify.ai/en/api-reference/knowledge-bases/retrieve-chunks-from-a-knowledge-base-test-retrieval)、
+[缺省配置实现](https://github.com/langgenius/dify/blob/main/api/services/hit_testing_service.py)。
 
 ### 9.2 FastGPT
 
-| 操作 | 接口 |
-| --- | --- |
-| 列表 | `POST /api/core/dataset/list` |
-| 详情 | `GET /api/core/dataset/detail?id=...` |
-| 检索 | `POST /api/core/dataset/searchTest` |
-| 认证 | `Authorization: Bearer <api-key>` |
+固定使用 `POST /api/core/dataset/list`、`GET /api/core/dataset/detail?id=...` 和
+`POST /api/core/dataset/searchTest`。列表 `data[]` 保留 Dataset 与文件夹，按 `parentId`
+读取层级，在当前父级响应内搜索和分页；文件夹只用于浏览。
 
-列表响应同时包含文件夹和知识库，只有 `type = dataset` 可以绑定。根列表请求发送
-`parentId: null`；文件夹需按父 ID 继续读取。当前实测列表为 `data[]`，检索为
-`data.list[]`，这是两个不同端点的结构。旧手工文档还展示检索 `data[]`，探测脚本接受
-该旧结构并单独记录 envelope；当前客户端只接受检索 `data.list[]`，旧结构尚未经过真实
-部署验证。不递归猜测任意嵌套。检索映射 `datasetId`、
-`text`、Token `limit`、`similarity`、`searchMode` 和 `usingReRank`。初始版本不发送查询优化
-字段，避免调用 FastGPT 配置的 LLM。
-当前实测响应的 `data` 包含 `list/duration/limit/searchMode/usingReRank/similarity`；结果项
-包含 `q/id/datasetId/collectionId/sourceName/sourceId/chunkIndex/score`，未返回 `a`。
-Adapter 以 `q` 为必需片段，`a` 仅在远端实际返回时追加，不能要求 `a` 存在。
-2026-09-10 实测 `score` 为 `{type, value, index}[]`，与当前官方结果 Schema 一致；
-旧手工文档中的数值分数不能作为当前统一映射依据。应保留评分类型或按明确规则选分，
-不能默认取第一项作为总分。当前客户端仅提取数值分数，数组评分的映射仍待实现。
-当前实例的 embedding、fullTextRecall、mixedRecall 和 mixedRecall + Rerank 均返回 200 和
-非空结果，因此这四种界面组合可以启用。查询扩展会调用模型，仍不在初始界面和探测脚本中
-启用。
+检索接受业务码 200 的 `data.list[]` 与旧手工文档的 `data[]`，不递归猜测嵌套结构。
+`q` 必需，`a` 仅在存在时追加；评分数组保留类型、值和可选 index，数值评分独立处理。
+当前客户端已通过 FastGPT 真实服务与本机 HTTP MCP，均返回 2 条。报告确认结果契约与
+引用映射有效，没有逐项归档评分包装，故旧包装和全部评分变体仍以定向测试证据为限。
 
-FastGPT 4.15.0 起应优先查阅部署实例的自动生成文档，`/apidoc/devapi` 与
-`/apidoc/systemopenapi` 的认证范围不同，Dev API 中出现不等于允许 API Key 调用。支持矩阵
-必须按真实版本测试；不能因为健康页可访问就假定列表和检索 Schema 相同。`searchTest`
-可能记录 `SEARCH_TEST` 等远端审计并更新 API Key 用量；Embedding 和 Rerank 也可能产生
-费用。GoodBuddy 将这些行为作为检索成本显示，不宣称该接口没有副作用。
+请求映射 `datasetId/text/limit/similarity/searchMode/usingReRank`，不发送查询扩展。
+Embedding、Rerank 和远端 API 审计仍可能产生用量；不调用 FastGPT 生成最终回答。
+
+官方来源：[API 说明](https://doc.fastgpt.io/zh-CN/openapi/intro)、
+[旧手工接口页](https://doc.fastgpt.io/zh-CN/openapi/dataset)、
+[生成 Schema](https://github.com/labring/FastGPT/blob/main/packages/global/openapi/core/dataset/api.ts)、
+[检索处理器](https://github.com/labring/FastGPT/blob/main/projects/app/src/pages/api/core/dataset/searchTest.ts)、
+[结果 Schema](https://github.com/labring/FastGPT/blob/main/packages/global/core/dataset/type.ts)。
+4.15.0 起应核对部署实例生成文档；历史检查只取得云端 `/apidoc/` 应用壳。
 
 ### 9.3 RAGFlow
 
-| 操作 | 接口 |
-| --- | --- |
-| 列表/详情 | `GET /api/v1/datasets` |
-| 检索 | `POST /api/v1/retrieval` |
-| 认证 | `Authorization: Bearer <api-key>` |
+目录和按 ID 详情均使用 `GET /api/v1/datasets`，检索使用 `POST /api/v1/retrieval`。
+请求发送 `question`、单个 `dataset_ids`、`page: 1`、`page_size: 20`、阈值、向量权重、
+`knn_top_k` 及显式的图谱、知识编译布尔值。HTTP 成功且业务码为 0 才读取 `data.chunks`。
+文档名映射 `document_keyword`，位置保存返回的 `positions`，分数取原始 `similarity`。
 
-检索映射 `question`、`dataset_ids`、`page_size`、`similarity_threshold`、
-`vector_similarity_weight`、`knn_top_k`、重排、`use_kg` 和
-`include_knowledge_compilation`。当前文档以 `knn_top_k` 取代 `top_k`；v0.24.0 文档只声明
-`top_k`，因此当前客户端不发送 `top_k` 的行为不能作为旧版本兼容承诺。
-`knn_top_k` 控制向量候选数量，`page_size` 控制返回数量；请求成功不能单独证明未知参数
-已生效。本轮未验证候选数参数的效果，也未确定新字段首次发布版本。
-HTTP 成功且业务 `code === 0` 才能解析结果。响应从 `data.chunks` 和
-`data.doc_aggs` 提取片段、文档、位置和原始相似度。当前实测非空 chunk 使用
-`document_keyword` 表示文档名，并包含 `id/document_id/content/positions/similarity/`
-`term_similarity/vector_similarity`；初始 Adapter 应按该字段映射，不假定存在
-`document_name`。
+`graphEnabled` 根据有效非零 `graphrag_task_finish_at` 判断；仅配置
+`parser_config.graphrag.use_graphrag` 不算完成。知识编译依据非空
+`compilation_template_group_id`。启用任一能力时，服务在检索前重新读取详情确认。
+当前不保存完整能力快照，不区分图谱未配置与构建中，也不检测 Provider 版本。
 
-图谱规则：
+官方来源：[HTTP API](https://ragflow.io/docs/dev/http_api_reference)、
+[当前文档原文](https://github.com/infiniflow/ragflow/blob/main/docs/references/http_api_reference.md)、
+[v0.24.0 文档](https://github.com/infiniflow/ragflow/blob/v0.24.0/docs/references/http_api_reference.md)。
+旧文档只声明 `top_k`，当前客户端发送 `knn_top_k`；请求成功不证明候选数参数生效，
+也不是旧部署版本兼容承诺。
 
-- `parser_config.graphrag.use_graphrag = true` 只表示库配置了 GraphRAG；单独出现该配置不
-  表示图谱已经构建完成。
-- `graphrag_task_finish_at` 为有效非零时间才作为图谱完成证据，不写回。
-- `use_kg` 是检索时开关，只在已有图谱和受支持版本均确认后发送。
-- Knowledge Compilation 与旧 GraphRAG 分别建模。
-- `include_knowledge_compilation` 使用本地保存的显式布尔值，初始默认 false；即使服务端
-  默认 true，也不依赖字段省略获得隐式行为。
-- `compilation_template_group_id` 或后续版本的等价受控字段作为 Knowledge Compilation 已
-  配置证据；仅仅请求返回 200 不能启用界面开关。
-- Provider 没有返回图节点或路径证据时，GoodBuddy 不生成图谱引用。
+## 10. 验证与验收
 
-2026-09-09 实例 28 个库中 17 个配置 GraphRAG、15 个存在完成证据。对一个已完成库使用同一查询，
-基础检索返回 0 条，`use_kg=true` 返回 1 条且原始相似度为 1，说明图谱开关对实际结果有
-影响。当时 28 个库均没有 Knowledge Compilation 配置证据；该请求虽返回 200 和零结果，
-界面仍必须禁用开关并显示“当前知识库未配置 Knowledge Compilation”。
-2026-09-10 目录增至 29 项，18 项配置图谱、16 项有完成证据；所选库基础检索 2 条、
-图谱检索 3 条。Knowledge Compilation 开关请求返回 2 条，目录仍无配置证据，不能据此
-认定编译内容参与了检索。
+三家 Provider 已通过生产 `KnowledgeService` 与本机 HTTP MCP，真实 Electron
+safeStorage 加解密和持久化重开成功。Dify 桌面已完成绑定、参数更新、重启、三档窗口宽度
+及历史引用检查。验证方法、原始报告边界和调用计数见[实施进度](./progress.md)及
+[脱敏摘要](./external-knowledge-validation-2026-09-13.json)。本轮文档只读取报告，没有
+另发 Provider 或模型请求，也未改动历史探测 JSON。
 
-## 10. 检索编排
+当前 Portal 与控件修改后的聚焦测试、全量回归、类型检查、lint、工作区及暂存区 diff
+检查均已通过。精确计数、运行命令、耗时、执行期间文件稳定性和原失败修正记录统一见
+[实施进度](./progress.md#2026-09-13-当前工作区实现与分组验证)。
 
-```text
-retrieveMany(knowledgeBaseIds, query, requestContext)
-  ├─ load and authorize GoodBuddy knowledge bases
-  ├─ partition local and external bindings
-  ├─ local: existing retrieval path
-  ├─ external: bounded concurrent adapter requests
-  ├─ validate and normalize each response
-  ├─ allocate deterministic context budget
-  └─ return evidence plus per-library diagnostics
-```
+后续真实生成使用已保存的默认模型，凭据在 Main 通过 safeStorage 解密。三家 Provider
+的 `always` 及 Dify `auto` 已产生有依据和引用的短答案；Dify `auto` 经进程内
+`ModelToolProvider → KnowledgeMcpGateway` 执行，不能当成本机 HTTP MCP 或远程 ACP
+验收。FastGPT/RAGFlow 首轮因直接比较序列化字符串产生验证断言失败，解码请求和嵌入
+证据 JSON 后重跑通过；报告保留初始结果。完整 App 输入区的发送、真实答案及引用点击
+仅覆盖 Dify。Dify/FastGPT 使用严格 HTTPS，RAGFlow 和模型使用已配置的 HTTP。
 
-预检索和 `knowledge_search` 工具必须调用同一个 `retrieveMany`。如果只修改聊天预检索而
-未修改 `KnowledgeMcpGateway`，`auto` 和 `always` 会产生不同能力，这是阻断发布的问题。
+请求精确增量与视觉 fixture 边界见[后续验证摘要](./external-knowledge-follow-up-2026-09-13.json)
+及[实施进度](./progress.md#2026-09-13-ui-修正与真实生成复验)。不公开模型端点、私有配置
+标识、凭据和答案正文。这些短答案检查没有评估广泛问答质量。
 
-### 10.1 上下文预算
+FastGPT/RAGFlow 完整桌面专属操作、复杂或混合问答、删除和真实错误矩阵仍需补验。
+Linux Host 的两条网络路径可达，但验证程序无法解密已有 SSH 凭据，在认证前返回
+`E_SAFE_STORAGE_DECRYPT_FAILED`，真实远程 forced-preflight 未执行。本机 HTTP MCP
+成功不覆盖该远程路径。剩余 Provider 版本和高级参数效果也不能由基础检索成功推断。
 
-- 每个知识库先保留不超过其 `resultLimit` 的结果。
-- 先给每个成功知识库一个最小有界配额，再按稳定顺序分配剩余字符。
-- 不用不同 Provider 原始分数决定跨库优先级。
-- 片段截断在 Main 完成并在引用中标记。
-- 相同实例的多个绑定仍按绑定分别请求，除非 Provider 明确支持且 Adapter 实现等价的多
-  Dataset 请求；合并不得改变每个绑定的配置和诊断。
+原设计的分项探测 UI、最低版本矩阵、详细诊断、地址确认和取消交互未全部落地。它们是
+待核对的产品差异，不能以补建 Adapter Registry 或版本框架代替验收决策。
 
-### 10.2 失败结果
+`scripts/external-knowledge-probe.mjs` 仍可只读探测列表、详情、检索；`--extended` 增加
+Dify 配置覆盖、FastGPT 重排和 RAGFlow 两种开关。报告区分成功零命中与失败，不输出
+凭据或业务正文。脚本不打包到桌面或 Agent，脚本执行本身不覆盖 UI、IPC、存储和引用链路。
 
-返回结构包含每个知识库的：
+## 11. 需求追踪
 
-```ts
-interface KnowledgeRetrievalOutcome {
-  knowledgeBaseId: string
-  status: 'success' | 'empty' | 'failed' | 'cancelled'
-  durationMs: number
-  resultCount: number
-  errorCode?: ExternalKnowledgeErrorCode
-  truncated: boolean
-}
-```
-
-至少一个 `success` 或 `empty` 表示检索编排完成；全部 `failed/cancelled` 时上层显示整体失败。
-
-## 11. 引用与来源打开
-
-外部结果不能进入依赖本地数据库的 `referenceContext` 和 `openSource` 路径。
-
-- 引用详情直接使用请求时保存的标准化片段和定位。
-- Main 可以按远端片段 ID 提供一次只读重新读取，但初始版本不要求。
-- Provider 返回 URL 只作为不可信元数据保存。没有独立 URL 规则和真实实例验证前，
-  Renderer 不显示打开链接操作。
-- 活动和会话持久化保存标准化引用，其中包含实际用于回答的有界远端片段；这属于引用
-  留存，不是批量同步或本地索引。删除会话或对应活动时按现有生命周期删除该副本。
-- 实例删除后，历史引用仍显示 Provider、知识库、文档名称和已保存片段，但标记连接已移除。
-
-## 12. 支持矩阵与版本变化
-
-每个 Adapter 维护明确的最低版本、已验证版本和 `adapterVersion`。连接测试优先读取可靠的
-版本接口或响应头；无法识别版本时，只允许经真实请求验证过的基础列表和检索字段，高级字段
-保持不可用。
-
-Adapter 可以保存少量受控事实，例如“目录接口可用”“详情表明已构建图谱”，但不尝试从
-远端拼出完整 capability manifest，也不计算 capability fingerprint。
-
-- `adapterVersion` 相同且实例仍在支持矩阵内：解析已保存配置并执行。
-- Adapter 升级：使用明确的配置迁移或把绑定标记为 `config-invalid`，不猜测字段迁移。
-- 实例版本离开支持矩阵：停止发送高级字段，并要求重新测试和确认。
-- 新能力出现：保持默认关闭，用户主动配置后才发送。
-- RAGFlow `use_kg` 还要求当前远端知识库存在已构建图谱的证据。
-
-## 13. 安全与隐私
-
-- API Key 在用户输入和保存 IPC 中短暂存在，随后使用系统安全存储加密；保存后不返回
-  Renderer，也不进入 Runtime、日志和普通元数据。
-- 请求不附带完整会话、附件、本地知识库证据、系统提示、模型配置或其他 Provider 结果。
-- Provider 结果使用与本地知识证据相同的不可信上下文标记。
-- Adapter 拒绝响应中的原型污染键、过深对象、超长数组和非有限数值。
-- 远端错误正文只用于 Main 内映射，日志与 UI 使用稳定错误码和短消息。
-- 外部知识库不能扩大当前对话显式选择的 GoodBuddy 知识库 ID。
-- Ask 与 Execute 对知识检索均为只读，Execute 不获得额外 Provider 权限。
-- Provider 配置中的模型 ID、背景文本和 Metadata 条件按独立长度限制验证，不能携带凭据。
-- HTTP 或证书例外需要按当前规范化地址确认凭据传输风险，地址变化后重新确认。
-
-## 14. 测试
-
-### 14.1 契约测试
-
-- 每个 Provider 的列表、详情、检索成功和错误 fixture。
-- 未知字段、缺字段、错误类型、超长内容、非有限分数和超大响应。
-- Dify 查询长度、FastGPT 文件夹过滤、RAGFlow 图谱和 Knowledge Compilation 字段。
-- Provider 配置判别联合拒绝类型错配和未知字段。
-
-### 14.2 安全测试
-
-- 保存完成后的 Renderer 快照、IPC 返回值、日志、错误、活动和导出中不存在明文 API Key；
-  `replace` 输入只在当前表单和单次 IPC 请求中短暂存在。
-- `keep/replace/clear` 凭据语义和安全存储不可用路径。
-- 地址中的凭据、查询、片段、危险 scheme、跨源重定向和远端 URL 注入被拒绝。
-- 取消、超时、响应大小上限和应用关闭释放请求。
-
-### 14.3 集成测试
-
-- 实例保存、目录读取、手工 ID、绑定创建、编辑和本地移除。
-- 同一远端目标重复绑定被拒绝。
-- 删除实例的引用保护和级联本地移除确认。
-- 本地与外部 `retrieveMany` 部分成功、全部失败和确定性上下文预算。
-- 聊天 `always` 与 Agent `knowledge_search` 使用同一 Provider-aware 编排。
-- 历史引用在实例或绑定移除后仍可读。
-
-### 14.4 UI 测试
-
-- 类型切换、异步旧响应、目录搜索、刷新和手工模式。
-- 两栏与窄窗口堆叠、键盘、焦点恢复和离开保护。
-- Provider 字段显隐、失效配置、RAGFlow 图谱说明和恢复默认。
-- 外部详情不出现导入、同步、分块和本地图谱操作。
-- 错误、零结果、部分失败和 Provider 引用显示。
-
-### 14.5 真实实例验收
-
-每个 Provider 至少选择一个明确版本的自部署实例，记录：
-
-- 版本、部署方式和认证范围。
-- 列表与检索的请求/响应 fixture，移除凭据和业务正文。
-- 默认与专属配置是否真实生效。
-- 401、403、404、429、超时和取消行为。
-- 查询、片段、引用和诊断的实际上限。
-
-Mock 或公开文档通过不能代替真实实例验收。
-
-2026-09-09 基线已完成 Dify `0.15.8`/`1.17.0` 目录、详情差异和 1.17 非空检索结构，
-2026-09-10 补充验证了 HTTPS 实例的严格 TLS。FastGPT/RAGFlow 产品版本、真实实例
-401/403/404/429、超时和取消尚未完成，因此不满足本节完整验收条件。
-
-### 14.6 可重复探测脚本
-
-仓库提供 `node scripts/external-knowledge-probe.mjs`。默认从进程环境变量读取
-`GOODBUDDY_<PROVIDER>_BASE_URL/API_KEY`，本地开发也兼容当前两行格式的 `.env.dify`、
-`.env.fastgpt` 和 `.env.ragflow`；Dify 文件还支持多个 `标签/URL/API Key` 三行配置块，用于
-同一次报告比较多个版本。输出不包含地址、凭据、远端 ID、名称、查询和正文。
-
-```text
-node scripts/external-knowledge-probe.mjs
-node scripts/external-knowledge-probe.mjs --provider=ragflow --extended
-node scripts/external-knowledge-probe.mjs --extended --output=<report.json>
-```
-
-默认模式覆盖目录、详情和基础检索。`--extended` 额外执行 Dify 当前配置覆盖、FastGPT
-Rerank、RAGFlow GraphRAG 和 Knowledge Compilation 检索。脚本只有固定 GET/POST 读取与
-检索端点，不实现或调用远端创建、更新、上传和删除。
-
-三家报告均将请求成功与命中数量分开：HTTP 必须成功，FastGPT 业务 `code` 必须为 `200`、
-RAGFlow 必须为 `0`，并分别校验 Dify `records`、FastGPT `data` 或 `data.list`、RAGFlow
-`data.chunks` 数组结构，才记录检索 `success: true` 和 `count`。成功的空数组
-记录 `count: 0`；HTTP、业务、响应结构、JSON 解析或网络失败记录 `success: false` 与
-固定失败类别，不用零命中代替失败。目录失败时不继续调用详情和检索。
-`features.searchModes` 只包含基础检索实际成功的模式；`rerankProbed` 表示实际尝试，
-`rerankRequestSucceeded` 表示请求成功，结果 `rerankEnabled` 单独记录远端实际返回的
-`usingReRank` 布尔值。FastGPT 另记录检索 envelope、分数类型和分数数组项结构；
-operation 保留 HTTP 状态、安全业务码及白名单网络错误码，不记录远端错误消息。
-历史基线保留原始证据，不追填未观测的成功字段。
-`tests/external-knowledge-probe-fastgpt.test.ts` 和 `tests/external-knowledge-probe-outcomes.test.ts`
-使用内存 fetch fixture 运行真实 CLI，覆盖错误、成功零命中和非空结果，不连接外部知识服务。
-
-### 14.7 CRUD 验收边界
-
-| 对象 | Create | Read | Update | Delete | 验收方式 |
-| --- | --- | --- | --- | --- | --- |
-| GoodBuddy 外部实例 | 是 | 是 | 是 | 是 | SQLite、凭据存储、IPC 和 Renderer 集成测试 |
-| GoodBuddy 外部绑定 | 是 | 是 | 是 | 是 | SQLite、统一知识库列表、检索和删除确认测试 |
-| Provider 远端知识库与内容 | 否 | 目录、详情、检索 | 否 | 否 | 探测脚本确认只有只读端点；代码审查确认无写端点 |
-
-FastGPT 等 Provider 的公开 API 确实提供远端知识库、集合和数据 CRUD，但这不属于当前产品
-接入。若未来要验证远端 CRUD，必须先修改 PRD，并使用可删除的专用测试实例或命名空间；
-不能在本轮三个既有实例上执行破坏性测试。
-
-## 15. 实施顺序
-
-这里的顺序只用于控制代码依赖，不裁剪产品设计：
-
-1. 建立共享判别契约、数据库迁移和凭据存储。
-2. 实现 HTTP 边界、错误映射和 Adapter Registry。
-3. 逐个实现三种 Provider，并用 fixture 完成契约测试。
-4. 实现实例管理和目录 IPC。
-5. 扩展创建向导、统一列表和外部详情。
-6. 扩展检索测试、引用和 `retrieveMany`。
-7. 接入聊天预检索与 `KnowledgeMcpGateway`。
-8. 完成真实实例、安全、响应式和跨平台验收。
-
-## 16. 发布条件
-
-- 三种 Provider 的受支持版本和限制已在产品界面或发布说明中可查。
-- 真实实例列表、绑定、检索和错误矩阵均通过。
-- 没有写入远端知识内容的代码路径。
-- API Key 泄漏测试、地址边界和响应大小测试通过。
-- 本地知识库创建、同步、检索、图谱和引用回归测试通过。
-- `auto`、`always`、检索测试和 MCP 知识工具得到一致的外部知识能力。
-
-## 17. 需求追踪
-
-| 需求 | 技术落点 | 验证 |
+| 需求 | 当前实现落点 | 待验收重点 |
 | --- | --- | --- |
-| `EK-FR-01` 至 `EK-FR-03` | 实例契约、Store、实例 IPC、凭据和测试状态 | 实例集成测试、安全测试 |
-| `EK-FR-04`、`EK-FR-05` | Adapter 目录与详情接口、目录 IPC | Provider fixture、手工 ID 集成测试 |
-| `EK-FR-06` 至 `EK-FR-09` | Provider 判别联合、Adapter 配置版本、Renderer 本地字段定义 | 契约测试、UI 字段显隐测试 |
-| `EK-FR-10`、`EK-FR-11` | `KnowledgeBase.kind`、绑定表、统一 `retrieveMany` | 本地与外部混合检索测试 |
-| `EK-FR-12`、`EK-FR-13` | 引用定位判别联合、结果标准化、检索测试 IPC | 引用持久化与 UI 测试 |
-| `EK-FR-14` | 稳定错误码、逐库 Outcome、取消和超时 | 错误 fixture、部分失败测试 |
-| `EK-FR-15` | 外键限制、绑定本地删除、无远端写接口 | 删除生命周期测试 |
-| `EK-FR-16` | Main-only HTTP、固定端点、传输风险确认 | 地址、证书和凭据泄漏测试 |
+| `EK-FR-01` 至 `EK-FR-05` | 实例 Service/Store、目录 Client、IPC 与管理表单 | 服务已验证；补充 FastGPT/RAGFlow 桌面和受限目录手工 ID |
+| `EK-FR-06` 至 `EK-FR-10` | 共享 Provider 配置、绑定事务、统一列表与两栏表单 | Dify 参数与布局已验证；其他 Provider 专属参数及未提供字段待核对 |
+| `EK-FR-11` 至 `EK-FR-14` | `retrieveMany`、预检索、MCP、共享引用与 failure 字段 | 三家 IPC 短答案与 Dify 完整输入区引用已验证；混合失败、广泛问答与远程待补 |
+| `EK-FR-15` | 唯一约束、外键保护、顺序本地删除 | 中途失败刷新、远端内容不变 |
+| `EK-FR-16` | Main 固定端点、有界请求与数据说明 | 当前桌面传输行为与 PRD 差异 |

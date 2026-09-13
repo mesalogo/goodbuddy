@@ -1,44 +1,21 @@
-export type ExternalKnowledgeProvider = 'dify' | 'fastgpt' | 'ragflow'
+import {
+  externalKnowledgeProviderConfigSchema,
+  type ExternalKnowledgeProvider,
+  type ExternalKnowledgeCatalogItem,
+  type ExternalKnowledgeCatalogPage,
+  type ExternalKnowledgeProviderConfig,
+  type ExternalKnowledgeRemoteResult
+} from '../../../shared/external-knowledge-contracts'
 
-export type ExternalKnowledgeCatalogItem = {
-  id: string
-  name: string
-  description?: string
-  graphEnabled?: boolean
-}
+export type { ExternalKnowledgeProvider, ExternalKnowledgeCatalogItem, ExternalKnowledgeCatalogPage }
+export type ExternalKnowledgeRetrievalConfig = ExternalKnowledgeProviderConfig
+export type ExternalKnowledgeRetrievalResult = ExternalKnowledgeRemoteResult
 
-export type ExternalKnowledgeCatalogPage = {
-  items: ExternalKnowledgeCatalogItem[]
-  total?: number
-  hasMore: boolean
-}
-
-export type ExternalKnowledgeRetrievalConfig =
-  | { provider: 'dify'; useDatasetDefaults: true }
-  | {
-      provider: 'fastgpt'
-      searchMode: 'embedding' | 'fullTextRecall' | 'mixedRecall'
-      tokenLimit: number
-      similarity: number
-      usingRerank: boolean
-    }
-  | {
-      provider: 'ragflow'
-      similarityThreshold: number
-      vectorSimilarityWeight: number
-      knnTopK: number
-      useKg: boolean
-      includeKnowledgeCompilation: boolean
-    }
-
-export type ExternalKnowledgeRetrievalResult = {
-  documentTitle: string
-  sourceDisplayName: string
-  snippet: string
-  providerScore?: number
-  remoteDocumentId?: string
-  remoteChunkId?: string
-  location?: string
+export type ExternalKnowledgeCatalogInput = {
+  page?: number
+  pageSize?: number
+  parentId?: string | null
+  search?: string
 }
 
 export class ExternalKnowledgeError extends Error {
@@ -46,6 +23,8 @@ export class ExternalKnowledgeError extends Error {
     readonly code:
       | 'EXTERNAL_KB_NETWORK'
       | 'EXTERNAL_KB_TIMEOUT'
+      | 'EXTERNAL_KB_CANCELLED'
+      | 'EXTERNAL_KB_INCOMPATIBLE'
       | 'EXTERNAL_KB_AUTH'
       | 'EXTERNAL_KB_FORBIDDEN'
       | 'EXTERNAL_KB_NOT_FOUND'
@@ -60,7 +39,7 @@ export class ExternalKnowledgeError extends Error {
   }
 }
 
-type ExternalKnowledgeClientOptions = {
+export type ExternalKnowledgeClientOptions = {
   provider: ExternalKnowledgeProvider
   baseUrl: string
   apiKey: string
@@ -109,6 +88,7 @@ function endpoint(baseUrl: URL, path: string): URL {
 }
 
 function errorForStatus(status: number): ExternalKnowledgeError {
+  if (status === 405) return new ExternalKnowledgeError('EXTERNAL_KB_INCOMPATIBLE', 'External knowledge operation is not supported by this deployment')
   if (status === 401) return new ExternalKnowledgeError('EXTERNAL_KB_AUTH', 'External knowledge authentication failed')
   if (status === 403) return new ExternalKnowledgeError('EXTERNAL_KB_FORBIDDEN', 'External knowledge access is forbidden')
   if (status === 404) return new ExternalKnowledgeError('EXTERNAL_KB_NOT_FOUND', 'External knowledge target was not found')
@@ -116,36 +96,42 @@ function errorForStatus(status: number): ExternalKnowledgeError {
   return new ExternalKnowledgeError('EXTERNAL_KB_SERVER', `External knowledge service returned HTTP ${status}`)
 }
 
-async function readBoundedJson(response: Response, maximumBytes: number): Promise<unknown> {
+async function readBoundedJson(response: Response, maximumBytes: number, signal: AbortSignal): Promise<unknown> {
   const declaredLength = Number(response.headers.get('content-length'))
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    void response.body?.cancel().catch(() => {})
     throw new ExternalKnowledgeError('EXTERNAL_KB_INVALID_RESPONSE', 'External knowledge response is too large')
   }
   if (!response.body) {
     throw new ExternalKnowledgeError('EXTERNAL_KB_INVALID_RESPONSE', 'External knowledge response is empty')
   }
   const reader = response.body.getReader()
+  const cancel = (): void => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', cancel, { once: true })
   const chunks: Uint8Array[] = []
   let total = 0
   try {
+    signal.throwIfAborted()
     while (true) {
       const part = await reader.read()
+      signal.throwIfAborted()
       if (part.done) break
       total += part.value.byteLength
       if (total > maximumBytes) {
-        await reader.cancel()
+        cancel()
         throw new ExternalKnowledgeError('EXTERNAL_KB_INVALID_RESPONSE', 'External knowledge response is too large')
       }
       chunks.push(part.value)
     }
   } finally {
+    signal.removeEventListener('abort', cancel)
     reader.releaseLock()
   }
   const body = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf8')
   try {
     return JSON.parse(body) as unknown
-  } catch (error) {
-    throw new ExternalKnowledgeError('EXTERNAL_KB_INVALID_RESPONSE', 'External knowledge response is not valid JSON', { cause: error })
+  } catch {
+    throw new ExternalKnowledgeError('EXTERNAL_KB_INVALID_RESPONSE', 'External knowledge response is not valid JSON')
   }
 }
 
@@ -169,16 +155,23 @@ export class ExternalKnowledgeClient {
     this.maximumResponseBytes = options.maximumResponseBytes ?? 5_000_000
   }
 
-  async listKnowledgeBases(signal?: AbortSignal): Promise<ExternalKnowledgeCatalogPage> {
+  async listKnowledgeBases(signal?: AbortSignal, input: ExternalKnowledgeCatalogInput = {}): Promise<ExternalKnowledgeCatalogPage> {
+    const { page = 1, pageSize = 100, parentId = null } = input
+    if (!Number.isInteger(page) || page < 1 || page > 500 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new RangeError('Invalid external knowledge catalog pagination')
+    }
+    const search = input.search?.trim().toLowerCase()
+    const filter = (items: ExternalKnowledgeCatalogItem[]): ExternalKnowledgeCatalogItem[] =>
+      search ? items.filter((item) => `${item.name}\n${item.description ?? ''}`.toLowerCase().includes(search)) : items
     if (this.provider === 'dify') {
       const url = endpoint(this.normalizedBaseUrl, '/v1/datasets')
-      url.searchParams.set('page', '1')
-      url.searchParams.set('limit', '100')
+      url.searchParams.set('page', String(page))
+      url.searchParams.set('limit', String(pageSize))
       const body = asRecord(await this.request(url, { method: 'GET' }, signal))
       const items = Array.isArray(body?.data) ? body.data : undefined
       if (!items) throw this.invalidResponse()
       return {
-        items: items.slice(0, 100).map((item) => this.catalogItem(item)),
+        items: filter(items.slice(0, pageSize).map((item) => this.catalogItem(item))),
         total: finiteNumber(body?.total),
         hasMore: body?.has_more === true
       }
@@ -187,45 +180,56 @@ export class ExternalKnowledgeClient {
     if (this.provider === 'fastgpt') {
       const body = asRecord(await this.request(
         endpoint(this.normalizedBaseUrl, '/core/dataset/list'),
-        { method: 'POST', body: JSON.stringify({ pageNum: 1, pageSize: 100 }) },
+        { method: 'POST', body: JSON.stringify({ parentId }) },
         signal
       ))
-      const data = asRecord(body?.data)
-      const items = Array.isArray(body?.data)
-        ? body.data
-        : Array.isArray(data?.data)
-          ? data.data
-          : Array.isArray(data?.list)
-            ? data.list
-            : undefined
+      const items = Array.isArray(body?.data) ? body.data : undefined
       if (body?.code !== 200 || !items) throw this.invalidResponse()
-      const datasets = items.filter((item) => asRecord(item)?.type === 'dataset')
+      const datasets = filter(items.filter((item) => ['dataset', 'folder'].includes(String(asRecord(item)?.type)))
+        .map((item) => this.catalogItem(item, '_id', 'intro')))
+      const offset = (page - 1) * pageSize
       return {
-        items: datasets.slice(0, 100).map((item) => this.catalogItem(item, '_id', 'intro')),
-        total: finiteNumber(data?.total) ?? datasets.length,
-        hasMore: datasets.length > 100
+        items: datasets.slice(offset, offset + pageSize),
+        total: datasets.length,
+        hasMore: datasets.length > offset + pageSize
       }
     }
 
     const url = endpoint(this.normalizedBaseUrl, '/api/v1/datasets')
-    url.searchParams.set('page', '1')
-    url.searchParams.set('page_size', '100')
+    url.searchParams.set('page', String(page))
+    url.searchParams.set('page_size', String(pageSize))
     const body = asRecord(await this.request(url, { method: 'GET' }, signal))
     if (body?.code !== 0 || !Array.isArray(body.data)) throw this.invalidResponse()
     return {
-      items: body.data.slice(0, 100).map((item) => {
-        const record = asRecord(item)
-        const graphFinishedAt = record?.graphrag_task_finish_at
-        return {
-          ...this.catalogItem(item),
-          graphEnabled:
-            (typeof graphFinishedAt === 'number' && graphFinishedAt > 0) ||
-            (typeof graphFinishedAt === 'string' && graphFinishedAt.length > 0)
-        }
-      }),
+      items: filter(body.data.slice(0, pageSize).map((item) => this.catalogItem(item))),
       total: finiteNumber(body.total_datasets),
-      hasMore: (finiteNumber(body.total_datasets) ?? 0) > 100
+      hasMore: finiteNumber(body.total_datasets) === undefined
+        ? body.data.length >= pageSize
+        : Number(body.total_datasets) > page * pageSize
     }
+  }
+
+  async getKnowledgeBase(remoteKnowledgeBaseId: string, signal?: AbortSignal): Promise<ExternalKnowledgeCatalogItem> {
+    const id = remoteKnowledgeBaseId.trim()
+    if (!id) throw new TypeError('Remote knowledge base ID is required')
+    const url = endpoint(this.normalizedBaseUrl, this.provider === 'dify'
+      ? `/v1/datasets/${encodeURIComponent(id)}`
+      : this.provider === 'fastgpt' ? '/core/dataset/detail' : '/api/v1/datasets')
+    if (this.provider !== 'dify') url.searchParams.set('id', id)
+    const body = asRecord(await this.request(url, { method: 'GET' }, signal))
+    let item: ExternalKnowledgeCatalogItem
+    if (this.provider === 'dify') item = this.catalogItem(body)
+    else if (this.provider === 'fastgpt') {
+      if (body?.code !== 200) throw this.invalidResponse()
+      item = this.catalogItem(body.data, '_id', 'intro')
+    } else {
+      if (body?.code !== 0 || !Array.isArray(body.data)) throw this.invalidResponse()
+      const match = body.data.find((value) => asRecord(value)?.id === id)
+      if (!match) throw errorForStatus(404)
+      item = this.catalogItem(match)
+    }
+    if (item.id !== id) throw this.invalidResponse()
+    return item
   }
 
   async retrieve(
@@ -234,16 +238,23 @@ export class ExternalKnowledgeClient {
     config: ExternalKnowledgeRetrievalConfig,
     signal?: AbortSignal
   ): Promise<ExternalKnowledgeRetrievalResult[]> {
+    config = externalKnowledgeProviderConfigSchema.parse(config)
     if (config.provider !== this.provider) throw new TypeError('Provider configuration does not match client')
     const remoteId = remoteKnowledgeBaseId.trim()
     const question = query.trim()
     if (!remoteId || !question) throw new TypeError('Remote knowledge base ID and query are required')
 
-    if (this.provider === 'dify') {
-      if (question.length > 250) throw new RangeError('Dify queries cannot exceed 250 characters')
+    if (this.provider === 'dify' && config.provider === 'dify') {
+      if (!config.useDatasetDefaults && config.retrievalModel.reranking_mode === 'weighted_score' && config.retrievalModel.weights) {
+        const weights = config.retrievalModel.weights
+        if (Math.abs(weights.vector_setting.vector_weight + weights.keyword_setting.keyword_weight - 1) > 1e-9) {
+          throw new TypeError('Dify retrieval weights must sum to one')
+        }
+      }
+      if (Array.from(question).length > 250) throw new RangeError('Dify queries cannot exceed 250 characters')
       const body = asRecord(await this.request(
         endpoint(this.normalizedBaseUrl, `/v1/datasets/${encodeURIComponent(remoteId)}/retrieve`),
-        { method: 'POST', body: JSON.stringify({ query: question }) },
+        { method: 'POST', body: JSON.stringify({ query: question, ...(!config.useDatasetDefaults ? { retrieval_model: config.retrievalModel } : {}) }) },
         signal
       ))
       if (!Array.isArray(body?.records)) throw this.invalidResponse()
@@ -267,8 +278,10 @@ export class ExternalKnowledgeClient {
         signal
       ))
       const data = asRecord(body?.data)
-      if (body?.code !== 200 || !Array.isArray(data?.list)) throw this.invalidResponse()
-      return data.list.slice(0, 20).map((item) => this.fastGptResult(item))
+      // The official legacy manual documents data[]; current OpenAPI uses data.list[].
+      const items = Array.isArray(body?.data) ? body.data : data?.list
+      if (body?.code !== 200 || !Array.isArray(items)) throw this.invalidResponse()
+      return items.slice(0, 20).map((item) => this.fastGptResult(item))
     }
 
     if (this.provider === 'ragflow' && config.provider === 'ragflow') {
@@ -299,12 +312,13 @@ export class ExternalKnowledgeClient {
   }
 
   private async request(url: URL, init: RequestInit, signal?: AbortSignal): Promise<unknown> {
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs)
     const effectiveSignal = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)])
-      : AbortSignal.timeout(this.timeoutMs)
-    let response: Response
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal
     try {
-      response = await this.fetcher(url, {
+      effectiveSignal.throwIfAborted()
+      const response = await this.fetcher(url, {
         ...init,
         redirect: 'error',
         signal: effectiveSignal,
@@ -314,20 +328,40 @@ export class ExternalKnowledgeClient {
           ...(init.body ? { 'Content-Type': 'application/json' } : {})
         }
       })
+      if (effectiveSignal.aborted || !response.ok) {
+        void response.body?.cancel().catch(() => {})
+        effectiveSignal.throwIfAborted()
+        throw errorForStatus(response.status)
+      }
+      return await readBoundedJson(response, this.maximumResponseBytes, effectiveSignal)
     } catch (error) {
-      const code = effectiveSignal.aborted ? 'EXTERNAL_KB_TIMEOUT' : 'EXTERNAL_KB_NETWORK'
-      throw new ExternalKnowledgeError(code, code === 'EXTERNAL_KB_TIMEOUT' ? 'External knowledge request timed out' : 'External knowledge service is unreachable', { cause: error })
+      if (effectiveSignal.aborted) {
+        const timedOut = effectiveSignal.reason === timeoutSignal.reason && timeoutSignal.aborted
+        throw new ExternalKnowledgeError(timedOut ? 'EXTERNAL_KB_TIMEOUT' : 'EXTERNAL_KB_CANCELLED',
+          timedOut ? 'External knowledge request timed out' : 'External knowledge request was cancelled')
+      }
+      if (error instanceof ExternalKnowledgeError) throw error
+      throw new ExternalKnowledgeError('EXTERNAL_KB_NETWORK', 'External knowledge service is unreachable')
     }
-    if (!response.ok) throw errorForStatus(response.status)
-    return readBoundedJson(response, this.maximumResponseBytes)
   }
 
   private catalogItem(value: unknown, idKey = 'id', descriptionKey = 'description'): ExternalKnowledgeCatalogItem {
     const record = asRecord(value)
-    const id = boundedString(record?.[idKey], 128)
+    const id = boundedString(record?.[idKey], 512)
     const name = boundedString(record?.name, 512)
     if (!id || !name) throw this.invalidResponse()
-    return { id, name, description: boundedString(record?.[descriptionKey], 2_000) }
+    const item: ExternalKnowledgeCatalogItem = { id, name, description: boundedString(record?.[descriptionKey], 2_000), kind: 'dataset' }
+    if (this.provider === 'fastgpt') {
+      if (record?.type !== 'dataset' && record?.type !== 'folder') throw this.invalidResponse()
+      item.kind = record.type
+    }
+    if (this.provider === 'ragflow') {
+      const finished = record?.graphrag_task_finish_at
+      item.graphEnabled = typeof finished === 'number' ? Number.isFinite(finished) && finished > 0
+        : typeof finished === 'string' && (Number.isFinite(Number(finished)) ? Number(finished) > 0 : Date.parse(finished) > 0)
+      item.knowledgeCompilationEnabled = !!boundedString(record?.compilation_template_group_id, 512)
+    }
+    return item
   }
 
   private difyResult(value: unknown): ExternalKnowledgeRetrievalResult {
@@ -341,7 +375,7 @@ export class ExternalKnowledgeClient {
       documentTitle: title,
       sourceDisplayName: title,
       snippet,
-      providerScore: finiteNumber(record?.score),
+      providerScore: this.resultScore(record?.score),
       remoteDocumentId: boundedString(document?.id, 128),
       remoteChunkId: boundedString(segment?.id, 128),
       location: finiteNumber(segment?.position) === undefined ? undefined : `segment ${segment?.position}`
@@ -351,15 +385,26 @@ export class ExternalKnowledgeClient {
   private fastGptResult(value: unknown): ExternalKnowledgeRetrievalResult {
     const record = asRecord(value)
     const question = boundedString(record?.q, 8_000)
+    if (!question) throw this.invalidResponse()
     const answer = boundedString(record?.a, 8_000)
     const snippet = [question, answer].filter(Boolean).join('\n')
     if (!snippet) throw this.invalidResponse()
     const title = boundedString(record?.sourceName, 512) ?? 'FastGPT document'
+    // Preserve channel semantics and provider order; these are not one comparable total score.
+    const providerScores = Array.isArray(record?.score) ? record.score.slice(0, 20).map((value) => {
+      const score = asRecord(value)
+      const type = boundedString(score?.type, 128)
+      const number = finiteNumber(score?.value)
+      const index = finiteNumber(score?.index)
+      if (!type || number === undefined || (score?.index !== undefined && (index === undefined || !Number.isInteger(index)))) throw this.invalidResponse()
+      return { type, value: number, ...(index === undefined ? {} : { index }) }
+    }) : undefined
     return {
       documentTitle: title,
       sourceDisplayName: title,
       snippet: snippet.slice(0, 8_000),
-      providerScore: finiteNumber(record?.score),
+      providerScore: providerScores ? undefined : this.resultScore(record?.score),
+      ...(providerScores ? { providerScores } : {}),
       remoteDocumentId: boundedString(record?.sourceId, 128),
       remoteChunkId: boundedString(record?.id, 128),
       location: finiteNumber(record?.chunkIndex) === undefined ? undefined : `chunk ${record?.chunkIndex}`
@@ -376,11 +421,18 @@ export class ExternalKnowledgeClient {
       documentTitle: title,
       sourceDisplayName: title,
       snippet,
-      providerScore: finiteNumber(record?.similarity),
+      providerScore: this.resultScore(record?.similarity),
       remoteDocumentId: boundedString(record?.document_id, 128),
       remoteChunkId: boundedString(record?.id, 128),
       location: positions ? JSON.stringify(positions).slice(0, 8_192) : undefined
     }
+  }
+
+  private resultScore(value: unknown): number | undefined {
+    if (value === undefined || value === null) return undefined
+    const score = finiteNumber(value)
+    if (score === undefined) throw this.invalidResponse()
+    return score
   }
 
   private invalidResponse(): ExternalKnowledgeError {

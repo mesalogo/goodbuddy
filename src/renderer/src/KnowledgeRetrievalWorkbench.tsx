@@ -40,8 +40,9 @@ export type KnowledgeRetrievalChannelDetail = {
 }
 
 export type KnowledgeRetrievalWorkbenchResult = {
-  chunkId: string
-  documentId: string
+  external?: import('../../shared/external-knowledge-contracts').ExternalKnowledgeLocator
+  chunkId?: string
+  documentId?: string
   rank: number
   documentName: string
   sourceName: string
@@ -1013,7 +1014,7 @@ export function KnowledgeRetrievalWorkbench({
                   {results.map((result) => (
                     <li
                       className="knowledge-retrieval-result"
-                      key={result.chunkId}
+                      key={result.chunkId ?? `external-${result.rank}`}
                     >
                       <article
                         aria-label={t('retrieval.results.resultAriaLabel', {
@@ -1094,7 +1095,7 @@ export function KnowledgeRetrievalWorkbench({
                             <p>{result.contextText}</p>
                           </details>
                         )}
-                        <footer>
+                        {!result.external && result.documentId && result.chunkId && <footer>
                           <button
                             className="secondary-button"
                             onClick={() => onViewContext(result)}
@@ -1111,7 +1112,7 @@ export function KnowledgeRetrievalWorkbench({
                             <ExternalLink aria-hidden="true" size={14} />
                             {t('retrieval.actions.openSource')}
                           </button>
-                        </footer>
+                        </footer>}
                       </article>
                     </li>
                   ))}

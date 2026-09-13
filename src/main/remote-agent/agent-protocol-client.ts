@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { remoteQuestionResponseSchema } from '../../shared/remote-question-contracts'
 import { workspaceManagementResultSchema } from '../../shared/workspace-management-contracts'
 import {
   AGENT_PROTOCOL_LIMITS,
@@ -186,6 +187,10 @@ export const AGENT_PROTOCOL_METHODS = {
   'runtime/attachPrompt': {
     params: remoteOwnedPromptAttachRequestSchema,
     result: remoteOwnedPromptStartResultSchema
+  },
+  'runtime/respondToQuestion': {
+    params: remoteQuestionResponseSchema,
+    result: z.object({}).strict()
   },
   'runtime/pagePromptTranscript': {
     params: remoteSemanticTranscriptPageRequestSchema,

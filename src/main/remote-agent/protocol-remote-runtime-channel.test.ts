@@ -489,6 +489,17 @@ async function openChannel(fixture = connectionFixture()) {
 }
 
 describe('ProtocolRemoteRuntimeChannel', () => {
+  it('sends question replies on the authenticated control channel and rejects foreign bindings', async () => {
+    const fixture = await openChannel()
+    const response = { bindingId: 'binding-1', operationId: 'operation-1', questionId: 'question-1', answers: [] }
+    await expect(fixture.channel.respondToQuestion({ ...response, bindingId: 'other' })).rejects.toThrow('binding identity')
+    await fixture.channel.respondToQuestion(response)
+    expect(fixture.client.requests.filter(request => request.method === 'runtime/respondToQuestion'))
+      .toEqual([expect.objectContaining({ method: 'runtime/respondToQuestion', params: response })])
+    await fixture.channel.close()
+    await expect(fixture.channel.respondToQuestion(response)).rejects.toThrow()
+  })
+
   it('maps the complete Agent-owned prompt RPC set', async () => {
     const fixture = await openChannel()
     const identity = {

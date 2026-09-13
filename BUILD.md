@@ -31,6 +31,10 @@ npm start
 
 ## 质量验证
 
+跨功能测试方法见[质量验证索引](./docs/quality/README.md)。桌面界面的测试分层、
+原生键盘、截图与计算样式取证、隔离启动和脱敏报告遵循
+[Electron UI 自动化测试规范](./docs/quality/electron-ui-automation.md)。
+
 提交或打包前运行：
 
 ```bash

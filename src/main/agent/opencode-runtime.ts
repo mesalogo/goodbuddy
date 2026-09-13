@@ -2464,6 +2464,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           return false;
         };
         const reportedMessageIds = new Set<string>();
+        const childTaskIdsBySession = new Map<string, string>();
         let waitingForRetry = false;
         for await (const event of subscription.stream) {
           const childProgress = subagentProgress.update(event);
@@ -2621,6 +2622,10 @@ export class OpenCodeRuntime implements AgentRuntime {
                 ...(subagent ? { subagent } : {}),
               });
               if (subagent) {
+                const metadata = "metadata" in part.state ? part.state.metadata : undefined;
+                if (isRecord(metadata) && typeof metadata.sessionId === "string") {
+                  childTaskIdsBySession.set(metadata.sessionId, subagent.childTaskId);
+                }
                 const retained = subagentProgress.retain(subagent);
                 toolStates.get(callId)!.subagent = retained;
                 yield retained;
@@ -2693,6 +2698,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                 requestId: request.requestId,
                 type: "question",
                 questionId: publicQuestionId,
+                childTaskId: childTaskIdsBySession.get(event.properties.sessionID),
                 questions: questionRequest.questions.map((question) => ({
                   header: question.header,
                   question: question.question,

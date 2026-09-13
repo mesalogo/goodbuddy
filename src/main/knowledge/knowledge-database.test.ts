@@ -86,7 +86,7 @@ describe('KnowledgeDatabase', () => {
     const inspection = new DatabaseSync(path)
     expect(
       inspection.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 11 })
+    ).toEqual({ user_version: 12 })
     expect(
       inspection
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
@@ -102,7 +102,8 @@ describe('KnowledgeDatabase', () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
-      { version: 11 }
+      { version: 11 },
+      { version: 12 }
     ])
     inspection.close()
 
@@ -143,14 +144,14 @@ describe('KnowledgeDatabase', () => {
     expect(repaired.listDocuments(knowledgeBase.id)).toHaveLength(1)
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 11
+      user_version: 12
     })
     inspection.close()
   })
 
   it.each([
-    ['migration version', 'INSERT INTO schema_migrations VALUES (12, ?)', true],
-    ['user version', 'PRAGMA user_version = 12', false]
+    ['migration version', 'INSERT INTO schema_migrations VALUES (13, ?)', true],
+    ['user version', 'PRAGMA user_version = 13', false]
   ])('rejects a future %s without downgrading it', async (
     _label,
     statement,
@@ -168,18 +169,18 @@ describe('KnowledgeDatabase', () => {
 
     const unsupported = new KnowledgeDatabase(path)
     expect(() => unsupported.initialize()).toThrow(
-      'newer than supported version 11'
+      'newer than supported version 12'
     )
 
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: hasParameter ? 11 : 12
+      user_version: hasParameter ? 12 : 13
     })
     expect(
       inspection
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: hasParameter ? 12 : 11 })
+    ).toEqual({ version: hasParameter ? 13 : 12 })
     inspection.close()
   })
 
@@ -319,7 +320,7 @@ describe('KnowledgeDatabase', () => {
       DROP TABLE chunk_embeddings;
       DROP TABLE knowledge_tasks;
       DELETE FROM schema_migrations
-      WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+      WHERE version > 1;
       PRAGMA user_version = 1;
     `)
     downgrade.close()
@@ -329,7 +330,7 @@ describe('KnowledgeDatabase', () => {
     upgraded.initialize()
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 11
+      user_version: 12
     })
     expect(
       inspection
@@ -436,7 +437,7 @@ describe('KnowledgeDatabase', () => {
           WHERE new.enabled = 1 AND new.role <> 'parent';
       END;
       INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild');
-      DELETE FROM schema_migrations WHERE version IN (9, 10, 11);
+      DELETE FROM schema_migrations WHERE version > 8;
       PRAGMA user_version = 8;
     `)
     downgrade

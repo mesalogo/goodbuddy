@@ -75,6 +75,7 @@ const project: AssistantProject = {
 
 afterEach(async () => {
   cleanup()
+  vi.useRealTimers()
   await i18n.changeLanguage('zh-CN')
   vi.restoreAllMocks()
 })
@@ -307,6 +308,50 @@ function installRemoteApi(
     emit: (phase: 'host' | 'agent') => progress?.({ phase })
   }
 }
+
+describe('ProjectSwitcher project activity integration', () => {
+  it('keeps per-project title counts and menu ordering stable across recovery and Host states', async () => {
+    const api = installRemoteApi({ connectionState: 'connecting' })
+    const remote: AssistantProject = {
+      ...project, id: remoteProjectId, name: 'Remote activity',
+      executionSpace: { kind: 'ssh', hostId, remoteRootPath: '/srv/project' }
+    }
+    const idle = { ...remote, id: 'idle-project', name: 'Idle remote' }
+    const props = {
+      activeProjectId: project.id, projects: [project, remote, idle],
+      remoteProjectsEnabled: true, onArchive: vi.fn(), onCreate: vi.fn(),
+      onDelete: vi.fn(), onRemoteCommitted: vi.fn(), onSelect: vi.fn(),
+      onSelectRoot: vi.fn(), onUpdate: vi.fn(),
+      activityByProjectId: {
+        [project.id]: { running: 1, attention: 0 },
+        [remote.id]: { running: 2, attention: 3 }
+      }
+    }
+    const { rerender } = render(<ProjectSwitcher {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+    const menu = screen.getByRole('menu', { name: '当前项目' })
+    await within(menu).findByRole('group', { name: 'SSH 主机：Build host' })
+    for (const stage of ['agent', 'failed', 'completed'] as const) {
+      rerender(<ProjectSwitcher {...props} recoveryByProjectId={{
+        [remote.id]: { projectId: remote.id, requestId: 'activity-recovery', stage,
+          message: 'Host unreachable', retryable: true }
+      }} />)
+      act(() => api.emitConnectionStatus(stage === 'agent' ? 'connecting' : stage === 'failed' ? 'disconnected' : 'ready'))
+      const rows = within(menu).getAllByRole('menuitemradio')
+      expect(rows.map((row) => row.querySelector('b')?.textContent))
+        .toEqual(['Local project', 'Remote activity', 'Idle remote'])
+      expect(rows[0]!.querySelector('.project-switcher__project-heading'))
+        .toHaveTextContent('Local project 1 个运行中')
+      const heading = rows[1]!.querySelector('.project-switcher__project-heading')!
+      expect(heading).toHaveTextContent('Remote activity3 个待处理 2 个运行中')
+      expect(heading.querySelector('b')?.nextElementSibling).toHaveClass('project-activity__counts')
+      expect(rows[2]!.querySelector('.project-activity__counts')).toBeNull()
+    }
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: /Remote activity/u }))
+    expect(props.onSelect).toHaveBeenCalledExactlyOnceWith(remote.id)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+})
 
 describe('ProjectSwitcher runtime fields', () => {
   it('creates an ordinary project with DeepSeek Harness', async () => {
@@ -609,6 +654,112 @@ describe('ProjectSwitcher managed SSH projects', () => {
     expect(
       within(menu).getByText('Restoring conversation at event 15')
     ).toBeInTheDocument()
+  })
+
+  it('expires completion feedback once per request across project switches and menu mounts', async () => {
+    await i18n.changeLanguage('en-US')
+    installRemoteApi()
+    vi.useFakeTimers()
+    const remote: AssistantProject = {
+      ...project,
+      id: remoteProjectId,
+      executionSpace: { kind: 'ssh', hostId, remoteRootPath: '/srv/project' }
+    }
+    const props = {
+      onArchive: vi.fn(), onCreate: vi.fn(), onDelete: vi.fn(),
+      onRemoteCommitted: vi.fn(), onSelect: vi.fn(),
+      onSelectRoot: vi.fn(), onUpdate: vi.fn(),
+      projects: [project, remote], remoteProjectsEnabled: true
+    }
+    const completed: RemoteProjectRecoveryState = {
+      projectId: remote.id,
+      requestId: '00000000-0000-4000-8000-000000000301',
+      stage: 'completed'
+    }
+    const view = (activeProjectId: string, state: RemoteProjectRecoveryState = completed) => (
+      <ProjectSwitcher {...props} activeProjectId={activeProjectId}
+        recoveryByProjectId={{ [remote.id]: { ...state } }} />
+    )
+    const { rerender, unmount } = render(view(remote.id))
+    const trigger = screen.getByRole('button', { name: 'Current project' })
+    expect(within(trigger).getByRole('status')).toHaveTextContent('Recovery completed')
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    rerender(view(project.id))
+    fireEvent.click(trigger)
+    expect(within(screen.getByRole('menu')).getByRole('status'))
+      .toHaveTextContent('Recovery completed')
+    await act(async () => { await vi.advanceTimersByTimeAsync(999) })
+    expect(screen.getByText('Recovery completed')).toBeInTheDocument()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(screen.queryByText('Recovery completed')).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    rerender(view(remote.id))
+    fireEvent.click(trigger)
+    expect(screen.queryByText('Recovery completed')).not.toBeInTheDocument()
+    expect(completed.stage).toBe('completed')
+
+    const next = { ...completed, requestId: '00000000-0000-4000-8000-000000000302' }
+    rerender(view(remote.id, { ...next, stage: 'network' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(within(trigger).getByRole('status')).toHaveAttribute('aria-busy', 'true')
+    rerender(view(remote.id, next))
+    expect(screen.getAllByText('Recovery completed')).toHaveLength(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+    expect(screen.queryByText('Recovery completed')).not.toBeInTheDocument()
+    rerender(view(remote.id, { ...next, requestId: 'new-request' }))
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('expires background completions independently and cancels obsolete completion timers', async () => {
+    await i18n.changeLanguage('en-US')
+    installRemoteApi()
+    vi.useFakeTimers()
+    const remote: AssistantProject = {
+      ...project, id: remoteProjectId,
+      executionSpace: { kind: 'ssh', hostId, remoteRootPath: '/srv/project' }
+    }
+    const second = { ...remote, id: 'second-project', name: 'Second remote' }
+    const onRetryRecovery = vi.fn(async () => undefined)
+    const props = {
+      activeProjectId: project.id,
+      onArchive: vi.fn(), onCreate: vi.fn(), onDelete: vi.fn(),
+      onRemoteCommitted: vi.fn(), onSelect: vi.fn(), onRetryRecovery,
+      onSelectRoot: vi.fn(), onUpdate: vi.fn(),
+      projects: [project, remote, second], remoteProjectsEnabled: true
+    }
+    const firstState: RemoteProjectRecoveryState = {
+      projectId: remote.id, requestId: 'first-request', stage: 'completed'
+    }
+    const secondState: RemoteProjectRecoveryState = {
+      projectId: second.id, requestId: 'second-request', stage: 'completed'
+    }
+    const { rerender } = render(<ProjectSwitcher {...props}
+      recoveryByProjectId={{ [remote.id]: firstState }} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    rerender(<ProjectSwitcher {...props} recoveryByProjectId={{
+      [remote.id]: { ...firstState }, [second.id]: secondState
+    }} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getAllByText('Recovery completed')).toHaveLength(1)
+    expect(within(menu).getByRole('menuitemradio', { name: /Second remote/u }))
+      .toHaveTextContent('Recovery completed')
+    rerender(<ProjectSwitcher {...props} recoveryByProjectId={{
+      [remote.id]: firstState,
+      [second.id]: { ...secondState, requestId: 'retry-request', stage: 'failed',
+        message: 'Host unreachable', retryable: true }
+    }} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(within(menu).getByRole('alert')).toHaveTextContent('Host unreachable')
+    await act(async () => {
+      fireEvent.click(within(menu).getByRole('menuitem', {
+        name: 'Retry recovery for project Second remote'
+      }))
+    })
+    expect(onRetryRecovery).toHaveBeenCalledWith(second.id)
+    expect(screen.queryByText('Recovery completed')).not.toBeInTheDocument()
   })
 
   it('renders an accessible failure and retries only the affected project', async () => {

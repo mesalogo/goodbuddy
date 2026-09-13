@@ -262,6 +262,25 @@ function createProps(
 }
 
 describe('KnowledgeWorkspace', () => {
+  it('searches external names and instances and filters the unified library list', async () => {
+    await i18n.changeLanguage('en-US')
+    const external = { ...library, id: 'external-1', name: 'Company handbook', external: { knowledgeBaseId: 'external-1', instanceId: 'instance-1', provider: 'dify' as const, remoteKnowledgeBaseId: 'remote-1', remoteName: 'Remote policies', commonConfig: { resultLimit: 6, requestTimeoutMs: 15000, maxSnippetCharacters: 4000 }, providerConfig: { provider: 'dify' as const, useDatasetDefaults: true as const }, lastVerifiedAt: '2026-09-12' } }
+    const props = createProps({ libraries: [library, external], externalInstances: [{ id: 'instance-1', name: 'Enterprise service', provider: 'dify', baseUrl: 'https://knowledge.example', enabled: true, credentialStatus: 'configured', probeStatus: 'healthy', bindingCount: 1 }] })
+    render(<KnowledgeWorkspace {...props} />)
+    const nav = screen.getByRole('navigation', { name: 'Library list' })
+    for (const query of ['Remote policies', 'Enterprise service', 'dify']) {
+      fireEvent.change(screen.getByLabelText('Search libraries'), { target: { value: query } })
+      expect(within(nav).getAllByRole('button')).toHaveLength(1)
+      expect(within(nav).getByRole('button', { name: /Company handbook/ })).toBeInTheDocument()
+    }
+    fireEvent.change(screen.getByLabelText('Library source filter'), { target: { value: 'local' } })
+    expect(within(nav).getByText('No matching results')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(within(nav).getAllByRole('button')).toHaveLength(2)
+    fireEvent.click(within(nav).getByRole('button', { name: /Company handbook/ }))
+    expect(props.onSelectLibrary).toHaveBeenCalledWith(external.id)
+  })
+
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
@@ -2022,7 +2041,8 @@ describe('KnowledgeWorkspace', () => {
     ).not.toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: '新建知识库' })
-    ).not.toBeInTheDocument()
+    ).toBeDisabled()
+    expect(screen.getByRole('button', { name: '管理外部实例' })).toBeInTheDocument()
   })
 
   it('shows a retryable load error instead of the first-library empty state', () => {

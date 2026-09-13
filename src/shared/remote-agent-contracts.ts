@@ -317,6 +317,7 @@ export const remoteSemanticTranscriptPageResultSchema = z
     acknowledgedSequence: agentSequenceSchema,
     state: remoteOwnedPromptStateSchema,
     sessionId: agentIdentifierSchema.optional(),
+    pendingQuestions: z.array(jsonValueSchema).optional(),
     hasMore: z.boolean()
   })
   .strict()

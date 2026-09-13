@@ -1,3 +1,5 @@
+import { externalKnowledgeInstanceInputSchema, externalKnowledgeInstanceEnabledInputSchema, externalKnowledgeInstanceSaveInputSchema, externalKnowledgeCatalogListInputSchema, externalKnowledgeCatalogGetInputSchema, externalKnowledgeBindingSaveInputSchema, externalKnowledgeBindingUpdateInputSchema, externalKnowledgeBindingTestInputSchema } from '../shared/external-knowledge-contracts'
+import { knowledgeReferenceKey, toKnowledgeReference } from '../shared/knowledge-reference'
 import {
   app,
   BrowserWindow,
@@ -992,6 +994,8 @@ function getKnowledgeSnapshot(
   }
   return {
     libraries: snapshot.libraries.map((library) => ({
+      kind: service.database.externalStore.listBindings().some(item=>item.knowledgeBaseId===library.id) ? 'external' : 'local',
+      external: service.database.externalStore.listBindings().find(item=>item.knowledgeBaseId===library.id),
       id: library.id,
       name: library.name,
       description: library.description ?? '',
@@ -1092,6 +1096,7 @@ function buildForcedKnowledgeEvidence(
   promptContext?: string
   references: KnowledgeSearchReference[]
 } {
+  const seen = new Set<string>()
   const ranked = entries
     .flatMap((entry) =>
       entry.response.results.map((result) => ({
@@ -1104,35 +1109,26 @@ function buildForcedKnowledgeEvidence(
     )
     .sort(
       (left, right) =>
-        right.result.relevance - left.result.relevance ||
-        right.result.scores.fusedScore -
-          left.result.scores.fusedScore ||
-        left.result.chunkId.localeCompare(right.result.chunkId)
+        left.result.rank - right.result.rank ||
+        left.entry.libraryId.localeCompare(right.entry.libraryId)
     )
+    .filter(({ entry, result }) => {
+      const key = knowledgeReferenceKey(toKnowledgeReference(result, entry.libraryName))
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
     .slice(0, 20)
   const references: KnowledgeSearchReference[] = ranked.map(
     ({ entry, result }, index) => ({
-      libraryId: entry.libraryId,
-      libraryName: entry.libraryName,
-      documentId: result.documentId,
-      chunkId: result.chunkId,
-      documentName: result.documentTitle,
-      sourceName: result.sourceDisplayName,
-      locator: result.location,
-      snippet: stripKnowledgeHighlightTags(result.snippet),
-      rank: index + 1,
-      score: result.scores.fusedScore,
-      lexicalRank: result.scores.ftsRank,
-      vectorRank: result.scores.vectorRank,
-      graphRank: result.scores.graphRank,
-      similarity: result.scores.vectorSimilarity,
-      retrievalChannels: result.channels
+      ...toKnowledgeReference(result, entry.libraryName),
+      rank: index + 1
     })
   )
   if (ranked.length === 0) {
     return { references }
   }
-  let remainingCharacters = 24_000
+  let remainingCharacters = 48_000
   const evidence: Array<{
     citation: number
     library: string
@@ -1161,7 +1157,7 @@ function buildForcedKnowledgeEvidence(
       library: item.entry.libraryName,
       document: item.result.documentTitle,
       source: item.result.sourceDisplayName,
-      locator: item.result.location,
+      locator: item.result.external?.location ?? item.result.location,
       text
     })
     remainingCharacters -= text.length
@@ -4317,12 +4313,7 @@ export function registerIpcHandlers(
                 request.knowledgeCapabilityToken
               ) ?? [])
             ].map((reference) => [
-              [
-                reference.libraryId,
-                reference.documentId,
-                reference.chunkId ?? '',
-                reference.locator ?? ''
-              ].join('\0'),
+              knowledgeReferenceKey(reference),
               reference
             ])
           ).values()
@@ -4379,6 +4370,9 @@ export function registerIpcHandlers(
                 libraryNames.get(knowledgeBaseId) ?? '知识库',
               response
             }))
+            if (entries.length && entries.every(entry => entry.response.diagnostics.failure)) {
+              throw new Error(entries.map(entry => `${entry.libraryName}: ${entry.response.diagnostics.failure}`).join('; '))
+            }
             const evidence = buildForcedKnowledgeEvidence(entries)
             preflightReferences = evidence.references
             const usedChannels = [
@@ -4390,13 +4384,13 @@ export function registerIpcHandlers(
               )
             ]
             const warnings = entries.flatMap((entry) =>
-              entry.response.diagnostics.degradedChannels.map(
+              [...(entry.response.diagnostics.failure ? [`${entry.libraryName} · ${entry.response.diagnostics.failure}`] : []), ...entry.response.diagnostics.degradedChannels.map(
                 (item) =>
                   `${entry.libraryName} · ${item.reason}`.slice(
                     0,
                     500
                   )
-              )
+              )]
             )
             if (evidence.promptContext) {
               executionRequest = {
@@ -4640,6 +4634,10 @@ export function registerIpcHandlers(
               requestId: request.requestId,
               runtime: selectedRuntime
             })
+          }
+          if (publicEvent.type === 'question-resolved' &&
+            pendingAgentQuestions.get(publicEvent.questionId)?.requestId === request.requestId) {
+            pendingAgentQuestions.delete(publicEvent.questionId)
           }
           if (publicEvent.type === 'error') {
             runtimeErrorEvent = publicEvent
@@ -7901,6 +7899,16 @@ export function registerIpcHandlers(
     }
   )
 
+  registerHandler(ipcChannels.externalInstancesList, (event) => {assertTrustedSender(event,window);return knowledgeService.external.listInstances()})
+  registerHandler(ipcChannels.externalInstancesSave, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.saveInstance(externalKnowledgeInstanceSaveInputSchema.parse(input))})
+  registerHandler(ipcChannels.externalInstancesTest, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.testInstance(externalKnowledgeInstanceInputSchema.parse(input).instanceId)})
+  registerHandler(ipcChannels.externalInstancesSetEnabled, (event,input:unknown) => {assertTrustedSender(event,window);const value=externalKnowledgeInstanceEnabledInputSchema.parse(input);return knowledgeService.external.setEnabled(value.instanceId,value.enabled)})
+  registerHandler(ipcChannels.externalInstancesDelete, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.deleteInstance(externalKnowledgeInstanceInputSchema.parse(input).instanceId)})
+  registerHandler(ipcChannels.externalCatalogList, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.listCatalog(externalKnowledgeCatalogListInputSchema.parse(input))})
+  registerHandler(ipcChannels.externalCatalogGet, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.getCatalog(externalKnowledgeCatalogGetInputSchema.parse(input))})
+  registerHandler(ipcChannels.externalRetrievalTest, (event,input:unknown) => {assertTrustedSender(event,window);return knowledgeService.external.testRetrieval(externalKnowledgeBindingTestInputSchema.parse(input))})
+  registerHandler(ipcChannels.externalBindingsCreate, async (event,input:unknown) => {assertTrustedSender(event,window);await knowledgeService.external.saveBinding(externalKnowledgeBindingSaveInputSchema.parse(input));return getKnowledgeSnapshot(knowledgeService)})
+  registerHandler(ipcChannels.externalBindingsUpdate, async (event,input:unknown) => {assertTrustedSender(event,window);await knowledgeService.external.saveBinding(externalKnowledgeBindingUpdateInputSchema.parse(input));return getKnowledgeSnapshot(knowledgeService)})
   registerHandler(ipcChannels.knowledgeSnapshot, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const libraryId =
@@ -8064,30 +8072,19 @@ export function registerIpcHandlers(
       availableLibraries.map((library) => [library.id, library.name])
     )
     const results = (
-      await knowledgeService.searchHybridMany(
+      await knowledgeService.retrieveMany(
         libraries,
-        value.query,
-        6
+        value.query
       )
-    ).map(({ knowledgeBaseId, result }) => ({
-      libraryId: knowledgeBaseId,
-      libraryName: names.get(knowledgeBaseId) ?? '知识库',
-      documentId: result.document.id,
-      chunkId: result.chunk.id,
-      documentName: result.document.title,
-      sourceName: result.source.displayName,
-      locator: result.chunk.location,
-      snippet: stripKnowledgeHighlightTags(result.snippet),
-      rank: result.rank,
-      score: result.retrieval.score,
-      lexicalRank: result.retrieval.lexicalRank,
-      vectorRank: result.retrieval.vectorRank,
-      graphRank: result.retrieval.graphRank,
-      similarity: result.retrieval.similarity,
-      retrievalChannels: result.retrieval.channels,
-      evidenceIds: result.retrieval.evidenceIds
-    }))
-    return results
+    )
+    const failures = results.flatMap(item => item.response.diagnostics.failure ? [item.response.diagnostics.failure] : [])
+    if (failures.length === results.length) throw new Error(failures.join('; '))
+    const references = results.flatMap(({ knowledgeBaseId, response }) => response.results.map(result => ({
+      ...toKnowledgeReference(result, names.get(knowledgeBaseId) ?? '知识库'),
+      ...(failures.length ? { warnings: failures } : {})
+    })))
+    if (!references.length && failures.length) throw new Error(failures.join('; '))
+    return [...new Map(references.map(reference => [knowledgeReferenceKey(reference), reference])).values()]
       .sort((left, right) => left.rank - right.rank)
       .slice(0, 8)
   })

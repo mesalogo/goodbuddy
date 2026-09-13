@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { externalKnowledgeLocatorSchema } from './external-knowledge-contracts'
 import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
 import { sshHostIdSchema } from './ssh-host-contracts'
 
@@ -368,7 +369,9 @@ export const conversationMessageSchema = z
           .object({
             libraryId: assistantIdSchema,
             libraryName: z.string().max(200),
-            documentId: assistantIdSchema,
+            documentId: assistantIdSchema.optional(),
+            external: externalKnowledgeLocatorSchema.optional(),
+            warnings: z.array(z.string().max(500)).max(20).optional(),
             chunkId: assistantIdSchema.optional(),
             documentName: z.string().max(500),
             sourceName: z.string().max(500),

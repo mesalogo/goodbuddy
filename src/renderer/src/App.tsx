@@ -56,6 +56,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { knowledgeReferenceKey } from "../../shared/knowledge-reference";
 import type { TFunction } from "i18next";
 import type {
   ApprovalDecision,
@@ -161,6 +162,8 @@ import {
   ScopeBadge,
 } from "./WorkspacePrimitives";
 import { ProjectSwitcher } from "./ProjectSwitcher";
+import { ProjectActivity } from "./ProjectActivity";
+import { deriveConversationActivity } from "./conversation-activity";
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
@@ -1461,10 +1464,14 @@ function mergePersistedConversations(
     );
     const messages = [
       ...conversation.messages.map((message) => {
+        const localMessage = localMessageById.get(message.id);
         if (!localIsNewer) {
+          // Pending prompts are live-only and are omitted from persisted messages.
+          if (localMessage?.state === "streaming" && message.state === "streaming") {
+            return { ...message, approval: localMessage.approval, pendingQuestions: localMessage.pendingQuestions };
+          }
           return message;
         }
-        const localMessage = localMessageById.get(message.id);
         if (
           !localMessage ||
           persistedTerminalStateOverridesLocal(localMessage, message)
@@ -2547,11 +2554,13 @@ function App(): React.JSX.Element {
       tasks: [],
     },
   );
+  const [externalInstances, setExternalInstances] = useState<import('../../shared/external-knowledge-contracts').ExternalKnowledgeInstanceSummary[]>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(true);
   const [knowledgeLoadError, setKnowledgeLoadError] = useState<string>();
   const [knowledgeOperationCount, setKnowledgeOperationCount] = useState(0);
   const knowledgeOperationCountRef = useRef(knowledgeOperationCount);
   const knowledgeLoadRequestRef = useRef(0);
+  const citationRequestRef = useRef(0);
   const failedKnowledgeLibraryIdRef = useRef<string | undefined>(undefined);
   const knowledgeScopeTriggerRef = useRef<HTMLButtonElement>(null);
   const knowledgeScopePopoverRef = useRef<HTMLDivElement>(null);
@@ -2855,6 +2864,7 @@ function App(): React.JSX.Element {
         ?.focus();
     });
     const closeOnEscape = (event: KeyboardEvent): void => {
+      if (sidebarRef.current?.closest<HTMLElement>(".app-shell")?.inert) return;
       if (event.key === "Escape") {
         event.preventDefault();
         closeNarrowSidebar();
@@ -3763,6 +3773,26 @@ function App(): React.JSX.Element {
       ),
     [projects, tWorkspace],
   );
+  const projectActivity = useMemo(
+    () => deriveConversationActivity(
+      conversations.map((conversation) => ({
+        ...conversation,
+        title: conversationTitles.get(conversation.id) ?? conversation.title,
+      })),
+      assistantTasks,
+      activeConversationIds,
+      projects.map((project) => ({
+        id: project.id,
+        name: projectNames.get(project.id) ?? project.name,
+      })),
+      tWorkspace("projectActivity.unassigned"),
+    ),
+    [conversations, conversationTitles, assistantTasks, activeConversationIds,
+      projects, projectNames, tWorkspace],
+  );
+  const activityByConversationId = new Map(
+    projectActivity.activities.map((activity) => [activity.conversationId, activity]),
+  );
   const pendingSidebarApprovals = useMemo<PendingSidebarApproval[]>(
     () =>
       conversations.flatMap((conversation) =>
@@ -3939,13 +3969,16 @@ function App(): React.JSX.Element {
     async (libraryId?: string): Promise<KnowledgeSnapshot> => {
       const requestId = ++knowledgeLoadRequestRef.current;
       try {
-        const snapshot =
-          await window.goodbuddy.knowledge.getSnapshot(libraryId);
+        const [snapshot, instances] = await Promise.all([
+          window.goodbuddy.knowledge.getSnapshot(libraryId),
+          window.goodbuddy.knowledge.externalInstancesList(),
+        ]);
         if (requestId !== knowledgeLoadRequestRef.current) {
           return snapshot;
         }
         failedKnowledgeLibraryIdRef.current = undefined;
         setKnowledgeSnapshot(snapshot);
+        setExternalInstances(instances);
         setKnowledgeLoadError(undefined);
         const availableIds = new Set(
           snapshot.libraries.map((library) => library.id),
@@ -4232,6 +4265,27 @@ function App(): React.JSX.Element {
         return;
       }
 
+      const liveMessage = conversationsRef.current
+        .find((conversation) => conversation.id === run.conversationId)
+        ?.messages.find((message) => message.id === run.messageId);
+      if (event.type === "question-resolved") {
+        updateMessage(run.conversationId, run.messageId, (message) => {
+          if (!message.pendingQuestions?.some((question) => question.questionId === event.questionId)) return message;
+          const pendingQuestions = message.pendingQuestions.filter((question) => question.questionId !== event.questionId);
+          if (!pendingQuestions.length && !message.approval && message.state === "streaming") {
+            setAssistantTasks((current) => current.map((task) =>
+              task.id === event.requestId && task.status === "waiting_approval" ? { ...task, status: "running" } : task,
+            ));
+          }
+          return { ...message, pendingQuestions };
+        });
+        return;
+      }
+      if (event.type === "question" && (
+        liveMessage?.state !== "streaming" ||
+        liveMessage.pendingQuestions?.some((question) => question.questionId === event.questionId) ||
+        liveMessage.answeredQuestions?.some((question) => question.questionId === event.questionId)
+      )) return;
       setAssistantTasks((current) => {
         let changed = false;
         const updated = current.map((task) => {
@@ -4245,7 +4299,9 @@ function App(): React.JSX.Element {
                 ? "completed"
                 : event.type === "error"
                   ? event.status
-                  : "running";
+                  : liveMessage?.pendingQuestions?.length || liveMessage?.approval
+                    ? "waiting_approval"
+                    : "running";
           const completedAt =
             event.type === "done" || event.type === "error"
               ? new Date().toISOString()
@@ -4640,11 +4696,18 @@ function App(): React.JSX.Element {
           },
         }));
       } else if (event.type === "question") {
-        updateMessage(run.conversationId, run.messageId, (message) => ({
-          ...message,
-          status: undefined,
-          question: event,
-        }));
+        updateMessage(run.conversationId, run.messageId, (message) => {
+          if (message.state !== "streaming" ||
+            message.pendingQuestions?.some((question) => question.questionId === event.questionId) ||
+            message.answeredQuestions?.some((question) => question.questionId === event.questionId)) {
+            return message;
+          }
+          return {
+            ...message,
+            status: undefined,
+            pendingQuestions: [...(message.pendingQuestions ?? []), event],
+          };
+        });
       } else if (event.type === "artifact") {
         updateMessage(run.conversationId, run.messageId, (message) => ({
           ...message,
@@ -4673,27 +4736,19 @@ function App(): React.JSX.Element {
         }));
       } else if (event.type === "source-references") {
         updateMessage(run.conversationId, run.messageId, (message) => {
-          const referenceKey = (reference: KnowledgeSearchReference): string =>
-            [
-              reference.libraryId,
-              reference.documentId,
-              reference.chunkId ?? "",
-              reference.locator ?? "",
-              reference.snippet,
-            ].join("\0");
           const incoming = [
             ...new Map(
               event.references.map((reference) => [
-                referenceKey(reference),
+                knowledgeReferenceKey(reference),
                 reference,
               ]),
             ).values(),
           ];
-          const incomingKeys = new Set(incoming.map(referenceKey));
+          const incomingKeys = new Set(incoming.map(knowledgeReferenceKey));
           const references = [
             ...incoming,
             ...(message.sourceReferences ?? []).filter(
-              (reference) => !incomingKeys.has(referenceKey(reference)),
+              (reference) => !incomingKeys.has(knowledgeReferenceKey(reference)),
             ),
           ].slice(0, 20);
           return {
@@ -4812,7 +4867,7 @@ function App(): React.JSX.Element {
                   )
                 : message.contextCompressions,
             approval: undefined,
-            question: undefined,
+            pendingQuestions: undefined,
             tools: toolTerminalState
               ? message.tools?.map((tool) =>
                   tool.state === "pending" || tool.state === "running"
@@ -6715,11 +6770,16 @@ function App(): React.JSX.Element {
 
   const openCitationContext = useCallback(
     async (reference: KnowledgeSearchReference): Promise<void> => {
+      const request = ++citationRequestRef.current;
+      if (reference.external) {
+        setCitationDialog({ reference, loading: false });
+        return;
+      }
       setCitationDialog({
         reference,
         loading: true,
       });
-      if (!reference.chunkId) {
+      if (!reference.chunkId || !reference.documentId) {
         setCitationDialog({
           reference,
           loading: false,
@@ -6733,6 +6793,7 @@ function App(): React.JSX.Element {
           documentId: reference.documentId,
           chunkId: reference.chunkId,
         });
+        if (request !== citationRequestRef.current) return;
         setCitationDialog({
           reference,
           loading: false,
@@ -6747,6 +6808,7 @@ function App(): React.JSX.Element {
           },
         });
       } catch (reason) {
+        if (request !== citationRequestRef.current) return;
         setCitationDialog({
           reference,
           loading: false,
@@ -6762,7 +6824,7 @@ function App(): React.JSX.Element {
 
   const openCitationSource = useCallback(
     async (reference: KnowledgeSearchReference): Promise<void> => {
-      if (!reference.chunkId) {
+      if (reference.external || !reference.chunkId || !reference.documentId) {
         return;
       }
       try {
@@ -7123,7 +7185,9 @@ function App(): React.JSX.Element {
           startedAt,
         },
         ...current,
-      ].slice(0, 100),
+      ].filter((task, index) =>
+        index < 100 || task.status === "running" || task.status === "waiting_approval",
+      ),
     );
     recordActivity({
       conversationId,
@@ -7349,6 +7413,12 @@ function App(): React.JSX.Element {
       approvalId: string,
       decision: ApprovalDecision,
     ): Promise<void> => {
+      const pendingMessage = conversationsRef.current
+        .find((conversation) => conversation.id === conversationId)
+        ?.messages.find((message) => message.id === messageId);
+      if (pendingMessage?.approval?.id !== approvalId) return;
+      const taskId = pendingMessage.task?.id ?? [...activeRuns.current.entries()]
+        .find(([, run]) => run.conversationId === conversationId && run.messageId === messageId)?.[0];
       try {
         await window.goodbuddy.agent.respondApproval(approvalId, decision);
         const approved = decision !== "deny";
@@ -7380,20 +7450,29 @@ function App(): React.JSX.Element {
             return record;
           });
         });
-        updateMessage(conversationId, messageId, (message) => ({
-          ...message,
-          approval: undefined,
-          status:
-            approved && message.task
-              ? undefined
-              : approved
-                ? tRef.current("chat.approval.executing", {
-                    decision: decisionLabel,
-                  })
-                : tRef.current("chat.approval.denied"),
-        }));
+        updateMessage(conversationId, messageId, (message) => {
+          if (message.approval?.id !== approvalId) return message;
+          if (!message.pendingQuestions?.length) {
+            setAssistantTasks((current) => current.map((task) =>
+              task.id === taskId && task.status === "waiting_approval"
+                ? { ...task, status: "running" }
+                : task,
+            ));
+          }
+          return {
+            ...message,
+            approval: undefined,
+            status: message.pendingQuestions?.length
+              ? message.status
+              : approved && message.task
+                ? undefined
+                : approved
+                  ? tRef.current("chat.approval.executing", { decision: decisionLabel })
+                  : tRef.current("chat.approval.denied"),
+          };
+        });
       } catch {
-        updateMessage(conversationId, messageId, (message) => ({
+        updateMessage(conversationId, messageId, (message) => message.approval?.id !== approvalId ? message : ({
           ...message,
           status: tRef.current("chat.approval.responseFailed"),
         }));
@@ -7409,35 +7488,48 @@ function App(): React.JSX.Element {
       questionId: string,
       answers?: AgentQuestionAnswer[],
     ): Promise<void> => {
-      const question = conversationsRef.current
+      const pendingMessage = conversationsRef.current
         .find((conversation) => conversation.id === conversationId)
-        ?.messages.find((message) => message.id === messageId)?.question;
+        ?.messages.find((message) => message.id === messageId);
+      const question = pendingMessage?.pendingQuestions?.[0];
       if (!question || question.questionId !== questionId) {
         return;
       }
+      const taskId = pendingMessage.task?.id ?? [...activeRuns.current.entries()]
+        .find(([, run]) => run.conversationId === conversationId && run.messageId === messageId)?.[0];
       await window.goodbuddy.agent.respondQuestion(questionId, answers);
-      updateMessage(conversationId, messageId, (message) => ({
-        ...message,
-        answeredQuestions: [
-          ...(message.answeredQuestions ?? []),
-          {
-            questionId,
-            skipped: answers === undefined,
-            questions: question.questions.map((item, index) => ({
-              ...item,
-              answer: answers?.[index],
-            })),
-          },
-        ],
-        question: message.question?.questionId === questionId
-          ? undefined
-          : message.question,
-        status: message.question?.questionId === questionId && message.state === "streaming"
-          ? answers
-            ? tRef.current("chat.status.answerSubmitted")
-            : tRef.current("chat.status.questionSkipped")
-          : message.status,
-      }));
+      updateMessage(conversationId, messageId, (message) => {
+        const pendingQuestions = message.pendingQuestions?.filter((item) => item.questionId !== questionId);
+        const resumed = message.pendingQuestions?.some((item) => item.questionId === questionId) &&
+          !pendingQuestions?.length && !message.approval && message.state === "streaming";
+        if (resumed) {
+          setAssistantTasks((current) => current.map((task) =>
+            task.id === taskId && task.status === "waiting_approval"
+              ? { ...task, status: "running" }
+              : task,
+          ));
+        }
+        return {
+          ...message,
+          answeredQuestions: [
+            ...(message.answeredQuestions ?? []).filter((item) => item.questionId !== questionId),
+            {
+              questionId,
+              skipped: answers === undefined,
+              questions: question.questions.map((item, index) => ({
+                ...item,
+                answer: answers?.[index],
+              })),
+            },
+          ],
+          pendingQuestions,
+          status: resumed
+            ? answers
+              ? tRef.current("chat.status.answerSubmitted")
+              : tRef.current("chat.status.questionSkipped")
+            : message.status,
+        };
+      });
     },
     [updateMessage],
   );
@@ -7752,29 +7844,46 @@ function App(): React.JSX.Element {
   };
 
   const openActivityConversation = (conversationId: string): void => {
-    const conversation = conversations.find(
-      (candidate) => candidate.id === conversationId,
-    );
-    if (!conversation) {
-      notify({
-        tone: "info",
-        message: t("notices.conversationDeleted"),
-      });
-      return;
-    }
-    if (conversation.projectId) {
-      setActiveProjectId(conversation.projectId);
-    }
-    setActiveId(conversationId);
-    setUnreadConversationIds((current) => {
-      if (!current.has(conversationId)) {
-        return current;
+    const open = async (): Promise<void> => {
+      let conversation = conversationsRef.current.find(
+        (candidate) => candidate.id === conversationId,
+      );
+      if (!conversation) {
+        try {
+          const persisted = await window.goodbuddy.conversations.list();
+          conversation = persisted.find((candidate) => candidate.id === conversationId);
+          setConversations((current) => mergePersistedConversations(
+            current, persisted, persistedLocalConversationsRef.current,
+          ));
+        } catch {
+          notify({ tone: "error", message: t("notices.remoteConversationRefreshFailed") });
+          return;
+        }
       }
-      const next = new Set(current);
-      next.delete(conversationId);
-      return next;
-    });
-    setView("chat");
+      if (!conversation) {
+        notify({ tone: "info", message: t("notices.conversationDeleted") });
+        return;
+      }
+      setActiveProjectId(conversation.projectId ?? "");
+      setConversationActionsId("");
+      setSelectedAssistantTaskId(undefined);
+      setSearchQuery("");
+      setActiveId(conversationId);
+      setUnreadConversationIds((current) => {
+        if (!current.has(conversationId)) return current;
+        const next = new Set(current);
+        next.delete(conversationId);
+        return next;
+      });
+      commitView("chat");
+      if (narrowWindow) closeNarrowSidebar();
+    };
+    const requestLeave = settingsLeaveRequesterRef.current;
+    if (viewRef.current === "settings" && requestLeave) {
+      requestLeave(() => { void open(); });
+    } else {
+      void open();
+    }
   };
 
   const openAssistantTask = (task: AssistantTask): void => {
@@ -8192,7 +8301,7 @@ function App(): React.JSX.Element {
         id="primary-sidebar"
         inert={!sidebarOpen}
         onKeyDown={(event) => {
-          if (mainSidebarOpen) {
+          if (mainSidebarOpen && event.currentTarget.contains(event.target as Node)) {
             trapTabFocus(event, sidebarRef.current);
           }
         }}
@@ -8220,6 +8329,7 @@ function App(): React.JSX.Element {
 
         <ProjectSwitcher
           activeProjectId={activeProjectId}
+          activityByProjectId={projectActivity.byProjectId}
           recoveryByProjectId={projectRecoveryByProjectId}
           runtimeSettings={runtimeSettings}
           onArchive={archiveProject}
@@ -8232,6 +8342,10 @@ function App(): React.JSX.Element {
           onUpdate={updateProject}
           projects={projects}
           remoteProjectsEnabled={remoteProjectsEnabled}
+        />
+        <ProjectActivity
+          activities={projectActivity.activities}
+          onOpenConversation={openActivityConversation}
         />
 
         {activeProject?.kind !== "channel" && (
@@ -8383,6 +8497,7 @@ function App(): React.JSX.Element {
                 conversation,
                 t("conversation.defaultTitle"),
               );
+              const activity = activityByConversationId.get(conversation.id);
               const branchSourceTitle = conversation.branch
                 ? (conversationTitles.get(
                     conversation.branch.sourceConversationId,
@@ -8497,12 +8612,16 @@ function App(): React.JSX.Element {
                         </time>
                       </small>
                     </button>
-                    {activeConversationIds.has(conversation.id) && (
+                    {activity && (
                       <span
-                        aria-label={t("conversation.active")}
-                        className="conversation-activity-indicator"
+                        aria-label={activity.status === "running"
+                          ? t("conversation.active")
+                          : tWorkspace(`projectActivity.status.${activity.status}`)}
+                        className={activity.status === "running"
+                          ? "conversation-activity-indicator"
+                          : "conversation-activity-indicator conversation-activity-indicator--attention"}
                         role="status"
-                        title={t("conversation.active")}
+                        title={tWorkspace(`projectActivity.status.${activity.status}`)}
                       />
                     )}
                     <button
@@ -9527,9 +9646,13 @@ function App(): React.JSX.Element {
                                         {t("composer.knowledge.scope")}
                                       </strong>
                                       {knowledgeSnapshot.libraries.map(
-                                        (library) => (
+                                        (library) => {
+                                          const instance = externalInstances.find(item => item.id === library.external?.instanceId);
+                                          const externalStatus = !instance ? 'temporarily-unavailable' : !instance.enabled ? 'instance-disabled' : instance.credentialStatus !== 'configured' || instance.probeStatus === 'auth-failed' ? 'credential-error' : ['failed', 'unreachable'].includes(instance.probeStatus) ? 'temporarily-unavailable' : 'ready';
+                                          return (
                                           <label key={library.id}>
                                             <input
+                                              disabled={!!library.external && externalStatus !== 'ready'}
                                               checked={enabledKnowledgeLibraryIds.includes(
                                                 library.id,
                                               )}
@@ -9553,7 +9676,7 @@ function App(): React.JSX.Element {
                                             />
                                             <span>{library.name}</span>
                                             <small>
-                                              {t(
+                                              {library.external ? `${({ dify: 'Dify', fastgpt: 'FastGPT', ragflow: 'RAGFlow' })[library.external.provider]} · ${instance?.name ?? library.external.instanceId} · ${t(`external.states.${externalStatus}`, { ns: 'knowledge' })}` : t(
                                                 "composer.knowledge.documents",
                                                 {
                                                   count: library.documentCount,
@@ -9561,7 +9684,7 @@ function App(): React.JSX.Element {
                                               )}
                                             </small>
                                           </label>
-                                        ),
+                                        )},
                                       )}
                                       <div className="knowledge-scope__retrieval-mode">
                                         <strong>
@@ -10269,6 +10392,12 @@ function App(): React.JSX.Element {
                       }
                     >
                       <KnowledgeWorkspace
+                        externalInstances={externalInstances}
+                        notify={notify}
+                        onExternalChanged={async (snapshot, createdId) => {
+                          await refreshKnowledge(createdId ?? snapshot?.selectedLibraryId ?? knowledgeSnapshot.selectedLibraryId);
+                          if (createdId) setEnabledKnowledgeLibraryIds(current => [...new Set([...current, createdId])]);
+                        }}
                         documents={knowledgeSnapshot.documents}
                         evidence={knowledgeSnapshot.evidence}
                         graphNodes={knowledgeSnapshot.graphNodes}
@@ -10784,10 +10913,10 @@ function App(): React.JSX.Element {
               context={citationDialog.context}
               error={citationDialog.error}
               loading={citationDialog.loading}
-              onClose={() => setCitationDialog(undefined)}
+              onClose={() => { citationRequestRef.current++; setCitationDialog(undefined); }}
               onOpenSource={async () => {
                 const { reference } = citationDialog;
-                if (!reference.chunkId) {
+                if (reference.external || !reference.chunkId || !reference.documentId) {
                   throw new Error(t("chat.citations.contextUnavailable"));
                 }
                 await window.goodbuddy.knowledge.openReferenceSource({

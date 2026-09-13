@@ -117,6 +117,7 @@ describe('model bridge loopback helper', () => {
       expect(args).toEqual(['acp'])
       expect(options).toMatchObject({ shell: false, stdio: 'inherit' })
       expect(options.env).toMatchObject({
+        OPENCODE_ENABLE_QUESTION_TOOL: 'true',
         ...resources,
         LANG: profile.env.LANG,
         LC_ALL: profile.env.LC_ALL,

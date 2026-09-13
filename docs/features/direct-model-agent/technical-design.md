@@ -86,6 +86,40 @@ type BuiltinModelToolSummary = {
 - 输入和目标文件不设固定总量上限。单次工具结果仍遵守直连模型上下文边界；读取返回续读
   位置，搜索截断时要求模型缩小路径、glob 或表达式。
 
+### 读取与搜索失败恢复
+
+`workspace_read_text` 和 `workspace_rg` 的输入校验及预期工作区错误由 `ModelToolProvider`
+转为 `RecoverableModelToolError`，保留原始 cause。范围包括 schema 校验失败、绝对路径或
+越界路径、目标不存在或类型不符、无效 UTF-8、无效读取范围，以及 `ENOENT`、`ENOTDIR`、
+`EISDIR`、`EACCES`、`EPERM`、`ELOOP`、`ENAMETOOLONG` 等已列明的文件系统错误。
+Runtime 向模型返回 `{ ok: false, recoverable: true, error, nextAction }` 的 JSON 文本工具结果，
+工具活动记为 `recoverable`，继续工具循环，由模型修正路径、分页参数、glob 或搜索表达式；
+提示不得原样重复失败参数。取消、远端断线、失效工作区、缺失 rg 可执行文件及未分类的内部
+错误继续向外传播，不转为可恢复结果。
+
+读取和搜索仍只接受工作区内相对路径，绝对路径即使指向工作区内文件也拒绝；原有越界及
+符号链接检查继续生效。仅当本机直连模型 Execute 的 `process_execute` 实际可用时，恢复
+提示才建议用它访问工作区外文件。此处理不改变 Windows 用户权限、UAC 或文件 ACL，
+也不提升进程权限；Ask 仍保持只读。
+
+ripgrep 结果按退出状态处理：
+
+- exit 1 保持正常无匹配结果。
+- exit 2 有 stdout 且不是 regex/glob 编译错误时，保留已取得的匹配或文件列表，附加
+  `incomplete search coverage` 警告及有界 stderr。零匹配只代表已搜索部分，不能据此断言
+  整个目标不存在匹配；输出截断提示仍独立保留。
+- exit 2 无 stdout，或出现无效 regex/glob 编译错误时，搜索层抛错，再由 Provider 转为
+  上述可恢复结果；模型可修正表达式，字面搜索可使用 `fixedStrings`。
+
+该契约属于桌面 `ModelAgentRuntime → ModelToolProvider` 内置工具路径，复用浏览器标签页
+关闭和元素引用失效已有的可恢复错误机制；浏览器分别提示 `browser_navigate` 或
+`browser_snapshot`，路由规则见[浏览器技术设计](../assistant-workbar/browser-tabs-technical-design.md#61-兼容阶段)。
+`workspace_read_text` 若使用 `RemoteWorkspaceAccess`，仍经同一 Provider 分类远端
+`data.code` 中的预期文件系统和路径/文本错误。Agent daemon 的 RPC 错误序列化保留
+`ENOENT` 等大写系统错误码，避免远端文件不存在被误判为不可恢复错误；远端原生工具
+处理不变。内置 rg 仍仅支持本机工作区，托管 SSH 当前仍使用远端 OpenCode 原生工具，
+不因共享读取抽象而开放远端直连模型，见[远程 Runtime 边界](../remote-host/technical-design.md#runtime)。
+
 ### ripgrep 打包
 
 固定依赖 `@vscode/ripgrep`，构建钩子根据 Electron 目标选择对应 Windows、macOS 或 Linux

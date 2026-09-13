@@ -701,10 +701,10 @@ export async function runRetrievalEvaluation(options: {
         )
         rankings.set(
           query.id,
-          response.results.map((result) => ({
+          response.results.flatMap((result) => result.chunkId ? [{
             chunkId: result.chunkId,
             context: contexts.get(result.chunkId)
-          }))
+          }] : [])
         )
       }
       const failures: RetrievalEvaluationReport['ablations'][number]['failures'] = []

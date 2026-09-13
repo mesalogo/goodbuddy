@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { remoteQuestionSchema } from '../../shared/remote-question-contracts'
+import type { AgentQuestionAnswer } from '../../shared/contracts'
 import { isDeepStrictEqual } from 'node:util'
 import {
   ClientSideConnection,
@@ -137,6 +139,7 @@ export class RemotePromptRecoveryUnavailableError extends Error {
 }
 
 type ActivePrompt = {
+  reportedQuestions?: Set<string>
   subagentProgress?: OpenCodeSubagentProgress
   requestId: string
   operationId: string
@@ -352,6 +355,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     Promise<SessionRecord>
   >()
   private readonly activePrompts = new Map<string, ActivePrompt>()
+  private readonly pendingQuestions = new Map<string, { prompt: ActivePrompt; nativeId: string }>()
   private readonly sessionReservations = new Set<string>()
   private readonly drainWaiters = new Set<() => void>()
   private readonly contexts = new Map<string, ChannelContext>()
@@ -2070,6 +2074,21 @@ export class AcpRemoteRuntime implements AgentRuntime {
     prompt: ActivePrompt,
     update: SessionUpdate
   ): RuntimePublicEvent | undefined {
+    const extension = update._meta?.goodbuddyQuestion
+    if (this.options.runtimeId === 'opencode' && extension && typeof extension === 'object' &&
+      prompt.open && prompt.context.channel.respondToQuestion) {
+      const value = extension as { question?: unknown; childCallId?: unknown }
+      const question = remoteQuestionSchema.parse(value.question)
+      const questionId = JSON.stringify([prompt.bindingId, prompt.operationId, question.id])
+      prompt.reportedQuestions ??= new Set()
+      if (prompt.reportedQuestions.has(questionId)) return undefined
+      prompt.reportedQuestions.add(questionId)
+      this.pendingQuestions.set(questionId, { prompt, nativeId: question.id })
+      const childTaskId = typeof value.childCallId === 'string'
+        ? prompt.toolCalls.get(value.childCallId)?.retainedSubagent?.childTaskId : undefined
+      return { requestId: prompt.requestId, type: 'question', questionId,
+        questions: question.questions, ...(childTaskId ? { childTaskId } : {}) }
+    }
     if (this.options.runtimeId === 'opencode') {
       if (!prompt.subagentProgress) {
         prompt.subagentProgress = new OpenCodeSubagentProgress(
@@ -2293,6 +2312,25 @@ export class AcpRemoteRuntime implements AgentRuntime {
       }
     }
     return undefined
+  }
+
+  async respondToQuestion(questionId: string, answers: AgentQuestionAnswer[] = []): Promise<void> {
+    const pending = this.pendingQuestions.get(questionId)
+    if (!pending || !pending.prompt.open || !pending.prompt.context.channel.respondToQuestion) {
+      throw new Error('Remote question is no longer pending')
+    }
+    const { prompt, nativeId } = pending
+    this.assertUsable(prompt.context, true)
+    await this.awaitOperation(prompt.context, '回答问题', prompt.context.channel.respondToQuestion!({
+      bindingId: prompt.bindingId, operationId: prompt.operationId, questionId: nativeId, answers
+    }), undefined, false)
+    this.pendingQuestions.delete(questionId)
+  }
+
+  private clearPromptQuestions(prompt: ActivePrompt): void {
+    for (const [id, pending] of this.pendingQuestions) {
+      if (pending.prompt === prompt) this.pendingQuestions.delete(id)
+    }
   }
 
   private withRemoteProvenance(
@@ -2553,7 +2591,8 @@ export class AcpRemoteRuntime implements AgentRuntime {
                 transcriptEvent.payload,
                 session.sessionId
               )
-            const mapped = this.mapUpdate(prompt, notification.update)
+            const mapped = page.pendingQuestions !== undefined && notification.update._meta?.goodbuddyQuestion
+              ? undefined : this.mapUpdate(prompt, notification.update)
             if (mapped !== undefined) {
               publicEvents.push(this.limitEvent(mapped))
             }
@@ -2672,6 +2711,23 @@ export class AcpRemoteRuntime implements AgentRuntime {
           transcriptPollDelayMs = 100
           continue
         }
+        const pendingNotifications = (page.pendingQuestions ?? []).map(question =>
+          transcriptSessionNotification(question, session.sessionId))
+        if (page.pendingQuestions !== undefined) {
+          const liveIds = new Set(pendingNotifications.map(notification => remoteQuestionSchema.parse(
+            (notification.update._meta?.goodbuddyQuestion as { question?: unknown } | undefined)?.question
+          ).id))
+          for (const [id, pending] of this.pendingQuestions) {
+            if (pending.prompt === prompt && !liveIds.has(pending.nativeId)) {
+              this.pendingQuestions.delete(id)
+              yield { requestId: prompt.requestId, type: 'question-resolved', questionId: id }
+            }
+          }
+        }
+        for (const notification of pendingNotifications) {
+          const event = this.mapUpdate(prompt, notification.update)
+          if (event?.type === 'question') yield event
+        }
         if (
           page.state === 'completed' ||
           page.state === 'failed' ||
@@ -2699,6 +2755,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       }
       signal.removeEventListener('abort', cancel)
       prompt.open = false
+      this.clearPromptQuestions(prompt)
       this.activePrompts.delete(binding.bindingId)
     }
   }
@@ -3043,6 +3100,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         session.binding = binding
       }
       prompt.open = false
+      this.clearPromptQuestions(prompt)
       prompt.interrupt = undefined
       prompt.wake?.()
       prompt.wake = undefined
@@ -3251,6 +3309,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         new Error('远端 Runtime 已关闭，活动请求结果需要核对')
       )
       prompt.open = false
+      this.clearPromptQuestions(prompt)
       prompt.wake?.()
       this.discardUpdates(prompt)
     }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { DatabaseSync } from 'node:sqlite'
 import {
   builtInDefaultProjectSeedDescription,
@@ -587,6 +588,14 @@ const taskSelect = `SELECT tasks.*,
    ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END
    LIMIT 1) AS active_run_status
   FROM tasks`
+
+// Match toTask's live statuses: pending schedule runs normalize to queued.
+const activeVisibleTaskSelect = `${taskSelect}
+  WHERE visible = 1 AND (
+    active_run_status = 'running'
+    OR (active_run_status IS NULL
+        AND status IN ('running', 'waiting_approval'))
+  )`
 
 function toTask(row: TaskRow): AssistantTask {
   return {
@@ -1470,16 +1479,7 @@ function reduceRecoveredAgentEvent(
           : undefined
     }
   } else if (event.type === 'source-references') {
-    const key = (
-      reference: (typeof event.references)[number]
-    ): string =>
-      [
-        reference.libraryId,
-        reference.documentId,
-        reference.chunkId ?? '',
-        reference.locator ?? '',
-        reference.snippet
-      ].join('\0')
+    const key = knowledgeReferenceKey
     const incoming = [
       ...new Map(
         event.references.map((reference) => [key(reference), reference])
@@ -2612,8 +2612,15 @@ export class AssistantDatabase {
                 updated_at
          FROM conversations
          WHERE status = 'active'
-         ORDER BY updated_at DESC
-         LIMIT 100`
+           AND (
+             id IN (SELECT id FROM conversations WHERE status = 'active'
+                    ORDER BY updated_at DESC LIMIT 100)
+             OR id IN (SELECT conversation_id FROM (${activeVisibleTaskSelect}))
+             OR EXISTS (SELECT 1 FROM messages
+                        WHERE conversation_id = conversations.id
+                          AND state = 'streaming')
+           )
+         ORDER BY updated_at DESC`
       )
       .all() as ConversationRow[]
     const messageStatement = database.prepare(
@@ -4195,8 +4202,12 @@ export class AssistantDatabase {
       .prepare(
         `${taskSelect}
          WHERE visible = 1
-         ORDER BY created_at DESC
-         LIMIT ?`
+           AND (
+             id IN (SELECT id FROM tasks WHERE visible = 1
+                    ORDER BY created_at DESC LIMIT ?)
+             OR id IN (SELECT id FROM (${activeVisibleTaskSelect}))
+           )
+         ORDER BY created_at DESC`
       )
       .all(safeLimit) as TaskRow[]
     return rows.map(toTask)

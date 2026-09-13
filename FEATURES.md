@@ -282,7 +282,9 @@ otherwise.
   pages; the selected model's context window and bounded transports still apply.
 - [x] **Native Runtime interaction routing**: OpenCode and Continue questions
   support choices, yes/no, free-text answers, and skipping through the existing
-  question card. OpenCode also routes questions from owned child sessions.
+  question card. Local and managed SSH OpenCode also route questions from
+  owned child sessions. Managed SSH requires the Agent question adapter;
+  this does not extend question support to arbitrary ACP services.
   Successful answers and skips retain the original questions and answers
   across rounds and local conversation reloads; answers discarded by older
   versions cannot be recovered.

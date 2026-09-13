@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { remoteQuestionResponseSchema, type RemoteQuestionResponse } from '../../shared/remote-question-contracts'
 import {
   AGENT_PROTOCOL_LIMITS,
   ChannelProtocolError,
@@ -677,6 +678,13 @@ export class ProtocolRemoteRuntimeChannel
         parsed
       )
     )
+  }
+
+  async respondToQuestion(request: RemoteQuestionResponse): Promise<void> {
+    const parsed = remoteQuestionResponseSchema.parse(request)
+    this.#assertOwnedPromptIdentity(parsed)
+    await requestWithTimeout(this.#state.client, 'runtime/respondToQuestion', parsed,
+      this.#state.controlTimeoutMs)
   }
 
   async pageOwnedPromptTranscript(

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { remoteQuestionResponseSchema } from '../shared/remote-question-contracts'
 import { createHash } from 'node:crypto'
 import {
   AGENT_PROTOCOL_LIMITS,
@@ -421,6 +422,20 @@ export class RuntimeAcpBackend {
         this.#enqueuePublicControl(() => this.#startOwnedPrompt(params, context)),
       'runtime/attachPrompt': (params, context) =>
         this.#enqueuePublicControl(() => this.#attachOwnedPrompt(params, context)),
+      'runtime/respondToQuestion': (params, context) =>
+        this.#enqueuePublicControl(async () => {
+          const request = remoteQuestionResponseSchema.parse(params)
+          this.#assertControllerLive(context)
+          const binding = this.#bindings.get(request.bindingId)
+          if (!binding?.ownedAcp || binding.activeOperationId !== request.operationId ||
+            binding.controllerId !== context.controller.controllerId ||
+            binding.controllerGeneration !== context.controller.generation ||
+            binding.connectionId !== context.controller.connectionId) {
+            throw new RuntimeAcpBackendError('Question reply identity does not match', 'identity')
+          }
+          await binding.ownedAcp.respondToQuestion(request)
+          return {}
+        }),
       'runtime/pagePromptTranscript': (params, context) =>
         this.#enqueuePublicControl(() => this.#pageOwnedPrompt(params, context)),
       'runtime/ackPromptTranscript': (params, context) =>
@@ -1476,10 +1491,12 @@ export class RuntimeAcpBackend {
         'process'
       )
     }
-    return this.#options.semanticPrompts.page({
+    const page = this.#options.semanticPrompts.page({
       ...request,
       controllerId: context.controller.controllerId
     })
+    const binding = this.#bindings.get(request.bindingId)
+    return { ...page, pendingQuestions: binding?.ownedAcp?.pendingQuestions(request.operationId) ?? [] }
   }
 
   #ackOwnedPrompt(
