@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantProject,
@@ -1413,7 +1414,7 @@ export function ProjectSwitcher({
           <Settings size={15} />
         </button>
       </div>
-      {dialogMode && (
+      {dialogMode && createPortal(
         <div
           className="project-create-backdrop"
           onMouseDown={(event) => {
@@ -2139,7 +2140,8 @@ export function ProjectSwitcher({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

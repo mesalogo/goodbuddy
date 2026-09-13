@@ -354,6 +354,23 @@ describe('ProjectSwitcher project activity integration', () => {
 })
 
 describe('ProjectSwitcher runtime fields', () => {
+  it.each(['新建项目', '项目设置'])('keeps %s outside the sidebar and restores focus after closing', (name) => {
+    renderSwitcher()
+    const trigger = screen.getByLabelText(name)
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name })
+    expect(dialog.parentElement?.parentElement).toBe(document.body)
+    const body = dialog.querySelector('.project-create-card__body')!
+    const close = within(dialog).getByRole('button', { name: `关闭${name}` })
+    expect(body).toContainElement(within(dialog).getByLabelText('名称'))
+    expect(body).not.toContainElement(close)
+    expect(body).not.toContainElement(within(dialog).getByRole('button', { name: '取消' }))
+    fireEvent.scroll(body, { target: { scrollTop: 500 } })
+    fireEvent.click(close)
+    expect(screen.queryByRole('dialog', { name })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
   it('creates an ordinary project with DeepSeek Harness', async () => {
     const { onCreate } = renderSwitcher()
 
