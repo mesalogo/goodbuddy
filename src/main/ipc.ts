@@ -992,10 +992,15 @@ function getKnowledgeSnapshot(
       ])
     }
   }
+  const bindingsByLibraryId = new Map(
+    service.database.externalStore
+      .listBindings()
+      .map((binding) => [binding.knowledgeBaseId, binding])
+  )
   return {
     libraries: snapshot.libraries.map((library) => ({
-      kind: service.database.externalStore.listBindings().some(item=>item.knowledgeBaseId===library.id) ? 'external' : 'local',
-      external: service.database.externalStore.listBindings().find(item=>item.knowledgeBaseId===library.id),
+      kind: bindingsByLibraryId.has(library.id) ? 'external' : 'local',
+      external: bindingsByLibraryId.get(library.id),
       id: library.id,
       name: library.name,
       description: library.description ?? '',

@@ -19,6 +19,16 @@ export class ExternalKnowledgeStore {
   deleteInstance(id: string): void {
     this.database.prepare('DELETE FROM external_knowledge_instances WHERE id=?').run(id)
   }
+  getBinding(knowledgeBaseId: string): ExternalKnowledgeBinding | undefined {
+    const row = this.database.prepare('SELECT value_json FROM external_knowledge_bindings WHERE knowledge_base_id=?').get(knowledgeBaseId)
+    return row ? JSON.parse(String(row.value_json)) as ExternalKnowledgeBinding : undefined
+  }
+  hasBinding(knowledgeBaseId: string): boolean {
+    return this.database.prepare('SELECT 1 FROM external_knowledge_bindings WHERE knowledge_base_id=?').get(knowledgeBaseId) !== undefined
+  }
+  getBindingsForInstance(instanceId: string): ExternalKnowledgeBinding[] {
+    return this.database.prepare('SELECT value_json FROM external_knowledge_bindings WHERE instance_id=? ORDER BY rowid').all(instanceId).map(row => JSON.parse(String(row.value_json)) as ExternalKnowledgeBinding)
+  }
   listBindings(): ExternalKnowledgeBinding[] {
     return this.database.prepare('SELECT value_json FROM external_knowledge_bindings ORDER BY rowid').all().map(row => JSON.parse(String(row.value_json)) as ExternalKnowledgeBinding)
   }

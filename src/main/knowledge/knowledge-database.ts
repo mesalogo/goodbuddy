@@ -926,7 +926,7 @@ export class KnowledgeDatabase {
     input: UpdateKnowledgeBaseInput
   ): KnowledgeBase {
     const current = this.requiredKnowledgeBase(id)
-    if (this.externalStore.listBindings().some(item => item.knowledgeBaseId === id) &&
+    if (this.externalStore.hasBinding(id) &&
       (input.graphEnabled !== undefined || input.graphStrategy !== undefined || input.storageMode !== undefined)) {
       throw new Error('EXTERNAL_KB_READ_ONLY')
     }

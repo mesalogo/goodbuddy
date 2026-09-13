@@ -3791,8 +3791,15 @@ function App(): React.JSX.Element {
     [conversations, conversationTitles, assistantTasks, activeConversationIds,
       projects, projectNames, tWorkspace],
   );
-  const activityByConversationId = new Map(
-    projectActivity.activities.map((activity) => [activity.conversationId, activity]),
+  const activityByConversationId = useMemo(
+    () =>
+      new Map(
+        projectActivity.activities.map((activity) => [
+          activity.conversationId,
+          activity,
+        ]),
+      ),
+    [projectActivity],
   );
   const pendingSidebarApprovals = useMemo<PendingSidebarApproval[]>(
     () =>
