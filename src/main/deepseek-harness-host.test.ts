@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import {
   createBoundedNdJsonStream,
   installHarnessDiagnosticGuard,
   startControlledDeepSeekHarnessHost
 } from './deepseek-harness-host'
 import { vi } from 'vitest'
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import type {
   Agent,
   CreateAgentOptions
@@ -65,6 +65,7 @@ describe('controlled DeepSeek Harness host', () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'goodbuddy-harness-host-'))
     )
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
     const inbound = new TransformStream<
       Record<string, unknown>,
       Record<string, unknown>
@@ -125,6 +126,7 @@ describe('controlled DeepSeek Harness host', () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'goodbuddy-harness-alias-'))
     )
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
     const alias = join(root, '..', basename(root))
     const inbound = new TransformStream<
       Record<string, unknown>,
@@ -157,6 +159,7 @@ describe('controlled DeepSeek Harness host', () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'goodbuddy-harness-extensions-'))
     )
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
     const brokenEntrypoint = join(root, 'broken.mjs')
     await writeFile(
       brokenEntrypoint,
@@ -202,6 +205,7 @@ describe('controlled DeepSeek Harness host', () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), 'goodbuddy-harness-skill-'))
     )
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
     const skillDirectory = join(root, 'web-3d-game')
     await mkdir(skillDirectory)
     await writeFile(

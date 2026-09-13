@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   DEEPSEEK_HARNESS_CONTROL_PROTOCOL,
   DEEPSEEK_HARNESS_CONTROL_VERSION,
@@ -33,6 +33,7 @@ async function fixture() {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'goodbuddy-harness-launcher-'))
   )
+  onTestFinished(() => rm(root, { recursive: true, force: true }))
   const workspace = join(root, 'workspace')
   const dshHome = join(root, 'home')
   const hostPath = join(

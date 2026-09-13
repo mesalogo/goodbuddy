@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -70,6 +70,22 @@ afterEach(async () => {
 })
 
 describe('ReleaseNotesService', () => {
+  it('reads and acknowledges the actual packaged release history', async () => {
+    const { version } = JSON.parse(
+      await readFile(join(process.cwd(), 'package.json'), 'utf8')
+    ) as { version: string }
+    const { filePath, service } = await createService(version)
+    await writeFile(
+      filePath,
+      await readFile(join(process.cwd(), 'resources', 'release-notes.json'))
+    )
+    await expect(service.getPending()).resolves.toMatchObject({
+      currentVersion: version,
+      releases: [{ version }]
+    })
+    await service.acknowledge({ version })
+    await expect(service.getPending()).resolves.toMatchObject({ releases: [] })
+  })
   it('shows only the current release on a fresh installation', async () => {
     const { service } = await createService('0.8.18')
 
@@ -135,7 +151,7 @@ describe('ReleaseNotesService', () => {
 
   it('rejects an oversized release-notes resource with a bounded read', async () => {
     const { filePath, service } = await createService('0.8.18')
-    await writeFile(filePath, ' '.repeat(128 * 1024 + 1), 'utf8')
+    await writeFile(filePath, ' '.repeat(1024 * 1024 + 1), 'utf8')
 
     await expect(service.getPending()).rejects.toThrow(
       'Release notes exceed the size limit'

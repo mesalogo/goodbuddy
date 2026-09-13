@@ -12731,6 +12731,7 @@ details.settings-section > :not(summary) + :not(summary) {
 .segmented-control,
 .page-tabs--segmented {
   display: inline-flex;
+  flex: 0 0 auto;
   max-width: 100%;
   padding: 3px;
   border: 1px solid var(--border-control);
@@ -13125,6 +13126,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .knowledge-workspace__library-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   padding: 0;
   margin: 0;
   gap: 7px;
@@ -13133,6 +13135,7 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .knowledge-workspace__library-button {
   width: 100%;
+  min-width: 0;
   padding: 11px;
   border: 1px solid transparent;
   border-radius: var(--radius-control);
@@ -13155,13 +13158,18 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-workspace__library-identity strong {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.knowledge-workspace__library-identity > svg {
+  flex: 0 0 auto;
+}
 
 .knowledge-workspace__library-meta {
   display: block;
+  overflow-wrap: anywhere;
   margin-top: 5px;
   color: var(--text-muted);
   font-size: var(--font-body);

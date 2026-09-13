@@ -210,6 +210,8 @@
 - 选项数量为 2 至 4 个。
 - 使用带 `aria-pressed` 的按钮组语义，支持方向键切换。
 - 不能用于多选筛选、页面导航或执行即时命令。
+- 与 `PageTabs` 一样，共享控件根节点必须 `flex: 0 0 auto`，不能被同级长表单或滚动区域
+  压缩高度。横向空间不足时保留控件自身滚动，不把标签裁成一条窄缝。
 - 控件宽度由内容决定，除移动窄屏外不默认等分整行。
 
 ### 6.3 筛选工具栏
@@ -395,6 +397,10 @@
   顶栏，不能保留一条未被遮罩的窗口控制色块。关闭操作由 Modal 自身提供。
 - 整窗固定遮罩通过 `createPortal(..., document.body)` 挂载，避免页面层叠上下文影响；
   保留 React Context、关闭与焦点管理，表单样式不得依赖已移出的页面祖先选择器。
+- 原生浏览器 `WebContentsView` 不受网页 `z-index` 控制。应用级 Modal 打开时统一释放
+  浏览器 viewport；非模态对话框、菜单、局部确认或应用通知与浏览器区域相交时也释放。
+  浮层关闭后只恢复当前活动实例的 viewport，不关闭、重建或刷新网页。接线与测试见
+  [浏览器多实例技术设计](./docs/features/assistant-workbar/browser-tabs-technical-design.md#4-renderer-与-viewport)。
 - 遮罩必须 `inset: 0` 铺满整窗，并由 `styles.css` 中统一的遮罩选择器声明
   `-webkit-app-region: no-drag`，否则 `.brand` 与 `.topbar` 的原生拖动区域会截获指针，
   使遮罩上的控件无法悬停和点击。新增整窗遮罩时扩展该共享选择器，不要在各自规则里复制

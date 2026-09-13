@@ -187,6 +187,7 @@ export function ExternalBindingForm({ provider, instances, libraries, library, o
   const [instanceId, setInstanceId] = useState(binding?.instanceId ?? '')
   const [remoteId, setRemoteId] = useState(binding?.remoteKnowledgeBaseId ?? '')
   const [name, setName] = useState(library?.name ?? '')
+  const [nameEdited, setNameEdited] = useState(Boolean(library))
   const [detail, setDetail] = useState<ExternalKnowledgeCatalogItem>()
   const [common, setCommon] = useState(binding?.commonConfig ?? commonDefaults)
   const [config, setConfig] = useState(binding?.providerConfig ?? externalProviderDefaults(provider))
@@ -265,10 +266,10 @@ export function ExternalBindingForm({ provider, instances, libraries, library, o
     <div className="external-knowledge__columns">
       <section className="external-knowledge__fields">
         <h3>{t('external.source')}</h3>
-        <InstanceSelect instances={instances.filter(item => item.provider === provider)} value={instanceId} onChange={value => { invalidate(); setDetail(undefined); setInstanceId(value); setRemoteId(''); setConfig(externalProviderDefaults(provider)); setPage(1); setParentId(null); setSearch('') }} />
+        <InstanceSelect instances={instances.filter(item => item.provider === provider)} value={instanceId} onChange={value => { invalidate(); setDetail(undefined); setInstanceId(value); setRemoteId(''); if (!nameEdited) setName(''); setConfig(externalProviderDefaults(provider)); setPage(1); setParentId(null); setSearch('') }} />
         <button type="button" className="secondary-button" onClick={onManage}>{t('external.manage')}</button>
         <SegmentedControl ariaLabel={t('external.remote')} value={manual ? 'manual' : 'catalog'} options={[{ value: 'catalog', label: t('external.browse') }, { value: 'manual', label: t('external.manual') }]} onChange={value => setManual(value === 'manual')} />
-        {manual ? <Field label={t('external.remoteId')}><input maxLength={512} value={remoteId} disabled={busy} aria-invalid={duplicate || undefined} aria-describedby={duplicate ? `${errorId}-duplicate` : undefined} onChange={event => { invalidate(); setDetail(undefined); setRemoteId(event.currentTarget.value) }} /></Field> : <>
+        {manual ? <Field label={t('external.remoteId')}><input maxLength={512} value={remoteId} disabled={busy} aria-invalid={duplicate || undefined} aria-describedby={duplicate ? `${errorId}-duplicate` : undefined} onChange={event => { invalidate(); setDetail(undefined); setRemoteId(event.currentTarget.value); if (!nameEdited) setName('') }} /></Field> : <>
           <Field label={t('external.search')}><input type="search" maxLength={512} value={search} onChange={event => { setSearch(event.currentTarget.value); setPage(1) }} /></Field>
           <div className="external-knowledge__actions"><button type="button" className="secondary-button" aria-label={t('external.refresh')} title={t('external.refresh')} onClick={() => { invalidate(); setRefresh(value => value + 1) }}><RefreshCw size={15} /></button>
             {parentId && <button type="button" className="secondary-button" onClick={() => { setParentId(null); setPage(1) }}>{t('external.root')}</button>}</div>
@@ -280,7 +281,7 @@ export function ExternalBindingForm({ provider, instances, libraries, library, o
               const bound = libraries.some(candidate => candidate.id !== library?.id && candidate.external?.instanceId === instanceId && candidate.external.remoteKnowledgeBaseId === item.id)
               return <button type="button" className="external-knowledge__target" key={item.id} aria-pressed={item.kind === 'folder' ? undefined : remoteId === item.id} disabled={bound || busy} onClick={() => {
                 if (item.kind === 'folder') { setParentId(item.id); setPage(1); return }
-                invalidate(); setRemoteId(item.id); setDetail(item); if (!name) setName(item.name)
+                invalidate(); setRemoteId(item.id); setDetail(item); if (!nameEdited) setName(item.name)
               }}>{item.kind === 'folder' ? <FolderOpen size={15} /> : <Database size={15} />}<span><strong>{item.name}</strong><small>{item.id}{bound ? ` · ${t('external.alreadyBound')}` : ''}</small></span></button>
             })}
             <div className="external-knowledge__actions"><button type="button" className="secondary-button" disabled={page === 1} onClick={() => setPage(value => value - 1)}>{t('external.previous')}</button><span>{page}</span><button type="button" className="secondary-button" disabled={!catalog.hasMore} onClick={() => setPage(value => value + 1)}>{t('external.next')}</button></div>
@@ -288,7 +289,7 @@ export function ExternalBindingForm({ provider, instances, libraries, library, o
         </>}
         {remoteId && <p className="external-knowledge__identifier">{remoteName}<br />{remoteId}</p>}
         {duplicate && <p role="alert" id={`${errorId}-duplicate`}>{t('external.alreadyBound')}</p>}
-        <Field label={t('fields.name')}><input required maxLength={512} value={name} onChange={event => setName(event.currentTarget.value)} /></Field>
+        <Field label={t('fields.name')}><input required maxLength={512} value={name} onChange={event => { setName(event.currentTarget.value); setNameEdited(true) }} /></Field>
         <Field label={t('external.query')}><textarea required maxLength={4000} value={query} onChange={event => { invalidate(); setQuery(event.currentTarget.value) }} /></Field>
       </section>
       <ExternalConfig common={common} config={config} detail={detail} onCommon={value => { invalidate(); setCommon(value) }} onConfig={value => { invalidate(); setConfig(value) }} />

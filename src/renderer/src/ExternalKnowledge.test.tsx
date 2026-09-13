@@ -32,6 +32,21 @@ function selectInstance(index = 0): void {
 }
 
 describe('external knowledge workflows', () => {
+  it('updates an automatic name when selecting another library but preserves an edited name', async () => {
+    bridge.externalCatalogList.mockResolvedValueOnce({
+      items: [{ id: 'remote-1', name: 'Handbook' }, { id: 'remote-2', name: 'Second library' }],
+      hasMore: false
+    })
+    render(<ExternalBindingForm provider="dify" instances={[instance]} libraries={[]} onCancel={vi.fn()} onChanged={vi.fn()} notify={vi.fn()} onManage={vi.fn()} />)
+    selectInstance()
+    fireEvent.click(await screen.findByRole('button', { name: /Handbook/ }))
+    expect(screen.getByLabelText('Name')).toHaveValue('Handbook')
+    fireEvent.click(screen.getByRole('button', { name: /Second library/ }))
+    expect(screen.getByLabelText('Name')).toHaveValue('Second library')
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'My chosen name' } })
+    fireEvent.click(screen.getByRole('button', { name: /Handbook/ }))
+    expect(screen.getByLabelText('Name')).toHaveValue('My chosen name')
+  })
   it('navigates the rich instance menu, skips disabled items and restores focus', async () => {
     render(<ExternalBindingForm provider="dify" instances={[instance, { ...instance, id: 'disabled', name: 'Disabled service', enabled: false }, { ...instance, id: 'other', name: 'Other service' }]} libraries={[]} onCancel={vi.fn()} onChanged={vi.fn()} notify={vi.fn()} onManage={vi.fn()} />)
     const trigger = screen.getByRole('button', { name: 'External instance' })
@@ -97,6 +112,7 @@ describe('external knowledge workflows', () => {
   it('keeps external tabs and filters from shrinking in the scrolling workspace', () => {
     const css = readFileSync('src/renderer/src/external-knowledge.css', 'utf8')
     expect(css).toMatch(/\.external-knowledge > \.page-tabs\s*\{[^}]*flex: 0 0 auto/)
+    expect(css).toMatch(/\.external-knowledge > header\s*\{[^}]*overflow-wrap: anywhere/)
     expect(css).toMatch(/\.external-knowledge__filters\s*\{[^}]*flex: 0 0 auto/)
     expect(css).toMatch(/\.external-knowledge-modal__surface\s*\{[^}]*width: min\(560px, 100%\)/)
     expect(css).toMatch(/\.external-knowledge__footer\s*\{[^}]*position: sticky/)

@@ -44,6 +44,10 @@ import type {
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
 import { SegmentedControl } from './WorkspacePrimitives'
 import {
+  browserOverlaySelector,
+  isBrowserViewportOccluded
+} from './browser-viewport-occlusion'
+import {
   findTaskSchedule,
   TaskScheduleActions
 } from './TaskScheduleActions'
@@ -504,10 +508,11 @@ function BrowserViewport({
     let animationFrame: number | undefined
     let lastRequest = ''
     let resizeObserver: ResizeObserver | undefined
+    const observedOverlays = new Set<Element>()
     const panel = host.closest<HTMLElement>('[role="tabpanel"]')
     const syncViewport = (): void => {
       if (animationFrame !== undefined) {
-        cancelAnimationFrame(animationFrame)
+        return
       }
       animationFrame = requestAnimationFrame(() => {
         animationFrame = undefined
@@ -517,7 +522,8 @@ function BrowserViewport({
           Boolean(conversationId) &&
           panel?.hidden !== true &&
           rect.width >= 1 &&
-          rect.height >= 1
+          rect.height >= 1 &&
+          !isBrowserViewportOccluded(host, rect)
         const bounds = isVisible
           ? {
               x: Math.max(0, Math.round(rect.left)),
@@ -545,6 +551,7 @@ function BrowserViewport({
       if (panel?.hidden !== false) {
         resizeObserver?.disconnect()
         resizeObserver = undefined
+        observedOverlays.clear()
         syncViewport()
         return
       }
@@ -552,17 +559,34 @@ function BrowserViewport({
         resizeObserver = new ResizeObserver(syncViewport)
         resizeObserver.observe(host)
       }
+      if (resizeObserver) {
+        const overlays = new Set(document.querySelectorAll(browserOverlaySelector))
+        for (const overlay of observedOverlays) {
+          if (!overlays.has(overlay)) {
+            resizeObserver.unobserve(overlay)
+            observedOverlays.delete(overlay)
+          }
+        }
+        for (const overlay of overlays) {
+          if (!observedOverlays.has(overlay)) {
+            resizeObserver.observe(overlay)
+            observedOverlays.add(overlay)
+          }
+        }
+      }
       syncViewport()
     }
     const mutationObserver = new MutationObserver(updateObservation)
-    if (panel) {
-      mutationObserver.observe(panel, {
-        attributes: true,
-        attributeFilter: ['hidden']
-      })
-    }
+    mutationObserver.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['hidden', 'aria-modal', 'role', 'class', 'style', 'open']
+    })
     window.addEventListener('resize', syncViewport)
     window.addEventListener('scroll', syncViewport, true)
+    document.addEventListener('transitionend', syncViewport, true)
+    document.addEventListener('animationend', syncViewport, true)
     updateObservation()
     return () => {
       if (animationFrame !== undefined) {
@@ -572,6 +596,8 @@ function BrowserViewport({
       mutationObserver.disconnect()
       window.removeEventListener('resize', syncViewport)
       window.removeEventListener('scroll', syncViewport, true)
+      document.removeEventListener('transitionend', syncViewport, true)
+      document.removeEventListener('animationend', syncViewport, true)
       void browserApi.setViewport({ leaseToken }).catch(() => undefined)
     }
   }, [conversationId, tabId, visible])
@@ -2397,7 +2423,7 @@ export function RightAssistantSidebar({
                   : undefined
               }
               tabId={browserTabIds[instance.id]}
-              visible={open && instance.id === activeWorkbarInstanceId && !terminalCloseConfirmation}
+              visible={open && instance.id === activeWorkbarInstanceId}
             />
           </section>
         )}

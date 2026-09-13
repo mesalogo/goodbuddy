@@ -8,7 +8,7 @@ import {
 import type { ApplicationSettingsStore } from './application-settings-store'
 import { compareStrictSemVer } from './version-checker'
 
-const maximumReleaseNotesBytes = 128 * 1024
+const maximumReleaseNotesBytes = 1024 * 1024
 
 export class ReleaseNotesService {
   private releases?: ReleaseNote[]

@@ -31,6 +31,12 @@
 | 检索结果 | 外部组件显示总耗时、返回数量、片段、定位、实际 ID 和原始评分，包括 FastGPT 评分数组；不显示本地全文、向量、图谱通道或本地上下文操作 |
 | 聊天与引用 | 统一选择器显示 Provider、实例与状态；外部引用打开保存片段，显示实例 ID 和远端定位，不请求本地上下文或打开原始来源 |
 
+创建类型分段控件复用全局不收缩规则，不能被目录和参数表单压扁；列表长名称的宽度约束见
+[知识库 UI 设计](./ui-design.md#2-信息架构)。新建时自动名称跟随目录选择，手动改名和已保存
+名称不被覆盖，具体规则见[逻辑设计](./external-knowledge-logic-design.md#5-创建与编辑)。
+实例 Modal 和其他浮层统一参与[原生浏览器遮挡处理](../assistant-workbar/browser-tabs-technical-design.md#4-renderer-与-viewport)，
+不再仅验证没有浏览器的独立 Portal。
+
 原 `knowledge-field` 的控件样式依赖知识库工作区祖先，实例 Modal 经 `createPortal` 挂到
 body 后丢失该作用域。当前 `Field` 使用全局 `.field` 和标签 span，密码也复用同一字段
 结构，确保 Portal 内的字体、输入边框、背景和焦点样式与应用一致。弹窗宽度为

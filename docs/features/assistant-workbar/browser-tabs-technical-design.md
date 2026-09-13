@@ -77,8 +77,16 @@ Record<ConversationId, Record<BrowserTabId, BrowserLiveState>>
 非活动 Browser Tab 保持页面和状态，但隐藏 `WebContentsView` 并停止非必要画面采集。工作栏
 收起、切换主页面和窗口隐藏时采用相同规则，不销毁 Tab。
 普通导航、快照与页面操作只同步轻量导航状态，不自动截图、等待画面或传输 JPEG；只有显式
-`browser_screenshot` 调用生成图片。侧栏内终端关闭确认显示期间，同样隐藏原生浏览器视图，
-确认或取消后恢复当前实例，避免原生子视图遮挡 HTML 确认按钮。
+`browser_screenshot` 调用生成图片。
+
+`BrowserViewport` 统一观察 body Portal 的插入、移除和可见属性变化，以及浮层尺寸、
+窗口尺寸、滚动和过渡结束。`browser-viewport-occlusion.ts` 按共享语义识别
+`aria-modal="true"`、dialog、alertdialog、menu 和应用通知：可见应用级 Modal 始终释放
+viewport，其余浮层只在与浏览器区域相交时释放。隐藏节点和隐藏祖先不阻塞浏览器。
+最后一个遮挡消失后，只有当前活动实例恢复同一 viewport 租约；网页、历史和页面状态不变。
+终端关闭确认复用此机制，不再维护单独的隐藏条件。页面无需逐个登记弹窗，也不能靠提高
+CSS `z-index` 覆盖原生子视图。此逻辑仅涉及 Desktop Renderer 的显示租约，不改变
+Runtime、MCP 或远端 Agent 的请求、导航与生命周期。
 
 浏览器应用声明 `visibleAcrossContextSwitches: true`，打开的 Tab 跨项目、会话切换继续显示。
 切换活动 Conversation 不改变当前选中的浏览器或其 `targetRef.conversationId`；用户在会话 B

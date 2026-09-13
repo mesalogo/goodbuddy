@@ -1472,6 +1472,99 @@ describe('RightAssistantSidebar resizing', () => {
     expect(browserA).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('releases the native browser for portalled modals until the last modal closes', async () => {
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 500, height: 400, left: 900, right: 1300, top: 100,
+      width: 400, x: 900, y: 100, toJSON: () => ({})
+    })
+    const modal = document.createElement('section')
+    modal.setAttribute('role', 'dialog')
+    modal.setAttribute('aria-modal', 'true')
+    const nested = modal.cloneNode() as HTMLElement
+    try {
+      renderSidebar({ tab: 'browser', activeConversationId: 'modal-browser' })
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ conversationId: 'modal-browser', bounds: expect.any(Object) })
+      ))
+      const lease = browserApi.setViewport.mock.calls.at(-1)![0].leaseToken
+      document.body.append(modal)
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith({ leaseToken: lease }))
+      document.body.append(nested)
+      modal.remove()
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
+      expect(browserApi.setViewport).toHaveBeenLastCalledWith({ leaseToken: lease })
+      nested.remove()
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ conversationId: 'modal-browser', leaseToken: lease, bounds: expect.any(Object) })
+      ))
+      expect(browserApi.closeTab).not.toHaveBeenCalled()
+      expect(browserApi.createTab).toHaveBeenCalledTimes(1)
+    } finally {
+      modal.remove()
+      nested.remove()
+      bounds.mockRestore()
+    }
+  })
+  it.each(['menu', 'dialog', 'notification'])('hides the native view only while an overlapping %s is visible', async (kind) => {
+    const popup = document.createElement('section')
+    if (kind === 'notification') popup.className = 'app-notification'
+    else popup.setAttribute('role', kind)
+    popup.hidden = true
+    let overlapping = true
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const left = this === popup && !overlapping ? 100 : 900
+      return {
+        bottom: 500, height: 400, left, right: left + 400, top: 100,
+        width: 400, x: left, y: 100, toJSON: () => ({})
+      }
+    })
+    try {
+      document.body.append(popup)
+      renderSidebar({ tab: 'browser', activeConversationId: 'popup-browser' })
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ conversationId: 'popup-browser', bounds: expect.any(Object) })
+      ))
+      const lease = browserApi.setViewport.mock.calls.at(-1)![0].leaseToken
+      popup.hidden = false
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith({ leaseToken: lease }))
+      overlapping = false
+      fireEvent(window, new Event('resize'))
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ conversationId: 'popup-browser', bounds: expect.any(Object) })
+      ))
+      overlapping = true
+      fireEvent(window, new Event('resize'))
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith({ leaseToken: lease }))
+      popup.hidden = true
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ conversationId: 'popup-browser', bounds: expect.any(Object) })
+      ))
+    } finally {
+      popup.remove()
+      bounds.mockRestore()
+    }
+  })
+  it('does not acquire a native view behind an already open modal or restore an inactive tab', async () => {
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 500, height: 400, left: 900, right: 1300, top: 100,
+      width: 400, x: 900, y: 100, toJSON: () => ({})
+    })
+    const modal = document.createElement('section')
+    modal.setAttribute('aria-modal', 'true')
+    try {
+      document.body.append(modal)
+      renderSidebar({ tab: 'browser', activeConversationId: 'covered-browser' })
+      await waitFor(() => expect(browserApi.setViewport).toHaveBeenCalled())
+      expect(browserApi.setViewport.mock.calls.every(([request]) => !('bounds' in request))).toBe(true)
+      fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+      modal.remove()
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
+      expect(browserApi.setViewport.mock.calls.every(([request]) => !('bounds' in request))).toBe(true)
+    } finally {
+      modal.remove()
+      bounds.mockRestore()
+    }
+  })
   it('releases the native browser viewport while confirming another terminal close', async () => {
     const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 500, height: 400, left: 900, right: 1300, top: 100,

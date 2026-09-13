@@ -111,6 +111,27 @@ describe('WorkspacePrimitives', () => {
     expect(platformFeaturesTabs).toBeDefined()
     expect(platformFeaturesTabs).toMatch(/flex:\s*0 0 auto;/u)
   })
+  it('keeps shared segmented controls from collapsing beside scrollable content', () => {
+    const segmentedStyles = stylesheet.match(
+      /\.segmented-control,\s*\.page-tabs--segmented\s*\{(?<rules>[^}]*)\}/u
+    )?.groups?.rules
+    expect(segmentedStyles).toBeDefined()
+    expect(segmentedStyles).toMatch(/flex:\s*0 0 auto;/u)
+  })
+  it('bounds knowledge library cards before truncating long names', () => {
+    expect(stylesheet).toMatch(
+      /\.knowledge-workspace__library-list\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-workspace__library-button\s*\{[^}]*min-width:\s*0;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-workspace__library-meta\s*\{[^}]*overflow-wrap:\s*anywhere;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.knowledge-workspace__library-identity > svg\s*\{[^}]*flex:\s*0 0 auto;/u
+    )
+  })
 
   it('keeps Capabilities and tools tabs visible in scrollable Settings', () => {
     const capabilitiesTabs = stylesheet.match(
