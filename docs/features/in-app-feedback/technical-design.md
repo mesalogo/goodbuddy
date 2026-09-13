@@ -156,6 +156,8 @@ Renderer 不预览、不读取也不接收诊断内容或路径。勾选后详�
 ### 3.4 可访问性
 
 - 对话框使用 `role="dialog"`、`aria-modal="true"` 和可见标题。
+- 整窗遮罩通过 React portal 挂到 `document.body`，遵循
+  [全局遮罩与原生拖动区域规则](../../../UI-DESIGN.md#610-应用顶栏与全局操作)。
 - 复用 `activateModalFocus()` 与 `trapTabFocus()`，打开后聚焦反馈类型，关闭后恢复入口
   按钮焦点。
 - 非提交状态支持 Escape 关闭；提交中保持对话框打开，直到请求完成或到达有界超时。

@@ -513,7 +513,7 @@ describe('DocumentParsingSettingsSection', () => {
   })
 
   it('runs a real-file diagnostic flow and displays its result', async () => {
-    render(<DocumentParsingSettingsSection />)
+    const { container } = render(<DocumentParsingSettingsSection />)
     await screen.findByText('PP-OCRv6 Tiny')
 
     const trigger = screen.getByRole('button', {
@@ -525,15 +525,13 @@ describe('DocumentParsingSettingsSection', () => {
     const dialog = await screen.findByRole('dialog', {
       name: '解析测试结果'
     })
+    expect(dialog.parentElement?.parentElement).toBe(document.body)
     expect(dialog).toHaveTextContent('扫描件识别正文')
     const close = screen.getByRole('button', {
       name: '关闭结果'
     })
     await waitFor(() => expect(close).toHaveFocus())
-    const backgroundSection = trigger.closest<HTMLElement>(
-      '.settings-section'
-    )
-    expect(backgroundSection?.inert).toBe(true)
+    expect(container.inert).toBe(true)
     expect(
       fireEvent.keyDown(dialog, { key: 'Tab' })
     ).toBe(false)
@@ -544,7 +542,7 @@ describe('DocumentParsingSettingsSection', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     )
     await waitFor(() => expect(trigger).toHaveFocus())
-    expect(backgroundSection?.inert).toBe(false)
+    expect(container.inert).toBe(false)
     expect(test).toHaveBeenCalledWith('chat-attachment')
     expect(update).not.toHaveBeenCalled()
   })

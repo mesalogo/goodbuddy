@@ -20,6 +20,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createPortal } from 'react-dom'
 import type {
   DocumentParsingDiagnostic,
   DocumentOcrModelCatalogViewEntry,
@@ -104,7 +105,7 @@ function DiagnosticDialog({
   useEffect(() => {
     return activateModalFocus(() => closeRef.current)
   }, [])
-  return (
+  return createPortal(
     <div
       className="document-parsing-diagnostic-backdrop"
       onMouseDown={(event) => {
@@ -190,7 +191,8 @@ function DiagnosticDialog({
           </div>
         )}
       </section>
-    </div>
+    </div>,
+    document.body
   )
 }
 

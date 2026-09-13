@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createPortal } from 'react-dom'
 import QRCode from 'qrcode'
 import type {
   ChannelConnectionTestResult,
@@ -512,7 +513,7 @@ function WeixinQrDialog({
       )
     : undefined
 
-  return (
+  return createPortal(
     <div className="channel-qr-backdrop">
       <section
         aria-labelledby="channel-qr-title"
@@ -639,7 +640,8 @@ function WeixinQrDialog({
           </div>
         )}
       </section>
-    </div>
+    </div>,
+    document.body
   )
 }
 

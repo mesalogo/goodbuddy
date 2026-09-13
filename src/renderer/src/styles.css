@@ -6955,12 +6955,13 @@ button > svg {
 }
 
 .image-viewer-backdrop {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: 80;
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
-  inset: 38px 0 0;
+  inset: 0;
   place-items: center;
 }
 
@@ -9935,12 +9936,13 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .channel-qr-backdrop {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
-  inset: 38px 0 0;
+  inset: 0;
   place-items: center;
 }
 
@@ -10060,6 +10062,7 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .feedback-dialog-backdrop {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -10749,6 +10752,7 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .document-parsing-diagnostic-backdrop {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -12794,6 +12798,7 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-confirm-dialog-backdrop {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -12836,6 +12841,7 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .knowledge-library-dialog-backdrop {
+  -webkit-app-region: no-drag;
   position: fixed;
   z-index: var(--z-dialog);
   display: grid;
@@ -12890,7 +12896,7 @@ details.settings-section > :not(summary) + :not(summary) {
   gap: var(--space-4);
 }
 
-.knowledge-page
+:is(.knowledge-page, .knowledge-library-dialog)
   :is(
     input:not([type]),
     input[type='text'],
@@ -15954,7 +15960,15 @@ details.settings-section > :not(summary) + :not(summary) {
   color: var(--text-primary);
 }
 
-:root[data-theme='dark'] .app-shell strong {
+:root[data-theme='dark'] :is(
+  .app-shell,
+  .feedback-dialog,
+  .document-parsing-diagnostic,
+  .knowledge-library-dialog,
+  .knowledge-confirm-dialog,
+  .channel-qr-dialog,
+  .image-viewer-dialog
+) strong {
   color: var(--text-primary);
 }
 

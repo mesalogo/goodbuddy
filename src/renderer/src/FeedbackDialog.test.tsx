@@ -198,6 +198,7 @@ describe('FeedbackDialog', () => {
     const dialog = screen.getByRole('dialog', {
       name: '提交反馈'
     })
+    expect(dialog.parentElement).toBe(document.body)
     const category = screen.getByLabelText('反馈类型')
     expect(category).toHaveFocus()
     fireEvent.change(screen.getByLabelText('标题'), {

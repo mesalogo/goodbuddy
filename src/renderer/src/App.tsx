@@ -56,6 +56,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
 import { knowledgeReferenceKey } from "../../shared/knowledge-reference";
 import type { TFunction } from "i18next";
 import type {
@@ -10928,7 +10929,7 @@ function App(): React.JSX.Element {
               reference={citationDialog.reference}
             />
           )}
-          {imageViewerItem && (
+          {imageViewerItem && createPortal(
             <div
               className="image-viewer-backdrop"
               onMouseDown={(event) => {
@@ -10980,7 +10981,8 @@ function App(): React.JSX.Element {
                   <img alt={imageViewerItem.title} src={imageViewerItem.src} />
                 </div>
               </section>
-            </div>
+            </div>,
+            document.body
           )}
           {customTaskDialog && activeProject?.kind === "user" && (
             <CustomTaskDialog

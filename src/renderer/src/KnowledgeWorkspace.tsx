@@ -41,6 +41,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createPortal } from 'react-dom'
 import type { TFunction } from 'i18next'
 import type {
   KnowledgeDocumentItem as SharedKnowledgeDocumentItem,
@@ -890,7 +891,7 @@ function EditLibraryDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
       aria-label={t('edit.ariaLabel')}
       aria-modal="true"
@@ -961,7 +962,8 @@ function EditLibraryDialog({
           </button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -998,7 +1000,7 @@ function DeleteLibraryDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
       aria-label={t('delete.ariaLabel')}
       aria-modal="true"
@@ -1056,7 +1058,8 @@ function DeleteLibraryDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -1097,7 +1100,7 @@ function RemoveSourceDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
       aria-describedby={descriptionId}
       aria-labelledby={titleId}
@@ -1155,7 +1158,8 @@ function RemoveSourceDialog({
           </button>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -1248,7 +1252,7 @@ function GraphDestructiveDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
       aria-describedby={descriptionId}
       aria-labelledby={titleId}
@@ -1296,7 +1300,8 @@ function GraphDestructiveDialog({
           </button>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body
   )
 }
 

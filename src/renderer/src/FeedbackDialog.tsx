@@ -12,6 +12,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createPortal } from 'react-dom'
 import type { AppInfo } from '../../shared/contracts'
 import {
   feedbackCategories,
@@ -326,7 +327,7 @@ export function FeedbackDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
       aria-describedby={descriptionId}
       aria-labelledby={titleId}
@@ -760,6 +761,7 @@ export function FeedbackDialog({
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

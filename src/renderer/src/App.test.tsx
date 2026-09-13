@@ -5693,6 +5693,7 @@ describe("App", () => {
     const imageDialog = await screen.findByRole("dialog", {
       name: "页面截图.png",
     });
+    expect(imageDialog.parentElement?.parentElement).toBe(document.body);
     expect(
       within(imageDialog).getByRole("img", { name: "页面截图.png" }),
     ).toHaveAttribute("src", imageAttachment.contentUrl);
@@ -5700,7 +5701,7 @@ describe("App", () => {
       name: "关闭图片查看器",
     });
     expect(closeViewer).toHaveFocus();
-    expect(document.querySelector("main")?.inert).toBe(true);
+    expect(document.querySelector<HTMLElement>(".app-shell")?.inert).toBe(true);
     fireEvent.keyDown(closeViewer, { key: "Tab" });
     expect(
       within(imageDialog).getByRole("button", {
@@ -5712,7 +5713,7 @@ describe("App", () => {
     expect(
       screen.queryByRole("dialog", { name: "页面截图.png" }),
     ).not.toBeInTheDocument();
-    expect(document.querySelector("main")?.inert).toBe(false);
+    expect(document.querySelector<HTMLElement>(".app-shell")?.inert).toBe(false);
     fireEvent.click(
       within(userArticle).getByRole("button", {
         name: "下载图片 页面截图.png",

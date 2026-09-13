@@ -385,6 +385,7 @@ describe('KnowledgeWorkspace', () => {
       '将删除此来源的 1 篇文档、检索索引、图谱证据和应用托管副本。磁盘上的原始文件不会改变。'
     )
     expect(onRemoveSource).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog').parentElement).toBe(document.body)
     fireEvent.click(
       screen.getByRole('button', { name: '移除来源' })
     )
@@ -1920,7 +1921,9 @@ describe('KnowledgeWorkspace', () => {
       '将永久删除实体“GoodBuddy”及其 1 条关联关系；相关证据引用也会从图谱中移除，且无法恢复。'
     )
     expect(onDeleteEntity).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog').parentElement).toBe(document.body)
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('button', { name: '删除关系 使用' })
@@ -2086,7 +2089,7 @@ describe('KnowledgeWorkspace', () => {
   })
 
   it('isolates and traps focus in the library edit dialog', async () => {
-    render(<KnowledgeWorkspace {...createProps()} />)
+    const { container } = render(<KnowledgeWorkspace {...createProps()} />)
 
     const trigger = screen.getByRole('button', { name: '编辑' })
     trigger.focus()
@@ -2095,13 +2098,10 @@ describe('KnowledgeWorkspace', () => {
     const dialog = screen.getByRole('dialog', {
       name: '编辑知识库'
     })
+    expect(dialog.parentElement).toBe(document.body)
     const nameInput = screen.getByLabelText('名称')
     expect(nameInput).toHaveFocus()
-    expect(
-      document.querySelector<HTMLElement>(
-        '.knowledge-workspace__main'
-      )?.inert
-    ).toBe(true)
+    expect(container.inert).toBe(true)
     fireEvent.keyDown(nameInput, { key: 'Tab', shiftKey: true })
     expect(
       screen.getByRole('button', { name: '保存修改' })
@@ -2109,16 +2109,12 @@ describe('KnowledgeWorkspace', () => {
 
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(trigger).toHaveFocus())
-    expect(
-      document.querySelector<HTMLElement>(
-        '.knowledge-workspace__main'
-      )?.inert
-    ).toBe(false)
+    expect(container.inert).toBe(false)
   })
 
   it('confirms that deleting a managed library removes managed copies', async () => {
     const onDeleteLibrary = vi.fn()
-    render(
+    const { container } = render(
       <KnowledgeWorkspace
         {...createProps({ onDeleteLibrary })}
       />
@@ -2131,19 +2127,12 @@ describe('KnowledgeWorkspace', () => {
     const dialog = screen.getByRole('dialog', {
       name: '删除知识库确认'
     })
+    expect(dialog.parentElement).toBe(document.body)
     expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
-    expect(
-      document.querySelector<HTMLElement>(
-        '.knowledge-workspace__main'
-      )?.inert
-    ).toBe(true)
+    expect(container.inert).toBe(true)
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(trigger).toHaveFocus())
-    expect(
-      document.querySelector<HTMLElement>(
-        '.knowledge-workspace__main'
-      )?.inert
-    ).toBe(false)
+    expect(container.inert).toBe(false)
     fireEvent.click(trigger)
     expect(
       screen.getByText(
