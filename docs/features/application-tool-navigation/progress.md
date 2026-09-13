@@ -1,0 +1,29 @@
+# 项目活动级联实施进度
+
+## 2026-09-13：生产活动入口
+
+对应 [FR-14](./prd.md#fr-14-项目活动汇总)、[US-E1 / US-E2](./user-stories.md#6-epic-e项目活动级联)。
+本页只记录项目活动入口，不表示应用中心计划已交付。
+
+`App` 已接入 `ProjectActivity` 常驻摘要和锚定级联菜单。会话和项目计数继续使用现有
+`deriveConversationActivity` 结果，点击会话继续调用 `openActivityConversation`。未增加
+持久化字段、IPC 或 Runtime 状态。项目选择器分组及计数保持原有行为。
+
+组件与 App 定向回归通过 32 项，覆盖空闲入口、稳定项目及 SSH Host 顺序、待处理优先、
+跨项目精确跳转、设置离开检查、实时状态清理、键盘返回、外部关闭和窄侧栏焦点。
+
+Windows Electron 视觉 fixture 使用当前 `ProjectActivity`、生产样式和 i18n，活动数据为
+受控样例。浅深主题分别验证 `1280×800`、`960×720`、`720×640`、`640×420`、`375×600`；
+原生键盘验证 Enter、上下及右方向键、End、两级 Escape、Tab 退出，另测左侧回退和空闲入口。
+此项证明组件的实际 Chromium 排版与交互，不代表完整生产 Main/Preload 的端到端验证。
+
+浏览器遮挡复用共享菜单相交机制，组件测试检查相交和非相交结果；本轮未单独驱动原生
+`WebContentsView` 可见性。远程 Agent 执行路径未改动，未发出模型或知识库请求。
+
+提交前复核：`npm run typecheck`、`npm run lint` 通过；单独运行
+`npx vitest run src/renderer/src/ProjectActivity.test.tsx`，11 项通过。
+`npm test` 在 240 秒后超时，超时前 `tests/agent-package.test.ts` 的
+`verifies and installs offline dependency inventories larger than one MiB` 用例失败，未取得完整结果。
+
+Demo 已按最新讨论隐藏空闲摘要并移除会话行箭头；本次提交的生产实现仍保留空闲摘要和
+会话行箭头，这两处尚未与 Demo 对齐。

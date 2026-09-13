@@ -4,6 +4,9 @@ import type { workspace as chineseWorkspace } from '../zh-CN/workspace'
 export const workspace = {
   projectActivity: {
     title: 'All project activity',
+    idle: 'No activity',
+    empty: 'No running conversations or conversations needing attention.',
+    back: 'Back to projects',
     close: 'Close project activity',
     unassigned: 'No project',
     attentionCount: '{{count}} need attention',

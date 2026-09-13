@@ -26,6 +26,112 @@ const variants = {
   scenes: ['F / 商店发现', '底部入口强调应用发现，展开后查看商店应用与安装位置。', '先模拟安装，再决定是否常驻；我的应用始终可切换访问。']
 };
 const $ = selector => document.querySelector(selector);
+const demoProjects = [
+  { id: 'goodbuddy', name: 'GoodBuddy', group: '本地', conversations: ['优化项目导航', '检查构建问题'] },
+  { id: 'website', name: '官网改版', group: '本地', conversations: ['发布首页'] },
+  { id: 'remote', name: '客户方案与交付文档工作空间', group: 'SSH', conversations: ['整理报价'] },
+  { id: 'channel', name: '团队助手', group: '通道', conversations: ['本周工作计划'] }
+];
+let currentProject = 'goodbuddy';
+let projectActivity = [];
+let expandedActivityProject = '';
+function renderProjects() {
+  const scenario = $('#project-scenario').value;
+  const activity = demoProjects.flatMap(project => project.conversations.map((name, index) => ({ project, name, index,
+    state: scenario === 'idle' || project.id === 'channel' || (scenario === 'current' && project.id !== currentProject) ? '' : scenario === 'waiting' && project.id === 'website' ? '等待审批' : '运行中'
+  }))).filter(row => row.state);
+  projectActivity = activity;
+  const waiting = activity.filter(row => row.state !== '运行中').length;
+  const running = activity.length - waiting;
+  const project = demoProjects.find(entry => entry.id === currentProject);
+  $('#project-name').textContent = project.name;
+  $('#project-trigger').setAttribute('aria-label', `切换项目，当前项目：${project.name}`);
+  $('#activity-trigger').hidden = !activity.length;
+  if (!activity.length && $('#project-activity').matches(':popover-open')) $('#project-activity').hidePopover();
+  $('#activity-summary').innerHTML = `${running ? `运行中 ${running}` : ''}${waiting && running ? ' · ' : ''}${waiting ? `<span class="project-waiting">待处理 ${waiting}</span>` : ''}`;
+  $('#activity-trigger').setAttribute('aria-label', `所有项目活动：${$('#activity-summary').textContent}`);
+  $('#project-list').innerHTML = ['本地', 'SSH', '通道'].map(group => `<section><h3>${group}</h3>${demoProjects.filter(entry => entry.group === group).map(entry => {
+    const rows = activity.filter(row => row.project.id === entry.id);
+    const pending = rows.filter(row => row.state !== '运行中').length;
+    const active = rows.length - pending;
+    return `<button data-project="${entry.id}" ${entry.id === currentProject ? 'aria-current="true"' : ''}><span class="project-row-name">${entry.name}</span>${entry.id === currentProject ? '<span aria-hidden="true">✓</span>' : ''}${rows.length ? `<small>${pending ? `<span class="project-waiting">待处理 ${pending}</span>` : ''}${active ? `<span>运行中 ${active}</span>` : ''}</small>` : ''}</button>`;
+  }).join('')}</section>`).join('');
+  $('#activity-project-list').innerHTML = demoProjects.map(entry => {
+    const rows = activity.filter(row => row.project.id === entry.id);
+    if (!rows.length) return '';
+    const pending = rows.filter(row => row.state !== '运行中').length;
+    return `<button data-activity-project="${entry.id}" aria-expanded="false" aria-controls="activity-sessions"><span>${entry.name}</span><small>${pending ? `<span class="project-waiting">待处理 ${pending}</span>` : `运行中 ${rows.length}`}</small><span aria-hidden="true">›</span></button>`;
+  }).join('') || '<p class="muted">暂无运行中或待处理会话。</p>';
+  expandActivityProject('');
+  $('.history').innerHTML = `<span class="eyebrow">当前项目对话</span>${project.conversations.map((name, index) => {
+    const row = activity.find(entry => entry.project.id === currentProject && entry.index === index);
+    return `<button data-conversation="${currentProject}" data-conversation-index="${index}">${name}${row ? `<small>${row.state}</small>` : ''}</button>`;
+  }).join('')}`;
+}
+$('#project-scenario').onchange = renderProjects;
+const projectMenu = $('#project-menu');
+function positionProjectMenu() {
+  const rect = $('#project-trigger').getBoundingClientRect();
+  projectMenu.style.left = `${Math.max(16, Math.min(rect.left, innerWidth - projectMenu.offsetWidth - 16))}px`;
+  projectMenu.style.top = `${Math.max(16, Math.min(rect.bottom + 8, window.innerHeight - projectMenu.offsetHeight - 16))}px`;
+}
+projectMenu.addEventListener('toggle', event => {
+  $('#project-trigger').setAttribute('aria-expanded', String(event.newState === 'open'));
+  if (event.newState === 'open') positionProjectMenu();
+});
+window.addEventListener('resize', () => { if (projectMenu.matches(':popover-open')) positionProjectMenu(); });
+window.addEventListener('scroll', () => { if (projectMenu.matches(':popover-open')) positionProjectMenu(); }, true);
+function positionActivityMenu() {
+  const panel = $('#project-activity');
+  const rect = $('#activity-trigger').getBoundingClientRect();
+  panel.classList.toggle('activity-compact', innerWidth < 620);
+  panel.classList.toggle('activity-left', innerWidth >= 620 && rect.left + panel.offsetWidth > innerWidth - 16 && rect.right >= panel.offsetWidth + 16);
+  const left = panel.classList.contains('activity-left') ? rect.right - panel.offsetWidth : rect.left;
+  panel.style.left = `${Math.max(16, Math.min(left, innerWidth - panel.offsetWidth - 16))}px`;
+  panel.style.top = `${Math.max(16, Math.min(rect.bottom + 4, window.innerHeight - panel.offsetHeight - 16))}px`;
+}
+function expandActivityProject(id, focus = false) {
+  expandedActivityProject = id;
+  $('#activity-sessions').hidden = !id;
+  $('#project-activity').classList.toggle('has-submenu', Boolean(id));
+  document.querySelectorAll('[data-activity-project]').forEach(button => button.setAttribute('aria-expanded', String(button.dataset.activityProject === id)));
+  if (id) {
+    $('#activity-project-title').textContent = demoProjects.find(project => project.id === id).name;
+    $('#activity-list').innerHTML = projectActivity.filter(row => row.project.id === id).sort((a, b) => Number(a.state === '运行中') - Number(b.state === '运行中')).map(row => `<button data-conversation="${id}" data-conversation-index="${row.index}"><strong>${row.name}</strong><small>${row.state}</small></button>`).join('');
+  }
+  if ($('#project-activity').matches(':popover-open')) positionActivityMenu();
+  if (focus) $('#activity-list button')?.focus();
+}
+$('#project-activity').addEventListener('toggle', event => {
+  $('#activity-trigger').setAttribute('aria-expanded', String(event.newState === 'open'));
+  if (event.newState === 'open') { expandActivityProject(''); positionActivityMenu(); }
+});
+$('#activity-project-list').addEventListener('pointerover', event => {
+  const button = event.target.closest('[data-activity-project]');
+  if (event.pointerType === 'mouse' && innerWidth >= 620 && button && button.dataset.activityProject !== expandedActivityProject) expandActivityProject(button.dataset.activityProject);
+});
+$('#activity-project-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-activity-project]');
+  if (button) expandActivityProject(button.dataset.activityProject, true);
+});
+$('#activity-back').onclick = () => {
+  const id = expandedActivityProject;
+  expandActivityProject('');
+  $(`[data-activity-project="${id}"]`)?.focus();
+};
+$('#project-activity').addEventListener('keydown', event => {
+  const button = event.target.closest('[data-activity-project]');
+  if (event.key === 'ArrowRight' && button) { event.preventDefault(); expandActivityProject(button.dataset.activityProject, true); }
+  if ((event.key === 'ArrowLeft' || event.key === 'Escape') && expandedActivityProject) { event.preventDefault(); event.stopPropagation(); $('#activity-back').click(); }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const buttons = [...document.querySelectorAll(button ? '[data-activity-project]' : '#activity-list button')];
+    const index = buttons.indexOf(document.activeElement);
+    if (index >= 0) { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length].focus(); }
+  }
+});
+window.addEventListener('resize', () => { if ($('#project-activity').matches(':popover-open')) positionActivityMenu(); });
+window.addEventListener('scroll', () => { if ($('#project-activity').matches(':popover-open')) positionActivityMenu(); }, true);
+renderProjects();
 let variant = 'dock';
 let catalogMode = 'apps';
 let residentApps = ['notes', 'knowledge'];
@@ -125,6 +231,16 @@ function selectTool(id) {
 document.addEventListener('click', event => {
   const button = event.target.closest('button'); if (!button) return;
   const data = button.dataset;
+  if (data.project || data.conversation) {
+    currentProject = data.project || data.conversation;
+    if (projectMenu.matches(':popover-open')) projectMenu.hidePopover();
+    if ($('#project-activity').matches(':popover-open')) $('#project-activity').hidePopover();
+    renderProjects();
+    const project = demoProjects.find(entry => entry.id === currentProject);
+    openPage(data.conversation ? project.conversations[Number(data.conversationIndex)] : '当前对话');
+    $('#page-label').textContent = `${project.name} / ${data.conversation ? project.conversations[Number(data.conversationIndex)] : '当前对话'}`;
+    $('#project-trigger').focus();
+  }
   if (data.variant) selectVariant(data.variant);
   if (data.catalog) openCatalog(data.catalog);
   if (data.page) openPage(data.page);

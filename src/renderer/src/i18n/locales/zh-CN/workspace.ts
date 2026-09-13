@@ -1,6 +1,9 @@
 export const workspace = {
   projectActivity: {
     title: '全项目活动',
+    idle: '暂无活动',
+    empty: '暂无运行中或待处理会话。',
+    back: '返回项目列表',
     close: '关闭全项目活动',
     unassigned: '未归属项目',
     attentionCount: '{{count}} 个待处理',

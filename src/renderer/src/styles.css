@@ -3763,7 +3763,6 @@ textarea:focus-visible {
   .knowledge-confirm-dialog-backdrop,
   .knowledge-library-dialog-backdrop,
   .knowledge-dialog-backdrop,
-  .project-activity__backdrop,
   .external-knowledge-modal
 ) {
   -webkit-app-region: no-drag;

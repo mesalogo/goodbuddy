@@ -21,9 +21,14 @@
     <button id="theme">切换深色</button>
   </header>
   <div class="design-note"><span id="variant-label">A / 紧凑 Dock</span><p id="variant-description"></p><span>交互原型 · 商店与指标均为演示数据</span></div>
+  <div class="project-lab"><label>项目活动演示 <select id="project-scenario"><option value="waiting">有待处理</option><option value="running">仅运行中</option><option value="current">仅当前项目运行</option><option value="idle">全部空闲</option></select></label><span>有活动时显示摘要，悬停或点击项目向右展开会话。</span></div>
   <main class="app" data-variant="dock">
     <aside class="sidebar" aria-label="主侧栏">
       <div class="brand"><span class="brand-mark">GB</span><strong>GoodBuddy</strong><span class="muted">个人空间</span></div>
+      <div class="project-entry"><button id="project-trigger" popovertarget="project-menu" aria-expanded="false" aria-controls="project-menu"><span id="project-name">GoodBuddy</span><span class="muted" aria-hidden="true">⌄</span></button></div>
+      <button id="activity-trigger" popovertarget="project-activity" aria-expanded="false" aria-controls="project-activity"><span id="activity-summary"></span><span aria-hidden="true">⌄</span></button>
+      <div id="project-menu" popover aria-label="切换项目"><div id="project-list"></div></div>
+      <div id="project-activity" popover aria-label="所有项目活动"><section id="activity-projects"><h3>所有项目活动</h3><div id="activity-project-list"></div></section><section id="activity-sessions" hidden><button id="activity-back">‹ 返回项目列表</button><h3 id="activity-project-title"></h3><div id="activity-list"></div></section></div>
       <button class="new-chat" data-page="当前对话"><span>＋</span> 新对话</button>
       <nav class="navigation" aria-label="应用导航">
         <button class="selected" data-page="当前对话"><span data-icon="chat"></span>当前对话</button>

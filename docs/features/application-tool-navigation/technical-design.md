@@ -392,7 +392,15 @@ resourceMonitor.getLocalSnapshot(input: {
 
 - `conversation-activity.ts` 从 `App.tsx` 的会话、`activeConversationIds`、全部可见
   `assistantTasks` 和项目元数据派生会话行、全局及项目计数，不新增持久化活动副本。
-  `ProjectActivity` 渲染汇总与弹窗，`ProjectSwitcher` 复用项目计数。
+  `ProjectActivity` 渲染常驻汇总与项目、会话级联菜单，`ProjectSwitcher` 复用项目计数。
+- `App` 向 `ProjectActivity` 传入项目元数据、活动行、侧栏可见状态与既有精确跳转回调。
+  菜单按项目 ID 分组并记忆化派生集合；排序仅影响展示，不改聚合状态或持久化数据。
+- 两层菜单在同一 body Portal 内相接。布局在打开、层级变化、实时数据更新、窗口缩放和
+  滚动时按锚点重算；窄窗口隐藏项目面板并保留返回操作。菜单不调用 Modal 焦点隔离，
+  捕获阶段消费 Escape，防止触发窄侧栏的文档级监听；Tab 关闭后交还正常焦点顺序。
+  菜单关闭与焦点恢复在导航回调之前同步完成。
+- `role="menu"` 使浮层直接进入共享 `browser-viewport-occlusion.ts` 相交检测。未增加
+  浏览器实例的特殊隐藏条件，也不关闭或重建浏览器会话。
 - 持久化快照刷新时，同一条仍在流式输出的消息保留本地待审批、待回答信息，持久化终态
   则清除这些信息。响应成功后对应 Task 立即退出等待状态；响应期间到达的新问题、审批或
   终态不能被旧响应覆盖。
@@ -406,3 +414,6 @@ resourceMonitor.getLocalSnapshot(input: {
   列表并合并，再查找同一 ID。刷新失败或会话已不存在时显示通知，不回退到项目最新会话。
   设置离开检查通过后才提交项目、会话及界面清理状态。
 - 远程恢复成功提示沿用独立的自动消失计时器；活动汇总更新不重置或替代该计时器。
+
+验证记录见[项目活动级联实施进度](./progress.md)。本次只改 Renderer 展示与交互，远程
+Runtime、Agent 协议和桌面到 Agent 的执行路径未改变。

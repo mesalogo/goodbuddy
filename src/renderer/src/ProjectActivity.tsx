@@ -1,13 +1,15 @@
-import { ChevronRight, CircleAlert, LoaderCircle, X } from 'lucide-react'
-import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
+import { ChevronDown, ChevronLeft, ChevronRight, CircleAlert, LoaderCircle } from 'lucide-react'
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { ConversationActivity } from './conversation-activity'
-import { activateModalFocus, trapTabFocus } from './dialog-focus'
+import type { AssistantProject } from '../../shared/assistant-contracts'
 import './project-activity.css'
 
 export type ProjectActivityProps = {
   activities: ConversationActivity[]
+  projects?: readonly AssistantProject[]
+  visible?: boolean
   onOpenConversation: (id: string) => void
 }
 
@@ -38,99 +40,178 @@ export function ProjectActivityCounts({
   )
 }
 
-function ActivityDialog({
+function ActivityMenu({
   activities,
+  projects,
+  anchorRef,
+  id,
   onOpenConversation,
   onClose
-}: ProjectActivityProps & { onClose: () => void }): React.JSX.Element {
+}: ProjectActivityProps & { anchorRef: React.RefObject<HTMLButtonElement | null>; id: string; onClose: () => void }): React.JSX.Element {
   const { t } = useTranslation('workspace')
-  const dialogRef = useRef<HTMLElement>(null)
-  const titleId = useId()
+  const menuRef = useRef<HTMLDivElement>(null)
+  const projectRef = useRef<HTMLDivElement>(null)
+  const sessionsRef = useRef<HTMLDivElement>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const groups = useMemo(() => {
+    const rows = new Map<string, { id: string; name: string; rows: ConversationActivity[] }>()
+    // Keep source project order within local, SSH Host and channel groups.
+    const ordered = new Map<string, AssistantProject[]>()
+    for (const project of projects ?? []) {
+      const key = project.kind === 'channel' ? 'channel' : project.executionSpace.kind === 'ssh'
+        ? `ssh:${project.executionSpace.hostId}` : 'local'
+      const group = ordered.get(key) ?? []
+      group.push(project)
+      ordered.set(key, group)
+    }
+    const keys = [...ordered.keys()].sort((a, b) =>
+      (a === 'local' ? 0 : a === 'channel' ? 2 : 1) - (b === 'local' ? 0 : b === 'channel' ? 2 : 1))
+    for (const key of keys) for (const project of ordered.get(key)!) {
+      rows.set(project.id, { id: project.id, name: project.name, rows: [] })
+    }
+    for (const activity of activities) {
+      const key = activity.projectId ?? ''
+      const group = rows.get(key) ?? { id: key, name: activity.projectName, rows: [] }
+      group.rows.push(activity)
+      rows.set(key, group)
+    }
+    return [...rows.values()].filter((group) => group.rows.length).map((group) => ({
+      ...group,
+      rows: group.rows.sort((a, b) => Number(a.status === 'running') - Number(b.status === 'running')),
+      running: group.rows.filter((row) => row.status === 'running').length
+    }))
+  }, [activities, projects])
+  const active = groups.find((group) => group.id === selected)
+  if (selected !== null && !active) setSelected(null)
+  const position = useEffectEvent(() => {
+    const menu = menuRef.current
+    if (!menu || !anchorRef.current) return
+    const rect = anchorRef.current.getBoundingClientRect()
+    const compact = window.innerWidth < 620
+    const panelWidth = Math.min(264, window.innerWidth - 32)
+    const baseLeft = Math.max(16, Math.min(rect.left, window.innerWidth - panelWidth - 16))
+    const leftward = !compact && baseLeft + panelWidth * 2 > window.innerWidth - 16 && baseLeft >= panelWidth + 16
+    menu.dataset.compact = String(compact)
+    menu.dataset.left = String(leftward)
+    const width = panelWidth * (active && !compact ? 2 : 1)
+    menu.style.width = `${width}px`
+    menu.style.left = `${Math.max(16, Math.min(baseLeft - (leftward && active ? panelWidth : 0), window.innerWidth - width - 16))}px`
+    menu.style.top = `${Math.max(16, Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 16))}px`
+    if (compact && active && projectRef.current?.contains(document.activeElement)) {
+      sessionsRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+    }
+  })
+  useLayoutEffect(() => { position() })
+  const back = (): void => {
+    const index = groups.findIndex((group) => group.id === selected)
+    flushSync(() => setSelected(null))
+    projectRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[Math.max(0, index)]?.focus()
+  }
+  const enter = (key: string): void => {
+    flushSync(() => setSelected(key))
+    sessionsRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+  }
   const handleKeyDown = useEffectEvent((event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
-      onClose()
-    } else {
-      trapTabFocus(event, dialogRef.current)
+      if (active) back()
+      else onClose()
+      return
     }
+    if (!menuRef.current?.contains(event.target as Node)) return
+    if (event.key === 'Tab') { flushSync(onClose); return }
+    if (event.key === 'ArrowLeft' && active) {
+      event.preventDefault()
+      back()
+      return
+    }
+    const projectButtons = projectRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+    const projectIndex = Array.from(projectButtons ?? []).indexOf(document.activeElement as HTMLButtonElement)
+    if (event.key === 'ArrowRight' && projectIndex >= 0) {
+      event.preventDefault()
+      enter(groups[projectIndex]!.id)
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const buttons = Array.from((projectIndex >= 0 ? projectRef : sessionsRef).current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+      : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+    buttons[next]?.focus()
   })
+  const dismiss = useEffectEvent(onClose)
   useEffect(() => {
-    const releaseFocus = activateModalFocus(
-      () => dialogRef.current?.querySelector<HTMLButtonElement>('button') ?? null
-    )
+    const anchor = anchorRef.current
+    const menu = menuRef.current
+    const initialFocus = projectRef.current?.querySelector<HTMLButtonElement>('button') ?? menu
+    initialFocus?.focus()
     const onKeyDown = (event: KeyboardEvent): void => handleKeyDown(event)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      releaseFocus()
+    const outside = (event: Event): void => {
+      if (!menuRef.current?.contains(event.target as Node) && !anchor?.contains(event.target as Node)) dismiss()
     }
-  }, [])
-
+    const reposition = (): void => position()
+    document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('focusin', outside)
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('focusin', outside)
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+      if (document.activeElement === document.body || menu?.contains(document.activeElement)) {
+        anchor?.focus()
+      }
+    }
+  }, [anchorRef])
+  useLayoutEffect(() => {
+    if (document.activeElement === document.body) {
+      const fallback = (active ? sessionsRef : projectRef).current?.querySelector<HTMLButtonElement>('[role="menuitem"]') ?? menuRef.current
+      fallback?.focus()
+    }
+  }, [groups, active])
   return createPortal(
-    <div
-      className="project-activity__backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <section
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="project-activity__dialog"
-        ref={dialogRef}
-        role="dialog"
-      >
-        <header className="project-activity__header">
-          <h2 id={titleId}>{t('projectActivity.title')}</h2>
-          <button
-            aria-label={t('projectActivity.close')}
-            className="icon-button"
-            onClick={onClose}
-            title={t('projectActivity.close')}
-            type="button"
-          >
-            <X aria-hidden="true" size={16} />
+    <div className="project-activity__menu" data-submenu={Boolean(active)} ref={menuRef} id={id}
+      role="menu" aria-label={t('projectActivity.title')} tabIndex={-1}>
+      <div className="project-activity__projects" ref={projectRef} role="presentation">
+        <h3>{t('projectActivity.title')}</h3>
+        {!groups.length && <p>{t('projectActivity.empty')}</p>}
+        {groups.map((group) => (
+          <button key={group.id} type="button" role="menuitem" tabIndex={-1}
+            className="project-activity__row" aria-haspopup="menu" aria-expanded={selected === group.id}
+            aria-controls={selected === group.id ? `${id}-sessions` : undefined}
+            onPointerEnter={(event) => {
+              if (event.pointerType === 'mouse' && menuRef.current?.dataset.compact !== 'true') setSelected(group.id)
+            }}
+            onClick={() => enter(group.id)}>
+            <span className="project-activity__identity"><span>{group.name}</span>{' '}
+              <ProjectActivityCounts running={group.running} attention={group.rows.length - group.running} />
+            </span><ChevronRight aria-hidden="true" size={14} />
           </button>
-        </header>
-        <div className="project-activity__content">
-          {(['attention', 'running'] as const).map((group) => {
-            const rows = activities.filter((activity) =>
-              group === 'running' ? activity.status === 'running' : activity.status !== 'running'
-            )
-            if (!rows.length) return null
-            return (
-              <section aria-labelledby={`${titleId}-${group}`} key={group}>
-                <h3 id={`${titleId}-${group}`}>{t(`projectActivity.groups.${group}`)}</h3>
-                <ul>
-                  {rows.map((activity) => (
-                    <li key={activity.conversationId}>
-                      <button
-                        className="project-activity__row"
-                        onClick={() => {
-                          // Release modal isolation and restore focus before navigation owns it.
-                          flushSync(onClose)
-                          onOpenConversation(activity.conversationId)
-                        }}
-                        type="button"
-                      >
-                        <span className="project-activity__identity">
-                          <small>{activity.projectName}</small>{' '}
-                          <span>{activity.title}</span>
-                        </span>{' '}
-                        <span className={`project-activity__${group}`}>
-                          {t(`projectActivity.status.${activity.status}`)}
-                        </span>
-                        <ChevronRight aria-hidden="true" size={14} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )
-          })}
-        </div>
-      </section>
+        ))}
+      </div>
+      {active && <div className="project-activity__sessions" ref={sessionsRef} id={`${id}-sessions`}
+        role="menu" aria-label={active.name}>
+        <button className="project-activity__back project-activity__row" type="button" onClick={back}>
+          <ChevronLeft aria-hidden="true" size={14} />{t('projectActivity.back')}
+        </button>
+        <h3>{active.name}</h3>
+        {active.rows.map((activity) => <button key={activity.conversationId} type="button" role="menuitem" tabIndex={-1}
+          className="project-activity__row" onClick={() => {
+            flushSync(onClose)
+            onOpenConversation(activity.conversationId)
+          }}>
+          <span className="project-activity__identity"><span>{activity.title}</span>{' '}
+            <small className={`project-activity__${activity.status === 'running' ? 'running' : 'attention'}`}>
+              {t(`projectActivity.status.${activity.status}`)}
+            </small>
+          </span><ChevronRight aria-hidden="true" size={14} />
+        </button>)}
+      </div>}
     </div>,
     document.body
   )
@@ -138,36 +219,46 @@ function ActivityDialog({
 
 export function ProjectActivity({
   activities,
+  projects,
+  visible = true,
   onOpenConversation
 }: ProjectActivityProps): React.JSX.Element | null {
   const { t } = useTranslation('workspace')
   const [open, setOpen] = useState(false)
-  if (!activities.length) {
-    // Adjusting state during render, guarded so it cannot loop: the dialog must
-    // not stay queued to reopen once the activity it listed has drained.
-    if (open) setOpen(false)
-    return null
-  }
-  const running = activities.filter((activity) => activity.status === 'running').length
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const id = useId()
+  if (!visible && open) setOpen(false)
+  const running = useMemo(() => activities.filter((activity) => activity.status === 'running').length, [activities])
   return (
     <>
       <button
         aria-expanded={open}
-        aria-haspopup="dialog"
+        aria-haspopup="menu"
+        aria-controls={open ? id : undefined}
+        aria-label={`${t('projectActivity.title')}: ${activities.length ? [t('projectActivity.attentionCount', { count: activities.length - running }), t('projectActivity.runningCount', { count: running })].join(', ') : t('projectActivity.idle')}`}
+        ref={triggerRef}
         className="project-activity__summary"
         onClick={(event) => {
           event.currentTarget.focus()
-          setOpen(true)
+          setOpen(!open)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault()
+            setOpen(true)
+          }
         }}
         type="button"
       >
-        <span>{t('projectActivity.title')}</span>{' '}
-        <ProjectActivityCounts attention={activities.length - running} running={running} />
-        <ChevronRight aria-hidden="true" size={14} />
+        {activities.length ? <ProjectActivityCounts attention={activities.length - running} running={running} /> : <span>{t('projectActivity.idle')}</span>}
+        <ChevronDown aria-hidden="true" size={14} />
       </button>
-      {open && (
-        <ActivityDialog
+      {open && visible && (
+        <ActivityMenu
           activities={activities}
+          projects={projects}
+          anchorRef={triggerRef}
+          id={id}
           onClose={() => setOpen(false)}
           onOpenConversation={onOpenConversation}
         />

@@ -1276,16 +1276,16 @@ describe("App", () => {
       expect(projectRow).toHaveTextContent("1 个运行中");
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       fireEvent.click(summary);
-      const dialog = screen.getByRole("dialog", { name: "全项目活动" });
-      const running = within(dialog).getByRole("region", { name: "运行中" });
-      expect(within(running).getAllByRole("button")).toHaveLength(1);
-      expect(within(running).getByRole("button", { name: /Background project Exact background discussion/u })).toBeInTheDocument();
-      expect(within(dialog).queryByRole("region", { name: "待处理" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
+      const running = screen.getByRole("menu", { name: "Background project" });
+      expect(within(running).getAllByRole("menuitem")).toHaveLength(1);
+      expect(within(running).getByRole("menuitem", { name: /Exact background discussion/u })).toHaveTextContent("运行中");
 
       vi.mocked(api.tasks.list).mockResolvedValue([{ ...task, status: "completed" }]);
       act(() => conversationQueueChangeListener?.(task.conversationId!));
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "全项目活动" })).not.toBeInTheDocument());
-      expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument();
+      await waitFor(() => expect(summary).toHaveTextContent("暂无活动"));
+      expect(screen.getByRole("menu", { name: "全项目活动" })).toHaveTextContent("暂无运行中或待处理会话");
+      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       expect(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: /Background project/u }))
         .not.toHaveTextContent("个运行中");
@@ -1311,13 +1311,13 @@ describe("App", () => {
         fireEvent.click(sidebar.querySelector<HTMLButtonElement>(".conversation-more")!);
         expect(sidebar.querySelector(".conversation-actions")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
-        fireEvent.click(within(screen.getByRole("dialog", { name: "全项目活动" }))
-          .getByRole("button", { name: /Exact background discussion/u }));
+        fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
+        fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
         expect(await screen.findByText("Exact conversation content")).toBeInTheDocument();
         expect(sidebar).toHaveClass("sidebar--closed");
         expect(within(screen.getByRole("region", { name: "当前会话的任务" }))
           .getByRole("button", { name: /会话任务/u })).toHaveAttribute("aria-expanded", "false");
-        expect(screen.queryByRole("dialog", { name: "全项目活动" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "切换侧栏" }));
         expect(screen.getByLabelText("搜索对话")).toHaveValue("");
         expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("Background project");
@@ -1341,15 +1341,15 @@ describe("App", () => {
         fireEvent.click(screen.getByRole("button", { name: "切换侧栏" }));
         const trigger = screen.getByRole("button", { name: /全项目活动/u });
         fireEvent.click(trigger);
-        const dialog = screen.getByRole("dialog", { name: "全项目活动" });
-        const close = within(dialog).getByRole("button", { name: "关闭全项目活动" });
-        expect(close).toHaveFocus();
-        // Native Tab must remain available between controls, even through a React portal.
-        expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(true);
-        fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
-        expect(within(dialog).getByRole("button", { name: /Exact background discussion/u })).toHaveFocus();
+        const projectItem = screen.getByRole("menuitem", { name: /Background project/u });
+        expect(projectItem).toHaveFocus();
+        fireEvent.keyDown(projectItem, { key: "ArrowRight" });
+        expect(screen.getByRole("menuitem", { name: /Exact background discussion/u })).toHaveFocus();
         fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-        expect(screen.queryByRole("dialog", { name: "全项目活动" })).not.toBeInTheDocument();
+        expect(projectItem).toHaveFocus();
+        expect(container.querySelector(".sidebar")).not.toHaveClass("sidebar--closed");
+        fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+        expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
         expect(container.querySelector(".sidebar")).not.toHaveClass("sidebar--closed");
         expect(trigger).toHaveFocus();
       } finally {
@@ -1364,8 +1364,8 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.change(await screen.findByLabelText("默认工作区目录"), { target: { value: "C:\\Unsaved activity draft" } });
       fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
-      fireEvent.click(within(screen.getByRole("dialog", { name: "全项目活动" }))
-        .getByRole("button", { name: /Exact background discussion/u }));
+      fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
+      fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
       expect(screen.getByRole("heading", { name: "设置中心" })).toBeVisible();
       expect(screen.getByRole("alert")).toHaveTextContent("当前设置有未保存更改");
       expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("Background project");
@@ -1373,7 +1373,7 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "放弃更改并关闭" }));
       expect(await screen.findByText("Exact conversation content")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "当前项目" })).toHaveTextContent("Background project");
-      expect(screen.queryByRole("dialog", { name: "全项目活动" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
     });
 
     it.each(["question", "approval"] as const)("preserves live %s across snapshot refresh and clears persisted terminal prompts", async (kind) => {
@@ -1497,12 +1497,14 @@ describe("App", () => {
       });
       await waitFor(() => expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理 1 个运行中"));
       fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
-      const dialog = screen.getByRole("dialog", { name: "全项目活动" });
-      expect(within(dialog).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["待处理", "运行中"]);
-      const pending = within(dialog).getByRole("region", { name: "待处理" });
-      expect(within(pending).getAllByRole("button")).toHaveLength(1);
+      const menu = screen.getByRole("menu", { name: "全项目活动" });
+      expect(within(menu).getAllByRole("menuitem")).toHaveLength(2);
+      fireEvent.click(within(menu).getByRole("menuitem", { name: /1 个待处理/u }));
+      const pending = screen.getByRole("menu", { name: project.name });
+      expect(within(pending).getAllByRole("menuitem")).toHaveLength(1);
       expect(pending).toHaveTextContent(kind === "question" ? "等待你的回答" : "等待审批");
-      expect(within(dialog).getByRole("region", { name: "运行中" })).toHaveTextContent("Exact background discussion");
+      fireEvent.click(within(menu).getByRole("menuitem", { name: /Background project/u }));
+      expect(screen.getByRole("menu", { name: "Background project" })).toHaveTextContent("Exact background discussion");
       vi.mocked(api.tasks.list).mockResolvedValue([]);
       act(() => {
         agentListener?.(kind === "question"
@@ -1510,8 +1512,8 @@ describe("App", () => {
           : { requestId: request.requestId, type: "error", status: "failed", message: "Activity execution failed" });
         conversationQueueChangeListener?.(request.conversationId!);
       });
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "全项目活动" })).not.toBeInTheDocument());
-      expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("暂无活动"));
+      expect(menu).toHaveTextContent("暂无运行中或待处理会话");
     });
   });
 

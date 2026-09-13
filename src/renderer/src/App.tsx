@@ -8353,6 +8353,8 @@ function App(): React.JSX.Element {
         />
         <ProjectActivity
           activities={projectActivity.activities}
+          projects={projects}
+          visible={sidebarOpen}
           onOpenConversation={openActivityConversation}
         />
 
