@@ -1247,15 +1247,14 @@ export class KnowledgeService {
     const input = knowledgeRetrieveInputSchema.parse(rawInput)
     const library = this.requireLibrary(input.knowledgeBaseId, false)
     const settings = input.settings ?? library.retrievalSettings
-    const binding = this.database.externalStore.listBindings().find(item => item.knowledgeBaseId === library.id)
+    const binding = this.database.externalStore.getBinding(library.id)
     if (binding) {
-      const response = await this.external.testRetrieval({instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId,commonConfig:binding.commonConfig,providerConfig:binding.providerConfig,testQuery:input.query}, signal)
+      const response = await this.external.retrieve({instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId,commonConfig:binding.commonConfig,providerConfig:binding.providerConfig,query:input.query}, signal)
       signal.throwIfAborted()
-      if (JSON.stringify(this.database.externalStore.listBindings().find(item => item.knowledgeBaseId === library.id)) !== JSON.stringify(binding)) throw new Error('EXTERNAL_KB_CONFIG_CHANGED')
       return {
         query:input.query,durationMs:response.durationMs,settings,
         diagnostics:{external:{provider:binding.provider,instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId},requestedChannels:[],usedChannels:[],degradedChannels:[],candidateCounts:{},channelDurationMs:{},vectorScannedCount:0,filteredByThresholdCount:0,filteredByBudgetCount:0,rerank:{requested:'none',used:'none',status:'skipped',candidateCount:0,durationMs:0}},
-        results:response.results.map((item,index)=>({knowledgeBaseId:library.id,documentTitle:item.documentTitle,sourceDisplayName:item.sourceDisplayName,snippet:item.snippet,rank:index+1,channels:[],scores:{fusedScore:0},external:{kind:'external' as const,provider:binding.provider,instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId,remoteDocumentId:item.remoteDocumentId,remoteChunkId:item.remoteChunkId,providerScore:item.providerScore,providerScores:item.providerScores,location:item.location,sourceUrl:item.sourceUrl}})),
+        results:response.results.map((item,index)=>({knowledgeBaseId:library.id,documentTitle:item.documentTitle,sourceDisplayName:item.sourceDisplayName,snippet:item.snippet,rank:index+1,channels:[],scores:{fusedScore:0},external:{kind:'external' as const,provider:binding.provider,instanceId:binding.instanceId,remoteKnowledgeBaseId:binding.remoteKnowledgeBaseId,remoteDocumentId:item.remoteDocumentId,remoteChunkId:item.remoteChunkId,providerScore:item.providerScore,providerScores:item.providerScores,location:item.location}})),
         context:{characterCount:response.results.reduce((sum,item)=>sum+item.snippet.length,0),truncated:false,groups:[]}
       }
     }
@@ -1693,7 +1692,7 @@ export class KnowledgeService {
       this.requireLibrary(id, false)
     )
     const preparedEmbedding = libraries.some(
-      (library) => !this.database.externalStore.listBindings().some(item=>item.knowledgeBaseId===library.id) && library.retrievalSettings.vectorWeight > 0
+      (library) => !this.database.externalStore.hasBinding(library.id) && library.retrievalSettings.vectorWeight > 0
     )
       ? await this.prepareQueryEmbedding(query, signal)
       : undefined
@@ -1867,45 +1866,6 @@ export class KnowledgeService {
       graphWeight: settings.graphWeight,
       signal
     })
-  }
-
-  async searchHybridMany(
-    knowledgeBaseIds: readonly string[],
-    query: string,
-    limitPerLibrary = 6,
-    signal?: AbortSignal
-  ): Promise<
-    Array<{ knowledgeBaseId: string; result: HybridSearchResult }>
-  > {
-    const vector = await this.embedQuery(query, signal)
-    return knowledgeBaseIds.flatMap((knowledgeBaseId) => {
-      const library = this.requireLibrary(knowledgeBaseId)
-      const settings = library.retrievalSettings
-      return this.database
-        .hybridSearch({
-          knowledgeBaseId,
-          query,
-          limit: limitPerLibrary,
-          provider:
-            vector && this.embeddingProvider
-              ? embeddingStorageProvider(this.embeddingProvider)
-              : undefined,
-          model: vector ? this.embeddingProvider?.model : undefined,
-          vector,
-          graphEnabled: library.graphEnabled,
-          minimumVectorSimilarity: settings.minimumVectorSimilarity,
-          candidateMultiplier: settings.candidateMultiplier,
-          ftsWeight: settings.ftsWeight,
-          vectorWeight: settings.vectorWeight,
-          graphWeight: settings.graphWeight,
-          signal
-        })
-        .map((result) => ({ knowledgeBaseId, result }))
-    }).sort(
-      (left, right) =>
-        right.result.retrieval.score - left.result.retrieval.score ||
-        left.result.chunk.id.localeCompare(right.result.chunk.id)
-    ).slice(0, limitPerLibrary)
   }
 
   private async embedQuery(
@@ -3863,7 +3823,7 @@ export class KnowledgeService {
   }
 
   private requireLibrary(id: string, localOnly = true): KnowledgeBase {
-    if (localOnly && this.database.externalStore.listBindings().some(item => item.knowledgeBaseId === id)) {
+    if (localOnly && this.database.externalStore.hasBinding(id)) {
       throw new Error('EXTERNAL_KB_READ_ONLY')
     }
     const library = this.database.getKnowledgeBase(id)
