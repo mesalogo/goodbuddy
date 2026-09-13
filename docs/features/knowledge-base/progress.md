@@ -16,6 +16,36 @@
 
 ## 验证证据
 
+### 2026-09-13 检索路径与绑定查询简化
+
+对 `3b560c9..ca4a58c` 的复查发现三处与本功能相关的实现问题，已按 KISS 与性能优先修正：
+
+| 修正项 | 修正前行为 | 修正后行为 |
+| --- | --- | --- |
+| 生产检索入口 | 对话检索复用 `testRetrieval`，把用户问题传入 `testQuery`，并对 RAGFlow 额外发一次 detail 请求 | 新增 `ExternalKnowledgeService.retrieve` 作为生产路径，只发一次检索请求；能力预检仅保留在 `testRetrieval` |
+| 配置变更检测 | 5 处 `JSON.stringify` 前后快照对比，抛出 `EXTERNAL_KB_CONFIG_CHANGED` | 全部删除，改由既有 `AbortController` 取消覆盖；被取消的探测抛 `EXTERNAL_KB_CANCELLED` 且不写回探测结果 |
+| 绑定查询 | `requireLibrary`（30+ 调用点，其中一处在循环内）与 `getKnowledgeSnapshot` 每次全表 `listBindings()` | 新增 `getBinding`/`hasBinding`/`getBindingsForInstance` 主键查询；快照改为单次 `Map` 构建 |
+
+修正过程中被测试拦下两次行为回退，已记录为当前不变量：
+
+- 被取消的连接测试必须抛出且不写回 `probeStatus`，不能记为 `failed`；用户停用实例不等于探测失败。
+- `testRetrieval` 的 RAGFlow 能力预检必须与检索共用绑定配置的 `requestTimeoutMs`，不能各自计时。
+
+同时删除确认无生产引用的死代码：`probeStatus` 的 `'healthy'` 取值、`external.transportConfirm`
+与 `external.states` 的 `remote-missing`/`config-invalid` 文案、`KnowledgeService.searchHybridMany`、
+`ExternalKnowledgeRemoteResult.sourceUrl`。`externalKnowledgeLocatorSchema` 的 `sourceUrl`
+保留，因为它解析已持久化的引用数据。
+
+| 验证 | 结果 |
+| --- | --- |
+| `npx vitest run src/main/knowledge src/main/agent/knowledge-mcp-gateway.test.ts` | 21 个文件通过、1 个跳过；288 项通过、1 项跳过 |
+| `npm test` | 348 个文件通过、9 个跳过；4,088 项通过、66 项跳过 |
+| `npm run typecheck`、`npm run lint` | 通过 |
+
+`npm test` 的唯一失败为 `src/main/agent/opencode-runtime-lifecycle.test.ts:120`
+（"Matcher did not succeed in time"）。已用 `git stash` 在同一 `HEAD` 上复现同样失败，
+确认早于本次修正且与知识库无关，未计入上表。
+
 ### 2026-09-13 当前工作区实现与分组验证
 
 三家 Provider 已通过生产服务、本机 HTTP MCP 与生产 IPC 的短答案生成检查，Dify 另已

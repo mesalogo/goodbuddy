@@ -118,13 +118,15 @@ Preload 暴露实例 `List/Save/Test/SetEnabled/Delete`、目录 `List/Get`、�
 
 Handler 调用 `assertTrustedSender` 并解析共享输入；检索按实例 ID 在 Main 读取地址与凭据。
 实例先保存为 `untested`，列表上的连接测试调用目录请求并更新摘要，不测试未保存草稿。
-绑定检索测试是单独操作，不会把实例探测状态自动升级为 `healthy`。
+绑定检索测试是单独操作，不会改变实例探测状态。探测状态取值为 `untested`、
+`catalog-ready`、`list-restricted`、`auth-failed`、`unreachable`、`failed`。
 
 服务按实例记录 AbortController。保存实例、停用、删除以及服务关闭会取消相应请求；
-调用方取消信号与总超时合并。异步测试或保存完成前比较实例配置，变化时返回
-`EXTERNAL_KB_CONFIG_CHANGED`，绑定更新还检查保存期间绑定是否改变。共享 IPC 没有
-`requestId` 或取消方法；Renderer 用局部 generation/active 标记丢弃旧响应，这与中止
-Main 请求是两种行为。
+调用方取消信号与总超时合并。取消即是配置变更的唯一处理方式：被取消的连接测试直接抛出
+`EXTERNAL_KB_CANCELLED`，不写回探测结果，因此不需要额外的前后配置快照比较。绑定保存在
+验证请求前后各检查一次同一远端目标是否已被占用，最终以 `UNIQUE(instance_id, remote_id)`
+索引为准。共享 IPC 没有 `requestId` 或取消方法；Renderer 用局部 generation/active 标记
+丢弃旧响应，这与中止 Main 请求是两种行为。
 
 删除仍被引用的实例返回 `EXTERNAL_KB_INSTANCE_IN_USE`。UI 确认后逐个调用本地
 `deleteLibrary`，再删除实例；这是顺序操作，发生中途失败会刷新已移除的绑定，不是跨调用事务。
@@ -143,16 +145,22 @@ Main 请求是两种行为。
 
 ## 7. 检索编排
 
-`KnowledgeService.retrieve` 查询本地绑定，存在绑定时调用
-`ExternalKnowledgeService.testRetrieval`，否则执行现有本地路径。外部结果附加
+`KnowledgeService.retrieve` 按知识库 ID 单行查询本地绑定，存在绑定时调用
+`ExternalKnowledgeService.retrieve`，否则执行现有本地路径。外部结果附加
 `diagnostics.external`，不运行本地向量、全文或图谱检索。
+
+`ExternalKnowledgeService` 区分两个入口：`retrieve` 是生产检索路径，只发出一次检索请求；
+`testRetrieval` 仅用于保存绑定前的验证，额外在同一超时预算内确认 RAGFlow 图谱与知识编排
+能力可用，能力缺失时返回 `EXTERNAL_KB_CAPABILITY_UNAVAILABLE`。生产检索不执行该能力预检，
+因此正常对话不会多一次 detail 请求，也不会出现仅属于保存校验的错误码。
 
 `retrieveMany` 对传入知识库 ID 去重并读取知识库，使用 `Promise.all` 逐库检索；只有选中
 需要向量的本地库时才准备本地查询 Embedding。当前没有额外的 Provider 并发队列。单库
 失败写入 `response.diagnostics.failure` 并保留空结果，成功零命中没有 failure；调用方
 取消仍向上传播。当前返回 `{knowledgeBaseId, response}[]`，没有独立的 Outcome 状态联合。
 
-服务测试先按绑定的结果数与单片段限制裁剪，并限制该次片段总量为 48,000 字符。
+服务检索与绑定验证共用同一裁剪逻辑：先按绑定的结果数与单片段限制裁剪，并限制该次片段
+总量为 48,000 字符。
 `retrieveMany` 展平各库结果并按库内 rank 稳定排序，再轮转分配 48,000 字符的片段预算：
 先处理各库第 1 条，再处理各库第 2 条，同 rank 保持输入库顺序。不会先耗完整个库再轮到
 下一个库；仍没有固定的每库最低字符配额。关联的本地上下文 groups 随相应结果使用另一份

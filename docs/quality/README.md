@@ -5,6 +5,7 @@
 | 文档 | 职责 |
 | --- | --- |
 | [Electron UI 自动化测试规范](./electron-ui-automation.md) | 测试分层、当前源码启动、视觉与原生交互取证、真实调用计数、脱敏报告和清理 |
+| [复发缺陷与防复发规则](./recurring-defects.md) | 已重复出现的缺陷类型、对应的共享机制和自动发现测试 |
 | [开发与构建](../../BUILD.md#质量验证) | 依赖、测试、类型检查、Lint 和构建命令 |
 | [UI 设计系统](../../UI-DESIGN.md#155-验收) | 全局视觉、交互和响应式验收要求 |
 | [知识检索评估](../features/knowledge-base/retrieval-evaluation.md) | 检索数据集、指标及评估方法 |

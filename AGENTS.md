@@ -148,6 +148,13 @@ additional hardening beyond the actual internal-network threat model:
   repository mechanisms instead of inventing extra gates, ceremonies, or
   disabled states.
 - Add or update focused tests for behavioral changes and regressions.
+- Read [`docs/quality/recurring-defects.md`](./docs/quality/recurring-defects.md)
+  before changing overlays, store lookups, retrieval entry points, cancellation
+  behavior, or render-time derived values. It records defect types that have
+  already recurred in this repository and the shared mechanism that covers each
+  one. When fixing an instance of a listed type, extend that shared mechanism
+  instead of patching the one reported case, and add an entry when a new defect
+  type recurs.
 - After completing any functional change, inspect the affected product,
   architecture, design, feature, setup, and operational documentation and
   update every relevant document to match the implemented behavior. Treat the
