@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { app, BrowserWindow, webContents } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -88,7 +89,15 @@ async function main(): Promise<void> {
     assert.equal(restoredRequestTab.workbarInstanceId, reserved.tabId)
     assert.equal(browser.getTabCount(), 1)
     assert.match(JSON.stringify(await client.callTool({ name: 'browser_snapshot', arguments: {} })), /MCP target/u)
-    await assert.rejects(browser.closeTab(conversationId, reserved.tabId, window.webContents.id), /正在被.*请求使用/u)
+    await browser.closeTab(conversationId, reserved.tabId, window.webContents.id)
+    assert.equal(reserved.signal.aborted, true)
+    assert.equal(controller.signal.aborted, false)
+    assert.equal(browser.getSessionCount(), 0)
+    const closedReservationSnapshot = await client.callTool({ name: 'browser_snapshot', arguments: {} })
+    assert.equal(closedReservationSnapshot.isError, true)
+    assert.match(JSON.stringify(closedReservationSnapshot), /标签页已关闭.*browser_navigate/u)
+    assert((await client.listTools()).tools.some((tool) => tool.name === 'browser_navigate'))
+    assert.equal(browser.getSessionCount(), 0)
     gateway.revoke(token)
     token = undefined
     await client.close()
@@ -97,7 +106,7 @@ async function main(): Promise<void> {
     await browser.closeTab(conversationId, reserved.tabId, window.webContents.id)
     assert.equal(browser.getSessionCount(), 0)
     removeStateListener()
-    console.log('MCP navigation materialized the exact reserved tab/workbar identity and released its request lease')
+    console.log('MCP reservation materialized the exact tab/workbar identity; leased close preserved the MCP session without recreating a page')
 
     await browser.navigate(conversationId, `${origin}/first`, controller.signal, undefined, window.webContents.id)
     const [unownedPrimary] = browser.listTabs(conversationId, window.webContents.id)
@@ -180,16 +189,54 @@ async function main(): Promise<void> {
     assert.equal(browser.getVisibleTabId(otherConversationId, window.webContents.id), other.tabId)
     assert.match(JSON.stringify(await browser.snapshot(conversationId, controller.signal, second.tabId, window.webContents.id)), /shared-browser-tab=visible/u)
 
+    const closedContents = webContents.getAllWebContents().find((contents) => contents.getURL() === `${origin}/mcp`)
+    assert(closedContents)
+    const siblingBeforeClose = browser.listTabs(conversationId, window.webContents.id).find((tab) => tab.tabId === second.tabId)
+    assert(siblingBeforeClose)
+    const destroyed = once(closedContents, 'destroyed', { signal: AbortSignal.timeout(5_000) })
+    await browser.closeTab(conversationId, first.tabId, window.webContents.id)
+    await destroyed
+    assert.equal(closedContents.isDestroyed(), true)
+    assert.equal(usage.signal.aborted, true)
+    assert.equal(controller.signal.aborted, false)
+    assert.equal(browser.getTabCount(conversationId), 1)
+    assert(gateway.getAvailableToolNames(token).includes('browser_navigate'))
+    assert((await client.listTools()).tools.some((tool) => tool.name === 'browser_snapshot'))
+    const closedSnapshot = await client.callTool({ name: 'browser_snapshot', arguments: {} })
+    assert.equal(closedSnapshot.isError, true)
+    assert.match(JSON.stringify(closedSnapshot), /标签页已关闭.*browser_navigate/u)
     await assert.rejects(
-      browser.closeTab(conversationId, first.tabId, window.webContents.id),
-      /正在被.*请求使用/u
+      browser.snapshot(conversationId, controller.signal, first.tabId, window.webContents.id),
+      /当前浏览器标签页尚未导航/u
     )
+    assert.equal(browser.getTabCount(conversationId), 1)
+    const replacementNavigation = await client.callTool({ name: 'browser_navigate', arguments: { url: `${origin}/mcp` } })
+    assert.notEqual(replacementNavigation.isError, true)
+    const replacement = browser.listTabs(conversationId, window.webContents.id).find((tab) => tab.tabId !== second.tabId)
+    assert(replacement)
+    assert.notEqual(replacement.tabId, first.tabId)
+    assert.equal(browser.getTabCount(conversationId), 2)
+    const replacementSnapshot = await client.callTool({ name: 'browser_snapshot', arguments: {} })
+    assert.notEqual(replacementSnapshot.isError, true)
+    assert.match(JSON.stringify(replacementSnapshot), /MCP target/u)
+    assert.match(JSON.stringify(await browser.snapshot(conversationId, controller.signal, replacement.tabId, window.webContents.id)), /MCP target/u)
+    // Closing the primary promotes its sibling without changing that sibling's page.
+    assert.deepEqual(browser.listTabs(conversationId, window.webContents.id).find((tab) => tab.tabId === second.tabId), {
+      ...siblingBeforeClose,
+      primary: true
+    })
+    assert.match(JSON.stringify(await browser.snapshot(conversationId, controller.signal, second.tabId, window.webContents.id)), /shared-browser-tab=visible/u)
+    assert.match(JSON.stringify(await browser.snapshot(otherConversationId, controller.signal, other.tabId, window.webContents.id)), /Second tab/u)
+    assert.equal(browser.getVisibleTabId(otherConversationId, window.webContents.id), other.tabId)
+    console.log('Leased Electron tab destroyed; same MCP capability reported the closed target and explicitly navigated a dedicated replacement, leaving siblings untouched')
     await browser.closeTab(otherConversationId, other.tabId, window.webContents.id)
     assert.equal(browser.getTabCount(otherConversationId), 0)
     assert.equal(browser.getTabCount(conversationId), 2)
     gateway.revoke(token)
     token = undefined
     await browser.closeTab(conversationId, first.tabId, window.webContents.id)
+    assert.equal(browser.getTabCount(conversationId), 2)
+    await browser.closeTab(conversationId, replacement.tabId, window.webContents.id)
     assert.equal(browser.getTabCount(conversationId), 1)
     await browser.closeTab(conversationId, second.tabId, window.webContents.id)
     assert.equal(browser.getTabCount(conversationId), 0)

@@ -11,6 +11,7 @@ import { rgPath } from '@vscode/ripgrep'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResolvedMcpServer } from '../capabilities/capability-service'
 import type { BrowserToolService } from '../browser/browser-model-tools'
+import { BrowserService } from '../browser/browser-service'
 import { browserTabIdSchema } from '../../shared/contracts'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
 import {
@@ -1430,6 +1431,71 @@ describe('ModelToolProvider', () => {
       message: '浏览器元素引用已失效，请重新获取快照',
       nextAction: expect.stringContaining('browser_snapshot')
     })
+  })
+
+  it('recovers a closed direct-model tab across calls without cancelling the request', async () => {
+    const workspace = await createWorkspace()
+    await writeFile(join(workspace, 'note.txt'), 'request still active')
+    const service = new BrowserService()
+    const original = service.reserveRequestTab('browser-owner', 'request')
+    const provider = new ModelToolProvider(workspace, [], service)
+    const context = {
+      ...toolContext, requestId: 'request', browserConversationId: 'browser-owner', browserTabId: original.tabId
+    }
+    const controller = new AbortController()
+    const navigate = vi.spyOn(service, 'navigate').mockImplementation(
+      async (_conversationId, _url, signal) => new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    )
+    const snapshot = vi.spyOn(service, 'snapshot').mockResolvedValue({} as never)
+    const createTab = vi.spyOn(service, 'createTab').mockImplementation(async () => {
+      const replacement = service.reserveRequestTab('browser-owner', 'replacement')
+      return { tabId: replacement.tabId } as never
+    })
+    const acquire = vi.spyOn(service, 'acquireTabUsage')
+    try {
+      const pending = provider.callTool('browser_navigate', { url: 'https://example.com/' }, controller.signal, context)
+      const closed = expect(pending).rejects.toMatchObject({
+        name: 'RecoverableModelToolError', nextAction: expect.stringContaining('browser_navigate')
+      })
+      await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce())
+      await service.closeTab('browser-owner', original.tabId)
+      await closed
+      expect(controller.signal.aborted).toBe(false)
+      for (const [name, args] of [
+        ['browser_snapshot', {}], ['browser_click', { ref: 'b_old' }],
+        ['browser_type', { ref: 'b_old', text: 'value' }],
+        ['browser_select', { ref: 'b_old', value: 'value' }],
+        ['browser_back', {}], ['browser_screenshot', {}]
+      ] as const) {
+        await expect(provider.callTool(name, args, controller.signal, context)).rejects.toMatchObject({
+          name: 'RecoverableModelToolError', nextAction: expect.stringContaining('browser_navigate')
+        })
+      }
+      expect(createTab).not.toHaveBeenCalled()
+      expect(snapshot).not.toHaveBeenCalled()
+      await expect(provider.callTool('workspace_read_text', { path: 'note.txt' }, controller.signal, context))
+        .resolves.toMatchObject({ parts: [{ type: 'text', text: expect.stringContaining('request still active') }] })
+      navigate.mockResolvedValue({ url: 'https://example.com/', origin: 'https://example.com' })
+      await provider.callTool('browser_navigate', { url: 'https://example.com/' }, controller.signal, context)
+      const replacementTabId = navigate.mock.calls[1]![3]!
+      expect(replacementTabId).not.toBe(original.tabId)
+      expect(createTab).toHaveBeenCalledWith('browser-owner', undefined, controller.signal,
+        expect.stringContaining(`:${original.tabId}`))
+      expect(acquire).toHaveBeenCalledWith('browser-owner', replacementTabId, expect.any(String))
+      await provider.listTools(context, controller.signal)
+      await provider.callTool('browser_snapshot', {}, controller.signal, context)
+      expect(snapshot).toHaveBeenLastCalledWith('browser-owner', expect.any(AbortSignal), replacementTabId)
+      await expect(provider.callTool('browser_snapshot', {}, controller.signal, { ...context, requestId: 'other-request' }))
+        .rejects.toMatchObject({ name: 'RecoverableModelToolError' })
+      expect(createTab).toHaveBeenCalledOnce()
+      expect(controller.signal.aborted).toBe(false)
+    } finally {
+      original.release()
+      await provider.dispose()
+      await service.dispose()
+    }
   })
 
   it('keeps a request on its bound tab when another tab changes or closes', async () => {

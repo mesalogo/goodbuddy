@@ -227,7 +227,8 @@ describe('BrowserService', () => {
     expect(restored.tabId).toBe(first.tabId)
     expect(harness.service.getTabCount()).toBe(1)
     first.release()
-    await expect(harness.service.closeTab('conversation', first.tabId, 21)).rejects.toThrow('正在被活动请求使用')
+    await harness.service.closeTab('conversation', first.tabId, 21)
+    expect(second.signal.aborted).toBe(true)
     second.release()
     await harness.service.closeTab('conversation', first.tabId, 21)
     await harness.service.closeTab('conversation', first.tabId, 21)
@@ -557,7 +558,7 @@ describe('BrowserService', () => {
     await harness.service.dispose()
   })
 
-  it('blocks closing a leased tab until every request releases it', async () => {
+  it('closes a leased tab and ends its leases without closing sibling tabs', async () => {
     const harness = createHarness()
     const signal = new AbortController().signal
     const primary = await harness.service.createTab('conversation', 11, signal)
@@ -577,15 +578,14 @@ describe('BrowserService', () => {
 
     await expect(
       harness.service.closeTab('conversation', primary.tabId, 11)
-    ).rejects.toThrow('浏览器标签页正在被活动请求使用，无法关闭')
-    await expect(
-      harness.service.closeTab('conversation', sibling.tabId, 11)
     ).resolves.toBeUndefined()
+    expect(first.signal.aborted).toBe(true)
+    expect(second.signal.aborted).toBe(true)
+    expect(harness.service.listTabs('conversation', 11).map((tab) => tab.tabId)).toEqual([sibling.tabId])
+    expect(harness.slots[0]?.session.dispose).toHaveBeenCalledOnce()
+    expect(harness.slots[1]?.session.dispose).not.toHaveBeenCalled()
     first.release()
     first.release()
-    await expect(
-      harness.service.closeTab('conversation', primary.tabId, 11)
-    ).rejects.toThrow('浏览器标签页正在被活动请求使用，无法关闭')
     second.release()
     await expect(
       harness.service.closeTab('conversation', primary.tabId, 11)

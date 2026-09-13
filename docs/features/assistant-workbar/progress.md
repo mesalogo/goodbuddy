@@ -1,5 +1,30 @@
 # 工作栏实现与验证进度
 
+## 2026-09-13 浏览器租用标签页关闭与显式恢复
+
+- 更新 `tests/browser-tabs-electron-e2e.ts`，移除两处租用期间拒绝关闭的旧断言。
+  当前行为见 [Agent 与 MCP 路由](./browser-tabs-technical-design.md#6-agent-与-mcp-路由)
+   和 [浏览器需求](./prd.md#77-浏览器)。同步修改 BrowserService、IPC、Gateway 和直连模型工具。
+- Windows 真实 Electron/Chromium 与 loopback HTTP/MCP 验证通过：关闭已物化的预留页和
+  已租用主标签页，等待原 WebContents 的 `destroyed` 事件，确认租约结束而请求信号未取消。
+  同一 token 和 MCP session 仍可列出工具；旧目标快照返回关闭提示且不创建页面。
+  显式 `browser_navigate` 创建不同身份的专用替代页，后续 MCP 快照读取该页。
+- 同 Conversation 的 sibling 仅在主标签页关闭后取得 `primary` 标记，页面 URL、导航状态、
+  时间戳、工作栏身份和 Cookie 内容保持不变；另一 Conversation 的页面与可见 viewport
+  保持不变。撤销 capability 后完成替代页、同级页和 Context 清理。
+- 已先检查 runner：esbuild 输出临时 CJS，启动真实 Electron，子进程上限 120 秒，结束后
+  删除临时 bundle。`node build/run-browser-tabs-electron-e2e.cjs` 最终退出码 0；
+  前三轮分别修正测试对销毁事件时序、服务旧 ID 错误文案和 sibling 主标签标记的假设。
+  测试文件 ESLint 与限定文件的 `git diff --check` 通过。
+- 覆盖边界：本轮通过 Main BrowserService 和真实 MCP transport 操作页面，未点击完整
+  Renderer/Preload 关闭入口，未注入执行中的工具取消，也未运行直连模型循环或其他共享工具。
+   浏览器、Gateway、直连 Provider、Model Runtime 和 IPC 回归共 359 项通过、1 项跳过，
+   包括执行中关闭、请求继续完成和其他工具继续可用。全库 typecheck、lint 和 diff 检查通过。
+   全量 `npm test` 在 Agent 离线依赖安装用例失败后达到 200 秒执行上限；无外部模型调用。
+- 本轮未修改 Agent、桥接或 Runtime 产品源码，也未连接远程 Host。远程调用若进入同一桌面
+  Gateway，会使用上述服务端路由；远端 Runtime 到桌面的实际传输、取消传播及恢复仍需真实
+  Host 验证，本记录不将本机 loopback 结果算作远程覆盖。
+
 ## 2026-09-12 浏览器刷新与关闭后的错误清理
 
 - 按 [浏览器工具栏规则](./prd.md#77-浏览器) 修复空白标签页允许刷新的问题；
@@ -83,7 +108,7 @@
   132 项通过。随后新增的 Ask 指令、继承 Runtime 用量持久化及计划模式 App 场景，3 项通过。
 - 扩展真实 Electron/MCP E2E 在独立临时 profile 通过：四个未使用的请求预留不创建会话、
   WebContents 或 UI 事件；首次 MCP 导航物化相同 Tab/工作栏身份，恢复不额外创建页面，
-  并验证独立页面、共享 Cookie、请求租约关闭保护和清理。
+  并验证独立页面、共享 Cookie、当时的请求租约关闭保护和清理；关闭保护已于 2026-09-13 移除。
 - 当前源码的共享 Linux x64 Host 验证已通过，覆盖工作区目标保护和重命名/Git Diff，
   并通过桌面托管 ACP → 隔离 Agent → OpenCode 完成 Ask/Execute 和继承 Runtime 指标持久化；
   该组共 3 次真实模型调用，清理后无所属进程残留。完整记录见
@@ -120,13 +145,13 @@
 - Renderer 使用工作栏实例 UUID 原子创建或恢复 Browser Tab，并以 UUID viewport token 防止
   延迟 cleanup 隐藏新活动 Tab。关闭单个实例只释放对应 Tab。
 - 直连模型和请求级 MCP capability 在请求开始时优先绑定可见 Tab，其次绑定 primary Tab，
-  并持有使用租约。请求结束或 capability 撤销前，绑定 Tab 拒绝关闭；工具参数未增加模型可见
+  并持有使用租约。当时绑定 Tab 拒绝关闭，该行为已于 2026-09-13 改为允许关闭和显式导航恢复；工具参数未增加模型可见
   `tabId`，已有浏览器工具 schema 保持不变。
 - 聚焦回归命令覆盖 Shared、BrowserService、Electron Session、IPC、Preload、MCP、Renderer
   和 Workbar，13 个测试文件共 453 项通过；`npm run lint` 与 Web TypeScript 检查通过。
 - `node build/run-browser-tabs-electron-e2e.cjs` 通过。该测试启动真实 Electron/Chromium 和本地
   HTTP 页面，创建两个 `WebContentsView`，验证页面隔离、同 Conversation Cookie 共享、真实
-  loopback MCP 的固定 Tab 导航与快照、使用租约关闭保护，以及单 Tab 和最终 Context 清理。
+  loopback MCP 的固定 Tab 导航与快照、当时的使用租约关闭保护，以及单 Tab 和最终 Context 清理。
 - `npm run typecheck`、`npm run lint`、`npm run build:bundle` 和 `git diff --check` 通过。
 - 本轮整库 `npm test` 为 3686 项通过、61 项跳过、4 项失败。失败位于 portable/release 的
   ASAR 元数据 fixture、Runtime 版本探测和 DeepSeek Harness 的本地 MCP fixture；定向复跑仍

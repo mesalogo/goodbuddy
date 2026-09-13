@@ -6,7 +6,7 @@
 | --- | --- |
 | 状态 | 基础多实例已实施，Agent 多 Tab 工具待需求 |
 | 版本 | 1.0 |
-| 日期 | 2026-09-10 |
+| 日期 | 2026-09-13 |
 | 关联 PRD | [通用助手工作栏与执行空间 PRD](./prd.md) |
 | 页签策略 | [助手工作栏多终端页签 PRD](./terminal-tabs-prd.md) |
 
@@ -86,7 +86,7 @@ Record<ConversationId, Record<BrowserTabId, BrowserLiveState>>
 默认或恢复实例可在首次使用时取得当前会话绑定。
 
 Tab 的跨会话可见性与 MCP 授权分开处理。B 的请求不能选择属于 A 的可见 Tab；A 已取得的
-capability 在用户切到 B 后仍固定路由至 A 的原 Tab，使用租约也继续阻止关闭该 Tab。
+capability 在用户切到 B 后仍固定路由至 A 的原 Tab；使用租约不阻止用户关闭该 Tab。
 内部点击实例只同步应用类型，不再次按当前 Conversation 改选实例。Main 状态携带对应的
 `workbarInstanceId`，Renderer 据此绑定请求创建的同一 Tab，而不是另建空白页。收到 `stopped`
 后清除该实例的旧 Tab 绑定，下一次使用通过原逻辑实例重新创建，保留地址草稿。
@@ -136,11 +136,16 @@ Conversation 归属，不新建租约或把页面重新归属到子级对话。
 
 直连模型上下文和请求级 MCP capability 同时保存 `conversationId` 与
 `boundBrowserTabId`。请求执行期间，用户切换、创建或关闭其他工作栏 Tab 不改变工具目标；
-模型请求使用某个 Tab 时禁用该 Tab 的工作栏关闭操作，并说明请求仍在执行。用户先取消请求
-后才能关闭；系统不得把进行中的操作改投其他 Tab。
+用户可直接关闭模型正在使用的 Tab。关闭释放该 Tab 的页面和使用租约，中止其浏览器操作，
+不取消整个模型请求、不撤销 MCP capability，也不关闭同级 Tab。系统不得把进行中的操作改投其他 Tab。
+
+关闭后，快照等非导航工具返回“浏览器标签页已关闭，请调用 browser_navigate 打开新标签页”，
+不自动创建页面或使用现有 primary/sibling。只有显式且参数有效的 `browser_navigate` 才创建
+专用替代 Tab 并绑定后续工具；旧 Tab 身份与元素引用不复用。Gateway 与直连 Provider 均隔离
+单次工具取消信号、Tab 使用租约信号和请求信号，取消一次工具调用不终止后续调用。
 
 该阶段 MCP transport、endpoint 和 token 生命周期不变，只扩展服务端 capability 内容和内部
-路由。旧工具调用继续使用被冻结的 Tab。
+路由。工具调用使用当前请求绑定的 Tab，只有上述显式导航恢复会更换绑定。
 
 ### 6.2 Agent 多 Tab 阶段
 
@@ -189,6 +194,8 @@ primary, including one opened by an Agent, is not adopted by a new instance. New
 - 一个 Tab 的元素 `ref` 不能在另一个 Tab 中执行。
 - 用户切换工作栏 Tab 不改变进行中模型请求的 MCP 浏览器目标。
 - 关闭一个 Tab 不释放 Conversation Runtime，也不关闭同一 Conversation 的其他 Tab。
+- 关闭已租用 Tab 后，同一 MCP 会话仍可列出工具；旧目标快照报错且不创建页面，显式导航创建
+  不同身份的替代 Tab，同级页面、导航状态与其他 Conversation 的可见 viewport 保持不变。
 - 旧版无 `tabId` 的模型工具调用仍操作请求绑定的默认 Tab。
 
 ## 10. 实施顺序

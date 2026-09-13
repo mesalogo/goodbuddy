@@ -326,6 +326,7 @@ describe('KnowledgeMcpGateway', () => {
       })
     )
     const browserService = {
+      createTab: vi.fn(),
       getOrigin: vi.fn(() => undefined),
       navigate: vi.fn(async () => ({
         url: 'https://example.com/',
@@ -461,6 +462,89 @@ describe('KnowledgeMcpGateway', () => {
       ).rejects.toThrow()
     } finally {
       await client.close()
+    }
+  })
+
+  it('keeps shared tools and the MCP session alive after tab closure and navigates a dedicated replacement', async () => {
+    const { service } = createService()
+    const browserService = new BrowserService()
+    const controller = new AbortController()
+    const lease = browserService.reserveRequestTab('conversation', 'request', 21)
+    const gateway = new KnowledgeMcpGateway(service, { browserService })
+    gateways.push(gateway)
+    const token = gateway.grant('request', [firstLibraryId], controller.signal, 'none', undefined, 'conversation', lease.tabId, lease)!
+    const navigate = vi.spyOn(browserService, 'navigate').mockImplementation(
+      async (_conversationId, _url, signal) => new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    )
+    const snapshot = vi.spyOn(browserService, 'snapshot').mockResolvedValue({} as never)
+    const replacementController = new AbortController()
+    const replacementTabId = browserTabIdSchema.parse(crypto.randomUUID())
+    const replacementLease = {
+      conversationId: 'conversation', tabId: replacementTabId, owner: 'request',
+      signal: replacementController.signal, release: vi.fn()
+    }
+    const createTab = vi.spyOn(browserService, 'createTab').mockResolvedValue({ tabId: replacementTabId } as never)
+    const acquire = vi.spyOn(browserService, 'acquireTabUsage').mockReturnValue(replacementLease)
+    await gateway.start()
+    const client = new Client({ name: 'closed-tab-test', version: '1.0.0' })
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } }
+      }))
+      const pending = client.callTool({ name: 'browser_navigate', arguments: { url: 'https://example.com/' } })
+      await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce())
+      lease.release()
+      await expect(pending).resolves.toMatchObject({
+        isError: true, content: [{ type: 'text', text: expect.stringContaining('标签页已关闭') }]
+      })
+      expect(navigate.mock.calls[0]![2].aborted).toBe(true)
+      expect(controller.signal.aborted).toBe(false)
+      await expect(client.callTool({ name: 'knowledge_search', arguments: { query: 'evidence' } }))
+        .resolves.toMatchObject({ content: [{ type: 'text', text: expect.stringContaining(firstLibraryId) }] })
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain('browser_navigate')
+      for (const name of browserToolNames.filter(name => name !== 'browser_navigate')) {
+        await expect(client.callTool({ name, arguments: {} })).resolves.toMatchObject({
+          isError: true, content: [{ type: 'text', text: expect.stringContaining('标签页已关闭') }]
+        })
+      }
+      expect(snapshot).not.toHaveBeenCalled()
+      expect(createTab).not.toHaveBeenCalled()
+      await expect(client.callTool({ name: 'browser_navigate', arguments: {} })).resolves.toMatchObject({ isError: true })
+      expect(createTab).not.toHaveBeenCalled()
+      navigate.mockResolvedValue({ url: 'https://example.com/', origin: 'https://example.com' })
+      await client.callTool({ name: 'browser_navigate', arguments: { url: 'https://example.com/' } })
+      expect(createTab).toHaveBeenCalledWith('conversation', undefined, expect.any(AbortSignal),
+        `browser-recovery:request:${lease.tabId}`)
+      expect(acquire).toHaveBeenCalledExactlyOnceWith('conversation', replacementTabId, 'request')
+      expect(navigate).toHaveBeenLastCalledWith('conversation', 'https://example.com/', expect.any(AbortSignal), replacementTabId)
+      await client.callTool({ name: 'browser_snapshot', arguments: {} })
+      expect(snapshot).toHaveBeenCalledWith('conversation', expect.any(AbortSignal), replacementTabId)
+      expect(createTab).toHaveBeenCalledOnce()
+      snapshot.mockImplementationOnce(async (_conversationId, signal) => new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      }))
+      const callController = new AbortController()
+      const canceled = client.callTool({ name: 'browser_snapshot', arguments: {} }, undefined, {
+        signal: callController.signal
+      })
+      const cancellation = expect(canceled).rejects.toThrow('cancel this call')
+      await vi.waitFor(() => expect(snapshot).toHaveBeenCalledTimes(2))
+      callController.abort(new Error('cancel this call'))
+      await cancellation
+      await vi.waitFor(() => expect(snapshot.mock.calls[1]![1].aborted).toBe(true))
+      expect(replacementController.signal.aborted).toBe(false)
+      expect(controller.signal.aborted).toBe(false)
+      await expect(client.callTool({ name: 'browser_navigate', arguments: { url: 'https://example.com/' } }))
+        .resolves.not.toHaveProperty('isError', true)
+      expect(createTab).toHaveBeenCalledOnce()
+      gateway.revoke(token)
+      expect(replacementLease.release).toHaveBeenCalledOnce()
+    } finally {
+      await client.close()
+      await gateway.dispose()
+      await browserService.dispose()
     }
   })
 

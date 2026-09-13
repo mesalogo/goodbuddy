@@ -24,6 +24,7 @@ import type {
 } from './runtime'
 import {
   BrowserModelTools,
+  BrowserTabClosedError,
   browserToolNames,
   type BrowserToolService
 } from '../browser/browser-model-tools'
@@ -661,6 +662,8 @@ function normalizeMcpResult(result: unknown): ModelToolResult {
 }
 
 export class ModelToolProvider implements ModelToolProviderLike {
+  // ModelAgentRuntime reuses one context for all tool calls in a request.
+  private readonly browserToolsByContext = new WeakMap<ModelToolCallContext, BrowserModelTools>()
   private readonly mcpConnections = new Map<
     ResolvedMcpServer,
     Promise<ConnectedMcp | undefined>
@@ -738,16 +741,20 @@ export class ModelToolProvider implements ModelToolProviderLike {
   private getBrowserTools(
     context: ModelToolCallContext
   ): BrowserModelTools | undefined {
-    return this.browserService &&
-      context.workMode === 'execute' &&
-      context.browserTabId
-      ? new BrowserModelTools({
-          service: this.browserService,
-          conversationId:
-            context.browserConversationId ?? context.conversationId,
-          browserTabId: context.browserTabId
-        })
-      : undefined
+    if (!this.browserService || context.workMode !== 'execute' || !context.browserTabId) {
+      return undefined
+    }
+    let tools = this.browserToolsByContext.get(context)
+    if (!tools) {
+      tools = new BrowserModelTools({
+        service: this.browserService,
+        conversationId: context.browserConversationId ?? context.conversationId,
+        browserTabId: context.browserTabId,
+        recoverClosedTab: true
+      })
+      this.browserToolsByContext.set(context, tools)
+    }
+    return tools
   }
 
   private getReservedToolCount(): number {
@@ -1707,6 +1714,13 @@ export class ModelToolProvider implements ModelToolProviderLike {
       try {
         return await browserTools.callTool(name, argumentsValue, signal)
       } catch (error) {
+        if (error instanceof BrowserTabClosedError) {
+          throw new RecoverableModelToolError(
+            error.message,
+            '调用 browser_navigate 打开新标签页，然后获取新快照继续操作',
+            { cause: error }
+          )
+        }
         if (error instanceof BrowserStaleReferenceError) {
           throw new RecoverableModelToolError(
             error.message,

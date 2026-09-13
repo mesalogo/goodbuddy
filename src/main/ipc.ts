@@ -552,7 +552,6 @@ async function grantScopedDataCapability(input: {
     signal: AbortSignal
   ) => Promise<boolean>
   signal: AbortSignal
-  abort?: (reason: unknown) => void
 }): Promise<ScopedDataCapability> {
   const enabledServers = new Set(input.enabledServers)
   const libraryIds = enabledServers.has('knowledge-base')
@@ -590,11 +589,6 @@ async function grantScopedDataCapability(input: {
       })
     : undefined
   const browserTabId = browserUsageLease?.tabId
-  browserUsageLease?.signal.addEventListener(
-    'abort',
-    () => input.abort?.(browserUsageLease.signal.reason),
-    { once: true }
-  )
   const config =
     configAccess !== 'none' && input.workspacePath
       ? {
@@ -2485,8 +2479,7 @@ export function registerIpcHandlers(
             ? runtimeConversationId
             : undefined,
         ownerWindowId: window.webContents.id,
-        signal: controller.signal,
-        abort: (reason) => controller.abort(reason)
+        signal: controller.signal
       })
       knowledgeCapabilityToken = notesCapability.token
       const noteTools = [
@@ -4060,8 +4053,7 @@ export function registerIpcHandlers(
           ? enrichedRequest.conversationId
           : undefined,
       ownerWindowId: event.sender.id,
-      signal: controller.signal,
-      abort: (reason) => controller.abort(reason)
+      signal: controller.signal
     })
     const knowledgeCapabilityToken = scopedCapability.token
     const availableTools = [

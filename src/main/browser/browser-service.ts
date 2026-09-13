@@ -31,9 +31,6 @@ export class BrowserNavigationStoppedError extends Error {
   }
 }
 
-export const BROWSER_TAB_IN_USE_ERROR =
-  '浏览器标签页正在被活动请求使用，无法关闭'
-
 export type BrowserTabUsageLease = {
   readonly conversationId: string
   readonly tabId: BrowserTabId
@@ -908,12 +905,14 @@ export class BrowserService {
         [...this.creations.entries()].some(([id, slot]) => slot.tabId === tabId && id !== conversationId) ||
         [...this.requestTabs.values()].some((slot) => slot.tabId === tabId && slot.conversationId !== conversationId)
       ) throw new Error('浏览器标签页不存在或不属于当前对话')
-      if (reservation?.tabId === tabId && reservation.usageLeases.size > 0) {
-        throw new Error(BROWSER_TAB_IN_USE_ERROR)
+      if (reservation?.tabId === tabId) {
+        this.releaseRequestTab(conversationId)
+      }
+      if (creation?.tabId === tabId) {
+        creation.controller.abort(new Error('浏览器会话已关闭'))
       }
       return
     }
-    if (tab.usageLeases.size > 0) throw new Error(BROWSER_TAB_IN_USE_ERROR)
     await this.releaseTab(conversation!, tab)
   }
 

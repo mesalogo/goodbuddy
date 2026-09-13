@@ -70,11 +70,12 @@ import {
 import type { LaunchEnvironmentProvider } from '../local-tool-environment'
 import {
   BrowserModelTools,
+  browserNavigateInputSchema,
   browserToolNames,
   type BrowserToolName,
   type BrowserToolService
 } from '../browser/browser-model-tools'
-import type { BrowserTabUsageLease } from '../browser/browser-service'
+import type { BrowserService, BrowserTabUsageLease } from '../browser/browser-service'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
 import { safeToolErrorDetail } from './approval-summary'
 
@@ -238,6 +239,7 @@ export type KnowledgeMcpGatewayOptions = {
   magicNotesDatabase?: MagicNotesDatabase
   configService?: GoodBuddyConfigService
   browserService?: BrowserToolService & {
+    createTab: BrowserService['createTab']
     listTabs(conversationId: string): BrowserTabSummary[]
     acquireTabUsage(
       conversationId: string,
@@ -371,6 +373,7 @@ export class KnowledgeMcpGateway {
   private readonly magicNotesDatabase?: MagicNotesDatabase
   private readonly configService?: GoodBuddyConfigService
   private readonly browserService?: BrowserToolService & {
+    createTab: BrowserService['createTab']
     listTabs(conversationId: string): BrowserTabSummary[]
     acquireTabUsage(
       conversationId: string,
@@ -581,15 +584,7 @@ export class KnowledgeMcpGateway {
     const abort = (): void => {
       this.revoke(token)
     }
-    const abortFromBrowser = (): void => {
-      this.revoke(token)
-    }
     value.signal.addEventListener('abort', abort, { once: true })
-    value.browserUsageLease?.signal.addEventListener(
-      'abort',
-      abortFromBrowser,
-      { once: true }
-    )
     this.capabilities.set(token, {
       ...value,
       expiresAt: this.now() + this.capabilityTtlMs,
@@ -597,10 +592,6 @@ export class KnowledgeMcpGateway {
       references: new Map(),
       removeAbortListener: () => {
         value.signal.removeEventListener('abort', abort)
-        value.browserUsageLease?.signal.removeEventListener(
-          'abort',
-          abortFromBrowser
-        )
       }
     })
     return token
@@ -1658,7 +1649,7 @@ export class KnowledgeMcpGateway {
             }
           }
           const capability = this.getCapability(token)
-          const browserTools = capability.browserConversationId && capability.browserTabId
+          let browserTools = capability.browserConversationId && capability.browserTabId
             ? new BrowserModelTools({
                 service: this.browserService!,
                 conversationId: capability.browserConversationId,
@@ -1666,12 +1657,52 @@ export class KnowledgeMcpGateway {
               })
             : undefined
           if (browserTools?.ownsTool(name)) {
+            let lease = capability.browserUsageLease!
             try {
+              const callSignal = AbortSignal.any([
+                extra.signal,
+                capability.signal,
+                capability.brokerController.signal
+              ])
+              callSignal.throwIfAborted()
+              if (lease.signal.aborted) {
+                if (name !== 'browser_navigate') {
+                  throw new Error('浏览器标签页已关闭，请调用 browser_navigate 打开新标签页。')
+                }
+                browserNavigateInputSchema.parse(input)
+                // A stable, request-specific ID also deduplicates concurrent recovery calls.
+                const tab = await this.browserService!.createTab(
+                  capability.browserConversationId!,
+                  undefined,
+                  callSignal,
+                  `browser-recovery:${capability.requestId}:${lease.tabId}`
+                )
+                callSignal.throwIfAborted()
+                if (capability.browserUsageLease === lease) {
+                  const replacement = this.browserService!.acquireTabUsage(
+                    capability.browserConversationId!,
+                    tab.tabId,
+                    capability.requestId
+                  )
+                  capability.browserTabId = tab.tabId
+                  capability.browserUsageLease = replacement
+                  lease.release()
+                }
+                lease = capability.browserUsageLease!
+                browserTools = new BrowserModelTools({
+                  service: this.browserService!,
+                  conversationId: capability.browserConversationId!,
+                  browserTabId: capability.browserTabId!
+                })
+              }
+              const browserSignal = AbortSignal.any([callSignal, lease.signal])
+              browserSignal.throwIfAborted()
               const result = await browserTools.callTool(
                 name,
                 input,
-                extra.signal
+                browserSignal
               )
+              browserSignal.throwIfAborted()
               return {
                 content: result.parts.map((part) =>
                   part.type === 'text'
@@ -1685,7 +1716,9 @@ export class KnowledgeMcpGateway {
               }
             } catch (error) {
               const detail =
-                safeToolErrorDetail(error, 2_000) ??
+                (lease.signal.aborted
+                  ? '浏览器标签页已关闭，请调用 browser_navigate 打开新标签页。'
+                  : safeToolErrorDetail(error, 2_000)) ??
                 '内置浏览器工具执行失败'
               return {
                 isError: true,

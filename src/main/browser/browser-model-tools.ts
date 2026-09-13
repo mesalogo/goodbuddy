@@ -7,7 +7,7 @@ import type {
 } from '../agent/model-tool-provider'
 import type { RuntimeApprovalRequest } from '../agent/runtime'
 import { canonicalizeBrowserUrl } from './browser-url-policy'
-import type { BrowserService } from './browser-service'
+import type { BrowserService, BrowserTabUsageLease } from './browser-service'
 import {
   MAX_BROWSER_INPUT_LENGTH as MAX_INPUT_LENGTH,
   MAX_BROWSER_SELECT_LENGTH as MAX_SELECT_LENGTH
@@ -191,12 +191,21 @@ export type BrowserToolService = Pick<
   | 'back'
   | 'screenshot'
   | 'releaseConversation'
->
+> & Partial<Pick<BrowserService, 'acquireTabUsage' | 'createTab'>>
 
 export type BrowserModelToolsOptions = {
   service: BrowserToolService
   conversationId: string
   browserTabId: BrowserTabId
+  // The scoped gateway manages its own binding and lease lifecycle.
+  recoverClosedTab?: boolean
+}
+
+export class BrowserTabClosedError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('浏览器标签页已关闭，请调用 browser_navigate 打开新标签页。', options)
+    this.name = 'BrowserTabClosedError'
+  }
 }
 
 function createTextResult(value: unknown): ModelToolResult {
@@ -220,12 +229,15 @@ function navigationLabel(url: URL): string {
 export class BrowserModelTools {
   private readonly service: BrowserToolService
   private readonly conversationId: string
-  private readonly browserTabId: BrowserTabId
+  private browserTabId: BrowserTabId
+  private readonly recoveryOwner = randomUUID()
+  private readonly recoverClosedTab: boolean
 
   constructor(options: BrowserModelToolsOptions) {
     this.service = options.service
     this.conversationId = options.conversationId
     this.browserTabId = options.browserTabId
+    this.recoverClosedTab = options.recoverClosedTab === true
     if (!this.conversationId || this.conversationId.length > 500) {
       throw new Error('浏览器对话标识无效')
     }
@@ -321,6 +333,53 @@ export class BrowserModelTools {
     if (!this.ownsTool(name)) {
       throw new Error(`未知浏览器工具：${name}`)
     }
+    if (!this.recoverClosedTab || !this.service.acquireTabUsage || !this.service.createTab) {
+      return this.callBoundTool(name, argumentsValue, signal, this.browserTabId)
+    }
+    let lease: BrowserTabUsageLease
+    try {
+      lease = this.service.acquireTabUsage(
+        this.conversationId, this.browserTabId, this.recoveryOwner
+      )
+    } catch (error) {
+      if (name !== 'browser_navigate') {
+        throw new BrowserTabClosedError({ cause: error })
+      }
+      const input = browserNavigateInputSchema.parse(argumentsValue)
+      canonicalizeBrowserUrl(input.url)
+      const tab = await this.service.createTab(
+        this.conversationId, undefined, signal,
+        `browser-recovery:${this.recoveryOwner}:${this.browserTabId}`
+      )
+      signal.throwIfAborted()
+      lease = this.service.acquireTabUsage(
+        this.conversationId, tab.tabId, this.recoveryOwner
+      )
+      this.browserTabId = tab.tabId
+    }
+    const browserSignal = AbortSignal.any([signal, lease.signal])
+    try {
+      const result = await this.callBoundTool(name, argumentsValue, browserSignal, lease.tabId)
+      browserSignal.throwIfAborted()
+      return result
+    } catch (error) {
+      signal.throwIfAborted()
+      if (lease.signal.aborted) {
+        throw new BrowserTabClosedError({ cause: error })
+      }
+      throw error
+    } finally {
+      lease.release()
+    }
+  }
+
+  private async callBoundTool(
+    name: BrowserToolName,
+    argumentsValue: Record<string, unknown>,
+    signal: AbortSignal,
+    browserTabId: BrowserTabId
+  ): Promise<ModelToolResult> {
+    signal.throwIfAborted()
     if (name === 'browser_navigate') {
       const input = browserNavigateInputSchema.parse(argumentsValue)
       return createTextResult(
@@ -328,7 +387,7 @@ export class BrowserModelTools {
           this.conversationId,
           input.url,
           signal,
-          this.browserTabId
+          browserTabId
         )
       )
     }
@@ -338,7 +397,7 @@ export class BrowserModelTools {
         await this.service.snapshot(
           this.conversationId,
           signal,
-          this.browserTabId
+          browserTabId
         )
       )
     }
@@ -348,7 +407,7 @@ export class BrowserModelTools {
         this.conversationId,
         input.ref,
         signal,
-        this.browserTabId
+        browserTabId
       )
       return createTextResult({ clicked: input.ref })
     }
@@ -359,7 +418,7 @@ export class BrowserModelTools {
         input.ref,
         input.text,
         signal,
-        this.browserTabId
+        browserTabId
       )
       return createTextResult({
         typed: input.ref,
@@ -374,7 +433,7 @@ export class BrowserModelTools {
         input.ref,
         input.value,
         signal,
-        this.browserTabId
+        browserTabId
       )
       return createTextResult({ selected: input.ref, value: '[已隐藏]' })
     }
@@ -384,7 +443,7 @@ export class BrowserModelTools {
         await this.service.back(
           this.conversationId,
           signal,
-          this.browserTabId
+          browserTabId
         )
       )
     }
@@ -392,7 +451,7 @@ export class BrowserModelTools {
     const screenshot = await this.service.screenshot(
       this.conversationId,
       signal,
-      this.browserTabId
+      browserTabId
     )
     return {
       parts: [

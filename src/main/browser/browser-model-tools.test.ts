@@ -245,4 +245,48 @@ describe('BrowserModelTools', () => {
       tools.callTool('browser_snapshot', {}, controller.signal)
     ).rejects.toHaveProperty('name', 'AbortError')
   })
+
+  it('validates explicit recovery navigation before creating a dedicated replacement', async () => {
+    const service = createService()
+    service.acquireTabUsage = vi.fn(() => { throw new Error('closed') })
+    service.createTab = vi.fn()
+    const tools = new BrowserModelTools({
+      service, conversationId: 'conversation', browserTabId, recoverClosedTab: true
+    })
+    for (const args of [{}, { url: 'file:///private' }, { url: 'https://example.com', extra: true }]) {
+      await expect(tools.callTool('browser_navigate', args, signal)).rejects.toThrow()
+    }
+    await expect(tools.callTool('browser_snapshot', {}, signal)).rejects.toHaveProperty('name', 'BrowserTabClosedError')
+    await expect(tools.callTool('browser_navigate', { url: 'https://example.com' }, AbortSignal.abort()))
+      .rejects.toHaveProperty('name', 'AbortError')
+    expect(service.createTab).not.toHaveBeenCalled()
+    expect(service.navigate).not.toHaveBeenCalled()
+  })
+
+  it('preserves request cancellation and releases the per-call lease', async () => {
+    const service = createService()
+    const leaseController = new AbortController()
+    const release = vi.fn()
+    service.acquireTabUsage = vi.fn(() => ({
+      conversationId: 'conversation', tabId: browserTabId, owner: 'request',
+      signal: leaseController.signal, release
+    }))
+    service.createTab = vi.fn()
+    vi.mocked(service.snapshot).mockImplementation(async (_conversationId, signal) =>
+      new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    )
+    const tools = new BrowserModelTools({
+      service, conversationId: 'conversation', browserTabId, recoverClosedTab: true
+    })
+    const controller = new AbortController()
+    const reason = new Error('cancel request')
+    const pending = tools.callTool('browser_snapshot', {}, controller.signal)
+    const cancelled = expect(pending).rejects.toBe(reason)
+    controller.abort(reason)
+    await cancelled
+    expect(release).toHaveBeenCalledOnce()
+    expect(service.createTab).not.toHaveBeenCalled()
+  })
 })

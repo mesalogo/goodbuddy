@@ -7739,6 +7739,94 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('completes the runtime request and releases its lease after browser lease abort', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000031'
+    const tabId = browserTabIdSchema.parse(
+      '00000000-0000-4000-8000-000000000423'
+    )
+    const leaseController = new AbortController()
+    const release = vi.fn()
+    const lease = {
+      conversationId: 'browser-lease-abort',
+      tabId,
+      owner: requestId,
+      signal: leaseController.signal,
+      release
+    }
+    let runtimeSignal: AbortSignal | undefined
+    const runtime = {
+      runtimeId: 'model',
+      capability: 'chat',
+      supportsToolExecution: true,
+      async *run(request: { requestId: string }, signal: AbortSignal) {
+        runtimeSignal = signal
+        leaseController.abort(new Error('browser tab closed'))
+        signal.throwIfAborted()
+        yield { requestId: request.requestId, type: 'done' }
+      }
+    }
+    let grantedLease: { release(): void } | undefined
+    const knowledgeGateway = {
+      grant: vi.fn((...args: unknown[]) => {
+        grantedLease = args[7] as { release(): void }
+        return 'browser-capability'
+      }),
+      getAvailableToolNames: vi.fn(() => ['browser_navigate']),
+      drainReferences: vi.fn(() => []),
+      revoke: vi.fn(() => grantedLease?.release())
+    }
+    const browserControl = {
+      listTabs: vi.fn(() => [{ tabId, primary: true }]),
+      getVisibleTabId: vi.fn(() => tabId),
+      acquireTabUsage: vi.fn(() => lease),
+      createTab: vi.fn(),
+      onState: vi.fn(() => () => undefined)
+    }
+    const harness = createHarness(
+      runtime,
+      undefined,
+      'always',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      knowledgeGateway,
+      false,
+      undefined,
+      { getEnabledBuiltinMcpServerIds: vi.fn(async () => ['builtin-browser']) },
+      browserControl
+    )
+
+    try {
+      await harness.handler?.(trustedEvent(harness.webContents), {
+        requestId,
+        conversationId: lease.conversationId,
+        prompt: 'Continue after the browser tab closes',
+        workMode: 'execute',
+        knowledgeLibraryIds: []
+      })
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+
+      expect(grantedLease).toBe(lease)
+      expect(lease.signal.aborted).toBe(true)
+      expect(runtimeSignal?.aborted).toBe(false)
+      expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(
+        requestId,
+        'completed'
+      )
+      const publicEvents = harness.webContents.send.mock.calls
+        .filter(([channel]) => channel === ipcChannels.agentEvent)
+        .map(([, payload]) => payload)
+      expect(publicEvents).toContainEqual({ requestId, type: 'done' })
+      expect(publicEvents).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'error' })
+      ]))
+      expect(knowledgeGateway.revoke).toHaveBeenCalledWith('browser-capability')
+    } finally {
+      await harness.dispose()
+    }
+  })
+
   it.each(['error', 'cancel'] as const)(
     'releases a request-created browser tab lease on runtime %s',
     async (outcome) => {
