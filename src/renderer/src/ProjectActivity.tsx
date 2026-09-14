@@ -87,16 +87,29 @@ function ActivityMenu({
     const menu = menuRef.current
     if (!menu || !anchorRef.current) return
     const rect = anchorRef.current.getBoundingClientRect()
-    const compact = window.innerWidth < 620
     const panelWidth = Math.min(264, window.innerWidth - 32)
     const baseLeft = Math.max(16, Math.min(rect.left, window.innerWidth - panelWidth - 16))
+    const compact = window.innerWidth < 620 || (
+      baseLeft + panelWidth * 2 > window.innerWidth - 16 && baseLeft < panelWidth + 16
+    )
     const leftward = !compact && baseLeft + panelWidth * 2 > window.innerWidth - 16 && baseLeft >= panelWidth + 16
     menu.dataset.compact = String(compact)
     menu.dataset.left = String(leftward)
-    const width = panelWidth * (active && !compact ? 2 : 1)
-    menu.style.width = `${width}px`
-    menu.style.left = `${Math.max(16, Math.min(baseLeft - (leftward && active ? panelWidth : 0), window.innerWidth - width - 16))}px`
+    menu.style.width = `${panelWidth}px`
+    menu.style.left = `${baseLeft}px`
     menu.style.top = `${Math.max(16, Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 16))}px`
+    const sessions = sessionsRef.current
+    if (sessions) {
+      sessions.style.width = `${panelWidth}px`
+      if (compact) {
+        sessions.style.left = ''
+        sessions.style.top = ''
+      } else {
+        const row = projectRef.current?.querySelector<HTMLButtonElement>('[aria-expanded="true"]')
+        sessions.style.left = `${baseLeft + (leftward ? -panelWidth : panelWidth)}px`
+        sessions.style.top = `${Math.max(16, Math.min(row?.getBoundingClientRect().top ?? rect.bottom + 4, window.innerHeight - sessions.offsetHeight - 16))}px`
+      }
+    }
     if (compact && active && projectRef.current?.contains(document.activeElement)) {
       sessionsRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
     }

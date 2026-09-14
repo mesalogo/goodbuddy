@@ -392,10 +392,11 @@ resourceMonitor.getLocalSnapshot(input: {
 
 - `conversation-activity.ts` 从 `App.tsx` 的会话、`activeConversationIds`、全部可见
   `assistantTasks` 和项目元数据派生会话行、全局及项目计数，不新增持久化活动副本。
-  `ProjectActivity` 渲染常驻汇总与项目、会话级联菜单，`ProjectSwitcher` 复用项目计数。
+  `ProjectActivity` 在有活动时渲染汇总与项目、会话级联菜单，`ProjectSwitcher` 复用项目计数。
 - `App` 向 `ProjectActivity` 传入项目元数据、活动行、侧栏可见状态与既有精确跳转回调。
   菜单按项目 ID 分组并记忆化派生集合；排序仅影响展示，不改聚合状态或持久化数据。
-- 两层菜单在同一 body Portal 内相接。布局在打开、层级变化、实时数据更新、窗口缩放和
+- 两层菜单在同一 body Portal 内相接，桌面会话层使用独立 fixed 定位，不参与项目层高度计算。
+  项目层锚定摘要，会话层锚定选中项目行并独立限制窗口边界。布局在打开、层级变化、实时数据更新、窗口缩放和
   滚动时按锚点重算；窄窗口隐藏项目面板并保留返回操作。菜单不调用 Modal 焦点隔离，
   捕获阶段消费 Escape，防止触发窄侧栏的文档级监听；Tab 关闭后交还正常焦点顺序。
   菜单关闭与焦点恢复在导航回调之前同步完成。
