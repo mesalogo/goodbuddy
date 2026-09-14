@@ -542,7 +542,8 @@ otherwise.
   showing the previous item's source after a selection change. Failed reads
   use application notifications, and missing sources have an explicit fallback. The left
   navigation can show the incomplete-todo count, and create, save, and comment
-  results use application-wide notifications.
+  results use application-wide notifications. Agent/MCP note writes automatically
+  refresh the open workbench while preserving selection and unsaved drafts.
 - [ ] **MCP Server Control Plane** (planned): Unified MCP lifecycle, health
   checks, reconnection, schema cache, isolation, approval, and audit.
 - [ ] **Traceable note excerpts and AI editing** (planned): Collects sourced

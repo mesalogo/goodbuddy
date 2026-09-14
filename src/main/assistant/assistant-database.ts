@@ -6,6 +6,7 @@ import {
   builtInDefaultProjectSeedName,
   activityHistorySnapshotSchema,
   assistantIdSchema,
+  conversationAnsweredQuestionSchema,
   conversationMessageSchema,
   conversationSnapshotSchema,
   expertCreateSchema,
@@ -26,6 +27,7 @@ import type {
   AssistantTask,
   ActivityHistorySnapshot,
   ConversationQueueItem,
+  ConversationAnsweredQuestion,
   ConversationBranchInput,
   ConversationMessageBlock,
   ConversationSubagentActivity,
@@ -1761,6 +1763,7 @@ export class AssistantDatabase {
   constructor(
     private readonly databasePath: string,
     private readonly options: {
+      onMagicNotesChanged?: () => void
       onMagicTodosChanged?: () => void
     } = {}
   ) {}
@@ -2063,6 +2066,7 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+    this.options.onMagicNotesChanged?.()
   }
 
   listProjects(includeArchived = false): AssistantProject[] {
@@ -3675,6 +3679,7 @@ export class AssistantDatabase {
       throw error
     }
     const detail = this.getMagicNote(id)
+    this.options.onMagicNotesChanged?.()
     if (input.content) {
       this.notifyMagicTodosChanged()
     }
@@ -3707,7 +3712,9 @@ export class AssistantDatabase {
     if (result.changes !== 1) {
       throw new Error('笔记已被更新，请刷新后重试')
     }
-    return this.getMagicNote(input.noteId)
+    const detail = this.getMagicNote(input.noteId)
+    this.options.onMagicNotesChanged?.()
+    return detail
   }
 
   deleteMagicNote(noteId: string): void {
@@ -3717,6 +3724,7 @@ export class AssistantDatabase {
     if (result.changes !== 1) {
       throw new Error('笔记不存在')
     }
+    this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
   }
 
@@ -3771,6 +3779,7 @@ export class AssistantDatabase {
       throw error
     }
     const detail = this.getMagicNote(input.noteId)
+    this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
     return detail
   }
@@ -3835,6 +3844,7 @@ export class AssistantDatabase {
       throw error
     }
     const detail = this.getMagicNote(existing.note_id)
+    this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
     return detail
   }
@@ -3866,6 +3876,7 @@ export class AssistantDatabase {
       throw error
     }
     const detail = this.getMagicNote(existing.note_id)
+    this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
     return detail
   }
@@ -3923,7 +3934,9 @@ export class AssistantDatabase {
     if (result.changes !== 1) {
       throw new Error('记录已被更新，请重新分析')
     }
-    return this.getMagicNote(existing.note_id)
+    const detail = this.getMagicNote(existing.note_id)
+    this.options.onMagicNotesChanged?.()
+    return detail
   }
 
   listMagicTodos(): MagicTodoItem[] {
@@ -4077,6 +4090,7 @@ export class AssistantDatabase {
       throw error
     }
     const todo = this.getMagicTodo(input.todoId)
+    this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
     return todo
   }
@@ -4118,7 +4132,9 @@ export class AssistantDatabase {
     if (result.changes !== 1) {
       throw new Error('待办已被更新，请刷新后重试')
     }
-    return this.getMagicTodo(input.todoId)
+    const todo = this.getMagicTodo(input.todoId)
+    this.options.onMagicNotesChanged?.()
+    return todo
   }
 
   listPendingDelegationResults(): Array<{
@@ -4581,11 +4597,55 @@ export class AssistantDatabase {
       })
   }
 
-  failRecoverableRemoteTask(taskIdInput: string, messageInput: string): void {
+  recordRemoteTaskQuestionAnswer(
+    taskIdInput: string,
+    answerInput: ConversationAnsweredQuestion
+  ): boolean {
+    const taskId = assistantIdSchema.parse(taskIdInput)
+    const answer = conversationAnsweredQuestionSchema.parse(answerInput)
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = database.prepare(
+        `SELECT m.id, m.conversation_id, m.metadata_json
+         FROM tasks t JOIN messages m
+           ON m.id = t.current_assistant_message_id
+             AND m.conversation_id = t.conversation_id AND m.request_id = t.id
+         WHERE t.id = ? AND t.remote_recoverable = 1 AND m.role = 'assistant'`
+      ).get(taskId) as {
+        id: string; conversation_id: string; metadata_json: string
+      } | undefined
+      if (!row) {
+        database.exec('COMMIT')
+        return false
+      }
+      const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+      metadata.answeredQuestions = [
+        ...(metadata.answeredQuestions ?? []).filter(item => item.questionId !== answer.questionId),
+        answer
+      ]
+      database.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?')
+        .run(JSON.stringify(metadata), row.id)
+      database.prepare(
+        'UPDATE conversations SET updated_at = MAX(updated_at, ?) WHERE id = ?'
+      ).run(new Date().toISOString(), row.conversation_id)
+      database.exec('COMMIT')
+      return true
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  endRecoverableRemoteTask(
+    taskIdInput: string,
+    messageInput: string,
+    status: 'failed' | 'cancelled'
+  ): void {
     const taskId = assistantIdSchema.parse(taskIdInput)
     const message = messageInput.trim().slice(0, 4_000)
     if (!message) {
-      throw new Error('远程恢复失败原因不能为空')
+      throw new Error('远程任务终止原因不能为空')
     }
     const database = this.requireDatabase()
     const now = new Date().toISOString()
@@ -4657,10 +4717,10 @@ export class AssistantDatabase {
         attachments: metadata.attachments,
         answeredQuestions: metadata.answeredQuestions
       })
-      const failed = reduceRecoveredAgentEvent(current, {
+      const ended = reduceRecoveredAgentEvent(current, {
         requestId: taskId,
         type: 'error',
-        status: 'failed',
+        status,
         message
       })
       database
@@ -4670,9 +4730,9 @@ export class AssistantDatabase {
            WHERE id = ? AND conversation_id = ? AND request_id = ?`
         )
         .run(
-          failed.content,
-          failed.state,
-          serializeConversationMessageMetadata(failed),
+          ended.content,
+          ended.state,
+          serializeConversationMessageMetadata(ended),
           owner.current_assistant_message_id,
           owner.conversation_id,
           taskId
@@ -4680,10 +4740,10 @@ export class AssistantDatabase {
       database
         .prepare(
           `UPDATE tasks
-           SET status = 'failed', error = ?, completed_at = ?
+           SET status = ?, error = ?, completed_at = ?
            WHERE id = ?`
         )
-        .run(message, now, taskId)
+        .run(status, message, now, taskId)
       database
         .prepare(
           `INSERT INTO task_events
@@ -4695,7 +4755,7 @@ export class AssistantDatabase {
           JSON.stringify({
             requestId: taskId,
             type: 'error',
-            status: 'failed',
+            status,
             message
           }),
           now
@@ -7747,7 +7807,7 @@ export class AssistantDatabase {
     return readProject(this.requireDatabase(), projectId)
   }
 
-  private getTask(taskId: string): AssistantTask {
+  getTask(taskId: string): AssistantTask {
     const row = this.requireDatabase()
       .prepare(`${taskSelect} WHERE tasks.id = ?`)
       .get(taskId) as TaskRow | undefined

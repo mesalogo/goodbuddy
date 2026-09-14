@@ -276,6 +276,7 @@ export const ipcChannels = {
   magicTodosList: 'magic-todos:list',
   magicTodosStatus: 'magic-todos:status',
   magicTodosStatusChanged: 'magic-todos:status-changed',
+  magicNotesChanged: 'magic-notes:changed',
   magicTodosUpdate: 'magic-todos:update',
   magicTodosAnalyze: 'magic-todos:analyze',
   knowledgeSnapshot: 'knowledge:snapshot',

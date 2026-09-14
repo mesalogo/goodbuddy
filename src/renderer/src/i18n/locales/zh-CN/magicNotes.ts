@@ -55,6 +55,8 @@ export const magicNotes = {
     todoReopened: '待办已恢复为未完成'
   },
   errors: {
+    noteDeletedExternally: '这篇笔记已在其他入口删除。未保存的草稿仍保留在此，切换笔记前请复制草稿。',
+    entryDeletedExternally: '正在编辑的记录已在其他入口删除。草稿仍保留在此，退出编辑前请复制草稿。',
     operationFailed: '操作失败，请重试',
     initialLoadTitle: '魔法笔记加载失败',
     initialLoadDescription: '无法加载魔法笔记：{{error}}',

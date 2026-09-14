@@ -811,6 +811,7 @@ const api: DesktopApi = {
       throw new Error("not used");
     }),
     onAnalysisEvent: vi.fn(() => vi.fn()),
+    onChanged: vi.fn(() => vi.fn()),
     onTodoStatusChanged: vi.fn((listener) => {
       magicTodoStatusChangedListener = listener;
       return () => {

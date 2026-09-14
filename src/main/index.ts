@@ -22,6 +22,7 @@ import {
 import { AgentRuntimeController } from './agent/runtime-controller'
 import type { AgentRuntime } from './agent/runtime'
 import { SelectedRuntimeManager } from './agent/selected-runtime-manager'
+import { LocalRuntimeRegistry } from './agent/local-runtime-registry'
 import { KnowledgeMcpGateway } from './agent/knowledge-mcp-gateway'
 import {
   applyRuntimeSelection,
@@ -206,6 +207,7 @@ let removeIpcHandlers: (() => Promise<void>) | undefined
 let removeFeedbackIpcHandler: (() => void) | undefined
 let runtime: AgentRuntimeController | undefined
 let selectedRuntimeManager: SelectedRuntimeManager | undefined
+const localRuntimeRegistry = new LocalRuntimeRegistry()
 let knowledgeService: KnowledgeService | undefined
 let knowledgeGateway: KnowledgeMcpGateway | undefined
 let assistantDatabase: AssistantDatabase | undefined
@@ -881,6 +883,17 @@ if (hasSingleInstanceLock) {
     const startupAssistantDatabase = new AssistantDatabase(
       join(app.getPath('userData'), 'assistant.sqlite'),
       {
+        onMagicNotesChanged: () => {
+          queueMicrotask(() => {
+            if (
+              mainWindow &&
+              !mainWindow.isDestroyed() &&
+              !mainWindow.webContents.isDestroyed()
+            ) {
+              mainWindow.webContents.send(ipcChannels.magicNotesChanged)
+            }
+          })
+        },
         onMagicTodosChanged: () => {
           queueMicrotask(() => {
             if (
@@ -954,6 +967,7 @@ if (hasSingleInstanceLock) {
             : Promise.resolve([])
         ])
       return createAgentRuntime(defaultWorkspace, settings, {
+        localRuntimeRegistry,
         skillInstructions: skillContext.instructions,
         skillPackages: skillContext.packages,
         mcpServers,
@@ -1148,7 +1162,8 @@ if (hasSingleInstanceLock) {
       undefined,
       undefined,
       observeDesktopFailure,
-      createSelectedStatusRuntime
+      createSelectedStatusRuntime,
+      (conversationId) => localRuntimeRegistry.releaseConversation(conversationId)
     )
     const contextManager = new ContextManager({
       parseDocument: documentParsingService.parse
@@ -1229,6 +1244,7 @@ if (hasSingleInstanceLock) {
             nextSubagentProfileRuntimes
           )
           await selectedRuntimeManager?.reset()
+          localRuntimeRegistry.reset(nextRuntime)
           const previousEmbeddingProvider = activeEmbeddingProvider
           activeEmbeddingProvider = nextEmbeddingProvider
           activeRerankProvider = nextRerankProvider
@@ -1530,6 +1546,7 @@ app.on('before-quit', (event) => {
           () => documentOcrModelManager?.dispose(),
           () => documentOcrBroker?.dispose()
         ],
+        [() => localRuntimeRegistry.dispose()],
         [() => terminalSessionManager?.dispose()],
         [() => localToolEnvironmentService?.dispose()],
         [() => managedRemoteExecutionServices?.dispose()],

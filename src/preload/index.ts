@@ -1604,6 +1604,12 @@ const desktopApi: DesktopApi = {
           handler
         )
     },
+    onChanged: (listener) => {
+      const handler = (): void => listener()
+      ipcRenderer.on(ipcChannels.magicNotesChanged, handler)
+      return () =>
+        ipcRenderer.removeListener(ipcChannels.magicNotesChanged, handler)
+    },
     onTodoStatusChanged: (listener) => {
       const handler = (): void => listener()
       ipcRenderer.on(ipcChannels.magicTodosStatusChanged, handler)

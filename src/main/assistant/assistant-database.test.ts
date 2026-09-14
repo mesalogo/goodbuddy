@@ -31,6 +31,7 @@ afterEach(async () => {
 
 async function createDatabase(
   options: {
+    onMagicNotesChanged?: () => void
     onMagicTodosChanged?: () => void
   } = {}
 ): Promise<AssistantDatabase> {
@@ -3438,7 +3439,7 @@ describe('AssistantDatabase', () => {
     raw.close()
   })
 
-  it('creates and recovers a remote-authoritative conversation task', async () => {
+  it.each(['failed', 'cancelled'] as const)('creates and recovers a remote-authoritative conversation task, then ends it as %s', async (terminalStatus) => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-remote-conversation-recovery-')
     )
@@ -3731,14 +3732,15 @@ describe('AssistantDatabase', () => {
       content: recoveredText,
       state: 'complete'
     })
-    reopened.failRecoverableRemoteTask(
+    reopened.endRecoverableRemoteTask(
       taskId,
-      '远端请求已不存在'
+      '远端请求已不存在',
+      terminalStatus
     )
     expect(
       reopened.listTasks().find((task) => task.id === taskId)
     ).toMatchObject({
-      status: 'failed',
+      status: terminalStatus,
       error: '远端请求已不存在'
     })
     expect(
@@ -6544,6 +6546,65 @@ describe('AssistantDatabase', () => {
     ).toThrow('待办已被更新，请刷新后重试')
 
     database.close()
+  })
+
+  it('publishes committed note, entry, todo and analysis writes but not failed writes', async () => {
+    const onMagicNotesChanged = vi.fn()
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-note-events-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath, { onMagicNotesChanged })
+    database.initialize('C:\\Workspace')
+    const reader = new DatabaseSync(databasePath, { readOnly: true })
+    // A separate connection must already see each emitted write.
+    const observed: string[][] = []
+    onMagicNotesChanged.mockImplementation(() => {
+      observed.push((reader.prepare('SELECT title FROM magic_notes').all() as Array<{ title: string }>).map((note) => note.title))
+    })
+    try {
+      const note = database.createMagicNote({ title: 'Empty note' })
+      expect(observed).toEqual([['Empty note']])
+      database.updateMagicNote({ noteId: note.id, title: 'Renamed', pinned: true, expectedRevision: 0 })
+      expect(observed.at(-1)).toEqual(['Renamed'])
+      expect(() => database.updateMagicNote({ noteId: note.id, title: 'Stale', expectedRevision: 0 })).toThrow()
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(2)
+      const content = {
+        version: 1 as const,
+        ops: [{ insert: 'Task' }, { insert: '\n', attributes: { list: 'unchecked' as const } }]
+      }
+      const withEntry = database.createMagicNoteEntry({ noteId: note.id, content, plainText: 'Task' })
+      const entry = withEntry.entries[0]!
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(3)
+      database.updateMagicNoteEntry({ entryId: entry.id, content, plainText: 'Task', expectedRevision: entry.revision })
+      expect(() => database.updateMagicNoteEntry({ entryId: entry.id, content, plainText: 'Stale', expectedRevision: entry.revision })).toThrow()
+      expect(() => database.createMagicNoteEntry({ noteId: randomUUID(), content, plainText: 'Missing' })).toThrow()
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(4)
+      const todo = database.listMagicTodos()[0]!
+      database.updateMagicTodo({ todoId: todo.id, completed: false, expectedRevision: todo.revision })
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(4)
+      const completed = database.updateMagicTodo({ todoId: todo.id, completed: true, expectedRevision: todo.revision })
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(5)
+      database.saveMagicTodoAnalysis({ todoId: todo.id, comments: [], expectedRevision: completed.revision })
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(6)
+      database.saveMagicNoteAnalysis({ entryId: entry.id, comments: [], expectedRevision: database.getMagicNoteEntry(entry.id).revision })
+      expect(() => database.saveMagicNoteAnalysis({ entryId: entry.id, comments: [], expectedRevision: 0 })).toThrow()
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(7)
+      database.deleteMagicNoteEntry(entry.id)
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(8)
+      database.deleteMagicNote(note.id)
+      expect(() => database.deleteMagicNote(note.id)).toThrow()
+      expect(() => database.deleteMagicNoteEntry(entry.id)).toThrow()
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(9)
+      expect(observed.at(-1)).toEqual([])
+      database.createMagicNote({ title: 'With content', content })
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(10)
+      database.clearAssistantData()
+      expect(onMagicNotesChanged).toHaveBeenCalledTimes(11)
+      expect(observed.at(-1)).toEqual([])
+    } finally {
+      reader.close()
+      database.close()
+    }
   })
 
   it('counts incomplete todos and publishes todo-changing writes', async () => {

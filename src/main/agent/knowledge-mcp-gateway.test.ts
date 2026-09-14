@@ -783,8 +783,10 @@ describe('KnowledgeMcpGateway', () => {
     const { service } = createService()
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-note-mcp-'))
     temporaryDirectories.push(directory)
+    const onMagicNotesChanged = vi.fn()
     const database = new AssistantDatabase(
-      join(directory, 'assistant.sqlite')
+      join(directory, 'assistant.sqlite'),
+      { onMagicNotesChanged }
     )
     databases.push(database)
     database.initialize('C:\\Workspace')
@@ -838,12 +840,20 @@ describe('KnowledgeMcpGateway', () => {
       })
     ])
     expect(created.entries[0]?.content).toBe('核对构建产物')
+    expect(onMagicNotesChanged).toHaveBeenCalledTimes(1)
+    gateway.updateMagicNote(writeToken, {
+      noteId: created.id,
+      title: 'Updated plan',
+      expectedRevision: created.revision
+    })
+    expect(onMagicNotesChanged).toHaveBeenCalledTimes(2)
     const withEntry = gateway.createMagicNoteEntry(writeToken, {
       noteId: created.id,
       content: '通知发布负责人'
     })
     const entry = withEntry.entries[1]!
     expect(entry.content).toBe('通知发布负责人')
+    expect(onMagicNotesChanged).toHaveBeenCalledTimes(3)
 
     const updatedEntry = gateway.updateMagicNoteEntry(writeToken, {
       entryId: entry.id,
@@ -859,6 +869,7 @@ describe('KnowledgeMcpGateway', () => {
         expectedRevision: entry.revision
       })
     ).toThrow('已被更新')
+    expect(onMagicNotesChanged).toHaveBeenCalledTimes(4)
 
     const withoutEntry = gateway.deleteMagicNoteEntry(writeToken, {
       entryId: entry.id,
@@ -873,6 +884,7 @@ describe('KnowledgeMcpGateway', () => {
         expectedRevision: withoutEntry.revision
       })
     ).toEqual({ deleted: true, noteId: created.id })
+    expect(onMagicNotesChanged).toHaveBeenCalledTimes(6)
     expect(() =>
       gateway.getMagicNote(readToken, { noteId: created.id })
     ).toThrow('笔记不存在')

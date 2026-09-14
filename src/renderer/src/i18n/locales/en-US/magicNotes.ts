@@ -59,6 +59,8 @@ export const magicNotes = {
     todoReopened: 'To-do marked incomplete'
   },
   errors: {
+    noteDeletedExternally: 'This note was deleted elsewhere. Your unsaved drafts are still here; copy them before switching notes.',
+    entryDeletedExternally: 'The entry being edited was deleted elsewhere. Your draft is still here; copy it before leaving the editor.',
     operationFailed: 'The operation failed. Try again.',
     initialLoadTitle: 'Could not load Magic Notes',
     initialLoadDescription: 'Could not load Magic Notes: {{error}}',

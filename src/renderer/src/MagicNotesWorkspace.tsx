@@ -544,6 +544,10 @@ export function MagicNotesWorkspace({
   const refreshRequestRef = useRef(0)
   const hasLoadedRef = useRef(false)
   const busyRef = useRef('')
+  const refreshContextRef = useRef({ detail, titleDraft, editingEntry })
+  useEffect(() => {
+    refreshContextRef.current = { detail, titleDraft, editingEntry }
+  }, [detail, titleDraft, editingEntry])
   const composerContentRef = useRef<MagicNoteRichContent | undefined>(
     undefined
   )
@@ -1273,7 +1277,7 @@ export function MagicNotesWorkspace({
   }, [pendingDraftSwitch])
 
   const refreshNotes = useCallback(
-    async (preferredId?: string): Promise<void> => {
+    async (preferredId?: string, background = false): Promise<void> => {
       const requestId = ++refreshRequestRef.current
       const detailRequestAtStart = detailRequestRef.current
       await Promise.resolve()
@@ -1307,17 +1311,44 @@ export function MagicNotesWorkspace({
           snapshot.notes.some((note) => note.id === requestedNoteId)
         setNotes(snapshot.notes)
         setTodos(todoSnapshot.todos)
-        setSelectedTodoId(todoSnapshot.todos[0]?.id ?? '')
+        setSelectedTodoId((current) =>
+          todoSnapshot.todos.some((todo) => todo.id === current)
+            ? current
+            : todoSnapshot.todos[0]?.id ?? ''
+        )
         hasLoadedRef.current = true
         setLoadStatus('ready')
         if (preserveNewerSelection) {
           return
         }
+        const current = refreshContextRef.current
+        const titleDirty = current.detail &&
+          current.titleDraft !== current.detail.title
+        if (background && current.detail?.id !== nextId) {
+          if (
+            titleDirty ||
+            hasContent(composerContentRef.current) ||
+            current.editingEntry
+          ) {
+            setRefreshError(tRef.current('errors.noteDeletedExternally'))
+            return
+          }
+          discardComposerDraft()
+          discardEditingDraft()
+        }
         detailRequestRef.current += 1
         requestedNoteIdRef.current = nextId
         setSelectedNoteId(nextId)
         setDetail(nextDetail)
-        setTitleDraft(nextDetail?.title ?? '')
+        if (!background || !titleDirty) {
+          setTitleDraft(nextDetail?.title ?? '')
+        }
+        if (
+          background && current.editingEntry && nextDetail &&
+          !nextDetail.entries.some((entry) => entry.id === current.editingEntry?.id)
+        ) {
+          setRefreshError(tRef.current('errors.entryDeletedExternally'))
+        }
         setDetailLoadError(undefined)
       } catch (loadError) {
         if (refreshRequestRef.current === requestId) {
@@ -1334,7 +1365,7 @@ export function MagicNotesWorkspace({
         }
       }
     },
-    []
+    [discardComposerDraft, discardEditingDraft]
   )
 
   useEffect(() => {
@@ -1345,6 +1376,28 @@ export function MagicNotesWorkspace({
       window.clearTimeout(timeout)
       refreshRequestRef.current += 1
       detailRequestRef.current += 1
+    }
+  }, [refreshNotes])
+
+  useEffect(() => {
+    let timeout: number | undefined
+    const refresh = (): void => {
+      if (busyRef.current) {
+        timeout = window.setTimeout(refresh, 100)
+        return
+      }
+      timeout = undefined
+      void refreshNotes(requestedNoteIdRef.current, true)
+    }
+    const unsubscribe = window.goodbuddy.magicNotes.onChanged(() => {
+      refreshRequestRef.current += 1
+      window.clearTimeout(timeout)
+      timeout = window.setTimeout(refresh, 100)
+    })
+    return () => {
+      unsubscribe()
+      window.clearTimeout(timeout)
+      refreshRequestRef.current += 1
     }
   }, [refreshNotes])
 
@@ -1424,7 +1477,7 @@ export function MagicNotesWorkspace({
     return () => {
       todoSourceRequestRef.current += 1
     }
-  }, [libraryView, notifyError, selectedTodoNoteId])
+  }, [libraryView, notifyError, selectedTodoNoteId, todos])
 
   const selectedTodoSourceEntry = useMemo(
     () =>
@@ -1452,6 +1505,13 @@ export function MagicNotesWorkspace({
         .reverse(),
     [detail]
   )
+  const displayedEntries = useMemo(() => {
+    const entries = detail?.entries ?? []
+    return editingEntry && editingEntry.noteId === detail?.id &&
+      !entries.some((entry) => entry.id === editingEntry.id)
+      ? [...entries, editingEntry]
+      : entries
+  }, [detail, editingEntry])
   const listPaneWidthLimits = getListPaneWidthLimits(
     magicNotesLayoutWidth,
     aiPaneWidth,
@@ -1578,7 +1638,6 @@ export function MagicNotesWorkspace({
       applyDetail(updated)
       await reloadTodos()
     } catch (updateError) {
-      setTitleDraft(detail.title)
       notifyError(updateError)
     } finally {
       endBusy(operation)
@@ -1840,7 +1899,7 @@ export function MagicNotesWorkspace({
               </span>
               <button
                 className="secondary-button"
-                onClick={() => void refreshNotes(selectedNoteId)}
+                onClick={() => void refreshNotes(selectedNoteId, true)}
                 type="button"
               >
                 {t('actions.retry')}
@@ -2466,12 +2525,12 @@ export function MagicNotesWorkspace({
               </div>
 
               <div className="magic-note-entry-stream">
-                {detail.entries.length === 0 ? (
+                {displayedEntries.length === 0 ? (
                   <p className="magic-notes-muted">
                     {t('notes.emptyEntries')}
                   </p>
                 ) : (
-                  [...detail.entries].reverse().map((entry) => (
+                  [...displayedEntries].reverse().map((entry) => (
                     <article
                       key={entry.id}
                       id={`magic-note-entry-${entry.id}`}
@@ -2566,7 +2625,7 @@ export function MagicNotesWorkspace({
                       {editingEntry?.id === entry.id ? (
                         <div className="magic-note-entry__editor">
                           <MagicNoteEditor
-                            key={`${entry.id}-${entry.revision}`}
+                            key={`${editingEntry.id}-${editingEntry.revision}`}
                             ariaDescribedBy={
                               validation?.target === 'edit-entry'
                                 ? 'magic-note-entry-edit-error'
@@ -2576,7 +2635,7 @@ export function MagicNotesWorkspace({
                               validation?.target === 'edit-entry'
                             }
                             ariaLabel={t('notes.editEntryLabel')}
-                            initialContent={entry.content}
+                            initialContent={editingEntry.content}
                             onChange={(content) => {
                               editingContentRef.current = content
                               clearValidation('edit-entry')

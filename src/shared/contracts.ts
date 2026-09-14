@@ -43,6 +43,7 @@ import {
   type ActivityRecord,
   type TokenUsageSummary,
   type ConversationSnapshot,
+  type LiveAgentQuestion,
   type ConversationAttachment,
   type ConversationBranchInput,
   type ConversationQueueItem,
@@ -1304,22 +1305,7 @@ export type AgentEvent =
       argumentSummary?: string
       allowPermanent?: boolean
     }
-  | {
-      requestId: string
-      type: 'question'
-      questionId: string
-      childTaskId?: string
-      questions: Array<{
-        header: string
-        question: string
-        options: Array<{
-          label: string
-          description: string
-        }>
-        multiple: boolean
-        custom: boolean
-      }>
-    }
+  | LiveAgentQuestion
   | {
       requestId: string
       type: 'question-resolved'
@@ -2286,6 +2272,7 @@ export type DesktopApi = {
       listener: (event: MagicNoteAnalysisStreamEvent) => void
     ) => () => void
     onTodoStatusChanged: (listener: () => void) => () => void
+    onChanged: (listener: () => void) => () => void
   }
   knowledge: {
     externalInstancesList: () => Promise<import('./external-knowledge-contracts').ExternalKnowledgeInstanceSummary[]>

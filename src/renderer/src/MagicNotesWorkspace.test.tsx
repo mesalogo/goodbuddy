@@ -201,10 +201,17 @@ const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async (
   magicNoteCommentFormat: 'combined'
 }))
 const onNotify = vi.fn()
+let changeListener: (() => void) | undefined
+const unsubscribeChanges = vi.fn()
+const onChanged = vi.fn<DesktopApi['magicNotes']['onChanged']>((listener) => {
+  changeListener = listener
+  return unsubscribeChanges
+})
 
 beforeEach(() => {
   localStorage.clear()
   analysisEventListener = undefined
+  changeListener = undefined
   getApplicationSettings.mockResolvedValue({
     checkUpdatesOnStartup: false,
     updateSource: 'github',
@@ -350,6 +357,7 @@ beforeEach(() => {
         updateTodo,
         analyzeTodo,
         analyzeDraft,
+        onChanged,
         onAnalysisEvent
       },
       updates: {
@@ -366,6 +374,180 @@ afterEach(() => {
 })
 
 describe('MagicNotesWorkspace', () => {
+  it('coalesces external writes, keeps selection and refreshes the selected detail', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByDisplayValue(detail.title)
+    const added = alternateDetail(secondNoteId, 'Agent-created note')
+    const updated = { ...detail, title: 'Agent-renamed note', pinned: true, revision: 2 }
+    list.mockResolvedValue({ notes: [added, updated] })
+    get.mockResolvedValue(updated)
+    act(() => {
+      changeListener?.()
+      changeListener?.()
+      changeListener?.()
+    })
+    await screen.findByDisplayValue(updated.title)
+    expect(screen.getByText(added.title)).toBeInTheDocument()
+    expect(get).toHaveBeenLastCalledWith(noteId)
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: '取消置顶' })).toBeInTheDocument()
+
+    list.mockResolvedValue({ notes: [added] })
+    get.mockResolvedValue(added)
+    act(() => changeListener?.())
+    await screen.findByDisplayValue(added.title)
+    expect(screen.queryByDisplayValue(updated.title)).not.toBeInTheDocument()
+  })
+
+  it('preserves title and composer drafts when external entries arrive', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    const title = await screen.findByDisplayValue(detail.title)
+    fireEvent.change(title, { target: { value: 'Unsaved title' } })
+    const composer = screen.getByTestId('magic-note-editor')
+    fireEvent.click(composer)
+    const updated = {
+      ...detail,
+      title: 'External title',
+      revision: 2,
+      entries: [...detail.entries, { ...detail.entries[0]!, id: createdEntryId, comments: [] }]
+    }
+    list.mockResolvedValue({ notes: [updated] })
+    get.mockResolvedValue(updated)
+    act(() => changeListener?.())
+    await waitFor(() => expect(screen.getAllByText('记录正文')).toHaveLength(2))
+    expect(title).toHaveValue('Unsaved title')
+    expect(screen.getByTestId('magic-note-editor')).toBe(composer)
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+    await waitFor(() => expect(createEntry).toHaveBeenCalledWith({
+      noteId,
+      content: { version: 1, ops: [{ insert: '新的句子\n' }] }
+    }))
+  })
+
+  it.each(['updated', 'deleted'] as const)('keeps an entry draft mounted when externally %s', async (change) => {
+    const { container } = render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    const editor = container.querySelector<HTMLButtonElement>('.magic-note-entry__editor [data-testid="magic-note-editor"]')!
+    fireEvent.click(editor)
+    const updated = {
+      ...detail,
+      title: 'External change',
+      revision: 2,
+      entries: change === 'deleted' ? [] : detail.entries.map((entry) => ({ ...entry, revision: 2 }))
+    }
+    list.mockResolvedValue({ notes: [updated] })
+    get.mockResolvedValue(updated)
+    act(() => changeListener?.())
+    await screen.findByDisplayValue(updated.title)
+    expect(container.querySelector('.magic-note-entry__editor [data-testid="magic-note-editor"]')).toBe(editor)
+    if (change === 'deleted') {
+      expect(screen.getByText(/正在编辑的记录已在其他入口删除/)).toBeInTheDocument()
+    }
+    updateEntry.mockRejectedValueOnce(new Error('Revision conflict or deleted entry'))
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(updateEntry).toHaveBeenCalledWith({
+      entryId,
+      content: { version: 1, ops: [{ insert: '新的句子\n' }] },
+      expectedRevision: 1
+    }))
+    expect(container.querySelector('.magic-note-entry__editor [data-testid="magic-note-editor"]')).toBe(editor)
+  })
+
+  it('retains a deleted note with drafts instead of moving them into another note', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    const title = await screen.findByDisplayValue(detail.title)
+    fireEvent.change(title, { target: { value: 'Unsaved title' } })
+    const composer = screen.getByTestId('magic-note-editor')
+    fireEvent.click(composer)
+    list.mockResolvedValue({ notes: [] })
+    listTodos.mockResolvedValue({ todos: [] })
+    act(() => changeListener?.())
+    await screen.findByText(/这篇笔记已在其他入口删除/)
+    expect(title).toHaveValue('Unsaved title')
+    expect(screen.getByTestId('magic-note-editor')).toBe(composer)
+    expect(screen.queryByRole('button', { name: /发布笔记.*整理发布清单/ })).not.toBeInTheDocument()
+  })
+
+  it('preserves the selected todo and reloads its source after external writes', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByText('记录正文')
+    fireEvent.click(screen.getByRole('tab', { name: '待办' }))
+    fireEvent.click(screen.getByRole('button', { name: /准备演示.*演示笔记/ }))
+    await waitFor(() => expect(get).toHaveBeenLastCalledWith(secondNoteId))
+    const source = alternateDetail(secondNoteId, '演示笔记')
+    get.mockResolvedValue(source)
+    listTodos.mockResolvedValue({ todos: [noteTodo, { ...manualTodo, title: 'External todo' }] })
+    act(() => changeListener?.())
+    await screen.findByRole('heading', { name: 'External todo' })
+    expect(screen.getByRole('button', { name: /External todo.*演示笔记/ })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(get).toHaveBeenLastCalledWith(secondNoteId))
+  })
+
+  it('unsubscribes and cancels queued refreshes on unmount', async () => {
+    const { unmount } = render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByDisplayValue(detail.title)
+    vi.useFakeTimers()
+    act(() => changeListener?.())
+    unmount()
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    expect(unsubscribeChanges).toHaveBeenCalledOnce()
+    expect(list).toHaveBeenCalledOnce()
+  })
+
+  it('does not let an in-flight external refresh undo a newer note selection', async () => {
+    const second = alternateDetail(secondNoteId, 'Second note')
+    list.mockResolvedValue({ notes: [detail, second] })
+    get.mockImplementation(async (id) => id === secondNoteId ? second : detail)
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByDisplayValue(detail.title)
+    let resolveList!: (snapshot: MagicNotesSnapshot) => void
+    list.mockImplementationOnce(() => new Promise((resolve) => { resolveList = resolve }))
+    act(() => changeListener?.())
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: /Second note/ }))
+    await screen.findByDisplayValue(second.title)
+    await act(async () => resolveList({ notes: [detail, second] }))
+    expect(screen.getByDisplayValue(second.title)).toBeInTheDocument()
+  })
+
+  it('keeps drafts after an event refresh fails and on retry while the user keeps typing', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    const title = await screen.findByDisplayValue(detail.title)
+    const composer = screen.getByTestId('magic-note-editor')
+    fireEvent.click(composer)
+    list.mockRejectedValueOnce(new Error('External refresh failed'))
+    act(() => changeListener?.())
+    await screen.findByText(/External refresh failed/)
+    expect(screen.getByTestId('magic-note-editor')).toBe(composer)
+    let resolveDetail!: (note: MagicNoteDetail) => void
+    get.mockImplementationOnce(() => new Promise((resolve) => { resolveDetail = resolve }))
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    fireEvent.change(title, { target: { value: 'Typed during refresh' } })
+    await act(async () => resolveDetail({ ...detail, title: 'External title', revision: 2 }))
+    expect(title).toHaveValue('Typed during refresh')
+    expect(screen.getByTestId('magic-note-editor')).toBe(composer)
+    expect(screen.queryByText(/External refresh failed/)).not.toBeInTheDocument()
+  })
+
+  it('defers event refreshes until an active save completes without losing the event', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByDisplayValue(detail.title)
+    let resolveSave!: (note: MagicNoteDetail) => void
+    createEntry.mockImplementationOnce(() => new Promise((resolve) => { resolveSave = resolve }))
+    fireEvent.click(screen.getByTestId('magic-note-editor'))
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+    await waitFor(() => expect(createEntry).toHaveBeenCalledOnce())
+    vi.useFakeTimers()
+    act(() => changeListener?.())
+    await act(() => vi.advanceTimersByTimeAsync(300))
+    expect(list).toHaveBeenCalledOnce()
+    await act(async () => resolveSave(detail))
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
   it('shows a retryable EmptyState when the initial load fails', async () => {
     get.mockRejectedValueOnce(new Error('详情暂时不可用'))
 
