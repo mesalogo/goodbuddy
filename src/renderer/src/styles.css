@@ -4304,14 +4304,6 @@ button > svg {
   grid-template-columns: repeat(5, minmax(max-content, 1fr));
 }
 
-.assistant-sidebar-toggle {
-  position: absolute;
-  z-index: 3;
-  top: 6px;
-  right: 6px;
-  -webkit-app-region: no-drag;
-}
-
 .assistant-sidebar__tab {
   position: relative;
   min-height: 32px;

@@ -10989,7 +10989,10 @@ describe("App", () => {
     expect(sidebar).not.toHaveClass("assistant-sidebar--open");
     const assistantTrigger = screen.getByLabelText("切换助手工作栏");
     expect(assistantTrigger.parentElement).toBe(
-      container.querySelector(".app-content"),
+      container.querySelector(".topbar__actions"),
+    );
+    expect(assistantTrigger.nextElementSibling).toBe(
+      container.querySelector(".theme-toggle-button"),
     );
     expect(container.querySelector(".sidebar")?.parentElement).toBe(
       container.querySelector(".app-shell"),
@@ -11019,7 +11022,7 @@ describe("App", () => {
     expect(container.querySelector(".topbar")).toContainElement(
       container.querySelector(".conversation-title"),
     );
-    expect(container.querySelector(".topbar")).not.toContainElement(
+    expect(container.querySelector(".topbar")).toContainElement(
       assistantTrigger,
     );
     expect(screen.queryByLabelText("关闭助手工作栏")).not.toBeInTheDocument();

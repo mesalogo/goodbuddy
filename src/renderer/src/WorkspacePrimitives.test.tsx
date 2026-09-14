@@ -323,9 +323,6 @@ describe('WorkspacePrimitives', () => {
       /\.workspace\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\);/u
     )
     expect(stylesheet).toMatch(
-      /\.assistant-sidebar-toggle\s*\{[^}]*position:\s*absolute;[^}]*top:\s*6px;[^}]*right:\s*6px;/u
-    )
-    expect(stylesheet).toMatch(
       /\.conversation-task-strip\s*\{[^}]*min-height:\s*46px;[^}]*padding:\s*0\s+max\(/u
     )
     expect(stylesheet).toMatch(

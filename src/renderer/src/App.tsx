@@ -9147,6 +9147,22 @@ function App(): React.JSX.Element {
               {runtimeDetail}
             </span>
             <button
+              aria-controls="assistant-sidebar"
+              aria-expanded={assistantSidebarOpen}
+              aria-label={t("topbar.toggleAssistantSidebar")}
+              className="icon-button assistant-sidebar-toggle"
+              onClick={() => setAssistantSidebarOpen((current) => !current)}
+              ref={assistantSidebarToggleRef}
+              title={t("topbar.toggleAssistantSidebar")}
+              type="button"
+            >
+              {assistantSidebarOpen ? (
+                <PanelRightClose aria-hidden="true" size={18} />
+              ) : (
+                <PanelRightOpen aria-hidden="true" size={18} />
+              )}
+            </button>
+            <button
               aria-label={
                 resolvedAppearanceTheme === "dark"
                   ? t("topbar.switchLight")
@@ -9173,23 +9189,6 @@ function App(): React.JSX.Element {
         </header>
 
         <div className="app-content">
-          <button
-            aria-controls="assistant-sidebar"
-            aria-expanded={assistantSidebarOpen}
-            aria-label={t("topbar.toggleAssistantSidebar")}
-            className="icon-button assistant-sidebar-toggle"
-            onClick={() => setAssistantSidebarOpen((current) => !current)}
-            ref={assistantSidebarToggleRef}
-            title={t("topbar.toggleAssistantSidebar")}
-            type="button"
-          >
-            {assistantSidebarOpen ? (
-              <PanelRightClose aria-hidden="true" size={18} />
-            ) : (
-              <PanelRightOpen aria-hidden="true" size={18} />
-            )}
-          </button>
-
           <main
             aria-hidden={backgroundIsolated ? "true" : undefined}
             className="workspace"
