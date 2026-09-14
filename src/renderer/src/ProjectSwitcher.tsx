@@ -1164,14 +1164,7 @@ export function ProjectSwitcher({
 
   return (
     <div className="project-switcher">
-      <div
-        className={`project-switcher__row${
-          activeProjectRecovery?.stage === 'failed' &&
-          activeProjectRecovery.retryable
-            ? ' project-switcher__row--with-retry'
-            : ''
-        }`}
-      >
+      <div className="project-switcher__row">
         <div
           className="project-switcher__picker"
           ref={projectPickerRef}
@@ -1346,26 +1339,6 @@ export function ProjectSwitcher({
             </div>
           )}
         </div>
-        {activeProject &&
-          activeProjectRecovery?.stage === 'failed' &&
-          activeProjectRecovery.retryable &&
-          onRetryRecovery && (
-            <button
-              aria-label={t(
-                'projectSwitcher.recovery.retryNamed',
-                { name: activeProjectDisplay?.name }
-              )}
-              className="icon-button project-switcher__active-retry"
-              disabled={
-                retryingRecoveryProjectId === activeProject.id
-              }
-              onClick={() => retryRecovery(activeProject.id)}
-              title={t('projectSwitcher.recovery.retry')}
-              type="button"
-            >
-              <RefreshCw aria-hidden="true" size={15} />
-            </button>
-          )}
         <button
           aria-label={t('projectSwitcher.selector.create')}
           className="icon-button"

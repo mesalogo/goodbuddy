@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录截至 2026-09-10 的当前代码实现，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
+下述状态段保留 2026-09-10 的实现与验证截面，不定义额外的信任框架。“新增 Host 只探测、Host 卡片手动准备
 Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Host current 环境”已经完成源码接线，
 详细事务与验收边界见
 [SSH Host 远程环境准备与直连下载设计](./environment-provisioning-technical-design.md)；
@@ -11,15 +11,41 @@ Agent/Runtime、Host 直接从 GitHub/北京镜像下载、项目始终使用 Ho
 Linux x64/arm64、取消和离线 GoodBuddy 传输的真实 Host 验收。
 Windows 到 Linux x64 的安装、Agent-owned Prompt、Agent 本地模型 gateway、断线恢复、
 同一 OpenCode Session 续接、取消和终态清理已经使用真实模型与工具验证。Agent
-`0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当前源码
+`0.11.14` 已通过独立 workflow 发布 Linux x64/arm64 复合包和签名累计目录；当时源码
 候选为 Agent `0.11.24`、Desktop `0.13.0`，修复远端原生问答转交和取消待答后的同会话
-续发。Agent `0.11.24` 要求先升级至 Desktop `0.13.0`；候选尚未发布。远程文件/Git 管理、
+续发。Agent `0.11.24` 要求先升级至 Desktop `0.13.0`；当时候选尚未发布。远程文件/Git 管理、
 可选模型限额、无限请求时长下的独立连接超时和移除固定十分钟 Prompt 时限由
 Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源码的真实 SSH/确定性模型证据
 及完整生产链路验证边界见[工作栏进度](../assistant-workbar/progress.md)。
 正式发布状态以 Agent 与 Desktop 独立发布渠道为准。
 现有源码显示本地与远端 OpenCode 原生 Task，并取消 GoodBuddy 对生产 Prompt 的
 固定墙钟总时限。失败的 `agent-v0.11.3` 保持不可变且未发布。
+
+2026-09-14 发布状态补注：Desktop `0.13.2` 与 Agent `0.11.25` 已正式发布，包含此前
+问答修复；Agent `0.11.25` 的维护发布要求 Desktop `0.13.2`。下节进程复用为当前未发布源码，
+不是这两个发布的已有能力；历史验证段的日期与边界保留。
+
+## 跨会话进程复用（未发布）
+
+已发布版本的 `RuntimeAcpBackend` 按 binding 拥有原生进程，`AgentOwnedAcpPrompt` 的一条 ACP
+连接对应一个原生 Session；同一会话后续 Prompt 可复用，但不同会话不共用进程。
+上文“Host 共享 Runtime 环境”指安装与 Agent 环境，不代表原生 OpenCode 进程已共享。
+
+锁定 OpenCode 1.18.29 / ACP SDK 0.25.1 的 Windows 隔离探针已确认：同一个 `acp`
+进程与一条连接可运行两个工作区 Session，原生 `chat.headers` 能向本机合成模型请求
+附带各自 sessionID。它未经过 Agent 所有权、生产 helper、真实工具或 Linux Host，
+不是远端交付证明。
+
+进程 owner 与 binding 拆分、单 ACP 连接分派、会话级权限以及模型桥逐 operation
+路由的唯一方案见
+[Runtime 进程复用技术设计 §6](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
+实施必须保留本文件的 released binding、Agent-owned Prompt、transcript/ACK、模型调用
+结果不确定性与断线规则，并在开发期间执行下文真实 Host 验证，不为复用新增持久化账本。
+当前源码已接入共享 process owner、`AgentAcpConnection` 和逐 operation 模型路由；
+验收进展见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。
+取消/失败的 Session 可以留下运行中的共享进程，结果中的 `processTree` 如实返回
+`running`，不能再据 Prompt 终态推断整进程为空。新行为需要配套 Desktop/Agent，
+已发布 Desktop `0.13.2` / Agent `0.11.25` 不包含这些改动。
 
 ## 产品语义
 
@@ -31,7 +57,7 @@ Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源�
 
 远程项目只有两种工作模式：
 
-- **Ask**：Runtime 在操作系统边界以只读方式访问项目 Workspace。
+- **Ask**：Runtime 在原生工具权限边界只读访问项目 Workspace，不声称操作系统级只读隔离。
 - **Execute**：用户已授权使用所选 SSH 账号的完整权限。Runtime 可以使用该账号可访问的文件、进程、网络和工具，不再要求额外 trust tier、consent checklist、逐工具审批或“受控执行”授权。
 
 Execute 不获得 root 或 SSH 账号本身没有的权限。托管 SSH Prompt 会把当前选中的文本模型
@@ -212,15 +238,16 @@ selection，Renderer 会恢复为当前 OpenCode 配置；Main 的远程请求�
 Ask 与 Execute 一样直接启动已签名 Runtime，不要求 Host 安装额外的进程隔离命令：
 
 - `cwd` 为项目 Workspace，并继承 SSH 账号的正常环境；
-- ACP 权限请求只有在工具种类为原生 `read` 且 Runtime 提供 `allow_once` 选项时才允许；
-  search、edit、execute、未知工具以及只提供持久授权的请求全部拒绝。
-- Ask 启动时同时注入 OpenCode 顶层和 build Agent 的 `permission: "ask"`；Agent
-  工具权限分发边界只批准上述原生读取请求。该双重边界不另加文件系统 confinement，
-  也不改变 Runtime 的直接启动方式。
-- Execute 的直接启动与模型桥启动均显式设置顶层和 build Agent 的 `permission: "allow"`，
-  避免继承 OpenCode 默认的 `external_directory` 询问；项目目录只是默认工作目录。
-  原生子代理同样使用当前 SSH 账号可访问的路径。仍出现的 ACP 权限请求由 Agent 按
-  当前 Prompt 模式自动答复，不增加 Desktop 人工审批，也不依赖日志解析。
+- Agent-owned ACP 的备用权限分派允许原生 `read`/`search`，优先选择 `allow_once`；
+  写入、执行和未知工具仍拒绝。独占 raw ACP 保留其原有的读取权限分派。
+- 未发布的共享路径以中性的 `permission: "ask"` 启动一个进程，再于每个 Session 的
+  `chat.message` 按已登记 workMode 设置原生工具规则。Ask 默认拒绝，放行已支持的
+  读取、搜索和业务问答；子 Session 同步根会话模式并保留原生显式限制，避免固定版本
+  ACP 不转发子 Session 权限请求而永远等待。
+- Execute Session 放行工具，不再被另一个 Ask Session 的进程级默认值限制。项目目录
+  是默认 cwd，原生子代理仍使用所选 SSH 账号可访问的路径；不增加 Desktop 人工审批。
+  规则及模型路由的唯一实现说明见
+  [共享 Agent Session 设计](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
 
 ### Execute
 
@@ -232,7 +259,7 @@ Execute 直接启动已签名 Runtime：
   launcher 路径；
 - `cwd` 为项目 Workspace；
 - 继承 SSH 账号的正常环境、文件系统、进程和网络能力；
-- 不注入 OpenCode Ask 权限配置；
+- 独占启动使用 Execute 配置；共享启动由 Session 规则应用 Execute，不修改其他会话模式；
 - 不进行 T2/T3、confinement attestation、approval bridge 或逐工具批准。
 
 两种模式都保留输入字节上限、用户取消和进程组清理；输出只用有界内存队列与 journal
@@ -353,7 +380,8 @@ Execute 直接启动已签名 Runtime：
 - 完成提示是项目选择器内恢复进度的收尾反馈，首次收到该项目该 `requestId` 的完成状态后
   显示 3 秒，然后从收起按钮和展开菜单同时隐藏；不另发全局成功通知。计时由
   `ProjectSwitcher` 持有，切换项目、开合菜单或重复状态快照不延长期限，也不重放已隐藏的
-  提示；新 `requestId` 的恢复可以再次展示。进行中状态和失败/就地重试持续保留。
+  提示；新 `requestId` 的恢复可以再次展示。进行中状态和失败提示持续保留；重试操作仅放在
+  展开的项目列表对应项目旁，收起时只显示状态，不在新建项目按钮旁增加恢复按钮。
   隐藏仅作用于展示层，`App` 保留完成业务状态，继续用于发送、队列恢复和事件顺序判断。
 - 正常应用退出对已接受托管 SSH 请求执行 detach，不等待远端完成；本地请求和尚未接受的
   请求仍按原行为取消。用户显式“停止”始终发送稳定 operation cancellation，并等待 Agent
@@ -388,11 +416,12 @@ Execute 直接启动已签名 Runtime：
   usage/task 数据。
 - 新组包的 Runtime manifest 将 `maximumPromptRuntimeMilliseconds` 设为 `0`，表示由
   Prompt 自身的 deadline 决定时长，不再额外截为十分钟。旧 manifest 中的正数限制仍按其
-  声明执行。进程 owner 使用真实剩余时长安排 Prompt deadline；启动与停止等待的有界
-  超时不再缩短 Prompt。
-- helper 可以接收同一 Prompt 内并发到达的模型桥请求；它在单一稳定模型桥上按到达
-  顺序等待并交付，不返回本地 `bridge-busy`，每个响应只有在 HTTP 完整 flush 后才
-  发送 delivery ACK。
+  声明执行。独占进程 owner 使用真实剩余时长安排 Prompt deadline；共享路径由 binding
+  执行逐 Prompt 输入与期限检查，不把历次 Prompt 累计当作整个进程的配额。
+  启动与停止等待的有界超时不再缩短 Prompt。
+- helper 可以接收并发模型桥请求，同一 Session/operation 的稳定模型桥按到达顺序
+  等待并交付，不同 operation 可并行。请求在排队后再次核对原路由，过期请求不转交给
+  新 operation；每个响应只有在 HTTP 完整 flush 后才发送 delivery ACK。
 - GoodBuddy 自己管理会话标题，因此传给 OpenCode 的配置禁用 title Agent；一次用户
   Prompt 不会额外触发标题模型请求。
 - Agent gateway 不再把 Provider 请求往返 Desktop；legacy blob bridge 只保留给旧的

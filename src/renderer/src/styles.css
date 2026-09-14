@@ -2560,10 +2560,6 @@ textarea:focus-visible {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
-.project-switcher__row--with-retry {
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-}
-
 .project-switcher__picker {
   min-width: 0;
 }
@@ -2810,10 +2806,6 @@ textarea:focus-visible {
 .project-switcher__menu-retry:hover,
 .project-switcher__menu-retry:focus-visible {
   background: var(--danger-subtle);
-}
-
-.project-switcher__active-retry {
-  color: var(--danger);
 }
 
 .project-recovery-status {

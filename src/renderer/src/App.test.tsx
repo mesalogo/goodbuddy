@@ -7124,6 +7124,35 @@ describe("App", () => {
     );
   });
 
+  it("restores live question controls and Stop from a Main snapshot without a local run", async () => {
+    const requestId = "00000000-0000-4000-8000-000000000891";
+    const messageId = "00000000-0000-4000-8000-000000000892";
+    const conversationId = "00000000-0000-4000-8000-000000000893";
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: conversationId, projectId: project.id, title: "Recovered question", updatedAt: Date.now(),
+      activeRequest: {
+        requestId, messageId, questions: [{
+          requestId, type: "question", questionId: "recovered-question",
+          questions: [{ header: "Recovered", question: "Answer after restart?",
+            options: [{ label: "Continue", description: "Resume only this Session" }], multiple: false, custom: true }],
+        }],
+      },
+      messages: [{ id: messageId, role: "assistant", content: "Retained output", state: "streaming", createdAt: 1 }],
+    }]);
+    render(<App />);
+    await screen.findByText("Answer after restart?");
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    await waitFor(() => expect(api.agent.cancel).toHaveBeenCalledWith(requestId));
+    fireEvent.click(screen.getByRole("radio", { name: /Continue/u }));
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+    await waitFor(() => expect(api.agent.respondQuestion).toHaveBeenCalledWith(
+      "recovered-question", [["Continue"]],
+    ));
+    expect(run).not.toHaveBeenCalled();
+    expect(JSON.stringify(vi.mocked(api.conversations.saveLocal).mock.calls))
+      .not.toContain('"activeRequest"');
+  });
+
   describe("persisted terminal state convergence", () => {
     let conversationsChangedListener: (() => void) | undefined;
 
@@ -7445,8 +7474,9 @@ describe("App", () => {
       "恢复失败：无法连接 Host",
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
     fireEvent.click(
-      screen.getByRole("button", {
+      screen.getByRole("menuitem", {
         name: `重试恢复项目 ${remoteProject.name}`,
       }),
     );
@@ -7455,6 +7485,7 @@ describe("App", () => {
         remoteProject.id,
       ),
     );
+    fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
     expect(await screen.findByText("正在恢复网络连接…")).toBeInTheDocument();
 
     act(() => {

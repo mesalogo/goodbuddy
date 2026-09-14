@@ -779,7 +779,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     expect(screen.queryByText('Recovery completed')).not.toBeInTheDocument()
   })
 
-  it('renders an accessible failure and retries only the affected project', async () => {
+  it('keeps recovery retry inside the project menu while showing the collapsed failure', async () => {
     await i18n.changeLanguage('en-US')
     const remoteProject: AssistantProject = {
       ...project,
@@ -822,14 +822,22 @@ describe('ProjectSwitcher managed SSH projects', () => {
     expect(screen.getAllByRole('alert')[0]).toHaveTextContent(
       'Recovery failed: Host unreachable'
     )
+    expect(screen.queryByRole('button', {
+      name: 'Retry recovery for project Remote project'
+    })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    const menu = screen.getByRole('menu', { name: 'Current project' })
     fireEvent.click(
-      screen.getByRole('button', {
+      within(menu).getByRole('menuitem', {
         name: 'Retry recovery for project Remote project'
       })
     )
     await waitFor(() =>
       expect(onRetryRecovery).toHaveBeenCalledWith(remoteProject.id)
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Current project' }))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Retry recovery for project Remote project')).not.toBeInTheDocument()
   })
 
   it('hides remote projects and APIs when the feature is disabled', async () => {
