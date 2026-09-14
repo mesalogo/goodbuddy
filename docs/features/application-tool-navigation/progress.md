@@ -25,8 +25,15 @@ Windows Electron 视觉 fixture 使用当前 `ProjectActivity`、生产样式和
 `npm test` 在 240 秒后超时，超时前 `tests/agent-package.test.ts` 的
 `verifies and installs offline dependency inventories larger than one MiB` 用例失败，未取得完整结果。
 
-Demo 已按最新讨论隐藏空闲摘要并移除会话行箭头；生产实现仍保留空闲摘要，尚未与 Demo 对齐。
+Demo 已按最新讨论隐藏空闲摘要并移除会话行箭头；生产空闲摘要在下述非驻留修正中对齐。
 后续界面修正已移除生产会话行箭头，并为活动摘要与下方新建会话增加 `8px` 间距。
+
+## 2026-09-14：摘要非驻留修正
+
+生产 `ProjectActivity` 在无活动时返回空内容，活动归零时关闭级联菜单；新活动只恢复摘要。
+组件回归 11 项通过，覆盖初始空闲、活动归零关闭菜单及活动恢复后不自动展开。
+App 的 `project activity integration` 定向回归 18 项通过，类型检查与 Lint 通过。
+本轮 `npm test` 在 60 秒后超时，未取得全量结果；未重新执行 Electron 视觉验证。
 
 ## 2026-09-14：0.13.2 候选验证
 

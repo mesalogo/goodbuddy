@@ -1285,9 +1285,8 @@ describe("App", () => {
 
       vi.mocked(api.tasks.list).mockResolvedValue([{ ...task, status: "completed" }]);
       act(() => conversationQueueChangeListener?.(task.conversationId!));
-      await waitFor(() => expect(summary).toHaveTextContent("暂无活动"));
-      expect(screen.getByRole("menu", { name: "全项目活动" })).toHaveTextContent("暂无运行中或待处理会话");
-      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+      await waitFor(() => expect(summary).not.toBeInTheDocument());
+      expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       expect(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: /Background project/u }))
         .not.toHaveTextContent("个运行中");
@@ -1517,8 +1516,8 @@ describe("App", () => {
           : { requestId: request.requestId, type: "error", status: "failed", message: "Activity execution failed" });
         conversationQueueChangeListener?.(request.conversationId!);
       });
-      await waitFor(() => expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("暂无活动"));
-      expect(menu).toHaveTextContent("暂无运行中或待处理会话");
+      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
+      expect(menu).not.toBeInTheDocument();
     });
   });
 

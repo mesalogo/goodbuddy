@@ -227,15 +227,16 @@ export function ProjectActivity({
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const id = useId()
-  if (!visible && open) setOpen(false)
+  if ((!visible || activities.length === 0) && open) setOpen(false)
   const running = useMemo(() => activities.filter((activity) => activity.status === 'running').length, [activities])
+  if (activities.length === 0) return null
   return (
     <>
       <button
         aria-expanded={open}
         aria-haspopup="menu"
         aria-controls={open ? id : undefined}
-        aria-label={`${t('projectActivity.title')}: ${activities.length ? [t('projectActivity.attentionCount', { count: activities.length - running }), t('projectActivity.runningCount', { count: running })].join(', ') : t('projectActivity.idle')}`}
+        aria-label={`${t('projectActivity.title')}: ${[t('projectActivity.attentionCount', { count: activities.length - running }), t('projectActivity.runningCount', { count: running })].join(', ')}`}
         ref={triggerRef}
         className="project-activity__summary"
         onClick={(event) => {
@@ -250,7 +251,7 @@ export function ProjectActivity({
         }}
         type="button"
       >
-        {activities.length ? <ProjectActivityCounts attention={activities.length - running} running={running} /> : <span>{t('projectActivity.idle')}</span>}
+        <ProjectActivityCounts attention={activities.length - running} running={running} />
         <ChevronDown aria-hidden="true" size={14} />
       </button>
       {open && visible && (

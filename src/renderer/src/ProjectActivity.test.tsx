@@ -37,13 +37,10 @@ function open(): HTMLButtonElement {
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('ProjectActivity', () => {
-  it('keeps an idle summary and an accessible empty menu while hiding zero counts', () => {
+  it('hides the idle summary and zero counts', () => {
     render(view([]))
-    const trigger = open()
-    expect(trigger).toHaveTextContent('No activity')
-    expect(screen.getByRole('menu')).toHaveTextContent('No running conversations')
-    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
-    expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('button', { name: /All project activity/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     const { container } = render(<I18nextProvider i18n={i18n}><ProjectActivityCounts attention={0} running={0} /></I18nextProvider>)
     expect(container).toBeEmptyDOMElement()
   })
@@ -165,10 +162,10 @@ describe('ProjectActivity', () => {
     rerender(view(activities.filter((activity) => activity.projectId === 'local')))
     expect(screen.getByRole('menuitem', { name: /Local/ })).toHaveFocus()
     rerender(view([]))
-    expect(screen.getByRole('menu')).toHaveTextContent('No running conversations')
-    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('button', { name: /All project activity/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     rerender(view())
+    expect(screen.getByRole('button', { name: /All project activity/ })).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
