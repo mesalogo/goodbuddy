@@ -156,7 +156,8 @@ npm run lint
 
 Scan the QR code to join the GoodBuddy WeChat group:
 
-<img width="1250" height="1194" alt="9627ce196b0de42f123c33dd9dea1568" src="https://github.com/user-attachments/assets/e806543f-6d8a-4c5c-ba44-19e74dac9a78" />
+<img width="1250" height="1743" alt="46b5c3b5936388b0a55db6fe034a7d7f" src="https://github.com/user-attachments/assets/45cd1736-f1ae-4f99-85be-cdb2cc1160c0" />
+
 
 
 
