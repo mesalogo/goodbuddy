@@ -224,6 +224,8 @@ export const workspace = {
       ariaLabel: '工作栏应用',
       tablist: '已打开的工作栏应用',
       add: '打开工作栏应用',
+      scrollLeft: '向左滚动标签栏',
+      scrollRight: '向右滚动标签栏',
       close: '关闭{{title}}',
       catalogTitle: '新建工作栏应用',
       catalogDescription: '选择要在工作栏中打开的应用。',

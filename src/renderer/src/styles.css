@@ -3937,6 +3937,7 @@ button > svg {
 }
 
 .workbar-shell__tab-row {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 46px;
@@ -4127,8 +4128,31 @@ button > svg {
 }
 
 .workbar-shell__scroll-button {
-  flex: 0 0 28px;
-  margin-bottom: 5px;
+  position: absolute;
+  z-index: 2;
+  bottom: 5px;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) ease-out;
+}
+
+.workbar-shell__tab-row:hover .workbar-shell__scroll-button:not(:disabled),
+.workbar-shell__scroll-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workbar-shell__tab-row:hover .workbar-shell__scroll-button:disabled {
+  opacity: 0.4;
+}
+
+.workbar-shell__scroll-button:first-child {
+  left: 0;
+}
+
+.workbar-shell__scroll-button:last-child {
+  right: 0;
 }
 
 .workbar-shell__scroll-button:hover:not(:disabled) {
@@ -4137,8 +4161,19 @@ button > svg {
 }
 
 .workbar-shell__scroll-button:disabled {
-  opacity: 0.4;
   cursor: default;
+  pointer-events: none;
+}
+
+@media (hover: none) {
+  .workbar-shell__scroll-button:not(:disabled) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .workbar-shell__scroll-button:disabled {
+    opacity: 0.4;
+  }
 }
 
 .workbar-shell__content,

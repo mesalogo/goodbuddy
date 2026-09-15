@@ -230,6 +230,8 @@ export const workspace = {
       ariaLabel: 'Workbar applications',
       tablist: 'Open workbar applications',
       add: 'Open workbar application',
+      scrollLeft: 'Scroll tabs left',
+      scrollRight: 'Scroll tabs right',
       close: 'Close {{title}}',
       catalogTitle: 'New workbar application',
       catalogDescription: 'Choose an application to open in the workbar.',

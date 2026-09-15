@@ -11,6 +11,7 @@ export default tseslint.config(
       '.runtime-resources/**',
       'coverage/**',
       'dist/**',
+      'docs/**/*-demo.*',
       'node_modules/**',
       'out/**',
       'shareserver/**'

@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -23,7 +24,10 @@ import {
   type WorkbarInstanceCreateRequest
 } from './WorkbarShell'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 const terminalOne: WorkbarTabInstance = {
   id: '20000000-0000-4000-8000-000000000001',
@@ -82,6 +86,70 @@ function ControlledShell({
 }
 
 describe('WorkbarShell', () => {
+  it('shows overflow controls, scrolls without switching tabs, and hides them after widening', () => {
+    let resize = (): void => {}
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback }
+      observe(): void {}
+      disconnect(): void {}
+    })
+    render(<ControlledShell />)
+    expect(screen.queryByRole('button', { name: '向左滚动标签栏' })).toBeNull()
+    const list = screen.getByRole('tablist')
+    const strip = list.parentElement!
+    const scroll = strip.parentElement!
+    const row = scroll.parentElement!
+    let rowWidth = 340
+    let viewportWidth = 230
+    let left = 0
+    Object.defineProperty(row, 'clientWidth', { get: () => rowWidth })
+    Object.defineProperty(strip, 'scrollWidth', { get: () => 600 })
+    Object.defineProperty(scroll, 'scrollWidth', { get: () => 600 })
+    Object.defineProperty(scroll, 'clientWidth', { get: () => viewportWidth })
+    Object.defineProperty(scroll, 'scrollLeft', {
+      get: () => left,
+      set: (value: number) => { left = Math.max(0, Math.min(600 - viewportWidth, value)) }
+    })
+    act(() => resize())
+    const previous = screen.getByRole('button', { name: '向左滚动标签栏' })
+    const next = screen.getByRole('button', { name: '向右滚动标签栏' })
+    expect(previous).toBeDisabled()
+    expect(next).toBeEnabled()
+    fireEvent.click(next)
+    expect(left).toBe(184)
+    expect(previous).toBeEnabled()
+    fireEvent.click(next)
+    fireEvent.click(next)
+    expect(next).toBeDisabled()
+    expect(screen.getByRole('tab', { name: '任务中心' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(previous)
+    expect(left).toBe(186)
+    expect(next).toBeEnabled()
+    left = 0
+    fireEvent.scroll(scroll)
+    expect(previous).toBeDisabled()
+    const add = screen.getByRole('button', { name: '打开工作栏应用' })
+    expect(add.parentElement).toBe(strip)
+    expect(list.nextElementSibling).toBe(add)
+    expect(row.firstElementChild).toBe(previous)
+    expect(row.lastElementChild).toBe(next)
+    rowWidth = 800
+    viewportWidth = 600
+    act(() => resize())
+    expect(screen.queryByRole('button', { name: '向右滚动标签栏' })).toBeNull()
+  })
+
+  it('reveals an activated tab outside the scroll viewport', () => {
+    render(<ControlledShell />)
+    const scroll = screen.getByRole('tablist').parentElement!.parentElement!
+    const workspace = screen.getByRole('tab', { name: '工作区' })
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({ left: 20, right: 220 } as DOMRect)
+    vi.spyOn(workspace.parentElement!, 'getBoundingClientRect').mockReturnValue({ left: 200, right: 320 } as DOMRect)
+    fireEvent.click(workspace)
+    expect(scroll.scrollLeft).toBe(100)
+    expect(workspace).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('keeps tabs and their controls rounded', () => {
     expect(stylesheet).toMatch(
       /\.workbar-shell__tab-item\s*\{[^}]*border-radius:\s*var\(--radius-control\) var\(--radius-control\) 0 0;/u
@@ -114,7 +182,7 @@ describe('WorkbarShell', () => {
     expect(
       screen.getByRole('button', { name: '打开工作栏应用' })
     ).toBeVisible()
-    expect(tablist.parentElement).toHaveClass(
+    expect(tablist.parentElement!.parentElement).toHaveClass(
       'workbar-shell__tab-scroll'
     )
     expect(

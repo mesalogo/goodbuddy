@@ -1,4 +1,6 @@
 import {
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   FileOutput,
   FolderTree,
@@ -116,6 +118,14 @@ export function WorkbarShell({
   const { t } = useTranslation('workspace')
   const idPrefix = useId()
   const addButtonRef = useRef<HTMLButtonElement>(null)
+  const tabRowRef = useRef<HTMLDivElement>(null)
+  const tabScrollRef = useRef<HTMLDivElement>(null)
+  const tabListRef = useRef<HTMLDivElement>(null)
+  const [tabOverflow, setTabOverflow] = useState({
+    visible: false,
+    left: false,
+    right: false
+  })
   const catalogRef = useRef<HTMLDivElement>(null)
   const returnInstanceIdRef = useRef<string | null>(null)
   const pendingTabFocusRef = useRef<string | null | undefined>(undefined)
@@ -136,6 +146,59 @@ export function WorkbarShell({
   )
   const panelId = (instanceId: string): string =>
     `${idPrefix}-panel-${instanceId}`
+
+  const updateTabOverflow = useCallback(() => {
+    const row = tabRowRef.current
+    const scroll = tabScrollRef.current
+    const list = tabListRef.current
+    if (!row || !scroll || !list) return
+    const style = getComputedStyle(row)
+    // Measure without the arrows so their appearance cannot sustain overflow.
+    const available = row.clientWidth -
+      (parseFloat(style.paddingLeft) || 0) -
+      (parseFloat(style.paddingRight) || 0)
+    const next = {
+      visible: list.scrollWidth > available + 1,
+      left: scroll.scrollLeft > 1,
+      right: scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 1
+    }
+    setTabOverflow((current) =>
+      current.visible === next.visible && current.left === next.left &&
+      current.right === next.right ? current : next
+    )
+  }, [])
+
+  useEffect(() => {
+    const observer = new ResizeObserver(updateTabOverflow)
+    for (const element of [tabRowRef.current, tabScrollRef.current, tabListRef.current]) {
+      if (element) observer.observe(element)
+    }
+    updateTabOverflow()
+    return () => observer.disconnect()
+  }, [updateTabOverflow])
+
+  useEffect(() => {
+    const scroll = tabScrollRef.current
+    const tab = activeInstanceId && !catalogOpen
+      ? document.getElementById(tabId(activeInstanceId))?.parentElement
+      : null
+    if (scroll && tab) {
+      const viewport = scroll.getBoundingClientRect()
+      const bounds = tab.getBoundingClientRect()
+      const delta = bounds.left < viewport.left
+        ? bounds.left - viewport.left
+        : Math.max(0, bounds.right - viewport.right)
+      if (delta) scroll.scrollLeft += delta
+    }
+    updateTabOverflow()
+  }, [activeInstanceId, catalogOpen, unorderedInstances, tabId, tabOverflow.visible, updateTabOverflow])
+
+  const scrollTabs = (direction: number): void => {
+    const scroll = tabScrollRef.current
+    if (!scroll) return
+    scroll.scrollLeft += direction * scroll.clientWidth * 0.8
+    updateTabOverflow()
+  }
 
   useEffect(() => {
     if (!catalogOpen) {
@@ -327,8 +390,21 @@ export function WorkbarShell({
       aria-label={t('sidebar.workbar.ariaLabel')}
       className={joinClassNames('workbar-shell', className)}
     >
-      <div className="workbar-shell__tab-row">
-        <div className="workbar-shell__tab-scroll">
+      <div className="workbar-shell__tab-row" ref={tabRowRef}>
+        {tabOverflow.visible && (
+          <button
+            aria-label={t('sidebar.workbar.scrollLeft')}
+            title={t('sidebar.workbar.scrollLeft')}
+            className="workbar-shell__scroll-button"
+            disabled={!tabOverflow.left}
+            onClick={() => scrollTabs(-1)}
+            type="button"
+          >
+            <ChevronLeft aria-hidden="true" />
+          </button>
+        )}
+        <div className="workbar-shell__tab-scroll" ref={tabScrollRef} onScroll={updateTabOverflow}>
+          <div className="workbar-shell__tab-strip" ref={tabListRef}>
           <div
             aria-label={t('sidebar.workbar.tablist')}
             className="workbar-shell__tablist"
@@ -406,7 +482,6 @@ export function WorkbarShell({
               )
             })}
           </div>
-        </div>
         <button
           aria-expanded={catalogOpen}
           aria-label={t('sidebar.workbar.add')}
@@ -423,6 +498,20 @@ export function WorkbarShell({
         >
           <span aria-hidden="true">+</span>
         </button>
+          </div>
+        </div>
+        {tabOverflow.visible && (
+          <button
+            aria-label={t('sidebar.workbar.scrollRight')}
+            title={t('sidebar.workbar.scrollRight')}
+            className="workbar-shell__scroll-button"
+            disabled={!tabOverflow.right}
+            onClick={() => scrollTabs(1)}
+            type="button"
+          >
+            <ChevronRight aria-hidden="true" />
+          </button>
+        )}
       </div>
 
       <div className="workbar-shell__content">
