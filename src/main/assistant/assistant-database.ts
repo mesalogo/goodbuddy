@@ -9,6 +9,7 @@ import {
   conversationAnsweredQuestionSchema,
   conversationMessageSchema,
   conversationSnapshotSchema,
+  conversationSetPinnedSchema,
   expertCreateSchema,
   normalizeInteractiveWorkMode,
   persistedProjectExecutionSpaceSchema,
@@ -34,6 +35,7 @@ import type {
   ConversationToolActivity,
   ConversationMessage,
   ConversationSnapshot,
+  ConversationSetPinnedInput,
   ExpertCreateInput,
   ExpertUpdateInput,
   HeartbeatCreateInput,
@@ -102,7 +104,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 36
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -209,6 +211,7 @@ type ConversationRow = {
   account_display: string | null
   branch_source_conversation_id: string | null
   branch_source_title: string | null
+  pinned: number
   updated_at: string
 }
 
@@ -1149,6 +1152,7 @@ function toConversationSnapshot(
         }
       : {}),
     title: conversation.title,
+    pinned: conversation.pinned === 1,
     updatedAt: Date.parse(conversation.updated_at),
     // Startup recovery is the only authority for interruption: it persists
     // the terminal state once. Deriving it while reading would also hit
@@ -2634,7 +2638,7 @@ export class AssistantDatabase {
                 external_account_id, external_conversation_id,
                 conversation_type, account_display,
                 branch_source_conversation_id, branch_source_title,
-                updated_at
+                pinned, updated_at
          FROM conversations
          WHERE status = 'active'
            AND (
@@ -2642,11 +2646,12 @@ export class AssistantDatabase {
                     ORDER BY updated_at DESC LIMIT 100)
              OR id IN (SELECT conversation_id FROM (${activeVisibleTaskSelect}))
              OR id IN (SELECT value FROM json_each(?))
+             OR pinned = 1
              OR EXISTS (SELECT 1 FROM messages
                         WHERE conversation_id = conversations.id
                           AND state = 'streaming')
            )
-         ORDER BY updated_at DESC`
+         ORDER BY pinned DESC, updated_at DESC`
       )
       .all(JSON.stringify([...extraIds])) as ConversationRow[]
   }
@@ -2715,7 +2720,7 @@ export class AssistantDatabase {
                 external_account_id, external_conversation_id,
                 conversation_type, account_display,
                 branch_source_conversation_id, branch_source_title,
-                updated_at
+                pinned, updated_at
          FROM conversations
          WHERE id = ? AND status = 'active'`
       )
@@ -2738,6 +2743,16 @@ export class AssistantDatabase {
       )
       .all(conversationId) as MessageRow[]
     return toConversationSnapshot(conversation, messages)
+  }
+
+  setConversationPinned(input: ConversationSetPinnedInput): void {
+    const { conversationId, pinned } = conversationSetPinnedSchema.parse(input)
+    const result = this.requireDatabase().prepare(
+      `UPDATE conversations SET pinned = ? WHERE id = ? AND status = 'active'`
+    ).run(pinned ? 1 : 0, conversationId)
+    if (result.changes !== 1) {
+      throw new Error('对话不存在')
+    }
   }
 
   repairConversationRuntimeSelections(
@@ -9915,6 +9930,20 @@ export class AssistantDatabase {
     if (version.user_version < SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION) {
       // Startup's worker has already compacted full and schema-34 delta events.
       database.exec(`PRAGMA user_version = ${SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION}`)
+    }
+    if (version.user_version < 36) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(`
+          ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0
+            CHECK(pinned IN (0, 1));
+          PRAGMA user_version = 36;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
     }
   }
 

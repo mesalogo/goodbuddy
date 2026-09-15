@@ -553,6 +553,8 @@ export const conversationSnapshotSchema = z
       .optional(),
     branch: conversationBranchSchema.optional(),
     title: z.string().trim().min(1).max(200),
+    // Absent in older snapshots means unpinned; written only via setPinned.
+    pinned: z.boolean().optional(),
     updatedAt: z.number().int().nonnegative(),
     // Main-only live projection. Never part of a saved conversation header.
     activeRequest: z.object({
@@ -583,6 +585,15 @@ export const conversationSearchRequestSchema = z.object({
   conversationIds: z.array(assistantIdSchema).default([])
 }).strict()
 
+export const conversationSetPinnedSchema = z.object({
+  conversationId: assistantIdSchema,
+  pinned: z.boolean()
+}).strict()
+
+export type ConversationSetPinnedInput = z.infer<
+  typeof conversationSetPinnedSchema
+>
+
 export const conversationSnapshotsSchema = z
   .array(conversationSnapshotSchema)
   .max(100)
@@ -590,6 +601,7 @@ export const conversationSnapshotsSchema = z
 export const localConversationHeaderSchema = conversationSnapshotSchema
   .omit({
     messages: true,
+    pinned: true,
     remote: true,
     activeRequest: true
   })

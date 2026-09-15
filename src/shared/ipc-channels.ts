@@ -190,6 +190,7 @@ export const ipcChannels = {
   conversationsSearch: 'conversations:search',
   conversationsReplace: 'conversations:replace',
   conversationsSaveLocal: 'conversations:save-local',
+  conversationsSetPinned: 'conversations:set-pinned',
   conversationsBranchLocal: 'conversations:branch-local',
   conversationsDeleteLocal: 'conversations:delete-local',
   conversationsChanged: 'conversations:changed',

@@ -28,6 +28,8 @@ import {
   MoreHorizontal,
   Paperclip,
   PanelLeft,
+  Pin,
+  PinOff,
   Search,
   Send,
   Settings,
@@ -1510,7 +1512,7 @@ function mergePersistedConversations(
         local.messages.some(message => message.approval || message.pendingQuestions?.length || message.state === "streaming") ||
         (!local.messageSummary && retainDetails.has(conversation.id)));
       const next = local && local.updatedAt > conversation.updatedAt
-        ? { ...local, messageSummary: conversation.messageSummary, messages: [] }
+        ? { ...local, pinned: conversation.pinned, messageSummary: conversation.messageSummary, messages: [] }
         : conversation;
       if (keepMessages) {
         // A list reply started before navigation must not unload the newly
@@ -1563,7 +1565,7 @@ function mergePersistedConversations(
       ...local.messages.filter((message) => !serverMessageIds.has(message.id)),
     ];
     const next = localIsNewer
-      ? { ...local, messages, messageSummary: undefined, activeRequest: conversation.activeRequest }
+      ? { ...local, pinned: conversation.pinned, messages, messageSummary: undefined, activeRequest: conversation.activeRequest }
       : { ...conversation, messages };
     persistedLocal.set(conversation.id, conversation);
     return withRecoveredQuestions(next);
@@ -1573,7 +1575,7 @@ function mergePersistedConversations(
       merged.push(conversation);
     }
   }
-  return merged.sort((left, right) => right.updatedAt - left.updatedAt);
+  return merged.sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt - left.updatedAt);
 }
 
 function getProjectDefaultRuntimeSelection(
@@ -2559,7 +2561,14 @@ function App(): React.JSX.Element {
   const [conversationLoadError, setConversationLoadError] = useState<string>();
   const [conversationLoadRetry, setConversationLoadRetry] = useState(0);
   const [conversationActionsId, setConversationActionsId] = useState("");
+  const [pinningConversationId, setPinningConversationId] = useState("");
+  const conversationPinRevisionRef = useRef(0);
+  const conversationPinPendingRef = useRef(false);
   const [confirmingConversationId, setConfirmingConversationId] = useState("");
+  if (!sidebarOpen && (conversationActionsId || confirmingConversationId)) {
+    setConversationActionsId("");
+    setConfirmingConversationId("");
+  }
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [branchingConversationId, setBranchingConversationId] = useState("");
   const [renamingConversationId, setRenamingConversationId] = useState("");
@@ -2723,6 +2732,39 @@ function App(): React.JSX.Element {
   const conversationActionTriggerRefs = useRef(
     new Map<string, HTMLButtonElement>(),
   );
+  const conversationActionsRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const surface = conversationActionsRef.current;
+    const trigger = conversationActionTriggerRefs.current.get(conversationActionsId);
+    if (!surface || !trigger) return;
+    const position = (): void => {
+      const anchor = trigger.getBoundingClientRect();
+      const bounds = surface.getBoundingClientRect();
+      surface.style.left = `${Math.max(8, Math.min(anchor.right - bounds.width, window.innerWidth - bounds.width - 8))}px`;
+      surface.style.top = `${Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - bounds.height - 8))}px`;
+    };
+    position();
+    surface.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+    const dismiss = (event: Event): void => {
+      if (event.target instanceof Node && !surface.contains(event.target) && !trigger.contains(event.target)) {
+        setConversationActionsId("");
+        setConfirmingConversationId("");
+      }
+    };
+    const resizeObserver = new ResizeObserver(position);
+    resizeObserver.observe(surface);
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("focusin", dismiss);
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    return () => {
+      resizeObserver.disconnect();
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("focusin", dismiss);
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, true);
+    };
+  }, [conversationActionsId]);
   const handleChatScrollSnapshotChange = useCallback(
     (conversationId: string, snapshot: ChatScrollSnapshot): void => {
       setChatScrollSnapshots((current) => ({
@@ -3827,7 +3869,7 @@ function App(): React.JSX.Element {
           (persistedSearchMatches.query === query && persistedSearchMatches.ids.has(conversation.id)) ||
           conversation.title.toLocaleLowerCase().includes(query) ||
           (localSearchMatches.query === query && localSearchMatches.ids.has(conversation.id))),
-    );
+    ).sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt - left.updatedAt);
   }, [
     activeProject,
     activeProjectId,
@@ -5129,12 +5171,16 @@ function App(): React.JSX.Element {
     if (!current.messageSummary) return Promise.resolve(current);
     const pending = conversationHistoryRequests.current.get(conversationId);
     if (pending) return pending;
+    const pinRevision = conversationPinRevisionRef.current;
     const request = window.goodbuddy.conversations.get(conversationId).then(snapshot => {
       const latest = conversationsRef.current.find(item => item.id === conversationId);
       if (!latest || deletingLocalConversationIdsRef.current.has(conversationId)) {
         throw new Error(tRef.current("notices.remoteConversationRefreshFailed"));
       }
       if (!latest.messageSummary) return latest;
+      if (pinRevision !== conversationPinRevisionRef.current || conversationPinPendingRef.current) {
+        snapshot = { ...snapshot, pinned: latest.pinned };
+      }
       const next = mergePersistedConversations(
         conversationsRef.current, [snapshot], persistedLocalConversationsRef.current,
         retainedConversationDetailIds(),
@@ -5274,6 +5320,7 @@ function App(): React.JSX.Element {
       refreshInFlight = true;
       refreshQueued = false;
       const sequence = refreshSequence;
+      const pinRevision = conversationPinRevisionRef.current;
       const tasksRefresh = window.goodbuddy.tasks
         .list()
         .then((tasks) => {
@@ -5319,6 +5366,14 @@ function App(): React.JSX.Element {
         .then((persisted) => {
           if (!active || sequence !== refreshSequence) {
             return;
+          }
+          if (pinRevision !== conversationPinRevisionRef.current) {
+            queueRefresh();
+            return;
+          }
+          if (conversationPinPendingRef.current) {
+            const currentPins = new Map(conversationsRef.current.map(item => [item.id, item.pinned]));
+            persisted = persisted.map(item => ({ ...item, pinned: currentPins.has(item.id) ? currentPins.get(item.id) : item.pinned }));
           }
           const remote = persisted.filter(
             (conversation) => conversation.remote,
@@ -6673,6 +6728,38 @@ function App(): React.JSX.Element {
           : task,
       ),
     );
+  };
+
+  const setConversationPinned = async (conversation: Conversation): Promise<void> => {
+    if (conversationPinPendingRef.current || !conversationStoreReady) return;
+    conversationPinPendingRef.current = true;
+    conversationPinRevisionRef.current += 1;
+    setPinningConversationId(conversation.id);
+    try {
+      if (!conversation.remote) {
+        await conversationPersistenceQueueRef.current;
+        if (!persistedLocalConversationsRef.current.has(conversation.id)) {
+          const draft = conversationsRef.current.find(item => item.id === conversation.id);
+          if (!draft) return;
+          await window.goodbuddy.conversations.saveLocal([{
+            header: toLocalConversationHeader(draft),
+            messages: draft.messages.map(toConversationMessage),
+          }]);
+          persistedLocalConversationsRef.current.set(draft.id, draft);
+        }
+      }
+      const pinned = !conversation.pinned;
+      await window.goodbuddy.conversations.setPinned({ conversationId: conversation.id, pinned });
+      const next = conversationsRef.current.map(item => item.id === conversation.id ? { ...item, pinned } : item);
+      conversationsRef.current = next;
+      setConversations(next);
+    } catch {
+      notify({ tone: "error", message: t("notices.conversationPinFailed") });
+    } finally {
+      conversationPinPendingRef.current = false;
+      conversationPinRevisionRef.current += 1;
+      setPinningConversationId("");
+    }
   };
 
   const deleteConversation = async (conversationId: string): Promise<void> => {
@@ -8855,6 +8942,7 @@ function App(): React.JSX.Element {
                       }}
                     >
                       <span className="conversation-item__primary">
+                        {conversation.pinned && <Pin className="conversation-pin" size={13} role="img" aria-label={t("conversation.actions.pinned")}><title>{t("conversation.actions.pinned")}</title></Pin>}
                         {branchSourceTitle && (
                           <ConversationBranchBadge
                             sourceTitle={branchSourceTitle}
@@ -8908,6 +8996,7 @@ function App(): React.JSX.Element {
                     )}
                     <button
                       aria-controls={`conversation-actions-${conversation.id}`}
+                      aria-haspopup="menu"
                       aria-expanded={conversationActionsId === conversation.id}
                       aria-label={t("conversation.actions.more", {
                         title: conversationTitle,
@@ -8937,17 +9026,45 @@ function App(): React.JSX.Element {
                       <MoreHorizontal size={14} />
                     </button>
                   </div>
-                  {conversationActionsId === conversation.id && (
+                  {sidebarOpen && conversationActionsId === conversation.id && createPortal(
                     <div
+                      ref={conversationActionsRef}
+                      role="menu"
+                      onKeyDown={(event) => {
+                        if (event.defaultPrevented) return;
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setConversationActionsId("");
+                          setConfirmingConversationId("");
+                          focusConversationActions(conversation.id);
+                          return;
+                        }
+                        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+                        event.preventDefault();
+                        const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([aria-disabled="true"])'));
+                        const index = items.indexOf(document.activeElement as HTMLButtonElement);
+                        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+                        items[next]?.focus();
+                      }}
                       aria-label={t("conversation.actions.region", {
                         title: conversationTitle,
                       })}
                       className="conversation-actions"
                       id={`conversation-actions-${conversation.id}`}
                     >
+                      <button role="menuitem" type="button" disabled={!conversationStoreReady || Boolean(pinningConversationId)} onClick={() => {
+                        setConversationActionsId("");
+                        focusConversationActions(conversation.id);
+                        void setConversationPinned(conversation);
+                      }}>
+                        {conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                        {t(conversation.pinned ? "conversation.actions.unpin" : "conversation.actions.pin")}
+                      </button>
                       {!conversation.remote && (
                         <>
                           <button
+                            role="menuitem"
                             aria-describedby={
                               branchDisabledReason
                                 ? branchDisabledReasonId
@@ -8991,6 +9108,7 @@ function App(): React.JSX.Element {
                       )}
                       {!conversation.remote && (
                         <button
+                          role="menuitem"
                           onClick={() => {
                             setConversationActionsId("");
                             setRenamingConversationId(conversation.id);
@@ -9002,6 +9120,7 @@ function App(): React.JSX.Element {
                         </button>
                       )}
                       <button
+                        role="menuitem"
                         onClick={() => {
                           setConversationActionsId("");
                           void copyConversation(conversation).finally(() =>
@@ -9014,6 +9133,7 @@ function App(): React.JSX.Element {
                         {t("conversation.actions.copy")}
                       </button>
                       <button
+                        role="menuitem"
                         onClick={() => {
                           setConversationActionsId("");
                           exportConversation(conversation);
@@ -9026,6 +9146,7 @@ function App(): React.JSX.Element {
                       </button>
                       {!conversation.remote && (
                         <DestructiveConfirmActions
+                          triggerRole="menuitem"
                           cancelAriaLabel={t("conversation.delete.cancelAria", {
                             title: conversationTitle,
                           })}
@@ -9058,7 +9179,7 @@ function App(): React.JSX.Element {
                           triggerLabel={t("conversation.delete.trigger")}
                         />
                       )}
-                    </div>
+                    </div>, document.body
                   )}
                   {!conversation.remote &&
                     renamingConversationId === conversation.id && (

@@ -425,9 +425,10 @@ resourceMonitor.getLocalSnapshot(input: {
 - `AssistantDatabase.listTasks()` 保留最近历史窗口（默认 100 条），额外包含窗口外当前
   运行或等待处理的可见 Task；`activeVisibleTaskSelect` 与 `toTask` 的有效状态保持一致，
   待调度运行规范化为 `queued`，不因旧 Task 状态被误纳入实时集合。
-- `listConversations()` 保留最近 100 条活动会话，同时包含上述 Task 关联的较早活动会话，
-  以及含 `streaming` 消息的较早活动会话。两类列表去重后仍按原时间顺序返回，结果允许超过
-  历史窗口大小，避免后台工作被最近记录挤出。
+- `listConversations()` 的范围与排序遵守
+  [会话列表读取与前端保留](../assistant-workbar/execution-history-storage.md#会话列表读取与前端保留)，
+  包含上述 Task 关联及含 `streaming` 消息的较早活动会话，避免后台工作被最近记录挤出。
+  `listTasks()` 仍按原时间顺序返回；列表结果允许超过历史窗口大小。
 - `openActivityConversation` 按确切 Conversation ID 导航；内存中缺失时刷新持久化会话
   列表并合并，再查找同一 ID。刷新失败或会话已不存在时显示通知，不回退到项目最新会话。
   设置离开检查通过后才提交项目、会话及界面清理状态。

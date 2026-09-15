@@ -112,6 +112,9 @@ export const app = {
       region: 'Conversation actions for {{title}}',
       branch: 'Continue in a new conversation',
       rename: 'Rename conversation',
+      pin: 'Pin conversation',
+      unpin: 'Unpin conversation',
+      pinned: 'Pinned',
       copy: 'Copy full conversation',
       export: 'Export Markdown'
     },
@@ -694,6 +697,7 @@ export const app = {
       'Failed to resume this conversation’s send queue',
     conversationPersistenceFailed:
       'Failed to save conversations. Check local storage.',
+    conversationPinFailed: 'Could not update the conversation pin. Please try again.',
     activityHistoryPersistenceFailed:
       'Failed to save run history. Check local storage.',
     activityHistoryReadFailed: 'Failed to read run history',

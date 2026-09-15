@@ -1088,6 +1088,9 @@ const desktopApi: DesktopApi = {
         batch
       )
     },
+    setPinned: async (input) => {
+      await ipcRenderer.invoke(ipcChannels.conversationsSetPinned, input)
+    },
     branchLocal: (input: ConversationBranchInput) =>
       ipcRenderer.invoke(
         ipcChannels.conversationsBranchLocal,

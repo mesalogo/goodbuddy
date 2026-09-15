@@ -496,6 +496,7 @@ const api: DesktopApi = {
     search: vi.fn(async () => []),
     replace: vi.fn(async () => {}),
     saveLocal: vi.fn(async () => {}),
+    setPinned: vi.fn(async () => {}),
     branchLocal: vi.fn(async (input) => ({
       id: crypto.randomUUID(),
       branch: {
@@ -1091,6 +1092,7 @@ describe("App", () => {
         };
       });
     vi.mocked(api.conversations.list).mockReset().mockResolvedValue([]);
+    vi.mocked(api.conversations.setPinned).mockReset().mockResolvedValue();
     const conversationFixtures = new Map<string, Awaited<ReturnType<DesktopApi["conversations"]["get"]>>>();
     vi.mocked(api.conversations.listSummaries).mockReset()
       .mockImplementation(async () => {
@@ -1349,7 +1351,7 @@ describe("App", () => {
         fireEvent.click(screen.getByRole("button", { name: "切换侧栏" }));
         await waitFor(() => expect(sidebar.querySelector(".conversation-more")).toBeInTheDocument());
         fireEvent.click(sidebar.querySelector<HTMLButtonElement>(".conversation-more")!);
-        expect(sidebar.querySelector(".conversation-actions")).toBeInTheDocument();
+        expect(screen.getByRole("menu")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
         fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
         fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
@@ -1365,7 +1367,7 @@ describe("App", () => {
           .toHaveClass("conversation-item--active");
         expect(screen.queryByRole("menu")).not.toBeInTheDocument();
         selectProjectOption(project.name);
-        expect(sidebar.querySelector(".conversation-actions")).not.toBeInTheDocument();
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       } finally {
         Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
       }
@@ -1626,11 +1628,11 @@ describe("App", () => {
     vi.mocked(api.conversations.get).mockResolvedValue(second);
     render(<App />);
     fireEvent.click(await screen.findByLabelText("更多会话操作 Copy unopened"));
-    fireEvent.click(screen.getByRole("button", { name: "复制完整会话" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制完整会话" }));
     await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("All retained text")));
     expect(api.conversations.get).toHaveBeenCalledExactlyOnceWith(second.id);
     fireEvent.click(screen.getByLabelText("更多会话操作 Copy unopened"));
-    fireEvent.click(screen.getByRole("button", { name: "复制完整会话" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制完整会话" }));
     await waitFor(() => expect(api.conversations.get).toHaveBeenCalledTimes(2));
     expect(screen.queryByText("All retained text")).not.toBeInTheDocument();
   });
@@ -3114,7 +3116,145 @@ describe("App", () => {
     expect(await screen.findByDisplayValue("本地语音结果")).toBeInTheDocument();
   });
 
-  it("keeps conversation actions in the conversation list", async () => {
+  it("clamps the conversation portal and supports keyboard and outside dismissal", async () => {
+    render(<App />);
+    const trigger = await screen.findByLabelText("更多会话操作 新对话");
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({ right: 5000, bottom: 5000 } as DOMRect);
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    expect(menu.parentElement).toBe(document.body);
+    expect(parseFloat(menu.style.left)).toBeLessThanOrEqual(window.innerWidth - 8);
+    expect(parseFloat(menu.style.top)).toBeLessThanOrEqual(window.innerHeight - 8);
+    expect(within(menu).getByRole("menuitem", { name: "置顶会话" })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "End" });
+    expect(within(menu).getByRole("menuitem", { name: "删除对话 新对话" })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Home" });
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(within(menu).getByRole("menuitem", { name: "在新会话中继续" })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    act(() => screen.getByLabelText("向 GoodBuddy 提问").focus());
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("dismisses the conversation portal and delete confirmation when resizing closes the sidebar", async () => {
+    const originalWidth = window.innerWidth;
+    const { container } = render(<App />);
+    const trigger = await screen.findByLabelText("更多会话操作 新对话");
+    fireEvent.click(trigger);
+    const menu = screen.getByRole("menu");
+    expect(menu.parentElement).toBe(document.body);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "删除对话 新对话" }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    try {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 899 });
+      fireEvent(window, new Event("resize"));
+      expect(container.querySelector(".sidebar")).toHaveAttribute("inert");
+      expect(menu).not.toBeInTheDocument();
+      expect(screen.queryByRole("alertdialog", { hidden: true })).not.toBeInTheDocument();
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+      fireEvent.click(screen.getByRole("button", { name: "切换侧栏" }));
+      expect(screen.queryByRole("menu", { hidden: true })).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: "对话" })).toHaveFocus());
+      fireEvent.click(trigger);
+      expect(screen.getByRole("menuitem", { name: "删除对话 新对话" })).toBeVisible();
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(api.conversations.deleteLocal).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
+  });
+
+  it("persists a draft before pinning and reports pin failures without changing its state", async () => {
+    vi.mocked(api.conversations.list).mockResolvedValue([{ id: "saved", projectId, title: "Saved discussion", updatedAt: 100, messages: [] }]);
+    const { container } = render(<App />);
+    await screen.findByLabelText("更多会话操作 Saved discussion");
+    fireEvent.click(container.querySelector(".new-chat")!);
+    await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveFocus());
+    const trigger = await screen.findByLabelText("更多会话操作 新对话");
+    fireEvent.click(trigger);
+    const pin = screen.getByRole("menuitem", { name: "置顶会话" });
+    await waitFor(() => expect(pin).toBeEnabled());
+    let persistedBeforePin = false;
+    vi.mocked(api.conversations.setPinned).mockImplementationOnce(async ({ conversationId }) => {
+      persistedBeforePin = vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch)
+        .some(entry => entry.header.id === conversationId);
+    });
+    fireEvent.click(pin);
+    await waitFor(() => expect(api.conversations.setPinned).toHaveBeenCalledOnce());
+    expect(persistedBeforePin).toBe(true);
+    expect(await screen.findByRole("img", { name: "已置顶" })).toBeVisible();
+    expect(api.conversations.setPinned).toHaveBeenCalledWith({ conversationId: expect.any(String), pinned: true });
+    vi.mocked(api.conversations.setPinned).mockRejectedValueOnce(new Error("storage failed"));
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "取消置顶" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("无法更新会话置顶状态，请重试");
+    expect(screen.getByRole("img", { name: "已置顶" })).toBeVisible();
+  });
+
+  it("sorts pinned conversations first and ignores a refresh started before unpinning", async () => {
+    const snapshots: ConversationSnapshot[] = [
+      { id: "pin-new", projectId, title: "Newer discussion", updatedAt: 300, messages: [] },
+      { id: "pin-old", projectId, title: "Pinned discussion", updatedAt: 100, pinned: true, messages: [] },
+    ];
+    vi.mocked(api.conversations.list).mockResolvedValue(snapshots);
+    const { container } = render(<App />);
+    await screen.findByLabelText("更多会话操作 Pinned discussion");
+    const titles = (): string[] => Array.from(container.querySelectorAll(".conversation-item__title")).map(item => item.textContent!);
+    expect(titles()).toEqual(["Pinned discussion", "Newer discussion"]);
+    let resolveRefresh!: (value: ConversationSnapshot[]) => void;
+    vi.mocked(api.conversations.listSummaries).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(resolveRefresh).toBeDefined());
+    fireEvent.click(screen.getByLabelText("更多会话操作 Pinned discussion"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "取消置顶" }));
+    await waitFor(() => expect(titles()).toEqual(["Newer discussion", "Pinned discussion"]));
+    vi.mocked(api.conversations.list).mockResolvedValue(snapshots.map(item => ({ ...item, pinned: false })));
+    await act(async () => resolveRefresh(snapshots));
+    await waitFor(() => expect(api.conversations.listSummaries).toHaveBeenCalledTimes(3));
+    expect(titles()).toEqual(["Newer discussion", "Pinned discussion"]);
+    expect(screen.queryByRole("img", { name: "已置顶" })).not.toBeInTheDocument();
+  });
+
+  it("uses the dedicated pin update for channel conversations", async () => {
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: "pin-channel", projectId, title: "Channel discussion", updatedAt: 100, messages: [],
+      remote: { channel: "weixin", accountDisplay: "Channel account", conversationType: "direct" },
+    }]);
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText("更多会话操作 Channel discussion"));
+    expect(screen.queryByRole("menuitem", { name: "重命名会话" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "置顶会话" }));
+    await waitFor(() => expect(api.conversations.setPinned).toHaveBeenCalledWith({ conversationId: "pin-channel", pinned: true }));
+    expect(api.conversations.saveLocal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("img", { name: "已置顶" })).toBeVisible();
+  });
+
+  it.each([false, true])("merges persisted pin metadata into a newer local conversation (summary: %s)", async (summary) => {
+    const snapshot: ConversationSnapshot = { id: "pin-merge", projectId, title: "Original discussion", updatedAt: 100, messages: [] };
+    vi.mocked(api.conversations.list).mockResolvedValue([snapshot]);
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText("更多会话操作 Original discussion"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "重命名会话" }));
+    const input = screen.getByLabelText("重命名会话 Original discussion");
+    fireEvent.change(input, { target: { value: "Locally renamed" } });
+    fireEvent.submit(input.closest("form")!);
+    vi.mocked(api.conversations.listSummaries).mockResolvedValue([{
+      ...snapshot, pinned: true, ...(summary ? { messageSummary: { count: 0 } } : {}),
+    }]);
+    fireEvent(window, new Event("focus"));
+    expect(await screen.findByRole("img", { name: "已置顶" })).toBeVisible();
+    expect(screen.getByLabelText("更多会话操作 Locally renamed")).toBeInTheDocument();
+  });
+
+  it("anchors conversation actions in a body portal and preserves rename and copy", async () => {
     const { container } = render(<App />);
     const topbar = container.querySelector<HTMLElement>(".topbar");
     const conversationList =
@@ -3152,17 +3292,20 @@ describe("App", () => {
     const conversationMenuTrigger =
       within(conversationList).getByLabelText("更多会话操作 新对话");
     fireEvent.click(conversationMenuTrigger);
-    const renameButton = within(conversationList).getByRole("button", {
+    const menu = screen.getByRole("menu");
+    expect(menu.parentElement).toBe(document.body);
+    expect(conversationList).not.toContainElement(menu);
+    const renameButton = within(menu).getByRole("menuitem", {
       name: "重命名会话",
     });
     expect(renameButton).toBeVisible();
     expect(
-      within(conversationList).getByRole("button", {
+      within(menu).getByRole("menuitem", {
         name: "复制完整会话",
       }),
     ).toBeVisible();
     expect(
-      within(conversationList).getByRole("button", {
+      within(menu).getByRole("menuitem", {
         name: "导出 Markdown",
       }),
     ).toBeVisible();
@@ -3184,7 +3327,7 @@ describe("App", () => {
       within(conversationList).getByLabelText("更多会话操作 重命名后的会话"),
     );
     fireEvent.click(
-      within(conversationList).getByRole("button", {
+      screen.getByRole("menuitem", {
         name: "复制完整会话",
       }),
     );
@@ -3271,7 +3414,7 @@ describe("App", () => {
     expect(await screen.findByText("探索不同发布方案")).toBeInTheDocument();
 
     fireEvent.click(await screen.findByLabelText("更多会话操作 方案讨论"));
-    fireEvent.click(screen.getByRole("button", { name: "重命名会话" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "重命名会话" }));
     const renameInput = screen.getByLabelText("重命名会话 方案讨论");
     fireEvent.change(renameInput, {
       target: { value: "方案讨论更新" },
@@ -3281,7 +3424,7 @@ describe("App", () => {
     vi.mocked(api.conversations.saveLocal).mockClear();
 
     fireEvent.click(screen.getByLabelText("更多会话操作 方案讨论更新"));
-    const branchButton = screen.getByRole("button", {
+    const branchButton = screen.getByRole("menuitem", {
       name: "在新会话中继续",
     });
     await waitFor(() => expect(branchButton).toBeEnabled());
@@ -3357,7 +3500,7 @@ describe("App", () => {
     const actionTrigger =
       await screen.findByLabelText("更多会话操作 保留的来源会话");
     fireEvent.click(actionTrigger);
-    const branchButton = screen.getByRole("button", {
+    const branchButton = screen.getByRole("menuitem", {
       name: "在新会话中继续",
     });
     await waitFor(() => expect(branchButton).toBeEnabled());
@@ -3408,7 +3551,7 @@ describe("App", () => {
     fireEvent.click(
       await screen.findByLabelText("更多会话操作 等待队列的会话"),
     );
-    const branchButton = screen.getByRole("button", {
+    const branchButton = screen.getByRole("menuitem", {
       name: "在新会话中继续",
     });
     await waitFor(() =>
@@ -3850,7 +3993,7 @@ describe("App", () => {
     render(<App />);
     const menuTrigger = screen.getByLabelText("更多会话操作 新对话");
     fireEvent.click(menuTrigger);
-    const deleteTrigger = screen.getByRole("button", {
+    const deleteTrigger = screen.getByRole("menuitem", {
       name: "删除对话 新对话",
     });
     fireEvent.click(deleteTrigger);
@@ -3873,7 +4016,7 @@ describe("App", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "删除对话 新对话" }),
+        screen.getByRole("menuitem", { name: "删除对话 新对话" }),
       ).toHaveFocus(),
     );
     expect(
@@ -3882,7 +4025,7 @@ describe("App", () => {
       }),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "删除对话 新对话" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "删除对话 新对话" }));
     fireEvent.click(
       screen.getByRole("button", {
         name: "确认永久删除对话 新对话",
@@ -3926,7 +4069,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByLabelText(`更多会话操作 ${title}`));
-    fireEvent.click(screen.getByRole("button", { name: `删除对话 ${title}` }));
+    fireEvent.click(screen.getByRole("menuitem", { name: `删除对话 ${title}` }));
     fireEvent.click(
       screen.getByRole("button", {
         name: `确认永久删除对话 ${title}`,
@@ -3966,7 +4109,7 @@ describe("App", () => {
     await waitFor(() => expect(run).toHaveBeenCalledOnce());
 
     fireEvent.click(await screen.findByLabelText(`更多会话操作 ${title}`));
-    fireEvent.click(screen.getByRole("button", { name: `删除对话 ${title}` }));
+    fireEvent.click(screen.getByRole("menuitem", { name: `删除对话 ${title}` }));
     const confirm = screen.getByRole("button", {
       name: `确认永久删除对话 ${title}`,
     });

@@ -317,7 +317,8 @@ describe('subagent progress storage', () => {
     const legacy = new DatabaseSync(path)
     const expected: SubagentEvent[] = []
     try {
-      legacy.exec(`PRAGMA user_version = ${sourceVersion}; BEGIN`)
+      legacy.exec(`ALTER TABLE conversations DROP COLUMN pinned;
+        PRAGMA user_version = ${sourceVersion}; BEGIN`)
       const insert = legacy.prepare(
         `INSERT INTO task_events(
           task_id, kind, payload_json, created_at, remote_binding_id,

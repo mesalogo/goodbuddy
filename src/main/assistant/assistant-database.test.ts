@@ -8,6 +8,8 @@ import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
   conversationSnapshotSchema,
+  conversationSetPinnedSchema,
+  localConversationHeaderSchema,
   isUntouchedBuiltInDefaultProject
 } from '../../shared/assistant-contracts'
 import {
@@ -18,6 +20,95 @@ import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contrac
 import type { ImageOperation } from '../../shared/image-generation-contracts'
 
 const temporaryDirectories: string[] = []
+
+it('persists conversation pins without changing timestamps or allowing autosaves to overwrite them', async () => {
+  const database = await createDatabase()
+  const header = { id: randomUUID(), title: 'Pinned conversation', updatedAt: 1000 }
+  const message = { id: randomUUID(), role: 'user' as const, content: 'Keep me', state: 'complete' as const, createdAt: 900 }
+  try {
+    database.saveLocalConversations([{ header, messages: [message] }])
+    const original = database.getConversation(header.id)
+    expect(original.pinned).toBe(false)
+    expect(conversationSnapshotSchema.parse({ ...header, messages: [] }).pinned).toBeUndefined()
+    expect(localConversationHeaderSchema.safeParse({ ...header, pinned: false }).success).toBe(false)
+    expect(conversationSetPinnedSchema.safeParse({ conversationId: header.id, pinned: 'true' }).success).toBe(false)
+    expect(conversationSetPinnedSchema.safeParse({ conversationId: header.id, pinned: true, updatedAt: 2000 }).success).toBe(false)
+
+    database.setConversationPinned({ conversationId: header.id, pinned: true })
+    database.setConversationPinned({ conversationId: header.id, pinned: true })
+    // Even a stale snapshot passed directly to storage cannot overwrite the pin.
+    database.saveLocalConversations([{ header: { ...header, ...{ pinned: false } }, messages: [message] }])
+    expect(database.getConversation(header.id)).toEqual({ ...original, pinned: true })
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.getConversation(header.id)).toEqual({ ...original, pinned: true })
+    database.setConversationPinned({ conversationId: header.id, pinned: false })
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.getConversation(header.id)).toEqual(original)
+    expect(() => database.setConversationPinned({ conversationId: randomUUID(), pinned: true })).toThrow('对话不存在')
+  } finally {
+    database.close()
+  }
+})
+
+it('includes older pinned conversations beyond the recent 100 and sorts pins by update time', async () => {
+  const database = await createDatabase()
+  const headers = Array.from({ length: 103 }, (_, index) => ({
+    id: randomUUID(), title: `Conversation ${index}`, updatedAt: 1000 + index
+  }))
+  try {
+    database.saveLocalConversations(headers.map(header => ({ header, messages: [] })))
+    database.setConversationPinned({ conversationId: headers[0]!.id, pinned: true })
+    database.setConversationPinned({ conversationId: headers[1]!.id, pinned: true })
+    const expectedIds = [headers[1]!.id, headers[0]!.id, ...headers.slice(3).reverse().map(header => header.id)]
+    expect(database.listConversations().map(item => item.id)).toEqual(expectedIds)
+    const summaries = database.listConversationSummaries()
+    expect(summaries.map(item => item.id)).toEqual(expectedIds)
+    expect(summaries.slice(0, 2).every(item => item.pinned)).toBe(true)
+    expect(database.searchConversations('Conversation 0')).toEqual([headers[0]!.id])
+    database.setConversationPinned({ conversationId: headers[0]!.id, pinned: false })
+    expect(database.listConversations().map(item => item.id)).toEqual(expectedIds.filter(id => id !== headers[0]!.id))
+    expect(database.getConversation(headers[0]!.id)).toMatchObject({ pinned: false, updatedAt: 1000 })
+  } finally {
+    database.close()
+  }
+})
+
+it('migrates schema 35 conversations to unpinned while retaining existing data across reopening', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-conversation-pins-'))
+  temporaryDirectories.push(directory)
+  const path = join(directory, 'assistant.sqlite')
+  const database = new AssistantDatabase(path)
+  database.initialize('C:\\Workspace')
+  const header = { id: randomUUID(), title: 'Before migration', updatedAt: 1000 }
+  database.saveLocalConversations([{ header, messages: [] }])
+  const original = database.getConversation(header.id)
+  database.close()
+  const legacy = new DatabaseSync(path)
+  legacy.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 35;')
+  legacy.close()
+  try {
+    database.initialize('C:\\Workspace')
+    expect(database.getConversation(header.id)).toEqual(original)
+    database.setConversationPinned({ conversationId: header.id, pinned: true })
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.getConversation(header.id)).toEqual({ ...original, pinned: true })
+  } finally {
+    database.close()
+  }
+  const inspected = new DatabaseSync(path)
+  try {
+    expect(inspected.prepare('PRAGMA user_version').get()).toEqual({ user_version: 36 })
+    expect(inspected.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    expect(inspected.prepare('SELECT created_at, updated_at FROM conversations WHERE id = ?').get(header.id)).toEqual({
+      created_at: new Date(1000).toISOString(), updated_at: new Date(1000).toISOString()
+    })
+  } finally {
+    inspected.close()
+  }
+})
 
 it('atomically completes conversation images and retains operations and upload references across saves and reopening', async () => {
   const database = await createDatabase()
@@ -732,6 +823,7 @@ describe('AssistantDatabase', () => {
     oldDatabase.exec(`
       DROP TABLE model_usage_calls;
       ALTER TABLE projects DROP COLUMN runtime_selection_json;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 3;
     `)
     oldDatabase.close()
@@ -888,6 +980,7 @@ describe('AssistantDatabase', () => {
       .all()
     legacy.exec(`
       DROP TABLE project_execution_spaces;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 26;
     `)
     legacy.close()
@@ -997,6 +1090,7 @@ describe('AssistantDatabase', () => {
         project_id TEXT PRIMARY KEY,
         runtime_bundle_digest TEXT NOT NULL
       );
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1068,6 +1162,7 @@ describe('AssistantDatabase', () => {
       INSERT INTO project_runtime_validations
         (project_id, runtime_bundle_digest)
       VALUES ('${project.id}', 'sha256:${'d'.repeat(64)}');
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1158,6 +1253,7 @@ describe('AssistantDatabase', () => {
     legacy.exec(`
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1198,6 +1294,7 @@ describe('AssistantDatabase', () => {
     legacy.exec(`
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1239,6 +1336,7 @@ describe('AssistantDatabase', () => {
     legacy.exec(`
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1276,6 +1374,7 @@ describe('AssistantDatabase', () => {
     legacy.exec(`
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1302,6 +1401,7 @@ describe('AssistantDatabase', () => {
       SET updated_at = created_at || '-edited';
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1325,6 +1425,7 @@ describe('AssistantDatabase', () => {
     const versionFive = new DatabaseSync(databasePath)
     versionFive.exec(`
       DROP TABLE computer_control_actions;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 5;
     `)
     versionFive.close()
@@ -1445,6 +1546,7 @@ describe('AssistantDatabase', () => {
       )
     raw.exec(`
       DROP INDEX IF EXISTS idx_tasks_schedule;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 21;
       COMMIT;
     `)
@@ -1532,6 +1634,7 @@ describe('AssistantDatabase', () => {
     const legacy = new DatabaseSync(databasePath)
     legacy.exec(`
       DELETE FROM magic_todos;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 9;
     `)
     legacy.close()
@@ -1583,7 +1686,7 @@ describe('AssistantDatabase', () => {
         now,
         now
       )
-    legacy.exec('PRAGMA user_version = 16')
+    legacy.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 16')
     legacy.close()
 
     const migrated = new AssistantDatabase(databasePath)
@@ -2528,7 +2631,7 @@ describe('AssistantDatabase', () => {
          WHERE id = ?`
       )
       .run(entry.id)
-    legacy.exec('PRAGMA user_version = 23')
+    legacy.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 23')
     legacy.close()
 
     const migrated = new AssistantDatabase(databasePath)
@@ -2663,6 +2766,7 @@ describe('AssistantDatabase', () => {
         ON channel_events(claimed_at);
       INSERT INTO channel_events(channel, event_id, claimed_at)
         VALUES ('weixin', 'legacy-event', 1);
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 18;
     `)
     legacy.close()
@@ -3169,6 +3273,7 @@ describe('AssistantDatabase', () => {
       ALTER TABLE task_events DROP COLUMN remote_semantic_sequence;
       ALTER TABLE task_events DROP COLUMN remote_operation_id;
       ALTER TABLE task_events DROP COLUMN remote_binding_id;
+      ALTER TABLE conversations DROP COLUMN pinned;
       PRAGMA user_version = 31;
     `)
     legacy.close()

@@ -371,6 +371,7 @@ export function DestructiveConfirmActions({
   onConfirm,
   onRequestConfirm,
   triggerAriaLabel,
+  triggerRole,
   triggerLabel
 }: {
   cancelAriaLabel?: string
@@ -384,6 +385,7 @@ export function DestructiveConfirmActions({
   onConfirm: () => void
   onRequestConfirm: () => void
   triggerAriaLabel?: string
+  triggerRole?: 'menuitem'
   triggerLabel: string
 }): React.JSX.Element {
   const { t } = useTranslation('workspace')
@@ -473,6 +475,7 @@ export function DestructiveConfirmActions({
   ) : (
     <button
       aria-label={triggerAriaLabel}
+      role={triggerRole}
       className="danger-button danger-button--quiet"
       disabled={disabled}
       onClick={onRequestConfirm}

@@ -105,6 +105,9 @@ export const app = {
       region: '{{title}} 的会话操作',
       branch: '在新会话中继续',
       rename: '重命名会话',
+      pin: '置顶会话',
+      unpin: '取消置顶',
+      pinned: '已置顶',
       copy: '复制完整会话',
       export: '导出 Markdown'
     },
@@ -646,6 +649,7 @@ export const app = {
     conversationQueueResumeFailed:
       '无法继续执行当前对话的待发送队列',
     conversationPersistenceFailed: '会话持久化失败，请检查本地存储',
+    conversationPinFailed: '无法更新会话置顶状态，请重试',
     activityHistoryPersistenceFailed: '运行记录保存失败，请检查本地存储',
     activityHistoryReadFailed: '运行记录读取失败',
     remoteConversationRefreshFailed: '远程通道会话刷新失败',

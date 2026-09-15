@@ -46,6 +46,7 @@ import {
   type LiveAgentQuestion,
   type ConversationAttachment,
   type ConversationBranchInput,
+  type ConversationSetPinnedInput,
   type ConversationQueueItem,
   type ConversationContextCompressionState,
   type LocalConversationSaveBatch,
@@ -1393,6 +1394,7 @@ export const browserLiveStateSchema = z
     conversationId: conversationIdSchema,
     tabId: browserTabIdSchema,
     workbarInstanceId: browserWorkbarInstanceIdSchema.optional(),
+    openerTabId: browserTabIdSchema.optional(),
     ownerWindowId: z.number().int().nonnegative().optional(),
     status: browserStatusSchema,
     sessionActive: z.boolean(),
@@ -2059,6 +2061,7 @@ export type DesktopApi = {
     search: (query: string, conversationIds?: string[]) => Promise<string[]>
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
+    setPinned: (input: ConversationSetPinnedInput) => Promise<void>
     branchLocal: (
       input: ConversationBranchInput
     ) => Promise<ConversationSnapshot>

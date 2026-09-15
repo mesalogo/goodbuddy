@@ -205,6 +205,7 @@ import {
   conversationSnapshotsSchema,
   conversationListRequestSchema,
   conversationSearchRequestSchema,
+  conversationSetPinnedSchema,
   type ConversationSnapshot,
   localConversationSaveBatchSchema,
   memoryCreateSchema,
@@ -1259,7 +1260,7 @@ export function registerIpcHandlers(
       signal: AbortSignal,
       tabId?: BrowserTabId,
       ownerWindowId?: number
-    ): Promise<void>
+    ): Promise<unknown>
     type(
       conversationId: string,
       ref: string,
@@ -6825,6 +6826,17 @@ export function registerIpcHandlers(
       assistantDatabase.saveLocalConversations(
         localConversationSaveBatchSchema.parse(input)
       )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationsSetPinned,
+    (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      assistantDatabase.setConversationPinned(
+        conversationSetPinnedSchema.parse(input)
+      )
+      publishConversationChange()
     }
   )
 
