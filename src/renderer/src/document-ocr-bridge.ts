@@ -26,6 +26,26 @@ const pending = new Map<string, PendingWorkerRequest>()
 const cancelledRequestIds = new Set<string>()
 let activeRequestId: string | undefined
 let requestQueue: Promise<void> = Promise.resolve()
+let queuedRequestCount = 0
+let idleTimer: number | undefined
+const workerIdleTimeoutMs = 60_000
+
+function clearIdleTimer(): void {
+  window.clearTimeout(idleTimer)
+  idleTimer = undefined
+}
+
+function scheduleIdleRelease(): void {
+  clearIdleTimer()
+  if (!worker || queuedRequestCount > 0 || activeRequestId || pending.size > 0) {
+    return
+  }
+  idleTimer = window.setTimeout(() => {
+    if (queuedRequestCount === 0 && !activeRequestId && pending.size === 0) {
+      terminateWorker(new Error('本地 OCR 空闲资源已释放'))
+    }
+  }, workerIdleTimeoutMs)
+}
 
 function safeError(error: unknown): string {
   return error instanceof Error
@@ -34,6 +54,7 @@ function safeError(error: unknown): string {
 }
 
 function terminateWorker(error: Error): void {
+  clearIdleTimer()
   worker?.terminate()
   rejectWorkerReady?.(error)
   worker = undefined
@@ -199,9 +220,15 @@ export function installDocumentOcrBridge(): () => void {
     return () => undefined
   }
   const removeRequestListener = api.onOcrRequest((request) => {
+    clearIdleTimer()
+    queuedRequestCount += 1
     requestQueue = requestQueue
       .then(() => handleRequest(request))
       .catch(() => undefined)
+      .finally(() => {
+        queuedRequestCount -= 1
+        scheduleIdleRelease()
+      })
   })
   const removeCancelListener = api.onOcrCancel((requestId) => {
     cancelledRequestIds.add(requestId)

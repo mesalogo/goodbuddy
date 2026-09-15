@@ -3,6 +3,7 @@ import {
   defaultDocumentParsingSettings
 } from './document-parsing-settings-store'
 import { DocumentParsingService } from './document-parsing-service'
+import { createImagePptx } from '../../tests/support/pptx-fixture'
 
 function createPdfFixture(...pageTexts: string[]): Buffer {
   const texts = pageTexts.length > 0 ? pageTexts : ['']
@@ -109,6 +110,73 @@ function createService(overrides?: {
 }
 
 describe('DocumentParsingService', () => {
+  it.each(['chat-attachment', 'knowledge-index', 'artifact-import', 'diagnostic'] as const)(
+    'recognizes embedded PPTX images for %s',
+    async (purpose) => {
+      const { recognize, service } = createService()
+      const parsed = await service.parse('slides.pptx', createImagePptx('', 2), purpose)
+      expect(parsed.sourceFormat).toBe('.pptx')
+      expect(parsed.pageCount).toBe(2)
+      expect(parsed.sections.map(({ locator, method, pageNumber }) => ({
+        locator, method, pageNumber
+      }))).toEqual([
+        { locator: '幻灯片 1 · 图片 1', method: 'ocr', pageNumber: 1 },
+        { locator: '幻灯片 2 · 图片 1', method: 'ocr', pageNumber: 2 }
+      ])
+      expect(recognize).toHaveBeenCalledTimes(2)
+      expect(recognize).toHaveBeenCalledWith(expect.objectContaining({
+        mimeType: 'image/png', maximumPages: 1, modelId: 'pp-ocrv6-tiny'
+      }))
+    }
+  )
+
+  it('preserves PPTX native text while recognizing image content on the same slide', async () => {
+    const { service } = createService()
+    const parsed = await service.parse('slides.pptx', createImagePptx('Native slide title'), 'chat-attachment')
+    expect(parsed.content).toContain('Native slide title')
+    expect(parsed.content).toContain('扫描件识别正文')
+    const diagnostic = await service.diagnose('slides.pptx', createImagePptx('Native slide title'))
+    expect(diagnostic).toMatchObject({ method: 'mixed', pageCount: 1, ocrPageCount: 1 })
+  })
+
+  it('reports disabled OCR for image-only PPTX in fast-text mode', async () => {
+    const { service, recognize } = createService({ settings: { chatWorkflow: 'fast-text' } })
+    await expect(service.parse('slides.pptx', createImagePptx(), 'chat-attachment')).rejects.toThrow('当前工作流未启用 OCR')
+    expect(recognize).not.toHaveBeenCalled()
+  })
+
+  it('enforces PPTX OCR page limits before recognizing images', async () => {
+    const { service, recognize } = createService({ settings: { maximumPages: 1 } })
+    await expect(service.parse('slides.pptx', createImagePptx('', 2), 'knowledge-index')).rejects.toThrow('超过 1 页限制')
+    expect(recognize).not.toHaveBeenCalled()
+  })
+
+  it('reports the model error for image-only PPTX, not empty document text', async () => {
+    const { service } = createService({ modelStatus: {
+      available: false, verified: false, detail: '模型尚未安装'
+    } })
+    await expect(service.parse('slides.pptx', createImagePptx(), 'chat-attachment')).rejects.toThrow('模型尚未安装')
+  })
+
+  it('only falls back to PPTX native text for automatic non-index workflows', async () => {
+    const { service } = createService({ recognize: async () => { throw new Error('OCR runtime failed') } })
+    const bytes = createImagePptx('Useful native slide body')
+    expect((await service.parse('slides.pptx', bytes, 'chat-attachment')).warnings).toEqual([
+      expect.stringContaining('OCR runtime failed')
+    ])
+    await expect(service.parse('slides.pptx', bytes, 'knowledge-index')).rejects.toThrow('OCR runtime failed')
+  })
+
+  it('stops PPTX OCR between images on cancellation instead of returning native text', async () => {
+    const controller = new AbortController()
+    const { service, recognize } = createService({ recognize: async () => {
+      controller.abort(new Error('Cancelled PPTX'))
+      throw new Error('OCR stopped')
+    } })
+    await expect(service.parse('slides.pptx', createImagePptx('Useful native text', 2), 'chat-attachment', controller.signal)).rejects.toThrow('Cancelled PPTX')
+    expect(recognize).toHaveBeenCalledOnce()
+  })
+
   it('keeps useful PDF text local without invoking OCR', async () => {
     const { recognize, service } = createService()
 

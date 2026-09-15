@@ -24,6 +24,27 @@ Main。IPC 先验证可信 sender，再使用共享 `contextImportFilesSchema` �
 会话草稿；发送时通过已有 `contextIds` 和 `ContextManager.enrichRequest` 生成请求上下文。
 本次变更不修改 Agent、远端协议或 Runtime 的附件消费实现。
 
+## PPTX 图片识别与 OCR 生命周期
+
+产品策略与限制分别见 [PPTX 图片流程](./prd.md#75-pptx-图片流程)、
+[OCR 空闲资源回收](./prd.md#76-ocr-空闲资源回收)。
+
+`DocumentParsingService` 在非快速工作流中使用 `knowledge/pptx-parser.ts` 读取
+演示文稿顺序、幻灯片文字、图片关系和内嵌图片。Office ZIP 读取复用
+`document-parser.ts` 的条目数量、单条目及总展开大小检查；不读取工作区中的关联文件。
+每张引用图片通过现有 `DocumentOcrBroker` 的图片请求契约，进入生产
+`document-ocr-bridge.ts` 和 WASM Worker。结果合并时保留原生文字，附上幻灯片页码、
+图片定位及 OCR 置信度，诊断中的 OCR 页数按页码去重。
+
+Bridge 用待完成请求计数判断队列是否空闲，正常完成后安排一次空闲计时；
+新请求和 `terminateWorker` 均清除计时。到期通过 `Worker.terminate()` 释放整个推理环境，
+而不是只清空 JavaScript 引用或反复触发垃圾回收。此机制由 PDF 与 PPTX 共用，
+不增加 IPC、持久化设置或模型安装状态。
+
+解析与回收发生在 Desktop 的 Main/Renderer，`gbagent` 不运行此 OCR Worker。
+远程 Runtime 消费的仍是 Desktop 已提取的附件文本，没有单独的 Agent 解析器或
+需要同步修改的远程 OCR 生命周期。
+
 ## Electron 验证
 
 2026-09-15 在 Windows 的 Electron 43.2.0 上，从当前源码构建隔离输出并启动完整应用，
@@ -67,3 +88,28 @@ npm run lint
 沙箱用例，类型检查与 lint 通过。完整 `npm test` 运行结果为 4214 项通过、67 项跳过、
 6 项窗口恢复用例失败；这些用例属于并行修改的 `window.test.ts`，随后该文件单独复跑
 10 项全部通过。本次没有再次完整重跑全仓测试。
+
+## 2026-09-15 PPTX OCR 与空闲回收验证
+
+在 Windows x64、Electron 43.2.0 上，从本次源码构建独立输出，使用独立用户数据目录和
+本机已安装的 PP-OCRv6 Tiny 模型完成真实验证。测试仅替换系统文件选择对话框的返回路径，
+保留生产 UI、preload、IPC、`ContextManager`、解析服务、OCR Broker 与 WASM Worker，
+未替换解析或推理实现。
+
+- 从“添加附件”一次导入 4 份图片型 PPTX，共 40 页；4 个附件均成功显示，连续处理期间
+  仅创建 1 个 OCR Worker。
+- 队列空闲后观察到 Worker 被终止。每 5 秒读取 Electron `app.getAppMetrics()`：
+  Renderer 工作集采样高点为 733,492 KiB（约 716 MiB），回收后为 162,716 KiB
+  （约 159 MiB），启动基线约 163 MiB。该结果是本次设备与文件上的测量，不是固定内存承诺。
+- 回收后，通过生产 `context.importFiles` 再导入一份 9 页 PPTX；新建第 2 个 Worker，
+  9 页均返回非空文字，共 2,462 字符，附件成功生成。
+- 本次合计 49 次本地图片 OCR 请求，文本模型调用 0 次；没有发送聊天消息，也没有将文件
+  交给云端模型。未修改源文件。未在 macOS、Linux 或其他 OCR 模型档位上做本次实测。
+
+新增聚焦回归覆盖 PPTX 关系与顺序、各场景路由、原生文字合并、快速模式、页数上限、
+OCR 错误和取消；Worker 回归覆盖空闲到期、连续请求复用、队列保护、关闭清理与立即取消。
+空闲回收后重新加载也在真实模型路径上验证，不能只用模型配置检查代替。
+
+最终检查：`npm test` 4,293 项通过、67 项跳过；`npm run typecheck`、
+`npm run lint` 通过。当前源码的隔离 Electron 生产构建通过；文档的 10 个相对文件链接
+均有效。测试应用已关闭，包含附件草稿的独立用户数据目录已删除，原文件和原模型安装未改动。

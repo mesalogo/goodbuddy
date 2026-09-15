@@ -102,7 +102,7 @@ function decodeXmlEntities(value: string): string {
     )
 }
 
-function extractXmlText(xml: string): string {
+export function extractXmlText(xml: string): string {
   return decodeXmlEntities(
     xml
       .replace(/<w:tab\b[^>]*\/>/g, '\t')
@@ -239,19 +239,10 @@ function extractWorksheetText(
     .trim()
 }
 
-function parseOfficeArchive(
+export function readOfficeArchive(
   buffer: Buffer,
-  extension: string
-): ParsedSection[] {
-  const patterns =
-    extension === '.docx'
-      ? [/^word\/document\.xml$/]
-      : extension === '.xlsx'
-        ? [
-            /^xl\/sharedStrings\.xml$/,
-            /^xl\/worksheets\/sheet\d+\.xml$/
-          ]
-        : [/^ppt\/slides\/slide\d+\.xml$/]
+  patterns: RegExp[]
+): Record<string, Uint8Array> {
   let archive: Record<string, Uint8Array>
   let entryCount = 0
   let selectedBytes = 0
@@ -281,6 +272,24 @@ function parseOfficeArchive(
   } catch {
     throw new Error('Office 文档已损坏或不是有效的 Open XML 文件')
   }
+  return archive
+}
+
+function parseOfficeArchive(
+  buffer: Buffer,
+  extension: string
+): ParsedSection[] {
+  const archive = readOfficeArchive(
+    buffer,
+    extension === '.docx'
+      ? [/^word\/document\.xml$/]
+      : extension === '.xlsx'
+        ? [
+            /^xl\/sharedStrings\.xml$/,
+            /^xl\/worksheets\/sheet\d+\.xml$/
+          ]
+        : [/^ppt\/slides\/slide\d+\.xml$/]
+  )
 
   if (extension === '.docx') {
     const documentXml = archive['word/document.xml']

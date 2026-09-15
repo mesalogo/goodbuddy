@@ -7,7 +7,7 @@
 | 文档 | 权威职责 |
 | --- | --- |
 | [文档解析与本地 OCR PRD](./prd.md) | 产品范围、解析策略、OCR 模型管理和验收 |
-| [聊天附件技术说明](./chat-attachments-technical-design.md) | 文件选择与粘贴的进程链路、IPC、失败处理和验证方法 |
+| [聊天附件技术说明](./chat-attachments-technical-design.md) | 文件选择与粘贴的进程链路、IPC、PPTX 图片 OCR、Worker 生命周期和验证证据 |
 
 当前尚无独立 User Stories、功能逻辑、UI 和进度文档；聊天输入区交互遵循根目录
 [UI 设计系统](../../../UI-DESIGN.md)。
