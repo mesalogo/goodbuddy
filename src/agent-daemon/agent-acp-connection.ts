@@ -87,12 +87,13 @@ export class AgentAcpConnection {
     sessionId: string,
     operationId: string,
     socketPath?: string,
-    workMode?: 'ask' | 'execute'
+    workMode?: 'ask' | 'execute',
+    imageToolName?: string
   ): Promise<void> {
     if (!this.bridgeOrigin) throw new Error('Shared model bridge is not ready')
     const response = await fetch(`${this.bridgeOrigin}/session`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, operationId, ...(socketPath ? { socketPath, workMode } : { release: true }) }),
+      body: JSON.stringify({ sessionId, operationId, ...(socketPath ? { socketPath, workMode, imageToolName } : { release: true }) }),
       signal: AbortSignal.timeout(10_000)
     })
     if (!response.ok) throw new Error(`Shared model bridge route failed (${response.status})`)

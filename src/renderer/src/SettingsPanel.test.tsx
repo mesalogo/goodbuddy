@@ -4790,6 +4790,11 @@ describe('SettingsPanel runtime files', () => {
       target: { value: 'openai-images-generations' }
     })
     const qualitySelect = screen.getByLabelText('图片质量 默认模型')
+    const invocationSwitch = screen.getByRole('switch', { name: '允许 AI 在会话中调用' })
+    expect(invocationSwitch).not.toBeChecked()
+    expect(screen.queryByRole('radio', { name: '设为默认生图模型' })).not.toBeInTheDocument()
+    fireEvent.click(invocationSwitch)
+    fireEvent.click(screen.getByRole('radio', { name: '设为默认生图模型' }))
     expect(qualitySelect).toHaveValue('auto')
     fireEvent.change(qualitySelect, {
       target: { value: 'high' }
@@ -4807,10 +4812,12 @@ describe('SettingsPanel runtime files', () => {
           modelProfiles: [
             expect.objectContaining({
               protocol: 'openai-images-generations',
+              allowConversationInvocation: true,
               imageGenerationQuality: 'high'
             })
           ],
-          imageGenerationQuality: 'high'
+          imageGenerationQuality: 'high',
+          defaultImageModelProfileId: modelProfileId
         })
       )
     )
@@ -5177,6 +5184,77 @@ describe('SettingsPanel runtime files', () => {
       screen.queryByRole('tab', { name: '自动化' })
     ).not.toBeInTheDocument()
     expect(screen.queryByText('智能心跳')).not.toBeInTheDocument()
+  })
+
+  it.each([false, true])('shows immutable image assignments and source navigation when enabled=%s', async (enabled) => {
+    const snapshot = {
+      ...capabilitySnapshot,
+      imageGeneration: {
+        modelProfiles: enabled ? [{ id: modelProfileId, name: 'Image' }] : [],
+        assignments: enabled ? ['model', 'opencode', 'continue', 'deepseek-harness'] : []
+      }
+    }
+    getCapabilitySnapshot.mockResolvedValueOnce(snapshot).mockResolvedValueOnce(snapshot)
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '能力与工具' }))
+    await screen.findByText('文档写作')
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    const card = screen.getByRole('article', { name: '图片生成与编辑' })
+    await waitFor(() => {
+      const checkboxes = within(card).getAllByRole('checkbox')
+      expect(checkboxes).toHaveLength(4)
+      for (const checkbox of checkboxes) {
+        expect(checkbox).toBeDisabled()
+        if (enabled) expect(checkbox).toBeChecked()
+        else expect(checkbox).not.toBeChecked()
+      }
+    })
+    expect(within(card).getByText('内置 · 自动管理')).toBeInTheDocument()
+    expect(within(card).queryByRole('switch')).not.toBeInTheDocument()
+    expect(within(card).queryByText(/暂不支持/)).not.toBeInTheDocument()
+    for (const checkbox of within(card).getAllByRole('checkbox')) {
+      expect(checkbox).toHaveAccessibleDescription('由图片模型的「允许 AI 在会话中调用」设置自动管理。')
+      fireEvent.click(checkbox)
+      fireEvent.click(checkbox.closest('label')!)
+      fireEvent.keyDown(checkbox, { key: ' ' })
+    }
+    expect(setBuiltinMcpServerAssignments).not.toHaveBeenCalled()
+    expect(setBuiltinMcpServerEnabled).not.toHaveBeenCalled()
+    expect(saveMcpServer).not.toHaveBeenCalled()
+    const navigation = within(card).getByRole('button', { name: '前往图片模型设置' })
+    navigation.focus()
+    expect(navigation).toHaveFocus()
+    fireEvent.click(navigation)
+    expect(screen.getByRole('tab', { name: '模型连接' })).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByRole('button', { name: '添加自定义' })).toBeEnabled()
+  })
+
+  it('retains a disabled or deleted image default and keeps drafts on save failure', async () => {
+    const imageId = '00000000-0000-4000-8000-000000000099'
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      defaultImageModelProfileId: imageId,
+      modelProfiles: [runtimeSettings.modelProfiles[0]!, {
+        ...runtimeSettings.modelProfiles[0]!, id: imageId, name: 'Image',
+        protocol: 'openai-images-generations', allowConversationInvocation: true
+      }]
+    })
+    render(<SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑模型连接 Image' }))
+    fireEvent.click(screen.getByRole('switch', { name: '允许 AI 在会话中调用' }))
+    expect(screen.getByText('默认生图模型不可用，请开启该模型或明确选择其他图片模型。')).toBeInTheDocument()
+    updateRuntime.mockRejectedValueOnce(new Error('Image settings save failed'))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await screen.findByText('Image settings save failed')
+    expect(screen.getByRole('switch', { name: '允许 AI 在会话中调用' })).not.toBeChecked()
+    expect(updateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ defaultImageModelProfileId: imageId }))
+    fireEvent.click(screen.getByRole('button', { name: '删除模型连接 Image' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(updateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({
+      defaultImageModelProfileId: imageId,
+      modelProfiles: [expect.objectContaining({ id: modelProfileId })]
+    })))
   })
 
   it('groups Skills and MCP under Capabilities and tools', async () => {

@@ -2,6 +2,13 @@ import type { TranslationShape } from '../../resource-types'
 import type { integrations as chineseIntegrations } from '../zh-CN/integrations'
 
 export const integrations = {
+  conversationImages: {
+    title: 'Image generation and editing',
+    managed: 'Builtin · Automatically managed',
+    description: 'Automatically managed by the image models’ “Allow AI to invoke in conversations” setting.',
+    runtimeScope: 'Assignments include applicable remote Runtimes through GoodBuddy Agent. Generation requires Execute and a chat model with tool calling; assignments do not indicate runtime readiness.',
+    openSettings: 'Go to image model settings'
+  },
   channels: {
     tabs: {
       weixin: 'WeChat ClawBot',

@@ -26,7 +26,7 @@ async function plugin(input?: {
 }) {
   const tasks = new Map<string, { sessionId: string; callId: string }>()
   const pending = new Map<string, { sessionId: string; root: string }>()
-  const modelMessages = new Map<string, { sessionId: string; operationId: string; workMode: 'ask' | 'execute' }>()
+  const modelMessages = new Map<string, { sessionId: string; operationId: string; workMode: 'ask' | 'execute'; imageToolName?: string }>()
   const modelRoute = async (sessionId: string, messageId: string) => {
     const key = `${sessionId}\0${messageId}`
     const previous = modelMessages.get(key)
@@ -43,8 +43,8 @@ async function plugin(input?: {
     }
     const response = await fetch(`${modules.modelBridgeOrigin}/session?sessionId=${encodeURIComponent(root)}`)
     if (!response.ok) throw new Error('GoodBuddy model operation is no longer active')
-    const { operationId, workMode } = await response.json() as { operationId: string; workMode: 'ask' | 'execute' }
-    const route = { sessionId: root, operationId, workMode }
+    const { operationId, workMode, imageToolName } = await response.json() as { operationId: string; workMode: 'ask' | 'execute'; imageToolName?: string }
+    const route = { sessionId: root, operationId, workMode, imageToolName }
     modelMessages.set(key, route)
     return route
   }
@@ -130,6 +130,10 @@ async function plugin(input?: {
         // OpenCode copies parent denies, not parent allows, into children.
         // Keep its explicit subagent restrictions after the request rules.
         permission.push(...(child.data.permission ?? []).filter(rule => rule.permission !== '*'))
+      }
+      permission.push({ permission: 'goodbuddy_image_*', pattern: '*', action: 'deny' })
+      if (route.workMode === 'execute' && route.imageToolName) {
+        permission.push({ permission: `${route.imageToolName}_*`, pattern: '*', action: 'allow' })
       }
       await input!.client._client.patch({
         url: `/session/${encodeURIComponent(request.sessionID)}`, body: { permission }, throwOnError: true

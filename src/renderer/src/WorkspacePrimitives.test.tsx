@@ -92,6 +92,18 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('wraps long model names, prompts, and errors inside shared message status cards', () => {
+    expect(stylesheet).toMatch(
+      /\.message-retrieval-status\s*\{[^}]*overflow-wrap:\s*anywhere;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.message-retrieval-status > div\s*\{[^}]*min-width:\s*0;/u
+    )
+    expect(stylesheet).toMatch(
+      /\.message-image-actions\s*\{[^}]*flex-wrap:\s*wrap;/u
+    )
+  })
+
   it('keeps shared switch rows aligned without standalone dividers', () => {
     const toggleRowStyles = stylesheet.match(
       /\.toggle-row\s*\{(?<rules>[^}]*)\}/u

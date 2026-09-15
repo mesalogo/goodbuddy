@@ -15,8 +15,10 @@ import {
   UserRound,
   XCircle
 } from 'lucide-react'
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ImageOperationStatus } from './ImageOperationStatus'
+import type { ImageOperation } from '../../shared/image-generation-contracts'
 import type {
   ApprovalDecision,
   AgentEvent,
@@ -75,6 +77,8 @@ export type Message = {
   sourceReferences?: KnowledgeSearchReference[]
   knowledgeRetrieval?: KnowledgeRetrievalStatus
   artifactIds?: string[]
+  imageOperations?: ConversationMessage['imageOperations']
+  imageSourceArtifactIds?: string[]
   imageContextNotice?: ConversationMessage['imageContextNotice']
   task?: ConversationMessage['task']
   attachments?: ConversationAttachment[]
@@ -488,6 +492,9 @@ function SubagentStatusList({
 }
 
 type ChatMessageRowProps = {
+  onOpenImageModelSettings?: () => void
+  onReselectImageSources?: (operation: ImageOperation) => void
+  onEditImage?: (artifact: AssistantArtifact) => void
   artifactById: ReadonlyMap<string, AssistantArtifact>
   canRetry: boolean
   conversationId: string
@@ -522,6 +529,9 @@ type ChatMessageRowProps = {
 }
 
 function ChatMessageRowView({
+  onOpenImageModelSettings,
+  onReselectImageSources,
+  onEditImage,
   artifactById,
   canRetry,
   conversationId,
@@ -541,6 +551,10 @@ function ChatMessageRowView({
   retryContent
 }: ChatMessageRowProps): React.JSX.Element {
   const { t } = useTranslation('app')
+  const imageArtifactIds = useMemo(() => [...new Set([
+    ...(message.artifactIds ?? []),
+    ...(message.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])
+  ])], [message.artifactIds, message.imageOperations])
   const compressionMarkers =
     message.contextCompressions ??
     (message.contextCompression ? [message.contextCompression] : [])
@@ -799,7 +813,8 @@ function ChatMessageRowView({
             subagents={unorderedSubagents}
           />
         )}
-        {message.artifactIds?.map((artifactId) => {
+        {message.imageOperations?.map(operation => <ImageOperationStatus key={operation.id} operation={operation} onOpenImageModelSettings={onOpenImageModelSettings} onReselectImageSources={onReselectImageSources} />)}
+        {imageArtifactIds.map((artifactId) => {
           const candidate = artifactById.get(artifactId)
           const artifact =
             candidate?.kind === 'image' &&
@@ -833,6 +848,7 @@ function ChatMessageRowView({
               </button>
               <figcaption>{artifact.title}</figcaption>
               <div className="message-image-actions">
+                {onEditImage && <button type="button" onClick={() => onEditImage(artifact)}>{t('chat.images.edit')}</button>}
                 <button
                   onClick={(event) =>
                     onOpenImage(
@@ -1254,6 +1270,9 @@ function ChatMessageRowView({
 export const ChatMessageRow = memo(ChatMessageRowView)
 
 type ChatTimelineProps = {
+  onOpenImageModelSettings?: () => void
+  onReselectImageSources?: (operation: ImageOperation) => void
+  onEditImage?: (artifact: AssistantArtifact) => void
   artifactById: ReadonlyMap<string, AssistantArtifact>
   conversationId: string
   hiddenMessageCount: number
@@ -1291,6 +1310,9 @@ type ChatTimelineProps = {
 }
 
 export const ChatTimeline = memo(function ChatTimeline({
+  onOpenImageModelSettings,
+  onReselectImageSources,
+  onEditImage,
   artifactById,
   conversationId,
   hiddenMessageCount,
@@ -1331,6 +1353,9 @@ export const ChatTimeline = memo(function ChatTimeline({
         const messageIndex = messageStartIndex + visibleMessageIndex
         return (
           <ChatMessageRow
+            onOpenImageModelSettings={onOpenImageModelSettings}
+            onReselectImageSources={onReselectImageSources}
+            onEditImage={onEditImage}
             artifactById={artifactById}
             canRetry={
               message.state === 'error' &&

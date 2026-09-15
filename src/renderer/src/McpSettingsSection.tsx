@@ -96,8 +96,10 @@ function editorFromServer(server: McpServerSummary): McpEditor {
 }
 
 export function McpSettingsSection({
+  onOpenImageModelSettings,
   magicNotesEnabled = false
 }: {
+  onOpenImageModelSettings: () => void
   magicNotesEnabled?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation('integrations')
@@ -574,11 +576,49 @@ export function McpSettingsSection({
           </div>
           <small>
             {t('mcp.profiles.count', {
-              count: builtinMcpServers.length
+              count: builtinMcpServers.length + 1
             })}
           </small>
         </div>
         <div className="mcp-server-list">
+          <article
+            className="capability-card builtin-mcp-card"
+            aria-label={t('conversationImages.title')}
+          >
+            <div className="capability-card__header">
+              <div>
+                <strong>{t('conversationImages.title')}</strong>
+                <small>{t('conversationImages.managed')}</small>
+              </div>
+            </div>
+            <p id="image-generation-management">
+              {t('conversationImages.description')}
+            </p>
+            <p>{t('conversationImages.runtimeScope')}</p>
+            <div className="runtime-assignments">
+              <small>{t('mcp.builtin.assignedTo')}</small>
+              {configurableMcpTargets.map((target) => (
+                <label key={target}>
+                  <input
+                    aria-describedby="image-generation-management"
+                    checked={
+                      snapshot?.imageGeneration?.assignments.includes(target) ?? false
+                    }
+                    disabled
+                    type="checkbox"
+                  />
+                  {runtimeLabels[target]}
+                </label>
+              ))}
+            </div>
+            <button
+              className="secondary-button"
+              onClick={onOpenImageModelSettings}
+              type="button"
+            >
+              {t('conversationImages.openSettings')}
+            </button>
+          </article>
           {builtinMcpServers.map((server) => {
             const expansionId = `builtin:${server.id}`
             const expanded = expandedItemIds.has(expansionId)

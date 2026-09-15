@@ -2161,9 +2161,13 @@ export class OpenCodeRuntime implements AgentRuntime {
     let customMcpToken: string | undefined;
     const attemptedMcpNames: string[] = [];
     const subscriptionController = new AbortController();
+    const imageCapabilityToken = request.imageToolBinding && request.workMode === 'execute'
+      ? this.options.knowledgeGateway?.bindImageTool(request.imageToolBinding, signal, request.knowledgeCapabilityToken)
+      : undefined;
+    const scopedCapabilityToken = imageCapabilityToken ?? request.knowledgeCapabilityToken;
     try {
       if (
-        request.knowledgeCapabilityToken &&
+        scopedCapabilityToken &&
         this.usesEmbeddedPermissionMediation() &&
         this.options.knowledgeGateway?.getEndpoint()
       ) {
@@ -2186,7 +2190,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                     url: knowledgeEndpoint,
                     enabled: true,
                     headers: {
-                      Authorization: `Bearer ${request.knowledgeCapabilityToken}`,
+                      Authorization: `Bearer ${scopedCapabilityToken}`,
                     },
                     oauth: false,
                   },
@@ -2212,7 +2216,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         // experimental/tool/ids. Its model tool namespace is deterministic:
         // "<MCP server name>_<declared tool name>".
         knowledgeToolIds = this.options.knowledgeGateway
-          .getAvailableToolNames(request.knowledgeCapabilityToken)
+          .getAvailableToolNames(scopedCapabilityToken)
           .map((toolName) => `${knowledgeMcpName}_${toolName}`);
       }
       if (
@@ -2996,6 +3000,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       }
     } finally {
       subscriptionController.abort();
+      if (imageCapabilityToken && imageCapabilityToken !== request.knowledgeCapabilityToken) this.options.knowledgeGateway?.revoke(imageCapabilityToken);
       for (const name of attemptedMcpNames) {
         await this.mutateMcp(new AbortController().signal, () => {
           // Queue wait must not consume the disconnect timeout.

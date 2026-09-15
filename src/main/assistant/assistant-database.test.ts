@@ -15,8 +15,43 @@ import {
   ASSISTANT_DATABASE_SCHEMA_VERSION
 } from './assistant-database'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
+import type { ImageOperation } from '../../shared/image-generation-contracts'
 
 const temporaryDirectories: string[] = []
+
+it('atomically completes conversation images and retains operations and upload references across saves and reopening', async () => {
+  const database = await createDatabase()
+  const conversationId = randomUUID()
+  const messageId = randomUUID()
+  const header = { id: conversationId, title: 'Image operation', updatedAt: Date.now() }
+  const message = { id: messageId, role: 'assistant' as const, content: '', state: 'complete' as const, createdAt: Date.now() }
+  database.saveLocalConversations([{ header, messages: [message] }])
+  const operation: ImageOperation = { id: randomUUID(), conversationId, messageId, requestId: randomUUID(), callId: 'image-call',
+    modelProfileId: randomUUID(), modelName: 'Image model', input: { intent: 'create', prompt: 'Blue', sourceArtifactIds: [] },
+    state: 'running', createdAt: Date.now(), updatedAt: Date.now(), artifactIds: [] }
+  database.saveConversationImageOperation(operation)
+  const sources = database.saveConversationImageSources({ conversationId, messageId,
+    images: [{ name: 'source.png', mediaType: 'image/png', data: 'iVBORw0KGgo=' }] })
+  const completed = database.saveConversationImageOperation(operation, { mimeType: 'image/png', data: 'iVBORw0KGgo=' })
+  expect(database.saveConversationImageOperation(operation, { mimeType: 'image/png', data: 'iVBORw0KGgo=' })).toEqual(completed)
+  expect(database.listArtifacts()).toHaveLength(2)
+  database.saveLocalConversations([{ header, messages: [message] }])
+  database.close()
+  database.initialize(process.cwd())
+  const restored = database.getConversation(conversationId).messages[0]!
+  expect(restored.imageOperations).toEqual([completed])
+  expect(restored.artifactIds).toEqual(completed.artifactIds)
+  expect(restored.imageSourceArtifactIds).toEqual(sources)
+  expect(database.getArtifact(sources[0]!).content).toContain('iVBORw0KGgo=')
+  const failed = { ...operation, id: randomUUID() }
+  database.saveConversationImageOperation(failed)
+  expect(() => database.saveConversationImageOperation(failed, { mimeType: 'image/png', data: 'a'.repeat(5 * 1024 * 1024) })).toThrow('5MB')
+  expect(database.listArtifacts()).toHaveLength(2)
+  expect(database.getConversation(conversationId).messages[0]!.imageOperations?.find(item => item.id === failed.id)?.state).toBe('running')
+  database.deleteLocalConversation(conversationId)
+  expect(() => database.saveConversationImageOperation(failed, { mimeType: 'image/png', data: 'iVBORw0KGgo=' })).toThrow('no longer exists')
+  database.close()
+})
 const channelDefaultProfileId =
   '00000000-0000-4000-8000-000000000001'
 

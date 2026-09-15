@@ -28,6 +28,8 @@ import type {
 } from '../shared/ssh-host-contracts'
 import { defaultKnowledgeOntologySettings } from '../shared/knowledge-ontology'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { ImageGenerationService } from './agent/image-generation-service'
+import type { AgentExecutionRequest } from './agent/runtime'
 import { KnowledgeService } from './knowledge/knowledge-service'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
 import { RemotePromptCancelledError } from './agent/acp-remote-runtime'
@@ -1310,6 +1312,7 @@ describe('registerIpcHandlers model download source routing', () => {
 })
 
 vi.mock('electron', () => ({
+  nativeImage: { createFromBuffer: (buffer: Buffer) => ({ isEmpty: () => false, toPNG: () => buffer }) },
   app: {
     getName: vi.fn(() => 'GoodBuddy'),
     getVersion: vi.fn(() => '0.1.0')
@@ -5058,7 +5061,9 @@ describe('registerIpcHandlers agent terminal state', () => {
     magicNotesEnabled = false,
     goodbuddyConfigService?: Record<string, unknown>,
     capabilityServiceOverride?: Record<string, unknown>,
-    browserControl?: Record<string, unknown>
+    browserControl?: Record<string, unknown>,
+    imageService?: ImageGenerationService,
+    imageDatabase?: AssistantDatabase
   ) {
     const assistantDatabase = {
       createTask: vi.fn(),
@@ -5229,7 +5234,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       })
     )
     const onRuntimeSettingsChanged = vi.fn(async () => {})
-    const dispose = registerIpcHandlers(
+    const args: Parameters<typeof registerIpcHandlers> = [
       window as never,
       runtime as never,
       'CommandOrControl+Shift+Space',
@@ -5256,7 +5261,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       (knowledgeServiceOverride ?? {
         database: { listKnowledgeBases: vi.fn(() => []) }
       }) as never,
-      assistantDatabase as never,
+      (imageDatabase ?? assistantDatabase) as never,
       approvalBroker as never,
       {} as never,
       onRuntimeSettingsChanged,
@@ -5279,7 +5284,9 @@ describe('registerIpcHandlers agent terminal state', () => {
       undefined,
       undefined,
       goodbuddyConfigService as never
-    )
+    ]
+    args[43] = imageService
+    const dispose = registerIpcHandlers(...args)
     return {
       approvalBroker,
       assistantDatabase,
@@ -5368,6 +5375,84 @@ describe('registerIpcHandlers agent terminal state', () => {
     prompt: 'continue on Agent',
     workMode: 'execute' as const,
     knowledgeLibraryIds: []
+  })
+
+  it('binds the production image service before text dispatch and routes regenerate, Ask rejection, and deletion through IPC', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const conversationId = crypto.randomUUID()
+    const userId = crypto.randomUUID()
+    const messageId = crypto.randomUUID()
+    const header = { id: conversationId, title: 'Image IPC', updatedAt: Date.now(), workMode: 'execute' as const }
+    database.saveLocalConversations([{ header, messages: [] }])
+    const profile = { id: crypto.randomUUID(), name: 'Image model', modelName: 'image-test', protocol: 'openai-images-generations',
+      baseUrl: 'https://image.test/v1', authentication: 'none' as const, allowConversationInvocation: true }
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [{ b64_json: 'iVBORw0KGgo=' }] }))
+    const service = new ImageGenerationService({ database, getSettings: async () => ({ modelProfiles: [profile], defaultImageModelProfileId: profile.id }), fetcher })
+    service.initialize()
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      expect(database.getConversation(conversationId).messages.map(message => message.id)).toEqual([userId, messageId])
+      expect(request.imageToolBinding?.context.messageId).toBe(messageId)
+      expect(await request.imageToolBinding?.describe()).toContain(profile.id)
+      expect((await request.imageToolBinding!.call({ intent: 'create', prompt: 'A blue circle' }, 'image-call')).state).toBe('completed')
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    const harness = createHarness({ runtimeId: 'model', capability: 'text', supportsToolExecution: true, run },
+      undefined, 'always', undefined, false, undefined, undefined, undefined, false, undefined, undefined, undefined, service, database)
+    const event = trustedEvent(harness.webContents)
+    try {
+      const requestId = crypto.randomUUID()
+      await harness.handler!(event, { requestId, conversationId, prompt: 'Draw a circle', workMode: 'execute',
+        currentUserMessageId: userId, currentAssistantMessageId: messageId })
+      await vi.waitFor(() => expect(database.getTask(requestId).status).toBe('completed'))
+      const original = database.getConversation(conversationId).messages[1]!.imageOperations![0]!
+      expect(database.getArtifact(original.artifactIds[0]!).content).toContain('iVBORw0KGgo=')
+      const regenerate = electronMocks.handlers.get(ipcChannels.imageOperationRegenerate)!
+      const cancel = electronMocks.handlers.get(ipcChannels.imageOperationCancel)!
+      expect(() => cancel(event, { conversationId, operationId: original.id, prompt: 'injected' })).toThrow()
+      const regenerated = await regenerate(event, { conversationId, operationId: original.id }) as typeof original
+      expect(regenerated.id).not.toBe(original.id)
+      expect(regenerated.messageId).toBe(messageId)
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      database.saveLocalConversations([{ header: { ...header, workMode: 'ask' }, messages: [] }])
+      await expect(regenerate(event, { conversationId, operationId: original.id })).rejects.toThrow('Execute')
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      const cancelConversation = vi.spyOn(service, 'cancelConversation')
+      await electronMocks.handlers.get(ipcChannels.conversationsDeleteLocal)!(event, conversationId)
+      expect(cancelConversation).toHaveBeenCalledWith(conversationId)
+      expect(() => database.getConversation(conversationId)).toThrow()
+    } finally {
+      await harness.dispose()
+      await service.dispose()
+      database.close()
+    }
+  })
+
+  it('persists uploads before dispatch while withholding image bytes from a nonvisual text model', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const conversationId = crypto.randomUUID()
+    const userId = crypto.randomUUID()
+    database.saveLocalConversations([{ header: { id: conversationId, title: 'Upload', updatedAt: Date.now() }, messages: [] }])
+    const service = new ImageGenerationService({ database, getSettings: async () => ({ modelProfiles: [] }) })
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      expect(request.images).toBeUndefined()
+      expect(request.trustedInstructions).toContain('cannot view')
+      const sources = database.getConversation(conversationId).messages.find(message => message.id === userId)!.imageSourceArtifactIds!
+      expect(sources).toHaveLength(1)
+      expect(database.getArtifact(sources[0]!).content).toContain('iVBORw0KGgo=')
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    const harness = createHarness({ runtimeId: 'model', capability: 'text', supportsToolExecution: true, run },
+      undefined, 'always', undefined, false, undefined, undefined, undefined, false, undefined, undefined, undefined, service, database)
+    harness.contextManager.enrichRequest.mockImplementation(request => ({ ...request, images: [{ name: 'Upload', mediaType: 'image/png', data: 'iVBORw0KGgo=' }] }))
+    try {
+      const requestId = crypto.randomUUID()
+      await harness.handler!(trustedEvent(harness.webContents), { requestId, conversationId, prompt: 'Turn it red', workMode: 'execute',
+        currentUserMessageId: userId, currentAssistantMessageId: crypto.randomUUID() })
+      await vi.waitFor(() => expect(database.getTask(requestId).status).toBe('completed'))
+      expect(run).toHaveBeenCalledOnce()
+    } finally { await harness.dispose(); await service.dispose(); database.close() }
   })
 
   it('restores image context at the IPC boundary and persists the quiet notice on its artifact event', async () => {

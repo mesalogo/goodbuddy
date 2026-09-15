@@ -368,6 +368,16 @@ export type WebSearchCapability = z.infer<
 export const capabilitySnapshotSchema = z
   .object({
     skills: z.array(skillSummarySchema).max(256),
+    imageGeneration: z
+      .object({
+        modelProfiles: z.array(z.object({
+          id: z.string().uuid(),
+          name: z.string()
+        }).strict()).max(20),
+        assignments: capabilityAssignmentsSchema
+      })
+      .strict()
+      .optional(),
     builtinMcpServers: z
       .array(builtinMcpServerStateSummarySchema)
       .max(4)

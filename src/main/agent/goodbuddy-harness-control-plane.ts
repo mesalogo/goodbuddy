@@ -221,7 +221,7 @@ function parseProxyToolCatalog(
       !/^[a-zA-Z0-9_-]{1,64}$/u.test(tool.name) ||
       names.has(tool.name) ||
       typeof tool.description !== 'string' ||
-      tool.description.length > 1_000 ||
+      tool.description.length > (tool.name === 'generate_image' ? imageToolDescriptionLimit : 1_000) ||
       !tool.inputSchema ||
       typeof tool.inputSchema !== 'object' ||
       Array.isArray(tool.inputSchema)
@@ -885,6 +885,7 @@ export class GoodBuddyHarnessControlPlane {
           {
             sessionId,
             name: tool.name,
+            callId: randomUUID(),
             arguments: argumentsValue
           }
         )
@@ -1450,3 +1451,4 @@ export class GoodBuddyHarnessControlPlane {
     await this.disposing
   }
 }
+import { imageToolDescriptionLimit } from '../../shared/image-generation-contracts'

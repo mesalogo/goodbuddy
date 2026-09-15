@@ -292,12 +292,14 @@ const storedSettingsSchema = version20StoredSettingsSchema
     modelProfiles: z
       .array(
         currentStoredModelProfileSchema.extend({
+          allowConversationInvocation: z.boolean().optional(),
           requestHeaders: modelRequestHeadersSchema,
           requestBody: modelRequestBodySchema
         })
       )
       .min(1)
-      .max(20)
+      .max(20),
+    defaultImageModelProfileId: z.string().uuid().nullable().optional()
   })
 
 type StoredSettings = z.infer<typeof storedSettingsSchema>
@@ -424,6 +426,7 @@ export type ResolvedRuntimeSettings = {
   apiKey?: string
   modelProfiles: ResolvedModelProfile[]
   defaultModelProfileId: string
+  defaultImageModelProfileId?: string | null
   opencodeModelProfile?: ResolvedModelProfile
   continueModelProfile?: ResolvedModelProfile
   deepseekHarnessModelProfile?: ResolvedModelProfile
@@ -458,6 +461,7 @@ export type RuntimePolicySettings = Pick<
 >
 
 export type ResolvedModelProfile = {
+  allowConversationInvocation?: boolean
   id: string
   name: string
   baseUrl: string
@@ -1599,6 +1603,7 @@ export class RuntimeSettingsStore {
           protocol: effective.protocol,
           authentication: effective.authentication,
           supportsImageInput: effective.supportsImageInput,
+          allowConversationInvocation: profile.allowConversationInvocation ?? false,
           contextWindowTokens: effective.contextWindowTokens,
           maximumOutputTokens: effective.maximumOutputTokens,
           imageGenerationQuality: effective.imageGenerationQuality,
@@ -1619,6 +1624,7 @@ export class RuntimeSettingsStore {
         protocol: profile.protocol,
         authentication: profile.authentication,
         supportsImageInput: profile.supportsImageInput,
+        allowConversationInvocation: profile.allowConversationInvocation ?? false,
         contextWindowTokens: profile.contextWindowTokens,
         maximumOutputTokens: profile.maximumOutputTokens,
         imageGenerationQuality: profile.imageGenerationQuality,
@@ -1704,6 +1710,7 @@ export class RuntimeSettingsStore {
         protocol: resolved.protocol,
         authentication: resolved.authentication,
         supportsImageInput: resolved.supportsImageInput,
+        allowConversationInvocation: profile.allowConversationInvocation ?? false,
         contextWindowTokens: resolved.contextWindowTokens,
         maximumOutputTokens: resolved.maximumOutputTokens,
         imageGenerationQuality:
@@ -1728,6 +1735,7 @@ export class RuntimeSettingsStore {
         protocol: profile.protocol,
         authentication: profile.authentication,
         supportsImageInput: profile.supportsImageInput,
+        allowConversationInvocation: profile.allowConversationInvocation ?? false,
         contextWindowTokens: profile.contextWindowTokens,
         maximumOutputTokens: profile.maximumOutputTokens,
         imageGenerationQuality:
@@ -1860,6 +1868,7 @@ export class RuntimeSettingsStore {
       credentialSource: effective.credentialSource,
       modelProfiles,
       defaultModelProfileId: settings.defaultModelProfileId,
+      defaultImageModelProfileId: settings.defaultImageModelProfileId,
       opencodeModelSource: agent.opencodeBaseUrl
         ? { kind: 'platform' }
         : settings.opencodeModelSource,
@@ -1889,6 +1898,18 @@ export class RuntimeSettingsStore {
 
   async getPublicSettings(): Promise<RuntimeSettings> {
     return this.toPublicSettings(await this.load())
+  }
+
+  async getSavedModelProfiles(): Promise<Array<Pick<
+    RuntimeSettings['modelProfiles'][number],
+    'id' | 'name' | 'protocol' | 'allowConversationInvocation'
+  >>> {
+    return (await this.load()).modelProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      protocol: profile.protocol,
+      allowConversationInvocation: profile.allowConversationInvocation ?? false
+    }))
   }
 
   captureRollback(): Promise<RuntimeSettingsRollback> {
@@ -1990,6 +2011,7 @@ export class RuntimeSettingsStore {
       modelProfiles,
       defaultModelProfileId: settings.defaultModelProfileId,
       opencodeModelProfile,
+      defaultImageModelProfileId: settings.defaultImageModelProfileId,
       continueModelProfile,
       deepseekHarnessModelProfile,
       ...agent,
@@ -2128,6 +2150,7 @@ export class RuntimeSettingsStore {
               protocol: input.modelProtocol,
               authentication: input.modelAuthentication,
               supportsImageInput: profile.supportsImageInput,
+              allowConversationInvocation: profile.allowConversationInvocation ?? false,
               contextWindowTokens: profile.contextWindowTokens,
               maximumOutputTokens: profile.maximumOutputTokens,
               imageGenerationQuality: input.imageGenerationQuality,
@@ -2143,6 +2166,7 @@ export class RuntimeSettingsStore {
               protocol: profile.protocol,
               authentication: profile.authentication,
               supportsImageInput: profile.supportsImageInput,
+              allowConversationInvocation: profile.allowConversationInvocation ?? false,
               contextWindowTokens: profile.contextWindowTokens,
               maximumOutputTokens: profile.maximumOutputTokens,
               imageGenerationQuality: profile.imageGenerationQuality,
@@ -2197,6 +2221,9 @@ export class RuntimeSettingsStore {
           protocol: profile.protocol,
           authentication: profile.authentication,
           supportsImageInput: profile.supportsImageInput ?? false,
+          allowConversationInvocation:
+            profile.allowConversationInvocation ??
+            existing?.allowConversationInvocation ?? false,
           contextWindowTokens: profile.contextWindowTokens,
           maximumOutputTokens: profile.maximumOutputTokens,
           imageGenerationQuality: profile.imageGenerationQuality,
@@ -2491,6 +2518,9 @@ export class RuntimeSettingsStore {
       modelProfiles,
       defaultModelProfileId,
       opencodeModelSource,
+      defaultImageModelProfileId: input.defaultImageModelProfileId === undefined
+        ? current.defaultImageModelProfileId
+        : input.defaultImageModelProfileId,
       continueModelSource,
       deepseekHarnessModelSource:
         requestedDeepSeekHarnessSource,

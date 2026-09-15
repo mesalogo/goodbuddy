@@ -11,12 +11,12 @@ describe('built-in model tool catalog', () => {
     expect(new Set(names).size).toBe(names.length)
   })
 
-  it('places every direct-model group outside the shared browser capability', () => {
+  it('places direct-model groups outside the shared browser and managed image capabilities', () => {
     const groupedNames = builtinModelToolGroups.flatMap((group) =>
       group.tools.map((tool) => tool.name)
     )
     const directModelTools = builtinModelTools.filter(
-      (tool) => tool.group !== 'browser'
+      (tool) => tool.group !== 'browser' && tool.group !== 'image'
     )
 
     expect(groupedNames).toHaveLength(directModelTools.length)
@@ -24,6 +24,10 @@ describe('built-in model tool catalog', () => {
     expect(groupedNames).toEqual(
       expect.arrayContaining(directModelTools.map((tool) => tool.name))
     )
+    expect(groupedNames).not.toContain('generate_image')
+    expect(builtinModelTools.find((tool) => tool.name === 'generate_image')).toMatchObject({
+      group: 'image', access: 'write'
+    })
 
     for (const group of builtinModelToolGroups) {
       expect(group.tools.every((tool) => tool.group === group.id)).toBe(true)

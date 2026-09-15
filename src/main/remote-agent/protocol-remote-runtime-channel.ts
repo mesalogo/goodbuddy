@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import type { ImageToolBinding } from '../agent/image-tool-binding'
+import { MainImageToolSession } from './main-image-tool-session'
 import { remoteQuestionResponseSchema, type RemoteQuestionResponse } from '../../shared/remote-question-contracts'
 import {
   AGENT_PROTOCOL_LIMITS,
@@ -584,37 +586,50 @@ export class ProtocolRemoteRuntimeChannel
   }
 
   async preparePrompt(
-    preparation: z.input<typeof remotePromptOperationPreparationSchema>
+    preparation: z.input<typeof remotePromptOperationPreparationSchema>,
+    imageToolBinding?: ImageToolBinding,
+    waitSignal?: AbortSignal
   ): Promise<
     z.infer<typeof remotePromptOperationAcceptanceSchema>
   > {
-    const parsed = remotePromptOperationPreparationSchema.parse(
-      preparation
-    )
-    this.#assertPreparationIdentity(parsed)
-    const raw = await this.#request(
-      'runtime/preparePrompt',
-      parsed
-    )
-    const acceptance = parseRemoteResult(
-      remotePromptOperationAcceptanceSchema,
-      raw,
-      'Remote Runtime prompt acceptance is invalid'
-    )
-    try {
-      assertRemotePromptAcceptanceMatchesPreparation(
-        parsed,
-        acceptance
-      )
-    } catch {
-      throw new ProtocolRemoteRuntimeChannelError(
-        'Remote Runtime prompt acceptance identity is invalid',
-        'binding-mismatch'
-      )
+    this.#imageTool?.close()
+    this.#imageTool = undefined
+    const description = preparation.workMode === 'execute' ? await imageToolBinding?.describe() : undefined
+    waitSignal?.throwIfAborted()
+    let imageTool: z.infer<typeof remotePromptOperationPreparationSchema>['imageTool']
+    if (description && imageToolBinding) {
+      this.#assertCurrent()
+      const binary = this.#state.client.allocateBinaryChannel?.({ kind: 'blob' })
+      if (!binary) throw new Error('Remote image tool transport is unavailable')
+      imageTool = { channelId: binary.channelId, channelEpoch: binary.channelEpoch, description }
+      this.#imageTool = new MainImageToolSession(binary, imageToolBinding, waitSignal)
     }
-    this.#assertCurrent()
-    return acceptance
+    try {
+      const parsed = remotePromptOperationPreparationSchema.parse({ ...preparation, imageTool })
+      this.#assertPreparationIdentity(parsed)
+      const raw = await this.#request('runtime/preparePrompt', parsed)
+      const acceptance = parseRemoteResult(
+        remotePromptOperationAcceptanceSchema, raw,
+        'Remote Runtime prompt acceptance is invalid'
+      )
+      try {
+        assertRemotePromptAcceptanceMatchesPreparation(parsed, acceptance)
+        if (Boolean(imageTool) !== Boolean(acceptance.imageToolUrl)) throw new Error('Image tool registration mismatch')
+      } catch {
+        throw new ProtocolRemoteRuntimeChannelError(
+          'Remote Runtime prompt acceptance identity is invalid', 'binding-mismatch'
+        )
+      }
+      this.#assertCurrent()
+      return acceptance
+    } catch (error) {
+      this.#imageTool?.close()
+      this.#imageTool = undefined
+      throw error
+    }
   }
+
+  #imageTool?: MainImageToolSession
 
   async startOwnedPrompt(
     request: z.input<typeof remoteOwnedPromptStartRequestSchema>
@@ -754,7 +769,8 @@ export class ProtocolRemoteRuntimeChannel
         'protocol'
       )
     }
-    this.clearRecoveryBoundary()
+    this.#removeRecoveryAbort?.()
+    this.#removeRecoveryAbort = undefined
     this.#recoveryDeadlineAt = deadline
     this.#recoverySignal = signal
     const abort = (): void => {
@@ -774,6 +790,8 @@ export class ProtocolRemoteRuntimeChannel
   }
 
   clearRecoveryBoundary(): void {
+    this.#imageTool?.close()
+    this.#imageTool = undefined
     this.#removeRecoveryAbort?.()
     this.#removeRecoveryAbort = undefined
     this.#recoverySignal = undefined
@@ -1628,6 +1646,7 @@ export class ProtocolRemoteRuntimeChannel
         this.#state.capabilityGeneration
       )
     this.#closing = true
+    this.#imageTool?.close()
     this.clearRecoveryBoundary()
     this.#lifetime.abort(
       new DOMException('Remote Runtime channel closed', 'AbortError')

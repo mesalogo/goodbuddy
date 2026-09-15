@@ -1057,6 +1057,15 @@ const desktopApi: DesktopApi = {
     }
   },
   conversations: {
+    imageOperations: {
+      cancel: (input) => ipcRenderer.invoke(ipcChannels.imageOperationCancel, input),
+      regenerate: (input) => ipcRenderer.invoke(ipcChannels.imageOperationRegenerate, input),
+      onChanged: (listener) => {
+        const handler = (_event: Electron.IpcRendererEvent, operation: import('../shared/image-generation-contracts').ImageOperation): void => listener(operation)
+        ipcRenderer.on(ipcChannels.imageOperationChanged, handler)
+        return () => ipcRenderer.removeListener(ipcChannels.imageOperationChanged, handler)
+      }
+    },
     list: () =>
       ipcRenderer.invoke(
         ipcChannels.conversationsList

@@ -273,6 +273,12 @@ export type SkillImportInspection = {
 }
 
 export type CapabilityServiceOptions = Readonly<{
+  getSavedModelProfiles?: () => Promise<ReadonlyArray<{
+    id: string
+    name: string
+    protocol: string
+    allowConversationInvocation?: boolean
+  }>>
   platform?: NodeJS.Platform
   architecture?: string
   electronTarget?: boolean
@@ -702,6 +708,7 @@ async function parseSkillZip(archivePath: string): Promise<ParsedSkillZip> {
 }
 
 export class CapabilityService {
+  private readonly getSavedModelProfiles: NonNullable<CapabilityServiceOptions['getSavedModelProfiles']>
   private state?: StoredCapabilities
   private loadPromise?: Promise<StoredCapabilities>
   private warnings: SettingsWarning[] = []
@@ -721,6 +728,8 @@ export class CapabilityService {
     private readonly cipher: CapabilityCipher,
     options: CapabilityServiceOptions = {}
   ) {
+    this.getSavedModelProfiles =
+      options.getSavedModelProfiles ?? (async () => [])
     this.platform = options.platform ?? process.platform
     this.architecture = options.architecture ?? process.arch
     this.electronTarget =
@@ -971,12 +980,25 @@ export class CapabilityService {
   }
 
   async getSnapshot(): Promise<CapabilitySnapshot> {
-    const [state, catalog, browserProfileState] = await Promise.all([
+    const [state, catalog, browserProfileState, savedModelProfiles] = await Promise.all([
       this.load(),
       this.getSkillCatalog(),
-      this.browserProfiles.getSnapshot()
+      this.browserProfiles.getSnapshot(),
+      this.getSavedModelProfiles()
     ])
+    const imageProfiles = savedModelProfiles
+      .filter((profile) =>
+        profile.protocol === 'openai-images-generations' &&
+        profile.allowConversationInvocation === true
+      )
+      .map(({ id, name }) => ({ id, name }))
     return {
+      imageGeneration: {
+        modelProfiles: imageProfiles,
+        assignments: imageProfiles.length > 0
+          ? ['model', 'opencode', 'continue', 'deepseek-harness']
+          : []
+      },
       skills: catalog
         .map((skill) => ({
           ...skill,

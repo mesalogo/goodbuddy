@@ -1,3 +1,5 @@
+import { ImageCapabilityNotice } from "./ImageCapabilityNotice";
+import type { ImageOperation } from "../../shared/image-generation-contracts";
 import {
   ArrowDown,
   Bot,
@@ -803,6 +805,9 @@ type ChatScrollSnapshot = {
 };
 
 function ChatHistoryPane({
+  onOpenImageModelSettings,
+  onReselectImageSources,
+  onEditImage,
   active,
   artifactById,
   conversationHtmlRenderingEnabled,
@@ -824,6 +829,9 @@ function ChatHistoryPane({
   taskStrip,
   visibleMessageCount,
 }: {
+  onOpenImageModelSettings: () => void;
+  onReselectImageSources: (operation: ImageOperation) => void;
+  onEditImage: (artifact: AssistantArtifact) => void;
   active: boolean;
   artifactById: ReadonlyMap<string, AssistantArtifact>;
   conversationHtmlRenderingEnabled: boolean;
@@ -1107,6 +1115,9 @@ function ChatHistoryPane({
           </div>
         )}
         <ChatTimeline
+          onOpenImageModelSettings={onOpenImageModelSettings}
+          onReselectImageSources={onReselectImageSources}
+          onEditImage={onEditImage}
           artifactById={artifactById}
           conversationId={conversation.id}
           hiddenMessageCount={hiddenMessageCount}
@@ -1344,6 +1355,8 @@ function toConversationMessage(message: Message): ConversationMessage {
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
     artifactIds: message.artifactIds,
+    imageOperations: message.imageOperations,
+    imageSourceArtifactIds: message.imageSourceArtifactIds,
     imageContextNotice: message.imageContextNotice,
     task: message.task,
     attachments: message.attachments,
@@ -1477,15 +1490,26 @@ function mergePersistedConversations(
       conversation.messages.map((message) => message.id),
     );
     const messages = [
-      ...conversation.messages.map((message) => {
-        const localMessage = localMessageById.get(message.id);
+      ...conversation.messages.map((persistedMessage) => {
+        const localMessage = localMessageById.get(persistedMessage.id);
+        const operations = new Map(persistedMessage.imageOperations?.map(operation => [operation.id, operation]));
+        for (const operation of localMessage?.imageOperations ?? []) {
+          if (operation.updatedAt > (operations.get(operation.id)?.updatedAt ?? -1)) operations.set(operation.id, operation);
+        }
+        const imageMetadata = {
+          imageOperations: operations.size ? [...operations.values()] : undefined,
+          imageSourceArtifactIds: persistedMessage.imageSourceArtifactIds ?? localMessage?.imageSourceArtifactIds,
+          artifactIds: [...new Set([...(persistedMessage.artifactIds ?? []),
+            ...[...operations.values()].flatMap(operation => operation.artifactIds)])].slice(-8),
+        };
+        const message = { ...persistedMessage, ...imageMetadata };
         if (!conversation.activeRequest && local.activeRequest?.messageId === message.id) {
           return { ...message, pendingQuestions: undefined };
         }
         if (!localIsNewer) {
           // Pending prompts are live-only and are omitted from persisted messages.
           if (localMessage?.state === "streaming" && message.state === "streaming") {
-            return { ...message, approval: localMessage.approval, pendingQuestions: localMessage.pendingQuestions };
+            return { ...localMessage, ...imageMetadata };
           }
           return message;
         }
@@ -1495,7 +1519,8 @@ function mergePersistedConversations(
         ) {
           return message;
         }
-        return localMessage;
+        return { ...localMessage, ...imageMetadata,
+          artifactIds: [...new Set([...(localMessage.artifactIds ?? []), ...(message.artifactIds ?? [])])].slice(-8) };
       }),
       ...local.messages.filter((message) => !serverMessageIds.has(message.id)),
     ];
@@ -2505,6 +2530,8 @@ function App(): React.JSX.Element {
     Record<string, ContextAttachment[]>
   >({});
   const attachments = attachmentsByConversation[activeId] ?? [];
+  const [imageReferencesByConversation, setImageReferencesByConversation] = useState<Record<string, AssistantArtifact[]>>({});
+  const imageReferences = imageReferencesByConversation[activeId] ?? [];
   const attachmentsRef = useRef(new Map<string, ContextAttachment[]>());
   const updateAttachments = useCallback(
     (
@@ -2618,6 +2645,7 @@ function App(): React.JSX.Element {
   );
   const hydratingArtifactIds = useRef(new Set<string>());
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentButtonRef = useRef<HTMLButtonElement>(null);
   const [chatScrollSnapshots, setChatScrollSnapshots] = useState<
     Record<string, ChatScrollSnapshot>
   >({});
@@ -6017,7 +6045,7 @@ function App(): React.JSX.Element {
     const missingIds = [
       ...new Set(
         (activeConversation?.messages ?? []).flatMap(
-          (message) => message.artifactIds ?? [],
+          (message) => [...(message.artifactIds ?? []), ...(message.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])],
         ),
       ),
     ]
@@ -6123,11 +6151,25 @@ function App(): React.JSX.Element {
       );
     const removeAgentListener =
       window.goodbuddy.agent.onEvent(handleAgentEvent);
+    const removeImageListener = window.goodbuddy.conversations.imageOperations.onChanged((operation) => {
+      setConversations(current => current.map(conversation => conversation.id !== operation.conversationId ? conversation : {
+        ...conversation,
+        updatedAt: Math.max(conversation.updatedAt, operation.updatedAt),
+        messages: conversation.messages.map(message => message.id !== operation.messageId ? message : {
+          ...message,
+          imageOperations: message.imageOperations?.some(item => item.id === operation.id)
+            ? message.imageOperations.map(item => item.id === operation.id ? operation : item)
+            : [...(message.imageOperations ?? []), operation],
+          artifactIds: [...new Set([...(message.artifactIds ?? []), ...operation.artifactIds])].slice(-8),
+        }),
+      }));
+    });
     const removeOpenSettingsListener = window.goodbuddy.app.onOpenSettings(() =>
       setView("settings"),
     );
     return () => {
       removeAgentListener();
+      removeImageListener();
       removeOpenSettingsListener();
     };
   }, [handleAgentEvent, setView]);
@@ -7103,6 +7145,7 @@ function App(): React.JSX.Element {
         includeMemoryContext: !command,
         prompt,
         attachments: attachmentSnapshot,
+        imageContextArtifactIds: imageReferences.map(artifact => artifact.id),
         knowledgeLibraryIds: knowledgeLibraryIdsSnapshot,
         knowledgeRetrievalMode: knowledgeRetrievalModeSnapshot,
       };
@@ -7119,6 +7162,7 @@ function App(): React.JSX.Element {
         setRuntimeMenuOpen(false);
         setInput("");
         updateAttachments([]);
+        setImageReferencesByConversation(current => ({ ...current, [conversationId]: [] }));
         if (command) {
           setSelectedRuntimeCommand("");
         }
@@ -7236,6 +7280,22 @@ function App(): React.JSX.Element {
       ),
     );
     try {
+      const saveOrigin = conversationPersistenceQueueRef.current.then(async () => {
+        const origin = {
+          ...conversationSnapshot,
+          title: conversationSnapshot.title === "新对话" ? prompt.slice(0, 24) : conversationSnapshot.title,
+          updatedAt: assistantMessage.createdAt,
+          workMode: workModeSnapshot,
+          messages: [...historySnapshot, userMessage, assistantMessage],
+        };
+        await window.goodbuddy.conversations.saveLocal([{
+          header: toLocalConversationHeader(origin),
+          messages: [toConversationMessage(userMessage), toConversationMessage(assistantMessage)],
+        }]);
+        persistedLocalConversationsRef.current.set(conversationId, origin);
+      });
+      conversationPersistenceQueueRef.current = saveOrigin.catch(() => undefined);
+      await saveOrigin;
       await window.goodbuddy.agent.run({
         requestId,
         conversationId,
@@ -7254,9 +7314,9 @@ function App(): React.JSX.Element {
         knowledgeLibraryIds: knowledgeLibraryIdsSnapshot,
         knowledgeRetrievalMode: knowledgeRetrievalModeSnapshot,
         contextIds: attachmentSnapshot.map((attachment) => attachment.id),
-        ...(runtimeSelectionSnapshot.provider === "model"
-          ? {
-              imageContextArtifactIds: [...historySnapshot]
+        imageContextArtifactIds: queuedInput?.imageContextArtifactIds?.length
+          ? queuedInput.imageContextArtifactIds
+          : attachmentSnapshot.some(attachment => attachment.kind === 'image') ? undefined : [...historySnapshot]
                 .reverse()
                 .find(
                   (message) =>
@@ -7264,8 +7324,6 @@ function App(): React.JSX.Element {
                     message.state === "complete" &&
                     message.artifactIds?.length,
                 )?.artifactIds,
-            }
-          : {}),
         contextCompressionState: conversationSnapshot.contextCompressionState,
         history: retainedHistorySnapshot.map((message) => ({
           role: message.role,
@@ -7587,6 +7645,30 @@ function App(): React.JSX.Element {
       );
     }
   };
+
+  const editImage = useCallback((artifact: AssistantArtifact): void => {
+    const conversationId = activeConversationIdRef.current;
+    setContextError(undefined);
+    setImageReferencesByConversation(current => ({ ...current,
+      [conversationId]: [...(current[conversationId] ?? []).filter(item => item.id !== artifact.id), artifact].slice(-8),
+    }));
+    inputRef.current?.focus();
+  }, []);
+
+  const openImageModelSettings = useCallback((): void => {
+    setSettingsInitialCategory("model");
+    setView("settings");
+  }, [setView]);
+
+  const reselectImageSources = useCallback((operation: ImageOperation): void => {
+    if (operation.conversationId !== activeId) return;
+    setInput(current => current || t("chat.images.recoveryPrompt", {
+      model: operation.modelProfileName ?? operation.modelName,
+      prompt: operation.input.prompt,
+    }));
+    inputRef.current?.focus();
+    attachmentButtonRef.current?.click();
+  }, [activeId, setInput, t]);
 
   const selectContextFiles = async (paths?: string[]): Promise<void> => {
     if (selectingContextFilesRef.current) {
@@ -9229,6 +9311,9 @@ function App(): React.JSX.Element {
                         locale={locale}
                         onCopyMessage={copyMessage}
                         onDownloadImage={downloadImage}
+                        onEditImage={editImage}
+                        onOpenImageModelSettings={openImageModelSettings}
+                        onReselectImageSources={reselectImageSources}
                         onOpenCitationContext={openCitationContext}
                         onOpenCitationSource={openCitationSource}
                         onOpenImage={openImageViewer}
@@ -9343,12 +9428,20 @@ function App(): React.JSX.Element {
                           running={conversationExecutionRunning}
                         />
                         <div className="composer">
+                          <ImageCapabilityNotice
+                            runtime={runtime}
+                            workMode={effectiveWorkMode}
+                            hasCallableImageModels={runtimeSettings?.modelProfiles.some(profile =>
+                              profile.protocol === "openai-images-generations" && profile.allowConversationInvocation === true
+                            ) ?? false}
+                            onOpenModelSettings={openImageModelSettings}
+                          />
                           {composerOptionSummary && (
                             <div className="composer__option-summary" aria-label={t("composer.settings")}>
                               {composerOptionSummary}
                             </div>
                           )}
-                          {(attachments.length > 0 ||
+                          {(attachments.length > 0 || imageReferences.length > 0 ||
                             selectingContextFiles) && (
                             <div
                               aria-busy={selectingContextFiles}
@@ -9360,6 +9453,14 @@ function App(): React.JSX.Element {
                               aria-invalid={contextError ? true : undefined}
                               className="context-list"
                             >
+                              {imageReferences.map(artifact => <div className="context-chip" key={artifact.id}>
+                                {artifact.content && <img alt="" className="context-chip__thumbnail" src={artifact.content} />}
+                                <span><strong>{artifact.title}</strong><small>{t('chat.images.edit')}</small></span>
+                                <button type="button" aria-label={t('composer.removeAttachment', { name: artifact.title })}
+                                  onClick={() => setImageReferencesByConversation(current => ({ ...current,
+                                    [activeId]: (current[activeId] ?? []).filter(item => item.id !== artifact.id),
+                                  }))}>×</button>
+                              </div>)}
                               {attachments.map((attachment) => (
                                 <div
                                   className="context-chip"
@@ -9558,6 +9659,7 @@ function App(): React.JSX.Element {
                                   }
                                   aria-invalid={contextError ? true : undefined}
                                   disabled={selectingContextFiles}
+                                  ref={attachmentButtonRef}
                                   onClick={() => void selectContextFiles()}
                                   title={t("composer.addAttachment")}
                                   type="button"

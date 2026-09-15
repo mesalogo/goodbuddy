@@ -382,6 +382,8 @@ import {
 } from './magic-notes/magic-note-analyzer'
 import { AgentEventBuffer } from './agent-event-buffer'
 import { withImageConversationContext } from './agent/image-conversation-context'
+import type { ImageGenerationService } from './agent/image-generation-service'
+import { imageOperationTargetSchema } from '../shared/image-operation-ipc'
 import {
   ExecutionSpaceResolver,
   REMOTE_EXECUTION_SPACE_UNAVAILABLE
@@ -1334,7 +1336,8 @@ export function registerIpcHandlers(
     'getHostConnectionState' | 'onHostConnectionStateChange'
   >,
   terminalSessionManager?: TerminalSessionManager,
-  localToolEnvironmentService?: LocalToolEnvironmentService
+  localToolEnvironmentService?: LocalToolEnvironmentService,
+  imageGenerationService?: ImageGenerationService
 ): () => Promise<void> {
   type ActiveRequestLease = {
     controller: AbortController
@@ -4018,6 +4021,34 @@ export function registerIpcHandlers(
     const attachedRequest = contextManager.enrichRequest(
       parsedRequest
     )
+    let uploadedImageSourceIds: string[] = []
+    if (imageGenerationService && parsedRequest.currentUserMessageId && parsedRequest.currentAssistantMessageId) {
+      const conversation = assistantDatabase.getConversation(parsedRequest.conversationId)
+      const now = Date.now()
+      assistantDatabase.saveLocalConversations([{
+        header: {
+          id: conversation.id, projectId: conversation.projectId, title: conversation.title,
+          updatedAt: now, workMode: normalizedWorkMode, runtimeSelection: parsedRequest.runtimeSelection,
+          knowledgeLibraryIds: conversation.knowledgeLibraryIds,
+          knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
+          contextMetrics: conversation.contextMetrics, contextCompressionState: conversation.contextCompressionState,
+          branch: conversation.branch
+        },
+        messages: [
+          ...(conversation.messages.some(message => message.id === parsedRequest.currentUserMessageId) ? [] : [{
+            id: parsedRequest.currentUserMessageId, role: 'user' as const,
+            content: parsedRequest.prompt, createdAt: now, state: 'complete' as const
+          }]),
+          ...(conversation.messages.some(message => message.id === parsedRequest.currentAssistantMessageId) ? [] : [{
+            id: parsedRequest.currentAssistantMessageId, role: 'assistant' as const,
+            content: '', createdAt: now, state: 'streaming' as const
+          }])
+        ]
+      }])
+      if (attachedRequest.images?.length) {
+        uploadedImageSourceIds = imageGenerationService.persistUploads({ conversationId: parsedRequest.conversationId, messageId: parsedRequest.currentUserMessageId }, attachedRequest.images)
+      }
+    }
     const enrichedRequest = imageGeneration
       ? withImageConversationContext(
           attachedRequest,
@@ -4045,7 +4076,7 @@ export function registerIpcHandlers(
       !agentRuntimeSelected
         ? capabilityService.getWebSearchCapabilityStatus?.()
         : undefined,
-      configAccess !== 'none' && !enrichedRequest.projectId
+      (configAccess !== 'none' && !enrichedRequest.projectId) || (imageGenerationService && !imageGeneration && enrichedRequest.images?.length)
         ? settingsStore.getResolvedSettings()
         : undefined,
       selectedRuntimeTarget
@@ -4077,6 +4108,15 @@ export function registerIpcHandlers(
             : undefined
           : resolvedRuntimeSettings?.workspacePath
     const controller = new AbortController()
+    const imageToolBinding = !imageGeneration && imageGenerationService && enrichedRequest.currentAssistantMessageId
+      ? imageGenerationService.bind({
+          conversationId: enrichedRequest.conversationId,
+          messageId: enrichedRequest.currentAssistantMessageId,
+          requestId: enrichedRequest.requestId,
+          workMode: normalizedWorkMode
+        }, () => normalizeInteractiveWorkMode(assistantDatabase.getConversation(enrichedRequest.conversationId).workMode))
+      : undefined
+    const imageToolAvailable = Boolean(await imageToolBinding?.describe())
     const scopedCapability = await grantScopedDataCapability({
       gateway: knowledgeGateway,
       browserControl: browserControl as BrowserCapabilityControl | undefined,
@@ -4101,6 +4141,7 @@ export function registerIpcHandlers(
     })
     const knowledgeCapabilityToken = scopedCapability.token
     const availableTools = [
+      ...(imageToolAvailable ? ['generate_image'] : []),
       ...(webSearchEnabled ? ['web_search', 'web_fetch'] : []),
       ...(!agentRuntimeSelected && !imageGeneration
         ? ['workspace_rg', 'workspace_read_text', 'output_read', 'subagent_delegate']
@@ -4141,6 +4182,28 @@ export function registerIpcHandlers(
       : baseRequest
     if (scopedCapability.browserTabId) {
       request.browserTabId = scopedCapability.browserTabId
+    }
+    if (imageToolBinding) {
+      request.imageToolBinding = imageToolBinding
+      const imageReferenceIds = [...uploadedImageSourceIds, ...(request.imageContextArtifactIds ?? [])]
+      if (imageReferenceIds.length) {
+        request.trustedInstructions = [request.trustedInstructions,
+          `Image references for this request: ${JSON.stringify(imageReferenceIds)}. These are references, not visual observations; use explicit sourceArtifactIds when editing.`].filter(Boolean).join('\n')
+      }
+      if (request.images?.length && resolvedRuntimeSettings) {
+        const effective = request.runtimeSelection
+          ? applyRuntimeSelection(resolvedRuntimeSettings, request.runtimeSelection).settings
+          : resolvedRuntimeSettings
+        const supportsImages = selectedRuntimeTarget === 'model' ? effective.supportsImageInput
+          : selectedRuntimeTarget === 'opencode' ? effective.opencodeModelProfile?.supportsImageInput
+            : selectedRuntimeTarget === 'continue' ? effective.continueModelProfile?.supportsImageInput
+              : effective.deepseekHarnessModelProfile?.supportsImageInput
+        if (supportsImages !== true) {
+          request.images = undefined
+          request.trustedInstructions = [request.trustedInstructions,
+            'The uploaded images were saved as conversation image references for the image tool. Your chat model cannot view them. Do not claim visual observations; use the user description to edit them.'].filter(Boolean).join('\n')
+        }
+      }
     }
     const managedSshExecution =
       agentRuntimeSelected &&
@@ -6762,6 +6825,7 @@ export function registerIpcHandlers(
     (event, input: unknown) => {
       assertTrustedSender(event, window)
       const conversationId = assistantIdSchema.parse(input)
+      imageGenerationService?.cancelConversation(conversationId)
       const queuedItems =
         assistantDatabase.listConversationQueueItems(conversationId)
       for (const item of queuedItems) {
@@ -6788,6 +6852,24 @@ export function registerIpcHandlers(
       return deleted
     }
   )
+
+  registerHandler(ipcChannels.imageOperationCancel, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const target = imageOperationTargetSchema.parse(input)
+    if (!imageGenerationService) throw new Error('Image service is unavailable')
+    return imageGenerationService.cancel(target.conversationId, target.operationId)
+  })
+  registerHandler(ipcChannels.imageOperationRegenerate, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const target = imageOperationTargetSchema.parse(input)
+    if (!imageGenerationService) throw new Error('Image service is unavailable')
+    const previous = imageGenerationService.getOperation(target.conversationId, target.operationId)
+    const currentWorkMode = (): 'ask' | 'execute' => normalizeInteractiveWorkMode(assistantDatabase.getConversation(target.conversationId).workMode)
+    return imageGenerationService.regenerate({
+      conversationId: target.conversationId, messageId: previous.messageId,
+      requestId: randomUUID(), workMode: currentWorkMode()
+    }, target.operationId, currentWorkMode)
+  })
 
   registerHandler(
     ipcChannels.conversationQueueList,

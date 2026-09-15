@@ -3,10 +3,17 @@ export type BuiltinModelToolSummary = {
   displayName: string
   description: string
   access: 'read' | 'write'
-  group: 'filesystem' | 'browser' | 'web' | 'programming'
+  group: 'filesystem' | 'browser' | 'web' | 'programming' | 'image'
 }
 
 export const builtinModelTools = [
+  {
+    name: 'generate_image',
+    displayName: 'Generate or edit image',
+    description: 'Generate or edit an image with an enabled image model and save it in this conversation.',
+    access: 'write',
+    group: 'image'
+  },
   {
     name: 'workspace_rg',
     displayName: '搜索工作区',

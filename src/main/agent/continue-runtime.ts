@@ -455,48 +455,46 @@ export class ContinueAgentRuntime implements AgentRuntime {
     }
 
     const execute = request.workMode === 'execute'
+    const imageCapabilityToken = request.imageToolBinding && execute
+      ? this.options.knowledgeGateway?.bindImageTool(request.imageToolBinding, signal, request.knowledgeCapabilityToken)
+      : undefined
     const knowledgeEndpoint = this.options.knowledgeGateway?.getEndpoint()
     const knowledgeCapability =
-      request.knowledgeCapabilityToken && knowledgeEndpoint
+      (imageCapabilityToken ?? request.knowledgeCapabilityToken) && knowledgeEndpoint
         ? {
             endpoint: knowledgeEndpoint,
-            token: request.knowledgeCapabilityToken
+            token: (imageCapabilityToken ?? request.knowledgeCapabilityToken)!
           }
         : undefined
     let customMcpCapability:
       | { endpoint: string; token: string }
       | undefined
-    if (
-      execute &&
-      knowledgeEndpoint &&
-      this.options.mcpServers?.length
-    ) {
-      const token = this.options.knowledgeGateway?.grantCustomMcp(
-        request.requestId,
-        this.options.mcpServers,
-        signal
-      )
-      if (token) {
-        customMcpCapability = {
-          endpoint: knowledgeEndpoint,
-          token
-        }
-        try {
-          await this.options.knowledgeGateway?.prepareCustomMcpTools(
-            token,
-            signal
-          )
-        } catch (error) {
-          this.options.knowledgeGateway?.revoke(token)
-          throw error
-        }
-      }
-    }
     let result: ContinueHostRunResult
     const emittedTools = new Map<string, ContinueHostTool>()
     let emittedText = ''
     const requestQuestionIds = new Set<string>()
     try {
+      if (
+        execute &&
+        knowledgeEndpoint &&
+        this.options.mcpServers?.length
+      ) {
+        const token = this.options.knowledgeGateway?.grantCustomMcp(
+          request.requestId,
+          this.options.mcpServers,
+          signal
+        )
+        if (token) {
+          customMcpCapability = {
+            endpoint: knowledgeEndpoint,
+            token
+          }
+          await this.options.knowledgeGateway?.prepareCustomMcpTools(
+            token,
+            signal
+          )
+        }
+      }
       const host = this.getHostAdapter(
         binaryPath,
         execute || knowledgeCapability ? 'agent' : 'chat'
@@ -643,6 +641,7 @@ export class ContinueAgentRuntime implements AgentRuntime {
           customMcpCapability.token
         )
       }
+      if (imageCapabilityToken && imageCapabilityToken !== request.knowledgeCapabilityToken) this.options.knowledgeGateway?.revoke(imageCapabilityToken)
     }
     if (!result.text) {
       throw new Error('Continue CLI 未返回内容')

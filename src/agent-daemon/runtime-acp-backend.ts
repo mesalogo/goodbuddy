@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { AgentImageToolMcp } from './image-tool-mcp'
+import { remoteImageToolMcpName } from '../shared/remote-image-tool-node'
 import { remoteQuestionResponseSchema } from '../shared/remote-question-contracts'
 import { createHash } from 'node:crypto'
 import {
@@ -338,6 +340,7 @@ type BindingState = {
   ownedPromptStartTimer?: NodeJS.Timeout
   modelBridgePolicy?: ModelBridgePolicy
   modelBridgeClient?: ModelBridgeBlobClient
+  imageTool?: AgentImageToolMcp
   modelBridgeBroker?: ModelBridgeBrokerServer
   ownedAcp?: AgentOwnedAcpPrompt
   workspaceDirectory?: string
@@ -558,6 +561,18 @@ export class RuntimeAcpBackend {
         'identity'
       )
     }
+    const imageBinding = [...this.#bindings.values()].find(binding =>
+      binding.controllerId === context.controller.controllerId &&
+      binding.controllerGeneration === context.controller.generation &&
+      binding.connectionId === context.controller.connectionId &&
+      binding.activeOperationId !== undefined &&
+      binding.imageTool?.descriptor.channelId === frame.header.channelId &&
+      binding.imageTool.descriptor.channelEpoch === frame.header.channelEpoch &&
+      context.channelId === frame.header.channelId)
+    if (imageBinding) {
+      imageBinding.imageTool!.onReply(frame.payload)
+      return
+    }
     const matches = [...this.#bindings.values()].filter(
       (binding) =>
         binding.controllerId === context.controller.controllerId &&
@@ -613,10 +628,10 @@ export class RuntimeAcpBackend {
         binding.controllerId === controller.controllerId &&
         binding.controllerGeneration === controller.generation &&
         binding.connectionId === controller.connectionId &&
-        binding.modelBridgeClient?.binding.channelId ===
-          frame.header.channelId &&
-        binding.modelBridgeClient.binding.channelEpoch ===
-          frame.header.channelEpoch &&
+        ((binding.modelBridgeClient?.binding.channelId === frame.header.channelId &&
+          binding.modelBridgeClient.binding.channelEpoch === frame.header.channelEpoch) ||
+          (binding.imageTool?.descriptor.channelId === frame.header.channelId &&
+          binding.imageTool.descriptor.channelEpoch === frame.header.channelEpoch)) &&
         frame.header.connectionId === binding.connectionId &&
         frame.header.generation === binding.controllerGeneration
     )
@@ -1140,11 +1155,37 @@ export class RuntimeAcpBackend {
         }
       }
     }
+    if (preparation.imageTool && (preparation.workMode !== 'execute' || !this.#options.blobSink)) {
+      throw new RuntimeAcpBackendError('Image tools require Execute and a desktop transport', 'identity')
+    }
     if (requestedModelBridgePolicy !== undefined) {
       await this.#startModelBridge(binding, preparation, workspace)
     }
     const acceptedAt = new Date(this.#now()).toISOString()
+    binding.imageTool?.close()
+    binding.imageTool = undefined
+    if (preparation.imageTool) {
+      let sequence = 0n
+      const imageTool = new AgentImageToolMcp(preparation.imageTool, async payload => {
+        if (binding.activeOperationId !== preparation.operationId || binding.transportState === 'detached') {
+          throw new Error('Image tool prompt is no longer connected')
+        }
+        await this.#options.blobSink!({
+          header: {
+            protocolMajor: AGENT_PROTOCOL_VERSION.major, protocolMinor: AGENT_PROTOCOL_VERSION.minor,
+            kind: 'blob', direction: 'agent-to-main',
+            connectionId: binding.connectionId, generation: binding.controllerGeneration,
+            channelId: preparation.imageTool!.channelId, channelEpoch: preparation.imageTool!.channelEpoch,
+            sequence: String(++sequence), payloadLength: payload.byteLength
+          }, payload
+        }, { bindingId: binding.request.bindingId, controllerId: binding.controllerId,
+          controllerGeneration: binding.controllerGeneration })
+      })
+      binding.imageTool = imageTool
+      await imageTool.start()
+    }
     const acceptance = remotePromptOperationAcceptanceSchema.parse({
+      ...(binding.imageTool?.url ? { imageToolUrl: binding.imageTool.url } : {}),
       bindingId: preparation.bindingId,
       operationId: preparation.operationId,
       requestId: preparation.requestId,
@@ -1448,6 +1489,9 @@ export class RuntimeAcpBackend {
         bindingId: binding.request.bindingId,
         controllerId: binding.controllerId,
         workspaceDirectory: binding.workspaceDirectory,
+        mcpServers: () => binding.imageTool?.url ? [{
+          type: 'http', name: remoteImageToolMcpName(binding.request.bindingId), url: binding.imageTool.url, headers: []
+        }] : [],
         ...(binding.modelBridgePolicy === undefined
           ? {}
           : {
@@ -1461,7 +1505,8 @@ export class RuntimeAcpBackend {
           transport: binding.sharedProcess.transport,
           prepareSession: async (sessionId: string, operationId: string, workMode: 'ask' | 'execute') => {
             await binding.sharedProcess!.transport.setModelRoute(
-              sessionId, operationId, binding.modelBridgeBroker!.socketPath, workMode
+              sessionId, operationId, binding.modelBridgeBroker!.socketPath, workMode,
+              binding.imageTool ? remoteImageToolMcpName(binding.request.bindingId) : undefined
             )
           }
         } : {}),
@@ -1816,6 +1861,8 @@ export class RuntimeAcpBackend {
     poisonIfActive: boolean,
     preserveRuntime = false
   ): Promise<void> {
+    binding.imageTool?.close()
+    binding.imageTool = undefined
     const broker = binding.modelBridgeBroker
     const client = binding.modelBridgeClient
     binding.modelBridgeBroker = undefined
@@ -2141,6 +2188,8 @@ export class RuntimeAcpBackend {
       return
     }
     binding.transportState = 'detached'
+    binding.imageTool?.close()
+    binding.imageTool = undefined
     if (binding.modelBridgeClient !== undefined) {
       await this.#closeModelBridge(binding, false, true).catch(
         () => undefined

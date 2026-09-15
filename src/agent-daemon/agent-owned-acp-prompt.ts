@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   ndJsonStream,
   type Client,
+  type McpServer,
   type PromptResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -26,6 +27,7 @@ export type AgentOwnedAcpPromptOptions = {
   bindingId: string
   controllerId: string
   workspaceDirectory: string
+  mcpServers?: () => McpServer[]
   expectedModel?: string
   process: RuntimeAcpProcessOwner
   transport?: AgentAcpConnection
@@ -60,6 +62,7 @@ export class AgentOwnedAcpPrompt {
   #promptSettled?: Promise<void>
   #closed = false
   #initialized = false
+  #hasMcpServers = false
   readonly #questions = new Map<string, {
     endpoint: string; operationId: string; questionCount: number; notification: SessionNotification
   }>()
@@ -109,6 +112,7 @@ export class AgentOwnedAcpPrompt {
       )
     }
 
+    const mcpServers = this.#options.mcpServers?.() ?? []
     if (!this.#initialized) {
       const initialization = await this.#whileProcessAlive(
         this.#transport.initialize({
@@ -135,7 +139,7 @@ export class AgentOwnedAcpPrompt {
             this.#connection.loadSession({
               sessionId: request.acpSessionId,
               cwd: this.#options.workspaceDirectory,
-              mcpServers: []
+              mcpServers
             })
           )
         } else if (
@@ -145,7 +149,7 @@ export class AgentOwnedAcpPrompt {
             this.#connection.resumeSession({
               sessionId: request.acpSessionId,
               cwd: this.#options.workspaceDirectory,
-              mcpServers: []
+              mcpServers
             })
           )
         } else {
@@ -156,7 +160,7 @@ export class AgentOwnedAcpPrompt {
         const created = await this.#whileProcessAlive(
           this.#connection.newSession({
             cwd: this.#options.workspaceDirectory,
-            mcpServers: []
+            mcpServers
           })
         )
         this.#sessionId = created.sessionId
@@ -186,7 +190,13 @@ export class AgentOwnedAcpPrompt {
       request.acpSessionId !== this.#sessionId
     ) {
       throw new Error('ACP session identity cannot change within a binding')
+    } else if (mcpServers.length > 0 || this.#hasMcpServers) {
+      await this.#whileProcessAlive(this.#connection.resumeSession({
+        sessionId: this.#sessionId!, cwd: this.#options.workspaceDirectory,
+        mcpServers
+      }))
     }
+    this.#hasMcpServers = mcpServers.length > 0
     await this.#options.prepareSession?.(this.#sessionId!, request.operationId, workMode)
     this.#active = {
       operationId: request.operationId,

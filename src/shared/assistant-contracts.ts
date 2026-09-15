@@ -419,6 +419,8 @@ export const conversationMessageSchema = z
       .strict()
       .optional(),
     artifactIds: z.array(assistantIdSchema).max(8).optional(),
+    imageOperations: z.array(imageOperationSchema).optional(),
+    imageSourceArtifactIds: z.array(assistantIdSchema).max(8).optional(),
     imageContextNotice: z
       .enum(['reference-unavailable', 'editing-unavailable'])
       .optional(),
@@ -1032,3 +1034,4 @@ export type AssistantExpert = z.output<typeof expertCreateSchema> & {
   createdAt: string
   updatedAt: string
 }
+import { imageOperationSchema } from './image-generation-contracts'

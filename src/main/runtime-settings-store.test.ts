@@ -80,6 +80,57 @@ afterEach(async () => {
 })
 
 describe('RuntimeSettingsStore', () => {
+  it('round-trips conversation image settings and retains unavailable defaults without resolving credentials', async () => {
+    const { store, filePath } = await createStore()
+    const initial = await store.getPublicSettings()
+    expect(initial.modelProfiles[0]?.allowConversationInvocation).toBe(false)
+    expect(initial.defaultImageModelProfileId).toBeUndefined()
+    const imageId = '00000000-0000-4000-8000-000000000099'
+    const text = {
+      id: initial.modelProfiles[0]!.id, name: 'Text',
+      baseUrl: 'https://example.com', modelName: 'text',
+      protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const,
+      imageGenerationQuality: 'auto' as const,
+      apiKey: { action: 'keep' as const }
+    }
+    const image = {
+      ...text, id: imageId, name: 'Image model',
+      protocol: 'openai-images-generations' as const,
+      allowConversationInvocation: true,
+      apiKey: { action: 'replace' as const, value: 'image-secret' }
+    }
+    const input = settings({ modelProfiles: [text, image], defaultModelProfileId: text.id, defaultImageModelProfileId: imageId })
+    await store.update(runtimeSettingsInputSchema.parse(input))
+    const reloaded = new RuntimeSettingsStore(filePath, cipher, {})
+    expect((await reloaded.getPublicSettings()).modelProfiles[1]).toMatchObject({ allowConversationInvocation: true, apiKeyConfigured: true })
+    expect((await reloaded.getResolvedSettings()).defaultImageModelProfileId).toBe(imageId)
+    expect((await reloaded.getResolvedSettings()).modelProfiles[1]).toMatchObject({ allowConversationInvocation: true, apiKey: 'image-secret' })
+    expect((await reloaded.getPublicSettings()).configured?.modelProfiles[1]?.allowConversationInvocation).toBe(true)
+    const decrypt = vi.fn(() => { throw new Error('Credential unavailable') })
+    const credentialFree = new RuntimeSettingsStore(filePath, { ...cipher, decrypt }, {})
+    expect(await credentialFree.getSavedModelProfiles()).toEqual([
+      { id: text.id, name: text.name, protocol: text.protocol, allowConversationInvocation: false },
+      { id: imageId, name: image.name, protocol: image.protocol, allowConversationInvocation: true }
+    ])
+    expect(decrypt).not.toHaveBeenCalled()
+    await reloaded.update(settings())
+    expect((await reloaded.getSavedModelProfiles())[1]?.allowConversationInvocation).toBe(true)
+    expect((await reloaded.getPublicSettings()).defaultImageModelProfileId).toBe(imageId)
+    const disabled = await reloaded.update({ ...input, modelProfiles: [text, { ...image, allowConversationInvocation: false, apiKey: { action: 'keep' } }] })
+    expect(disabled.defaultImageModelProfileId).toBe(imageId)
+    expect(disabled.modelProfiles[1]).toMatchObject({ allowConversationInvocation: false, apiKeyConfigured: true })
+    const removed = await reloaded.update({ ...input, modelProfiles: [text] })
+    expect(removed.defaultImageModelProfileId).toBe(imageId)
+    expect((await new RuntimeSettingsStore(filePath, cipher, {}).getPublicSettings()).defaultImageModelProfileId).toBe(imageId)
+    expect((await reloaded.update({ ...input, modelProfiles: [text], defaultImageModelProfileId: null })).defaultImageModelProfileId).toBeNull()
+  })
+
+  it('rejects malformed conversation image settings', () => {
+    expect(runtimeSettingsInputSchema.safeParse(settings({ defaultImageModelProfileId: 'not-a-uuid' })).success).toBe(false)
+    expect(runtimeSettingsInputSchema.safeParse({ ...settings(), modelProfiles: [{ id: '00000000-0000-4000-8000-000000000001', name: 'Image', baseUrl: 'https://example.com', modelName: 'image', protocol: 'openai-images-generations', authentication: 'none', imageGenerationQuality: 'auto', apiKey: { action: 'keep' }, allowConversationInvocation: 'true' }] }).success).toBe(false)
+  })
+
   it('defaults to automatic Execute tool authorization and preserves an explicitly saved deny policy', async () => {
     const { store, filePath } = await createStore()
     await expect(store.getPublicSettings()).resolves.toMatchObject({ toolApproval: 'always' })

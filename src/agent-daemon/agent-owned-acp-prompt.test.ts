@@ -30,23 +30,27 @@ describe('AgentOwnedAcpPrompt', () => {
     let client!: Client
     let finish!: (response: PromptResponse) => void
     const newSession = vi.fn(async () => ({ sessionId: 'session-1' }))
+    const resumeSession = vi.fn(async () => ({}))
+    let imageUrl: string | undefined
+    const mcpServers = () => imageUrl ? [{ type: 'http' as const, name: 'images', url: imageUrl, headers: [] }] : []
     const prepareSession = vi.fn(async () => undefined)
     const completePrompt = vi.fn(async () => undefined)
     const owner = new AgentOwnedAcpPrompt({
       bindingId: 'binding-1', controllerId: 'controller-1',
       workspaceDirectory: '/workspace', process: new MemoryProcess(),
-      transcript, prepareSession, completePrompt,
+      transcript, prepareSession, completePrompt, mcpServers,
       createConnection: factory => {
         client = factory()
         return {
           initialize: async () => ({ protocolVersion: 1, agentCapabilities: {} }),
-          newSession,
+          newSession, resumeSession,
           prompt: () => new Promise<PromptResponse>(resolve => { finish = resolve })
         } as unknown as ClientSideConnection
       }
     })
     try {
-      for (const [index, workMode] of (['execute', 'ask', 'execute'] as const).entries()) {
+      for (const [index, workMode] of (['execute', 'execute', 'ask', 'execute', 'ask'] as const).entries()) {
+        imageUrl = workMode === 'execute' && index !== 1 ? `http://127.0.0.1:1234/prompt-${index}` : undefined
         const operationId = `operation-${index}`
         transcript.prepare({
           bindingId: 'binding-1', operationId, requestId: operationId,
@@ -58,6 +62,9 @@ describe('AgentOwnedAcpPrompt', () => {
           prompt: [{ type: 'text', text: 'Continue with the selected mode' }]
         }, workMode)
         expect(prepareSession).toHaveBeenLastCalledWith('session-1', operationId, workMode)
+        if (index !== 2) {
+          expect(index === 0 ? newSession : resumeSession).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: mcpServers() }))
+        }
         const result = await client.requestPermission!({
           sessionId: 'session-1',
           toolCall: { toolCallId: `tool-${index}`, kind: 'execute', title: 'Run a test' },
@@ -74,7 +81,8 @@ describe('AgentOwnedAcpPrompt', () => {
           .toMatchObject({ state: 'completed' }))
       }
       expect(newSession).toHaveBeenCalledOnce()
-      expect(completePrompt).toHaveBeenCalledTimes(3)
+      expect(resumeSession).toHaveBeenCalledTimes(3)
+      expect(completePrompt).toHaveBeenCalledTimes(5)
     } finally {
       owner.close()
       transcript.close()

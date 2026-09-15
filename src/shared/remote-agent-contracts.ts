@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { remoteImageToolSchema } from './remote-image-tool-contracts'
 import { workspaceManagementActionSchema } from './workspace-management-contracts'
 import {
   acpFrameDirectionSchema,
@@ -164,6 +165,7 @@ const remotePromptOperationIdentityFields = {
   runtimeAdapterDigest: sha256DigestSchema,
   modelBridge: remotePromptModelBridgeSchema.optional(),
   modelProfile: agentPromptModelProfileSchema.optional(),
+  imageTool: remoteImageToolSchema.optional(),
   promptSequence: z
     .number()
     .int()
@@ -350,6 +352,7 @@ export type RemoteSemanticTranscriptEvent = z.infer<
 
 export const remotePromptOperationAcceptanceSchema = z
   .object({
+    imageToolUrl: z.string().url().optional(),
     bindingId: agentIdentifierSchema,
     operationId: agentIdentifierSchema,
     requestId: agentIdentifierSchema,

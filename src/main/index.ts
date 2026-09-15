@@ -31,6 +31,7 @@ import {
   type SelectedRuntimeTarget
 } from './agent/runtime-selection'
 import { CapabilityService } from './capabilities/capability-service'
+import { ImageGenerationService } from './agent/image-generation-service'
 import { ContextManager } from './context-manager'
 import {
   registerIpcHandlers,
@@ -211,6 +212,7 @@ const localRuntimeRegistry = new LocalRuntimeRegistry()
 let knowledgeService: KnowledgeService | undefined
 let knowledgeGateway: KnowledgeMcpGateway | undefined
 let assistantDatabase: AssistantDatabase | undefined
+let imageGenerationService: ImageGenerationService | undefined
 let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
 let feedbackService: FeedbackService | undefined
@@ -750,7 +752,8 @@ if (hasSingleInstanceLock) {
         ? join(process.resourcesPath, 'skills')
         : join(app.getAppPath(), 'resources', 'skills'),
       join(app.getPath('userData'), 'skills', 'imported'),
-      secureCipher
+      secureCipher,
+      { getSavedModelProfiles: () => settingsStore.getSavedModelProfiles() }
     )
     const channelSettingsStore = new ChannelSettingsStore(
       join(app.getPath('userData'), 'channel-settings.json'),
@@ -910,6 +913,23 @@ if (hasSingleInstanceLock) {
       }
     )
     assistantDatabase = startupAssistantDatabase
+    imageGenerationService = new ImageGenerationService({
+      database: startupAssistantDatabase,
+      getSettings: () => settingsStore.getResolvedSettings(),
+      onError: (error) => {
+        void desktopDiagnostics.recordFailure({ component: 'desktop', stage: 'image-generation', code: 'image-generation.observer.failed', error }).catch(() => undefined)
+      },
+      onOperation: (operation) => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send(ipcChannels.imageOperationChanged, operation)
+        }
+      },
+      onUsage: (event) => startupAssistantDatabase.upsertModelUsageCall({
+        requestId: event.requestId, callId: event.callId, runtime: event.runtime,
+        provider: event.provider, model: event.model, input: event.inputTokens,
+        output: event.outputTokens, cacheRead: event.cacheReadTokens, cacheWrite: event.cacheWriteTokens
+      })
+    })
     directModelSubagentScheduler = new SubagentScheduler({
       concurrency: 3,
       queueLimit: 20,
@@ -1130,6 +1150,7 @@ if (hasSingleInstanceLock) {
         createConfiguredRuntime(initialResolvedSettings),
       initializeAssistant: () => {
         startupAssistantDatabase.initialize(defaultWorkspace)
+        imageGenerationService!.initialize()
         startupAssistantDatabase.ensureChannelProjects(
           defaultWorkspace,
           initialRuntimeSettings.defaultModelProfileId
@@ -1426,7 +1447,8 @@ if (hasSingleInstanceLock) {
       agentPackageManager,
       startupRemoteAgentServices.connectionManager,
       terminalSessionManager,
-      startupLocalToolEnvironmentService
+      startupLocalToolEnvironmentService,
+      imageGenerationService
     )
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,
@@ -1522,6 +1544,7 @@ app.on('before-quit', (event) => {
           () => feedbackService?.dispose(),
           () => removeFeedbackIpcHandler?.(),
           () => dshExtensionInstaller?.dispose(),
+          () => imageGenerationService?.dispose(),
           () => removeIpcHandlers?.()
         ],
         [() => stopRuntimeReconfiguration?.()],

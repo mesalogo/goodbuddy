@@ -41,6 +41,64 @@ import { LocalRuntimeRegistry } from './local-runtime-registry'
 import { createAgentRuntime } from './create-runtime'
 import { defaultRuntimeSettings } from '../../shared/contracts'
 import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
+import { AssistantDatabase } from '../assistant/assistant-database'
+import { ImageGenerationService } from './image-generation-service'
+
+vi.mock('electron', () => ({ nativeImage: {} }))
+
+it('generates and edits durable images through the controlled Harness Main proxy and refreshes it in Ask', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-images-')))
+  const database = new AssistantDatabase(join(root, 'assistant.sqlite'))
+  database.initialize(root)
+  const conversationId = crypto.randomUUID()
+  const profileId = crypto.randomUUID()
+  const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [{ b64_json: 'iVBORw0KGgo=' }] }))
+  const service = new ImageGenerationService({ database, fetcher, getSettings: async () => ({ defaultImageModelProfileId: profileId, modelProfiles: [{
+    id: profileId, name: 'Image fixture', modelName: 'fixture', protocol: 'openai-images-generations',
+    allowConversationInvocation: true, baseUrl: 'https://image.test/v1', authentication: 'none'
+  }] }) })
+  let input: Record<string, unknown> = { intent: 'create', prompt: 'Blue circle' }
+  const inProcess = createInProcessLaunch(root, {
+    stream(options) {
+      const prompt = latestUserText(options)
+      const tool = options.tools?.find(tool => tool.name === 'generate_image')
+      if (prompt === 'ask-image') {
+        expect(tool).toBeUndefined()
+        return textResponse('Ask is read-only')
+      }
+      expect(tool).toBeDefined()
+      expect(tool?.description).toContain(profileId)
+      if (!toolResultText(options, prompt)) return toolCall(prompt, 'generate_image', input)
+      expect(toolResultText(options, prompt)).toContain('completed')
+      return textResponse('IMAGE_SAVED')
+    }
+  })
+  const runtime = new DeepSeekHarnessRuntime({ defaultWorkspace: root, baseUrl: 'https://chat.test/v1', model: 'fixture',
+    launch: inProcess.launch, credentialRefs: { [CREDENTIAL_REF]: 'fixture' }, toolProvider: new ModelToolProvider(root),
+    initializationTimeoutMs: 20_000, promptTimeoutMs: 20_000, shutdownTimeoutMs: 5_000 })
+  try {
+    for (const intent of ['create', 'edit'] as const) {
+      const messageId = crypto.randomUUID()
+      const requestId = crypto.randomUUID()
+      database.saveLocalConversations([{ header: { id: conversationId, title: 'Images', updatedAt: Date.now() },
+        messages: [{ id: messageId, role: 'assistant', content: '', createdAt: Date.now(), state: 'complete' }] }])
+      const events = await collect(runtime.run({ requestId, conversationId, prompt: `${intent}-${requestId}`, workMode: 'execute',
+        imageToolBinding: service.bind({ conversationId, messageId, requestId, workMode: 'execute' }) }, new AbortController().signal, async () => 'once'))
+      expect(events.at(-1)?.type).toBe('done')
+      const operation = database.getConversation(conversationId).messages.find(message => message.id === messageId)!.imageOperations![0]!
+      expect(operation.state).toBe('completed')
+      input = { intent: 'edit', prompt: 'Turn red', sourceArtifactIds: operation.artifactIds }
+    }
+    await collect(runtime.run({ requestId: crypto.randomUUID(), conversationId, prompt: 'ask-image', workMode: 'ask' }, new AbortController().signal))
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(String(fetcher.mock.calls[1]![0])).toMatch(/images\/edits$/u)
+  } finally {
+    await runtime.dispose()
+    await service.dispose()
+    database.close()
+    await rm(root, { recursive: true, force: true })
+  }
+}, 60_000)
 
 const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
 const SKILL_CALL_ID = 'e2e-skill-call'

@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { decodeRemoteImageToolMessage, encodeRemoteImageToolMessage, remoteImageToolCallSchema } from '../shared/remote-image-tool-contracts'
+import type { AgentFrame } from '../shared/agent-protocol'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -309,7 +313,7 @@ function harness(input: {
       throw new Error('broker close failed')
     }
   })
-  const blobSink = vi.fn(async () => undefined)
+  const blobSink = vi.fn<(frame: AgentFrame) => Promise<void>>(async () => undefined)
   let bridgeDispatch: ModelBridgeBrokerDispatch | undefined
   const launchModelBridges: unknown[] = []
   const resolved = resolvedBundle()
@@ -451,6 +455,49 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it('binds MCP image calls to authenticated blob framing and closes each prompt endpoint', async () => {
+    const fixture = harness({ workMode: 'execute' })
+    const client = new Client({ name: 'image-backend-test', version: '1' })
+    try {
+      await open(fixture)
+      const accepted = await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+        imageTool: { channelId: 'image-channel', channelEpoch: '1', description: 'Image catalog' }
+      })) as { imageToolUrl: string }
+      await client.connect(new StreamableHTTPClientTransport(new URL(accepted.imageToolUrl)))
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['generate_image'])
+      const result = client.callTool({ name: 'generate_image', arguments: { intent: 'create', prompt: 'Blue' } })
+      await vi.waitFor(() => expect(fixture.blobSink).toHaveBeenCalledOnce())
+      const frame = fixture.blobSink.mock.calls[0]![0]
+      expect(frame.header).toMatchObject({ channelId: 'image-channel', channelEpoch: '1', sequence: '1', direction: 'agent-to-main' })
+      expect(fixture.backend.authorizeBlobFrame(frame, fixture.context.controller)).toBe(true)
+      expect(fixture.backend.authorizeBlobFrame(frame, { ...fixture.context.controller, connectionId: 'foreign' })).toBe(false)
+      const call = remoteImageToolCallSchema.parse(decodeRemoteImageToolMessage(frame.payload))
+      const payload = encodeRemoteImageToolMessage({ callId: call.callId, error: 'Controlled test failure' })
+      const reply = { header: { ...frame.header, direction: 'main-to-agent' as const, payloadLength: payload.byteLength }, payload }
+      await expect(fixture.backend.onBlobFrame(reply, { ...fixture.context, channelId: 'image-channel', controller: { ...fixture.context.controller, connectionId: 'foreign' } })).rejects.toThrow('authority')
+      await fixture.backend.onBlobFrame(reply, { ...fixture.context, channelId: 'image-channel' })
+      expect(await result).toMatchObject({ isError: true })
+      await invoke(fixture, 'runtime/completePrompt', { bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1' })
+      await expect(fetch(accepted.imageToolUrl)).rejects.toThrow()
+      const next = await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+        requestId: 'request-2', operationId: 'request-2', promptSequence: 1,
+        imageTool: { channelId: 'image-channel-2', channelEpoch: '2', description: 'Refreshed image catalog' }
+      })) as { imageToolUrl: string }
+      expect(next.imageToolUrl).not.toBe(accepted.imageToolUrl)
+    } finally { await client.close(); await fixture.backend.dispose() }
+  })
+
+  it('rejects image tool preparation in Ask before launching a process or bridge', async () => {
+    const fixture = harness()
+    try {
+      await open(fixture)
+      await expect(invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+        imageTool: { channelId: 'image-channel', channelEpoch: '1', description: 'Images' }
+      }))).rejects.toThrow('Execute')
+      expect(fixture.launches).toHaveLength(0)
+      expect(fixture.lifecycle).not.toContain('bridge-listen')
+    } finally { await fixture.backend.dispose() }
+  })
   it.each([false, true])('allows mode changes only on a shared Session (shared=%s)', async (shared) => {
     const fixture = harness({ agentOwned: true, shareOwnedProcesses: shared, workMode: 'execute' })
     try {

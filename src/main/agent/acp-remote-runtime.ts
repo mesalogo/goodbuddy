@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { remoteImageToolMcpName } from '../../shared/remote-image-tool-node'
 import { remoteQuestionSchema } from '../../shared/remote-question-contracts'
 import type { AgentQuestionAnswer } from '../../shared/contracts'
 import { isDeepStrictEqual } from 'node:util'
@@ -191,6 +192,7 @@ type SessionRecord = {
   sessionId: string
   context: ChannelContext
   modelBridge?: RemoteModelBridgeSession
+  imageToolUrl?: string
   sendHistoryWithNextPrompt: boolean
   ownedPromptAttached?: boolean
 }
@@ -1183,7 +1185,9 @@ export class AcpRemoteRuntime implements AgentRuntime {
       raw = await this.awaitOperation(
         context,
         '启动远端请求',
-        context.channel.preparePrompt(preparation),
+        request.imageToolBinding
+          ? context.channel.preparePrompt(preparation, request.imageToolBinding, signal)
+          : context.channel.preparePrompt(preparation),
         signal
       )
     } catch (error) {
@@ -1596,7 +1600,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
             state.agent.loadSession({
               sessionId: binding.acpSessionId,
               cwd: this.options.workspacePath,
-              mcpServers: []
+              mcpServers: this.imageMcpServers(binding.bindingId, prepared.acceptance.imageToolUrl)
             }),
             signal
           )
@@ -1607,7 +1611,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
             state.agent.resumeSession({
               sessionId: binding.acpSessionId,
               cwd: this.options.workspacePath,
-              mcpServers: []
+              mcpServers: this.imageMcpServers(binding.bindingId, prepared.acceptance.imageToolUrl)
             }),
             signal
           )
@@ -1619,6 +1623,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
           sessionId: binding.acpSessionId,
           context,
           modelBridge: prepared.modelBridge,
+          imageToolUrl: prepared.acceptance.imageToolUrl,
           sendHistoryWithNextPrompt: false
         }
         pendingModelBridge = undefined
@@ -1668,7 +1673,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         '创建会话',
         state.agent.newSession({
           cwd: this.options.workspacePath,
-          mcpServers: []
+          mcpServers: this.imageMcpServers(binding.bindingId, prepared.acceptance.imageToolUrl)
         }),
         signal
       )
@@ -1697,6 +1702,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         sessionId: response.sessionId,
         context,
         modelBridge: prepared.modelBridge,
+        imageToolUrl: prepared.acceptance.imageToolUrl,
         sendHistoryWithNextPrompt: true
       }
       pendingModelBridge = undefined
@@ -1723,6 +1729,10 @@ export class AcpRemoteRuntime implements AgentRuntime {
       }
       throw error
     }
+  }
+
+  private imageMcpServers(bindingId: string, url?: string) {
+    return url ? [{ type: 'http' as const, name: remoteImageToolMcpName(bindingId), url, headers: [] }] : []
   }
 
   private async getSession(
@@ -1782,6 +1792,13 @@ export class AcpRemoteRuntime implements AgentRuntime {
         current.modelBridge = prepared.modelBridge
         if (this.options.modelProfile !== undefined) {
           current.ownedPromptAttached = false
+        } else if (prepared.acceptance.imageToolUrl || current.imageToolUrl) {
+          const state = await this.getState(current.context, signal)
+          await this.awaitOperation(current.context, 'Refresh image tools', state.agent.resumeSession({
+            sessionId: current.sessionId, cwd: this.options.workspacePath,
+            mcpServers: this.imageMcpServers(current.binding.bindingId, prepared.acceptance.imageToolUrl)
+          }), signal)
+          current.imageToolUrl = prepared.acceptance.imageToolUrl
         }
         return current
       } catch (error) {

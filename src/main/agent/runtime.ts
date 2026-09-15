@@ -146,6 +146,7 @@ export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   trustedInstructions?: string
   /** Main-process-only request-scoped authorization for built-in data tools. */
   knowledgeCapabilityToken?: string
+  imageToolBinding?: ImageToolBinding
   /** Main-process-only browser tab fixed for this request. */
   browserTabId?: BrowserTabId
   /**
@@ -160,3 +161,4 @@ export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   /** Main-only durable native subagent state for partial recovery updates. */
   remoteRecoveredSubagents?: readonly RemoteRecoveredSubagent[]
 }
+import type { ImageToolBinding } from './image-tool-binding'

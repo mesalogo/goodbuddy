@@ -483,6 +483,11 @@ const api: DesktopApi = {
     },
   },
   conversations: {
+    imageOperations: {
+      cancel: vi.fn(),
+      regenerate: vi.fn(),
+      onChanged: vi.fn(() => () => undefined),
+    },
     list: vi.fn(async () => []),
     replace: vi.fn(async () => {}),
     saveLocal: vi.fn(async () => {}),
@@ -8926,6 +8931,19 @@ describe("App", () => {
     expect(mode).toHaveAccessibleName("工作模式：Ask · 只读问答");
   });
 
+  it('opens model settings from no-tool image guidance without losing the request draft', async () => {
+    vi.mocked(api.agent.getStatus).mockResolvedValue({ id: 'model', label: 'Legacy chat', available: true, supportsToolExecution: false, capability: 'chat', detail: 'Ready' });
+    render(<App />);
+    expect(await screen.findByText('当前聊天模型无法自动调用图片工具，可使用已有直连图片工作流。')).toBeVisible();
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Keep my image request' } });
+    fireEvent.click(screen.getByRole('button', { name: '前往图片模型设置' }));
+    expect(await screen.findByRole('tab', { name: '模型连接' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
+    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('Keep my image request');
+    expect(run).not.toHaveBeenCalled();
+    expect(api.conversations.imageOperations.regenerate).not.toHaveBeenCalled();
+  });
+
   it("allows a direct model to submit Execute with GoodBuddy approvals", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: "model",
@@ -10288,6 +10306,93 @@ describe("App", () => {
       role: "user", content: "生成一只蓝色的猫",
     });
     anchorClick.mockRestore();
+  });
+
+  it("updates the original image message after leaving its conversation and queues history editing across Runtime switches", async () => {
+    const conversationId = crypto.randomUUID();
+    const messageId = crypto.randomUUID();
+    const otherId = crypto.randomUUID();
+    const operation: import('../../shared/image-generation-contracts').ImageOperation = {
+      id: crypto.randomUUID(), conversationId, messageId, requestId: crypto.randomUUID(), callId: 'image-call',
+      modelProfileId: crypto.randomUUID(), modelName: 'image-model', modelProfileName: '图片连接',
+      input: { intent: 'create', prompt: 'Blue circle', sourceArtifactIds: [] }, state: 'running', artifactIds: [], createdAt: 1, updatedAt: 1,
+    };
+    const secondOperation = { ...operation, id: crypto.randomUUID(), modelProfileName: 'Second image connection' };
+    let imageListener: ((value: typeof operation) => void) | undefined;
+    vi.mocked(api.conversations.imageOperations.onChanged).mockImplementationOnce(listener => { imageListener = listener; return () => { imageListener = undefined; }; });
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([
+      { id: conversationId, projectId, title: '图片原会话', updatedAt: 2, workMode: 'execute', messages: [
+        { id: messageId, role: 'assistant', content: '图片稍后保存', createdAt: 1, state: 'complete', imageOperations: [operation, secondOperation] },
+      ] },
+      { id: otherId, projectId, title: '另一会话', updatedAt: 1, messages: [
+        { id: crypto.randomUUID(), role: 'assistant', content: '另一会话正文', createdAt: 1, state: 'complete' },
+      ] },
+    ]);
+    const artifact = { id: crypto.randomUUID(), kind: 'image' as const, title: 'Blue circle', mimeType: 'image/png',
+      content: 'data:image/png;base64,iVBORw0KGgo=', byteSize: 8, createdAt: '2026-09-15T00:00:00Z', updatedAt: '2026-09-15T00:00:00Z' };
+    vi.mocked(api.artifacts.get).mockResolvedValueOnce(artifact);
+    render(<App />);
+    expect(await screen.findByText('图片稍后保存')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /^另一会话/u }));
+    expect(await screen.findByText('另一会话正文')).toBeVisible();
+    act(() => imageListener?.({ ...operation, state: 'completed', artifactIds: [artifact.id], updatedAt: 3 }));
+    expect(screen.queryByRole('img', { name: 'Blue circle' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^图片原会话/u }));
+    expect(await screen.findByRole('img', { name: 'Blue circle' })).toBeVisible();
+    expect(screen.getByText(/图片已保存/u)).toBeVisible();
+    expect(screen.getAllByRole('region', { name: '图片生成' }).map(card => within(card).getByRole('status').textContent)).toEqual([
+      '图片已保存 · 图片连接', '正在生成图片 · Second image connection',
+    ]);
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '继续修改' }));
+    fireEvent.click(screen.getByRole('button', { name: /sonnet-5/u }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /^OpenCode · 默认模型/u }));
+    await waitFor(() => expect(api.agent.getStatus).toHaveBeenLastCalledWith({ provider: 'opencode' }));
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Turn the circle red' } });
+    fireEvent.click(screen.getByLabelText('发送'));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]![0]).toMatchObject({ runtimeSelection: { provider: 'opencode' }, imageContextArtifactIds: [artifact.id] });
+    expect(api.conversationQueue.enqueueUser).toHaveBeenCalledWith(expect.objectContaining({ imageContextArtifactIds: [artifact.id] }));
+    expect(api.context.addPastedImage).not.toHaveBeenCalled();
+  });
+
+  it('recovers failed image editing through settings and composer attachments without resubmitting the operation', async () => {
+    const conversationId = crypto.randomUUID();
+    const operation: import('../../shared/image-generation-contracts').ImageOperation = {
+      id: crypto.randomUUID(), conversationId, messageId: crypto.randomUUID(), requestId: crypto.randomUUID(), callId: 'failed-edit',
+      modelProfileId: crypto.randomUUID(), modelName: 'original-image-model', modelProfileName: 'Original image connection',
+      input: { intent: 'edit', prompt: 'Change the background', sourceArtifactIds: [crypto.randomUUID()] },
+      state: 'failed', error: 'Original source unavailable', artifactIds: [], createdAt: 1, updatedAt: 1,
+    };
+    vi.mocked(api.conversations.list).mockResolvedValueOnce([{ id: conversationId, projectId, title: 'Failed image editing', updatedAt: 2, workMode: 'execute', messages: [
+      { id: operation.messageId, role: 'assistant', content: '', createdAt: 1, state: 'complete', imageOperations: [operation] },
+    ] }]);
+    const source = { id: crypto.randomUUID(), name: 'replacement.png', size: 64, preview: 'Replacement image', kind: 'image' as const, contentUrl: 'data:image/png;base64,iVBORw0KGgo=' };
+    vi.mocked(api.context.selectFiles).mockResolvedValueOnce([source]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: '重新选择素材' }));
+    const composer = screen.getByLabelText('向 GoodBuddy 提问');
+    expect(composer).toHaveValue('使用图片模型“Original image connection”：Change the background');
+    expect(composer).toHaveFocus();
+    expect(await within(composer.closest<HTMLElement>('.composer')!).findByText('replacement.png')).toBeVisible();
+    expect(api.context.selectFiles).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    expect(api.conversations.imageOperations.regenerate).not.toHaveBeenCalled();
+    fireEvent.change(composer, { target: { value: 'My edited image request' } });
+    vi.mocked(api.context.selectFiles).mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByRole('button', { name: '重新选择素材' }));
+    await waitFor(() => expect(api.context.selectFiles).toHaveBeenCalledTimes(2));
+    expect(composer).toHaveValue('My edited image request');
+    fireEvent.click(screen.getByRole('button', { name: '重新选择模型' }));
+    expect(await screen.findByRole('tab', { name: '模型连接' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
+    expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('My edited image request');
+    expect(screen.getByText('Original source unavailable')).toBeVisible();
+    expect(api.conversations.imageOperations.regenerate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText('发送'));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]![0]).toMatchObject({ conversationId, prompt: 'My edited image request', contextIds: [source.id] });
+    expect(run.mock.calls[0]![0].imageContextArtifactIds).toBeUndefined();
   });
 
   it("can dispatch a request to the parallel expert team", async () => {

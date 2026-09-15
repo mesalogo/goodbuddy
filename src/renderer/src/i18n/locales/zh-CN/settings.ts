@@ -1,4 +1,12 @@
 export const settings = {
+  conversationImages: {
+    allow: '允许 AI 在会话中调用',
+    description: '开启后，支持工具调用的聊天助手可使用此模型生成和编辑图片，编辑能力取决于图片协议。结果保存在发起请求的会话中。',
+    callable: '可在会话中调用',
+    defaultBadge: '默认生图模型',
+    setDefault: '设为默认生图模型',
+    unavailable: '默认生图模型不可用，请开启该模型或明确选择其他图片模型。'
+  },
   modelDownloadSources: {
     modelscope: 'ModelScope',
     'hugging-face': 'Hugging Face'

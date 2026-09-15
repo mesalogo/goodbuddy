@@ -385,6 +385,7 @@ export const conversationQueueUserInputSchema = z
     includeMemoryContext: z.boolean().default(true),
     prompt: z.string().trim().min(1).max(100_000),
     attachments: z.array(conversationAttachmentSchema).max(8).default([]),
+    imageContextArtifactIds: z.array(assistantIdSchema).max(8).optional(),
     knowledgeLibraryIds: z
       .array(z.string().uuid())
       .max(20)
@@ -625,6 +626,7 @@ const modelProfileInputSchema = z
     protocol: modelProtocolSchema,
     authentication: modelAuthenticationSchema,
     supportsImageInput: z.boolean().optional(),
+    allowConversationInvocation: z.boolean().optional(),
     contextWindowTokens: z
       .number()
       .int()
@@ -740,6 +742,7 @@ export const runtimeSettingsInputSchema = z
     apiKey: modelApiKeyUpdateSchema,
     modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
     defaultModelProfileId: modelProfileIdSchema.optional(),
+    defaultImageModelProfileId: modelProfileIdSchema.nullable().optional(),
     opencodeModelSource: runtimeModelSourceSchema.optional(),
     continueModelSource: runtimeModelSourceSchema.optional(),
     deepseekHarnessModelSource: runtimeModelSourceSchema
@@ -1019,6 +1022,7 @@ export type ModelConnectionSettings = {
   protocol: ModelProtocol
   authentication: ModelAuthentication
   supportsImageInput?: boolean
+  allowConversationInvocation?: boolean
   contextWindowTokens?: number
   maximumOutputTokens?: number
   imageGenerationQuality: ImageGenerationQuality
@@ -1111,6 +1115,7 @@ export type RuntimeSettings = {
   credentialSource: 'none' | 'encrypted' | 'environment' | 'unreadable'
   modelProfiles: ModelConnectionSettings[]
   defaultModelProfileId: string
+  defaultImageModelProfileId?: string | null
   opencodeModelSource: RuntimeModelSource
   continueModelSource: RuntimeModelSource
   deepseekHarnessModelSource?: RuntimeModelSource
@@ -2047,6 +2052,7 @@ export type DesktopApi = {
     }
   }
   conversations: {
+    imageOperations: import('./image-operation-ipc').ImageOperationsApi
     list: () => Promise<ConversationSnapshot[]>
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>

@@ -2681,9 +2681,15 @@ export class ModelAgentRuntime implements AgentRuntime {
     return history
   }
 
+  /** Strict image service entry point; direct-image conversations retain their fallback policy. */
+  generateImage(request: AgentExecutionRequest, signal: AbortSignal): AsyncGenerator<RuntimeEvent, void, void> {
+    return this.runImageGeneration(request, signal, false)
+  }
+
   private async *runImageGeneration(
     request: AgentExecutionRequest,
-    signal: AbortSignal
+    signal: AbortSignal,
+    allowEditingFallback = true
   ): AsyncGenerator<RuntimeEvent, void, void> {
     const images = request.images ?? []
     const prompt = imageConversationPrompt(request)
@@ -2744,7 +2750,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       )
       const providerMessage = getErrorMessage(errorPayload)
       if (
-        images.length > 0 &&
+        allowEditingFallback && images.length > 0 &&
         isImageEditingUnavailable(response.status, providerMessage)
       ) {
         signal.throwIfAborted()
@@ -3417,6 +3423,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       wakeNestedEvents = undefined
     }
     const toolContext: ModelToolCallContext = {
+      imageToolBinding: request.imageToolBinding,
       conversationId: request.conversationId,
       browserTabId: request.browserTabId,
       browserConversationId: request.browserConversationId,
@@ -3743,6 +3750,7 @@ export class ModelAgentRuntime implements AgentRuntime {
       let roundContextBytes = 0
       const roundCallIds = new Set<string>()
       for (const call of response.toolCalls) {
+        toolContext.toolCallId = call.id
         signal.throwIfAborted()
         if (roundCallIds.has(call.id)) {
           throw new Error('模型重复使用了工具调用 ID')

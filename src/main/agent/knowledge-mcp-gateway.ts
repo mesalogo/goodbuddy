@@ -102,6 +102,7 @@ export {
 }
 
 export type GoodBuddyBuiltinToolName =
+  | 'generate_image'
   | ScopedDataToolName
   | BrowserToolName
 
@@ -184,6 +185,7 @@ export type KnowledgeLibraryListItem = {
 }
 
 type Capability = {
+  imageToolBinding?: ImageToolBinding
   requestId: string
   libraryIds: readonly string[]
   magicNotesAccess: MagicNotesCapabilityAccess
@@ -530,6 +532,20 @@ export class KnowledgeMcpGateway {
     }
   }
 
+  bindImageTool(binding: ImageToolBinding, signal: AbortSignal, existingToken?: string): string {
+    signal.throwIfAborted()
+    if (existingToken) {
+      const capability = this.getCapability(existingToken)
+      if (capability.requestId !== binding.context.requestId) throw new Error('Image capability request does not match')
+      capability.imageToolBinding = binding
+      return existingToken
+    }
+    return this.storeCapability({
+      requestId: binding.context.requestId, libraryIds: [], magicNotesAccess: 'none', configAccess: 'none',
+      customMcpServers: [], signal, imageToolBinding: binding
+    })
+  }
+
   grantCustomMcp(
     requestId: string,
     servers: readonly ResolvedMcpServer[],
@@ -760,6 +776,7 @@ export class KnowledgeMcpGateway {
   getAvailableToolNames(token: string): GoodBuddyBuiltinToolName[] {
     const capability = this.getCapability(token)
     return [
+      ...(capability.imageToolBinding ? ['generate_image' as const] : []),
       ...(capability.libraryIds.length > 0
         ? knowledgeToolNames
         : []),
@@ -1570,6 +1587,7 @@ export class KnowledgeMcpGateway {
           }
         )
         const capability = this.getCapability(token)
+        const imageTool = await imageToolDefinition(capability.imageToolBinding)
         const browserTools = capability.browserConversationId && capability.browserTabId
           ? new BrowserModelTools({
               service: this.browserService!,
@@ -1596,6 +1614,7 @@ export class KnowledgeMcpGateway {
         session.listedTools = true
         return {
           tools: [
+            ...(imageTool ? [{ name: imageTool.name, description: imageTool.description, inputSchema: imageTool.inputSchema as Tool['inputSchema'], annotations: { readOnlyHint: false, destructiveHint: false } }] : []),
             ...scopedTools,
             ...browserDefinitions,
             ...[...customBindings.values()].map(
@@ -1610,6 +1629,12 @@ export class KnowledgeMcpGateway {
       async (call, extra) => {
         const name = call.params.name
         const input = call.params.arguments ?? {}
+        if (name === 'generate_image') {
+          const capability = this.getCapability(token)
+          if (!capability.imageToolBinding) throw new Error('Image capability is unavailable')
+          const operation = await capability.imageToolBinding.call(input, `${session.registryKey}:${extra.requestId}`, AbortSignal.any([extra.signal, capability.signal]))
+          return { content: [{ type: 'text' as const, text: JSON.stringify(operation) }] }
+        }
         if (availableTools.has(name as ScopedDataToolName)) {
           const definition = scopedDataToolByName.get(
             name as ScopedDataToolName
@@ -1868,3 +1893,4 @@ export class KnowledgeMcpGateway {
     }
   }
 }
+import { imageToolDefinition, type ImageToolBinding } from './image-tool-binding'

@@ -137,6 +137,30 @@ afterEach(async () => {
 })
 
 describe('CapabilityService', () => {
+  it('derives image assignments from saved profiles without persisting or exposing connection data', async () => {
+    const image = { id: '00000000-0000-4000-8000-000000000001', name: 'Image', protocol: 'openai-images-generations', allowConversationInvocation: true, apiKey: 'must-not-leak' }
+    let profiles = [image]
+    const getSavedModelProfiles = vi.fn(async () => profiles)
+    const { service, filePath, builtinRoot, importedRoot } = await createService({ getSavedModelProfiles })
+    const all = ['model', 'opencode', 'continue', 'deepseek-harness']
+    expect((await service.getSnapshot()).imageGeneration).toEqual({ modelProfiles: [{ id: image.id, name: image.name }], assignments: all })
+    profiles = [image, { ...image, id: '00000000-0000-4000-8000-000000000002' }]
+    expect((await service.getSnapshot()).imageGeneration?.modelProfiles).toHaveLength(2)
+    profiles = [{ ...image, allowConversationInvocation: false }, profiles[1]!]
+    expect((await service.getSnapshot()).imageGeneration).toMatchObject({ assignments: all, modelProfiles: [{ id: profiles[1]!.id }] })
+    profiles = [{ ...image, allowConversationInvocation: false }, { ...image, protocol: 'openai-chat-completions' }]
+    expect((await service.getSnapshot()).imageGeneration).toEqual({ modelProfiles: [], assignments: [] })
+    profiles = []
+    expect((await service.getSnapshot()).imageGeneration?.assignments).toEqual([])
+    profiles = [image]
+    const reloaded = new CapabilityService(filePath, builtinRoot, importedRoot, cipher, { getSavedModelProfiles })
+    expect((await reloaded.getSnapshot()).imageGeneration?.assignments).toEqual(all)
+    await service.setBuiltinMcpServerEnabled('knowledge-base', false)
+    expect(await readFile(filePath, 'utf8')).not.toContain('imageGeneration')
+    expect((await service.getSnapshot()).imageGeneration?.assignments).toEqual(all)
+    expect((await new CapabilityService(filePath, builtinRoot, importedRoot, cipher).getSnapshot()).imageGeneration).toEqual({ modelProfiles: [], assignments: [] })
+  })
+
   it('memoizes concurrent loads and retries after a failed load', async () => {
     const initialStore = {
       load: vi.fn(async () => undefined),

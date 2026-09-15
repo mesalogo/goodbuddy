@@ -290,6 +290,8 @@ export type ModelToolResult = {
 }
 
 export type ModelToolCallContext = {
+  imageToolBinding?: ImageToolBinding
+  toolCallId?: string
   conversationId: string
   browserTabId?: BrowserTabId
   browserConversationId?: string
@@ -1290,6 +1292,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): Promise<ModelToolDefinition[]> {
     signal.throwIfAborted()
     const scopedTools = this.getScopedTools(context)
+    const imageTool = context.workMode === 'execute' ? await imageToolDefinition(context.imageToolBinding) : undefined
     const webTools = this.webSearchEnabled
       ? this.getWebSearchDefinitions()
       : []
@@ -1312,6 +1315,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     const browserTools = this.getBrowserTools(context)
     return [
       ...workspaceTools,
+      ...(imageTool ? [imageTool] : []),
       ...processTools,
       ...subagentTools,
       ...outputTools,
@@ -1439,6 +1443,10 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): Promise<ModelToolResult> {
     signal.throwIfAborted()
     assertToolAuthorizedForWorkMode(name, context)
+    if (name === 'generate_image') {
+      if (!context.imageToolBinding || !context.toolCallId) throw new Error('Image tool request binding is unavailable')
+      return createTextToolResult(JSON.stringify(await context.imageToolBinding.call(argumentsValue, context.toolCallId, signal)))
+    }
     if (name === 'knowledge_list') {
       if (
         !this.knowledgeGateway ||
@@ -2020,3 +2028,4 @@ function emitDirectModelSubagentUsage(
     )
   })
 }
+import { imageToolDefinition, type ImageToolBinding } from './image-tool-binding'

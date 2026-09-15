@@ -1,4 +1,11 @@
 export const integrations = {
+  conversationImages: {
+    title: '图片生成与编辑',
+    managed: '内置 · 自动管理',
+    description: '由图片模型的「允许 AI 在会话中调用」设置自动管理。',
+    runtimeScope: '分配包含 GoodBuddy Agent 远程路径上的适用 Runtime。生成需要 Execute 模式及支持工具调用的聊天模型；勾选不代表 Runtime 已就绪。',
+    openSettings: '前往图片模型设置'
+  },
   channels: {
     tabs: {
       weixin: '微信 ClawBot',

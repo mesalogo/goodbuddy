@@ -11,9 +11,11 @@ type CapabilitySettingsTab = 'skills' | 'mcp' | 'tools'
 
 export function CapabilitiesAndToolsSettingsSection({
   magicNotesEnabled,
+  onOpenImageModelSettings,
   onNotify
 }: {
   magicNotesEnabled: boolean
+  onOpenImageModelSettings: () => void
   onNotify?: (notification: AppNotificationInput) => void
 }): React.JSX.Element {
   const { t } = useTranslation('settings')
@@ -76,7 +78,10 @@ export function CapabilitiesAndToolsSettingsSection({
         role="tabpanel"
       >
         {mcpVisited && (
-          <McpSettingsSection magicNotesEnabled={magicNotesEnabled} />
+          <McpSettingsSection
+            magicNotesEnabled={magicNotesEnabled}
+            onOpenImageModelSettings={onOpenImageModelSettings}
+          />
         )}
       </section>
       <section

@@ -18,6 +18,7 @@ import type {
   remoteSemanticTranscriptPageResultSchema,
 } from '../../shared/remote-agent-contracts'
 import type { z } from 'zod'
+import type { ImageToolBinding } from './image-tool-binding'
 import type { RemoteQuestionResponse } from '../../shared/remote-question-contracts'
 import type {
   ModelBridgePolicy
@@ -111,7 +112,9 @@ export interface RemoteRuntimeChannel {
   ): Promise<RuntimeSessionBindingCursors>
   /** Accepts the prompt and starts its Ask or Execute Runtime process. */
   preparePrompt(
-    preparation: RemotePromptOperationPreparation
+    preparation: RemotePromptOperationPreparation,
+    imageToolBinding?: ImageToolBinding,
+    waitSignal?: AbortSignal
   ): Promise<RemotePromptOperationAcceptance>
   /** Starts an Agent-owned ACP prompt exactly once for its stable operation. */
   startOwnedPrompt?(

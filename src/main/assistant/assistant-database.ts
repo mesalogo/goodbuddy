@@ -279,6 +279,8 @@ type MessageMetadata = {
   sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
   knowledgeRetrieval?: ConversationSnapshot['messages'][number]['knowledgeRetrieval']
   artifactIds?: string[]
+  imageOperations?: ImageOperation[]
+  imageSourceArtifactIds?: string[]
   imageContextNotice?: ConversationSnapshot['messages'][number]['imageContextNotice']
   task?: ConversationSnapshot['messages'][number]['task']
   attachments?: ConversationSnapshot['messages'][number]['attachments']
@@ -1177,6 +1179,8 @@ function toConversationSnapshot(
         sourceReferences: metadata.sourceReferences,
         knowledgeRetrieval: metadata.knowledgeRetrieval,
         artifactIds: metadata.artifactIds,
+        imageOperations: metadata.imageOperations,
+        imageSourceArtifactIds: metadata.imageSourceArtifactIds,
         imageContextNotice: metadata.imageContextNotice,
         task: metadata.task,
         attachments: metadata.attachments,
@@ -1204,6 +1208,8 @@ function serializeConversationMessageMetadata(
     sourceReferences: message.sourceReferences,
     knowledgeRetrieval: message.knowledgeRetrieval,
     artifactIds: message.artifactIds,
+    imageOperations: message.imageOperations,
+    imageSourceArtifactIds: message.imageSourceArtifactIds,
     imageContextNotice: message.imageContextNotice,
     task: message.task,
     attachments: message.attachments,
@@ -2862,7 +2868,7 @@ export class AssistantDatabase {
        WHERE id = ? AND channel IS NULL`
     )
     const findMessage = database.prepare(
-      `SELECT conversation_id, role,
+      `SELECT conversation_id, role, metadata_json,
               EXISTS(
                 SELECT 1 FROM tasks
                 WHERE tasks.id = messages.request_id
@@ -2941,6 +2947,7 @@ export class AssistantDatabase {
             | {
                 conversation_id: string
                 role: MessageRow['role']
+                metadata_json: string
                 remote_recoverable: number
               }
             | undefined
@@ -2957,7 +2964,20 @@ export class AssistantDatabase {
             updateMessage.run(
               message.content,
               message.state,
-              serializeConversationMessageMetadata(message),
+              serializeConversationMessageMetadata({
+                ...message,
+                ...(() => {
+                  const stored = JSON.parse(existingMessage.metadata_json) as MessageMetadata
+                  return {
+                    imageOperations: stored.imageOperations,
+                    imageSourceArtifactIds: stored.imageSourceArtifactIds,
+                    artifactIds: stored.imageOperations?.some(operation => operation.artifactIds.length) ? [...new Set([
+                      ...(message.artifactIds ?? []),
+                      ...(stored.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])
+                    ])].slice(-8) : message.artifactIds
+                  }
+                })()
+              }),
               message.id
             )
             continue
@@ -5703,6 +5723,101 @@ export class AssistantDatabase {
       kind: 'markdown',
       mimeType: 'text/markdown'
     })
+  }
+
+  saveConversationImageOperation(
+    operation: ImageOperation,
+    image?: { mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; data: string }
+  ): ImageOperation {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = database.prepare(`SELECT m.metadata_json, c.project_id FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = ? AND m.conversation_id = ?`).get(operation.messageId, operation.conversationId) as
+        { metadata_json: string; project_id: string | null } | undefined
+      if (!row) throw new Error('Image operation conversation or message no longer exists')
+      const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+      const previous = metadata.imageOperations?.find(item => item.id === operation.id)
+      if (previous?.state === 'completed') {
+        database.exec('COMMIT')
+        return previous
+      }
+      let saved = operation
+      if (image) {
+        const artifact = this.createImageArtifact({
+          projectId: row.project_id ?? undefined,
+          title: operation.input.prompt.slice(0, 120),
+          mimeType: image.mimeType,
+          base64: image.data
+        })
+        saved = { ...operation, state: 'completed', artifactIds: [artifact.id] }
+        metadata.artifactIds = [...new Set([...(metadata.artifactIds ?? []), artifact.id])].slice(-8)
+      }
+      metadata.imageOperations = [...(metadata.imageOperations ?? []).filter(item => item.id !== saved.id), saved]
+      database.prepare('UPDATE messages SET metadata_json = ? WHERE id = ? AND conversation_id = ?')
+        .run(JSON.stringify(metadata), saved.messageId, saved.conversationId)
+      database.prepare('UPDATE conversations SET updated_at = MAX(updated_at, ?) WHERE id = ?')
+        .run(new Date(saved.updatedAt).toISOString(), saved.conversationId)
+      database.exec('COMMIT')
+      return saved
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  saveConversationImageSources(input: {
+    conversationId: string
+    messageId: string
+    images: readonly { name: string; mediaType: 'image/png' | 'image/jpeg'; data: string }[]
+  }): string[] {
+    if (input.images.length > 8) throw new Error('At most eight source images are supported')
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = database.prepare(`SELECT m.metadata_json, c.project_id FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id = ? AND m.conversation_id = ?`).get(input.messageId, input.conversationId) as
+        { metadata_json: string; project_id: string | null } | undefined
+      if (!row) throw new Error('Image source conversation or message no longer exists')
+      const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+      if (!metadata.imageSourceArtifactIds?.length) {
+        metadata.imageSourceArtifactIds = input.images.map(image => this.createImageArtifact({
+          projectId: row.project_id ?? undefined, title: image.name,
+          mimeType: image.mediaType, base64: image.data
+        }).id)
+        database.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?').run(JSON.stringify(metadata), input.messageId)
+      }
+      database.exec('COMMIT')
+      return metadata.imageSourceArtifactIds
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  markUnfinishedImageOperationsUnconfirmed(): void {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const rows = database.prepare("SELECT id, metadata_json FROM messages WHERE json_type(metadata_json, '$.imageOperations') = 'array'")
+        .all() as { id: string; metadata_json: string }[]
+      for (const row of rows) {
+        const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+        let changed = false
+        metadata.imageOperations = metadata.imageOperations?.map(operation => {
+          if (!['running', 'saving', 'cancelling'].includes(operation.state)) return operation
+          changed = true
+          return { ...operation, state: 'unconfirmed', updatedAt: Date.now() }
+        })
+        if (changed) database.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?').run(JSON.stringify(metadata), row.id)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   createImageArtifact(input: {
@@ -9764,3 +9879,4 @@ export class AssistantDatabase {
     return this.database
   }
 }
+import type { ImageOperation } from '../../shared/image-generation-contracts'

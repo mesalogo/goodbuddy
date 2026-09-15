@@ -290,7 +290,7 @@ function isMainWebTool(
   )
 }
 
-function dshCompatibleWebInputSchema(
+function dshCompatibleMainInputSchema(
   schema: Record<string, unknown>
 ): Record<string, unknown> {
   const compatible: Record<string, unknown> = {}
@@ -311,7 +311,7 @@ function dshCompatibleWebInputSchema(
           propertySchema &&
           typeof propertySchema === 'object' &&
           !Array.isArray(propertySchema)
-            ? dshCompatibleWebInputSchema(
+            ? dshCompatibleMainInputSchema(
                 propertySchema as Record<string, unknown>
               )
             : propertySchema
@@ -325,7 +325,7 @@ function dshCompatibleWebInputSchema(
       typeof value === 'object' &&
       !Array.isArray(value)
     ) {
-      compatible.items = dshCompatibleWebInputSchema(
+      compatible.items = dshCompatibleMainInputSchema(
         value as Record<string, unknown>
       )
       continue
@@ -335,7 +335,7 @@ function dshCompatibleWebInputSchema(
         candidate &&
         typeof candidate === 'object' &&
         !Array.isArray(candidate)
-          ? dshCompatibleWebInputSchema(
+          ? dshCompatibleMainInputSchema(
               candidate as Record<string, unknown>
             )
           : candidate
@@ -350,8 +350,8 @@ function proxyToolInputSchema(
     ReturnType<ModelToolProviderLike['listTools']>
   >[number]
 ): Record<string, unknown> {
-  return isMainWebTool(tool)
-    ? dshCompatibleWebInputSchema(tool.inputSchema)
+  return isMainWebTool(tool) || tool.name === 'generate_image'
+    ? dshCompatibleMainInputSchema(tool.inputSchema)
     : tool.inputSchema
 }
 
@@ -368,7 +368,7 @@ function boundedProxyToolCatalog(
   const catalog = tools.filter(
     (tool) =>
       isMainWebTool(tool) ||
-      (workMode === 'execute' && tool.source === 'mcp')
+      (workMode === 'execute' && (tool.source === 'mcp' || tool.name === 'generate_image'))
   )
   if (catalog.length > MAX_MCP_PROXY_TOOLS) {
     throw new Error(
@@ -386,7 +386,7 @@ function boundedProxyToolCatalog(
     names.add(tool.name)
     const description = tool.description.slice(
       0,
-      MAX_MCP_TOOL_DESCRIPTION_CHARACTERS
+      tool.name === 'generate_image' ? imageToolDescriptionLimit : MAX_MCP_TOOL_DESCRIPTION_CHARACTERS
     )
     const inputSchema = proxyToolInputSchema(tool)
     let serialized: string
@@ -838,6 +838,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 const run = this.activeRuns.get(params.sessionId)
                 if (!run?.toolProvider || run.closed) return { tools: [] }
                 const context = {
+                  imageToolBinding: run.request.imageToolBinding,
                   conversationId:
                     run?.request.conversationId ??
                     'deepseek-harness-tool-catalog',
@@ -855,7 +856,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 )
                 const catalog = boundedProxyToolCatalog(tools, context.workMode)
                 this.proxyToolCatalogs.set(params.sessionId, tools.filter(
-                  (tool) => tool.source === 'mcp' || isMainWebTool(tool)
+                  (tool) => tool.source === 'mcp' || isMainWebTool(tool) || tool.name === 'generate_image'
                 ))
                 return { tools: catalog }
               }
@@ -881,6 +882,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   )
                 }
                 const context = {
+                  imageToolBinding: run.request.imageToolBinding,
+                  ...(name === 'generate_image' ? { toolCallId: typeof params.callId === 'string' ? params.callId : crypto.randomUUID() } : {}),
                   conversationId: run.request.conversationId,
                   browserTabId: run.request.browserTabId,
                   workMode:
@@ -894,7 +897,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 const tool = tools.find(
                   (candidate) =>
                     candidate.name === name &&
-                    (candidate.source === 'mcp' ||
+                    (candidate.source === 'mcp' || candidate.name === 'generate_image' ||
                       isMainWebTool(candidate))
                 )
                 if (!tool) {
@@ -1754,3 +1757,4 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     ).catch(() => undefined)
   }
 }
+import { imageToolDescriptionLimit } from '../../shared/image-generation-contracts'

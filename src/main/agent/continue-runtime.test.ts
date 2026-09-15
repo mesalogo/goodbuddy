@@ -464,6 +464,34 @@ describe('ContinueAgentRuntime', () => {
     expect(gateway.grantCustomMcp).not.toHaveBeenCalled()
   })
 
+  it.each([undefined, 'existing-capability'])('cleans up image capabilities after custom MCP preparation fails (existing=%s)', async existingToken => {
+    const gateway = {
+      getEndpoint: () => 'http://127.0.0.1:4567/mcp',
+      bindImageTool: vi.fn(() => existingToken ?? 'image-capability'),
+      grantCustomMcp: vi.fn(() => 'custom-capability'),
+      prepareCustomMcpTools: vi.fn(async () => { throw new Error('Custom MCP unavailable') }),
+      revoke: vi.fn()
+    }
+    const context = { requestId: randomUUID(), conversationId: 'conversation-1', messageId: 'message-1', workMode: 'execute' as const }
+    const runtime = new ContinueAgentRuntime({
+      binaryPath: '', configPath: 'C:\\safe config\\continue.yaml', defaultWorkspace: process.cwd(),
+      hostCacheRoot: 'C:\\safe\\continue-host',
+      knowledgeGateway: gateway as unknown as KnowledgeMcpGateway,
+      mcpServers: [{ id: randomUUID(), name: 'Custom', description: '', enabled: true, allowDynamicTools: false,
+        assignments: ['continue'], secretConfigured: false, transport: 'http', url: 'https://mcp.test' }],
+      createHostAdapter: () => ({ getPreparedHost: mocks.prepareHost, run: mocks.runHost, dispose: mocks.disposeHost })
+    })
+    try {
+      await expect((async () => {
+        for await (const event of runtime.run({ ...context, prompt: 'Draw an image', knowledgeCapabilityToken: existingToken,
+          imageToolBinding: { context, describe: async () => 'Images', call: vi.fn() }
+        }, new AbortController().signal)) void event
+      })()).rejects.toThrow('Custom MCP unavailable')
+      expect(gateway.revoke.mock.calls).toEqual(existingToken ? [['custom-capability']] : [['custom-capability'], ['image-capability']])
+      expect(mocks.runHost).not.toHaveBeenCalled()
+    } finally { await runtime.dispose() }
+  })
+
   it('adds assigned Skill instructions to the Continue prompt', async () => {
     let hostOptions: ContinueHostAdapterOptions | undefined
     const runtime = new ContinueAgentRuntime({

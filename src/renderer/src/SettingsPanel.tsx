@@ -279,6 +279,7 @@ function toModelProfileDrafts(
     ({ requestHeaders, requestBody, ...profile }) => ({
       ...profile,
       supportsImageInput: profile.supportsImageInput ?? false,
+      allowConversationInvocation: profile.allowConversationInvocation ?? false,
       maximumOutputTokens:
         profile.maximumOutputTokens ??
         defaultAnthropicMaximumOutputTokens,
@@ -356,6 +357,7 @@ function hydrateRuntimeSettings(
     modelProfiles: (value: ModelProfileDraft[]) => void
     selectedModelProfileId: (value: RuntimeDraftSelection) => void
     defaultModelProfileId: (value: string) => void
+    defaultImageModelProfileId: (value: string | null) => void
     opencodeModelSource: (value: RuntimeModelSource) => void
     continueModelSource: (value: RuntimeModelSource) => void
     deepseekHarnessModelSource: (value: RuntimeModelSource) => void
@@ -404,6 +406,7 @@ function hydrateRuntimeSettings(
       : fallbackProfileId
   )
   setters.defaultModelProfileId(value.defaultModelProfileId)
+  setters.defaultImageModelProfileId(value.defaultImageModelProfileId ?? null)
   setters.opencodeModelSource(configured.opencodeModelSource)
   setters.continueModelSource(configured.continueModelSource)
   setters.deepseekHarnessModelSource(
@@ -671,6 +674,8 @@ export function SettingsPanel({
   const [selectedModelProfileId, setSelectedModelProfileId] =
     useState('')
   const [defaultModelProfileId, setDefaultModelProfileId] = useState('')
+  const [defaultImageModelProfileId, setDefaultImageModelProfileId] =
+    useState<string | null>(null)
   const [opencodeModelSource, setOpencodeModelSource] =
     useState<RuntimeModelSource>({ kind: 'platform' })
   const [continueModelSource, setContinueModelSource] =
@@ -844,6 +849,7 @@ export function SettingsPanel({
         modelProfiles: setModelProfiles,
         selectedModelProfileId: setSelectedModelProfileId,
         defaultModelProfileId: setDefaultModelProfileId,
+        defaultImageModelProfileId: setDefaultImageModelProfileId,
         opencodeModelSource: setOpencodeModelSource,
         continueModelSource: setContinueModelSource,
         deepseekHarnessModelSource: setDeepseekHarnessModelSource,
@@ -905,6 +911,7 @@ export function SettingsPanel({
       provider,
       modelProfiles,
       defaultModelProfileId,
+      defaultImageModelProfileId,
       opencodeModelSource,
       continueModelSource,
       deepseekHarnessModelSource,
@@ -936,6 +943,7 @@ export function SettingsPanel({
         provider: settings.provider,
         modelProfiles: toModelProfileDrafts(settings),
         defaultModelProfileId: settings.defaultModelProfileId,
+        defaultImageModelProfileId: settings.defaultImageModelProfileId ?? null,
         opencodeModelSource:
           savedConfiguredSettings?.opencodeModelSource,
         continueModelSource:
@@ -1420,6 +1428,7 @@ export function SettingsPanel({
           protocol: profile.protocol,
           authentication: profile.authentication,
           supportsImageInput: profile.supportsImageInput,
+          allowConversationInvocation: profile.allowConversationInvocation ?? false,
           contextWindowTokens: profile.contextWindowTokens,
           maximumOutputTokens: profile.maximumOutputTokens,
           imageGenerationQuality: profile.imageGenerationQuality,
@@ -1506,6 +1515,7 @@ export function SettingsPanel({
         apiKey: defaultProfileInput.apiKey,
         modelProfiles: profileInputs,
         defaultModelProfileId: defaultProfile.id,
+        defaultImageModelProfileId,
         opencodeModelSource,
         continueModelSource,
         deepseekHarnessModelSource,
@@ -1802,6 +1812,7 @@ export function SettingsPanel({
         protocol: 'openai-chat-completions',
         authentication: defaultRuntimeSettings.modelAuthentication,
         supportsImageInput: defaultRuntimeSettings.supportsImageInput,
+        allowConversationInvocation: false,
         maximumOutputTokens: defaultAnthropicMaximumOutputTokens,
         imageGenerationQuality:
           defaultRuntimeSettings.imageGenerationQuality,
@@ -2929,6 +2940,15 @@ export function SettingsPanel({
                 {t('actions.addCustom')}
               </button>
             </div>
+            {defaultImageModelProfileId && !modelProfiles.some((profile) =>
+              profile.id === defaultImageModelProfileId &&
+              profile.protocol === 'openai-images-generations' &&
+              profile.allowConversationInvocation
+            ) && (
+              <p className="settings-warning" role="status">
+                {t('conversationImages.unavailable')}
+              </p>
+            )}
             <div className="model-connection-manager">
               <aside
                 aria-label={t('model.profile.listAriaLabel')}
@@ -2962,6 +2982,12 @@ export function SettingsPanel({
                         <span className="model-connection-list__badges">
                           {defaultModelProfileId === profile.id && (
                             <span>{t('model.profile.defaultBadge')}</span>
+                          )}
+                          {profile.protocol === 'openai-images-generations' && profile.allowConversationInvocation && (
+                            <span>{t('conversationImages.callable')}</span>
+                          )}
+                          {defaultImageModelProfileId === profile.id && (
+                            <span>{t('conversationImages.defaultBadge')}</span>
                           )}
                           {profile.protocol ===
                             'openai-images-generations' && (
@@ -3245,6 +3271,36 @@ export function SettingsPanel({
                               'credentials.noAuthenticationDescription'
                             )}
                       </span>
+                    </div>
+                  )}
+                  {profile.protocol === 'openai-images-generations' && (
+                    <div className="field">
+                      <label className="toggle-row">
+                        <input
+                          checked={profile.allowConversationInvocation ?? false}
+                          onChange={(event) => updateModelProfile(profile.id, {
+                            allowConversationInvocation: event.target.checked
+                          })}
+                          aria-describedby={`conversation-images-help-${profile.id}`}
+                          role="switch"
+                          type="checkbox"
+                        />
+                        <span>{t('conversationImages.allow')}</span>
+                      </label>
+                      <small id={`conversation-images-help-${profile.id}`}>
+                        {t('conversationImages.description')}
+                      </small>
+                      {profile.allowConversationInvocation && (
+                        <label className="check-field">
+                          <input
+                            checked={defaultImageModelProfileId === profile.id}
+                            name="default-image-model-profile"
+                            onChange={() => setDefaultImageModelProfileId(profile.id)}
+                            type="radio"
+                          />
+                          <span>{t('conversationImages.setDefault')}</span>
+                        </label>
+                      )}
                     </div>
                   )}
                   {isAgentRuntimeModelProtocol(profile.protocol) && (
@@ -4081,6 +4137,17 @@ export function SettingsPanel({
           )}
           {activeTab === 'capabilities' && (
             <CapabilitiesAndToolsSettingsSection
+              onOpenImageModelSettings={() => {
+                if (requestTabChange('model')) {
+                  setModelType('llm')
+                  const imageProfile = modelProfiles.find(
+                    (profile) => profile.protocol === 'openai-images-generations'
+                  )
+                  if (imageProfile) {
+                    setSelectedModelProfileId(imageProfile.id)
+                  }
+                }
+              }}
               magicNotesEnabled={magicNotesEnabled}
               onNotify={onNotify}
             />

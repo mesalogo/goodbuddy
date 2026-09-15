@@ -5,6 +5,29 @@ import { describe, expect, it, vi } from 'vitest'
 import { openCodeSubagentPluginSource } from './opencode-subagent-plugin'
 
 describe('OpenCode ACP child event plugin', () => {
+  it('hides foreign image tools and removes the current image tool in Ask on a reused Session', async () => {
+    let mode = 'execute'
+    const imageToolName = `goodbuddy_image_${'a'.repeat(24)}`
+    const patch = vi.fn()
+    const factory = runInNewContext(
+      `(${openCodeSubagentPluginSource('http://127.0.0.1:12345/fixture').replace(/^import .*\n/gmu, '').replace('export default ', '')})`,
+      { process: { stdout: { write: vi.fn() } }, createServer, randomBytes,
+        fetch: async () => ({ ok: true, json: async () => ({ operationId: mode, workMode: mode, imageToolName }) }) }
+    )
+    const hooks = await factory({ client: {
+      _client: { get: vi.fn(), post: vi.fn(), patch },
+      session: { get: async () => ({ data: { id: 'root' } }) }
+    } })
+    try {
+      for (mode of ['execute', 'ask', 'execute']) {
+        await hooks.event({ event: { type: 'session.status', properties: { sessionID: 'root', status: { type: 'idle' } } } })
+        await hooks['chat.message']({ sessionID: 'root' }, { message: { id: mode } })
+        const rules = patch.mock.calls.at(-1)![0].body.permission
+        expect(rules).toContainEqual({ permission: 'goodbuddy_image_*', pattern: '*', action: 'deny' })
+        expect(rules.some((rule: { permission: string; action: string }) => rule.permission === `${imageToolName}_*` && rule.action === 'allow')).toBe(mode === 'execute')
+      }
+    } finally { await hooks.dispose() }
+  })
   it('attributes child and compaction model rounds to the frozen root operation', async () => {
     const operations = new Map([['one', 'operation-1'], ['two', 'operation-2']])
     const fetchRoute = vi.fn(async (url: string) => {
@@ -33,7 +56,10 @@ describe('OpenCode ACP child event plugin', () => {
     try {
       await hooks['chat.message']({ sessionID: 'one' }, { message: { id: 'first' } })
       expect(patch).toHaveBeenCalledWith({
-        url: '/session/one', body: { permission: [{ permission: '*', pattern: '*', action: 'allow' }] }, throwOnError: true
+        url: '/session/one', body: { permission: [
+          { permission: '*', pattern: '*', action: 'allow' },
+          { permission: 'goodbuddy_image_*', pattern: '*', action: 'deny' }
+        ] }, throwOnError: true
       })
       expect(await headers('child', 'child-message')).toEqual({
         'x-goodbuddy-session': 'one', 'x-goodbuddy-operation': 'operation-1'
@@ -42,7 +68,8 @@ describe('OpenCode ACP child event plugin', () => {
       expect(patch).toHaveBeenLastCalledWith({
         url: '/session/child', body: { permission: [
           { permission: '*', pattern: '*', action: 'allow' },
-          { permission: 'task', pattern: '*', action: 'deny' }
+          { permission: 'task', pattern: '*', action: 'deny' },
+          { permission: 'goodbuddy_image_*', pattern: '*', action: 'deny' }
         ] }, throwOnError: true
       })
       expect(await headers('two', 'compact')).toEqual({

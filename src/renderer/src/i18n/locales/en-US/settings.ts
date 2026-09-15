@@ -2,6 +2,14 @@ import type { TranslationShape } from '../../resource-types'
 import type { settings as chineseSettings } from '../zh-CN/settings'
 
 export const settings = {
+  conversationImages: {
+    allow: 'Allow AI to invoke in conversations',
+    description: 'When enabled, assistants with tool calling can use this model to generate and edit images. Editing support depends on the image protocol. Results are saved in the originating conversation.',
+    callable: 'Conversation enabled',
+    defaultBadge: 'Default image model',
+    setDefault: 'Set as default image model',
+    unavailable: 'The default image model is unavailable. Enable it or explicitly choose another image model.'
+  },
   modelDownloadSources: {
     modelscope: 'ModelScope',
     'hugging-face': 'Hugging Face'
