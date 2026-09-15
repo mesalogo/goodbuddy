@@ -547,7 +547,7 @@ if (hasSingleInstanceLock) {
         details.mediaType === 'audio'
     )
 
-    mainWindow = createMainWindow(() => isQuitting)
+    mainWindow = createMainWindow(() => isQuitting, observeDesktopFailure)
     registerDesktopNotificationActivation(mainWindow)
     tray = buildTray()
     storageUpgrade = prepareAssistantStorage(

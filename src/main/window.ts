@@ -1,6 +1,7 @@
-import { app, BrowserWindow, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, dialog, nativeImage, shell } from 'electron'
 import { dirname, join, posix, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { DesktopDiagnosticFailureObserver } from './desktop-diagnostics'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 
@@ -51,7 +52,10 @@ function hasSameOrigin(url: string, allowedUrl: string): boolean {
   }
 }
 
-export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
+export function createMainWindow(
+  shouldQuit: () => boolean,
+  observeFailure?: DesktopDiagnosticFailureObserver
+): BrowserWindow {
   const iconPath = resolveWindowIcon()
   const icon = iconPath
     ? nativeImage.createFromPath(iconPath)
@@ -102,6 +106,51 @@ export function createMainWindow(shouldQuit: () => boolean): BrowserWindow {
     }
   })
 
+  let recoveryPending = false
+  window.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit' || shouldQuit() || window.isDestroyed()) return
+    console.error('GoodBuddy renderer exited', details.reason, details.exitCode)
+    observeFailure?.({
+      component: 'desktop',
+      stage: 'renderer',
+      code: 'desktop.renderer.gone',
+      error: new Error(`Renderer exited: ${details.reason} (${details.exitCode})`)
+    })
+    if (recoveryPending) return
+    recoveryPending = true
+    // No automatic retries: a persistent crash requires a fresh user action.
+    const en = !app.getLocale().toLowerCase().startsWith('zh')
+    void dialog.showMessageBox(window, {
+      type: 'error',
+      title: 'GoodBuddy',
+      message: en ? 'The GoodBuddy window stopped working' : 'GoodBuddy 窗口已停止工作',
+      detail: en
+        ? 'Reload to try again. Unsaved input may be lost. If this happens again, quit and reopen GoodBuddy.'
+        : '请重新加载后重试。尚未保存的输入可能丢失。如果再次出现，请退出并重新打开 GoodBuddy。',
+      buttons: en ? ['Reload', 'Cancel'] : ['重新加载', '取消'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    }).then(({ response }) => {
+      if (response === 0 && !shouldQuit() && !window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.reload()
+      }
+    }).catch((error: unknown) => {
+      console.error('GoodBuddy renderer recovery failed', error)
+    }).finally(() => {
+      recoveryPending = false
+    })
+  })
+
+  window.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+    if (!isMainFrame || code === -3 || shouldQuit() || window.isDestroyed()) return
+    console.error('GoodBuddy window load failed', code, description)
+    observeFailure?.({
+      component: 'desktop', stage: 'renderer', code: 'desktop.renderer.load-failed',
+      error: new Error(`Window load failed: ${code}`)
+    })
+  })
+
   return window
 }
 
@@ -112,12 +161,16 @@ export function loadMainWindow(
   if (process.env.ELECTRON_RENDERER_URL) {
     const url = new URL(process.env.ELECTRON_RENDERER_URL)
     if (storageUpgrade) url.searchParams.set('storageUpgrade', '1')
-    void window.loadURL(url.href)
+    void window.loadURL(url.href).catch((error: unknown) => {
+      console.error('GoodBuddy window load rejected', error)
+    })
   } else {
     void window.loadFile(
       join(currentDirectory, '../renderer/index.html'),
       storageUpgrade ? { query: { storageUpgrade: '1' } } : undefined
-    )
+    ).catch((error: unknown) => {
+      console.error('GoodBuddy window load rejected', error)
+    })
   }
 }
 

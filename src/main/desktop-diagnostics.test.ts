@@ -34,6 +34,22 @@ afterEach(async () => {
 })
 
 describe('DesktopDiagnostics', () => {
+  it('persists renderer failure codes without storing raw error content', async () => {
+    const diagnostics = new DesktopDiagnostics(await temporaryDirectory())
+    for (const code of ['desktop.renderer.gone', 'desktop.renderer.load-failed']) {
+      await diagnostics.recordFailure({
+        component: 'desktop', stage: 'renderer', code,
+        error: new Error('private renderer details')
+      })
+    }
+    const records = await diagnostics.readRecent()
+    expect(records.map(record => record.code)).toEqual([
+      'desktop.renderer.gone', 'desktop.renderer.load-failed'
+    ])
+    expect(records.every(record => record.message === 'Desktop renderer failed')).toBe(true)
+    expect(JSON.stringify(records)).not.toContain('private renderer details')
+    await diagnostics.dispose()
+  })
   it('rotates within fixed file and byte bounds', async () => {
     const directory = await temporaryDirectory()
     let sequence = 0

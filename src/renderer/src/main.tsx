@@ -4,6 +4,7 @@ import '@fontsource-variable/noto-sans-sc/wght.css'
 import 'katex/dist/katex.min.css'
 import './markdown-math.css'
 import App from './App'
+import { AppErrorBoundary } from './AppErrorBoundary'
 import { StorageUpgrade } from './StorageUpgrade'
 import { installBundledUiFonts } from './fonts'
 import { changeUiLocale } from './i18n'
@@ -51,12 +52,14 @@ installDocumentOcrBridge()
 
 createRoot(root).render(
   <StrictMode>
-    <UiLocaleProvider
-      initialPreference={initialUiLocalePreference}
-    >
-      {new URLSearchParams(window.location.search).get('storageUpgrade') === '1'
-        ? <StorageUpgrade />
-        : <App />}
-    </UiLocaleProvider>
+    <AppErrorBoundary>
+      <UiLocaleProvider
+        initialPreference={initialUiLocalePreference}
+      >
+        {new URLSearchParams(window.location.search).get('storageUpgrade') === '1'
+          ? <StorageUpgrade />
+          : <App />}
+      </UiLocaleProvider>
+    </AppErrorBoundary>
   </StrictMode>
 )

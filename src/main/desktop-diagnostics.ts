@@ -14,6 +14,7 @@ const DEFAULT_MAXIMUM_RECORDS = 1_000
 export const MAXIMUM_PENDING_DESKTOP_DIAGNOSTIC_WRITES = 32
 const DIAGNOSTIC_FILE_NAME = 'desktop-diagnostics.ndjson'
 const allowedStages = new Set([
+  'renderer',
   'startup',
   'create',
   'status',
@@ -25,6 +26,8 @@ const allowedStages = new Set([
   'disconnect'
 ])
 const allowedCodes = new Set([
+  'desktop.renderer.gone',
+  'desktop.renderer.load-failed',
   'desktop.startup.failed',
   'runtime.operation.failed',
   'runtime.run.failed',
@@ -108,6 +111,7 @@ function fixedMessage(
   stage: string
 ): string {
   if (component === 'desktop') {
+    if (stage === 'renderer') return 'Desktop renderer failed'
     return 'Desktop startup failed'
   }
   if (component === 'remote-agent') {

@@ -1,0 +1,22 @@
+.app-error-recovery {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  height: 100vh;
+  overflow: auto;
+  padding: var(--space-6);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  -webkit-app-region: no-drag;
+}
+
+.app-error-recovery h1 {
+  font-size: var(--font-page-title);
+}
+
+.app-error-recovery p {
+  color: var(--text-secondary);
+  margin-block: var(--space-4);
+}
