@@ -701,32 +701,18 @@ export function RightAssistantSidebar({
       }),
     [t, tabs]
   )
-  const defaultInstances = useMemo(
-    () =>
-      DEFAULT_WORKBAR_INSTANCES.map((instance) => ({
-        ...instance,
-        title:
-          localizedAppDefinitions.find(
-            (definition) => definition.id === instance.appId
-          )?.label ?? instance.title
-      })),
-    [localizedAppDefinitions]
-  )
   const [workbarInstances, setWorkbarInstances] = useState<
     WorkbarTabInstance[]
   >(() => {
-    const instances = (initialLayout?.instances ?? defaultInstances).map(
+    const instances = (initialLayout?.instances ?? DEFAULT_WORKBAR_INSTANCES).map(
       (instance) => {
-        if (instance.appId === 'terminal') {
+        if (instance.appId !== 'browser') {
           return instance
         }
         const label =
           localizedAppDefinitions.find(
             (definition) => definition.id === instance.appId
           )?.label ?? instance.title
-        if (instance.appId !== 'browser') {
-          return { ...instance, title: label }
-        }
         const conversationId =
           instance.targetRef?.type === 'conversation'
             ? instance.targetRef.conversationId
@@ -751,6 +737,26 @@ export function RightAssistantSidebar({
     )
     return instances
   })
+  const localizedWorkbarInstances = useMemo(
+    () => workbarInstances.map((instance) => {
+      if (
+        instance.appId === 'browser' ||
+        (instance.appId === 'terminal' && instance.defaultTitleNumber === undefined)
+      ) {
+        return instance
+      }
+      const label = localizedAppDefinitions.find(
+        (definition) => definition.id === instance.appId
+      )?.label ?? instance.title
+      return {
+        ...instance,
+        title: instance.appId === 'terminal'
+          ? `${label} ${instance.defaultTitleNumber}`
+          : label
+      }
+    }),
+    [localizedAppDefinitions, workbarInstances]
+  )
   const [activeWorkbarInstanceId, setActiveWorkbarInstanceId] =
     useState<string | null>(
       () =>
@@ -1119,6 +1125,9 @@ export function RightAssistantSidebar({
             : request.appId === 'browser'
               ? browserTitle()
             : definition.label,
+        ...(request.appId === 'terminal'
+          ? { defaultTitleNumber: sameTargetTerminals + 1 }
+          : {}),
         ...(request.targetRef || conversationTarget
           ? { targetRef: request.targetRef ?? conversationTarget }
           : {})
@@ -1206,6 +1215,12 @@ export function RightAssistantSidebar({
 
   useEffect(() => window.goodbuddy.browser?.onState?.((state) => {
     if (state.status !== 'stopped') return
+    if (state.openerTabId && state.workbarInstanceId) {
+      setWorkbarInstances((current) => current.filter((instance) => instance.id !== state.workbarInstanceId))
+      const openerInstanceId = Object.entries(browserTabIdsRef.current)
+        .find(([, tabId]) => tabId === state.openerTabId)?.[0]
+      setActiveWorkbarInstanceId((current) => current === state.workbarInstanceId ? openerInstanceId ?? null : current)
+    }
     const next = { ...browserTabIdsRef.current }
     let changed = false
     for (const [instanceId, tabId] of Object.entries(next)) {
@@ -1259,7 +1274,13 @@ export function RightAssistantSidebar({
           .filter((candidate) => !current.some((instance) => instance.id === candidate.id))
           .slice(0, Math.max(0, WORKBAR_LIMITS.maximumOpenInstances - current.length))
       ])
-      const requested = additions.find((instance) =>
+      const popup = additions.findLast((instance) => liveTabs.some((state) =>
+        state.workbarInstanceId === instance.id &&
+        state.openerTabId &&
+        activeWorkbarInstanceId &&
+        state.openerTabId === nextBindings[activeWorkbarInstanceId]
+      ))
+      const requested = popup ?? additions.find((instance) =>
         instance.targetRef?.type === 'conversation' &&
         instance.targetRef.conversationId === activeConversationId
       )
@@ -1267,7 +1288,7 @@ export function RightAssistantSidebar({
         setActiveWorkbarInstanceId(requested.id)
       }
     }
-  }, [activeConversationId, browserStates, conversationTitles, tab, t, workbarInstances])
+  }, [activeConversationId, activeWorkbarInstanceId, browserStates, conversationTitles, tab, t, workbarInstances])
 
   const removeWorkbarInstance = useCallback(
     (instanceId: string): void => {
@@ -1778,7 +1799,7 @@ export function RightAssistantSidebar({
       <WorkbarShell
         activeInstanceId={activeWorkbarInstanceId}
         appDefinitions={localizedAppDefinitions}
-        instances={workbarInstances}
+        instances={localizedWorkbarInstances}
         onActiveInstanceChange={updateActiveWorkbarInstance}
         onCloseInstance={requestCloseWorkbarInstance}
         onCreateInstance={createWorkbarInstance}
@@ -1828,7 +1849,7 @@ export function RightAssistantSidebar({
                 setWorkbarInstances((current) =>
                   current.map((candidate) =>
                     candidate.id === instance.id
-                      ? { ...candidate, title }
+                      ? { ...candidate, title, defaultTitleNumber: undefined }
                       : candidate
                   )
                 )

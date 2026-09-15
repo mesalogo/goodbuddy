@@ -1,5 +1,37 @@
 # 工作栏实现与验证进度
 
+## 2026-09-15 会话置顶与浮动操作菜单
+
+已核对当前源码差异：置顶经专用 IPC 写入 SQLite，schema 36 迁移保留已有会话；会话操作
+改为 body Portal 菜单。规则分别见[会话置顶](./execution-history-storage.md#会话置顶)和
+[菜单界面](../application-tool-navigation/ui-design.md#会话置顶与操作菜单)。
+
+本次任务提供的已验证聚焦测试结果为 backend **135 项通过**、renderer **283 项通过**。
+本轮仅更新文档，未重新运行测试；任务未提供这两组的完整命令或原始日志路径。
+已核对 `assistant-database.test.ts` 与 `App.test.tsx` 中相关回归，覆盖持久化与重开、
+schema 35 升级、最近 100 条之外的置顶、自动保存隔离、草稿先保存、通道会话、失败保留
+状态、旧刷新竞态，以及 Portal、窗口边界、键盘与外部关闭。
+
+原生 Electron 视觉与完整应用交互尚未验证，不能据组件测试声明实际菜单排版、原生浏览器
+遮挡或跨主题／窗口尺寸视觉验收通过；本轮也未运行全量测试、类型检查、lint 或构建。
+
+## 2026-09-15 工作栏标签标题国际化修复
+
+实现与兼容规则见[多终端页签 PRD 第 10 节](./terminal-tabs-prd.md#10-实例session-与持久化)。
+任务中心、工作区、成果和带默认编号的终端标题由 Sidebar 按当前语言派生；重命名清除默认
+编号。浏览器标题保持原行为，未修改工作栏壳层。本次只涉及桌面标题显示与布局描述，不改变
+本机或远程 PTY、Runtime、Agent 协议或桌面到 Agent 的执行路径。
+
+聚焦验证：
+
+- `npx vitest run src/renderer/src/RightAssistantSidebar.resize.test.tsx src/shared/workbar-contracts.test.ts src/renderer/src/WorkbarShell.test.tsx`：3 个文件、74 项通过。
+- Sidebar 新增 6 项行为回归，覆盖中英切换且不改写布局、默认终端编号持久化与跨语言恢复、
+  重命名后恢复，以及中文默认名、英文默认名和自定义名三种无标记旧终端。测试使用真实
+  Sidebar、WorkbarShell 和布局 Schema，终端面板使用测试替身，未启动 Shell。
+- `npx eslint src/renderer/src/RightAssistantSidebar.tsx src/renderer/src/RightAssistantSidebar.resize.test.tsx src/shared/workbar-contracts.ts`：通过。
+- 首轮测试有一处新增浏览器文案断言错误，修正为现有“未绑定会话”后通过。按用户要求未运行
+  全量测试、全量 typecheck、全量 lint 或构建；本轮未进行 Electron 实机验证。
+
 ## 2026-09-15 Desktop 0.13.6 发布准备
 
 用户批准两项性能修复的中英文更新说明，指定 Desktop 0.13.6，不发布 Agent 或

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalSnapshot } from '../../shared/terminal-contracts'
 import { workbarLayoutPreferencesSchema } from '../../shared/workbar-contracts'
 import { DEFAULT_WORKBAR_INSTANCES } from './WorkbarShell'
+import i18n from './i18n'
 import type {
   AssistantProject,
   AssistantTask,
@@ -31,22 +32,34 @@ import {
 } from './RightAssistantSidebar'
 
 vi.mock('./TerminalPanel', () => ({
-  TerminalPanel: ({ onSessionChange }: {
+  TerminalPanel: ({ onSessionChange, onRename, title }: {
     onSessionChange?: (snapshot: TerminalSnapshot) => void
+    onRename: (title: string) => void
+    title: string
   }) => (
-    <button
-      onClick={() => onSessionChange?.({
-        sessionId: '00000000-0000-4000-8000-000000000498',
-        state: 'running'
-      } as TerminalSnapshot)}
-      type="button"
-    >
-      Start test terminal
-    </button>
+    <>
+      <input
+        aria-label="Test terminal name"
+        onChange={(event) => onRename(event.target.value)}
+        value={title}
+      />
+      <button
+        onClick={() => onSessionChange?.({
+          sessionId: '00000000-0000-4000-8000-000000000498',
+          state: 'running'
+        } as TerminalSnapshot)}
+        type="button"
+      >
+        Start test terminal
+      </button>
+    </>
   )
 }))
 
-afterEach(cleanup)
+afterEach(async () => {
+  cleanup()
+  await i18n.changeLanguage('zh-CN')
+})
 
 const firstBrowserTabId =
   '00000000-0000-4000-8000-000000000401' as BrowserTabId
@@ -223,6 +236,100 @@ function renderSidebar(options: Parameters<typeof sidebarElement>[0] = {}): HTML
     name: '助手工作栏'
   })
 }
+
+describe('RightAssistantSidebar tab titles', () => {
+  it('updates application titles in place when the locale changes without rewriting the layout', async () => {
+    renderSidebar()
+    const initialTabs = screen.getAllByRole('tab')
+    const savedLayout = localStorage.getItem('goodbuddy.workbar-layout.v1')
+    expect(initialTabs.map((tab) => tab.textContent)).toEqual([
+      '任务中心', '工作区', '浏览器 · 未绑定会话', '成果'
+    ])
+
+    await act(async () => { await i18n.changeLanguage('en-US') })
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Task center', 'Files', '浏览器 · 未绑定会话', 'Results'
+    ])
+    expect(screen.getAllByRole('tab')).toEqual(initialTabs)
+    expect(screen.getByRole('tab', { name: 'Task center' })).toHaveAttribute('aria-selected', 'true')
+    expect(localStorage.getItem('goodbuddy.workbar-layout.v1')).toBe(savedLayout)
+
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      '任务中心', '工作区', '浏览器 · 未绑定会话', '成果'
+    ])
+  })
+
+  it('persists default terminal numbers and restores titles using the current locale', async () => {
+    const view = render(sidebarElement())
+    for (const number of [1, 2]) {
+      fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+      fireEvent.click(screen.getByText('终端', { selector: 'strong' }).closest('button')!)
+      expect(await screen.findByRole('tab', { name: `终端 ${number}` })).toBeInTheDocument()
+    }
+    const savedLayout = workbarLayoutPreferencesSchema.parse(
+      JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
+    )
+    expect(savedLayout.instances.filter((instance) => instance.appId === 'terminal'))
+      .toEqual([1, 2].map((number) => expect.objectContaining({
+        title: `终端 ${number}`, defaultTitleNumber: number,
+        targetRef: { type: 'project', projectId: currentProject.id }
+      })))
+    view.unmount()
+    await i18n.changeLanguage('en-US')
+    render(sidebarElement())
+    expect(screen.getByRole('tab', { name: 'Terminal 1' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Terminal 2' })).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByRole('textbox', { name: 'Test terminal name' })).toHaveValue('Terminal 2')
+    for (const name of ['Task center', 'Files', 'Results']) {
+      expect(screen.getByRole('tab', { name })).toBeInTheDocument()
+    }
+    await act(async () => { await i18n.changeLanguage('zh-CN') })
+    expect(screen.getByRole('tab', { name: '终端 2' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('textbox', { name: 'Test terminal name' })).toHaveValue('终端 2')
+  })
+
+  it('clears the default marker on rename and preserves a default-looking custom name across locale changes and restore', async () => {
+    const view = render(sidebarElement())
+    fireEvent.click(screen.getByRole('button', { name: '打开工作栏应用' }))
+    fireEvent.click(screen.getByText('终端', { selector: 'strong' }).closest('button')!)
+    const input = await screen.findByRole('textbox', { name: 'Test terminal name' })
+    fireEvent.change(input, { target: { value: 'Terminal 99' } })
+    const savedLayout = workbarLayoutPreferencesSchema.parse(
+      JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
+    )
+    const terminal = savedLayout.instances.find((instance) => instance.appId === 'terminal')!
+    expect(terminal.title).toBe('Terminal 99')
+    expect(terminal).not.toHaveProperty('defaultTitleNumber')
+    await act(async () => { await i18n.changeLanguage('en-US') })
+    expect(screen.getByRole('tab', { name: 'Terminal 99' })).toBeInTheDocument()
+    view.unmount()
+    await i18n.changeLanguage('zh-CN')
+    render(sidebarElement())
+    expect(screen.getByRole('tab', { name: 'Terminal 99' })).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByRole('textbox', { name: 'Test terminal name' })).toHaveValue('Terminal 99')
+  })
+
+  it.each(['终端 1', 'Terminal 2', '部署日志'])('preserves an unmarked legacy terminal title: %s', async (title) => {
+    const terminalId = '10000000-0000-4000-8000-000000000009'
+    localStorage.setItem('goodbuddy.workbar-layout.v1', JSON.stringify({
+      instances: [...DEFAULT_WORKBAR_INSTANCES, {
+        id: terminalId, appId: 'terminal', title, targetRef: { type: 'local' }
+      }],
+      activeInstanceId: terminalId, expanded: true, dock: 'right', widthRatio: 0.3
+    }))
+    renderSidebar()
+    expect(await screen.findByRole('textbox', { name: 'Test terminal name' })).toHaveValue(title)
+    await act(async () => { await i18n.changeLanguage('en-US') })
+    expect(screen.getByRole('tab', { name: title })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('textbox', { name: 'Test terminal name' })).toHaveValue(title)
+    const savedLayout = workbarLayoutPreferencesSchema.parse(
+      JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
+    )
+    expect(savedLayout.instances.find((instance) => instance.id === terminalId))
+      .toEqual({ id: terminalId, appId: 'terminal', title, targetRef: { type: 'local' } })
+  })
+})
 
 describe('RightAssistantSidebar resizing', () => {
   it('resizes with pointer capture and preserves compact pane minima', () => {
@@ -1170,6 +1277,37 @@ describe('RightAssistantSidebar resizing', () => {
       screen.getByRole('tab', { name: '浏览器 · conversation-a' })
     ).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '浏览器 1 · conversation-a' })).not.toBeInTheDocument()
+  })
+
+  it('selects a visible opener popup across conversation switches and removes its script-closed instance', async () => {
+    const conversationId = 'popup-owner'
+    const view = render(sidebarElement({ tab: 'browser', activeConversationId: conversationId }))
+    await waitFor(() => expect(browserApi.createTab).toHaveBeenCalledOnce())
+    const popup: BrowserLiveState = {
+      ...browserSummary(conversationId, secondBrowserTabId, false),
+      workbarInstanceId: secondBrowserTabId, openerTabId: firstBrowserTabId,
+      sessionActive: true, url: 'https://popup.example/'
+    }
+    view.rerender(sidebarElement({
+      tab: 'browser', activeConversationId: 'another-conversation',
+      browserStates: { [conversationId]: { [secondBrowserTabId]: popup } }
+    }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://popup.example/'))
+    expect(browserApi.createTab).toHaveBeenCalledOnce()
+    const stopped: BrowserLiveState = { ...popup, status: 'stopped', sessionActive: false }
+    act(() => {
+      for (const listener of browserStateListeners) listener(stopped)
+      view.rerender(sidebarElement({
+        tab: 'browser', activeConversationId: 'another-conversation',
+        browserStates: { [conversationId]: { [secondBrowserTabId]: stopped } }
+      }))
+    })
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
+      expect(saved.instances.some((instance: { id: string }) => instance.id === secondBrowserTabId)).toBe(false)
+    })
+    expect(browserApi.createTab).toHaveBeenCalledOnce()
+    expect(browserApi.closeTab).not.toHaveBeenCalled()
   })
 
   it('restores a browser by stable ownership and releases only its viewport lease', async () => {

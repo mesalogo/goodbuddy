@@ -199,6 +199,7 @@ export const workbarTabInstanceSchema = z
     id: z.string().uuid(),
     appId: workbarAppIdSchema,
     title: boundedUtf8TextSchema(WORKBAR_LIMITS.maximumTitleBytes),
+    defaultTitleNumber: z.number().int().positive().optional(),
     targetRef: workbarTargetRefSchema.optional()
   })
   .strict()

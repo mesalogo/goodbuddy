@@ -90,7 +90,8 @@ SSH 连接池，但尚不存在工作栏应用实例模型、终端 IPC、终端
 工作栏 Tab 是应用的一次打开实例。每个实例具有独立 ID、标题、应用类型和状态。Tab 行只
 显示已经打开的实例，不把全部能力同时渲染为 Tab。
 
-实例持久化字段只有 `id`、`appId`、`title` 和可选 `targetRef`。`targetRef` 使用公开引用：
+实例持久化字段为 `id`、`appId`、`title`，以及可选的 `targetRef`、`defaultTitleNumber`。
+默认标题编号的保存和兼容规则见第 10 节。`targetRef` 使用公开引用：
 终端接受 `local` 或 `projectId`，浏览器接受 `conversationId`。Main 签发的 Browser Tab ID、
 Terminal Session ID、元素引用、凭据、路径和运行状态不进入工作栏布局。
 
@@ -179,8 +180,12 @@ stdio fallback。首期远程终端随 SSH Channel 结束，不提供跨 SSH 或
 - 每个实例使用独立 `tab` 和 `tabpanel`。
 - “+”固定在 Tab 行末尾，但位于 `tablist` 之外。
 - Tab 过多时实例区域单行横向滚动，“+”保持可见；不换行、不自动隐藏实例。
+- 标签全部可见时隐藏左右滚动按钮，“+”紧随最后一个标签；溢出时两端显示左右箭头，点击滚动约一屏，边界方向禁用。“+”固定在右箭头外侧。切换或新增激活标签时将其滚入可见区域。未激活标签使用灰蓝底色和边框，激活标签保留亮底与强调色顶线。
 - 终端 Tab 默认使用递增标题，例如“终端 1”“终端 2”；状态栏持续显示项目、Host、
   工作目录和 Shell。用户可以重命名终端。
+- 任务中心、工作区、成果及新建终端的默认标题随界面语言切换，恢复布局时也使用当前语言。
+  终端自定义名称保持原文；旧布局中的终端名称保持原值，即使看起来像“终端 1”。浏览器
+  标题沿用现有行为，不在本次标题国际化范围内。
 - 当前 Tab 同时使用连续内容表面、选中边框、顶部强调线、图标和较高字重，不能只靠文字颜色。
 - Tab、关闭按钮和“+”入口沿用共享控件圆角；终端面板外框和终端顶部工具栏按钮使用直角，
   保持紧凑的停靠式终端界面。
@@ -345,6 +350,7 @@ type WorkbarTabInstance = {
   id: string
   appId: WorkbarAppDefinition['id']
   title: string
+  defaultTitleNumber?: number
   targetRef?:
     | { type: 'local' }
     | { type: 'project'; projectId: string }
@@ -372,6 +378,12 @@ type WorkbarLayoutPreferences = {
 - 应用重启恢复终端 Tab 描述，但状态为“会话已结束”，不自动建立 SSH 连接或启动本机
   Shell。
 - 运行期间切换项目不会改变已经创建的终端目标。用户需要新目标时通过“+”创建新终端。
+
+新建终端保存正整数 `defaultTitleNumber`，沿用同一目标已有终端数量加一的编号规则。
+Sidebar 在渲染时按当前语言派生应用和默认终端标题，再交给 Tab 壳层与终端面板；切换语言
+不改写持久化标题。用户重命名时清除此字段并保存输入的 `title`。缺少标记的旧终端直接显示
+原 `title`，不通过名称模式推断默认标题。布局存储键保持 `goodbuddy.workbar-layout.v1`；
+旧版本使用严格 Schema，不能读取带新增字段的布局，本变更不提供降级兼容。
 
 ## 11. 生命周期与关闭语义
 
