@@ -38,6 +38,23 @@ const untouchedProject: AssistantProject = {
 }
 
 describe('agent question contracts', () => {
+  it('returns recovered questions only in live snapshots, not saved headers', () => {
+    const id = '00000000-0000-4000-8000-000000000901'
+    const snapshot = {
+      id, title: 'Recovered', updatedAt: 1, messages: [],
+      activeRequest: {
+        requestId: id, messageId: id,
+        questions: [{
+          requestId: id, type: 'question', questionId: 'native',
+          questions: [{ header: 'Input', question: 'Which?', options: [], multiple: false, custom: true }]
+        }]
+      }
+    }
+    expect(conversationSnapshotSchema.parse(snapshot)).toEqual(snapshot)
+    const { messages, ...header } = snapshot
+    expect(localConversationSaveBatchSchema.safeParse([{ header, messages }]).success).toBe(false)
+  })
+
   it('does not impose GoodBuddy-specific question answer limits', () => {
     const answers = Array.from({ length: 5 }, (_, questionIndex) =>
       Array.from(

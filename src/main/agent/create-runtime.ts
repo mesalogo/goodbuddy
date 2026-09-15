@@ -3,7 +3,8 @@ import {
   type ModelRuntimeOptions
 } from './model-runtime'
 import { ContinueAgentRuntime } from './continue-runtime'
-import { OpenCodeRuntime } from './opencode-runtime'
+import { OpenCodeRuntime, type OpenCodeRuntimeOptions } from './opencode-runtime'
+import type { LocalRuntimeRegistry } from './local-runtime-registry'
 import {
   DeepSeekHarnessRuntime,
   type DeepSeekHarnessRuntimeOptions
@@ -57,6 +58,7 @@ const noModelTaskTools: ModelToolProviderLike = {
 }
 
 export type AgentCapabilityContext = {
+  localRuntimeRegistry?: LocalRuntimeRegistry
   skillInstructions?: string
   skillPackages?: RuntimeSkillPackage[]
   mcpServers?: ResolvedMcpServer[]
@@ -213,8 +215,8 @@ export function createAgentRuntime(
     if (!capabilities.deepseekHarnessLauncher) {
       throw new Error('DeepSeek Harness 受控 Host 启动器不可用')
     }
-    return new DeepSeekHarnessRuntime({
-      defaultWorkspace: workspace,
+    const options: DeepSeekHarnessRuntimeOptions = {
+      defaultWorkspace: capabilities.localRuntimeRegistry ? defaultWorkspace : workspace,
       baseUrl: profile.baseUrl,
       model: profile.modelName,
       supportsImageInput: profile.supportsImageInput === true,
@@ -225,16 +227,26 @@ export function createAgentRuntime(
       },
       skillPackages: capabilities.skillPackages,
       extensionPackages: capabilities.deepseekHarnessExtensions,
-      toolProvider: new ModelToolProvider(
-        getWorkspaceAccess(),
-        capabilities.mcpServers,
-        undefined,
-        capabilities.knowledgeGateway,
-        capabilities.webSearchEnabled === true,
-        {},
-        capabilities.launchEnvironmentProvider
+      createToolProvider: (directory) => new ModelToolProvider(
+        new LocalWorkspaceAccess(directory), capabilities.mcpServers, undefined,
+        capabilities.knowledgeGateway, capabilities.webSearchEnabled === true,
+        {}, capabilities.launchEnvironmentProvider
       )
-    })
+    }
+    const create = () => new DeepSeekHarnessRuntime(options)
+    if (!capabilities.localRuntimeRegistry) return create()
+    const configuration = { ...options, defaultWorkspace: undefined, createToolProvider: undefined }
+    return capabilities.localRuntimeRegistry.acquire(
+      `deepseek-harness:${profile.id}`,
+      {
+        ...configuration,
+        mcpServers: capabilities.mcpServers,
+        webSearchEnabled: capabilities.webSearchEnabled === true,
+        launchEnvironment: capabilities.launchEnvironmentProvider?.()
+      },
+      workspace,
+      create
+    )
   }
 
   if (provider === 'continue') {
@@ -293,7 +305,7 @@ export function createAgentRuntime(
         'OpenCode 独立模型连接仅支持文本对话协议，不支持图像生成协议'
       )
     }
-    return new OpenCodeRuntime({
+    const options: OpenCodeRuntimeOptions = {
       baseUrl,
       embedded,
       binaryPath:
@@ -311,13 +323,25 @@ export function createAgentRuntime(
       skillInstructions: capabilities.skillInstructions,
       skillPackages: capabilities.skillPackages,
       sharedCacheRoot: capabilities.opencodeSharedCacheRoot,
-      defaultWorkspace: workspace,
+      defaultWorkspace: capabilities.localRuntimeRegistry ? defaultWorkspace : workspace,
       knowledgeGateway: capabilities.knowledgeGateway,
       mcpServers: capabilities.mcpServers,
       customization: settings?.runtimeCustomization.opencode,
       launchEnvironmentProvider:
         capabilities.launchEnvironmentProvider
-    })
+    }
+    const create = () => new OpenCodeRuntime(options)
+    if (!capabilities.localRuntimeRegistry) return create()
+    const configuration = { ...options, defaultWorkspace: undefined }
+    return capabilities.localRuntimeRegistry.acquire(
+      `opencode:${settings?.opencodeModelProfile?.id ?? 'native'}`,
+      {
+        ...configuration,
+        launchEnvironment: capabilities.launchEnvironmentProvider?.()
+      },
+      workspace,
+      create
+    )
   }
 
   const defaultModelProfile =

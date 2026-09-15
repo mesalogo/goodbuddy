@@ -24,6 +24,32 @@ afterEach(() => {
 })
 
 describe('direct Linux stdio Runtime ownership', () => {
+  it('keeps shared stdin available across Session completion without a cumulative prompt quota', async () => {
+    const registry = createRegistry()
+    const child = fakeChild()
+    const owner = await launchDirectLinuxStdioProcessOwner({
+      manifest: manifest(), profile: profile(), sharedSessions: true,
+      identity: { launchId: 'shared-launch', processId: 'shared-process' },
+      installationId: 'installation-1', registry, platform: 'linux',
+      deadlineAt: '2030-01-01T00:00:00.000Z', maximumInputBytes: 16,
+      spawn: () => { queueMicrotask(() => child.emit('spawn')); return child },
+      randomOwnerToken: () => 'a'.repeat(32),
+      readProcessIdentity: async () => identity()
+    })
+    try {
+      for (let index = 0; index < 8; index++) {
+        owner.beginPrompt({ deadlineAt: '2030-01-01T00:00:00.000Z', maximumInputBytes: 16 })
+        await owner.writeStdin(Uint8Array.from(Buffer.from('12345678')))
+        await owner.completePrompt()
+      }
+      await owner.writeStdin(Uint8Array.from(Buffer.from('cancel-peer')))
+    } finally {
+      child.exitCode = 0
+      child.emit('close', 0, null)
+      registry.close()
+    }
+  })
+
   it('spawns Ask directly without systemd using detached fixed stdio', async () => {
     const registry = createRegistry()
     const child = fakeChild()

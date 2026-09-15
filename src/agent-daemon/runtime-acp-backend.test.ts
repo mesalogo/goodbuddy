@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   type AcpJournalCursor,
   type RemotePromptOperationPreparation,
@@ -7,7 +10,7 @@ import {
 import type { RemoteRuntimeBundleManifest } from '../shared/remote-runtime-launch-contracts'
 import type { ControllerLease } from './controller-registry'
 import { AgentModelGatewayError } from './agent-model-gateway'
-import { EventJournalCapacityError } from './event-journal'
+import { EventJournal, EventJournalCapacityError } from './event-journal'
 import type { ProtocolMethodContext } from './protocol-server'
 import type {
   ModelBridgeBrokerDispatch,
@@ -280,6 +283,8 @@ function harness(input: {
   uniqueProcesses?: boolean
   outputGate?: Promise<void>
   agentOwned?: boolean
+  shareOwnedProcesses?: boolean
+  journal?: RuntimeAcpJournal
   modelGateway?: {
     dispatch: ReturnType<typeof vi.fn>
     finalizePrompt: ReturnType<typeof vi.fn>
@@ -319,7 +324,9 @@ function harness(input: {
       }
     : undefined
   const backend = new RuntimeAcpBackend({
-    journal,
+    shareOwnedProcesses: input.shareOwnedProcesses,
+    sharedProcessIdleMs: 20,
+    journal: input.journal ?? journal,
     resolveRuntimeBundle: vi.fn(async () => resolved),
     loadRegisteredRuntimeBundle: vi.fn(async () => verifiedBundle()),
     resolveWorkspace: vi.fn(async (preparation) => ({
@@ -444,6 +451,66 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it.each([false, true])('allows mode changes only on a shared Session (shared=%s)', async (shared) => {
+    const fixture = harness({ agentOwned: true, shareOwnedProcesses: shared, workMode: 'execute' })
+    try {
+      await open(fixture)
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation())
+      await invoke(fixture, 'runtime/completePrompt', {
+        bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1'
+      })
+      const next = fixture.preparation({
+        operationId: 'request-2', requestId: 'request-2', promptSequence: 1, workMode: 'ask'
+      })
+      if (shared) {
+        await expect(invoke(fixture, 'runtime/preparePrompt', next)).resolves.toMatchObject({ workMode: 'ask' })
+        await invoke(fixture, 'runtime/completePrompt', {
+          bindingId: 'binding-1', operationId: 'request-2', requestId: 'request-2'
+        })
+        await expect(invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+          operationId: 'request-3', requestId: 'request-3', promptSequence: 2, workMode: 'execute'
+        }))).resolves.toMatchObject({ workMode: 'execute' })
+      } else {
+        await expect(invoke(fixture, 'runtime/preparePrompt', next)).rejects.toThrow('work mode cannot change')
+      }
+      expect(fixture.launches).toHaveLength(1)
+    } finally {
+      await fixture.backend.dispose()
+    }
+  })
+
+  it('shares Agent-owned workspaces and modes, retaining peers and reclaiming only an unused process', async () => {
+    const fixture = harness({ agentOwned: true, shareOwnedProcesses: true })
+    const channels: Array<{ bindingId: string; channelId: string; channelEpoch: string }> = []
+    try {
+      for (let index = 0; index < 4; index++) {
+        const bindingId = `shared-${index}`
+        const workspaceIdentity = `workspace-${index % 2}`
+        const channel = await invoke(fixture, 'runtime/openAcpChannel', {
+          ...fixture.openRequest, bindingId, workspaceIdentity
+        }) as (typeof channels)[number]
+        channels.push({ bindingId, channelId: channel.channelId, channelEpoch: channel.channelEpoch })
+        await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+          bindingId, workspaceIdentity, channelEpoch: channel.channelEpoch,
+          workMode: index % 2 ? 'execute' : 'ask',
+          operationId: `operation-${index}`, requestId: `operation-${index}`
+        }))
+      }
+      expect(fixture.launches).toHaveLength(1)
+      for (const channel of channels.slice(0, 3)) {
+        await invoke(fixture, 'runtime/closeAcpChannel', {
+          ...channel, reason: 'released'
+        })
+      }
+      await new Promise(resolve => setTimeout(resolve, 40))
+      expect(fixture.process.stops).toEqual([])
+      await invoke(fixture, 'runtime/closeAcpChannel', { ...channels[3], reason: 'released' })
+      await vi.waitFor(() => expect(fixture.process.stops).toEqual(['binding-closed']))
+    } finally {
+      await fixture.backend.dispose()
+    }
+  })
+
   it('rejects Agent-first unknown blob channels before prompt authority exists', async () => {
     const fixture = harness()
     await expect(
@@ -1534,6 +1601,71 @@ describe('RuntimeAcpBackend', () => {
         fixture.context
       )
     ).rejects.toMatchObject({ code: 'stale-controller' })
+  })
+
+  it('resumes shared semantic bindings with no binary output in the real journal', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-empty-acp-replay-'))
+    const journal = new EventJournal(join(directory, 'events.sqlite'))
+    const fixture = harness({
+      agentOwned: true,
+      shareOwnedProcesses: true,
+      journal
+    })
+    const channels: Array<{
+      bindingId: string
+      channelId: string
+      channelEpoch: string
+    }> = []
+    try {
+      for (let index = 0; index < 4; index++) {
+        const bindingId = `empty-${index}`
+        const workspaceIdentity = `workspace-${index % 2}`
+        const channel = await invoke(fixture, 'runtime/openAcpChannel', {
+          ...fixture.openRequest, bindingId, workspaceIdentity
+        }) as (typeof channels)[number]
+        channels.push({
+          bindingId,
+          channelId: channel.channelId,
+          channelEpoch: channel.channelEpoch
+        })
+        await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({
+          bindingId, workspaceIdentity,
+          channelEpoch: channel.channelEpoch,
+          operationId: `operation-${index}`,
+          requestId: `operation-${index}`,
+          workMode: index % 2 ? 'execute' : 'ask'
+        }))
+        expect(journal.getAcpCursor(
+          bindingId, channel.channelEpoch, 'runtime-to-main'
+        )).toBeUndefined()
+      }
+      fixture.context.abort.abort()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const resumed = protocolContext({
+        generation: 2,
+        connectionId: 'connection-2'
+      })
+      for (const channel of channels) {
+        await fixture.backend.methods['runtime/resumeAcpChannel']!(
+          channel, resumed
+        )
+        await expect(fixture.backend.methods['runtime/replayAcpChannel']!(
+          { ...channel, acknowledgedSequence: '1' }, resumed
+        )).rejects.toThrow('ACK exceeds durable output')
+        await expect(fixture.backend.methods['runtime/replayAcpChannel']!(
+          { ...channel, acknowledgedSequence: '0' }, resumed
+        )).resolves.toMatchObject({
+          ...channel, replayedThroughSequence: '0', live: true
+        })
+      }
+      expect(fixture.launches).toHaveLength(1)
+      expect(fixture.process.stops).toEqual([])
+      expect(fixture.process.writes).toEqual([])
+    } finally {
+      await fixture.backend.dispose()
+      journal.close()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('fails closed on supervised process identity conflict', async () => {

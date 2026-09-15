@@ -23,6 +23,64 @@ afterEach(() => {
 })
 
 describe('AgentOwnedAcpPrompt', () => {
+  it('applies each prompt mode to the retained session and its permission decisions', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-acp-modes-'))
+    temporary.push(root)
+    const transcript = new SemanticPromptStore(join(root, 'prompts.sqlite'))
+    let client!: Client
+    let finish!: (response: PromptResponse) => void
+    const newSession = vi.fn(async () => ({ sessionId: 'session-1' }))
+    const prepareSession = vi.fn(async () => undefined)
+    const completePrompt = vi.fn(async () => undefined)
+    const owner = new AgentOwnedAcpPrompt({
+      bindingId: 'binding-1', controllerId: 'controller-1',
+      workspaceDirectory: '/workspace', process: new MemoryProcess(),
+      transcript, prepareSession, completePrompt,
+      createConnection: factory => {
+        client = factory()
+        return {
+          initialize: async () => ({ protocolVersion: 1, agentCapabilities: {} }),
+          newSession,
+          prompt: () => new Promise<PromptResponse>(resolve => { finish = resolve })
+        } as unknown as ClientSideConnection
+      }
+    })
+    try {
+      for (const [index, workMode] of (['execute', 'ask', 'execute'] as const).entries()) {
+        const operationId = `operation-${index}`
+        transcript.prepare({
+          bindingId: 'binding-1', operationId, requestId: operationId,
+          controllerId: 'controller-1', preparationDigest: `sha256:${'a'.repeat(64)}`,
+          promptSequence: index
+        })
+        await owner.start({
+          bindingId: 'binding-1', operationId, requestId: operationId,
+          prompt: [{ type: 'text', text: 'Continue with the selected mode' }]
+        }, workMode)
+        expect(prepareSession).toHaveBeenLastCalledWith('session-1', operationId, workMode)
+        const result = await client.requestPermission!({
+          sessionId: 'session-1',
+          toolCall: { toolCallId: `tool-${index}`, kind: 'execute', title: 'Run a test' },
+          options: [
+            { kind: 'allow_once', optionId: 'allow', name: 'Allow' },
+            { kind: 'reject_once', optionId: 'reject', name: 'Reject' }
+          ]
+        })
+        expect(result.outcome).toEqual({
+          outcome: 'selected', optionId: workMode === 'execute' ? 'allow' : 'reject'
+        })
+        finish({ stopReason: 'end_turn' })
+        await vi.waitFor(() => expect(transcript.attach('binding-1', operationId, 'controller-1'))
+          .toMatchObject({ state: 'completed' }))
+      }
+      expect(newSession).toHaveBeenCalledOnce()
+      expect(completePrompt).toHaveBeenCalledTimes(3)
+    } finally {
+      owner.close()
+      transcript.close()
+    }
+  })
+
   it('keeps the original prompt promise through Desktop detach and recovers the final response', async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodbuddy-owned-acp-'))
     temporary.push(root)
@@ -76,7 +134,6 @@ describe('AgentOwnedAcpPrompt', () => {
       bindingId: 'binding-1',
       controllerId: 'controller-1',
       workspaceDirectory: '/workspace',
-      workMode: 'execute',
       expectedModel,
       process,
       transcript,
@@ -101,7 +158,7 @@ describe('AgentOwnedAcpPrompt', () => {
       requestId: 'operation-1',
       prompt: [{ type: 'text' as const, text: 'finish independently' }]
     }
-    await expect(owner.start(request)).resolves.toMatchObject({
+    await expect(owner.start(request, 'execute')).resolves.toMatchObject({
       state: 'running',
       sessionId: 'session-1'
     })
@@ -141,7 +198,7 @@ describe('AgentOwnedAcpPrompt', () => {
         limit: 10
       }).events.map((event) => event.kind)
     ).toEqual(['session-update', 'prompt-terminal'])
-    await expect(owner.start(request)).resolves.toMatchObject({
+    await expect(owner.start(request, 'execute')).resolves.toMatchObject({
       state: 'completed'
     })
     expect(prompt).toHaveBeenCalledOnce()
@@ -170,7 +227,6 @@ describe('AgentOwnedAcpPrompt', () => {
       bindingId: 'binding-1',
       controllerId: 'controller-1',
       workspaceDirectory: '/workspace',
-      workMode: 'execute',
       process: new MemoryProcess(),
       transcript,
       completePrompt,
@@ -191,7 +247,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'finish independently' }]
-    })
+    }, 'execute')
     await vi.waitFor(() =>
       expect(
         transcript.attach('binding-1', 'operation-1', 'controller-1')
@@ -239,7 +295,6 @@ describe('AgentOwnedAcpPrompt', () => {
       bindingId: 'binding-1',
       controllerId: 'controller-1',
       workspaceDirectory: '/workspace',
-      workMode: 'execute',
       process,
       transcript,
       completePrompt,
@@ -261,7 +316,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'wait for Runtime exit' }]
-    })
+    }, 'execute')
     await process.emitExit()
 
     await vi.waitFor(() =>
@@ -315,7 +370,6 @@ describe('AgentOwnedAcpPrompt', () => {
       bindingId: 'binding-1',
       controllerId: 'controller-1',
       workspaceDirectory: '/workspace',
-      workMode: 'execute',
       process: new MemoryProcess(),
       transcript,
       completePrompt: async () => undefined,
@@ -338,7 +392,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'run one tool' }]
-    })
+    }, 'execute')
     await expect(
       client.requestPermission({
         sessionId: 'session-1',
@@ -388,7 +442,6 @@ describe('AgentOwnedAcpPrompt', () => {
       bindingId: 'binding-1',
       controllerId: 'controller-1',
       workspaceDirectory: '/workspace',
-      workMode: 'ask',
       process: new MemoryProcess(),
       transcript,
       completePrompt: async () => undefined,
@@ -411,7 +464,7 @@ describe('AgentOwnedAcpPrompt', () => {
       operationId: 'operation-1',
       requestId: 'operation-1',
       prompt: [{ type: 'text', text: 'inspect one file' }]
-    })
+    }, 'ask')
     const permission = (
       kind: 'read' | 'edit'
     ): Parameters<Client['requestPermission']>[0] => ({

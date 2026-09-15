@@ -429,20 +429,8 @@ export const acpReconcilePromptResultSchema = z.discriminatedUnion(
         ]),
         processTree: z.enum(['running', 'empty'])
       })
-      .strict()
-      .superRefine((result, context) => {
-        if (
-          result.processTree === 'running' &&
-          result.terminalState !== 'completed'
-        ) {
-          context.addIssue({
-            code: 'custom',
-            path: ['processTree'],
-            message:
-              'Only a completed prompt may retain a running process tree'
-          })
-        }
-      }),
+      // A terminal Session can leave a shared Runtime serving other Sessions.
+      .strict(),
     z
       .object({
         status: z.literal('running'),

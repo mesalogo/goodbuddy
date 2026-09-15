@@ -37,6 +37,10 @@ import { createOpenAIChatCompletionsUrl } from './openai-endpoint'
 import { createModelRequestProbe } from '../../../tests/support/model-request-probe'
 import { ExecutionSpaceResolver } from '../execution-space/execution-space-resolver'
 import { SelectedRuntimeManager } from './selected-runtime-manager'
+import { LocalRuntimeRegistry } from './local-runtime-registry'
+import { createAgentRuntime } from './create-runtime'
+import { defaultRuntimeSettings } from '../../shared/contracts'
+import type { ResolvedRuntimeSettings } from '../runtime-settings-store'
 
 const CREDENTIAL_REF = 'GOODBUDDY_HARNESS_MODEL_API_KEY'
 const SKILL_CALL_ID = 'e2e-skill-call'
@@ -385,6 +389,81 @@ function createInProcessLaunch(
 }
 
 describe('DeepSeek Harness real ACP control-plane E2E', () => {
+  it.each([2, 10])('shares one production-composed Host across %i projects with independent native file and shell tools', async (projectCount) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-reuse-')))
+    const directories = Array.from(
+      { length: projectCount }, (_, index) => join(root, `project-${index}`)
+    )
+    await Promise.all(directories.map(async (directory, index) => {
+      await mkdir(directory)
+      await writeFile(join(directory, 'marker.txt'), `PROJECT_${index}`)
+    }))
+    const inProcess = createInProcessLaunch(root, {
+      stream(options) {
+        const id = latestUserText(options)
+        const read = toolResultText(options, `${id}-read`)
+        if (read === undefined) return toolCall(`${id}-read`, 'read', { file_path: 'marker.txt' })
+        const write = toolResultText(options, `${id}-write`)
+        if (write === undefined) return toolCall(`${id}-write`, 'write', {
+          file_path: `${id}.txt`, content: read
+        })
+        const shell = toolResultText(options, `${id}-shell`)
+        if (shell === undefined) return toolCall(`${id}-shell`, process.platform === 'win32' ? 'pwsh' : 'bash', {
+          command: process.platform === 'win32' ? 'Get-Content marker.txt' : 'cat marker.txt',
+          description: 'Read the session workspace fixture'
+        })
+        return textResponse(shell)
+      }
+    })
+    const launch = vi.fn(inProcess.launch)
+    const registry = new LocalRuntimeRegistry()
+    const resolver = new ExecutionSpaceResolver()
+    const profile = {
+      id: '00000000-0000-4000-8000-000000000009',
+      name: 'Reuse fixture', baseUrl: 'http://127.0.0.1:9',
+      modelName: 'reuse', protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const, apiKey: 'unused-deterministic-model'
+    }
+    const settings = {
+      ...defaultRuntimeSettings, provider: 'deepseek-harness',
+      modelProfiles: [profile], deepseekHarnessModelProfile: profile
+    } as ResolvedRuntimeSettings
+    const manager = new SelectedRuntimeManager(async (_selection, space) =>
+      createAgentRuntime(root, settings, {
+        executionSpace: space, localRuntimeRegistry: registry,
+        deepseekHarnessLauncher: launch
+      }), 1, 1, undefined, undefined, (id) => registry.releaseConversation(id))
+    try {
+      const selection = { provider: 'deepseek-harness' as const }
+      for (let wave = 0; wave < 2; wave++) {
+        const outputs = await Promise.all(directories.flatMap((directory, project) =>
+          [0, 1].map(async (conversation) => {
+            const runtime = await manager.getRuntime(selection, resolver.resolveLocal(directory))
+            const id = `p${project}-c${conversation}-w${wave}`
+            const events = await collect(runtime.run({
+              requestId: id, conversationId: `p${project}-c${conversation}`,
+              prompt: id, workMode: 'execute'
+            }, AbortSignal.timeout(20_000)))
+            expect(events.at(-1)?.type).toBe('done')
+            expect(await readFile(join(directory, `${id}.txt`), 'utf8')).toContain(`PROJECT_${project}`)
+            expect(events.filter((event) => event.type === 'text').map((event) => event.delta).join(''))
+              .toContain(`PROJECT_${project}`)
+            return events
+          })
+        ))
+        expect(outputs).toHaveLength(projectCount * 2)
+        expect(launch).toHaveBeenCalledOnce()
+      }
+      await manager.releaseConversation('p0-c0')
+      expect(launch).toHaveBeenCalledOnce()
+      expect(inProcess.hosts).toHaveLength(1)
+    } finally {
+      await manager.dispose()
+      await registry.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it.skipIf(process.platform !== 'win32')('reuses a working runtime for mixed-separator and canonical Windows paths', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-path-')))
     const workspace = join(root, 'workspace')
@@ -427,6 +506,103 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('keeps native Skills, plugin inventory, MCP calls and images scoped across shared projects', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-shared-capabilities-')))
+    const directories = [join(root, 'one'), join(root, 'two')]
+    await Promise.all(directories.map(directory => mkdir(directory)))
+    const plugin = join(root, 'inventory-plugin.mjs')
+    await writeFile(plugin, [
+      "export const name = 'shared-inventory'",
+      "export const inject = ['skills']",
+      'export function apply(ctx) {',
+      "ctx.skills.register({ name: 'shared-plugin-skill', description: 'Shared plugin fixture', content: '# Shared plugin', source: 'custom' })",
+      '}'
+    ].join('\n'))
+    const models = [new FakeGameModel(), new FakeGameModel()]
+    const images = [createCanvas(1, 1).toBuffer('image/png'), createCanvas(2, 1).toBuffer('image/png')]
+    const seenImages = new Map<number, GenerateOptions['messages'][number]['content']>()
+    const inProcess = createInProcessLaunch(root, {
+      stream(options) {
+        const project = latestUserText(options).includes('PROJECT_1') ? 1 : 0
+        seenImages.set(project, options.messages.flatMap(message => message.content).filter(block => block.type === 'image'))
+        return models[project]!.stream(options)
+      }
+    })
+    const launch = vi.fn(inProcess.launch)
+    const calls = vi.spyOn(ModelToolProvider.prototype, 'callTool')
+    const registry = new LocalRuntimeRegistry()
+    const profile = {
+      id: '00000000-0000-4000-8000-000000000010',
+      name: 'Capabilities fixture', baseUrl: 'http://127.0.0.1:9',
+      modelName: 'capabilities', protocol: 'openai-chat-completions' as const,
+      authentication: 'api-key' as const, apiKey: 'unused-deterministic-model',
+      supportsImageInput: true
+    }
+    const resolver = new ExecutionSpaceResolver()
+    const runtimes = directories.map(directory => createAgentRuntime(root, {
+      ...defaultRuntimeSettings, provider: 'deepseek-harness',
+      modelProfiles: [profile], deepseekHarnessModelProfile: profile
+    } as ResolvedRuntimeSettings, {
+      executionSpace: resolver.resolveLocal(directory), localRuntimeRegistry: registry,
+      deepseekHarnessLauncher: launch,
+      skillPackages: [{ id: 'web-3d-game', directory: resolve('tests/fixtures/web-3d-game-skill') }],
+      deepseekHarnessExtensions: [{ id: 'shared-inventory', entrypoint: plugin, configuration: {} }],
+      mcpServers: [{
+        id: 'fbf42200-4e60-48d0-b5f2-e816db38ac54', name: 'Shared blueprint', description: '',
+        enabled: true, allowDynamicTools: false, assignments: ['deepseek-harness'],
+        secretConfigured: false, transport: 'stdio',
+        command: process.versions.electron ? 'node' : process.execPath,
+        args: [resolve('tests/fixtures/web-3d-game-mcp.mjs')]
+      }]
+    }))
+    try {
+      for (const mode of ['execute', 'ask'] as const) {
+        await Promise.all(runtimes.map(async (runtime, project) => {
+          const events = await collect(runtime.run({
+            requestId: `capabilities-${project}-${mode}`, conversationId: `capabilities-${project}`,
+            workMode: mode,
+            prompt: `${mode === 'ask' ? 'ASK_BOUNDARY_PROBE' : 'Use Skill and MCP'} PROJECT_${project}`,
+            ...(mode === 'execute' ? { images: [{
+              name: `project-${project}.png`, mediaType: 'image/png', data: images[project]!.toString('base64')
+            }] } : {})
+          }, AbortSignal.timeout(30_000), async () => 'once'))
+          expect(events.at(-1)?.type).toBe('done')
+          const model = models[project]!
+          if (mode === 'execute') {
+            expect(model.skillResult).toContain('window.__GOODBUDDY_GAME__')
+            expect(model.blueprint).toMatchObject({ title: 'Prism Relay' })
+            const seen = seenImages.get(project)!
+            expect(seen).toHaveLength(1)
+            const image = seen[0]!
+            if (image.type !== 'image') throw new Error('Expected image block')
+            expect(image.attachment).toMatchObject({ width: project + 1, height: 1 })
+            const stored = await inProcess.hosts[0]!.context.attachments.readImage(image.attachment)
+            expect(Buffer.from(stored.data).equals(images[project]!)).toBe(true)
+          } else {
+            expect(model.askToolNames).not.toContain(model.mcpToolName)
+            expect(model.askToolResult).toContain('Ask 模式不允许执行非只读工具')
+          }
+          expect(await runtime.getNativeSnapshot?.()).toMatchObject({
+            skills: expect.arrayContaining([expect.objectContaining({ id: 'shared-plugin-skill', source: 'plugin' })])
+          })
+        }))
+        expect(launch).toHaveBeenCalledOnce()
+        expect(calls).toHaveBeenCalledTimes(2)
+      }
+      expect(new Set(calls.mock.contexts).size).toBe(2)
+      expect(calls.mock.calls.map(call => call[3]?.conversationId).sort())
+        .toEqual(['capabilities-0', 'capabilities-1'])
+      await runtimes[0]!.releaseConversation?.('capabilities-0')
+      expect(await runtimes[1]!.getStatus()).toMatchObject({ available: true })
+      expect(launch).toHaveBeenCalledOnce()
+    } finally {
+      calls.mockRestore()
+      await Promise.all(runtimes.map(runtime => runtime.dispose()))
+      await registry.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   it('writes outside the Workspace in Execute without approval and rejects the same tool in Ask', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'goodbuddy-dsh-directory-')))
@@ -780,7 +956,7 @@ describe('DeepSeek Harness real ACP control-plane E2E', () => {
       )
 
       try {
-        await runtime.getStatus()
+        await runtime.testConnection()
         expect(inProcess.hosts[0]?.extensionFailures).toEqual([])
         await expect(runtime.getNativeSnapshot()).resolves.toMatchObject({
           provider: 'deepseek-harness',

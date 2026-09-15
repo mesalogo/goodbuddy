@@ -121,10 +121,9 @@ GoodBuddy 使用自己固定的 Harness Host 入口和只读组合模板，不�
 
 模型名称、服务地址、工作区、Skills、MCP schema 和已启用插件的规范化入口通过严格校验的 Main 配置传给 Host。API Key 只通过受控凭据通道按需提供，不写入 YAML、命令行、Renderer 或日志。插件配置只来自 GoodBuddy 受管状态，不合并用户 profile 或全局补丁。
 
-本机 Runtime 初始化时对工作区调用 `realpath`，将结果保存在该 Host 的运行状态中；
-Host 启动与 ACP `newSession.cwd` 共用这一路径。Host 仍校验目录并严格比较会话路径。
-Windows 混合分隔符与同目录规范写法可继续通过现有 execution-space identity 复用
-Runtime，无需更改缓存键或增加重试。远端 SSH 由 `ManagedRemoteAcpRuntime` /
+Main 在创建 Session 前解析该请求工作区的 `realpath`，把绝对路径传给 ACP
+`newSession.cwd`。Host 不再要求 Session cwd 等于启动 cwd，原生 Agent header.cwd
+驱动文件与 Shell 工具；启动 cwd 仅为默认值。远端 SSH 由 `ManagedRemoteAcpRuntime` /
 `AcpRemoteRuntime` 单独处理，不经过本机 DS Runtime 的目录解析。
 
 ### 5.3 双层内部控制面
@@ -323,18 +322,18 @@ Harness Control Plane 只发送 GoodBuddy 能稳定解释的字段：
 
 ### 9.1 进程模型
 
-- 每个活动的 DeepSeek Harness Runtime 实例拥有一个 `utilityProcess`。
-- 一个进程可以承载多个 Harness Session。
+- Main `LocalRuntimeRegistry` 按兼容模型及 Host 配置共享重型实例；
+  每组拥有一个 `utilityProcess`，不同工作区使用轻量适配器及独立 Session cwd。
 - 同一 GoodBuddy 对话的 Prompt 串行执行。
 - 不同对话可以并行，但受全局并发上限控制。
-- Runtime 设置变化时创建新实例，旧实例等待在途请求结束或在宽限期后被取消。
+- Runtime 设置变化时旧配置停止接收新请求，在途请求结算后释放旧实例。
 
 ### 9.2 会话映射
 
 Main 保存内存映射：
 
 ```text
-GoodBuddy conversationId -> Harness sessionId + process generation
+GoodBuddy conversationId -> Harness sessionId + workspace + process generation
 ```
 
 - 首次请求创建 Session。
@@ -346,7 +345,8 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 ### 9.3 取消与有界控制操作
 
 - 用户取消时立即发送 `session/cancel`。
-- 取消等待有界，超时后关闭连接并终止整个 Harness 进程。
+- 取消等待有界，超时先释放目标 Session 的 Agent、工具和 Main 代理资源；
+  只有该控制操作也不响应时才终止整个 Harness 进程。
 - 初始化、握手、请求准备、权限回传和关闭分别使用独立控制超时。
 - 生产 Prompt 不设置固定墙钟总时限，由 Harness 自身协议终态或用户取消结束。测试可以
   显式注入短 Prompt 时限验证取消传播，超时错误与用户取消仍不能被宽泛 catch 抹平。
@@ -354,7 +354,10 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 
 ### 9.4 释放与退出
 
-- 原生能力清单由 `SelectedRuntimeManager` 缓存的执行 Runtime 提供，与随后的对话请求共用同一实例，不再为清单单独启动并销毁一次 Host；该实例遵循执行缓存的空闲淘汰、设置变更 reset 和退出 dispose 规则。
+- 原生清单与执行使用共享 owner，查询携带工作区。轻量适配器被缓存淘汰不结束原生
+  Session；无会话、无请求的 owner 空闲 60 秒退出，再次使用按需启动。
+- `getStatus()` 只读取已有状态和配置，不启动 Host，也不重置空闲回收计时；显式 `testConnection()` 才启动
+  并验证连接，临时检查适配器的 dispose 不终止其他会话。
 - 删除或释放对话时调用 `goodbuddy/session/release`。
 - Runtime dispose 时先拒绝新请求，再取消所有 Session。
 - Harness Control Plane 完成 Agent、工具和会话清理，Host 完成 Cordis Fiber 与子进程的反向清理。
@@ -362,6 +365,17 @@ GoodBuddy conversationId -> Harness sessionId + process generation
 - 超时后终止 utilityProcess，并在平台允许时清理完整进程树。
 - 应用退出时中止正在运行的 npm 插件安装并终止其完整进程树，不能让 lifecycle script 在 GoodBuddy 退出后继续运行。
 - 应用退出不得因 Harness 清理无限阻塞。
+
+### 9.5 跨项目复用
+
+锁定 0.1.2-rc.1 的文件和 Bash/PowerShell 工具已按原生 Session header.cwd 路由，
+Provider 的根 cwd 只是默认值。不为每工作区复制本地 Provider；
+Main 的 Web/MCP ToolProvider 按工作区保存，最后一个对应 Session 释放时 dispose。
+
+共享 Utility、逐 Session cwd、被动状态、Main 工具代理和取消升级统一由
+[Runtime 进程复用技术设计](../assistant-workbar/runtime-process-reuse-technical-design.md#5-deepseek-harness)
+定义，证据及剩余验收见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。
+本节描述当前未发布源码，不将新行为归入已发布的 Desktop 0.13.2。
 
 ## 10. 权限与主机执行
 

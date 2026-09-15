@@ -443,6 +443,16 @@ function toolProvider(
 }
 
 describe('DeepSeekHarnessRuntime', () => {
+  it('reports passive readiness without launching a Host or reading a model', async () => {
+    const harness = setup()
+    await expect(harness.runtime.getStatus()).resolves.toMatchObject({
+      available: true, detail: expect.stringContaining('首次使用')
+    })
+    expect(harness.launch).not.toHaveBeenCalled()
+    await harness.runtime.dispose()
+    expect(harness.launch).not.toHaveBeenCalled()
+  })
+
   it('includes bounded failed-extension cleanup in the startup budget', () => {
     expect(deepSeekHarnessStartupBudget(11)).toEqual({
       hostTimeoutMs: 76_000,
@@ -474,7 +484,7 @@ describe('DeepSeekHarnessRuntime', () => {
         ]
       })
 
-      const status = harness.runtime.getStatus()
+      const status = harness.runtime.testConnection()
       await vi.waitFor(() => expect(harness.launch).toHaveBeenCalledOnce())
       await vi.advanceTimersByTimeAsync(10_001)
 
@@ -504,7 +514,7 @@ describe('DeepSeekHarnessRuntime', () => {
         }
       })
 
-      const status = harness.runtime.getStatus()
+      const status = harness.runtime.testConnection()
       await vi.waitFor(() => expect(harness.launch).toHaveBeenCalledOnce())
       await vi.advanceTimersByTimeAsync(12_000)
 
@@ -528,7 +538,7 @@ describe('DeepSeekHarnessRuntime', () => {
       }
     })
 
-    const status = harness.runtime.getStatus()
+    const status = harness.runtime.testConnection()
     await vi.waitFor(() => expect(harness.launch).toHaveBeenCalledOnce())
 
     await harness.runtime.dispose()
@@ -633,7 +643,7 @@ describe('DeepSeekHarnessRuntime', () => {
       advertisedImageInput: false
     })
 
-    await expect(harness.runtime.getStatus()).resolves.toMatchObject({
+    await expect(harness.runtime.testConnection()).resolves.toMatchObject({
       available: false,
       detail: expect.stringContaining('图片能力')
     })
@@ -904,11 +914,14 @@ describe('DeepSeekHarnessRuntime', () => {
       }
     ])
     const harness = setup({ toolProvider: provider })
-    await harness.runtime.getStatus()
+    const running = collect(harness.runtime.run(
+      request('catalog', 'execute'), new AbortController().signal
+    ))
+    await vi.waitFor(() => expect(harness.promptGates).toHaveLength(1))
 
     await expect(
       harness.extension('goodbuddy/tools/list', {
-        sessionId: 'session-catalog'
+        sessionId: 'session-1'
       })
     ).resolves.toEqual({
       tools: [
@@ -938,10 +951,12 @@ describe('DeepSeekHarnessRuntime', () => {
     expect(
       JSON.stringify(
         await harness.extension('goodbuddy/tools/list', {
-          sessionId: 'session-catalog'
+          sessionId: 'session-1'
         })
       )
     ).not.toContain('secret')
+    harness.promptGates[0]!.resolve({ stopReason: 'end_turn' })
+    await running
     await harness.runtime.dispose()
   })
 
@@ -1396,8 +1411,9 @@ describe('DeepSeekHarnessRuntime', () => {
     await harness.runtime.dispose()
   })
 
-  it('bounds cancellation when the harness prompt never settles', async () => {
-    const harness = setup({ useProductionPromptTimeout: true })
+  it('releases an uncooperative cancelled session without terminating its peer', async () => {
+    const provider = toolProvider()
+    const harness = setup({ useProductionPromptTimeout: true, toolProvider: provider })
     const controller = new AbortController()
     const running = collect(
       harness.runtime.run(
@@ -1409,6 +1425,10 @@ describe('DeepSeekHarnessRuntime', () => {
       expect(harness.promptGates).toHaveLength(1)
     )
 
+    const peer = collect(harness.runtime.run(
+      request('cancel-peer'), new AbortController().signal
+    ))
+    await vi.waitFor(() => expect(harness.promptGates).toHaveLength(2))
     controller.abort(new Error('cancelled by user'))
 
     await expect(running).rejects.toThrow('cancelled by user')
@@ -1416,7 +1436,14 @@ describe('DeepSeekHarnessRuntime', () => {
       method: 'session/cancel',
       params: { sessionId: 'session-1' }
     })
-    expect(harness.child.terminate).toHaveBeenCalled()
+    expect(harness.requests).toContainEqual({
+      method: 'goodbuddy/session/release',
+      params: { sessionId: 'session-1' }
+    })
+    expect(harness.child.terminate).not.toHaveBeenCalled()
+    expect(provider.releaseConversation).toHaveBeenCalledWith(request('uncooperative-cancel').conversationId)
+    harness.promptGates[1]!.resolve({ stopReason: 'end_turn' })
+    expect((await peer).at(-1)?.type).toBe('done')
     await harness.runtime.dispose()
   })
 
@@ -1447,7 +1474,7 @@ describe('DeepSeekHarnessRuntime', () => {
 
   it('reports process exit and fully disposes the connection and child', async () => {
     const harness = setup()
-    await expect(harness.runtime.getStatus()).resolves.toMatchObject({
+    await expect(harness.runtime.testConnection()).resolves.toMatchObject({
       available: true
     })
     harness.exit.resolve({ exitCode: 9 })
@@ -1469,7 +1496,7 @@ describe('DeepSeekHarnessRuntime', () => {
       new Error('method not found')
     )
 
-    await expect(harness.runtime.getStatus()).resolves.toMatchObject({
+    await expect(harness.runtime.testConnection()).resolves.toMatchObject({
       available: false,
       detail: 'method not found'
     })

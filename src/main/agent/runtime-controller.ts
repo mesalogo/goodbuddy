@@ -80,6 +80,7 @@ export class AgentRuntimeController implements AgentRuntime {
   private retirement?: Promise<void>
   private disposal?: Promise<void>
   private readonly ownedConversationIds = new Set<string>()
+  private readonly questionOwners = new Map<string, { slot: RuntimeSlot; requestId: string }>()
 
   constructor(
     runtime: AgentRuntime,
@@ -147,11 +148,15 @@ export class AgentRuntimeController implements AgentRuntime {
     return this.ownedConversationIds.size
   }
 
+  get sharedProcess(): boolean {
+    return this.current.runtime.sharedProcess === true
+  }
+
   get canRetire(): boolean {
     return (
       !this.closing &&
       this.activeRequestCount === 0 &&
-      this.ownedConversationIds.size === 0
+      (this.sharedProcess || this.ownedConversationIds.size === 0)
     )
   }
 
@@ -269,7 +274,7 @@ export class AgentRuntimeController implements AgentRuntime {
     slot.activeRequests += 1
     try {
       const status = await operation(slot.runtime)
-      if (slot !== this.current) {
+      if (slot !== this.current && !(slot.runtime.sharedProcess && stage === 'compact')) {
         throw new Error('Runtime 已切换，请重试')
       }
       return status
@@ -347,13 +352,16 @@ export class AgentRuntimeController implements AgentRuntime {
           signal,
           effectiveAuthorize
         )) {
-          if (slot !== this.current && !slot.drainable) {
+          if (slot !== this.current && !slot.drainable && !slot.runtime.sharedProcess) {
             throw new Error('Runtime 已切换，当前请求已中断')
           }
           toolDenied = false
+          if (event.type === 'question') {
+            this.questionOwners.set(event.questionId, { slot, requestId: request.requestId })
+          }
           yield event
         }
-        if (slot !== this.current && !slot.drainable) {
+        if (slot !== this.current && !slot.drainable && !slot.runtime.sharedProcess) {
           throw new Error('Runtime 已切换，当前请求已中断')
         }
       } catch (error) {
@@ -368,6 +376,9 @@ export class AgentRuntimeController implements AgentRuntime {
         throw error
       }
     } finally {
+      for (const [questionId, owner] of this.questionOwners) {
+        if (owner.requestId === request.requestId) this.questionOwners.delete(questionId)
+      }
       slot.activeRequests -= 1
       if (
         slot.retiring &&
@@ -419,14 +430,16 @@ export class AgentRuntimeController implements AgentRuntime {
     questionId: string,
     answers?: AgentQuestionAnswer[]
   ): Promise<void> {
-    if (this.closing) {
+    const owner = this.questionOwners.get(questionId)
+    if (this.closing && !owner) {
       throw new Error('Agent Runtime 正在关闭')
     }
-    const runtime = this.current.runtime
+    const runtime = (owner?.slot ?? this.current).runtime
     if (!runtime.respondToQuestion) {
       throw new Error('当前 Runtime 不支持回答交互式问题')
     }
     await runtime.respondToQuestion(questionId, answers)
+    this.questionOwners.delete(questionId)
   }
 
   private retireSlot(slot: RuntimeSlot): Promise<void> {

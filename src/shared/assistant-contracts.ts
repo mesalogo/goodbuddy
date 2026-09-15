@@ -515,6 +515,21 @@ export const conversationBranchSchema = z
   })
   .strict()
 
+export const liveAgentQuestionSchema = z.object({
+  requestId: z.string().min(1),
+  type: z.literal('question'),
+  questionId: z.string().min(1),
+  childTaskId: z.string().optional(),
+  questions: z.array(z.object({
+    header: z.string(),
+    question: z.string(),
+    options: z.array(z.object({ label: z.string(), description: z.string() })),
+    multiple: z.boolean(),
+    custom: z.boolean()
+  }))
+})
+export type LiveAgentQuestion = z.infer<typeof liveAgentQuestionSchema>
+
 export const conversationSnapshotSchema = z
   .object({
     id: assistantIdSchema,
@@ -537,6 +552,12 @@ export const conversationSnapshotSchema = z
     branch: conversationBranchSchema.optional(),
     title: z.string().trim().min(1).max(200),
     updatedAt: z.number().int().nonnegative(),
+    // Main-only live projection. Never part of a saved conversation header.
+    activeRequest: z.object({
+      requestId: assistantIdSchema,
+      messageId: assistantIdSchema,
+      questions: z.array(liveAgentQuestionSchema)
+    }).optional(),
     messages: z.array(conversationMessageSchema)
   })
   .strict()
@@ -551,7 +572,8 @@ export const conversationSnapshotsSchema = z
 export const localConversationHeaderSchema = conversationSnapshotSchema
   .omit({
     messages: true,
-    remote: true
+    remote: true,
+    activeRequest: true
   })
 
 export type LocalConversationHeader = z.infer<

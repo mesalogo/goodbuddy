@@ -74,7 +74,7 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
     controllerId: 'controller', preparationDigest: `sha256:${'a'.repeat(64)}`, promptSequence: 0 })
   let complete = false
   const owner = new AgentOwnedAcpPrompt({ bindingId: 'binding', controllerId: 'controller',
-    workspaceDirectory: root, workMode: 'execute', transcript,
+    workspaceDirectory: root, transcript,
     process: {
       writeStdin: async (data: Uint8Array) => { child.stdin.write(data) },
       subscribeOutput: (listener: (event: { stream: string; data: Uint8Array }) => void) => {
@@ -88,7 +88,7 @@ it.skipIf(!existsSync(binary)).each(['parent', 'child', 'reject', 'cancel'] as c
   })
   try {
     await owner.start({ bindingId: 'binding', operationId: 'operation', requestId: 'operation',
-      prompt: [{ type: 'text', text: 'Ask the native question tool for the decision.' }] })
+      prompt: [{ type: 'text', text: 'Ask the native question tool for the decision.' }] }, 'execute')
     let questionId: string | undefined
     await expect.poll(async () => {
       const page = transcript.page({ bindingId: 'binding', operationId: 'operation',

@@ -1,5 +1,471 @@
 # 工作栏实现与验证进度
 
+## 2026-09-14 Runtime 进程复用（实施中）
+
+对应 FR-RR1–FR-RR6，设计及完整验收清单见
+[Runtime 进程复用技术设计](./runtime-process-reuse-technical-design.md)。
+用户已授权实施，本次复用改动尚未整体提交或发布，不包含在正式 Desktop 0.13.2 /
+Agent 0.11.25 中。最终验证结果见本节末尾，早期失败及中间状态按时间保留。
+
+- P0–P2：Main 已组合 `LocalRuntimeRegistry`，OpenCode Server 和 DSH Utility 按兼容
+  配置共享，工作区通过轻量适配器传入 Session。无会话 owner 空闲 60 秒回收；
+  适配器淘汰不结束其他会话。DSH 被动状态不再启动 Host，取消超时先释放目标 Session，
+  同时回收对应 Main 工具资源；配置替换期间的原生问题继续交给原请求的 Runtime。
+- 首轮 Windows 完整 UI 使用当时构建的生产 Main/Preload/Renderer 和隔离 profile，
+  OpenCode、DSH 各两个项目、四个并行会话，通过输入区和发送按钮完成实际开发。
+  OpenCode 工具数为 7、7、6、8；DSH 为 9、13、11、11。独立运行各项目测试合计
+  60 项通过。两类 Runtime 分别共用一个重型进程，本轮未使用原生子代理。
+- 首轮 UI 提供方请求共 55 次 HTTP 200：OpenCode 23、DSH 32。其中包含驱动选择器
+  失误引发的一条额外默认项目 Ask，工具为 0，不把它计为开发任务验收。
+  同轮 OpenCode 单进程 Private Commit 约 882.88 MiB，工作集约 629.51 MiB；
+  Electron 自身指标另存，不将两者混为整个 App 的测量结论。后续重复运行和空闲
+  证据见下文，不把这一单点与正式用户库直接比较。
+- P3：生产 Agent 已接入单 ACP decoder/握手、Session → binding/operation 路由、
+  逐 operation Unix 模型桥及空闲回收。共享 stdio 与 Prompt 输入/期限分离；
+  Session 取消结算可如实保留 `processTree: running`。未增加持久进程池账本。
+- 共享 Linux x64 Host 已通过现有加密凭据与固定 Host identity 连接。使用当前源码、
+  固定 Node 24.19.0 / OpenCode 1.18.29 构建隔离测试包，走真实 prepare/commit、
+  activate、attach 和 Agent-owned Prompt，不改写已有 Host 安装。
+- Linux 首轮五条 Prompt 共 22 次已完成且已交付模型调用；两个 Execute 分别在正确
+  项目完成修改，各通过 8 项测试，四个会话只启动一个原生进程。但 Ask 的搜索被原
+  `kind === read` 规则误拒，原生子代理工具因权限请求未转发而等待，首轮验收失败。
+  修正采用原生 Session 工具规则；原生子代理只继承父拒绝规则、不继承允许规则这一点
+  已按固定版本源码核实，子 Session 同样设置当前模式，并保留原生显式限制。
+- 下一轮测试脚本在 transcript 尚有分页时按已完成状态提前结束，误报缺少项目 marker，
+  随后 cleanup 中止了其他三个请求。这是验证驱动缺陷，产品自身已有 `hasMore` 处理；
+  驱动已修正为读完全部分页、等待全部并行结果。该轮共 14 次 dispatch，
+  其中 11 次完成、3 次结果不确定，失败记录保留，不将其计为通过。
+- 重复测试包构建曾遇到 Host ENOSPC。只清理本轮已确认可重建的 bundle、Runtime
+  staging 和重复 `.gbagent`，保留测试 home、workspace、SQLite 及报告，继续验证。
+- 后续两轮 Linux 各 7 条 Prompt、35/34 次 dispatch，四个 Ask/Execute 与原生子代理
+  续接均通过，分别取得 483/467 条子会话事件；取消没有关闭共享 owner。重连驱动先后
+  漏发 `controller/resume`、错读 `agent/capabilities.generation`，导致两次后续验收
+  失败；均已修正，保留失败报告。35 次调用一轮包含 1 次结果不确定，34 次一轮全部完成。
+- 最终当前源码 Linux 生命周期复验：2 条 Prompt、5 次完成且已交付调用，共享一个
+  owner。目标返回 `cancelled / processTree: running`；另一会话跨真实 SSH 断线、
+  controller resume 和重新 attach 继续执行，3 个工具返回正确项目 marker。
+  全部 binding 释放后等待 65 秒，owner 数为 0；停止隔离 Agent 后仍为 0。
+- 原生 Compact 单独复验：两项目各先完成 3 工具请求，再并行压缩原生 Session。
+  两次压缩分别归到各自的新 operation，各 1 次已交付调用，前后为同一个 owner；
+  总计 4 条 Prompt、8 次完成且已交付调用。释放会话并等待 65 秒后 owner 为 0，
+  Agent 停止后仍为 0。该结果没有用普通聊天返回“已压缩”代替原生 Compact。
+- 第二轮 Windows 完整 UI 重开同一隔离 profile，四项目八条续接开发请求全部完成，
+  OpenCode 包含原生子代理，DSH 使用已有原生工具。独立项目测试合计 77 项通过。
+  两个 Runtime 仍各一个重型进程。另有四条实际慢工具请求：前两条 30 秒测试在点击
+  停止前已结束，不作为取消通过；后两条 120 秒测试中目标被正常 Stop 取消，另一项目
+  的测试继续完成，DSH PID 未变化。第二个 App 共 12 条任务，11 完成、1 取消；
+  100 次 HTTP 200（OpenCode 24、DSH 76），无失败请求。
+- 第二轮任务结束后的 631.573 秒采样共 121 点，提供方请求计数始终为 100，
+  DB 始终 2,928,640 字节、WAL 始终 4,268,352 字节。期间查看了项目和截图，属于
+  **无新任务/模型请求**，不是完全无人操作的 UI。原生 Session 有意保留，不要求其
+  Runtime 退出；首个 App 自行退出时的进程消失不计为空闲计时验收。
+
+| 进程 | Private Commit 起止（MiB） | 范围（MiB） | 区间 CPU 秒 |
+| --- | ---: | ---: | ---: |
+| OpenCode | 826.34 → 825.05 | 824.36–830.82 | 12.03125 |
+| DSH Utility | 98.73 → 98.73 | 98.73–98.73 | 0 |
+| Main | 184.16 → 185.05 | 182.90–186.77 | 0.953125 |
+| Renderer | 142.80 → 136.22 | 135.00–142.80 | 0.6875 |
+| GPU | 120.48 → 138.88 | 120.48–173.52 | 0.0625 |
+
+Private Commit 不是独占物理内存，工作集相加会重复计算共享页。这组测量未发现两个
+Runtime 在该空闲区间持续增长，但不是整个 App 无泄漏证明，也不是旧新版本对照。
+
+- 当前 Linux 六个 ACP/bridge/owner 测试文件为 82 通过、0 跳过，包含 Windows 跳过的
+  Unix broker 并发及旧路由排队拒绝回归。本机完整回归曾为 4,170 通过、67 跳过；
+  首轮唯一失败来自旧测试把 `failed + running` 当成非法，修正后仍保留 `unknown`
+  的拒绝断言，并新增共享失败/取消接受用例。
+- 标准 `typecheck` 原先没有把部分 Agent 源码作为检查入口。已增加
+  `tsconfig.agent.json`，并修正暴露的 ACP resume capability、spawn stdio 及几个局部
+  类型问题；扩展类型检查、26 项受影响 Agent 回归及 lint 通过，之后已再次进行上述
+  当前源码 Host 生命周期与压缩验证。
+- 三个只读审查分别检查复用、质量/兼容来源和效率。修复了被动状态刷新不断重置
+  60 秒空闲计时的问题；状态检查不取得执行 owner，Native Session 映射成为唯一会话
+  保留依据，不再另存重复 conversation Set。最后本机定向回归 98 通过、3 跳过，
+  含真实 OpenCode 与 DSH ACP 组合；扩展类型检查通过。该补修仅涉及本机 registry，
+  不改变 Agent/远程路径。当时全量 `npm test` 为 **4,171 通过、67 跳过、0 失败**
+  （356 文件通过、9 跳过，609.57 秒）；`npm run typecheck`、`npm run lint`、
+  `npm run build` 均通过。构建仍报告既有 chunk 大小/混合导入警告，不影响成功结果。
+- 保留 exclusive raw ACP 是已有公开字节流路径，不是为本分支中间形态保留的兼容层。
+  新的共享取消/失败结果需要配套 Desktop/Agent，不声称旧 Desktop 已支持新结果。
+  原生插件两处祖先遍历可局部提取，但没有已证实故障或性能收益，本次不为此扩展改动。
+- 本轮真实模型调用合计 **273 次**：本机两轮 UI 155 次，Linux 六轮
+  **118 次 dispatch**（29 条 Prompt，114 次完成、4 次结果不确定）。
+  包含所有失败轮次和误发默认 Ask，不重复计算最新报告别名；本机 HTTP 200 不等于
+  Agent ledger 的完整交付证明。原生确定性协议测试不计入真实提供方调用。
+
+补充的 owner 成本对照使用同一当前源码、同一 Windows 机器、全新空工作区，分别经
+生产 factory 创建两个独占实例或两个共享适配器。每种组合重复 3 轮，每轮显式连接后
+再做 5 次双工作区连接检查；共启动 18 个真实 OpenCode/DSH Utility，全部退出，
+**真实模型和本机合成模型请求均为 0**。测量前全量测试已结束，没有同时运行测试套件。
+
+| Runtime / owner 方式 | 进程数 | Private Commit 中位数及范围（MiB） | 双工作区首次 ready 中位数及范围（ms） |
+| --- | ---: | ---: | ---: |
+| OpenCode 两个独占实例 | 2 | 1,401.17（1,396.15–1,517.91） | 1,195.00（1,184.14–1,213.49） |
+| OpenCode 一个共享 owner | 1 | 777.59（667.04–802.78） | 1,135.71（1,130.32–1,140.81） |
+| DSH 两个独占实例 | 2 | 171.62（170.79–173.50） | 167.06（163.36–167.78） |
+| DSH 一个共享 owner | 1 | 86.64（86.18–87.29） | 155.31（155.28–157.79） |
+
+这是**进程所有权方式**的对照，不是旧版 App 对新版 App、等规模历史或真实开发负载
+对照；没有测模型首字节。DSH 后续连接检查读取已缓存握手，不能当作热 Prompt 延迟。
+最后一个共享 DSH 在无 Session 时每 5 秒读取状态，持续 65 秒，原 Host 已退出且没有
+重启，证明状态轮询不会续期空闲 owner。探针早期的类型及 CJS/ESM 打包错误均发生在
+模型调用前；改为正确 ESM 依赖解析并加入启动前语法检查后完成测量，未修改产品以适应驱动。
+
+清理时，完整 UI 的“关闭窗口”按现有产品行为隐藏到托盘，并不退出 App。随后只对已无
+活动任务且重新核对启动命令的隔离 App 进程树进行清理；这不作为正常托盘退出验收。
+命名浏览器会话已关闭，本机按本轮启动路径筛选的进程数为 0。最终通过固定身份 SSH
+只读核对本轮 Linux 路径下的 `/proc` 进程和各测试安装 owner 数据库，两者均为 0；
+保留测试 profile、工作区、数据库和报告，未删除用户历史或停止用户 Runtime。
+
+此时尚未完成的完整 UI、十项目和问答恢复验收，后续结果见以下继续验收记录。
+旧新版本全 App 对照、完整共享能力组合及 Continue/直连资源分解仍需独立完成，
+不能将 P0–P4/V1–V8 整体标为完成。
+
+本机证据位于忽略目录 `.agent-resources/runtime-reuse-implementation-20260914/`，
+包括 UI 聚合指标、截图、Host 聚合报告及保留的失败轮次。这些不是 checkout 自带资产，
+不包含可提交的模型或 SSH 凭据。
+
+### 继续验收：远端完整 UI 与模式切换
+
+- 用户要求继续后，已从完整生产 Electron UI 启用远程项目、保存两个 SSH 项目并在
+  各项目创建两条会话。仅在测试 SSH 命令入口将 `HOME` 指向既有隔离安装；项目保存、
+  Host/Agent/Runtime 发现、Main Runtime factory、传输、协议、模型和工具均保持生产实现，
+  未伪造 capability、Prompt、事件或权限结果。
+- 四条正常开发任务均完成，共用一个原生 owner。分别在各自工作区实现 words/prices，
+  独立运行两项目测试为 12 + 13 = **25 项通过**。实际重叠峰值为 2 条请求，
+  不是四条同时运行；四个会话完成后，共享的原生 owner 仍然存活。
+- 新增真实模型调用 **21 次**，分别为 5、5、5、6，均 completed 且已交付。
+  与上一段 273 次相加，累计 **294 次**；没有把旧 Agent ledger 的 13 次基线重复计入。
+- 随后在原价格会话中从 Execute 切到 Ask 并发送原生业务问答请求，实际失败，UI
+  显示“没有可安全附加的远端 Agent 请求，且恢复不会重放任务”。Agent 仍把 workMode
+  固定在 binding 首次启动值，拒绝新模式；此次在模型 dispatch 前失败，新增调用为 0。
+  此问题不能由先前“不同 binding 使用不同模式”的通过结果排除。
+- 当前修正只允许共享 Session 的后续准备变更模式，独占进程仍保持原契约；
+  `AgentOwnedAcpPrompt.start` 显式接收当前请求模式，原生 Session 路由与 ACP 备用权限
+  决策均使用该模式，不再捕获构造时模式。48 项定向回归和扩展类型检查、lint 通过，
+  包含 Execute → Ask → Execute 保留 Session 与原生父/子问答。
+  后续当前源码 Linux 包和完整 UI 复验已通过，见下一节；48 项是当时的定向结果，
+  不是后续全部修正后的全量结果。
+- 首轮 UI 通过正常 `app.quit()` 进入生产退出清理，本机测试进程退出；
+  隔离 Agent 随后按 installation identity 停止，`/proc` 与 owner 数据库均为 0。
+  首轮报告、失败任务和工作区保留。再次构建前 Host 仅余约 251 MiB，已明确限定只回收
+  更早停止的测试安装软件及重复测试包，不清理状态、历史或工作区。
+
+### 继续验收：断线、取消、模式续接与 Desktop 重启
+
+- 四个原生问题同时等待时切断实际 SSH，复现“ACP channel does not exist”，继而出现
+  重复注册 binary channel。诊断确认 Agent-owned Prompt 可能没有 raw ACP journal 行，
+  replay 却对不存在的行 ACK 0。修正只在已有 raw cursor 时确认 journal，不放宽正序号、
+  channel/epoch 或 installation 检查。真实临时 SQLite 回归先失败再通过；94 项后端/
+  journal/channel 测试、当前源码 Linux 六文件 86 项通过，失败报告保留。
+- 保留旧 Desktop profile 并更换隔离 Agent 后，旧安装的恢复曾无限重试阻塞项目。
+  attach-only 路径现在在打开 channel 前明确报告安装身份不匹配，不重放 Prompt。
+  同一 Agent 的新连接则保留 Runtime，对已有 binding 旋转 transport generation，
+  新 channel 使用实际连接 generation；不同 daemon 或倒退身份仍按原规则拒绝/替换。
+- 完整生产 Electron UI 再次同时等待四个问题，实际断线重连后原表单和 Session 均保留，
+  没有新增模型调用或 owner。四会话尚在等待时，第五个新 Session 可以执行文件读写；
+  该 Session 的 Execute → Ask → Execute 三轮均完成，各 2 个工具、3 次模型调用，
+  验证实际写入、只读读取、再次写入，不以模型自述代替文件结果。
+- 取消一个 120 秒原生命令时，其余三个待答会话仍可各自回答并完成。取消后立即在原
+  对话显式发送新请求也完成，使用新的原生 Session，仍共用原 owner。已确认取消通过
+  专用错误进入终态；未确认的 Stop 保留原恢复逻辑，不把网络中断等同于取消成功。
+  曾出现 Task 已取消但 assistant message 仍 streaming，改用既有数据库终态事务
+  同时更新消息、任务和终态事件。最终真实 UI、Desktop SQLite、Agent 状态一致，
+  streaming message 和 active Task 均为 0，共享进程未被误杀。
+- Desktop 重启前的首次尝试因测试观察 SSH 挂起，实际上未退出，已明确作废该证据。
+  驱动加有界观察超时和 `finally` 退出后，真实重启复现两个缺陷：live question 没有
+  transcript provenance 却被当作持久事件拒绝；同项目串行恢复让第二个待答 Session
+  无法附加。现由 Main 并行恢复任务，live question 使用已有待答 Map 和活动请求租约，
+  只投影到实时会话快照，不伪造 provenance，不写新的问题日志。
+- 修正后的真实正常退出/重开恢复两个同时待答的 Session，后一个先回答并完成，
+  前一个独立 Stop。两端终态分别 completed/cancelled，UI 无残留活动或恢复提示，
+  仍为同一个原生 owner。到该轮累计真实提供方调用 **348 次**：
+  273 + 首轮远端 UI 21 + 旧隔离安装诊断 6 + 当前隔离安装 48。
+  48 次全部完成并交付；更早 273 次中的 4 次不确定仍保留，Prompt 取消不等同于
+  模型调用交付不确定。后续审查复验的增量另记，不覆盖这一时间点。
+- 重启修正后的全量回归为 **4,186 通过、67 跳过、1 失败**，唯一失败是
+  `ActivityPanel` 的 501 条历史显示测试；该文件单独重跑 **16 项全通过**。
+  不将单文件重跑写成全量通过，原全量报告保留。此前 4,171 通过的报告早于这些修正。
+
+### 继续验收：共享能力与配置退役审查
+
+- OpenCode 生产 factory、真实二进制测试覆盖 2/10 项目，每项目两 Session、两轮原生
+  文件读取并逐项目原生 Compact，manager 容量设为 1，仍只启动一个 Server。
+  DSH 实际 Host/ACP composition 同样覆盖 2/10 项目、每项目两 Session、两轮原生
+  文件读写和平台 Shell，一个 Host。二者使用确定性模型，新增真实提供方调用为 0；
+  这是原生组合测试，不是十项目完整 Electron 性能测试。
+- DSH 补充双项目共享组合：原生 Skill、实际 stdio MCP、Host 插件清单、不同尺寸的
+  inline 图片和 Execute → Ask 均通过。两项目使用不同 Main ToolProvider 和正确的
+  conversation context，Ask 不调用先前 MCP，图片原始字节分别匹配。该文件当前
+  **9 通过、3 跳过**；Host 在测试进程内实际运行，不能表述为完整 Utility/UI 能力矩阵。
+- 完整 61 文件复查分别检查复用、质量/兼容来源和效率。没有新增仅服务分支中间形态的
+  兼容层；raw ACP 独占和 Continue 单请求 Host 保留其已有契约。
+  复查发现重启后的回答/跳过未保存到 remote-authoritative assistant message，以及
+  manager reset 后旧 controller 拒绝所属问题的回答。修正复用原消息 `answeredQuestions`
+  metadata 和既有 question owner，不新增 schema、恢复日志或重复历史。
+- 真实 UI 复验又确认设置保存入口仍主动取消全部请求，不能以 controller 单测通过
+  宣称生产配置切换完整。Runtime 设置、原生定制和能力更新现在只激活/退役配置，
+  不批量 abort 或清除待答确认；已接受请求继续使用原配置。用户 Stop、清除数据和
+  App 退出的原有取消/分离规则不变。真实 SQLite 的三入口回归覆盖并行恢复、反序回答、
+  跳过、重新打开答案和终态；manager reset 回归覆盖旧问题可回答、新工作仍拒绝。
+  最新 **152 项 IPC/controller/manager 测试、typecheck、lint 和生产构建通过**；
+  这次补修的最终真实 UI 复验及全量回归仍在进行。
+- 后续真实 UI 的设置保存不再取消原生待答 Prompt；一次连接 readiness 超时后，
+  重新启动 Desktop 附加同一请求并回答 `KeepYes`，原 owner 未更换，任务 completed，
+  原消息的 `answeredQuestions` 已落库。再一次正常退出/重开后，“问题与回答”仍显示
+  正确答案和完成状态，截图已检查。该时点累计真实调用 **352 次**，相对 348 新增
+  当前 Agent 3 次及误选默认项目的本机 Ask 1 次；后者未使用问题工具，不计问答验收。
+  当前 Agent ledger 共 51 次，均 completed 且已交付。正常退出 Desktop 后按已核对的
+  隔离 installation 停止 Agent，所属 `/proc` 进程和 active owner 记录均为 0。
+- 复查设置更新的专家团队分支发现，既有调度器会取消剩余专家，但父请求可能用替换后的
+  模型继续综合。仅对活动团队父请求保留配置替换取消，普通原生请求不受影响；
+  **156 项 IPC/controller/manager/SubagentService 回归通过**。此分支属于 Main 专家
+  调度，不是 Agent 原生子代理；远端普通 Prompt 的 `teamMode` 为 false，先前验证的
+  SSH 问答路径不改变。
+- 工作区随后出现其他任务的新提交和 Magic Notes API 修改。整仓类型检查曾因其
+  `DesktopApi.magicNotes.onChanged` 与 App 测试 mock 不匹配失败，没有覆盖这些并行
+  改动。冻结 candidate 的 typecheck、lint、生产构建通过，前后性能对照
+  使用该隔离源码，不滚入后来的功能变更；其已带入的按钮位置调整见下节范围说明。
+- 随后完成 baseline/candidate 两个独立生产构建、相同 seed 历史、三次冷启动及
+  无新任务十分钟的全 App 对照，结果见下节。驱动校准失败不计性能样本，
+  测量期间未并发全量测试；既有 owner-only 数据不替代此结果。
+
+### 2026-09-15：前后完整 App 对照与剩余 Runtime 检查
+
+对照基线为 `de14a6157a6c34f1e3ef22619eca374a50a83706`。通过隔离源码构建 baseline
+和包含本任务改动的 candidate，使用同一 Windows 机器、同一依赖、同一 seed
+SQLite（四项目、八会话、320 条等量历史消息）和相同工作区 marker。后续其他工作区
+提交不滚入该冻结对照；这里的冷启动是新的 App/profile/Runtime 进程，不清 OS 文件缓存。
+
+截图及源码复核发现，candidate 的 `App.tsx` 同时带入了 `fbba2e3` 的工作栏按钮
+移到主题切换按钮旁的调整。用户明确要求保留，工作区及冻结 candidate 均未剔除，
+也不为此补跑。以下结果是**包含该 UI 差异的完整 App 实测对照**，不是严格的
+纯 Runtime 单变量实验；此前“只含本任务改动”的范围描述不准确，现予以更正。
+
+- 每组 3 次冷启动，各 55 条请求、110 次确定性 loopback 模型请求。每次冷启动包含
+  八会话一轮工具请求和五条热请求，最后一次另加两轮八会话续接。每轮等待八个真实
+  Native Prompt 同时到达提供方再释放响应，随后实际原生 `read` 读取各项目 marker。
+  全部目录结果正确，无全局 Prompt 串行化。该对照新增真实提供方调用为 **0**；
+  自然开发、写入、Shell 和真实模型验收仍以前文证据为准。
+- baseline 稳态为 3 个 OpenCode Server、2 个 DSH Host；三轮分别累计启动 3/3/3 个
+  OpenCode 和 4/4/6 个 DSH（包含被动状态临时 Host）。candidate 每轮只启动一个
+  OpenCode、一个 DSH；六次 App 正常退出后，本次登记的全部 Runtime 进程均退出。
+- 早期驱动的必填模型字段、Windows 子进程继承输出管道、Runtime 未就绪时点击以及
+  读到半份 JSON 报告导致的失败均保留，不纳入以下样本。最终报告原子替换，发送前等待
+  实际启用状态并核对 Main 已接收请求；不重放失败/不确定的真实模型请求。
+
+| 指标 | baseline，中位数（范围） | candidate，中位数（范围） | 样本口径 |
+| --- | ---: | ---: | --- |
+| 全 App 采样峰值 Private Commit，MiB | 3,543.18（3,485.58–3,589.01） | 2,040.11（1,698.68–2,085.82） | 每组 3 个 App，分别取采样峰值 |
+| Runtime 采样峰值 Private Commit，MiB | 2,843.18（2,831.00–2,854.82） | 1,338.93（1,229.31–1,347.63） | 同上，仅 Runtime 进程 |
+| bootstrap 到首个模型请求到达，ms | 4,519（4,464–4,529） | 3,573（3,519–4,040） | 每组 3 次，包含 UI 启动与操作，不是独立握手计时 |
+| OpenCode 热请求总时长，ms | 225（198–286） | 200（187–308） | 每组 9 次 |
+| OpenCode 首个可见事件，ms | 139（118–201） | 124（102–187） | 文本/推理/工具任一事件，不是模型首字节 |
+| DSH 热请求总时长，ms | 66.5（54–80） | 83（62–104） | 每组 6 次 |
+| DSH 首个可见事件，ms | 32（28–39） | 38（30–45） | 同上 |
+
+这批包含上述 UI 差异的样本中，全 App 采样峰值中位数降低 **42.42%**，不能将全部
+差值单独归因于 Runtime 复用。DSH 的热请求中位数反而增加 16.5 ms，
+没有隐去该回退，也没有据此增加未经测量的队列优化。Private Commit 不是独占物理
+RAM，工作集求和会重复统计共享页；5 秒采样不等于捕获了瞬时峰值。两组使用相同
+测试观察代码，数据不是未插桩 App 或生产大库的性能承诺。
+
+最后一次各有 **124 个**无新任务空闲样本，覆盖 **610.588 / 610.544 秒**，最大间隔
+5.149 / 5.068 秒。两组模型请求均固定为 58，active Task 为 0，DB 固定
+2,007,040 字节、WAL 固定 4,128,272 字节、事件数固定为 276。
+
+| 空闲组 | baseline Private Commit 起止，MiB / CPU 秒 | candidate Private Commit 起止，MiB / CPU 秒 |
+| --- | ---: | ---: |
+| 全部 OpenCode | 2,433.02 → 2,382.73 / 19.359375 | 1,007.88 → 973.12 / 11.609375 |
+| 全部 DSH | 180.00 → 179.19 / 0.09375 | 86.92 → 87.62 / 0 |
+| Main | 211.00 → 200.34 / 4.9375 | 205.33 → 197.70 / 4.4375 |
+| Renderer | 183.32 → 137.40 / 0.265625 | 157.90 → 127.23 / 0.4375 |
+
+Session 有意保留；DSH 尾端有 0.70 MiB 增量，不把这一段描述为所有点都下降，
+也不从十分钟数据宣称整个 App 已无泄漏。聚合报告同时保留工作集、堆、句柄和逐进程 CPU。
+原始数据位于忽略目录 `matched-app-WBCdJL/{before,after}-{10,11,12}`，汇总为 `summary.json`；
+这些是本机验证资产，不进入版本库。
+
+其后才运行剩余 Runtime 检查，避免干扰对照：
+
+- OpenCode 双项目真实 Server 组合通过原生 Skill、真实 stdio MCP 和不同 inline 图片，
+  两轮八次 MCP 调用均用请求 ID 核对原 grant 归属，读取结果仍匹配各自目录；十项目
+  测试仍通过。DSH 的对应共享组合也通过。四文件合计 **114 通过、4 跳过**，
+  跳过的是 3 个显式启用的真实 DSH 模型测试和 1 个真实图像生成测试，不把这些记为通过。
+- 直连模型的会话 release/dispose 与实际 Shell 完整输出分页检查通过：删除目标会话
+  缓存并释放对应 ToolProvider；dispose 先释放所有已知会话，再释放 provider。实际命令
+  结束后输出可分页，dispose 后句柄失效。没有新增模型进程池、历史字节 LRU 或持久缓存，
+  此处也没有做直连模型整体 retained-heap 泄漏证明。
+- Continue 使用实际 1.5.47 包和生产 Utility adapter，3 轮各两个并发请求，另 5 次热请求。
+  11 次本机确定性提供方请求全部返回预期内容，11 个请求级 Utility 均退出，真实模型调用
+  为 0。准备耗时中位数：冷准备 **333.93 ms**（326.06–381.94），同 adapter 缓存
+  **0.0031 ms**（0.0010–0.0054），新 adapter 命中磁盘产物仍 **312.97 ms**
+  （276.08–334.63），各 3 次。11 次原生 HTTP ready 中位数 **936.96 ms**
+  （925.60–959.27），首个提供方请求从 run 起算 **980 ms**（969–1,013），总时长
+  **1,353 ms**（1,314–1,373）。准备在 run 前单独测量，不能把它再说成总时长已包含。
+  跨 adapter 重复准备没有消失；本次保留现有检查与缓存，不为约 0.31 秒的准备成本
+  修改单 Session Host 或新增常驻池。
+- 最终整仓 `npm test -- --reporter=json --outputFile=<本机证据目录>/full-validation-final.json`
+  为 **4,204 通过、67 跳过、0 失败**，耗时约 **733.80 秒**。包括最后加强的
+  OpenCode 逐请求图片互斥断言、共享能力组合、设置退役及专家父请求回归；
+  先前失败的 `ActivityPanel` 本次在全量中 **16 项通过**。早期失败报告仍保留，
+  不将跳过的真实提供方或平台专用测试计为通过。
+- 全量结束后再次运行 `npm run typecheck`、`npm run lint` 和 `git diff --check`，
+  全部通过，先前并行 Magic Notes mock 不匹配已不再出现。10 个相关文档的
+  **140 个相对文件链接**均可解析，未独立复验标题锚点。全量测试进程及按本次测试
+  路径筛选的本机验证进程均已退出；Linux 隔离安装的清理证据见前文。
+- 最终门禁及报告修订没有新增真实提供方调用，累计仍为 **352 次**。按钮位置调整及
+  其他并行工作均保留；本次未执行 commit、push、tag 或发布。性能对照仍使用原冻结
+  样本，不把整仓后来通过的回归结果描述成已重新测量该版本的性能。
+
+验收边界仍需保留：性能对照是 Windows 四项目确定性读取，不是大库自然开发或十项目
+完整 UI 性能报告；十项目为实际 Native composition 测试。未测所有第三方插件的组合，
+未证明整个 App/直连模型无泄漏，macOS/Linux arm64 原生运行仍需可用平台或 CI。
+
+### 2026-09-15：追加真实模型复验与资源观察
+
+用户要求继续使用真实模型，并监控数据库及内存。此次将 `e1fe1cf` 与当时工作区改动
+冻结到独立源码目录，构建真实 Main/Preload/Renderer，使用新的隔离 profile 和四个专用
+项目，预置 320 条合成历史。按钮位置调整保留；没有把正式用户历史送入测试。
+原始证据位于忽略目录 `.agent-resources/runtime-live-20260915/run-tQ1xtk/`，
+不是 checkout 自带资产。本轮只调整测试驱动，没有修改 Runtime 产品源码。
+
+- 独立生产构建通过。冻结快照的类型检查暴露并行附件功能的 App 测试 mock 缺少
+  `getFilePath` / `importFiles`，未覆盖或撤销那部分工作；这一失败不被早先整仓通过
+  的结果覆盖。初次构建取证脚本误用 Preload 扩展名、同步 esbuild 不支持插件等驱动
+  错误均发生在模型调用前，生产构建与 Runtime 未因此修改。
+- 显式启用 DSH 的三个真实模型专项，全部通过：自定义 Header、Ask 下 Main 代理的
+  Web Search/Fetch、真实 npm 插件在 Ask 被拒绝且在 Execute 执行。共 **7 次**
+  实际模型请求；该次按测试名选择，仅运行这三项，不把其余九项的过滤跳过算作通过。
+- 完整 App 从输入区发出四项目八条开发任务，实际读写模块、添加边界测试并执行
+  `node --test`。项目选择器曾因模糊名称匹配到路径中的 `live-2` 而选错项目，
+  驱动在发送前被会话身份检查挡住，改用已验证的精确项目文本；没有重复发送已接受任务。
+- 第一轮六条任务完成、两条 DSH 以 `pi-ai stream idle timeout after 300000ms`
+  失败。一次未观察到上游响应状态，另一条有 HTTP 200 但任务仍超时，不能把 HTTP 200
+  当作交付成功。保留失败与数据库后，正常退出测试 App，将测试转发层改为独立
+  `undici.request` 流式转发，再显式重跑这两条，均完成。由于同时重启了 App，
+  不能据此断言已经唯一定位到转发器或提供方；本轮未盲目修改 Runtime 来规避失败。
+- 四项目独立执行测试分别 **16、17、18、19 项通过，共 70 项**。每类 Runtime 的
+  项目请求存在重叠，使用同组 owner；本轮开发请求重叠峰值为 OpenCode 4、DSH 2。
+  两类 Runtime 分批发送，不声称八条同时运行。
+  后续真实原生子代理读取模块及测试，父请求执行测试完成；DSH 两个真实慢命令重叠时，
+  只 Stop 其中一个，另一项目继续完成，DSH Host PID 未变。
+- 直连与 Continue 从同一完整 App 会话各发出一次无工具短请求，分别持久化
+  `LIVE_DIRECT_OK` / `LIVE_CONTINUE_OK`。当前已配置的图像模型另发出一次生成请求，
+  实际得到白底蓝色圆形图片并可在生产预览中打开；不是配置检查，也没有读取提供方
+  返回的图片 URL。这验证当前配置路径，不冒充运行了绑定指定服务商的可选测试。
+- 此时 App 共 **16 条 Prompt：13 completed、2 failed、1 cancelled**，
+  **67 次模型请求**；加上 DSH 专项 7 次，本机新增 **74 次真实调用（73 次文本、
+  1 次图像）**。计数包含失败及显式重跑。早期累计 352 次暂增至 426 次，
+  后续 Linux 增量另记；本机 HTTP 计数不等于 Agent ledger 的交付证明。
+- 真实子代理的 **153 条事件**，实际保存 **70,668 字节**，等价完整快照
+  **495,934 字节**，该事件负载减少 **85.75%**。使用生产 codec 逐条还原及重新编码
+  校验通过；6 次工具块 upsert 中无变化重复写入为 **0**，数据库 `quick_check` 为
+  `ok`。这是同批事件的编码差额，不是整个数据库文件缩小 85.75%，也没有删历史。
+- 模型结束后连续 **610.857 秒、123 个样本**，最大采样间隔 **5.292 秒**。
+  请求数固定为 16，模型调用数固定为 67，活动任务和 streaming 消息为 0；
+  DB 固定 **1,765,376 字节**、WAL 固定 **4,140,632 字节**，消息数 355、
+  事件数 663、事件 JSON 负载 284,577 字节均不变。
+- 本轮全 App 采样峰值 Private Commit 为 **1,728.79 MiB**，OpenCode + DSH
+  合计采样峰值 **997.66 MiB**。没有同负载的旧版真实模型样本，不能把它与前文
+  确定性对照相减生成新的“节省百分比”，也不把采样峰值称为瞬时峰值或独占物理 RAM。
+- App 收到正常 quit 后回收了本轮登记的全部 Runtime，OS 核验最终 Main、OpenCode、
+  DSH 和 Continue Utility 均已消失。退出探针曾因等待 `will-quit` 误报超时：
+  生产实现实际在 `before-quit` 清理后调用 `app.exit(0)`。该驱动失败记录保留，
+  后续探针改从独立父进程观察退出，不修改产品退出路径或伪造原始报告中的 phase。
+  关闭后 WAL 为 0，DB 为 **3,125,248 字节**，属于正常 checkpoint，不是空闲增长；
+  已保存图片内容为 **1,351,526 字节**，不能把图片占用与事件差量节省混为一谈。
+
+| 空闲进程 | Private Commit 起止（MiB） | 范围（MiB） | 区间 CPU 秒 | 句柄起止 |
+| --- | ---: | ---: | ---: | ---: |
+| 全 App | 1,345.77 → 1,345.95 | 逐进程样本保留 | 分进程见下 | 分进程见下 |
+| OpenCode | 750.42 → 746.00 | 741.62–750.42 | 5.984375 | 333 → 333 |
+| DSH | 89.86 → 89.86 | 89.86–89.93 | 0.015625 | 364 → 364 |
+| Main | 196.61 → 200.37 | 193.13–205.09 | 5.703125 | 1,137 → 1,137 |
+| Renderer | 120.66 → 121.51 | 120.64–122.67 | 0.15625 | 337 → 335 |
+
+Main 堆使用量为 67.27 → 69.44 MiB；Main 与 Renderer 有小幅增量，不能表述为
+“所有进程都下降”。采样包含测试观察器累积记录的分配，这一窗口未见数据库增长或
+Runtime 句柄积累，但不构成整个 App 无泄漏证明。
+
+当前源码 Linux 复验使用 `/root/tmp` 下的专用目录。旧 `/tmp` 测试 Node/依赖缓存
+已不存在，初次准备因失效链接失败，未发出模型请求。随后只替换本轮创建的失效链接，
+核验锁定 Node 24.19.0 的 SHA-256，并安装锁定依赖，完成当前源码 Agent/Runtime
+组包、隔离安装及 OpenCode 1.18.29 激活，不修改旧安装或无关 Host 文件。
+
+- 两项目各 Ask/Execute 一会话，共四会话使用同一个进程 owner、一个原生 OpenCode PID。
+  Ask 实际读取，Execute 实际修改和运行测试，目录 marker 均正确。后续原生子代理
+  产生 **497 条**子会话事件，同一 Session 续接完成；两项目独立测试各 **8 项通过**。
+- 两个真实 90 秒慢命令期间，目标 Prompt 明确结算为
+  `cancelled / processTree: running`。另一会话经真实 attach 传输断开、
+  controller resume 和重新附加后完成，原 Session 与 owner 均保留。
+  本轮走生产 SSH/ACP/Agent/模型桥，不是再次运行完整远程 Electron UI 或 Desktop 重启。
+- 共 **7 条 Prompt：6 completed、1 cancelled**，**36 次模型请求全部 completed
+  且已交付**，逐 operation 归账。取消 Prompt 不等于模型交付不确定。释放全部 binding，
+  等待 65 秒后 owner 为 0；随后停止本轮隔离 Agent，独立 `/proc` 与 owner 表核验均为 0。
+- Host 共 71 次资源快照，未出现采样错误；所属进程私有驻留页合计采样峰值
+  **1,033.00 MiB**，其中 OpenCode 峰值 **771.60 MiB**。这是 Linux 私有驻留页，
+  不是 Windows Private Commit；也不是 Linux 十分钟空闲或旧新版本对照。
+  退出后 semantic-prompts、model-calls、runtime-owners 数据库分别为
+  **1,634,304 / 36,864 / 24,576 字节**，WAL 均为 0。
+- 本轮最终新增 **110 次模型请求：109 次文本、1 次图像**，包括本机失败和显式重跑；
+  加上此前 352 次，累计 **462 次**。其中本机一次未观察到上游响应状态，不能把全部
+  110 次写成成功交付。实际开发项目测试合计 **86 项通过（Windows 70 + Linux 16）**。
+- 收尾时当前工作区 `npm run typecheck`、`npm run lint` 和差异检查通过。
+  238 个 Runtime/Agent/远程适配器文件与冻结快照的文本内容一致，原始字节差异来自
+  checkout 的 CRLF/LF；Main、Preload、Renderer 入口产物哈希未变化。并行附件测试
+  mock 的缺项已在当前工作区消失，不回写冻结快照，也不掩盖其当时的类型检查失败。
+  10 个相关文档的 140 个相对文件链接有效，标题锚点未独立复验。
+  本轮没有产品源码修复，未再次运行全仓 `npm test`；前文 4,204 项通过的报告
+  早于后来的并行附件/窗口改动，不能将其当成这些改动的完整回归结果。
+- 本机命名浏览器会话及所有本轮测试进程均已关闭；保留隔离工作区、数据库、生成图片、
+  失败诊断及汇总报告，没有清理正式用户历史，也没有 commit、push、tag 或发布。
+
+## 2026-09-14 Runtime 资源调研与方案（未实施）
+
+- 按用户要求完成文档与源码调研，方案见
+  [Runtime 进程复用技术设计](./runtime-process-reuse-technical-design.md)，对应
+  FR-RR1–FR-RR6。当前工作仅文档和本机忽略目录内的隔离探针，未修改 Runtime/Agent
+  源码、停止用户 Runtime、清理用户数据或准备新发布。
+- 源码基线 `de14a6157a6c34f1e3ef22619eca374a50a83706`，保留此前活动 UI 修复。
+  manager/controller、OpenCode、Continue、DeepSeek、直连、远程 ACP、Agent backend /
+  owner、模型桥和原生插件均已检查。此前同基线生命周期定向回归为 11 文件、
+  346 通过/1 跳过；不是本方案实施后的产品验收。
+- 已安装 0.13.2 的 09:10:12–09:15:12 五分钟只读采样：数据库约增加 2.72 MiB，
+  3,367 条新增子代理事件约 1.49 MiB、平均约 465 字节，93 个工具 upsert 中未变化的
+  upsert 为 0；App 相关进程 Private Commit 约 3,229–3,866 MiB，CPU 平均约为
+  16 核整机的 3.15%。后续一分钟又完成两个任务，不能作为真正空闲或泄漏结论。
+- 两个 OpenCode Server 属于当前 App，启动工作区不同。其中一个原生库 0 Session /
+  0 Message、约 527 MiB Private Commit。源码确认按工作区保留实例、清单可启动执行
+  Runtime、无时间型空闲回收；没有独立调用轨迹证明该空 Server 最早由清单启动。
+- 首轮两个无真实模型探针中 OpenCode 通过，DSH 驱动误用工具内部 `filePath` 而不是
+  原生 schema 的 `file_path`，断言失败。修正驱动参数后两项通过，未调整产品代码。
+- 随后完整三探针最终通过，Vitest 3 passed / 0 failed，39.20 秒：
+  - 生产 OpenCode launcher 单次 spawn，两个目录四个原生 Session，文件路由与单会话
+    删除后的其他会话存活通过；没有调用生产 `Runtime.run`。
+  - 真实 DSH Host composition、Agent factory、文件和 PowerShell 工具，两个不同 cwd
+    的 Agent 并行读写各自测试文件；生产控制面拒绝第二工作区也得到断言确认。
+    这不是 Electron Utility/ACP 生产多工作区测试。
+  - 一个 Windows 原生 `opencode acp`、一条 ACP connection、两个工作区 Session，
+    并行完成两个合成 Prompt；`chat.headers` 的 sessionID 与两个 HTTP 请求归属一致。
+    尚未经过 Agent backend、生产模型桥、真实工具/子代理或 Linux Host。
+- 本次研究真实模型调用 **0 次**；最终 ACP 探针向本机确定性服务发出 **2 次 HTTP
+  请求**。测试服务、原生进程和专用工作区在 finally 中关闭/删除，不操作用户运行中的
+  Runtime 或其临时数据库。
+- 复现命令：`npx vitest run --config .agent-resources/runtime-reuse-research-20260914/vitest.config.ts`。
+  `probe.test.ts`、`opencode-result.json`、`dsh-result.json`、`acp-result.json` 保留在
+  同一忽略目录，仅为本机证据，不作为他人 checkout 后必然存在的测试资产。
+- 未实施项及生产验收见技术设计 P0–P4/V1–V8；本次未进行新的 Linux Host 验证、
+  真实模型开发任务或修复前后内存对照，不将原生能力探针描述成修复完成。
+- 文档核验覆盖 10 个改动文档、131 个相对链接和其中 44 个标题锚点，全部通过；
+  FR-RR1–FR-RR6 的定义唯一且有验收引用，`git diff --check` 通过。研究用 OpenCode
+  二进制剩余进程数为 0。产品源码未改动，因此本轮未重跑全仓 test/typecheck/lint。
+
+本页下方 schema 35 段落保留当时的失败与未发布记录。其后已随 Desktop `0.13.2`
+（发布提交 `81ae9e0`）正式交付，Agent `0.11.25` 同期为维护发布；新的进程复用方案
+不包含在这两个已发布版本内。
+
 ## 2026-09-14 多 Runtime 工具操作摘要
 
 显示与事件合并规则见[工具操作摘要](./runtime-interactions.md#工具操作摘要)。Continue、

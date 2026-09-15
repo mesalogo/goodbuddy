@@ -319,6 +319,9 @@ Execute 直接启动已签名 Runtime：
   自动重放。插件随 OpenCode 实例释放临时端口，helper 退出时删除插件文件。
   以上只适用于当前 Agent 管理的 SSH OpenCode 生产路径，不声明任意 ACP 服务的问答兼容性。
   真实二进制、SSH 传输和取消验证见[工作栏进度](../assistant-workbar/progress.md#2026-09-13-托管-ssh-原生问答)。
+  未发布进程复用源码补齐 Desktop 重启后的多任务并行附加、实时待答快照及 Main 答案
+  持久化，详见[恢复与终态投影](../assistant-workbar/runtime-process-reuse-technical-design.md#63-恢复与终态投影)；
+  不把该待答投影当作 durable transcript 或旧版本已经支持的行为。
 - ACP 工具结果同时支持文本 `content` 和 `rawOutput.output`，移除 OpenCode 的
   `<task><task_result>` 外层包装后渲染正文。恢复已有子代理时使用 ACP 所带的所属
   `toolCallId` 继续路由，不等待新的父 Task metadata，也不重放模型请求。

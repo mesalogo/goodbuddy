@@ -29,6 +29,11 @@
 
 ## 2. 总体架构
 
+直连模型在 Main 内执行 HTTP，本身没有独立模型进程。跨 Runtime 资源调研中的直连
+部分仅检查历史缓存、会话引用和工具资源释放，不为它新增进程池；分析与验证范围
+见 [Runtime 资源技术设计 §7.2](../assistant-workbar/runtime-process-reuse-technical-design.md#72-直连模型及历史详情)。
+以下当前功能不因此改变，进程工具产生的子进程仍按各自会话生命周期管理。
+
 ```text
 ModelAgentRuntime
   └─ ModelToolProvider

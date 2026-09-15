@@ -204,11 +204,13 @@ export type DeepSeekHarnessRuntimeOptions = {
   skillPackages?: RuntimeSkillPackage[]
   extensionPackages?: ControlledHarnessExtensionPackage[]
   toolProvider?: ModelToolProviderLike
+  createToolProvider?: (workspace: string) => ModelToolProviderLike
   loadAcpSdk?: () => Promise<DeepSeekHarnessAcpSdk>
 }
 
 type ActiveRun = {
   request: AgentExecutionRequest
+  toolProvider?: ModelToolProviderLike
   toolController: AbortController
   authorize?: RuntimeAuthorizer
   updates: AcpSessionNotification['update'][]
@@ -454,7 +456,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   private disposed = false
   private fatalError?: Error
   private stderrBytes = 0
-  private readonly sessions = new Map<string, string>()
+  private readonly sessions = new Map<string, { id: string; workspace: string }>()
+  private readonly workspaceTools = new Map<string, ModelToolProviderLike>()
   private readonly proxyToolCatalogs = new Map<string, ModelToolDefinition[]>()
   private readonly sessionInitializations = new Map<
     string,
@@ -832,10 +835,8 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                     'DeepSeek Harness MCP 工具上下文不可用'
                   )
                 }
-                if (!this.options.toolProvider) {
-                  return { tools: [] }
-                }
                 const run = this.activeRuns.get(params.sessionId)
+                if (!run?.toolProvider || run.closed) return { tools: [] }
                 const context = {
                   conversationId:
                     run?.request.conversationId ??
@@ -848,7 +849,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                   knowledgeCapabilityToken:
                     run?.request.knowledgeCapabilityToken
                 }
-                const tools = await this.options.toolProvider.listTools(
+                const tools = await run.toolProvider.listTools(
                   context,
                   connection.signal
                 )
@@ -869,7 +870,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 if (
                   !run ||
                   run.closed ||
-                  !this.options.toolProvider ||
+                  !run.toolProvider ||
                   typeof name !== 'string' ||
                   !argumentsValue ||
                   typeof argumentsValue !== 'object' ||
@@ -935,7 +936,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                 }
                 if (!isWebTool) {
                   const approval =
-                    this.options.toolProvider.getApproval(
+                    run.toolProvider.getApproval(
                       tool,
                       argumentsValue as Record<string, unknown>,
                       argumentSummary,
@@ -950,7 +951,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
                     )
                   }
                 }
-                const result = await this.options.toolProvider.callTool(
+                const result = await run.toolProvider.callTool(
                   name,
                   argumentsValue as Record<string, unknown>,
                   run.toolController.signal,
@@ -1091,6 +1092,35 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   }
 
   async getStatus(): Promise<AgentRuntimeStatus> {
+    return {
+      id: 'deepseek-harness',
+      label: 'DeepSeek Harness',
+      available: !this.disposed && !this.fatalError,
+      supportsToolExecution: true,
+      detail: this.disposed
+        ? 'DeepSeek Harness Runtime 已关闭'
+        : this.fatalError?.message ??
+          (this.state
+            ? `DeepSeek Harness ${this.state.capabilities.harnessVersion} · 当前用户权限`
+            : 'DeepSeek Harness 已配置，将在首次使用时启动')
+    }
+  }
+
+  get hasRetainedSessions(): boolean {
+    return this.sessions.size > 0 || this.sessionInitializations.size > 0
+  }
+
+  private toolsFor(workspace: string): ModelToolProviderLike | undefined {
+    if (!this.options.createToolProvider) return this.options.toolProvider
+    let provider = this.workspaceTools.get(workspace)
+    if (!provider) {
+      provider = this.options.createToolProvider(workspace)
+      this.workspaceTools.set(workspace, provider)
+    }
+    return provider
+  }
+
+  async testConnection(): Promise<AgentRuntimeStatus> {
     try {
       await this.getState()
       return {
@@ -1114,10 +1144,13 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     }
   }
 
-  async getNativeSnapshot(): Promise<RuntimeNativeSnapshot> {
+  async getNativeSnapshot(workspace?: string): Promise<RuntimeNativeSnapshot> {
     const state = await this.getState()
     const response = await withTimeout(
-      state.agent.extMethod(GOODBUDDY_NATIVE_SNAPSHOT, {}),
+      state.agent.extMethod(
+        GOODBUDDY_NATIVE_SNAPSHOT,
+        workspace ? { workspace } : {}
+      ),
       this.initializationTimeoutMs,
       '原生能力清单'
     )
@@ -1302,11 +1335,15 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
 
   private async getSession(
     state: HarnessState,
-    conversationId: string
+    conversationId: string,
+    workspace: string
   ): Promise<string> {
     const current = this.sessions.get(conversationId)
+    if (current?.workspace === workspace) {
+      return current.id
+    }
     if (current) {
-      return current
+      await this.releaseConversation(conversationId)
     }
     const pending = this.sessionInitializations.get(conversationId)
     if (pending) {
@@ -1314,14 +1351,14 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     }
     const creation = state.agent
       .newSession({
-        cwd: state.workspace,
+        cwd: workspace,
         mcpServers: []
       })
       .then((response) => {
         if (!response.sessionId) {
           throw new Error('DeepSeek Harness 未返回 ACP 会话 ID')
         }
-        this.sessions.set(conversationId, response.sessionId)
+        this.sessions.set(conversationId, { id: response.sessionId, workspace })
         return response.sessionId
       })
     this.sessionInitializations.set(conversationId, creation)
@@ -1445,12 +1482,17 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     try {
       state = await this.getState()
       signal.throwIfAborted()
+      const workspace = request.executionWorkspace
+        ? await realpath(request.executionWorkspace)
+        : state.workspace
       sessionId = await this.getSession(
         state,
-        request.conversationId
+        request.conversationId,
+        workspace
       )
       run = {
         request,
+        toolProvider: this.toolsFor(workspace),
         toolController,
         authorize,
         updates: [],
@@ -1586,7 +1628,14 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
             this.shutdownTimeoutMs,
             '取消请求'
           ).catch(async () => {
-            await this.terminate(state!.child)
+            await withTimeout(
+              state!.agent.extMethod(GOODBUDDY_RELEASE, { sessionId }),
+              this.shutdownTimeoutMs,
+              '释放已取消会话'
+            ).catch(async () => {
+              await this.terminate(state!.child)
+            })
+            await this.forgetSession(request.conversationId)
           })
         }
       }
@@ -1609,25 +1658,39 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
   }
 
   async releaseConversation(conversationId: string): Promise<void> {
-    const sessionId = this.sessions.get(conversationId)
-    this.sessions.delete(conversationId)
-    if (sessionId) this.proxyToolCatalogs.delete(sessionId)
-    if (!sessionId || !this.state) {
-      await this.options.toolProvider
-        ?.releaseConversation(conversationId)
-        .catch(() => undefined)
-      return
+    await this.sessionInitializations.get(conversationId)?.catch(() => undefined)
+    const session = this.sessions.get(conversationId)
+    const sessionId = session?.id
+    if (sessionId && this.state) {
+      await this.state.agent
+        .extMethod(GOODBUDDY_RELEASE, { sessionId })
+        .catch(async () => {
+          await this.state?.agent
+            .cancel({ sessionId })
+            .catch(() => undefined)
+        })
     }
-    await this.state.agent
-      .extMethod(GOODBUDDY_RELEASE, { sessionId })
-      .catch(async () => {
-        await this.state?.agent
-          .cancel({ sessionId })
-          .catch(() => undefined)
-      })
-    await this.options.toolProvider
+    await this.forgetSession(conversationId)
+  }
+
+  private async forgetSession(conversationId: string): Promise<void> {
+    const session = this.sessions.get(conversationId)
+    const provider = session
+      ? this.workspaceTools.get(session.workspace) ?? this.options.toolProvider
+      : this.options.toolProvider
+    this.sessions.delete(conversationId)
+    if (session) this.proxyToolCatalogs.delete(session.id)
+    await provider
       ?.releaseConversation(conversationId)
       .catch(() => undefined)
+    if (
+      session && provider &&
+      this.workspaceTools.get(session.workspace) === provider &&
+      ![...this.sessions.values()].some((other) => other.workspace === session.workspace)
+    ) {
+      this.workspaceTools.delete(session.workspace)
+      await provider.dispose()
+    }
   }
 
   async dispose(): Promise<void> {
@@ -1662,8 +1725,16 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
     this.proxyToolCatalogs.clear()
     this.sessionInitializations.clear()
     this.conversationTails.clear()
+    const providers = new Set([
+      ...this.workspaceTools.values(),
+      ...(this.options.toolProvider ? [this.options.toolProvider] : [])
+    ])
+    this.workspaceTools.clear()
+    const disposeTools = () => Promise.allSettled(
+      [...providers].map((provider) => provider.dispose())
+    )
     if (!state) {
-      await this.options.toolProvider?.dispose().catch(() => undefined)
+      await disposeTools()
       return
     }
     await withTimeout(
@@ -1671,7 +1742,7 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
       this.shutdownTimeoutMs,
       '内部控制面关闭'
     ).catch(() => undefined)
-    await this.options.toolProvider?.dispose().catch(() => undefined)
+    await disposeTools()
     await this.terminate(state.child)
     await withTimeout(
       Promise.allSettled([

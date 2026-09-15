@@ -186,6 +186,7 @@ async function runModelBridgeHelper(
     'model',
     'supports-image-input',
     'work-mode',
+    'shared-sessions',
     'opencode-entrypoint'
   ])
   requireOptions(options, [
@@ -212,6 +213,9 @@ async function runModelBridgeHelper(
   if (workMode !== 'ask' && workMode !== 'execute') {
     throw new Error('Invalid model bridge work-mode option')
   }
+  if (options['shared-sessions'] !== undefined && options['shared-sessions'] !== 'true') {
+    throw new Error('Invalid model bridge shared-sessions option')
+  }
   return await (
     dependencies.runModelBridgeHelper ??
     runOpenCodeModelBridgeHelper
@@ -221,6 +225,7 @@ async function runModelBridgeHelper(
     model: options.model!,
     supportsImageInput: imageInput === 'true',
     workMode,
+    ...(options['shared-sessions'] === 'true' ? { sharedSessions: true } : {}),
     opencodeEntrypoint: options['opencode-entrypoint']!
   })
 }

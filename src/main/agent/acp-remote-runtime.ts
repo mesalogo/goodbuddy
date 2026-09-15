@@ -138,6 +138,13 @@ export class RemotePromptRecoveryUnavailableError extends Error {
   }
 }
 
+export class RemotePromptCancelledError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'RemotePromptCancelledError'
+  }
+}
+
 type ActivePrompt = {
   reportedQuestions?: Set<string>
   subagentProgress?: OpenCodeSubagentProgress
@@ -1016,9 +1023,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       false
     ).catch(() => undefined)
     if (
-      result?.status === 'terminal' &&
-      (result.processTree === 'empty' ||
-        result.terminalState === 'completed')
+      result?.status === 'terminal'
     ) {
       const terminal = await this.persist(
         context,
@@ -1310,6 +1315,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
     return runtimeSessionBindingSchema.parse({
       bindingId,
       ...this.options.identity,
+      controllerGeneration: context.channel.generation,
       conversationId,
       runtimeId: this.options.runtimeId,
       acpSessionId: `opening-${randomUUID()}`,
@@ -1351,6 +1357,15 @@ export class AcpRemoteRuntime implements AgentRuntime {
     ) {
       throw new RemotePromptRecoveryUnavailableError(
         '没有可安全附加的远端 Agent 请求，且恢复不会重放任务'
+      )
+    }
+    if (
+      request.remoteRecoveryOnly === true &&
+      binding &&
+      !this.bindingIdentityMatches(binding)
+    ) {
+      throw new RemotePromptRecoveryUnavailableError(
+        '原远端 Agent 或 Runtime 已变更，无法恢复原请求且不会重放任务'
       )
     }
     if (
@@ -1740,6 +1755,11 @@ export class AcpRemoteRuntime implements AgentRuntime {
         this.assertHostCurrent(
           current.context,
           current.binding
+        )
+        current.binding = await this.rotateBindingTransport(
+          current.binding,
+          current.context,
+          signal
         )
         current.binding = await this.persist(
           current.context,
@@ -2685,9 +2705,10 @@ export class AcpRemoteRuntime implements AgentRuntime {
             )
             session.binding = binding
             if (terminal.state === 'cancelled') {
-              throw signal.aborted
-                ? abortReason(signal)
-                : new Error('远端 Runtime 请求已取消')
+              throw new RemotePromptCancelledError(
+                '远端 Runtime 请求已取消',
+                signal.aborted ? { cause: abortReason(signal) } : undefined
+              )
             }
             if (terminal.state === 'failed') {
               throw new Error(
@@ -2810,6 +2831,14 @@ export class AcpRemoteRuntime implements AgentRuntime {
           signal,
           authorize
         )
+      } catch (error) {
+        if (signal.aborted && session.binding.state === 'closed') {
+          throw new RemotePromptCancelledError(
+            error instanceof Error ? error.message : '远端 Runtime 请求已取消',
+            { cause: error }
+          )
+        }
+        throw error
       } finally {
         this.sessionReservations.delete(request.conversationId)
         this.notifyDrain()

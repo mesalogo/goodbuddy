@@ -132,24 +132,27 @@ const FORWARDED_HEADER_NAMES = [
 
 export class ModelBridgeLoopbackProxy {
   readonly #exchange: ModelBridgeExchange
+  readonly #sharedSessions: boolean
+  readonly #sessionRoutes = new Map<string, { operationId: string; socketPath: string; workMode: 'ask' | 'execute' }>()
   readonly #routeToken: string
   readonly #maximumConnections: number
   readonly #requestTimeoutMs: number
   readonly #sockets = new Set<Socket>()
-  readonly #dispatchWaiters: DispatchWaiter[] = []
+  readonly #dispatches = new Map<string, DispatchWaiter[]>()
   #server?: Server
   #origin?: string
-  #dispatchBusy = false
   #closing = false
   #closePromise?: Promise<void>
 
   constructor(options: {
     exchange: ModelBridgeExchange
+    sharedSessions?: boolean
     routeToken?: string
     maximumConnections?: number
     requestTimeoutMs?: number
   }) {
     this.#exchange = options.exchange
+    this.#sharedSessions = options.sharedSessions === true
     this.#routeToken = parseModelBridgeRouteToken(
       options.routeToken ??
         randomBytes(32).toString('base64url')
@@ -259,6 +262,7 @@ export class ModelBridgeLoopbackProxy {
       )
     } finally {
       this.#sockets.clear()
+      this.#sessionRoutes.clear()
       this.#closing = false
     }
   }
@@ -280,6 +284,9 @@ export class ModelBridgeLoopbackProxy {
     let responseFlushed = false
     let deliveryAcknowledged = false
     let dispatchHeld = false
+    let dispatchKey = ''
+    let sessionId: string | undefined
+    let sessionRoute: { operationId: string; socketPath: string } | undefined
     const onAborted = (): void => {
       cancellation.abort(
         new ModelBridgeBrokerError('request-cancelled')
@@ -303,14 +310,58 @@ export class ModelBridgeLoopbackProxy {
     timeout?.unref?.()
 
     try {
+      if (this.#sharedSessions && incoming.url?.startsWith(`/${this.#routeToken}/session`)) {
+        const url = new URL(incoming.url, 'http://localhost')
+        if (url.pathname !== `/${this.#routeToken}/session`) throw new HttpRequestError(404, 'path-not-allowed')
+        if (incoming.method === 'GET') {
+          const route = this.#sessionRoutes.get(url.searchParams.get('sessionId') ?? '')
+          if (!route) throw new HttpRequestError(409, 'session-inactive')
+          outgoing.setHeader('content-type', 'application/json')
+          outgoing.end(JSON.stringify({ operationId: route.operationId, workMode: route.workMode }))
+          return
+        }
+        if (incoming.method !== 'POST') throw new HttpRequestError(405, 'method-not-allowed')
+        const value = JSON.parse((await readBoundedBody(incoming)).toString('utf8')) as {
+          sessionId?: string; operationId?: string; socketPath?: string; release?: boolean; workMode?: 'ask' | 'execute'
+        }
+        if (
+          typeof value.sessionId !== 'string' || value.sessionId.length > 128 ||
+          typeof value.operationId !== 'string' || value.operationId.length > 128
+        ) throw new HttpRequestError(400, 'request-invalid')
+        if (value.release) {
+          if (this.#sessionRoutes.get(value.sessionId)?.operationId === value.operationId) {
+            this.#sessionRoutes.delete(value.sessionId)
+          }
+        } else {
+          if (value.workMode !== 'ask' && value.workMode !== 'execute') throw new HttpRequestError(400, 'request-invalid')
+          const socketPath = normalizedAbsolutePath(value.socketPath ?? '', 'Model bridge socket')
+          this.#sessionRoutes.set(value.sessionId, { operationId: value.operationId, socketPath, workMode: value.workMode })
+        }
+        outgoing.end('{}')
+        return
+      }
       const request = await parseHttpRequest(
         incoming,
         this.#routeToken
       )
-      await this.#acquireDispatch(cancellation.signal)
+      let exchange = this.#exchange
+      if (this.#sharedSessions) {
+        const sessionHeader = incoming.headers['x-goodbuddy-session']
+        const operationId = incoming.headers['x-goodbuddy-operation']
+        sessionId = typeof sessionHeader === 'string' ? sessionHeader : undefined
+        const route = sessionId ? this.#sessionRoutes.get(sessionId) : undefined
+        if (!route || route.operationId !== operationId) throw new HttpRequestError(409, 'session-inactive')
+        sessionRoute = route
+        dispatchKey = `${sessionId}\0${operationId}`
+        exchange = createUnixModelBridgeExchange({ socketPath: route.socketPath })
+      }
+      await this.#acquireDispatch(dispatchKey, cancellation.signal)
       dispatchHeld = true
+      if (sessionId && this.#sessionRoutes.get(sessionId) !== sessionRoute) {
+        throw new HttpRequestError(409, 'session-inactive')
+      }
       dispatched = normalizeExchangeResult(
-        await raceWithAbort(this.#exchange(request, {
+        await raceWithAbort(exchange(request, {
           requestId: `model-${randomUUID()}`,
           signal: cancellation.signal
         }), cancellation.signal)
@@ -351,34 +402,36 @@ export class ModelBridgeLoopbackProxy {
       incoming.off('aborted', onAborted)
       outgoing.off('close', onResponseClose)
       if (dispatchHeld) {
-        this.#releaseDispatch()
+        this.#releaseDispatch(dispatchKey)
       }
     }
   }
 
-  async #acquireDispatch(signal: AbortSignal): Promise<void> {
+  async #acquireDispatch(key: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
-    if (!this.#dispatchBusy) {
-      this.#dispatchBusy = true
+    const queue = this.#dispatches.get(key)
+    if (!queue) {
+      this.#dispatches.set(key, [])
       return
     }
     await new Promise<void>((resolve, reject) => {
       const waiter: DispatchWaiter = { resolve, reject, signal }
       waiter.abort = (): void => {
-        const index = this.#dispatchWaiters.indexOf(waiter)
+        const index = queue.indexOf(waiter)
         if (index >= 0) {
-          this.#dispatchWaiters.splice(index, 1)
+          queue.splice(index, 1)
         }
         reject(signal.reason)
       }
       signal.addEventListener('abort', waiter.abort, { once: true })
-      this.#dispatchWaiters.push(waiter)
+      queue.push(waiter)
     })
   }
 
-  #releaseDispatch(): void {
-    while (this.#dispatchWaiters.length > 0) {
-      const waiter = this.#dispatchWaiters.shift()!
+  #releaseDispatch(key: string): void {
+    const queue = this.#dispatches.get(key)
+    while (queue && queue.length > 0) {
+      const waiter = queue.shift()!
       if (waiter.abort !== undefined) {
         waiter.signal.removeEventListener('abort', waiter.abort)
       }
@@ -389,7 +442,7 @@ export class ModelBridgeLoopbackProxy {
       waiter.resolve()
       return
     }
-    this.#dispatchBusy = false
+    this.#dispatches.delete(key)
   }
 }
 
@@ -399,6 +452,7 @@ export async function runOpenCodeModelBridgeHelper(options: {
   model: string
   supportsImageInput: boolean
   workMode: 'ask' | 'execute'
+  sharedSessions?: boolean
   opencodeEntrypoint: string
   environment?: Readonly<NodeJS.ProcessEnv>
   spawn?: ModelBridgeHelperSpawn
@@ -412,19 +466,19 @@ export async function runOpenCodeModelBridgeHelper(options: {
     'OpenCode entrypoint'
   )
   const exchange = createUnixModelBridgeExchange({ socketPath })
-  const proxy = new ModelBridgeLoopbackProxy({ exchange })
+  const proxy = new ModelBridgeLoopbackProxy({ exchange, sharedSessions: options.sharedSessions })
   const origin = await proxy.listen()
   let pluginDirectory: string | undefined
   try {
     pluginDirectory = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-plugin-'))
     const pluginPath = join(pluginDirectory, 'subagent.mjs')
-    await writeFile(pluginPath, openCodeSubagentPluginSource(), 'utf8')
+    await writeFile(pluginPath, openCodeSubagentPluginSource(options.sharedSessions ? origin : undefined), 'utf8')
     const config = createOpenCodeModelBridgeProviderConfig({
       protocol: options.protocol,
       model: options.model,
       loopbackOrigin: origin,
       supportsImageInput: options.supportsImageInput,
-      workMode: options.workMode
+      workMode: options.sharedSessions ? 'ask' : options.workMode
     })
     const environment = credentialFreeHelperEnvironment(
       options.environment ?? process.env,
@@ -433,6 +487,11 @@ export async function runOpenCodeModelBridgeHelper(options: {
         plugin: [pathToFileURL(pluginPath).href]
       })
     )
+    if (options.sharedSessions) {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0', method: 'goodbuddy/modelBridgeReady', params: { origin }
+      }) + '\n')
+    }
     const child = (options.spawn ?? defaultHelperSpawn)(
       opencodeEntrypoint,
       ['acp'],

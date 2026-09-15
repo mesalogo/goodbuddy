@@ -240,7 +240,10 @@ import {
 } from './agent/runtime-selection'
 import { safeToolErrorDetail } from './agent/approval-summary'
 import { ReasoningTagStreamParser } from './agent/reasoning-stream'
-import { RemotePromptRecoveryUnavailableError } from './agent/acp-remote-runtime'
+import {
+  RemotePromptCancelledError,
+  RemotePromptRecoveryUnavailableError
+} from './agent/acp-remote-runtime'
 import {
   bundledContinueVersion,
   bundledDeepSeekHarnessVersion,
@@ -1192,7 +1195,7 @@ export function registerIpcHandlers(
   assistantDatabase: AssistantDatabase,
   approvalBroker: ToolApprovalBroker,
   bundledRuntimePaths: BundledRuntimePaths,
-  onRuntimeSettingsChanged: () => Promise<void>,
+  activateRuntimeSettings: () => Promise<void>,
   onBeforeClearLocalData?: () => Promise<void>,
   browserControl?: {
     createTab(
@@ -1337,9 +1340,21 @@ export function registerIpcHandlers(
     controller: AbortController
     conversationId: string
     detachOnApplicationExit: boolean
+    teamMode?: boolean
+    recoveredMessageId?: string
     release(): void
   }
   const activeRequests = new Map<string, ActiveRequestLease>()
+  const onRuntimeSettingsChanged = async (): Promise<void> => {
+    // The expert scheduler cancels its work on replacement. Its parent must
+    // not synthesize partial old-generation results with the replacement model.
+    for (const lease of activeRequests.values()) {
+      if (lease.teamMode) {
+        lease.controller.abort(new Error('专家团队使用的模型设置已更改'))
+      }
+    }
+    await activateRuntimeSettings()
+  }
   const requireTerminalSessionManager = (): TerminalSessionManager => {
     if (!terminalSessionManager) {
       throw new Error('终端服务不可用')
@@ -1375,7 +1390,7 @@ export function registerIpcHandlers(
   const activeEventBuffers = new Map<string, { flush(): void }>()
   const pendingAgentQuestions = new Map<
     string,
-    { requestId: string; runtime: AgentRuntime }
+    { requestId: string; runtime: AgentRuntime; question: Extract<AgentEvent, { type: 'question' }> }
   >()
   const heartbeatControllers = new Set<AbortController>()
   let activeSshDirectoryBrowse: AbortController | undefined
@@ -1637,7 +1652,6 @@ export function registerIpcHandlers(
   ): Promise<CapabilitySnapshot> => {
     const snapshot = await operation
     if (reconfigureRuntime) {
-      abortActiveRequests('扩展能力设置已更改')
       await onRuntimeSettingsChanged()
     }
     return snapshot
@@ -1924,6 +1938,7 @@ export function registerIpcHandlers(
       controller
     )
     lease.detachOnApplicationExit = true
+    lease.recoveredMessageId = task.currentAssistantMessageId
     let sawTerminal = false
     try {
       publishRemoteProjectRecovery({
@@ -1973,6 +1988,21 @@ export function registerIpcHandlers(
         recoveryRequest,
         controller.signal
       )) {
+        if (rawEvent.type === 'question' || rawEvent.type === 'question-resolved') {
+          if (rawEvent.type === 'question') {
+            pendingAgentQuestions.set(rawEvent.questionId, {
+              requestId: task.taskId, runtime: recoveredRuntime, question: rawEvent
+            })
+            assistantDatabase.updateTaskStatus(task.taskId, 'waiting_approval')
+          } else {
+            pendingAgentQuestions.delete(rawEvent.questionId)
+            if (![...pendingAgentQuestions.values()].some(pending => pending.requestId === task.taskId)) {
+              assistantDatabase.updateTaskStatus(task.taskId, 'running')
+            }
+          }
+          publishConversationChange()
+          continue
+        }
         const provenance = remoteSemanticProvenance(rawEvent)
         if (provenance === undefined) {
           if (rawEvent.type !== 'status') {
@@ -2069,16 +2099,26 @@ export function registerIpcHandlers(
         return
       }
       if (error instanceof RemotePromptRecoveryUnavailableError) {
-        assistantDatabase.failRecoverableRemoteTask(
+        assistantDatabase.endRecoverableRemoteTask(
           task.taskId,
-          error.message
+          error.message,
+          'failed'
         )
+        publishConversationChange()
+        return
+      }
+      if (error instanceof RemotePromptCancelledError) {
+        assistantDatabase.endRecoverableRemoteTask(task.taskId, '请求已取消', 'cancelled')
         publishConversationChange()
         return
       }
       throw error
     } finally {
+      for (const [id, pending] of pendingAgentQuestions) {
+        if (pending.requestId === task.taskId) pendingAgentQuestions.delete(id)
+      }
       lease.release()
+      publishConversationChange()
       assistantDatabase.completeTaskScheduleRun(task.taskId)
     }
   }
@@ -2111,9 +2151,11 @@ export function registerIpcHandlers(
               task.projectId === projectId &&
               !activeRequests.has(task.taskId)
           )
-        for (const task of tasks) {
-          await recoverRemoteTask(task, requestId)
-        }
+        const results = await Promise.allSettled(
+          tasks.map(task => recoverRemoteTask(task, requestId))
+        )
+        const failure = results.find(result => result.status === 'rejected')
+        if (failure?.status === 'rejected') throw failure.reason
         // Recovery may terminalize the task without a trailing checkpoint;
         // let the renderer converge on the persisted terminal state.
         publishConversationChange()
@@ -4137,6 +4179,7 @@ export function registerIpcHandlers(
       request.conversationId,
       controller
     )
+    activeRequestLease.teamMode = request.teamMode === true
     if (parsedInput.queueItemId) {
       const dispatchTimeout = queueDispatchTimers.get(
         parsedInput.queueItemId
@@ -4638,7 +4681,8 @@ export function registerIpcHandlers(
           if (publicEvent.type === 'question') {
             pendingAgentQuestions.set(publicEvent.questionId, {
               requestId: request.requestId,
-              runtime: selectedRuntime
+              runtime: selectedRuntime,
+              question: publicEvent
             })
           }
           if (publicEvent.type === 'question-resolved' &&
@@ -4723,16 +4767,19 @@ export function registerIpcHandlers(
       } catch (error) {
         publishReferences()
         eventBuffer.flush()
-        const errorMessage = controller.signal.aborted
+        const cancelled =
+          controller.signal.aborted ||
+          error instanceof RemotePromptCancelledError
+        const errorMessage = cancelled
           ? '请求已取消'
           : safeRuntimeError(error, 'Agent Runtime 执行失败')
         const agentEvent: AgentEvent =
-          runtimeErrorEvent && !controller.signal.aborted
+          runtimeErrorEvent && !cancelled
             ? runtimeErrorEvent
             : {
                 requestId: request.requestId,
                 type: 'error',
-                status: controller.signal.aborted
+                status: cancelled
                   ? 'cancelled'
                   : 'failed',
                 message: errorMessage
@@ -4745,25 +4792,39 @@ export function registerIpcHandlers(
         const shouldRecoverAcceptedRemoteOperation =
           remoteConversationRecovery !== undefined &&
           managedSshOperationAccepted &&
-          !runtimeErrorPersistedRemotely
+          !runtimeErrorPersistedRemotely &&
+          !(error instanceof RemotePromptCancelledError)
         remoteRecoveryPending =
           shouldRecoverAcceptedRemoteOperation
-        assistantDatabase.updateTaskStatus(
-          request.requestId,
-          shouldRecoverAcceptedRemoteOperation
-            ? 'interrupted'
-            : terminalStatus,
-          errorMessage
-        )
-        if (!runtimeErrorPersistedRemotely) {
-          assistantDatabase.appendTaskEvent(
+        if (
+          remoteConversationRecovery !== undefined &&
+          error instanceof RemotePromptCancelledError &&
+          !runtimeErrorPersistedRemotely
+        ) {
+          assistantDatabase.endRecoverableRemoteTask(
             request.requestId,
-            agentEvent.type,
-            agentEvent
+            errorMessage,
+            'cancelled'
           )
+          publishConversationChange()
+        } else {
+          assistantDatabase.updateTaskStatus(
+            request.requestId,
+            shouldRecoverAcceptedRemoteOperation
+              ? 'interrupted'
+              : terminalStatus,
+            errorMessage
+          )
+          if (!runtimeErrorPersistedRemotely) {
+            assistantDatabase.appendTaskEvent(
+              request.requestId,
+              agentEvent.type,
+              agentEvent
+            )
+          }
         }
         showDesktopNotificationWhenUnfocused(window, {
-          title: controller.signal.aborted
+          title: cancelled
             ? 'GoodBuddy 任务已取消'
             : 'GoodBuddy 任务失败',
           body: '打开任务工作栏查看详情。'
@@ -4874,7 +4935,26 @@ export function registerIpcHandlers(
         response.questionId,
         response.answers.length > 0 ? response.answers : undefined
       )
+      const recorded = assistantDatabase.recordRemoteTaskQuestionAnswer(pending.requestId, {
+        questionId: response.questionId,
+        skipped: response.answers.length === 0,
+        questions: pending.question.questions.map((question, index) => ({
+          ...question,
+          answer: response.answers[index]
+        }))
+      })
       pendingAgentQuestions.delete(response.questionId)
+      if (activeRequests.get(pending.requestId)?.recoveredMessageId) {
+        if (
+          ![...pendingAgentQuestions.values()].some(value => value.requestId === pending.requestId) &&
+          assistantDatabase.getTask(pending.requestId).status === 'waiting_approval'
+        ) {
+          assistantDatabase.updateTaskStatus(pending.requestId, 'running')
+        }
+      }
+      if (recorded) {
+        publishConversationChange()
+      }
     }
   )
 
@@ -5083,8 +5163,6 @@ export function registerIpcHandlers(
           persistCandidate: async () => {
             const saved =
               await settingsStore.updateRuntimeCustomization(settings)
-            abortActiveRequests('Runtime 定制设置已更改')
-            approvalBroker.clear()
             return saved
           },
           activate: onRuntimeSettingsChanged,
@@ -5153,8 +5231,6 @@ export function registerIpcHandlers(
               ...settings,
               workspacePath
             })
-            abortActiveRequests('运行时设置已更改')
-            approvalBroker.clear()
             return saved
           },
           activate: onRuntimeSettingsChanged,
@@ -6624,7 +6700,27 @@ export function registerIpcHandlers(
 
   registerHandler(ipcChannels.conversationsList, (event) => {
     assertTrustedSender(event, window)
-    return assistantDatabase.listConversations()
+    const questions = new Map<string, Extract<AgentEvent, { type: 'question' }>[]>()
+    for (const pending of pendingAgentQuestions.values()) {
+      const entries = questions.get(pending.requestId) ?? []
+      entries.push(pending.question)
+      questions.set(pending.requestId, entries)
+    }
+    const recovered = new Map(
+      [...activeRequests].flatMap(([requestId, lease]) =>
+        lease.recoveredMessageId
+          ? [[lease.conversationId, {
+              requestId,
+              messageId: lease.recoveredMessageId,
+              questions: questions.get(requestId) ?? []
+            }] as const]
+          : []
+      )
+    )
+    return assistantDatabase.listConversations().map(conversation => ({
+      ...conversation,
+      ...(recovered.has(conversation.id) ? { activeRequest: recovered.get(conversation.id) } : {})
+    }))
   })
 
   registerHandler(

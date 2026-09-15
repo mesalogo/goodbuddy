@@ -339,6 +339,10 @@ validation are not substitutes for this development-time check.
 - Keep all artifacts in GoodBuddy-owned test directories. Before stopping or
   changing a remote process, verify that it belongs to the test run; never
   modify unrelated Host files or processes.
+- During remote testing, prefer dedicated test directories under `/root/tmp`
+  for temporary files. Avoid creating files under `/tmp` where possible, since
+  it may be memory-backed and consume additional RAM. Set `TMPDIR` to the
+  dedicated test directory when needed so test tools use it as well.
 - If neither route is reachable, report the real-Host validation as blocked and
   do not present the Agent work as complete or defer its first real validation
   to release time.

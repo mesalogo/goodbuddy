@@ -926,7 +926,9 @@ export class GoodBuddyHarnessControlPlane {
     }
   }
 
-  private async nativeSnapshot(): Promise<Record<string, unknown>> {
+  private async nativeSnapshot(
+    workspace = this.config.workspace
+  ): Promise<Record<string, unknown>> {
     const controller = new AbortController()
     const timer = setTimeout(
       () =>
@@ -938,7 +940,7 @@ export class GoodBuddyHarnessControlPlane {
     try {
       const skills = await Promise.race([
         this.ctx.skills.list({
-          cwd: this.config.workspace,
+          cwd: workspace,
           signal: controller.signal
         }),
         new Promise<never>((_resolve, reject) => {
@@ -1132,12 +1134,11 @@ export class GoodBuddyHarnessControlPlane {
         }
         if (
           !isAbsolute(params.cwd) ||
-          params.cwd !== this.config.workspace ||
           params.mcpServers.length > 0
         ) {
           throw RequestError.invalidParams(
             undefined,
-            'the controlled workspace and no MCP servers are required'
+            'an absolute workspace and no MCP servers are required'
           )
         }
         const sessionId = SessionId(randomUUID())
@@ -1393,7 +1394,11 @@ export class GoodBuddyHarnessControlPlane {
       return { released: true }
     }
     if (method === GOODBUDDY_NATIVE_SNAPSHOT) {
-      return this.nativeSnapshot()
+      const workspace = params.workspace === undefined
+        ? this.config.workspace
+        : requiredString(params, 'workspace')
+      if (!isAbsolute(workspace)) throw RequestError.invalidParams(undefined, 'workspace must be absolute')
+      return this.nativeSnapshot(workspace)
     }
     if (method === GOODBUDDY_SHUTDOWN) {
       await this.dispose()

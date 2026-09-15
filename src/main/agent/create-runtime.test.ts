@@ -134,6 +134,10 @@ describe('createAgentRuntime model compatibility', () => {
 
     expect(runtime.runtimeId).toBe('deepseek-harness')
     await expect(runtime.getStatus()).resolves.toMatchObject({
+      available: true
+    })
+    expect(deepseekHarnessLauncher).not.toHaveBeenCalled()
+    await expect(runtime.testConnection!()).resolves.toMatchObject({
       available: false
     })
     expect(deepseekHarnessLauncher).toHaveBeenCalledWith(

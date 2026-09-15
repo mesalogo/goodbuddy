@@ -20,6 +20,8 @@ import {
 import type { RuntimeEvent } from './runtime'
 import {
   AcpRemoteRuntime,
+  RemotePromptCancelledError,
+  RemotePromptRecoveryUnavailableError,
   type AcpRemoteRuntimeOptions
 } from './acp-remote-runtime'
 import type {
@@ -2979,6 +2981,42 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     expect(fixture.preparePrompt).toHaveBeenCalledOnce()
   })
 
+  it('uses the recovered generation for retained and new Sessions and mode changes', async () => {
+    const fixture = ownedChannel()
+    const fresh = ownedChannel()
+    try {
+      await collect(fixture.instance.run(
+        { ...request, workMode: 'ask' }, new AbortController().signal
+      ))
+      Object.defineProperty(fixture.channel, 'generation', { value: 2 })
+      await collect(fixture.instance.run(
+        { ...request, requestId: 'after-reconnect', workMode: 'execute' },
+        new AbortController().signal
+      ))
+      Object.defineProperty(fresh.channel, 'generation', { value: 2 })
+      await collect(fresh.instance.run(
+        { ...request, requestId: 'new-after-reconnect', conversationId: 'another-conversation' },
+        new AbortController().signal
+      ))
+      expect([
+        ...fixture.preparePrompt.mock.calls.slice(1),
+        ...fresh.preparePrompt.mock.calls
+      ].map(([prepared]) => ({
+        controllerGeneration: prepared.controllerGeneration,
+        connectionGeneration: prepared.connectionGeneration
+      }))).toEqual([
+        { controllerGeneration: 2, connectionGeneration: 2 },
+        { controllerGeneration: 2, connectionGeneration: 2 }
+      ])
+      expect(fixture.startOwnedPrompt).toHaveBeenNthCalledWith(
+        2, expect.objectContaining({ acpSessionId: 'owned-session' })
+      )
+      expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all([fixture.instance.dispose(), fresh.instance.dispose()])
+    }
+  })
+
   it('does not abandon an accepted Agent prompt for a later request', async () => {
     const fixture = ownedChannel({ waitForCancellation: true })
     const first = fixture.instance.run(
@@ -3115,6 +3153,30 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
   })
 
+  it('definitively ends recovery after the original Agent installation is replaced', async () => {
+    const fixture = ownedChannel({ waitForCancellation: true })
+    const first = fixture.instance.run(request, new AbortController().signal)
+    await first.next()
+    await first.return()
+    const channelFactory = vi.fn(async () => fixture.channel)
+    const replacement = factoryRuntime(channelFactory, fixture.store, {
+      identity: { ...identity, agentInstallationId: 'replacement-agent' },
+      modelBridgePolicy,
+      modelProfile: ownedModelProfile
+    })
+    try {
+      await expect(collect(replacement.run(
+        { ...request, remoteRecoveryOnly: true },
+        new AbortController().signal
+      ))).rejects.toBeInstanceOf(RemotePromptRecoveryUnavailableError)
+      expect(channelFactory).not.toHaveBeenCalled()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+      expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all([replacement.dispose(), fixture.instance.dispose()])
+    }
+  })
+
   it('reconciles an owned cancellation before the next prompt in the same conversation', async () => {
     const fixture = ownedChannel()
     fixture.pageOwnedPromptTranscript.mockImplementationOnce(() => new Promise<never>(() => {}))
@@ -3124,7 +3186,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     const pending = stream.next()
     await vi.waitFor(() => expect(fixture.pageOwnedPromptTranscript).toHaveBeenCalledOnce())
     controller.abort(new Error('cancel pending question'))
-    await expect(pending).rejects.toThrow('cancel pending question')
+    await expect(pending).rejects.toBeInstanceOf(RemotePromptCancelledError)
     expect(await fixture.store.getByConversation(request.conversationId)).toBeUndefined()
     const events = await collect(fixture.instance.run(
       { ...request, requestId: 'after-cancel' }, new AbortController().signal
@@ -3170,7 +3232,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     expect(settled).toBe(false)
 
     releaseEscalation()
-    await expect(pending).rejects.toThrow('cancel owned prompt')
+    await expect(pending).rejects.toBeInstanceOf(RemotePromptCancelledError)
   })
 
   it.each([

@@ -59,6 +59,7 @@ import type {
   ProtocolMethodHandler
 } from './protocol-server'
 import { AgentOwnedAcpPrompt } from './agent-owned-acp-prompt'
+import { AgentAcpConnection } from './agent-acp-connection'
 import type { SemanticPromptStore } from './semantic-prompt-store'
 import {
   AgentModelGatewayError,
@@ -83,6 +84,7 @@ const DEFAULT_MAXIMUM_PENDING_OUTPUT_BYTES_GLOBAL =
 const DEFAULT_MAXIMUM_OPERATIONS_PER_BINDING = 1_000
 const DEFAULT_DISPOSE_TIMEOUT_MS = 10_000
 const OWNED_PROMPT_CANCEL_GRACE_MS = 1_000
+const SHARED_PROCESS_IDLE_MS = 60_000
 const OWNED_PROMPT_START_TIMEOUT_MS = 2 * 60_000
 const ACP_JOURNAL_RETRY_INITIAL_MILLISECONDS = 25
 const ACP_JOURNAL_RETRY_MAXIMUM_MILLISECONDS = 1_000
@@ -228,6 +230,7 @@ export type RuntimeAcpProcessLaunch = {
   workMode: 'ask' | 'execute'
   deadlineAt: string
   budget: RemotePromptOperationPreparation['budget']
+  sharedSessions?: boolean
   modelBridge?: {
     socketPath: string
     policy: ModelBridgePolicy
@@ -249,6 +252,8 @@ export type RuntimeAcpBackendLimits = {
 }
 
 export type RuntimeAcpBackendOptions = {
+  shareOwnedProcesses?: boolean
+  sharedProcessIdleMs?: number
   journal: RuntimeAcpJournal
   resolveRuntimeBundle(
     runtimeId: string,
@@ -298,6 +303,7 @@ type PreparedOperation = {
   budget: RemotePromptOperationPreparation['budget']
   completion?: z.infer<typeof acpCompletePromptResultSchema>
   terminalState?: 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  processTree?: 'running' | 'empty'
   modelProfile?: AgentPromptModelProfile
   promptSequence: number
   ownedPromptStarted?: boolean
@@ -314,6 +320,7 @@ type BindingState = {
   state: 'open' | 'running' | 'stopping' | 'closed' | 'outcome-unknown'
   workMode?: 'ask' | 'execute'
   process?: RuntimeAcpProcessOwner
+  sharedProcess?: SharedProcess
   unsubscribeOutput?: () => void
   unsubscribeExit?: () => void
   stopRequested: boolean
@@ -338,12 +345,23 @@ type BindingState = {
   poisoned: boolean
 }
 
+type SharedProcess = {
+  key: string
+  process: RuntimeAcpProcessOwner
+  transport: AgentAcpConnection
+  bindings: Set<BindingState>
+  unsubscribeExit?: () => void
+  idleTimer?: NodeJS.Timeout
+  exited: boolean
+}
+
 export class RuntimeAcpBackend {
   readonly methods: Readonly<Record<string, ProtocolMethodHandler>>
   readonly #options: RuntimeAcpBackendOptions
   readonly #limits: RuntimeAcpBackendLimits
   readonly #bindings = new Map<string, BindingState>()
   readonly #processIdentityBindings = new Map<string, string>()
+  readonly #sharedProcesses = new Map<string, SharedProcess>()
   readonly #boundConnectionSignals = new WeakSet<AbortSignal>()
   #nextChannelEpoch: bigint
   #lifetimeBindings = 0
@@ -636,6 +654,14 @@ export class RuntimeAcpBackend {
               result.status === 'rejected'
           )
           .map((result) => result.reason)
+        const sharedResults = await Promise.allSettled(
+          [...this.#sharedProcesses.values()].map(group =>
+            this.#stopSharedProcess(group, 'binding-closed')
+          )
+        )
+        for (const result of sharedResults) {
+          if (result.status === 'rejected') failures.push(result.reason)
+        }
         if (failures.length > 0) {
           throw new AggregateError(
             failures,
@@ -930,11 +956,15 @@ export class RuntimeAcpBackend {
         'identity'
       )
     }
-    this.#options.journal.acknowledgeAcpFromMain?.({
-      bindingId: binding.request.bindingId,
-      channelEpoch: binding.openResult.channelEpoch,
-      sequence: request.acknowledgedSequence
-    })
+    // Agent-owned prompts may have semantic events but no binary journal.
+    // In that case the validated zero cursor has nothing to acknowledge.
+    if (initialCursor !== undefined) {
+      this.#options.journal.acknowledgeAcpFromMain?.({
+        bindingId: binding.request.bindingId,
+        channelEpoch: binding.openResult.channelEpoch,
+        sequence: request.acknowledgedSequence
+      })
+    }
     if (this.#options.journal.replayAcpFrames === undefined) {
       throw new RuntimeAcpBackendError(
         'Durable ACP replay is unavailable',
@@ -1011,7 +1041,8 @@ export class RuntimeAcpBackend {
     }
     if (
       binding.workMode !== undefined &&
-      binding.workMode !== preparation.workMode
+      binding.workMode !== preparation.workMode &&
+      binding.sharedProcess === undefined
     ) {
       throw new RuntimeAcpBackendError(
         'Runtime process work mode cannot change',
@@ -1124,12 +1155,22 @@ export class RuntimeAcpBackend {
 
     if (binding.process === undefined) {
       let process: RuntimeAcpProcessOwner
+      const sharedKey =
+        this.#options.shareOwnedProcesses &&
+        preparation.modelProfile && this.#options.modelGateway &&
+        this.#options.semanticPrompts && binding.modelBridgePolicy
+          ? canonicalJson([
+              verified.manifest.bundleDigest,
+              verified.manifest.adapterDigest,
+              binding.modelBridgePolicy
+            ])
+          : undefined
       this.#options.diagnostics?.tryRecord('runtime.starting', {
         runtimeId: verified.manifest.runtimeId,
         workMode: preparation.workMode
       })
       try {
-        process = await this.#options.launchProcess({
+        const launch: RuntimeAcpProcessLaunch = {
           manifest: verified.manifest,
           bundle: verified,
           workspace,
@@ -1137,6 +1178,7 @@ export class RuntimeAcpBackend {
           workMode: preparation.workMode,
           deadlineAt: preparation.deadlineAt,
           budget: preparation.budget,
+          ...(sharedKey === undefined ? {} : { sharedSessions: true }),
           ...(binding.modelBridgePolicy === undefined ||
           binding.modelBridgeBroker === undefined
             ? {}
@@ -1146,7 +1188,15 @@ export class RuntimeAcpBackend {
                   policy: binding.modelBridgePolicy
                 }
               })
-        })
+        }
+        if (sharedKey !== undefined) {
+          const group = await this.#acquireSharedProcess(sharedKey, launch)
+          binding.sharedProcess = group
+          group.bindings.add(binding)
+          process = group.process
+        } else {
+          process = await this.#options.launchProcess(launch)
+        }
         assertProcessIdentity(process.identity)
       } catch (error) {
         this.#options.diagnostics?.tryRecord('runtime.start.failed', {
@@ -1166,7 +1216,7 @@ export class RuntimeAcpBackend {
       const identityOwner = this.#processIdentityBindings.get(processKey)
       if (
         identityOwner !== undefined &&
-        identityOwner !== binding.request.bindingId
+        identityOwner !== (binding.sharedProcess?.key ?? binding.request.bindingId)
       ) {
         await Promise.resolve(
           process.stop({
@@ -1182,7 +1232,7 @@ export class RuntimeAcpBackend {
       }
       this.#processIdentityBindings.set(
         processKey,
-        binding.request.bindingId
+        binding.sharedProcess?.key ?? binding.request.bindingId
       )
       binding.process = process
       binding.workspaceDirectory = workspace.workspaceDirectory
@@ -1208,7 +1258,7 @@ export class RuntimeAcpBackend {
             binding.unsubscribeOutput = unsubscribe
           }
         }
-        const unsubscribeExit = process.subscribeExit?.(() => {
+        const unsubscribeExit = binding.sharedProcess ? undefined : process.subscribeExit?.(() => {
           void this.#enqueueControl(async () => {
             await this.#handleProcessExit(binding)
           }).catch(() => undefined)
@@ -1230,7 +1280,7 @@ export class RuntimeAcpBackend {
         runtimeId: verified.manifest.runtimeId,
         workMode: preparation.workMode
       })
-    } else {
+    } else if (!binding.sharedProcess) {
       try {
         await binding.process.beginPrompt({
           deadlineAt: preparation.deadlineAt,
@@ -1246,6 +1296,7 @@ export class RuntimeAcpBackend {
         )
       }
     }
+    binding.workMode = preparation.workMode
     binding.inputBytes = 0
     if (!binding.operations.has(preparation.operationId)) {
       binding.operations.set(preparation.operationId, {
@@ -1389,12 +1440,14 @@ export class RuntimeAcpBackend {
         'conflict'
       )
     }
+    if (Buffer.byteLength(canonicalJson(request.prompt)) > prepared.budget.maximumInputBytes) {
+      throw new RuntimeAcpBackendError('Prompt input quota reached', 'capacity')
+    }
     if (binding.ownedAcp === undefined) {
       binding.ownedAcp = new AgentOwnedAcpPrompt({
         bindingId: binding.request.bindingId,
         controllerId: binding.controllerId,
         workspaceDirectory: binding.workspaceDirectory,
-        workMode: binding.workMode!,
         ...(binding.modelBridgePolicy === undefined
           ? {}
           : {
@@ -1404,6 +1457,14 @@ export class RuntimeAcpBackend {
               )
             }),
         process: binding.process,
+        ...(binding.sharedProcess ? {
+          transport: binding.sharedProcess.transport,
+          prepareSession: async (sessionId: string, operationId: string, workMode: 'ask' | 'execute') => {
+            await binding.sharedProcess!.transport.setModelRoute(
+              sessionId, operationId, binding.modelBridgeBroker!.socketPath, workMode
+            )
+          }
+        } : {}),
         transcript: this.#options.semanticPrompts,
         completePrompt: async (operationId, status) => {
           await this.#enqueueControl(async () => {
@@ -1418,7 +1479,7 @@ export class RuntimeAcpBackend {
           binding.poisoned ? 'outcome-unknown' : status
       })
     }
-    const result = await binding.ownedAcp.start(request)
+    const result = await binding.ownedAcp.start(request, prepared.acceptance.workMode)
     prepared.ownedPromptStarted = true
     if (binding.ownedPromptStartTimer !== undefined) {
       clearTimeout(binding.ownedPromptStartTimer)
@@ -1532,7 +1593,7 @@ export class RuntimeAcpBackend {
     }
     await this.#closeModelBridge(binding, true)
     try {
-      await binding.process.completePrompt()
+      if (!binding.sharedProcess) await binding.process.completePrompt()
     } catch {
       binding.state = 'outcome-unknown'
       prepared.modelProfile = undefined
@@ -1556,6 +1617,7 @@ export class RuntimeAcpBackend {
         : status === 'failed'
           ? 'failed'
           : 'completed'
+    prepared.processTree = 'running'
     if (status === 'completed') {
       prepared.completion = acpCompletePromptResultSchema.parse({
         bindingId: binding.request.bindingId,
@@ -1759,6 +1821,11 @@ export class RuntimeAcpBackend {
     binding.modelBridgeBroker = undefined
     binding.modelBridgeClient = undefined
     let brokerError: unknown
+    if (binding.sharedProcess && binding.ownedAcp?.sessionId && binding.activeOperationId) {
+      await binding.sharedProcess.transport.setModelRoute(
+        binding.ownedAcp.sessionId, binding.activeOperationId
+      ).catch(() => undefined)
+    }
     try {
       await broker?.close()
     } catch (error) {
@@ -1902,7 +1969,7 @@ export class RuntimeAcpBackend {
         status: 'terminal',
         terminalState: prepared.terminalState,
         processTree:
-          prepared.terminalState === 'completed' ? 'running' : 'empty'
+          prepared.processTree ?? (prepared.terminalState === 'completed' ? 'running' : 'empty')
       }
     }
     if (binding.activeOperationId !== operation.operationId) {
@@ -2113,6 +2180,25 @@ export class RuntimeAcpBackend {
       this.#finishBinding(binding, 'interrupted')
       return
     }
+    if (binding.sharedProcess) {
+      const group = binding.sharedProcess
+      const prepared = binding.activeOperationId
+        ? binding.operations.get(binding.activeOperationId) : undefined
+      try {
+        await rejectAfter(
+          binding.ownedAcp?.releaseSession() ?? Promise.resolve(),
+          OWNED_PROMPT_CANCEL_GRACE_MS * 3,
+          'Shared Runtime Session release timed out'
+        )
+        if (prepared) prepared.processTree = group.exited ? 'empty' : 'running'
+        this.#finishBinding(binding, reason === 'user-cancelled' ? 'cancelled' : 'interrupted')
+      } catch {
+        // A non-responsive native control plane affects the whole process.
+        // Ordinary Session cancellation never reaches this fallback.
+        await this.#stopSharedProcess(group, reason)
+      }
+      return
+    }
     binding.state = 'stopping'
     if (!binding.stopRequested) {
       binding.stopRequested = true
@@ -2277,7 +2363,12 @@ export class RuntimeAcpBackend {
   }
 
   #finishProcess(binding: BindingState): void {
-    if (binding.process !== undefined) {
+    const group = binding.sharedProcess
+    if (group) {
+      group.bindings.delete(binding)
+      binding.sharedProcess = undefined
+      this.#scheduleSharedIdle(group)
+    } else if (binding.process !== undefined) {
       this.#processIdentityBindings.delete(
         processIdentityKey(binding.process.identity)
       )
@@ -2302,6 +2393,68 @@ export class RuntimeAcpBackend {
     if (binding.ownedPromptStartTimer !== undefined) {
       clearTimeout(binding.ownedPromptStartTimer)
       binding.ownedPromptStartTimer = undefined
+    }
+  }
+
+  async #acquireSharedProcess(key: string, launch: RuntimeAcpProcessLaunch): Promise<SharedProcess> {
+    const existing = this.#sharedProcesses.get(key)
+    if (existing && !existing.exited) {
+      if (existing.idleTimer) clearTimeout(existing.idleTimer)
+      existing.idleTimer = undefined
+      return existing
+    }
+    const process = await this.#options.launchProcess(launch)
+    assertProcessIdentity(process.identity)
+    const group: SharedProcess = {
+      key, process, transport: new AgentAcpConnection(process),
+      bindings: new Set(), exited: false
+    }
+    group.unsubscribeExit = process.subscribeExit?.(() => {
+      void this.#enqueueControl(() => this.#handleSharedExit(group)).catch(() => undefined)
+    }) ?? undefined
+    this.#sharedProcesses.set(key, group)
+    return group
+  }
+
+  #scheduleSharedIdle(group: SharedProcess): void {
+    if (group.bindings.size || group.exited || this.#disposed || group.idleTimer) return
+    group.idleTimer = setTimeout(() => {
+      group.idleTimer = undefined
+      void this.#enqueueControl(async () => {
+        if (!group.bindings.size) await this.#stopSharedProcess(group, 'binding-closed')
+      }).catch(() => undefined)
+    }, this.#options.sharedProcessIdleMs ?? SHARED_PROCESS_IDLE_MS)
+    group.idleTimer.unref?.()
+  }
+
+  async #stopSharedProcess(group: SharedProcess, reason: RuntimeAcpProcessStopReason): Promise<void> {
+    if (group.exited) return
+    if (group.idleTimer) clearTimeout(group.idleTimer)
+    group.idleTimer = undefined
+    await group.process.stop({
+      reason, deadlineAt: new Date(this.#now() + 10_000).toISOString()
+    })
+    const result = await group.process.reconcile()
+    if (!sameProcessIdentity(result.identity, group.process.identity) || result.processTree !== 'empty') {
+      throw new RuntimeAcpBackendError('Shared Runtime process stop did not reconcile', 'process')
+    }
+    await this.#handleSharedExit(group)
+  }
+
+  async #handleSharedExit(group: SharedProcess): Promise<void> {
+    if (group.exited) return
+    group.exited = true
+    if (group.idleTimer) clearTimeout(group.idleTimer)
+    group.unsubscribeExit?.()
+    group.transport.dispose()
+    if (this.#sharedProcesses.get(group.key) === group) this.#sharedProcesses.delete(group.key)
+    this.#processIdentityBindings.delete(processIdentityKey(group.process.identity))
+    for (const binding of [...group.bindings]) {
+      if (binding.activeOperationId) {
+        const prepared = binding.operations.get(binding.activeOperationId)
+        if (prepared) prepared.processTree = 'empty'
+      }
+      await this.#handleProcessExit(binding)
     }
   }
 

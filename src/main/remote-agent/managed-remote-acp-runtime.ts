@@ -286,11 +286,12 @@ class ManagedRemoteRuntimeResources {
     bindingId: string
   ) {
     const transport = await this.prepareTransport()
-    assertSameTransport(
-      expected,
-      transport,
-      'Remote Runtime transport lease is stale'
-    )
+    if (
+      expected.daemonBootId !== transport.daemonBootId ||
+      transport.controllerGeneration < expected.controllerGeneration
+    ) {
+      throw new Error('Remote Runtime transport lease is stale')
+    }
     const channel = await createProtocolRemoteRuntimeChannel({
       connection: this.connection,
       openIdentity: {
@@ -302,7 +303,7 @@ class ManagedRemoteRuntimeResources {
     })
     try {
       assertSameTransport(
-        expected,
+        transport,
         this.currentTransportIdentity(),
         'Remote Agent transport changed while opening an ACP channel'
       )
@@ -511,19 +512,24 @@ class ManagedRemoteAcpRuntime implements AgentRuntime {
         throw new Error('远端 Runtime 正在退役')
       }
       if (!sameTransport(this.transport, currentTransport)) {
-        if (this.#activeRuns > 0) {
-          throw new Error(
-            'Remote Agent transport changed while another Runtime request was active'
-          )
+        const resumedSameAgent =
+          this.transport.daemonBootId === currentTransport.daemonBootId &&
+          currentTransport.controllerGeneration > this.transport.controllerGeneration
+        if (!resumedSameAgent) {
+          if (this.#activeRuns > 0) {
+            throw new Error(
+              'Remote Agent transport changed while another Runtime request was active'
+            )
+          }
+          await this.remote.dispose()
+          if (this.#disposed) {
+            throw new Error('远端 Runtime 已关闭')
+          }
+          if (this.#draining) {
+            throw new Error('远端 Runtime 正在退役')
+          }
+          this.remote = this.createRemote(currentTransport)
         }
-        await this.remote.dispose()
-        if (this.#disposed) {
-          throw new Error('远端 Runtime 已关闭')
-        }
-        if (this.#draining) {
-          throw new Error('远端 Runtime 正在退役')
-        }
-        this.remote = this.createRemote(currentTransport)
         this.transport = currentTransport
       }
       this.#activeRuns += 1

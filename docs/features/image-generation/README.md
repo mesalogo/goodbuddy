@@ -27,6 +27,7 @@
 
 ## 相关功能
 
+- [会话媒体生成设计](../conversation-media-generation/README.md)：规划普通 LLM 通过工具调用图片、视频模型及模型切换行为，尚未实现。
 - [模型连接](../model-connections/README.md)：地址、模型 ID、凭据与请求定制。
 - [直连文本 Agent](../direct-model-agent/README.md)：文本模型的工具和上下文压缩，
   不等于图片模型支持 Responses 图片工具。

@@ -1692,6 +1692,31 @@ describe("OpenCodeRuntime embedded launcher", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("keeps a shared cold start alive when only its first waiter cancels", async () => {
+    const child = fakeChild();
+    let healthy = false;
+    const { deps, spawnMock } = dependencies(child, {
+      startupTimeoutMs: 2_000,
+      checkServerHealth: vi.fn(async () => healthy),
+    });
+    const runtime = new OpenCodeRuntime(options(), deps);
+    const controller = new AbortController();
+    const pending = runtime.run({
+      requestId: "cancel-initializer", conversationId: "first",
+      prompt: "test", executionWorkspace: resolve("one"),
+    }, controller.signal).next();
+    const rejected = expect(pending).rejects.toThrow("启动已取消");
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledOnce());
+    const peer = runtime.testConnection();
+    controller.abort();
+    await rejected;
+    expect(child.kill).not.toHaveBeenCalled();
+    healthy = true;
+    await expect(peer).resolves.toMatchObject({ available: true });
+    expect(spawnMock).toHaveBeenCalledOnce();
+    await runtime.dispose();
+  });
+
   it("bounds session setup without imposing a full-run deadline", async () => {
     const harness = runClient([]);
     (

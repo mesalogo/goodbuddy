@@ -11,6 +11,39 @@ import {
   RuntimeReplacementCapacityError
 } from './runtime-controller'
 
+it('routes a shared request question to its original Runtime across replacement', async () => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const previous: AgentRuntime = {
+    sharedProcess: true, requiresToolApproval: false, supportsToolExecution: true,
+    getStatus: vi.fn(), dispose: vi.fn(async () => undefined),
+    respondToQuestion: vi.fn(async () => undefined),
+    async *run(request) {
+      yield { type: 'question', requestId: request.requestId, questionId: 'question-old', questions: [] }
+      await gate
+      yield { type: 'done', requestId: request.requestId }
+    }
+  }
+  const next: AgentRuntime = { ...previous, respondToQuestion: vi.fn(async () => undefined) }
+  const controller = new AgentRuntimeController(previous, 1)
+  const stream = controller.run({
+    requestId: 'old-request', conversationId: 'old-conversation', prompt: 'test', workMode: 'execute'
+  }, new AbortController().signal)
+  try {
+    expect((await stream.next()).value?.type).toBe('question')
+    await controller.replace(next)
+    await controller.respondToQuestion('question-old', [])
+    expect(previous.respondToQuestion).toHaveBeenCalledWith('question-old', [])
+    expect(next.respondToQuestion).not.toHaveBeenCalled()
+    release()
+    expect((await stream.next()).value?.type).toBe('done')
+  } finally {
+    release()
+    await stream.return()
+    await controller.dispose()
+  }
+})
+
 class TestRuntime implements AgentRuntime {
   readonly dispose = vi.fn(async () => {})
   readonly started: Promise<void>
@@ -172,6 +205,26 @@ describe('AgentRuntimeController', () => {
     finishProbe()
     await expect(status).rejects.toThrow('Runtime 已切换')
     await replacement
+    expect(previous.dispose).toHaveBeenCalledOnce()
+    await controller.dispose()
+  })
+
+  it('lets a shared local request finish while replacing its workspace facade', async () => {
+    const previous = Object.assign(new TestRuntime(true), { sharedProcess: true })
+    const controller = new AgentRuntimeController(previous, 1)
+    const stream = controller.run({
+      requestId: '00000000-0000-4000-8000-000000000071',
+      conversationId: 'shared-replacement', prompt: 'continue', workMode: 'ask'
+    }, new AbortController().signal)
+    const pending = stream.next()
+    await previous.started
+    await controller.replace(new TestRuntime())
+    expect(previous.dispose).not.toHaveBeenCalled()
+    previous.finish()
+    await expect(pending).resolves.toMatchObject({
+      done: false, value: { type: 'text' }
+    })
+    await stream.next()
     expect(previous.dispose).toHaveBeenCalledOnce()
     await controller.dispose()
   })

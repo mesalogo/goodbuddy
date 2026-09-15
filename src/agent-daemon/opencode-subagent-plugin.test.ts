@@ -5,6 +5,65 @@ import { describe, expect, it, vi } from 'vitest'
 import { openCodeSubagentPluginSource } from './opencode-subagent-plugin'
 
 describe('OpenCode ACP child event plugin', () => {
+  it('attributes child and compaction model rounds to the frozen root operation', async () => {
+    const operations = new Map([['one', 'operation-1'], ['two', 'operation-2']])
+    const fetchRoute = vi.fn(async (url: string) => {
+      const session = new URL(url).searchParams.get('sessionId')!
+      return { ok: operations.has(session), json: async () => ({ operationId: operations.get(session), workMode: 'execute' }) }
+    })
+    const factory = runInNewContext(
+      `(${openCodeSubagentPluginSource('http://127.0.0.1:12345/fixture').replace(/^import .*\n/gmu, '').replace('export default ', '')})`,
+      { process: { stdout: { write: vi.fn() } }, createServer, randomBytes, fetch: fetchRoute }
+    )
+    const patch = vi.fn()
+    const hooks = await factory({ client: {
+      _client: { get: vi.fn(), post: vi.fn(), patch },
+      session: { get: async ({ path }: { path: { id: string } }) => ({
+        data: {
+          id: path.id, parentID: path.id === 'child' ? 'one' : undefined,
+          permission: path.id === 'child' ? [{ permission: 'task', pattern: '*', action: 'deny' }] : undefined
+        }
+      }) }
+    } })
+    const headers = async (sessionID: string, id: string) => {
+      const output = { headers: {} }
+      await hooks['chat.headers']({ sessionID, message: { id } }, output)
+      return output.headers
+    }
+    try {
+      await hooks['chat.message']({ sessionID: 'one' }, { message: { id: 'first' } })
+      expect(patch).toHaveBeenCalledWith({
+        url: '/session/one', body: { permission: [{ permission: '*', pattern: '*', action: 'allow' }] }, throwOnError: true
+      })
+      expect(await headers('child', 'child-message')).toEqual({
+        'x-goodbuddy-session': 'one', 'x-goodbuddy-operation': 'operation-1'
+      })
+      await hooks['chat.message']({ sessionID: 'child' }, { message: { id: 'child-message' } })
+      expect(patch).toHaveBeenLastCalledWith({
+        url: '/session/child', body: { permission: [
+          { permission: '*', pattern: '*', action: 'allow' },
+          { permission: 'task', pattern: '*', action: 'deny' }
+        ] }, throwOnError: true
+      })
+      expect(await headers('two', 'compact')).toEqual({
+        'x-goodbuddy-session': 'two', 'x-goodbuddy-operation': 'operation-2'
+      })
+      operations.set('one', 'next-operation')
+      expect(await headers('one', 'first')).toEqual({
+        'x-goodbuddy-session': 'one', 'x-goodbuddy-operation': 'operation-1'
+      })
+      await hooks.event({ event: { type: 'session.status', properties: { sessionID: 'one', status: { type: 'idle' } } } })
+      expect(await headers('one', 'next-message')).toEqual({
+        'x-goodbuddy-session': 'one', 'x-goodbuddy-operation': 'next-operation'
+      })
+      operations.delete('two')
+      await expect(headers('two', 'stale-new-message')).rejects.toThrow('no longer active')
+      expect(await headers('two', 'compact')).toEqual({
+        'x-goodbuddy-session': 'two', 'x-goodbuddy-operation': 'operation-2'
+      })
+    } finally { await hooks.dispose() }
+  })
+
   it('authenticates native replies, checks live ownership, rejects stale events and closes its endpoint', async () => {
     const write = vi.fn()
     const question = { id: 'q', sessionID: 'grandchild', questions: [

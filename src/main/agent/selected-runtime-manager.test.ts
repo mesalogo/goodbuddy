@@ -510,6 +510,44 @@ describe('SelectedRuntimeManager', () => {
     await manager.dispose()
   })
 
+  it('answers owned questions after settings reset while rejecting new work', async () => {
+    const active = runtime()
+    active.value.respondToQuestion = vi.fn(async () => undefined)
+    active.value.run = async function* (request) {
+      yield {
+        requestId: request.requestId, type: 'question', questionId: 'retained-question',
+        questions: [{ header: 'Choice', question: 'Continue?', options: [], multiple: false, custom: true }]
+      }
+      yield { requestId: request.requestId, type: 'done' }
+    }
+    const manager = new SelectedRuntimeManager(async () => active.value)
+    const controller = await manager.getRuntime({ provider: 'opencode' }, executionSpace('project-one'))
+    const stream = controller.run({
+      requestId: 'retained-request', conversationId: 'retained-conversation',
+      prompt: 'Ask a question', workMode: 'execute'
+    }, new AbortController().signal)
+    try {
+      expect((await stream.next()).value?.type).toBe('question')
+      await manager.reset()
+      expect(active.dispose).not.toHaveBeenCalled()
+      await expect(controller.respondToQuestion('unknown-question', [['Yes']]))
+        .rejects.toThrow('正在关闭')
+      await expect(controller.respondToQuestion('retained-question', [['Yes']]))
+        .resolves.toBeUndefined()
+      expect(active.value.respondToQuestion).toHaveBeenCalledWith('retained-question', [['Yes']])
+      await expect(controller.run({
+        requestId: 'new-request', conversationId: 'new-conversation',
+        prompt: 'New work', workMode: 'execute'
+      }, new AbortController().signal).next()).rejects.toThrow('正在关闭')
+      expect((await stream.next()).value?.type).toBe('done')
+      await stream.next()
+      await vi.waitFor(() => expect(active.dispose).toHaveBeenCalledOnce())
+    } finally {
+      await stream.return()
+      await manager.dispose()
+    }
+  })
+
   it('routes application exit through cached runtime controllers without ordinary disposal', async () => {
     const active = runtime()
     const detachForApplicationExit = vi.fn(() => undefined)
@@ -595,7 +633,8 @@ describe('SelectedRuntimeManager', () => {
     await expect(
       manager.getRuntime(selection('43'))
     ).rejects.toThrow(/退役容量/iu)
-    expect(create).toHaveBeenCalledTimes(2)
+    expect(create).toHaveBeenCalledTimes(3)
+    expect(created[2]!.dispose).toHaveBeenCalledOnce()
     await manager.dispose()
     expect(created[0]!.dispose).toHaveBeenCalledOnce()
     expect(created[1]!.dispose).toHaveBeenCalledOnce()
@@ -607,7 +646,10 @@ describe('SelectedRuntimeManager', () => {
       finishCreate = resolve
     })
     const created = runtime()
-    const create = vi.fn(async () => await pendingCreate)
+    const rejected = runtime()
+    const create = vi.fn()
+      .mockReturnValueOnce(pendingCreate)
+      .mockResolvedValueOnce(rejected.value)
     const manager = new SelectedRuntimeManager(create, 1, 1)
     const selection = (suffix: string) => ({
       provider: 'model' as const,
@@ -622,7 +664,8 @@ describe('SelectedRuntimeManager', () => {
     await expect(
       manager.getRuntime(selection('52'))
     ).rejects.toThrow(/退役容量/iu)
-    expect(create).toHaveBeenCalledOnce()
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(rejected.dispose).toHaveBeenCalledOnce()
 
     finishCreate(created.value)
     await expect(firstRuntime).resolves.toEqual(

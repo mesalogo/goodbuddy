@@ -513,7 +513,7 @@ function diagnosticErrorName(error: unknown): string {
   return error instanceof Error ? 'Error' : 'NonError'
 }
 
-const SAFE_DIAGNOSTIC_ERROR_CODES = new Set([
+const SAFE_DIAGNOSTIC_ERROR_CODES: ReadonlySet<string> = new Set([
   'EACCES',
   'EADDRINUSE',
   'ECONNREFUSED',

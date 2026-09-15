@@ -1296,7 +1296,7 @@ describe('ProtocolRemoteRuntimeChannel', () => {
         return {
           status: 'terminal',
           terminalState: 'failed',
-          processTree: 'running'
+          processTree: 'unknown'
         }
       }
       return defaultResponse(method, params)
@@ -1308,6 +1308,17 @@ describe('ProtocolRemoteRuntimeChannel', () => {
         requestId: 'operation-1'
       })
     ).rejects.toMatchObject({ reason: 'protocol' })
+    await fixture.channel.close()
+  })
+
+  it.each(['failed', 'cancelled'] as const)('accepts a %s Session while its shared process serves peers', async terminalState => {
+    const fixture = await openChannel()
+    fixture.client.responder = (method, params) => method === 'runtime/reconcilePrompt'
+      ? { status: 'terminal', terminalState, processTree: 'running' }
+      : defaultResponse(method, params)
+    await expect(fixture.channel.reconcilePromptOperation({
+      bindingId: 'binding-1', operationId: 'operation-1', requestId: 'operation-1'
+    })).resolves.toEqual({ status: 'terminal', terminalState, processTree: 'running' })
     await fixture.channel.close()
   })
 

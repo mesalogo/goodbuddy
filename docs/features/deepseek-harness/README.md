@@ -11,3 +11,8 @@
 | [实现进度](./progress.md) | Windows 工作区路径修复及验证记录 |
 
 现有文档同时包含部分 PRD、功能逻辑和进度内容，后续修改该 Runtime 时再按标准职责拆分。
+
+跨项目共享 Host 和状态检查不冷启动的实现设计，由
+[Runtime 进程复用技术设计](../assistant-workbar/runtime-process-reuse-technical-design.md)
+统一维护；本 Runtime 的生命周期见[技术设计 §9](./technical-design.md#9-runtime-生命周期)，
+未发布实现的验收状态见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。

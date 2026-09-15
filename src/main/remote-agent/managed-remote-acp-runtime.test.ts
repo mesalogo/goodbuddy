@@ -448,6 +448,36 @@ describe('createManagedRemoteAcpRuntime', () => {
     await runtime.dispose()
   })
 
+  it('retains active Sessions and admits new channels after same-Agent reconnect', async () => {
+    const fixture = harness()
+    const runtime = await createManagedRemoteAcpRuntime(fixture.options)
+    let releaseGate!: () => void
+    remoteHarness.runGate = new Promise<void>(resolve => { releaseGate = resolve })
+    const first = runtime.run(request('before-reconnect'), new AbortController().signal)
+    await first.next()
+    fixture.connection.client.generation = 6
+    const second = runtime.run(request('after-reconnect'), new AbortController().signal)
+    try {
+      await expect(second.next()).resolves.toMatchObject({
+        value: { type: 'status' }, done: false
+      })
+      expect(remoteHarness.instances).toHaveLength(1)
+      expect(remoteHarness.instances[0]!.dispose).not.toHaveBeenCalled()
+      // This fixture does not implement the open RPC. Reaching it proves the
+      // original factory accepts the recovered transport instead of a stale lease.
+      await expect(remoteHarness.instances[0]!.options.channelFactory(
+        'binding-after-reconnect'
+      )).rejects.toThrow()
+      expect(fixture.connection.client.request.mock.calls.some(
+        ([method]) => method === 'runtime/openAcpChannel'
+      )).toBe(true)
+    } finally {
+      releaseGate()
+      await Promise.all([collect(first), collect(second)])
+      await runtime.dispose()
+    }
+  })
+
   it('abandons connected runtime ownership on application exit without remote cleanup', async () => {
     const fixture = harness()
     const runtime = await createManagedRemoteAcpRuntime(

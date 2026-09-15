@@ -41,6 +41,7 @@ export function createOpenCodeLaunchProfile(input: {
     bridgeDirectory: string;
     socketPath: string;
     policy: ModelBridgePolicy;
+    sharedSessions?: boolean;
   };
 }): OpenCodeLaunchProfile {
   const manifest = remoteRuntimeBundleManifestSchema.parse(input.manifest);
@@ -90,6 +91,7 @@ export function createOpenCodeLaunchProfile(input: {
             "Model bridge socket",
           ),
           policy: modelBridgePolicySchema.parse(input.modelBridge.policy),
+          sharedSessions: input.modelBridge.sharedSessions === true,
         };
   if (
     modelBridge !== undefined &&
@@ -132,6 +134,7 @@ export function createOpenCodeLaunchProfile(input: {
             modelBridge.policy.supportsImageInput ? "true" : "false",
             "--work-mode",
             input.workMode,
+            ...(modelBridge.sharedSessions ? ["--shared-sessions", "true"] : []),
             "--opencode-entrypoint",
             executablePath,
           ],

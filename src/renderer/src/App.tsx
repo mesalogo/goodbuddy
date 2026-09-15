@@ -1436,6 +1436,19 @@ function persistedTerminalStateOverridesLocal(
   return persisted.state !== "streaming" && local.state !== "complete";
 }
 
+function withRecoveredQuestions(conversation: Conversation): Conversation {
+  const active = conversation.activeRequest;
+  if (!active) return conversation;
+  return {
+    ...conversation,
+    messages: conversation.messages.map(message =>
+      message.id === active.messageId && message.state === "streaming"
+        ? { ...message, pendingQuestions: active.questions }
+        : message,
+    ),
+  };
+}
+
 function mergePersistedConversations(
   current: readonly Conversation[],
   incoming: readonly ConversationSnapshot[],
@@ -1454,7 +1467,7 @@ function mergePersistedConversations(
     const local = currentById.get(conversation.id);
     if (!local || local.remote) {
       persistedLocal.set(conversation.id, conversation);
-      return conversation;
+      return withRecoveredQuestions(conversation);
     }
     const localMessageById = new Map(
       local.messages.map((message) => [message.id, message]),
@@ -1466,6 +1479,9 @@ function mergePersistedConversations(
     const messages = [
       ...conversation.messages.map((message) => {
         const localMessage = localMessageById.get(message.id);
+        if (!conversation.activeRequest && local.activeRequest?.messageId === message.id) {
+          return { ...message, pendingQuestions: undefined };
+        }
         if (!localIsNewer) {
           // Pending prompts are live-only and are omitted from persisted messages.
           if (localMessage?.state === "streaming" && message.state === "streaming") {
@@ -1484,10 +1500,10 @@ function mergePersistedConversations(
       ...local.messages.filter((message) => !serverMessageIds.has(message.id)),
     ];
     const next = localIsNewer
-      ? { ...local, messages }
+      ? { ...local, messages, activeRequest: conversation.activeRequest }
       : { ...conversation, messages };
     persistedLocal.set(conversation.id, conversation);
-    return next;
+    return withRecoveredQuestions(next);
   });
   for (const conversation of current) {
     if (!incomingById.has(conversation.id)) {
@@ -5579,7 +5595,7 @@ function App(): React.JSX.Element {
             )
         : [];
       let nextConversations: Conversation[] = [
-        ...persistedConversations,
+        ...persistedConversations.map(withRecoveredQuestions),
         ...migratedLocalConversations,
       ];
       let projectConversation = nextConversations.find(
@@ -7404,7 +7420,9 @@ function App(): React.JSX.Element {
   const stop = async (): Promise<void> => {
     const requestId = [...activeRuns.current.entries()].find(
       ([, run]) => run.conversationId === activeId,
-    )?.[0];
+    )?.[0] ?? conversationsRef.current.find(
+      conversation => conversation.id === activeId,
+    )?.activeRequest?.requestId;
     if (requestId) {
       try {
         await window.goodbuddy.agent.cancel(requestId);
@@ -7503,8 +7521,7 @@ function App(): React.JSX.Element {
       if (!question || question.questionId !== questionId) {
         return;
       }
-      const taskId = pendingMessage.task?.id ?? [...activeRuns.current.entries()]
-        .find(([, run]) => run.conversationId === conversationId && run.messageId === messageId)?.[0];
+      const taskId = question.requestId;
       await window.goodbuddy.agent.respondQuestion(questionId, answers);
       updateMessage(conversationId, messageId, (message) => {
         const pendingQuestions = message.pendingQuestions?.filter((item) => item.questionId !== questionId);

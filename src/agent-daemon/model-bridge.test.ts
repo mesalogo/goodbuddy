@@ -615,6 +615,50 @@ describe('model bridge loopback helper', () => {
 describe('model bridge Unix broker', () => {
   const runOnUnix = process.platform === 'win32' ? it.skip : it
 
+  runOnUnix('routes shared Sessions concurrently and rejects queued work after its operation ends', async () => {
+    let unblock!: () => void
+    const blocked = new Promise<void>(resolve => { unblock = resolve })
+    const dispatchOne = vi.fn(async () => { await blocked; return validResponse })
+    const dispatchTwo = vi.fn(async () => validResponse)
+    const brokers = [dispatchOne, dispatchTwo].map(dispatch => new ModelBridgeBrokerServer({
+      scratchDirectory: privateTemporaryDirectory(), dispatch
+    }))
+    const fallback = vi.fn(async () => validResponse)
+    const proxy = new ModelBridgeLoopbackProxy({ exchange: fallback, sharedSessions: true })
+    await Promise.all(brokers.map(broker => broker.listen()))
+    const origin = await proxy.listen()
+    const route = (sessionId: string, operationId: string, index: number) => fetch(`${origin}/session`, {
+      method: 'POST', body: JSON.stringify({ sessionId, operationId, socketPath: brokers[index]!.socketPath, workMode: 'execute' })
+    })
+    const prompt = (sessionId: string, operationId: string) => fetch(`${origin}/v1/messages`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-goodbuddy-session': sessionId, 'x-goodbuddy-operation': operationId },
+      body: '{"model":"fixture"}'
+    })
+    try {
+      expect((await route('one', 'operation-1', 0)).ok).toBe(true)
+      expect((await route('two', 'operation-2', 1)).ok).toBe(true)
+      const first = prompt('one', 'operation-1')
+      await vi.waitFor(() => expect(dispatchOne).toHaveBeenCalledOnce())
+      const queued = prompt('one', 'operation-1')
+      expect((await prompt('two', 'operation-2')).status).toBe(201)
+      await route('one', 'next-operation', 0)
+      unblock()
+      expect((await first).status).toBe(201)
+      expect((await queued).status).toBe(409)
+      expect((await prompt('one', 'operation-1')).status).toBe(409)
+      expect((await prompt('one', 'next-operation')).status).toBe(201)
+      expect(dispatchOne).toHaveBeenCalledTimes(2)
+      expect(fallback).not.toHaveBeenCalled()
+      for (const dispatch of [dispatchOne, dispatchTwo]) {
+        expect(dispatch.mock.calls[0]?.[0]).not.toHaveProperty('headers.x-goodbuddy-session')
+      }
+    } finally {
+      unblock()
+      await proxy.close()
+      await Promise.all(brokers.map(broker => broker.close()))
+    }
+  })
+
   it('allows a delayed connection with the default unlimited request timeout', async () => {
     const socket = new Duplex({
       read() {},

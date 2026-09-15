@@ -245,6 +245,7 @@ export async function createProductionRuntimeProtocol(
       stateDirectory
     )
     backend = new RuntimeAcpBackend({
+      shareOwnedProcesses: true,
       journal: options.events,
       resolveRuntimeBundle: (runtimeId, bundleDigest) =>
         currentRegistry().resolve(
@@ -254,7 +255,9 @@ export async function createProductionRuntimeProtocol(
         ),
       loadRegisteredRuntimeBundle: async (resolved) => {
         return await loadRegistered(
-          resolved.entry,
+          // This composition's resolver above returns the complete registry
+          // entry; the backend itself only needs its public identity fields.
+          resolved.entry as RuntimeRegistryEntry,
           resolved.bundleDirectory
         )
       },
@@ -283,7 +286,8 @@ export async function createProductionRuntimeProtocol(
                     bridgeDirectory:
                       launch.workspace.bridgeDirectory!,
                     socketPath: launch.modelBridge.socketPath,
-                    policy: launch.modelBridge.policy
+                    policy: launch.modelBridge.policy,
+                    sharedSessions: launch.sharedSessions
                   }
                 })
           },
@@ -294,7 +298,8 @@ export async function createProductionRuntimeProtocol(
           installationId,
           registry: ownerRegistry,
           deadlineAt: launch.deadlineAt,
-          maximumInputBytes: launch.budget.maximumInputBytes
+          maximumInputBytes: launch.budget.maximumInputBytes,
+          sharedSessions: launch.sharedSessions
         }),
       outputSink: options.outputSink,
       semanticPrompts,

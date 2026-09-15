@@ -2,10 +2,10 @@
  * OpenCode's ACP adapter omits native questions and child sessions. Native
  * events use ACP metadata; question replies use a process-local capability.
  */
-export function openCodeSubagentPluginSource(): string {
+export function openCodeSubagentPluginSource(modelBridgeOrigin?: string): string {
   return `import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
-export default (input) => (${plugin.toString()})(input, { createServer, randomBytes })`
+export default (input) => (${plugin.toString()})(input, { createServer, randomBytes, modelBridgeOrigin: ${JSON.stringify(modelBridgeOrigin)} })`
 }
 
 async function plugin(input?: {
@@ -13,17 +13,41 @@ async function plugin(input?: {
     _client: {
       get(input: { url: string; throwOnError: true }): Promise<{ data: unknown }>
       post(input: { url: string; body?: unknown; throwOnError: true }): Promise<unknown>
+      patch(input: { url: string; body: unknown; throwOnError: true }): Promise<unknown>
     }
     session: { get(input: { path: { id: string }; throwOnError: true }): Promise<{
-      data: { id: string; parentID?: string }
+      data: { id: string; parentID?: string; permission?: Array<{ permission: string; pattern: string; action: string }> }
     }> }
   }
 }, modules?: {
   createServer: typeof import('node:http').createServer
   randomBytes: typeof import('node:crypto').randomBytes
+  modelBridgeOrigin?: string
 }) {
   const tasks = new Map<string, { sessionId: string; callId: string }>()
   const pending = new Map<string, { sessionId: string; root: string }>()
+  const modelMessages = new Map<string, { sessionId: string; operationId: string; workMode: 'ask' | 'execute' }>()
+  const modelRoute = async (sessionId: string, messageId: string) => {
+    const key = `${sessionId}\0${messageId}`
+    const previous = modelMessages.get(key)
+    if (previous) return previous
+    if (!input || !modules?.modelBridgeOrigin) return undefined
+    let root = sessionId
+    const seen = new Set<string>()
+    for (;;) {
+      if (seen.has(root)) throw new Error('OpenCode Session parent cycle')
+      seen.add(root)
+      const session = await input.client.session.get({ path: { id: root }, throwOnError: true })
+      if (!session.data.parentID) break
+      root = session.data.parentID
+    }
+    const response = await fetch(`${modules.modelBridgeOrigin}/session?sessionId=${encodeURIComponent(root)}`)
+    if (!response.ok) throw new Error('GoodBuddy model operation is no longer active')
+    const { operationId, workMode } = await response.json() as { operationId: string; workMode: 'ask' | 'execute' }
+    const route = { sessionId: root, operationId, workMode }
+    modelMessages.set(key, route)
+    return route
+  }
   let endpoint: string | undefined
   let closed = false
   let closeServer: (() => void) | undefined
@@ -82,7 +106,43 @@ async function plugin(input?: {
       closed = true
       pending.clear()
       tasks.clear()
+      modelMessages.clear()
       closeServer?.()
+    },
+    'chat.message': async (
+      request: { sessionID: string },
+      output: { message: { id: string } }
+    ) => {
+      const route = await modelRoute(request.sessionID, output.message.id)
+      if (!route) return
+      // Native ACP only forwards permissions for its registered root Sessions.
+      // Use native Session rules so child tools use Execute and Ask's
+      // unavailable tools are omitted instead of interrupting the prompt.
+      const permission = route.workMode === 'execute'
+        ? [{ permission: '*', pattern: '*', action: 'allow' }]
+        : [
+            { permission: '*', pattern: '*', action: 'deny' },
+            ...['read', 'glob', 'grep', 'list', 'lsp', 'webfetch', 'websearch', 'codesearch', 'question', 'external_directory']
+              .map(permission => ({ permission, pattern: '*', action: 'allow' }))
+          ]
+      if (route.sessionId !== request.sessionID) {
+        const child = await input!.client.session.get({ path: { id: request.sessionID }, throwOnError: true })
+        // OpenCode copies parent denies, not parent allows, into children.
+        // Keep its explicit subagent restrictions after the request rules.
+        permission.push(...(child.data.permission ?? []).filter(rule => rule.permission !== '*'))
+      }
+      await input!.client._client.patch({
+        url: `/session/${encodeURIComponent(request.sessionID)}`, body: { permission }, throwOnError: true
+      })
+    },
+    'chat.headers': async (
+      request: { sessionID: string; message: { id: string } },
+      output: { headers: Record<string, string> }
+    ) => {
+      const route = await modelRoute(request.sessionID, request.message.id)
+      if (!route) return
+      output.headers['x-goodbuddy-session'] = route.sessionId
+      output.headers['x-goodbuddy-operation'] = route.operationId
     },
     event: async ({ event }: { event: {
       type: string
@@ -105,6 +165,9 @@ async function plugin(input?: {
       const properties = event.properties
       if (closed) return
       if (event.type === 'session.status' && properties.status?.type === 'idle' && properties.sessionID) {
+        for (const [key, route] of modelMessages) {
+          if (route.sessionId === properties.sessionID) modelMessages.delete(key)
+        }
         for (const [id, question] of pending) {
           if (question.root !== properties.sessionID && question.sessionId !== properties.sessionID) continue
           pending.delete(id)

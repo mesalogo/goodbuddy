@@ -729,7 +729,9 @@ export class OpenCodeRuntime implements AgentRuntime {
   private clientInitialization?: Promise<OpencodeClient>;
   private server?: OpenCodeServer;
   private startingChild?: SpawnedProcess;
-  private readonly sessions = new Map<string, string>();
+  private readonly sessions = new Map<string, { id: string; directory: string }>();
+  private initializationController?: AbortController;
+  private initializationWaiters = 0;
   private readonly sessionInitializations = new Map<string, Promise<string>>();
   private readonly pendingQuestions = new Map<
     string,
@@ -759,6 +761,10 @@ export class OpenCodeRuntime implements AgentRuntime {
       controlRequestTimeoutMs: CONTROL_REQUEST_TIMEOUT_MS,
       ...dependencies,
     };
+  }
+
+  get hasRetainedSessions(): boolean {
+    return this.sessions.size > 0 || this.sessionInitializations.size > 0;
   }
 
   private usesEmbeddedPermissionMediation(): boolean {
@@ -1276,19 +1282,38 @@ export class OpenCodeRuntime implements AgentRuntime {
     if (this.client && !this.server) {
       return this.client;
     }
-    const existingInitialization = this.clientInitialization;
     const cached = Boolean(this.client && this.server);
-    // Cached health checks are shared, but each caller owns only its wait.
-    const initialization = this.clientInitialization ??= this.initializeClient(
-      cached ? undefined : signal,
-    ).finally(() => {
-      if (this.clientInitialization === initialization) {
-        this.clientInitialization = undefined;
+    this.initializationWaiters += 1;
+    if (!this.clientInitialization) {
+      const controller = this.initializationController = new AbortController();
+      const initialization = this.initializeClient(
+        cached ? undefined : controller.signal,
+      ).finally(() => {
+        if (this.clientInitialization === initialization) {
+          this.clientInitialization = undefined;
+          this.initializationController = undefined;
+        }
+      });
+      this.clientInitialization = initialization;
+    }
+    try {
+      return signal
+        ? await awaitWithAbort(this.clientInitialization, signal)
+        : await this.clientInitialization;
+    } catch (error) {
+      if (signal?.aborted && !cached && !this.client) {
+        throw new Error("OpenCode Server 启动已取消", { cause: error });
       }
-    });
-    return signal && (cached || existingInitialization)
-      ? await awaitWithAbort(initialization, signal)
-      : await initialization;
+      throw error;
+    } finally {
+      this.initializationWaiters -= 1;
+      if (this.initializationWaiters === 0 && !this.client) {
+        this.initializationController?.abort(
+          new Error("OpenCode 初始化已无等待请求"),
+        );
+        await this.clientInitialization?.catch(() => undefined);
+      }
+    }
   }
 
   private async controlRequest<T>(
@@ -1460,6 +1485,7 @@ export class OpenCodeRuntime implements AgentRuntime {
   private async discoverAgents(
     client: OpencodeClient,
     signal?: AbortSignal,
+    directory = this.options.defaultWorkspace,
   ): Promise<
     Array<{
       id: string;
@@ -1475,7 +1501,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       (controlSignal) =>
         client.app.agents(
           {
-            directory: this.options.defaultWorkspace,
+            directory,
           },
           { signal: controlSignal },
         ),
@@ -1521,7 +1547,9 @@ export class OpenCodeRuntime implements AgentRuntime {
     if (!this.supportsNativeCustomization()) {
       throw new Error("外部 OpenCode Server 不支持由 GoodBuddy 选择 Agent");
     }
-    const agents = await this.discoverAgents(client, signal);
+    const agents = await this.discoverAgents(
+      client, signal, request.executionWorkspace ?? this.options.defaultWorkspace,
+    );
     if (
       !agents.some(
         (agent) =>
@@ -1537,7 +1565,9 @@ export class OpenCodeRuntime implements AgentRuntime {
     return selected;
   }
 
-  async getNativeSnapshot(): Promise<RuntimeNativeSnapshot> {
+  async getNativeSnapshot(
+    directory = this.options.defaultWorkspace,
+  ): Promise<RuntimeNativeSnapshot> {
     const controlled = this.supportsNativeCustomization();
     const empty: RuntimeNativeSnapshot = {
       provider: "opencode",
@@ -1572,7 +1602,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         const response = await this.controlRequest("连接检查", (signal) =>
           client.session.list(
             {
-              directory: this.options.defaultWorkspace,
+              directory,
               limit: 1,
             },
             { signal },
@@ -1602,7 +1632,6 @@ export class OpenCodeRuntime implements AgentRuntime {
       };
     }
 
-    const directory = this.options.defaultWorkspace;
     const assignedSkillIds = new Set(
       (this.options.skillPackages ?? []).map((skill) => skill.id),
     );
@@ -1626,7 +1655,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           { signal },
         ),
       ),
-      this.discoverAgents(client),
+      this.discoverAgents(client, undefined, directory),
       this.controlRequest("读取工具清单", (signal) =>
         client.tool.ids({ directory }, { signal }),
       ),
@@ -1914,8 +1943,11 @@ export class OpenCodeRuntime implements AgentRuntime {
     permission?: PermissionRuleset,
   ): Promise<{ id: string; created: boolean }> {
     const current = this.sessions.get(request.conversationId);
+    if (current?.directory === directory) {
+      return { id: current.id, created: false };
+    }
     if (current) {
-      return { id: current, created: false };
+      await this.releaseConversation(request.conversationId);
     }
     const pending = this.sessionInitializations.get(request.conversationId);
     if (pending) {
@@ -1959,7 +1991,7 @@ export class OpenCodeRuntime implements AgentRuntime {
       const stillCurrent =
         this.sessionInitializations.get(request.conversationId) === creation;
       if (signal.aborted || !stillCurrent) {
-        if (this.sessions.get(request.conversationId) !== sessionId) {
+        if (this.sessions.get(request.conversationId)?.id !== sessionId) {
           void client.session
             .delete(
               {
@@ -1975,7 +2007,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         }
         throw new Error("OpenCode 会话初始化已失效");
       }
-      this.sessions.set(request.conversationId, sessionId);
+      this.sessions.set(request.conversationId, { id: sessionId, directory });
       return sessionId;
     });
     this.sessionInitializations.set(request.conversationId, creation);
@@ -2072,7 +2104,7 @@ export class OpenCodeRuntime implements AgentRuntime {
     signal: AbortSignal,
     client: OpencodeClient,
   ): AsyncGenerator<RuntimeEvent, void, void> {
-    const directory = this.options.defaultWorkspace;
+    const directory = resolve(request.executionWorkspace ?? this.options.defaultWorkspace);
     const runtimeControl =
       request.runtimeControl?.provider === "opencode"
         ? request.runtimeControl
@@ -3065,7 +3097,8 @@ export class OpenCodeRuntime implements AgentRuntime {
           executionSignal = AbortSignal.any([executionSignal, server.signal]);
         }
       }
-      const sessionId = this.sessions.get(request.conversationId);
+      const session = this.sessions.get(request.conversationId);
+      const sessionId = session?.id;
       if (!sessionId || !client) {
         return {
           result: {
@@ -3076,6 +3109,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           },
         };
       }
+      const directory = session!.directory;
       const context = await this.controlRequest(
         "读取原生上下文",
         (controlSignal) =>
@@ -3122,7 +3156,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         "订阅 Compact 事件流",
         (controlSignal) =>
           client.event.subscribe(
-            { directory: this.options.defaultWorkspace },
+            { directory },
             eventSubscriptionOptions(controlSignal),
           ),
         subscriptionSignal,
@@ -3162,7 +3196,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         const compact = await client.session.summarize(
           {
             sessionID: sessionId,
-            directory: this.options.defaultWorkspace,
+            directory,
             providerID: configuredModel.providerID,
             modelID: configuredModel.modelID,
             auto: false,
@@ -3220,6 +3254,7 @@ export class OpenCodeRuntime implements AgentRuntime {
   }
 
   async dispose(): Promise<void> {
+    this.initializationController?.abort(new Error("OpenCode Runtime 已关闭"));
     this.pendingQuestions.clear();
     const startingChild = this.startingChild;
     this.startingChild = undefined;
@@ -3238,16 +3273,16 @@ export class OpenCodeRuntime implements AgentRuntime {
   }
 
   async releaseConversation(conversationId: string): Promise<void> {
-    const sessionId = this.sessions.get(conversationId);
+    const session = this.sessions.get(conversationId);
     this.sessions.delete(conversationId);
-    if (!sessionId || !this.client) {
+    if (!session || !this.client) {
       return;
     }
     await this.controlRequest("释放会话", (signal) =>
       this.client!.session.delete(
         {
-          sessionID: sessionId,
-          directory: this.options.defaultWorkspace,
+          sessionID: session.id,
+          directory: session.directory,
         },
         { signal },
       ),

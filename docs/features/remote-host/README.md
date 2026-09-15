@@ -11,3 +11,7 @@
 | [远程环境准备技术设计](./environment-provisioning-technical-design.md) | Host 下载、GoodBuddy 传输、安装事务、更新和恢复边界 |
 
 现有文档包含产品、功能逻辑和进度事实，后续修改远程功能时再按标准职责拆分。
+
+跨会话共享 OpenCode 进程、ACP 连接与模型桥的实现设计，见
+[Runtime 进程复用技术设计](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
+当前实现尚未发布；验收状态见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。

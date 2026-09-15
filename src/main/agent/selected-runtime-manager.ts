@@ -76,7 +76,8 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
       DEFAULT_MAXIMUM_RETAINED_RUNTIMES,
     private readonly observeFailure?:
       DesktopDiagnosticFailureObserver,
-    private readonly createStatusRuntime = createRuntime
+    private readonly createStatusRuntime = createRuntime,
+    private readonly releaseSharedConversation?: (conversationId: string) => Promise<void>
   ) {
     if (
       !Number.isSafeInteger(maximumCachedRuntimes) ||
@@ -111,21 +112,6 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
       return existing.operation
     }
     this.evictIdleEntries(this.maximumCachedRuntimes - 1)
-    if (this.entries.size >= this.maximumCachedRuntimes) {
-      throw new Error(
-        'Agent Runtime 缓存已被活动会话占满，请先关闭不再使用的会话'
-      )
-    }
-    if (
-      this.entries.size +
-        this.retiringControllers.size +
-        this.pendingRetirementControllers >=
-      this.maximumRetainedRuntimes
-    ) {
-      throw new Error(
-        'Agent Runtime 退役容量已满，请先关闭仍由旧设置持有的会话'
-      )
-    }
     const operation = this.createRuntime(selection, executionSpace).then(
       async (runtime) => {
         if (
@@ -134,6 +120,21 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
         ) {
           await runtime.dispose()
           throw new Error('Runtime 设置已更改，请重新选择')
+        }
+        if (!runtime.sharedProcess) {
+          const currentCount = [...this.entries.values()].filter(
+            (candidate) => candidate !== entry && !candidate.controller?.sharedProcess
+          ).length
+          const retiredCount = [...this.retiringControllers].filter(
+            (candidate) => !candidate.sharedProcess
+          ).length + this.pendingRetirementControllers
+          if (
+            currentCount >= this.maximumCachedRuntimes ||
+            currentCount + retiredCount >= this.maximumRetainedRuntimes
+          ) {
+            await runtime.dispose()
+            throw new Error('Agent Runtime 退役容量已满，请先关闭仍由旧设置持有的会话')
+          }
         }
         const controller = new AgentRuntimeController(
           runtime,
@@ -234,6 +235,7 @@ export class SelectedRuntimeManager implements SelectedRuntimeResolver {
   }
 
   async releaseConversation(conversationId: string): Promise<void> {
+    await this.releaseSharedConversation?.(conversationId)
     const controllers = await Promise.allSettled([
       ...[...this.entries.values()].map(({ operation }) => operation)
     ])

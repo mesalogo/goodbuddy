@@ -108,6 +108,7 @@ export type DirectLinuxStdioProcessOwnerOptions = {
       bridgeDirectory: string
       socketPath: string
       policy: ModelBridgePolicy
+      sharedSessions?: boolean
     }
   }
   identity: { launchId: string; processId: string }
@@ -115,6 +116,7 @@ export type DirectLinuxStdioProcessOwnerOptions = {
   registry: RuntimeOwnerRegistry
   deadlineAt: string
   maximumInputBytes: number
+  sharedSessions?: boolean
   signal?: AbortSignal
   platform?: NodeJS.Platform
   spawn?: DirectLinuxStdioSpawn
@@ -151,6 +153,7 @@ export class DirectLinuxStdioProcessOwner {
   readonly processIdentity: LinuxRuntimeProcessIdentity
 
   readonly #child: DirectLinuxStdioChild
+  readonly #sharedSessions: boolean
   readonly #registry: RuntimeOwnerRegistry
   readonly #now: () => number
   readonly #readIdentity: typeof readLinuxRuntimeProcessIdentity
@@ -194,6 +197,7 @@ export class DirectLinuxStdioProcessOwner {
     listPidNamespaceMembers: typeof listLinuxPidNamespaceMembers
     sendSignal: typeof process.kill
     maximumInputBytes: number
+    sharedSessions?: boolean
     maximumPendingStdinBytes: number
     maximumStdinWriteBytes: number
     maximumOutputBytes: number
@@ -208,6 +212,7 @@ export class DirectLinuxStdioProcessOwner {
     this.ownerId = input.ownerId
     this.processIdentity = Object.freeze({ ...input.processIdentity })
     this.#child = input.child
+    this.#sharedSessions = input.sharedSessions === true
     this.#registry = input.registry
     this.#now = input.now
     this.#readIdentity = input.readProcessIdentity
@@ -222,7 +227,7 @@ export class DirectLinuxStdioProcessOwner {
       input.maximumPromptRuntimeMilliseconds
     this.#maximumOutputQueueChunks = input.maximumOutputQueueChunks
     this.#maximumListeners = input.maximumListeners
-    this.#scheduleDeadline(input.deadlineAt)
+    if (!this.#sharedSessions) this.#scheduleDeadline(input.deadlineAt)
     input.child.stdout.on('data', (chunk: Buffer | Uint8Array) => {
       this.#acceptOutput(chunk)
     })
@@ -245,13 +250,13 @@ export class DirectLinuxStdioProcessOwner {
     }
     if (
       payload.byteLength > this.#maximumStdinWriteBytes ||
-      this.#inputBytes + payload.byteLength > this.#maximumInputBytes ||
+      (!this.#sharedSessions && this.#inputBytes + payload.byteLength > this.#maximumInputBytes) ||
       this.#pendingInputBytes + payload.byteLength > this.#maximumPendingStdinBytes
     ) {
       throw capacityError('Runtime stdin quota reached')
     }
     const copy = Buffer.from(payload)
-    this.#inputBytes += copy.byteLength
+    if (!this.#sharedSessions) this.#inputBytes += copy.byteLength
     this.#pendingInputBytes += copy.byteLength
     const write = this.#writeTail.then(async () => {
       if (this.#closed || this.#stdinClosed || !this.#promptActive) {
@@ -268,6 +273,7 @@ export class DirectLinuxStdioProcessOwner {
   }
 
   beginPrompt(input: { deadlineAt: string; maximumInputBytes: number }): void {
+    if (this.#sharedSessions && !this.#closed && !this.#stdinClosed) return
     if (this.#closed || this.#stdinClosed || this.#promptActive) {
       throw new DirectLinuxStdioProcessOwnerError(
         this.#promptActive ? 'A Runtime prompt is already active' : 'Runtime process is closed',
@@ -293,6 +299,7 @@ export class DirectLinuxStdioProcessOwner {
   }
 
   async completePrompt(): Promise<void> {
+    if (this.#sharedSessions) return
     if (!this.#promptActive) return
     await this.#writeTail
     this.#promptActive = false
@@ -655,6 +662,7 @@ export async function launchDirectLinuxStdioProcessOwner(
         options.listPidNamespaceMembers ?? listLinuxPidNamespaceMembers,
       sendSignal: options.sendSignal ?? process.kill,
       maximumInputBytes,
+      sharedSessions: options.sharedSessions,
       maximumPendingStdinBytes,
       maximumStdinWriteBytes,
       maximumOutputBytes: manifest.limits.maximumPromptOutputBytes,
@@ -975,7 +983,7 @@ function defaultSpawn(
   args: readonly string[],
   options: Parameters<DirectLinuxStdioSpawn>[2]
 ): DirectLinuxStdioChild {
-  return nodeSpawn(executable, [...args], options)
+  return nodeSpawn(executable, [...args], { ...options, stdio: [...options.stdio] })
 }
 
 async function waitForSpawn(

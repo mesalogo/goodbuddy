@@ -16,6 +16,7 @@ import type {
   RemoteOwnedPromptStartResult
 } from '../shared/remote-agent-contracts'
 import type { RuntimeAcpProcessOwner } from './runtime-acp-backend'
+import { AgentAcpConnection } from './agent-acp-connection'
 import {
   SemanticPromptStore,
   SemanticPromptStoreError
@@ -25,9 +26,10 @@ export type AgentOwnedAcpPromptOptions = {
   bindingId: string
   controllerId: string
   workspaceDirectory: string
-  workMode: 'ask' | 'execute'
   expectedModel?: string
   process: RuntimeAcpProcessOwner
+  transport?: AgentAcpConnection
+  prepareSession?: (sessionId: string, operationId: string, workMode: 'ask' | 'execute') => Promise<void>
   transcript: SemanticPromptStore
   completePrompt: (
     operationId: string,
@@ -44,18 +46,18 @@ export type AgentOwnedAcpPromptOptions = {
 }
 
 /**
- * Owns the ACP ClientSideConnection and the original prompt Promise. No
- * transport-connection signal is part of this lifetime.
+ * Owns a native Session and its original prompt Promise. Desktop connection
+ * signals are not part of this lifetime; the native transport may be shared.
  */
 export class AgentOwnedAcpPrompt {
   readonly #options: AgentOwnedAcpPromptOptions
   readonly #connection: ClientSideConnection
-  readonly #input: ReadableStream<Uint8Array>
-  readonly #unsubscribeOutput: () => void
-  readonly #unsubscribeExit: () => void
+  readonly #transport: AgentAcpConnection
+  #unregisterSession?: () => void
   readonly #processExit: Promise<never>
   #sessionId?: string
   #promptPromise?: Promise<void>
+  #promptSettled?: Promise<void>
   #closed = false
   #initialized = false
   readonly #questions = new Map<string, {
@@ -64,56 +66,23 @@ export class AgentOwnedAcpPrompt {
   #acceptQuestions = false
   #active?: {
     operationId: string
+    workMode: 'ask' | 'execute'
   }
 
   constructor(options: AgentOwnedAcpPromptOptions) {
     this.#options = options
-    let controller: ReadableStreamDefaultController<Uint8Array> | undefined
-    let rejectProcessExit!: (error: Error) => void
-    this.#processExit = new Promise<never>((_resolve, reject) => {
-      rejectProcessExit = reject
-    })
-    void this.#processExit.catch(() => undefined)
-    this.#input = new ReadableStream<Uint8Array>({
-      start(value) {
-        controller = value
-      }
-    })
-    const output = new WritableStream<Uint8Array>({
-      write: async (chunk) => {
-        await options.process.writeStdin(chunk)
-      }
-    })
-    const unsubscribe = options.process.subscribeOutput((event) => {
-      if (
-        event.stream === 'stdout' &&
-        event.data.byteLength > 0 &&
-        !this.#closed
-      ) {
-        controller?.enqueue(event.data.slice())
-      }
-    })
-    this.#unsubscribeOutput = unsubscribe ?? (() => undefined)
-    const unsubscribeExit = options.process.subscribeExit?.(() => {
-      if (this.#closed) {
-        return
-      }
-      const error = new Error('ACP Runtime process exited')
-      this.#acceptQuestions = false
-      this.#questions.clear()
-      controller?.error(error)
-      controller = undefined
-      rejectProcessExit(error)
-    })
-    this.#unsubscribeExit = unsubscribeExit ?? (() => undefined)
-    const stream = ndJsonStream(output, this.#input)
-    this.#connection =
-      options.createConnection?.(() => this.#client(), stream) ??
-      new ClientSideConnection(() => this.#client(), stream)
+    this.#transport = options.transport ?? new AgentAcpConnection(
+      options.process, () => this.#client(), options.createConnection
+    )
+    this.#connection = this.#transport.connection
+    this.#processExit = this.#transport.exited
   }
 
+  get sessionId(): string | undefined { return this.#sessionId }
+
   async start(
-    request: RemoteOwnedPromptStartRequest
+    request: RemoteOwnedPromptStartRequest,
+    workMode: 'ask' | 'execute'
   ): Promise<RemoteOwnedPromptStartResult> {
     if (
       request.bindingId !== this.#options.bindingId
@@ -142,7 +111,7 @@ export class AgentOwnedAcpPrompt {
 
     if (!this.#initialized) {
       const initialization = await this.#whileProcessAlive(
-        this.#connection.initialize({
+        this.#transport.initialize({
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: {
             terminal: false,
@@ -170,7 +139,7 @@ export class AgentOwnedAcpPrompt {
             })
           )
         } else if (
-          initialization.agentCapabilities?.sessionCapabilities?.resume === true
+          initialization.agentCapabilities?.sessionCapabilities?.resume != null
         ) {
           await this.#whileProcessAlive(
             this.#connection.resumeSession({
@@ -210,6 +179,7 @@ export class AgentOwnedAcpPrompt {
           throw new Error('ACP Runtime did not select the prepared model')
         }
       }
+      this.#unregisterSession = this.#transport.register(this.#sessionId!, this.#client())
       this.#initialized = true
     } else if (
       request.acpSessionId !== undefined &&
@@ -217,8 +187,10 @@ export class AgentOwnedAcpPrompt {
     ) {
       throw new Error('ACP session identity cannot change within a binding')
     }
+    await this.#options.prepareSession?.(this.#sessionId!, request.operationId, workMode)
     this.#active = {
-      operationId: request.operationId
+      operationId: request.operationId,
+      workMode
     }
     this.#acceptQuestions = true
     const begun = this.#options.transcript.begin({
@@ -229,13 +201,14 @@ export class AgentOwnedAcpPrompt {
     })
     // Keep this exact Promise alive on Agent. The caller receives only the
     // durable operation identity and may disconnect immediately.
-    this.#promptPromise = this.#whileProcessAlive(
+    const promptOperation = this.#whileProcessAlive(
       this.#connection.prompt({
-          sessionId: this.#sessionId,
+          sessionId: this.#sessionId!,
           prompt: request.prompt
         })
     )
-      .then(
+    this.#promptSettled = promptOperation.then(() => undefined, () => undefined)
+    this.#promptPromise = promptOperation.then(
         async (response) => {
           const proposed =
             response.stopReason === 'cancelled'
@@ -303,6 +276,17 @@ export class AgentOwnedAcpPrompt {
 
   close(): void {
     this.#clear()
+  }
+
+  async releaseSession(): Promise<void> {
+    await this.cancel()
+    if (this.#sessionId && !this.#closed) {
+      await this.#connection.closeSession({ sessionId: this.#sessionId })
+    }
+    // Wait for the original native Prompt, not its completion callback, which
+    // may be queued behind the caller's backend control operation.
+    await this.#promptSettled
+    this.close()
   }
 
   async respondToQuestion(request: RemoteQuestionResponse): Promise<void> {
@@ -384,14 +368,15 @@ export class AgentOwnedAcpPrompt {
   #handlePermission(
     request: RequestPermissionRequest
   ): RequestPermissionResponse {
+    const active = this.#requireActive()
     const selected =
-      this.#options.workMode === 'execute'
-        ? request.options.find((option) => option.kind === 'allow_always') ??
-          request.options.find((option) => option.kind === 'allow_once')
-        : request.toolCall.kind === 'read'
+      active.workMode === 'execute'
+        ? request.options.find((option) => option.kind === 'allow_once') ??
+          request.options.find((option) => option.kind === 'allow_always')
+        : request.toolCall.kind === 'read' || request.toolCall.kind === 'search'
           ? request.options.find((option) => option.kind === 'allow_once')
-          : request.options.find((option) => option.kind === 'reject_always') ??
-            request.options.find((option) => option.kind === 'reject_once')
+          : request.options.find((option) => option.kind === 'reject_once') ??
+            request.options.find((option) => option.kind === 'reject_always')
     const response: RequestPermissionResponse =
       selected === undefined
         ? { outcome: { outcome: 'cancelled' } }
@@ -403,7 +388,7 @@ export class AgentOwnedAcpPrompt {
           }
     this.#options.transcript.append({
       bindingId: this.#options.bindingId,
-      operationId: this.#requireActive().operationId,
+      operationId: active.operationId,
       kind: 'permission-decision',
       payload: {
         sessionId: request.sessionId,
@@ -434,15 +419,15 @@ export class AgentOwnedAcpPrompt {
     this.#closed = true
     this.#acceptQuestions = false
     this.#questions.clear()
-    this.#unsubscribeOutput()
-    this.#unsubscribeExit()
+    this.#unregisterSession?.()
+    if (!this.#options.transport) this.#transport.dispose()
   }
 
   async #whileProcessAlive<T>(operation: Promise<T>): Promise<T> {
     return await Promise.race([operation, this.#processExit])
   }
 
-  #requireActive(): NonNullable<AgentOwnedAcpPrompt['#active']> {
+  #requireActive(): { operationId: string; workMode: 'ask' | 'execute' } {
     if (this.#active === undefined) {
       throw new Error('ACP notification has no active prompt')
     }

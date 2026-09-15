@@ -86,6 +86,9 @@ export type RuntimeConversationCompactOutcome = {
 }
 
 export interface AgentRuntime {
+  /** A workspace facade whose sessions are owned by a shared local Runtime. */
+  readonly sharedProcess?: boolean
+  readonly hasRetainedSessions?: boolean
   readonly runtimeId?: AgentRuntimeStatus['id']
   readonly requiresToolApproval: boolean
   readonly supportsToolExecution: boolean
@@ -94,7 +97,7 @@ export interface AgentRuntime {
   readonly capability?: 'chat' | 'image-generation'
   getStatus(): Promise<AgentRuntimeStatus>
   testConnection?(): Promise<AgentRuntimeStatus>
-  getNativeSnapshot?(): Promise<RuntimeNativeSnapshot>
+  getNativeSnapshot?(workspace?: string): Promise<RuntimeNativeSnapshot>
   compactConversation?(
     request: RuntimeConversationCompactInput,
     signal: AbortSignal
@@ -132,6 +135,8 @@ export type RemoteRecoveredSubagent =
   ConversationSubagentActivity
 
 export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
+  /** Resolved Main-side workspace, never taken from the current UI selection. */
+  executionWorkspace?: string
   workMode?: WorkMode
   images?: AgentImage[]
   imageContextNotice?: ConversationMessage['imageContextNotice']
