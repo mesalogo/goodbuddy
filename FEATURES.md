@@ -8,8 +8,11 @@ otherwise.
 
 ## Status
 
-- [x] Available
-- [ ] In development or planned, as described by the item
+- [x] Completed
+- [ ] To implement
+
+Status describes implementation, not publication or test coverage. Validation
+records are listed separately and do not introduce another feature status.
 
 ## Feature Matrix
 
@@ -21,7 +24,7 @@ otherwise.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.13.2. See the
+  releases and automatic updates; no preview is planned for 0.13.5. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -40,8 +43,8 @@ otherwise.
   running conversations and conversations needing attention across projects,
   including older conversations with live work. Anchored project-to-conversation
   menus provide keyboard navigation and exact conversation opening without a
-  full activity dialog. The summary remains visible when idle, and project
-  selection continues to show activity counts.
+  full activity dialog. The summary hides when idle, long conversation submenus
+  scroll independently, and project selection continues to show activity counts.
 - [x] **Compact conversation controls**: Composer options share a compact
   settings panel while Runtime, mode, sending, and queue controls remain
   available. Conversation search has an inline clear action that restores the
@@ -51,6 +54,12 @@ otherwise.
   files into the chat composer with `Ctrl+V` to add attachments, using the same
   parsing progress and limits as the attachment button. Text and screenshot
   paste remain available. See [attachment rules](./docs/features/document-processing/prd.md#321-聊天附件入口).
+- [x] **Text recognition in image-based PPTX files**: With local OCR configured
+  and an OCR-enabled parsing workflow, embedded PNG, JPEG, and WebP images are
+  recognized alongside native text, retaining slide locations. OCR releases
+  model memory after 60 seconds without active or queued work and reloads on
+  demand; fast text/index modes still skip OCR. See the
+  [parsing behavior and real-file evidence](./docs/features/document-processing/chat-attachments-technical-design.md).
 - [x] **Per-file workspace diffs**: Changed files expose separate staged and
   unstaged diffs, including deleted, renamed, and untracked files. Refresh
   reloads the selected diff, browsed directory, and expanded directories; more than 50 changes
@@ -79,7 +88,8 @@ otherwise.
   citation metadata. Full-conversation copy uses the same validated
   Preload/Main clipboard path.
 - [x] **Assistant workbar, multiple terminals, and resizable layouts**: The
-  right workbar uses a persistent “+” capability catalog and application tabs.
+  toggle sits beside the theme switch. The right workbar uses a persistent “+”
+  capability catalog and application tabs.
   Task Center and Workspace are permanent singleton tabs; browser tabs are
   independent instances. Task Center can show the current project, global
   tasks, or all projects, and retains the selected scope with the layout.
@@ -121,7 +131,7 @@ otherwise.
   The first upgrade automatically converts existing history and reclaims disk
   space, with visible progress and quit/retry support. Chats, execution details,
   results, and remote event deduplication are preserved; older clients cannot
-  reopen the upgraded database. The 0.13.2 candidate's schema-35 repair also handles
+  reopen the upgraded database. The schema-35 repair released in 0.13.2 also handles
   repeated tool blocks written after upgrading to 0.13.1, without deleting events.
   Terminal tasks release their write caches; duplicate remote replay does not
   rebuild a released cache. See
@@ -137,6 +147,22 @@ otherwise.
   take priority. Missing editing support does not block text-based generation:
   the affected reply shows a quiet footer explaining that reference images were
   not used. See [image generation](./docs/features/image-generation/README.md).
+- [x] **Image tools in the current conversation**:
+  Enable conversation access for an image model to let tool-capable chat models
+  generate images and edit uploads or earlier artifacts in Execute, without a
+  separate conversation or manually switching to an image model. Direct text
+  models, local OpenCode, Continue, DeepSeek Harness, and managed remote OpenCode
+  use the shared service; Runtime assignment is derived from model settings.
+  Requests may incur provider charges and editing requires provider support.
+  See the [implementation and validation records](./docs/features/conversation-media-generation/progress.md).
+- [x] **Cross-project Runtime process reuse**: Compatible local OpenCode and
+  DeepSeek Harness configurations share heavyweight processes; managed OpenCode
+  sessions share a process on the same Host. Project adapters and session
+  workspaces, models, tools, questions, and cancellation stay independently
+  routed. Remote pending questions and task status recover after reconnect or
+  Desktop restart without resending accepted prompts. Requires Desktop `0.13.5`
+  and Agent `0.13.0` together for the new remote behavior. See the
+  [design and measured validation](./docs/features/assistant-workbar/runtime-process-reuse-technical-design.md).
 - [x] **Direct model programming agent**: Local direct text models can run the
   platform Shell in Execute mode and delegate one level of programming
   Subagent work while inheriting the parent request's mode, model, workspace,
@@ -157,7 +183,7 @@ otherwise.
   credential without starting a throwaway server; the explicit settings test,
   native inventory still performs full startup and health checks, then shares
   that execution Runtime with the first real request instead of cold-starting
-  another server. Execution Runtimes remain reusable per project, while local
+  another server. Execution Runtime adapters remain reusable per project, while local
   OpenCode configuration dependencies and content-addressed Skill snapshots are
   shared globally across projects. Session data, tool output, and request-scoped
   MCP state remain isolated. GoodBuddy-managed local OpenCode keeps
@@ -231,7 +257,7 @@ otherwise.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.11.25`, while the current Desktop release candidate is `0.13.2`; formal
+  `0.13.0`, while the current Desktop release candidate is `0.13.5`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -267,7 +293,7 @@ otherwise.
   demand and run a fixed `attach-or-bootstrap`; registered health,
   capabilities, and prompt startup do not scan the full payload. See the
   [design](./docs/features/remote-host/environment-provisioning-technical-design.md).
-- [ ] **Real-Host acceptance for SSH Host environment provisioning**: The
+- **SSH Host environment provisioning validation records**: The
   current source passed isolated Linux x64 package installation, Ask/Execute,
   native subagent external writes, reconnection, and stop/bootstrap.
   The complete Host-card acquisition matrix across GitHub, Beijing mirror,
@@ -462,7 +488,7 @@ otherwise.
   installation validation on Windows x64. Managed Python archive validation
   follows the target filesystem: Linux preserves valid case-distinct paths,
   while every target still rejects exact duplicates and unsafe entries.
-- [ ] **Local tool-execution environment release acceptance**: All six
+- **Local tool-execution environment validation records**: All six
   platform/architecture OSS mirror objects have passed public byte, size, and
   SHA-256 verification. Managed Python remains an on-demand download and does
   not add license files to the Desktop package. Each standard package job uses
@@ -512,7 +538,7 @@ otherwise.
   index, or modify remote content. Bounded cited snippets are retained locally
   with their conversations. See the
   [external knowledge-base PRD](./docs/features/knowledge-base/external-knowledge-prd.md).
-- [ ] **External knowledge-base acceptance**: All three providers have passed
+- **External knowledge-base validation records**: All three providers have passed
   real service, local HTTP MCP, and production-IPC short-answer checks; Dify
   additionally passed the complete App composer-to-answer-and-citation path.
   FastGPT/RAGFlow desktop-specific parameters, complex multi-library answers,
@@ -676,6 +702,9 @@ otherwise.
   (default) or the mirror. Manual checks, startup checks, and the download page
   use the same choice and read only fixed trusted release indexes; GoodBuddy
   does not automatically download or install updates.
+- [x] **Window recovery controls**: Rendering errors show a localized Reload
+  action and renderer crashes offer a native recovery confirmation. Reload may
+  lose unsaved input. See [window recovery](./docs/development/window-recovery.md).
 - [x] **In-app feedback**: About and Updates can submit problems, suggestions,
   or experience feedback with an optional email and one screenshot.
   Diagnostics are not uploaded by default; users can explicitly attach a
@@ -690,18 +719,26 @@ otherwise.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.2` and Agent `0.11.25`, with
+- Current source candidates are Desktop `0.13.5` and Agent `0.13.0`, with
   OpenCode pinned to `1.18.29`. Publication status follows the independent
   Desktop and Agent release channels.
-- Agent `0.11.25` is a maintenance release without standalone remote feature
-  changes, and its packages require Desktop `0.13.2`. The desktop storage repair
-  also works with Agent `0.11.24`; updating Agent is not a substitute for updating Desktop.
-- Candidate acceptance remains separate from version preparation. Current-source
+- Agent `0.13.0` adds remote image-tool integration and shared Runtime processes
+  with conversation recovery fixes. Its packages require Desktop `0.13.5`;
+  update Desktop first, then the Host environment. Node remains `24.19.0`.
+- Validation records remain separate from implementation status. Current-source
   storage validation covers real local and Linux x64 Host tool workloads,
   concurrent projects/conversations, cancellation, and lossless database migration.
-  Windows tool summaries and DeepSeek path handling have real full-App evidence;
-  the release candidate still requires main CI and native release packaging. See the
-  [validation evidence](./docs/features/assistant-workbar/progress.md).
+  Runtime process reuse has real Windows full-App and Linux x64 Host evidence;
+  PPTX OCR and idle-memory release have real Windows file evidence. Image tools
+  have real provider generation/editing and Host transport evidence. Full
+  UI-driven natural-language invocation and local/remote switching are not
+  covered by those records. The candidate still requires main CI and
+  native release packaging. See the [Runtime evidence](./docs/features/assistant-workbar/progress.md)
+  and [image-tool evidence](./docs/features/conversation-media-generation/progress.md).
+- Candidate checks on 2026-09-15 passed: bilingual release notes, `npm test`
+  (4,293 passed, 67 skipped), `npm run typecheck`, and `npm run lint`.
+  This metadata/documentation preparation made no new real model calls and did
+  not rerun Host scenarios or build local production packages.
 - [x] **0BSD open-source license**: Original code can be freely used, copied,
   modified, distributed, and commercialized. Third-party components and
   resources retain their own licenses.
@@ -732,7 +769,7 @@ otherwise.
   artifact API with scoped, expiring, rate-limited, and revocable tokens.
 - [ ] **GoodBuddy Team Hub** (planned): An optional service for organizations,
   RBAC, project sharing, remote Agents, policy distribution, and tenant audit.
-- [ ] **SSH Host and remote execution-space release acceptance**: Host CRUD,
+- **SSH Host and remote execution-space validation records**: Host CRUD,
   Host Key, encrypted credentials, Project UI, Workspace, OpenCode ACP v5,
   Agent-owned Prompt/gateway/transcript, read-only Ask, full-account Execute,
   cancellation, exact detached-Agent reconnection, and release-only

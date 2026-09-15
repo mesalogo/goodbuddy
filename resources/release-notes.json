@@ -2,6 +2,54 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.5",
+      "releasedAt": "2026-09-15",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**聊天生图，无需切换模型**：生图模块现在可作为 MCP 能力，供支持工具调用的聊天模型使用，无需另开会话或手动切换到图片模型。在当前对话中即可要求 AI 生成图片、修改上传图片或继续调整之前的成果，图片和生成状态直接显示在原会话中。",
+            "**复制文件，直接粘贴为附件**：在文件管理器中复制一个或多个支持的本地文件后，直接粘贴到聊天输入框即可添加附件。读取和解析进度清晰可见，失败时保留草稿与已有附件，文本和截图仍可照常粘贴。"
+          ],
+          "fixes": [
+            "**图片型 PPTX 也能读取文字**：配置本地 OCR 并选择启用 OCR 的解析方式后，可识别幻灯片内嵌图片中的文字，解决图片型 PPTX 无法提取内容的问题。识别结果保留幻灯片定位，原有文字也会一并保留。",
+            "**识别结束后释放内存**：本地 OCR 在没有正在执行或排队的识别任务时，空闲 60 秒后自动释放模型运行内存。连续解析会复用模型，下次使用时自动重新加载。",
+            "**多项目运行更省资源**：多个项目使用兼容配置时，本地 OpenCode、DeepSeek Harness 和托管远程 OpenCode 可分别复用各自的底层进程，减少重复启动和内存占用。不同会话仍可并行工作，停止其中一个不会连带停止其他会话。",
+            "**远程对话恢复更连贯**：修复断线、桌面重启或配置更新后，远程待答问题和任务状态恢复不一致的问题。需要重试时，可直接在对应项目的菜单中操作。",
+            "**项目菜单和工作栏更顺手**：长会话列表独立滚动，不再撑高项目菜单；没有会话活动时自动隐藏摘要。工作栏开关移到明暗主题按钮旁，不再悬浮遮挡内容。",
+            "**魔法笔记自动同步显示**：AI 或 MCP 修改笔记后，已打开的笔记页面会自动刷新，无需手动重新打开。刷新保留当前选择和未保存草稿。",
+            "**窗口异常时可以直接恢复**：界面渲染失败时提供“重新加载”入口，渲染进程崩溃时弹出恢复提示。重新加载可能丢失未保存的输入。"
+          ],
+          "notices": [
+            "聊天生图需先为图片模型开启会话调用，并在 **Execute 模式**使用；支持直连文本模型、本地 OpenCode、Continue、DeepSeek Harness 和托管远程 OpenCode。生成和编辑可能产生图片服务费用，参考图编辑需要服务商支持。",
+            "远程用户请先升级至 **GoodBuddy 0.13.5**，再更新 Host 上的 **Agent 0.13.0**。远程项目仍为技术预览，Ask/Execute 权限不变。",
+            "提供 Windows、macOS、Linux 的 x64 和 arm64 标准桌面安装包，本次不构建 LoongArch 实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Create images without switching chat models**: Image generation is now available as an MCP capability to tool-capable chat models, without opening another conversation or manually switching to an image model. Ask AI to create an image, edit an upload, or refine an earlier result, with images and generation status shown in the same conversation.",
+            "**Paste files directly into chat**: Copy one or more supported local files in your file manager and paste them into the composer to attach them. Reading and parsing progress is shown, failures preserve your draft and existing attachments, and text and screenshot paste continue to work."
+          ],
+          "fixes": [
+            "**Read text from image-based PowerPoint files**: With local OCR configured and an OCR-enabled parsing mode selected, GoodBuddy can recognize text in embedded slide images instead of rejecting image-only PPTX files. Results retain slide locations alongside the original text.",
+            "**Release memory after text recognition**: Local OCR releases its model memory after 60 idle seconds when no recognition tasks are running or queued. Consecutive tasks reuse the model, and it reloads automatically when needed again.",
+            "**Use fewer resources across projects**: With compatible configurations, local OpenCode, DeepSeek Harness, and managed remote OpenCode each reuse their underlying processes to reduce duplicate startup and memory use. Conversations can still run in parallel, and stopping one does not stop the others.",
+            "**Resume remote conversations more reliably**: Fixed inconsistent recovery of pending questions and task status after disconnection, Desktop restart, or configuration changes. Retry actions are available in the affected project’s menu.",
+            "**Smoother project menus and workbar access**: Long conversation lists scroll independently without stretching the project menu, and the activity summary hides when idle. The workbar toggle now sits beside the theme switch instead of floating over content.",
+            "**Keep Magic Notes up to date**: The open notes page refreshes automatically after AI or MCP edits, without needing to reopen it. Your selection and unsaved drafts are preserved.",
+            "**Recover directly from window errors**: Rendering failures show a Reload action, and renderer-process crashes display a recovery prompt. Reloading may lose unsaved input."
+          ],
+          "notices": [
+            "Enable conversation access for an image model and use **Execute mode** for in-chat image tools. Supported runtimes are direct text models, local OpenCode, Continue, DeepSeek Harness, and managed remote OpenCode; image requests may incur provider charges, and reference-image editing requires provider support.",
+            "Remote users should upgrade to **GoodBuddy 0.13.5** before updating Hosts to **Agent 0.13.0**. Remote projects remain a technical preview, with unchanged Ask/Execute permissions.",
+            "Standard desktop packages cover Windows, macOS, and Linux on x64 and arm64. No LoongArch experimental preview is included."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.2",
       "releasedAt": "2026-09-14",
       "notes": {
