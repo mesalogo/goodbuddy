@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import { BrowserUrlPolicy, canonicalizeBrowserUrl } from './browser-url-policy'
 import {
   BrowserNavigationStoppedError,
@@ -15,6 +16,8 @@ type HarnessSlot = {
   approvedOrigin?: string
   emitLoading(isLoading: boolean): void
   emitNavigation(url: string): void
+  openPopup(session: BrowserSessionLike, ready?: Promise<void>): boolean
+  destroy(): void
   session: BrowserSessionLike
   driver: BrowserDriverLike
 }
@@ -54,14 +57,22 @@ function createHarness(options: {
   const createSession = vi.fn(async (): Promise<BrowserSessionLike> => {
     await options.sessionGate
     const slot = {} as HarnessSlot
+    const events = new EventEmitter()
+    let destroyed = false
     const webContents = {
+      on: events.on.bind(events),
+      off: events.off.bind(events),
+      isDestroyed: () => destroyed,
       getURL: () => slot.currentUrl ?? `${slot.currentOrigin}/page`
     } as BrowserWebContents
     const loadingListeners = new Set<(isLoading: boolean) => void>()
     const navigationListeners = new Set<(url: string) => void>()
     let isLoading = false
+    let popupHandler: Parameters<NonNullable<BrowserSessionLike['setPopupHandler']>>[0]
+    let canOpenPopup: () => boolean
     const session: BrowserSessionLike = {
       webContents,
+      setPopupHandler: (handler, canOpen) => { popupHandler = handler; canOpenPopup = canOpen },
       approveNavigation: vi.fn((target) => {
         slot.approvedOrigin = target.origin
       }),
@@ -126,6 +137,12 @@ function createHarness(options: {
     Object.assign(slot, {
       session,
       driver,
+      openPopup: (popup: BrowserSessionLike, ready = Promise.resolve()) => {
+        if (!canOpenPopup()) return false
+        popupHandler(() => ({ session: popup, ready }))
+        return true
+      },
+      destroy: () => { destroyed = true; events.emit('destroyed') },
       emitLoading: (loading: boolean) => {
         isLoading = loading
         for (const listener of loadingListeners) {
@@ -168,6 +185,56 @@ afterEach(() => {
 })
 
 describe('BrowserService', () => {
+  it('adopts click popups with ownership and releases script-closed tabs without closing the opener', async () => {
+    const harness = createHarness()
+    const signal = new AbortController().signal
+    const states: BrowserLiveState[] = []
+    harness.service.onState((state) => states.push(state))
+    try {
+      await harness.service.navigate('conversation', 'https://example.com/', signal, undefined, 21)
+      const opener = harness.slots[0]!
+      const openerTab = harness.service.listTabs('conversation')[0]!
+      const popupSession = await harness.createSession()
+      const popup = harness.slots[1]!
+      popup.currentUrl = 'https://popup.example/'
+      popup.currentOrigin = 'https://popup.example'
+      const ready = deferred<void>()
+      vi.mocked(opener.driver.click).mockImplementation(async () => {
+        expect(opener.openPopup(popupSession, ready.promise)).toBe(true)
+      })
+      const click = harness.service.click('conversation', 'b_link', signal, openerTab.tabId)
+      await vi.waitFor(() => expect(harness.service.getTabCount()).toBe(2))
+      ready.resolve()
+      const opened = await click
+      expect(opened).toMatchObject({ url: 'https://popup.example/', workbarInstanceId: expect.any(String) })
+      expect(states.find((state) => state.tabId === opened!.tabId)).toMatchObject({ openerTabId: openerTab.tabId, ownerWindowId: 21 })
+      await harness.service.snapshot('conversation', signal, opened!.tabId)
+      popup.destroy()
+      await vi.waitFor(() => expect(popupSession.dispose).toHaveBeenCalledOnce())
+      expect(harness.service.listTabs('conversation').map((tab) => tab.tabId)).toEqual([openerTab.tabId])
+      expect(opener.session.dispose).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(states.at(-1)).toMatchObject({ status: 'stopped', openerTabId: openerTab.tabId }))
+    } finally { await harness.service.dispose() }
+  })
+
+  it('counts pending popups against capacity and cleans up initialization after conversation close', async () => {
+    const harness = createHarness({ maximumTabsPerConversation: 2 })
+    const signal = new AbortController().signal
+    try {
+      await harness.service.navigate('conversation', 'https://example.com/', signal)
+      const opener = harness.slots[0]!
+      const popupSession = await harness.createSession()
+      harness.slots[1]!.currentUrl = 'about:blank'
+      const ready = deferred<void>()
+      expect(opener.openPopup(popupSession, ready.promise)).toBe(true)
+      expect(opener.openPopup(popupSession)).toBe(false)
+      await harness.service.releaseConversation('conversation')
+      ready.resolve()
+      await vi.waitFor(() => expect(popupSession.dispose).toHaveBeenCalledOnce())
+      expect(harness.service.getTabCount()).toBe(0)
+      expect(opener.openPopup(popupSession)).toBe(false)
+    } finally { await harness.service.dispose() }
+  })
   const firstLeaseToken = '7d201980-0ad4-4670-81d4-dc2bf79f03b2'
   const secondLeaseToken = 'db8a2c28-43a6-4aab-93e0-1c01b9374dca'
   const workbarInstanceId = '0387bd61-3a12-40ce-98d7-ef5d14cc8251'

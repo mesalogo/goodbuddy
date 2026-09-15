@@ -153,9 +153,38 @@ Conversation 归属，不新建租约或把页面重新归属到子级对话。
 单次工具取消信号、Tab 使用租约信号和请求信号，取消一次工具调用不终止后续调用。
 
 该阶段 MCP transport、endpoint 和 token 生命周期不变，只扩展服务端 capability 内容和内部
-路由。工具调用使用当前请求绑定的 Tab，只有上述显式导航恢复会更换绑定。
+路由。工具调用使用当前请求绑定的 Tab；显式导航恢复和下述点击开窗会更换绑定。
 
-### 6.2 Agent 多 Tab 阶段
+### 6.2 Page-created tabs
+
+`target="_blank"` and `window.open` create managed `WebContentsView` tabs through Electron's
+`setWindowOpenHandler.createWindow`. Chromium retains the original request and opener relationship,
+including a blank window followed by a script-assigned location. These tabs share the Conversation
+partition, proxy and permission restrictions. HTTP(S) URL checks remain in the session and filtering
+proxy; `about:blank` is permitted only as the initial empty popup. Unsupported URL schemes remain denied.
+
+BrowserService reserves capacity before creating the native view, assigns a new Tab/workbar identity,
+and owns initialization, the Driver and cleanup. Initialization failure or Conversation disposal releases
+the popup. Closing the opener leaves an already created popup alive. A popup's `window.close()` releases
+its service slot and usage leases; Renderer removes its workbar instance and returns to the opener when
+it is still available. No separate unmanaged BrowserWindow is created.
+
+Live state includes `openerTabId`. A popup from the visible browser is selected even when the active chat
+has switched to a different Conversation. Other workbar panels and viewport occlusion rules retain their
+existing behavior. The existing workbar capacity notification still applies when all 32 slots are occupied.
+
+During `browser_click`, the service collects popup registrations from that Tab and waits for their
+initialization. The result identifies the last created popup. BrowserModelTools binds subsequent tools to
+that Tab and asks the model to obtain new references with `browser_snapshot`; the MCP gateway also replaces
+its capability binding and usage lease. Switching visible tabs does not alter this binding. Closing the
+popup retains the existing explicit `browser_navigate` recovery behavior. A page may still be loading
+when the click returns. Popups requested asynchronously after the click has completed are displayed as
+managed tabs, but are not attributed to that completed tool call.
+
+The remote ACP Runtime exposes its separately scoped image MCP server, not this desktop browser gateway;
+this change does not add browser access to the deployed GoodBuddy Agent.
+
+### 6.3 Agent 多 Tab 阶段
 
 只有明确需要 Agent 管理多个页面时，才增加：
 

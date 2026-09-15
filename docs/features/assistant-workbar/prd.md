@@ -230,7 +230,7 @@ Runtime
 从当前聊天右栏迁移时，Task Center 和工作区作为默认打开、单实例且不可关闭的基础应用保留；
 浏览器保留一个默认打开实例，但注册为可关闭的多实例应用；成果保持默认打开、单实例且可
 关闭；终端不默认打开，由用户通过“+”创建，并从首期开始支持多实例。Tab 必须单行横向滚动，
-不能自动隐藏或缩写到不可辨认，“+”不能随滚动消失。Task Center 继续作为 Task 的现有
+不能自动隐藏或缩写到不可辨认，“+”紧随最后一个 Tab 并随标签滚动，溢出时两端提供固定滚动箭头。Task Center 继续作为 Task 的现有
 入口；审批定位到所属 Task 或 Runtime。智能心跳不作为工作栏页签，其报告、建议、历史和
 完整配置统一归属“智能心跳”菜单入口。当前阶段不新增独立自动化中心。
 
@@ -456,6 +456,12 @@ Renderer 不接收任意系统 PID 控制能力。控制动作引用 Main 签发
 符号链接边界检查。Renderer 只能提交受约束的相对路径和已授权范围 ID。
 
 ### 7.7 浏览器
+
+Page requests made with `target="_blank"` or `window.open` open managed browser tabs in the same
+Conversation. A popup from the visible page becomes visible in the workbar; closing it from page script
+removes that popup tab. When an Agent click opens a new tab, subsequent browser tools follow that page
+and obtain fresh element references. Detailed lifecycle and routing rules are defined in
+[Page-created tabs](./browser-tabs-technical-design.md#62-page-created-tabs).
 
 浏览器是可关闭的多实例应用。升级后的默认布局保留一个浏览器实例；用户从“+”目录选择
 浏览器时每次创建新的 Browser Tab。每个实例必须显示可区分的标题和绑定 Conversation，

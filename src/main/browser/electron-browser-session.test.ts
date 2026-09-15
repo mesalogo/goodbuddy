@@ -25,7 +25,7 @@ function createHarness() {
   const partitionEvents = new EventEmitter()
   let currentUrl = ''
   let loadingMainFrame = false
-  let openHandler: ((details: { url: string }) => { action: 'deny' }) | undefined
+  let openHandler: Parameters<BrowserWebContents['setWindowOpenHandler']>[0] | undefined
   const sendCommand = vi.fn(async () => ({}))
   const capturedImage = {
     getSize: () => ({ width: 1_280, height: 800 }),
@@ -150,6 +150,48 @@ function createHarness() {
 }
 
 describe('ElectronBrowserSession', () => {
+  it('creates native popups in the sandboxed shared partition and rejects unsupported URLs', async () => {
+    const opener = createHarness()
+    const child = createHarness()
+    opener.window.createPopupView = vi.fn(() => child.window)
+    const session = await ElectronBrowserSession.create({
+      policy: opener.policy, createPartition: async () => opener.partition,
+      createView: async () => opener.window, createProxy: () => opener.proxy
+    })
+    let popup: ElectronBrowserSession | undefined
+    let ready: Promise<void> | undefined
+    session.setPopupHandler((create) => {
+      const created = create()
+      popup = created.session
+      ready = created.ready
+    }, () => true)
+    try {
+      for (const url of ['file:///secret', 'javascript:alert(1)', 'data:text/html,hello']) {
+        expect(opener.getOpenHandler()!({ url })).toEqual({ action: 'deny' })
+      }
+      const response = opener.getOpenHandler()!({ url: 'https://example.com/popup' })
+      expect(response).toMatchObject({ action: 'allow', outlivesOpener: true,
+        overrideBrowserWindowOptions: { webPreferences: {
+          partition: session.partition, sandbox: true, contextIsolation: true,
+          nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false
+        } }
+      })
+      expect(response.createWindow!(response.overrideBrowserWindowOptions!)).toBe(child.webContents)
+      expect(child.getOpenHandler()).toBeDefined()
+      const preventDefault = vi.fn()
+      child.contentEvents.emit('will-navigate', { preventDefault }, 'file:///secret')
+      expect(preventDefault).toHaveBeenCalledOnce()
+      await ready
+      expect(popup!.partition).toBe(session.partition)
+      await session.dispose()
+      expect(opener.partition.clearData).not.toHaveBeenCalled()
+      await popup!.dispose()
+      expect(opener.partition.clearData).toHaveBeenCalledOnce()
+    } finally {
+      await popup?.dispose()
+      await session.dispose()
+    }
+  })
   it('creates an isolated sandboxed partition and denies privileged capabilities', async () => {
     const harness = createHarness()
     const createView = vi.fn(async (options: Record<string, unknown>) => {

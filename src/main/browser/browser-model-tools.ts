@@ -373,6 +373,10 @@ export class BrowserModelTools {
     }
   }
 
+  getBoundTabId(): BrowserTabId {
+    return this.browserTabId
+  }
+
   private async callBoundTool(
     name: BrowserToolName,
     argumentsValue: Record<string, unknown>,
@@ -403,12 +407,21 @@ export class BrowserModelTools {
     }
     if (name === 'browser_click') {
       const input = browserClickInputSchema.parse(argumentsValue)
-      await this.service.click(
+      const opened = await this.service.click(
         this.conversationId,
         input.ref,
         signal,
         browserTabId
       )
+      if (opened) {
+        this.browserTabId = opened.tabId
+        return createTextResult({
+          clicked: input.ref,
+          openedTabId: opened.tabId,
+          url: opened.url ?? 'about:blank',
+          message: '已切换到新标签页。请调用 browser_snapshot 获取新页面引用；旧页面引用不可复用。'
+        })
+      }
       return createTextResult({ clicked: input.ref })
     }
     if (name === 'browser_type') {

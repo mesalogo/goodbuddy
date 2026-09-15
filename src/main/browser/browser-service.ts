@@ -45,6 +45,10 @@ export type BrowserSessionLike = {
     target: Awaited<ReturnType<BrowserUrlPolicy['validate']>>
   ): void
   createTab?(signal: AbortSignal): Promise<BrowserSessionLike>
+  setPopupHandler?(
+    handler: (create: () => { session: BrowserSessionLike; ready: Promise<void> }) => void,
+    canOpen: () => boolean
+  ): void
   getCurrentOrigin(): string | undefined
   isLoading(): boolean
   onLoadingChange(listener: (isLoading: boolean) => void): () => void
@@ -108,6 +112,9 @@ type BrowserTabSlot = {
   stopLoadingRequested: boolean
   removeLoadingListener: () => void
   removeNavigationListener: () => void
+  removeCloseListener: () => void
+  popupOperations?: Promise<BrowserTabSummary>[]
+  openerTabId?: BrowserTabId
   released: boolean
   workbarInstanceId?: string
   usageLeases: Map<symbol, {
@@ -360,6 +367,9 @@ export class BrowserService {
     const state: BrowserLiveState = {
       conversationId: tab.conversationId,
       tabId: tab.tabId,
+      ...((current?.openerTabId ?? previous?.openerTabId)
+        ? { openerTabId: current?.openerTabId ?? previous?.openerTabId }
+        : {}),
       ...((tab.workbarInstanceId ?? current?.workbarInstanceId ?? previous?.workbarInstanceId)
         ? { workbarInstanceId: tab.workbarInstanceId ?? current?.workbarInstanceId ?? previous?.workbarInstanceId }
         : {}),
@@ -496,10 +506,42 @@ export class BrowserService {
       stopLoadingRequested: false,
       removeLoadingListener: () => undefined,
       removeNavigationListener: () => undefined,
+      removeCloseListener: () => undefined,
       released: false,
       usageLeases: new Map(),
       ...(workbarInstanceId ? { workbarInstanceId } : {})
     }
+    session.setPopupHandler?.((create) => {
+      const context = this.conversations.get(conversationId)!
+      const releaseReservation = this.reserveTab(conversationId, context.ownerWindowId)
+      let popup: ReturnType<typeof create>
+      try {
+        popup = create()
+      } catch (error) {
+        releaseReservation()
+        throw error
+      }
+      const operation = this.adoptPopup(context, popup.session, popup.ready, tab.tabId).finally(releaseReservation)
+      tab.popupOperations?.push(operation)
+      void operation.catch((error: unknown) => {
+        if (this.hasTab(tab)) this.emitFailure(tab, '打开浏览器新标签页', error)
+      })
+    }, () => {
+      if (!this.hasTab(tab) || this.clearing || this.disposed) return false
+      try {
+        this.assertTabCapacity(this.conversations.get(conversationId), this.getOwnerWindowId(conversationId))
+        return true
+      } catch (error) {
+        this.emitFailure(tab, '打开浏览器新标签页', error)
+        return false
+      }
+    })
+    const closed = (): void => {
+      const context = this.conversations.get(conversationId)
+      if (context && this.hasTab(tab)) void this.releaseTab(context, tab).catch(() => undefined)
+    }
+    session.webContents.on?.('destroyed', closed)
+    tab.removeCloseListener = () => { session.webContents.off?.('destroyed', closed) }
     tab.removeLoadingListener = session.onLoadingChange((isLoading) => {
       if (!isLoading) tab.stopLoadingRequested = false
       if (tab.released || tab.isLoading === isLoading || !this.hasTab(tab)) return
@@ -534,6 +576,40 @@ export class BrowserService {
       }) ?? (() => undefined)
     if (conversation) conversation.tabs.set(tabId, tab)
     return tab
+  }
+
+  private async adoptPopup(
+    conversation: BrowserConversationSlot,
+    session: BrowserSessionLike,
+    ready: Promise<void>,
+    openerTabId: BrowserTabId
+  ): Promise<BrowserTabSummary> {
+    const tabId = createTabId()
+    let tab: BrowserTabSlot | undefined
+    void ready.catch(() => undefined)
+    try {
+      tab = await this.createTabSlot(conversation, conversation.conversationId, session, tabId, tabId)
+      tab.openerTabId = openerTabId
+      conversation.ownedTabs.set(tabId, tabId)
+      if (conversation.released || session.webContents.isDestroyed()) throw new Error('浏览器会话已关闭')
+      this.emitState(tab, 'ready')
+      this.applyViewport()
+      await waitFor(ready, AbortSignal.any([this.lifecycle.signal, conversation.lifecycle.signal]))
+      if (!this.hasTab(tab)) throw new Error('浏览器标签页已关闭')
+      const url = session.webContents.getURL()
+      if (url && url !== 'about:blank') {
+        const target = await this.policy.validateRedirect(url, conversation.lifecycle.signal)
+        session.approveNavigation(target)
+        tab.origin = target.origin
+        await this.refreshNavigationState(tab, conversation.lifecycle.signal)
+      }
+      this.touchConversation(conversation.conversationId)
+      return this.summarizeTab(tab)
+    } catch (error) {
+      if (tab) await this.releaseTab(conversation, tab).catch(() => undefined)
+      else await session.dispose().catch(() => undefined)
+      throw error
+    }
   }
 
   private hasTab(tab: BrowserTabSlot): boolean {
@@ -641,6 +717,7 @@ export class BrowserService {
     if (signal.aborted || !hasWaiters() || this.releaseRequests.has(conversationId)) {
       tab.removeLoadingListener()
       tab.removeNavigationListener()
+      tab.removeCloseListener()
       tab.driver.dispose()
       await boundedCleanup(session.dispose(), this.cleanupTimeoutMs)
       throw signal.reason ?? new Error('浏览器会话创建已取消')
@@ -1087,11 +1164,19 @@ export class BrowserService {
     }, tabId, ownerWindowId)
   }
 
-  async click(conversationId: string, ref: string, signal: AbortSignal, tabId?: BrowserTabId, ownerWindowId?: number): Promise<void> {
-    await this.runInTab(conversationId, signal, 'acting', true, '浏览器点击', async (tab, effectiveSignal) => {
+  async click(conversationId: string, ref: string, signal: AbortSignal, tabId?: BrowserTabId, ownerWindowId?: number): Promise<BrowserTabSummary | void> {
+    return this.runInTab(conversationId, signal, 'acting', true, '浏览器点击', async (tab, effectiveSignal) => {
       await this.verifyCurrentOriginOrRelease(tab)
-      await tab.driver.click(ref, effectiveSignal)
-      await this.refreshNavigationState(tab, effectiveSignal)
+      const popups: Promise<BrowserTabSummary>[] = []
+      tab.popupOperations = popups
+      try {
+        await tab.driver.click(ref, effectiveSignal)
+        await this.refreshNavigationState(tab, effectiveSignal)
+        const opened = await waitFor(Promise.all(popups), effectiveSignal)
+        return opened.at(-1)
+      } finally {
+        tab.popupOperations = undefined
+      }
     }, tabId, ownerWindowId)
   }
 
@@ -1295,6 +1380,7 @@ export class BrowserService {
     conversation.tabs.delete(tab.tabId)
     tab.removeLoadingListener()
     tab.removeNavigationListener()
+    tab.removeCloseListener()
     tab.active?.controller.abort(new Error('浏览器会话已释放'))
     for (const lease of tab.usageLeases.values()) {
       lease.controller.abort(new Error('浏览器标签页使用租约已终止'))

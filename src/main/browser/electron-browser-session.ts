@@ -36,7 +36,12 @@ export type BrowserWebContents = {
   on(event: string, listener: BrowserEventListener): unknown
   off(event: string, listener: BrowserEventListener): unknown
   setWindowOpenHandler(
-    handler: (details: { url: string }) => { action: 'deny' }
+    handler: (details: { url: string }) => {
+      action: 'deny' | 'allow'
+      outlivesOpener?: boolean
+      overrideBrowserWindowOptions?: Record<string, unknown>
+      createWindow?: (options: Record<string, unknown>) => BrowserWebContents
+    }
   ): void
   capturePage?(): Promise<BrowserCapturedImage>
   loadURL?(url: string): Promise<unknown>
@@ -51,6 +56,7 @@ export type BrowserWebContents = {
 export type BrowserViewHandle = {
   webContents: BrowserWebContents
   nativeView?: unknown
+  createPopupView?: (options: Record<string, unknown>) => BrowserViewHandle
   setVisible(visible: boolean): void
   setBounds(bounds: BrowserWindowBounds): void
 }
@@ -245,13 +251,17 @@ async function defaultCreateView(
   options: Record<string, unknown>
 ): Promise<BrowserViewHandle> {
   const electron = await import('electron')
-  const view = new electron.WebContentsView(options)
-  view.setVisible(false)
-  return {
-    nativeView: view,
-    webContents: view.webContents as unknown as BrowserWebContents,
-    setVisible: (visible) => view.setVisible(visible),
-    setBounds: (bounds) => view.setBounds(bounds)
+  return createView(options)
+  function createView(options: Record<string, unknown>): BrowserViewHandle {
+    const view = new electron.WebContentsView(options)
+    view.setVisible(false)
+    return {
+      nativeView: view,
+      createPopupView: createView,
+      webContents: view.webContents as unknown as BrowserWebContents,
+      setVisible: (visible) => view.setVisible(visible),
+      setBounds: (bounds) => view.setBounds(bounds)
+    }
   }
 }
 
@@ -264,6 +274,16 @@ export class ElectronBrowserSession {
   private readonly navigationListeners = new Set<(url: string) => void>()
   private loading = false
   private disposed = false
+  private popupHandler?: (create: () => { session: ElectronBrowserSession; ready: Promise<void> }) => void
+  private canOpenPopup?: () => boolean
+
+  setPopupHandler(
+    handler: (create: () => { session: ElectronBrowserSession; ready: Promise<void> }) => void,
+    canOpen: () => boolean
+  ): void {
+    this.popupHandler = handler
+    this.canOpenPopup = canOpen
+  }
 
   private constructor(
     private readonly policy: BrowserUrlPolicy,
@@ -462,7 +482,41 @@ export class ElectronBrowserSession {
     this.listen(contents, 'did-stop-loading', () => {
       this.setLoading(contents.isLoadingMainFrame?.() ?? false)
     })
-    contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    contents.setWindowOpenHandler(({ url }) => {
+      if (this.disposed || !this.view.createPopupView || !this.popupHandler || !this.canOpenPopup?.()) {
+        return { action: 'deny' }
+      }
+      if (url !== 'about:blank') {
+        try { canonicalizeBrowserUrl(url) } catch { return { action: 'deny' } }
+      }
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        overrideBrowserWindowOptions: {
+          webPreferences: {
+            partition: this.partition, sandbox: true, contextIsolation: true,
+            nodeIntegration: false, nodeIntegrationInSubFrames: false,
+            nodeIntegrationInWorker: false, webSecurity: true,
+            allowRunningInsecureContent: false, plugins: false, devTools: false,
+            safeDialogs: true, backgroundThrottling: false
+          }
+        },
+        createWindow: (options) => {
+          let popup!: ElectronBrowserSession
+          this.popupHandler!(() => {
+            this.assertOpen()
+            const view = this.view.createPopupView!(options)
+            this.resources.references += 1
+            popup = new ElectronBrowserSession(this.policy, view, this.resources, this.parentWindow)
+            if (view.nativeView) this.parentWindow?.contentView?.addChildView(view.nativeView)
+            // Install navigation guards synchronously, before Chromium starts the popup request.
+            const ready = boundedSetup(popup.initialize(), new AbortController().signal, this.resources.setupTimeoutMs)
+            return { session: popup, ready }
+          })
+          return popup.webContents
+        }
+      }
+    })
     this.listen(contents, 'will-navigate', (event: { preventDefault(): void }, details: { url?: string } | string) => {
       const url = typeof details === 'string' ? details : details.url
       if (!url || !this.updateOriginFromUrl(url)) {
@@ -494,6 +548,7 @@ export class ElectronBrowserSession {
       callback()
     })
     this.listen(contents, 'did-navigate', (_event: unknown, url: string) => {
+      if (url === 'about:blank') return
       if (url && !this.updateOriginFromUrl(url)) {
         contents.stop()
         return
@@ -742,10 +797,10 @@ export class ElectronBrowserSession {
     for (const { target, event, listener } of this.listeners.splice(0)) {
       target.off(event, listener)
     }
-    if (this.webContents.debugger.isAttached()) {
+    if (!this.webContents.isDestroyed() && this.webContents.debugger.isAttached()) {
       this.webContents.debugger.detach()
     }
-    this.webContents.stop()
+    if (!this.webContents.isDestroyed()) this.webContents.stop()
     this.view.setVisible(false)
     if (this.view.nativeView) {
       this.parentWindow?.contentView?.removeChildView(this.view.nativeView)

@@ -1712,6 +1712,15 @@ export class KnowledgeMcpGateway {
                 browserSignal
               )
               browserSignal.throwIfAborted()
+              const openedTabId = browserTools.getBoundTabId()
+              if (openedTabId !== lease.tabId && capability.browserUsageLease === lease) {
+                const replacement = this.browserService!.acquireTabUsage(
+                  capability.browserConversationId!, openedTabId, capability.requestId
+                )
+                capability.browserTabId = openedTabId
+                capability.browserUsageLease = replacement
+                lease.release()
+              }
               return {
                 content: result.parts.map((part) =>
                   part.type === 'text'

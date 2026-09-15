@@ -1,5 +1,32 @@
 # 工作栏实现与验证进度
 
+## 2026-09-15 Managed browser popups
+
+Implemented [page-created tabs](./browser-tabs-technical-design.md#62-page-created-tabs): native
+Electron popup creation now registers a managed Tab, and click results update direct-tool and MCP
+bindings. Renderer selects a visible opener's popup across chat switches and removes script-closed
+popup instances. Existing worktree changes were retained.
+
+Validation against the current source:
+
+- `npx vitest run src/main/browser src/main/agent/knowledge-mcp-gateway.test.ts src/main/agent/model-tool-provider.test.ts src/renderer/src/RightAssistantSidebar.resize.test.tsx src/shared/contracts.test.ts`: 10 files, 232 tests passed.
+- `node build/run-browser-tabs-electron-e2e.cjs`: passed twice after making the test wait for the shown
+  native view's animation frames before sending mouse input. Real Chromium verified `target=_blank`,
+  `window.open(url)`, blank-then-location, script close, opener close, shared partition, unsupported URL
+  denial, and subsequent direct/MCP snapshots on the popup. No fixed click delay was added to production.
+- `npm run typecheck` and `npm run lint`: passed. `git diff --check`: no whitespace errors.
+- `npm test`: 4319 passed, 67 skipped, 6 failed across 5 files. Failures were Agent offline dependency
+  installation timeout, local Runtime reuse timeout, diagnostic-log writer expectations, two heartbeat
+  migration fixtures with `duplicate column name: pinned`, and an App external knowledge binding test
+  missing the `Remote handbook` heading. The full suite was not green; none of these failures exercise
+  the popup registration or binding path.
+
+The Electron test uses production BrowserService, CDP and MCP with a local HTTP fixture; the workbar
+selection/removal path is covered by the actual Renderer component test. A complete installed-App
+visual test and macOS/Linux native popup checks were not run. No external model calls were made for
+the popup validation. Remote ACP exposes only its scoped image MCP server (`imageMcpServers`), so the
+deployed Agent has no separate affected browser implementation and no remote Host change was needed.
+
 ## 2026-09-15 会话置顶与浮动操作菜单
 
 已核对当前源码差异：置顶经专用 IPC 写入 SQLite，schema 36 迁移保留已有会话；会话操作

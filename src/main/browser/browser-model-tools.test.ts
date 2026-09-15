@@ -48,6 +48,24 @@ const browserTabId = browserTabIdSchema.parse(
 )
 
 describe('BrowserModelTools', () => {
+  it('binds subsequent tools and approval origin to the popup returned by a click', async () => {
+    const service = createService()
+    const popupId = browserTabIdSchema.parse(crypto.randomUUID())
+    vi.mocked(service.click).mockResolvedValue({
+      conversationId: 'conversation', tabId: popupId, workbarInstanceId: popupId,
+      primary: false, status: 'ready', isLoading: false, canGoBack: false,
+      url: 'https://popup.example/', createdAt: 1, updatedAt: 1
+    })
+    const tools = new BrowserModelTools({ service, conversationId: 'conversation', browserTabId })
+    const result = await tools.callTool('browser_click', { ref }, signal)
+    expect(JSON.stringify(result)).toContain(popupId)
+    expect(JSON.stringify(result)).toContain('browser_snapshot')
+    expect(tools.getBoundTabId()).toBe(popupId)
+    await tools.callTool('browser_snapshot', {}, signal)
+    expect(service.snapshot).toHaveBeenLastCalledWith('conversation', signal, popupId)
+    tools.getApproval('browser_snapshot', {})
+    expect(service.getOrigin).toHaveBeenLastCalledWith('conversation', popupId)
+  })
   it('publishes seven strict, bounded builtin tool definitions', () => {
     const tools = new BrowserModelTools({
       service: createService(),

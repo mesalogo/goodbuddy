@@ -7,6 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { KnowledgeService } from '../src/main/knowledge/knowledge-service'
 import { KnowledgeMcpGateway } from '../src/main/agent/knowledge-mcp-gateway'
 import { BrowserService } from '../src/main/browser/browser-service'
+import { BrowserModelTools } from '../src/main/browser/browser-model-tools'
 import type { BrowserLiveState } from '../src/shared/contracts'
 
 const conversationId = 'browser-tabs-electron-e2e'
@@ -29,6 +30,10 @@ async function main(): Promise<void> {
     }
     if (request.url === '/cookie') {
       response.end(page('Cookie page', '<p id="cookie"></p><script>document.querySelector("#cookie").textContent = document.cookie</script>'))
+      return
+    }
+    if (request.url === '/popups') {
+      response.end(page('Popup opener', '<a target="_blank" href="/popup-target">Open target</a><button onclick="window.child=window.open(\'/popup-script\')">Open script</button><button onclick="window.child=window.open();child.location=\'/popup-blank\'">Open blank</button>'))
       return
     }
     response.end(page(request.url === '/mcp' ? 'MCP target' : request.url === '/second' ? 'Second tab' : 'First tab'))
@@ -241,6 +246,79 @@ async function main(): Promise<void> {
     await browser.closeTab(conversationId, second.tabId, window.webContents.id)
     assert.equal(browser.getTabCount(conversationId), 0)
     console.log('Real Electron browser-tab and MCP E2E passed')
+
+    await client.close()
+    client = undefined
+    const opener = await browser.createTab(conversationId, window.webContents.id)
+    await browser.navigate(conversationId, `${origin}/popups`, controller.signal, opener.tabId)
+    browser.setViewport(conversationId, bounds, opener.tabId, 'popup-viewport', window.webContents.id)
+    window.show()
+    const openerContents = webContents.getAllWebContents().find((contents) => contents.getURL() === `${origin}/popups`)
+    assert(openerContents)
+    openerContents.focus()
+    await openerContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    const popupUsage = browser.acquireTabUsage(conversationId, opener.tabId, 'popup-e2e')
+    token = gateway.grant('popup-e2e', [], controller.signal, 'none', undefined, conversationId, opener.tabId, popupUsage)
+    assert(token)
+    client = new Client({ name: 'popup-e2e', version: '1.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } }
+    }))
+    const snapshot = await browser.snapshot(conversationId, controller.signal, opener.tabId)
+    const link = snapshot.nodes.find((node) => node.name === 'Open target')
+    assert(link)
+    const clickResult = await client.callTool({ name: 'browser_click', arguments: { ref: link.ref } })
+    assert.notEqual(clickResult.isError, true, JSON.stringify(clickResult))
+    assert.match(JSON.stringify(clickResult), /openedTabId/u)
+    const popup = browser.listTabs(conversationId).find((tab) => tab.tabId !== opener.tabId)
+    assert(popup)
+    assert.equal(popup.workbarInstanceId, popup.tabId)
+    const popupSnapshot = await client.callTool({ name: 'browser_snapshot', arguments: {} })
+    assert.notEqual(popupSnapshot.isError, true, JSON.stringify(popupSnapshot))
+    assert.match(JSON.stringify(popupSnapshot), /popup-target/u)
+    assert.equal(browser.listTabs(conversationId).find((tab) => tab.tabId === opener.tabId)?.url, `${origin}/popups`)
+    const popupContents = webContents.getAllWebContents().find((contents) => contents.getURL() === `${origin}/popup-target`)
+    assert(popupContents)
+    assert.equal(await popupContents.executeJavaScript('typeof process'), 'undefined')
+    const popupDestroyed = once(popupContents, 'destroyed', { signal: AbortSignal.timeout(5_000) })
+    await popupContents.executeJavaScript('window.close()').catch(() => undefined)
+    await popupDestroyed
+    assert.equal(browser.getTabCount(conversationId), 1)
+    assert.equal((await client.callTool({ name: 'browser_snapshot', arguments: {} })).isError, true)
+    for (const path of ['/popup-script', '/popup-blank']) {
+      const navigation = new Promise<void>((resolve) => {
+        const remove = browser.onState((state) => {
+          if (state.url === `${origin}${path}`) { remove(); resolve() }
+        })
+      })
+      await openerContents.executeJavaScript(path === '/popup-blank'
+        ? `window.child=window.open();child.location='${path}';void 0`
+        : `window.child=window.open('${path}');void 0`)
+      await navigation
+      assert.equal(await openerContents.executeJavaScript('child !== null && !child.closed'), true)
+      const child = webContents.getAllWebContents().find((contents) => contents.getURL() === `${origin}${path}`)
+      assert(child)
+      const destroyedChild = once(child, 'destroyed', { signal: AbortSignal.timeout(5_000) })
+      await openerContents.executeJavaScript('child.close()')
+      await destroyedChild
+      assert.equal(browser.getTabCount(conversationId), 1)
+    }
+    assert.equal(await openerContents.executeJavaScript('window.open("file:///unsupported") === null'), true)
+    assert.equal(browser.getTabCount(conversationId), 1)
+    const directTools = new BrowserModelTools({ service: browser, conversationId, browserTabId: opener.tabId, recoverClosedTab: true })
+    const directSnapshot = await browser.snapshot(conversationId, controller.signal, opener.tabId)
+    const button = directSnapshot.nodes.find((node) => node.name === 'Open script' && node.role === 'button')
+    assert(button)
+    assert.match(JSON.stringify(await directTools.callTool('browser_click', { ref: button.ref }, controller.signal)), /openedTabId/u)
+    assert.match(JSON.stringify(await directTools.callTool('browser_snapshot', {}, controller.signal)), /popup-script/u)
+    const childContents = webContents.getAllWebContents().find((contents) => contents.getURL() === `${origin}/popup-script`)
+    assert(childContents)
+    assert.equal(childContents.session, openerContents.session)
+    await browser.closeTab(conversationId, opener.tabId)
+    assert.equal(childContents.isDestroyed(), false)
+    assert.match(JSON.stringify(await directTools.callTool('browser_snapshot', {}, controller.signal)), /popup-script/u)
+    await browser.releaseConversation(conversationId)
+    console.log('Native target=_blank, window.open(url), blank-then-location, script close, opener close, shared partition, URL denial and direct/MCP popup binding passed')
   } finally {
     if (token) gateway.revoke(token)
     await client?.close().catch(() => undefined)
