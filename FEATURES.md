@@ -47,7 +47,10 @@ otherwise.
   available. Conversation search has an inline clear action that restores the
   scoped list and returns focus to the input.
 - [x] **File, screenshot, window, and clipboard context**: Added to model
-  context only after explicit user selection.
+  context only after explicit user selection. Paste one or more supported local
+  files into the chat composer with `Ctrl+V` to add attachments, using the same
+  parsing progress and limits as the attachment button. Text and screenshot
+  paste remain available. See [attachment rules](./docs/features/document-processing/prd.md#321-聊天附件入口).
 - [x] **Per-file workspace diffs**: Changed files expose separate staged and
   unstaged diffs, including deleted, renamed, and untracked files. Refresh
   reloads the selected diff, browsed directory, and expanded directories; more than 50 changes

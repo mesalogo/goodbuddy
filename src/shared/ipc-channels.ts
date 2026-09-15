@@ -255,6 +255,7 @@ export const ipcChannels = {
   runtimeExtensionsSnapshot: 'runtime-extensions:snapshot',
   runtimeExtensionsApply: 'runtime-extensions:apply',
   contextSelectFiles: 'context:select-files',
+  contextImportFiles: 'context:import-files',
   contextFileSelectionProgress: 'context:file-selection-progress',
   contextAddPastedImage: 'context:add-pasted-image',
   contextCaptureScreen: 'context:capture-screen',

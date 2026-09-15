@@ -300,8 +300,15 @@ export class ContextManager {
       return []
     }
 
+    return this.importFiles(result.filePaths, onProgress)
+  }
+
+  async importFiles(
+    paths: string[],
+    onProgress?: (progress: ContextFileSelectionProgress) => void
+  ): Promise<ContextAttachment[]> {
     const attachments: ContextAttachment[] = []
-    const selectedPaths = result.filePaths.slice(
+    const selectedPaths = paths.slice(
       0,
       maximumAttachmentsPerMessage
     )

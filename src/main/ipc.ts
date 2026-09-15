@@ -44,6 +44,7 @@ import {
   browserStopRequestSchema,
   browserTypeRequestSchema,
   clipboardTextSchema,
+  contextImportFilesSchema,
   conversationQueueUserInputSchema,
   defaultRuntimeSettings,
   knowledgeCreateSchema,
@@ -7566,6 +7567,16 @@ export function registerIpcHandlers(
           ipcChannels.contextFileSelectionProgress,
           progress
         )
+      }
+    })
+  })
+
+  registerHandler(ipcChannels.contextImportFiles, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { paths } = contextImportFilesSchema.parse(input)
+    return contextManager.importFiles(paths, (progress) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(ipcChannels.contextFileSelectionProgress, progress)
       }
     })
   })

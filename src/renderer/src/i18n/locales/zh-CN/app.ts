@@ -416,11 +416,11 @@ export const app = {
     placeholder: '给 GoodBuddy 发消息…',
     imagePlaceholder: '描述你想生成的图片…',
     keyboardHint:
-      'Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本',
+      'Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴文件、图片或文本',
     addContent: '添加内容',
     addAttachment: '添加附件',
     attachmentProgress: {
-      selecting: '正在选择附件…',
+      selecting: '正在添加附件…',
       reading: '正在读取 {{name}}',
       parsing: '正在解析 {{name}}',
       waiting: '选择文件后将自动读取并解析',
@@ -578,6 +578,7 @@ export const app = {
     },
     errors: {
       pasteImageType: '仅支持粘贴 JPEG、PNG 或 WebP 图片',
+      pasteFilePath: '无法读取此剪贴板文件，请保存到本地后通过附件按钮添加',
       pasteImageSize: '粘贴图片不能超过 12MB',
       attachmentLimit: '单次消息最多添加 8 个附件',
       addContext: '添加上下文失败'

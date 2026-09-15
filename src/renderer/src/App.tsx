@@ -7571,7 +7571,7 @@ function App(): React.JSX.Element {
     }
   };
 
-  const selectContextFiles = async (): Promise<void> => {
+  const selectContextFiles = async (paths?: string[]): Promise<void> => {
     if (selectingContextFilesRef.current) {
       return;
     }
@@ -7579,7 +7579,9 @@ function App(): React.JSX.Element {
     setSelectingContextFiles(true);
     setFileSelectionProgress(undefined);
     try {
-      await addContext(() => window.goodbuddy.context.selectFiles());
+      await addContext(() => paths
+        ? window.goodbuddy.context.importFiles(paths)
+        : window.goodbuddy.context.selectFiles());
     } finally {
       selectingContextFilesRef.current = false;
       setSelectingContextFiles(false);
@@ -9452,17 +9454,40 @@ function App(): React.JSX.Element {
                               value={input}
                               onChange={(event) => setInput(event.target.value)}
                               onPaste={(event) => {
-                                const imageItem = Array.from(
-                                  event.clipboardData.items,
-                                ).find(
-                                  (item) =>
-                                    item.kind === "file" &&
-                                    item.type.startsWith("image/"),
-                                );
-                                if (!imageItem) {
+                                const files = Array.from(event.clipboardData.files);
+                                if (files.length > 0) {
+                                  event.preventDefault();
+                                  if (selectingContextFilesRef.current) {
+                                    setContextError(t("composer.attachmentProgress.waitBeforeSending"));
+                                    return;
+                                  }
+                                  if (files.length > 8) {
+                                    setContextError(t("composer.errors.attachmentLimit"));
+                                    return;
+                                  }
+                                  try {
+                                    const paths = files.map((file) => window.goodbuddy.context.getFilePath(file));
+                                    if (paths.some(Boolean)) {
+                                      if (paths.some((path) => !path)) {
+                                        setContextError(t("composer.errors.pasteFilePath"));
+                                        return;
+                                      }
+                                      void selectContextFiles(paths);
+                                      return;
+                                    }
+                                    if (files.some((file) => !file.type.startsWith("image/"))) {
+                                      setContextError(t("composer.errors.pasteFilePath"));
+                                      return;
+                                    }
+                                  } catch (reason) {
+                                    setContextError(reason instanceof Error ? reason.message : t("composer.errors.addContext"));
+                                    return;
+                                  }
+                                }
+                                const image = files.find((file) => file.type.startsWith("image/"));
+                                if (!image) {
                                   return;
                                 }
-                                const image = imageItem.getAsFile();
                                 const mimeType =
                                   image?.type === "image/jpeg" ||
                                   image?.type === "image/png" ||

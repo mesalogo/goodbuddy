@@ -753,6 +753,8 @@ const api: DesktopApi = {
     })),
   },
   context: {
+    getFilePath: vi.fn(() => ""),
+    importFiles: vi.fn(async () => []),
     selectFiles: vi.fn(async () => []),
     onFileSelectionProgress: vi.fn((listener) => {
       fileSelectionProgressListener = listener;
@@ -1586,11 +1588,11 @@ describe("App", () => {
       ).toBeInTheDocument();
       expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
         "placeholder",
-        "Message GoodBuddy…\nEnter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text",
+        "Message GoodBuddy…\nEnter to send, Shift+Enter for a new line, Ctrl+V to paste files, images, or text",
       );
       expect(screen.getByLabelText("Message GoodBuddy")).toHaveAttribute(
         "title",
-        "Enter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text",
+        "Enter to send, Shift+Enter for a new line, Ctrl+V to paste files, images, or text",
       );
     } finally {
       cleanup();
@@ -5776,7 +5778,7 @@ describe("App", () => {
         name: "附件读取与解析进度",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("正在选择附件…")).toBeInTheDocument();
+    expect(screen.getByText("正在添加附件…")).toBeInTheDocument();
 
     act(() => {
       fileSelectionProgressListener?.({
@@ -5875,6 +5877,63 @@ describe("App", () => {
     );
   });
 
+  it("imports copied files with progress, prevents duplicate pastes, and sends their context", async () => {
+    const files = [new File(["notes"], "notes.txt"), new File(["doc"], "report.docx")];
+    vi.mocked(api.context.getFilePath)
+      .mockReturnValueOnce("C:\\notes.txt")
+      .mockReturnValueOnce("C:\\report.docx");
+    const attachments: ContextAttachment[] = files.map((file, index) => ({
+      id: `00000000-0000-4000-8000-00000000032${index}`,
+      name: file.name, kind: "text", size: 4, preview: "parsed content",
+    }));
+    let finish: ((attachments: ContextAttachment[]) => void) | undefined;
+    vi.mocked(api.context.importFiles).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<App />);
+    const input = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(input, { target: { value: "Read these files" } });
+    expect(fireEvent.paste(input, { clipboardData: { files } })).toBe(false);
+    expect(api.context.importFiles).toHaveBeenCalledExactlyOnceWith(["C:\\notes.txt", "C:\\report.docx"]);
+    expect(screen.getByLabelText("添加附件")).toBeDisabled();
+    act(() => fileSelectionProgressListener?.({
+      phase: "parsing", fileName: "report.docx", fileNumber: 2, fileCount: 2,
+    }));
+    expect(screen.getByText("正在解析 report.docx")).toBeInTheDocument();
+    fireEvent.paste(input, { clipboardData: { files } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(api.context.importFiles).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    act(() => finish?.(attachments));
+    expect(await screen.findByText("report.docx")).toBeInTheDocument();
+    expect(input).toHaveValue("Read these files");
+    await waitFor(() => expect(screen.getByLabelText("添加附件")).toBeEnabled());
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Read these files", contextIds: attachments.map(item => item.id),
+    })));
+    expect(api.context.addPastedImage).not.toHaveBeenCalled();
+    expect(api.context.selectFiles).not.toHaveBeenCalled();
+  });
+
+  it("shows file paste failures without clearing the draft and rejects oversized batches", async () => {
+    render(<App />);
+    const input = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(input, { target: { value: "Keep this draft" } });
+    const file = new File(["archive"], "archive.zip");
+    vi.mocked(api.context.getFilePath).mockReturnValueOnce("C:\\archive.zip");
+    vi.mocked(api.context.importFiles).mockRejectedValueOnce(new Error("不支持的文件类型：.zip"));
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    expect(await screen.findByRole("alert", { name: "不支持的文件类型：.zip" })).toBeInTheDocument();
+    expect(input).toHaveValue("Keep this draft");
+    await waitFor(() => expect(screen.getByLabelText("添加附件")).toBeEnabled());
+    fireEvent.paste(input, { clipboardData: { files: Array(9).fill(file) } });
+    expect(api.context.importFiles).toHaveBeenCalledOnce();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    expect(await screen.findByRole("alert", {
+      name: "无法读取此剪贴板文件，请保存到本地后通过附件按钮添加",
+    })).toBeInTheDocument();
+  });
+
   it("accepts pasted images without intercepting pasted text", async () => {
     vi.mocked(api.context.addPastedImage).mockResolvedValueOnce({
       id: "00000000-0000-4000-8000-000000000303",
@@ -5895,6 +5954,7 @@ describe("App", () => {
     expect(
       fireEvent.paste(input, {
         clipboardData: {
+          files: [],
           items: [
             {
               getAsFile: () => null,
@@ -5909,6 +5969,7 @@ describe("App", () => {
 
     fireEvent.paste(input, {
       clipboardData: {
+        files: [pastedImage],
         items: [
           {
             getAsFile: () => pastedImage,
@@ -6685,7 +6746,7 @@ describe("App", () => {
     ).toHaveTextContent(/^Ask$/u);
     expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
       "placeholder",
-      "给 GoodBuddy 发消息…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本",
+      "给 GoodBuddy 发消息…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴文件、图片或文本",
     );
     expect(
       within(conversationSettings).getByRole("button", {
@@ -10146,7 +10207,7 @@ describe("App", () => {
     expect((await screen.findAllByText("生图")).length).toBeGreaterThan(0);
     expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveAttribute(
       "placeholder",
-      "描述你想生成的图片…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片或文本",
+      "描述你想生成的图片…\nEnter 发送，Shift+Enter 换行，Ctrl+V 粘贴文件、图片或文本",
     );
     await waitFor(() => expect(api.artifacts.list).toHaveBeenCalled());
 

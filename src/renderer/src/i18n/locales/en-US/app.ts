@@ -435,11 +435,11 @@ export const app = {
     placeholder: 'Message GoodBuddy…',
     imagePlaceholder: 'Describe the image you want to generate…',
     keyboardHint:
-      'Enter to send, Shift+Enter for a new line, Ctrl+V to paste an image or text',
+      'Enter to send, Shift+Enter for a new line, Ctrl+V to paste files, images, or text',
     addContent: 'Add content',
     addAttachment: 'Add attachment',
     attachmentProgress: {
-      selecting: 'Selecting attachments…',
+      selecting: 'Adding attachments…',
       reading: 'Reading {{name}}',
       parsing: 'Parsing {{name}}',
       waiting: 'Files will be read and parsed after selection',
@@ -618,6 +618,7 @@ export const app = {
     },
     errors: {
       pasteImageType: 'Only JPEG, PNG, or WebP images can be pasted',
+      pasteFilePath: 'Cannot read this clipboard file. Save it locally, then use Add attachment.',
       pasteImageSize: 'Pasted images cannot exceed 12 MB',
       attachmentLimit: 'A message can include up to 8 attachments',
       addContext: 'Failed to add context'

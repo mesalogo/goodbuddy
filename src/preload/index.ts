@@ -1486,6 +1486,12 @@ const desktopApi: DesktopApi = {
       ) as Promise<RuntimeNativeSnapshot>
   },
   context: {
+    getFilePath: (file) => webUtils.getPathForFile(file),
+    importFiles: (paths) =>
+      ipcRenderer.invoke(
+        ipcChannels.contextImportFiles,
+        { paths }
+      ) as Promise<ContextAttachment[]>,
     selectFiles: () =>
       ipcRenderer.invoke(
         ipcChannels.contextSelectFiles

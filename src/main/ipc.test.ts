@@ -531,7 +531,7 @@ describe('registerIpcHandlers computer capabilities', () => {
       'CommandOrControl+Shift+Space',
       {} as never,
       capabilityService as never,
-      { clear: vi.fn(), selectFiles } as never,
+      { clear: vi.fn(), selectFiles, importFiles: selectFiles } as never,
       {} as never,
       {
         queueDueSchedules: vi.fn(() => []),
@@ -616,6 +616,11 @@ describe('registerIpcHandlers computer capabilities', () => {
       electronMocks.handlers.get(ipcChannels.contextSelectFiles)?.(event)
     ).resolves.toEqual([])
     expect(selectFiles).toHaveBeenCalledWith(window, expect.any(Function))
+    const importFiles = electronMocks.handlers.get(ipcChannels.contextImportFiles)!
+    await expect(importFiles(event, { paths: ['C:\\scan.pdf'] })).resolves.toEqual([])
+    expect(selectFiles).toHaveBeenCalledWith(['C:\\scan.pdf'], expect.any(Function))
+    expect(() => importFiles(event, { paths: [''] })).toThrow()
+    expect(() => importFiles({ ...event, senderFrame: {} }, { paths: ['C:\\scan.pdf'] })).toThrow()
     expect(webContents.send).toHaveBeenCalledWith(
       ipcChannels.contextFileSelectionProgress,
       {

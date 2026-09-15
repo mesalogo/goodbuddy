@@ -39,6 +39,68 @@ afterEach(async () => {
 })
 
 describe('ContextManager', () => {
+  it('imports multiple pasted paths with real document parsing and request enrichment', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-pasted-files-'))
+    temporaryDirectories.push(directory)
+    const paths = [join(directory, 'notes.txt'), join(directory, 'report.docx')]
+    await writeFile(paths[0]!, 'PASTED_TEXT')
+    await writeFile(paths[1]!, zipSync({
+      'word/document.xml': strToU8('<w:document><w:p><w:t>PASTED_DOCX</w:t></w:p></w:document>')
+    }))
+    const manager = new ContextManager()
+    const progress = vi.fn()
+    const attachments = await manager.importFiles(paths, progress)
+    expect(attachments.map(item => item.name)).toEqual(['notes.txt', 'report.docx'])
+    expect(showOpenDialog).not.toHaveBeenCalled()
+    expect(progress.mock.calls.map(([value]) => value)).toEqual([
+      { phase: 'reading', fileName: 'notes.txt', fileNumber: 1, fileCount: 2 },
+      { phase: 'reading', fileName: 'report.docx', fileNumber: 2, fileCount: 2 },
+      { phase: 'parsing', fileName: 'report.docx', fileNumber: 2, fileCount: 2 }
+    ])
+    const request = manager.enrichRequest({
+      requestId: crypto.randomUUID(), conversationId: 'pasted-files', prompt: 'Read',
+      contextIds: attachments.map(item => item.id)
+    })
+    expect(request.prompt).toContain('PASTED_TEXT')
+    expect(request.prompt).toContain('PASTED_DOCX')
+  })
+
+  it.each([
+    ['unsupported.zip', 1, /不支持的文件类型/],
+    ['large.txt', 256 * 1024 + 1, /256KB/],
+    ['large.pdf', 20 * 1024 * 1024 + 1, /20MB/],
+    ['large.png', 12 * 1024 * 1024 + 1, /12MB/]
+  ] as const)('rolls back a pasted batch containing %s and preserves earlier attachments', async (name, size, error) => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-pasted-files-'))
+    temporaryDirectories.push(directory)
+    const good = join(directory, 'notes.txt')
+    const bad = join(directory, name)
+    await writeFile(good, 'Retained text')
+    await writeFile(bad, Buffer.alloc(size))
+    const manager = new ContextManager()
+    const [existing] = await manager.importFiles([good])
+    const remove = vi.spyOn(manager, 'remove')
+    await expect(manager.importFiles([good, bad])).rejects.toThrow(error)
+    expect(remove).toHaveBeenCalledOnce()
+    expect(remove).not.toHaveBeenCalledWith(existing!.id)
+    expect(manager.enrichRequest({
+      requestId: crypto.randomUUID(), conversationId: 'pasted-files', prompt: 'Read',
+      contextIds: [existing!.id]
+    }).prompt).toContain('Retained text')
+  })
+
+  it('uses the upload batch cap and hides filesystem paths in paste failures', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-pasted-files-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'notes.txt')
+    await writeFile(path, 'Text')
+    const manager = new ContextManager()
+    expect(await manager.importFiles(Array(9).fill(path))).toHaveLength(8)
+    await expect(manager.importFiles([join(directory, 'missing.txt')])).rejects.toThrow(
+      '无法读取所选文件，请检查文件权限和状态'
+    )
+  })
+
   it('preserves the tail of a real DOCX larger than the former extracted-text cap', async () => {
     const content = `${'word text '.repeat(30_000)}DOCX_TAIL`
     const data = Buffer.from(zipSync({

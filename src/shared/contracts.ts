@@ -1139,6 +1139,10 @@ export const maximumPastedImageBytes = 12 * 1024 * 1024
 
 export const clipboardTextSchema = z.string()
 
+export const contextImportFilesSchema = z.object({
+  paths: z.array(z.string().min(1).max(32768)).min(1).max(8)
+}).strict()
+
 export const pastedImageInputSchema = z
   .object({
     data: z
@@ -2226,6 +2230,8 @@ export type DesktopApi = {
   }
   context: {
     selectFiles: () => Promise<ContextAttachment[]>
+    getFilePath: (file: File) => string
+    importFiles: (paths: string[]) => Promise<ContextAttachment[]>
     onFileSelectionProgress: (
       listener: (progress: ContextFileSelectionProgress) => void
     ) => () => void
