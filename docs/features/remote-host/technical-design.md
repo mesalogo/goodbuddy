@@ -271,6 +271,19 @@ Execute 直接启动已签名 Runtime：
 `0.11.10` 及更早版本仍会按其 manifest 上限夹紧，因此桌面启用这一语义前必须配套更新
 到 Agent `0.11.13` 或更高版本。
 
+## 执行清单接入范围
+
+OC `todowrite` / CN `Checklist` 顶部展示属于待实施功能，权威需求及接入设计见
+[Runtime 执行清单](../assistant-workbar/runtime-checklist-technical-design.md)，
+当前证据见[工作栏进度](../assistant-workbar/progress.md#2026-09-15-runtime-执行清单设计未实现)。
+目标范围包括远程 GoodBuddy Agent 运行 OC 和 CN；ACP 仅承担传输与远端协议。
+
+当前托管安装与实时 Runtime 路径仍只接受 OC，不能把通用 ACP plan/tool 传递代码视作
+远程 CN 已可用。CN 的受管工件、安装/启动、项目选择与校验、模型桥及原生清单传递
+需要在该功能实施时补齐，并在共享 Linux 真实 Host 分别确认 OC/CN 的可用程度。
+本次只完善文档，未实测任一远程 Runtime 的清单；已有 OC Ask/Execute、问答或重连证据
+不作为本功能通过证据。清单恢复复用下节流程，不增加独立持久化或重连系统。
+
 ## ACP 与断线
 
 - 管控面只负责有界 JSON-RPC：连接、查询、启动、取消、关闭和重连。数据面只负责

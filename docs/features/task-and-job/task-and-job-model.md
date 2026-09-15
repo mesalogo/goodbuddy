@@ -84,6 +84,14 @@ Subagent 是执行 Job 或 Subjob 的受限执行者，不是对象层级：
 - Subagent 不自动拥有独立 Task 或 Conversation。
 - Subagent 输出先回到所属 Job，再由 Task 协调器写入关联 Conversation。
 
+### 1.7 Runtime 执行清单
+
+Runtime 执行清单是一次请求中由 OC `todowrite` 或 CN `Checklist` 更新的只读工作项列表，
+属于请求及其助手消息，不创建 Task、Job、Run 或 Schedule，也不驱动定时任务状态。
+条目全部完成不表示关联 Task 目标达成，请求取消也不自动完成条目。
+该功能尚未实现，需求、顶部展示与本地/远程接入由
+[助手工作栏文档](../assistant-workbar/README.md)维护。
+
 ## 2. 对象关系
 
 ```text
