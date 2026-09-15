@@ -5073,6 +5073,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       >(() => true),
       appendRemoteConversationTaskEventOnce: vi.fn<AssistantDatabase['appendRemoteConversationTaskEventOnce']>(() => true),
       listConversations: vi.fn<() => ConversationSnapshot[]>(() => []),
+      listConversationSummaries: vi.fn<(ids?: string[]) => ConversationSnapshot[]>(() => []),
       listRecoverableRemoteTasks: vi.fn<
         () => Array<{
           taskId: string
@@ -6800,6 +6801,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     })
     harness.assistantDatabase.getConversation.mockImplementation(database.getConversation.bind(database))
     harness.assistantDatabase.listConversations.mockImplementation(database.listConversations.bind(database))
+    harness.assistantDatabase.listConversationSummaries.mockImplementation(database.listConversationSummaries.bind(database))
     harness.assistantDatabase.listRecoverableRemoteTasks.mockImplementation(database.listRecoverableRemoteTasks.bind(database))
     harness.assistantDatabase.appendRemoteConversationTaskEventOnce.mockImplementation(database.appendRemoteConversationTaskEventOnce.bind(database))
     harness.assistantDatabase.updateTaskStatus.mockImplementation(database.updateTaskStatus.bind(database))
@@ -6813,6 +6815,11 @@ describe('registerIpcHandlers agent terminal state', () => {
       harness.recoveryGetHandler?.(event)
       await vi.waitFor(() => expect(ready.size).toBe(2))
       await vi.waitFor(() => expect(list().every(c => c.activeRequest?.questions.length === 1)).toBe(true))
+      const summaries = electronMocks.handlers.get(ipcChannels.conversationsListSummaries)!(event, { detailIds: [] }) as ConversationSnapshot[]
+      expect(summaries).toEqual(list())
+      for (const snapshot of summaries) {
+        expect(electronMocks.handlers.get(ipcChannels.conversationsGet)!(event, snapshot.id)).toEqual(snapshot)
+      }
       expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).not.toHaveBeenCalled()
       const update = settingsKind === 'runtime'
         ? [ipcChannels.runtimeSettingsUpdate, runtimeSettingsInputSchema.strip().parse({

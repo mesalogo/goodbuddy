@@ -69,6 +69,9 @@ export const app = {
     switchDark: '切换深色主题'
   },
   conversation: {
+    historyLoading: '正在加载对话记录…',
+    historyLoadFailed: '对话记录加载失败',
+    historyRetry: '重新加载',
     defaultTitle: '新对话',
     remoteTitle: '远程会话',
     greeting:

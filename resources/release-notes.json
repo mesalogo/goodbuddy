@@ -2,6 +2,34 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.6",
+      "releasedAt": "2026-09-15",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**历史会话更省内存**：减少打开应用、刷新列表和切换会话时加载的历史数据，降低资源占用。历史详情按需读取，完整记录、全文搜索、复制、导出和续聊保持可用。",
+            "**避免重复保存历史消息**：修复切回应用或刷新会话时，未变化的消息仍被反复保存的问题。减少重复处理，同时保留图片状态更新、后台审批和远程待答问题。"
+          ],
+          "notices": [
+            "本次仅更新 Desktop，Agent 保持 **0.13.0**，无需因这两项修复重新更新 Host 环境。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Lower memory use with conversation history**: Reduced the history data loaded when opening the app, refreshing the list, and switching conversations. Details load on demand while complete records, full-text search, copy, export, and continued conversations remain available.",
+            "**Avoid repeatedly saving unchanged messages**: Fixed unchanged messages being saved again when returning to the app or refreshing conversations. This reduces repeated processing while preserving image updates, background approvals, and pending remote questions."
+          ],
+          "notices": [
+            "This release updates Desktop only. Agent remains at **0.13.0**, and these fixes do not require another Host environment update."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.5",
       "releasedAt": "2026-09-15",
       "notes": {

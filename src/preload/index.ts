@@ -1070,6 +1070,12 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.conversationsList
       ) as Promise<ConversationSnapshot[]>,
+    listSummaries: (detailIds = []) =>
+      ipcRenderer.invoke(ipcChannels.conversationsListSummaries, { detailIds }),
+    get: (conversationId) =>
+      ipcRenderer.invoke(ipcChannels.conversationsGet, conversationId),
+    search: (query, conversationIds = []) =>
+      ipcRenderer.invoke(ipcChannels.conversationsSearch, { query, conversationIds }),
     replace: async (conversations: ConversationSnapshot[]) => {
       await ipcRenderer.invoke(
         ipcChannels.conversationsReplace,

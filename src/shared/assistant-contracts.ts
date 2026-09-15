@@ -567,6 +567,22 @@ export const conversationSnapshotSchema = z
 export type ConversationSnapshot = z.infer<
   typeof conversationSnapshotSchema
 >
+// Read-only list projection. An absent summary means messages are complete.
+// Never serialize messageSummary as a persisted conversation/header.
+export type ConversationListSnapshot = ConversationSnapshot & {
+  messageSummary?: {
+    count: number
+    firstRole?: ConversationMessage['role']
+  }
+}
+export const conversationListRequestSchema = z.object({
+  detailIds: z.array(assistantIdSchema).default([])
+}).strict()
+export const conversationSearchRequestSchema = z.object({
+  query: z.string(),
+  conversationIds: z.array(assistantIdSchema).default([])
+}).strict()
+
 export const conversationSnapshotsSchema = z
   .array(conversationSnapshotSchema)
   .max(100)

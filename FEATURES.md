@@ -24,7 +24,7 @@ records are listed separately and do not introduce another feature status.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.13.5. See the
+  releases and automatic updates; no preview is planned for 0.13.6. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -49,6 +49,13 @@ records are listed separately and do not introduce another feature status.
   settings panel while Runtime, mode, sending, and queue controls remain
   available. Conversation search has an inline clear action that restores the
   scoped list and returns focus to the input.
+- [x] **On-demand conversation history**: Lists load lightweight summaries
+  rather than every conversation's process metadata. Opened and active
+  conversations retain full details; search, copy, export, continued requests,
+  and remote pending questions remain available. Unchanged image reconciliation
+  does not resend saved messages, and idle acknowledged details follow the
+  existing view-cache lifetime. See the
+  [history loading and retention rules](./docs/features/assistant-workbar/execution-history-storage.md#会话列表读取与前端保留).
 - [x] **File, screenshot, window, and clipboard context**: Added to model
   context only after explicit user selection. Paste one or more supported local
   files into the chat composer with `Ctrl+V` to add attachments, using the same
@@ -719,7 +726,7 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.5` and Agent `0.13.0`, with
+- Current source candidates are Desktop `0.13.6` and Agent `0.13.0`, with
   OpenCode pinned to `1.18.29`. Publication status follows the independent
   Desktop and Agent release channels.
 - Agent `0.13.0` adds remote image-tool integration and shared Runtime processes
@@ -735,10 +742,16 @@ records are listed separately and do not introduce another feature status.
   covered by those records. The candidate still requires main CI and
   native release packaging. See the [Runtime evidence](./docs/features/assistant-workbar/progress.md)
   and [image-tool evidence](./docs/features/conversation-media-generation/progress.md).
-- Candidate checks on 2026-09-15 passed: bilingual release notes, `npm test`
-  (4,293 passed, 67 skipped), `npm run typecheck`, and `npm run lint`.
-  This metadata/documentation preparation made no new real model calls and did
-  not rerun Host scenarios or build local production packages.
+- Desktop 0.13.6 history fixes passed 4,301 tests with 67 skipped, type checking,
+  scoped lint, isolated production Electron validation, and three paired
+  synthetic-history comparisons. Development validation used three real text
+  calls, including two on the current-source Linux Agent with Session
+  continuation; it did not alter Agent protocols. Release preparation does not
+  repeat local production builds. The exact candidate still requires its
+  main-branch CI and native tag packaging. At the user's request, the local
+  release-candidate rerun was cancelled after release-note verification; CI is
+  the candidate validation authority. Agent 0.13.0 is not republished for this
+  Desktop update.
 - [x] **0BSD open-source license**: Original code can be freely used, copied,
   modified, distributed, and commercialized. Third-party components and
   resources retain their own licenses.

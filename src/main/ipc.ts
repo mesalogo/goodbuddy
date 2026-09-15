@@ -203,6 +203,9 @@ import {
   activityHistorySnapshotSchema,
   conversationBranchInputSchema,
   conversationSnapshotsSchema,
+  conversationListRequestSchema,
+  conversationSearchRequestSchema,
+  type ConversationSnapshot,
   localConversationSaveBatchSchema,
   memoryCreateSchema,
   normalizeInteractiveWorkMode,
@@ -6761,8 +6764,7 @@ export function registerIpcHandlers(
     }
   )
 
-  registerHandler(ipcChannels.conversationsList, (event) => {
-    assertTrustedSender(event, window)
+  const projectConversationRequests = <T extends ConversationSnapshot>(conversations: T[]): T[] => {
     const questions = new Map<string, Extract<AgentEvent, { type: 'question' }>[]>()
     for (const pending of pendingAgentQuestions.values()) {
       const entries = questions.get(pending.requestId) ?? []
@@ -6780,10 +6782,30 @@ export function registerIpcHandlers(
           : []
       )
     )
-    return assistantDatabase.listConversations().map(conversation => ({
+    return conversations.map(conversation => ({
       ...conversation,
       ...(recovered.has(conversation.id) ? { activeRequest: recovered.get(conversation.id) } : {})
     }))
+  }
+  registerHandler(ipcChannels.conversationsList, (event) => {
+    assertTrustedSender(event, window)
+    return projectConversationRequests(assistantDatabase.listConversations())
+  })
+  registerHandler(ipcChannels.conversationsListSummaries, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { detailIds } = conversationListRequestSchema.parse(input)
+    return projectConversationRequests(assistantDatabase.listConversationSummaries([
+      ...detailIds, ...[...activeRequests.values()].map(request => request.conversationId)
+    ]))
+  })
+  registerHandler(ipcChannels.conversationsGet, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return projectConversationRequests([assistantDatabase.getConversation(assistantIdSchema.parse(input))])[0]
+  })
+  registerHandler(ipcChannels.conversationsSearch, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { query, conversationIds } = conversationSearchRequestSchema.parse(input)
+    return assistantDatabase.searchConversations(query, conversationIds)
   })
 
   registerHandler(

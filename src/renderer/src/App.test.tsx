@@ -489,6 +489,11 @@ const api: DesktopApi = {
       onChanged: vi.fn(() => () => undefined),
     },
     list: vi.fn(async () => []),
+    // Existing full-history fixtures remain valid list projections. The lazy
+    // history regressions below explicitly supply summaries and detail replies.
+    listSummaries: vi.fn(async () => api.conversations.list()),
+    get: vi.fn(),
+    search: vi.fn(async () => []),
     replace: vi.fn(async () => {}),
     saveLocal: vi.fn(async () => {}),
     branchLocal: vi.fn(async (input) => ({
@@ -1086,8 +1091,34 @@ describe("App", () => {
         };
       });
     vi.mocked(api.conversations.list).mockReset().mockResolvedValue([]);
-    vi.mocked(api.conversations.replace).mockReset().mockResolvedValue();
-    vi.mocked(api.conversations.saveLocal).mockReset().mockResolvedValue();
+    const conversationFixtures = new Map<string, Awaited<ReturnType<DesktopApi["conversations"]["get"]>>>();
+    vi.mocked(api.conversations.listSummaries).mockReset()
+      .mockImplementation(async () => {
+        const snapshots = await api.conversations.list();
+        snapshots.forEach(snapshot => conversationFixtures.set(snapshot.id, snapshot));
+        return snapshots;
+      });
+    vi.mocked(api.conversations.get).mockReset().mockImplementation(async id => {
+      const snapshot = conversationFixtures.get(id);
+      if (!snapshot) throw new Error("Missing conversation fixture");
+      return snapshot;
+    });
+    vi.mocked(api.conversations.search).mockReset().mockImplementation(async query =>
+      [...conversationFixtures.values()].filter(snapshot =>
+        snapshot.title.toLocaleLowerCase().includes(query) ||
+        snapshot.messages.some(message => message.content.toLocaleLowerCase().includes(query))
+      ).map(snapshot => snapshot.id));
+    vi.mocked(api.conversations.replace).mockReset().mockImplementation(async snapshots => {
+      snapshots.forEach(snapshot => conversationFixtures.set(snapshot.id, snapshot));
+    });
+    vi.mocked(api.conversations.saveLocal).mockReset().mockImplementation(async batch => {
+      for (const { header, messages } of batch) {
+        const existing = conversationFixtures.get(header.id);
+        const byId = new Map(existing?.messages.map(message => [message.id, message]));
+        messages.forEach(message => byId.set(message.id, message));
+        conversationFixtures.set(header.id, { ...header, messages: [...byId.values()] });
+      }
+    });
     vi.mocked(api.conversations.branchLocal)
       .mockReset()
       .mockImplementation(async (input) => ({
@@ -1527,6 +1558,81 @@ describe("App", () => {
       await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
       expect(menu).not.toBeInTheDocument();
     });
+  });
+
+  it("loads only the opened history and saves no unchanged messages after a real-shaped list refresh", async () => {
+    const snapshots = Array.from({ length: 100 }, (_, index) => ({
+      id: crypto.randomUUID(), projectId, title: `History ${index}`, updatedAt: 100 - index,
+      messages: Array.from({ length: 16 }, (_, messageIndex) => ({
+        id: crypto.randomUUID(), role: "assistant" as const, state: "complete" as const,
+        content: `History body ${index}/${messageIndex}`, createdAt: messageIndex,
+        reasoning: "Retained process output".repeat(100),
+      })),
+    }));
+    vi.mocked(api.conversations.listSummaries).mockImplementation(async (detailIds = []) =>
+      JSON.parse(JSON.stringify(snapshots.map(snapshot => detailIds.includes(snapshot.id)
+        ? snapshot : { ...snapshot, messages: [], messageSummary: { count: 16, firstRole: "assistant" } }))));
+    vi.mocked(api.conversations.get).mockImplementation(async id => snapshots.find(snapshot => snapshot.id === id)!);
+    render(<App />);
+    expect(await screen.findByText("History body 0/15")).toBeInTheDocument();
+    expect(api.conversations.get).toHaveBeenCalledExactlyOnceWith(snapshots[0]!.id);
+    expect(api.conversations.list).not.toHaveBeenCalled();
+    vi.mocked(api.conversations.saveLocal).mockClear();
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(api.conversations.listSummaries).toHaveBeenCalledTimes(2));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+    const saved = vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch)
+      .flatMap(item => item.messages);
+    expect(saved).toHaveLength(0);
+    expect(api.conversations.get).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("History body 99/15")).not.toBeInTheDocument();
+  });
+
+  it("searches unloaded history and retries a failed detail load without losing the conversation", async () => {
+    const first = { id: crypto.randomUUID(), projectId, title: "Opened", updatedAt: 2, messages: [
+      { id: crypto.randomUUID(), role: "assistant" as const, state: "complete" as const, content: "Opened body", createdAt: 1 },
+    ] };
+    const second = { id: crypto.randomUUID(), projectId, title: "Unopened", updatedAt: 1, messages: [
+      { id: crypto.randomUUID(), role: "user" as const, state: "complete" as const, content: "Rare searchable history", createdAt: 1 },
+    ] };
+    vi.mocked(api.conversations.listSummaries).mockResolvedValue([first, {
+      ...second, messages: [], messageSummary: { count: 1, firstRole: "user" },
+    }]);
+    vi.mocked(api.conversations.search).mockResolvedValue([second.id]);
+    vi.mocked(api.conversations.get).mockRejectedValueOnce(new Error("Temporary history read failure"))
+      .mockResolvedValueOnce(second);
+    const { container } = render(<App />);
+    expect(await screen.findByText("Opened body")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("搜索对话"), { target: { value: "rare searchable" } });
+    const list = within(container.querySelector<HTMLElement>(".conversation-list")!);
+    fireEvent.click(await list.findByText("Unopened"));
+    expect(await screen.findByText("Temporary history read failure")).toBeInTheDocument();
+    expect(screen.queryByText("Rare searchable history")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+    expect(await screen.findByText("Rare searchable history")).toBeInTheDocument();
+    expect(api.conversations.get).toHaveBeenNthCalledWith(1, second.id);
+    expect(api.conversations.get).toHaveBeenNthCalledWith(2, second.id);
+    expect(api.conversations.replace).not.toHaveBeenCalled();
+  });
+
+  it("copies a complete unopened conversation instead of exporting its empty summary", async () => {
+    const first = { id: crypto.randomUUID(), projectId, title: "Opened", updatedAt: 2, messages: [] };
+    const second = { id: crypto.randomUUID(), projectId, title: "Copy unopened", updatedAt: 1, messages: [
+      { id: crypto.randomUUID(), role: "user" as const, state: "complete" as const, content: "All retained text", createdAt: 1 },
+    ] };
+    vi.mocked(api.conversations.listSummaries).mockResolvedValue([first, {
+      ...second, messages: [], messageSummary: { count: 1, firstRole: "user" },
+    }]);
+    vi.mocked(api.conversations.get).mockResolvedValue(second);
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText("更多会话操作 Copy unopened"));
+    fireEvent.click(screen.getByRole("button", { name: "复制完整会话" }));
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("All retained text")));
+    expect(api.conversations.get).toHaveBeenCalledExactlyOnceWith(second.id);
+    fireEvent.click(screen.getByLabelText("更多会话操作 Copy unopened"));
+    fireEvent.click(screen.getByRole("button", { name: "复制完整会话" }));
+    await waitFor(() => expect(api.conversations.get).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("All retained text")).not.toBeInTheDocument();
   });
 
   it("provides custom minimize, maximize, and close controls", async () => {
@@ -2232,6 +2338,43 @@ describe("App", () => {
     expect(
       document.querySelector(".conversation-task-child__icon"),
     ).not.toBeInTheDocument();
+  });
+
+  it("preserves a scheduled approval arriving after an unopened summary refresh began", async () => {
+    const taskId = crypto.randomUUID();
+    const target = {
+      id: crypto.randomUUID(), projectId, title: "Unopened scheduled history", updatedAt: 1,
+      messages: [{ id: crypto.randomUUID(), role: "user" as const, state: "complete" as const,
+        content: "Retained scheduled history", createdAt: 1 }],
+    };
+    const snapshots = [
+      { id: crypto.randomUUID(), projectId, title: "Opened history", updatedAt: 2, messages: [] },
+      { ...target, messages: [], messageSummary: { count: 1, firstRole: "user" as const } },
+    ];
+    vi.mocked(api.conversations.listSummaries).mockResolvedValueOnce(snapshots);
+    let finishRefresh: ((value: typeof snapshots) => void) | undefined;
+    vi.mocked(api.conversations.listSummaries).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve; }));
+    vi.mocked(api.conversations.get).mockResolvedValue(target);
+    vi.mocked(api.tasks.list).mockResolvedValue([{
+      id: taskId, projectId, conversationId: target.id, origin: "schedule", status: "running",
+      title: "Scheduled approval", instructions: "Ask before writing", createdAt: "2026-09-15T00:00:00Z",
+    }]);
+    const { container } = render(<App />);
+    await screen.findAllByText("Opened history");
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(finishRefresh).toBeDefined());
+    act(() => {
+      agentListener?.({
+        requestId: taskId, type: "approval", approvalId: crypto.randomUUID(),
+        title: "Keep this approval", description: "A scheduled write", toolName: "write_file",
+        argumentSummary: "test.txt", allowPermanent: false,
+      });
+    });
+    await act(async () => { finishRefresh!(snapshots); });
+    expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理");
+    fireEvent.click(within(container.querySelector<HTMLElement>(".conversation-list")!).getByText(target.title));
+    expect(await screen.findByText("Retained scheduled history")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "仅此次" })).toBeInTheDocument();
   });
 
   it("routes scheduled Task approvals to the associated Conversation", async () => {

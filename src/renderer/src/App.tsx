@@ -99,6 +99,7 @@ import {
   getDefaultRuntimeSelection,
   getRuntimeSelectionForProvider,
 } from "./runtime-selection";
+import { mergeMessageImageState } from "./message-image-state";
 import type {
   ActivityHistorySnapshot,
   AssistantProject,
@@ -116,6 +117,7 @@ import type {
   ConversationMessage,
   ConversationQueueItem,
   ConversationSnapshot,
+  ConversationListSnapshot,
   ConversationAttachment,
   ConversationContextCompressionMarker,
   ConversationMessageBlock,
@@ -490,7 +492,7 @@ function supportsSubagentSmartRouting(workMode: string): boolean {
   return workMode === "ask";
 }
 
-type Conversation = Omit<ConversationSnapshot, "messages"> & {
+type Conversation = Omit<ConversationListSnapshot, "messages"> & {
   messages: Message[];
 };
 
@@ -781,8 +783,8 @@ function ConversationBranchBadge({
 function isUnusedConversation(conversation: Conversation): boolean {
   return (
     conversation.title === "新对话" &&
-    conversation.messages.length === 1 &&
-    conversation.messages[0]?.role === "assistant"
+    (conversation.messageSummary?.count ?? conversation.messages.length) === 1 &&
+    (conversation.messageSummary?.firstRole ?? conversation.messages[0]?.role) === "assistant"
   );
 }
 
@@ -803,6 +805,30 @@ type ChatScrollSnapshot = {
   pinnedToBottom: boolean;
   scrollTop: number;
 };
+
+function ConversationHistoryLoader({ conversationId, active, load }: {
+  conversationId: string;
+  active: boolean;
+  load: (id: string) => Promise<Conversation>;
+}): React.JSX.Element {
+  const { t } = useTranslation("app");
+  const [error, setError] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let mounted = true;
+    void load(conversationId).catch(reason => {
+      if (mounted) setError(displayErrorMessage(reason, t("conversation.historyLoadFailed")));
+    });
+    return () => { mounted = false; };
+  }, [conversationId, load, attempt, t]);
+  return <section hidden={!active} className="empty-state" aria-busy={!error}>
+    <p role={error ? "alert" : "status"}>{error ?? t("conversation.historyLoading")}</p>
+    {error && <button type="button" className="secondary-button" onClick={() => {
+      setError(undefined);
+      setAttempt(value => value + 1);
+    }}>{t("conversation.historyRetry")}</button>}
+  </section>;
+}
 
 function ChatHistoryPane({
   onOpenImageModelSettings,
@@ -1464,8 +1490,9 @@ function withRecoveredQuestions(conversation: Conversation): Conversation {
 
 function mergePersistedConversations(
   current: readonly Conversation[],
-  incoming: readonly ConversationSnapshot[],
+  incoming: readonly ConversationListSnapshot[],
   persistedLocal: Map<string, Conversation>,
+  retainDetails: ReadonlySet<string> = new Set(),
 ): Conversation[] {
   const incomingById = new Map(
     incoming.map((conversation) => [conversation.id, conversation]),
@@ -1474,6 +1501,28 @@ function mergePersistedConversations(
     current.map((conversation) => [conversation.id, conversation]),
   );
   const merged = incoming.map((conversation): Conversation => {
+    if (conversation.messageSummary) {
+      const local = currentById.get(conversation.id);
+      const acknowledged = persistedLocal.get(conversation.id);
+      const dirtyMessages = local &&
+        local.messages.some(message => !acknowledged?.messages.includes(message));
+      const keepMessages = local && (dirtyMessages ||
+        local.messages.some(message => message.approval || message.pendingQuestions?.length || message.state === "streaming") ||
+        (!local.messageSummary && retainDetails.has(conversation.id)));
+      const next = local && local.updatedAt > conversation.updatedAt
+        ? { ...local, messageSummary: conversation.messageSummary, messages: [] }
+        : conversation;
+      if (keepMessages) {
+        // A list reply started before navigation must not unload the newly
+        // opened history, or any messages not acknowledged by Main yet.
+        return {
+          ...next, messages: local.messages,
+          messageSummary: local.messageSummary ? conversation.messageSummary : undefined,
+        };
+      }
+      if (!conversation.remote) persistedLocal.set(conversation.id, conversation);
+      return next;
+    }
     if (conversation.remote) {
       return conversation;
     }
@@ -1492,24 +1541,14 @@ function mergePersistedConversations(
     const messages = [
       ...conversation.messages.map((persistedMessage) => {
         const localMessage = localMessageById.get(persistedMessage.id);
-        const operations = new Map(persistedMessage.imageOperations?.map(operation => [operation.id, operation]));
-        for (const operation of localMessage?.imageOperations ?? []) {
-          if (operation.updatedAt > (operations.get(operation.id)?.updatedAt ?? -1)) operations.set(operation.id, operation);
-        }
-        const imageMetadata = {
-          imageOperations: operations.size ? [...operations.values()] : undefined,
-          imageSourceArtifactIds: persistedMessage.imageSourceArtifactIds ?? localMessage?.imageSourceArtifactIds,
-          artifactIds: [...new Set([...(persistedMessage.artifactIds ?? []),
-            ...[...operations.values()].flatMap(operation => operation.artifactIds)])].slice(-8),
-        };
-        const message = { ...persistedMessage, ...imageMetadata };
+        const message = mergeMessageImageState(persistedMessage, persistedMessage, localMessage);
         if (!conversation.activeRequest && local.activeRequest?.messageId === message.id) {
           return { ...message, pendingQuestions: undefined };
         }
         if (!localIsNewer) {
           // Pending prompts are live-only and are omitted from persisted messages.
           if (localMessage?.state === "streaming" && message.state === "streaming") {
-            return { ...localMessage, ...imageMetadata };
+            return mergeMessageImageState(localMessage, persistedMessage, localMessage);
           }
           return message;
         }
@@ -1519,13 +1558,12 @@ function mergePersistedConversations(
         ) {
           return message;
         }
-        return { ...localMessage, ...imageMetadata,
-          artifactIds: [...new Set([...(localMessage.artifactIds ?? []), ...(message.artifactIds ?? [])])].slice(-8) };
+        return mergeMessageImageState(localMessage, persistedMessage, localMessage);
       }),
       ...local.messages.filter((message) => !serverMessageIds.has(message.id)),
     ];
     const next = localIsNewer
-      ? { ...local, messages, activeRequest: conversation.activeRequest }
+      ? { ...local, messages, messageSummary: undefined, activeRequest: conversation.activeRequest }
       : { ...conversation, messages };
     persistedLocal.set(conversation.id, conversation);
     return withRecoveredQuestions(next);
@@ -2362,6 +2400,10 @@ function App(): React.JSX.Element {
   const [cachedConversationViews, setCachedConversationViews] = useState<
     KeepAliveCacheEntry<string>[]
   >(() => (activeId ? [{ key: activeId, lastVisitedAt: Date.now() }] : []));
+  const cachedConversationViewsRef = useRef(cachedConversationViews);
+  useLayoutEffect(() => {
+    cachedConversationViewsRef.current = cachedConversationViews;
+  }, [cachedConversationViews]);
   const commitView = useCallback((next: WorkspaceView): void => {
     const previous = viewRef.current;
     const now = Date.now();
@@ -2510,8 +2552,10 @@ function App(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const [searchConversationSnapshot, setSearchConversationSnapshot] =
-    useState(conversations);
+  const [localSearchMatches, setLocalSearchMatches] =
+    useState<{ query: string; ids: Set<string> }>({ query: "", ids: new Set() });
+  const [persistedSearchMatches, setPersistedSearchMatches] =
+    useState<{ query: string; ids: Set<string> }>({ query: "", ids: new Set() });
   const [conversationLoadError, setConversationLoadError] = useState<string>();
   const [conversationLoadRetry, setConversationLoadRetry] = useState(0);
   const [conversationActionsId, setConversationActionsId] = useState("");
@@ -2992,11 +3036,33 @@ function App(): React.JSX.Element {
       return;
     }
     const timeout = window.setTimeout(
-      () => setSearchConversationSnapshot(conversations),
+      () => {
+        const query = searchQuery.trim().toLocaleLowerCase();
+        setLocalSearchMatches({ query, ids: new Set(conversations.filter(conversation =>
+          conversation.messages.some(message => message.content.toLocaleLowerCase().includes(query))
+        ).map(conversation => conversation.id)) });
+      },
       conversationSearchSnapshotDelayMs,
     );
     return () => window.clearTimeout(timeout);
   }, [conversations, searchQuery]);
+
+  useEffect(() => {
+    const query = deferredSearchQuery.trim().toLocaleLowerCase();
+    if (!query || !conversationStoreReady) return;
+    let active = true;
+    const timeout = window.setTimeout(() => {
+      void window.goodbuddy.conversations.search(query, conversationsRef.current.map(item => item.id)).then(ids => {
+        if (active) setPersistedSearchMatches({ query, ids: new Set(ids) });
+      }).catch(() => {
+        if (active) notify({
+          tone: "error", message: tRef.current("notices.remoteConversationRefreshFailed"),
+          dedupeKey: "conversation-search",
+        });
+      });
+    }, conversationSearchSnapshotDelayMs);
+    return () => { active = false; window.clearTimeout(timeout); };
+  }, [deferredSearchQuery, conversationStoreReady, localSearchMatches]);
 
   useEffect(() => {
     projectsRef.current = projects;
@@ -3752,24 +3818,23 @@ function App(): React.JSX.Element {
   );
   const filteredConversations = useMemo(() => {
     const query = deferredSearchQuery.trim().toLocaleLowerCase();
-    const candidates = query ? searchConversationSnapshot : conversations;
-    return candidates.filter(
+    return conversations.filter(
       (conversation) =>
         (!activeProjectId || conversation.projectId === activeProjectId) &&
         (activeProject?.kind !== "channel" ||
           conversation.remote !== undefined) &&
         (!query ||
+          (persistedSearchMatches.query === query && persistedSearchMatches.ids.has(conversation.id)) ||
           conversation.title.toLocaleLowerCase().includes(query) ||
-          conversation.messages.some((message) =>
-            message.content.toLocaleLowerCase().includes(query),
-          )),
+          (localSearchMatches.query === query && localSearchMatches.ids.has(conversation.id))),
     );
   }, [
     activeProject,
     activeProjectId,
     conversations,
     deferredSearchQuery,
-    searchConversationSnapshot,
+    localSearchMatches,
+    persistedSearchMatches,
   ]);
   const productAssistantTasks = useMemo(
     () =>
@@ -4994,6 +5059,38 @@ function App(): React.JSX.Element {
     viewRef.current = view;
   }, [view]);
 
+  const retainedConversationDetailIds = useCallback((): Set<string> => new Set([
+    activeConversationIdRef.current,
+    ...cachedConversationViewsRef.current.map(entry => entry.key),
+    ...[...activeRuns.current.values()].map(run => run.conversationId),
+    ...preparingConversations.current,
+  ].filter(Boolean)), []);
+  const conversationHistoryRequests = useRef(new Map<string, Promise<Conversation>>());
+  const releaseUnretainedConversationHistories = useCallback((): void => {
+    const retained = retainedConversationDetailIds();
+    setConversations(current => {
+      let changed = false;
+      const next = current.map(conversation => {
+        if (conversation.messageSummary || retained.has(conversation.id) ||
+          conversationHistoryRequests.current.has(conversation.id) ||
+          conversation.activeRequest ||
+          (!conversation.remote && persistedLocalConversationsRef.current.get(conversation.id) !== conversation) ||
+          conversation.messages.some(message => message.state === "streaming" ||
+            message.approval || message.pendingQuestions?.length) ||
+          assistantTasksRef.current.some(task => task.conversationId === conversation.id &&
+            (task.status === "running" || task.status === "waiting_approval"))) return conversation;
+        changed = true;
+        const summary: Conversation = {
+          ...conversation, messages: [],
+          messageSummary: { count: conversation.messages.length, firstRole: conversation.messages[0]?.role },
+        };
+        if (!conversation.remote) persistedLocalConversationsRef.current.set(conversation.id, summary);
+        return summary;
+      });
+      return changed ? next : current;
+    });
+  }, [retainedConversationDetailIds]);
+
   const persistLocalConversationChanges = useCallback((): void => {
     const operation = conversationPersistenceQueueRef.current.then(async () => {
       if (conversationPersistencePausedRef.current) {
@@ -5005,6 +5102,7 @@ function App(): React.JSX.Element {
         deletingLocalConversationIdsRef.current,
       );
       if (batch.length === 0) {
+        releaseUnretainedConversationHistories();
         return;
       }
       await window.goodbuddy.conversations.saveLocal(batch);
@@ -5014,6 +5112,7 @@ function App(): React.JSX.Element {
           conversation,
         );
       }
+      releaseUnretainedConversationHistories();
     });
     conversationPersistenceQueueRef.current = operation.catch(() => undefined);
     void operation.catch(() => {
@@ -5023,7 +5122,37 @@ function App(): React.JSX.Element {
         dedupeKey: "conversation-persistence",
       });
     });
-  }, []);
+  }, [releaseUnretainedConversationHistories]);
+  const ensureConversationHistory = useCallback((conversationId: string): Promise<Conversation> => {
+    const current = conversationsRef.current.find(item => item.id === conversationId);
+    if (!current) return Promise.reject(new Error(tRef.current("notices.remoteConversationRefreshFailed")));
+    if (!current.messageSummary) return Promise.resolve(current);
+    const pending = conversationHistoryRequests.current.get(conversationId);
+    if (pending) return pending;
+    const request = window.goodbuddy.conversations.get(conversationId).then(snapshot => {
+      const latest = conversationsRef.current.find(item => item.id === conversationId);
+      if (!latest || deletingLocalConversationIdsRef.current.has(conversationId)) {
+        throw new Error(tRef.current("notices.remoteConversationRefreshFailed"));
+      }
+      if (!latest.messageSummary) return latest;
+      const next = mergePersistedConversations(
+        conversationsRef.current, [snapshot], persistedLocalConversationsRef.current,
+        retainedConversationDetailIds(),
+      );
+      conversationsRef.current = next;
+      setConversations(next);
+      return next.find(item => item.id === conversationId)!;
+    }).finally(() => { conversationHistoryRequests.current.delete(conversationId); });
+    conversationHistoryRequests.current.set(conversationId, request);
+    return request;
+  }, [retainedConversationDetailIds]);
+
+  useEffect(() => {
+    if (!conversationStoreReady) return;
+    // Reuse the view cache's lifetime. Release only acknowledged, idle history,
+    // including its persistence reference, never unsaved or executing messages.
+    persistLocalConversationChanges();
+  }, [cachedConversationViews, conversationStoreReady, persistLocalConversationChanges]);
 
   useEffect(() => {
     if (!conversationStoreReady) {
@@ -5186,7 +5315,7 @@ function App(): React.JSX.Element {
           }
         });
       const conversationsRefresh = window.goodbuddy.conversations
-        .list()
+        .listSummaries([...retainedConversationDetailIds()])
         .then((persisted) => {
           if (!active || sequence !== refreshSequence) {
             return;
@@ -5230,6 +5359,7 @@ function App(): React.JSX.Element {
               current,
               persisted,
               persistedLocalConversationsRef.current,
+              retainedConversationDetailIds(),
             ),
           );
           settleActiveRunsFromPersistedMessages(persisted);
@@ -5277,6 +5407,7 @@ function App(): React.JSX.Element {
   }, [
     conversationStoreReady,
     releaseConversationQueueAfterRun,
+    retainedConversationDetailIds,
     setConversationActivity,
   ]);
 
@@ -5589,7 +5720,7 @@ function App(): React.JSX.Element {
     let active = true;
     const initialization = Promise.all([
       window.goodbuddy.projects.list(false),
-      window.goodbuddy.conversations.list(),
+      window.goodbuddy.conversations.listSummaries(),
     ]).then(async ([value, persistedConversations]) => {
       if (!active || value.length === 0) {
         return;
@@ -5600,6 +5731,11 @@ function App(): React.JSX.Element {
         throw new Error("没有可用的本地项目");
       }
       setActiveProjectId(project.id);
+      const initialConversation = persistedConversations.find(item => item.projectId === project.id);
+      if (initialConversation?.messageSummary) {
+        const detail = await window.goodbuddy.conversations.get(initialConversation.id);
+        persistedConversations = persistedConversations.map(item => item.id === detail.id ? detail : item);
+      }
       const persistedLocalConversations = persistedConversations.filter(
         (conversation) => !conversation.remote,
       );
@@ -6763,9 +6899,22 @@ function App(): React.JSX.Element {
     [t],
   );
 
+  const readConversationForExport = async (item: Conversation): Promise<Conversation> => {
+    if (!item.messageSummary) return item;
+    const snapshot = await window.goodbuddy.conversations.get(item.id);
+    // Export reads do not acquire a view-cache entry or retain tool metadata.
+    return mergePersistedConversations([item], [snapshot], new Map())[0]!;
+  };
+
   const copyConversation = async (
-    conversation: ConversationSnapshot,
+    item: Conversation,
   ): Promise<void> => {
+    let conversation: Conversation;
+    try { conversation = await readConversationForExport(item); }
+    catch {
+      notify({ tone: "error", message: t("notices.remoteConversationRefreshFailed") });
+      return;
+    }
     const transcript = conversation.messages
       .map((message) =>
         t("chat.exportSpeaker", {
@@ -6786,7 +6935,13 @@ function App(): React.JSX.Element {
     [t, writeClipboardText],
   );
 
-  const exportConversation = (conversation: ConversationSnapshot): void => {
+  const exportConversation = async (item: Conversation): Promise<void> => {
+    let conversation: Conversation;
+    try { conversation = await readConversationForExport(item); }
+    catch {
+      notify({ tone: "error", message: t("notices.remoteConversationRefreshFailed") });
+      return;
+    }
     const markdown = [
       `# ${conversation.title}`,
       "",
@@ -6983,11 +7138,20 @@ function App(): React.JSX.Element {
         });
       }
     };
-    const conversationSnapshot = queuedInput
+    let conversationSnapshot = queuedInput
       ? conversationsRef.current.find(
           (conversation) => conversation.id === queuedInput.conversationId,
         )
       : activeConversation;
+    if (conversationSnapshot?.messageSummary) {
+      try {
+        conversationSnapshot = await ensureConversationHistory(conversationSnapshot.id);
+      } catch {
+        notify({ tone: "error", message: t("notices.remoteConversationRefreshFailed") });
+        await releaseQueuedItem();
+        return;
+      }
+    }
     const recoveryProjectId =
       queuedInput?.projectId ?? conversationSnapshot?.projectId;
     if (
@@ -7396,7 +7560,13 @@ function App(): React.JSX.Element {
     ) {
       return;
     }
-    const history = activeConversation.messages.filter(
+    let completeConversation: Conversation;
+    try { completeConversation = await ensureConversationHistory(activeConversation.id); }
+    catch {
+      notify({ tone: "error", message: t("notices.remoteConversationRefreshFailed") });
+      return;
+    }
+    const history = completeConversation.messages.filter(
         (message) => message.state === "complete" && message.content.trim(),
       );
     if (history.length < 2) {
@@ -7959,8 +8129,8 @@ function App(): React.JSX.Element {
       );
       if (!conversation) {
         try {
-          const persisted = await window.goodbuddy.conversations.list();
-          conversation = persisted.find((candidate) => candidate.id === conversationId);
+          conversation = await window.goodbuddy.conversations.get(conversationId);
+          const persisted = [conversation];
           setConversations((current) => mergePersistedConversations(
             current, persisted, persistedLocalConversationsRef.current,
           ));
@@ -8060,7 +8230,7 @@ function App(): React.JSX.Element {
 
     const [conversationResult, taskResult, scheduleResult] =
       await Promise.allSettled([
-        window.goodbuddy.conversations.list(),
+        window.goodbuddy.conversations.listSummaries([...retainedConversationDetailIds(), schedule.conversationId]),
         window.goodbuddy.tasks.list(),
         window.goodbuddy.schedules.list(),
       ]);
@@ -8070,6 +8240,7 @@ function App(): React.JSX.Element {
           current,
           conversationResult.value,
           persistedLocalConversationsRef.current,
+          retainedConversationDetailIds(),
         ),
       );
     } else {
@@ -9299,7 +9470,14 @@ function App(): React.JSX.Element {
               <KeepAliveRoute active={view === "chat"} route="chat">
                 <PageShell variant="reading">
                   <div className="chat-scroll-region">
-                    {cachedConversations.map((conversation) => (
+                    {cachedConversations.map((conversation) => conversation.messageSummary ? (
+                      <ConversationHistoryLoader
+                        key={conversation.id}
+                        conversationId={conversation.id}
+                        active={view === "chat" && conversation.id === activeId}
+                        load={ensureConversationHistory}
+                      />
+                    ) : (
                       <ChatHistoryPane
                         active={view === "chat" && conversation.id === activeId}
                         artifactById={assistantArtifactById}

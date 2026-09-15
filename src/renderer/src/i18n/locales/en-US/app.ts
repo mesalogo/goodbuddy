@@ -72,6 +72,9 @@ export const app = {
     switchDark: 'Switch to dark theme'
   },
   conversation: {
+    historyLoading: 'Loading conversation history…',
+    historyLoadFailed: 'Failed to load conversation history',
+    historyRetry: 'Reload history',
     defaultTitle: 'New conversation',
     remoteTitle: 'Remote conversation',
     greeting:

@@ -2618,8 +2618,16 @@ export class AssistantDatabase {
   }
 
   listConversations(): ConversationSnapshot[] {
+    return this.readConversationList()
+  }
+
+  listConversationSummaries(detailIds: string[] = []): import('../../shared/assistant-contracts').ConversationListSnapshot[] {
+    return this.readConversationList(new Set(detailIds))
+  }
+
+  private listConversationRows(extraIds: ReadonlySet<string> = new Set()): ConversationRow[] {
     const database = this.requireDatabase()
-    const conversations = database
+    return database
       .prepare(
         `SELECT id, project_id, runtime_selection_json,
                 knowledge_retrieval_mode, context_state_json, title, channel,
@@ -2633,13 +2641,19 @@ export class AssistantDatabase {
              id IN (SELECT id FROM conversations WHERE status = 'active'
                     ORDER BY updated_at DESC LIMIT 100)
              OR id IN (SELECT conversation_id FROM (${activeVisibleTaskSelect}))
+             OR id IN (SELECT value FROM json_each(?))
              OR EXISTS (SELECT 1 FROM messages
                         WHERE conversation_id = conversations.id
                           AND state = 'streaming')
            )
          ORDER BY updated_at DESC`
       )
-      .all() as ConversationRow[]
+      .all(JSON.stringify([...extraIds])) as ConversationRow[]
+  }
+
+  private readConversationList(detailIds?: ReadonlySet<string>): import('../../shared/assistant-contracts').ConversationListSnapshot[] {
+    const database = this.requireDatabase()
+    const conversations = this.listConversationRows(detailIds)
     const messageStatement = database.prepare(
       `SELECT id, conversation_id, role, content, state, metadata_json,
               created_at
@@ -2652,12 +2666,44 @@ export class AssistantDatabase {
        )
        ORDER BY sequence ASC`
     )
-    return conversations.map((conversation) =>
-      toConversationSnapshot(
-        conversation,
-        messageStatement.all(conversation.id) as MessageRow[]
-      )
+    const summaryStatement = database.prepare(
+      `SELECT count(*) AS count,
+              max(state = 'streaming') AS streaming,
+              (SELECT role FROM messages WHERE conversation_id = ? ORDER BY sequence LIMIT 1) AS firstRole
+       FROM messages WHERE conversation_id = ?`
     )
+    const activeIds = new Set(
+      (database.prepare(`SELECT conversation_id FROM (${activeVisibleTaskSelect})`).all() as
+        { conversation_id: string }[]).map(row => row.conversation_id)
+    )
+    return conversations.map((conversation) => {
+      if (detailIds && !detailIds.has(conversation.id) && !activeIds.has(conversation.id)) {
+        const summary = summaryStatement.get(conversation.id, conversation.id) as {
+          count: number; streaming: number | null; firstRole: ConversationMessage['role'] | null
+        }
+        if (!summary.streaming) {
+          return {
+            ...toConversationSnapshot(conversation, []),
+            messageSummary: { count: summary.count, firstRole: summary.firstRole ?? undefined }
+          }
+        }
+      }
+      return toConversationSnapshot(conversation, messageStatement.all(conversation.id) as MessageRow[])
+    })
+  }
+
+  searchConversations(query: string, conversationIds: string[] = []): string[] {
+    const normalized = query.trim().toLocaleLowerCase()
+    if (!normalized) return []
+    const database = this.requireDatabase()
+    // Read only searchable text, never tool/subagent/image metadata. Use the
+    // same Unicode case folding as the renderer's existing search.
+    const messages = database.prepare('SELECT content FROM messages WHERE conversation_id = ?')
+    return this.listConversationRows(new Set(conversationIds)).filter(conversation =>
+      conversation.title.toLocaleLowerCase().includes(normalized) ||
+      (messages.all(conversation.id) as { content: string }[]).some(message =>
+        message.content.toLocaleLowerCase().includes(normalized))
+    ).map(conversation => conversation.id)
   }
 
   getConversation(conversationId: string): ConversationSnapshot {

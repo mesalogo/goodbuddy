@@ -185,6 +185,9 @@ export const ipcChannels = {
   remoteProjectRecoveryProgress:
     'projects:remote:recovery:progress',
   conversationsList: 'conversations:list',
+  conversationsListSummaries: 'conversations:list-summaries',
+  conversationsGet: 'conversations:get',
+  conversationsSearch: 'conversations:search',
   conversationsReplace: 'conversations:replace',
   conversationsSaveLocal: 'conversations:save-local',
   conversationsBranchLocal: 'conversations:branch-local',

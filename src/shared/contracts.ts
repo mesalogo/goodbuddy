@@ -2054,6 +2054,9 @@ export type DesktopApi = {
   conversations: {
     imageOperations: import('./image-operation-ipc').ImageOperationsApi
     list: () => Promise<ConversationSnapshot[]>
+    listSummaries: (detailIds?: string[]) => Promise<import('./assistant-contracts').ConversationListSnapshot[]>
+    get: (conversationId: string) => Promise<ConversationSnapshot>
+    search: (query: string, conversationIds?: string[]) => Promise<string[]>
     replace: (conversations: ConversationSnapshot[]) => Promise<void>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
     branchLocal: (
