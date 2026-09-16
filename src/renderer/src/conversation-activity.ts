@@ -3,14 +3,15 @@ export type ConversationActivity = {
   projectId?: string
   title: string
   projectName: string
-  status: 'running' | 'approval' | 'question' | 'attention'
+  status: 'running' | 'approval' | 'question' | 'attention' | 'completed'
 }
 
 export type ConversationActivitySummary = {
   activities: ConversationActivity[]
-  byProjectId: Record<string, { running: number; attention: number }>
+  byProjectId: Record<string, { running: number; attention: number; completed: number }>
   running: number
   attention: number
+  completed: number
 }
 
 export function deriveConversationActivity(
@@ -28,16 +29,18 @@ export function deriveConversationActivity(
   }[],
   activeConversationIds: ReadonlySet<string>,
   projects: readonly { id: string; name: string }[],
-  fallbackProjectName: string
+  fallbackProjectName: string,
+  completedConversationIds: ReadonlySet<string> = new Set()
 ): ConversationActivitySummary {
   const projectNames = new Map(projects.map((project) => [project.id, project.name]))
   const metadata = new Map(conversations.map((conversation) => [conversation.id, conversation]))
   const rows = new Map<string, ConversationActivity>()
-  const priority = { running: 0, attention: 1, approval: 2, question: 3 }
+  const priority = { completed: -1, running: 0, attention: 1, approval: 2, question: 3 }
 
   for (const conversation of conversations) {
     let status: ConversationActivity['status'] | undefined =
-      activeConversationIds.has(conversation.id) ? 'running' : undefined
+      activeConversationIds.has(conversation.id) ? 'running'
+        : completedConversationIds.has(conversation.id) ? 'completed' : undefined
     for (const message of conversation.messages) {
       const candidate = message.pendingQuestions?.length
         ? 'question'
@@ -62,11 +65,13 @@ export function deriveConversationActivity(
   }
 
   for (const task of tasks) {
-    if (!task.conversationId || (task.status !== 'running' && task.status !== 'waiting_approval')) {
+    if (!task.conversationId || (task.status !== 'running' && task.status !== 'waiting_approval'
+      && !completedConversationIds.has(task.conversationId))) {
       continue
     }
     // Tasks use waiting_approval for both approvals and questions.
-    const status = task.status === 'waiting_approval' ? 'attention' : 'running'
+    const status = task.status === 'waiting_approval' ? 'attention'
+      : task.status === 'running' ? 'running' : 'completed'
     const existing = rows.get(task.conversationId)
     if (existing) {
       if (priority[status] > priority[existing.status]) existing.status = status
@@ -87,14 +92,15 @@ export function deriveConversationActivity(
     activities: [...rows.values()],
     byProjectId: {},
     running: 0,
-    attention: 0
+    attention: 0,
+    completed: 0
   }
-  const counts = new Map<string, { running: number; attention: number }>()
+  const counts = new Map<string, { running: number; attention: number; completed: number }>()
   for (const activity of summary.activities) {
-    const category = activity.status === 'running' ? 'running' : 'attention'
+    const category = activity.status === 'running' || activity.status === 'completed' ? activity.status : 'attention'
     summary[category] += 1
     if (activity.projectId !== undefined) {
-      const project = counts.get(activity.projectId) ?? { running: 0, attention: 0 }
+      const project = counts.get(activity.projectId) ?? { running: 0, attention: 0, completed: 0 }
       project[category] += 1
       counts.set(activity.projectId, project)
     }

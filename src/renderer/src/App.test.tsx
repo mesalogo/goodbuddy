@@ -1301,7 +1301,7 @@ describe("App", () => {
       vi.mocked(api.tasks.list).mockResolvedValue([task]);
     });
 
-    it("keeps cross-project task counts independent of initial and current search and clears on refresh", async () => {
+    it("keeps cross-project counts independent of search and retains completion until opened", async () => {
       const initialTasks = deferred<AssistantTask[]>();
       vi.mocked(api.tasks.list).mockReturnValueOnce(initialTasks.promise);
       render(<App />);
@@ -1326,11 +1326,123 @@ describe("App", () => {
 
       vi.mocked(api.tasks.list).mockResolvedValue([{ ...task, status: "completed" }]);
       act(() => conversationQueueChangeListener?.(task.conversationId!));
+      await waitFor(() => expect(summary).toHaveTextContent("1 个已完成"));
+      expect(summary).not.toHaveTextContent("待处理");
+      fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
+      expect(await screen.findByText("Exact conversation content")).toBeInTheDocument();
       await waitFor(() => expect(summary).not.toBeInTheDocument());
       expect(screen.queryByRole("menu", { name: "全项目活动" })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
       expect(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: /Background project/u }))
         .not.toHaveTextContent("个运行中");
+    });
+
+    it.each((["foreground", "background"] as const).flatMap((location) =>
+      (["done", "persisted"] as const).map((source) => ({ location, source })),
+    ))("acknowledges $location local success from $source only when its chat is viewed", async ({ location, source }) => {
+      vi.mocked(api.tasks.list).mockResolvedValue([]);
+      const { container } = render(<App />);
+      await screen.findByLabelText("更多会话操作 Current discussion");
+      fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Complete local activity" } });
+      await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+      fireEvent.click(screen.getByLabelText("发送"));
+      await waitFor(() => expect(run).toHaveBeenCalledOnce());
+      const request = run.mock.calls[0]![0];
+      expect(request.conversationId).toBe("activity-current");
+      const summary = screen.getByRole("button", { name: /全项目活动/u });
+      expect(summary).toHaveTextContent("1 个运行中");
+      await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalledWith(expect.arrayContaining([
+        expect.objectContaining({ header: expect.objectContaining({ id: request.conversationId }), messages: expect.arrayContaining([
+          expect.objectContaining({ role: "assistant", state: "streaming" }),
+        ]) }),
+      ])));
+      const saved = vi.mocked(api.conversations.saveLocal).mock.calls.at(-1)![0]
+        .find((conversation) => conversation.header.id === request.conversationId)!;
+      if (location === "background") {
+        selectProjectOption(otherProject.name);
+        fireEvent.click(await screen.findByTitle("Exact background discussion"));
+        await screen.findByText("Exact conversation content");
+      }
+
+      if (source === "done") {
+        act(() => {
+          agentListener?.({ requestId: request.requestId, type: "text", delta: "Local completion result" });
+          agentListener?.({ requestId: request.requestId, type: "done" });
+        });
+      } else {
+        vi.mocked(api.conversations.list).mockResolvedValue([
+          { ...saved.header, updatedAt: saved.header.updatedAt + 120_000,
+            messages: saved.messages.map((message) => message.role === "assistant"
+              ? { ...message, state: "complete", content: "Local completion result" } : message) },
+          ...conversations.filter((conversation) => conversation.id !== request.conversationId),
+        ]);
+        act(() => conversationQueueChangeListener?.(request.conversationId!));
+      }
+
+      if (location === "background") {
+        await waitFor(() => expect(summary).toHaveTextContent("1 个已完成"));
+        expect(summary).not.toHaveTextContent("运行中");
+        expect(screen.getByText("Exact conversation content")).toBeVisible();
+        fireEvent.click(summary);
+        fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(project.name, "u") }));
+        expect(screen.getByRole("menu", { name: project.name })).toHaveTextContent("已完成");
+        fireEvent.click(summary);
+        expect(summary).toHaveTextContent("1 个已完成");
+        selectProjectOption(project.name);
+        fireEvent.click(await within(container.querySelector<HTMLElement>(".conversation-list")!)
+          .findByTitle(saved.header.title));
+      }
+      expect(await screen.findByText("Local completion result")).toBeVisible();
+      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
+      selectProjectOption(otherProject.name);
+      await screen.findByTitle("Exact background discussion");
+      expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument();
+    });
+
+    it.each(["failed", "cancelled"] as const)("does not mark a background local run completed after %s", async (status) => {
+      vi.mocked(api.tasks.list).mockResolvedValue([]);
+      render(<App />);
+      await screen.findByLabelText("更多会话操作 Current discussion");
+      fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Unsuccessful local activity" } });
+      await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+      fireEvent.click(screen.getByLabelText("发送"));
+      await waitFor(() => expect(run).toHaveBeenCalledOnce());
+      const request = run.mock.calls[0]![0];
+      selectProjectOption(otherProject.name);
+      fireEvent.click(await screen.findByTitle("Exact background discussion"));
+      await screen.findByText("Exact conversation content");
+      expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个运行中");
+      act(() => agentListener?.({
+        requestId: request.requestId, type: "error", status, message: `Local activity ${status}`,
+      }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
+      expect(screen.getByText("Exact conversation content")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+      expect(within(screen.getByRole("menu", { name: "当前项目" }))
+        .getByRole("menuitemradio", { name: new RegExp(project.name, "u") })).not.toHaveTextContent("已完成");
+    });
+
+    it("retains completion for the selected conversation while Settings is open until chat is actually viewed", async () => {
+      const currentTask = { ...task, projectId, conversationId: "activity-current" };
+      vi.mocked(api.tasks.list).mockResolvedValue([currentTask]);
+      const { container } = render(<App />);
+      const selected = (await within(container.querySelector<HTMLElement>(".conversation-list")!)
+        .findByTitle("Current discussion")).closest("button")!;
+      expect(selected).toHaveClass("conversation-item--active");
+      const summary = await screen.findByRole("button", { name: /全项目活动/u });
+      expect(summary).toHaveTextContent("1 个运行中");
+      fireEvent.click(screen.getByRole("button", { name: /本地工作区/u }));
+      const settings = await screen.findByRole("dialog", { name: "设置中心" });
+      expect(selected).toHaveClass("conversation-item--active");
+      vi.mocked(api.tasks.list).mockResolvedValue([{ ...currentTask, status: "completed" }]);
+      act(() => conversationQueueChangeListener?.(currentTask.conversationId));
+      await waitFor(() => expect(summary).toHaveTextContent("1 个已完成"));
+      expect(settings).toBeVisible();
+      expect(selected).toHaveClass("conversation-item--active");
+      fireEvent.click(within(settings).getByRole("button", { name: "关闭设置" }));
+      await waitFor(() => expect(settings).not.toBeInTheDocument());
+      expect(screen.getByLabelText("向 GoodBuddy 提问")).toBeVisible();
+      await waitFor(() => expect(screen.queryByRole("button", { name: /全项目活动/u })).not.toBeInTheDocument());
     });
 
     it("opens the exact off-project conversation and clears task selection, search, menu and narrow sidebar", async () => {
@@ -1790,7 +1902,10 @@ describe("App", () => {
       );
       fireEvent.click(screen.getByLabelText("Toggle assistant workspace"));
 
-      fireEvent.click(screen.getByLabelText("Project settings"));
+      fireEvent.click(projectTrigger);
+      fireEvent.click(screen.getByRole("menuitem", {
+        name: "Manage project Default project",
+      }));
       const settingsDialog = screen.getByRole("dialog", {
         name: "Project settings",
       });
@@ -2579,7 +2694,7 @@ describe("App", () => {
     expect(route).not.toHaveAttribute("hidden");
   });
 
-  it("enforces the workspace KeepAlive cap during rapid visits", async () => {
+  it("keeps Settings outside the workspace KeepAlive cache", async () => {
     let now = 2_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => ++now);
     render(<App />);
@@ -2597,7 +2712,8 @@ describe("App", () => {
     expect(document.querySelectorAll(".workspace-route-cache")).toHaveLength(4);
     expect(
       document.querySelector('[data-route="knowledge"]'),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
+    expect(document.querySelector('[data-route="settings"]')).toBeNull();
   });
 
   it("preserves title, message, and project filtering with deferred search", async () => {
@@ -2794,7 +2910,7 @@ describe("App", () => {
       );
 
       expect(
-        await screen.findByRole("region", {
+        await screen.findByRole("dialog", {
           name: "Settings",
         }),
       ).toBeInTheDocument();
@@ -3345,7 +3461,8 @@ describe("App", () => {
         expect.stringContaining("你好，我是 GoodBuddy"),
       ),
     );
-    expect(await screen.findByText("回复已复制到剪贴板")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "回复已复制到剪贴板" })).toBeVisible();
+    expect(screen.queryByText("回复已复制到剪贴板")).not.toBeInTheDocument();
   });
 
   it("reports a desktop clipboard write failure", async () => {
@@ -3359,6 +3476,7 @@ describe("App", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "无法访问剪贴板，请检查系统权限",
     );
+    expect(screen.getByRole("button", { name: "复制此回复" })).toBeVisible();
   });
 
   it("flushes and opens an independent conversation branch with provenance badges", async () => {
@@ -5007,7 +5125,7 @@ describe("App", () => {
     await waitFor(() => expect(knowledgeNavigation).toHaveFocus());
   });
 
-  it("restores focus outside Settings after closing the page", async () => {
+  it("restores focus outside Settings after closing the modal", async () => {
     render(<App />);
 
     await screen.findByLabelText("向 GoodBuddy 提问");
@@ -5020,6 +5138,40 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭设置" }));
 
     await waitFor(() => expect(settingsTrigger).toHaveFocus());
+  });
+
+  it.each([
+    ["chat", "对话"],
+    ["knowledge", "知识库"],
+    ["activity", "运行记录"],
+  ])("preserves the %s workspace underneath Settings", async (route, label) => {
+    render(<App />);
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(composer, { target: { value: "Keep this workspace draft" } });
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    const workspace = document.querySelector(`[data-route="${route}"]`)!;
+    workspace.scrollTop = 120;
+    const trigger = screen.getByRole("button", { name: /本地工作区/u });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog", { name: "设置中心" });
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
+    expect(document.querySelector(".app-shell")).toHaveProperty("inert", true);
+    expect(workspace).not.toHaveAttribute("hidden");
+    expect(document.querySelector(`[data-route="${route}"]`)).toBe(workspace);
+    fireEvent.mouseDown(dialog.parentElement!);
+    fireEvent.click(dialog.parentElement!);
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭设置" })).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(dialog).not.toBeInTheDocument();
+    expect(document.querySelector(".app-shell")).toHaveProperty("inert", false);
+    expect(workspace).not.toHaveAttribute("hidden");
+    expect(workspace.scrollTop).toBe(120);
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toBe(composer);
+    expect(composer).toHaveValue("Keep this workspace draft");
   });
 
   it("focuses the Composer after closing automatically opened Settings", async () => {
@@ -8271,7 +8423,10 @@ describe("App", () => {
       "微信 ClawBot通道项目",
     );
 
-    fireEvent.click(screen.getByLabelText("项目设置"));
+    fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+    fireEvent.click(screen.getByRole("menuitem", {
+      name: `管理项目 ${weixinProject.name}`,
+    }));
     let dialog = screen.getByRole("dialog", { name: "项目设置" });
     const dialogDescription =
       within(dialog).getByLabelText("微信 ClawBot 项目说明");
@@ -8350,7 +8505,10 @@ describe("App", () => {
       ),
     );
 
-    fireEvent.click(screen.getByLabelText("项目设置"));
+    fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+    fireEvent.click(screen.getByRole("menuitem", {
+      name: `管理项目 ${weixinProject.name}`,
+    }));
     dialog = screen.getByRole("dialog", { name: "项目设置" });
     expect(within(dialog).getByLabelText("微信 ClawBot 项目说明")).toHaveValue(
       "从消息通道更新",
@@ -9222,10 +9380,18 @@ describe("App", () => {
     render(<App />);
     expect(await screen.findByText('当前聊天模型无法自动调用图片工具，可使用已有直连图片工作流。')).toBeVisible();
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Keep my image request' } });
+    fireEvent.click(screen.getByRole('button', { name: /本地工作区/u }));
+    fireEvent.click(await screen.findByRole('tab', { name: '外观' }));
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     fireEvent.click(screen.getByRole('button', { name: '前往图片模型设置' }));
     expect(await screen.findByRole('tab', { name: '模型连接' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('Keep my image request');
+    fireEvent.click(screen.getByRole('button', { name: /本地工作区/u }));
+    expect(await screen.findByRole('tab', { name: 'Agent Runtime' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '前往图片模型设置' }));
+    expect(await screen.findByRole('tab', { name: '模型连接' })).toHaveAttribute('aria-selected', 'true');
     expect(run).not.toHaveBeenCalled();
     expect(api.conversations.imageOperations.regenerate).not.toHaveBeenCalled();
   });
@@ -10378,7 +10544,10 @@ describe("App", () => {
     ]);
     render(<App />);
 
-    fireEvent.click(await screen.findByLabelText("项目设置"));
+    fireEvent.click(await screen.findByRole("button", { name: "当前项目" }));
+    fireEvent.click(screen.getByRole("menuitem", {
+      name: "管理项目 默认项目",
+    }));
     let dialog = screen.getByRole("dialog", { name: "项目设置" });
     expect(within(dialog).getByLabelText("名称")).toHaveValue(project.name);
     expect(within(dialog).getByLabelText("根目录")).toHaveValue(
@@ -10413,7 +10582,10 @@ describe("App", () => {
       ),
     );
 
-    fireEvent.click(screen.getByLabelText("项目设置"));
+    fireEvent.click(screen.getByRole("button", { name: "当前项目" }));
+    fireEvent.click(screen.getByRole("menuitem", {
+      name: "管理项目 默认项目",
+    }));
     dialog = screen.getByRole("dialog", { name: "项目设置" });
     expect(dialog).toHaveTextContent("不会删除磁盘上的项目目录或文件");
     fireEvent.click(within(dialog).getByRole("button", { name: "删除项目" }));
@@ -11405,10 +11577,9 @@ describe("App", () => {
         name: "设置中心",
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("region", { name: "设置中心" }),
-    ).toBeInTheDocument();
+      screen.getByRole("dialog", { name: "设置中心" }),
+    ).toHaveAttribute("aria-modal", "true");
     expect(
       screen.getByRole("tab", { name: "Agent Runtime" }),
     ).toBeInTheDocument();

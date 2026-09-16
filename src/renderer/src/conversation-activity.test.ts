@@ -64,6 +64,17 @@ describe('deriveConversationActivity', () => {
       })),
       { title: 'No conversation', status: 'running' }
     ], new Set(), projects, 'Unknown')
-    expect(summary).toEqual({ activities: [], byProjectId: {}, running: 0, attention: 0 })
+    expect(summary).toEqual({ activities: [], byProjectId: {}, running: 0, attention: 0, completed: 0 })
+  })
+
+  it('retains only unviewed completions and gives live work precedence', () => {
+    const summary = deriveConversationActivity([
+      { id: 'done', title: 'Done', projectId: 'local', messages: [] },
+      { id: 'busy', title: 'Busy', projectId: 'local', messages: [] }
+    ], [{ conversationId: 'unloaded', projectId: 'remote', title: 'Remote done', status: 'completed' }],
+    new Set(['busy']), projects, 'Unknown', new Set(['done', 'busy', 'unloaded']))
+    expect(summary).toMatchObject({ running: 1, attention: 0, completed: 2,
+      byProjectId: { local: { running: 1, completed: 1 }, remote: { completed: 1 } } })
+    expect(summary.activities.map(row => row.status)).toEqual(['completed', 'running', 'completed'])
   })
 })

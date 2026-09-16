@@ -17,6 +17,8 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createPortal } from 'react-dom'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type {
   AssistantExpert,
   AssistantProject,
@@ -821,6 +823,8 @@ export function SettingsPanel({
   const runtimeCustomizationRef =
     useRef<RuntimeCustomizationSectionHandle>(null)
   const keepEditingRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
   const leaveTriggerRef = useRef<HTMLElement | undefined>(undefined)
   const handleRuntimeCustomizationDirtyChange = useCallback(
     (dirty: boolean): void => {
@@ -1241,6 +1245,7 @@ export function SettingsPanel({
     }
 
   const close = (trigger?: HTMLElement): void => {
+    if (saving || testing || clearingLocalData) return
     if (hasUnsavedDrafts) {
       leaveTriggerRef.current =
         trigger ??
@@ -1348,6 +1353,13 @@ export function SettingsPanel({
     }
     keepEditingRef.current?.focus()
   }, [pendingLeave])
+
+  useEffect(() => {
+    if (open && presentation === 'modal') {
+      return activateModalFocus(() => closeRef.current)
+    }
+    return undefined
+  }, [open, presentation])
 
   useLayoutEffect(() => {
     const requestLeave: SettingsLeaveRequester = (proceed) => {
@@ -2007,7 +2019,7 @@ export function SettingsPanel({
       ? settings?.defaultModelProfileId
       : undefined
 
-  return (
+  const panel = (
     <div
       className={
         presentation === 'page'
@@ -2020,6 +2032,21 @@ export function SettingsPanel({
         aria-labelledby="settings-title"
         aria-modal={presentation === 'modal' ? 'true' : undefined}
         className="settings-panel"
+        ref={dialogRef}
+        onKeyDown={(event) => {
+          if (
+            presentation !== 'modal' ||
+            event.defaultPrevented ||
+            (event.target as HTMLElement).closest('[role="dialog"]') !== dialogRef.current
+          ) return
+          event.stopPropagation()
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            if (pendingLeave) keepEditing()
+            else close()
+          }
+          trapTabFocus(event, dialogRef.current)
+        }}
         role={presentation === 'modal' ? 'dialog' : 'region'}
       >
         <div className="settings-panel__header">
@@ -2029,6 +2056,8 @@ export function SettingsPanel({
                 <button
                   aria-label={t('center.close')}
                   className="icon-button"
+                  disabled={saving || testing || clearingLocalData}
+                  ref={closeRef}
                   onClick={(event) => close(event.currentTarget)}
                   type="button"
                 >
@@ -4160,4 +4189,5 @@ export function SettingsPanel({
       </section>
     </div>
   )
+  return presentation === 'modal' ? createPortal(panel, document.body) : panel
 }

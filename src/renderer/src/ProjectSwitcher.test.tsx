@@ -356,8 +356,15 @@ describe('ProjectSwitcher project activity integration', () => {
 describe('ProjectSwitcher runtime fields', () => {
   it.each(['新建项目', '项目设置'])('keeps %s outside the sidebar and restores focus after closing', (name) => {
     renderSwitcher()
-    const trigger = screen.getByLabelText(name)
+    const trigger = screen.getByRole('button', {
+      name: name === '项目设置' ? '当前项目' : name
+    })
     fireEvent.click(trigger)
+    if (name === '项目设置') {
+      fireEvent.click(screen.getByRole('menuitem', {
+        name: '管理项目 Local project'
+      }))
+    }
     const dialog = screen.getByRole('dialog', { name })
     expect(dialog.parentElement?.parentElement).toBe(document.body)
     const body = dialog.querySelector('.project-create-card__body')!
@@ -411,7 +418,10 @@ describe('ProjectSwitcher runtime fields', () => {
   it('edits an ordinary project to use DeepSeek Harness and switches work mode by keyboard', async () => {
     const { onUpdate } = renderSwitcher()
 
-    fireEvent.click(screen.getByLabelText('项目设置'))
+    fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+    fireEvent.click(screen.getByRole('menuitem', {
+      name: '管理项目 Local project'
+    }))
     const dialog = screen.getByRole('dialog', { name: '项目设置' })
     fireEvent.change(
       within(dialog).getByLabelText('新对话默认 Runtime'),
@@ -893,9 +903,14 @@ describe('ProjectSwitcher managed SSH projects', () => {
     }
     renderSwitcher(remoteProject, { remoteProjectsEnabled: false })
 
-    const settings = screen.getByLabelText('项目设置')
-    expect(settings).toBeDisabled()
-    fireEvent.click(settings)
+    expect(screen.queryByRole('button', {
+      name: '项目设置'
+    })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+    expect(within(screen.getByRole('menu', { name: '当前项目' }))
+      .queryByRole('menuitem', {
+        name: '管理项目 Remote project'
+      })).not.toBeInTheDocument()
     expect(
       screen.queryByRole('dialog', { name: '项目设置' })
     ).not.toBeInTheDocument()
@@ -1401,7 +1416,10 @@ describe('ProjectSwitcher managed SSH projects', () => {
       runtimeSelection: { provider: 'opencode' }
     }
     const { onUpdate } = renderSwitcher(remoteProject)
-    fireEvent.click(screen.getByLabelText('项目设置'))
+    fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+    fireEvent.click(screen.getByRole('menuitem', {
+      name: '管理项目 Remote project'
+    }))
     const dialog = screen.getByRole('dialog', { name: '项目设置' })
     await waitFor(() =>
       expect(
@@ -1479,7 +1497,10 @@ describe('ProjectSwitcher managed SSH projects', () => {
       runtimeSelection: { provider: 'opencode' }
     }
     renderSwitcher(remoteProject)
-    fireEvent.click(screen.getByLabelText('项目设置'))
+    fireEvent.click(screen.getByRole('button', { name: '当前项目' }))
+    fireEvent.click(screen.getByRole('menuitem', {
+      name: '管理项目 Remote project'
+    }))
     const dialog = screen.getByRole('dialog', { name: '项目设置' })
 
     expect(

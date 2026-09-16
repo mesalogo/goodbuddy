@@ -5,15 +5,17 @@ export const workspace = {
   projectActivity: {
     title: 'All project activity',
     idle: 'No activity',
-    empty: 'No running conversations or conversations needing attention.',
+    empty: 'No conversation activity.',
     back: 'Back to projects',
     close: 'Close project activity',
     unassigned: 'No project',
     attentionCount: '{{count}} need attention',
     runningCount: '{{count}} running',
+    completedCount: '{{count}} completed',
     groups: { attention: 'Needs attention', running: 'Running' },
     status: {
       running: 'Running',
+      completed: 'Completed',
       approval: 'Waiting for approval',
       question: 'Waiting for your answer',
       attention: 'Needs attention'

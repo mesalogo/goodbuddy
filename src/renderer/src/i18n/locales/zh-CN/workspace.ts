@@ -2,15 +2,17 @@ export const workspace = {
   projectActivity: {
     title: '全项目活动',
     idle: '暂无活动',
-    empty: '暂无运行中或待处理会话。',
+    empty: '暂无会话活动。',
     back: '返回项目列表',
     close: '关闭全项目活动',
     unassigned: '未归属项目',
     attentionCount: '{{count}} 个待处理',
     runningCount: '{{count}} 个运行中',
+    completedCount: '{{count}} 个已完成',
     groups: { attention: '待处理', running: '运行中' },
     status: {
       running: '运行中',
+      completed: '已完成',
       approval: '等待审批',
       question: '等待你的回答',
       attention: '待处理'

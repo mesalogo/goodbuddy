@@ -6,6 +6,7 @@ import { ProjectActivity, ProjectActivityCounts } from './ProjectActivity'
 import type { ConversationActivity } from './conversation-activity'
 import { isBrowserViewportOccluded } from './browser-viewport-occlusion'
 import { workspace } from './i18n/locales/en-US/workspace'
+import { workspace as chineseWorkspace } from './i18n/locales/zh-CN/workspace'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 
 const i18n = createInstance()
@@ -73,6 +74,58 @@ describe('ProjectActivity', () => {
     open()
     expect(screen.getAllByRole('menuitem').map((row) => row.querySelector('.project-activity__identity > span')?.textContent))
       .toEqual(['Local', 'Remote', 'Same host', 'Other host', 'Channel', 'No project'])
+  })
+
+  it('counts completed separately and orders attention, running, then completed within a project', () => {
+    const completed: ConversationActivity = {
+      conversationId: 'completed', projectId: 'remote', projectName: 'Remote', title: 'Release notes', status: 'completed'
+    }
+    render(view([completed, ...activities]))
+    const trigger = open()
+    expect(trigger).toHaveAccessibleName('All project activity: 3 need attention, 2 running, 1 completed')
+    expect(Array.from(trigger.querySelectorAll('.project-activity__counts > span'), (count) => count.textContent))
+      .toEqual(['3 need attention', '2 running', '1 completed'])
+    const remote = screen.getByRole('menuitem', { name: 'Remote 2 need attention 1 running 1 completed' })
+    fireEvent.click(remote)
+    const rows = within(screen.getByRole('menu', { name: 'Remote' })).getAllByRole('menuitem')
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'Choose target Waiting for your answer', 'Approve command Waiting for approval', 'Deploy Running', 'Release notes Completed'
+    ])
+    expect(rows[3]!.querySelector('.project-activity__completed .lucide-check')).toBeInTheDocument()
+    expect(rows[3]!.querySelector('.project-activity__attention')).not.toBeInTheDocument()
+    fireEvent.keyDown(rows[0]!, { key: 'End' })
+    expect(rows[3]).toHaveFocus()
+  })
+
+  it.each([
+    { language: 'en', resource: workspace, title: 'All project activity', count: '1 completed', status: 'Completed' },
+    { language: 'zh', resource: chineseWorkspace, title: '全项目活动', count: '1 个已完成', status: '已完成' }
+  ])('keeps completed-only activity navigable in $language and closes before opening the conversation', ({ language, resource, title, count, status }) => {
+    const localized = createInstance()
+    void localized.init({ lng: language, initImmediate: false, resources: { [language]: { workspace: resource } } })
+    const onOpen = vi.fn(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+    })
+    render(<I18nextProvider i18n={localized}>
+      <ProjectActivity activities={[{
+        conversationId: 'completed-only', projectId: 'remote', projectName: 'Remote', title: 'Release notes', status: 'completed'
+      }]} onOpenConversation={onOpen} />
+    </I18nextProvider>)
+    const trigger = screen.getByRole('button', { name: new RegExp(title) })
+    expect(within(trigger).getByText(count)).toBeInTheDocument()
+    expect(trigger.querySelector('.project-activity__attention')).not.toBeInTheDocument()
+    expect(trigger.querySelector('.project-activity__running')).not.toBeInTheDocument()
+    expect(trigger.querySelector('.project-activity__completed .lucide-check')).toBeInTheDocument()
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const project = screen.getByRole('menuitem', { name: `Remote ${count}` })
+    expect(project).toHaveFocus()
+    fireEvent.keyDown(project, { key: 'ArrowRight' })
+    const conversation = screen.getByRole('menuitem', { name: `Release notes ${status}` })
+    expect(conversation).toHaveFocus()
+    fireEvent.click(conversation)
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('completed-only')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('navigates arrows, Home/End, Enter and two-stage Escape before the sidebar listener', () => {

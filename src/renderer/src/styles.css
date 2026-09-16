@@ -2558,7 +2558,7 @@ textarea:focus-visible {
   display: grid;
   align-items: center;
   gap: 5px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .project-switcher__picker {
@@ -5711,6 +5711,10 @@ button > svg {
   justify-content: flex-end;
 }
 
+.message__copy-success {
+  color: var(--success);
+}
+
 .message__actions {
   display: flex;
   margin-top: var(--space-2);
@@ -7861,7 +7865,7 @@ button > svg {
 
 .settings-backdrop {
   position: fixed;
-  z-index: 50;
+  z-index: var(--z-dialog);
   display: grid;
   background: var(--overlay-backdrop);
   inset: 0;
@@ -7877,10 +7881,11 @@ button > svg {
 
 .settings-panel {
   display: grid;
-  width: min(820px, calc(100vw - 40px));
-  max-height: calc(100vh - 48px);
+  width: min(1200px, calc(100vw - 2 * var(--space-6)));
+  height: min(900px, calc(100vh - 2 * var(--space-6)));
+  max-height: calc(100vh - 2 * var(--space-6));
   border: 1px solid var(--border-default);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   overflow: hidden;
   background: var(--surface-raised);
   box-shadow: var(--shadow-dialog);
@@ -7900,7 +7905,7 @@ button > svg {
   position: relative;
   display: flex;
   align-items: center;
-  padding: 22px 24px 18px;
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -7916,6 +7921,11 @@ button > svg {
 .settings-panel__header .page-header {
   position: relative;
   width: 100%;
+}
+
+.settings-backdrop .settings-panel__header .page-header {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .settings-page .settings-panel__header .page-header {
@@ -8002,7 +8012,8 @@ button > svg {
   font-weight: 400;
 }
 
-.settings-page .settings-panel__body {
+.settings-page .settings-panel__body,
+.settings-backdrop .settings-panel__body {
   display: grid;
   min-height: 0;
   padding: var(--space-6) var(--page-gutter) var(--page-gutter);
@@ -8010,7 +8021,7 @@ button > svg {
   align-items: stretch;
   grid-template-columns: 220px minmax(0, 1fr);
   justify-content: start;
-  gap: 28px;
+  gap: var(--space-6);
 }
 
 .platform-feature-option {
@@ -8210,7 +8221,8 @@ button > svg {
   font-weight: 600;
 }
 
-.settings-page .settings-tabs {
+.settings-page .settings-tabs,
+.settings-backdrop .settings-tabs {
   display: flex;
   min-height: 0;
   max-height: 100%;
@@ -8222,7 +8234,8 @@ button > svg {
   scrollbar-gutter: auto;
 }
 
-.settings-page .settings-panel__content {
+.settings-page .settings-panel__content,
+.settings-backdrop .settings-panel__content {
   width: min(100%, var(--content-standard));
   min-height: 0;
   padding-right: var(--space-1);
@@ -8278,7 +8291,9 @@ button > svg {
   grid-column: 1 / -1;
 }
 
-.settings-page .settings-tabs button {
+.settings-page .settings-tabs button,
+.settings-backdrop .settings-tabs button {
+  flex: 0 0 auto;
   min-height: 58px;
   padding: 10px 12px;
   align-items: flex-start;
@@ -8286,19 +8301,22 @@ button > svg {
   text-align: left;
 }
 
-.settings-page .settings-tabs button strong {
+.settings-page .settings-tabs button strong,
+.settings-backdrop .settings-tabs button strong {
   font-size: var(--font-body);
   line-height: 1.35;
 }
 
-.settings-page .settings-tabs button small {
+.settings-page .settings-tabs button small,
+.settings-backdrop .settings-tabs button small {
   display: block;
   margin-top: 3px;
   font-size: var(--font-caption);
   line-height: 1.35;
 }
 
-.settings-page .settings-tabs button[aria-selected='true'] {
+.settings-page .settings-tabs button[aria-selected='true'],
+.settings-backdrop .settings-tabs button[aria-selected='true'] {
   background: var(--accent-subtle);
   box-shadow: none;
 }
@@ -16342,7 +16360,20 @@ details.settings-section > :not(summary) + :not(summary) {
   }
 }
 
+@media (max-width: 1020px), (max-height: 720px) {
+  .settings-backdrop .settings-panel {
+    width: calc(100vw - 2 * var(--space-4));
+    height: calc(100vh - 2 * var(--space-4));
+    max-height: calc(100vh - 2 * var(--space-4));
+  }
+}
+
 @media (max-width: 1020px) {
+  .settings-backdrop .settings-panel__body {
+    grid-template-columns: 180px minmax(0, 1fr);
+    padding: var(--space-4);
+    gap: var(--space-4);
+  }
   .sidebar {
     flex-basis: var(--primary-sidebar-width, 236px);
   }
@@ -16422,6 +16453,24 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 @media (max-width: 720px) {
+  .settings-backdrop .settings-panel__body {
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+
+  .settings-backdrop .settings-tabs button {
+    min-height: 40px;
+    padding: var(--space-2);
+  }
+
+  .settings-backdrop .settings-tabs button small {
+    display: none;
+  }
+
+  .settings-backdrop .settings-panel__header {
+    padding: var(--space-4);
+  }
   .release-notes-backdrop {
     padding: var(--space-4);
   }

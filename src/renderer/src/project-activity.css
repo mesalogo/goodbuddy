@@ -68,6 +68,12 @@
 
 .project-activity__attention { color: var(--warning); }
 .project-activity__running { color: var(--accent); }
+.project-activity__completed { color: var(--success); }
+
+.project-activity__completed > svg {
+  flex: 0 0 auto;
+  animation: none;
+}
 
 .project-switcher__project-heading {
   display: grid;
@@ -129,6 +135,9 @@
 }
 
 .project-activity__identity small {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font-size: var(--font-caption);
 }
 

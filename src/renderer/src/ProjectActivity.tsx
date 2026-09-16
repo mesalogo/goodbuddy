@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, ChevronRight, CircleAlert, LoaderCircle } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, LoaderCircle } from 'lucide-react'
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -13,14 +13,15 @@ export type ProjectActivityProps = {
   onOpenConversation: (id: string) => void
 }
 
-export type ProjectActivityCountsProps = { running: number; attention: number }
+export type ProjectActivityCountsProps = { running: number; attention: number; completed?: number }
 
 export function ProjectActivityCounts({
   running,
-  attention
+  attention,
+  completed = 0
 }: ProjectActivityCountsProps): React.JSX.Element | null {
   const { t } = useTranslation('workspace')
-  if (!running && !attention) return null
+  if (!running && !attention && !completed) return null
   return (
     <span className="project-activity__counts">
       {attention > 0 && (
@@ -36,6 +37,12 @@ export function ProjectActivityCounts({
           {t('projectActivity.runningCount', { count: running })}
         </span>
       )}
+      {completed > 0 && <>{' '}
+        <span className="project-activity__completed">
+          <Check aria-hidden="true" size={13} />
+          {t('projectActivity.completedCount', { count: completed })}
+        </span>
+      </>}
     </span>
   )
 }
@@ -54,6 +61,7 @@ function ActivityMenu({
   const sessionsRef = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const groups = useMemo(() => {
+    const priority = { attention: 0, approval: 0, question: 0, running: 1, completed: 2 }
     const rows = new Map<string, { id: string; name: string; rows: ConversationActivity[] }>()
     // Keep source project order within local, SSH Host and channel groups.
     const ordered = new Map<string, AssistantProject[]>()
@@ -77,8 +85,9 @@ function ActivityMenu({
     }
     return [...rows.values()].filter((group) => group.rows.length).map((group) => ({
       ...group,
-      rows: group.rows.sort((a, b) => Number(a.status === 'running') - Number(b.status === 'running')),
-      running: group.rows.filter((row) => row.status === 'running').length
+      rows: group.rows.sort((a, b) => priority[a.status] - priority[b.status]),
+      running: group.rows.filter((row) => row.status === 'running').length,
+      completed: group.rows.filter((row) => row.status === 'completed').length
     }))
   }, [activities, projects])
   const active = groups.find((group) => group.id === selected)
@@ -202,7 +211,8 @@ function ActivityMenu({
             }}
             onClick={() => enter(group.id)}>
             <span className="project-activity__identity"><span>{group.name}</span>{' '}
-              <ProjectActivityCounts running={group.running} attention={group.rows.length - group.running} />
+              <ProjectActivityCounts running={group.running} completed={group.completed}
+                attention={group.rows.length - group.running - group.completed} />
             </span><ChevronRight aria-hidden="true" size={14} />
           </button>
         ))}
@@ -219,7 +229,8 @@ function ActivityMenu({
             onOpenConversation(activity.conversationId)
           }}>
           <span className="project-activity__identity"><span>{activity.title}</span>{' '}
-            <small className={`project-activity__${activity.status === 'running' ? 'running' : 'attention'}`}>
+            <small className={`project-activity__${activity.status === 'completed' ? 'completed' : activity.status === 'running' ? 'running' : 'attention'}`}>
+              {activity.status === 'completed' && <Check aria-hidden="true" size={13} />}
               {t(`projectActivity.status.${activity.status}`)}
             </small>
           </span>
@@ -242,6 +253,8 @@ export function ProjectActivity({
   const id = useId()
   if ((!visible || activities.length === 0) && open) setOpen(false)
   const running = useMemo(() => activities.filter((activity) => activity.status === 'running').length, [activities])
+  const completed = useMemo(() => activities.filter((activity) => activity.status === 'completed').length, [activities])
+  const attention = activities.length - running - completed
   if (activities.length === 0) return null
   return (
     <>
@@ -249,7 +262,7 @@ export function ProjectActivity({
         aria-expanded={open}
         aria-haspopup="menu"
         aria-controls={open ? id : undefined}
-        aria-label={`${t('projectActivity.title')}: ${[t('projectActivity.attentionCount', { count: activities.length - running }), t('projectActivity.runningCount', { count: running })].join(', ')}`}
+        aria-label={`${t('projectActivity.title')}: ${[t('projectActivity.attentionCount', { count: attention }), t('projectActivity.runningCount', { count: running }), ...(completed > 0 ? [t('projectActivity.completedCount', { count: completed })] : [])].join(', ')}`}
         ref={triggerRef}
         className="project-activity__summary"
         onClick={(event) => {
@@ -264,7 +277,7 @@ export function ProjectActivity({
         }}
         type="button"
       >
-        <ProjectActivityCounts attention={activities.length - running} running={running} />
+        <ProjectActivityCounts attention={attention} running={running} completed={completed} />
         <ChevronDown aria-hidden="true" size={14} />
       </button>
       {open && visible && (

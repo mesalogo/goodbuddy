@@ -1,5 +1,47 @@
 # 项目活动级联实施进度
 
+## 2026-09-16：设置改为大 Modal
+
+对应 [US-A2](./user-stories.md#us-a2-从固定入口进入设置)。设置入口保留底层工作区，关闭后卸载
+设置内容；布局、关闭与分类直达规则见 [设置中心 UI 规范](../../../UI-DESIGN.md#138-设置中心)。
+
+`App.test.tsx`、`SettingsPanel.test.tsx`、`WorkspacePrimitives.test.tsx` 和
+`browser-viewport-occlusion.test.ts` 定向回归共 389 项通过。`npm run lint` 通过。
+全量 `npm test` 完成时为 4,354 项通过、9 项失败、67 项跳过；失败涉及本地 Runtime 复用超时、
+心跳旧库迁移、远程恢复及 ProjectSwitcher。共享工作区存在并行修改，最终 `npm run typecheck`
+报错位于非本次修改的 `use-unviewed-completions.test.tsx`，未将全量检查记为通过。
+
+Windows Electron 使用临时用户目录、当前 Renderer 源码和已有 Main/Preload 输出，验证窗口
+尺寸 `1440 × 960`、`1024 × 700`、`680 × 560`（系统缩放使实际 CSS 高宽略有偏差）。
+浅色与深色检查通过：整窗背景隔离、左右分栏、无内容横向溢出、遮罩点击不关闭、原生 Tab 与
+Escape、关闭后保留原知识库组件。截图保存在本轮临时验证目录；没有运行打包构建，也未单独
+驱动原生 `WebContentsView`，其遮挡规则通过共享检测测试验证。本次未修改 GoodBuddy Agent
+或桌面到 Agent 的执行路径，未额外发起真实模型请求。
+
+## 2026-09-16：已完成保留至查看
+
+对应 [FR-14](./prd.md#fr-14-项目活动汇总)、[US-E3](./user-stories.md#us-e3-完成后保留至查看)。
+已核对当前工作区 `use-unviewed-completions.ts`、`conversation-activity.ts` 和 `App.tsx` 的
+完成通知接入：Renderer 会话内集合、后台 Task 转换、本地及持久化活动运行成功标记、
+三类计数，以及聊天、设置和文档可见性条件。行为定义见[活动逻辑](./logic-design.md#9-项目活动汇总)。
+
+活动汇总、完成通知 Hook、项目活动组件、项目选择器及 App 活动集成定向回归共 77 项通过。
+覆盖前台完成、后台完成、持久化完成补齐、失败和取消、普通会话入口及级联菜单进入、
+设置覆盖聊天、窗口隐藏、历史完成不提醒、查看后刷新不重复提示和下一轮完成。
+实际聊天详情加载完成后才清除提示。最终 `npm run typecheck` 与 `npm run lint` 通过。
+
+全量 `npm test` 用 900 秒预算运行，762.20 秒结束：4,365 项通过、3 项失败、67 项跳过。
+失败为 `agent-package.test.ts` 离线依赖清单安装内部 60 秒超时，以及
+`heartbeat-database.test.ts` 两项迁移的 `duplicate column name: pinned`。
+共享工作区存在并行修改，此项未改动这些文件，不将全量检查记为通过。
+
+Windows Electron 43.2.0 / Chromium 150 的当前组件 fixture 验证浅深主题、1280×800 和
+375×667、混合状态及仅完成状态，共 8 个场景、112 项检查通过，8 张 PNG 已审阅。
+检查包含完成图标、三类计数、原生方向键与 Space、进入回调及移除后的空闲隐藏。
+证据为临时目录 `activity-completion-0916-results.json` 和 `activity-completion-0916-review.md`。
+此项使用受控活动数据，未验证完整 Main/Preload 真实模型端到端；模型及知识库请求为 0。
+本次只修改 Renderer 展示与状态跟踪，本地和远程均消费已有事件／Task 更新，不改变 Agent 执行路径。
+
 ## 2026-09-14：菜单独立高度修正
 
 生产菜单移除共用双栏表面，会话层独立定位到选中项目行。打开较长会话列表时，项目层的位置、

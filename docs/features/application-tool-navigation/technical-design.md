@@ -190,7 +190,9 @@ Renderer
 ```
 
 不能在设置按钮内部嵌套工具按钮。设置按钮继续调用 `navigateFromSidebar('settings', trigger)`，
-保留设置预加载、焦点恢复和未保存离开确认。
+保留设置预加载、焦点恢复和未保存离开确认。该调用只打开设置 Modal，不更新当前工作区或
+KeepAlive 缓存；`settingsOpen` 独立管理打开状态。关闭后卸载设置内容，下次按入口指定的分类
+和消息通道重新挂载，避免缓存上次分类覆盖本次直达目标。底层工作区继续挂载，普通关闭不跳回聊天。
 
 系统工具按钮调用统一 `openSystemTool`：
 
@@ -408,8 +410,17 @@ resourceMonitor.getLocalSnapshot(input: {
 派生状态，界面行为见[活动界面](./ui-design.md#10-项目活动汇总)。
 
 - `conversation-activity.ts` 从 `App.tsx` 的会话、`activeConversationIds`、全部可见
-  `assistantTasks` 和项目元数据派生会话行、全局及项目计数，不新增持久化活动副本。
+  `assistantTasks`、`completedConversationIds` 和项目元数据派生会话行、全局及项目计数，不新增持久化活动副本。
   `ProjectActivity` 在有活动时渲染汇总与项目、会话级联菜单，`ProjectSwitcher` 复用项目计数。
+- `use-unviewed-completions.ts` 在 Renderer 内存维护完成集合和上一轮 Task 状态；已观察到的
+  顶层 Task 转为 `completed` 时加入集合，初始历史不生成通知。`App` 的本地 `done` 事件和
+  活动运行持久化快照的成功终态调用 `markConversationCompleted`，失败、取消不调用。
+  新运行及 Task 恢复运行或等待处理时清除旧通知。具体优先级和通知生命周期以活动逻辑为准。
+- `App` 仅在 `view === 'chat' && !settingsOpen` 时向 Hook 传入当前会话 ID；Hook 监听
+  `visibilitychange`，文档不为 `hidden` 时才按当前会话清除通知。这使普通侧栏、活动菜单
+  导航和可见性恢复共用查看规则，KeepAlive 挂载本身不代表查看。集合不写入 SQLite 或设置。
+- 聚合状态新增 `completed`，全局和项目计数包含 `attention`、`running`、`completed`，
+  同一 Conversation ID 只按最高优先级计数；活动行为空才隐藏摘要。
 - `App` 向 `ProjectActivity` 传入项目元数据、活动行、侧栏可见状态与既有精确跳转回调。
   菜单按项目 ID 分组并记忆化派生集合；排序仅影响展示，不改聚合状态或持久化数据。
 - 两层菜单在同一 body Portal 内相接，桌面会话层使用独立 fixed 定位，不参与项目层高度计算。
@@ -434,5 +445,6 @@ resourceMonitor.getLocalSnapshot(input: {
   设置离开检查通过后才提交项目、会话及界面清理状态。
 - 远程恢复成功提示沿用独立的自动消失计时器；活动汇总更新不重置或替代该计时器。
 
-验证记录见[项目活动级联实施进度](./progress.md)。本次只改 Renderer 展示与交互，远程
-Runtime、Agent 协议和桌面到 Agent 的执行路径未改变。
+完成通知的定向验证应覆盖本地成功、持久化活动运行成功、后台 Task 状态转换、初始历史、
+失败和取消、实时状态优先、三类计数、普通侧栏查看、设置覆盖、隐藏文档与恢复可见、无活动行隐藏。
+验证记录见[项目活动级联实施进度](./progress.md)；源码核对不能替代真实 Electron 路径验证。

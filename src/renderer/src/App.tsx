@@ -171,6 +171,7 @@ import {
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { ProjectActivity } from "./ProjectActivity";
 import { deriveConversationActivity } from "./conversation-activity";
+import { useUnviewedCompletions } from "./use-unviewed-completions";
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
@@ -865,7 +866,7 @@ function ChatHistoryPane({
   conversationHtmlRenderingEnabled: boolean;
   conversation: Conversation;
   locale: TimeFormatLocale;
-  onCopyMessage: (content: string, kind?: 'tool') => Promise<void>;
+  onCopyMessage: (content: string, kind?: 'tool') => Promise<boolean>;
   onDownloadImage: (item: ImageViewerItem) => void;
   onOpenCitationContext: (reference: KnowledgeSearchReference) => Promise<void>;
   onOpenCitationSource: (reference: KnowledgeSearchReference) => Promise<void>;
@@ -2391,6 +2392,12 @@ function App(): React.JSX.Element {
     Record<string, Record<string, BrowserLiveState>>
   >({});
   const [view, setViewState] = useState<WorkspaceView>("chat");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpenRef = useRef(false);
+  const [settingsInitialCategory, setSettingsInitialCategory] =
+    useState<SettingsCategoryId>();
+  const [settingsInitialChannel, setSettingsInitialChannel] =
+    useState<ProjectChannel>();
   const settingsEntryFocusRef = useRef<HTMLElement | undefined>(undefined);
   const settingsExitFocusRef = useRef<HTMLElement | undefined>(undefined);
   const settingsLeaveRequesterRef = useRef<SettingsLeaveRequester | undefined>(
@@ -2407,7 +2414,11 @@ function App(): React.JSX.Element {
     cachedConversationViewsRef.current = cachedConversationViews;
   }, [cachedConversationViews]);
   const commitView = useCallback((next: WorkspaceView): void => {
-    const previous = viewRef.current;
+    const wasSettingsOpen = settingsOpenRef.current;
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setSettingsInitialCategory(undefined);
+    setSettingsInitialChannel(undefined);
     const now = Date.now();
     const runningConversationIds = new Set(
       [...activeRuns.current.values()].map((run) => run.conversationId),
@@ -2444,7 +2455,7 @@ function App(): React.JSX.Element {
       }),
     );
     setViewState(next);
-    if (previous === "settings" && next !== "settings") {
+    if (wasSettingsOpen) {
       const preferred = settingsExitFocusRef.current;
       const returnTarget = settingsEntryFocusRef.current;
       settingsExitFocusRef.current = undefined;
@@ -2468,7 +2479,7 @@ function App(): React.JSX.Element {
       const next =
         typeof update === "function" ? update(viewRef.current) : update;
       if (
-        viewRef.current !== "settings" &&
+        !settingsOpenRef.current &&
         next === "settings" &&
         !settingsEntryFocusRef.current?.isConnected
       ) {
@@ -2480,7 +2491,12 @@ function App(): React.JSX.Element {
             ? activeElement
             : undefined;
       }
-      if (viewRef.current === "settings" && next !== "settings") {
+      if (next === "settings") {
+        settingsOpenRef.current = true;
+        setSettingsOpen(true);
+        return;
+      }
+      if (settingsOpenRef.current) {
         const requestLeave = settingsLeaveRequesterRef.current;
         if (requestLeave) {
           requestLeave(() => commitView(next));
@@ -2536,10 +2552,6 @@ function App(): React.JSX.Element {
     }
     setActiveIdState(next);
   }, []);
-  const [settingsInitialCategory, setSettingsInitialCategory] =
-    useState<SettingsCategoryId>();
-  const [settingsInitialChannel, setSettingsInitialChannel] =
-    useState<ProjectChannel>();
   const [remoteProjectsEnabled, setRemoteProjectsEnabled] = useState(false);
   const [
     conversationHtmlRenderingEnabled,
@@ -2844,13 +2856,13 @@ function App(): React.JSX.Element {
   );
   const navigateFromSidebar = useCallback(
     (nextView: WorkspaceView, trigger: HTMLElement): void => {
-      if (viewRef.current !== "settings" && nextView === "settings") {
+      if (!settingsOpenRef.current && nextView === "settings") {
         settingsEntryFocusRef.current = trigger;
-      } else if (viewRef.current === "settings" && nextView !== "settings") {
+      } else if (settingsOpenRef.current && nextView !== "settings") {
         settingsExitFocusRef.current = trigger;
       }
       setView(nextView);
-      if (narrowWindow) {
+      if (narrowWindow && nextView !== "settings") {
         closeNarrowSidebar();
       }
     },
@@ -3925,6 +3937,10 @@ function App(): React.JSX.Element {
       ),
     [projects, tWorkspace],
   );
+  const { completedConversationIds, markConversationCompleted, clearConversationCompleted } =
+    useUnviewedCompletions(assistantTasks,
+      view === "chat" && !settingsOpen && activeConversation && !activeConversation.messageSummary
+        ? activeId : undefined);
   const projectActivity = useMemo(
     () => deriveConversationActivity(
       conversations.map((conversation) => ({
@@ -3938,14 +3954,15 @@ function App(): React.JSX.Element {
         name: projectNames.get(project.id) ?? project.name,
       })),
       tWorkspace("projectActivity.unassigned"),
+      completedConversationIds,
     ),
     [conversations, conversationTitles, assistantTasks, activeConversationIds,
-      projects, projectNames, tWorkspace],
+      projects, projectNames, tWorkspace, completedConversationIds],
   );
   const activityByConversationId = useMemo(
     () =>
       new Map(
-        projectActivity.activities.map((activity) => [
+        projectActivity.activities.filter((activity) => activity.status !== "completed").map((activity) => [
           activity.conversationId,
           activity,
         ]),
@@ -5070,6 +5087,7 @@ function App(): React.JSX.Element {
           };
         });
         activeRuns.current.delete(event.requestId);
+        if (event.type === "done") markConversationCompleted(run.conversationId);
         setConversationActivity(run.conversationId, false);
         releaseConversationQueueAfterRun(run);
         flushConversationPersistenceAfterRenderRef.current = true;
@@ -5083,6 +5101,7 @@ function App(): React.JSX.Element {
       setConversationActivity,
       updateMessage,
       updateRequestActivity,
+      markConversationCompleted,
     ],
   );
 
@@ -5307,6 +5326,7 @@ function App(): React.JSX.Element {
         );
         if (state !== undefined && state !== "streaming") {
           activeRuns.current.delete(requestId);
+          if (state === "complete") markConversationCompleted(run.conversationId);
           setConversationActivity(run.conversationId, false);
           releaseConversationQueueAfterRun(run);
         }
@@ -5464,6 +5484,7 @@ function App(): React.JSX.Element {
     releaseConversationQueueAfterRun,
     retainedConversationDetailIds,
     setConversationActivity,
+    markConversationCompleted,
   ]);
 
   useEffect(() => {
@@ -6969,18 +6990,20 @@ function App(): React.JSX.Element {
   };
 
   const writeClipboardText = useCallback(
-    async (content: string, successMessage: string): Promise<void> => {
+    async (content: string, successMessage?: string): Promise<boolean> => {
       try {
         await window.goodbuddy.clipboard.writeText(content);
-        notify({
+        if (successMessage) notify({
           tone: "success",
           message: successMessage,
         });
+        return true;
       } catch {
         notify({
           tone: "error",
           message: t("notices.clipboardUnavailable"),
         });
+        return false;
       }
     },
     [t],
@@ -7017,8 +7040,8 @@ function App(): React.JSX.Element {
   };
 
   const copyMessage = useCallback(
-    (content: string, kind?: 'tool'): Promise<void> =>
-      writeClipboardText(content, t(kind === 'tool' ? "chat.tools.copied" : "notices.messageCopied")),
+    (content: string, kind?: 'tool'): Promise<boolean> =>
+      writeClipboardText(content, kind === 'tool' ? t("chat.tools.copied") : undefined),
     [t, writeClipboardText],
   );
 
@@ -7433,6 +7456,7 @@ function App(): React.JSX.Element {
     setComposerMenuOpen(undefined);
     setRuntimeMenuOpen(false);
     preparingConversations.current.add(conversationId);
+    clearConversationCompleted(conversationId);
     setConversationActivity(conversationId, true);
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -8245,7 +8269,7 @@ function App(): React.JSX.Element {
       if (narrowWindow) closeNarrowSidebar();
     };
     const requestLeave = settingsLeaveRequesterRef.current;
-    if (viewRef.current === "settings" && requestLeave) {
+    if (settingsOpenRef.current && requestLeave) {
       requestLeave(() => { void open(); });
     } else {
       void open();
@@ -11214,9 +11238,7 @@ function App(): React.JSX.Element {
                 </PageShell>
               </KeepAliveRoute>
             )}
-            {(view === "settings" ||
-              cachedWorkspaceViewKeys.has("settings")) && (
-              <KeepAliveRoute active={view === "settings"} route="settings">
+            {settingsOpen && (
                 <RouteErrorBoundary
                   key="settings"
                   fallback={
@@ -11226,9 +11248,7 @@ function App(): React.JSX.Element {
                     />
                   }
                 >
-                  <Suspense
-                    fallback={<RouteLoadingStatus label={t("route.loading")} />}
-                  >
+                  <Suspense fallback={null}>
                     <SettingsPanel
                       appearanceTheme={appearanceTheme}
                       brandingFallbackLogo={
@@ -11259,9 +11279,7 @@ function App(): React.JSX.Element {
                       }}
                       onClearLocalData={clearLocalData}
                       onClose={() => {
-                        setSettingsInitialCategory(undefined);
-                        setSettingsInitialChannel(undefined);
-                        commitView("chat");
+                        commitView(viewRef.current);
                       }}
                       onExpertsChanged={(experts) => {
                         setAssistantExperts(experts);
@@ -11299,13 +11317,11 @@ function App(): React.JSX.Element {
                       }}
                       onShortcutSettingsChanged={handleShortcutSettingsChanged}
                       onUpdateProject={updateProject}
-                      open={view === "settings"}
-                      presentation="page"
+                      open={settingsOpen}
                       projects={projects}
                     />
                   </Suspense>
                 </RouteErrorBoundary>
-              </KeepAliveRoute>
             )}
             {(view === "activity" ||
               cachedWorkspaceViewKeys.has("activity")) && (

@@ -185,7 +185,7 @@ function MessageReasoning({
   )
 }
 
-type CopyContent = (content: string, kind?: 'tool') => Promise<void>
+type CopyContent = (content: string, kind?: 'tool') => Promise<boolean>
 
 function ToolDetail({ label, content, formatJson = false, onCopy }: {
   label: string
@@ -551,6 +551,18 @@ function ChatMessageRowView({
   retryContent
 }: ChatMessageRowProps): React.JSX.Element {
   const { t } = useTranslation('app')
+  const [copied, setCopied] = useState(false)
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(copyResetTimer.current), [])
+
+  const copyReply = async (): Promise<void> => {
+    const success = await onCopyMessage(greeting ? t('conversation.greeting') : message.content)
+    clearTimeout(copyResetTimer.current)
+    setCopied(success)
+    if (success) {
+      copyResetTimer.current = setTimeout(() => setCopied(false), 3000)
+    }
+  }
   const imageArtifactIds = useMemo(() => [...new Set([
     ...(message.artifactIds ?? []),
     ...(message.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])
@@ -1220,19 +1232,15 @@ function ChatMessageRowView({
           Boolean(message.content.trim()) && (
             <div className="message__actions">
               <button
-                aria-label={t('chat.copyMessage')}
+                aria-label={t(copied ? 'notices.messageCopied' : 'chat.copyMessage')}
                 className="icon-button"
-                onClick={() =>
-                  void onCopyMessage(
-                    greeting
-                      ? t('conversation.greeting')
-                      : message.content
-                  )
-                }
-                title={t('chat.copyMessage')}
+                onClick={() => void copyReply()}
+                title={t(copied ? 'notices.messageCopied' : 'chat.copyMessage')}
                 type="button"
               >
-                <Copy aria-hidden="true" size={15} />
+                {copied
+                  ? <Check aria-hidden="true" className="message__copy-success" size={15} />
+                  : <Copy aria-hidden="true" size={15} />}
               </button>
             </div>
           )}

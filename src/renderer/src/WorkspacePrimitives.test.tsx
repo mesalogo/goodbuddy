@@ -547,22 +547,22 @@ describe('WorkspacePrimitives', () => {
       /\.settings-page \.settings-panel__header \.page-header\s*\{[^}]*padding-bottom:\s*var\(--space-4\);[^}]*border-bottom:\s*1px solid var\(--border-subtle\);/u
     )
     expect(stylesheet).toMatch(
-      /\.settings-page \.settings-panel__body\s*\{[^}]*padding:\s*var\(--space-6\) var\(--page-gutter\) var\(--page-gutter\);[^}]*grid-template-columns:\s*220px minmax\(0,\s*1fr\);/u
+      /\.settings-backdrop \.settings-panel__body\s*\{[^}]*padding:\s*var\(--space-6\) var\(--page-gutter\) var\(--page-gutter\);[^}]*grid-template-columns:\s*220px minmax\(0,\s*1fr\);/u
     )
     expect(stylesheet).toMatch(
       /@media \(max-width: 1020px\)\s*\{[\s\S]*?\.settings-page \.settings-panel__body\s*\{[^}]*grid-template-columns:\s*196px minmax\(0,\s*1fr\);/u
     )
     expect(stylesheet).toMatch(
-      /\.settings-page \.settings-tabs\s*\{[^}]*scrollbar-gutter:\s*auto;/u
+      /\.settings-backdrop \.settings-tabs\s*\{[^}]*scrollbar-gutter:\s*auto;/u
     )
     expect(stylesheet).toMatch(
-      /\.settings-page \.settings-panel__content\s*\{[^}]*width:\s*min\(100%,\s*var\(--content-standard\)\);/u
+      /\.settings-backdrop \.settings-panel__content\s*\{[^}]*width:\s*min\(100%,\s*var\(--content-standard\)\);/u
     )
     expect(stylesheet).toMatch(
-      /\.settings-page \.settings-tabs button strong\s*\{[^}]*font-size:\s*var\(--font-body\);/u
+      /\.settings-backdrop \.settings-tabs button strong\s*\{[^}]*font-size:\s*var\(--font-body\);/u
     )
     expect(stylesheet).toMatch(
-      /\.settings-page \.settings-tabs button small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
+      /\.settings-backdrop \.settings-tabs button small\s*\{[^}]*font-size:\s*var\(--font-caption\);/u
     )
   })
 

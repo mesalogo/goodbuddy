@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -38,7 +39,7 @@ vi.mock('./MarkdownRenderer', () => ({
 
 const callbacks = {
   onArticleRef: vi.fn(),
-  onCopyMessage: vi.fn(async () => undefined),
+  onCopyMessage: vi.fn(async () => true),
   onDownloadImage: vi.fn(),
   onOpenCitationContext: vi.fn(async () => undefined),
   onOpenCitationSource: vi.fn(async () => undefined),
@@ -483,7 +484,7 @@ describe('ChatTimeline', () => {
     ).toHaveTextContent('每日状态')
   })
 
-  it('copies a completed assistant reply from its bottom action', () => {
+  it('copies a completed assistant reply and resets its success icon three seconds after the latest copy', async () => {
     const messages: Message[] = [
       {
         id: 'assistant-message',
@@ -532,12 +533,26 @@ describe('ChatTimeline', () => {
       screen.getAllByRole('button', { name: '复制此回复' })
     ).toHaveLength(1)
 
-    fireEvent.click(copyButton)
+    vi.useFakeTimers()
+    try {
+      await act(async () => { fireEvent.click(copyButton) })
 
-    expect(callbacks.onCopyMessage).toHaveBeenCalledOnce()
-    expect(callbacks.onCopyMessage).toHaveBeenCalledWith(
-      '## Answer\n\nKeep the Markdown source.'
-    )
+      expect(callbacks.onCopyMessage).toHaveBeenCalledOnce()
+      expect(callbacks.onCopyMessage).toHaveBeenCalledWith(
+        '## Answer\n\nKeep the Markdown source.'
+      )
+      expect(copyButton).toHaveAccessibleName('回复已复制到剪贴板')
+      expect(copyButton.querySelector('.message__copy-success')).not.toBeNull()
+      await act(async () => { vi.advanceTimersByTime(2000) })
+      await act(async () => { fireEvent.click(copyButton) })
+      await act(async () => { vi.advanceTimersByTime(2999) })
+      expect(copyButton).toHaveAccessibleName('回复已复制到剪贴板')
+      await act(async () => { vi.advanceTimersByTime(1) })
+      expect(copyButton).toHaveAccessibleName('复制此回复')
+      expect(copyButton.querySelector('.message__copy-success')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('shows every parallel expert output in its own expandable card', () => {

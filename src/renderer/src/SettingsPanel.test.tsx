@@ -5229,6 +5229,43 @@ describe('SettingsPanel runtime files', () => {
     expect(await screen.findByRole('button', { name: '添加自定义' })).toBeEnabled()
   })
 
+  it('traps modal focus and protects dirty drafts on Escape', async () => {
+    const onClose = vi.fn()
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={onClose}
+        onSaved={vi.fn()}
+      />
+    )
+    const workspace = await screen.findByLabelText('默认工作区目录')
+    const dialog = screen.getByRole('dialog', { name: '设置中心' })
+    const closeButton = screen.getByRole('button', { name: '关闭设置' })
+    const focusable = dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+    const last = focusable[focusable.length - 1]!
+    closeButton.focus()
+    fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
+    expect(last).toHaveFocus()
+    fireEvent.keyDown(last, { key: 'Tab' })
+    expect(closeButton).toHaveFocus()
+    fireEvent.change(workspace, { target: { value: 'C:\\Escape draft' } })
+    workspace.focus()
+    fireEvent.keyDown(workspace, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '继续编辑' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: '继续编辑' }), { key: 'Escape' })
+    await waitFor(() => expect(workspace).toHaveFocus())
+    expect(workspace).toHaveValue('C:\\Escape draft')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.keyDown(workspace, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: '放弃更改并关闭' }))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('retains a disabled or deleted image default and keeps drafts on save failure', async () => {
     const imageId = '00000000-0000-4000-8000-000000000099'
     getRuntime.mockResolvedValueOnce({

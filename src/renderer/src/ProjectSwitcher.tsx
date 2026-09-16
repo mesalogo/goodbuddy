@@ -52,7 +52,7 @@ import {
 import { getProjectDisplayText } from './project-display'
 import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
 import { ProjectActivityCounts } from './ProjectActivity'
-import type { ConversationActivitySummary } from './conversation-activity'
+import type { ProjectActivityCountsProps } from './ProjectActivity'
 import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { displayErrorMessage } from './error-message'
@@ -60,7 +60,7 @@ import { displayErrorMessage } from './error-message'
 type ProjectSwitcherProps = {
   projects: AssistantProject[]
   activeProjectId: string
-  activityByProjectId?: ConversationActivitySummary['byProjectId']
+  activityByProjectId?: Record<string, ProjectActivityCountsProps>
   remoteProjectsEnabled?: boolean
   runtimeSettings?: RuntimeSettings
   onArchive: (projectId: string) => Promise<void>
@@ -272,7 +272,6 @@ export function ProjectSwitcher({
   const [remoteDirectoryListing, setRemoteDirectoryListing] =
     useState<SshDirectoryBrowseResult>()
   const createButtonRef = useRef<HTMLButtonElement>(null)
-  const settingsButtonRef = useRef<HTMLButtonElement>(null)
   const directoryPickerTriggerRef = useRef<HTMLButtonElement>(null)
   const directoryPickerRef = useRef<HTMLDivElement>(null)
   const directoryBrowseRequestRef = useRef(0)
@@ -281,7 +280,7 @@ export function ProjectSwitcher({
   const projectPickerMenuRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusTarget = useRef<
-    'create' | 'settings' | 'picker' | undefined
+    'create' | 'picker' | undefined
   >(undefined)
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [retryingRecoveryProjectId, setRetryingRecoveryProjectId] =
@@ -788,8 +787,6 @@ export function ProjectSwitcher({
     if (!dialogMode) {
       if (restoreFocusTarget.current === 'create') {
         createButtonRef.current?.focus()
-      } else if (restoreFocusTarget.current === 'settings') {
-        settingsButtonRef.current?.focus()
       } else if (restoreFocusTarget.current === 'picker') {
         projectPickerButtonRef.current?.focus()
       }
@@ -852,10 +849,7 @@ export function ProjectSwitcher({
     setSettingsProjectId(undefined)
   }
 
-  const openProjectSettings = (
-    project: AssistantProject,
-    restoreTarget: 'settings' | 'picker'
-  ): void => {
+  const openProjectSettings = (project: AssistantProject): void => {
     if (
       !remoteProjectsEnabled &&
       project.executionSpace.kind === 'ssh'
@@ -894,7 +888,7 @@ export function ProjectSwitcher({
         ? channelProjectDraft(nextDraft, runtimeSettings)
         : nextDraft
     )
-    restoreFocusTarget.current = restoreTarget
+    restoreFocusTarget.current = 'picker'
     setDialogMode('settings')
   }
 
@@ -1151,7 +1145,7 @@ export function ProjectSwitcher({
             { name: projectDisplay.name }
           )}
           className="project-switcher__menu-settings"
-          onClick={() => openProjectSettings(project, 'picker')}
+          onClick={() => openProjectSettings(project)}
           role="menuitem"
           tabIndex={-1}
           type="button"
@@ -1366,25 +1360,6 @@ export function ProjectSwitcher({
           type="button"
         >
           <Plus size={15} />
-        </button>
-        <button
-          aria-label={t('projectSwitcher.selector.settings')}
-          className="icon-button"
-          disabled={
-            !activeProject ||
-            (!remoteProjectsEnabled &&
-              activeProject.executionSpace.kind === 'ssh')
-          }
-          onClick={() => {
-            if (!activeProject) {
-              return
-            }
-            openProjectSettings(activeProject, 'settings')
-          }}
-          ref={settingsButtonRef}
-          type="button"
-        >
-          <Settings size={15} />
         </button>
       </div>
       {dialogMode && createPortal(
