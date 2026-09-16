@@ -12,6 +12,7 @@ import i18n from './i18n'
 import type { DesktopApi } from '../../shared/contracts'
 import {
   defaultLocalToolEnvironmentSettings,
+  defaultApplicationNavigation,
   type ApplicationSettings
 } from '../../shared/application-settings-contracts'
 import type {
@@ -173,6 +174,7 @@ const get = vi.fn<(noteId: string) => Promise<MagicNoteDetail>>()
 const listTodos = vi.fn<() => Promise<MagicTodosSnapshot>>()
 const create = vi.fn<DesktopApi['magicNotes']['create']>()
 const remove = vi.fn<DesktopApi['magicNotes']['remove']>()
+const update = vi.fn<DesktopApi['magicNotes']['update']>()
 const createEntry = vi.fn<DesktopApi['magicNotes']['createEntry']>()
 const updateEntry = vi.fn<DesktopApi['magicNotes']['updateEntry']>()
 const analyze = vi.fn<DesktopApi['magicNotes']['analyze']>()
@@ -193,6 +195,7 @@ const getApplicationSettings = vi.fn<() => Promise<ApplicationSettings>>(async (
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
+  applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
   conversationHtmlRenderingEnabled: true,
   remoteProjectsEnabled: false,
   magicNotesEnabled: true,
@@ -217,6 +220,7 @@ beforeEach(() => {
     updateSource: 'github',
     modelDownloadSource: 'modelscope',
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
     conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: false,
     magicNotesEnabled: true,
@@ -229,6 +233,7 @@ beforeEach(() => {
   listTodos.mockResolvedValue({ todos: [noteTodo, manualTodo] })
   create.mockResolvedValue(alternateDetail(thirdNoteId, '新笔记'))
   remove.mockResolvedValue()
+  update.mockResolvedValue({ ...detail, pinned: true, revision: 2 })
   const createdDetail: MagicNoteDetail = {
     ...detail,
     revision: detail.revision + 1,
@@ -351,6 +356,7 @@ beforeEach(() => {
         listTodos,
         create,
         remove,
+        update,
         createEntry,
         updateEntry,
         analyze,
@@ -374,6 +380,116 @@ afterEach(() => {
 })
 
 describe('MagicNotesWorkspace', () => {
+  it('portals note actions with keyboard navigation, confirmation and outside dismissal', async () => {
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    const trigger = await screen.findByRole('button', { name: `更多笔记操作 ${detail.title}` })
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({ right: 5000, bottom: 5000 } as DOMRect)
+    fireEvent.click(trigger)
+    const menu = screen.getByRole('menu')
+    expect(menu.parentElement).toBe(document.body)
+    expect(parseFloat(menu.style.left)).toBeLessThanOrEqual(window.innerWidth - 8)
+    expect(parseFloat(menu.style.top)).toBeLessThanOrEqual(window.innerHeight - 8)
+    expect(screen.getByRole('menuitem', { name: '置顶笔记' })).toHaveFocus()
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    const deletion = screen.getByRole('menuitem', { name: '删除笔记' })
+    expect(deletion).toHaveFocus()
+    fireEvent.click(deletion)
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(detail.title)
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: '删除笔记' })).toHaveFocus()
+    expect(remove).not.toHaveBeenCalled()
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    act(() => screen.getByLabelText('笔记标题').focus())
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: '隐藏左侧列表' }))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it.each([false, true])('pins a note without replacing selected drafts (selected: %s)', async (selected) => {
+    const second = alternateDetail(secondNoteId, '第二篇笔记')
+    list.mockResolvedValue({ notes: [detail, second] })
+    const target = selected ? detail : second
+    update.mockResolvedValue({ ...target, pinned: true, revision: 2 })
+    const { container } = render(<MagicNotesWorkspace onNotify={onNotify} />)
+    const title = await screen.findByLabelText('笔记标题')
+    act(() => title.focus())
+    fireEvent.change(title, { target: { value: '未保存标题' } })
+    const composer = screen.getByTestId('magic-note-editor')
+    fireEvent.click(composer)
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    const editors = screen.getAllByTestId('magic-note-editor')
+    fireEvent.click(editors[1]!)
+    const trigger = screen.getByRole('button', { name: `更多笔记操作 ${target.title}` })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: '置顶笔记' }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ noteId: target.id, pinned: true, expectedRevision: 1 }))
+    expect(update).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(container.querySelector('.magic-note-list-item__title')).toHaveTextContent(target.title))
+    expect(title).toHaveValue('未保存标题')
+    expect(screen.getAllByTestId('magic-note-editor')).toEqual(editors)
+    expect(document.getElementById(`magic-note-select-${noteId}`)).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(trigger)
+    update.mockRejectedValueOnce(new Error('revision conflict'))
+    fireEvent.click(screen.getByRole('menuitem', { name: '取消置顶' }))
+    await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error', message: 'revision conflict' })))
+    expect(update).toHaveBeenLastCalledWith({ noteId: target.id, pinned: false, expectedRevision: 2 })
+    expect(title).toHaveValue('未保存标题')
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(updateEntry).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 1, content: { version: 1, ops: [{ insert: '新的句子\n' }] } })))
+  })
+
+  it('deletes an unselected note without clearing the selected composer or dirty title', async () => {
+    const second = alternateDetail(secondNoteId, '第二篇笔记')
+    list.mockResolvedValue({ notes: [detail, second] })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    const title = await screen.findByLabelText('笔记标题')
+    fireEvent.change(title, { target: { value: '未保存标题' } })
+    const editor = screen.getByTestId('magic-note-editor')
+    fireEvent.click(editor)
+    fireEvent.click(screen.getByRole('button', { name: `更多笔记操作 ${second.title}` }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除笔记' }))
+    list.mockResolvedValue({ notes: [detail] })
+    fireEvent.click(screen.getByRole('button', { name: '删除笔记' }))
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(second.id))
+    await waitFor(() => expect(screen.queryByText(second.title)).not.toBeInTheDocument())
+    expect(title).toHaveValue('未保存标题')
+    expect(screen.getByTestId('magic-note-editor')).toBe(editor)
+    fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
+    await waitFor(() => expect(createEntry).toHaveBeenCalledWith({ noteId, content: { version: 1, ops: [{ insert: '新的句子\n' }] } }))
+  })
+
+  it('retains drafts on delete failure and selects a remaining note after confirmed deletion', async () => {
+    const second = alternateDetail(secondNoteId, '第二篇笔记')
+    list.mockResolvedValue({ notes: [detail, second] })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await screen.findByLabelText('笔记标题')
+    const editor = screen.getByTestId('magic-note-editor')
+    fireEvent.click(editor)
+    fireEvent.click(screen.getByRole('button', { name: `更多笔记操作 ${detail.title}` }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除笔记' }))
+    remove.mockRejectedValueOnce(new Error('delete failed'))
+    fireEvent.click(screen.getByRole('button', { name: '删除笔记' }))
+    await waitFor(() => expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error', message: 'delete failed' })))
+    expect(screen.getByTestId('magic-note-editor')).toBe(editor)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    list.mockResolvedValue({ notes: [second] })
+    get.mockResolvedValue(second)
+    fireEvent.click(screen.getByRole('button', { name: '删除笔记' }))
+    await screen.findByDisplayValue(second.title)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('magic-note-editor')).not.toBe(editor)
+    await waitFor(() => expect(document.getElementById(`magic-note-select-${second.id}`)).toHaveFocus())
+  })
+
   it('coalesces external writes, keeps selection and refreshes the selected detail', async () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await screen.findByDisplayValue(detail.title)
@@ -390,7 +506,8 @@ describe('MagicNotesWorkspace', () => {
     expect(screen.getByText(added.title)).toBeInTheDocument()
     expect(get).toHaveBeenLastCalledWith(noteId)
     expect(list).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('button', { name: '取消置顶' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: `更多笔记操作 ${updated.title}` }))
+    expect(screen.getByRole('menuitem', { name: '取消置顶' })).toBeInTheDocument()
 
     list.mockResolvedValue({ notes: [added] })
     get.mockResolvedValue(added)
@@ -505,7 +622,7 @@ describe('MagicNotesWorkspace', () => {
     list.mockImplementationOnce(() => new Promise((resolve) => { resolveList = resolve }))
     act(() => changeListener?.())
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
-    fireEvent.click(screen.getByRole('button', { name: /Second note/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Second note/, pressed: false }))
     await screen.findByDisplayValue(second.title)
     await act(async () => resolveList({ notes: [detail, second] }))
     expect(screen.getByDisplayValue(second.title)).toBeInTheDocument()
@@ -577,20 +694,19 @@ describe('MagicNotesWorkspace', () => {
 
     await screen.findByText('记录正文')
     list.mockRejectedValueOnce(new Error('刷新暂时不可用'))
+    fireEvent.click(screen.getByRole('button', { name: `更多笔记操作 ${detail.title}` }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除笔记' }))
     fireEvent.click(screen.getByRole('button', { name: '删除笔记' }))
-    fireEvent.click(
-      screen.getAllByRole('button', { name: '删除笔记' })[1]!
-    )
 
     expect(
       await screen.findByText(/刷新失败，已保留当前内容：刷新暂时不可用/)
     ).toBeInTheDocument()
     expect(screen.getByLabelText('笔记标题')).toHaveValue(detail.title)
     expect(
-      screen.getByRole('button', { name: /发布笔记/ })
+      screen.getByRole('button', { name: /发布笔记/, pressed: true })
     ).toHaveAttribute('aria-pressed', 'true')
     const updatedTime = screen
-      .getByRole('button', { name: /发布笔记/ })
+      .getByRole('button', { name: /发布笔记/, pressed: true })
       .querySelector('time')
     expect(updatedTime).toHaveAttribute('datetime', detail.updatedAt)
     expect(updatedTime).toHaveTextContent('更新于')
@@ -662,17 +778,10 @@ describe('MagicNotesWorkspace', () => {
     )
 
     await screen.findByText('记录正文')
-    const deleteNote = screen.getByRole('button', {
-      name: '删除笔记'
-    })
+    expect(container.querySelector('.magic-note-detail-header button')).toBeNull()
     const deleteEntry = screen.getByRole('button', {
       name: '删除记录'
     })
-    expect(deleteNote).toHaveClass(
-      'icon-button',
-      'magic-note-detail-header__delete'
-    )
-    expect(deleteNote).toHaveTextContent('')
     expect(deleteEntry).toHaveClass('danger-button', 'danger-button--quiet')
     expect(deleteEntry).toHaveTextContent('删除记录')
 
@@ -1043,7 +1152,7 @@ describe('MagicNotesWorkspace', () => {
     expect(continueEditing).toHaveFocus()
     expect(get).toHaveBeenCalledTimes(callsBeforeSwitch)
     expect(
-      screen.getByRole('button', { name: /发布笔记/ })
+      screen.getByRole('button', { name: /发布笔记/, pressed: true })
     ).toHaveAttribute('aria-pressed', 'true')
 
     discardAndSwitch.focus()
@@ -1076,7 +1185,7 @@ describe('MagicNotesWorkspace', () => {
 
     expect(await screen.findByDisplayValue(second.title)).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /第二篇笔记/ })
+      screen.getByRole('button', { name: /第二篇笔记/, pressed: true })
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -1186,7 +1295,7 @@ describe('MagicNotesWorkspace', () => {
 
     expect(create).not.toHaveBeenCalled()
     expect(
-      screen.getByRole('button', { name: /发布笔记/ })
+      screen.getByRole('button', { name: /发布笔记/, pressed: true })
     ).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(
@@ -1316,10 +1425,9 @@ describe('MagicNotesWorkspace', () => {
 
     await screen.findByText('记录正文')
     list.mockRejectedValueOnce(new Error('刷新暂时不可用'))
+    fireEvent.click(screen.getByRole('button', { name: `更多笔记操作 ${detail.title}` }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除笔记' }))
     fireEvent.click(screen.getByRole('button', { name: '删除笔记' }))
-    fireEvent.click(
-      screen.getAllByRole('button', { name: '删除笔记' })[1]!
-    )
     const retry = await screen.findByRole('button', { name: '重试' })
 
     let resolveRefreshDetail:
@@ -1431,6 +1539,7 @@ describe('MagicNotesWorkspace', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
@@ -1467,6 +1576,7 @@ describe('MagicNotesWorkspace', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
@@ -1586,6 +1696,7 @@ describe('MagicNotesWorkspace', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,

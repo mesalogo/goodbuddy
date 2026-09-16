@@ -9,6 +9,7 @@ export const magicNotes = {
     todos: '待办'
   },
   actions: {
+    more: '更多笔记操作 {{title}}',
     cancel: '取消',
     retry: '重试',
     clearFilters: '清除筛选',

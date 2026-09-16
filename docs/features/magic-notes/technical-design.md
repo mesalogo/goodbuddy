@@ -45,6 +45,22 @@ Read failures use the existing retryable refresh error and retain successful
 data and drafts. Retry uses the same draft-preserving loader. Interaction rules
 are owned by [the UI design system](../../../UI-DESIGN.md#137-魔法笔记).
 
+## Note List Actions
+
+Each note row has a selection button and a sibling action-menu button. The menu
+uses the conversation action styles and shared `DestructiveConfirmActions`, and
+is portalled to `document.body`. Its position follows the trigger on scrolling,
+window resizing and confirmation-size changes. Hiding the list, filtering out the
+target or leaving the notes panel closes the menu.
+
+Pinning uses the target summary's ID and revision through the existing update
+IPC. It updates the sorted summary and matching selected detail without resetting
+title, composer or entry-edit drafts. Deleting uses the explicitly confirmed
+target ID; deleting another note uses the draft-preserving refresh path. Deleting
+the selected note clears its entry drafts only after the write succeeds, then
+selects a remaining note. These are renderer changes; database and Agent contracts
+are unchanged.
+
 ## Agent Search Contract
 
 `note_search` accepts an integer `limit` from 1 to 100, defaulting to 8.
@@ -71,6 +87,8 @@ daemon implementation update.
   channel, payload-free callback and listener removal.
 - `MagicNotesWorkspace.test.tsx` covers external updates and deletion, selection,
   source reload, editor identity and draft saves, coalescing, deferred writes,
-  asynchronous selection races, error retry and unmount cleanup.
+  asynchronous selection races, error retry and unmount cleanup. List-action
+  coverage includes portal placement, keyboard navigation, dismissal, delete
+  confirmation, target selection, revision failures and draft preservation.
 
 No schema migration, dependency, refresh control or network service is added.

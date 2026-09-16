@@ -13,6 +13,7 @@ export const magicNotes = {
     todos: 'To-dos'
   },
   actions: {
+    more: 'More note actions {{title}}',
     cancel: 'Cancel',
     retry: 'Retry',
     clearFilters: 'Clear filters',

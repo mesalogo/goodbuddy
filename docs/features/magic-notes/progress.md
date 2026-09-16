@@ -1,5 +1,24 @@
 # Magic Notes Progress
 
+## 2026-09-17: Note List Action Menu
+
+- Moved pin/unpin and whole-note deletion from the editor header to each note's
+  action menu, following the [UI design system](../../../UI-DESIGN.md#137-魔法笔记).
+  The menu uses existing update/delete IPC and shared destructive confirmation.
+- Added regression coverage for menu keyboard behavior, portal placement,
+  dismissal, pin ordering, revision failures, deletion and retained drafts.
+- The focused Magic Notes suite passed 42 tests. The combined Magic Notes,
+  conversation and shared-primitives suites passed 332 tests. Typecheck and
+  targeted ESLint passed.
+- Full `npm test`: 370 files and 4,440 tests passed, 2 files and 3 tests failed,
+  9 files and 67 tests skipped. Two heartbeat migration fixtures relabel a current
+  database as an old version and fail on the existing `pinned` column. One
+  OpenCode runtime-reuse request timed out; its two tests passed on isolated rerun.
+- Full lint reported 22 `document` no-undef errors in the unrelated, untracked
+  `docs/features/story-graph/demo.js`. No unrelated files were changed to resolve
+  these validation failures. Interactive Electron and touch verification remain
+  unperformed.
+
 ## 2026-09-15: Automatic External Refresh
 
 - Implemented the shared-database notification and Main/preload subscription

@@ -8,6 +8,7 @@ import {
   FolderTree,
   Lightbulb,
   ListTodo,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -22,11 +23,13 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createPortal } from 'react-dom'
 import type {
   MagicNoteAnalysisOptions,
   MagicNoteCommentDirection,
@@ -39,7 +42,7 @@ import type {
   MagicNoteSummary,
   MagicTodoItem
 } from '../../shared/magic-notes-contracts'
-import type { MagicNoteCommentMode } from '../../shared/application-settings-contracts'
+import type { ApplicationSettings, MagicNoteCommentMode } from '../../shared/application-settings-contracts'
 import { MagicNoteContent } from './MagicNoteContent'
 import { MagicNoteEditor } from './MagicNoteEditor'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -47,6 +50,7 @@ import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type { AppNotificationInput } from './notifications'
 import {
   EmptyState,
+  DestructiveConfirmActions,
   PageHeader,
   PageTabs,
   SegmentedControl,
@@ -54,6 +58,7 @@ import {
 } from './WorkspacePrimitives'
 
 export type MagicNotesWorkspaceProps = {
+  applicationSettings?: ApplicationSettings
   onNotify: (notification: AppNotificationInput) => void
 }
 
@@ -393,7 +398,8 @@ function TodoListItem({
 }
 
 export function MagicNotesWorkspace({
-  onNotify
+  onNotify,
+  applicationSettings
 }: MagicNotesWorkspaceProps): React.JSX.Element {
   const { i18n, t } = useTranslation('magicNotes')
   const tRef = useRef(t)
@@ -474,12 +480,14 @@ export function MagicNotesWorkspace({
   const [todos, setTodos] = useState<MagicTodoItem[]>([])
   const [libraryView, setLibraryView] = useState<LibraryView>('notes')
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('active')
-  const [commentMode, setCommentMode] =
+  const [loadedCommentMode, setCommentMode] =
     useState<MagicNoteCommentMode>('immediate')
   const [commentDirection, setCommentDirection] =
     useState<MagicNoteCommentDirection>('general')
-  const [commentFormat, setCommentFormat] =
+  const [loadedCommentFormat, setCommentFormat] =
     useState<MagicNoteCommentFormat>('combined')
+  const commentMode = applicationSettings?.magicNoteCommentMode ?? loadedCommentMode
+  const commentFormat = applicationSettings?.magicNoteCommentFormat ?? loadedCommentFormat
   const [selectedNoteId, setSelectedNoteId] = useState('')
   const [selectedTodoId, setSelectedTodoId] = useState('')
   const [detail, setDetail] = useState<MagicNoteDetail>()
@@ -498,6 +506,9 @@ export function MagicNotesWorkspace({
   const [newTitle, setNewTitle] = useState('')
   const [titleDraft, setTitleDraft] = useState('')
   const [deletingNote, setDeletingNote] = useState(false)
+  const [noteActionsId, setNoteActionsId] = useState('')
+  const noteActionsRef = useRef<HTMLDivElement>(null)
+  const noteActionTriggerRef = useRef<HTMLButtonElement | null>(null)
   const [composerKey, setComposerKey] = useState(0)
   const [editingEntry, setEditingEntry] = useState<MagicNoteEntry>()
   const [deletingEntryId, setDeletingEntryId] = useState('')
@@ -1412,6 +1423,97 @@ export function MagicNotesWorkspace({
       : notes
   }, [notes, search])
 
+  const actionNote = useMemo(
+    () => listPaneOpen && libraryView === 'notes' && !pendingDraftSwitch
+      ? visibleNotes.find((note) => note.id === noteActionsId)
+      : undefined,
+    [libraryView, listPaneOpen, noteActionsId, pendingDraftSwitch, visibleNotes]
+  )
+  if (noteActionsId && !actionNote) {
+    setNoteActionsId('')
+    setDeletingNote(false)
+  }
+
+  const closeNoteActions = (): void => {
+    setNoteActionsId('')
+    setDeletingNote(false)
+    noteActionTriggerRef.current?.focus({ preventScroll: true })
+  }
+
+  useLayoutEffect(() => {
+    const surface = noteActionsRef.current
+    const trigger = noteActionTriggerRef.current
+    if (!noteActionsId || !surface || !trigger) return
+    const position = (): void => {
+      const anchor = trigger.getBoundingClientRect()
+      const bounds = surface.getBoundingClientRect()
+      surface.style.left = `${Math.max(8, Math.min(anchor.right - bounds.width, window.innerWidth - bounds.width - 8))}px`
+      surface.style.top = `${Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - bounds.height - 8))}px`
+    }
+    position()
+    surface.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+    const dismiss = (event: Event): void => {
+      if (event.target instanceof Node && !surface.contains(event.target) && !trigger.contains(event.target)) {
+        setNoteActionsId('')
+        setDeletingNote(false)
+      }
+    }
+    const observer = new ResizeObserver(position)
+    observer.observe(surface)
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('focusin', dismiss)
+    window.addEventListener('resize', position)
+    window.addEventListener('scroll', position, true)
+    return () => {
+      observer.disconnect()
+      document.removeEventListener('pointerdown', dismiss)
+      document.removeEventListener('focusin', dismiss)
+      window.removeEventListener('resize', position)
+      window.removeEventListener('scroll', position, true)
+    }
+  }, [noteActionsId])
+
+  const pinNote = async (note: MagicNoteSummary): Promise<void> => {
+    const operation = 'pin-note'
+    if (!beginBusy(operation)) return
+    closeNoteActions()
+    try {
+      const updated = await window.goodbuddy.magicNotes.update({
+        noteId: note.id,
+        pinned: !note.pinned,
+        expectedRevision: note.revision
+      })
+      applyNoteSummary(updated)
+      setDetail((current) => current?.id === updated.id ? updated : current)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      endBusy(operation)
+    }
+  }
+
+  const deleteNote = async (note: MagicNoteSummary): Promise<void> => {
+    const operation = 'delete-note'
+    if (!beginBusy(operation)) return
+    try {
+      await window.goodbuddy.magicNotes.remove(note.id)
+      notifySuccess(t('notifications.noteDeleted'))
+      closeNoteActions()
+      if (requestedNoteIdRef.current === note.id) {
+        discardComposerDraft()
+        discardEditingDraft()
+        await refreshNotes()
+        requestAnimationFrame(() => document.getElementById(`magic-note-select-${requestedNoteIdRef.current}`)?.focus())
+      } else {
+        await refreshNotes(requestedNoteIdRef.current, true)
+      }
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      endBusy(operation)
+    }
+  }
+
   const visibleTodos = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase()
     return todos.filter((todo) => {
@@ -2057,8 +2159,8 @@ export function MagicNotesWorkspace({
               </>
             ) : (
               visibleNotes.map((note) => (
+                <div className="magic-note-row" key={note.id}>
                 <button
-                  key={note.id}
                   id={`magic-note-select-${note.id}`}
                   aria-pressed={selectedNoteId === note.id}
                   className={`magic-note-list-item ${
@@ -2101,7 +2203,65 @@ export function MagicNotesWorkspace({
                     </time>
                   </span>
                 </button>
+                <button
+                  aria-controls={`magic-note-actions-${note.id}`}
+                  aria-expanded={noteActionsId === note.id}
+                  aria-haspopup="menu"
+                  aria-label={t('actions.more', { title: note.title })}
+                  title={t('actions.more', { title: note.title })}
+                  className="magic-note-more icon-button"
+                  type="button"
+                  onClick={(event) => {
+                    noteActionTriggerRef.current = event.currentTarget
+                    setDeletingNote(false)
+                    setNoteActionsId((current) => current === note.id ? '' : note.id)
+                  }}
+                >
+                  <MoreHorizontal aria-hidden="true" size={14} />
+                </button>
+                </div>
               ))
+            )}
+            {actionNote && createPortal(
+              <div
+                className="conversation-actions magic-note-actions"
+                id={`magic-note-actions-${actionNote.id}`}
+                aria-label={t('actions.more', { title: actionNote.title })}
+                ref={noteActionsRef}
+                role="menu"
+                onKeyDown={(event) => {
+                  if (event.defaultPrevented) return
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    closeNoteActions()
+                    return
+                  }
+                  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+                  event.preventDefault()
+                  const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+                  const index = items.indexOf(document.activeElement as HTMLButtonElement)
+                  const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+                  items[next]?.focus()
+                }}
+              >
+                <button role="menuitem" type="button" disabled={Boolean(busy)} onClick={() => void pinNote(actionNote)}>
+                  {actionNote.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                  {t(actionNote.pinned ? 'actions.unpinNote' : 'actions.pinNote')}
+                </button>
+                <DestructiveConfirmActions
+                  triggerRole="menuitem"
+                  triggerLabel={t('actions.deleteNote')}
+                  confirmLabel={t('actions.deleteNote')}
+                  confirming={deletingNote}
+                  disabled={Boolean(busy)}
+                  icon={<Trash2 size={14} />}
+                  message={t('confirmations.deleteNote', { title: actionNote.title })}
+                  onCancel={() => setDeletingNote(false)}
+                  onRequestConfirm={() => setDeletingNote(true)}
+                  onConfirm={() => void deleteNote(actionNote)}
+                />
+              </div>, document.body
             )}
           </div>
             </div>
@@ -2305,7 +2465,10 @@ export function MagicNotesWorkspace({
                   aria-label={t('notes.titleLabel')}
                   maxLength={100}
                   value={titleDraft}
-                  onBlur={() => void updateTitle()}
+                  onBlur={(event) => {
+                    if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.magic-note-more, .magic-note-actions')) return
+                    void updateTitle()
+                  }}
                   onChange={(event) => {
                     setTitleDraft(event.target.value)
                     clearValidation('note-title')
@@ -2320,54 +2483,6 @@ export function MagicNotesWorkspace({
                     }
                   }}
                 />
-                <div>
-                  <button
-                    aria-label={t(
-                      detail.pinned
-                        ? 'actions.unpinNote'
-                        : 'actions.pinNote'
-                    )}
-                    className="icon-button"
-                    title={t(
-                      detail.pinned
-                        ? 'actions.unpinNote'
-                        : 'actions.pinNote'
-                    )}
-                    type="button"
-                    onClick={() => {
-                      const operation = 'pin-note'
-                      if (!beginBusy(operation)) {
-                        return
-                      }
-                      void window.goodbuddy.magicNotes
-                        .update({
-                          noteId: detail.id,
-                          pinned: !detail.pinned,
-                          expectedRevision: detail.revision
-                        })
-                        .then(applyDetail)
-                        .catch((pinError) =>
-                          notifyError(pinError)
-                        )
-                        .finally(() => endBusy(operation))
-                    }}
-                  >
-                    {detail.pinned ? (
-                      <PinOff size={15} />
-                    ) : (
-                      <Pin size={15} />
-                    )}
-                  </button>
-                  <button
-                    aria-label={t('actions.deleteNote')}
-                    className="icon-button magic-note-detail-header__delete"
-                    title={t('actions.deleteNote')}
-                    type="button"
-                    onClick={() => setDeletingNote(true)}
-                  >
-                    <Trash2 aria-hidden="true" size={14} />
-                  </button>
-                </div>
               </header>
               {validation?.target === 'note-title' && (
                 <p
@@ -2377,46 +2492,6 @@ export function MagicNotesWorkspace({
                 >
                   {validation.message}
                 </p>
-              )}
-
-              {deletingNote && (
-                <div className="magic-note-delete-confirmation">
-                  <span>
-                    {t('confirmations.deleteNote', {
-                      title: detail.title
-                    })}
-                  </span>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => setDeletingNote(false)}
-                  >
-                    {t('actions.cancel')}
-                  </button>
-                  <button
-                    className="danger-solid"
-                    type="button"
-                    onClick={() => {
-                      const operation = 'delete-note'
-                      if (!beginBusy(operation)) {
-                        return
-                      }
-                      void window.goodbuddy.magicNotes
-                        .remove(detail.id)
-                        .then(async () => {
-                          notifySuccess(t('notifications.noteDeleted'))
-                          setDeletingNote(false)
-                          await refreshNotes()
-                        })
-                        .catch((deleteError) =>
-                          notifyError(deleteError)
-                        )
-                        .finally(() => endBusy(operation))
-                    }}
-                  >
-                    {t('actions.deleteNote')}
-                  </button>
-                </div>
               )}
 
               <div className="magic-note-composer" ref={composerRef}>
