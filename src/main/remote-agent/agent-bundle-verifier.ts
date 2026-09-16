@@ -343,6 +343,12 @@ export function assertAgentManifestMatchesRuntimeLock(
     )
   }
   if (
+    manifest.licenses.find((license) => license.package === 'Node.js')
+      ?.version !== lock.node.version
+  ) {
+    throw new Error('Agent Node version does not match the runtime lock')
+  }
+  if (
     manifest.protocol.major !== lock.protocol.major ||
     manifest.protocol.minor !== lock.protocol.minor
   ) {

@@ -31,14 +31,20 @@ afterEach(() => {
 })
 
 describe('Remote Runtime bundle verifier', () => {
-  it('verifies an authentic digest-addressed OpenCode bundle', async () => {
-    const fixture = await createBundle()
+  it.each(['1.18.29', '1.18.9'])('verifies an authentic digest-addressed OpenCode %s bundle with a matching lock', async (runtimeVersion) => {
+    const fixture = await createBundle({ runtimeVersion })
 
     await expect(
       verifyRuntimeBundle(fixture.bundleDirectory, {
         architecture: 'x64',
         releaseKeyRegistry: fixture.registry,
-        runtimeLock: lock,
+        runtimeLock: {
+          ...lock,
+          runtimes: {
+            ...lock.runtimes,
+            opencode: { ...lock.runtimes.opencode, version: runtimeVersion }
+          }
+        },
         verificationEnvironment: 'test',
         filesystemPlatform: 'win32'
       })
@@ -108,14 +114,19 @@ describe('Remote Runtime bundle verifier', () => {
     ).rejects.toThrow(/payload (?:size|hash) mismatch/iu)
   })
 
-  it('rejects a validly signed bundle outside the locked profile', async () => {
-    const fixture = await createBundle({
+  it.each([
+    {
+      runtimeVersion: '1.18.9'
+    },
+    {
       sourcePackage: {
         name: 'opencode-linux-x64',
         integrity:
           'sha512-VrvzV5Agrj0T2ZPvr5gzmh8xc4zqQ5pW8UeNgTzt5cJ/9Cbdxw6oFywgv7nfJqlpSfQqTWYJYH+LIHt3QdCS5g=='
       }
-    })
+    }
+  ])('rejects a validly signed bundle outside the locked profile: %j', async (overrides) => {
+    const fixture = await createBundle(overrides)
 
     await expect(
       verifyRuntimeBundle(fixture.bundleDirectory, {
@@ -259,6 +270,7 @@ describe('Remote Runtime bundle verifier', () => {
 
 async function createBundle(
   overrides: {
+    runtimeVersion?: RemoteRuntimeBundleManifest['runtimeVersion']
     sourcePackage?: RemoteRuntimeBundleManifest['sourcePackage']
     directoryDigest?: string
   } = {}

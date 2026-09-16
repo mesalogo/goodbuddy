@@ -630,6 +630,16 @@ bundle 构建通过；这组历史结果不替代完整 Host 支持改动后的�
 
 ### Linux 历史验收
 
+- 2026-09-16：当前源码通过本机 Linux x64/arm64 两份 `0.11.18` 旧包副本的生产签名、
+  manifest、包内 lock 和 payload 校验（OpenCode `1.18.9`），原缓存元数据未变。
+  共享 Linux x64 Host 的 LAN/VPN 两条路由均通过固定主机密钥验证；在 `/root/tmp`
+  独立目录运行当前源码校验与 `preparePackage` / `commitPackage`，随后旧包 Agent
+  bootstrap、health、stop 全部通过，未操作原有 Agent，模型请求为 0 次。
+  相关扩大回归为 326 通过、1 跳过；全量 `npm test` 为 4146 通过、67 跳过、4 失败，
+  另有 App 测试文件因缺少 `LocalInferencePage` 导入失败。大离线包超时用例复跑通过；
+  其余失败为 heartbeat fixture 重复 `pinned` 列及导航设置默认字段导致的断言差异。
+  Node/Agent 类型检查和本次改动文件 lint 通过；全量 typecheck 受上述缺失组件阻塞，
+  全量 lint 受 story-graph demo 的 22 项 `document` 未定义错误阻塞。
 - 2026-09-06 使用当前源码隔离 Agent 验证原生子代理过程插件。最终场景收到 37 条 ACP
   插件事件，桌面侧从已保留活动重建跟踪器后仍接收后续文本与工具；子代理和父请求正常
   完成，最终模型调用账本为 4 次 completed。此前成功场景另 4 次，两轮真实 Host 共
@@ -793,6 +803,13 @@ goodbuddy-agent diagnostics --installation-id <installationId>
   校验，但所有 production 层统一使用一组 GoodBuddy 通用发布身份并通过签名域区分用途，
   不要求内部 Runtime 单独配置密钥。`build/agent-catalog.cjs` 为双架构包生成签名累计目录，
   拒绝同一版本/架构改变字节。
+- `remote-runtime-launch-contracts.ts` 中的 OpenCode Runtime lock 版本使用现有
+  `componentVersionSchema` 校验，不再硬编码为 `1.18.29`，避免 Desktop 升级后仅因版本
+  不同拒绝已有完整签名旧包。包内 manifest、lock 与 descriptor 的版本一致性，以及签名、
+  哈希和协议兼容性检查仍须通过；构建与发行的 OpenCode pin 保持 `1.18.29`。
+- Agent lock 的 Node/koffi 版本同样使用 `componentVersionSchema`，允许完整旧包携带
+  不同于 Desktop 构建 pin 的依赖版本。验证时仍以包自身 lock 精确核对 manifest 的
+  Node.js、koffi 和 koffi native 版本；Node `24.19.0`、koffi `3.1.4` 发行 pin 不变。
 - `.github/workflows/agents.yml` 只使用进程内临时测试 key 做分支/PR 原生验证，不发布。
   `.github/workflows/agent-release.yml` 才可在 annotated `agent-v<version>` 标签和受保护
   `agent-signing` Environment 中构建 production 包。Agent GitHub Release 必须

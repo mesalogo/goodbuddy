@@ -239,7 +239,7 @@ export const agentRuntimeLockSchema = z
     protocol: agentProtocolVersionSchema,
     node: z
       .object({
-        version: z.literal('24.19.0'),
+        version: componentVersionSchema,
         source: z
           .url()
           .refine(
@@ -257,7 +257,7 @@ export const agentRuntimeLockSchema = z
       .strict(),
     koffi: z
       .object({
-        version: z.literal('3.1.4')
+        version: componentVersionSchema
       })
       .strict()
   })

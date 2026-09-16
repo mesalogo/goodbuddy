@@ -147,7 +147,10 @@ describe('Agent installation contracts', () => {
     ).toThrow('canonical Base64')
   })
 
-  it('requires both locked Linux targets and the fixed Node patch', () => {
+  it.each([
+    ['24.19.0', '3.1.4'],
+    ['24.18.0', '3.1.3']
+  ])('accepts package Node %s and koffi %s versions while requiring valid targets and source', (nodeVersion, koffiVersion) => {
     const target = {
       archive: 'node.tar.gz',
       sha256: digest,
@@ -160,16 +163,16 @@ describe('Agent installation contracts', () => {
         agentVersion: '0.11.0',
         protocol: { major: 1, minor: 0 },
         node: {
-          version: '24.19.0',
-          source: 'https://nodejs.org/dist/v24.19.0/',
+          version: nodeVersion,
+          source: `https://nodejs.org/dist/v${nodeVersion}/`,
           targets: {
             'linux-x64': target,
             'linux-arm64': target
           }
         },
-        koffi: { version: '3.1.4' }
+        koffi: { version: koffiVersion }
       }).koffi.version
-    ).toBe('3.1.4')
+    ).toBe(koffiVersion)
     expect(() =>
       agentRuntimeLockSchema.parse({
         formatVersion: 1,

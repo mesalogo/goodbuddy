@@ -108,7 +108,7 @@ function writeKoffiPayload(
       join(packageRoot, 'package.json'),
       JSON.stringify({
         name: 'koffi',
-        version: '3.1.4',
+        version: runtimeLock.koffi.version,
         type: 'module',
         exports: { '.': { import: './index.js' } }
       })
@@ -129,7 +129,7 @@ function writeKoffiPayload(
       join(nativeRoot, 'package.json'),
       JSON.stringify({
         name: nativePackage,
-        version: '3.1.4',
+        version: runtimeLock.koffi.version,
         main: './index.js',
         os: ['linux'],
         cpu: [architecture]
@@ -202,9 +202,9 @@ function writeBundle(
 
   const manifest = buildAgentBundle.createManifest(directory, {
     agentVersion: '0.11.0',
-    nodeVersion: '24.19.0',
+    nodeVersion: runtimeLock.node.version,
     zodVersion: '4.4.3',
-    koffiVersion: '3.1.4',
+    koffiVersion: runtimeLock.koffi.version,
     koffiNativePackage: '@koromix/koffi-linux-x64',
     arch: 'x64',
     protocol: { major: 1, minor: 0 },
@@ -282,6 +282,27 @@ afterEach(() => {
 })
 
 describe('runtime and build-time Agent verifier parity', () => {
+  it('accepts older dependencies when the signed manifest matches the package lock', async () => {
+    runtimeLock.node.version = '24.18.0'
+    runtimeLock.koffi.version = '3.1.3'
+    writeBundle()
+    await expect(verifyBundle()).resolves.toMatchObject({
+      manifest: { agentVersion: runtimeLock.agentVersion }
+    })
+  })
+
+  it.each(['node', 'koffi'] as const)('rejects a signed bundle with a mismatched %s lock version', async (component) => {
+    writeBundle()
+    runtimeLock[component].version = component === 'node' ? '24.18.0' : '3.1.3'
+    await expect(verifyBundle()).rejects.toThrow(/does not match the runtime lock|dependencies do not match the runtime lock/u)
+  })
+
+  it.each(['node', 'koffi'] as const)('rejects an invalid %s lock version', async (component) => {
+    writeBundle()
+    runtimeLock[component].version = 'latest'
+    await expect(verifyBundle()).rejects.toThrow('Agent runtime lock contract is invalid')
+  })
+
   it('accepts equivalent registry whitespace and canonicalizes validated keys', () => {
     const canonical = canonicalAgentReleaseKeyRegistryBytes(registry)
     const crlf = Buffer.from(

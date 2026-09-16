@@ -74,17 +74,31 @@ async function createFixture(): Promise<{
 }
 
 describe('remote Runtime verification metadata loader', () => {
-  it('loads canonical verification metadata without Runtime payloads', async () => {
+  it.each(['1.18.9', '1.18.29'])('loads canonical verification metadata for Runtime %s without payloads', async (version) => {
     const fixture = await createFixture()
+    const packageLock = structuredClone(runtimeLock)
+    packageLock.runtimes.opencode.version = version
+    await writeFile(fixture.paths.runtimeLockPath, canonical(packageLock))
 
     await expect(
       loadRemoteRuntimeVerificationMetadata(fixture.paths)
     ).resolves.toEqual({
       releaseKeyRegistry: registry,
-      runtimeLock,
+      runtimeLock: packageLock,
       canonicalReleaseKeyRegistryBytes: canonical(registry),
-      canonicalRemoteRuntimeLockBytes: canonical(runtimeLock)
+      canonicalRemoteRuntimeLockBytes: canonical(packageLock)
     })
+  })
+
+  it.each(['', 'latest', '^1.18.9', '1.18'])('rejects invalid Runtime version %j', async (version) => {
+    const fixture = await createFixture()
+    const packageLock = structuredClone(runtimeLock)
+    packageLock.runtimes.opencode.version = version
+    await writeFile(fixture.paths.runtimeLockPath, canonical(packageLock))
+
+    await expect(
+      loadRemoteRuntimeVerificationMetadata(fixture.paths)
+    ).rejects.toThrow('Remote Runtime lock contract is invalid')
   })
 
   it('canonicalizes equivalent release-key registry formatting', async () => {

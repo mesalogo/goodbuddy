@@ -5,7 +5,8 @@ import {
   agentManifestLicenseSchema,
   agentManifestPathSchema,
   agentProtocolVersionSchema,
-  agentReleaseKeySchema
+  agentReleaseKeySchema,
+  componentVersionSchema
 } from './agent-installation-contracts'
 import {
   agentIdentifierSchema,
@@ -227,7 +228,8 @@ export const remoteRuntimeLockSchema = z
       .object({
         opencode: z
           .object({
-            version: z.literal('1.18.29'),
+            // Installed packages carry their own signed Runtime version.
+            version: componentVersionSchema,
             provider: z.literal('opencode'),
             entrypoint: z.literal('bin/opencode'),
             entrypointIdentity: z.literal('opencode-acp'),
