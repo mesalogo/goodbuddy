@@ -1640,7 +1640,18 @@ export class KnowledgeMcpGateway {
             name as ScopedDataToolName
           )
           if (definition) {
-            const parsedInput = definition.inputSchema.parse(input)
+            const parsedInput = definition.inputSchema.safeParse(input)
+            if (!parsedInput.success) {
+              return {
+                isError: true,
+                content: [{
+                  type: 'text' as const,
+                  text: `Invalid arguments for ${name}: ${parsedInput.error.issues
+                    .map((issue) => `${issue.path.join('.') || 'arguments'}: ${issue.message}`)
+                    .join('; ')}. Correct the arguments and retry.`
+                }]
+              }
+            }
             return {
               content: [
                 {
@@ -1649,7 +1660,7 @@ export class KnowledgeMcpGateway {
                     await this.callScopedTool(
                       token,
                       name as ScopedDataToolName,
-                      parsedInput,
+                      parsedInput.data,
                       extra.signal
                     )
                   )

@@ -45,12 +45,28 @@ Read failures use the existing retryable refresh error and retain successful
 data and drafts. Retry uses the same draft-preserving loader. Interaction rules
 are owned by [the UI design system](../../../UI-DESIGN.md#137-魔法笔记).
 
+## Agent Search Contract
+
+`note_search` accepts an integer `limit` from 1 to 100, defaulting to 8.
+The shared schema supplies both model tool definitions and MCP validation;
+the existing 128 KiB output budget can reduce the returned result count.
+The built-in MCP gateway returns invalid scoped-tool arguments as an
+`isError: true` tool result with the field and validation message, allowing
+the model to correct its arguments without an MCP internal-error response.
+Validation failures do not execute the tool.
+
+These note tools run in the desktop gateway. Remote gbagent ACP sessions
+currently inject only the image MCP server, so this change requires no
+daemon implementation update.
+
 ## Validation
 
 - `assistant-database.test.ts` checks committed writes with a second SQLite
   connection, successful mutation coverage, failures, no-op completion and reset.
 - `knowledge-mcp-gateway.test.ts` exercises real database CRUD through Agent/MCP
-  access, including revision failure without an extra notification.
+  access, including revision failure without an extra notification. A real HTTP
+  MCP client also checks searches above ten results, the published limit schema,
+  invalid arguments and successful retry against SQLite.
 - `magic-notes-events.test.ts` executes the production preload, checking the
   channel, payload-free callback and listener removal.
 - `MagicNotesWorkspace.test.tsx` covers external updates and deletion, selection,

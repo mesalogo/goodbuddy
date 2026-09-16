@@ -890,6 +890,53 @@ describe('KnowledgeMcpGateway', () => {
     ).toThrow('笔记不存在')
   })
 
+  it('searches more than ten notes over MCP and returns recoverable argument errors', async () => {
+    const { service } = createService()
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-note-search-mcp-'))
+    temporaryDirectories.push(directory)
+    const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
+    databases.push(database)
+    database.initialize('C:\\Workspace')
+    const gateway = new KnowledgeMcpGateway(service, { magicNotesDatabase: database })
+    gateways.push(gateway)
+    const token = gateway.grant('notes-search-http', [], new AbortController().signal, 'write')!
+    for (let index = 0; index < 12; index += 1) {
+      gateway.createMagicNote(token, { title: `Search regression ${index}`, content: 'Matching entry' })
+    }
+    await gateway.start()
+    const client = new Client({ name: 'note-search-test', version: '1.0.0' })
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(gateway.getEndpoint()!), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } }
+      }))
+      const listed = await client.listTools()
+      expect(listed.tools.find((tool) => tool.name === 'note_search')?.inputSchema.properties?.limit)
+        .toMatchObject({ type: 'integer', minimum: 1, maximum: 100, default: 8 })
+      for (const limit of [11, 12, 100]) {
+        const result = await client.callTool({ name: 'note_search', arguments: { query: 'Search regression', limit } })
+        expect(result.isError).not.toBe(true)
+        expect(result.content).toEqual([{ type: 'text', text: expect.any(String) }])
+        const content = result.content as Array<{ type: 'text'; text: string }>
+        expect(JSON.parse(content[0]!.text).notes).toHaveLength(Math.min(limit, 12))
+      }
+      for (const limit of [101, 0, 1.5, '12']) {
+        await expect(client.callTool({ name: 'note_search', arguments: { query: 'Search regression', limit } }))
+          .resolves.toMatchObject({
+            isError: true,
+            content: [{ type: 'text', text: expect.stringContaining('Invalid arguments for note_search: limit:') }]
+          })
+      }
+      await expect(client.callTool({ name: 'note_create', arguments: { title: '' } }))
+        .resolves.toMatchObject({ isError: true })
+      expect(database.listMagicNotes()).toHaveLength(12)
+      const retried = await client.callTool({ name: 'note_search', arguments: { query: 'Search regression' } })
+      const content = retried.content as Array<{ type: 'text'; text: string }>
+      expect(JSON.parse(content[0]!.text).notes).toHaveLength(8)
+    } finally {
+      await client.close()
+    }
+  })
+
   it('binds an authenticated MCP endpoint and rejects oversized bodies', async () => {
     const { service } = createService()
     const gateway = new KnowledgeMcpGateway(service, {
