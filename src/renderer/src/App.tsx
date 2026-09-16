@@ -502,6 +502,7 @@ type Conversation = Omit<ConversationListSnapshot, "messages"> & {
 type ActiveRun = {
   conversationId: string;
   messageId: string;
+  taskId?: string;
   projectId?: string;
   runtimeSelectionKey: string;
 };
@@ -3979,6 +3980,7 @@ function App(): React.JSX.Element {
                   conversationId: conversation.id,
                   projectId: conversation.projectId,
                   messageId: message.id,
+                  taskId: message.approval.taskId ?? message.task?.id,
                   approvalId: message.approval.id,
                   title: message.approval.title,
                   description: message.approval.description,
@@ -4864,6 +4866,7 @@ function App(): React.JSX.Element {
           status: undefined,
           approval: {
             id: event.approvalId,
+            taskId: run.taskId,
             title: event.title,
             description: event.description,
             toolName: event.toolName,
@@ -7502,6 +7505,7 @@ function App(): React.JSX.Element {
     activeRuns.current.set(requestId, {
       conversationId,
       messageId: assistantMessage.id,
+      taskId: queuedDispatch?.scheduled ? queuedDispatch.item.taskId : undefined,
       projectId: projectIdSnapshot,
       runtimeSelectionKey: agentRuntimeSelectionKey(
         runtimeSettings

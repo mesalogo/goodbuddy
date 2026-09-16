@@ -2540,7 +2540,14 @@ describe("App", () => {
     expect(screen.getByText("仅此次")).toBeInTheDocument();
     expect(screen.getByLabelText("任务结果：发布任务")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理");
-    fireEvent.click(screen.getByRole("button", { name: "仅此次" }));
+    fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
+    fireEvent.click(screen.getByRole("tab", { name: /任务中心/u }));
+    const taskRow = screen.getByRole("button", { name: /发布任务发布审批会话/u }).closest("article")!;
+    expect(within(taskRow).getByLabelText("等待审批: write_file")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "等待审批" })).not.toBeInTheDocument();
+    fireEvent.click(within(taskRow).getByRole("button", { name: "仅此次允许" }));
+    await waitFor(() => expect(api.agent.respondApproval).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000834", "once"));
+    await waitFor(() => expect(within(taskRow).queryByLabelText("等待审批: write_file")).not.toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个运行中"));
     expect(screen.getByRole("button", { name: /全项目活动/u })).not.toHaveTextContent("待处理");
   });
@@ -5880,6 +5887,37 @@ describe("App", () => {
     await waitFor(() => expect(expertButton).toBeEnabled());
     expect(modeButton).toBeEnabled();
     expect(runtimeButton).toBeEnabled();
+  });
+
+  it("associates live scheduled approvals using the dispatched task rather than another task in the conversation", async () => {
+    const conversationId = crypto.randomUUID();
+    const taskId = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const approvalId = crypto.randomUUID();
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: conversationId, projectId, title: "Scheduled approval target", updatedAt: Date.now(), messages: [],
+    }]);
+    const task = { id: taskId, conversationId, projectId, title: "Dispatched task", instructions: "Write", origin: "schedule" as const, status: "idle" as const, createdAt: new Date().toISOString() };
+    vi.mocked(api.tasks.list).mockResolvedValue([task, { ...task, id: crypto.randomUUID(), title: "Another task" }]);
+    render(<App />);
+    await waitFor(() => expect(api.conversationQueue.ready).toHaveBeenCalledWith(conversationId));
+    act(() => conversationQueueDispatchListener?.({
+      scheduled: true,
+      item: { id: runId, scheduleRunId: runId, taskId, conversationId, source: "schedule", label: "Timed message", createdAt: new Date().toISOString() },
+      input: { conversationId, projectId, prompt: "Write a scheduled file" },
+    }));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    act(() => agentListener?.({ requestId: runId, type: "approval", approvalId, title: "Scheduled write", description: "Confirm write", toolName: "write_file", argumentSummary: "file.md", allowPermanent: false }));
+    fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
+    fireEvent.click(screen.getByRole("tab", { name: /任务中心/u }));
+    const row = screen.getByRole("button", { name: /Dispatched taskScheduled approval target/u }).closest("article")!;
+    expect(within(row).getByLabelText("等待审批: write_file")).toBeVisible();
+    const otherRow = screen.getByRole("button", { name: /Another taskScheduled approval target/u }).closest("article")!;
+    expect(within(otherRow).queryByLabelText("等待审批: write_file")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "等待审批" })).not.toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "拒绝" }));
+    await waitFor(() => expect(api.agent.respondApproval).toHaveBeenCalledWith(approvalId, "deny"));
+    await waitFor(() => expect(within(row).queryByLabelText("等待审批: write_file")).not.toBeInTheDocument());
   });
 
   it("sends scheduled instructions with the target conversation's current settings and history", async () => {

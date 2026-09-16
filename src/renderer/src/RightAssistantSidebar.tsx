@@ -93,6 +93,7 @@ export type SidebarArtifact = {
 
 export type PendingSidebarApproval = {
   conversationId: string
+  taskId?: string
   projectId?: string
   messageId: string
   approvalId: string
@@ -162,6 +163,31 @@ const defaultSidebarRatio = 0.3
 const minimumPaneWidth = 160
 const keyboardResizeStep = 16
 const workbarStorageKey = 'goodbuddy.workbar-layout.v1'
+
+function SidebarApproval({ approval, onRespondApproval }: {
+  approval: PendingSidebarApproval
+  onRespondApproval: RightAssistantSidebarProps['onRespondApproval']
+}): React.JSX.Element {
+  const { t } = useTranslation('workspace')
+  return (
+    <article
+      aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${approval.toolName ?? approval.title}`}
+      className="assistant-sidebar__approval"
+    >
+      <strong>{approval.title}</strong>
+      <p>{approval.description}</p>
+      {approval.toolName && <code>{approval.toolName}</code>}
+      <div className="assistant-sidebar__approval-actions">
+        <button className="secondary-button" onClick={() => onRespondApproval(approval, 'deny')} type="button">
+          {t('sidebar.tasks.deny')}
+        </button>
+        <button className="primary-button" onClick={() => onRespondApproval(approval, 'once')} type="button">
+          {t('sidebar.tasks.allowOnce')}
+        </button>
+      </div>
+    </article>
+  )
+}
 
 function loadPersistedWorkbarLayout(): ReturnType<
   typeof workbarLayoutPreferencesSchema.parse
@@ -942,9 +968,27 @@ export function RightAssistantSidebar({
       ),
     [taskMatchesScope, tasks]
   )
+  const { approvalsByTask, unassociatedApprovals } = useMemo(() => {
+    const tasksById = new Map(topLevelTasks.map((task) => [task.id, task]))
+    const approvalsByTask = new Map<string, PendingSidebarApproval[]>()
+    const unassociatedApprovals: PendingSidebarApproval[] = []
+    for (const approval of scopedApprovals) {
+      const task = approval.taskId ? tasksById.get(approval.taskId) : undefined
+      // A shared conversation alone cannot identify a task or a scheduled run.
+      if (task && task.conversationId === approval.conversationId && task.projectId === approval.projectId) {
+        const pending = approvalsByTask.get(task.id) ?? []
+        pending.push(approval)
+        approvalsByTask.set(task.id, pending)
+      } else {
+        unassociatedApprovals.push(approval)
+      }
+    }
+    return { approvalsByTask, unassociatedApprovals }
+  }, [scopedApprovals, topLevelTasks])
   const filteredTasks = useMemo(
     () =>
       topLevelTasks.filter((task) => {
+        if (approvalsByTask.has(task.id)) return taskFilter === 'active'
         if (taskFilter === 'active') {
           return (
             task.status === 'idle' ||
@@ -960,7 +1004,7 @@ export function RightAssistantSidebar({
         }
         return task.status === 'completed' || task.status === 'cancelled'
       }),
-    [taskFilter, topLevelTasks]
+    [approvalsByTask, taskFilter, topLevelTasks]
   )
 
   useEffect(() => {
@@ -1894,49 +1938,15 @@ export function RightAssistantSidebar({
               </p>
             ) : (
               <>
+            {unassociatedApprovals.length > 0 && <>
             <h3>
               <ShieldAlert size={15} />
               {t('sidebar.tasks.approvalsTitle')}
             </h3>
-            {scopedApprovals.length === 0 ? (
-              <p className="assistant-sidebar__empty">
-                {t('sidebar.tasks.noApprovals')}
-              </p>
-            ) : (
-              scopedApprovals.map((approval) => (
-                <article
-                  aria-label={`${t('sidebar.tasks.approvalsTitle')}: ${
-                    approval.toolName ?? approval.title
-                  }`}
-                  className="assistant-sidebar__approval"
-                  key={approval.approvalId}
-                >
-                  <strong>{approval.title}</strong>
-                  <p>{approval.description}</p>
-                  {approval.toolName && <code>{approval.toolName}</code>}
-                  <div className="assistant-sidebar__approval-actions">
-                    <button
-                      className="secondary-button"
-                      onClick={() =>
-                        onRespondApproval(approval, 'deny')
-                      }
-                      type="button"
-                    >
-                      {t('sidebar.tasks.deny')}
-                    </button>
-                    <button
-                      className="primary-button"
-                      onClick={() =>
-                        onRespondApproval(approval, 'once')
-                      }
-                      type="button"
-                    >
-                      {t('sidebar.tasks.allowOnce')}
-                    </button>
-                  </div>
-                </article>
-              ))
-            )}
+            {unassociatedApprovals.map((approval) => (
+              <SidebarApproval key={approval.approvalId} approval={approval} onRespondApproval={onRespondApproval} />
+            ))}
+            </>}
 
             <div className="task-center__index-heading">
               <h3>
@@ -2058,6 +2068,9 @@ export function RightAssistantSidebar({
                                 })
                               : t('sidebar.tasks.notStarted'))}
                     </p>
+                    {approvalsByTask.get(task.id)?.map((approval) => (
+                      <SidebarApproval key={approval.approvalId} approval={approval} onRespondApproval={onRespondApproval} />
+                    ))}
                     {schedule && (
                       <div className="task-center__actions">
                         <TaskScheduleActions

@@ -65,6 +65,7 @@ export type Message = {
   subagents?: SubagentActivity[]
   approval?: {
     id: string
+    taskId?: string
     title: string
     description: string
     toolName?: string

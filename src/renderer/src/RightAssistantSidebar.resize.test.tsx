@@ -555,7 +555,8 @@ describe('RightAssistantSidebar resizing', () => {
   it('keeps the product Task index in the task center', () => {
     renderSidebar({ tab: 'tasks' })
 
-    expect(screen.getByText('等待审批')).toBeInTheDocument()
+    expect(screen.queryByText('等待审批')).not.toBeInTheDocument()
+    expect(screen.queryByText(i18n.t('sidebar.tasks.noApprovals', { ns: 'workspace' }))).not.toBeInTheDocument()
     const taskIndexHeading = screen.getByRole('heading', {
       name: '任务索引'
     })
@@ -629,6 +630,65 @@ describe('RightAssistantSidebar resizing', () => {
     expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'once')
     fireEvent.click(screen.getByRole('button', { name: '拒绝' }))
     expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'deny')
+  })
+
+  it('embeds matched approvals only in active task cards and preserves their actions', () => {
+    const task: AssistantTask = {
+      id: 'scheduled-task', conversationId: 'conversation-1', projectId: currentProject.id,
+      title: 'Scheduled task', instructions: '', origin: 'schedule', status: 'paused',
+      createdAt: '2026-09-16T00:00:00Z'
+    }
+    const approval: PendingSidebarApproval = {
+      taskId: task.id, conversationId: task.conversationId!, projectId: task.projectId,
+      messageId: 'message-1', approvalId: 'approval-1', title: 'Confirm write', description: 'write file'
+    }
+    const onRespondApproval = vi.fn()
+    renderSidebar({ tasks: [task], approvals: [approval], onRespondApproval })
+    const row = screen.getByText(task.title).closest('article')!
+    expect(within(row).getByLabelText('等待审批: Confirm write')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: '等待审批' })).not.toBeInTheDocument()
+    fireEvent.click(within(row).getByRole('button', { name: '仅此次允许' }))
+    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'once')
+    fireEvent.click(within(row).getByRole('button', { name: '拒绝' }))
+    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'deny')
+    for (const filter of ['暂停', '已结束']) {
+      fireEvent.click(screen.getByRole('button', { name: filter }))
+      expect(screen.queryByText(task.title)).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('等待审批: Confirm write')).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: '等待审批' })).not.toBeInTheDocument()
+      expect(screen.getByLabelText('等待审批: 1')).toBeVisible()
+    }
+    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    expect(screen.getByLabelText('等待审批: Confirm write')).toBeVisible()
+  })
+
+  it('keeps unmatched approvals accessible without guessing by conversation or crossing projects', () => {
+    const task: AssistantTask = {
+      id: 'task-1', conversationId: 'conversation-1', projectId: currentProject.id,
+      title: 'Task one', instructions: '', origin: 'schedule', status: 'running',
+      createdAt: '2026-09-16T00:00:00Z'
+    }
+    const approvals: PendingSidebarApproval[] = [
+      { taskId: task.id, conversationId: task.conversationId!, projectId: task.projectId },
+      { taskId: undefined, conversationId: task.conversationId!, projectId: task.projectId },
+      { taskId: 'other-run', conversationId: task.conversationId!, projectId: task.projectId },
+      { taskId: task.id, conversationId: 'other-conversation', projectId: task.projectId },
+      { taskId: task.id, conversationId: task.conversationId!, projectId: 'other-project' },
+      { taskId: 'child', conversationId: task.conversationId!, projectId: task.projectId }
+    ].map((identity, index) => ({ ...identity, messageId: `message-${index}`, approvalId: `approval-${index}`, title: `Approval ${index}`, description: '' }))
+    renderSidebar({ tasks: [task, { ...task, id: 'child', parentTaskId: task.id }], approvals })
+    const row = screen.getByText(task.title).closest('article')!
+    expect(within(row).getAllByRole('article')).toHaveLength(1)
+    expect(within(row).getByText('Approval 0')).toBeVisible()
+    for (const index of [1, 2, 3, 5]) {
+      expect(screen.getByText(`Approval ${index}`)).toBeVisible()
+      expect(within(row).queryByText(`Approval ${index}`)).not.toBeInTheDocument()
+    }
+    expect(screen.queryByText('Approval 4')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '所有项目' }))
+    expect(screen.getByText('Approval 4')).toBeVisible()
+    expect(within(row).queryByText('Approval 4')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Approval 0')).toHaveLength(1)
   })
 
   it('labels approval counts and cards without duplicate live regions', () => {

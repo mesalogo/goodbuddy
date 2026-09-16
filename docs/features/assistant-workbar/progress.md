@@ -1115,6 +1115,20 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
   测试应用与具名浏览器会话已退出，所属 Electron/Node 进程及 fixture 监听端口均为 0；
   临时截图和隔离 profile 保留在本机测试目录，不进入仓库。
 
+## 2026-09-16 任务卡内审批
+
+- 任务中心按 [Task Center 交互规则](../task-and-job/task-center-prd.md#5-交互) 展示卡内审批，
+  未关联审批保留处理入口；没有审批时不渲染空审批区域。
+- 当前定时运行从队列 `taskId` 记录到 `ActiveRun`，审批事件再写入消息的临时审批数据；
+  历史消息使用明确的 `message.task.id`。Sidebar 按任务 ID 匹配当前范围内顶层任务，
+  并核对会话 ID 和项目 ID，不按会话、标题、时间或计划猜测运行归属。
+- `RightAssistantSidebar.resize.test.tsx` 的 54 项测试通过，覆盖项目范围、状态筛选、
+  卡内处理、无审批、普通会话审批及关联不一致。App 使用 `-t "approval|scheduled instructions"`
+  定向运行的 14 项测试通过，验证历史与当前定时审批的映射、允许／拒绝接口调用及成功移除。
+- `npm run typecheck`、`npm run lint` 通过。本次仅修改 Renderer 展示与临时关联数据，
+  本机和远程审批继续使用原有接口；未改 Main、Agent 或存储协议。未进行真实 Electron
+  窗口和模型调用验收；按本次要求未运行全量测试及无关数据库迁移测试。
+
 ## 2026-09-16 任务中心范围简化
 
 - 任务中心仅保留“当前项目”和“所有项目”；无项目任务在后者中标注“未绑定项目”。具体规则见
