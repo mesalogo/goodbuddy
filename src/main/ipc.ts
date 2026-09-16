@@ -1919,17 +1919,24 @@ export function registerIpcHandlers(
     const recoveredAssistantMessage = conversation.messages.find(
       (message) => message.id === task.currentAssistantMessageId
     )
+    const activityStates = assistantDatabase.getRemoteTaskActivityStates(task.taskId)
     const recoveredTools =
       recoveredAssistantMessage?.tools?.filter(
         (tool): tool is typeof tool & { callId: string } =>
           Boolean(tool.callId)
-      ) ?? []
+      ).map(tool => ({
+        ...tool,
+        state: activityStates.tools.get(tool.callId) ?? tool.state
+      })) ?? []
     const recoveredSubagents =
       recoveredAssistantMessage?.subagents?.filter(
         (subagent) =>
           subagent.routingMode === 'native' &&
           subagent.runtimeCallId
-      ) ?? []
+      ).map(subagent => ({
+        ...subagent,
+        ...activityStates.subagents.get(subagent.childTaskId)
+      })) ?? []
     const toolStates = new Map(
       recoveredTools.map((tool) => [tool.callId, tool])
     )
@@ -1982,6 +1989,8 @@ export function registerIpcHandlers(
         remoteSemanticAfterSequence: highestCommitted,
         remoteRecoveryOnly: true,
         remoteRecoveredTools: recoveredTools,
+        remoteHasResponseTextAfterToolFailure:
+          assistantDatabase.hasRemoteResponseTextAfterToolFailure(task.taskId),
         remoteRecoveredSubagents: recoveredSubagents
       }
       let recoveryMetricSettings:

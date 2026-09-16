@@ -5086,9 +5086,11 @@ describe('registerIpcHandlers agent terminal state', () => {
           status: 'running' | 'waiting_approval' | 'interrupted'
         }>
       >(() => []),
-      getHighestCommittedRemoteTaskEventSequenceForTask: vi.fn(
+      getHighestCommittedRemoteTaskEventSequenceForTask: vi.fn<AssistantDatabase['getHighestCommittedRemoteTaskEventSequenceForTask']>(
         () => '0'
       ),
+      hasRemoteResponseTextAfterToolFailure: vi.fn<AssistantDatabase['hasRemoteResponseTextAfterToolFailure']>(() => false),
+      getRemoteTaskActivityStates: vi.fn<AssistantDatabase['getRemoteTaskActivityStates']>(() => ({ tools: new Map(), subagents: new Map() })),
       endRecoverableRemoteTask: vi.fn(),
       recordRemoteTaskQuestionAnswer: vi.fn<AssistantDatabase['recordRemoteTaskQuestionAnswer']>(),
       getTask: vi.fn<AssistantDatabase['getTask']>(),
@@ -6519,7 +6521,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('reattaches a recoverable task from its committed cursor and completes project synchronization', async () => {
+  it.each([false, true])('reattaches from its committed cursor with tool recovery evidence %s', async (hasRecoveredResponse) => {
     const projectId = '00000000-0000-4000-8000-000000000781'
     const taskId = '00000000-0000-4000-8000-000000000782'
     const conversationId =
@@ -6543,6 +6545,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           requestId: taskId,
           remoteRecoveryOnly: true,
           remoteSemanticAfterSequence: '2',
+          remoteHasResponseTextAfterToolFailure: hasRecoveredResponse,
           remoteRecoveredTools: [
             expect.objectContaining({
               callId: 'tool-before-restart',
@@ -6575,6 +6578,14 @@ describe('registerIpcHandlers agent terminal state', () => {
             eventIndex: 1
           }
         } as const
+        if (hasRecoveredResponse) yield {
+          requestId: taskId, type: 'tool', callId: 'tool-before-restart',
+          name: 'Read', state: 'recoverable', summary: 'Handled missing file', error: 'missing file',
+          remoteProvenance: {
+            source: 'remote-semantic-transcript', bindingId: 'binding-recovery',
+            operationId: taskId, semanticSequence: '4', eventIndex: 0
+          }
+        } as const
         yield {
           requestId: taskId,
           type: 'done',
@@ -6584,7 +6595,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             bindingId: 'binding-recovery',
             operationId: taskId,
             semanticSequence: '4',
-            eventIndex: 0
+            eventIndex: hasRecoveredResponse ? 1 : 0
           }
         } as const
         consumed.push('4')
@@ -6596,7 +6607,7 @@ describe('registerIpcHandlers agent terminal state', () => {
             bindingId: 'binding-recovery',
             operationId: taskId,
             semanticSequence: '4',
-            eventIndex: 1
+            eventIndex: hasRecoveredResponse ? 2 : 1
           }
         } as const
       }
@@ -6653,6 +6664,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask.mockReturnValue(
       '2'
     )
+    harness.assistantDatabase.hasRemoteResponseTextAfterToolFailure.mockReturnValue(hasRecoveredResponse)
 
     harness.recoveryGetHandler?.(
       trustedEvent(harness.webContents)
@@ -6662,7 +6674,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await vi.waitFor(() =>
       expect(
         harness.assistantDatabase.appendRemoteConversationTaskEventOnce
-      ).toHaveBeenCalledTimes(4)
+      ).toHaveBeenCalledTimes(hasRecoveredResponse ? 5 : 4)
     )
     expect(
       harness.assistantDatabase.appendRemoteConversationTaskEventOnce
@@ -6683,11 +6695,13 @@ describe('registerIpcHandlers agent terminal state', () => {
     expect(
       harness.assistantDatabase.appendRemoteConversationTaskEventOnce
     ).toHaveBeenNthCalledWith(
-      3,
+      hasRecoveredResponse ? 4 : 3,
       expect.objectContaining({
         taskId,
         semanticSequence: '4',
-        event: {
+        event: hasRecoveredResponse ? {
+          requestId: taskId, type: 'done', sessionId: 'session-recovery'
+        } : {
           requestId: taskId,
           type: 'error',
           status: 'failed',
@@ -6720,6 +6734,83 @@ describe('registerIpcHandlers agent terminal state', () => {
         .some(([channel]) => channel === ipcChannels.conversationsChanged)
     ).toBe(true)
     await harness.dispose()
+  })
+
+  it('replays an error committed before its checkpoint using remote tool states instead of terminal message states', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize('C:\\Workspace')
+    const project = database.createSshProject({
+      project: { name: 'Partial terminal', description: '', rootPath: '/srv/project', defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' } },
+      executionSpace: { kind: 'ssh', hostId: '00000000-0000-4000-8000-000000000850', remoteRootPath: '/srv/project' },
+      assertCurrent: () => {}
+    })
+    const taskId = '00000000-0000-4000-8000-000000000851'
+    const conversationId = '00000000-0000-4000-8000-000000000852'
+    const assistantMessageId = '00000000-0000-4000-8000-000000000853'
+    database.saveLocalConversations([{
+      header: { id: conversationId, projectId: project.id, title: 'Partial terminal', updatedAt: 0 }, messages: []
+    }])
+    database.createTask({
+      id: taskId, projectId: project.id, conversationId, title: 'Partial terminal', instructions: 'Read', workMode: 'execute',
+      remoteRecovery: { recoverable: true, currentUserMessageId: '00000000-0000-4000-8000-000000000854', currentAssistantMessageId: assistantMessageId }
+    })
+    const append = (semanticSequence: string, eventIndex: number, event: Parameters<AssistantDatabase['appendRemoteConversationTaskEventOnce']>[0]['event']) =>
+      database.appendRemoteConversationTaskEventOnce({
+        taskId, conversationId, assistantMessageId, bindingId: 'partial-terminal', operationId: taskId,
+        semanticSequence, eventIndex, event
+      })
+    const events: AgentEvent[] = [
+      { requestId: taskId, type: 'tool', callId: 'A', name: 'Read', state: 'failed', summary: 'Read', error: 'missing file' },
+      { requestId: taskId, type: 'text', delta: 'Handled missing file' },
+      { requestId: taskId, type: 'tool', callId: 'B', name: 'Write', state: 'running', summary: 'Write', input: 'preserve input' }
+    ]
+    events.forEach((event, index) => {
+      append(String(index + 1), 0, event)
+      append(String(index + 1), 1, { requestId: taskId, type: 'remote-semantic-checkpoint' })
+    })
+    const error: AgentEvent = { requestId: taskId, type: 'error', status: 'failed', message: 'Read 工具执行失败：missing file' }
+    append('4', 0, error)
+    expect(database.getConversation(conversationId).messages[1]?.tools?.map(tool => tool.state)).toEqual(['failed', 'failed'])
+    expect(database.getTask(taskId).status).toBe('running')
+    const recoveredRuntime = {
+      runtimeId: 'opencode', capability: 'chat', supportsToolExecution: true,
+      async *run(request: AgentExecutionRequest) {
+        expect(request).toMatchObject({
+          requestId: taskId, remoteRecoveryOnly: true, remoteSemanticAfterSequence: '3',
+          remoteHasResponseTextAfterToolFailure: true,
+          remoteRecoveredTools: [
+            expect.objectContaining({ callId: 'A', state: 'failed', error: 'missing file' }),
+            expect.objectContaining({ callId: 'B', state: 'running', input: 'preserve input' })
+          ]
+        })
+        const remoteProvenance = {
+          source: 'remote-semantic-transcript' as const, bindingId: 'partial-terminal',
+          operationId: taskId, semanticSequence: '4', eventIndex: 0
+        }
+        yield { requestId: taskId, type: 'done' as const, remoteProvenance }
+        yield { requestId: taskId, type: 'remote-semantic-checkpoint' as const, remoteProvenance: { ...remoteProvenance, eventIndex: 1 } }
+      }
+    }
+    const { harness } = createManagedSshHarness(recoveredRuntime)
+    harness.assistantDatabase.getProject.mockImplementation(database.getProject.bind(database))
+    harness.assistantDatabase.getConversation.mockImplementation(database.getConversation.bind(database))
+    harness.assistantDatabase.listRecoverableRemoteTasks.mockImplementation(database.listRecoverableRemoteTasks.bind(database))
+    harness.assistantDatabase.getHighestCommittedRemoteTaskEventSequenceForTask.mockImplementation(database.getHighestCommittedRemoteTaskEventSequenceForTask.bind(database))
+    harness.assistantDatabase.hasRemoteResponseTextAfterToolFailure.mockImplementation(database.hasRemoteResponseTextAfterToolFailure.bind(database))
+    harness.assistantDatabase.getRemoteTaskActivityStates.mockImplementation(database.getRemoteTaskActivityStates.bind(database))
+    harness.assistantDatabase.appendRemoteConversationTaskEventOnce.mockImplementation(database.appendRemoteConversationTaskEventOnce.bind(database))
+    try {
+      harness.recoveryGetHandler?.(trustedEvent(harness.webContents))
+      await vi.waitFor(() => expect(database.getTask(taskId).status).toBe('failed'))
+      expect(database.getHighestCommittedRemoteTaskEventSequenceForTask(taskId)).toBe('4')
+      expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce).toHaveBeenNthCalledWith(1,
+        expect.objectContaining({ semanticSequence: '4', eventIndex: 0, event: error }))
+      expect(harness.assistantDatabase.appendRemoteConversationTaskEventOnce.mock.results.map(result => result.value)).toEqual([false, true])
+      expect(database.getRemoteTaskActivityStates(taskId).tools.get('B')).toBe('running')
+    } finally {
+      await harness.dispose()
+      database.close()
+    }
   })
 
   it.each(['runtime', 'customization', 'capabilities'] as const)('restores concurrent live questions and their answer history across %s settings reload', async (settingsKind) => {

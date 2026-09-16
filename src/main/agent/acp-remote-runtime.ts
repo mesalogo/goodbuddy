@@ -147,6 +147,8 @@ export class RemotePromptCancelledError extends Error {
 }
 
 type ActivePrompt = {
+  failedTools?: Map<string, Extract<RuntimePublicEvent, { type: 'tool' }>>
+  hasResponseTextAfterToolFailure?: boolean
   reportedQuestions?: Set<string>
   subagentProgress?: OpenCodeSubagentProgress
   requestId: string
@@ -2111,6 +2113,46 @@ export class AcpRemoteRuntime implements AgentRuntime {
     prompt: ActivePrompt,
     update: SessionUpdate
   ): RuntimePublicEvent | undefined {
+    const mapped = this.mapSessionUpdate(prompt, update)
+    if (!mapped) return undefined
+    const event = this.limitEvent(mapped)
+    if (event.type === 'text' && event.delta.trim()) {
+      prompt.hasResponseTextAfterToolFailure = true
+    } else if (event.type === 'tool') {
+      if (event.state === 'failed') {
+        prompt.failedTools ??= new Map()
+        prompt.failedTools.set(event.callId, event)
+        prompt.hasResponseTextAfterToolFailure = false
+      } else {
+        prompt.failedTools?.delete(event.callId)
+      }
+    } else if (event.type === 'subagent' && event.runtimeCallId) {
+      prompt.failedTools?.delete(event.runtimeCallId)
+    }
+    return event
+  }
+
+  private recoveredToolEvents(prompt: ActivePrompt): RuntimePublicEvent[] {
+    if (!prompt.hasResponseTextAfterToolFailure ||
+      [...prompt.toolCalls.values()].some(tool =>
+        tool.status === 'pending' || tool.status === 'in_progress')) {
+      return []
+    }
+    // Re-emit already recovered tools too: a terminal may be only partly
+    // committed. Sorting keeps every event index stable across reattachment.
+    return [...(prompt.failedTools ?? [])]
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([, tool]) => ({
+        ...tool,
+        state: 'recoverable' as const,
+        summary: `远端 Runtime 已在后续响应中处理工具失败：${tool.name}`
+      }))
+  }
+
+  private mapSessionUpdate(
+    prompt: ActivePrompt,
+    update: SessionUpdate
+  ): RuntimePublicEvent | undefined {
     const extension = update._meta?.goodbuddyQuestion
     if (this.options.runtimeId === 'opencode' && extension && typeof extension === 'object' &&
       prompt.open && prompt.context.channel.respondToQuestion) {
@@ -2432,11 +2474,26 @@ export class AcpRemoteRuntime implements AgentRuntime {
       pendingUpdateBytes: 0,
       inboundPaused: false,
       toolCalls: new Map(),
+      hasResponseTextAfterToolFailure: request.remoteHasResponseTextAfterToolFailure,
+      failedTools: new Map(),
       open: true,
       completed: false,
       context
     }
     for (const tool of request.remoteRecoveredTools ?? []) {
+      if (tool.state === 'failed' || tool.state === 'recoverable') {
+        prompt.failedTools!.set(tool.callId, {
+          requestId: request.requestId,
+          type: 'tool',
+          callId: tool.callId,
+          name: tool.name,
+          state: tool.state,
+          summary: tool.summary,
+          ...(tool.input ? { input: tool.input } : {}),
+          ...(tool.output ? { output: tool.output } : {}),
+          ...(tool.error ? { error: tool.error } : {})
+        })
+      }
       prompt.toolCalls.set(tool.callId.slice(0, 256), {
         title: tool.name.slice(0, 200),
         status:
@@ -2457,6 +2514,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
       if (!subagent.runtimeCallId) {
         continue
       }
+      prompt.failedTools?.delete(subagent.runtimeCallId)
       const subagentTitle =
         'actor' in subagent
           ? subagent.actor.label
@@ -2631,7 +2689,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
             const mapped = page.pendingQuestions !== undefined && notification.update._meta?.goodbuddyQuestion
               ? undefined : this.mapUpdate(prompt, notification.update)
             if (mapped !== undefined) {
-              publicEvents.push(this.limitEvent(mapped))
+              publicEvents.push(mapped)
             }
           } else if (transcriptEvent.kind === 'prompt-terminal') {
             const terminal = transcriptTerminal(
@@ -2650,6 +2708,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
               }
             }
             if (terminal.state === 'completed') {
+              publicEvents.push(...this.recoveredToolEvents(prompt))
               publicEvents.push({
                 requestId: request.requestId,
                 type: 'done',
@@ -2979,7 +3038,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         }
         const event = this.mapUpdate(prompt, update)
         if (event) {
-          yield this.limitEvent(event)
+          yield event
         }
       }
       await this.awaitOperation(
@@ -3025,6 +3084,7 @@ export class AcpRemoteRuntime implements AgentRuntime {
         signal
       )
       session.binding = binding
+      yield* this.recoveredToolEvents(prompt)
       yield {
         requestId: request.requestId,
         type: 'done',

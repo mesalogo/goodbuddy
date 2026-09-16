@@ -6,7 +6,8 @@ import {
   type Agent,
   type AgentCapabilities,
   type PromptRequest,
-  type PromptResponse
+  type PromptResponse,
+  type SessionUpdate
 } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 import { canonicalJson } from '../../shared/agent-protocol/canonical'
@@ -17,7 +18,7 @@ import type {
 import {
   REMOTE_RUNTIME_LAUNCH_LIMITS
 } from '../../shared/remote-runtime-launch-contracts'
-import type { RuntimeEvent } from './runtime'
+import type { RuntimeEvent, RemoteSemanticEventProvenance } from './runtime'
 import {
   AcpRemoteRuntime,
   RemotePromptCancelledError,
@@ -35,6 +36,7 @@ import type {
   RemoteRuntimeChannel
 } from './remote-runtime-channel'
 import { MemoryRuntimeSessionBindingStore } from './runtime-session-binding-store'
+import { AssistantDatabase } from '../assistant/assistant-database'
 
 type FakeServer = {
   channel: RemoteRuntimeChannel
@@ -2589,6 +2591,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
   }
 
   function ownedChannel(options?: {
+    updates?: SessionUpdate[]
     state?: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown'
     terminalPayload?: unknown
     includePermissionCheckpoint?: boolean
@@ -2619,7 +2622,7 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
       state: 'running' as const,
       latestSemanticSequence: '0'
     }))
-    const events = [
+    const defaultEvents = [
       {
         sequence: '1',
         kind: 'session-update' as const,
@@ -2708,6 +2711,13 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
         createdAt: 5
       }
     ]
+    const events = options?.updates ? [
+      ...options.updates.map((update, index) => ({
+        sequence: String(index + 1), kind: 'session-update' as const,
+        payload: { sessionId: 'owned-session', update }, createdAt: index + 1
+      })),
+      { ...defaultEvents.at(-1)!, sequence: String(options.updates.length + 1) }
+    ] : defaultEvents
     const pageOwnedPromptTranscript = vi.fn(async ({
       bindingId,
       operationId,
@@ -3130,6 +3140,186 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
         input: '{"path":"/workspace/file.txt"}'
       })
     )
+  })
+
+  const failedRead: SessionUpdate = {
+    sessionUpdate: 'tool_call', toolCallId: 'read-1', title: 'Read',
+    status: 'failed', rawInput: { filePath: '/missing' },
+    content: [{ type: 'content', content: { type: 'text', text: 'File not found' } }]
+  }
+  const responseText: SessionUpdate = {
+    sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Handled the missing file.' }
+  }
+
+  describe.each(['owned', 'direct'] as const)('%s tool failure recovery', (path) => {
+    it.each([
+      { name: 'response after failure', updates: [failedRead, responseText], recovered: true },
+      { name: 'no response', updates: [failedRead], recovered: false },
+      { name: 'response before failure', updates: [responseText, failedRead], recovered: false },
+      { name: 'reasoning only', updates: [failedRead, { ...responseText, sessionUpdate: 'agent_thought_chunk' }], recovered: false },
+      { name: 'whitespace only', updates: [failedRead, { ...responseText, content: { type: 'text', text: ' \n\t' } }], recovered: false },
+      { name: 'another failure after response', updates: [failedRead, responseText, { ...failedRead, toolCallId: 'read-2' }], recovered: false },
+      { name: 'unfinished tool', updates: [failedRead, responseText, { ...failedRead, toolCallId: 'read-2', status: 'in_progress' }], recovered: false },
+      { name: 'native subagent failure', updates: [{ ...failedRead, rawInput: { subagent_type: 'explorer', prompt: 'Read a file' } }, responseText], recovered: false }
+    ] satisfies Array<{ name: string; updates: SessionUpdate[]; recovered: boolean }>)('$name', async ({ updates, recovered }) => {
+      const fixture = path === 'owned' ? ownedChannel({ updates }) : undefined
+      const server = fixture ? undefined : fakeServer({
+        prompt: async ({ sessionId }) => {
+          for (const update of updates) await server!.client.sessionUpdate({ sessionId, update })
+          return { stopReason: 'end_turn' }
+        }
+      })
+      const instance = fixture?.instance ?? runtime(server!)
+      try {
+        const events = await collect(instance.run(request, new AbortController().signal))
+        const recovery = events.filter(event => event.type === 'tool' && event.state === 'recoverable')
+        expect(recovery).toHaveLength(recovered ? 1 : 0)
+        if (recovered) expect(recovery[0]).toMatchObject({
+          callId: 'read-1', name: 'Read', input: '{"filePath":"/missing"}', output: '"File not found"'
+        })
+        expect(events.some(event => event.type === 'done')).toBe(true)
+      } finally {
+        await instance.dispose()
+      }
+    })
+
+    it.each(['failed', 'cancelled', 'outcome-unknown'] as const)('does not recover a %s prompt', async (state) => {
+      const updates = [failedRead, responseText]
+      const fixture = path === 'owned' ? ownedChannel({ updates, state }) : undefined
+      const server = fixture ? undefined : fakeServer({
+        prompt: async ({ sessionId }) => {
+          for (const update of updates) await server!.client.sessionUpdate({ sessionId, update })
+          if (state === 'cancelled') return { stopReason: 'cancelled' }
+          throw new Error(state)
+        }
+      })
+      const instance = fixture?.instance ?? runtime(server!)
+      const events: RuntimeEvent[] = []
+      try {
+        await expect((async () => {
+          for await (const event of instance.run(request, new AbortController().signal)) events.push(event)
+        })()).rejects.toThrow()
+        expect(events.some(event => event.type === 'tool' && event.state === 'recoverable')).toBe(false)
+        expect(events.some(event => event.type === 'done')).toBe(false)
+      } finally {
+        await instance.dispose()
+      }
+    })
+  })
+
+  it.each(['failed', 'cancelled', 'interrupted', 'running'] as const)('does not promote an ineligible recovered %s tool', async (state) => {
+    const fixture = ownedChannel({ updates: [] })
+    try {
+      const events = await collect(fixture.instance.run({
+        ...request, remoteRecoveredTools: [{ callId: 'read', name: 'Read', state, summary: 'Read' }],
+        remoteHasResponseTextAfterToolFailure: state !== 'failed'
+      }, new AbortController().signal))
+      expect(events.some(event => event.type === 'tool')).toBe(false)
+    } finally {
+      await fixture.instance.dispose()
+    }
+  })
+
+  it.each(['recoverable', 'done', 'unfinished-tool', 'unfinished-subagent'] as const)(
+    'replays a partial %s terminal after real message reduction without provenance conflicts', async (cut) => {
+    const failedTerminal = cut.startsWith('unfinished-')
+    const fixture = ownedChannel({
+      terminalPayload: { status: 'completed', response: { stopReason: 'end_turn' } },
+      updates: failedTerminal ? [failedRead, responseText, {
+        ...failedRead, toolCallId: 'running-call', status: 'in_progress',
+        ...(cut === 'unfinished-subagent'
+          ? { rawInput: { subagent_type: 'explorer', prompt: 'Read a file' } } : {})
+      }] : [
+        { ...failedRead, toolCallId: 'z-read' },
+        { ...failedRead, toolCallId: 'a-read' }, responseText
+      ]
+    })
+    const database = new AssistantDatabase(':memory:')
+    database.initialize('C:\\Workspace')
+    const project = database.createSshProject({
+      project: { name: 'Recovery', description: '', rootPath: '/srv/project', defaultWorkMode: 'execute', runtimeSelection: { provider: 'opencode' } },
+      executionSpace: { kind: 'ssh', hostId: '00000000-0000-4000-8000-000000000850', remoteRootPath: '/srv/project' },
+      assertCurrent: () => {}
+    })
+    const assistantMessageId = '00000000-0000-4000-8000-000000000851'
+    const conversationId = '00000000-0000-4000-8000-000000000853'
+    database.saveLocalConversations([{
+      header: { id: conversationId, projectId: project.id, title: 'Recovery', updatedAt: 0 }, messages: []
+    }])
+    database.createTask({
+      id: request.requestId, projectId: project.id, conversationId,
+      title: 'Recovery', instructions: 'Read', workMode: 'execute',
+      remoteRecovery: { recoverable: true, currentUserMessageId: '00000000-0000-4000-8000-000000000852', currentAssistantMessageId: assistantMessageId }
+    })
+    const persist = (event: RuntimeEvent & { remoteProvenance?: RemoteSemanticEventProvenance }) => {
+      if (!event.remoteProvenance) return undefined
+      if (event.type === 'model-usage' || event.type === 'generated-image') throw new Error('Unexpected fixture event')
+      const { remoteProvenance, ...publicEvent } = event
+      // IPC rejects done while the original failed Read is still unsuccessful.
+      const payload = failedTerminal && publicEvent.type === 'done' ? {
+        requestId: request.requestId, type: 'error' as const, status: 'failed' as const,
+        message: 'Read 工具执行失败'
+      } : publicEvent
+      return database.appendRemoteConversationTaskEventOnce({
+        taskId: request.requestId, conversationId, assistantMessageId,
+        ...remoteProvenance, event: payload
+      })
+    }
+    const stream = fixture.instance.run({ ...request, conversationId }, new AbortController().signal)
+    let partial: RuntimeEvent | undefined
+    for (;;) {
+      const next = await stream.next()
+      if (next.done) throw new Error('Expected partial terminal')
+      persist(next.value)
+      if (cut === 'recoverable'
+        ? next.value.type === 'tool' && next.value.state === 'recoverable'
+        : next.value.type === 'done') {
+        partial = next.value
+        break
+      }
+    }
+    await stream.return()
+    const replacement = factoryRuntime(async () => fixture.channel, fixture.store, {
+      modelBridgePolicy, modelProfile: ownedModelProfile
+    })
+    try {
+      const cursor = database.getHighestCommittedRemoteTaskEventSequenceForTask(request.requestId)
+      expect(cursor).toBe('3')
+      expect(database.getTask(request.requestId).status).toBe('running')
+      expect(database.hasRemoteResponseTextAfterToolFailure(request.requestId)).toBe(true)
+      const message = database.getConversation(conversationId).messages[1]!
+      const states = database.getRemoteTaskActivityStates(request.requestId)
+      if (cut === 'unfinished-tool') {
+        expect(message.tools?.map(tool => tool.state)).toEqual(['failed', 'failed'])
+        expect(states.tools.get('running-call')).toBe('running')
+      } else if (cut === 'unfinished-subagent') {
+        expect(message.subagents?.[0]).toMatchObject({ state: 'failed', error: 'Read 工具执行失败' })
+        expect(states.subagents.get(message.subagents![0]!.childTaskId)).toEqual({ state: 'running', error: undefined })
+      }
+      const recovered = await collect(replacement.run({
+        ...request, conversationId, remoteRecoveryOnly: true, remoteSemanticAfterSequence: cursor,
+        remoteHasResponseTextAfterToolFailure: database.hasRemoteResponseTextAfterToolFailure(request.requestId),
+        remoteRecoveredTools: [...(message.tools ?? [])].reverse().map(tool => ({
+          ...tool, callId: tool.callId!, state: states.tools.get(tool.callId!) ?? tool.state
+        })),
+        remoteRecoveredSubagents: message.subagents?.map(subagent => ({
+          ...subagent, ...states.subagents.get(subagent.childTaskId)
+        }))
+      }, new AbortController().signal))
+      expect(recovered).toContainEqual(partial)
+      const replayed = recovered.filter(event => event.type === 'tool')
+      expect(replayed.map(event => event.callId)).toEqual(failedTerminal ? [] : ['a-read', 'z-read'])
+      expect(persist(partial!)).toBe(false)
+      for (const event of recovered) persist(event)
+      expect(database.getHighestCommittedRemoteTaskEventSequenceForTask(request.requestId)).toBe('4')
+      expect(recovered.some(event => event.type === 'done')).toBe(true)
+      expect(database.getTask(request.requestId).status).toBe(failedTerminal ? 'failed' : 'completed')
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+      expect(fixture.attachOwnedPrompt).toHaveBeenCalledOnce()
+    } finally {
+      database.close()
+      await Promise.all([replacement.dispose(), fixture.instance.dispose()])
+    }
   })
 
   it('never starts a replacement prompt for attach-only recovery', async () => {

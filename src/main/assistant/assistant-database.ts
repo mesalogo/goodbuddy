@@ -5405,6 +5405,57 @@ export class AssistantDatabase {
     return row.sequence === null ? '0' : String(row.sequence)
   }
 
+  hasRemoteResponseTextAfterToolFailure(taskIdInput: string): boolean {
+    const taskId = assistantIdSchema.parse(taskIdInput)
+    // Use event order, not display blocks: tool blocks are updated in place,
+    // and display capture can be truncated before the final response arrives.
+    const rows = this.requireDatabase().prepare(
+      `SELECT kind, payload_json FROM task_events
+       WHERE task_id = ? AND remote_semantic_sequence IS NOT NULL
+         AND (kind = 'text' OR
+           (kind = 'tool' AND json_extract(payload_json, '$.state') = 'failed'))
+       ORDER BY CAST(remote_semantic_sequence AS INTEGER) DESC, remote_event_index DESC`
+    ).iterate(taskId)
+    for (const row of rows) {
+      if (row.kind === 'tool') return false
+      const event = JSON.parse(row.payload_json as string) as { delta?: string }
+      if (event.delta?.trim()) return true
+    }
+    return false
+  }
+
+  getRemoteTaskActivityStates(taskIdInput: string): {
+    tools: Map<string, ConversationToolActivity['state']>
+    subagents: Map<string, Pick<ConversationSubagentActivity, 'state' | 'error'>>
+  } {
+    const taskId = assistantIdSchema.parse(taskIdInput)
+    const tools = new Map<string, ConversationToolActivity['state']>()
+    const subagents = new Map<string, Pick<ConversationSubagentActivity, 'state' | 'error'>>()
+    // Terminal message projection changes unfinished activities. Only their
+    // original remote events can supply states for deterministic terminal replay.
+    const rows = this.requireDatabase().prepare(
+      `SELECT kind, json_extract(payload_json, '$.callId') AS call_id,
+              json_extract(payload_json, '$.childTaskId') AS child_task_id,
+              json_extract(payload_json, '$.state') AS state,
+              json_extract(payload_json, '$.error') AS error
+       FROM task_events
+       WHERE task_id = ? AND remote_semantic_sequence IS NOT NULL
+         AND kind IN ('tool', 'subagent')
+       ORDER BY CAST(remote_semantic_sequence AS INTEGER), remote_event_index`
+    ).iterate(taskId)
+    for (const row of rows) {
+      if (row.kind === 'tool') {
+        tools.set(row.call_id as string, row.state as ConversationToolActivity['state'])
+      } else {
+        subagents.set(row.child_task_id as string, {
+          state: row.state as ConversationSubagentActivity['state'],
+          error: row.error === null ? undefined : row.error as string
+        })
+      }
+    }
+    return { tools, subagents }
+  }
+
   private queryHighestCommittedRemoteTaskEventSequence(
     database: DatabaseSync,
     bindingId: string,

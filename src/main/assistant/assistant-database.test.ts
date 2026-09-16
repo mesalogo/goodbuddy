@@ -3544,6 +3544,40 @@ describe('AssistantDatabase', () => {
     inspected.close()
   })
 
+  it('derives remote recovery evidence from semantic order across a restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-tool-recovery-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    let database = new AssistantDatabase(path)
+    database.initialize('C:\\Workspace')
+    const taskId = '00000000-0000-4000-8000-000000000702'
+    database.createTask({ id: taskId, title: 'Recovery', instructions: 'Read', workMode: 'execute' })
+    const append = (sequence: string, kind: string, payload: object) => database.appendRemoteTaskEventOnce({
+      taskId, bindingId: 'tool-recovery', operationId: taskId,
+      semanticSequence: sequence, eventIndex: 0, kind, payload
+    })
+    expect(database.hasRemoteResponseTextAfterToolFailure(taskId)).toBe(false)
+    append('1', 'text', { delta: 'Before failure' })
+    append('2', 'tool', { state: 'failed', callId: 'read' })
+    append('3', 'reasoning', { delta: 'Still thinking' })
+    append('4', 'text', { delta: '\n\t\u3000' })
+    expect(database.hasRemoteResponseTextAfterToolFailure(taskId)).toBe(false)
+    append('10', 'text', { delta: 'Handled the failure' })
+    // Late insertion of an older event must not change semantic ordering.
+    append('9', 'tool', { state: 'failed', callId: 'read-again' })
+    expect(database.hasRemoteResponseTextAfterToolFailure(taskId)).toBe(true)
+    database.close()
+    database = new AssistantDatabase(path)
+    database.initialize('C:\\Workspace')
+    expect(database.hasRemoteResponseTextAfterToolFailure(taskId)).toBe(true)
+    append('11', 'tool', { state: 'recoverable', callId: 'read' })
+    expect(database.hasRemoteResponseTextAfterToolFailure(taskId)).toBe(true)
+    append('12', 'tool', { state: 'failed', callId: 'third-read' })
+    expect(database.hasRemoteResponseTextAfterToolFailure(taskId)).toBe(false)
+    expect(database.hasRemoteResponseTextAfterToolFailure('00000000-0000-4000-8000-000000000703')).toBe(false)
+    database.close()
+  })
+
   it('persists inherited remote metrics and replay without pinning the conversation', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-inherited-remote-metrics-')

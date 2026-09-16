@@ -158,6 +158,8 @@ export type AgentExecutionRequest = Omit<AgentRequest, 'workMode'> & {
   remoteRecoveryOnly?: boolean
   /** Main-only durable tool state used to merge partial recovery updates. */
   remoteRecoveredTools?: readonly RemoteRecoveredTool[]
+  /** Derived from committed task events, including text before disconnect. */
+  remoteHasResponseTextAfterToolFailure?: boolean
   /** Main-only durable native subagent state for partial recovery updates. */
   remoteRecoveredSubagents?: readonly RemoteRecoveredSubagent[]
 }
