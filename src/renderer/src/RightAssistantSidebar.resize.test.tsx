@@ -156,6 +156,8 @@ function sidebarElement({
   onNavigateBrowser,
   onReloadBrowser,
   onStopLoadingBrowser,
+  onOpenTask = vi.fn(),
+  onRespondApproval = vi.fn(),
   onTabChange = vi.fn()
 }: {
   open?: boolean
@@ -188,6 +190,8 @@ function sidebarElement({
   onNavigateBrowser?: (conversationId: string, tabId: BrowserTabId, url: string) => Promise<void>
   onReloadBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
   onStopLoadingBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
+  onOpenTask?: (task: AssistantTask) => void
+  onRespondApproval?: React.ComponentProps<typeof RightAssistantSidebar>['onRespondApproval']
   onTabChange?: (tab: AssistantSidebarTab) => void
 } = {}): React.JSX.Element {
   return (
@@ -215,11 +219,11 @@ function sidebarElement({
         onRefreshChanges={vi.fn(async () => undefined)}
         onReloadBrowser={onReloadBrowser}
         onRemoveSchedule={vi.fn(async () => undefined)}
-        onRespondApproval={vi.fn()}
+        onRespondApproval={onRespondApproval}
         onRunSchedule={vi.fn(async () => undefined)}
         onSetScheduleEnabled={vi.fn(async () => undefined)}
         onStopLoadingBrowser={onStopLoadingBrowser}
-        onOpenTask={vi.fn()}
+        onOpenTask={onOpenTask}
         onTabChange={onTabChange}
         open={open}
         restoreFocusRef={restoreFocusRef}
@@ -568,6 +572,65 @@ describe('RightAssistantSidebar resizing', () => {
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
   })
 
+  it('groups attention states as active while preserving task details and approvals across filters', () => {
+    const statuses: AssistantTask['status'][] = [
+      'idle', 'queued', 'running', 'waiting_approval', 'failed', 'interrupted',
+      'paused', 'completed', 'cancelled'
+    ]
+    const tasks = statuses.map((status): AssistantTask => ({
+      id: status,
+      title: `Task ${status}`,
+      instructions: status,
+      projectId: currentProject.id,
+      origin: 'schedule',
+      status,
+      error: status === 'failed' ? 'Task execution failed' : undefined,
+      createdAt: '2026-09-09T00:00:00.000Z'
+    }))
+    const approval: PendingSidebarApproval = {
+      conversationId: 'conversation-1', messageId: 'message-1',
+      approvalId: 'approval-1', projectId: currentProject.id,
+      title: '写入工作区', description: '更新 release.md'
+    }
+    const onOpenTask = vi.fn()
+    const onRespondApproval = vi.fn()
+    renderSidebar({
+      tasks: [...tasks, { ...tasks[4]!, id: 'child', title: 'Child task', parentTaskId: 'running' }],
+      approvals: [approval], onOpenTask, onRespondApproval
+    })
+
+    const filters = within(screen.getByRole('group', { name: '筛选任务' }))
+    expect(filters.getAllByRole('button').map((button) => button.textContent))
+      .toEqual(['进行中', '暂停', '已结束'])
+    expect(filters.getByRole('button', { name: '进行中' })).toHaveAttribute('aria-pressed', 'true')
+    for (const task of tasks.slice(0, 6)) {
+      const row = screen.getByText(task.title).closest('article')!
+      expect(within(row).getByText(i18n.t(`task.status.${task.status}`, { ns: 'workspace' }))).toBeVisible()
+      fireEvent.click(within(row).getByRole('button'))
+      expect(onOpenTask).toHaveBeenLastCalledWith(task)
+    }
+    expect(screen.getByText('Task execution failed')).toBeVisible()
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument()
+
+    for (const [filter, visibleStatuses] of [
+      ['进行中', statuses.slice(0, 6)],
+      ['暂停', ['paused']],
+      ['已结束', ['completed', 'cancelled']]
+    ] as const) {
+      fireEvent.click(filters.getByRole('button', { name: filter }))
+      for (const task of tasks) {
+        expect(Boolean(screen.queryByText(task.title)))
+          .toBe((visibleStatuses as readonly string[]).includes(task.status))
+      }
+      expect(screen.getByLabelText('等待审批: 1')).toBeVisible()
+      expect(screen.getByLabelText('等待审批: 写入工作区')).toBeVisible()
+    }
+    fireEvent.click(screen.getByRole('button', { name: '仅此次允许' }))
+    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'once')
+    fireEvent.click(screen.getByRole('button', { name: '拒绝' }))
+    expect(onRespondApproval).toHaveBeenLastCalledWith(approval, 'deny')
+  })
+
   it('labels approval counts and cards without duplicate live regions', () => {
     renderSidebar({
       approvals: [
@@ -722,15 +785,15 @@ describe('RightAssistantSidebar resizing', () => {
     fireEvent.click(
       within(screen.getByRole('group', { name: '任务范围' })).getByRole(
         'button',
-        { name: '全局' }
+        { name: '所有项目' }
       )
     )
     expect(screen.getByText('全局审批')).toBeInTheDocument()
-    expect(screen.queryByText('当前项目审批')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('等待审批: 1')).toBeInTheDocument()
+    expect(screen.getByText('当前项目审批')).toBeInTheDocument()
+    expect(screen.getByLabelText('等待审批: 2')).toBeInTheDocument()
   })
 
-  it('scopes tasks to the current project, global tasks, or all projects and persists the choice', () => {
+  it('scopes tasks to the current or all projects, labels unbound tasks and persists the choice', () => {
     const createTask = (
       id: string,
       title: string,
@@ -758,15 +821,10 @@ describe('RightAssistantSidebar resizing', () => {
 
     expect(screen.getByText('当前项目任务')).toBeInTheDocument()
     expect(screen.queryByText('全局任务')).not.toBeInTheDocument()
-
-    fireEvent.click(
-      within(screen.getByRole('group', { name: '任务范围' })).getByRole(
-        'button',
-        { name: '全局' }
-      )
-    )
-    expect(screen.getByText('全局任务')).toBeInTheDocument()
-    expect(screen.queryByText('当前项目任务')).not.toBeInTheDocument()
+    expect(screen.queryByText('其他项目任务')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: '任务范围' })).getAllByRole('button'))
+      .toHaveLength(2)
+    expect(screen.queryByRole('button', { name: '全局' })).not.toBeInTheDocument()
 
     fireEvent.click(
       within(screen.getByRole('group', { name: '任务范围' })).getByRole(
@@ -777,8 +835,31 @@ describe('RightAssistantSidebar resizing', () => {
     expect(screen.getByText('当前项目任务')).toBeInTheDocument()
     expect(screen.getByText('全局任务')).toBeInTheDocument()
     expect(screen.getByText('其他项目任务')).toBeInTheDocument()
+    expect(screen.getAllByText('未绑定项目')).toHaveLength(1)
+    expect(screen.getByText('项目：00000000-0000-4000-8000-000000000302')).toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!))
       .toEqual(expect.objectContaining({ taskScope: 'all-projects' }))
+  })
+
+  it('restores the legacy global scope as all projects and saves the updated preference', () => {
+    localStorage.setItem('goodbuddy.workbar-layout.v1', JSON.stringify({
+      instances: DEFAULT_WORKBAR_INSTANCES,
+      activeInstanceId: DEFAULT_WORKBAR_INSTANCES[0]!.id,
+      expanded: true,
+      dock: 'right',
+      widthRatio: 0.3,
+      taskScope: 'global'
+    }))
+    renderSidebar({ activeProject: null, tasks: [{
+      id: 'legacy-unbound-task', title: '历史任务', instructions: '历史任务',
+      origin: 'schedule', status: 'running', createdAt: '2026-09-09T00:00:00.000Z'
+    }] })
+
+    expect(screen.getByRole('button', { name: '所有项目' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('历史任务')).toBeInTheDocument()
+    expect(screen.getByText('未绑定项目')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!).taskScope)
+      .toBe('all-projects')
   })
 
   it('shows a clear current-project empty state when no project is active', () => {

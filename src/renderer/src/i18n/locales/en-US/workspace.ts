@@ -327,21 +327,19 @@ export const workspace = {
       noFilterResults: 'No tasks match this filter.',
       conversationUnavailable: 'Conversation unavailable',
       projectScope: 'Project: {{project}}',
-      globalScope: 'Global',
+      unboundProject: 'Unbound project',
       startedAt: 'Started {{time}}',
       nextRunAt: 'Next run: {{time}}',
       notStarted: 'Not run yet',
       scope: {
         ariaLabel: 'Task scope',
         currentProject: 'Current project',
-        global: 'Global',
         allProjects: 'All projects',
         noCurrentProject:
           'No project is active. Choose another task scope or open a project.'
       },
       filters: {
         ariaLabel: 'Filter tasks',
-        attention: 'Attention',
         active: 'Active',
         paused: 'Paused',
         finished: 'Finished'

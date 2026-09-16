@@ -338,7 +338,7 @@
   单实例重复选择时聚焦已有 Tab；浏览器和终端每次选择创建独立实例。主侧栏系统工具快捷
   入口按当前上下文聚焦最近使用的匹配实例，额外实例仍从“+”目录创建。
 - Task Center 是默认跟随当前项目的单实例索引，不使用多实例模式。用户可在同一 Tab 内切换
-  “当前项目”“全局任务”和“全部项目”；范围变化不得创建第二个 Task Center。每个 Task 只
+  “当前项目”和“所有项目”；无项目任务在“所有项目”中标注“未绑定项目”。范围变化不得创建第二个 Task Center。每个 Task 只
   关联一条 Conversation，一条 Conversation 可以关联多个 Task；列表不得复制会话内容，也
   不得把 Job/Run 提升为可导航 UI 对象。
 - 各栏目读取当前会话或项目的对应内容；当前内容不可用时仍保留栏目入口并说明原因。
@@ -687,7 +687,7 @@ GoodBuddy 是可调整窗口大小的桌面应用。响应式设计优先保证�
 - 每项显示名称、关联 Conversation、Global 或 Project 范围、Ask/Execute、状态、最近进展、
   最近真实活动时间及需要关注信息。
 - 点击列表项打开关联 Conversation 并定位该 Task，不显示第二份内容载体。
-- 需要关注、进行中、已暂停和已结束使用共享 `SegmentedControl`；窄栏不足时单行滚动。
+- 进行中、暂停和已结束使用共享 `SegmentedControl`；窄栏不足时单行滚动。状态归类遵循[任务中心 PRD](docs/features/task-and-job/task-center-prd.md#5-交互)。
 - 完整消息留在 Conversation；长错误、工具、审批和成果按 Task 关联到 Runtime、活动记录和
   成果查看器，不撑高列表，也不显示 Job/Run 树。
 - “新建定制任务”使用共享 Modal，明确选择当前或新 Conversation。聊天入口默认当前

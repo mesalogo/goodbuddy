@@ -319,23 +319,21 @@ export const workspace = {
       noFilterResults: '当前筛选条件下没有任务。',
       conversationUnavailable: '关联会话不可用',
       projectScope: '项目：{{project}}',
-      globalScope: '全局',
+      unboundProject: '未绑定项目',
       startedAt: '{{time}} 开始',
       nextRunAt: '下次运行：{{time}}',
       notStarted: '尚未运行',
       scope: {
         ariaLabel: '任务范围',
         currentProject: '当前项目',
-        global: '全局',
         allProjects: '所有项目',
         noCurrentProject: '没有活动项目。请选择其他任务范围或先打开一个项目。'
       },
       filters: {
         ariaLabel: '筛选任务',
-        attention: '待关注',
         active: '进行中',
-        paused: '已暂停',
-        finished: '已完成'
+        paused: '暂停',
+        finished: '已结束'
       },
       schedule: {
         recurrence: {

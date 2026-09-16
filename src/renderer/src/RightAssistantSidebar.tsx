@@ -831,10 +831,12 @@ export function RightAssistantSidebar({
   const [workspacePreviewLoadMoreError, setWorkspacePreviewLoadMoreError] =
     useState('')
   const [taskFilter, setTaskFilter] = useState<
-    'attention' | 'active' | 'paused' | 'finished'
+    'active' | 'paused' | 'finished'
   >('active')
-  const [taskScope, setTaskScope] = useState<WorkbarTaskScope>(
-    initialLayout?.taskScope ?? 'current-project'
+  const [taskScope, setTaskScope] = useState<Exclude<WorkbarTaskScope, 'global'>>(
+    initialLayout?.taskScope === 'global'
+      ? 'all-projects'
+      : initialLayout?.taskScope ?? 'current-project'
   )
   const [actionErrorState, setActionErrorState] = useState({
     scope: { instanceId: activeWorkbarInstanceId, open },
@@ -925,9 +927,6 @@ export function RightAssistantSidebar({
       if (taskScope === 'all-projects') {
         return true
       }
-      if (taskScope === 'global') {
-        return !projectId
-      }
       return Boolean(currentProject && projectId === currentProject.id)
     },
     [currentProject, taskScope]
@@ -946,18 +945,14 @@ export function RightAssistantSidebar({
   const filteredTasks = useMemo(
     () =>
       topLevelTasks.filter((task) => {
-        if (taskFilter === 'attention') {
-          return (
-            task.status === 'waiting_approval' ||
-            task.status === 'failed' ||
-            task.status === 'interrupted'
-          )
-        }
         if (taskFilter === 'active') {
           return (
             task.status === 'idle' ||
             task.status === 'queued' ||
-            task.status === 'running'
+            task.status === 'running' ||
+            task.status === 'waiting_approval' ||
+            task.status === 'failed' ||
+            task.status === 'interrupted'
           )
         }
         if (taskFilter === 'paused') {
@@ -1886,10 +1881,6 @@ export function RightAssistantSidebar({
                     label: t('sidebar.tasks.scope.currentProject')
                   },
                   {
-                    value: 'global',
-                    label: t('sidebar.tasks.scope.global')
-                  },
-                  {
                     value: 'all-projects',
                     label: t('sidebar.tasks.scope.allProjects')
                   }
@@ -1967,10 +1958,6 @@ export function RightAssistantSidebar({
                 onChange={setTaskFilter}
                 options={[
                   {
-                    value: 'attention',
-                    label: t('sidebar.tasks.filters.attention')
-                  },
-                  {
                     value: 'active',
                     label: t('sidebar.tasks.filters.active')
                   },
@@ -2034,11 +2021,11 @@ export function RightAssistantSidebar({
                     </button>
                     <div className="task-center__metadata">
                       <span>
-                        {projectName
+                        {task.projectId
                           ? t('sidebar.tasks.projectScope', {
-                              project: projectName
+                              project: projectName ?? task.projectId
                             })
-                          : t('sidebar.tasks.globalScope')}
+                          : t('sidebar.tasks.unboundProject')}
                       </span>
                       <span>
                         {schedule

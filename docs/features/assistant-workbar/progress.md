@@ -1115,13 +1115,24 @@ src/agent-daemon/runtime-composition.test.ts src/main/ipc.test.ts` 为 179 项�
   测试应用与具名浏览器会话已退出，所属 Electron/Node 进程及 fixture 监听端口均为 0；
   临时截图和隔离 profile 保留在本机测试目录，不进入仓库。
 
+## 2026-09-16 任务中心范围简化
+
+- 任务中心仅保留“当前项目”和“所有项目”；无项目任务在后者中标注“未绑定项目”。具体规则见
+  [Task Center 范围](../task-and-job/task-center-prd.md#4-范围)。
+- Renderer 将旧布局中的 `global` 恢复为 `all-projects` 并保存新值；共享解析契约、后端与任务
+  数据不变。App 仍只向任务中心传入 schedule 来源的顶层任务。
+- `npx vitest run src/renderer/src/RightAssistantSidebar.resize.test.tsx src/shared/workbar-contracts.test.ts`
+  通过 60 项；`npm run typecheck` 和 `npm run lint` 通过。未进行真实 Electron 窗口验收。
+- `npm test` 在 200 秒后超时，未取得整库结果；单独复跑 `heartbeat-database.test.ts` 为 6 项通过、
+  2 项失败，均在未修改的数据库迁移代码中报 `duplicate column name: pinned`。
+
 ## 2026-09-10 固定基础页签与浏览器多实例
 
 - 工作栏注册表已分别声明实例策略、默认上下文、默认打开、必须存在、可关闭和排序属性。
   任务中心与工作区保持默认存在且不可关闭；浏览器改为当前 Conversation 上下文的多实例。
   布局加载按 `required` 补回缺失的基础页签，并修复失效活动实例。
 - 任务中心增加“当前项目”“全局任务”“全部项目”范围，默认跟随活动项目；任务和审批按
-  Conversation 所属项目过滤，范围模式随工作栏布局持久化。
+  Conversation 所属项目过滤，范围模式随工作栏布局持久化。范围选项已于 2026-09-16 简化，见上方记录。
 - 浏览器服务已拆分 Conversation Context 与 Browser Tab。每个 Tab 拥有独立页面、Driver、
   操作队列、状态和元素引用空间，同一 Conversation 的 Tab 共享 partition、代理和 Cookie。
 - Renderer 使用工作栏实例 UUID 原子创建或恢复 Browser Tab，并以 UUID viewport token 防止

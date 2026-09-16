@@ -368,6 +368,8 @@ type WorkbarLayoutPreferences = {
 ```
 
 - 持久化工作栏打开状态、Tab 顺序、活动实例、应用 ID、自定义标题、公开目标引用和宽度比例。
+- `taskScope` 中的 `global` 仅保留旧布局解析兼容；UI 恢复时映射为 `all-projects`，此后只保存
+  `current-project` 或 `all-projects`。范围规则见 [Task Center PRD](../task-and-job/task-center-prd.md#4-范围)。
 - 加载布局时根据 `required` 补回缺失实例，并拒绝重复的单实例应用；应用策略不写入实例
   数据，避免持久化状态覆盖注册表。
 - `reorderable` 已进入共享契约；当前 Tab 壳层尚未提供拖放或键盘重排，不能把声明属性视为

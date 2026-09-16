@@ -98,8 +98,9 @@ records are listed separately and do not introduce another feature status.
   toggle sits beside the theme switch. The right workbar uses a persistent “+”
   capability catalog and application tabs.
   Task Center and Workspace are permanent singleton tabs; browser tabs are
-  independent instances. Task Center can show the current project, global
-  tasks, or all projects, and retains the selected scope with the layout.
+  independent instances. Task Center can show the current project or all projects,
+  and retains the selected scope with the layout. Tasks without a project appear
+  under all projects with an “Unbound project” label.
   Users can open multiple independent terminals for the current local or
   managed SSH project with bounded output, resizing, termination, and explicit
   reconnection. Closing a terminal tab ends its Shell; restarting the app
