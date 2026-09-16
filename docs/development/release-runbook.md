@@ -10,6 +10,23 @@ from the authoritative GitHub, OSS, workflow, and Git state, then use the
 smallest existing idempotent rerun or a new immutable version as specified
 below.
 
+## Optional PR Article
+
+Product publicity is an optional companion to a release, not a release blocker
+or a replacement for the approved bilingual release notes. When requested,
+follow the [PR article workflow](../pr-articles/README.md) and choose either the
+[featured article](../pr-articles/featured-template.md) or
+[regular update](../pr-articles/regular-template.md) template based on user value,
+not version size or commit count.
+
+Prepare the draft and real screenshots against the candidate commit using the
+[isolated screenshot procedure](../pr-articles/screenshot-guide.md). This does
+not waive the build, packaging, or launch restrictions below. Keep missing
+materials in the article's review record without delaying the software release.
+Before external publication, verify the final version, download links, upgrade
+notes, and screenshot accuracy. Preparing materials does not authorize posting
+to a public channel; follow the user's explicit publication instruction.
+
 ## Release Packaging
 
 - Unless the user explicitly requests it, never run a local production build,
