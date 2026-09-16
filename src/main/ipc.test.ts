@@ -7342,7 +7342,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
-  it('dispatches and accepts a queued user message through the renderer', async () => {
+  it('claims an idle user message before notifying the renderer and accepts its dispatch', async () => {
     const runtime = {
       runtimeId: 'model',
       capability: 'chat',
@@ -7406,14 +7406,22 @@ describe('registerIpcHandlers agent terminal state', () => {
     const enqueueHandler = electronMocks.handlers.get(
       ipcChannels.conversationQueueEnqueueUser
     )
+    harness.webContents.send.mockClear()
     expect(
       enqueueHandler?.(trustedEvent(harness.webContents), input)
     ).toEqual(item)
-    await vi.waitFor(() =>
-      expect(harness.webContents.send).toHaveBeenCalledWith(
-        ipcChannels.conversationQueueDispatch,
-        { item, input }
-      )
+    expect(harness.webContents.send).toHaveBeenCalledWith(
+      ipcChannels.conversationQueueDispatch,
+      { item, input }
+    )
+    const queueChangeIndex = harness.webContents.send.mock.calls.findIndex(
+      ([channel]) => channel === ipcChannels.conversationQueueChanged
+    )
+    expect(queueChangeIndex).toBeGreaterThanOrEqual(0)
+    expect(
+      harness.assistantDatabase.claimConversationQueueItem.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      harness.webContents.send.mock.invocationCallOrder[queueChangeIndex] ?? 0
     )
 
     await harness.handler?.(trustedEvent(harness.webContents), {

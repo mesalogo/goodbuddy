@@ -6947,13 +6947,12 @@ export function registerIpcHandlers(
         contextManager.remove(attachment.id)
       }
       rendererReadyConversationQueues.add(item.conversationId)
-      publishConversationQueueChange(item.conversationId)
       if (!isConversationExecuting(item.conversationId)) {
         readyConversationQueues.add(item.conversationId)
-        setTimeout(() => {
-          void pumpConversationQueue(item.conversationId)
-        }, 0)
+        // Claim idle sends before exposing pending items to the renderer.
+        void pumpConversationQueue(item.conversationId)
       }
+      publishConversationQueueChange(item.conversationId)
       return item
     }
   )
