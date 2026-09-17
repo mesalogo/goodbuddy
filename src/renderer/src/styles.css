@@ -6402,6 +6402,8 @@ button > svg {
 
 .subagent-status-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   margin: var(--space-2) 0 var(--space-4);
   gap: var(--space-2);
 }
@@ -6558,6 +6560,8 @@ button > svg {
 
 .subagent-status-card__details {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   padding: var(--space-3) var(--space-4) var(--space-4);
   border-top: 1px solid var(--border-subtle);
   background: var(--surface-subtle);
@@ -6566,6 +6570,7 @@ button > svg {
 
 .subagent-status-card__progress {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: var(--space-3);
   padding-left: var(--space-3);
@@ -6574,6 +6579,8 @@ button > svg {
 
 .subagent-status-card__details section {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: var(--space-2);
 }
 
