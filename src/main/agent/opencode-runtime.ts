@@ -2378,13 +2378,26 @@ export class OpenCodeRuntime implements AgentRuntime {
         AbortSignal.any([signal, subscriptionController.signal]),
       );
 
+      let sessionAbort: Promise<void> | undefined;
       const abortSession = (): void => {
-        void client.session
-          .abort({
-            sessionID: sessionId,
-            directory,
+        sessionAbort ??= this.controlRequest(
+          "取消会话",
+          (controlSignal) => client.session.abort(
+            { sessionID: sessionId, directory },
+            { signal: controlSignal },
+          ),
+        )
+          .then((response) => {
+            if (response.error || response.data !== true) {
+              throw new Error("OpenCode 会话取消失败");
+            }
           })
-          .catch(() => undefined);
+          .catch(() => {
+            // An unconfirmed abort must never target a reused session.
+            if (this.sessions.get(request.conversationId)?.id === sessionId) {
+              this.sessions.delete(request.conversationId);
+            }
+          });
       };
       signal.addEventListener("abort", abortSession, { once: true });
 
@@ -2994,6 +3007,8 @@ export class OpenCodeRuntime implements AgentRuntime {
         throw error;
       } finally {
         signal.removeEventListener("abort", abortSession);
+        // Keep the conversation locked until its session-wide abort settles.
+        await sessionAbort;
         for (const questionId of reportedQuestionIds.values()) {
           this.pendingQuestions.delete(questionId);
         }

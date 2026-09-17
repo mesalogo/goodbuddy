@@ -1,0 +1,57 @@
+{
+  "date": "2026-09-17",
+  "status": "passed-with-counting-limitation",
+  "sourceBase": "3639566e1b52296c6a9bc409bcfcecb86c905e30",
+  "source": "Working tree including consecutive-request cancellation and terminal snapshot fixes",
+  "environment": {
+    "platform": "Windows x64",
+    "runtime": "OpenCode",
+    "mode": "ask",
+    "model": "Existing configured default text model",
+    "upstreamProtocol": "http",
+    "fullProductionApp": true,
+    "isolatedProfile": true,
+    "nativeInput": true
+  },
+  "checks": {
+    "twoQueuedRequestsCompleteAndPersist": true,
+    "cancelAfterExternalDispatch": true,
+    "cancelToResendMs": 25,
+    "resendCompletesAndPersists": true,
+    "cancellationPersists": true,
+    "stopAbsentAfterBothScenarios": true,
+    "sendEnabledWithUnsentProbe": true,
+    "terminalScreenshotsReviewed": true
+  },
+  "requests": {
+    "instrumentedExternalDispatches": 4,
+    "http200": 3,
+    "cancelledBeforeResponseHeaders": 1,
+    "observedRetries": 0,
+    "toolExecutions": 0,
+    "initialUninstrumentedCompletedGenerations": 2,
+    "totalUiSubmissions": 6,
+    "totalExternalDispatches": null
+  },
+  "limitations": [
+    "Initial Main counting hook missed child-process HTTP traffic; total dispatches across attempts are unknown.",
+    "Successful rerun used a transparent Main relay to the unchanged configured HTTP upstream for dispatch counting.",
+    "Seven tool definitions remained exposed by production Ask, with zero observed tool executions.",
+    "Upstream proxy retries and cancelled request outcome at the upstream are not observable.",
+    "No deterministic stale-event ordering, remote Host, or restart verification in this live run."
+  ],
+  "validation": {
+    "focusedTestsPassed": 362,
+    "typecheck": "passed",
+    "productionBundle": "passed"
+  },
+  "cleanup": {
+    "ownedProcessesStopped": true,
+    "isolatedProfileRemoved": true,
+    "temporaryBuildRemoved": true,
+    "sensitiveCopiesRemoved": true,
+    "originalSettingsUnchanged": true,
+    "targetSourceHashesUnchanged": true
+  },
+  "localArtifacts": "consecutive-ui-0917/{final-evidence.json,scenarios.json,report.json,normal-terminal.png,cancel-resend-terminal.png} under the approved temporary directory"
+}

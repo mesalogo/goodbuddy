@@ -49,6 +49,9 @@ it.skipIf(!existsSync(binaryPath))(
     const gateway = new KnowledgeMcpGateway({} as never)
     await gateway.start()
     let openEventBodies = 0
+    let delayedAbort: Promise<void> | undefined
+    let abortStarted: (() => void) | undefined
+    let promptCount = 0
     const runtime = new OpenCodeRuntime({
       embedded: true, binaryPath: '', bundledBinaryPath: binaryPath,
       configPath: '', defaultWorkspace: workspace, knowledgeGateway: gateway,
@@ -61,8 +64,14 @@ it.skipIf(!existsSync(binaryPath))(
       createClient: (options) => createOpencodeClient({
         ...options,
         fetch: async (request, init) => {
-          const response = await fetch(request, init)
           const url = request instanceof Request ? request.url : request
+          const pathname = new URL(url).pathname
+          if (pathname.endsWith('/abort') && delayedAbort) {
+            abortStarted?.()
+            await delayedAbort
+          }
+          if (pathname.endsWith('/prompt_async')) promptCount++
+          const response = await fetch(request, init)
           if (new URL(url).pathname !== '/event' || !response.body) return response
           openEventBodies++
           const reader = response.body.getReader()
@@ -130,6 +139,30 @@ it.skipIf(!existsSync(binaryPath))(
         expect(run()).resolves.toBe('LIFECYCLE_OK')
       ])
       await expect.poll(() => openEventBodies).toBe(0)
+      let releaseAbort!: () => void
+      delayedAbort = new Promise<void>((resolve) => { releaseAbort = resolve })
+      const abortPending = new Promise<void>((resolve) => { abortStarted = resolve })
+      const reusedConversation = crypto.randomUUID()
+      cancelledController = new AbortController()
+      const first = run(cancelledController, true, reusedConversation).catch((error: unknown) => error)
+      let second: Promise<string> | undefined
+      try {
+        await abortPending
+        const beforeResend = promptCount
+        second = run(new AbortController(), false, reusedConversation)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        const beforeAbortCompletes = promptCount
+        releaseAbort()
+        expect(await first).toMatchObject({ name: 'AbortError' })
+        await expect(second).resolves.toBe('LIFECYCLE_OK')
+        expect(beforeAbortCompletes).toBe(beforeResend)
+        expect(promptCount).toBe(beforeResend + 1)
+        await expect.poll(() => openEventBodies).toBe(0)
+      } finally {
+        releaseAbort()
+        await Promise.allSettled([first, second])
+        delayedAbort = undefined
+      }
       const conversationId = crypto.randomUUID()
       await expect(run(new AbortController(), false, conversationId)).resolves.toBe('LIFECYCLE_OK')
       await expect(runtime.compactConversation({

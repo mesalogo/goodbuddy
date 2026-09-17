@@ -159,6 +159,10 @@ SelectedRuntimeManager
 
 会话绑定记录规范化绝对目录及原生 sessionId。同一 conversation 的请求继续串行，
 不同 conversation 并行，不引入覆盖整个 Server 的 Prompt 队列。
+取消或失败时，每次请求只发送一次会话级 abort，并在该调用结束后才释放会话锁，避免
+迟到的 abort 中断下一条请求。abort 使用既有控制请求超时；失败或超时后移除对应绑定，
+下一条请求创建新 Session。这也适用于配置外部 OpenCode HTTP Server 的路径；托管 SSH
+使用独立的 ACP 取消路径。
 现有 `snapshot: false` 必须保留。
 
 `mcpMutationTail` 目前属于 Runtime 对象；共享后同一原生目录的变更必须由同一 owner

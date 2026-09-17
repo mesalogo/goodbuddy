@@ -1546,6 +1546,11 @@ function mergePersistedConversations(
       ...conversation.messages.map((persistedMessage) => {
         const localMessage = localMessageById.get(persistedMessage.id);
         const message = mergeMessageImageState(persistedMessage, persistedMessage, localMessage);
+        // A newer conversation timestamp can still contain an older message
+        // snapshot while a terminal event is being persisted.
+        if (localMessage && localMessage.state !== "streaming" && message.state === "streaming") {
+          return mergeMessageImageState(localMessage, persistedMessage, localMessage);
+        }
         if (!conversation.activeRequest && local.activeRequest?.messageId === message.id) {
           return { ...message, pendingQuestions: undefined };
         }

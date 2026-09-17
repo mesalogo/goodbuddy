@@ -6053,6 +6053,11 @@ describe("App", () => {
       queueItemId: secondItem.id,
       prompt: secondItem.label,
     });
+    act(() => {
+      agentListener?.({ requestId: run.mock.calls[1]![0].requestId, type: "done" });
+    });
+    await waitFor(() => expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("发送")).toBeInTheDocument();
   });
 
   it("restores a queued message when Agent preflight rejects it", async () => {
@@ -7777,6 +7782,27 @@ describe("App", () => {
           status: assistant.status,
         },
       ],
+    });
+
+    it.each(["complete", "error"] as const)("does not revive a locally %s message from a newer conversation's stale streaming snapshot", async (state) => {
+      const started = await startStreamingRun();
+      act(() => {
+        agentListener?.({ requestId: started.requestId, type: "text", delta: "Retained terminal output" });
+        agentListener?.(state === "complete"
+          ? { requestId: started.requestId, type: "done" }
+          : { requestId: started.requestId, type: "error", status: "cancelled", message: "Cancelled response" });
+      });
+      await waitFor(() => expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument());
+      const snapshot = persistedSnapshot(started, { state: "streaming", content: "Stale partial output" });
+      snapshot.updatedAt = Date.now() + 10_000;
+      vi.mocked(api.conversations.list).mockResolvedValue([snapshot]);
+      const callsBeforeRefresh = vi.mocked(api.conversations.list).mock.calls.length;
+      await act(async () => { conversationsChangedListener?.(); });
+      await waitFor(() => expect(api.conversations.list).toHaveBeenCalledTimes(callsBeforeRefresh + 1));
+      expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument();
+      expect(screen.getByText("Retained terminal output")).toBeInTheDocument();
+      expect(screen.queryByText("Stale partial output")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("发送")).toBeInTheDocument();
     });
 
     it("converges a streaming message onto the persisted completed state after reconnecting", async () => {

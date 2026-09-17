@@ -1924,6 +1924,137 @@ describe("OpenCodeRuntime embedded launcher", () => {
     await runtime.dispose();
   });
 
+  it.each(["cancel", "stream-error"])("waits for delayed session abort before reusing a conversation after %s", async (outcome) => {
+    const setup = runClient([]);
+    const controller = new AbortController();
+    let releaseAbort!: () => void;
+    const abortGate = new Promise<void>((resolve) => { releaseAbort = resolve; });
+    let endFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { endFirst = resolve; });
+    let secondActive = false;
+    let secondInterrupted = false;
+    let subscriptions = 0;
+    vi.mocked(setup.session.abort).mockImplementation(async () => {
+      await abortGate;
+      if (secondActive) secondInterrupted = true;
+      return { data: true, error: undefined } as never;
+    });
+    vi.mocked(setup.event.subscribe).mockImplementation(async () => {
+      const first = ++subscriptions === 1;
+      return {
+        stream: (async function* () {
+          if (first) {
+            await firstGate;
+            if (outcome === "stream-error") throw new Error("stream failed");
+            return;
+          }
+          secondActive = true;
+          await abortGate;
+          // Let every pending abort reach the server before B completes.
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          if (secondInterrupted) throw new Error("B interrupted by A's late abort");
+          yield { type: "session.idle", properties: { sessionID: "session-1" } };
+          secondActive = false;
+        })(),
+      } as never;
+    });
+    const runtime = embeddedRuntime(setup.client, {
+      embedded: false, baseUrl: "http://127.0.0.1:4096",
+    });
+    const collect = async (requestId: string, signal: AbortSignal) => {
+      const events: RuntimeEvent[] = [];
+      for await (const event of runtime.run({
+        requestId, conversationId: "shared-conversation", prompt: requestId,
+        workMode: "execute",
+      }, signal)) events.push(event);
+      return events;
+    };
+    const first = collect("A", controller.signal).catch((error: unknown) => error);
+    let second: Promise<unknown> | undefined;
+    try {
+      await vi.waitFor(() => expect(setup.session.promptAsync).toHaveBeenCalledTimes(1));
+      if (outcome === "cancel") controller.abort(new Error("A cancelled"));
+      endFirst();
+      second = collect("B", new AbortController().signal).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(setup.session.abort).toHaveBeenCalled());
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      const promptsBeforeAbort = vi.mocked(setup.session.promptAsync).mock.calls.length;
+      releaseAbort();
+      expect(await first).toMatchObject({ message: outcome === "cancel" ? "A cancelled" : "stream failed" });
+      expect(await second).toEqual(expect.arrayContaining([expect.objectContaining({ type: "done" })]));
+      expect(promptsBeforeAbort).toBe(1);
+      expect(setup.session.abort).toHaveBeenCalledOnce();
+      expect(setup.session.create).toHaveBeenCalledOnce();
+      expect(setup.session.promptAsync).toHaveBeenCalledTimes(2);
+    } finally {
+      endFirst();
+      releaseAbort();
+      await Promise.all([first, second]);
+      await runtime.dispose();
+    }
+  });
+
+  it.each(["never-returns", "rejects", "error", "false"])("replaces the session after abort %s and lets the next request finish", async (outcome) => {
+    const setup = runClient([]);
+    const controller = new AbortController();
+    let abortSignal: AbortSignal | undefined;
+    let abortedAtStart: boolean | undefined;
+    vi.mocked(setup.session.abort).mockImplementation(async (_input, options) => {
+      abortSignal = options?.signal ?? undefined;
+      abortedAtStart = abortSignal?.aborted;
+      if (outcome === "never-returns") return new Promise<never>(() => undefined);
+      if (outcome === "rejects") throw new Error("abort failed");
+      return { data: false, error: outcome === "error" ? { message: "abort failed" } : undefined } as never;
+    });
+    vi.mocked(setup.session.create)
+      .mockResolvedValueOnce({ data: { id: "session-1" } } as never)
+      .mockResolvedValueOnce({ data: { id: "session-2" } } as never);
+    let subscriptions = 0;
+    vi.mocked(setup.event.subscribe).mockImplementation(async () => {
+      const first = ++subscriptions === 1;
+      return {
+        stream: (async function* () {
+          if (first) {
+            controller.abort(new Error("A cancelled"));
+            return;
+          }
+          yield { type: "session.idle", properties: { sessionID: "session-2" } };
+        })(),
+      } as never;
+    });
+    const runtime = embeddedRuntime(setup.client, {
+      embedded: false, baseUrl: "http://127.0.0.1:4096",
+    }, { controlRequestTimeoutMs: 20 });
+    const collect = async (requestId: string, signal: AbortSignal) => {
+      const events: RuntimeEvent[] = [];
+      for await (const event of runtime.run({
+        requestId, conversationId: "shared-conversation", prompt: requestId,
+        workMode: "execute",
+      }, signal)) events.push(event);
+      return events;
+    };
+    try {
+      let settled = false;
+      const first = collect("A", controller.signal).catch((error: unknown) => error)
+        .finally(() => { settled = true; });
+      await vi.waitFor(() => expect(settled).toBe(true));
+      expect(await first).toMatchObject({ message: "A cancelled" });
+      expect(abortedAtStart).toBe(false);
+      expect(abortSignal?.aborted).toBe(outcome === "never-returns");
+      expect(setup.session.abort).toHaveBeenCalledOnce();
+      await expect(collect("B", new AbortController().signal)).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "done", sessionId: "session-2" })]),
+      );
+      expect(setup.session.create).toHaveBeenCalledTimes(2);
+      expect(setup.session.promptAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sessionID: "session-2" }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("loads assigned Skills before prompting", async () => {
     const child = fakeChild();
     const promptAsync = vi.fn().mockResolvedValue({ error: undefined });
@@ -4046,10 +4177,10 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
     await expect(collectRun(runtime, "execute")).rejects.toThrow(
       "OpenCode 权限回复失败",
     );
-    expect(session.abort).toHaveBeenCalledWith({
-      sessionID: "session-1",
-      directory: process.cwd(),
-    });
+    expect(session.abort).toHaveBeenCalledWith(
+      { sessionID: "session-1", directory: process.cwd() },
+      { signal: expect.any(AbortSignal) },
+    );
     await runtime.dispose();
   });
 

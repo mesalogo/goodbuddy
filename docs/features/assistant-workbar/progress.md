@@ -1,5 +1,47 @@
 # 工作栏实现与验证进度
 
+## 2026-09-17 连续请求取消与停止状态
+
+- 复现并修复 OpenCode 迟到的会话取消中断下一条请求：同一次运行复用一个有界 abort，
+  等待取消结束后释放会话锁；取消失败时移除对应绑定。规则见
+  [本机 OpenCode](./runtime-process-reuse-technical-design.md#4-本机-opencode)。
+- 复现并修复旧 streaming 快照覆盖本地终态后停止按钮残留。完成、取消两种回归在
+  修复前失败，修复后通过；连续两条消息结束后按钮恢复。规则见
+  [消息底部请求状态](./runtime-interactions.md#消息底部请求状态)。
+- App 257 项测试通过；最终 OpenCode Runtime、权限与真实 lifecycle 105 项通过。
+  lifecycle 使用真实 OpenCode 二进制与 SDK、本地模型 fixture，验证延迟取消后同会话
+  下一条正常完成及 SSE 回收。该轮外部真实模型调用 0 次；后续完整 App 实测见下文。
+- `npm test`：4454 项通过、67 项跳过、2 项失败；失败均为 heartbeat 迁移的
+  `duplicate column name: pinned`。`npm run typecheck`、修改文件定向 ESLint、
+  `git diff --check` 通过；全库 lint 因范围外 `docs/features/story-graph/demo.js`
+  的 22 项 `document` 未定义错误失败。
+- 托管 SSH 经 `ManagedRemoteAcpRuntime` / `AgentOwnedAcpPrompt` 使用独立 ACP
+  取消流程，不复用此 HTTP abort 实现；本次未改 Agent 或远程协议，未做共享 Host 实测。
+
+### Real-model follow-up
+
+Current-source production Main, Preload, and Renderer were built into dedicated
+temporary output and launched in an isolated Electron profile on Windows. Native
+input submitted two queued OpenCode Ask requests, then cancelled another request
+after external HTTP dispatch and clicked resend within 25 ms. Both queued answers
+and the resend completed and were persisted. The cancellation was also persisted.
+After each scenario, the real DOM had no Stop button; Send was enabled after
+entering an unsent readiness probe. Both terminal screenshots were reviewed.
+
+The instrumented run dispatched exactly four external text-model HTTP requests:
+three returned HTTP 200 and one was cancelled before response headers. There were
+no observed retries or tool executions. A transparent Main relay forwarded to the
+unchanged configured HTTP upstream to count child-process requests; model answers
+and events were not simulated. An initial driver attempt completed two additional
+real generations before its counting hook was found not to cover child traffic.
+The total external dispatch count across both attempts is therefore unknown.
+
+This verifies the observed full-App flows, not deterministic stale-event ordering,
+remote Hosts, or restart behavior. Isolated credentials, profile, build, and owned
+processes were cleaned up; original settings and target source hashes were unchanged.
+The follow-up focused suite passed all 362 tests, and `npm run typecheck` passed.
+Redacted evidence: [real-model report](./consecutive-requests-live-2026-09-17.json).
+
 ## 2026-09-15 Managed browser popups
 
 Implemented [page-created tabs](./browser-tabs-technical-design.md#62-page-created-tabs): native
