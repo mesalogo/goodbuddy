@@ -54,6 +54,7 @@ import { ProjectRuntimeSelector } from './ProjectRuntimeSelector'
 import { ProjectActivityCounts } from './ProjectActivity'
 import type { ProjectActivityCountsProps } from './ProjectActivity'
 import { ProjectWorkModeFields } from './ProjectWorkModeFields'
+import { ChannelIcon } from './ChannelIcon'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { displayErrorMessage } from './error-message'
 
@@ -1108,7 +1109,11 @@ export function ProjectSwitcher({
           tabIndex={selected ? 0 : -1}
           type="button"
         >
-          <ProjectIcon aria-hidden="true" size={16} />
+          {project.kind === 'channel' && project.channel ? (
+            <ChannelIcon channel={project.channel} />
+          ) : (
+            <ProjectIcon aria-hidden="true" size={16} />
+          )}
           <span>
             <span className="project-switcher__project-heading">
               <b>{projectDisplay.name}</b>

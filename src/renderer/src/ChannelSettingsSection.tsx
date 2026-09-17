@@ -28,6 +28,7 @@ import type { WeixinBindingSnapshot } from '../../shared/weixin-channel-contract
 import type { AppNotificationInput } from './notifications'
 import { trapTabFocus } from './dialog-focus'
 import { PageTabs } from './WorkspacePrimitives'
+import { ChannelIcon } from './ChannelIcon'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
@@ -799,9 +800,9 @@ export function ChannelSettingsSection({
     tRef.current = t
   }, [t])
   const channelTabs = [
-    { id: 'weixin', label: t('channels.tabs.weixin') },
-    { id: 'wecom', label: t('channels.tabs.wecom') },
-    { id: 'dingtalk', label: t('channels.tabs.dingtalk') }
+    { id: 'weixin', label: t('channels.tabs.weixin'), icon: <ChannelIcon channel="weixin" /> },
+    { id: 'wecom', label: t('channels.tabs.wecom'), icon: <ChannelIcon channel="wecom" /> },
+    { id: 'dingtalk', label: t('channels.tabs.dingtalk'), icon: <ChannelIcon channel="dingtalk" /> }
   ] as const
   const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot>()
   const [runtimeSettings, setRuntimeSettings] =
