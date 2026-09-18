@@ -13832,8 +13832,8 @@ details.settings-section > :not(summary) + :not(summary) {
   pointer-events: none;
 }
 
-.knowledge-documents__search input,
-.knowledge-graph__search input {
+.knowledge-page .knowledge-documents__search input,
+.knowledge-page .knowledge-graph__search input {
   padding-left: 34px;
 }
 

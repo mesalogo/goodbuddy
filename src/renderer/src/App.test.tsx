@@ -2652,6 +2652,7 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: /全项目活动/u })).toHaveTextContent("1 个待处理");
     fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
     fireEvent.click(screen.getByRole("tab", { name: /任务中心/u }));
+    fireEvent.click(screen.getByRole("button", { name: /项目任务/u }));
     const taskRow = screen.getByRole("button", { name: /发布任务发布审批会话/u }).closest("article")!;
     expect(within(taskRow).getByLabelText("等待审批: write_file")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "等待审批" })).not.toBeInTheDocument();
@@ -6044,6 +6045,7 @@ describe("App", () => {
     act(() => agentListener?.({ requestId: runId, type: "approval", approvalId, title: "Scheduled write", description: "Confirm write", toolName: "write_file", argumentSummary: "file.md", allowPermanent: false }));
     fireEvent.click(screen.getByRole("button", { name: "切换助手工作栏" }));
     fireEvent.click(screen.getByRole("tab", { name: /任务中心/u }));
+    fireEvent.click(screen.getByRole("button", { name: /项目任务/u }));
     const row = screen.getByRole("button", { name: /Dispatched taskScheduled approval target/u }).closest("article")!;
     expect(within(row).getByLabelText("等待审批: write_file")).toBeVisible();
     const otherRow = screen.getByRole("button", { name: /Another taskScheduled approval target/u }).closest("article")!;
