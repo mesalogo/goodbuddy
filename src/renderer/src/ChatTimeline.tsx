@@ -19,6 +19,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ImageOperationStatus } from './ImageOperationStatus'
 import type { ImageOperation } from '../../shared/image-generation-contracts'
+import type { RuntimeChecklist } from '../../shared/runtime-checklist'
 import type {
   ApprovalDecision,
   AgentEvent,
@@ -59,6 +60,7 @@ export type Message = {
   createdAt: number
   state: 'streaming' | 'complete' | 'error'
   status?: string
+  runtimeChecklist?: RuntimeChecklist
   contextCompression?: ConversationMessage['contextCompression']
   contextCompressions?: ConversationMessage['contextCompressions']
   tools?: ToolActivity[]
@@ -188,21 +190,23 @@ function MessageReasoning({
 
 type CopyContent = (content: string, kind?: 'tool') => Promise<boolean>
 
-function ToolDetail({ label, content, formatJson = false, onCopy }: {
+const ToolDetail = memo(function ToolDetail({ label, content, formatJson = false, onCopy }: {
   label: string
   content: string
   formatJson?: boolean
   onCopy: CopyContent
 }): React.JSX.Element {
   const { t } = useTranslation('app')
-  let display = content
-  if (formatJson) {
-    try {
-      display = JSON.stringify(JSON.parse(content), null, 2)
-    } catch {
-      // Truncated JSON and plain-text arguments remain readable as received.
+  const display = useMemo(() => {
+    if (formatJson) {
+      try {
+        return JSON.stringify(JSON.parse(content), null, 2)
+      } catch {
+        // Truncated JSON and plain-text arguments remain readable as received.
+      }
     }
-  }
+    return content
+  }, [content, formatJson])
 
   return (
     <section className="tool-detail" aria-label={label}>
@@ -218,7 +222,72 @@ function ToolDetail({ label, content, formatJson = false, onCopy }: {
       </pre>
     </section>
   )
-}
+})
+
+const ToolExecutionRow = memo(function ToolExecutionRow({ onCopy, ...tool }: Pick<
+  ToolActivity, 'name' | 'summary' | 'state' | 'input' | 'output' | 'error'
+> & {
+  onCopy: CopyContent
+}): React.JSX.Element {
+  const { t } = useTranslation('app')
+  const summary = tool.summary.trim()
+  // Only suppress known boilerplate; recovery hints and custom summaries remain visible.
+  const summaryIdentity = summary.replace(
+    /^(?:(?:OpenCode|Continue|DeepSeek Harness|远端 Runtime) 工具|直连模型工具(?:已完成|执行失败)?|正在执行直连模型工具)\s*[:：]\s*/u,
+    ''
+  )
+  const hasSummary = summary.length > 0 && summaryIdentity !== tool.name.trim()
+  const StateIcon = tool.state === 'running' ? LoaderCircle
+    : tool.state === 'pending' ? Clock3
+      : tool.state === 'completed' ? Check : XCircle
+  return (
+    <li>
+      <details
+        className={`tool-execution tool-execution--${tool.state}`}
+      >
+        <summary>
+          <ChevronRight aria-hidden="true" size={14} className="tool-execution__chevron" />
+          <span className="tool-execution__identity">
+            <strong title={tool.name}>{tool.name}</strong>
+            {hasSummary && <span title={tool.summary}>{tool.summary}</span>}
+          </span>
+          <small
+            aria-label={t(`chat.tools.states.${tool.state}`)}
+            title={t(`chat.tools.states.${tool.state}`)}
+            className="tool-execution__status"
+          >
+            <StateIcon aria-hidden="true" size={13} />
+            {(tool.state === 'failed' || tool.state === 'recoverable' || tool.state === 'cancelled') && t(`chat.tools.states.${tool.state}`)}
+          </small>
+        </summary>
+        <div className="tool-execution__details">
+          {hasSummary && <p className="tool-execution__full-summary">{tool.summary}</p>}
+          {tool.error && (
+            <div className="tool-execution__error">
+              <ToolDetail label={t('chat.tools.error')} content={tool.error} onCopy={onCopy} />
+            </div>
+          )}
+          {tool.output ? (
+            <ToolDetail label={t('chat.tools.output')} content={tool.output} onCopy={onCopy} />
+          ) : !tool.error && (
+            <p>{t(tool.state === 'running' ? 'chat.tools.waitingOutput'
+              : tool.state === 'pending' ? 'chat.tools.waitingStart'
+                : tool.state === 'completed' ? 'chat.tools.emptyOutput' : 'chat.tools.noDetails')}</p>
+          )}
+          {tool.input && (
+            <details className="tool-execution__input">
+              <summary>{t('chat.tools.input')}</summary>
+              <ToolDetail label={t('chat.tools.input')} content={tool.input} formatJson onCopy={onCopy} />
+            </details>
+          )}
+        </div>
+      </details>
+      {tool.error && (
+        <p className="tool-execution__error-preview" title={tool.error}>{tool.error}</p>
+      )}
+    </li>
+  )
+})
 
 function ToolExecutionList({
   tools,
@@ -235,65 +304,18 @@ function ToolExecutionList({
       className="tool-execution-list"
     >
       <ol>
-        {tools.map((tool) => {
-          const summary = tool.summary.trim()
-          // Only suppress known boilerplate; recovery hints and custom summaries remain visible.
-          const summaryIdentity = summary.replace(
-            /^(?:(?:OpenCode|Continue|DeepSeek Harness|远端 Runtime) 工具|直连模型工具(?:已完成|执行失败)?|正在执行直连模型工具)\s*[:：]\s*/u,
-            ''
-          )
-          const hasSummary = summary.length > 0 && summaryIdentity !== tool.name.trim()
-          const StateIcon = tool.state === 'running' ? LoaderCircle
-            : tool.state === 'pending' ? Clock3
-              : tool.state === 'completed' ? Check : XCircle
-          return (
-            <li key={tool.callId ?? tool.name}>
-              <details
-                className={`tool-execution tool-execution--${tool.state}`}
-              >
-                <summary>
-                  <ChevronRight aria-hidden="true" size={14} className="tool-execution__chevron" />
-                  <span className="tool-execution__identity">
-                    <strong title={tool.name}>{tool.name}</strong>
-                    {hasSummary && <span title={tool.summary}>{tool.summary}</span>}
-                  </span>
-                  <small
-                    aria-label={t(`chat.tools.states.${tool.state}`)}
-                    title={t(`chat.tools.states.${tool.state}`)}
-                    className="tool-execution__status"
-                  >
-                    <StateIcon aria-hidden="true" size={13} />
-                    {(tool.state === 'failed' || tool.state === 'recoverable' || tool.state === 'cancelled') && t(`chat.tools.states.${tool.state}`)}
-                  </small>
-                </summary>
-                <div className="tool-execution__details">
-                  {hasSummary && <p className="tool-execution__full-summary">{tool.summary}</p>}
-                  {tool.error && (
-                    <div className="tool-execution__error">
-                      <ToolDetail label={t('chat.tools.error')} content={tool.error} onCopy={onCopy} />
-                    </div>
-                  )}
-                  {tool.output ? (
-                    <ToolDetail label={t('chat.tools.output')} content={tool.output} onCopy={onCopy} />
-                  ) : !tool.error && (
-                    <p>{t(tool.state === 'running' ? 'chat.tools.waitingOutput'
-                      : tool.state === 'pending' ? 'chat.tools.waitingStart'
-                        : tool.state === 'completed' ? 'chat.tools.emptyOutput' : 'chat.tools.noDetails')}</p>
-                  )}
-                  {tool.input && (
-                    <details className="tool-execution__input">
-                      <summary>{t('chat.tools.input')}</summary>
-                      <ToolDetail label={t('chat.tools.input')} content={tool.input} formatJson onCopy={onCopy} />
-                    </details>
-                  )}
-                </div>
-              </details>
-              {tool.error && (
-                <p className="tool-execution__error-preview" title={tool.error}>{tool.error}</p>
-              )}
-            </li>
-          )
-        })}
+        {tools.map((tool) => (
+          <ToolExecutionRow
+            key={tool.callId ?? tool.name}
+            name={tool.name}
+            summary={tool.summary}
+            state={tool.state}
+            input={tool.input}
+            output={tool.output}
+            error={tool.error}
+            onCopy={onCopy}
+          />
+        ))}
       </ol>
     </section>
   )

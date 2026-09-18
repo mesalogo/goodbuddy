@@ -8,6 +8,7 @@ import {
 } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ChatTimeline,
@@ -16,6 +17,23 @@ import {
 
 const markdownRenderProbe = vi.hoisted(() => vi.fn())
 const htmlRenderProbe = vi.hoisted(() => vi.fn())
+const toolRowRenderProbe = vi.hoisted(() => vi.fn())
+const toolDetailRenderProbe = vi.hoisted(() => vi.fn())
+
+vi.mock('lucide-react', async (importOriginal) => {
+  const icons = await importOriginal<typeof import('lucide-react')>()
+  return {
+    ...icons,
+    Check: (props: ComponentProps<typeof icons.Check>) => {
+      toolRowRenderProbe()
+      return <icons.Check {...props} />
+    },
+    Copy: (props: ComponentProps<typeof icons.Copy>) => {
+      toolDetailRenderProbe()
+      return <icons.Copy {...props} />
+    }
+  }
+})
 const stylesheet = readFileSync(
   join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
   'utf8'
@@ -176,6 +194,125 @@ describe('ChatTimeline', () => {
     }]} />)
     expect(inputCard.querySelector('pre')?.textContent).toBe('{"incomplete":')
   })
+
+  it('isolates historical tool rows and unchanged details across cloned child progress snapshots', () => {
+    const props = {
+      artifactById: new Map(), conversationId: 'tools',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, ...callbacks, totalMessageCount: 1
+    }
+    let message: Message = {
+      id: 'child-progress', role: 'assistant', content: '', createdAt: 0, state: 'streaming',
+      subagents: [{
+        childTaskId: 'child', expertId: 'expert', expertName: 'general',
+        routingMode: 'native', state: 'running',
+        progress: Array.from({ length: 12 }, (_, index) => ({
+          id: `block-${index}`, type: 'tool', tool: {
+            callId: `call-${index}`, name: 'read', summary: `Read file ${index}`,
+            state: 'completed', input: `{"path":"file-${index}"}`,
+            output: `contents-${index}`, error: undefined
+          }
+        }))
+      }]
+    }
+    const parse = vi.spyOn(JSON, 'parse')
+    try {
+      const view = render(<ChatTimeline {...props} messages={[message]} />)
+      const childCard = view.container.querySelector<HTMLDetailsElement>('.subagent-status-card')!
+      fireEvent.click(childCard.querySelector('summary')!)
+      fireEvent(childCard, new Event('toggle'))
+      const cards = view.container.querySelectorAll<HTMLDetailsElement>('.tool-execution')
+      expect(cards).toHaveLength(12)
+      const firstCard = cards[0]!
+      // Folded tool/input details stay mounted for the existing find-in-page path.
+      expect(cards[1]!.querySelectorAll('pre')).toHaveLength(2)
+      expect(cards[1]!.open).toBe(false)
+      fireEvent.click(firstCard.querySelector('summary')!)
+      const inputCard = firstCard.querySelector<HTMLDetailsElement>('.tool-execution__input')!
+      fireEvent.click(inputCard.querySelector('summary')!)
+      expect(toolRowRenderProbe).toHaveBeenCalledTimes(12)
+      expect(toolDetailRenderProbe).toHaveBeenCalledTimes(24)
+      expect(parse.mock.calls.filter(([value]) => value === '{"path":"file-0"}')).toHaveLength(1)
+      toolRowRenderProbe.mockClear()
+      toolDetailRenderProbe.mockClear()
+      parse.mockClear()
+
+      for (let index = 0; index < 3; index += 1) {
+        message = structuredClone(message)
+        message.subagents![0]!.progress!.push({ id: `text-${index}`, type: 'text', content: `Progress ${index}` })
+        view.rerender(<ChatTimeline {...props} messages={[message]} />)
+        expect(screen.getByText(`Progress ${index}`)).toBeVisible()
+      }
+      expect(toolRowRenderProbe).not.toHaveBeenCalled()
+      expect(toolDetailRenderProbe).not.toHaveBeenCalled()
+      expect(parse.mock.calls.filter(([value]) => String(value).includes('file-'))).toHaveLength(0)
+      expect(view.container.querySelector('.tool-execution')).toBe(firstCard)
+      expect(firstCard.open).toBe(true)
+      expect(inputCard.open).toBe(true)
+
+      message = structuredClone(message)
+      const block = message.subagents![0]!.progress![0]!
+      if (block.type !== 'tool') throw new Error('Expected tool progress')
+      block.tool.output = 'updated contents'
+      block.tool.name = 'read_file'
+      block.tool.summary = 'Updated summary'
+      view.rerender(<ChatTimeline {...props} messages={[message]} />)
+      expect(toolRowRenderProbe).toHaveBeenCalledTimes(1)
+      expect(toolDetailRenderProbe).toHaveBeenCalledTimes(1)
+      expect(firstCard).toHaveTextContent('updated contents')
+      expect(firstCard.querySelector('strong')).toHaveTextContent('read_file')
+      expect(firstCard.querySelector('.tool-execution__full-summary')).toHaveTextContent('Updated summary')
+      expect(parse.mock.calls.filter(([value]) => value === block.tool.input)).toHaveLength(0)
+
+      const onCopyMessage = vi.fn(async () => true)
+      view.rerender(<ChatTimeline {...props} messages={[message]} onCopyMessage={onCopyMessage} />)
+      fireEvent.click(within(firstCard).getByRole('button', { name: '复制调用参数' }))
+      expect(onCopyMessage).toHaveBeenLastCalledWith('{"path":"file-0"}', 'tool')
+      fireEvent.click(within(firstCard).getByRole('button', { name: '复制执行结果' }))
+      expect(onCopyMessage).toHaveBeenLastCalledWith('updated contents', 'tool')
+      expect(callbacks.onCopyMessage).not.toHaveBeenCalled()
+      expect(parse.mock.calls.filter(([value]) => value === block.tool.input)).toHaveLength(0)
+    } finally {
+      parse.mockRestore()
+    }
+  })
+
+  it.each(['cancelled', 'failed', 'completed'] as const)(
+    'updates pending child tools when the child becomes %s', (state) => {
+      const props = {
+        artifactById: new Map(), conversationId: 'tools',
+        hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+        messageStartIndex: 0, ...callbacks, totalMessageCount: 1
+      }
+      const message: Message = {
+        id: 'child', role: 'assistant', content: '', createdAt: 0, state: 'streaming',
+        subagents: [{
+          childTaskId: 'child', expertId: 'expert', expertName: 'general',
+          routingMode: 'native', state: 'running',
+          progress: ['pending', 'running'].map((toolState, index) => ({
+            id: `tool-${index}`, type: 'tool', tool: {
+              callId: `call-${index}`, name: 'read', summary: 'read',
+              state: toolState as 'pending' | 'running', input: '{"path":"file"}'
+            }
+          }))
+        }]
+      }
+      const view = render(<ChatTimeline {...props} messages={[message]} />)
+      const childCard = view.container.querySelector<HTMLDetailsElement>('.subagent-status-card')!
+      fireEvent.click(childCard.querySelector('summary')!)
+      fireEvent(childCard, new Event('toggle'))
+      const cards = view.container.querySelectorAll('.tool-execution')
+      fireEvent.click(cards[0]!.querySelector('summary')!)
+      const next = structuredClone(message)
+      next.subagents![0]!.state = state
+      view.rerender(<ChatTimeline {...props} messages={[next]} />)
+      for (const card of cards) {
+        expect(card).toHaveClass(`tool-execution--${state === 'cancelled' ? 'cancelled' : 'interrupted'}`)
+      }
+      expect(cards[0]).toHaveAttribute('open')
+      expect(childCard).toHaveAttribute('open')
+    }
+  )
 
   it('shows an image context limitation as a quiet persistent footer, not an alert', () => {
     const message: Message = {

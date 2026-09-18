@@ -199,6 +199,7 @@ import {
   type CustomTaskDestination,
 } from "./CustomTaskDialog";
 import { ConversationTaskStrip } from "./ConversationTaskStrip";
+import { RuntimeChecklistStrip } from "./RuntimeChecklistStrip";
 import { ConversationInputQueue } from "./ConversationInputQueue";
 import { OverflowMarquee } from "./OverflowMarquee";
 import { findTaskSchedule } from "./TaskScheduleActions";
@@ -1393,6 +1394,7 @@ function toConversationMessage(message: Message): ConversationMessage {
     createdAt: message.createdAt,
     state: message.state,
     status: message.status,
+    runtimeChecklist: message.runtimeChecklist,
     contextCompression: message.contextCompression,
     contextCompressions: message.contextCompressions,
     tools: message.tools,
@@ -1606,7 +1608,7 @@ function getProjectDefaultRuntimeSelection(
   settings: RuntimeSettings,
 ): AgentRuntimeSelection {
   if (isManagedSshProject(project)) {
-    return project.runtimeSelection?.provider === "opencode"
+    return project.runtimeSelection?.provider === "opencode" || project.runtimeSelection?.provider === "continue"
       ? project.runtimeSelection : getRuntimeSelectionForProvider("opencode", settings);
   }
   const selection = project?.runtimeSelection;
@@ -4331,7 +4333,7 @@ function App(): React.JSX.Element {
         !runtimeSettings ||
         !activeConversation ||
         runtimeSwitching ||
-        (activeProjectUsesManagedSsh && selection.provider !== "opencode")
+        (activeProjectUsesManagedSsh && selection.provider !== "opencode" && selection.provider !== "continue")
       ) {
         return;
       }
@@ -4673,7 +4675,13 @@ function App(): React.JSX.Element {
           });
       }
 
-      if (event.type === "text") {
+      if (event.type === "checklist") {
+        updateMessage(run.conversationId, run.messageId, (message) =>
+          message.state === "streaming"
+            ? { ...message, runtimeChecklist: event.checklist }
+            : message,
+        );
+      } else if (event.type === "text") {
         updateMessage(run.conversationId, run.messageId, (message) => {
           const blocks = appendMessageContentBlock(
             message.blocks,
@@ -4884,6 +4892,14 @@ function App(): React.JSX.Element {
               completedAt: completedAt ?? existing?.completedAt,
               error: event.error,
             };
+            if (
+              existing &&
+              (Object.keys(childTask) as (keyof AssistantTask)[]).every(
+                (key) => existing[key] === childTask[key],
+              )
+            ) {
+              return current;
+            }
             return existing
               ? current.map((task) =>
                   task.id === event.childTaskId ? childTask : task,
@@ -4892,16 +4908,17 @@ function App(): React.JSX.Element {
           });
         }
         if (event.runtimeCallId) {
-          setActivityRecords((current) =>
-            current.filter(
+          setActivityRecords((current) => {
+            const remaining = current.filter(
               (record) =>
                 !(
                   record.requestId === event.requestId &&
                   record.kind === "tool" &&
                   record.callId === event.runtimeCallId
                 ),
-            ),
-          );
+            );
+            return remaining.length === current.length ? current : remaining;
+          });
         }
         recordActivity({
           conversationId: run.conversationId,
@@ -5056,7 +5073,7 @@ function App(): React.JSX.Element {
             sourceReferences: references,
           };
         });
-      } else {
+      } else if (event.type === "done" || event.type === "error") {
         const terminalStatus =
           event.type === "error"
             ? event.status === "cancelled"
@@ -6596,7 +6613,8 @@ function App(): React.JSX.Element {
           current.map((candidate) =>
             candidate.projectId === selected.id &&
             candidate.runtimeSelection !== undefined &&
-            candidate.runtimeSelection?.provider !== "opencode"
+            candidate.runtimeSelection?.provider !== "opencode" &&
+            candidate.runtimeSelection?.provider !== "continue"
               ? {
                   ...candidate,
                   runtimeSelection,
@@ -7675,6 +7693,7 @@ function App(): React.JSX.Element {
                 ...conversation.messages.slice(-499),
                 assistantMessage,
               ],
+              activeRequest: undefined,
             }
           : conversation,
       ),
@@ -9760,7 +9779,8 @@ function App(): React.JSX.Element {
                         quickActions={quickActions}
                         scrollSnapshot={chatScrollSnapshots[conversation.id]}
                         taskStrip={
-                          !conversation.remote ? (
+                          <div className="conversation-context-strips">
+                          {!conversation.remote ? (
                             <ConversationTaskStrip
                               conversationMode={
                                 conversation.id === activeId
@@ -9789,7 +9809,12 @@ function App(): React.JSX.Element {
                                 tasksByConversation.get(conversation.id) ?? []
                               }
                             />
-                          ) : undefined
+                          ) : undefined}
+                            <RuntimeChecklistStrip
+                              messages={conversation.messages}
+                              activeMessageId={conversation.activeRequest?.messageId}
+                            />
+                          </div>
                         }
                         visibleMessageCount={
                           visibleMessageCounts[conversation.id] ??
@@ -10575,8 +10600,7 @@ function App(): React.JSX.Element {
                                             </small>
                                           </button>
                                         )}
-                                      {!activeProjectUsesManagedSsh && (
-                                        <>
+                                      <>
                                           <div
                                             className="runtime-picker__divider"
                                             role="separator"
@@ -10617,6 +10641,9 @@ function App(): React.JSX.Element {
                                                 </small>
                                               </button>
                                             )}
+                                      </>
+                                      {!activeProjectUsesManagedSsh && (
+                                        <>
                                           <div
                                             className="runtime-picker__divider"
                                             role="separator"

@@ -12,7 +12,7 @@ import {
   builtInDefaultProjectSeedName
 } from '../../shared/assistant-contracts'
 import { ActivityPanel } from './ActivityPanel'
-import { type ActivityRecord } from './activity-store'
+import { upsertActivityRecord, type ActivityRecord } from './activity-store'
 import i18n from './i18n'
 
 function makeRecord(
@@ -219,6 +219,91 @@ describe('ActivityPanel', () => {
     expect(
       within(conversation).queryByText('已取消')
     ).not.toBeInTheDocument()
+  })
+
+  it('reuses expanded conversation cards when calls reorder and change', () => {
+    const first = { ...makeRecord(1), callId: 'call-1' }
+    const second = {
+      ...makeRecord(2),
+      conversationId: first.conversationId,
+      requestId: first.requestId,
+      callId: 'call-2'
+    }
+    const props = {
+      onClear: vi.fn(),
+      onOpenConversation: vi.fn(),
+      tokenUsage: makeTokenUsage()
+    }
+    const records = [second, first]
+    const { rerender } = render(<ActivityPanel {...props} records={records} />)
+    fireEvent.click(screen.getByText(`对话：${second.title}`))
+    const firstCard = screen.getByText(first.title).closest('article')!
+    const secondCard = screen.getByText(second.title).closest('article')!
+    const group = firstCard.closest('details')!
+    const firstItem = firstCard.closest('li')!
+    const secondItem = secondCard.closest('li')!
+
+    const reordered = upsertActivityRecord(records, { ...first })
+    rerender(<ActivityPanel {...props} records={reordered} />)
+    expect(screen.getByText(first.title).closest('article')).toBe(firstCard)
+    expect(firstCard.closest('details')).toBe(group)
+    expect(group).toHaveAttribute('open')
+    expect(Array.from(group.querySelectorAll('li'))).toEqual([firstItem, secondItem])
+    expect(screen.getByText(second.title).closest('article')).toBe(secondCard)
+
+    rerender(
+      <ActivityPanel
+        {...props}
+        records={upsertActivityRecord(reordered, {
+          ...second,
+          detail: 'Updated detail',
+          status: 'failed'
+        })}
+      />
+    )
+    expect(screen.getByText('Updated detail').closest('article')).toBe(secondCard)
+    expect(secondCard).toHaveClass('activity-item--failed')
+    expect(group).toHaveAttribute('open')
+    expect(Array.from(group.querySelectorAll('li'))).toEqual([secondItem, firstItem])
+  })
+
+  it('reuses selected timeline nodes when calls reorder and change', () => {
+    const first = { ...makeRecord(1), callId: 'call-1' }
+    const second = {
+      ...makeRecord(2),
+      conversationId: first.conversationId,
+      requestId: first.requestId,
+      callId: 'call-2'
+    }
+    const props = {
+      onClear: vi.fn(),
+      onOpenConversation: vi.fn(),
+      tokenUsage: makeTokenUsage()
+    }
+    const records = [second, first]
+    const { rerender } = render(<ActivityPanel {...props} records={records} />)
+    fireEvent.click(screen.getByRole('tab', { name: '活动时间线' }))
+    const node = screen.getByRole('button', { name: /活动 1，工具/u })
+    fireEvent.click(node)
+    node.focus()
+    const detail = screen.getByLabelText('选中的活动节点详情')
+
+    rerender(
+      <ActivityPanel
+        {...props}
+        records={upsertActivityRecord(records, {
+          ...first,
+          detail: 'Updated detail',
+          status: 'failed'
+        })}
+      />
+    )
+    expect(screen.getByRole('button', { name: /活动 1，工具/u })).toBe(node)
+    expect(node).toHaveFocus()
+    expect(node).toHaveAttribute('aria-pressed', 'true')
+    expect(node).toHaveClass('activity-track__node--failed')
+    expect(screen.getByLabelText('选中的活动节点详情')).toBe(detail)
+    expect(within(detail).getByText('Updated detail')).toBeInTheDocument()
   })
 
   it('filters active and exceptional activity and opens its conversation', () => {

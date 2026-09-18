@@ -785,10 +785,10 @@ export function ActivityPanel({
                             </time>
                           </summary>
                           <ol className="activity-list">
-                            {conversation.records.map((record, index) => (
+                            {conversation.records.map((record) => (
                               <li
                                 className={`activity-list__item activity-item--${record.status}`}
-                                key={`${record.id}-${index}`}
+                                key={record.id}
                               >
                                 {renderRecordCard(record, false)}
                               </li>
@@ -908,7 +908,7 @@ export function ActivityPanel({
                             </span>
                           </div>
                           <div className="activity-track__rail">
-                            {conversation.records.map((record, index) => {
+                            {conversation.records.map((record) => {
                               const nodeTime = formatTime(
                                 record.createdAt,
                                 dateTimeFormatter,
@@ -932,7 +932,7 @@ export function ActivityPanel({
                                   )}
                                   aria-pressed={selected}
                                   className={`activity-track__node activity-track__node--actor-${actor.kind} activity-track__node--${record.status}`}
-                                  key={`${record.id}-${index}`}
+                                  key={record.id}
                                   onClick={() =>
                                     setSelectedTimelineRecordId(
                                       selected ? undefined : record.id

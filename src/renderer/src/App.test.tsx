@@ -42,6 +42,18 @@ const speechRecognitionMocks = vi.hoisted(() => ({
 }));
 
 const messageRenderProbe = vi.hoisted(() => vi.fn());
+const assistantTasksProbe = vi.hoisted(() => vi.fn());
+
+vi.mock("./use-unviewed-completions", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./use-unviewed-completions")>();
+  return {
+    ...original,
+    useUnviewedCompletions: (...args: Parameters<typeof original.useUnviewedCompletions>) => {
+      assistantTasksProbe(args[0]);
+      return original.useUnviewedCompletions(...args);
+    },
+  };
+});
 
 vi.mock("./MarkdownRenderer", async (importOriginal) => {
   const original = await importOriginal<typeof import("./MarkdownRenderer")>();
@@ -4854,6 +4866,92 @@ describe("App", () => {
     expect(screen.getByText("正在分析真实推理内容")).toBeVisible();
   });
 
+  it.each(["done", "cancelled", "failed"] as const)("keeps runtime checklists request-scoped and persisted after %s, including explicit clears", async (outcome) => {
+    render(<App />);
+    const send = async (text: string, count: number) => {
+      fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: text } });
+      await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+      fireEvent.click(screen.getByLabelText("发送"));
+      await waitFor(() => expect(run).toHaveBeenCalledTimes(count));
+      return run.mock.calls[count - 1]![0].requestId;
+    };
+    const requestId = await send("清单第一轮", 1);
+    const checklist = { source: "opencode" as const, items: [{ content: "尚未完成的工作", status: "pending" as const }] };
+    act(() => agentListener?.({ requestId, type: "checklist", checklist }));
+    expect(screen.getByRole("button", { name: /执行清单/ })).toHaveTextContent("已完成 0/1");
+    expect(screen.getByLabelText("停止生成")).toBeInTheDocument();
+    act(() => agentListener?.({ requestId, type: "text", delta: "仍在正常输出" }));
+    act(() => agentListener?.(outcome === "done"
+      ? { requestId, type: "done" }
+      : { requestId, type: "error", status: outcome, message: outcome === "cancelled" ? "已取消" : "执行失败" }));
+    expect(screen.getByRole("button", { name: /执行清单/ })).toHaveTextContent("已完成 0/1");
+    await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ messages: expect.arrayContaining([expect.objectContaining({ runtimeChecklist: checklist, state: outcome === "done" ? "complete" : "error" })]) })
+    ])));
+    const nextId = await send("清单第二轮", 2);
+    expect(screen.queryByRole("button", { name: /执行清单/ })).not.toBeInTheDocument();
+    act(() => agentListener?.({ requestId, type: "checklist", checklist }));
+    expect(screen.queryByRole("button", { name: /执行清单/ })).not.toBeInTheDocument();
+    act(() => agentListener?.({ requestId: nextId, type: "checklist", checklist }));
+    expect(screen.getByRole("button", { name: /执行清单/ })).toBeVisible();
+    const empty = { source: "opencode" as const, items: [] };
+    act(() => agentListener?.({ requestId: nextId, type: "checklist", checklist: empty }));
+    expect(screen.queryByRole("button", { name: /执行清单/ })).not.toBeInTheDocument();
+    act(() => agentListener?.({ requestId: nextId, type: "done" }));
+    await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ messages: expect.arrayContaining([expect.objectContaining({ runtimeChecklist: empty, state: "complete" })]) })
+    ])));
+  });
+
+  it.each([false, true])("restores saved runtime checklists without a Task (remote=%s)", async (remote) => {
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: "00000000-0000-4000-8000-000000000881", projectId: project.id,
+      title: "Saved checklist", updatedAt: Date.now(),
+      ...(remote ? { remote: { channel: "weixin" as const, accountDisplay: "sender", conversationType: "direct" as const } } : {}),
+      messages: [{
+        id: "00000000-0000-4000-8000-000000000882", role: "assistant", content: "Saved reply",
+        createdAt: Date.now(), state: "error", status: "已取消",
+        runtimeChecklist: { source: "continue", items: [{ content: "Saved unfinished item", status: "pending" }] }
+      }]
+    }]);
+    render(<App />);
+    const toggle = await screen.findByRole("button", { name: /执行清单/ });
+    expect(toggle).toHaveTextContent("已完成 0/1");
+    expect(toggle).toHaveTextContent("已取消");
+    fireEvent.click(toggle);
+    expect(screen.getByText("Saved unfinished item")).toBeVisible();
+    expect(document.querySelector(".conversation-task-strip")).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("does not revive a recovered checklist when a new local request starts", async () => {
+    const messageId = "00000000-0000-4000-8000-000000000883";
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: "00000000-0000-4000-8000-000000000884", projectId: project.id,
+      title: "Recovered checklist", updatedAt: Date.now(),
+      activeRequest: { requestId: "00000000-0000-4000-8000-000000000885", messageId, questions: [] },
+      messages: [{ id: messageId, role: "assistant", content: "Previous result", createdAt: 1, state: "complete",
+        runtimeChecklist: { source: "opencode", items: [{ content: "Old unfinished item", status: "pending" }] }
+      }]
+    }]);
+    render(<App />);
+    await screen.findByRole("button", { name: /执行清单/ });
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "New request" } });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: /执行清单/ })).not.toBeInTheDocument();
+    const requestId = run.mock.calls[0]![0].requestId;
+    act(() => agentListener?.({ requestId, type: "checklist", checklist: {
+      source: "continue", items: [{ content: "Current request item", status: "pending" }]
+    } }));
+    fireEvent.click(screen.getByRole("button", { name: /执行清单/ }));
+    expect(screen.getByText("Current request item")).toBeVisible();
+    expect(screen.queryByText("Old unfinished item")).not.toBeInTheDocument();
+    act(() => agentListener?.({ requestId, type: "done" }));
+    expect(screen.getByText("Current request item")).toBeVisible();
+  });
+
   it("keeps request status truthful through retry, progress, and completion", async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
@@ -7520,7 +7618,7 @@ describe("App", () => {
     );
   });
 
-  it("switches immediately to a managed SSH project and shows only supported OpenCode choices", async () => {
+  it("switches immediately to a managed SSH project and preserves supported OC and CN choices", async () => {
     installRemoteProjectsSetting(true);
     const remoteProject = {
       ...project,
@@ -7586,11 +7684,11 @@ describe("App", () => {
         name: /^OpenCode · 默认模型.*sonnet-5$/u,
       }),
     ).toBeInTheDocument();
-    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(1);
+    expect(within(runtimeMenu).getAllByRole("menuitemradio")).toHaveLength(2);
     expect(within(runtimeMenu).queryByText("直连模型")).not.toBeInTheDocument();
     expect(
       within(runtimeMenu).queryByText("Continue Runtime"),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
     expect(
       within(runtimeMenu).queryByText(/DeepSeek Harness/u),
     ).not.toBeInTheDocument();
@@ -7604,19 +7702,19 @@ describe("App", () => {
     fireEvent.click(screen.getByText("旧 Continue 会话").closest("button")!);
     expect(
       await screen.findByRole("button", {
-        name: /OpenCode · 默认模型/u,
+        name: /Continue ·/u,
       }),
     ).toBeInTheDocument();
   });
 
-  it("keeps an unselected SSH conversation inheriting the project's fixed model", async () => {
+  it.each(["opencode", "continue"] as const)("keeps an unselected SSH conversation inheriting the project's %s model", async (provider) => {
     installRemoteProjectsSetting(true);
     const remoteProject = {
       ...project,
       id: "00000000-0000-4000-8000-000000000119",
       name: "Fixed remote model",
       rootPath: "/srv/project",
-      runtimeSelection: { provider: "opencode" as const, profileId: modelProfileId },
+      runtimeSelection: { provider, profileId: modelProfileId },
       executionSpace: {
         kind: "ssh" as const,
         hostId: "00000000-0000-4000-8000-000000000219",
@@ -11346,6 +11444,96 @@ describe("App", () => {
       screen.queryByText("远端 Runtime 工具：Review application architecture"),
     ).not.toBeInTheDocument();
   });
+
+  it.each(["completed", "cancelled"] as const)(
+    "keeps subagent progress fresh with stable tasks and propagates %s",
+    async (state) => {
+      render(<App />);
+      fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+        target: { value: "Check streaming child progress" },
+      });
+      fireEvent.click(screen.getByLabelText("发送"));
+      await waitFor(() => expect(run).toHaveBeenCalledOnce());
+      expect(agentListener).toBeTypeOf("function");
+      const requestId = run.mock.calls[0]![0].requestId;
+      const child = {
+        requestId,
+        type: "subagent" as const,
+        childTaskId: "00000000-0000-4000-8000-000000000614",
+        expertId: "00000000-0000-4000-8000-000000000714",
+        expertName: "Streaming explorer",
+        routingMode: "native" as const,
+        runtimeCallId: "streaming-child-call",
+        state: "running" as const,
+        reason: "Inspect streaming updates",
+      };
+      act(() => agentListener!({
+        requestId, type: "tool", callId: child.runtimeCallId,
+        name: "Task", state: "running", summary: "Provisional child tool",
+      }));
+      act(() => agentListener!(child));
+      const region = screen.getByLabelText("子代理状态");
+      const card = within(region).getByRole("group");
+      fireEvent.click(within(card).getByText(child.expertName, { selector: "strong" }));
+      fireEvent(card, new Event("toggle"));
+      const runningTasks = assistantTasksProbe.mock.lastCall![0] as AssistantTask[];
+      expect(runningTasks).toContainEqual(expect.objectContaining({
+        id: child.childTaskId, status: "running",
+      }));
+
+      const progress = (step: number) => [{
+        id: "child-progress", type: "text" as const, content: `Progress snapshot ${step}`,
+      }, {
+        id: "child-tool", type: "tool" as const,
+        tool: { callId: "child-read", name: "read", state: "running" as const,
+          summary: `Reading file ${step}` },
+      }];
+      for (const step of [1, 2, 3]) {
+        assistantTasksProbe.mockClear();
+        act(() => agentListener!({ ...child, progress: progress(step) }));
+        const process = within(region).getByRole("region", { name: "执行过程" });
+        expect(within(process).getByText(`Progress snapshot ${step}`)).toBeVisible();
+        expect(within(process).getByText(`Reading file ${step}`, { selector: "span" })).toBeVisible();
+        if (step > 1) {
+          expect(within(process).queryByText(`Progress snapshot ${step - 1}`)).not.toBeInTheDocument();
+          expect(within(process).queryByText(`Reading file ${step - 1}`)).not.toBeInTheDocument();
+        }
+        expect(assistantTasksProbe).toHaveBeenCalled();
+        for (const [tasks] of assistantTasksProbe.mock.calls) {
+          expect(tasks).toBe(runningTasks);
+        }
+      }
+
+      act(() => agentListener!({ ...child, state, progress: progress(3), output: "Latest child result" }));
+      const terminalTasks = assistantTasksProbe.mock.lastCall![0] as AssistantTask[];
+      expect(terminalTasks).not.toBe(runningTasks);
+      expect(terminalTasks).toContainEqual(expect.objectContaining({
+        id: child.childTaskId, status: state, completedAt: expect.any(String),
+      }));
+      expect(within(card).getByText(state === "completed" ? "已完成" : "已取消", {
+        selector: ".subagent-status-card__status",
+      })).toBeVisible();
+      expect(within(region).getByRole("region", { name: "最终结果" })).toHaveTextContent("Latest child result");
+      act(() => agentListener!(state === "completed"
+        ? { requestId, type: "done" }
+        : { requestId, type: "error", status: "cancelled", message: "已取消" }));
+      expect(screen.queryByLabelText("停止生成")).not.toBeInTheDocument();
+      await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({
+          messages: expect.arrayContaining([expect.objectContaining({
+            state: state === "completed" ? "complete" : "error",
+            subagents: expect.arrayContaining([expect.objectContaining({
+              childTaskId: child.childTaskId, state, progress: progress(3), output: "Latest child result",
+            })]),
+          })]),
+        })]),
+      ));
+      fireEvent.click(screen.getByText("运行记录"));
+      expect(await screen.findAllByText("子专家")).toHaveLength(1);
+      expect(screen.queryByText("Provisional child tool")).not.toBeInTheDocument();
+      expect(screen.getByText("Latest child result")).toBeInTheDocument();
+    },
+  );
 
   it("records direct-model child runs without adding Assistant Tasks", async () => {
     render(<App />);

@@ -42,9 +42,17 @@ function parseActivityRecord(value: unknown): ActivityRecord | undefined {
 }
 
 export function upsertActivityRecord(
+  records: ActivityRecord[],
+  incoming: ActivityRecord
+): ActivityRecord[]
+export function upsertActivityRecord(
   records: readonly ActivityRecord[],
   incoming: ActivityRecord
-): ActivityRecord[] {
+): readonly ActivityRecord[]
+export function upsertActivityRecord(
+  records: readonly ActivityRecord[],
+  incoming: ActivityRecord
+): readonly ActivityRecord[] {
   if (
     (incoming.kind !== 'tool' && incoming.kind !== 'subagent') ||
     !incoming.callId
@@ -63,13 +71,24 @@ export function upsertActivityRecord(
   }
 
   const existing = records[existingIndex]!
+  // Matching fields and the original identity/scope cannot change on an update.
+  const unchanged =
+    existing.conversationId === incoming.conversationId &&
+    existing.title === incoming.title &&
+    existing.detail === incoming.detail &&
+    existing.status === incoming.status
+  if (unchanged && existingIndex === 0) {
+    return records
+  }
   return [
-    {
-      ...incoming,
-      id: existing.id,
-      createdAt: existing.createdAt,
-      scope: existing.scope
-    },
+    unchanged
+      ? existing
+      : {
+          ...incoming,
+          id: existing.id,
+          createdAt: existing.createdAt,
+          scope: existing.scope
+        },
     ...records.filter((_, index) => index !== existingIndex)
   ]
 }

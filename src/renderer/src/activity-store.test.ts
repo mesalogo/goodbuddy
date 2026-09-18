@@ -182,6 +182,74 @@ describe('activity-store', () => {
     ).toEqual(first.scope)
   })
 
+  it.each(['tool', 'subagent'] as const)(
+    'reuses an unchanged leading %s record and readonly array',
+    (kind) => {
+      const first: ActivityRecord = {
+        ...makeRecord(1),
+        kind,
+        callId: 'call-1'
+      }
+      const records: readonly ActivityRecord[] = Object.freeze([
+        first,
+        makeRecord(2)
+      ])
+      const updated = upsertActivityRecord(records, {
+        ...first,
+        id: 'replacement-id',
+        createdAt: 99,
+        scope: { kind: 'unavailable' }
+      })
+
+      expect(updated).toBe(records)
+      expect(updated[0]).toBe(first)
+    }
+  )
+
+  it('moves interleaved unchanged calls to the front without rebuilding records', () => {
+    const first = { ...makeRecord(1), callId: 'call-1' }
+    const second = { ...makeRecord(2), callId: 'call-2' }
+    const third = { ...makeRecord(3), callId: 'call-3' }
+    const records = Object.freeze([third, second, first])
+    const updated = upsertActivityRecord(records, { ...first })
+    expect(updated).not.toBe(records)
+    expect(updated[0]).toBe(first)
+    expect(updated[1]).toBe(third)
+    expect(updated[2]).toBe(second)
+
+    const interleaved = upsertActivityRecord(updated, { ...second })
+    expect(interleaved[0]).toBe(second)
+    expect(interleaved[1]).toBe(first)
+    expect(interleaved[2]).toBe(third)
+    expect(upsertActivityRecord(interleaved, { ...second })).toBe(interleaved)
+    expect(records).toEqual([third, second, first])
+  })
+
+  it.each([
+    { conversationId: 'conversation-2' },
+    { title: 'Updated title' },
+    { detail: 'Updated detail' },
+    { status: 'failed' as const }
+  ])('replaces a record when effective fields change: %o', (change) => {
+    const first = { ...makeRecord(1), callId: 'call-1' }
+    const other = makeRecord(2)
+    const records = [other, first]
+    const updated = upsertActivityRecord(records, {
+      ...first,
+      ...change,
+      id: 'replacement-id',
+      createdAt: 99,
+      scope: { kind: 'unavailable' }
+    })
+
+    expect(updated).not.toBe(records)
+    expect(updated[0]).not.toBe(first)
+    expect(updated[0]).toEqual({ ...first, ...change })
+    expect(updated[0]?.scope).toBe(first.scope)
+    expect(updated[1]).toBe(other)
+    expect(records).toEqual([other, first])
+  })
+
   it('upserts Subagent state transitions', () => {
     const queued: ActivityRecord = {
       ...makeRecord(1),
