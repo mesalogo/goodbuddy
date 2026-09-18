@@ -15,10 +15,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import type {
   ApplicationSettings,
-  MagicNoteCommentMode,
   ModelDownloadSource
 } from '../../shared/application-settings-contracts'
-import type { MagicNoteCommentFormat } from '../../shared/magic-notes-contracts'
 import type {
   AgentPackageDownloadProgress,
   AgentPackageInventory
@@ -34,8 +32,7 @@ import {
 } from '../../shared/shortcut'
 import type { AppNotificationInput } from './notifications'
 import {
-  PageTabs,
-  SegmentedControl
+  PageTabs
 } from './WorkspacePrimitives'
 import {
   SettingsCategoryHeader,
@@ -45,10 +42,6 @@ import { displayErrorMessage } from './error-message'
 
 type PlatformFeaturesSettingsSectionProps = {
   onConversationHtmlRenderingEnabledChange: (
-    enabled: boolean
-  ) => void
-  onMagicNotesEnabledChange: (enabled: boolean) => void
-  onMagicNotesShowIncompleteTodoCountChange: (
     enabled: boolean
   ) => void
   onRemoteProjectsEnabledChange: (enabled: boolean) => void
@@ -62,7 +55,6 @@ type PlatformFeaturesSettingsSectionProps = {
 type PlatformFeaturesTab =
   | 'general'
   | 'remote-projects'
-  | 'magic-notes'
 
 const shortcutErrorTranslationKeys: Record<
   GlobalShortcutUpdateErrorCode,
@@ -78,8 +70,6 @@ const shortcutErrorTranslationKeys: Record<
 
 export function PlatformFeaturesSettingsSection({
   onConversationHtmlRenderingEnabledChange,
-  onMagicNotesEnabledChange,
-  onMagicNotesShowIncompleteTodoCountChange,
   onRemoteProjectsEnabledChange,
   onNotify,
   onDirtyChange,
@@ -472,26 +462,6 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
-  const changeMagicNotes = async (enabled: boolean): Promise<void> => {
-    const updates = window.goodbuddy.updates
-    if (!updates || !settings) {
-      return
-    }
-    setSaving(true)
-    setError(undefined)
-    try {
-      const nextSettings = await updates.updateSettings({
-        magicNotesEnabled: enabled
-      })
-      setSettings(nextSettings)
-      onMagicNotesEnabledChange(nextSettings.magicNotesEnabled)
-    } catch {
-      setError(t('platformFeatures.errors.saveMagicNotesFailed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const changeConversationHtmlRendering = async (
     enabled: boolean
   ): Promise<void> => {
@@ -546,72 +516,6 @@ export function PlatformFeaturesSettingsSection({
     }
   }
 
-  const changeCommentMode = async (
-    magicNoteCommentMode: MagicNoteCommentMode
-  ): Promise<void> => {
-    const updates = window.goodbuddy.updates
-    if (!updates || !settings) {
-      return
-    }
-    setSaving(true)
-    setError(undefined)
-    try {
-      setSettings(
-        await updates.updateSettings({ magicNoteCommentMode })
-      )
-    } catch {
-      setError(t('platformFeatures.errors.saveCommentModeFailed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const changeIncompleteTodoCount = async (
-    magicNotesShowIncompleteTodoCount: boolean
-  ): Promise<void> => {
-    const updates = window.goodbuddy.updates
-    if (!updates || !settings) {
-      return
-    }
-    setSaving(true)
-    setError(undefined)
-    try {
-      const nextSettings = await updates.updateSettings({
-        magicNotesShowIncompleteTodoCount
-      })
-      setSettings(nextSettings)
-      onMagicNotesShowIncompleteTodoCountChange(
-        nextSettings.magicNotesShowIncompleteTodoCount
-      )
-    } catch {
-      setError(
-        t('platformFeatures.errors.saveIncompleteTodoCountFailed')
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const changeCommentFormat = async (
-    magicNoteCommentFormat: MagicNoteCommentFormat
-  ): Promise<void> => {
-    const updates = window.goodbuddy.updates
-    if (!updates || !settings) {
-      return
-    }
-    setSaving(true)
-    setError(undefined)
-    try {
-      setSettings(
-        await updates.updateSettings({ magicNoteCommentFormat })
-      )
-    } catch {
-      setError(t('platformFeatures.errors.saveCommentFormatFailed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
   return (
     <>
       <SettingsCategoryHeader
@@ -633,10 +537,6 @@ export function PlatformFeaturesSettingsSection({
             {
               id: 'remote-projects',
               label: t('platformFeatures.remoteProjects.title')
-            },
-            {
-              id: 'magic-notes',
-              label: t('platformFeatures.tabs.magicNotes')
             }
           ]}
           value={activeSection}
@@ -1146,141 +1046,6 @@ export function PlatformFeaturesSettingsSection({
         </article>
       </section>
 
-      <section
-        aria-labelledby="platform-features-tab-magic-notes"
-        className="settings-section"
-        hidden={activeSection !== 'magic-notes'}
-        id="platform-features-panel-magic-notes"
-        role="tabpanel"
-      >
-        {settings ? (
-        <article className="capability-card">
-          <div className="capability-card__header">
-            <div>
-              <strong>{t('platformFeatures.magicNotes.title')}</strong>
-              <small>
-                {t('platformFeatures.magicNotes.description')}
-              </small>
-            </div>
-          </div>
-          <label className="toggle-row">
-            <input
-              checked={settings.magicNotesEnabled}
-              disabled={saving}
-              onChange={(event) =>
-                void changeMagicNotes(event.target.checked)
-              }
-              role="switch"
-              type="checkbox"
-            />
-            <span>{t('platformFeatures.magicNotes.showEntry')}</span>
-          </label>
-          <label className="toggle-row">
-            <input
-              checked={
-                settings.magicNotesShowIncompleteTodoCount
-              }
-              disabled={saving}
-              onChange={(event) =>
-                void changeIncompleteTodoCount(
-                  event.target.checked
-                )
-              }
-              role="switch"
-              type="checkbox"
-            />
-            <span>
-              {t(
-                'platformFeatures.magicNotes.showIncompleteTodoCount'
-              )}
-            </span>
-          </label>
-          <p className="settings-notice">
-            {t(
-              'platformFeatures.magicNotes.showIncompleteTodoCountHelp'
-            )}
-          </p>
-          <div className="platform-feature-option">
-            <span>
-              {t('platformFeatures.magicNotes.commentMode')}
-            </span>
-            <SegmentedControl
-              ariaLabel={t(
-                'platformFeatures.magicNotes.commentModeAria'
-              )}
-              disabled={saving}
-              onChange={(value) => void changeCommentMode(value)}
-              options={[
-                {
-                  value: 'immediate',
-                  label: t(
-                    'platformFeatures.magicNotes.modes.immediate'
-                  )
-                },
-                {
-                  value: 'after-save-auto',
-                  label: t(
-                    'platformFeatures.magicNotes.modes.afterSaveAuto'
-                  )
-                },
-                {
-                  value: 'after-save-manual',
-                  label: t(
-                    'platformFeatures.magicNotes.modes.afterSaveManual'
-                  )
-                }
-              ]}
-              value={settings.magicNoteCommentMode}
-            />
-            <small>
-              {t('platformFeatures.magicNotes.commentModeHelp')}
-            </small>
-          </div>
-          <div className="platform-feature-option">
-            <span>
-              {t('platformFeatures.magicNotes.commentFormat')}
-            </span>
-            <SegmentedControl
-              ariaLabel={t(
-                'platformFeatures.magicNotes.commentFormatAria'
-              )}
-              disabled={saving}
-              onChange={(value) => void changeCommentFormat(value)}
-              options={[
-                {
-                  value: 'combined',
-                  label: t(
-                    'platformFeatures.magicNotes.formats.combined'
-                  )
-                },
-                {
-                  value: 'narrative',
-                  label: t(
-                    'platformFeatures.magicNotes.formats.narrative'
-                  )
-                },
-                {
-                  value: 'structured',
-                  label: t(
-                    'platformFeatures.magicNotes.formats.structured'
-                  )
-                }
-              ]}
-              value={settings.magicNoteCommentFormat}
-            />
-            <small>
-              {t('platformFeatures.magicNotes.commentFormatHelp')}
-            </small>
-          </div>
-        </article>
-        ) : (
-          !error && (
-            <p className="settings-notice" role="status">
-              {t('platformFeatures.loading')}
-            </p>
-          )
-        )}
-      </section>
     </>
   )
 }

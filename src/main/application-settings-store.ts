@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   applicationSettingsSchema,
   applicationSettingsUpdateSchema,
+  defaultApplicationNavigation,
   type ApplicationSettings
 } from '../shared/application-settings-contracts'
 import {
@@ -27,7 +28,7 @@ export {
 } from '../shared/application-settings-contracts'
 export type { ApplicationSettings } from '../shared/application-settings-contracts'
 
-const CURRENT_SETTINGS_VERSION = 11
+const CURRENT_SETTINGS_VERSION = 12
 
 const legacyStoredApplicationSettingsSchema = z
   .object({
@@ -148,6 +149,8 @@ const storedApplicationSettingsSchema = applicationSettingsSchema
   })
   .strict()
 
+const versionElevenStoredApplicationSettingsSchema = storedApplicationSettingsSchema.extend({ version: z.literal(11) })
+
 type StoredApplicationSettings = z.infer<typeof storedApplicationSettingsSchema>
 
 export type LegacyLocalToolEnvironmentPaths = {
@@ -234,7 +237,9 @@ export const defaultApplicationSettings: ApplicationSettings = {
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
   conversationHtmlRenderingEnabled: true,
   remoteProjectsEnabled: false,
-  magicNotesEnabled: false,
+  applicationNavigation: defaultApplicationNavigation,
+  localInferenceEnabled: true,
+  magicNotesEnabled: true,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined'
@@ -245,11 +250,17 @@ export class ApplicationSettingsStore {
   private settingsLoad?: Promise<StoredApplicationSettings>
   private warnings: SettingsWarning[] = []
   private updateQueue: Promise<void> = Promise.resolve()
+  private readonly listeners = new Set<(settings: ApplicationSettings) => void>()
 
   constructor(
     private readonly filePath: string,
     private readonly legacyLocalToolEnvironmentResolver: LegacyLocalToolEnvironmentResolver = resolveLegacyLocalToolEnvironmentPaths
   ) {}
+
+  onChanged(listener: (settings: ApplicationSettings) => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
 
   private async migrateLegacy(
     settings: Omit<
@@ -257,6 +268,8 @@ export class ApplicationSettingsStore {
       | 'conversationHtmlRenderingEnabled'
       | 'localToolEnvironment'
       | 'version'
+      | 'applicationNavigation'
+      | 'localInferenceEnabled'
     > & {
       conversationHtmlRenderingEnabled?: boolean
       version: number
@@ -271,6 +284,7 @@ export class ApplicationSettingsStore {
         ? { source: 'custom', executablePath }
         : { source: 'managed' }
     const next: StoredApplicationSettings = {
+      ...defaultApplicationSettings,
       ...settings,
       conversationHtmlRenderingEnabled:
         settings.conversationHtmlRenderingEnabled ?? true,
@@ -328,6 +342,12 @@ export class ApplicationSettingsStore {
       )
       const result = storedApplicationSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionElevenResult = versionElevenStoredApplicationSettingsSchema.safeParse(parsed)
+        if (versionElevenResult.success) {
+          const next: StoredApplicationSettings = { ...versionElevenResult.data, version: CURRENT_SETTINGS_VERSION }
+          await this.persist(next)
+          return next
+        }
         const versionTenResult =
           versionTenStoredApplicationSettingsSchema.safeParse(parsed)
         if (versionTenResult.success) {
@@ -437,7 +457,7 @@ export class ApplicationSettingsStore {
             updateSource: 'github',
             modelDownloadSource: 'modelscope',
             remoteProjectsEnabled: false,
-            magicNotesEnabled: false,
+            magicNotesEnabled: true,
             magicNotesShowIncompleteTodoCount: true,
             magicNoteCommentMode: 'immediate',
             magicNoteCommentFormat: 'combined',
@@ -482,6 +502,8 @@ export class ApplicationSettingsStore {
       conversationHtmlRenderingEnabled:
         stored.conversationHtmlRenderingEnabled,
       remoteProjectsEnabled: stored.remoteProjectsEnabled,
+      applicationNavigation: stored.applicationNavigation,
+      localInferenceEnabled: stored.localInferenceEnabled,
       magicNotesEnabled: stored.magicNotesEnabled,
       magicNotesShowIncompleteTodoCount:
         stored.magicNotesShowIncompleteTodoCount,
@@ -511,7 +533,7 @@ export class ApplicationSettingsStore {
       }
       await this.persist(next)
       this.warnings = []
-      return {
+      const settings: ApplicationSettings = {
         checkUpdatesOnStartup: next.checkUpdatesOnStartup,
         updateSource: next.updateSource,
         modelDownloadSource: next.modelDownloadSource,
@@ -519,12 +541,16 @@ export class ApplicationSettingsStore {
         conversationHtmlRenderingEnabled:
           next.conversationHtmlRenderingEnabled,
         remoteProjectsEnabled: next.remoteProjectsEnabled,
+        applicationNavigation: next.applicationNavigation,
+        localInferenceEnabled: next.localInferenceEnabled,
         magicNotesEnabled: next.magicNotesEnabled,
         magicNotesShowIncompleteTodoCount:
           next.magicNotesShowIncompleteTodoCount,
         magicNoteCommentMode: next.magicNoteCommentMode,
         magicNoteCommentFormat: next.magicNoteCommentFormat
       }
+      for (const listener of this.listeners) listener(settings)
+      return settings
     })
     this.updateQueue = operation.then(
       () => undefined,

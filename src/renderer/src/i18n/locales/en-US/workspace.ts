@@ -322,7 +322,20 @@ export const workspace = {
       noApprovals: 'There are no operations awaiting approval.',
       deny: 'Deny',
       allowOnce: 'Allow once',
-      taskIndexTitle: 'Task index',
+      taskIndexTitle: 'Project tasks',
+      stats: {
+        label: 'Current conversation statistics',
+        currentConversation: 'Current conversation',
+        noConversation: 'No conversation selected',
+        replyDuration: 'Cumulative Agent reply time',
+        messages: 'Messages',
+        unavailable: 'Not available',
+        incomplete: 'Some replies have no timing records. Only known durations are included.',
+        partial: 'Partial records',
+        timeHelp: 'About timing',
+        timeDescription: 'Adds the actual duration of each Agent reply, excluding idle time between replies. Missing durations are not estimated from conversation or task start and end times.',
+        taskDuration: 'Cumulative task time'
+      },
       empty: 'Explicitly created tasks will appear here.',
       noFilterResults: 'No tasks match this filter.',
       conversationUnavailable: 'Conversation unavailable',
@@ -336,9 +349,12 @@ export const workspace = {
         currentProject: 'Current project',
         allProjects: 'All projects',
         noCurrentProject:
-          'No project is active. Choose another task scope or open a project.'
+          'No project is active. Open a project to view and create tasks.'
       },
       filters: {
+        all: 'All',
+        summary: 'Filter: {{filter}} · {{count}} tasks',
+        clear: 'Clear filter',
         ariaLabel: 'Filter tasks',
         active: 'Active',
         paused: 'Paused',

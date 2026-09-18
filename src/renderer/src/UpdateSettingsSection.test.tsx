@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   defaultLocalToolEnvironmentSettings,
+  defaultApplicationNavigation,
   type ApplicationSettings
 } from '../../shared/application-settings-contracts'
 import type { DesktopApi } from '../../shared/contracts'
@@ -25,6 +26,7 @@ describe('UpdateSettingsSection', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: true,
@@ -88,7 +90,8 @@ describe('UpdateSettingsSection', () => {
           updateSettings,
           check,
           openReleasePage: vi.fn(),
-          onResult: vi.fn(() => () => {})
+          onResult: vi.fn(() => () => {}),
+          onSettingsChanged: vi.fn(() => () => {})
         }
       } as unknown as DesktopApi
     })
@@ -193,7 +196,8 @@ describe('UpdateSettingsSection', () => {
             )
           }),
           openReleasePage: vi.fn(),
-          onResult: vi.fn(() => () => {})
+          onResult: vi.fn(() => () => {}),
+          onSettingsChanged: vi.fn(() => () => {})
         }
       } as unknown as DesktopApi
     })
@@ -237,7 +241,8 @@ describe('UpdateSettingsSection', () => {
           openReleasePage: vi.fn(async () => {
             throw new Error('Shell refused the release URL')
           }),
-          onResult: vi.fn(() => () => {})
+          onResult: vi.fn(() => () => {}),
+          onSettingsChanged: vi.fn(() => () => {})
         }
       } as unknown as DesktopApi
     })

@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron'
+import { localInferenceService } from './local-inference-service'
 import { ipcChannels } from '../shared/ipc-channels'
 import {
   documentOcrFailureSchema,
@@ -59,7 +60,7 @@ export class DocumentOcrBroker {
             1_000
       )
     )
-    return new Promise<DocumentOcrResult>((resolve, reject) => {
+    return localInferenceService.run('ocr', '文档解析', () => new Promise<DocumentOcrResult>((resolve, reject) => {
       const onAbort = (): void =>
         this.cancelRequest(request.requestId, 'OCR 解析已取消')
       signal?.addEventListener('abort', onAbort, { once: true })
@@ -78,7 +79,7 @@ export class DocumentOcrBroker {
         return
       }
       this.dispatchNext()
-    })
+    }), { model: request.modelId, cancelUnavailableReason: '现有 OCR 取消会终止共享 Worker；管理页不将服务释放用作单任务取消。' })
   }
 
   respond(input: unknown): void {

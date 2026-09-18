@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Tokenizer } from '@huggingface/tokenizers'
-import * as ort from 'onnxruntime-web/wasm'
+import * as ort from 'onnxruntime-web'
 import type {
   EmbeddingInferenceEngine,
   EmbeddingOnnxRuntime,

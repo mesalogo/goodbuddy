@@ -8,18 +8,32 @@ import type {
 } from '../../shared/assistant-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { SegmentedControl } from './WorkspacePrimitives'
+import './custom-task-dialog.css'
 
 export type CustomTaskDestination = 'current' | 'new'
+// App translates the UI execution choice into the schedule creation request.
+export type CustomTaskCreateOptions = { runImmediately?: boolean }
+export type CustomTaskConversation = {
+  id: string
+  title: string
+  projectId?: string
+}
+
+const emptyConversations: readonly CustomTaskConversation[] = []
 
 type CustomTaskDialogProps = {
   currentConversationAvailable: boolean
   currentConversationId?: string
-  defaultDestination: CustomTaskDestination
+  defaultDestination?: CustomTaskDestination
+  conversations?: readonly CustomTaskConversation[]
   projectId?: string
   projectName: string
   workspaceLabel: string
   onClose: () => void
-  onCreate: (input: ScheduleCreateInput) => Promise<AssistantSchedule>
+  onCreate: (
+    input: ScheduleCreateInput,
+    options?: CustomTaskCreateOptions
+  ) => Promise<AssistantSchedule>
 }
 
 function toLocalDateTimeValue(date: Date): string {
@@ -30,7 +44,8 @@ function toLocalDateTimeValue(date: Date): string {
 export function CustomTaskDialog({
   currentConversationAvailable,
   currentConversationId,
-  defaultDestination,
+  defaultDestination = 'current',
+  conversations = emptyConversations,
   projectId,
   projectName,
   workspaceLabel,
@@ -39,81 +54,80 @@ export function CustomTaskDialog({
 }: CustomTaskDialogProps): React.JSX.Element {
   const { t } = useTranslation('app')
   const dialogRef = useRef<HTMLElement>(null)
-  const titleRef = useRef<HTMLInputElement>(null)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
+  const submittingRef = useRef(false)
   const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
-  const [destination, setDestination] = useState<CustomTaskDestination>(
-    defaultDestination === 'current' && currentConversationAvailable
+  const [destination, setDestination] = useState<string>(
+    defaultDestination === 'current' &&
+      currentConversationAvailable && currentConversationId
       ? 'current'
       : 'new'
   )
+  const [timing, setTiming] = useState<'now' | 'scheduled'>('now')
   const [recurrence, setRecurrence] =
     useState<ScheduleCreateInput['recurrence']>('once')
   const [nextRunAt, setNextRunAt] = useState(() =>
     toLocalDateTimeValue(new Date(Date.now() + 60 * 60 * 1_000))
   )
   const [errors, setErrors] = useState<
-    Partial<Record<'title' | 'prompt' | 'destination' | 'nextRunAt' | 'form', string>>
+    Partial<Record<'prompt' | 'destination' | 'nextRunAt' | 'form', string>>
   >({})
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(
-    () => activateModalFocus(() => titleRef.current),
+    () => activateModalFocus(() => promptRef.current),
     []
   )
 
-  const destinationOptions = useMemo(
-    () => [
-      {
-        value: 'current' as const,
-        label: t('customTask.destination.current'),
-        disabled: !currentConversationAvailable
-      },
-      {
-        value: 'new' as const,
-        label: t('customTask.destination.new')
-      }
-    ],
-    [currentConversationAvailable, t]
+  const otherConversations = useMemo(
+    () => conversations.filter((conversation) =>
+      conversation.projectId === projectId &&
+      conversation.id !== currentConversationId
+    ),
+    [conversations, projectId, currentConversationId]
   )
+  const generatedTitle = prompt.trim().replace(/\s+/gu, ' ').slice(0, 120)
 
   const submit = async (): Promise<void> => {
+    if (submittingRef.current) return
     const nextErrors: typeof errors = {}
-    if (!title.trim()) {
-      nextErrors.title = t('customTask.errors.title')
-    }
     if (!prompt.trim()) {
       nextErrors.prompt = t('customTask.errors.instructions')
     }
     if (
-      destination === 'current' &&
-      (!currentConversationAvailable || !currentConversationId)
+      (destination === 'current' &&
+        (!currentConversationAvailable || !currentConversationId)) ||
+      (destination !== 'current' && destination !== 'new' &&
+        !otherConversations.some((conversation) => conversation.id === destination))
     ) {
       nextErrors.destination = t('customTask.errors.destination')
     }
-    const runAt = new Date(nextRunAt)
-    if (!nextRunAt || Number.isNaN(runAt.getTime())) {
+    const runAt = timing === 'now' ? new Date() : new Date(nextRunAt)
+    if (Number.isNaN(runAt.getTime())) {
       nextErrors.nextRunAt = t('customTask.errors.time')
-    } else if (runAt.getTime() <= Date.now()) {
-      nextErrors.nextRunAt = t('customTask.errors.futureTime')
     }
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) {
       return
     }
 
+    submittingRef.current = true
     setSubmitting(true)
     try {
-      await onCreate({
-        ...(projectId ? { projectId } : {}),
-        ...(destination === 'current' && currentConversationId
-          ? { conversationId: currentConversationId }
-          : {}),
-        title: title.trim(),
-        prompt: prompt.trim(),
-        recurrence,
-        nextRunAt: runAt.toISOString()
-      })
+      await onCreate(
+        {
+          ...(projectId ? { projectId } : {}),
+          ...(destination !== 'new'
+            ? { conversationId: destination === 'current' ? currentConversationId : destination }
+            : {}),
+          title: title.trim() || generatedTitle,
+          prompt: prompt.trim(),
+          recurrence: timing === 'now' ? 'once' : recurrence,
+          nextRunAt: runAt.toISOString()
+        },
+        { runImmediately: timing === 'now' }
+      )
       onClose()
     } catch (reason) {
       setErrors((current) => ({
@@ -124,6 +138,7 @@ export function CustomTaskDialog({
             : t('customTask.errors.create')
       }))
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
@@ -176,38 +191,24 @@ export function CustomTaskDialog({
           </button>
         </header>
 
-        <div className="custom-task-dialog__content">
+        <fieldset
+          className="custom-task-dialog__content custom-task-dialog__form"
+          disabled={submitting}
+        >
           <label className="custom-task-dialog__field">
-            <span>{t('customTask.fields.name')}</span>
-            <input
-              aria-describedby={errors.title ? 'custom-task-title-error' : undefined}
-              aria-invalid={Boolean(errors.title)}
-              maxLength={120}
-              onChange={(event) => {
-                setTitle(event.target.value)
-                setErrors((current) => ({ ...current, title: undefined }))
-              }}
-              ref={titleRef}
-              value={title}
-            />
-            {errors.title && (
-              <small id="custom-task-title-error" role="alert">
-                {errors.title}
-              </small>
-            )}
-          </label>
-
-          <label className="custom-task-dialog__field">
-            <span>{t('customTask.fields.instructions')}</span>
+            <span id="custom-task-prompt-label">{t('customTask.fields.instructions')}</span>
             <textarea
+              aria-labelledby="custom-task-prompt-label"
               aria-describedby={errors.prompt ? 'custom-task-prompt-error' : undefined}
               aria-invalid={Boolean(errors.prompt)}
+              aria-required="true"
               maxLength={100_000}
               onChange={(event) => {
                 setPrompt(event.target.value)
                 setErrors((current) => ({ ...current, prompt: undefined }))
               }}
               rows={5}
+              ref={promptRef}
               value={prompt}
             />
             {errors.prompt && (
@@ -217,72 +218,113 @@ export function CustomTaskDialog({
             )}
           </label>
 
-          <div className="custom-task-dialog__choice">
-            <span>{t('customTask.fields.destination')}</span>
-            <SegmentedControl
-              ariaLabel={t('customTask.fields.destination')}
-              onChange={(value) => {
-                setDestination(value)
+          <label className="custom-task-dialog__field">
+            <span id="custom-task-name-label">{t('customTask.fields.name')}</span>
+            <input
+              aria-labelledby="custom-task-name-label"
+              aria-describedby="custom-task-name-help"
+              maxLength={120}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder={generatedTitle}
+              value={title}
+            />
+            <small id="custom-task-name-help">{t('customTask.nameHelp')}</small>
+          </label>
+
+          <label className="custom-task-dialog__field">
+            <span id="custom-task-destination-label">{t('customTask.fields.destination')}</span>
+            <select
+              aria-labelledby="custom-task-destination-label"
+              aria-describedby={errors.destination ? 'custom-task-destination-error' : 'custom-task-destination-help'}
+              aria-invalid={Boolean(errors.destination)}
+              onChange={(event) => {
+                setDestination(event.target.value)
                 setErrors((current) => ({
                   ...current,
                   destination: undefined
                 }))
               }}
-              options={destinationOptions}
               value={destination}
-            />
-            <small>
-              {destination === 'current'
-                ? t('customTask.destination.currentHelp')
-                : t('customTask.destination.newHelp')}
+            >
+              <option value="current" disabled={!currentConversationAvailable || !currentConversationId}>
+                {t('customTask.destination.current')}
+              </option>
+              {otherConversations.map((conversation) => (
+                <option key={conversation.id} value={conversation.id}>{conversation.title}</option>
+              ))}
+              <option value="new">{t('customTask.destination.new')}</option>
+            </select>
+            <small id="custom-task-destination-help">
+              {destination === 'new'
+                ? t('customTask.destination.newHelp')
+                : t('customTask.destination.currentHelp')}
             </small>
-            {!currentConversationAvailable && (
+            {(!currentConversationAvailable || !currentConversationId) && (
               <small>{t('customTask.destination.currentUnavailable')}</small>
             )}
             {errors.destination && (
-              <small role="alert">{errors.destination}</small>
-            )}
-          </div>
-
-          <div className="custom-task-dialog__two-columns">
-            <label className="custom-task-dialog__field">
-              <span>{t('customTask.fields.recurrence')}</span>
-              <select
-                onChange={(event) =>
-                  setRecurrence(
-                    event.target.value as ScheduleCreateInput['recurrence']
-                  )
-                }
-                value={recurrence}
-              >
-                <option value="once">{t('customTask.recurrence.once')}</option>
-                <option value="daily">{t('customTask.recurrence.daily')}</option>
-                <option value="weekly">{t('customTask.recurrence.weekly')}</option>
-              </select>
-            </label>
-          </div>
-
-          <label className="custom-task-dialog__field">
-            <span>{t('customTask.fields.time')}</span>
-            <input
-              aria-describedby={errors.nextRunAt ? 'custom-task-time-error' : undefined}
-              aria-invalid={Boolean(errors.nextRunAt)}
-              onChange={(event) => {
-                setNextRunAt(event.target.value)
-                setErrors((current) => ({
-                  ...current,
-                  nextRunAt: undefined
-                }))
-              }}
-              type="datetime-local"
-              value={nextRunAt}
-            />
-            {errors.nextRunAt && (
-              <small id="custom-task-time-error" role="alert">
-                {errors.nextRunAt}
-              </small>
+              <small id="custom-task-destination-error" role="alert">{errors.destination}</small>
             )}
           </label>
+
+          <div className="custom-task-dialog__choice">
+            <span>{t('customTask.fields.timing')}</span>
+            <SegmentedControl
+              ariaLabel={t('customTask.fields.timing')}
+              onChange={(value) => {
+                setTiming(value)
+                setErrors((current) => ({ ...current, nextRunAt: undefined }))
+              }}
+              options={[
+                { value: 'now', label: t('customTask.timing.now'), disabled: submitting },
+                { value: 'scheduled', label: t('customTask.timing.scheduled'), disabled: submitting }
+              ]}
+              value={timing}
+            />
+          </div>
+
+          {timing === 'scheduled' && (
+            <>
+              <label className="custom-task-dialog__field">
+                <span>{t('customTask.fields.recurrence')}</span>
+                <select
+                  onChange={(event) =>
+                    setRecurrence(
+                      event.target.value as ScheduleCreateInput['recurrence']
+                    )
+                  }
+                  value={recurrence}
+                >
+                  <option value="once">{t('customTask.recurrence.once')}</option>
+                  <option value="daily">{t('customTask.recurrence.daily')}</option>
+                  <option value="weekly">{t('customTask.recurrence.weekly')}</option>
+                </select>
+              </label>
+
+              <label className="custom-task-dialog__field">
+                <span id="custom-task-time-label">{t('customTask.fields.time')}</span>
+                <input
+                  aria-labelledby="custom-task-time-label"
+                  aria-describedby={errors.nextRunAt ? 'custom-task-time-error' : undefined}
+                  aria-invalid={Boolean(errors.nextRunAt)}
+                  onChange={(event) => {
+                    setNextRunAt(event.target.value)
+                    setErrors((current) => ({
+                      ...current,
+                      nextRunAt: undefined
+                    }))
+                  }}
+                  type="datetime-local"
+                  value={nextRunAt}
+                />
+                {errors.nextRunAt && (
+                  <small id="custom-task-time-error" role="alert">
+                    {errors.nextRunAt}
+                  </small>
+                )}
+              </label>
+            </>
+          )}
 
           <section
             aria-label={t('customTask.scope.title')}
@@ -316,7 +358,7 @@ export function CustomTaskDialog({
               {errors.form}
             </p>
           )}
-        </div>
+        </fieldset>
 
         <footer className="custom-task-dialog__actions">
           <button

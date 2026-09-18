@@ -3739,6 +3739,7 @@ textarea:focus-visible {
  * rather than adding a per-dialog copy.
  */
 :is(
+  .custom-task-dialog,
   .project-create-backdrop,
   .remote-directory-picker-backdrop,
   .html-preview-viewer-backdrop,

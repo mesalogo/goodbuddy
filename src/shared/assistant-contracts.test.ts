@@ -4,6 +4,7 @@ import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
   activityHistorySnapshotSchema,
+  executionStatsInputSchema,
   conversationBranchInputSchema,
   conversationMessageSchema,
   conversationSubagentActivitySchema,
@@ -36,6 +37,15 @@ const untouchedProject: AssistantProject = {
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z'
 }
+
+it('requires exactly one execution statistics scope and rejects renderer timing inputs', () => {
+  const id = untouchedProject.id
+  expect(executionStatsInputSchema.parse({ conversationId: id })).toEqual({ conversationId: id })
+  expect(executionStatsInputSchema.parse({ projectId: id })).toEqual({ projectId: id })
+  for (const input of [{}, { conversationId: id, projectId: id }, { projectId: 'bad' }, { projectId: id, asOf: 100 }]) {
+    expect(executionStatsInputSchema.safeParse(input).success).toBe(false)
+  }
+})
 
 describe('agent question contracts', () => {
   it('returns recovered questions only in live snapshots, not saved headers', () => {

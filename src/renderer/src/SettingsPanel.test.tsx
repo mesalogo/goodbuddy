@@ -25,6 +25,7 @@ import type {
 } from '../../shared/capability-contracts'
 import {
   defaultLocalToolEnvironmentSettings,
+  defaultApplicationNavigation,
   type ApplicationSettings
 } from '../../shared/application-settings-contracts'
 import type {
@@ -547,6 +548,7 @@ let applicationSettings: ApplicationSettings = {
   updateSource: 'github',
   modelDownloadSource: 'modelscope',
   localToolEnvironment: defaultLocalToolEnvironmentSettings,
+applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
   conversationHtmlRenderingEnabled: true,
   remoteProjectsEnabled: false,
   magicNotesEnabled: false,
@@ -838,6 +840,7 @@ describe('SettingsPanel runtime files', () => {
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -998,7 +1001,8 @@ describe('SettingsPanel runtime files', () => {
           updateSettings: updateApplicationSettings,
           check: vi.fn(),
           openReleasePage: vi.fn(),
-          onResult: vi.fn(() => () => {})
+          onResult: vi.fn(() => () => {}),
+          onSettingsChanged: vi.fn(() => () => {})
         },
         localToolEnvironment: {
           getSnapshot: getLocalToolEnvironmentSnapshot,
@@ -1500,71 +1504,19 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
   })
 
-  it('toggles Magic Notes navigation settings', async () => {
-    const onMagicNotesEnabledChange = vi.fn()
-    const onMagicNotesShowIncompleteTodoCountChange = vi.fn()
+  it('omits Magic Notes from global platform settings without changing stored settings', async () => {
+    const storedSettings = structuredClone(applicationSettings)
     render(
-      <SettingsPanel
-        {...heartbeatSettingsProps}
-        onMagicNotesEnabledChange={onMagicNotesEnabledChange}
-        onMagicNotesShowIncompleteTodoCountChange={
-          onMagicNotesShowIncompleteTodoCountChange
-        }
-        open
-        onClearLocalData={vi.fn(async () => {})}
-        onClose={vi.fn()}
-        onSaved={vi.fn()}
-      />
+      <SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />
     )
-
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    fireEvent.click(
-      await screen.findByRole('tab', { name: '魔法笔记' })
-    )
-    const toggle = await screen.findByRole('switch', {
-      name: '显示魔法笔记入口'
-    })
-    expect(toggle).not.toBeChecked()
-    expect(screen.getByText(/默认关闭/)).toBeInTheDocument()
-    fireEvent.click(toggle)
-
-    await waitFor(() =>
-      expect(updateApplicationSettings).toHaveBeenCalledWith({
-        magicNotesEnabled: true
-      })
-    )
-    expect(onMagicNotesEnabledChange).toHaveBeenCalledWith(true)
-    const countToggle = screen.getByRole('switch', {
-      name: '显示未完成待办数量'
-    })
-    expect(countToggle).toBeChecked()
-    fireEvent.click(countToggle)
-    await waitFor(() =>
-      expect(updateApplicationSettings).toHaveBeenCalledWith({
-        magicNotesShowIncompleteTodoCount: false
-      })
-    )
-    expect(
-      onMagicNotesShowIncompleteTodoCountChange
-    ).toHaveBeenCalledWith(false)
-    fireEvent.click(
-      screen.getByRole('button', { name: '保存后自动' })
-    )
-    await waitFor(() =>
-      expect(updateApplicationSettings).toHaveBeenCalledWith({
-        magicNoteCommentMode: 'after-save-auto'
-      })
-    )
-
-    expect(
-      screen.getByRole('button', { name: '长评 + 要点' })
-    ).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(screen.getByRole('button', { name: '要点' }))
-    await waitFor(() =>
-      expect(updateApplicationSettings).toHaveBeenCalledWith({
-        magicNoteCommentFormat: 'structured'
-      })
-    )
+    expect(await screen.findByRole('tab', { name: '通用设置' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: '魔法笔记', hidden: true })).not.toBeInTheDocument()
+    expect(document.getElementById('platform-features-panel-magic-notes')).toBeNull()
+    expect(screen.queryByRole('switch', { name: '显示魔法笔记入口' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
+    expect(updateApplicationSettings).not.toHaveBeenCalled()
+    expect(applicationSettings).toEqual(storedSettings)
   })
 
   it('switches the global model download source from General settings', async () => {
@@ -1609,9 +1561,9 @@ describe('SettingsPanel runtime files', () => {
       dedupeKey: 'model-download-source'
     })
 
-    fireEvent.click(screen.getByRole('tab', { name: '魔法笔记' }))
+    fireEvent.click(screen.getByRole('tab', { name: '远程项目（技术预览）' }))
     expect(
-      screen.getByRole('switch', { name: '显示魔法笔记入口' })
+      screen.getByRole('tabpanel', { name: '远程项目（技术预览）' })
     ).toBeInTheDocument()
   })
 
@@ -1712,24 +1664,17 @@ describe('SettingsPanel runtime files', () => {
   })
 
   it('refreshes built-in Notes MCP after enabling Magic Notes', async () => {
-    function Harness(): React.JSX.Element {
-      const [magicNotesEnabled, setMagicNotesEnabled] = useState(false)
-      return (
-        <SettingsPanel
-          {...heartbeatSettingsProps}
-          magicNotesEnabled={magicNotesEnabled}
-          onMagicNotesEnabledChange={setMagicNotesEnabled}
-          open
-          onClearLocalData={vi.fn(async () => {})}
-          onClose={vi.fn()}
-          onSaved={vi.fn()}
-        />
-      )
-    }
-
-    render(
-      <Harness />
+    const panel = (magicNotesEnabled: boolean): React.JSX.Element => (
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        magicNotesEnabled={magicNotesEnabled}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
     )
+    const { rerender } = render(panel(false))
 
     openCapabilitySettingsTab('MCP')
     const noteServerToggle = await screen.findByRole('button', {
@@ -1739,22 +1684,7 @@ describe('SettingsPanel runtime files', () => {
       'capability-card--disabled'
     )
 
-    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    fireEvent.click(
-      await screen.findByRole('tab', { name: '魔法笔记' })
-    )
-    fireEvent.click(
-      await screen.findByRole('switch', {
-        name: '显示魔法笔记入口'
-      })
-    )
-    await waitFor(() =>
-      expect(updateApplicationSettings).toHaveBeenCalledWith({
-        magicNotesEnabled: true
-      })
-    )
-
-    openCapabilitySettingsTab('MCP')
+    rerender(panel(true))
     await waitFor(() =>
       expect(
         screen

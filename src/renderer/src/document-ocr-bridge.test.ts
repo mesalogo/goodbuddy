@@ -83,6 +83,29 @@ async function setup() {
 }
 
 describe('document OCR worker idle release', () => {
+  it('reports a failed model load and recovers on the next real request', async () => {
+    const api = await setup()
+    const { getOcrInferenceState } = await import('./document-ocr-bridge')
+    api.getOcrAssets.mockRejectedValueOnce(new Error('model unavailable'))
+    await api.start()
+    expect(getOcrInferenceState()).toMatchObject({ state: 'error', loaded: false, busy: false, error: 'model unavailable' })
+    const next = await api.start()
+    expect(getOcrInferenceState()).toMatchObject({ state: 'running', loaded: true, error: undefined })
+    await api.finish(next)
+  })
+  it('reports the actual worker and refuses manual release while busy', async () => {
+    const api = await setup()
+    const { getOcrInferenceState, releaseOcrInference } = await import('./document-ocr-bridge')
+    expect(getOcrInferenceState()).toMatchObject({ state: 'idle', loaded: false })
+    const input = await api.start()
+    expect(getOcrInferenceState()).toMatchObject({ state: 'running', loaded: true, busy: true })
+    expect(() => releaseOcrInference()).toThrow('活动或排队任务')
+    expect(TestWorker.instances[0]!.terminate).not.toHaveBeenCalled()
+    await api.finish(input)
+    releaseOcrInference()
+    expect(TestWorker.instances[0]!.terminate).toHaveBeenCalledOnce()
+    expect(getOcrInferenceState()).toMatchObject({ state: 'idle', loaded: false })
+  })
   it('releases after 60 idle seconds and reloads the model for the next request', async () => {
     const api = await setup()
     const input = await api.start()

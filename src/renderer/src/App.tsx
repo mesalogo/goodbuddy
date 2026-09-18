@@ -1,8 +1,24 @@
 import { ImageCapabilityNotice } from "./ImageCapabilityNotice";
+import LocalInferencePage from "./LocalInferencePage";
+import { ApplicationMenu } from './ApplicationMenu';
+import {
+  ApplicationAvailability,
+  ApplicationCenter,
+  ApplicationSettingsNavigation,
+  applicationDefinitions,
+  isApplicationEnabled,
+} from "./ApplicationCenter";
+import {
+  defaultApplicationNavigation,
+  type ApplicationSettings,
+  type ApplicationSettingsUpdate,
+  type EditableApplicationId,
+} from "../../shared/application-settings-contracts";
 import type { ImageOperation } from "../../shared/image-generation-contracts";
 import {
   ArrowDown,
   Bot,
+  ChartColumn,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -14,7 +30,7 @@ import {
   Edit3,
   FileText,
   GitFork,
-  HeartPulse,
+  Grid2X2,
   Info,
   Library,
   LoaderCircle,
@@ -172,6 +188,7 @@ import { ProjectSwitcher } from "./ProjectSwitcher";
 import { ProjectActivity } from "./ProjectActivity";
 import { deriveConversationActivity } from "./conversation-activity";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
+import { useExecutionStats } from "./use-execution-stats";
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
@@ -180,6 +197,7 @@ import {
 } from "./RightAssistantSidebar";
 import {
   CustomTaskDialog,
+  type CustomTaskCreateOptions,
   type CustomTaskDestination,
 } from "./CustomTaskDialog";
 import { ConversationTaskStrip } from "./ConversationTaskStrip";
@@ -508,7 +526,7 @@ type ActiveRun = {
 };
 
 type WorkspaceView =
-  "chat" | "magic-notes" | "knowledge" | "heartbeat" | "activity" | "settings";
+  "chat" | "magic-notes" | "knowledge" | "heartbeat" | "local-inference" | "activity" | "settings";
 
 const intentRoutePreloaders: Partial<
   Record<WorkspaceView, () => Promise<unknown>>
@@ -2399,6 +2417,17 @@ function App(): React.JSX.Element {
   >({});
   const [view, setViewState] = useState<WorkspaceView>("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localInferenceOpen, setLocalInferenceOpen] = useState(false);
+  const [applicationCenterOpen, setApplicationCenterOpen] = useState(false);
+  const [applicationMenuOpen, setApplicationMenuOpen] = useState(false);
+  const applicationMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const [applicationSettingsTarget, setApplicationSettingsTarget] = useState<EditableApplicationId>();
+  const [applicationSettings, setApplicationSettings] = useState<ApplicationSettings>();
+  const [applicationSettingsPending, setApplicationSettingsPending] = useState(false);
+  const [applicationSettingsUnconfirmed, setApplicationSettingsUnconfirmed] = useState(false);
+  const applicationSettingsPendingRef = useRef(0);
+  const applicationSettingsRevisionRef = useRef(0);
+  const [applicationSettingsError, setApplicationSettingsError] = useState<string>();
   const settingsOpenRef = useRef(false);
   const [settingsInitialCategory, setSettingsInitialCategory] =
     useState<SettingsCategoryId>();
@@ -2484,6 +2513,10 @@ function App(): React.JSX.Element {
     (update: SetStateAction<WorkspaceView>): void => {
       const next =
         typeof update === "function" ? update(viewRef.current) : update;
+      if (next === "local-inference") {
+        setLocalInferenceOpen(true);
+        return;
+      }
       if (
         !settingsOpenRef.current &&
         next === "settings" &&
@@ -2569,6 +2602,78 @@ function App(): React.JSX.Element {
     setMagicNotesShowIncompleteTodoCount,
   ] = useState(true);
   const [incompleteMagicTodoCount, setIncompleteMagicTodoCount] = useState(0);
+  const applicationNavigation = applicationSettings?.applicationNavigation ?? defaultApplicationNavigation;
+  const visibleApplications = useMemo(() => ['knowledge' as const, 'heartbeat' as const, ...applicationNavigation.order].filter(id =>
+    id === 'knowledge' || id === 'heartbeat' || (applicationNavigation.pinned[id] && (id === 'magic-notes' ? magicNotesEnabled : isApplicationEnabled(applicationSettings, id)))
+  ), [applicationNavigation, applicationSettings, magicNotesEnabled]);
+  const applyApplicationSettings = useCallback((settings: ApplicationSettings): void => {
+    setApplicationSettings(settings);
+    setMagicNotesEnabled(settings.magicNotesEnabled);
+    setMagicNotesShowIncompleteTodoCount(settings.magicNotesShowIncompleteTodoCount);
+    setConversationHtmlRenderingEnabled(settings.conversationHtmlRenderingEnabled !== false);
+    setRemoteProjectsEnabled(settings.remoteProjectsEnabled);
+  }, []);
+  const reloadApplicationSettings = useCallback(async (): Promise<void> => {
+    const revision = ++applicationSettingsRevisionRef.current;
+    applicationSettingsPendingRef.current++;
+    setApplicationSettingsPending(true);
+    try {
+      if (!window.goodbuddy.updates) throw new Error(t('applications.loadFailed'));
+      const settings = await window.goodbuddy.updates.getSettings();
+      if (revision !== applicationSettingsRevisionRef.current) return;
+      applyApplicationSettings(settings);
+      setApplicationSettingsUnconfirmed(false);
+      setApplicationSettingsError(undefined);
+    } catch (error) {
+      if (revision !== applicationSettingsRevisionRef.current) return;
+      setApplicationSettingsUnconfirmed(true);
+      setApplicationSettingsError(displayErrorMessage(error, t('applications.loadFailed')));
+    } finally {
+      setApplicationSettingsPending(--applicationSettingsPendingRef.current > 0);
+    }
+  }, [applyApplicationSettings, t]);
+  const updateApplicationSettings = useCallback(async (patch: ApplicationSettingsUpdate): Promise<boolean> => {
+    if (applicationSettingsPendingRef.current || applicationSettingsUnconfirmed) return false;
+    const revision = ++applicationSettingsRevisionRef.current;
+    applicationSettingsPendingRef.current++;
+    setApplicationSettingsPending(true);
+    setApplicationSettingsError(undefined);
+    try {
+      if (!window.goodbuddy.updates) throw new Error(t('applications.loadFailed'));
+      const settings = await window.goodbuddy.updates.updateSettings(patch);
+      if (revision === applicationSettingsRevisionRef.current) applyApplicationSettings(settings);
+      return true;
+    } catch (error) {
+      if (revision !== applicationSettingsRevisionRef.current) return false;
+      setApplicationSettingsError(displayErrorMessage(error, t('applications.saveFailed')));
+      try {
+        if (!window.goodbuddy.updates) throw error;
+        const settings = await window.goodbuddy.updates.getSettings();
+        if (revision === applicationSettingsRevisionRef.current) applyApplicationSettings(settings);
+      } catch {
+        if (revision !== applicationSettingsRevisionRef.current) return false;
+        // Keep edits locked until Retry obtains the authoritative settings.
+        setApplicationSettingsError(t('applications.confirmFailed'));
+        setApplicationSettingsUnconfirmed(true);
+      }
+      return false;
+    } finally {
+      setApplicationSettingsPending(--applicationSettingsPendingRef.current > 0);
+    }
+  }, [applicationSettingsUnconfirmed, applyApplicationSettings, t]);
+  const openApplicationSettings = useCallback((id: EditableApplicationId): void => {
+    const open = (): void => {
+      setApplicationSettingsTarget(id);
+      setApplicationMenuOpen(false);
+      setApplicationCenterOpen(true);
+      void reloadApplicationSettings();
+    };
+    if (settingsOpenRef.current) {
+      const leave = (): void => { commitView(viewRef.current); requestAnimationFrame(open); };
+      if (settingsLeaveRequesterRef.current) settingsLeaveRequesterRef.current(leave);
+      else leave();
+    } else open();
+  }, [commitView, reloadApplicationSettings]);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -3145,26 +3250,32 @@ function App(): React.JSX.Element {
   }, [appearanceTheme]);
 
   useEffect(() => {
+    const revision = applicationSettingsRevisionRef;
+    const remove = window.goodbuddy.updates?.onSettingsChanged((settings) => {
+      // A persisted change supersedes reads and mutation replies already in flight.
+      revision.current++;
+      applyApplicationSettings(settings);
+      setApplicationSettingsUnconfirmed(false);
+      setApplicationSettingsError(undefined);
+    });
+    return () => {
+      remove?.();
+      revision.current++;
+    };
+  }, [applyApplicationSettings]);
+
+  useEffect(() => {
     const updates = window.goodbuddy.updates;
     if (!updates || startupUpdateCheckStartedRef.current) {
       return;
     }
     startupUpdateCheckStartedRef.current = true;
+    const revision = applicationSettingsRevisionRef.current;
     let updateCheckSource: "github" | "mirror" | undefined;
     void updates
       .getSettings()
       .then(async (settings) => {
-        setConversationHtmlRenderingEnabled(
-          settings.conversationHtmlRenderingEnabled !== false,
-        );
-        setRemoteProjectsEnabled(settings.remoteProjectsEnabled);
-        setMagicNotesEnabled(settings.magicNotesEnabled);
-        setMagicNotesShowIncompleteTodoCount(
-          settings.magicNotesShowIncompleteTodoCount,
-        );
-        if (!settings.magicNotesEnabled) {
-          setView((current) => (current === "magic-notes" ? "chat" : current));
-        }
+        if (revision === applicationSettingsRevisionRef.current) applyApplicationSettings(settings);
         if (!settings.checkUpdatesOnStartup) {
           return;
         }
@@ -3183,6 +3294,8 @@ function App(): React.JSX.Element {
       })
       .catch((reason: unknown) => {
         if (!updateCheckSource) {
+          if (revision !== applicationSettingsRevisionRef.current) return;
+          setApplicationSettingsError(displayErrorMessage(reason, i18n.t('applications.loadFailed', { ns: 'app' })));
           return;
         }
         notify({
@@ -3201,7 +3314,7 @@ function App(): React.JSX.Element {
           dedupeKey: "startup-update-check",
         });
       });
-  }, [i18n, setView]);
+  }, [i18n, applyApplicationSettings]);
 
   useEffect(() => {
     const magicNotes = window.goodbuddy.magicNotes;
@@ -3903,6 +4016,25 @@ function App(): React.JSX.Element {
       ),
     [assistantTasks],
   );
+  const executionStatsRevision = useMemo(
+    () => assistantTasks.map((task) => `${task.id}:${task.status}:${task.completedAt ?? ""}`).join("|"),
+    [assistantTasks],
+  );
+  const statsConversation = activeConversation?.projectId === activeProjectId
+    ? activeConversation : undefined;
+  const statsMessageCount = statsConversation?.messageSummary?.count ?? statsConversation?.messages.length ?? 0;
+  const executionStats = useExecutionStats(
+    statsConversation?.id,
+    activeProjectId || undefined,
+    `${executionStatsRevision}:${statsMessageCount}:${activeConversationIds.has(activeId)}`,
+    assistantSidebarOpen && assistantSidebarTab === "tasks",
+  );
+  const taskDurations = useMemo(() => new Map(
+    executionStats.project?.taskDurations.map((task) => [task.id, {
+      durationMs: task.durationMs,
+      incomplete: task.incompleteRequestCount > 0,
+    }]) ?? [],
+  ), [executionStats.project]);
   const tasksByConversation = useMemo(() => {
     const grouped = new Map<string, AssistantTask[]>();
     for (const task of productAssistantTasks) {
@@ -3945,7 +4077,7 @@ function App(): React.JSX.Element {
   );
   const { completedConversationIds, markConversationCompleted, clearConversationCompleted } =
     useUnviewedCompletions(assistantTasks,
-      view === "chat" && !settingsOpen && activeConversation && !activeConversation.messageSummary
+      view === "chat" && !settingsOpen && !applicationCenterOpen && activeConversation && !activeConversation.messageSummary
         ? activeId : undefined);
   const projectActivity = useMemo(
     () => deriveConversationActivity(
@@ -8331,12 +8463,19 @@ function App(): React.JSX.Element {
 
   const createCustomTask = async (
     input: Parameters<typeof window.goodbuddy.schedules.create>[0],
+    options?: CustomTaskCreateOptions,
   ): Promise<AssistantSchedule> => {
+    if (!options?.runImmediately && !(Date.parse(input.nextRunAt) > Date.now())) {
+      throw new Error(t("customTask.errors.futureTime"));
+    }
     if (input.conversationId) {
       persistLocalConversationChanges();
       await conversationPersistenceQueueRef.current;
     }
-    const schedule = await window.goodbuddy.schedules.create(input);
+    const schedule = await window.goodbuddy.schedules.create({
+      ...input,
+      runImmediately: options?.runImmediately ?? false,
+    });
     setAssistantSchedules((current) => [
       schedule,
       ...current.filter((item) => item.id !== schedule.id),
@@ -8682,6 +8821,7 @@ function App(): React.JSX.Element {
   };
 
   return (
+    <ApplicationSettingsNavigation value={openApplicationSettings}>
     <div className="app-shell">
       <aside
         aria-label={
@@ -8797,78 +8937,34 @@ function App(): React.JSX.Element {
             <MessageSquare aria-hidden="true" size={17} />
             <span>{t("navigation.chat")}</span>
           </button>
-          {magicNotesEnabled && (
-            <button
-              aria-current={view === "magic-notes" ? "page" : undefined}
-              className={
-                view === "magic-notes"
-                  ? "nav-item nav-item--active"
-                  : "nav-item"
-              }
-              onFocus={() => preloadWorkspaceRouteOnIntent("magic-notes")}
-              onClick={(event) =>
-                navigateFromSidebar("magic-notes", event.currentTarget)
-              }
-              onPointerEnter={() =>
-                preloadWorkspaceRouteOnIntent("magic-notes")
-              }
-              type="button"
-            >
-              <Sparkles aria-hidden="true" size={17} />
-              <span>{t("navigation.magicNotes")}</span>
-              {magicNotesShowIncompleteTodoCount &&
-                incompleteMagicTodoCount > 0 && (
-                  <span
-                    aria-label={t("navigation.incompleteTodos", {
-                      count: incompleteMagicTodoCount,
-                    })}
-                    className="nav-item__badge"
-                  >
-                    {incompleteMagicTodoCount > 99
-                      ? "99+"
-                      : incompleteMagicTodoCount}
+          {visibleApplications.map((id) => {
+            const definition = applicationDefinitions[id];
+            const Icon = definition.icon;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={view === id ? "nav-item nav-item--active" : "nav-item"}
+                aria-current={view === id ? "page" : undefined}
+                onClick={(event) => navigateFromSidebar(id, event.currentTarget)}
+                onFocus={() => preloadWorkspaceRouteOnIntent(id)}
+                onPointerEnter={() => preloadWorkspaceRouteOnIntent(id)}
+              >
+                <Icon size={17} aria-hidden="true" />
+                <span>{t(definition.title)}</span>
+                {id === "magic-notes" && magicNotesShowIncompleteTodoCount && incompleteMagicTodoCount > 0 && (
+                  <span className="nav-item__badge" aria-label={t("navigation.incompleteTodos", { count: incompleteMagicTodoCount })}>
+                    {incompleteMagicTodoCount > 99 ? "99+" : incompleteMagicTodoCount}
                   </span>
                 )}
-            </button>
-          )}
-          <button
-            aria-current={view === "knowledge" ? "page" : undefined}
-            className={
-              view === "knowledge" ? "nav-item nav-item--active" : "nav-item"
-            }
-            onFocus={() => preloadWorkspaceRouteOnIntent("knowledge")}
-            onClick={(event) =>
-              navigateFromSidebar("knowledge", event.currentTarget)
-            }
-            onPointerEnter={() => preloadWorkspaceRouteOnIntent("knowledge")}
-            type="button"
-          >
-            <Library aria-hidden="true" size={17} />
-            <span>{t("navigation.knowledge")}</span>
-          </button>
-          <button
-            aria-current={view === "heartbeat" ? "page" : undefined}
-            className={
-              view === "heartbeat" ? "nav-item nav-item--active" : "nav-item"
-            }
-            onClick={(event) =>
-              navigateFromSidebar("heartbeat", event.currentTarget)
-            }
-            type="button"
-          >
-            <HeartPulse aria-hidden="true" size={17} />
-            <span>{t("navigation.heartbeat")}</span>
-            {pendingHeartbeatSuggestionCount > 0 && (
-              <span
-                aria-label={t("navigation.pendingSuggestions", {
-                  count: pendingHeartbeatSuggestionCount,
-                })}
-                className="nav-item__badge"
-              >
-                {pendingHeartbeatSuggestionCount}
-              </span>
-            )}
-          </button>
+                {id === "heartbeat" && pendingHeartbeatSuggestionCount > 0 && (
+                  <span className="nav-item__badge" aria-label={t("navigation.pendingSuggestions", { count: pendingHeartbeatSuggestionCount })}>
+                    {pendingHeartbeatSuggestionCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
           <button
             aria-current={view === "activity" ? "page" : undefined}
             className={
@@ -8881,7 +8977,7 @@ function App(): React.JSX.Element {
             onPointerEnter={() => preloadWorkspaceRouteOnIntent("activity")}
             type="button"
           >
-            <TerminalSquare aria-hidden="true" size={17} />
+            <ChartColumn aria-hidden="true" size={17} />
             <span>{t("navigation.activity")}</span>
           </button>
         </nav>
@@ -9415,9 +9511,34 @@ function App(): React.JSX.Element {
           ) : null}
         </div>
 
-        <div className="sidebar-footer">
+        <div className="sidebar-footer sidebar-footer--applications">
           <button
-            className="user-card"
+            className="nav-item"
+            type="button"
+            ref={applicationMenuTriggerRef}
+            aria-haspopup="menu"
+            aria-expanded={applicationMenuOpen}
+            aria-controls="application-menu"
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+              event.preventDefault();
+              if (!applicationMenuOpen) {
+                setApplicationMenuOpen(true);
+                void reloadApplicationSettings();
+              }
+            }}
+            onClick={() => {
+              setApplicationMenuOpen(!applicationMenuOpen);
+              if (!applicationMenuOpen) void reloadApplicationSettings();
+            }}
+          >
+            <Grid2X2 size={17} aria-hidden="true" />
+            <span>{t("applications.title")}</span>
+          </button>
+          <button
+            className="icon-button"
+            aria-label={t('navigation.settings')}
+            title={t('navigation.settings')}
             type="button"
             onFocus={() => preloadWorkspaceRouteOnIntent("settings")}
             onClick={(event) =>
@@ -9425,15 +9546,6 @@ function App(): React.JSX.Element {
             }
             onPointerEnter={() => preloadWorkspaceRouteOnIntent("settings")}
           >
-            <span className="avatar">GB</span>
-            <span className="user-card__copy">
-              <strong>{t("sidebar.localWorkspace")}</strong>
-              <small>
-                {appInfo
-                  ? `${appInfo.platform} · ${appInfo.arch}`
-                  : t("sidebar.loading")}
-              </small>
-            </span>
             <Settings size={16} />
           </button>
         </div>
@@ -10830,13 +10942,13 @@ function App(): React.JSX.Element {
                 </PageShell>
               </KeepAliveRoute>
             )}
-            {magicNotesEnabled &&
-              (view === "magic-notes" ||
+            {(view === "magic-notes" ||
                 cachedWorkspaceViewKeys.has("magic-notes")) && (
                 <KeepAliveRoute
                   active={view === "magic-notes"}
                   route="magic-notes"
                 >
+                  <ApplicationAvailability id="magic-notes" enabled={magicNotesEnabled}>
                   <PageShell variant="master-detail">
                     <RouteErrorBoundary
                       key="magic-notes"
@@ -10852,10 +10964,11 @@ function App(): React.JSX.Element {
                           <RouteLoadingStatus label={t("route.loading")} />
                         }
                       >
-                        <MagicNotesWorkspace onNotify={notify} />
+                        <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} />
                       </Suspense>
                     </RouteErrorBoundary>
                   </PageShell>
+                  </ApplicationAvailability>
                 </KeepAliveRoute>
               )}
             {(view === "knowledge" ||
@@ -11247,6 +11360,51 @@ function App(): React.JSX.Element {
                 </PageShell>
               </KeepAliveRoute>
             )}
+            {localInferenceOpen && (
+              <LocalInferencePage
+                enabled={isApplicationEnabled(applicationSettings, "local-inference")}
+                onClose={() => setLocalInferenceOpen(false)}
+                restoreFocus={() => applicationMenuTriggerRef.current?.closest('[aria-hidden="true"]')
+                  ? document.querySelector<HTMLElement>('.sidebar-toggle')
+                  : applicationMenuTriggerRef.current}
+              />
+            )}
+            {applicationCenterOpen && (
+              <ApplicationCenter
+                settings={applicationSettings}
+                pending={applicationSettingsPending}
+                locked={applicationSettingsUnconfirmed}
+                error={applicationSettingsError}
+                initialApplication={applicationSettingsTarget}
+                onClose={() => setApplicationCenterOpen(false)}
+                onOpen={(id) => {
+                  if (!isApplicationEnabled(applicationSettings, id)) return;
+                  setApplicationCenterOpen(false);
+                  setView(id);
+                  if (window.innerWidth < 900) setSidebarOpen(false);
+                }}
+                onUpdate={updateApplicationSettings}
+                onRetry={() => void reloadApplicationSettings()}
+              />
+            )}
+            {applicationMenuOpen && (
+              <ApplicationMenu
+                anchorRef={applicationMenuTriggerRef}
+                settings={applicationSettings}
+                pending={applicationSettingsPending || (!applicationSettings && !applicationSettingsError)}
+                error={applicationSettingsError}
+                onClose={() => setApplicationMenuOpen(false)}
+                onOpen={(id) => {
+                  setView(id);
+                  if (window.innerWidth < 900) setSidebarOpen(false);
+                }}
+                onManage={() => {
+                  setApplicationSettingsTarget(undefined);
+                  setApplicationCenterOpen(true);
+                }}
+                onRetry={() => void reloadApplicationSettings()}
+              />
+            )}
             {settingsOpen && (
                 <RouteErrorBoundary
                   key="settings"
@@ -11301,18 +11459,6 @@ function App(): React.JSX.Element {
                             ))
                         ) {
                           setSelectedExpertId("");
-                        }
-                      }}
-                      onMagicNotesEnabledChange={(enabled) => {
-                        setMagicNotesEnabled(enabled);
-                        if (!enabled) {
-                          setIncompleteMagicTodoCount(0);
-                        }
-                      }}
-                      onMagicNotesShowIncompleteTodoCountChange={(enabled) => {
-                        setMagicNotesShowIncompleteTodoCount(enabled);
-                        if (!enabled) {
-                          setIncompleteMagicTodoCount(0);
                         }
                       }}
                       onRemoteProjectsEnabledChange={
@@ -11462,6 +11608,10 @@ function App(): React.JSX.Element {
           )}
           {customTaskDialog && activeProject?.kind === "user" && (
             <CustomTaskDialog
+              conversations={conversations.filter(
+                (conversation) => !conversation.remote &&
+                  conversation.projectId === activeProject.id,
+              )}
               currentConversationAvailable={Boolean(
                 activeConversation &&
                 !activeConversation.remote &&
@@ -11480,6 +11630,13 @@ function App(): React.JSX.Element {
           )}
           <RightAssistantSidebar
             activeConversationId={activeId}
+            conversationStats={statsConversation && executionStats.conversation ? {
+              conversationId: statsConversation.id,
+              messageCount: statsMessageCount,
+              replyDurationMs: executionStats.conversation.durationMs,
+              incomplete: executionStats.conversation.incompleteRequestCount > 0,
+            } : undefined}
+            taskDurations={taskDurations}
             approvals={pendingSidebarApprovals}
             artifacts={sidebarArtifacts}
             browserStates={browserStates}
@@ -11559,6 +11716,7 @@ function App(): React.JSX.Element {
         </div>
       </div>
     </div>
+    </ApplicationSettingsNavigation>
   );
 }
 

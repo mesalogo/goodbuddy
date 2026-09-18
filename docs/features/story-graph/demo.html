@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Story Graph · GoodBuddy 监督者</title>
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <header class="appbar"><div class="brand"><span class="brandmark">G</span> GoodBuddy <span class="separator">/</span> 监督者</div><div class="top-actions"><span class="badge">交互原型 · 模拟数据</span><button id="theme" aria-label="切换深浅主题">切换主题</button></div></header>
+  <main>
+    <header class="page-heading"><div><div class="eyebrow">STORY GRAPH</div><h1>故事图谱</h1><p>沿着工作的来路，看见知识之间的联系。</p></div><div class="scope">范围：GoodBuddy 项目<br><span>2026.09.01 — 09.14</span></div></header>
+    <div class="workspace">
+      <aside class="timelines"><div class="section-heading"><h2>时间线</h2><span>03</span></div><p class="muted">选择一条故事，查看它的演变。</p><div id="timeline-list"></div><div class="sidebar-note"><span class="eyebrow">如何读图</span><p>一个圆，一条时间线。<br>圆内节点是阶段总结，<br>圆间虚线是知识关联。</p><p class="muted">分布仅作示意。集中度不等于效率或产出。</p></div></aside>
+      <section class="graph-section" aria-label="故事图谱画布"><div class="graph-toolbar"><div><strong id="graph-title">全部故事</strong><span id="node-count" class="muted"></span></div><label class="view-picker">视图 <select id="view" aria-label="图谱视图"><option value="flat">平铺 · 环绕时间轴</option><option value="circles">圆形 · 独立故事</option></select></label><label class="check"><input id="relations" type="checkbox" checked> 跨线关联</label></div>
+        <div class="canvas"><svg id="graph" viewBox="0 0 860 620" role="group" aria-label="可交互故事图谱，使用 Tab 选择阶段节点"></svg><div class="canvas-caption"><span class="live-dot"></span> 阶段总结构成故事，关联让知识相遇</div></div>
+        <div class="graph-legend"><span><i class="dot"></i>阶段总结</span><span><i class="line"></i>时间推进</span><span><i class="line dashed"></i>知识关联</span><button id="reset">显示全部时间线</button></div>
+        <div class="playback"><div class="playback-heading"><strong>故事如何长出来</strong><output id="date-label" for="stage">09.14 · 知识汇聚</output></div><input id="stage" type="range" min="0" max="2" value="2" step="1" aria-label="回放阶段"><div class="range-labels"><span>09.01 · 起点</span><span>09.07 · 探索</span><span>09.14 · 汇聚</span></div></div>
+      </section>
+      <aside class="inspector" aria-label="阶段详情"><div class="section-heading"><h2>故事详情</h2><span class="badge">可追溯</span></div><div id="detail" aria-live="polite"></div></aside>
+    </div>
+    <section class="insights"><div><div class="eyebrow">ACROSS STORIES</div><h2>从不同故事中，找到同一个答案</h2><p>3 条时间线中，有一条共同的知识线索。</p></div><button id="insight" class="insight-card"><span class="insight-icon">↗</span><span><strong>知识需要保留来路</strong><small>故事图谱 × 个人知识库 × 记忆架构</small></span><span>查看聚合 →</span></button></section>
+    <footer>设计讨论稿 · 所有总结、关联和来源均为模拟示例；未读取或修改真实会话。</footer>
+  </main>
+  <script src="demo.js"></script>
+</body>
+</html>

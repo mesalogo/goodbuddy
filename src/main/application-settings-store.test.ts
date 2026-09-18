@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApplicationSettingsStore,
   applicationSettingsSchema,
@@ -44,6 +44,55 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it('keeps the confirmed snapshot when an atomic save fails', async () => {
+    const { filePath, store } = await createStore()
+    const confirmed = await store.get()
+    const changed = vi.fn()
+    store.onChanged(changed)
+    await mkdir(filePath)
+    await expect(store.update({ localInferenceEnabled: false })).rejects.toThrow()
+    expect(await store.get()).toEqual(confirmed)
+    expect(changed).not.toHaveBeenCalled()
+  })
+
+  it('defaults missing released Notes fields to enabled without resetting unrelated values', async () => {
+    const { filePath, store } = await createStore()
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 11, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }
+    for (const key of ['applicationNavigation', 'localInferenceEnabled', 'magicNotesEnabled', 'magicNotesShowIncompleteTodoCount']) delete legacy[key]
+    await writeFile(filePath, JSON.stringify(legacy), 'utf8')
+    expect(await store.get()).toEqual({ ...defaultApplicationSettings, checkUpdatesOnStartup: false })
+    expect(await createApplicationSettingsStore(filePath).get()).toEqual(await store.get())
+  })
+  it('migrates released settings without replacing explicit false values or comment choices', async () => {
+    const { filePath, store } = await createStore()
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 11, lastSeenReleaseNotesVersion: null, magicNotesEnabled: false, magicNotesShowIncompleteTodoCount: false, magicNoteCommentMode: 'after-save-manual', magicNoteCommentFormat: 'structured' }
+    for (const key of ['applicationNavigation', 'localInferenceEnabled']) delete legacy[key]
+    await writeFile(filePath, JSON.stringify(legacy), 'utf8')
+    const migrated = await store.get()
+    expect(migrated).toMatchObject({ magicNotesEnabled: false, magicNotesShowIncompleteTodoCount: false, localInferenceEnabled: true, magicNoteCommentMode: 'after-save-manual', magicNoteCommentFormat: 'structured' })
+    await store.update({ localInferenceEnabled: false })
+    await store.update({ applicationNavigation: { ...migrated.applicationNavigation, order: [...migrated.applicationNavigation.order].reverse(), pinned: { ...migrated.applicationNavigation.pinned, 'local-inference': false } } })
+    const reloaded = await createApplicationSettingsStore(filePath).get()
+    expect(reloaded).toMatchObject({ magicNotesEnabled: false, magicNotesShowIncompleteTodoCount: false, localInferenceEnabled: false, magicNoteCommentMode: 'after-save-manual', magicNoteCommentFormat: 'structured' })
+    expect(reloaded.applicationNavigation.order).toEqual([...migrated.applicationNavigation.order].reverse())
+    expect(reloaded.applicationNavigation.pinned['local-inference']).toBe(false)
+  })
+
+  it('rejects incomplete, duplicate, unknown order and pin values without applying defaults to patches', () => {
+    const navigation = defaultApplicationSettings.applicationNavigation
+    for (const invalid of [
+      { ...navigation, order: navigation.order.slice(1) },
+      { ...navigation, order: ['magic-notes', 'magic-notes'] },
+      { ...navigation, order: ['unknown', 'local-inference'] },
+      { ...navigation, order: ['knowledge', 'local-inference'] },
+      { ...navigation, order: ['heartbeat', 'local-inference'] },
+      { ...navigation, pinned: { ...navigation.pinned, heartbeat: true } },
+      { ...navigation, pinned: { ...navigation.pinned, knowledge: true } },
+      { ...navigation, pinned: { ...navigation.pinned, extra: true } },
+      { ...navigation, pinned: { knowledge: true } }
+    ]) expect(applicationSettingsUpdateSchema.safeParse({ applicationNavigation: invalid }).success).toBe(false)
+    expect(applicationSettingsUpdateSchema.parse({ checkUpdatesOnStartup: false })).toEqual({ checkUpdatesOnStartup: false })
+  })
   it('returns defaults without creating a settings file', async () => {
     const { directory, store } = await createStore()
 
@@ -61,6 +110,7 @@ describe('ApplicationSettingsStore', () => {
         magicNotesShowIncompleteTodoCount: false
       })
     ).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -73,6 +123,7 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -85,7 +136,8 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 11,
+      ...defaultApplicationSettings,
+      version: 12,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -119,7 +171,7 @@ describe('ApplicationSettingsStore', () => {
       remoteProjectsEnabled: true
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 11,
+      version: 12,
       lastSeenReleaseNotesVersion: null,
       ...defaultApplicationSettings,
       remoteProjectsEnabled: true
@@ -138,6 +190,7 @@ describe('ApplicationSettingsStore', () => {
     await expect(
       createApplicationSettingsStore(filePath).get()
     ).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -152,7 +205,7 @@ describe('ApplicationSettingsStore', () => {
   })
 
   it.each([1, 2])(
-    'loads version %s settings missing the field with Magic Notes disabled',
+    'loads version %s settings missing the field with Magic Notes enabled',
     async (version) => {
       const { filePath, store } = await createStore()
       await writeFile(
@@ -165,13 +218,14 @@ describe('ApplicationSettingsStore', () => {
       )
 
       await expect(store.get()).resolves.toEqual({
+        ...defaultApplicationSettings,
         checkUpdatesOnStartup: false,
         updateSource: 'github',
         modelDownloadSource: 'modelscope',
         localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
-        magicNotesEnabled: false,
+        magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate',
         magicNoteCommentFormat: 'combined'
@@ -192,6 +246,7 @@ describe('ApplicationSettingsStore', () => {
     )
 
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -219,6 +274,7 @@ describe('ApplicationSettingsStore', () => {
     )
 
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -252,7 +308,8 @@ describe('ApplicationSettingsStore', () => {
       createApplicationSettingsStore(filePath).getLastSeenReleaseNotesVersion()
     ).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 11,
+      ...defaultApplicationSettings,
+      version: 12,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -283,6 +340,7 @@ describe('ApplicationSettingsStore', () => {
     )
 
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -311,6 +369,7 @@ describe('ApplicationSettingsStore', () => {
     await writeFile(filePath, JSON.stringify(versionSix), 'utf8')
 
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'mirror',
       modelDownloadSource: 'modelscope',
@@ -323,8 +382,9 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'structured'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...defaultApplicationSettings,
       ...versionSix,
-      version: 11,
+      version: 12,
       modelDownloadSource: 'modelscope',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
@@ -334,8 +394,9 @@ describe('ApplicationSettingsStore', () => {
 
     await store.update({ modelDownloadSource: 'hugging-face' })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...defaultApplicationSettings,
       ...versionSix,
-      version: 11,
+      version: 12,
       modelDownloadSource: 'hugging-face',
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
@@ -359,6 +420,7 @@ describe('ApplicationSettingsStore', () => {
     await writeFile(filePath, JSON.stringify(versionSeven), 'utf8')
 
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -371,8 +433,9 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...defaultApplicationSettings,
       ...versionSeven,
-      version: 11,
+      version: 12,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
@@ -398,6 +461,7 @@ describe('ApplicationSettingsStore', () => {
 
     const migratedSettings = await store.get()
     expect(migratedSettings).toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'mirror',
       modelDownloadSource: 'hugging-face',
@@ -411,8 +475,9 @@ describe('ApplicationSettingsStore', () => {
     })
     await expect(store.getLastSeenReleaseNotesVersion()).resolves.toBe('0.8.18')
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...defaultApplicationSettings,
       ...versionEight,
-      version: 11,
+      version: 12,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false
@@ -420,8 +485,9 @@ describe('ApplicationSettingsStore', () => {
 
     await store.update({ checkUpdatesOnStartup: true })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
+      ...defaultApplicationSettings,
       ...versionEight,
-      version: 11,
+      version: 12,
       checkUpdatesOnStartup: true,
       localToolEnvironment: defaultApplicationSettings.localToolEnvironment,
       conversationHtmlRenderingEnabled: true,
@@ -454,6 +520,7 @@ describe('ApplicationSettingsStore', () => {
     })
 
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'mirror',
       modelDownloadSource: 'hugging-face',
@@ -476,8 +543,9 @@ describe('ApplicationSettingsStore', () => {
 
     const persisted = JSON.parse(await readFile(filePath, 'utf8'))
     expect(persisted).toEqual({
+      ...defaultApplicationSettings,
       ...versionNine,
-      version: 11,
+      version: 12,
       conversationHtmlRenderingEnabled: true,
       localToolEnvironment: {
         node: {
@@ -538,6 +606,7 @@ describe('ApplicationSettingsStore', () => {
     await expect(
       store.update({ checkUpdatesOnStartup: false })
     ).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -596,7 +665,7 @@ describe('ApplicationSettingsStore', () => {
     await expect(store.get()).resolves.toEqual(defaultApplicationSettings)
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
       ...versionTenSettings,
-      version: 11,
+      version: 12,
       conversationHtmlRenderingEnabled: true
     })
   })
@@ -606,7 +675,7 @@ describe('ApplicationSettingsStore', () => {
     JSON.stringify({
       version: 3,
       checkUpdatesOnStartup: false,
-      magicNotesEnabled: false
+      magicNotesEnabled: 'false'
     }),
     JSON.stringify({
       version: 2,
@@ -685,6 +754,7 @@ describe('ApplicationSettingsStore', () => {
     ])
 
     await expect(store.get()).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -697,7 +767,8 @@ describe('ApplicationSettingsStore', () => {
       magicNoteCommentFormat: 'combined'
     })
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 11,
+      ...defaultApplicationSettings,
+      version: 12,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',
@@ -727,6 +798,7 @@ describe('ApplicationSettingsStore', () => {
         magicNotesEnabled: true
       })
     ).resolves.toEqual({
+      ...defaultApplicationSettings,
       checkUpdatesOnStartup: false,
       updateSource: 'github',
       modelDownloadSource: 'modelscope',

@@ -76,7 +76,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
     database.close()
 
     const raw = new DatabaseSync(path)
-    raw.exec('PRAGMA user_version = 2')
+    raw.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 2')
     raw.close()
 
     const migrated = new AssistantDatabase(path)
@@ -128,7 +128,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
         'DELETE FROM heartbeat_config_projects WHERE config_id = ?'
       )
       .run(config.id)
-    raw.exec('PRAGMA user_version = 20')
+    raw.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 20')
     raw.close()
 
     const migrated = new AssistantDatabase(path)

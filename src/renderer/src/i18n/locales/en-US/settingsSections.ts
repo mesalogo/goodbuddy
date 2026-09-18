@@ -557,8 +557,7 @@ export const settingsSections = {
     label: 'Platform feature options',
     tabs: {
       ariaLabel: 'Platform feature settings',
-      general: 'General',
-      magicNotes: 'Magic Notes'
+      general: 'General'
     },
     conversationHtml: {
       title: 'Conversation HTML rendering',
@@ -680,7 +679,7 @@ export const settingsSections = {
     magicNotes: {
       title: 'Magic Notes',
       description:
-        'Off by default. Enable it to capture notes and to-dos and analyze content with AI.',
+        'Capture notes and to-dos and analyze content with AI. Manage preferences in Application settings.',
       showEntry: 'Show Magic Notes',
       showIncompleteTodoCount: 'Show incomplete to-do count',
       showIncompleteTodoCountHelp:

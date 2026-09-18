@@ -19,6 +19,7 @@ import type {
 } from "../../shared/contracts";
 import {
   defaultLocalToolEnvironmentSettings,
+  defaultApplicationNavigation,
   type ApplicationSettings,
 } from "../../shared/application-settings-contracts";
 import type { GlobalShortcutSettingsSnapshot } from "../../shared/shortcut";
@@ -181,6 +182,12 @@ const terminalSnapshot: TerminalSnapshot = {
 };
 
 const api: DesktopApi = {
+  localInference: {
+    openSettings: vi.fn(async () => undefined),
+    getSnapshot: vi.fn(async () => ({ services: [], tasks: [] })),
+    act: vi.fn(async () => undefined),
+    cancel: vi.fn(async () => undefined)
+  },
   storageUpgrade: {
     getProgress: vi.fn(),
     act: vi.fn(async () => undefined)
@@ -572,6 +579,10 @@ const api: DesktopApi = {
   },
   tasks: {
     list: vi.fn(async () => []),
+    getExecutionStats: vi.fn(async () => ({
+      durationMs: 0, requestCount: 0, incompleteRequestCount: 0,
+      activeRequestCount: 0, asOf: Date.now(), taskDurations: [],
+    })),
     setStatus: vi.fn(async () => {}),
   },
   activityHistory: {
@@ -1048,6 +1059,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
     updateSource: "github",
     modelDownloadSource: "modelscope",
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
+    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
     conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: enabled,
     magicNotesEnabled: false,
@@ -1067,6 +1079,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
     check: vi.fn(),
     openReleasePage: vi.fn(),
     onResult: vi.fn(() => () => {}),
+    onSettingsChanged: vi.fn(() => () => {}),
   };
   return { updateSettings };
 }
@@ -1224,7 +1237,7 @@ describe("App", () => {
     vi.mocked(api.activityHistory.replace).mockReset().mockResolvedValue();
     vi.mocked(api.schedules.list).mockReset().mockResolvedValue([]);
     api.channels = undefined;
-    api.updates = undefined;
+    installRemoteProjectsSetting(false);
     newConversationListener = undefined;
     beforeQuitListener = undefined;
     browserListener = undefined;
@@ -1431,7 +1444,7 @@ describe("App", () => {
       expect(selected).toHaveClass("conversation-item--active");
       const summary = await screen.findByRole("button", { name: /全项目活动/u });
       expect(summary).toHaveTextContent("1 个运行中");
-      fireEvent.click(screen.getByRole("button", { name: /本地工作区/u }));
+      fireEvent.click(screen.getByRole("button", { name: /^设置$/u }));
       const settings = await screen.findByRole("dialog", { name: "设置中心" });
       expect(selected).toHaveClass("conversation-item--active");
       vi.mocked(api.tasks.list).mockResolvedValue([{ ...currentTask, status: "completed" }]);
@@ -1514,7 +1527,7 @@ describe("App", () => {
     it("respects the Settings leave guard before changing project and conversation", async () => {
       render(<App />);
       await screen.findByRole("button", { name: /全项目活动/u });
-      fireEvent.click(await screen.findByText("本地工作区"));
+      fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.change(await screen.findByLabelText("默认工作区目录"), { target: { value: "C:\\Unsaved activity draft" } });
       fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
@@ -1749,6 +1762,105 @@ describe("App", () => {
     expect(screen.queryByText("All retained text")).not.toBeInTheDocument();
   });
 
+  describe("custom task creation", () => {
+    const currentId = "00000000-0000-4000-8000-000000000811";
+    const otherId = "00000000-0000-4000-8000-000000000812";
+    const snapshots: ConversationSnapshot[] = [
+      { id: currentId, projectId, title: "Task current", updatedAt: 300, messages: [] },
+      { id: otherId, projectId, title: "Task other", updatedAt: 200, messages: [] },
+      { id: "00000000-0000-4000-8000-000000000813", projectId, title: "Task remote", updatedAt: 100, messages: [],
+        remote: { channel: "weixin", accountDisplay: "Remote account", conversationType: "direct" } },
+      { id: "00000000-0000-4000-8000-000000000814", projectId: "other-project", title: "Task elsewhere", updatedAt: 50, messages: [] },
+    ];
+
+    beforeEach(() => {
+      vi.mocked(api.conversations.list).mockResolvedValue(snapshots);
+      vi.mocked(api.schedules.create).mockReset().mockImplementation(async (input) => ({
+        ...input,
+        workMode: "execute",
+        id: "00000000-0000-4000-8000-000000000815",
+        taskId: "00000000-0000-4000-8000-000000000816",
+        conversationId: input.conversationId ?? "00000000-0000-4000-8000-000000000817",
+        enabled: !input.runImmediately,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+    });
+
+    async function openDialog(): Promise<HTMLElement> {
+      render(<App />);
+      fireEvent.click(await screen.findByRole("button", { name: "切换助手工作栏" }));
+      fireEvent.click(await screen.findByRole("tab", { name: "任务中心" }));
+      fireEvent.click(await screen.findByRole("button", { name: "新建任务" }));
+      return screen.getByRole("dialog", { name: "新建定制任务" });
+    }
+
+    it("creates immediately in the current conversation with one IPC call and no follow-up runNow", async () => {
+      const dialog = await openDialog();
+      expect(within(dialog).getByLabelText("关联会话")).toHaveValue("current");
+      fireEvent.change(within(dialog).getByLabelText("任务内容"), { target: { value: "立即检查项目" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "创建任务" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建定制任务" })).not.toBeInTheDocument());
+      expect(api.schedules.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        conversationId: currentId, projectId, title: "立即检查项目", prompt: "立即检查项目",
+        recurrence: "once", runImmediately: true,
+      }));
+      expect(api.schedules.runNow).not.toHaveBeenCalled();
+    });
+
+    it.each([otherId, "new"])("creates in the selected destination %s while excluding remote and other-project conversations", async (destination) => {
+      const dialog = await openDialog();
+      expect(within(dialog).getByRole("option", { name: "Task other" })).toBeInTheDocument();
+      expect(within(dialog).queryByRole("option", { name: "Task remote" })).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole("option", { name: "Task elsewhere" })).not.toBeInTheDocument();
+      fireEvent.change(within(dialog).getByLabelText("关联会话"), { target: { value: destination } });
+      fireEvent.change(within(dialog).getByLabelText("任务内容"), { target: { value: "检查所选会话" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "创建任务" }));
+      await waitFor(() => expect(api.schedules.create).toHaveBeenCalledOnce());
+      const input = vi.mocked(api.schedules.create).mock.calls[0]![0];
+      if (destination === "new") expect(input).not.toHaveProperty("conversationId");
+      else expect(input.conversationId).toBe(otherId);
+      expect(input.runImmediately).toBe(true);
+      expect(api.schedules.runNow).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建定制任务" })).not.toBeInTheDocument());
+    });
+
+    it("validates future scheduled time before creating and retains recurrence", async () => {
+      const dialog = await openDialog();
+      fireEvent.change(within(dialog).getByLabelText("任务内容"), { target: { value: "每周检查" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "定时执行" }));
+      fireEvent.change(within(dialog).getByLabelText("运行频率"), { target: { value: "weekly" } });
+      fireEvent.change(within(dialog).getByLabelText("首次运行"), { target: { value: "2020-01-01T12:00" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "创建任务" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("首次运行时间必须晚于当前时间");
+      expect(api.schedules.create).not.toHaveBeenCalled();
+      fireEvent.change(within(dialog).getByLabelText("首次运行"), { target: { value: "2099-01-01T12:00" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "创建任务" }));
+      await waitFor(() => expect(api.schedules.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        recurrence: "weekly", runImmediately: false, nextRunAt: new Date("2099-01-01T12:00").toISOString(),
+      })));
+      expect(api.schedules.runNow).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建定制任务" })).not.toBeInTheDocument());
+    });
+
+    it("retains the draft after create failure and does not retry creation after a refresh failure", async () => {
+      const dialog = await openDialog();
+      vi.mocked(api.schedules.create).mockRejectedValueOnce(new Error("队列写入失败"));
+      fireEvent.change(within(dialog).getByLabelText("任务内容"), { target: { value: "保留任务内容" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "创建任务" }));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("队列写入失败");
+      expect(within(dialog).getByLabelText("任务内容")).toHaveValue("保留任务内容");
+      expect(api.schedules.create).toHaveBeenCalledOnce();
+      vi.mocked(api.conversations.listSummaries).mockRejectedValueOnce(new Error("刷新失败"));
+      vi.mocked(api.tasks.list).mockRejectedValueOnce(new Error("刷新失败"));
+      vi.mocked(api.schedules.list).mockRejectedValueOnce(new Error("刷新失败"));
+      fireEvent.click(within(dialog).getByRole("button", { name: "创建任务" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建定制任务" })).not.toBeInTheDocument());
+      expect(api.schedules.create).toHaveBeenCalledTimes(2);
+      expect(api.schedules.runNow).not.toHaveBeenCalled();
+    });
+  });
+
   it("provides custom minimize, maximize, and close controls", async () => {
     const { unmount } = render(<App />);
 
@@ -1803,7 +1915,7 @@ describe("App", () => {
       expect(
         screen.getByRole("button", { name: "Current project" }),
       ).toHaveTextContent("Default project");
-      expect(screen.getByText("Project: Default project")).toHaveClass(
+      expect(screen.getByLabelText("Project: Default project")).toHaveClass(
         "scope-badge",
       );
       expect(
@@ -1877,7 +1989,7 @@ describe("App", () => {
         within(assistantSidebar).getByText("Project: Default project"),
       ).toBeInTheDocument();
       const taskIndexHeading = within(assistantSidebar).getByRole("heading", {
-        name: "Task index",
+        name: /Project tasks/,
       });
       const newTaskButton = within(assistantSidebar).getByRole("button", {
         name: "New task",
@@ -1891,10 +2003,8 @@ describe("App", () => {
         within(taskDialog).getByText("Default project"),
       ).toBeInTheDocument();
       expect(
-        within(taskDialog).getByRole("button", {
-          name: "Current conversation",
-        }),
-      ).toHaveAttribute("aria-pressed", "true");
+        within(taskDialog).getByLabelText("Conversation"),
+      ).toHaveValue("current");
       fireEvent.click(
         within(taskDialog).getByRole("button", {
           name: "Close new custom task",
@@ -2582,7 +2692,7 @@ describe("App", () => {
 
     fireEvent.click(
       await screen.findByRole("button", {
-        name: /本地工作区/u,
+        name: /^设置$/u,
       }),
     );
     await screen.findByRole("heading", { name: "设置中心" }, { timeout: 3000 });
@@ -2713,7 +2823,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
     await screen.findByRole("heading", { name: "运行记录" });
     fireEvent.click(screen.getByRole("button", { name: "对话" }));
-    fireEvent.click(screen.getByRole("button", { name: /本地工作区/u }));
+    fireEvent.click(screen.getByRole("button", { name: /^设置$/u }));
     await screen.findByRole("heading", { name: "设置中心" });
 
     expect(document.querySelectorAll(".workspace-route-cache")).toHaveLength(4);
@@ -2867,6 +2977,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
@@ -2878,6 +2989,7 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       render(
@@ -2888,7 +3000,7 @@ describe("App", () => {
 
       fireEvent.click(
         await screen.findByRole("button", {
-          name: /本地工作区/u,
+          name: /^设置$/u,
         }),
       );
       await screen.findByRole(
@@ -2966,6 +3078,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -2978,6 +3091,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -2988,6 +3102,7 @@ describe("App", () => {
       check,
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       render(<App />);
@@ -3075,6 +3190,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -3087,6 +3203,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -3097,6 +3214,7 @@ describe("App", () => {
       check,
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       const first = render(<App />);
@@ -3545,7 +3663,13 @@ describe("App", () => {
       target: { value: "方案讨论更新" },
     });
     fireEvent.submit(renameInput.closest("form")!);
-    expect(await screen.findAllByText("方案讨论更新")).toHaveLength(2);
+    expect(
+      await within(container.querySelector(".conversation-list") as HTMLElement)
+        .findByText("方案讨论更新"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".conversation-title")).toHaveTextContent(
+      /^方案讨论更新$/,
+    );
     vi.mocked(api.conversations.saveLocal).mockClear();
 
     fireEvent.click(screen.getByLabelText("更多会话操作 方案讨论更新"));
@@ -4442,7 +4566,7 @@ describe("App", () => {
     for (const reasoning of completedReasoning) {
       expect(reasoning.closest("details")).not.toHaveAttribute("open");
     }
-    expect(screen.getByText("项目：默认项目")).toHaveClass("scope-badge");
+    expect(screen.getByLabelText("项目：默认项目")).toHaveClass("scope-badge");
   });
 
   it("keeps every activity detail in a long tool chain", async () => {
@@ -5088,7 +5212,7 @@ describe("App", () => {
       });
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /本地工作区/u }));
+    fireEvent.click(screen.getByRole("button", { name: /^设置$/u }));
     await screen.findByRole("heading", { name: "设置中心" });
     fireEvent.click(screen.getByRole("tab", { name: "上下文控制" }));
     const trigger = await screen.findByLabelText("压缩触发阈值");
@@ -5113,7 +5237,7 @@ describe("App", () => {
   it("guards sidebar navigation away from dirty Settings drafts", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByText("本地工作区"));
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }));
     await screen.findByRole("heading", { name: "设置中心" });
     fireEvent.change(await screen.findByLabelText("默认工作区目录"), {
       target: { value: "C:\\Unsaved from App" },
@@ -5137,7 +5261,7 @@ describe("App", () => {
 
     await screen.findByLabelText("向 GoodBuddy 提问");
     const settingsTrigger = screen.getByRole("button", {
-      name: /本地工作区/u,
+      name: /^设置$/u,
     });
     fireEvent.click(settingsTrigger);
     await screen.findByRole("heading", { name: "设置中心" });
@@ -5158,7 +5282,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: label }));
     const workspace = document.querySelector(`[data-route="${route}"]`)!;
     workspace.scrollTop = 120;
-    const trigger = screen.getByRole("button", { name: /本地工作区/u });
+    const trigger = screen.getByRole("button", { name: /^设置$/u });
     trigger.focus();
     fireEvent.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "设置中心" });
@@ -5204,6 +5328,7 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -5235,6 +5360,7 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     api.shortcuts = {
       getSettings: vi.fn(async () => shortcutSnapshot),
@@ -5256,7 +5382,7 @@ describe("App", () => {
     try {
       render(<App />);
       expect(await screen.findByText("Ctrl+Shift+Space")).toBeInTheDocument();
-      fireEvent.click(await screen.findByText("本地工作区"));
+      fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
       const shortcutInput = await screen.findByLabelText("快捷键");
@@ -5273,7 +5399,7 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "对话" }));
       expect(await screen.findByText("Ctrl+Alt+K")).toBeInTheDocument();
 
-      fireEvent.click(await screen.findByText("本地工作区"));
+      fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
       const shortcutSwitch = await screen.findByRole("switch", {
@@ -5657,7 +5783,7 @@ describe("App", () => {
     );
   });
 
-  it("restores an independent knowledge scope for each conversation", async () => {
+  it("restores independent knowledge scopes across conversations and the application center", async () => {
     const libraryId = "11111111-1111-4111-8111-111111111111";
     const firstConversationId = "22222222-2222-4222-8222-222222222222";
     const secondConversationId = "33333333-3333-4333-8333-333333333333";
@@ -5725,6 +5851,14 @@ describe("App", () => {
         name: "选择知识库，本次已启用 1 个",
       }),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '知识库' } });
+    expect(within(screen.getByRole('dialog')).queryByRole('switch')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }));
+    openComposerOptions();
+    expect(screen.getByRole('button', { name: '选择知识库，本次已启用 1 个' })).toBeInTheDocument();
+    expect(document.querySelector('.composer__option-summary')).toHaveTextContent('每次先检索');
   });
 
   it("persists and submits always-retrieve mode for the active conversation", async () => {
@@ -6555,7 +6689,7 @@ describe("App", () => {
   it("opens chat and focuses the composer for tray conversations", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByText("本地工作区"));
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }));
     expect(
       await screen.findByRole("heading", { name: "设置中心" }),
     ).toBeInTheDocument();
@@ -7008,7 +7142,7 @@ describe("App", () => {
   it("applies and persists a dark appearance from Settings", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByText("本地工作区"));
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }));
     await screen.findByRole("heading", { name: "设置中心" }, { timeout: 3000 });
     fireEvent.click(screen.getByRole("tab", { name: "外观" }));
     fireEvent.click(screen.getByRole("radio", { name: /暗色/u }));
@@ -8194,7 +8328,7 @@ describe("App", () => {
       ).toHaveTextContent(remoteProject.name),
     );
 
-    fireEvent.click(screen.getByText("本地工作区"));
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
     fireEvent.click(await screen.findByRole("tab", { name: "平台功能" }));
     fireEvent.click(
       await screen.findByRole("tab", {
@@ -9444,14 +9578,14 @@ describe("App", () => {
     render(<App />);
     expect(await screen.findByText('当前聊天模型无法自动调用图片工具，可使用已有直连图片工作流。')).toBeVisible();
     fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: 'Keep my image request' } });
-    fireEvent.click(screen.getByRole('button', { name: /本地工作区/u }));
+    fireEvent.click(screen.getByRole('button', { name: /^设置$/u }));
     fireEvent.click(await screen.findByRole('tab', { name: '外观' }));
     fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     fireEvent.click(screen.getByRole('button', { name: '前往图片模型设置' }));
     expect(await screen.findByRole('tab', { name: '模型连接' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     expect(screen.getByLabelText('向 GoodBuddy 提问')).toHaveValue('Keep my image request');
-    fireEvent.click(screen.getByRole('button', { name: /本地工作区/u }));
+    fireEvent.click(screen.getByRole('button', { name: /^设置$/u }));
     expect(await screen.findByRole('tab', { name: 'Agent Runtime' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('button', { name: '关闭设置' }));
     fireEvent.click(screen.getByRole('button', { name: '前往图片模型设置' }));
@@ -11635,7 +11769,7 @@ describe("App", () => {
   it("configures a runtime without reading an existing API key", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByText("本地工作区"));
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }));
     expect(
       await screen.findByRole("heading", {
         name: "设置中心",
@@ -11738,7 +11872,7 @@ describe("App", () => {
       "true",
     );
     expect(
-      screen.getByText("没有活动项目。请选择其他任务范围或先打开一个项目。"),
+      screen.getByText("没有活动项目。请先打开一个项目以查看和创建任务。"),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("region", { name: "当前会话的任务" }),
@@ -12284,7 +12418,7 @@ describe("App", () => {
   it("opens Smart Heartbeat as a first-class workspace", async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    fireEvent.click(await screen.findByRole("button", { name: "智能心跳" }));
 
     expect(
       await screen.findByRole("heading", { name: "智能心跳" }),
@@ -12378,7 +12512,7 @@ describe("App", () => {
     );
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
     expect(await screen.findByText("知识库加载失败")).toBeInTheDocument();
     expect(screen.getAllByText("知识数据库暂时不可用")).toHaveLength(1);
     expect(screen.queryByText("建立第一个知识库")).not.toBeInTheDocument();
@@ -12434,7 +12568,7 @@ describe("App", () => {
       });
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
     fireEvent.click(
       await screen.findByRole(
         "button",
@@ -12465,7 +12599,7 @@ describe("App", () => {
     );
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    fireEvent.click(await screen.findByRole("button", { name: "智能心跳" }));
     expect(await screen.findByText("智能心跳加载失败")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "配置智能心跳" }),
@@ -12511,7 +12645,7 @@ describe("App", () => {
     ]);
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    fireEvent.click(await screen.findByRole("button", { name: "智能心跳" }));
     fireEvent.click(await screen.findByRole("tab", { name: "心跳计划" }));
     expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
     selectProjectOption(secondProject.name);
@@ -12522,7 +12656,7 @@ describe("App", () => {
 
   it("automatically snapshots the conversation project on new activity", async () => {
     render(<App />);
-    await screen.findByText("项目：默认项目");
+    expect(await screen.findByLabelText("项目：默认项目")).toHaveClass("scope-badge");
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
       target: { value: "记录项目范围" },
@@ -12564,7 +12698,7 @@ describe("App", () => {
     );
 
     render(<App />);
-    await screen.findByText("项目：默认项目");
+    expect(await screen.findByLabelText("项目：默认项目")).toHaveClass("scope-badge");
 
     await waitFor(() => {
       expect(api.activityHistory.replace).toHaveBeenCalledWith(
@@ -12588,7 +12722,7 @@ describe("App", () => {
       name: "主导航",
     });
     const chat = within(navigation).getByRole("button", { name: "对话" });
-    const knowledge = within(navigation).getByRole("button", {
+    const knowledge = await within(navigation).findByRole("button", {
       name: "知识库",
     });
 
@@ -12782,6 +12916,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -12794,6 +12929,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -12804,10 +12940,11 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       render(<App />);
-      await screen.findByText("项目：默认项目");
+      await screen.findByLabelText("项目：默认项目");
       const magicNotesEntry = await screen.findByRole("button", {
         name: "魔法笔记",
       });
@@ -12842,6 +12979,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -12853,6 +12991,7 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       render(<App />);
@@ -12897,6 +13036,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -12908,6 +13048,7 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       render(<App />);
@@ -12929,6 +13070,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
@@ -12941,6 +13083,7 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
+        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
@@ -12951,6 +13094,7 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       render(<App />);
@@ -12998,6 +13142,7 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -13017,6 +13162,7 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
 
     render(<App />);
@@ -13025,7 +13171,7 @@ describe("App", () => {
       await screen.findByTitle("Agent 回复 HTML 静态预览"),
     ).toHaveAttribute("sandbox", "");
 
-    fireEvent.click(await screen.findByRole("button", { name: /本地工作区/u }));
+    fireEvent.click(await screen.findByRole("button", { name: /^设置$/u }));
     fireEvent.click(await screen.findByRole("tab", { name: "平台功能" }));
     const toggle = await screen.findByRole("switch", {
       name: "在会话中渲染 HTML",
@@ -13046,12 +13192,13 @@ describe("App", () => {
     expect(screen.getByText(/Rendered dashboard/u)).toBeInTheDocument();
   });
 
-  it("keeps platform-feature switches in Settings without navigating", async () => {
+  it("omits global notes settings while retaining application center settings without navigating the workspace", async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: false,
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
+      applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -13071,25 +13218,34 @@ describe("App", () => {
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
       onResult: vi.fn(() => () => {}),
+      onSettingsChanged: vi.fn(() => () => {}),
     };
     try {
       const { container } = render(<App />);
       fireEvent.click(
         await screen.findByRole("button", {
-          name: /本地工作区/u,
+          name: /^设置$/u,
         }),
       );
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
-      fireEvent.click(await screen.findByRole("tab", { name: "魔法笔记" }));
+      await screen.findByRole("tab", { name: "通用设置" });
+      expect(screen.queryByRole("tab", { name: "魔法笔记" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "应用设置" })).not.toBeInTheDocument();
+      expect(api.updates.updateSettings).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "关闭设置" }));
+      fireEvent.click(screen.getByRole("button", { name: "应用中心" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "管理应用" }));
+      fireEvent.click(screen.getByRole("button", { name: "魔法笔记 应用设置" }));
       const toggle = await screen.findByRole("switch", {
-        name: "显示魔法笔记入口",
+        name: "启用应用",
       });
+      await waitFor(() => expect(toggle).toBeEnabled());
 
       fireEvent.click(toggle);
       await waitFor(() => expect(toggle).toBeChecked());
       expect(
-        screen.getByRole("heading", { name: "设置中心" }),
+        screen.getByRole("heading", { name: "魔法笔记" }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "魔法笔记" }),
@@ -13101,7 +13257,7 @@ describe("App", () => {
       fireEvent.click(toggle);
       await waitFor(() => expect(toggle).not.toBeChecked());
       expect(
-        screen.getByRole("heading", { name: "设置中心" }),
+        screen.getByRole("heading", { name: "魔法笔记" }),
       ).toBeInTheDocument();
       expect(
         screen.queryByRole("button", { name: "魔法笔记" }),
@@ -13111,10 +13267,183 @@ describe("App", () => {
     }
   });
 
+  it('refreshes externally changed navigation before editing and keeps Knowledge in its fixed slot', async () => {
+    const updates = api.updates!
+    const original = await updates.getSettings()
+    render(<App />)
+    await screen.findByRole('button', { name: '智能心跳' })
+    const external = {
+      ...original,
+      applicationNavigation: {
+        ...original.applicationNavigation,
+        order: ['local-inference', 'magic-notes'] as const,
+      },
+    }
+    vi.mocked(updates.getSettings).mockResolvedValue({ ...external, applicationNavigation: { ...external.applicationNavigation, order: [...external.applicationNavigation.order] } })
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '本机推理 应用设置' }))
+    const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
+    expect(pin).toBeDisabled()
+    await waitFor(() => expect(pin).not.toBeDisabled())
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    expect(within(nav).getAllByRole('button').map(button => button.textContent)).toEqual([
+      '对话', '知识库', '智能心跳', '本机推理', '运行记录',
+    ])
+    fireEvent.click(pin)
+    await waitFor(() => expect(updates.updateSettings).toHaveBeenCalledWith({
+      applicationNavigation: {
+        order: ['local-inference', 'magic-notes'],
+        pinned: { ...original.applicationNavigation.pinned, 'local-inference': false },
+      },
+    }))
+  })
+
+  it.each(['read', 'mutation'] as const)('keeps a settings event authoritative over a stale %s reply', async (operation) => {
+    const updates = api.updates!
+    const original = await updates.getSettings()
+    let changed!: Parameters<typeof updates.onSettingsChanged>[0]
+    vi.mocked(updates.onSettingsChanged).mockImplementation(listener => {
+      changed = listener
+      return vi.fn()
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: '智能心跳' })
+    const reply = deferred<ApplicationSettings>()
+    if (operation === 'read') vi.mocked(updates.getSettings).mockReturnValueOnce(reply.promise)
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '本机推理 应用设置' }))
+    const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
+    if (operation === 'mutation') {
+      await waitFor(() => expect(pin).not.toBeDisabled())
+      vi.mocked(updates.updateSettings).mockReturnValueOnce(reply.promise)
+      fireEvent.click(pin)
+    }
+    const external: ApplicationSettings = {
+      ...original,
+      applicationNavigation: {
+        order: ['local-inference', 'magic-notes'],
+        pinned: { ...original.applicationNavigation.pinned, 'local-inference': false },
+      },
+    }
+    await act(async () => changed(external))
+    expect(pin).not.toBeChecked()
+    await act(async () => reply.resolve(original))
+    await waitFor(() => expect(pin).not.toBeDisabled())
+    expect(pin).not.toBeChecked()
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', { name: '本机推理' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: '智能心跳' })).toBeInTheDocument()
+    fireEvent.click(pin)
+    expect(updates.updateSettings).toHaveBeenLastCalledWith({
+      applicationNavigation: { ...external.applicationNavigation, pinned: { ...external.applicationNavigation.pinned, 'local-inference': true } },
+    })
+  })
+
+  it('keeps fixed apps available when application settings cannot be loaded', async () => {
+    vi.mocked(api.updates!.getSettings).mockRejectedValue(new Error('unavailable'))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    expect(await screen.findByLabelText('知识工作区')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '智能心跳' }))
+    expect(await screen.findByRole('heading', { name: '智能心跳' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
+    expect(api.heartbeats.update).not.toHaveBeenCalled()
+  })
+
+  it.each(['sidebar', 'menu', 'center'])('opens local inference from %s as a modal preserving the workspace', async (entry) => {
+    render(<App />)
+    const nav = await screen.findByRole('button', { name: '本机推理' })
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }))
+    const workspace = await screen.findByLabelText('知识工作区')
+    if (entry === 'sidebar') {
+      nav.focus()
+      fireEvent.click(nav)
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+      if (entry === 'menu') fireEvent.click(screen.getByRole('menuitem', { name: '本机推理' }))
+      else {
+        fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+        const item = screen.getByRole('button', { name: '本机推理 应用设置' }).closest('article')!
+        fireEvent.click(within(item).getByRole('button', { name: '打开' }))
+      }
+    }
+    const dialog = screen.getByRole('dialog', { name: '本机推理' })
+    expect(workspace).toBeInTheDocument()
+    expect(workspace.closest('.app-shell')).toHaveProperty('inert', true)
+    expect(nav).not.toHaveAttribute('aria-current', 'page')
+    expect(dialog.closest('main')).toBeNull()
+    const close = within(dialog).getByRole('button', { name: '关闭本机推理' })
+    expect(close).toHaveFocus()
+    fireEvent.click(close)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('知识工作区')).toBe(workspace)
+    expect(workspace.closest('.app-shell')).toHaveProperty('inert', false)
+    expect(entry === 'sidebar' ? nav : screen.getByRole('button', { name: '应用中心' })).toHaveFocus()
+  })
+
+  it('opens an unpinned app and recovers a disabled current page without remounting it', async () => {
+    let changed!: Parameters<NonNullable<typeof api.updates>['onSettingsChanged']>[0]
+    vi.mocked(api.updates!.onSettingsChanged).mockImplementation(listener => {
+      changed = listener
+      return vi.fn()
+    })
+    render(<App />)
+    const inferenceNav = await screen.findByRole('button', { name: '本机推理' })
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '本机推理 应用设置' }))
+    const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
+    await waitFor(() => expect(pin).not.toBeDisabled())
+    fireEvent.click(pin)
+    await waitFor(() => expect(inferenceNav).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
+    const trigger = screen.getByRole('button', { name: '应用中心' })
+    expect(trigger).toHaveFocus()
+    fireEvent.click(trigger)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: '本机推理' }))
+    const workspace = await screen.findByRole('region', { name: '本机推理服务' })
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', { name: '本机推理' })).not.toBeInTheDocument()
+    await act(async () => changed(await api.updates!.updateSettings({ localInferenceEnabled: false })))
+    expect(screen.getByText('应用已关闭')).toBeInTheDocument()
+    expect(workspace).toBeInTheDocument()
+    expect(workspace.closest('.local-inference-workspace')).toHaveAttribute('hidden')
+    fireEvent.click(screen.getByRole('button', { name: '应用设置' }))
+    await waitFor(() => expect(screen.getByRole('switch', { name: '启用应用' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('switch', { name: '启用应用' }))
+    await waitFor(() => expect(screen.getByRole('switch', { name: '启用应用' })).toBeChecked())
+    fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
+    expect(screen.getByRole('region', { name: '本机推理服务' })).toBe(workspace)
+    expect(workspace.closest('.local-inference-workspace')).not.toHaveAttribute('hidden')
+    expect((await api.updates!.getSettings()).applicationNavigation.pinned['local-inference']).toBe(false)
+  })
+
+  it('keeps confirmed application preferences and locks edits until an unknown save is read back', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: '知识库' })
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    const updates = api.updates!
+    fireEvent.click(screen.getByRole('button', { name: '本机推理 应用设置' }))
+    await waitFor(() => expect(screen.getByRole('switch', { name: '常驻左侧菜单' })).not.toBeDisabled())
+    vi.mocked(updates.updateSettings).mockRejectedValueOnce(new Error('response lost'))
+    vi.mocked(updates.getSettings).mockRejectedValueOnce(new Error('read unavailable'))
+    fireEvent.click(screen.getByRole('switch', { name: '常驻左侧菜单' }))
+    await screen.findByText('无法确认保存结果，请重新读取后再修改。')
+    const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
+    expect(pin).toBeChecked()
+    expect(pin).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '重新读取' }))
+    await waitFor(() => expect(pin).not.toBeDisabled())
+    expect(updates.updateSettings).toHaveBeenCalledOnce()
+  })
+
   it("gives the knowledge workspace the full content width", async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "知识库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
 
     expect(await screen.findByLabelText("知识工作区")).toBeInTheDocument();
     expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();

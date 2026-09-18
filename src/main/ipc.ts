@@ -1,5 +1,7 @@
 import { externalKnowledgeInstanceInputSchema, externalKnowledgeInstanceEnabledInputSchema, externalKnowledgeInstanceSaveInputSchema, externalKnowledgeCatalogListInputSchema, externalKnowledgeCatalogGetInputSchema, externalKnowledgeBindingSaveInputSchema, externalKnowledgeBindingUpdateInputSchema, externalKnowledgeBindingTestInputSchema } from '../shared/external-knowledge-contracts'
 import { knowledgeReferenceKey, toKnowledgeReference } from '../shared/knowledge-reference'
+import { localInferenceService } from './local-inference-service'
+import { inferenceActionSchema, inferenceCancelSchema } from '../shared/local-inference-contracts'
 import {
   app,
   BrowserWindow,
@@ -200,6 +202,7 @@ import {
 } from '../shared/magic-notes-contracts'
 import {
   assistantIdSchema,
+  executionStatsInputSchema,
   activityHistorySnapshotSchema,
   conversationBranchInputSchema,
   conversationSnapshotsSchema,
@@ -1345,6 +1348,7 @@ export function registerIpcHandlers(
 ): () => Promise<void> {
   type ActiveRequestLease = {
     controller: AbortController
+    isReply: boolean
     conversationId: string
     detachOnApplicationExit: boolean
     teamMode?: boolean
@@ -1375,10 +1379,12 @@ export function registerIpcHandlers(
   const leaseActiveRequest = (
     requestId: string,
     conversationId: string,
-    controller: AbortController
+    controller: AbortController,
+    isReply = true
   ): ActiveRequestLease => {
     const lease: ActiveRequestLease = {
       controller,
+      isReply,
       conversationId,
       detachOnApplicationExit: false,
       release: (): void => {
@@ -1580,6 +1586,11 @@ export function registerIpcHandlers(
   }
   window.on('maximize', notifyMaximizedChanged)
   window.on('unmaximize', notifyMaximizedChanged)
+  const removeApplicationSettingsListener = applicationSettingsStore?.onChanged((settings) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(ipcChannels.applicationSettingsChanged, settings)
+    }
+  })
   const removeBrowserStateListener = browserControl?.onState((state) => {
     if (!window.isDestroyed() && state.ownerWindowId === window.webContents.id) {
       window.webContents.send(ipcChannels.browserState, state)
@@ -5117,7 +5128,8 @@ export function registerIpcHandlers(
       const activeRequestLease = leaseActiveRequest(
         request.requestId,
         request.conversationId,
-        controller
+        controller,
+        false
       )
       assistantDatabase.createTask({
         id: request.requestId,
@@ -6480,6 +6492,29 @@ export function registerIpcHandlers(
     }
   )
 
+  registerHandler(ipcChannels.localInferenceGet, async (event) => {
+    assertTrustedSender(event, window)
+    const snapshot = await localInferenceService.snapshot()
+    const settings = await settingsStore.getPublicSettings()
+    return {
+      ...snapshot,
+      externalConnections: settings.embeddingConnections?.filter((connection) => connection.kind !== 'builtin')
+        .map((connection) => ({ id: connection.id, name: connection.name, model: connection.modelName })) ?? []
+    }
+  })
+  registerHandler(ipcChannels.localInferenceOpenSettings, (event) => {
+    assertTrustedSender(event, window)
+    window.webContents.send(ipcChannels.settingsOpen)
+  })
+  registerHandler(ipcChannels.localInferenceAct, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return trackExecution(localInferenceService.act(inferenceActionSchema.parse(input)))
+  })
+  registerHandler(ipcChannels.localInferenceCancel, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    localInferenceService.cancel(inferenceCancelSchema.parse(input).taskId)
+  })
+
   registerHandler(ipcChannels.speechModelsGet, (event) => {
     assertTrustedSender(event, window)
     if (!speechModelManager) {
@@ -7220,6 +7255,13 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     return assistantDatabase.listTasks()
   })
+  registerHandler(ipcChannels.tasksExecutionStats, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getExecutionStats(
+      executionStatsInputSchema.parse(input),
+      new Set([...activeRequests].filter(([, lease]) => lease.isReply && !lease.controller.signal.aborted).map(([id]) => id))
+    )
+  })
   registerHandler(ipcChannels.tasksSetStatus, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const parsed = taskStatusRequestSchema.parse(input)
@@ -7398,9 +7440,23 @@ export function registerIpcHandlers(
 
   registerHandler(ipcChannels.schedulesCreate, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return assistantDatabase.createSchedule(
-      scheduleCreateSchema.parse(input)
-    )
+    const value = scheduleCreateSchema.parse(input)
+    if (value.runImmediately) {
+      if (executionPaused || shuttingDown) {
+        throw new Error('本地数据维护期间暂不接受新任务')
+      }
+    } else if (new Date(value.nextRunAt).getTime() <= Date.now()) {
+      throw new Error('首次运行时间必须晚于当前时间。')
+    }
+    const schedule = assistantDatabase.createSchedule(value)
+    if (value.runImmediately) {
+      publishConversationQueueChange(schedule.conversationId)
+      if (!isConversationExecuting(schedule.conversationId)) {
+        readyConversationQueues.add(schedule.conversationId)
+        void pumpConversationQueue(schedule.conversationId)
+      }
+    }
+    return schedule
   })
 
   registerHandler(
@@ -8737,6 +8793,7 @@ export function registerIpcHandlers(
 
   return async () => {
     shuttingDown = true
+    removeApplicationSettingsListener?.()
     removeLocalToolEnvironmentProgressListener?.()
     await localToolEnvironmentService?.dispose()
     removeBrowserStateListener?.()

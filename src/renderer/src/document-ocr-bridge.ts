@@ -18,6 +18,10 @@ type PendingWorkerRequest = {
 }
 
 let worker: Worker | undefined
+let workerLoaded = false
+let workerError: string | undefined
+let managementLoading = false
+let startupTimer: number | undefined
 let workerModelId: string | undefined
 let workerReady: Promise<void> | undefined
 let resolveWorkerReady: (() => void) | undefined
@@ -55,9 +59,12 @@ function safeError(error: unknown): string {
 
 function terminateWorker(error: Error): void {
   clearIdleTimer()
+  window.clearTimeout(startupTimer)
+  startupTimer = undefined
   worker?.terminate()
   rejectWorkerReady?.(error)
   worker = undefined
+  workerLoaded = false
   workerModelId = undefined
   workerReady = undefined
   resolveWorkerReady = undefined
@@ -97,15 +104,27 @@ async function ensureWorker(modelId: string): Promise<Worker> {
     new URL('./document-ocr-worker.ts', import.meta.url),
     { type: 'module', name: 'goodbuddy-document-ocr' }
   )
+  workerModelId = modelId
   workerReady = new Promise<void>((resolve, reject) => {
     resolveWorkerReady = resolve
     rejectWorkerReady = reject
   })
+  const ready = workerReady
+  void ready.catch(() => undefined)
+  // A worker that never becomes ready must not leave manual loading locked forever.
+  startupTimer = window.setTimeout(() => {
+    workerError = '本地 OCR 模型加载超时，请重试'
+    terminateWorker(new Error(workerError))
+  }, 120_000)
   worker.addEventListener(
     'message',
     (event: MessageEvent<WorkerOutput>) => {
       const output = event.data
       if (output.type === 'ready') {
+        window.clearTimeout(startupTimer)
+        startupTimer = undefined
+        workerLoaded = true
+        workerError = undefined
         resolveWorkerReady?.()
         return
       }
@@ -141,6 +160,7 @@ async function ensureWorker(modelId: string): Promise<Worker> {
     }
   )
   worker.addEventListener('error', (event) => {
+    workerError = event.message || '本地 OCR Worker 异常'
     terminateWorker(
       new Error(event.message || '本地 OCR Worker 异常')
     )
@@ -159,14 +179,49 @@ async function ensureWorker(modelId: string): Promise<Worker> {
         assets.dictionary
       ]
     )
-    await workerReady
+    await ready
   } catch (error) {
+    workerError = safeError(error)
     terminateWorker(
       error instanceof Error ? error : new Error('本地 OCR 初始化失败')
     )
     throw error
   }
   return worker
+}
+
+export function getOcrInferenceState(): {
+  state: 'idle' | 'running' | 'starting' | 'error'
+  model?: string
+  busy: boolean
+  loaded: boolean
+  error?: string
+} {
+  return {
+    state: worker ? workerLoaded ? 'running' : 'starting' : workerError ? 'error' : 'idle',
+    model: workerModelId, loaded: workerLoaded,
+    busy: managementLoading || queuedRequestCount > 0 || Boolean(activeRequestId) || pending.size > 0,
+    error: workerError
+  }
+}
+
+export async function loadOcrInference(): Promise<void> {
+  if (getOcrInferenceState().busy) throw new Error('OCR 正在处理任务，请等待完成后再加载')
+  managementLoading = true
+  try {
+    const snapshot = await window.goodbuddy.documentParsing?.getSnapshot()
+    if (!snapshot) throw new Error('文档解析服务不可用')
+    if (!snapshot.status.localOcr.available) throw new Error(snapshot.status.localOcr.detail)
+    await ensureWorker(snapshot.settings.localOcrModelId)
+  } finally {
+    managementLoading = false
+    scheduleIdleRelease()
+  }
+}
+
+export function releaseOcrInference(): void {
+  if (getOcrInferenceState().busy) throw new Error('OCR 仍有活动或排队任务，无法释放共享 Worker；请等待任务结束')
+  terminateWorker(new Error('用户已释放 OCR 模型'))
 }
 
 async function recognize(

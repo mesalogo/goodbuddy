@@ -96,6 +96,23 @@ afterEach(async () => {
 })
 
 describe('GoodBuddyConfigService', () => {
+  it('publishes persisted application changes from config apply through the settings event', async () => {
+    const { application, service, workspace } = await createHarness()
+    const changed = vi.fn()
+    const unsubscribe = application.onChanged(changed)
+    const current = await application.get()
+    const applicationNavigation = { ...current.applicationNavigation, order: [...current.applicationNavigation.order].reverse() }
+    const plan = await service.plan('settings-sync', workspace, {
+      operations: [{ operation: 'application.update', updates: { applicationNavigation } }],
+    })
+    expect(changed).not.toHaveBeenCalled()
+    await service.apply('settings-sync', { planId: plan.planId }, new AbortController().signal, async () => true)
+    expect(changed).toHaveBeenCalledExactlyOnceWith(await application.get())
+    expect(changed.mock.calls[0]![0].applicationNavigation).toEqual(applicationNavigation)
+    unsubscribe()
+    await application.update({ localInferenceEnabled: false })
+    expect(changed).toHaveBeenCalledOnce()
+  })
   it('returns only sanitized configuration and publishes common examples', async () => {
     const { service, capabilities } = await createHarness()
     await capabilities.saveMcpServer(undefined, {

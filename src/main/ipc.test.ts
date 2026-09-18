@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
 import type {
   AssistantProject,
+  AssistantSchedule,
   ConversationSnapshot,
   ConversationQueueItem
 } from '../shared/assistant-contracts'
@@ -21,7 +22,8 @@ import {
   runtimeSettingsInputSchema,
   type AgentEvent,
   type BrowserLiveState,
-  type BrowserTabId
+  type BrowserTabId,
+  type ConversationQueueDispatch
 } from '../shared/contracts'
 import type {
   SshHostAgentConnectionStatus
@@ -1056,6 +1058,8 @@ describe('registerIpcHandlers update source routing', () => {
     const versionChecker = {
       check: vi.fn(async () => result)
     }
+    const unsubscribe = vi.fn()
+    const onChanged = vi.fn<(listener: (settings: unknown) => void) => () => void>(() => unsubscribe)
     const dispose = registerIpcHandlers(
       window as never,
       { capability: 'text' } as never,
@@ -1076,9 +1080,13 @@ describe('registerIpcHandlers update source routing', () => {
       undefined,
       undefined,
       undefined,
-      { get: getApplicationSettings } as never,
+      { get: getApplicationSettings, onChanged } as never,
       versionChecker as never
     )
+
+    const changedSettings = { updateSource: 'github' }
+    onChanged.mock.calls[0]![0](changedSettings)
+    expect(webContents.send).toHaveBeenCalledWith(ipcChannels.applicationSettingsChanged, changedSettings)
 
     await expect(
       electronMocks.handlers.get(ipcChannels.versionCheck)?.(event)
@@ -1111,6 +1119,7 @@ describe('registerIpcHandlers update source routing', () => {
     )
 
     await dispose()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 })
 
@@ -1177,6 +1186,7 @@ describe('registerIpcHandlers model download source routing', () => {
       snapshot: vi.fn(async () => ocrSnapshot)
     }
     const applicationSettingsStore = {
+      onChanged: vi.fn(),
       get: vi.fn(async () => ({
         modelDownloadSource: 'hugging-face'
       }))
@@ -1781,7 +1791,8 @@ describe('registerIpcHandlers SSH hosts', () => {
       undefined, // subagentService
       undefined, // channelSettingsStore
       {
-        get: vi.fn(async () => ({ remoteProjectsEnabled: true }))
+        get: vi.fn(async () => ({ remoteProjectsEnabled: true })),
+        onChanged: vi.fn()
       } as never, // applicationSettingsStore
       undefined, // versionChecker
       undefined, // speechModelManager
@@ -2212,6 +2223,7 @@ describe('registerIpcHandlers SSH hosts', () => {
       updatedAt: '2026-08-01T00:00:00.000Z'
     }
     const applicationSettingsStore = {
+      onChanged: vi.fn(),
       get: vi.fn(async () => ({ remoteProjectsEnabled: false }))
     }
     const sshHostService = {
@@ -4235,6 +4247,7 @@ describe('registerIpcHandlers workspace files', () => {
       undefined,
       undefined,
       {
+        onChanged: vi.fn(),
         get: vi.fn(async () => {
           throw new Error('settings unavailable')
         })
@@ -4323,6 +4336,7 @@ describe('registerIpcHandlers workspace files', () => {
       undefined,
       undefined,
       {
+        onChanged: vi.fn(),
         get: vi.fn(async () => ({ remoteProjectsEnabled: true }))
       } as never
     )
@@ -4361,6 +4375,42 @@ describe('registerIpcHandlers token usage', () => {
   afterEach(() => {
     electronMocks.handlers.clear()
     vi.clearAllMocks()
+  })
+
+  it('validates execution statistics scope and sender before reading evidence', async () => {
+    const summary = { durationMs: 5000, requestCount: 2, incompleteRequestCount: 1, activeRequestCount: 0, asOf: 10000, taskDurations: [{ id: 'task', durationMs: 5000, incompleteRequestCount: 1 }] }
+    const assistantDatabase = {
+      queueDueSchedules: vi.fn(() => []),
+      listConversationQueueItems: vi.fn(() => []),
+      listPendingConversationQueueIds: vi.fn(() => []),
+      getExecutionStats: vi.fn(() => summary)
+    }
+    const webContents = {
+      mainFrame: { url: 'file:///goodbuddy/index.html' },
+      getURL: vi.fn(() => 'file:///goodbuddy/index.html'), send: vi.fn()
+    }
+    const window = { webContents, isDestroyed: vi.fn(() => false), on: vi.fn(), removeListener: vi.fn() }
+    const dispose = registerIpcHandlers(
+      window as never, { capability: 'text' } as never,
+      'CommandOrControl+Shift+Space', {} as never, {} as never,
+      { clear: vi.fn() } as never, {} as never, assistantDatabase as never,
+      { clear: vi.fn() } as never, {} as never, vi.fn(async () => {})
+    )
+    try {
+      const handler = electronMocks.handlers.get(ipcChannels.tasksExecutionStats)!
+      const event = { sender: webContents, senderFrame: webContents.mainFrame }
+      const id = '00000000-0000-4000-8000-000000000301'
+      for (const scope of [{ conversationId: id }, { projectId: id }]) {
+        expect(handler(event, scope)).toBe(summary)
+        expect(assistantDatabase.getExecutionStats).toHaveBeenLastCalledWith(scope, new Set())
+      }
+      expect(() => handler(event, {})).toThrow()
+      expect(() => handler(event, { projectId: id, conversationId: id })).toThrow()
+      expect(() => handler({ sender: {}, senderFrame: webContents.mainFrame }, { projectId: id })).toThrow()
+      expect(assistantDatabase.getExecutionStats).toHaveBeenCalledTimes(2)
+    } finally {
+      await dispose()
+    }
   })
 
   it('returns the database token summary to a trusted renderer', async () => {
@@ -5273,7 +5323,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       subagentService as never,
       undefined,
       {
-        get: getApplicationSettings
+        get: getApplicationSettings,
+        onChanged: vi.fn()
       } as never,
       undefined,
       undefined,
@@ -5516,7 +5567,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       title: '每周汇总',
       prompt: '汇总本周进展',
       recurrence: 'weekly' as const,
-      nextRunAt: '2026-08-21T09:00:00.000Z'
+      nextRunAt: new Date(Date.now() + 60_000).toISOString()
     }
 
     await electronMocks.handlers.get(
@@ -5530,6 +5581,68 @@ describe('registerIpcHandlers agent terminal state', () => {
       workMode: 'execute'
     })
     await harness.dispose()
+  })
+
+  it.each(['completed', 'failed'] as const)('creates an immediate task into the production queue and dispatches exactly one ordinary run (%s)', async (status) => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const conversationId = crypto.randomUUID()
+    database.saveLocalConversations([{
+      header: { id: conversationId, title: 'Immediate', updatedAt: Date.now(), workMode: 'ask' },
+      messages: []
+    }])
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      if (status === 'failed') {
+        yield { type: 'error' as const, requestId: request.requestId, message: 'Runtime failed' }
+        return
+      }
+      yield { type: 'text' as const, requestId: request.requestId, delta: 'Once' }
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    const harness = createHarness(
+      { runtimeId: 'model', capability: 'chat', supportsToolExecution: true, run },
+      undefined, 'always', undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database
+    )
+    const event = trustedEvent(harness.webContents)
+    try {
+      await electronMocks.handlers.get(ipcChannels.conversationQueueReady)!(event, conversationId)
+      const create = electronMocks.handlers.get(ipcChannels.schedulesCreate)!
+      const input = {
+        conversationId, title: 'Immediate', prompt: 'Run once', recurrence: 'once',
+        nextRunAt: '2020-01-01T00:00:00.000Z'
+      }
+      expect(() => create(event, input)).toThrow('首次运行时间必须晚于当前时间')
+      expect(database.listSchedules()).toEqual([])
+      const schedule = await create(event, { ...input, runImmediately: true }) as AssistantSchedule
+      expect(schedule.enabled).toBe(false)
+      const dispatches = () => harness.webContents.send.mock.calls.filter(
+        ([channel]) => channel === ipcChannels.conversationQueueDispatch
+      )
+      expect(dispatches()).toHaveLength(1)
+      const dispatch = dispatches()[0]![1] as ConversationQueueDispatch
+      expect(dispatch).toMatchObject({ scheduled: true, item: { taskId: schedule.taskId } })
+      expect(database.queueDueSchedules(new Date('2099-01-01T00:00:00Z'))).toEqual([])
+      await harness.handler!(event, {
+        requestId: dispatch.item.id,
+        conversationId,
+        queueItemId: dispatch.item.id,
+        prompt: input.prompt,
+        workMode: 'ask',
+        currentUserMessageId: crypto.randomUUID(),
+        currentAssistantMessageId: crypto.randomUUID()
+      })
+      await vi.waitFor(() => expect(database.getTask(schedule.taskId).status).toBe(status))
+      await electronMocks.handlers.get(ipcChannels.conversationQueueReady)!(event, conversationId)
+      expect(database.queueDueSchedules(new Date('2099-01-01T00:00:00Z'))).toEqual([])
+      expect(dispatches()).toHaveLength(1)
+      expect(run).toHaveBeenCalledOnce()
+      expect(database.listConversationQueueItems()).toEqual([])
+      expect(database.listSchedules()).toHaveLength(1)
+    } finally {
+      await harness.dispose()
+      database.close()
+    }
   })
 
   it('dispatches scheduled messages through ordinary agent runs with current history and tools', async () => {
@@ -7812,6 +7925,46 @@ describe('registerIpcHandlers agent terminal state', () => {
     )
     expect(knowledgeGateway.grant).not.toHaveBeenCalled()
     await harness.dispose()
+  })
+
+  it('retains user-enabled knowledge scopes when other applications are disabled', async () => {
+    const libraryId = '11111111-1111-4111-8111-111111111111'
+    let finish: (() => void) | undefined
+    const held = new Promise<void>(resolve => { finish = resolve })
+    const run = vi.fn(async function* (request: { requestId: string; knowledgeLibraryIds: string[] }) {
+      if (request.requestId.endsWith('21')) await held
+      yield { requestId: request.requestId, type: 'done' }
+    })
+    const retrieveMany = vi.fn(async () => [])
+    const gateway = { grant: vi.fn(() => 'capability'), getAvailableToolNames: vi.fn(() => ['knowledge_search']), drainReferences: vi.fn(() => []), revoke: vi.fn() }
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: true, supportsScopedDataTools: true, run }, undefined, 'always', undefined, false, undefined, {
+      database: { listKnowledgeBases: vi.fn(() => [{ id: libraryId, name: 'Knowledge' }]) }, retrieveMany
+    }, gateway)
+    const request = { prompt: 'use saved knowledge', workMode: 'ask', knowledgeLibraryIds: [libraryId], knowledgeRetrievalMode: 'always' }
+    try {
+      await harness.handler?.(trustedEvent(harness.webContents), { ...request, requestId: '00000000-0000-4000-8000-000000000021', conversationId: 'in-flight' })
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      expect(retrieveMany).toHaveBeenCalledOnce()
+      harness.getApplicationSettings.mockResolvedValue({ localInferenceEnabled: false, magicNotesEnabled: false })
+      await harness.handler?.(trustedEvent(harness.webContents), { ...request, requestId: '00000000-0000-4000-8000-000000000022', conversationId: 'disabled' })
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+      expect(run.mock.calls[0]![0].knowledgeLibraryIds).toEqual([libraryId])
+      expect(run.mock.calls[1]![0].knowledgeLibraryIds).toEqual([libraryId])
+      expect(retrieveMany).toHaveBeenCalledTimes(2)
+      expect(gateway.grant).toHaveBeenCalledTimes(2)
+      expect(harness.assistantDatabase.updateTaskStatus).not.toHaveBeenCalledWith('00000000-0000-4000-8000-000000000021', 'cancelled')
+      finish!()
+      await vi.waitFor(() => expect(harness.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000021', 'completed'))
+      harness.getApplicationSettings.mockResolvedValue({ localInferenceEnabled: true, magicNotesEnabled: false })
+      await harness.handler?.(trustedEvent(harness.webContents), { ...request, requestId: '00000000-0000-4000-8000-000000000023', conversationId: 'restored' })
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3))
+      expect(run.mock.calls[2]![0].knowledgeLibraryIds).toEqual([libraryId])
+      expect(retrieveMany).toHaveBeenCalledTimes(3)
+      expect(request.knowledgeLibraryIds).toEqual([libraryId])
+    } finally {
+      finish!()
+      await harness.dispose()
+    }
   })
 
   it('grants read-only Magic Notes tools in Ask and write tools in Execute', async () => {

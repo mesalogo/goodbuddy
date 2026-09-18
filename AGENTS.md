@@ -31,7 +31,7 @@ risk or an explicit user requirement.
 ## Design Simplicity
 
 Follow KISS and YAGNI. Use the smallest conventional design that completes the
-real user workflow.
+real user workflow. NO over-engineering or over-design.
 
 - A demonstrated failure authorizes only the smallest proportional fix, not a
   general recovery, compatibility, or security framework.

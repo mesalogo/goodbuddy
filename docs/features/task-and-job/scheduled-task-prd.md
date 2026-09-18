@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 首期稳定 Task 生命周期、创建体验与 Conversation 输入仲裁已实现；高级触发和执行治理待实施 |
-| 版本 | 0.8 |
-| 日期 | 2026-09-10 |
+| 版本 | 0.9 |
+| 日期 | 2026-09-17 |
 | 依赖 | [Task 与 Job 统一领域模型](./task-and-job-model.md) |
 | 相关架构 | [自动化平台总体设计](../../architecture/automation-platform-architecture.md) |
 
@@ -21,7 +21,7 @@ Scheduled Task 是带时间或事件触发器的 Task。每个 Scheduled Task �
 
 创建 Scheduled Task 时：
 
-1. 用户选择关联当前 Conversation 或创建新 Conversation。
+1. 默认关联当前 Conversation，也可选择本项目其他可用 Conversation 或创建新 Conversation。
 2. 系统创建一个 Task，并保存稳定 `conversationId` 和 Schedule/Trigger Binding。
 3. 每次触发在同一 Task 内创建新的 Job 和 Run。
 4. 面向用户的文本进展和结果写回关联 Conversation，并标明 Task 来源。
@@ -34,11 +34,11 @@ Scheduled Task 是带时间或事件触发器的 Task。每个 Scheduled Task �
 
 GoodBuddy 当前已实现首期统一生命周期：
 
-- 创建 Modal 可以关联当前 Conversation 或原子创建新 Conversation，不修改当前
+- 创建 Modal 可以关联当前或本项目其他可用 Conversation，或原子创建新 Conversation，不修改已有
   Conversation 的标题和既有消息。
 - 每个 Schedule 绑定一个稳定产品级 Task 和 Conversation；重复触发复用同一身份，不再
   为每次触发创建新的顶层 Task。
-- 创建表单只设置任务要求、关联会话和时间；工作模式在关联会话中设置，未设置时使用项目默认值。
+- 创建表单设置任务要求、可选名称、关联会话和执行时间，默认立即执行；工作模式在关联会话中设置，未设置时使用项目默认值。
 - 单次、每日和每周计划支持暂停、恢复、立即运行和应用重启恢复。
 - 到期和手动运行先进入关联 Conversation 的持久输入队列，与回复期间继续发送的普通消息
   顺序仲裁；默认不打断当前回复，也不与其并发写入时间线。
@@ -58,7 +58,7 @@ Job/Subjob/Run 的统一持久化抽象。当前每日和每周按既有 UTC 间
 
 - 支持单次、每日、每周、每月、工作日和受限 Cron。
 - 支持 Task 完成、失败、Conversation 完成等内部事件触发。
-- 创建时明确选择当前或新 Conversation。
+- 创建时明确选择当前、本项目其他可用或新 Conversation。
 - 使用关联会话当前的工作模式；新会话使用普通项目默认值。
 - 在实际发送时解析上下文和执行配置，与手动发送共用执行流程。
 - 提供时区、错过执行、幂等、租约、重试、恢复、取消、预算和审计。
@@ -82,10 +82,10 @@ Task Center 和 Conversation 操作都可以提供“新建定制任务”，但
 
 ```text
 新建定制任务
-创建一个可以按计划自动运行，并持续记录在会话中的任务
+创建一个立即或按计划运行，并持续记录在会话中的任务
 
-任务名称 *
-[ 每周项目总结                                  ]
+任务名称（可选）
+[ 留空时从任务内容生成                          ]
 
 任务要求 *
 [ 总结本周完成和失败的工作，并列出下周优先事项。 ]
@@ -97,11 +97,13 @@ Task Center 和 Conversation 操作都可以提供“新建定制任务”，但
 ○ 新建会话
   为任务创建一条新会话，默认标题为任务名称
 
-运行频率
-[ 单次 ] [ 每日 ] [ 每周 ] [ 每月 ] [ 工作日 ] [ Cron ]
+○ 本项目其他会话
+[ 选择会话                                     ▾ ]
 
-首次运行    [ 2026-08-21 ] [ 17:00 ]
-时区        [ Asia/Shanghai                    ▾ ]
+执行时间
+◉ 立即执行  ○ 定时执行
+定时选项    [ 单次 ] [ 每日 ] [ 每周 ]
+首次运行    [ 日期 ] [ 时间 ]（仅定时执行时显示）
 
 关联项目
 GoodBuddy Desktop · 项目工作目录
@@ -112,13 +114,17 @@ GoodBuddy Desktop · 项目工作目录
 
 ### 5.1 Conversation 选择
 
-- 从当前聊天发起时默认选择当前 Conversation。
-- 从 Task Center 发起时默认选择新 Conversation。
+- 从当前聊天或 Task Center 发起时均默认选择当前 Conversation。
+- 可选本项目其他可用 Conversation 或新 Conversation；当前会话不可用时明确提示用户选择，不隐藏目标。
 - 当前选择必须持续可见，不能根据入口静默决定后隐藏。
 - 关联当前 Conversation 不修改其标题、既有消息和普通聊天能力。
 - 当前 Conversation 已有关联 Task 时，显示 Task 数量和共享上下文说明。
 - 新 Conversation 默认使用 Task 名称作为标题，用户可以单独修改。
 - 远程通道、归档、正在删除或 Project 不匹配的 Conversation 不可选择，并显示原因。
+
+任务内容必填。名称可留空，使用压缩连续空白后的内容前 120 个字符生成。默认立即执行；
+选择定时后支持单次、每日和每周，首次运行时间必须在未来。每月、工作日、Cron 和 IANA
+时区仍属于后续能力，不显示为本次已支持选项。
 
 ### 5.2 创建摘要
 
@@ -133,8 +139,13 @@ GoodBuddy Desktop · 项目工作目录
 ✓ 独立交付物保存到成果
 ```
 
+摘要随目标会话和执行时间更新，默认立即执行时明确显示“创建后进入会话队列”。
 创建 Task、可选新 Conversation、关联关系和 Schedule Binding 必须在 Main 中原子提交。
-失败时保持 Modal 和用户输入，不只显示短暂通知。提交期间锁定重复操作。
+立即创建同时提交一次执行及其队列项，只入队一次，遵循同会话串行规则；自动定时触发不得
+再添加一次执行。事务失败保留 Modal 和输入；提交期间锁定重复操作。创建成功后的刷新失败
+只提示刷新错误，不重新创建；后续执行失败显示在已创建任务中。
+数据库事务与队列实现见[技术设计](./technical-design.md#custom-task-creation)，其中 schedule run
+与 queue 和创建记录在同一事务内写入，前端创建后不再调用 `runNow`。
 
 ### 5.3 Modal 行为与无障碍
 
@@ -346,7 +357,8 @@ Task Center 显示 Scheduled Task 的范围、关联 Conversation、状态、最
 
 ## 16. 验收标准
 
-- [x] 创建 Scheduled Task 可以选择当前或新 Conversation。
+- [ ] 创建默认立即执行并关联当前 Conversation，可选本项目其他可用会话或新会话；名称可留空从内容生成。
+- [ ] 立即创建原子提交且只入队一次，定时器不重复触发；入队失败回滚创建，刷新或执行失败不重复创建。
 - [x] 关联当前 Conversation 不修改其标题、类型或既有消息。
 - [x] 一条 Conversation 可以在左侧展开一个或多个 Task。
 - [x] 工作模式使用关联会话当前设置，未设置时使用项目默认值。
@@ -369,3 +381,5 @@ Task Center 显示 Scheduled Task 的范围、关联 Conversation、状态、最
 - [x] 文本结果只写入 Conversation，独立交付物才进入成果。
 - [ ] Task Center 和桌面通知可以打开正确 Conversation 并定位 Task。
 - [ ] 应用重启不自动重放结果未知的副作用。
+
+本次新增或变更的创建验收项未在本轮文档同步中执行验证，保留未勾选状态。

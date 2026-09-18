@@ -528,8 +528,7 @@ export const settingsSections = {
     label: '平台功能选项',
     tabs: {
       ariaLabel: '平台功能设置',
-      general: '通用设置',
-      magicNotes: '魔法笔记'
+      general: '通用设置'
     },
     conversationHtml: {
       title: '会话 HTML 渲染',
@@ -634,7 +633,7 @@ export const settingsSections = {
     },
     magicNotes: {
       title: '魔法笔记',
-      description: '默认关闭；开启后可记录笔记与待办，并使用 AI 分析内容',
+      description: '记录笔记与待办，使用 AI 分析内容；相关配置统一在应用设置中管理。',
       showEntry: '显示魔法笔记入口',
       showIncompleteTodoCount: '显示未完成待办数量',
       showIncompleteTodoCountHelp:

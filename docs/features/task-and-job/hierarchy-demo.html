@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoodBuddy · 当前会话统计</title>
+  <link rel="stylesheet" href="hierarchy-demo.css">
+  <script src="hierarchy-demo.js" defer></script>
+</head>
+<body>
+  <header class="demo-bar"><div><strong>GoodBuddy / 会话统计 Demo</strong><span>演示数据 · 时间为固定样例</span></div><button id="theme" aria-pressed="false">深色模式</button></header>
+  <div class="workspace">
+    <aside class="sidebar" aria-label="项目与会话">
+      <div class="brand"><span class="brand-mark">G</span><strong>GoodBuddy</strong></div>
+      <div class="eyebrow">当前项目</div>
+      <strong>GoodBuddy 产品设计</strong>
+      <p id="project-meta" class="muted">工作目录 · goodbuddy</p>
+      <div class="section-heading"><h2>会话</h2><span id="session-count"></span></div>
+      <nav id="sessions" aria-label="当前项目的会话"></nav>
+    </aside>
+    <main>
+      <header class="conversation-header"><div class="eyebrow">GoodBuddy 产品设计</div><h1 id="conversation-title"></h1></header>
+      <section class="messages" id="messages" aria-label="会话内容"></section>
+      <div class="composer"><div class="composer-box">继续交流，或交代下一件事…<div><span>Execute · OpenCode</span><span>输入区仅作布局展示</span></div></div></div>
+    </main>
+    <aside class="tasks" aria-label="任务中心">
+      <header><h2>任务中心</h2><p class="muted">当前项目 · GoodBuddy 产品设计</p></header>
+      <section class="session-stats" aria-label="当前会话统计" aria-live="polite">
+        <div class="eyebrow">当前会话</div><h3 id="stats-title"></h3>
+        <dl class="stat-grid"><div><dt>Agent 累计回复时长</dt><dd id="duration"></dd></div><div><dt>消息数</dt><dd id="message-count"></dd></div></dl>
+        <p id="message-breakdown" class="muted"></p>
+        <details><summary>时间说明</summary><p id="time-description"></p><p>累计每次 Agent 回复的结束时间减去开始时间，不包含回复之间的空闲时间。任务用时单独展示，包含任务中的等待时间。</p></details>
+      </section>
+      <div class="section-heading task-heading"><h2>项目任务 <span id="task-count"></span></h2><div class="task-toolbar"><button id="new-task" aria-label="新建任务" title="新建任务" aria-expanded="false" aria-controls="task-form">＋</button><button id="filter-toggle" aria-label="筛选任务" title="筛选任务" aria-expanded="false" aria-controls="task-filter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8z"/></svg></button></div></div>
+      <form id="task-form" hidden>
+        <h3>新建任务</h3>
+        <label for="task-content">任务内容</label><textarea id="task-content" rows="3" required maxlength="500" placeholder="描述要完成的工作"></textarea>
+        <label for="task-conversation">关联会话</label><select id="task-conversation"></select>
+        <label for="task-timing">执行时间</label><select id="task-timing"><option value="now">立即执行</option><option value="scheduled">定时执行</option></select>
+        <div id="schedule-field" hidden><label for="task-date">计划时间</label><input id="task-date" type="datetime-local"></div>
+        <p class="muted">仅在此页面模拟创建，刷新后恢复样例。</p>
+        <div class="task-actions"><button type="submit">创建任务</button><button id="close-form" type="button">取消</button></div>
+      </form>
+      <div id="task-filter" hidden><label for="task-status">任务状态</label>
+      <select id="task-status"><option value="all">全部状态</option><option value="进行中">进行中</option><option value="待执行">待执行</option><option value="已暂停">已暂停</option><option value="ended">已结束</option></select></div>
+      <p id="active-filter" class="scope-label" hidden></p>
+      <div id="task-list" aria-live="polite"></div>
+    </aside>
+  </div>
+  <footer class="demo-footer"><span>切换会话更新统计；项目任务保持可见，可暂停、继续或取消。</span><span>范围固定为当前项目</span></footer>
+</body>
+</html>

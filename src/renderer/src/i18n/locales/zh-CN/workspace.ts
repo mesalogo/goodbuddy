@@ -314,7 +314,20 @@ export const workspace = {
       noApprovals: '当前没有等待审批的操作。',
       deny: '拒绝',
       allowOnce: '仅此次允许',
-      taskIndexTitle: '任务索引',
+      taskIndexTitle: '项目任务',
+      stats: {
+        label: '当前会话统计',
+        currentConversation: '当前会话',
+        noConversation: '尚未选择会话',
+        replyDuration: 'Agent 累计回复时长',
+        messages: '消息数',
+        unavailable: '暂无统计',
+        incomplete: '部分回复缺少计时记录，时长仅包含已知记录。',
+        partial: '部分记录',
+        timeHelp: '时间说明',
+        timeDescription: '累计每次 Agent 回复的实际用时，不包含回复之间的空闲时间。缺少计时记录的回复不按会话或任务的起止时间估算。',
+        taskDuration: '任务累计用时'
+      },
       empty: '明确创建的任务会显示在这里。',
       noFilterResults: '当前筛选条件下没有任务。',
       conversationUnavailable: '关联会话不可用',
@@ -327,9 +340,12 @@ export const workspace = {
         ariaLabel: '任务范围',
         currentProject: '当前项目',
         allProjects: '所有项目',
-        noCurrentProject: '没有活动项目。请选择其他任务范围或先打开一个项目。'
+        noCurrentProject: '没有活动项目。请先打开一个项目以查看和创建任务。'
       },
       filters: {
+        all: '全部',
+        summary: '筛选：{{filter}} · {{count}} 项',
+        clear: '清除筛选',
         ariaLabel: '筛选任务',
         active: '进行中',
         paused: '暂停',

@@ -4,6 +4,24 @@ import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
 import { sshHostIdSchema } from './ssh-host-contracts'
 
 export const assistantIdSchema = z.string().uuid()
+export const executionStatsInputSchema = z.union([
+  z.object({ conversationId: assistantIdSchema }).strict(),
+  z.object({ projectId: assistantIdSchema }).strict()
+])
+export type ExecutionStatsInput = z.infer<typeof executionStatsInputSchema>
+export interface ExecutionStats {
+  /** Sum of evidenced top-level reply intervals, including tools and approvals. */
+  durationMs: number
+  requestCount: number
+  /** Requests/replies with missing timing evidence; confirmed live intervals are complete as of asOf. */
+  incompleteRequestCount: number
+  /** Requests currently leased by Main; does not authorize renderer extrapolation. */
+  activeRequestCount: number
+  /** Epoch milliseconds at query time. */
+  asOf: number
+  /** Project card totals; empty for conversation queries. */
+  taskDurations: Array<{ id: string; durationMs: number; incompleteRequestCount: number }>
+}
 export const interactiveWorkModes = ['ask', 'execute'] as const
 export const workModeSchema = z.enum(interactiveWorkModes)
 export const legacyWorkModeSchema = z.enum([
@@ -809,13 +827,18 @@ export const scheduleCreateSchema = z
     prompt: z.string().trim().min(1).max(100_000),
     workMode: workModeSchema.default('execute'),
     recurrence: z.enum(['once', 'daily', 'weekly']),
-    nextRunAt: z.string().datetime({ offset: true })
+    nextRunAt: z.string().datetime({ offset: true }),
+    runImmediately: z.boolean().optional()
   })
   .strict()
+  .refine((input) => !input.runImmediately || input.recurrence === 'once', {
+    message: '立即执行只支持单次任务',
+    path: ['recurrence']
+  })
 
 export type ScheduleCreateInput = z.input<typeof scheduleCreateSchema>
 
-export type AssistantSchedule = z.output<typeof scheduleCreateSchema> & {
+export type AssistantSchedule = Omit<z.output<typeof scheduleCreateSchema>, 'runImmediately'> & {
   id: string
   taskId: string
   conversationId: string

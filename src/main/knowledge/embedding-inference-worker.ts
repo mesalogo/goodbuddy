@@ -206,13 +206,13 @@ export class EmbeddingInferenceWorker {
         requestId: message.requestId,
         vectors
       })
-    } catch {
+    } catch (error) {
       this.postError(
         message.requestId,
         controller.signal.aborted ? 'CANCELLED' : 'ENGINE_FAILURE',
         controller.signal.aborted
           ? 'Embedding inference was cancelled'
-          : 'Embedding engine failed'
+          : error instanceof Error ? error.message : 'Embedding engine failed'
       )
     }
   }

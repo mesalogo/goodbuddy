@@ -65,6 +65,7 @@ import type {
   AssistantHeartbeatRun,
   AssistantExpert,
   AssistantTask,
+  ExecutionStats,
   ActivityHistorySnapshot,
   ActivityRecord,
   TokenUsageSummary,
@@ -674,6 +675,14 @@ const desktopApi: DesktopApi = {
     }
   },
   updates: {
+    onSettingsChanged: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        settings: ApplicationSettings
+      ): void => listener(settings)
+      ipcRenderer.on(ipcChannels.applicationSettingsChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.applicationSettingsChanged, handler)
+    },
     getSettings: () =>
       ipcRenderer.invoke(
         ipcChannels.applicationSettingsGet
@@ -778,6 +787,12 @@ const desktopApi: DesktopApi = {
         { version }
       )
     }
+  },
+  localInference: {
+    openSettings: () => ipcRenderer.invoke(ipcChannels.localInferenceOpenSettings),
+    getSnapshot: () => ipcRenderer.invoke(ipcChannels.localInferenceGet),
+    act: (input) => ipcRenderer.invoke(ipcChannels.localInferenceAct, input),
+    cancel: (taskId) => ipcRenderer.invoke(ipcChannels.localInferenceCancel, { taskId })
   },
   speechModels: {
     getSnapshot: () =>
@@ -1216,6 +1231,8 @@ const desktopApi: DesktopApi = {
   tasks: {
     list: () =>
       ipcRenderer.invoke(ipcChannels.tasksList) as Promise<AssistantTask[]>,
+    getExecutionStats: (input) =>
+      ipcRenderer.invoke(ipcChannels.tasksExecutionStats, input) as Promise<ExecutionStats>,
     setStatus: async (
       taskId: string,
       status: 'completed' | 'cancelled'

@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
+import { localInferenceService } from '../local-inference-service'
 import {
   speechTranscriptionInputSchema,
   speechTranscriptionResultSchema,
@@ -190,9 +191,10 @@ export const runSherpaTranscription: SpeechTranscriptionRunner = (
       signal.removeEventListener('abort', abort)
       worker.removeAllListeners()
       if (terminate) {
-        void worker.terminate()
+        void worker.terminate().then(action, reject)
+      } else {
+        action()
       }
-      action()
     }
     const abort = (): void =>
       finish(() => reject(createAbortError()))
@@ -265,21 +267,23 @@ export class SpeechTranscriptionService {
     }
     const controller = new AbortController()
     this.active.set(request.requestId, controller)
-    try {
-      const model = await this.models.getSelectedRuntimeModel()
-      if (!model) {
-        throw new Error('请先在设置中安装并选择本地语音模型')
+    return localInferenceService.run('asr', '语音输入', async () => {
+      try {
+        const model = await this.models.getSelectedRuntimeModel()
+        if (!model) {
+          throw new Error('请先在设置中安装并选择本地语音模型')
+        }
+        const text = await this.runner(
+          createSherpaRecognizerConfig(model),
+          samples,
+          request.sampleRate,
+          controller.signal
+        )
+        return speechTranscriptionResultSchema.parse({ text })
+      } finally {
+        this.active.delete(request.requestId)
       }
-      const text = await this.runner(
-        createSherpaRecognizerConfig(model),
-        samples,
-        request.sampleRate,
-        controller.signal
-      )
-      return speechTranscriptionResultSchema.parse({ text })
-    } finally {
-      this.active.delete(request.requestId)
-    }
+    }, { cancel: () => controller.abort() })
   }
 
   cancel(requestId: SpeechTranscriptionInput['requestId']): boolean {

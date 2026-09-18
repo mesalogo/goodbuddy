@@ -242,11 +242,7 @@ type SettingsPanelProps = {
   onConversationHtmlRenderingEnabledChange?: (
     enabled: boolean
   ) => void
-  onMagicNotesEnabledChange?: (enabled: boolean) => void
   onRemoteProjectsEnabledChange?: (enabled: boolean) => void
-  onMagicNotesShowIncompleteTodoCountChange?: (
-    enabled: boolean
-  ) => void
   onShortcutSettingsChanged?: (
     snapshot: GlobalShortcutSettingsSnapshot
   ) => void
@@ -655,9 +651,7 @@ export function SettingsPanel({
   magicNotesEnabled = false,
   remoteProjectsEnabled = false,
   onConversationHtmlRenderingEnabledChange = () => {},
-  onMagicNotesEnabledChange = () => {},
   onRemoteProjectsEnabledChange = () => {},
-  onMagicNotesShowIncompleteTodoCountChange = () => {},
   onShortcutSettingsChanged = () => {},
   onLeaveRequestReady = () => {}
 }: SettingsPanelProps): React.JSX.Element | null {
@@ -2300,10 +2294,6 @@ export function SettingsPanel({
               onDirtyChange={setPlatformFeaturesDirty}
               onConversationHtmlRenderingEnabledChange={
                 onConversationHtmlRenderingEnabledChange
-              }
-              onMagicNotesEnabledChange={onMagicNotesEnabledChange}
-              onMagicNotesShowIncompleteTodoCountChange={
-                onMagicNotesShowIncompleteTodoCountChange
               }
               onRemoteProjectsEnabledChange={
                 onRemoteProjectsEnabledChange

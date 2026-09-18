@@ -16,11 +16,11 @@
       <button data-variant="cards" aria-pressed="false">C · 应用预览</button>
       <button data-variant="launcher" aria-pressed="false">D · 搜索启动台</button>
       <button data-variant="favorites" aria-pressed="false">E · 常驻管理</button>
-      <button data-variant="scenes" aria-pressed="false">F · 商店发现</button>
+      <button data-variant="scenes" aria-pressed="false">F · 私有市场预览</button>
     </div>
     <button id="theme">切换深色</button>
   </header>
-  <div class="design-note"><span id="variant-label">A / 紧凑 Dock</span><p id="variant-description"></p><span>交互原型 · 商店与指标均为演示数据</span></div>
+  <div class="design-note"><span id="variant-label">A / 紧凑 Dock</span><p id="variant-description"></p><span>交互原型 · 全部状态仅在内存中，刷新重置</span></div>
   <div class="project-lab"><label>项目活动演示 <select id="project-scenario"><option value="waiting">有待处理</option><option value="running">仅运行中</option><option value="current">仅当前项目运行</option><option value="idle">全部空闲</option></select></label><span>有活动时显示摘要，悬停或点击项目向右展开会话。</span></div>
   <main class="app" data-variant="dock">
     <aside class="sidebar" aria-label="主侧栏">
@@ -63,8 +63,8 @@
           <div id="composer-options" popover aria-label="会话选项">
             <header><strong>会话选项</strong><button popovertarget="composer-options" popovertargetaction="hide" aria-label="关闭会话选项">×</button></header>
             <label class="option-row">专家<select id="composer-expert"><option value="">默认助手</option><option>产品顾问</option><option>代码审查专家</option></select></label>
-            <fieldset><legend>知识范围</legend><label><input type="checkbox" data-knowledge="产品文档"> 产品文档</label><label><input type="checkbox" data-knowledge="团队知识"> 团队知识</label></fieldset>
-            <label class="option-row">检索方式<select id="composer-retrieval"><option value="auto">自动检索</option><option value="always">每次检索</option></select></label>
+             <fieldset data-knowledge-control><legend>知识范围</legend><label><input type="checkbox" data-knowledge="产品文档"> 产品文档</label><label><input type="checkbox" data-knowledge="团队知识"> 团队知识</label></fieldset>
+             <label class="option-row" data-knowledge-control>检索方式<select id="composer-retrieval"><option value="auto">自动检索</option><option value="always">每次检索</option></select></label>
             <div id="runtime-options"><label class="option-row"><span id="agent-label">Agent</span><select id="composer-agent"><option value="">默认</option><option value="plan">Plan</option><option value="review">Review</option></select></label><label class="option-row">快捷操作<select id="composer-command"><option value="">无</option><option value="prompt">填入总结模板</option><option value="command">原生命令 /init</option></select></label></div>
             <p class="muted">非默认选项会显示在输入框上方。</p>
           </div>
@@ -77,7 +77,16 @@
   </main>
   <footer class="lab-footer"><span id="design-tradeoff"></span><button id="reset">恢复默认应用</button></footer>
   <div class="reference-note">设计参考：<a href="https://www.raycast.com/" target="_blank" rel="noreferrer">Raycast · 搜索与扩展</a><a href="https://www.notion.com/help/intro-to-workspaces" target="_blank" rel="noreferrer">Notion · 收藏与折叠分区</a><a href="https://code.visualstudio.com/docs/configure/profiles" target="_blank" rel="noreferrer">VS Code · Profiles</a><span>借鉴交互思路，保留 GoodBuddy 的视觉与入口分类。</span></div>
-  <dialog id="catalog" aria-labelledby="catalog-title"><button id="back-to-apps" hidden>‹ 返回应用中心</button><header><div><span class="eyebrow">GOODBUDDY COLLECTION</span><h2 id="catalog-title">应用中心</h2></div><button id="close-catalog" aria-label="关闭">×</button></header><p class="muted" id="catalog-description"></p><div class="center-switch" role="group" aria-label="应用中心视图"><button data-catalog="apps">我的应用</button><button data-catalog="store">商店</button></div><input id="search" type="search" aria-label="搜索应用" placeholder="搜索应用…"><div id="catalog-items"></div><section id="app-settings" aria-label="魔法笔记设置" hidden></section><footer>常驻只表示菜单入口，不表示后台运行。安装与内容均为演示。</footer></dialog>
+   <dialog id="catalog" aria-labelledby="catalog-title"><button id="back-to-apps" hidden>‹ 返回应用中心</button><header><div><span class="eyebrow">GOODBUDDY COLLECTION</span><h2 id="catalog-title">应用中心</h2></div><button id="close-catalog" aria-label="关闭">×</button></header><p class="muted" id="catalog-description"></p><div class="center-switch" role="group" aria-label="应用中心视图" hidden><button data-catalog="apps">我的应用</button><button data-catalog="store">未来私有市场</button></div><section id="market-preview" hidden>
+     <label>私有市场 URL<input id="market-url" type="url" value="https://market.example.invalid" aria-describedby="market-status"></label><button id="market-fetch">模拟获取目录</button><button id="market-fail">模拟不可达</button><p id="market-status" role="status">未来预览，不发送网络请求；来源仅用于市场。</p>
+     <details><summary>YAML 导入 / 导出预览（mock schema）</summary><p class="muted">仅支持下列扁平示例字段，非正式 Schema。支持 .yml / .yaml 的文本预览；不包含凭据或业务数据，不替代程序包或模型权重。</p><label>应用定义<textarea id="yaml-input" rows="9" spellcheck="false">schema: mock-v1
+id: reading
+name: 阅读空间
+version: 1.0
+entry: main
+dependencies: builtin:knowledge
+resources: bundled</textarea></label><button id="yaml-preview">预览导入</button><label>导出应用<select id="yaml-app"></select></label><button id="yaml-export">预览导出 YAML</button><pre id="yaml-output" tabindex="0" hidden></pre><div id="import-preview" hidden></div></details>
+   </section><input id="search" type="search" aria-label="搜索应用" placeholder="搜索应用…"><div id="catalog-items"></div><section id="app-settings" aria-label="应用设置" hidden></section><footer>取消常驻仅隐藏捷径；关闭应用隐藏业务入口，保留数据与后台状态。此处全部为模拟。</footer></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

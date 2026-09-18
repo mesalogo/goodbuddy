@@ -1,3 +1,5 @@
+import { localInferenceService } from './local-inference-service'
+import { createEmbeddingUtilityTransport } from './knowledge/embedding-utility-transport'
 import {
   app,
   BrowserWindow,
@@ -45,10 +47,7 @@ import { OpenAIEmbeddingClient } from './knowledge/openai-embedding-client'
 import { embeddingProviderFingerprint } from './knowledge/embedding-provider-key'
 import type { EmbeddingProvider } from './knowledge/types'
 import { EmbeddingModelManager } from './knowledge/embedding-model-manager'
-import {
-  EmbeddingInferenceBroker,
-  type EmbeddingInferenceTransport
-} from './knowledge/embedding-inference-broker'
+import { EmbeddingInferenceBroker } from './knowledge/embedding-inference-broker'
 import { CohereRerankClient } from './knowledge/cohere-rerank-client'
 import { RuntimeSettingsStore } from './runtime-settings-store'
 import type { ResolvedRuntimeSettings } from './runtime-settings-store'
@@ -220,6 +219,7 @@ let documentOcrBroker: DocumentOcrBroker | undefined
 let documentOcrModelManager: DocumentOcrModelManager | undefined
 let embeddingModelManager: EmbeddingModelManager | undefined
 const embeddingBrokers = new Set<EmbeddingInferenceBroker>()
+const sharedEmbeddingBrokers = new Map<string, { broker: EmbeddingInferenceBroker; users: number; unregister: () => void }>()
 let stopRuntimeReconfiguration: (() => Promise<void>) | undefined
 let dshExtensionInstaller: DshNpmExtensionInstaller | undefined
 let remoteAgentServices: RemoteAgentServices | undefined
@@ -232,47 +232,6 @@ let localToolEnvironmentService: LocalToolEnvironmentService | undefined
 
 type ManagedEmbeddingProvider = EmbeddingProvider & {
   dispose?: () => void | Promise<void>
-}
-
-function createEmbeddingUtilityTransport(
-  modulePath: string,
-  modelDirectory: string
-): EmbeddingInferenceTransport {
-  const child = utilityProcess.fork(
-    modulePath,
-    [modelDirectory],
-    {
-      serviceName: 'GoodBuddy Embedding Inference',
-      stdio: 'pipe',
-      allowLoadingUnsignedLibraries: false
-    }
-  )
-  return {
-    postMessage: (message) => child.postMessage(message),
-    onMessage: (listener) => {
-      child.on('message', listener)
-      return () => child.removeListener('message', listener)
-    },
-    onClose: (listener) => {
-      let closed = false
-      const notify = (): void => {
-        if (closed) {
-          return
-        }
-        closed = true
-        listener()
-      }
-      child.on('exit', notify)
-      child.on('error', notify)
-      return () => {
-        child.removeListener('exit', notify)
-        child.removeListener('error', notify)
-      }
-    },
-    close: () => {
-      child.kill()
-    }
-  }
 }
 
 async function createEmbeddingProvider(
@@ -320,14 +279,38 @@ async function createEmbeddingProvider(
   if (!tokenizerDigest || !modelDigest) {
     throw new Error('内置向量模型安装清单不完整')
   }
-  const broker = new EmbeddingInferenceBroker({
-    createTransport: () =>
-      createEmbeddingUtilityTransport(
-        join(mainModuleDirectory, 'embedding-inference-bootstrap.js'),
-        modelDirectory
-      )
-  })
-  embeddingBrokers.add(broker)
+  let shared = sharedEmbeddingBrokers.get(modelDirectory)
+  if (!shared) {
+    const broker = new EmbeddingInferenceBroker({
+      createTransport: () =>
+        createEmbeddingUtilityTransport(
+          join(mainModuleDirectory, 'embedding-inference-bootstrap.js'),
+          modelDirectory
+        )
+    })
+    embeddingBrokers.add(broker)
+    const unregister = localInferenceService.register('embedding', {
+      snapshot: () => ({
+        id: 'embedding', name: '向量生成', engine: 'Granite / ONNX',
+        ownership: 'managed-process', state: broker.getManagementState(), model: model.id,
+        error: broker.getManagementError(),
+        resources: broker.getResources(),
+        detail: 'GoodBuddy 托管进程，由知识检索与索引共享。进程启动后模型在首个请求时加载；资源指标为整个向量服务进程占用。停止会中断使用方任务，启动不重放任务。',
+        actions: broker.getManagementState() === 'stopped' || broker.getManagementState() === 'idle' || broker.getManagementState() === 'error'
+          ? ['start'] : broker.getManagementState() === 'running' ? ['stop', 'restart'] : []
+      }),
+      act: async (action) => {
+        if (action !== 'start') await broker.stop()
+        if (action !== 'stop') await broker.start()
+      }
+    })
+    shared = { broker, users: 0, unregister }
+    sharedEmbeddingBrokers.set(modelDirectory, shared)
+  }
+  shared.users += 1
+  const sharedBroker = shared
+  const broker = shared.broker
+  let disposed = false
   return {
     provider: 'builtin',
     model: model.id,
@@ -354,6 +337,12 @@ async function createEmbeddingProvider(
     embedDocuments: (texts, signal) =>
       broker.embed(texts, 'document', signal),
     dispose: async () => {
+      if (disposed) return
+      disposed = true
+      sharedBroker.users -= 1
+      if (sharedBroker.users > 0) return
+      sharedEmbeddingBrokers.delete(modelDirectory)
+      sharedBroker.unregister()
       try {
         await broker.shutdown()
       } finally {
@@ -803,6 +792,19 @@ if (hasSingleInstanceLock) {
       documentOcrModelManager,
       documentOcrBroker
     )
+    localInferenceService.register('ocr', {
+      snapshot: async () => {
+        const snapshot = await documentParsingService.snapshot()
+        const model = snapshot.status.localOcr
+        return {
+          id: 'ocr', name: '文字识别', engine: 'PaddleOCR / ONNX Web', ownership: 'renderer-worker',
+          resources: { scope: 'unavailable', reason: 'Web Worker 与界面共享渲染进程，无法独立统计 CPU / 内存' },
+          state: model.available ? 'unknown' : 'unavailable', model: model.id,
+          detail: `${model.detail}。模型由 Renderer Worker 持有，文档解析按需加载，空闲 60 秒自动释放；仅允许无活动任务时手动释放。`,
+          actions: []
+        }
+      }
+    })
     const versionChecker = new VersionChecker({
       fetch: globalThis.fetch,
       currentVersion: app.getVersion(),
@@ -818,6 +820,18 @@ if (hasSingleInstanceLock) {
     const speechTranscriptionService = new SpeechTranscriptionService(
       speechModelManager
     )
+    localInferenceService.register('asr', {
+      snapshot: async () => {
+        const model = await speechModelManager.getSelectedRuntimeModel()
+        return {
+          id: 'asr', name: '语音识别', engine: 'sherpa-onnx', ownership: 'request-worker',
+          resources: { scope: 'unavailable', reason: '识别线程与主进程共享资源，无法独立统计 CPU / 内存' },
+          state: model ? 'unknown' : 'unavailable', model: model?.id,
+          detail: model ? '每个识别请求独立加载模型，完成后释放；支持取消单次识别，没有常驻服务可启停。' : '请在设置中安装并选择本地语音模型。',
+          actions: []
+        }
+      }
+    })
     browserService = new BrowserService({ parentWindow: mainWindow })
     const bundledRuntimePaths = resolveBundledRuntimePaths({
       appPath: app.getAppPath(),

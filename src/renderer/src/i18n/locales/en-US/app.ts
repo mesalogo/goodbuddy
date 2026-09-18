@@ -2,6 +2,22 @@ import type { TranslationShape } from '../../resource-types'
 import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
+  applications: {
+    fixed: 'Fixed entry', optional: 'Optional',
+    manage: 'Manage Apps',
+    title: 'Application Center', description: 'Open built-in applications and manage optional apps, pins, and order. Knowledge and Smart Heartbeat have fixed sidebar entries.',
+    localInference: 'Local Inference', settings: 'Application settings', enable: 'Enable application', pin: 'Pin to sidebar',
+    enableHelp: 'Pinning only controls the sidebar shortcut. Disabling preserves data and pins without stopping existing requests or background services.',
+    disabledPage: 'Application is disabled', close: 'Close application center', retry: 'Reload settings', back: 'Back to application center',
+    search: 'Search built-in applications', noResults: 'No matching applications', clear: 'Clear search', builtin: 'Built-in',
+    enabled: 'Enabled', disabled: 'Disabled', open: 'Open', moveUp: 'Move {{name}} up', moveDown: 'Move {{name}} down',
+    orderUpdated: 'Application order updated', loadFailed: 'Could not load application settings', saveFailed: 'Could not save application settings',
+    confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
+    descriptions: {
+      'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
+      heartbeat: 'Review heartbeat suggestions and schedules.', 'local-inference': 'Inspect local inference tasks and execution services.'
+    }
+  },
   notifications: {
     success: 'Success',
     error: 'Error',
@@ -39,6 +55,7 @@ export const app = {
     }
   },
   navigation: {
+    settings: 'Settings',
     label: 'Main navigation',
     chat: 'Chat',
     magicNotes: 'Magic Notes',
@@ -137,11 +154,14 @@ export const app = {
     eyebrow: 'CUSTOM TASK',
     title: 'New custom task',
     description:
-      'Send task instructions to an ordinary conversation on schedule. Replies stay in the conversation just like manually sent messages.',
+      'Send task content to a conversation now or on schedule. Replies stay in the linked conversation.',
+    nameHelp: 'Optional. Leave blank to generate a name from the task content.',
+    timing: { now: 'Run immediately', scheduled: 'Schedule' },
     close: 'Close new custom task',
     fields: {
       name: 'Task name',
-      instructions: 'Task instructions',
+      instructions: 'Task content',
+      timing: 'Execution time',
       destination: 'Conversation',
       mode: 'Work mode',
       recurrence: 'Frequency',
@@ -151,11 +171,11 @@ export const app = {
       current: 'Current conversation',
       new: 'New conversation',
       currentHelp:
-        'Use this conversation\'s history, Runtime, work mode, and enabled capabilities when the message is sent.',
+        'Use the selected conversation\'s history, Runtime, work mode, and enabled capabilities when the message is sent.',
       newHelp:
         'Create an independent ordinary conversation with project defaults and the task name as its title.',
       currentUnavailable:
-        'The current conversation cannot host this task. Choose a new conversation.'
+        'The current conversation cannot host this task. Choose another conversation in this project or a new conversation.'
     },
     mode: {
       execute: 'Execute',
@@ -183,7 +203,7 @@ export const app = {
     },
     errors: {
       title: 'Enter a task name.',
-      instructions: 'Enter task instructions.',
+      instructions: 'Enter task content.',
       destination: 'Choose an available conversation.',
       time: 'Choose a valid first run time.',
       futureTime: 'The first run must be in the future.',

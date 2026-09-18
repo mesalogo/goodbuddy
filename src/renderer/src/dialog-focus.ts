@@ -14,8 +14,9 @@ export function trapTabFocus(
   if (event.key !== 'Tab' || !container) {
     return
   }
-  const focusable =
+  const focusable = Array.from(
     container.querySelectorAll<HTMLElement>(focusableSelector)
+  ).filter((element) => !element.closest('[hidden], [inert], [aria-hidden="true"]'))
   if (focusable.length === 0) {
     event.preventDefault()
     container.focus()
@@ -36,7 +37,8 @@ export function trapTabFocus(
 }
 
 export function activateModalFocus(
-  initialFocus: () => HTMLElement | null
+  initialFocus: () => HTMLElement | null,
+  fallbackFocus?: () => HTMLElement | null
 ): () => void {
   const restoreFocus =
     document.activeElement instanceof HTMLElement
@@ -86,6 +88,10 @@ export function activateModalFocus(
     for (const { element, wasInert } of isolatedElements) {
       element.inert = wasInert
     }
-    restoreFocus?.focus()
+    const canRestore = restoreFocus?.isConnected &&
+      restoreFocus !== document.body &&
+      !restoreFocus.closest('[hidden], [inert], [aria-hidden="true"], :disabled')
+    const target = canRestore ? restoreFocus : fallbackFocus?.()
+    target?.focus()
   }
 }

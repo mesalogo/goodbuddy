@@ -1,4 +1,20 @@
 export const app = {
+  applications: {
+    fixed: '固定入口', optional: '可选',
+    manage: '管理应用',
+    title: '应用中心', description: '打开内置应用，管理可选应用的启用、常驻和顺序。知识库和智能心跳固定显示在左侧菜单。',
+    localInference: '本机推理', settings: '应用设置', enable: '启用应用', pin: '常驻左侧菜单',
+    enableHelp: '常驻只控制左侧捷径；关闭应用保留数据和常驻偏好，不停止已有请求或后台服务。',
+    disabledPage: '应用已关闭', close: '关闭应用中心', retry: '重新读取', back: '返回应用中心',
+    search: '搜索内置应用', noResults: '未找到相关应用', clear: '清除搜索', builtin: '内置',
+    enabled: '已启用', disabled: '已关闭', open: '打开', moveUp: '上移 {{name}}', moveDown: '下移 {{name}}',
+    orderUpdated: '应用顺序已更新', loadFailed: '无法读取应用设置', saveFailed: '应用设置保存失败',
+    confirmFailed: '无法确认保存结果，请重新读取后再修改。',
+    descriptions: {
+      'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
+      heartbeat: '查看智能心跳建议与计划。', 'local-inference': '查看本机推理任务与执行服务。'
+    }
+  },
   notifications: {
     success: '成功',
     error: '错误',
@@ -36,6 +52,7 @@ export const app = {
     }
   },
   navigation: {
+    settings: '设置',
     label: '主导航',
     chat: '对话',
     magicNotes: '魔法笔记',
@@ -129,11 +146,14 @@ export const app = {
   customTask: {
     eyebrow: '定制任务',
     title: '新建定制任务',
-    description: '按计划向普通会话发送任务要求，回复和手动发送的消息一样保留在会话中。',
+    description: '立即或按计划向会话发送任务内容，回复保留在关联会话中。',
+    nameHelp: '可选，留空时从任务内容生成名称。',
+    timing: { now: '立即执行', scheduled: '定时执行' },
     close: '关闭新建定制任务',
     fields: {
       name: '任务名称',
-      instructions: '任务要求',
+      instructions: '任务内容',
+      timing: '执行时间',
       destination: '关联会话',
       mode: '执行模式',
       recurrence: '运行频率',
@@ -142,9 +162,9 @@ export const app = {
     destination: {
       current: '当前会话',
       new: '新建会话',
-      currentHelp: '发送时使用当前会话的历史、Runtime、工作模式和已启用能力。',
+      currentHelp: '发送时使用所选会话的历史、Runtime、工作模式和已启用能力。',
       newHelp: '创建独立的普通会话，使用项目默认设置，以任务名称作为标题。',
-      currentUnavailable: '当前会话不能关联此任务，请选择新建会话。'
+      currentUnavailable: '当前会话不能关联此任务，请选择本项目其他会话或新建会话。'
     },
     mode: {
       execute: 'Execute',
@@ -170,7 +190,7 @@ export const app = {
     },
     errors: {
       title: '请输入任务名称。',
-      instructions: '请输入任务要求。',
+      instructions: '请输入任务内容。',
       destination: '请选择可用的关联会话。',
       time: '请选择有效的首次运行时间。',
       futureTime: '首次运行时间必须晚于当前时间。',

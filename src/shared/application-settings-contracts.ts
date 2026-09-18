@@ -30,6 +30,22 @@ export type MagicNoteCommentMode = z.infer<typeof magicNoteCommentModeSchema>
 export const updateSourceSchema = z.enum(['github', 'mirror'])
 export type UpdateSource = z.infer<typeof updateSourceSchema>
 
+export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference'] as const
+export type BuiltInApplicationId = typeof builtInApplicationIds[number]
+export const editableApplicationIds = ['magic-notes', 'local-inference'] as const
+export type EditableApplicationId = typeof editableApplicationIds[number]
+export const defaultApplicationNavigation = {
+  order: [...editableApplicationIds],
+  pinned: { 'magic-notes': true, 'local-inference': true }
+}
+export const applicationNavigationSchema = z.object({
+  order: z.array(z.enum(editableApplicationIds)).length(editableApplicationIds.length)
+    .refine(ids => new Set(ids).size === editableApplicationIds.length, 'Each application must occur exactly once'),
+  pinned: z.object({
+    'magic-notes': z.boolean(), 'local-inference': z.boolean()
+  }).strict()
+}).strict()
+
 const applicationPreferencesSchema = z
   .object({
     checkUpdatesOnStartup: z.boolean(),
@@ -38,10 +54,12 @@ const applicationPreferencesSchema = z
     localToolEnvironment: localToolEnvironmentSettingsSchema,
     conversationHtmlRenderingEnabled: z.boolean(),
     remoteProjectsEnabled: z.boolean(),
-    magicNotesEnabled: z.boolean(),
-    magicNotesShowIncompleteTodoCount: z.boolean(),
-    magicNoteCommentMode: magicNoteCommentModeSchema,
-    magicNoteCommentFormat: magicNoteCommentFormatSchema
+    applicationNavigation: applicationNavigationSchema.default(defaultApplicationNavigation),
+    localInferenceEnabled: z.boolean().default(true),
+    magicNotesEnabled: z.boolean().default(true),
+    magicNotesShowIncompleteTodoCount: z.boolean().default(true),
+    magicNoteCommentMode: magicNoteCommentModeSchema.default('immediate'),
+    magicNoteCommentFormat: magicNoteCommentFormatSchema.default('combined')
   })
   .strict()
 
@@ -53,6 +71,14 @@ export const applicationSettingsSchema = applicationPreferencesSchema
 
 export const applicationSettingsUpdateSchema = applicationPreferencesSchema
   .partial()
+  .extend({
+    applicationNavigation: applicationNavigationSchema.optional(),
+    localInferenceEnabled: z.boolean().optional(),
+    magicNotesEnabled: z.boolean().optional(),
+    magicNotesShowIncompleteTodoCount: z.boolean().optional(),
+    magicNoteCommentMode: magicNoteCommentModeSchema.optional(),
+    magicNoteCommentFormat: magicNoteCommentFormatSchema.optional()
+  })
   .refine((input) => Object.keys(input).length > 0, {
     message: 'At least one application setting is required'
   })

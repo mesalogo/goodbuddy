@@ -39,6 +39,8 @@ import {
   type AssistantHeartbeatRun,
   type AssistantExpert,
   type AssistantTask,
+  type ExecutionStats,
+  type ExecutionStatsInput,
   type ActivityHistorySnapshot,
   type ActivityRecord,
   type TokenUsageSummary,
@@ -1744,6 +1746,7 @@ export type KnowledgeSearchReference = {
 }
 
 export type DesktopApi = {
+  localInference: import('./local-inference-contracts').LocalInferenceApi
   storageUpgrade: {
     getProgress: () => Promise<import('./assistant-storage-contracts').AssistantStorageProgress>
     act: (action: 'retry' | 'quit') => Promise<void>
@@ -1907,6 +1910,7 @@ export type DesktopApi = {
   }
   updates?: {
     getSettings: () => Promise<ApplicationSettings>
+    onSettingsChanged: (listener: (settings: ApplicationSettings) => void) => () => void
     updateSettings: (
       input: ApplicationSettingsUpdate
     ) => Promise<ApplicationSettings>
@@ -2107,6 +2111,7 @@ export type DesktopApi = {
   }
   tasks: {
     list: () => Promise<AssistantTask[]>
+    getExecutionStats: (input: ExecutionStatsInput) => Promise<ExecutionStats>
     setStatus: (
       taskId: string,
       status: Extract<AssistantTask['status'], 'completed' | 'cancelled'>

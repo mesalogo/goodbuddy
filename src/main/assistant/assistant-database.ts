@@ -6,6 +6,7 @@ import {
   builtInDefaultProjectSeedName,
   activityHistorySnapshotSchema,
   assistantIdSchema,
+  executionStatsInputSchema,
   conversationAnsweredQuestionSchema,
   conversationMessageSchema,
   conversationSnapshotSchema,
@@ -26,6 +27,8 @@ import type {
   AssistantProject,
   AssistantSchedule,
   AssistantTask,
+  ExecutionStats,
+  ExecutionStatsInput,
   ActivityHistorySnapshot,
   ConversationQueueItem,
   ConversationAnsweredQuestion,
@@ -4317,6 +4320,230 @@ export class AssistantDatabase {
     return rows.map(toTask)
   }
 
+  getExecutionStats(
+    input: ExecutionStatsInput,
+    activeRequestIds: ReadonlySet<string> = new Set()
+  ): ExecutionStats {
+    const scope = executionStatsInputSchema.parse(input)
+    const result: ExecutionStats = {
+      durationMs: 0, requestCount: 0, incompleteRequestCount: 0,
+      activeRequestCount: 0, asOf: Date.now(), taskDurations: []
+    }
+    const database = this.requireDatabase()
+    const scopeId = 'conversationId' in scope ? scope.conversationId : scope.projectId
+    const scopeColumn = 'conversationId' in scope ? 'conversation_id' : 'project_id'
+    const durations = new Map<string, ExecutionStats['taskDurations'][number]>()
+    const observed = new Set<string>()
+    const coverage = new Map<string, number>()
+    const bucket = (conversationId: string | null, owner: string | null): string =>
+      JSON.stringify([conversationId, owner])
+    const add = (id: string | null, durationMs: number, incomplete: number): void => {
+      if (!id || !('projectId' in scope)) return
+      const entry = durations.get(id) ?? { id, durationMs: 0, incompleteRequestCount: 0 }
+      entry.durationMs += durationMs
+      entry.incompleteRequestCount += incomplete
+      durations.set(id, entry)
+    }
+    // Materialize task-level evidence once. Stream/tool payloads are never parsed;
+    // task_events_task_idx supplies request membership and boundary seeks.
+    const rows = database.prepare(`
+      WITH scoped AS MATERIALIZED (
+        SELECT t.id, t.conversation_id, t.visible, t.started_at, t.remote_recoverable,
+          COALESCE(parent.id, retained.id) AS schedule_task_id,
+          space.kind = 'ssh' AS ssh_project,
+          EXISTS (SELECT 1 FROM messages m
+            WHERE m.conversation_id = t.conversation_id AND m.request_id = t.id) AS linked,
+          EXISTS (SELECT 1 FROM task_events proof WHERE proof.task_id = t.id
+            AND proof.kind IN ('text', 'reasoning', 'tool', 'done', 'error',
+              'subagent', 'generated-image', 'question')) AS reply_event,
+          EXISTS (SELECT 1 FROM task_events remote WHERE remote.task_id = t.id
+            AND remote.remote_operation_id IS NOT NULL) AS remote_event,
+          (SELECT tail.created_at FROM task_events tail WHERE tail.task_id = t.id
+            ORDER BY tail.id DESC LIMIT 1) AS last_at
+        FROM tasks t
+        LEFT JOIN schedule_runs sr ON sr.id = t.id
+        LEFT JOIN tasks parent ON parent.schedule_id = sr.schedule_id
+        LEFT JOIN tasks retained ON retained.id = t.parent_task_id
+          AND retained.origin = 'schedule' AND retained.visible = 1
+        LEFT JOIN project_execution_spaces space ON space.project_id = t.project_id
+        WHERE t.${scopeColumn} = ?
+          AND t.schedule_id IS NULL AND t.origin != 'subagent'
+          AND NOT (t.origin = 'schedule' AND t.visible = 1)
+      )
+      SELECT scoped.*, e.kind, e.created_at,
+        CASE WHEN e.kind = 'status'
+          THEN json_extract(e.payload_json, '$.status') END AS event_status,
+        CASE WHEN e.kind = 'status' THEN
+          json_extract(e.payload_json, '$.requestId') = scoped.id
+          AND json_extract(e.payload_json, '$.type') = 'status'
+          AND json_type(e.payload_json, '$.message') = 'text'
+        END AS runtime_status,
+        CASE WHEN e.kind = 'status' THEN (
+          SELECT previous.created_at FROM task_events previous
+          WHERE previous.task_id = scoped.id AND previous.id < e.id
+          ORDER BY previous.id DESC LIMIT 1
+        ) END AS previous_at
+      FROM scoped LEFT JOIN task_events e ON e.task_id = scoped.id
+        AND e.kind IN ('status', 'done', 'error')
+      ORDER BY scoped.id, e.id
+    `).iterate(scopeId)
+    let task: {
+      id: string; proven: boolean; remote: boolean; incomplete: boolean
+      start: number | undefined; last: number | undefined; duration: number
+      conversationId: string | null; owner: string | null
+      lastEvidence: number
+    } | undefined
+    const finish = (): void => {
+      if (!task?.proven) return
+      result.requestCount++
+      observed.add(task.id)
+      const key = bucket(task.conversationId, task.owner)
+      coverage.set(key, (coverage.get(key) ?? 0) + 1)
+      if (activeRequestIds.has(task.id)) result.activeRequestCount++
+      if (task.remote) {
+        task.duration = 0
+        task.incomplete = true
+      } else if (task.start !== undefined) {
+        if (Number.isFinite(task.lastEvidence) && task.lastEvidence >= task.start && task.lastEvidence <= result.asOf) {
+          task.last = Math.max(task.last ?? task.start, task.lastEvidence)
+        }
+        const live = activeRequestIds.has(task.id) && task.start <= result.asOf
+        task.duration += Math.max(0, (live ? result.asOf : task.last ?? task.start) - task.start)
+        task.incomplete ||= !live
+      }
+      result.durationMs += task.duration
+      if (task.incomplete) result.incompleteRequestCount++
+      add(task.owner ?? task.id, task.duration, Number(task.incomplete))
+    }
+    for (const raw of rows) {
+      const row = raw as unknown as {
+        id: string; started_at: string | null; remote_recoverable: number
+        linked: number; kind: string | null; created_at: string | null
+        reply_event: number; remote_event: number; last_at: string | null; previous_at: string | null
+        event_status: string | null; runtime_status: number | null; ssh_project: number | null
+        conversation_id: string | null; visible: number; schedule_task_id: string | null
+      }
+      if (task?.id !== row.id) {
+        finish()
+        const start = Date.parse(row.started_at ?? '')
+        task = {
+          id: row.id, proven: row.linked === 1 || row.reply_event === 1 || row.schedule_task_id !== null || activeRequestIds.has(row.id),
+          remote: row.remote_recoverable === 1 || row.remote_event === 1 || row.ssh_project === 1,
+          lastEvidence: Date.parse(row.last_at ?? ''),
+          conversationId: row.conversation_id,
+          owner: row.schedule_task_id ?? (row.visible === 1 ? row.id : null),
+          incomplete: !Number.isFinite(start),
+          start: Number.isFinite(start) ? start : undefined,
+          last: Number.isFinite(start) ? start : undefined, duration: 0
+        }
+      }
+      const current = task!
+      current.proven ||= row.runtime_status === 1
+      if (row.kind === null) continue
+      const status = row.event_status
+      // Recovery writes interrupted at restart, not when execution actually stopped.
+      if (status === 'interrupted') {
+        if (current.start !== undefined) {
+          const previous = Date.parse(row.previous_at ?? '')
+          if (Number.isFinite(previous) && previous >= current.start && previous <= result.asOf) {
+            current.last = Math.max(current.last ?? current.start, previous)
+          }
+          current.duration += Math.max(0, (current.last ?? current.start) - current.start)
+        }
+        current.start = undefined
+        current.last = undefined
+        current.incomplete = true
+        continue
+      }
+      const time = Date.parse(row.created_at ?? '')
+      if (!Number.isFinite(time) || time > result.asOf || (current.last !== undefined && time < current.last)) {
+        current.incomplete = true
+        continue
+      }
+      if (status === 'running' && current.start === undefined) current.start = time
+      const closes = row.kind === 'done' || row.kind === 'error' ||
+        ['completed', 'failed', 'cancelled', 'paused', 'queued', 'idle'].includes(status ?? '')
+      if (closes && current.start !== undefined) {
+        current.duration += time - current.start
+        current.start = undefined
+      }
+      current.last = time
+    }
+    finish()
+
+    // A schedule run has an independent request ID. Its stable task is never a clock.
+    for (const row of database.prepare(`
+      SELECT t.id, t.conversation_id, t.origin, t.schedule_id,
+        sr.id AS run_id, sr.status AS run_status
+      FROM tasks t LEFT JOIN schedule_runs sr ON sr.schedule_id = t.schedule_id
+      WHERE t.${scopeColumn} = ? AND t.visible = 1 AND t.origin != 'subagent'
+      ORDER BY t.id, sr.id
+    `).iterate(scopeId)) {
+      const id = row.id as string
+      add(id, 0, 0)
+      const key = bucket(row.conversation_id as string | null, id)
+      // A removed plan without retained execution links cannot establish a zero.
+      if (row.origin === 'schedule' && row.schedule_id === null && !coverage.has(key)) {
+        result.requestCount++
+        result.incompleteRequestCount++
+        add(id, 0, 1)
+        coverage.set(key, 1)
+      }
+      if (row.run_id && ['completed', 'failed', 'running'].includes(row.run_status as string) && !observed.has(row.run_id as string)) {
+        observed.add(row.run_id as string)
+        result.requestCount++
+        result.incompleteRequestCount++
+        add(id, 0, 1)
+        coverage.set(key, (coverage.get(key) ?? 0) + 1)
+      }
+    }
+    // Local snapshots lack request IDs. Compare top-level assistant rows per
+    // conversation/task, never nested subagent blocks or child-task messages.
+    const messages = database.prepare(`
+      SELECT m.conversation_id, m.request_id,
+        COALESCE(parent.id, retained.id, json_extract(m.metadata_json, '$.task.id'),
+          CASE WHEN mt.visible = 1 THEN mt.id END) AS owner,
+        COUNT(*) AS count
+      FROM messages m JOIN conversations c ON c.id = m.conversation_id
+      LEFT JOIN tasks mt ON mt.id = m.request_id
+      LEFT JOIN schedule_runs sr ON sr.id = m.request_id
+      LEFT JOIN tasks parent ON parent.schedule_id = sr.schedule_id
+      LEFT JOIN tasks retained ON retained.id = mt.parent_task_id
+        AND retained.origin = 'schedule' AND retained.visible = 1
+      WHERE ${'conversationId' in scope ? 'm.conversation_id' : 'c.project_id'} = ?
+        AND m.role = 'assistant'
+        AND NOT (c.channel IS NULL AND m.sequence = 0 AND m.request_id IS NULL
+          AND json_extract(m.metadata_json, '$.task.id') IS NULL
+          AND m.content IN (?, ?))
+        AND COALESCE(mt.origin, '') != 'subagent'
+        AND NOT EXISTS (SELECT 1 FROM tasks child WHERE child.origin = 'subagent'
+          AND child.id = json_extract(m.metadata_json, '$.task.id'))
+      GROUP BY m.conversation_id, owner, m.request_id
+      ORDER BY m.request_id IS NULL
+    `).all(
+      scopeId,
+      // Persisted greetings have no marker. Match only shipped default copy,
+      // not arbitrary assistant-only/imported history or localized prefixes.
+      '你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件，或使用知识库整理和检索信息。需要我操作文件或调用工具时，请选择合适的 Agent Runtime 和工作模式。',
+      'Hi, I’m GoodBuddy. Ask me a question, add local files, or use your knowledge base to organize and retrieve information. When you want me to operate on files or use tools, choose the appropriate Agent Runtime and work mode.'
+    )
+    for (const row of messages) {
+      const owner = row.owner as string | null
+      const key = bucket(row.conversation_id as string, owner)
+      const available = coverage.get(key) ?? 0
+      const linked = row.request_id as string | null
+      const count = linked ? 1 : row.count as number
+      const covered = linked ? Number(observed.has(linked)) : Math.min(count, available)
+      coverage.set(key, Math.max(0, available - covered))
+      const missing = count - covered
+      result.requestCount += missing
+      result.incompleteRequestCount += missing
+      add(owner, 0, missing)
+    }
+    result.taskDurations = [...durations.values()]
+    return result
+  }
+
   getActivityHistory(): ActivityHistorySnapshot {
     const row = this.requireDatabase()
       .prepare(
@@ -4424,13 +4651,18 @@ export class AssistantDatabase {
            work_mode, progress, created_at, started_at, visible,
            remote_recoverable, current_user_message_id,
            current_assistant_message_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?, ?,
+          VALUES (?, ?, ?, COALESCE((
+            SELECT parent.id FROM schedule_runs sr
+            JOIN tasks parent ON parent.schedule_id = sr.schedule_id
+            WHERE sr.id = ?
+          ), ?), ?, ?, ?, ?, ?, ?, 0, ?, NULL, ?, ?, ?,
                  ?, ?, ?)`
         )
         .run(
           taskId,
           input.projectId ?? null,
           input.conversationId ?? null,
+          taskId,
           input.parentTaskId ?? null,
           input.expertId ?? null,
           input.routingMode ?? null,
@@ -6486,7 +6718,7 @@ export class AssistantDatabase {
           (id, project_id, task_template_json, timezone, recurrence_json,
            next_run_at, missed_run_policy, enabled, last_run_at,
            created_at, updated_at)
-         VALUES (?, ?, ?, 'UTC', ?, ?, 'run_once', 1, NULL, ?, ?)`
+         VALUES (?, ?, ?, 'UTC', ?, ?, 'run_once', ?, ?, ?, ?)`
         )
         .run(
           scheduleId,
@@ -6497,7 +6729,11 @@ export class AssistantDatabase {
             workMode: parsed.workMode
           }),
           JSON.stringify({ type: parsed.recurrence }),
-          parsed.nextRunAt,
+          parsed.runImmediately ? now : parsed.nextRunAt,
+          parsed.runImmediately ? 0 : 1,
+          // Immediate creation consumes the once trigger even if its queue item
+          // is cancelled. Further execution must use an explicit manual run.
+          parsed.runImmediately ? now : null,
           now,
           now
         )
@@ -6521,6 +6757,22 @@ export class AssistantDatabase {
           parsed.workMode,
           now
         )
+      if (parsed.runImmediately) {
+        // Commit the task and its only automatic occurrence together. The timer
+        // must never see an enabled immediate schedule between create and queue.
+        const runId = randomUUID()
+        database.prepare(
+          `INSERT INTO schedule_runs
+             (id, schedule_id, scheduled_for, task_id, status)
+           VALUES (?, ?, ?, ?, 'pending')`
+        ).run(runId, scheduleId, now, taskId)
+        database.prepare(
+          `INSERT INTO conversation_queue_items
+             (id, conversation_id, source, label, payload_json,
+              schedule_run_id, schedule_id, task_id, status, created_at)
+           VALUES (?, ?, 'schedule', ?, '{}', ?, ?, ?, 'pending', ?)`
+        ).run(runId, conversationId, parsed.title, runId, scheduleId, taskId, now)
+      }
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
@@ -6605,6 +6857,16 @@ export class AssistantDatabase {
       if (activeRun) {
         throw new Error('定时任务正在运行，完成后才能删除计划')
       }
+      // Preserve older requests' proven run ownership before the cascade removes it.
+      database.prepare(`
+        UPDATE tasks AS request SET parent_task_id = (
+          SELECT parent.id FROM schedule_runs sr
+          JOIN tasks parent ON parent.schedule_id = sr.schedule_id
+          WHERE sr.id = request.id AND sr.schedule_id = ?
+        )
+        WHERE request.parent_task_id IS NULL
+          AND request.id IN (SELECT id FROM schedule_runs WHERE schedule_id = ?)
+      `).run(scheduleId, scheduleId)
       database
         .prepare(
           `UPDATE tasks

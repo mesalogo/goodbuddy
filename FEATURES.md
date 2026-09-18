@@ -111,10 +111,33 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Project Agent Space** (planned): Unifies roles, knowledge, Skills/MCP,
   models, approval policy, budgets, and timeouts in a Project, with reusable
   templates.
-- [ ] **Application navigation and system-tool shortcuts** (design only):
-  Plans fixed system entries, configurable built-in application visibility,
-  and footer shortcuts into the existing workbar. These are not implemented
-  interface changes. See the [design](./docs/features/application-tool-navigation/README.md).
+- [ ] **Application center and navigation** (integration pending):
+  Clicking the bottom App Center opens a lightweight upward anchored popup with enabled apps,
+  regardless of pinning or opening history, and no modal backdrop. Clicking an app row closes
+  the popup; Local Inference opens a separate modal preserving the workspace, while other apps
+  open their main content pages. Manage Apps opens searchable cards with settings details;
+  layout and interaction rules are defined in the [UI design](./docs/features/application-tool-navigation/ui-design.md).
+  Knowledge and Heartbeat are always enabled in stable sidebar
+  positions before optional apps. Their management rows offer only Open, with no enable,
+  pin, reorder, or generic empty settings controls. Existing workspace settings and Heartbeat
+  per-plan enabled states remain unchanged. Only Notes and Local Inference have optional
+  enablement, pinning, ordering, and shared settings. Unshipped `knowledgeEnabled` and
+  `heartbeatEnabled` fields were removed without migrations.
+  Durable settings saves, including configuration-tool writes, synchronize through change events;
+  reopening the center locks edits until refresh completes, and newer snapshots supersede stale reads.
+  The `local-inference` modal shows a single service list without task history or external
+  connections. Embedding shows its independent process CPU and working-set memory;
+  ASR/OCR explain shared-process attribution limits. ASR readiness is unknown rather
+  than inferred from active requests. Supported service controls retain impact confirmation;
+  failed operations refresh the list and require a new confirmation. TTS remains unavailable.
+  Cancelling inference remains active in service-stop impact until worker
+  acknowledgement or exit. Previous validation: typecheck and `npx eslint src` passed; full `npm test` finished with
+  4,448 passed, 67 skipped, and two unchanged Heartbeat migration failures (`duplicate column
+  name: pinned`). Full lint still reports 22 unrelated story-graph demo `document` errors.
+  Eight Electron fixture theme/size scenarios cover keyboard, focus, geometry, native-view
+  occlusion, and actual settings-store persistence, not full production App acceptance.
+  Latest validation, prior real local-engine evidence, and remaining limits are preserved in
+  [validation progress](./docs/features/application-tool-navigation/progress.md).
 - [ ] **Additional assistant workbar and execution-space capabilities**
   (planned): Builds on the current workbar and multiple terminals with
   supervision, unified Runtime monitoring, managed processes, safe static HTML

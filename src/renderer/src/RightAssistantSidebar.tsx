@@ -7,6 +7,7 @@ import {
   Copy,
   ExternalLink,
   FileText,
+  Filter,
   ClockFading,
   Maximize2,
   Minimize2,
@@ -60,7 +61,6 @@ import {
   normalizeWorkbarLayoutPreferences,
   workbarLayoutPreferencesSchema,
   type WorkbarAppDefinition,
-  type WorkbarTaskScope,
   type WorkbarTabInstance,
   type WorkbarTargetRef
 } from '../../shared/workbar-contracts'
@@ -71,6 +71,7 @@ import {
 } from './WorkbarShell'
 import type { TerminalAdapter } from './TerminalPanel'
 import './terminal-panel.css'
+import './task-center.css'
 
 const TerminalPanel = lazy(async () => {
   const module = await import('./TerminalPanel')
@@ -102,7 +103,22 @@ export type PendingSidebarApproval = {
   toolName?: string
 }
 
-type RightAssistantSidebarProps = {
+export type SidebarConversationStats = {
+  // Must match activeConversationId; late results for other conversations are ignored.
+  conversationId: string
+  title?: string
+  messageCount: number
+  // Authoritative cumulative reply time, excluding idle gaps. Never a lifecycle delta.
+  replyDurationMs: number
+  incomplete?: boolean
+}
+
+export type SidebarTaskDuration = {
+  durationMs: number
+  incomplete?: boolean
+}
+
+export type RightAssistantSidebarProps = {
   open: boolean
   tab: AssistantSidebarTab
   approvals: PendingSidebarApproval[]
@@ -115,6 +131,8 @@ type RightAssistantSidebarProps = {
   workspaceChanges?: WorkspaceChanges
   workspaceProjectId?: string
   activeConversationId?: string
+  conversationStats?: SidebarConversationStats
+  taskDurations?: ReadonlyMap<string, SidebarTaskDuration>
   browserStates?: Readonly<Record<string, Readonly<Record<string, BrowserLiveState>>>>
   currentProject?: AssistantProject
   restoreFocusRef?: { current: HTMLElement | null }
@@ -210,8 +228,7 @@ function persistWorkbarLayout(
   instances: readonly WorkbarTabInstance[],
   activeInstanceId: string | null,
   expanded: boolean,
-  widthRatio: number,
-  taskScope: WorkbarTaskScope
+  widthRatio: number
 ): void {
   try {
     localStorage.setItem(
@@ -223,7 +240,7 @@ function persistWorkbarLayout(
           expanded,
           dock: 'right',
           widthRatio,
-          taskScope
+          taskScope: 'current-project'
         })
       )
     )
@@ -664,6 +681,8 @@ export function RightAssistantSidebar({
   workspaceChanges,
   workspaceProjectId,
   activeConversationId,
+  conversationStats,
+  taskDurations,
   browserStates = {},
   currentProject,
   restoreFocusRef,
@@ -688,6 +707,13 @@ export function RightAssistantSidebar({
 }: RightAssistantSidebarProps): React.JSX.Element {
   const { i18n, t } = useTranslation('workspace')
   const locale = i18n.resolvedLanguage || 'zh-CN'
+  const currentStats = activeConversationId && conversationStats?.conversationId === activeConversationId
+    ? conversationStats
+    : undefined
+  const formatDuration = (durationMs: number): string => {
+    const seconds = Math.floor(Math.max(0, durationMs) / 1000)
+    return `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor(seconds / 60 % 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
+  }
   const sidebarTimeFormatter = useMemo(
     () =>
       new Intl.DateTimeFormat(locale, {
@@ -857,13 +883,9 @@ export function RightAssistantSidebar({
   const [workspacePreviewLoadMoreError, setWorkspacePreviewLoadMoreError] =
     useState('')
   const [taskFilter, setTaskFilter] = useState<
-    'active' | 'paused' | 'finished'
-  >('active')
-  const [taskScope, setTaskScope] = useState<Exclude<WorkbarTaskScope, 'global'>>(
-    initialLayout?.taskScope === 'global'
-      ? 'all-projects'
-      : initialLayout?.taskScope ?? 'current-project'
-  )
+    'all' | 'active' | 'paused' | 'finished'
+  >('all')
+  const [taskFiltersExpanded, setTaskFiltersExpanded] = useState(false)
   const [actionErrorState, setActionErrorState] = useState({
     scope: { instanceId: activeWorkbarInstanceId, open },
     message: ''
@@ -950,12 +972,9 @@ export function RightAssistantSidebar({
     sidebarWidthLimits.maximum > sidebarWidthLimits.minimum
   const taskMatchesScope = useCallback(
     (projectId?: string): boolean => {
-      if (taskScope === 'all-projects') {
-        return true
-      }
       return Boolean(currentProject && projectId === currentProject.id)
     },
-    [currentProject, taskScope]
+    [currentProject]
   )
   const scopedApprovals = useMemo(
     () => approvals.filter((approval) => taskMatchesScope(approval.projectId)),
@@ -988,6 +1007,7 @@ export function RightAssistantSidebar({
   const filteredTasks = useMemo(
     () =>
       topLevelTasks.filter((task) => {
+        if (taskFilter === 'all') return true
         if (approvalsByTask.has(task.id)) return taskFilter === 'active'
         if (taskFilter === 'active') {
           return (
@@ -1067,14 +1087,12 @@ export function RightAssistantSidebar({
       workbarInstances,
       activeWorkbarInstanceId,
       open,
-      sidebarRatio,
-      taskScope
+      sidebarRatio
     )
   }, [
     activeWorkbarInstanceId,
     open,
     sidebarRatio,
-    taskScope,
     workbarInstances
   ])
 
@@ -1914,59 +1932,61 @@ export function RightAssistantSidebar({
           </Suspense>
         ) : null}
         {instance.appId === 'tasks' && (
-          <section className="assistant-sidebar__section">
-            <div className="task-center__filters">
-              <SegmentedControl
-                ariaLabel={t('sidebar.tasks.scope.ariaLabel')}
-                onChange={setTaskScope}
-                options={[
-                  {
-                    value: 'current-project',
-                    label: t('sidebar.tasks.scope.currentProject')
-                  },
-                  {
-                    value: 'all-projects',
-                    label: t('sidebar.tasks.scope.allProjects')
-                  }
-                ]}
-                value={taskScope}
-              />
-            </div>
-            {taskScope === 'current-project' && !currentProject ? (
+          <section className="assistant-sidebar__section task-center">
+            <p className="task-center__scope">{currentProject
+              ? t('sidebar.tasks.projectScope', { project: currentProject.name })
+              : t('sidebar.tasks.scope.currentProject')}</p>
+            <section className="task-center__stats" aria-label={t('sidebar.tasks.stats.label')}>
+              <span className="task-center__eyebrow">{t('sidebar.tasks.stats.currentConversation')}</span>
+              <h3>{activeConversationId
+                ? currentStats?.title ?? conversationTitles.get(activeConversationId) ?? t('sidebar.tasks.stats.currentConversation')
+                : t('sidebar.tasks.stats.noConversation')}</h3>
+              <dl className="task-center__stat-grid">
+                <div><dt>{t('sidebar.tasks.stats.replyDuration')}</dt><dd>{currentStats ? formatDuration(currentStats.replyDurationMs) : t('sidebar.tasks.stats.unavailable')}</dd></div>
+                <div><dt>{t('sidebar.tasks.stats.messages')}</dt><dd>{currentStats ? currentStats.messageCount.toLocaleString(locale) : t('sidebar.tasks.stats.unavailable')}</dd></div>
+              </dl>
+              {currentStats?.incomplete && <p className="task-center__incomplete">{t('sidebar.tasks.stats.incomplete')}</p>}
+              <details><summary>{t('sidebar.tasks.stats.timeHelp')}</summary><p>{t('sidebar.tasks.stats.timeDescription')}</p></details>
+            </section>
+            {!currentProject ? (
               <p className="assistant-sidebar__empty">
                 {t('sidebar.tasks.scope.noCurrentProject')}
               </p>
             ) : (
               <>
-            {unassociatedApprovals.length > 0 && <>
-            <h3>
-              <ShieldAlert size={15} />
-              {t('sidebar.tasks.approvalsTitle')}
-            </h3>
-            {unassociatedApprovals.map((approval) => (
-              <SidebarApproval key={approval.approvalId} approval={approval} onRespondApproval={onRespondApproval} />
-            ))}
-            </>}
-
             <div className="task-center__index-heading">
               <h3>
                 <ClockFading size={15} />
-                {t('sidebar.tasks.taskIndexTitle')}
+                {t('sidebar.tasks.taskIndexTitle')}{' '}
+                <span className="task-center__count">{topLevelTasks.length}</span>
               </h3>
               <button
                 className="secondary-button task-center__create"
+                aria-label={t('taskStrip.create')}
+                title={t('taskStrip.create')}
                 onClick={onCreateCustomTask}
                 type="button"
               >
                 <Plus aria-hidden="true" size={13} />
-                {t('taskStrip.create')}
               </button>
+              <button
+                className="secondary-button task-center__filter-toggle"
+                aria-label={t('sidebar.tasks.filters.ariaLabel')}
+                title={t('sidebar.tasks.filters.ariaLabel')}
+                aria-expanded={taskFiltersExpanded}
+                aria-controls={`task-filters-${instance.id}`}
+                data-active={taskFilter !== 'all'}
+                onClick={() => setTaskFiltersExpanded((expanded) => !expanded)}
+                type="button"
+              ><Filter aria-hidden="true" size={14} /></button>
             </div>
-            <div className="task-center__filters">
+            <div className="task-center__filters" id={`task-filters-${instance.id}`} hidden={!taskFiltersExpanded}
+              onFocusCapture={(event) => event.target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })}>
               <SegmentedControl
                 ariaLabel={t('sidebar.tasks.filters.ariaLabel')}
                 onChange={setTaskFilter}
                 options={[
+                  { value: 'all', label: t('sidebar.tasks.filters.all') },
                   {
                     value: 'active',
                     label: t('sidebar.tasks.filters.active')
@@ -1983,6 +2003,16 @@ export function RightAssistantSidebar({
                 value={taskFilter}
               />
             </div>
+            {taskFilter !== 'all' && <div className="task-center__filter-summary">
+              <span>{t('sidebar.tasks.filters.summary', { filter: t(`sidebar.tasks.filters.${taskFilter}`), count: filteredTasks.length })}</span>
+              <button type="button" onClick={() => setTaskFilter('all')}>{t('sidebar.tasks.filters.clear')}</button>
+            </div>}
+            {unassociatedApprovals.length > 0 && <>
+              <h3><ShieldAlert size={15} />{t('sidebar.tasks.approvalsTitle')}</h3>
+              {unassociatedApprovals.map((approval) => (
+                <SidebarApproval key={approval.approvalId} approval={approval} onRespondApproval={onRespondApproval} />
+              ))}
+            </>}
             {filteredTasks.length === 0 ? (
               <p className="assistant-sidebar__empty">
                 {topLevelTasks.length === 0
@@ -1998,6 +2028,7 @@ export function RightAssistantSidebar({
                 const projectName = task.projectId
                   ? projectNames.get(task.projectId)
                   : undefined
+                const duration = taskDurations?.get(task.id)
                 return (
                   <article
                     className={
@@ -2010,6 +2041,7 @@ export function RightAssistantSidebar({
                     <button
                       className="task-center__item-main"
                       onClick={() => onOpenTask(task)}
+                      aria-current={selectedTaskId === task.id ? 'true' : undefined}
                       type="button"
                     >
                       <span
@@ -2045,6 +2077,10 @@ export function RightAssistantSidebar({
                             : t('task.mode.unavailable')}
                       </span>
                       <span>{t(`task.status.${task.status}`)}</span>
+                      {duration && <span title={t('sidebar.tasks.stats.taskDuration')}>
+                        {t('sidebar.tasks.stats.taskDuration')}: {formatDuration(duration.durationMs)}
+                        {duration.incomplete && ` (${t('sidebar.tasks.stats.partial')})`}
+                      </span>}
                     </div>
                     <p>
                       {task.error ??

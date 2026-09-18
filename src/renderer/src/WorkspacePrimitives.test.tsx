@@ -23,6 +23,10 @@ const stylesheet = readFileSync(
   join(process.cwd(), 'src', 'renderer', 'src', 'styles.css'),
   'utf8'
 )
+const taskCenterStylesheet = readFileSync(
+  join(process.cwd(), 'src', 'renderer', 'src', 'task-center.css'),
+  'utf8'
+)
 const rendererEntry = readFileSync(
   join(process.cwd(), 'src', 'renderer', 'src', 'main.tsx'),
   'utf8'
@@ -346,11 +350,14 @@ describe('WorkspacePrimitives', () => {
     expect(stylesheet).not.toMatch(
       /@media \(max-width: 720px\)\s*\{[\s\S]*?\.conversation-task-strip__header\s*\{[^}]*flex-direction:\s*column;/u
     )
-    expect(stylesheet).toMatch(
-      /\.task-center__filters \.segmented-control\s*\{[^}]*width:\s*100%;[^}]*overflow:\s*hidden;/u
+  })
+
+  it('keeps narrow task filters scrollable without shrinking their labels', () => {
+    expect(taskCenterStylesheet).toMatch(
+      /\.task-center \.task-center__filters \.segmented-control\s*\{[^}]*overflow-x:\s*auto;/u
     )
-    expect(stylesheet).toMatch(
-      /\.task-center__filters \.segmented-control__option\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1;/u
+    expect(taskCenterStylesheet).toMatch(
+      /\.task-center \.task-center__filters \.segmented-control__option\s*\{[^}]*flex:\s*1 0 auto;[^}]*min-width:\s*max-content;/u
     )
   })
 
