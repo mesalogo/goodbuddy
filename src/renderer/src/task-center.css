@@ -1,5 +1,5 @@
 .task-center .task-center__scope {
-  margin: 0;
+  margin: 0 0 var(--space-2);
   color: var(--text-secondary);
   font-size: var(--font-caption);
   overflow-wrap: anywhere;
@@ -58,6 +58,28 @@
 }
 
 .task-center__count { color: var(--text-muted); }
+
+.task-center__running-count {
+  color: var(--accent);
+  font-size: var(--font-caption);
+  white-space: nowrap;
+}
+
+.task-center__list-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.task-center__list-toggle[aria-expanded='true'] > svg { transform: rotate(90deg); }
+.task-center__list { display: flex; flex-direction: column; gap: var(--space-2); }
+.task-center__list[hidden] { display: none; }
 
 .task-center .task-center__create,
 .task-center .task-center__filter-toggle {

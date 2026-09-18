@@ -8,7 +8,6 @@ import {
   ExternalLink,
   FileText,
   Filter,
-  ClockFading,
   Maximize2,
   Minimize2,
   Plus,
@@ -886,6 +885,7 @@ export function RightAssistantSidebar({
     'all' | 'active' | 'paused' | 'finished'
   >('all')
   const [taskFiltersExpanded, setTaskFiltersExpanded] = useState(false)
+  const [taskListExpanded, setTaskListExpanded] = useState(false)
   const [actionErrorState, setActionErrorState] = useState({
     scope: { instanceId: activeWorkbarInstanceId, open },
     message: ''
@@ -987,6 +987,7 @@ export function RightAssistantSidebar({
       ),
     [taskMatchesScope, tasks]
   )
+  const runningTaskCount = topLevelTasks.filter((task) => task.status === 'running').length
   const { approvalsByTask, unassociatedApprovals } = useMemo(() => {
     const tasksById = new Map(topLevelTasks.map((task) => [task.id, task]))
     const approvalsByTask = new Map<string, PendingSidebarApproval[]>()
@@ -1933,10 +1934,10 @@ export function RightAssistantSidebar({
         ) : null}
         {instance.appId === 'tasks' && (
           <section className="assistant-sidebar__section task-center">
+            <section className="task-center__stats" aria-label={t('sidebar.tasks.stats.label')}>
             <p className="task-center__scope">{currentProject
               ? t('sidebar.tasks.projectScope', { project: currentProject.name })
               : t('sidebar.tasks.scope.currentProject')}</p>
-            <section className="task-center__stats" aria-label={t('sidebar.tasks.stats.label')}>
               <span className="task-center__eyebrow">{t('sidebar.tasks.stats.currentConversation')}</span>
               <h3>{activeConversationId
                 ? currentStats?.title ?? conversationTitles.get(activeConversationId) ?? t('sidebar.tasks.stats.currentConversation')
@@ -1956,9 +1957,20 @@ export function RightAssistantSidebar({
               <>
             <div className="task-center__index-heading">
               <h3>
-                <ClockFading size={15} />
+                <button
+                  className="task-center__list-toggle"
+                  type="button"
+                  aria-expanded={taskListExpanded}
+                  aria-controls={`project-tasks-${instance.id}`}
+                  onClick={() => setTaskListExpanded((expanded) => !expanded)}
+                >
+                <ChevronRight aria-hidden="true" size={15} />
                 {t('sidebar.tasks.taskIndexTitle')}{' '}
                 <span className="task-center__count">{topLevelTasks.length}</span>
+                </button>
+                {runningTaskCount > 0 && <span className="task-center__running-count">
+                  {t('sidebar.tasks.runningCount', { count: runningTaskCount })}
+                </span>}
               </h3>
               <button
                 className="secondary-button task-center__create"
@@ -1973,14 +1985,17 @@ export function RightAssistantSidebar({
                 className="secondary-button task-center__filter-toggle"
                 aria-label={t('sidebar.tasks.filters.ariaLabel')}
                 title={t('sidebar.tasks.filters.ariaLabel')}
-                aria-expanded={taskFiltersExpanded}
+                aria-expanded={taskListExpanded && taskFiltersExpanded}
                 aria-controls={`task-filters-${instance.id}`}
                 data-active={taskFilter !== 'all'}
-                onClick={() => setTaskFiltersExpanded((expanded) => !expanded)}
+                onClick={() => {
+                  setTaskListExpanded(true)
+                  setTaskFiltersExpanded((expanded) => !expanded)
+                }}
                 type="button"
               ><Filter aria-hidden="true" size={14} /></button>
             </div>
-            <div className="task-center__filters" id={`task-filters-${instance.id}`} hidden={!taskFiltersExpanded}
+            <div className="task-center__filters" id={`task-filters-${instance.id}`} hidden={!taskListExpanded || !taskFiltersExpanded}
               onFocusCapture={(event) => event.target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })}>
               <SegmentedControl
                 ariaLabel={t('sidebar.tasks.filters.ariaLabel')}
@@ -2003,7 +2018,7 @@ export function RightAssistantSidebar({
                 value={taskFilter}
               />
             </div>
-            {taskFilter !== 'all' && <div className="task-center__filter-summary">
+            {taskListExpanded && taskFilter !== 'all' && <div className="task-center__filter-summary">
               <span>{t('sidebar.tasks.filters.summary', { filter: t(`sidebar.tasks.filters.${taskFilter}`), count: filteredTasks.length })}</span>
               <button type="button" onClick={() => setTaskFilter('all')}>{t('sidebar.tasks.filters.clear')}</button>
             </div>}
@@ -2013,6 +2028,7 @@ export function RightAssistantSidebar({
                 <SidebarApproval key={approval.approvalId} approval={approval} onRespondApproval={onRespondApproval} />
               ))}
             </>}
+            <div className="task-center__list" id={`project-tasks-${instance.id}`} hidden={!taskListExpanded}>
             {filteredTasks.length === 0 ? (
               <p className="assistant-sidebar__empty">
                 {topLevelTasks.length === 0
@@ -2124,6 +2140,7 @@ export function RightAssistantSidebar({
                 )
               })
             )}
+            </div>
               </>
             )}
           </section>

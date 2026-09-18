@@ -323,6 +323,7 @@ export const workspace = {
       deny: 'Deny',
       allowOnce: 'Allow once',
       taskIndexTitle: 'Project tasks',
+      runningCount: '{{count}} running',
       stats: {
         label: 'Current conversation statistics',
         currentConversation: 'Current conversation',

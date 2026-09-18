@@ -315,6 +315,7 @@ export const workspace = {
       deny: '拒绝',
       allowOnce: '仅此次允许',
       taskIndexTitle: '项目任务',
+      runningCount: '{{count}} 运行中',
       stats: {
         label: '当前会话统计',
         currentConversation: '当前会话',

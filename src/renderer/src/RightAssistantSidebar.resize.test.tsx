@@ -247,6 +247,8 @@ function sidebarElement({
 
 function renderSidebar(options: Parameters<typeof sidebarElement>[0] = {}): HTMLElement {
   render(sidebarElement(options))
+  const taskListToggle = screen.queryByRole('button', { name: /^项目任务 /u })
+  if (taskListToggle) fireEvent.click(taskListToggle)
   return screen.getByRole('complementary', {
     name: '助手工作栏'
   })
@@ -360,6 +362,7 @@ describe('RightAssistantSidebar resizing', () => {
       taskDurations: new Map([['a', { durationMs: 125_000, incomplete: true }]])
     }
     const view = render(sidebarElement(props))
+    fireEvent.click(screen.getByRole('button', { name: '项目任务 2' }))
     const stats = within(screen.getByRole('region', { name: '当前会话统计' }))
     expect(stats.getByText('01:01:01')).toBeVisible()
     expect(stats.getByText('24')).toBeVisible()
@@ -642,6 +645,43 @@ describe('RightAssistantSidebar resizing', () => {
 
     expect(sidebar).not.toHaveAttribute('aria-modal')
     expect(sidebar).toHaveAttribute('role', 'complementary')
+  })
+
+  it('collapses project tasks by default and toggles the list from its heading', () => {
+    render(sidebarElement({ tab: 'tasks' }))
+    const toggle = screen.getByRole('button', { name: '项目任务 0' })
+    const list = document.getElementById(toggle.getAttribute('aria-controls')!)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(list).not.toBeVisible()
+    expect(screen.getByRole('button', { name: '新建任务' })).toBeVisible()
+    fireEvent.click(toggle)
+    expect(list).toBeVisible()
+    fireEvent.click(toggle)
+    expect(list).not.toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '筛选任务' }))
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(list).toBeVisible()
+  })
+
+  it('keeps the project inside statistics and shows running counts while collapsed or filtered', () => {
+    const tasks: AssistantTask[] = ['running', 'running', 'queued', 'completed'].map((status, index) => ({
+      id: `summary-${index}`, title: `Summary task ${index}`, instructions: '',
+      projectId: currentProject.id, origin: 'schedule', status: status as AssistantTask['status'],
+      createdAt: '2026-09-18T00:00:00Z'
+    }))
+    tasks.push({ ...tasks[0]!, id: 'other-project', projectId: 'other-project' })
+    tasks.push({ ...tasks[0]!, id: 'child-task', parentTaskId: tasks[0]!.id })
+    const view = render(sidebarElement({ tab: 'tasks', tasks }))
+    const stats = screen.getByRole('region', { name: '当前会话统计' })
+    expect(within(stats).getByText(`项目：${currentProject.name}`)).toBeVisible()
+    expect(screen.getByRole('button', { name: '项目任务 4' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByText('2 运行中')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '筛选任务' }))
+    fireEvent.click(within(screen.getByRole('group', { name: '筛选任务' })).getByRole('button', { name: '已结束' }))
+    expect(screen.getByText('2 运行中')).toBeVisible()
+    view.rerender(sidebarElement({ tab: 'tasks', tasks: [] }))
+    expect(screen.queryByText('2 运行中')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 运行中')).not.toBeInTheDocument()
   })
 
   it('keeps the product Task index in the task center', () => {
