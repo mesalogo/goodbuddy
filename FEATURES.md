@@ -114,14 +114,16 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Application center and navigation** (integration pending):
   Clicking the bottom App Center opens a lightweight upward anchored popup with enabled apps,
   regardless of pinning or opening history, and no modal backdrop. Clicking an app row closes
-  the popup; Local Inference opens a separate modal preserving the workspace, while other apps
+  the popup; Local Inference Monitor opens a separate modal preserving the workspace, while other apps
   open their main content pages. Manage Apps opens searchable cards with settings details;
   layout and interaction rules are defined in the [UI design](./docs/features/application-tool-navigation/ui-design.md).
-  Knowledge and Heartbeat are always enabled in stable sidebar
-  positions before optional apps. Their management rows offer only Open, with no enable,
-  pin, reorder, or generic empty settings controls. Existing workspace settings and Heartbeat
-  per-plan enabled states remain unchanged. Only Notes and Local Inference have optional
-  enablement, pinning, ordering, and shared settings. Unshipped `knowledgeEnabled` and
+  All four application cards support arrow and drag reordering regardless of enablement or pinning.
+  Cards, the launcher, and the filtered sidebar share one persisted order. Knowledge and Heartbeat
+  are always enabled and pinned, labeled Always shown, with Open and reorder controls but no
+  enable/pin toggles or generic empty settings. Existing workspace settings and Heartbeat
+  per-plan enabled states remain unchanged. Only Notes and Local Inference Monitor have optional
+  enablement, pinning, and shared settings. Older optional-app orders retain their relative order
+  when missing defaults are added. Unshipped `knowledgeEnabled` and
   `heartbeatEnabled` fields were removed without migrations.
   Durable settings saves, including configuration-tool writes, synchronize through change events;
   reopening the center locks edits until refresh completes, and newer snapshots supersede stale reads.

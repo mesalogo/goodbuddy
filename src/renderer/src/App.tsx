@@ -4,7 +4,6 @@ import { ApplicationMenu } from './ApplicationMenu';
 import {
   ApplicationAvailability,
   ApplicationCenter,
-  ApplicationSettingsNavigation,
   applicationDefinitions,
   isApplicationEnabled,
 } from "./ApplicationCenter";
@@ -12,7 +11,6 @@ import {
   defaultApplicationNavigation,
   type ApplicationSettings,
   type ApplicationSettingsUpdate,
-  type EditableApplicationId,
 } from "../../shared/application-settings-contracts";
 import type { ImageOperation } from "../../shared/image-generation-contracts";
 import {
@@ -2421,7 +2419,6 @@ function App(): React.JSX.Element {
   const [applicationCenterOpen, setApplicationCenterOpen] = useState(false);
   const [applicationMenuOpen, setApplicationMenuOpen] = useState(false);
   const applicationMenuTriggerRef = useRef<HTMLButtonElement>(null);
-  const [applicationSettingsTarget, setApplicationSettingsTarget] = useState<EditableApplicationId>();
   const [applicationSettings, setApplicationSettings] = useState<ApplicationSettings>();
   const [applicationSettingsPending, setApplicationSettingsPending] = useState(false);
   const [applicationSettingsUnconfirmed, setApplicationSettingsUnconfirmed] = useState(false);
@@ -2603,7 +2600,7 @@ function App(): React.JSX.Element {
   ] = useState(true);
   const [incompleteMagicTodoCount, setIncompleteMagicTodoCount] = useState(0);
   const applicationNavigation = applicationSettings?.applicationNavigation ?? defaultApplicationNavigation;
-  const visibleApplications = useMemo(() => ['knowledge' as const, 'heartbeat' as const, ...applicationNavigation.order].filter(id =>
+  const visibleApplications = useMemo(() => applicationNavigation.order.filter(id =>
     id === 'knowledge' || id === 'heartbeat' || (applicationNavigation.pinned[id] && (id === 'magic-notes' ? magicNotesEnabled : isApplicationEnabled(applicationSettings, id)))
   ), [applicationNavigation, applicationSettings, magicNotesEnabled]);
   const applyApplicationSettings = useCallback((settings: ApplicationSettings): void => {
@@ -2661,19 +2658,6 @@ function App(): React.JSX.Element {
       setApplicationSettingsPending(--applicationSettingsPendingRef.current > 0);
     }
   }, [applicationSettingsUnconfirmed, applyApplicationSettings, t]);
-  const openApplicationSettings = useCallback((id: EditableApplicationId): void => {
-    const open = (): void => {
-      setApplicationSettingsTarget(id);
-      setApplicationMenuOpen(false);
-      setApplicationCenterOpen(true);
-      void reloadApplicationSettings();
-    };
-    if (settingsOpenRef.current) {
-      const leave = (): void => { commitView(viewRef.current); requestAnimationFrame(open); };
-      if (settingsLeaveRequesterRef.current) settingsLeaveRequesterRef.current(leave);
-      else leave();
-    } else open();
-  }, [commitView, reloadApplicationSettings]);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -8821,7 +8805,6 @@ function App(): React.JSX.Element {
   };
 
   return (
-    <ApplicationSettingsNavigation value={openApplicationSettings}>
     <div className="app-shell">
       <aside
         aria-label={
@@ -10948,7 +10931,7 @@ function App(): React.JSX.Element {
                   active={view === "magic-notes"}
                   route="magic-notes"
                 >
-                  <ApplicationAvailability id="magic-notes" enabled={magicNotesEnabled}>
+                  <ApplicationAvailability enabled={magicNotesEnabled}>
                   <PageShell variant="master-detail">
                     <RouteErrorBoundary
                       key="magic-notes"
@@ -11375,7 +11358,6 @@ function App(): React.JSX.Element {
                 pending={applicationSettingsPending}
                 locked={applicationSettingsUnconfirmed}
                 error={applicationSettingsError}
-                initialApplication={applicationSettingsTarget}
                 onClose={() => setApplicationCenterOpen(false)}
                 onOpen={(id) => {
                   if (!isApplicationEnabled(applicationSettings, id)) return;
@@ -11399,7 +11381,6 @@ function App(): React.JSX.Element {
                   if (window.innerWidth < 900) setSidebarOpen(false);
                 }}
                 onManage={() => {
-                  setApplicationSettingsTarget(undefined);
                   setApplicationCenterOpen(true);
                 }}
                 onRetry={() => void reloadApplicationSettings()}
@@ -11716,7 +11697,6 @@ function App(): React.JSX.Element {
         </div>
       </div>
     </div>
-    </ApplicationSettingsNavigation>
   );
 }
 

@@ -35,12 +35,12 @@ export type BuiltInApplicationId = typeof builtInApplicationIds[number]
 export const editableApplicationIds = ['magic-notes', 'local-inference'] as const
 export type EditableApplicationId = typeof editableApplicationIds[number]
 export const defaultApplicationNavigation = {
-  order: [...editableApplicationIds],
-  pinned: { 'magic-notes': true, 'local-inference': true }
+  order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference'] as BuiltInApplicationId[],
+  pinned: { 'magic-notes': true, 'local-inference': false }
 }
 export const applicationNavigationSchema = z.object({
-  order: z.array(z.enum(editableApplicationIds)).length(editableApplicationIds.length)
-    .refine(ids => new Set(ids).size === editableApplicationIds.length, 'Each application must occur exactly once'),
+  order: z.array(z.enum(builtInApplicationIds)).length(builtInApplicationIds.length)
+    .refine(ids => new Set(ids).size === builtInApplicationIds.length, 'Each application must occur exactly once'),
   pinned: z.object({
     'magic-notes': z.boolean(), 'local-inference': z.boolean()
   }).strict()

@@ -1,6 +1,4 @@
 import {
-  createContext,
-  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -63,41 +61,19 @@ export function isApplicationEnabled(
   )
 }
 
-export const ApplicationSettingsNavigation = createContext<
-  ((id: EditableApplicationId) => void) | undefined
->(undefined)
-
-export function ApplicationSettingsLink({
-  id,
-}: {
-  id: EditableApplicationId
-}): React.JSX.Element | null {
-  const open = useContext(ApplicationSettingsNavigation)
-  const { t } = useTranslation('app')
-  return open ? (
-    <button className="secondary-button" type="button" onClick={() => open(id)}>
-      <Settings size={15} aria-hidden="true" />
-      {t('applications.settings')}
-    </button>
-  ) : null
-}
-
 export function ApplicationAvailability({
-  id,
   enabled,
   children,
 }: {
-  id: EditableApplicationId
   enabled: boolean
   children: ReactNode
 }): React.JSX.Element {
   const { t } = useTranslation('app')
   return (
     <div className="application-page">
-      <div className="application-page-controls">
-        {!enabled && <strong>{t('applications.disabledPage')}</strong>}
-        <ApplicationSettingsLink id={id} />
-      </div>
+      {!enabled && <div className="application-page-controls">
+        <strong>{t('applications.disabledPage')}</strong>
+      </div>}
       <div
         className="application-page-content"
         hidden={!enabled}
@@ -267,7 +243,6 @@ export function ApplicationCenter({
   pending,
   locked = false,
   error,
-  initialApplication,
   onClose,
   onOpen,
   onUpdate,
@@ -277,7 +252,6 @@ export function ApplicationCenter({
   pending: boolean
   locked?: boolean
   error?: string
-  initialApplication?: EditableApplicationId
   onClose: () => void
   onOpen: (id: BuiltInApplicationId) => void
   onUpdate: (patch: ApplicationSettingsUpdate) => Promise<boolean>
@@ -285,8 +259,8 @@ export function ApplicationCenter({
 }): React.JSX.Element {
   const { t } = useTranslation('app')
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState(initialApplication)
-  const [dragged, setDragged] = useState<EditableApplicationId>()
+  const [selected, setSelected] = useState<EditableApplicationId>()
+  const [dragged, setDragged] = useState<BuiltInApplicationId>()
   const [announcement, setAnnouncement] = useState('')
   const dialog = useRef<HTMLElement>(null)
   const body = useRef<HTMLDivElement>(null)
@@ -305,7 +279,7 @@ export function ApplicationCenter({
   const editingDisabled = pending || locked
   const results = useMemo(
     () =>
-      ['knowledge' as const, 'heartbeat' as const, ...navigation.order].filter((id) =>
+      navigation.order.filter((id) =>
         `${t(applicationDefinitions[id].title)} ${t(`applications.descriptions.${id}`)}`
           .toLocaleLowerCase()
           .includes(query.trim().toLocaleLowerCase()),
@@ -313,8 +287,8 @@ export function ApplicationCenter({
     [navigation.order, query, t],
   )
   const move = async (
-    from: EditableApplicationId,
-    to: EditableApplicationId,
+    from: BuiltInApplicationId,
+    to: BuiltInApplicationId,
   ): Promise<void> => {
     if (editingDisabled || from === to) return
     const order = [...navigation.order]
@@ -396,35 +370,12 @@ export function ApplicationCenter({
           {!settings ? (
             <p role="status">{t('route.loading')}</p>
           ) : selected ? (
-            <>
-              <ApplicationSettingsView
-                id={selected}
-                settings={settings}
-                pending={editingDisabled}
-                onUpdate={onUpdate}
-              />
-              <div className="application-center__order">
-                {([-1, 1] as const).map((offset) => {
-                  const target =
-                    navigation.order[navigation.order.indexOf(selected) + offset]
-                  const Icon = offset === -1 ? ArrowUp : ArrowDown
-                  return (
-                    <button
-                      key={offset}
-                      className="secondary-button"
-                      type="button"
-                      disabled={editingDisabled || !target}
-                      onClick={() => { if (target) void move(selected, target) }}
-                    >
-                      <Icon size={16} aria-hidden="true" />
-                      {t(offset === -1 ? 'applications.moveUp' : 'applications.moveDown', {
-                        name: t(applicationDefinitions[selected].title),
-                      })}
-                    </button>
-                  )
-                })}
-              </div>
-            </>
+            <ApplicationSettingsView
+              id={selected}
+              settings={settings}
+              pending={editingDisabled}
+              onUpdate={onUpdate}
+            />
           ) : (
             <>
               <label className="application-center__search">
@@ -452,20 +403,20 @@ export function ApplicationCenter({
                 const definition = applicationDefinitions[id]
                 const Icon = definition.icon
                 const enabled = isApplicationEnabled(settings, id)
-                const fixed = id === 'knowledge' || id === 'heartbeat'
+                const alwaysShown = id === 'knowledge' || id === 'heartbeat'
                 return (
                   <article
                     className="application-center__item"
                     key={id}
-                    draggable={!fixed && !editingDisabled && !query}
-                    onDragStart={() => { if (!fixed) setDragged(id) }}
+                    draggable={!editingDisabled && !query}
+                    onDragStart={() => { if (!editingDisabled && !query) setDragged(id) }}
                     onDragEnd={() => setDragged(undefined)}
                     onDragOver={(event) => {
-                      if (!fixed && dragged && !editingDisabled) event.preventDefault()
+                      if (dragged && !editingDisabled && !query) event.preventDefault()
                     }}
                     onDrop={(event) => {
                       event.preventDefault()
-                      if (!fixed && dragged) void move(dragged, id)
+                      if (dragged && !query) void move(dragged, id)
                       setDragged(undefined)
                     }}
                   >
@@ -475,8 +426,8 @@ export function ApplicationCenter({
                         <div className="application-center__title">
                           <strong>{t(definition.title)}</strong>
                           <small>
-                            {fixed
-                              ? t('applications.fixed')
+                            {alwaysShown
+                              ? t('applications.alwaysShown')
                               : `${t('applications.optional')} · ${t(enabled ? 'applications.enabled' : 'applications.disabled')}`}
                           </small>
                         </div>
@@ -492,7 +443,7 @@ export function ApplicationCenter({
                       >
                         {t('applications.open')}
                       </button>
-                      {!fixed && (
+                      {!alwaysShown && (
                         <button
                           className="secondary-button"
                           type="button"
@@ -504,6 +455,28 @@ export function ApplicationCenter({
                           {t('applications.settings')}
                         </button>
                       )}
+                      <div className="application-center__order">
+                        {([-1, 1] as const).map((offset) => {
+                          const target = navigation.order[navigation.order.indexOf(id) + offset]
+                          const MoveIcon = offset === -1 ? ArrowUp : ArrowDown
+                          const label = t(offset === -1 ? 'applications.moveUp' : 'applications.moveDown', {
+                            name: t(definition.title),
+                          })
+                          return (
+                            <button
+                              key={offset}
+                              className="icon-button"
+                              type="button"
+                              aria-label={label}
+                              title={label}
+                              disabled={editingDisabled || !target}
+                              onClick={() => { if (target) void move(id, target) }}
+                            >
+                              <MoveIcon size={16} aria-hidden="true" />
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   </article>
                 )

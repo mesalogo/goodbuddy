@@ -22,17 +22,17 @@ function Harness({ value = settings, pending = false, error, onOpen = vi.fn(), o
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-it('lists enabled apps regardless of pins and keeps Knowledge and Heartbeat fixed before filtering', () => {
+it('filters the shared order by enablement only, including reordered always-shown apps', () => {
   const value = { ...settings, magicNotesEnabled: true, localInferenceEnabled: true,
-    applicationNavigation: { order: ['local-inference', 'magic-notes'] as ApplicationSettings['applicationNavigation']['order'],
+    applicationNavigation: { order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] as ApplicationSettings['applicationNavigation']['order'],
       pinned: { 'magic-notes': false, 'local-inference': false } } }
   const onOpen = vi.fn()
   const { rerender } = render(<Harness value={value} onOpen={onOpen} />)
   fireEvent.click(screen.getByText('Launcher'))
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['知识库', '智能心跳', '本机推理', '魔法笔记', '管理应用'])
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '智能心跳', '魔法笔记', '知识库', '管理应用'])
   rerender(<Harness value={{ ...value, magicNotesEnabled: false }} onOpen={onOpen} />)
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['知识库', '智能心跳', '本机推理', '管理应用'])
-  fireEvent.click(screen.getByRole('menuitem', { name: '本机推理' }))
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '智能心跳', '知识库', '管理应用'])
+  fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
   expect(onOpen).toHaveBeenCalledWith('local-inference')
   expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 })

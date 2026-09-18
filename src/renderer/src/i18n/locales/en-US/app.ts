@@ -3,10 +3,10 @@ import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
   applications: {
-    fixed: 'Fixed entry', optional: 'Optional',
+    alwaysShown: 'Always shown', optional: 'Optional',
     manage: 'Manage Apps',
-    title: 'Application Center', description: 'Open built-in applications and manage optional apps, pins, and order. Knowledge and Smart Heartbeat have fixed sidebar entries.',
-    localInference: 'Local Inference', settings: 'Application settings', enable: 'Enable application', pin: 'Pin to sidebar',
+    title: 'Application Center', description: 'Open and reorder built-in applications, and manage optional apps and pins. Knowledge and Smart Heartbeat are always shown and can be moved.',
+    localInference: 'Local Inference Monitor', settings: 'Application settings', enable: 'Enable application', pin: 'Pin to sidebar',
     enableHelp: 'Pinning only controls the sidebar shortcut. Disabling preserves data and pins without stopping existing requests or background services.',
     disabledPage: 'Application is disabled', close: 'Close application center', retry: 'Reload settings', back: 'Back to application center',
     search: 'Search built-in applications', noResults: 'No matching applications', clear: 'Clear search', builtin: 'Built-in',

@@ -18,7 +18,7 @@ export function ApplicationMenu({ anchorRef, settings, pending, error, onClose, 
   const { t } = useTranslation('app')
   const applications = useMemo(() => {
     const order = (settings?.applicationNavigation ?? defaultApplicationNavigation).order
-    return ['knowledge' as const, 'heartbeat' as const, ...order]
+    return order
       .filter(id => isApplicationEnabled(settings, id))
   }, [settings])
   return <AnchoredMenu anchorRef={anchorRef} id="application-menu" label={t('applications.title')} onClose={onClose}>

@@ -4,6 +4,8 @@ import { z } from 'zod'
 import {
   applicationSettingsSchema,
   applicationSettingsUpdateSchema,
+  applicationNavigationSchema,
+  builtInApplicationIds,
   defaultApplicationNavigation,
   type ApplicationSettings
 } from '../shared/application-settings-contracts'
@@ -144,6 +146,20 @@ const versionTenStoredApplicationSettingsSchema =
 
 const storedApplicationSettingsSchema = applicationSettingsSchema
   .extend({
+    // Stored partial orders are upgraded here; public settings writes remain strict.
+    applicationNavigation: applicationNavigationSchema.extend({
+      order: z.array(z.enum(builtInApplicationIds))
+        .refine(ids => new Set(ids).size === ids.length, 'Duplicate application')
+        .default([])
+        .transform(ids => [
+          ...(['knowledge', 'heartbeat'] as const).filter(id => !ids.includes(id)),
+          ...ids,
+          ...defaultApplicationNavigation.order.filter(id => id !== 'knowledge' && id !== 'heartbeat' && !ids.includes(id))
+        ]),
+      pinned: applicationNavigationSchema.shape.pinned.partial()
+        .default({})
+        .transform(pinned => ({ ...defaultApplicationNavigation.pinned, ...pinned }))
+    }).default(defaultApplicationNavigation),
     version: z.literal(CURRENT_SETTINGS_VERSION),
     lastSeenReleaseNotesVersion: releaseVersionSchema.nullable()
   })

@@ -14,7 +14,7 @@ const items = [
   { id: 'notes', name: '魔法笔记', icon: 'note', detail: '记录想法、整理待办', summary: '把刚才的灵感留在这里', builtin: true },
   { id: 'knowledge', name: '知识库', icon: 'book', detail: '整理资料、检索知识', summary: '下一次提问，从已有知识开始', builtin: true },
   { id: 'heartbeat', name: '智能心跳', icon: 'activity', detail: '管理定时任务与主动提醒', summary: '让例行任务按计划发生', builtin: true },
-  { id: 'models', name: '本机推理管理', icon: 'layers', detail: '语音、OCR、向量任务统一管理 · 计划预览', summary: '查看本机推理任务、使用方和资源占用', builtin: true },
+  { id: 'models', name: '本机推理监控', icon: 'layers', detail: '语音、OCR、向量任务统一管理 · 计划预览', summary: '查看本机推理任务、使用方和资源占用', builtin: true },
   { id: 'projects', name: '项目管理', icon: 'layers', detail: '跟踪项目、任务与进度', summary: '把一个想法变成可跟进的项目', builtin: false },
   { id: 'reading', name: '阅读空间', icon: 'book', detail: '集中阅读、批注与摘录', summary: '给长文和深度阅读留一个空间', builtin: false }
 ];
@@ -135,8 +135,8 @@ window.addEventListener('scroll', () => { if ($('#project-activity').matches(':p
 renderProjects();
 let variant = 'dock';
 let catalogMode = 'apps';
-let residentApps = items.filter(item => item.builtin).map(item => item.id);
-let enabledApps = new Set(residentApps);
+let residentApps = items.filter(item => item.builtin && item.id !== 'models').map(item => item.id);
+let enabledApps = new Set(items.filter(item => item.builtin).map(item => item.id));
 let currentPage = '当前对话';
 let settingsApp = 'notes';
 let marketReady = false;
@@ -234,16 +234,14 @@ function openPage(name, keepSettings = false) {
   $('.composer-area').hidden = Boolean(app) || name === '设置' || name === '运行记录';
   $('#page-content').classList.toggle('app-page', $('.composer-area').hidden);
   for (const panel of ['#composer-options', '#context-details']) if ($(panel).matches(':popover-open')) $(panel).hidePopover();
-  $('#page-actions').innerHTML = app ? `<button data-app-settings="${app.id}">${icon('settings')} 应用设置</button>` : '';
+  $('#page-actions').replaceChildren();
   if (app && !enabledApps.has(app.id)) {
     description.textContent = '此应用已关闭，当前页面不可用。已有数据和选择保留；此操作不停止后台任务或模型服务。';
-    const recovery = document.createElement('button'); recovery.dataset.appSettings = app.id; recovery.textContent = '前往设置，重新开启'; $('#page-content').append(recovery);
     renderApps(); return;
   }
   if (app?.id === 'models') renderModels();
   if (name === '魔法笔记' || name === '设置') {
     const summary = document.createElement('p'); summary.id = 'note-settings-summary'; summary.className = 'muted'; $('#page-content').append(summary);
-    if (name === '设置') items.filter(item => item.builtin).forEach(item => { const button = document.createElement('button'); button.dataset.appSettings = item.id; button.textContent = `${item.name}设置`; $('#page-content').append(button); });
     renderAppSettings();
   }
   document.querySelectorAll('.navigation button').forEach(button => button.classList.toggle('selected', button.dataset.page === name));
@@ -269,7 +267,7 @@ function selectTool(id) {
   document.querySelectorAll('[data-tool]').forEach(button => { button.setAttribute('aria-selected', String(button.dataset.tool === id)); button.tabIndex = button.dataset.tool === id ? 0 : -1; });
 }
 function renderModels() {
-  $('#page-content').innerHTML = `<h1>本机推理管理</h1><p class="muted">统一查看语音、OCR、向量等本机推理任务与执行服务。任务进度、引擎及占用均为模拟数据。</p><h2>推理任务与服务</h2><p class="muted">下方操作作用于执行服务；启动或加载服务不会自动恢复已中断的任务。</p><div class="model-list">${modelServices.map(service => {
+  $('#page-content').innerHTML = `<h1>本机推理监控</h1><p class="muted">统一查看语音、OCR、向量等本机推理任务与执行服务。任务进度、引擎及占用均为模拟数据。</p><h2>推理任务与服务</h2><p class="muted">下方操作作用于执行服务；启动或加载服务不会自动恢复已中断的任务。</p><div class="model-list">${modelServices.map(service => {
     const external = service.management === '外部管理';
     const active = service.management === '进程内' ? '已加载' : '运行中';
     const actions = external ? ['config'] : service.management === '进程内' ? [service.running ? 'release' : 'load'] : service.running ? ['stop', 'restart'] : ['start'];
@@ -440,7 +438,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Enter' && document.activeElement === $('#search')) { event.preventDefault(); actions[0].click(); }
 });
 $('#theme').onclick = () => { const dark = document.documentElement.dataset.theme !== 'dark'; document.documentElement.dataset.theme = dark ? 'dark' : 'light'; $('#theme').textContent = dark ? '切换浅色' : '切换深色'; };
-$('#reset').onclick = () => { installed = new Set(items.filter(item => item.builtin).map(item => item.id)); residentApps = [...installed]; enabledApps = new Set(installed); Object.assign(noteSettings, { showCount: true, mode: 'immediate', format: 'combined' }); editingApps = false; definitions.clear(); importDraft = null; $('#import-preview').hidden = true; renderApps(); renderComposer(); openPage('当前对话'); notify('应用启用、常驻和笔记设置已恢复默认'); };
+$('#reset').onclick = () => { installed = new Set(items.filter(item => item.builtin).map(item => item.id)); residentApps = [...installed].filter(id => id !== 'models'); enabledApps = new Set(installed); Object.assign(noteSettings, { showCount: true, mode: 'immediate', format: 'combined' }); editingApps = false; definitions.clear(); importDraft = null; $('#import-preview').hidden = true; renderApps(); renderComposer(); openPage('当前对话'); notify('应用启用、常驻和笔记设置已恢复默认'); };
 let demoRunning = false;
 let demoRecording = false;
 let demoAttachments = [];

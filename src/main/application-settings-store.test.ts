@@ -44,6 +44,50 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it.each([
+    { order: ['local-inference', 'magic-notes'], expected: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] },
+    { order: ['local-inference'], expected: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] },
+    { order: ['magic-notes', 'knowledge'], expected: ['heartbeat', 'magic-notes', 'knowledge', 'local-inference'] },
+    { order: [], expected: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference'] },
+    { order: undefined, expected: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference'] },
+    { order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'], expected: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] },
+  ])('normalizes stored order $order without changing existing relative order', async ({ order, expected }) => {
+    const { filePath, store } = await createStore()
+    await writeFile(filePath, JSON.stringify({
+      ...defaultApplicationSettings, version: 12, lastSeenReleaseNotesVersion: null,
+      magicNotesEnabled: false, applicationNavigation: { order, pinned: { 'magic-notes': false } },
+    }))
+    const settings = await store.get()
+    expect(settings.warnings).toBeUndefined()
+    expect(settings.magicNotesEnabled).toBe(false)
+    expect(settings.applicationNavigation).toEqual({ order: expected, pinned: { 'magic-notes': false, 'local-inference': false } })
+    expect(applicationSettingsSchema.parse(settings)).toEqual(settings)
+    await store.update({ checkUpdatesOnStartup: false })
+    expect(JSON.parse(await readFile(filePath, 'utf8')).applicationNavigation).toEqual(settings.applicationNavigation)
+    expect((await createApplicationSettingsStore(filePath).get()).applicationNavigation).toEqual(settings.applicationNavigation)
+  })
+
+  it('validates full-order writes, persists and publishes them, and rejects partial writes without mutation', async () => {
+    const { store, filePath } = await createStore()
+    const applicationNavigation = {
+      order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'],
+      pinned: { 'magic-notes': false, 'local-inference': false },
+    }
+    const changed = vi.fn()
+    store.onChanged(changed)
+    const saved = await store.update({ applicationNavigation })
+    expect(applicationSettingsSchema.parse(saved).applicationNavigation).toEqual(applicationNavigation)
+    expect(changed).toHaveBeenCalledExactlyOnceWith(saved)
+    const contents = await readFile(filePath, 'utf8')
+    for (const order of [[], ['local-inference', 'magic-notes'], ['knowledge', 'knowledge', 'magic-notes', 'local-inference'], ['knowledge', 'heartbeat', 'magic-notes', 'invalid']]) {
+      expect(applicationSettingsSchema.safeParse({ ...saved, applicationNavigation: { ...applicationNavigation, order } }).success).toBe(false)
+      await expect(store.update({ applicationNavigation: { ...applicationNavigation, order } })).rejects.toThrow()
+    }
+    expect(await readFile(filePath, 'utf8')).toBe(contents)
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect((await createApplicationSettingsStore(filePath).get()).applicationNavigation).toEqual(applicationNavigation)
+  })
+
   it('keeps the confirmed snapshot when an atomic save fails', async () => {
     const { filePath, store } = await createStore()
     const confirmed = await store.get()
@@ -55,13 +99,26 @@ describe('ApplicationSettingsStore', () => {
     expect(changed).not.toHaveBeenCalled()
   })
 
-  it('defaults missing released Notes fields to enabled without resetting unrelated values', async () => {
+  it.each([11, 12])('defaults missing navigation and Notes fields in version %s without resetting unrelated values', async (version) => {
     const { filePath, store } = await createStore()
-    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 11, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null, checkUpdatesOnStartup: false }
     for (const key of ['applicationNavigation', 'localInferenceEnabled', 'magicNotesEnabled', 'magicNotesShowIncompleteTodoCount']) delete legacy[key]
     await writeFile(filePath, JSON.stringify(legacy), 'utf8')
     expect(await store.get()).toEqual({ ...defaultApplicationSettings, checkUpdatesOnStartup: false })
+    expect(await store.get()).toMatchObject({ localInferenceEnabled: true, applicationNavigation: defaultApplicationSettings.applicationNavigation })
     expect(await createApplicationSettingsStore(filePath).get()).toEqual(await store.get())
+  })
+  it.each([true, false])('preserves a saved local inference pin of %s through migration, updates and reload', async (pinned) => {
+    const { filePath, store } = await createStore()
+    const applicationNavigation = {
+      order: ['local-inference', 'magic-notes'],
+      pinned: { 'magic-notes': false, 'local-inference': pinned }
+    }
+    await writeFile(filePath, JSON.stringify({ ...defaultApplicationSettings, applicationNavigation, version: 11, lastSeenReleaseNotesVersion: null }), 'utf8')
+    const normalized = { ...applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] }
+    expect((await store.get()).applicationNavigation).toEqual(normalized)
+    await store.update({ checkUpdatesOnStartup: false })
+    expect((await createApplicationSettingsStore(filePath).get()).applicationNavigation).toEqual(normalized)
   })
   it('migrates released settings without replacing explicit false values or comment choices', async () => {
     const { filePath, store } = await createStore()
@@ -82,8 +139,9 @@ describe('ApplicationSettingsStore', () => {
     const navigation = defaultApplicationSettings.applicationNavigation
     for (const invalid of [
       { ...navigation, order: navigation.order.slice(1) },
-      { ...navigation, order: ['magic-notes', 'magic-notes'] },
-      { ...navigation, order: ['unknown', 'local-inference'] },
+      { ...navigation, order: ['knowledge', 'heartbeat', 'magic-notes', 'magic-notes'] },
+      { ...navigation, order: ['knowledge', 'heartbeat', 'unknown', 'local-inference'] },
+      { ...navigation, order: ['magic-notes', 'local-inference'] },
       { ...navigation, order: ['knowledge', 'local-inference'] },
       { ...navigation, order: ['heartbeat', 'local-inference'] },
       { ...navigation, pinned: { ...navigation.pinned, heartbeat: true } },
@@ -97,6 +155,7 @@ describe('ApplicationSettingsStore', () => {
     const { directory, store } = await createStore()
 
     await expect(store.get()).resolves.toEqual(defaultApplicationSettings)
+    expect(await store.get()).toMatchObject({ localInferenceEnabled: true, applicationNavigation: defaultApplicationSettings.applicationNavigation })
     await expect(readdir(directory)).resolves.toEqual([])
   })
 

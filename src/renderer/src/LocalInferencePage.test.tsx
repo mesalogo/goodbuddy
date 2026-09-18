@@ -12,12 +12,13 @@ const snapshot: LocalInferenceSnapshot = {
   services: [{ id: 'embedding', name: '向量生成', engine: 'Granite', ownership: 'managed-process', state: 'running', detail: '共享执行服务', actions: ['stop', 'restart'] }],
   tasks: [{ id: 'real-task', serviceId: 'embedding', source: '知识索引', state: 'running', startedAt: 1 }]
 }
-const api = { getSnapshot: vi.fn(), act: vi.fn(), cancel: vi.fn() }
+const api = { getSnapshot: vi.fn(), act: vi.fn(), cancel: vi.fn(), openSettings: vi.fn() }
 beforeEach(() => {
   vi.resetAllMocks()
   api.getSnapshot.mockResolvedValue(snapshot)
   api.act.mockResolvedValue(undefined)
   api.cancel.mockResolvedValue(undefined)
+  api.openSettings.mockResolvedValue(undefined)
   vi.stubGlobal('goodbuddy', { localInference: api })
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -51,6 +52,9 @@ describe('LocalInferencePage', () => {
     const toolbar = screen.getByText('每 5 秒刷新 · CPU 100% = 一个逻辑核心').parentElement!
     expect(toolbar).toHaveClass('local-inference-toolbar')
     expect(within(toolbar).getByRole('button', { name: '刷新状态' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
+    fireEvent.click(within(toolbar).getByRole('button', { name: '模型与连接设置' }))
+    expect(api.openSettings).toHaveBeenCalledOnce()
     expect(styles).toMatch(/\.local-inference-toolbar\s*\{[^}]*flex: 0 0 auto/)
     expect(screen.getByRole('region', { name: '本机推理服务' })).toBeInTheDocument()
   })
@@ -132,12 +136,12 @@ describe('LocalInferencePage', () => {
   it('isolates nested Escape, traps focus, and restores the service action', async () => {
     const onClose = vi.fn()
     render(<LocalInferencePage onClose={onClose} />)
-    expect(screen.getByRole('button', { name: '关闭本机推理' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: '关闭本机推理监控' })).toHaveFocus()
     await screen.findByRole('heading', { name: '向量生成' })
-    fireEvent.keyDown(screen.getByRole('button', { name: '关闭本机推理' }), { key: 'Tab', shiftKey: true })
+    fireEvent.keyDown(screen.getByRole('button', { name: '关闭本机推理监控' }), { key: 'Tab', shiftKey: true })
     expect(screen.getByRole('button', { name: '重启服务' })).toHaveFocus()
     fireEvent.keyDown(screen.getByRole('button', { name: '重启服务' }), { key: 'Tab' })
-    expect(screen.getByRole('button', { name: '关闭本机推理' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: '关闭本机推理监控' })).toHaveFocus()
     const stop = screen.getByRole('button', { name: '停止服务' })
     stop.focus()
     fireEvent.click(stop)
@@ -169,12 +173,12 @@ describe('LocalInferencePage', () => {
     fireEvent.click(confirm)
     fireEvent.keyDown(confirm, { key: 'Escape' })
     expect(screen.getByRole('button', { name: '保留运行状态' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '关闭本机推理' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '关闭本机推理监控' })).toBeDisabled()
     expect(onClose).not.toHaveBeenCalled()
     expect(api.act).toHaveBeenCalledOnce()
     resolve()
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '停止服务：向量生成' })).not.toBeInTheDocument())
-    expect(screen.getByRole('button', { name: '关闭本机推理' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: '关闭本机推理监控' })).not.toBeDisabled()
   })
 
   it('restores fallback focus when the entry was removed and clears background isolation', () => {
@@ -213,12 +217,12 @@ describe('LocalInferencePage', () => {
     expect(release).toHaveBeenCalledOnce()
     expect(api.act).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog', { name: '本机推理' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '本机推理监控' })).toBeInTheDocument()
   })
 
   it('keeps keyboard focus in the modal when the application content is disabled', () => {
     render(<LocalInferencePage onClose={vi.fn()} enabled={false} />)
-    const close = screen.getByRole('button', { name: '关闭本机推理' })
+    const close = screen.getByRole('button', { name: '关闭本机推理监控' })
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
     expect(close).toHaveFocus()
     fireEvent.keyDown(close, { key: 'Tab' })

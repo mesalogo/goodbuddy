@@ -18,6 +18,22 @@ import { defaultLocalToolEnvironmentSettings } from './local-tool-environment-co
 import { defaultApplicationNavigation } from './application-settings-contracts'
 
 describe('GoodBuddy configuration contracts', () => {
+  it('uses the authoritative full application order for configuration-tool writes', () => {
+    const operation = {
+      operation: 'application.update',
+      updates: { applicationNavigation: {
+        ...defaultApplicationNavigation,
+        order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'],
+      } },
+    }
+    expect(goodbuddyConfigOperationSchema.parse(operation)).toEqual(operation)
+    for (const order of [['magic-notes', 'local-inference'], ['knowledge', 'heartbeat', 'magic-notes', 'magic-notes'], ['knowledge', 'heartbeat', 'magic-notes', 'invalid']]) {
+      expect(goodbuddyConfigOperationSchema.safeParse({ ...operation, updates: {
+        applicationNavigation: { ...defaultApplicationNavigation, order },
+      } }).success).toBe(false)
+    }
+  })
+
   it('publishes one valid generated example for every operation', () => {
     const operationNames = goodbuddyConfigOperationNameSchema.options
 

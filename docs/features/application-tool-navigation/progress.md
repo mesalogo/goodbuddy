@@ -1,5 +1,43 @@
 # 应用导航实施进度
 
+## 2026-09-18：收拢通用应用设置入口
+
+对应 FR-11、US-B9。移除魔法笔记页面及本机推理监控停用状态的通用“应用设置”按钮，启用、常驻和笔记评论配置统一从应用中心卡片进入。保留管理应用、设置详情返回导航、模型与连接设置及原业务控件。删除仅用于页面快捷入口的 Context、跳转回调和初始详情参数；停用时仍保留页面挂载状态。现行入口规则见 [UI 设计](./ui-design.md#41-共同应用设置页)，Demo 已移除页面、停用恢复及全局设置中的重复快捷入口。
+
+验证：App 入口与状态同步定向测试 14 项通过；ApplicationCenter、ApplicationMenu、LocalInferencePage、SettingsPanel 共 128 项通过。首次包含完整 App 文件的运行出现两项既有任务审批失败，以及新增笔记测试未启用 fixture 的失败；修正 fixture 后相关定向测试通过。两项审批失败与上次记录一致，本轮未修改。类型检查、全仓 lint、Demo 语法及 diff 检查通过。本轮未运行全量测试或 Electron 窗口验收，未调用模型，未创建提交；保留已有四应用排序、监控名称和默认不常驻改动。
+
+## 2026-09-18：四应用共享顺序
+
+对应 FR-3、FR-11、FR-12、US-B7。四张管理卡片均提供上下移动和拖动，包含关闭、未常驻以及始终显示的应用；卡片、菜单、侧栏共用 `applicationNavigation.order`。知识库和智能心跳保留无开关的始终启用、常驻行为，位置可调整，标签改为“始终显示”／`Always shown`。当前对话、运行记录、设置仍保持系统位置。搜索中箭头按完整顺序移动，拖动禁用。保留此前 `260px` 自适应网格、本机推理监控名称及默认不常驻。
+
+权威设置返回及写入 schema 接受四个 ID 各一次，拒绝重复、未知和缺失项。仅存储读取补齐旧可选应用顺序及部分默认值，保留已有顺序、显式布尔值和无关设置；规则见[持久化与 IPC](./technical-design.md#43-持久化与-ipc)。没有新增存储版本、应用启用字段或第二份导航状态。
+
+验证：`npm test -- src/main/application-settings-store.test.ts src/shared/goodbuddy-config-contracts.test.ts src/main/goodbuddy-config-service.test.ts src/renderer/src/ApplicationCenter.test.tsx src/renderer/src/ApplicationMenu.test.tsx src/renderer/src/LocalInferencePage.test.tsx src/renderer/src/WorkspacePrimitives.test.tsx` 共 127 项通过；App 排序保存、菜单与侧栏同步、外部事件、重开及入口行为的 9 项定向测试通过。包含完整 `App.test.tsx` 的八文件运行共 390 项通过、2 项失败，失败项是任务中心审批测试在折叠列表中找不到任务行（`App.test.tsx` 的 scheduled approvals 场景），本次没有修改该行为。`npm run typecheck`、`npm run lint` 和 `git diff --check` 通过。全量 `npm test` 运行约七分钟仍未得到汇总，已停止本次测试进程；日志复现上述两项失败，不能宣称全量通过。
+
+Windows Electron fixture 使用当前 ApplicationCenter、生产 CSS／中文翻译、真实 ApplicationSettingsStore 和临时 IPC，从旧两项顺序读取后，移动知识库以及关闭且未常驻的本机推理监控，并用新 Store 实例确认磁盘结果。浅深主题各检查 1280、960、640、375px 目标宽度，实际 CSS 视口因缩放多约 1px；均显示八个排序箭头、四个可拖动卡片，无横向溢出，列数分别为三、三、二、一。详情不含排序，返回搜索焦点和重开顺序通过。最终证据目录为临时 `all-app-order-t0hDya`；已查看桌面浅色及窄屏深色截图。此项是组件与存储验证，未验收完整生产 Main／Preload 启动或安装包，原生指针拖放由组件事件测试之外另行验收。
+
+中文文档运行 deai-writing 扫描，无阻断项；对本次改动的复核候选人工检查，保留明确的产品状态与验收限制。未调用模型，未修改模型管理、GPU 指标或 Agent 执行路径，未创建提交。下方记录保留各次实施时的行为，旧“固定位置”“仅常驻项排序”规则已由本条及现行设计替代。
+
+## 2026-09-18：卡片排序与自适应列数
+
+对应 FR-11、US-B7、US-D1、US-D2。上下移动从设置详情移到常驻可选应用卡片，箭头名称及提示包含应用名；首尾、唯一常驻项和保存锁定时禁用对应操作。拖动也仅允许常驻可选应用，固定应用及未常驻项不参与排序。卡片改用 `auto-fit/minmax`，最小宽度 `260px`，Modal 最大宽度仍为 `960px`；启用、常驻及笔记设置继续使用原详情表单。保留本机推理监控名称及默认不常驻改动。
+
+Windows Electron 组件 fixture 使用当前 ApplicationCenter、生产 CSS／中文 i18n、真实 ApplicationSettingsStore 及临时 IPC。浅深主题各检查 1280、960、640、375px 目标窗口宽度，实际 CSS 视口受缩放约多 1px；分别为三、三、二、一列，均无横向溢出。检查排序持久化、详情无排序及返回搜索焦点，并人工查看桌面浅色、窄屏深色截图。证据位于临时目录 `cards-order-fixture-tucKjv`。完整 App 配合已有 Main／Preload 的两次启动尝试未产生窗口，此次 fixture 不作为完整 App 或安装包验收。
+
+`npm run typecheck`、`npm run lint`、`git diff --check` 通过；`npm test -- src/renderer/src/ApplicationCenter.test.tsx src/renderer/src/ApplicationMenu.test.tsx src/renderer/src/LocalInferencePage.test.tsx src/main/application-settings-store.test.ts` 共 66 项通过，覆盖固定／未常驻项、边界、保存锁定、搜索排序及设置入口。全量 `npm test` 在 60 秒后超时，未取得完整结果。中文改动按 deai-writing 自查清单人工复核。未调用模型、修改模型管理或 GPU 指标，未创建提交。
+
+## 2026-09-18：本机推理监控默认不常驻
+
+对应 FR-11、US-B 的默认值与迁移场景。共享导航默认值改为本机推理监控不常驻；新安装和旧设置缺失整个导航配置时采用此值，应用仍默认启用，可从应用菜单及管理 Modal 打开。默认可选顺序及知识库、智能心跳的固定入口规则保持不变。沿用存储版本 12，已有常驻 `true`／`false` 均保留；旧默认值与主动固定没有来源标记，无法区分，不强制取消已有常驻。Demo 初始状态和恢复默认同步。
+
+验证：设置存储、应用中心、菜单、推理 Modal 共 62 项测试通过，App 入口及设置同步 8 项定向测试通过；`npm run typecheck`、`npm run lint`、Demo 的 `node --check` 和 `git diff --check` 通过。全量 `npm test` 在 60 秒后超时，未取得完整结果。中文改动按 deai-writing 自查清单人工复核。本次未启动 Electron 或调用模型，不涉及 GoodBuddy Agent 或远程执行路径；未创建提交，保留此前未提交的名称调整。
+
+## 2026-09-18：统一名称为本机推理监控
+
+对应 FR-16、US-F3。导航、应用中心、应用设置、Modal 标题及关闭按钮统一使用“本机推理监控”，英文应用名为 Local Inference Monitor。现行功能文档与 Demo 名称同步；`local-inference`、API、组件名及服务行为保持不变，下方历史记录保留当时称谓。
+
+验证：应用菜单、应用中心、Modal 的 27 项测试及 App 入口、设置同步相关的 8 项测试通过；`npm run typecheck`、修改源码 ESLint、Demo 的 `node --check` 和 `git diff --check` 通过。Demo 被 ESLint 既有规则排除。中文改动按 deai-writing 自查清单人工复核，仅同步名称及本条验证事实。本次未运行全量测试或启动 Electron 验收窗口排版。
+
 ## 2026-09-18：独立推理进程资源采样
 
 对应 FR-16、US-F3。向量 utility process 已按 PID 接入 Electron 真实 CPU 和工作集内存，服务行显示进程范围、PID、百分比及 MiB。ASR 为主进程线程，OCR 为渲染进程 Web Worker，分别显示不能独立统计的原因。采样口径及基线规则见[技术设计](./technical-design.md)。服务 Modal 继续保持单一列表。

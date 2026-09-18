@@ -5,7 +5,6 @@ import type { InferenceAction, InferenceService, InferenceTask, LocalInferenceSn
 import { PageHeader } from './WorkspacePrimitives'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { getOcrInferenceState, loadOcrInference, releaseOcrInference } from './document-ocr-bridge'
-import { ApplicationSettingsLink } from './ApplicationCenter'
 import './local-inference.css'
 
 const stateLabels: Record<string, string> = {
@@ -112,7 +111,7 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
     else setControl(selected)
   }
 
-  return createPortal(<div className="custom-task-dialog"><section className="custom-task-dialog__surface local-inference-modal" role="dialog" aria-modal="true" aria-label="本机推理" tabIndex={-1} onKeyDown={(event) => {
+  return createPortal(<div className="custom-task-dialog"><section className="custom-task-dialog__surface local-inference-modal" role="dialog" aria-modal="true" aria-label="本机推理监控" tabIndex={-1} onKeyDown={(event) => {
     if (event.target instanceof Element && event.target.closest('[aria-modal="true"]') !== event.currentTarget) return
     trapTabFocus(event, event.currentTarget)
     if (event.key === 'Escape') {
@@ -122,11 +121,11 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
     }
   }}>
     <div className="custom-task-dialog__header">
-    <PageHeader headingId="local-inference-title" title="本机推理" scope={{ kind: 'global' }}
-      actions={<button ref={close} type="button" className="icon-button" aria-label="关闭本机推理" title="关闭本机推理" disabled={busy || Boolean(control)} onClick={() => { if (!operation.current && !control) onClose() }}><X size={20} aria-hidden="true" /></button>} />
+    <PageHeader headingId="local-inference-title" title="本机推理监控" scope={{ kind: 'global' }}
+      actions={<button ref={close} type="button" className="icon-button" aria-label="关闭本机推理监控" title="关闭本机推理监控" disabled={busy || Boolean(control)} onClick={() => { if (!operation.current && !control) onClose() }}><X size={20} aria-hidden="true" /></button>} />
     </div>
     <div className="local-inference-modal__body">
-    {!enabled && <div className="local-inference-actions"><strong>应用已关闭</strong><ApplicationSettingsLink id="local-inference" /></div>}
+    {!enabled && <div className="local-inference-actions"><strong>应用已关闭</strong></div>}
     <div className="local-inference-workspace" hidden={!enabled} inert={!enabled}>
     <div className="local-inference-toolbar">
     <p className="local-inference-note">每 5 秒刷新 · CPU 100% = 一个逻辑核心</p>
