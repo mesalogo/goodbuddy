@@ -28,8 +28,9 @@ export const magicNotes = {
     analyzeAgain: 'Analyze again',
     analyzing: 'Analyzing…',
     openSourceNote: 'Open source note',
-    hideListPane: 'Hide left list',
-    showListPane: 'Show left list',
+    backToOverview: 'Back to overview',
+    backToTodos: 'Back to to-dos',
+    backToTodoList: 'Back to to-do list',
     hideAiComments: 'Hide AI comments',
     showAiComments: 'Show AI comments',
     pinNote: 'Pin note',
@@ -104,8 +105,11 @@ export const magicNotes = {
     listLabel: 'To-do list',
     detailLabel: 'To-do details',
     heading: 'All to-dos',
+    resultCount: '{{count}} / {{total}} items',
+    loadingSource: 'Loading source entry…',
+    retrySource: 'Retry loading source',
     searchLabel: 'Search to-dos in the current scope',
-    searchPlaceholder: 'Search to-dos',
+    searchPlaceholder: 'Search tasks, instructions, or source notes',
     filterLabel: 'Filter to-dos',
     filters: {
       active: 'Incomplete',
@@ -169,8 +173,6 @@ export const magicNotes = {
       'Choose “Analyze with AI” on an entry to show comments here.'
   },
   accessibility: {
-    resizeListPane: 'Resize the note list and editor panes',
-    listPaneWidth: 'Left list, {{width}} pixels',
     resizeAiPane: 'Resize the editor and AI comments panes',
     aiPaneWidth: 'AI comments pane, {{width}} pixels'
   },

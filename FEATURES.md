@@ -105,9 +105,9 @@ records are listed separately and do not introduce another feature status.
   managed SSH project with bounded output, resizing, termination, and explicit
   reconnection. Closing a terminal tab ends its Shell; restarting the app
   restores only an ended tab description and never restarts the Shell. The
-  main sidebar and Magic Notes list support pointer and keyboard resizing;
-  the notes list can be hidden, remembers its layout, and stacks at narrow
-  widths.
+  main sidebar and Magic Notes editor's AI pane support pointer and keyboard
+  resizing. The AI pane remembers its visibility and width, and stacks below
+  the editor at narrow widths.
 - [ ] **Project Agent Space** (planned): Unifies roles, knowledge, Skills/MCP,
   models, approval policy, budgets, and timeouts in a Project, with reusable
   templates.
@@ -599,10 +599,15 @@ records are listed separately and do not introduce another feature status.
   demand or before every response, show zero-result, degraded, failed, and
   cancelled states, and expose cited context or safely open its source.
 - [x] **Magic Notes**: A local-first notes and todo workbench with scope
-  management, editing, filtering, and controlled AI comments. The todo view
-  displays the source entry inside the selected item's details, without
+  management, editing, filtering, and controlled AI comments. Notes open from a
+  responsive card overview. The separate To-dos tab offers search, status filters,
+  grouped tasks and direct completion, with instructions, source entries and AI
+  comments in a right detail pane beside a stable task list. Narrow views offer
+  on-demand detail with an explicit return to the list. Content-sized tabs sit
+  beside New note in the header; status filters follow search. Source-note
+  navigation returns to the same task context, without
   showing the previous item's source after a selection change. Failed reads
-  use application notifications, and missing sources have an explicit fallback. The left
+  use application notifications with inline retry, and missing sources have an explicit fallback. The left
   navigation can show the incomplete-todo count, and create, save, and comment
   results use application-wide notifications. Agent/MCP note writes automatically
   refresh the open workbench while preserving selection and unsaved drafts.

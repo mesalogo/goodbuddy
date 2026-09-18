@@ -24,8 +24,9 @@ export const magicNotes = {
     analyzeAgain: '重新分析',
     analyzing: '分析中…',
     openSourceNote: '打开原笔记修改',
-    hideListPane: '隐藏左侧列表',
-    showListPane: '显示左侧列表',
+    backToOverview: '返回总览',
+    backToTodos: '返回待办',
+    backToTodoList: '返回待办列表',
     hideAiComments: '隐藏 AI 评论',
     showAiComments: '显示 AI 评论',
     pinNote: '置顶笔记',
@@ -98,8 +99,11 @@ export const magicNotes = {
     listLabel: '待办列表',
     detailLabel: '待办详情',
     heading: '全部待办',
+    resultCount: '{{count}} / {{total}} 项',
+    loadingSource: '正在加载来源记录…',
+    retrySource: '重试加载来源',
     searchLabel: '搜索当前范围的待办',
-    searchPlaceholder: '搜索待办',
+    searchPlaceholder: '搜索任务、说明或来源笔记',
     filterLabel: '筛选待办',
     filters: {
       active: '未完成',
@@ -157,8 +161,6 @@ export const magicNotes = {
     manualHint: '在记录上点击“AI 分析”，评论会显示在这里。'
   },
   accessibility: {
-    resizeListPane: '调整笔记列表与编辑区宽度',
-    listPaneWidth: '左侧列表 {{width}} 像素',
     resizeAiPane: '调整编辑区与 AI 评论宽度',
     aiPaneWidth: 'AI 评论栏 {{width}} 像素'
   },

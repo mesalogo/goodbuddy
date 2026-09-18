@@ -22,6 +22,15 @@ objects and returns a function removing that listener. The existing
 
 ## Refresh Lifecycle
 
+The overview's `libraryView` and the optional note-only `detailView` are independent:
+opening a todo's source note does not lose the originating task view.
+The overview remains mounted but hidden while detail is open, retaining scroll
+position and filters. Returning restores the initiating control's focus and
+invalidates outstanding detail requests. Initial loading fetches summaries and
+todos without selecting the first note or task. Navigation away from unsaved content or
+an unsaved title uses the existing draft confirmation; active writes finish
+before navigation. No new persistence or IPC contract is required.
+
 `MagicNotesWorkspace` subscribes on mount and coalesces notifications with a
 100 ms debounce. Pending notifications wait for an active local save or analysis
 to finish. Cleanup removes the listener, clears its timer and invalidates pending
@@ -45,20 +54,47 @@ Read failures use the existing retryable refresh error and retain successful
 data and drafts. Retry uses the same draft-preserving loader. Interaction rules
 are owned by [the UI design system](../../../UI-DESIGN.md#137-魔法笔记).
 
+## Todo Task View
+
+The To-dos panel has its own search/status toolbar and independently scrolling
+task list, grouped by source note. `selectedTodoId` controls one sibling detail pane;
+the selected item is derived from the filtered list. Completion updates the
+existing item and source cache without selecting or opening another task. Items
+that no longer match the status filter leave the list. A removed focused control
+returns focus to an available list/filter control.
+
+Detail content includes instructions, the source entry, its existing note
+navigation action, and AI controls/comments. AI requests still use the existing
+analysis options and streaming subscription; failed analysis retains saved
+comments. Source reads are guarded against superseded selections, report failures
+through notifications and offer inline retry. The grid reserves both columns even
+without a selection, so selecting or switching tasks cannot move list rows. The
+detail is keyed by task ID to start each newly selected task at its top.
+At a page container width of 700px or less, CSS hides the mounted list while a
+task is selected and shows an explicit return button in the detail area. Returning
+clears selection and restores row focus without scrolling; source-note return
+retains selection and focuses this visible return button on narrow layouts.
+There is no todo detail route, separate AI sidebar or resize handle. Note detail
+retains its existing AI pane preferences.
+
+The shared segmented `PageTabs` lives in `PageHeader.actions` before New note,
+retaining tab/panel IDs, roving focus and arrow-key navigation. Its width follows
+content at all sizes. The shared status `SegmentedControl` follows search in one
+wrapping toolbar. These layout changes do not change Main, preload or storage.
+
 ## Note List Actions
 
-Each note row has a selection button and a sibling action-menu button. The menu
+Each overview card has an open-detail button and a sibling action-menu button. The menu
 uses the conversation action styles and shared `DestructiveConfirmActions`, and
 is portalled to `document.body`. Its position follows the trigger on scrolling,
-window resizing and confirmation-size changes. Hiding the list, filtering out the
+window resizing and confirmation-size changes. Entering detail, filtering out the
 target or leaving the notes panel closes the menu.
 
 Pinning uses the target summary's ID and revision through the existing update
 IPC. It updates the sorted summary and matching selected detail without resetting
 title, composer or entry-edit drafts. Deleting uses the explicitly confirmed
-target ID; deleting another note uses the draft-preserving refresh path. Deleting
-the selected note clears its entry drafts only after the write succeeds, then
-selects a remaining note. These are renderer changes; database and Agent contracts
+target ID and refreshes the overview after success, without opening another note.
+These actions are available only in the overview. Database and Agent contracts
 are unchanged.
 
 ## Agent Search Contract

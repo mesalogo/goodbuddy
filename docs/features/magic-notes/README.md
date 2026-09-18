@@ -5,6 +5,15 @@ actions and authorized Agent/MCP tools write to the same desktop SQLite store.
 The open workbench subscribes to successful writes so users can see external
 changes without leaving the page or clicking a refresh button.
 
+The workbench opens on a responsive note-card overview. Opening a note replaces
+the overview with its detail and optional AI comments. The separate To-dos tab
+keeps search, status filters and grouped tasks on one page, with direct completion
+and a stable left list/right detail layout for instructions, source content and AI
+comments. Narrow containers use on-demand detail with an explicit return to the
+mounted list. Content-sized tabs sit in the page header immediately before New
+note; status filters sit beside search and wrap when needed. Returning from a source note restores the task
+context and protects unsaved editor changes.
+
 ## Documents
 
 - [Technical design](./technical-design.md): database notifications, process

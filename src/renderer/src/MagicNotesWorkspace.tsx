@@ -1,7 +1,9 @@
 import {
+  ArrowLeft,
   Bot,
   BookOpen,
   CheckCircle2,
+  ChevronRight,
   CircleAlert,
   Circle,
   FileText,
@@ -9,8 +11,6 @@ import {
   Lightbulb,
   ListTodo,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Pin,
@@ -71,18 +71,15 @@ type ValidationTarget =
   | 'new-entry'
   | 'edit-entry'
 type DraftSwitchTarget =
+  | { kind: 'overview' }
   | { kind: 'library-view'; value: LibraryView }
   | { kind: 'create-note'; title: string }
   | { kind: 'edit-entry'; entry: MagicNoteEntry }
   | { kind: 'note'; noteId: string; entryId?: string }
-  | { kind: 'todo'; todoId: string }
 
 const defaultAiPaneWidth = 280
 const minimumAiPaneWidth = 240
 const maximumAiPaneWidth = 520
-const defaultMagicNotesListPaneWidth = 220
-const minimumMagicNotesListPaneWidth = 180
-const maximumMagicNotesListPaneWidth = 360
 const minimumMagicNotesEditorWidth = 300
 const magicNotesResizeHandleWidth = 9
 const magicNotesPaneKeyboardResizeStep = 16
@@ -90,16 +87,12 @@ const magicNotesLayoutStorageKey =
   'goodbuddy.magic-notes-layout.v1'
 
 type MagicNotesLayoutPreferences = {
-  listPaneOpen: boolean
-  listPaneWidth: number
   aiPaneOpen: boolean
   aiPaneWidth: number
 }
 
 function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
   const defaults = {
-    listPaneOpen: true,
-    listPaneWidth: defaultMagicNotesListPaneWidth,
     aiPaneOpen: true,
     aiPaneWidth: defaultAiPaneWidth
   }
@@ -112,18 +105,6 @@ function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
       MagicNotesLayoutPreferences
     >
     return {
-      listPaneOpen: parsed.listPaneOpen !== false,
-      listPaneWidth:
-        typeof parsed.listPaneWidth === 'number' &&
-        Number.isFinite(parsed.listPaneWidth)
-          ? Math.min(
-              maximumMagicNotesListPaneWidth,
-              Math.max(
-                minimumMagicNotesListPaneWidth,
-                parsed.listPaneWidth
-              )
-            )
-          : defaults.listPaneWidth,
       aiPaneOpen: parsed.aiPaneOpen !== false,
       aiPaneWidth:
         typeof parsed.aiPaneWidth === 'number' &&
@@ -157,30 +138,14 @@ type MagicNotesPaneWidthLimits = {
   maximum: number
 }
 
-function getMagicNotesPaneWidthLimits({
-  adjacentPaneOpen,
-  adjacentPaneWidth,
-  layoutWidth,
-  maximum,
-  minimum
-}: {
-  adjacentPaneOpen: boolean
-  adjacentPaneWidth: number
-  layoutWidth: number
-  maximum: number
-  minimum: number
-}): MagicNotesPaneWidthLimits {
-  const reservedAdjacentWidth = adjacentPaneOpen
-    ? adjacentPaneWidth + magicNotesResizeHandleWidth
-    : 0
+function getAiPaneWidthLimits(layoutWidth: number): MagicNotesPaneWidthLimits {
   return {
-    minimum,
+    minimum: minimumAiPaneWidth,
     maximum: Math.max(
-      minimum,
+      minimumAiPaneWidth,
       Math.min(
-        maximum,
+        maximumAiPaneWidth,
         layoutWidth -
-          reservedAdjacentWidth -
           minimumMagicNotesEditorWidth -
           magicNotesResizeHandleWidth
       )
@@ -197,63 +162,13 @@ function clampMagicNotesPaneWidth(
   )
 }
 
-function getAiPaneWidthLimits(
-  layoutWidth: number,
-  listPaneWidth: number,
-  listPaneOpen: boolean
-): MagicNotesPaneWidthLimits {
-  return getMagicNotesPaneWidthLimits({
-    adjacentPaneOpen: listPaneOpen,
-    adjacentPaneWidth: listPaneWidth,
-    layoutWidth,
-    maximum: maximumAiPaneWidth,
-    minimum: minimumAiPaneWidth
-  })
-}
-
 function clampAiPaneWidth(
   width: number,
-  layoutWidth: number,
-  listPaneWidth: number,
-  listPaneOpen: boolean
+  layoutWidth: number
 ): number {
   return clampMagicNotesPaneWidth(
     width,
-    getAiPaneWidthLimits(
-      layoutWidth,
-      listPaneWidth,
-      listPaneOpen
-    )
-  )
-}
-
-function getListPaneWidthLimits(
-  layoutWidth: number,
-  aiPaneWidth: number,
-  aiPaneOpen: boolean
-): MagicNotesPaneWidthLimits {
-  return getMagicNotesPaneWidthLimits({
-    adjacentPaneOpen: aiPaneOpen,
-    adjacentPaneWidth: aiPaneWidth,
-    layoutWidth,
-    maximum: maximumMagicNotesListPaneWidth,
-    minimum: minimumMagicNotesListPaneWidth
-  })
-}
-
-function clampListPaneWidth(
-  width: number,
-  layoutWidth: number,
-  aiPaneWidth: number,
-  aiPaneOpen: boolean
-): number {
-  return clampMagicNotesPaneWidth(
-    width,
-    getListPaneWidthLimits(
-      layoutWidth,
-      aiPaneWidth,
-      aiPaneOpen
-    )
+    getAiPaneWidthLimits(layoutWidth)
   )
 }
 
@@ -344,26 +259,22 @@ function AiComment({
 
 function TodoListItem({
   disabled,
+  expanded,
   id,
   onSelect,
   onToggle,
-  selected,
   todo
 }: {
   disabled: boolean
+  expanded: boolean
   id: string
   onSelect: () => void
   onToggle: () => void
-  selected: boolean
   todo: MagicTodoItem
 }): React.JSX.Element {
   const { t } = useTranslation('magicNotes')
   return (
-    <div
-      className={`magic-todo-list-item ${
-        selected ? 'magic-todo-list-item--active' : ''
-      }`}
-    >
+    <div className={`magic-todo-list-item${todo.completed ? ' magic-todo-list-item--completed' : ''}`}>
       <button
         aria-label={t(
           todo.completed
@@ -384,14 +295,17 @@ function TodoListItem({
         )}
       </button>
       <button
-        aria-pressed={selected}
+        aria-controls={expanded ? `magic-todo-detail-${todo.id}` : undefined}
+        aria-expanded={expanded}
         className="magic-todo-list-item__content"
+        disabled={disabled}
         id={id}
         onClick={onSelect}
         type="button"
       >
         <strong>{todo.title}</strong>
         <small>{t('todos.sourceNote', { title: todo.noteTitle })}</small>
+        <ChevronRight aria-hidden="true" size={16} />
       </button>
     </div>
   )
@@ -426,9 +340,9 @@ export function MagicNotesWorkspace({
     ReadonlyArray<{ value: TodoFilter; label: string }>
   >(
     () => [
+      { value: 'all', label: t('todos.filters.all') },
       { value: 'active', label: t('todos.filters.active') },
-      { value: 'completed', label: t('todos.filters.completed') },
-      { value: 'all', label: t('todos.filters.all') }
+      { value: 'completed', label: t('todos.filters.completed') }
     ],
     [t]
   )
@@ -479,6 +393,8 @@ export function MagicNotesWorkspace({
   const [notes, setNotes] = useState<MagicNoteSummary[]>([])
   const [todos, setTodos] = useState<MagicTodoItem[]>([])
   const [libraryView, setLibraryView] = useState<LibraryView>('notes')
+  const [detailView, setDetailView] = useState<'notes'>()
+  const overviewFocusRef = useRef('')
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('active')
   const [loadedCommentMode, setCommentMode] =
     useState<MagicNoteCommentMode>('immediate')
@@ -493,6 +409,8 @@ export function MagicNotesWorkspace({
   const [detail, setDetail] = useState<MagicNoteDetail>()
   const [todoSourceDetail, setTodoSourceDetail] =
     useState<MagicNoteDetail>()
+  const [todoSourceStatus, setTodoSourceStatus] = useState<LoadStatus>('loading')
+  const [todoSourceRetry, setTodoSourceRetry] = useState(0)
   const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading')
   const [loadError, setLoadError] = useState('')
   const [refreshError, setRefreshError] = useState('')
@@ -516,13 +434,6 @@ export function MagicNotesWorkspace({
     () => loadMagicNotesLayoutPreferences(),
     []
   )
-  const [listPaneOpen, setListPaneOpen] = useState(
-    initialLayoutPreferences.listPaneOpen
-  )
-  const [listPaneWidth, setListPaneWidth] = useState(
-    initialLayoutPreferences.listPaneWidth
-  )
-  const [listPaneResizing, setListPaneResizing] = useState(false)
   const [aiPaneOpen, setAiPaneOpen] = useState(
     initialLayoutPreferences.aiPaneOpen
   )
@@ -575,8 +486,6 @@ export function MagicNotesWorkspace({
   const draftAnalysisContextRef = useRef(0)
   const lastDraftAnalysisStartedAtRef = useRef(0)
   const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
-  const liveListPaneWidthRef = useRef(listPaneWidth)
-  const listResizePointerIdRef = useRef<number | undefined>(undefined)
   const liveAiPaneWidthRef = useRef(aiPaneWidth)
   const aiResizePointerIdRef = useRef<number | undefined>(undefined)
   const composerRef = useRef<HTMLDivElement>(null)
@@ -629,9 +538,7 @@ export function MagicNotesWorkspace({
       const bounds = getLayoutBounds()
       const width = clampAiPaneWidth(
         bounds.right - clientX,
-        bounds.width,
-        liveListPaneWidthRef.current,
-        listPaneOpen
+        bounds.width
       )
       liveAiPaneWidthRef.current = width
       if (commit) {
@@ -643,7 +550,7 @@ export function MagicNotesWorkspace({
         `${width}px`
       )
     },
-    [getLayoutBounds, listPaneOpen]
+    [getLayoutBounds]
   )
 
   const finishAiPaneResize = useCallback(
@@ -665,9 +572,7 @@ export function MagicNotesWorkspace({
     (event: React.KeyboardEvent<HTMLDivElement>): void => {
       const bounds = getLayoutBounds()
       const limits = getAiPaneWidthLimits(
-        bounds.width,
-        listPaneWidth,
-        listPaneOpen
+        bounds.width
       )
       const nextWidth =
         event.key === 'Home'
@@ -685,85 +590,12 @@ export function MagicNotesWorkspace({
       event.preventDefault()
       const width = clampAiPaneWidth(
         nextWidth,
-        bounds.width,
-        listPaneWidth,
-        listPaneOpen
+        bounds.width
       )
       liveAiPaneWidthRef.current = width
       setAiPaneWidth(width)
     },
-    [aiPaneWidth, getLayoutBounds, listPaneOpen, listPaneWidth]
-  )
-
-  const resizeListPaneFromClientX = useCallback(
-    (clientX: number, commit: boolean): void => {
-      const bounds = getLayoutBounds()
-      const width = clampListPaneWidth(
-        clientX - bounds.left,
-        bounds.width,
-        liveAiPaneWidthRef.current,
-        aiPaneOpen
-      )
-      liveListPaneWidthRef.current = width
-      if (commit) {
-        setListPaneWidth(width)
-        return
-      }
-      magicNotesLayoutRef.current?.style.setProperty(
-        '--magic-notes-list-width',
-        `${width}px`
-      )
-    },
-    [aiPaneOpen, getLayoutBounds]
-  )
-
-  const finishListPaneResize = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>): void => {
-      if (listResizePointerIdRef.current !== event.pointerId) {
-        return
-      }
-      listResizePointerIdRef.current = undefined
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId)
-      }
-      setListPaneWidth(liveListPaneWidthRef.current)
-      setListPaneResizing(false)
-    },
-    []
-  )
-
-  const resizeListPaneWithKeyboard = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>): void => {
-      const bounds = getLayoutBounds()
-      const limits = getListPaneWidthLimits(
-        bounds.width,
-        aiPaneWidth,
-        aiPaneOpen
-      )
-      const nextWidth =
-        event.key === 'Home'
-          ? limits.minimum
-          : event.key === 'End'
-            ? limits.maximum
-            : event.key === 'ArrowLeft'
-              ? listPaneWidth - magicNotesPaneKeyboardResizeStep
-              : event.key === 'ArrowRight'
-                ? listPaneWidth + magicNotesPaneKeyboardResizeStep
-                : undefined
-      if (nextWidth === undefined) {
-        return
-      }
-      event.preventDefault()
-      const width = clampListPaneWidth(
-        nextWidth,
-        bounds.width,
-        aiPaneWidth,
-        aiPaneOpen
-      )
-      liveListPaneWidthRef.current = width
-      setListPaneWidth(width)
-    },
-    [aiPaneOpen, aiPaneWidth, getLayoutBounds, listPaneWidth]
+    [aiPaneWidth, getLayoutBounds]
   )
 
   useEffect(
@@ -783,37 +615,21 @@ export function MagicNotesWorkspace({
 
   useEffect(() => {
     persistMagicNotesLayoutPreferences({
-      listPaneOpen,
-      listPaneWidth,
       aiPaneOpen,
       aiPaneWidth
     })
-  }, [aiPaneOpen, aiPaneWidth, listPaneOpen, listPaneWidth])
+  }, [aiPaneOpen, aiPaneWidth])
 
   useEffect(() => {
     const layout = magicNotesLayoutRef.current
     const updateLayoutWidth = (): void => {
       const width = layout?.getBoundingClientRect().width || window.innerWidth
       setMagicNotesLayoutWidth(width)
-      if (width > 720) {
-        setListPaneWidth((current) => {
-          const next = clampListPaneWidth(
-            current,
-            width,
-            liveAiPaneWidthRef.current,
-            aiPaneOpen
-          )
-          liveListPaneWidthRef.current = next
-          return next
-        })
-      }
       if (width > 800) {
         setAiPaneWidth((current) => {
           const next = clampAiPaneWidth(
             current,
-            width,
-            liveListPaneWidthRef.current,
-            listPaneOpen
+            width
           )
           liveAiPaneWidthRef.current = next
           return next
@@ -836,7 +652,7 @@ export function MagicNotesWorkspace({
       }
       observer?.disconnect()
     }
-  }, [aiPaneOpen, listPaneOpen])
+  }, [aiPaneOpen, detailView, loadStatus])
 
   const notifyError = useCallback(
     (error: unknown): void =>
@@ -911,12 +727,14 @@ export function MagicNotesWorkspace({
       lastDraftAnalysisStartedAtRef.current = Date.now()
       setDraftAnalysisRunning(true)
       const options = await createAnalysisOptions()
-      setLiveAnalysis({
-        requestId: options.requestId,
-        content: '',
-        direction: options.direction,
-        format: options.format
-      })
+      if (draftAnalysisContextRef.current === analysisContext) {
+        setLiveAnalysis({
+          requestId: options.requestId,
+          content: '',
+          direction: options.direction,
+          format: options.format
+        })
+      }
       try {
         const analysis =
           await window.goodbuddy.magicNotes.analyzeDraft(content, options)
@@ -1026,7 +844,6 @@ export function MagicNotesWorkspace({
           right.updatedAt.localeCompare(left.updatedAt)
       )
     )
-    setSelectedTodoId(next.id)
   }, [])
 
   const loadDetail = useCallback(
@@ -1073,6 +890,7 @@ export function MagicNotesWorkspace({
     draftAnalysisQueuedRef.current = false
     draftAnalysisContextRef.current += 1
     setDraftAnalyses([])
+    setLiveAnalysis(undefined)
     if (draftAnalysisTimerRef.current !== undefined) {
       window.clearTimeout(draftAnalysisTimerRef.current)
       draftAnalysisTimerRef.current = undefined
@@ -1113,8 +931,10 @@ export function MagicNotesWorkspace({
           discardEditingDraft()
         }
         applyDetail(created)
+        detailRequestRef.current += 1
         requestedNoteIdRef.current = created.id
         setSelectedNoteId(created.id)
+        setDetailView('notes')
         setNewTitle('')
         setCreating(false)
         notifySuccess(t('notifications.noteCreated'))
@@ -1140,16 +960,14 @@ export function MagicNotesWorkspace({
     (target: DraftSwitchTarget): void => {
       requestAnimationFrame(() => {
         const focusTarget =
-          target.kind === 'library-view'
-            ? document.getElementById(`magic-library-tab-${target.value}`)
-            : target.kind === 'note'
-              ? document.getElementById(
-                  `magic-note-select-${target.noteId}`
-                )
-              : target.kind === 'todo'
-                ? document.getElementById(
-                    `magic-todo-select-${target.todoId}`
-                  )
+          target.kind === 'overview'
+            ? (document.getElementById('magic-todo-back')?.checkVisibility?.() &&
+                document.getElementById('magic-todo-back')) || document.getElementById(overviewFocusRef.current) ||
+              document.getElementById('magic-note-new')
+            : target.kind === 'library-view'
+              ? document.getElementById(`magic-library-tab-${target.value}`)
+               : target.kind === 'note'
+                ? document.getElementById('magic-notes-back')
                 : target.kind === 'edit-entry'
                   ? document
                       .getElementById(
@@ -1161,7 +979,7 @@ export function MagicNotesWorkspace({
                   : composerRef.current?.querySelector<HTMLElement>(
                       '.ql-editor, [data-testid="magic-note-editor"]'
                     )
-        focusTarget?.focus()
+        focusTarget?.focus({ preventScroll: true })
       })
     },
     []
@@ -1171,6 +989,21 @@ export function MagicNotesWorkspace({
     (target: DraftSwitchTarget): void => {
       setPendingDraftSwitch(undefined)
       setValidation(undefined)
+      if (target.kind === 'overview') {
+        discardComposerDraft()
+        discardEditingDraft()
+        detailRequestRef.current += 1
+        requestedNoteIdRef.current = ''
+        setSelectedNoteId('')
+        setDetail(undefined)
+        setTitleDraft('')
+        setDetailLoadError(undefined)
+        setRefreshError('')
+        setDeletingEntryId('')
+        setDetailView(undefined)
+        focusSwitchTarget(target)
+        return
+      }
       if (target.kind === 'library-view') {
         if (target.value === 'todos') {
           discardComposerDraft()
@@ -1179,11 +1012,6 @@ export function MagicNotesWorkspace({
         setLibraryView(target.value)
         setCreating(false)
         setSearch('')
-        focusSwitchTarget(target)
-        return
-      }
-      if (target.kind === 'todo') {
-        setSelectedTodoId(target.todoId)
         focusSwitchTarget(target)
         return
       }
@@ -1196,15 +1024,17 @@ export function MagicNotesWorkspace({
         return
       }
       if (target.kind === 'create-note') {
+        overviewFocusRef.current = 'magic-note-new'
         void createNote(target.title, true)
           .then(() => focusSwitchTarget(target))
         return
       }
       setDeletingNote(false)
-      setLibraryView('notes')
+      if (!detailView && libraryView === 'notes') overviewFocusRef.current = `magic-note-select-${target.noteId}`
+      setDetailView('notes')
+      focusSwitchTarget(target)
       void loadDetail(target.noteId).then(() => {
-        focusSwitchTarget(target)
-        if (!target.entryId) {
+        if (!target.entryId || requestedNoteIdRef.current !== target.noteId) {
           return
         }
         requestAnimationFrame(() =>
@@ -1216,10 +1046,12 @@ export function MagicNotesWorkspace({
     },
     [
       createNote,
+      detailView,
       discardComposerDraft,
       discardEditingDraft,
       focusSwitchTarget,
-      loadDetail
+      loadDetail,
+      libraryView
     ]
   )
 
@@ -1228,25 +1060,27 @@ export function MagicNotesWorkspace({
       if (pendingDraftSwitch) {
         return
       }
+      if (busyRef.current) {
+        notifyInfo(tRef.current('notifications.waitForOperation'))
+        return
+      }
       const changesContext =
         target.kind === 'library-view'
           ? target.value !== libraryView
           : target.kind === 'note'
-            ? target.noteId !== selectedNoteId ||
+            ? !detailView || target.noteId !== selectedNoteId ||
               target.entryId !== undefined
-            : target.kind === 'todo'
-              ? target.todoId !== selectedTodoId
-              : target.kind === 'edit-entry'
+             : target.kind === 'edit-entry'
                 ? target.entry.id !== editingEntry?.id
                 : true
       if (!changesContext) {
         return
       }
       const wouldClearComposer = target.kind !== 'edit-entry'
-      const wouldClearEditing = target.kind !== 'todo'
       if (
         (wouldClearComposer && hasContent(composerContentRef.current)) ||
-        (wouldClearEditing && hasDirtyEditingDraft())
+        hasDirtyEditingDraft() ||
+        (target.kind === 'overview' && detail && titleDraft !== detail.title)
       ) {
         setPendingDraftSwitch(target)
         return
@@ -1255,12 +1089,15 @@ export function MagicNotesWorkspace({
     },
     [
       editingEntry?.id,
+      detail,
+      detailView,
+      titleDraft,
+      notifyInfo,
       hasDirtyEditingDraft,
       libraryView,
       pendingDraftSwitch,
       performDraftSwitch,
-      selectedNoteId,
-      selectedTodoId
+      selectedNoteId
     ]
   )
 
@@ -1309,23 +1146,21 @@ export function MagicNotesWorkspace({
         const nextId =
           preferredId && snapshot.notes.some((note) => note.id === preferredId)
             ? preferredId
-            : snapshot.notes[0]?.id ?? ''
+            : ''
         const nextDetail = nextId
           ? await window.goodbuddy.magicNotes.get(nextId)
           : undefined
         if (refreshRequestRef.current !== requestId) {
           return
         }
-        const requestedNoteId = requestedNoteIdRef.current
         const preserveNewerSelection =
-          detailRequestRef.current !== detailRequestAtStart &&
-          snapshot.notes.some((note) => note.id === requestedNoteId)
+          detailRequestRef.current !== detailRequestAtStart
         setNotes(snapshot.notes)
         setTodos(todoSnapshot.todos)
         setSelectedTodoId((current) =>
           todoSnapshot.todos.some((todo) => todo.id === current)
             ? current
-            : todoSnapshot.todos[0]?.id ?? ''
+            : ''
         )
         hasLoadedRef.current = true
         setLoadStatus('ready')
@@ -1351,6 +1186,7 @@ export function MagicNotesWorkspace({
         requestedNoteIdRef.current = nextId
         setSelectedNoteId(nextId)
         setDetail(nextDetail)
+        if (preferredId && !nextId) setDetailView(undefined)
         if (!background || !titleDirty) {
           setTitleDraft(nextDetail?.title ?? '')
         }
@@ -1424,10 +1260,10 @@ export function MagicNotesWorkspace({
   }, [notes, search])
 
   const actionNote = useMemo(
-    () => listPaneOpen && libraryView === 'notes' && !pendingDraftSwitch
+    () => !detailView && libraryView === 'notes' && !pendingDraftSwitch
       ? visibleNotes.find((note) => note.id === noteActionsId)
       : undefined,
-    [libraryView, listPaneOpen, noteActionsId, pendingDraftSwitch, visibleNotes]
+    [libraryView, detailView, noteActionsId, pendingDraftSwitch, visibleNotes]
   )
   if (noteActionsId && !actionNote) {
     setNoteActionsId('')
@@ -1499,14 +1335,8 @@ export function MagicNotesWorkspace({
       await window.goodbuddy.magicNotes.remove(note.id)
       notifySuccess(t('notifications.noteDeleted'))
       closeNoteActions()
-      if (requestedNoteIdRef.current === note.id) {
-        discardComposerDraft()
-        discardEditingDraft()
-        await refreshNotes()
-        requestAnimationFrame(() => document.getElementById(`magic-note-select-${requestedNoteIdRef.current}`)?.focus())
-      } else {
-        await refreshNotes(requestedNoteIdRef.current, true)
-      }
+      await refreshNotes()
+      requestAnimationFrame(() => document.getElementById('magic-note-new')?.focus({ preventScroll: true }))
     } catch (error) {
       notifyError(error)
     } finally {
@@ -1553,33 +1383,39 @@ export function MagicNotesWorkspace({
   }, [currentLocale, visibleTodos])
 
   const selectedTodo = useMemo(
-    () => todos.find((todo) => todo.id === selectedTodoId),
-    [selectedTodoId, todos]
+    () => visibleTodos.find((todo) => todo.id === selectedTodoId),
+    [selectedTodoId, visibleTodos]
   )
   const selectedTodoNoteId = selectedTodo?.noteId
   const selectedTodoEntryId = selectedTodo?.entryId
 
   useEffect(() => {
-    if (libraryView !== 'todos' || !selectedTodoNoteId) {
+    if (detailView || libraryView !== 'todos' || !selectedTodoNoteId) {
       return
     }
     const requestId = ++todoSourceRequestRef.current
-    void window.goodbuddy.magicNotes
-      .get(selectedTodoNoteId)
+    void Promise.resolve().then(() => {
+      if (todoSourceRequestRef.current !== requestId) return undefined
+      setTodoSourceStatus('loading')
+      return window.goodbuddy.magicNotes.get(selectedTodoNoteId)
+    })
       .then((sourceDetail) => {
         if (todoSourceRequestRef.current === requestId) {
           setTodoSourceDetail(sourceDetail)
+          setTodoSourceStatus('ready')
         }
       })
       .catch((sourceError: unknown) => {
         if (todoSourceRequestRef.current === requestId) {
+          setTodoSourceDetail(undefined)
+          setTodoSourceStatus('error')
           notifyError(sourceError)
         }
       })
     return () => {
       todoSourceRequestRef.current += 1
     }
-  }, [libraryView, notifyError, selectedTodoNoteId, todos])
+  }, [detailView, libraryView, notifyError, selectedTodoNoteId, todos, todoSourceRetry])
 
   const selectedTodoSourceEntry = useMemo(
     () =>
@@ -1596,7 +1432,7 @@ export function MagicNotesWorkspace({
     setSelectedTodoId((current) =>
       snapshot.todos.some((todo) => todo.id === current)
         ? current
-        : snapshot.todos[0]?.id ?? ''
+        : ''
     )
   }, [])
 
@@ -1614,20 +1450,9 @@ export function MagicNotesWorkspace({
       ? [...entries, editingEntry]
       : entries
   }, [detail, editingEntry])
-  const listPaneWidthLimits = getListPaneWidthLimits(
-    magicNotesLayoutWidth,
-    aiPaneWidth,
-    aiPaneOpen
-  )
   const aiPaneWidthLimits = getAiPaneWidthLimits(
-    magicNotesLayoutWidth,
-    listPaneWidth,
-    listPaneOpen
+    magicNotesLayoutWidth
   )
-  const canResizeListPane =
-    listPaneOpen &&
-    magicNotesLayoutWidth > 720 &&
-    listPaneWidthLimits.maximum > listPaneWidthLimits.minimum
   const canResizeAiPane =
     aiPaneOpen &&
     magicNotesLayoutWidth > 800 &&
@@ -1691,6 +1516,13 @@ export function MagicNotesWorkspace({
         expectedRevision: todo.revision
       })
       applyTodo(result.todo)
+      if (todoFilter !== 'all') {
+        requestAnimationFrame(() => {
+          if (document.activeElement === document.body) {
+            document.querySelector<HTMLElement>('#magic-library-panel-todos .magic-todo-list-item__check, #magic-library-panel-todos .segmented-control__option--active')?.focus()
+          }
+        })
+      }
       if (selectedTodoId === todo.id) {
         todoSourceRequestRef.current += 1
         setTodoSourceDetail(result.note)
@@ -1916,24 +1748,19 @@ export function MagicNotesWorkspace({
       <PageHeader
         actions={
           <>
+            {detailView && (
             <button
-              aria-controls="magic-notes-list-pane"
-              aria-expanded={listPaneOpen}
+              id="magic-notes-back"
               className="secondary-button"
-              onClick={() => setListPaneOpen((current) => !current)}
+              onClick={() => requestDraftSwitch({ kind: 'overview' })}
+              disabled={Boolean(busy)}
               type="button"
             >
-              {listPaneOpen ? (
-                <PanelLeftClose aria-hidden="true" size={15} />
-              ) : (
-                <PanelLeftOpen aria-hidden="true" size={15} />
-              )}
-              {t(
-                listPaneOpen
-                  ? 'actions.hideListPane'
-                  : 'actions.showListPane'
-              )}
+              <ArrowLeft aria-hidden="true" size={15} />
+               {t(libraryView === 'todos' ? 'actions.backToTodos' : 'actions.backToOverview')}
             </button>
+            )}
+            {detailView && (
             <button
               aria-controls="magic-notes-ai-pane"
               aria-expanded={aiPaneOpen}
@@ -1952,18 +1779,32 @@ export function MagicNotesWorkspace({
                   : 'actions.showAiComments'
               )}
             </button>
-            {libraryView === 'notes' && (
+            )}
+            {!detailView && (
+              <>
+              <PageTabs
+                ariaLabel={t('page.contentLabel')}
+                idPrefix="magic-library"
+                onChange={(value) => requestDraftSwitch({ kind: 'library-view', value })}
+                tabs={libraryTabs}
+                value={libraryView}
+                variant="segmented"
+              />
               <button
+                id="magic-note-new"
                 className="primary-button"
+                disabled={Boolean(busy)}
                 type="button"
                 onClick={() => {
                   setValidation(undefined)
+                  setLibraryView('notes')
                   setCreating(true)
                 }}
               >
                 <Plus aria-hidden="true" size={15} />
                 {t('actions.newNote')}
               </button>
+              </>
             )}
           </>
         }
@@ -2012,17 +1853,12 @@ export function MagicNotesWorkspace({
         ref={magicNotesLayoutRef}
         aria-busy={Boolean(busy)}
         className={`magic-notes-layout${
-          listPaneOpen ? '' : ' magic-notes-layout--list-hidden'
+          detailView ? '' : ' magic-notes-layout--overview'
         }${
           aiPaneOpen ? '' : ' magic-notes-layout--ai-hidden'
         }${
-          (listPaneResizing && canResizeListPane) ||
           (aiPaneResizing && canResizeAiPane)
             ? ' magic-notes-layout--resizing'
-            : ''
-        }${
-          listPaneResizing && canResizeListPane
-            ? ' magic-notes-layout--list-resizing'
             : ''
         }${
           aiPaneResizing && canResizeAiPane
@@ -2031,34 +1867,19 @@ export function MagicNotesWorkspace({
         }`}
         style={
           {
-            '--magic-notes-list-width': `${listPaneWidth}px`,
             '--magic-notes-ai-width': `${aiPaneWidth}px`
           } as React.CSSProperties
         }
       >
-        <aside
+        <section
           aria-label={t(
             libraryView === 'notes'
               ? 'notes.listLabel'
               : 'todos.listLabel'
           )}
-          className="magic-notes-list-pane"
-          hidden={!listPaneOpen}
-          id="magic-notes-list-pane"
+           className={`magic-notes-overview${libraryView === 'todos' ? ' magic-notes-overview--todos' : ''}`}
+          hidden={Boolean(detailView)}
         >
-          <PageTabs
-            ariaLabel={t('page.contentLabel')}
-            idPrefix="magic-library"
-            onChange={(value) =>
-              requestDraftSwitch({
-                kind: 'library-view',
-                value
-              })
-            }
-            tabs={libraryTabs}
-            value={libraryView}
-            variant="segmented"
-          />
           {libraryView === 'notes' ? (
             <div
               aria-labelledby="magic-library-tab-notes"
@@ -2135,7 +1956,7 @@ export function MagicNotesWorkspace({
               </div>
             </form>
           )}
-          <div className="magic-notes-list">
+          <div className="magic-notes-list magic-notes-card-grid">
             {loadStatus === 'loading' ? (
               <p className="magic-notes-muted">
                 {t('status.loadingNotes')}
@@ -2162,12 +1983,7 @@ export function MagicNotesWorkspace({
                 <div className="magic-note-row" key={note.id}>
                 <button
                   id={`magic-note-select-${note.id}`}
-                  aria-pressed={selectedNoteId === note.id}
-                  className={`magic-note-list-item ${
-                    selectedNoteId === note.id
-                      ? 'magic-note-list-item--active'
-                      : ''
-                  }`}
+                  className="magic-note-list-item"
                   type="button"
                   onClick={() =>
                     requestDraftSwitch({
@@ -2274,8 +2090,9 @@ export function MagicNotesWorkspace({
             >
               <div className="magic-notes-pane-heading">
                 <strong>{t('todos.heading')}</strong>
-                <span>{todos.length}</span>
+                <span>{t('todos.resultCount', { count: visibleTodos.length, total: todos.length })}</span>
               </div>
+              <div className="magic-todo-toolbar">
               <label className="magic-notes-search">
                 <span className="sr-only">{t('todos.searchLabel')}</span>
                 <input
@@ -2291,6 +2108,8 @@ export function MagicNotesWorkspace({
                 options={todoFilters}
                 value={todoFilter}
               />
+              </div>
+              <div className={`magic-todo-workspace${selectedTodo ? ' magic-todo-workspace--selected' : ''}`}>
               <div className="magic-notes-list">
                 {loadStatus === 'loading' ? (
                   <p className="magic-notes-muted">
@@ -2333,102 +2152,126 @@ export function MagicNotesWorkspace({
                       </div>
                       <div className="magic-todo-directory__items">
                         {directory.todos.map((todo) => (
+                          <div className="magic-todo-task" key={todo.id}>
                           <TodoListItem
-                            disabled={busy === `update-todo-${todo.id}`}
+                            disabled={Boolean(busy)}
+                            expanded={selectedTodo?.id === todo.id}
                             id={`magic-todo-select-${todo.id}`}
-                            key={todo.id}
-                            onSelect={() =>
-                              requestDraftSwitch({
-                                kind: 'todo',
-                                todoId: todo.id
+                            onSelect={() => {
+                              overviewFocusRef.current = `magic-todo-select-${todo.id}`
+                              setSelectedTodoId((current) => current === todo.id ? '' : todo.id)
+                              requestAnimationFrame(() => {
+                                const back = document.getElementById('magic-todo-back')
+                                if (back?.checkVisibility?.()) back.focus({ preventScroll: true })
                               })
-                            }
+                            }}
                             onToggle={() =>
                               void updateTodoCompletion(todo)
                             }
-                            selected={selectedTodoId === todo.id}
                             todo={todo}
                           />
+                          </div>
                         ))}
                       </div>
                     </section>
                   ))
                 )}
               </div>
+                          {selectedTodo ? (
+                            <section
+                              aria-label={t('todos.detailLabel')}
+                              className="magic-todo-detail"
+                              id={`magic-todo-detail-${selectedTodo.id}`}
+                              key={selectedTodo.id}
+                            >
+                              <button id="magic-todo-back" className="secondary-button" disabled={Boolean(busy)} type="button" onClick={() => {
+                                setSelectedTodoId('')
+                                requestAnimationFrame(() => document.getElementById(`magic-todo-select-${selectedTodo.id}`)?.focus({ preventScroll: true }))
+                              }}>
+                                <ArrowLeft aria-hidden="true" size={14} />
+                                {t('actions.backToTodoList')}
+                              </button>
+                              <h3>{selectedTodo.title}</h3>
+                              <p className="magic-todo-instructions">{selectedTodo.instructions || t('todos.defaultInstructions')}</p>
+                              <button
+                                className="secondary-button"
+                                disabled={Boolean(busy)}
+                                onClick={() => requestDraftSwitch({ kind: 'note', noteId: selectedTodo.noteId, entryId: selectedTodo.entryId })}
+                                type="button"
+                              >
+                                <BookOpen aria-hidden="true" size={14} />
+                                {t('actions.openSourceNote')}
+                              </button>
+                              <section aria-label={t('todos.sourceEntryLabel')} className="magic-todo-source-entry">
+                                <header><strong>{t('todos.sourceEntryHeading')}</strong></header>
+                                {selectedTodoSourceEntry ? (
+                                  <MagicNoteContent content={selectedTodoSourceEntry.content} />
+                                ) : todoSourceStatus === 'error' ? (
+                                  <button className="secondary-button" onClick={() => setTodoSourceRetry((current) => current + 1)} type="button">{t('todos.retrySource')}</button>
+                                ) : (
+                                  <p className="magic-notes-muted">{t(todoSourceStatus === 'loading' || todoSourceDetail?.id !== selectedTodo.noteId ? 'todos.loadingSource' : 'todos.sourceEntryMissing')}</p>
+                                )}
+                              </section>
+                              <section aria-label={t('comments.paneLabel')} className="magic-todo-comments">
+                                <strong>{t('comments.paneLabel')}</strong>
+                                <div className="magic-notes-ai-controls">
+                                  <label>
+                                    <span>{t('comments.directionLabel')}</span>
+                                    <select
+                                      aria-label={t('comments.directionAriaLabel')}
+                                      onChange={(event) => setCommentDirection(event.target.value as MagicNoteCommentDirection)}
+                                      value={commentDirection}
+                                    >
+                                      {commentDirections.map((direction) => <option key={direction.value} value={direction.value}>{direction.label}</option>)}
+                                    </select>
+                                  </label>
+                                  <button className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeTodo(selectedTodo.id)} type="button">
+                                    <Bot aria-hidden="true" size={14} />
+                                    {t(busy === `analyze-todo-${selectedTodo.id}` ? 'actions.analyzing' : selectedTodo.analyzedAt ? 'actions.analyzeAgain' : 'actions.analyze')}
+                                  </button>
+                                  <small>{t('comments.directionHelp')}</small>
+                                </div>
+                                {liveAnalysis && busy === `analyze-todo-${selectedTodo.id}` && (
+                                  <div className="magic-notes-ai-live" aria-live="polite">
+                                    <p role="status">{t(liveAnalysis.format === 'structured' ? 'status.generatingPoints' : 'status.generatingDirection', { direction: commentDirectionLabels[liveAnalysis.direction] })}</p>
+                                    {liveAnalysis.format !== 'structured' && <div className="markdown-content"><MarkdownRenderer>{liveAnalysis.content || t('status.preparingComment')}</MarkdownRenderer></div>}
+                                  </div>
+                                )}
+                                {selectedTodo.comments.map((comment) => <AiComment comment={comment} key={comment.id} />)}
+                                {!liveAnalysis && selectedTodo.comments.length === 0 && <p className="magic-notes-muted">{t('comments.analyzeTodoHint')}</p>}
+                              </section>
+                            </section>
+                          ) : (
+                            <div className="magic-todo-detail magic-todo-detail--empty">
+                              <EmptyState icon={<ListTodo size={24} />} title={t('todos.emptySelectionTitle')} description={t('todos.emptySelectionDescription')} />
+                            </div>
+                          )}
+              </div>
             </div>
           )}
-        </aside>
+        </section>
 
-        {listPaneOpen && (
-          <div
-            aria-controls="magic-notes-list-pane"
-            aria-disabled={!canResizeListPane}
-            aria-label={t('accessibility.resizeListPane')}
-            aria-orientation="vertical"
-            aria-valuemax={listPaneWidthLimits.maximum}
-            aria-valuemin={listPaneWidthLimits.minimum}
-            aria-valuenow={listPaneWidth}
-            aria-valuetext={t('accessibility.listPaneWidth', {
-              width: listPaneWidth
-            })}
-            className="magic-notes-list-resize-handle"
-            onKeyDown={resizeListPaneWithKeyboard}
-            onLostPointerCapture={(event) => {
-              if (
-                listResizePointerIdRef.current === event.pointerId
-              ) {
-                listResizePointerIdRef.current = undefined
-                setListPaneWidth(liveListPaneWidthRef.current)
-                setListPaneResizing(false)
-              }
-            }}
-            onPointerCancel={finishListPaneResize}
-            onPointerDown={(event) => {
-              if (event.button !== 0 || !canResizeListPane) {
-                return
-              }
-              event.preventDefault()
-              listResizePointerIdRef.current = event.pointerId
-              event.currentTarget.setPointerCapture(event.pointerId)
-              resizeListPaneFromClientX(event.clientX, true)
-              setListPaneResizing(true)
-            }}
-            onPointerMove={(event) => {
-              if (
-                listResizePointerIdRef.current !== event.pointerId
-              ) {
-                return
-              }
-              if (!canResizeListPane) {
-                finishListPaneResize(event)
-                return
-              }
-              event.preventDefault()
-              resizeListPaneFromClientX(event.clientX, false)
-            }}
-            onPointerUp={finishListPaneResize}
-            role="separator"
-            tabIndex={canResizeListPane ? 0 : -1}
-          />
-        )}
-
+        {detailView && (
+        <>
         <section
-          aria-label={t(
-            libraryView === 'notes'
-              ? 'notes.streamLabel'
-              : 'todos.detailLabel'
-          )}
+          aria-label={t('notes.streamLabel')}
           className="magic-notes-stream-pane"
         >
-          {libraryView === 'notes' ? (
-            !detail ? (
+          {!detail ? (
             <EmptyState
-              description={t('notes.emptySelectionDescription')}
+              action={detailLoadError ? (
+                <button
+                  className="secondary-button"
+                  onClick={() => void loadDetail(detailLoadError.noteId)}
+                  type="button"
+                >
+                  {t('actions.retry')}
+                </button>
+              ) : undefined}
+              description={detailLoadError ? detailLoadError.message : t('status.loadingNotes')}
               icon={<FileText size={24} />}
               title={
-                loadStatus === 'loading'
-                  ? t('status.loading')
-                  : t('notes.emptySelectionTitle')
+                detailLoadError ? t('errors.initialLoadTitle') : t('status.loading')
               }
             />
           ) : (
@@ -2776,114 +2619,6 @@ export function MagicNotesWorkspace({
                 )}
               </div>
             </>
-            )
-          ) : !selectedTodo ? (
-            <EmptyState
-              description={t('todos.emptySelectionDescription')}
-              icon={<ListTodo size={24} />}
-              title={
-                loadStatus === 'loading'
-                  ? t('status.loading')
-                  : t('todos.emptySelectionTitle')
-              }
-            />
-          ) : (
-            <section className="magic-todo-detail">
-              <header>
-                <button
-                  aria-label={t(
-                    selectedTodo.completed
-                      ? 'todos.markIncomplete'
-                      : 'todos.markComplete',
-                    { title: selectedTodo.title }
-                  )}
-                  aria-pressed={selectedTodo.completed}
-                  className="magic-todo-detail__check"
-                  disabled={
-                    busy === `update-todo-${selectedTodo.id}`
-                  }
-                  onClick={() =>
-                    void updateTodoCompletion(selectedTodo)
-                  }
-                  type="button"
-                >
-                  {selectedTodo.completed ? (
-                    <CheckCircle2 size={24} />
-                  ) : (
-                    <Circle size={24} />
-                  )}
-                </button>
-                <div>
-                  <h2>{selectedTodo.title}</h2>
-                  <span>
-                    {t('todos.sourceNote', {
-                      title: selectedTodo.noteTitle
-                    })}
-                  </span>
-                </div>
-                <div className="magic-todo-detail__actions">
-                  <button
-                    className="secondary-button"
-                    disabled={busy === `analyze-todo-${selectedTodo.id}`}
-                    onClick={() => void analyzeTodo(selectedTodo.id)}
-                    type="button"
-                  >
-                    <Bot aria-hidden="true" size={14} />
-                    {busy === `analyze-todo-${selectedTodo.id}`
-                      ? t('actions.analyzing')
-                      : selectedTodo.analyzedAt
-                        ? t('actions.analyzeAgain')
-                        : t('actions.analyze')}
-                  </button>
-                </div>
-              </header>
-
-              <div className="magic-todo-detail__content">
-                <p>
-                  {selectedTodo.instructions ||
-                    t('todos.defaultInstructions')}
-                </p>
-                <button
-                  className="secondary-button"
-                  onClick={() =>
-                    requestDraftSwitch({
-                      kind: 'note',
-                      noteId: selectedTodo.noteId,
-                      entryId: selectedTodo.entryId
-                    })
-                  }
-                  type="button"
-                >
-                  <BookOpen size={14} />
-                  {t('actions.openSourceNote')}
-                </button>
-              </div>
-              <section
-                aria-label={t('todos.sourceEntryLabel')}
-                className="magic-todo-source-entry"
-              >
-                <header>
-                  <div>
-                    <strong>{t('todos.sourceEntryHeading')}</strong>
-                    <small>{selectedTodo.noteTitle}</small>
-                  </div>
-                  {selectedTodoSourceEntry && (
-                    <time dateTime={selectedTodoSourceEntry.updatedAt}>
-                      {dateFormatter.format(
-                        new Date(selectedTodoSourceEntry.updatedAt)
-                      )}
-                    </time>
-                  )}
-                </header>
-                {selectedTodoSourceEntry ? (
-                  <MagicNoteContent content={selectedTodoSourceEntry.content} />
-                ) : (
-                  <p className="magic-notes-muted">
-                    {t('todos.sourceEntryMissing')}
-                  </p>
-                )}
-              </section>
-            </section>
           )}
         </section>
 
@@ -3016,46 +2751,11 @@ export function MagicNotesWorkspace({
               </div>
             </section>
           ) : null}
-          {libraryView === 'todos' ? (
-            !selectedTodo ? (
-              <EmptyState
-                description={t('comments.selectTodo')}
-                icon={<Bot size={20} />}
-                title={t('comments.selectTodoTitle')}
-              />
-            ) : selectedTodo.comments.length === 0 ? (
-              !liveAnalysis && (
-                <EmptyState
-                  description={t('comments.analyzeTodoHint')}
-                  icon={<Bot size={20} />}
-                  title={t('comments.analyzeTodoTitle')}
-                />
-              )
-            ) : (
-              <div className="magic-notes-ai-feed">
-                <section className="magic-notes-ai-group">
-                  <span className="magic-notes-ai-source">
-                    {selectedTodo.title}
-                  </span>
-                  {selectedTodo.comments.map((comment) => (
-                    <AiComment comment={comment} key={comment.id} />
-                  ))}
-                </section>
-              </div>
-            )
-          ) : !detail ? (
+          {!detail ? (
             <EmptyState
-              description={
-                loadStatus === 'loading'
-                  ? t('status.loadingNotes')
-                  : t('comments.selectNote')
-              }
+              description={detailLoadError ? detailLoadError.message : t('status.loadingNotes')}
               icon={<Bot size={20} />}
-              title={
-                loadStatus === 'loading'
-                  ? t('status.loading')
-                  : t('comments.selectNoteTitle')
-              }
+              title={t('status.loading')}
             />
           ) : aiEntries.length === 0 &&
             draftAnalyses.length === 0 &&
@@ -3116,6 +2816,8 @@ export function MagicNotesWorkspace({
             </div>
           )}
         </aside>
+        </>
+        )}
       </div>
         </>
       )}
