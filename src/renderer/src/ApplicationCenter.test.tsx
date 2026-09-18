@@ -156,9 +156,11 @@ describe('Application Center', () => {
     expect(screen.queryByRole('button', { name: /上移|下移/ })).not.toBeInTheDocument()
   })
 
-  it('orders all apps on cards, disables full-order boundaries, and waits for confirmed settings', async () => {
+  it('orders all app rows, disables full-order boundaries, and waits for confirmed settings', async () => {
     const handlers = props()
     const { rerender } = render(<ApplicationCenter {...handlers} settings={pinnedSettings} />)
+    const displayedOrder = () => screen.getAllByRole('article').map((row) => row.querySelector('strong')?.textContent)
+    expect(displayedOrder()).toEqual(['知识库', '智能心跳', '魔法笔记', '本机推理监控'])
     expect(screen.getByRole('button', { name: '上移 知识库' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '下移 本机推理监控' })).toBeDisabled()
     const moveUp = screen.getByRole('button', { name: '上移 本机推理监控' })
@@ -173,10 +175,12 @@ describe('Application Center', () => {
     })
     expect(screen.getByRole('button', { name: '下移 本机推理监控' })).toBeDisabled()
     expect(await screen.findByRole('status')).not.toBeEmptyDOMElement()
+    expect(displayedOrder()).toEqual(['知识库', '智能心跳', '魔法笔记', '本机推理监控'])
     rerender(<ApplicationCenter {...handlers} settings={{
       ...pinnedSettings,
       applicationNavigation: { ...pinnedSettings.applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] },
     }} />)
+    expect(displayedOrder()).toEqual(['知识库', '智能心跳', '本机推理监控', '魔法笔记'])
     expect(screen.getByRole('button', { name: '下移 魔法笔记' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '下移 本机推理监控' }))
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ applicationNavigation: pinnedSettings.applicationNavigation })
@@ -222,7 +226,7 @@ describe('Application Center', () => {
     expect(handlers.onRetry).toHaveBeenCalledOnce()
   })
 
-  it.each(['pending', 'locked'] as const)('disables card sorting when %s', (state) => {
+  it.each(['pending', 'locked'] as const)('disables row sorting when %s', (state) => {
     const handlers = props()
     render(<ApplicationCenter {...handlers} settings={pinnedSettings} {...{ [state]: true }} />)
     for (const button of screen.getAllByRole('button', { name: /上移|下移/ }))

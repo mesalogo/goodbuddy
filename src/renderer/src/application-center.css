@@ -1,12 +1,9 @@
 .settings-backdrop .settings-panel.application-center {
-  width: min(960px, calc(100vw - 2 * var(--space-4)));
+  width: min(640px, calc(100vw - 2 * var(--space-4)));
   height: auto;
   max-height: calc(100vh - 2 * var(--space-4));
 }
 
-.settings-backdrop .settings-panel.application-center--detail {
-  width: min(640px, calc(100vw - 2 * var(--space-4)));
-}
 .application-center .settings-panel__header {
   gap: var(--space-3);
   flex: 0 0 auto;
@@ -56,30 +53,33 @@
 }
 .application-center__item {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-  padding: var(--space-4);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-3) 0;
   min-width: 0;
+}
+.application-center__item + .application-center__item {
+  border-top: 1px solid var(--border-subtle);
 }
 .application-center__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr);
 }
 .application-center__summary {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  flex: 1;
+  flex: 1 1 260px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .application-center__summary > svg {
   flex-shrink: 0;
   color: var(--text-secondary);
+}
+.application-center__summary > div {
+  min-width: 0;
 }
 .application-center__title {
   display: flex;
@@ -103,14 +103,15 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
-  margin-top: auto;
+  margin-left: auto;
+  max-width: 100%;
 }
 .application-center__order {
   display: flex;
   flex: 0 0 auto;
   gap: var(--space-1);
-  margin-left: auto;
 }
 .application-settings {
   display: grid;
