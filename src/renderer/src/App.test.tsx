@@ -6526,6 +6526,10 @@ describe("App", () => {
     });
     expect(screen.getByText("正在解析 扫描材料.pdf")).toBeInTheDocument();
     expect(screen.getByText("第 1 / 1 个文件")).toBeInTheDocument();
+    const cancelImport = screen.getByRole("button", { name: "取消文件导入" });
+    expect(cancelImport).toHaveClass("icon-button", "attachment-action");
+    expect(cancelImport.textContent).toBe("");
+    expect(cancelImport).toHaveAttribute("title", "取消文件导入");
     fireEvent.click(addButton);
     await waitFor(() => expect(api.context.selectFiles).toHaveBeenCalledOnce());
 
