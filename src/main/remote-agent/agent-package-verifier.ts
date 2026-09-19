@@ -223,29 +223,34 @@ export async function verifyExtractedAgentPackage(options: {
       )
     }
   }
+  for (const runtime of [descriptor.remoteRuntime, ...(descriptor.additionalRuntimes ?? [])]) {
   const runtimeBundle =
     await loadVerifiedRemoteRuntimeResourceBundle(
       runtimePaths,
       descriptor.architecture,
       {
+        runtimeId: runtime.runtimeId,
         verificationEnvironment:
           options.verificationEnvironment ?? 'production'
       }
     )
   if (
+    runtimeBundle.manifest.runtimeId !== runtime.runtimeId ||
+    runtimeBundle.manifest.provider !== runtime.provider ||
     runtimeBundle.manifest.platform !== descriptor.platform ||
     runtimeBundle.manifest.runtimeVersion !==
-      descriptor.remoteRuntime.version ||
+      runtime.version ||
     runtimeBundle.manifest.bundleDigest !==
-      descriptor.remoteRuntime.bundleDigest ||
+      runtime.bundleDigest ||
     runtimeBundle.manifest.protocol.major !==
-      descriptor.remoteRuntime.protocol.major ||
+      runtime.protocol.major ||
     runtimeBundle.manifest.protocol.minor !==
-      descriptor.remoteRuntime.protocol.minor
+      runtime.protocol.minor
   ) {
     throw new Error(
       'Agent package descriptor does not match its Runtime bundle'
     )
+  }
   }
   return {
     rootDirectory,

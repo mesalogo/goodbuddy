@@ -46,10 +46,10 @@ export class ManagedRemoteProjectRuntimeValidator
   ): Promise<RemoteProjectRuntimeValidationLease> {
     input.signal.throwIfAborted()
     if (
-      input.selection.provider !== 'opencode'
+      input.selection.provider !== 'opencode' && input.selection.provider !== 'continue'
     ) {
       throw new Error(
-        'Managed remote projects require the OpenCode Runtime'
+        'Managed remote projects require OpenCode or Continue'
       )
     }
     assertInputIdentity(input)
@@ -72,7 +72,8 @@ export class ManagedRemoteProjectRuntimeValidator
         input.host.hostId,
         {
           signal: input.signal,
-          agentInstallationId: input.agent.installationId
+          agentInstallationId: input.agent.installationId,
+          runtimeId: input.selection.provider
         }
       )
     input.signal.throwIfAborted()
@@ -164,7 +165,7 @@ function assertInstallationIdentity(
   installation: RemoteRuntimeInstallationIdentity
 ): void {
   if (
-    installation.runtimeId !== 'opencode' ||
+    installation.runtimeId !== input.selection.provider ||
     installation.platform !== input.agent.platform ||
     installation.architecture !== input.agent.architecture
   ) {
@@ -186,7 +187,7 @@ function assertRuntimeCapability(
       capability.name === RUNTIME_MODEL_BRIDGE_CAPABILITY_NAME
   )
   const runtimes = capabilities.runtimes.filter(
-    (runtime) => runtime.runtimeId === 'opencode'
+    (runtime) => runtime.runtimeId === installation.runtimeId
   )
   if (
     acp === undefined ||

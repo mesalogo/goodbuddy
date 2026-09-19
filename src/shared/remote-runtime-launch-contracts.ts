@@ -42,6 +42,9 @@ export const remoteRuntimeProviderKindSchema = z.enum([
   'continue'
 ])
 
+export const managedRemoteRuntimeIdSchema = z.enum(['opencode', 'continue'])
+export type ManagedRemoteRuntimeId = z.infer<typeof managedRemoteRuntimeIdSchema>
+
 export const remoteRuntimeArchitectureSchema = agentArchitectureSchema
 
 export const remoteRuntimeAllowedEnvironmentNameSchema = z.enum([
@@ -80,7 +83,7 @@ const npmPackageIntegritySchema = z
 
 export const remoteRuntimeSourcePackageSchema = z
   .object({
-    name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/u),
+    name: z.string().regex(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]{0,127}$/u),
     integrity: npmPackageIntegritySchema
   })
   .strict()
@@ -262,7 +265,21 @@ export const remoteRuntimeLockSchema = z
               })
               .strict()
           })
-          .strict()
+          .strict(),
+        continue: z.object({
+          version: componentVersionSchema,
+          provider: z.literal('continue'),
+          entrypoint: z.literal('lib/continue/dist/cn.js'),
+          entrypointIdentity: z.literal('continue-acp'),
+          argvPrefix: z.tuple([]),
+          allowedEnvironmentNames: z.array(remoteRuntimeAllowedEnvironmentNameSchema),
+          protocol: agentProtocolVersionSchema,
+          targets: z.object({
+            x64: remoteRuntimeLockedTargetSchema,
+            arm64: remoteRuntimeLockedTargetSchema,
+            'darwin-arm64': remoteRuntimeLockedTargetSchema.optional()
+          }).strict()
+        }).strict().optional()
       })
       .strict()
   })

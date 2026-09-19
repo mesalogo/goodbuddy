@@ -313,13 +313,21 @@ OSS 先写 `agent-releases/v<version>/` 不可变对象，GitHub Release 公开�
 `agent-catalog.json` 与 `agent-catalog.sig`，避免客户端观察到跨版本组合。Agent Release 必须使用
 `--latest=false`，不得改变桌面 Release 的 Latest 标记。
 
-### 远程 OpenCode Runtime 基础
+### 远程 Runtime 工件
 
 `remote-runtime-lock.json` 独立锁定首个远程 Runtime：OpenCode 1.18.29 的 Linux x64
 baseline 与 arm64 官方包 integrity、`bin/opencode` 入口和固定 `acp` 参数。它不同于
 `agent-runtime-lock.json`，后者锁定 Agent 自带 Node 以及用于 Linux `SO_PEERCRED`
 的 Koffi 版本。Agent bundle 将 Koffi loader 作为 external module，并只携带目标
 Linux 架构的 glibc/musl 原生 binding；构建与导入都会校验其 ELF 架构和 MIT 许可证。
+
+lock 同时固定 `@continuedev/cli@1.5.47` 的 npm integrity。CN 工件使用
+`lib/continue/dist/cn.js`，由 Agent 中的 HTTP-to-ACP helper 启动，不能传入原生 `acp`
+参数。`remote-runtime:build` 与 `build/agent-package.cjs build` 接受
+`--runtime-id continue`；默认 Agent 组包通过 `--continue-archive` 同时携带 OC/CN。
+CN 的 JS payload 通过文件摘要与签名校验，执行它的 Node 仍来自 Agent 固定包。
+默认 workflow 已接入联合组包；开发包与完整桌面到 Linux 的实测见
+[CN 部署记录](./docs/features/remote-host/runtime-checklist-validation.md#cn-部署与生命周期)。
 
 远程 Runtime 工件由以下命令独立管理：
 

@@ -571,6 +571,8 @@ export class ContinueAgentRuntime implements AgentRuntime {
               type: 'text',
               delta: event.delta
             }
+          } else if (event.type === 'checklist') {
+            yield { type: 'checklist', requestId: request.requestId, checklist: event.checklist }
           } else if (event.type === 'tool') {
             yield toContinueToolEvent(
               request.requestId,

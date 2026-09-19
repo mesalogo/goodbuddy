@@ -228,12 +228,14 @@ jobs:
           set -euo pipefail
           output="$RUNNER_TEMP/goodbuddy-agent-output"
           mkdir -p "$output"
+          continue_archive="$(node build/acquire-continue-runtime.cjs "$RUNNER_TEMP/goodbuddy-continue-runtime" "$AGENT_ARCH" "$AGENT_PLATFORM")"
           node build/agent-package.cjs build \
             --platform "$AGENT_PLATFORM" \
             --arch "$AGENT_ARCH" \
             --minimum-desktop-version "$(node -p "require('./package.json').version")" \
             --node-archive "$RUNNER_TEMP/goodbuddy-agent-release-inputs/$NODE_ARCHIVE" \
             --runtime-archive "$RUNNER_TEMP/goodbuddy-agent-release-inputs/$OPENCODE_ARCHIVE" \
+            --continue-archive "$continue_archive" \
             --output "$output/goodbuddy-agent-$AGENT_VERSION-$AGENT_PLATFORM-$AGENT_ARCH.gbagent" \
             > "$output/result.json"
           node - "$output/result.json" "$AGENT_ARCH" "$AGENT_VERSION" <<'NODE'

@@ -9,6 +9,7 @@
 | --- | --- |
 | [远程主机与 Agent 技术设计](./technical-design.md) | 当前产品语义、Agent、Runtime、Workspace、协议、生命周期和验证事实 |
 | [远程环境准备技术设计](./environment-provisioning-technical-design.md) | Host 下载、GoodBuddy 传输、安装事务、更新和恢复边界 |
+| [执行清单验证记录](./runtime-checklist-validation.md) | 远程 OC/CN 原生清单、CN 开发包安装、取消及断线重放的实测结果与剩余验收 |
 
 现有文档包含产品、功能逻辑和进度事实，后续修改远程功能时再按标准职责拆分。
 

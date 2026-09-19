@@ -117,6 +117,44 @@ afterEach(async () => {
 })
 
 describe('ContinueHostAdapter', () => {
+  it('commits complete raw checklists once on success, retaining candidates and excluding old history', async () => {
+    const distribution = await createDistribution()
+    const longContent = 'task'.repeat(1500)
+    const checklist = { source: 'continue' as const, items: [{ content: longContent, status: 'pending' as const }] }
+    const historyTool = (id: string, text: string, status = 'done') => ({
+      toolCallId: id, toolCall: { function: { name: 'Checklist', arguments: JSON.stringify({ checklist: text }) } }, status
+    })
+    const old = { toolCallStates: [historyTool('old', '- [ ] old')] }
+    let polls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      if (!String(input).endsWith('/state')) return Response.json({})
+      polls++
+      return Response.json({
+        session: { history: polls === 1 ? [old] : [old, {
+          message: { role: 'assistant', content: 'OK' },
+          toolCallStates: polls < 3 ? [] : [historyTool('long', `- [ ] ${longContent}`), historyTool('failed', '- [x] bad', 'failed'), ...(polls >= 4 ? [historyTool('empty', '')] : [])]
+        }] },
+        isProcessing: polls < 5, messageQueueLength: 0, pendingPermission: null,
+        goodbuddyEvents: polls === 2 ? [
+          { type: 'tool', callId: 'long', name: 'Checklist', state: 'running', input: 'truncated', runtimeChecklist: checklist },
+          { type: 'tool', callId: 'failed', name: 'Checklist', state: 'running', runtimeChecklist: checklist }
+        ] : polls === 3 ? [
+          { type: 'tool', callId: 'long', name: 'Checklist', state: 'completed' },
+          { type: 'tool', callId: 'failed', name: 'Checklist', state: 'failed' }
+        ] : []
+      })
+    }))
+    const events: unknown[] = []
+    const adapter = new ContinueHostAdapter({
+      binaryPath: distribution.entryPath, configPath: 'test.yaml', workspace: process.cwd(), cacheRoot: distribution.cacheRoot,
+      trustedBundleHashes: [distribution.sourceHash],
+      launchHost: () => ({ exitCode: null, killed: false, stderr: null, once: () => undefined, kill: () => true })
+    })
+    try {
+      await adapter.run('test', new AbortController().signal, async () => 'once', { onEvent: event => { if (event.type === 'checklist') events.push(event) } })
+      expect(events).toEqual([{ type: 'checklist', checklist }, { type: 'checklist', checklist: { source: 'continue', items: [] } }])
+    } finally { await adapter.dispose() }
+  })
   it('creates a versioned authenticated loopback host copy', async () => {
     const distribution = await createDistribution()
     const adapter = new ContinueHostAdapter({

@@ -93,7 +93,7 @@ export class ManagedRemoteExecutionServices {
           )
         ).installationId
       signal.throwIfAborted()
-      if (runtimeId !== 'opencode') {
+      if (runtimeId !== 'opencode' && runtimeId !== 'continue') {
         throw new Error(
           'Remote Runtime identity is unsupported'
         )

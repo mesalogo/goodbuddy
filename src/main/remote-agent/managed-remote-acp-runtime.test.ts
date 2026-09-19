@@ -277,17 +277,23 @@ describe('createManagedRemoteAcpRuntime', () => {
     await runtime.dispose()
   })
 
-  it('rejects non-OpenCode providers before acquiring remote resources', async () => {
+  it('rejects unsupported providers before acquiring remote resources', async () => {
     const fixture = harness({
-      selection: { provider: 'continue' }
+      selection: { provider: 'model', profileId: '00000000-0000-4000-8000-000000000001' }
     })
 
     await expect(
       createManagedRemoteAcpRuntime(fixture.options)
-    ).rejects.toThrow(/OpenCode Runtime/iu)
+    ).rejects.toThrow(/OpenCode or Continue/iu)
     expect(
       fixture.options.agentServices.connectionManager.acquire
     ).not.toHaveBeenCalled()
+  })
+
+  it('rejects an installed Runtime that differs from the selected Continue provider', async () => {
+    const fixture = harness({ selection: { provider: 'continue' } })
+    await expect(createManagedRemoteAcpRuntime(fixture.options)).rejects.toThrow(/selected provider/iu)
+    expect(fixture.releaseConnection).toHaveBeenCalledOnce()
   })
 
   it('binds the current Agent and Runtime and owns its connection lease', async () => {
@@ -307,6 +313,7 @@ describe('createManagedRemoteAcpRuntime', () => {
     expect(
       fixture.options.runtimeInstallationManager.activateInstalled
     ).toHaveBeenCalledWith('host-1', {
+      runtimeId: 'opencode',
       agentInstallationId: 'agent-1'
     })
     expect(

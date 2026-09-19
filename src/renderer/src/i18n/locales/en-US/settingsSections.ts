@@ -573,7 +573,7 @@ export const settingsSections = {
       agentInventory: {
         title: 'GoodBuddy Agent packages',
         description:
-          'Agent packages are released independently and include the Agent, pinned Node, and the remote OpenCode Runtime adapted by GoodBuddy. Opening this page reads only the small signed catalog to show available updates and never downloads an Agent package automatically. Online actions use the source selected under About & Updates.',
+          'Agent packages are released independently and include the Agent, pinned Node, and the remote OpenCode and Continue Runtimes adapted by GoodBuddy. Opening this page reads only the small signed catalog to show available updates and never downloads an Agent package automatically. Online actions use the source selected under About & Updates.',
         loading: 'Verifying local Agent packages and checking online versions…',
         refresh: 'Refresh package inventory',
         import: 'Import offline package',

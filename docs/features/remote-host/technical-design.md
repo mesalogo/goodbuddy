@@ -225,10 +225,10 @@ Main 传入已规范化的绝对 POSIX root。Agent 返回 Workspace identity、
 
 ## Runtime
 
-首个远程 Runtime 固定为签名 OpenCode ACP bundle。
-托管 SSH 项目的 Composer Runtime 菜单只显示当前配置的 OpenCode 和管理入口，不显示
-直连模型、Continue 或 DeepSeek Harness。激活旧远程会话时，若其保存了其他 Runtime
-selection，Renderer 会恢复为当前 OpenCode 配置；Main 的远程请求校验仍是最终边界。
+托管 SSH 项目支持签名 OpenCode ACP bundle 和 Continue 1.5.47 HTTP 宿主。
+Composer Runtime 菜单显示 OpenCode、Continue 和管理入口，不显示直连模型或
+DeepSeek Harness。项目与历史会话保留 OC/CN 选择；不支持的旧 selection 恢复为项目
+默认值。Main 校验已安装 Runtime 身份与选择一致，按相应 CN/OC 模型 profile 建立模型桥。
 本机配置的 SKILL 包和 stdio MCP Server 不上传或分配给远程 Runtime；远程 ACP Session
 继续使用空 MCP Server 列表。Node.js、Python 等工具执行环境同样不修改或同步到 Host，
 完整边界见[工具执行环境](../local-tool-environment/README.md)。
@@ -273,16 +273,34 @@ Execute 直接启动已签名 Runtime：
 
 ## 执行清单接入范围
 
-OC `todowrite` / CN `Checklist` 顶部展示属于待实施功能，权威需求及接入设计见
+OC `todowrite` / CN `Checklist` 顶部展示的权威需求及接入设计见
 [Runtime 执行清单](../assistant-workbar/runtime-checklist-technical-design.md)，
-当前证据见[工作栏进度](../assistant-workbar/progress.md#2026-09-15-runtime-执行清单设计未实现)。
+远程实现与验证范围见[执行清单验证记录](./runtime-checklist-validation.md)。
 目标范围包括远程 GoodBuddy Agent 运行 OC 和 CN；ACP 仅承担传输与远端协议。
 
-当前托管安装与实时 Runtime 路径仍只接受 OC，不能把通用 ACP plan/tool 传递代码视作
-远程 CN 已可用。CN 的受管工件、安装/启动、项目选择与校验、模型桥及原生清单传递
-需要在该功能实施时补齐，并在共享 Linux 真实 Host 分别确认 OC/CN 的可用程度。
-本次只完善文档，未实测任一远程 Runtime 的清单；已有 OC Ask/Execute、问答或重连证据
-不作为本功能通过证据。清单恢复复用下节流程，不增加独立持久化或重连系统。
+CN 1.5.47 的 `serve` 提供 HTTP `/state`、`/message`，没有原生 ACP 命令。
+Agent 的 `continue-acp-helper.ts` 复用 `ContinueHostAdapter` 启动该宿主，转换 ACP
+Session、文字、工具、问答、清单与取消。Main 冻结的模型配置仍通过既有 Agent gateway
+执行，CN 配置仅持有 loopback 路由及占位凭据。成功的原生清单经
+`_meta.goodbuddyChecklist` 进入同一 operation 的 semantic transcript，Main 校验 CN
+来源和统一 schema；普通工具参数和正文不生成清单。
+
+2026-09-18 Linux x64 已通过 CN 开发复合包验包、安装、Agent 启动及 CN 激活，随后
+通过真实模型清单新增/清空、未 ACK 断线重放、取消和同对话 Ask 续发。默认组包现同时
+携带 OC/CN，`additionalRuntimes` 随主 Runtime 一起验签、安装和加载，仍可读取已有单
+Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创建、清单更新、重启和
+取消后续发；实测范围及尚未覆盖的平台见上述验证记录。开发包尚未发布。
+
+2026-09-18 实测 OC 1.18.29 的 ACP 仅转发 `todowrite` 工具活动，没有原生 `plan`
+通知。已有 OC 插件现将精确 `todo.updated` 事件经 `_meta.goodbuddyTodoEvent` 转发，
+保留原 Session ID、完整条目及空数组。Main 校验原生事件类型、Session 和清单 schema
+后输出 `checklist`，不从工具标题、截断字符串或正文推测清单。标准 `plan.entries`
+也可映射 OC 清单；尚未确认的 `plan_update`、`plan_removed` 只形成活动状态。
+清单恢复复用下节流程及既有 semantic transcript/ACK；已通过首份清单未 ACK 时断开、
+同操作重连、随后收到空清单的真实 Host 验证。顶部显示与数据库历史由对应模块单独验收。
+
+同次验证复现原生 ACP 冷启动超过 15 秒控制超时。`runtime/startPrompt` 的控制等待
+现至少为 30 秒，其余控制请求沿用原时限；Runtime 外层仍保留启动超时和取消处理。
 
 ## ACP 与断线
 
@@ -355,6 +373,10 @@ OC `todowrite` / CN `Checklist` 顶部展示属于待实施功能，权威需求
   的断线继续执行语义。
 - 同一 detached Agent 存活时，短暂 SSH 断线依次执行 `controller/resume`、`runtime/resumeAcpChannel` 和 `runtime/replayAcpChannel`，从 Main 已确认的 cursor 后只重放 Agent 到 Main 的已记录输出。重复 frame 会被确认但不会再次交给上层。若上一代连接只留下没有活动请求的 detached binding，完成精确 controller takeover 后会先有界停止并核对遗留 Runtime process，再用新 channel epoch 重新打开同一 binding 并恢复已有 ACP session；其他 controller、未证明 takeover 或仍有活动请求的 binding 仍被拒绝。
 - Main 到 Runtime 的 ACP 输入、模型请求、工具请求和 blob 不自动重放。
+- Continue helper 的会话与上下文仅保存在进程内。Desktop 冷打开已完成的 CN 对话时，
+  关闭旧空闲 binding，以新 binding 和已有对话历史创建会话；同一存活会话内续发仍递增
+  Prompt 序列。活动请求恢复沿用原 operation 和序列；start 未确认时通过既有 attach
+  核对，不递增序列或重新发送 Prompt。
 - 无法确认外部 Provider 是否已处理的模型调用保持结果未知，避免重复计费或重复副作用。
 - 只有远端返回 identity 匹配且 `closed: true` 时，Main 才删除持久化 binding；传输失败或未确认 close 会保留 recovery identity。
 - 终态 close 由 Agent 在一个事务中为两个方向记录 sequence high-water tombstone，删除剩余 frame 和 active channel，并归零对应 journal quota。tombstone 用于拒绝迟到的旧 epoch frame，因此当前不会按时间自动裁剪。

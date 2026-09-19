@@ -312,8 +312,8 @@ export const sshHostRemoteEnvironmentSchema = z
       .array(
         z
           .object({
-            runtimeId: z.literal('opencode'),
-            provider: z.literal('opencode'),
+            runtimeId: z.enum(['opencode', 'continue']),
+            provider: z.enum(['opencode', 'continue']),
             state: sshHostRemoteEnvironmentStateSchema,
             expected: sshHostRemoteEnvironmentVersionSchema,
             installed:

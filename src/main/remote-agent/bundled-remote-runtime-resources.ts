@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AgentArchitecture } from '../../shared/agent-installation-contracts'
 
 export type BundledRemoteRuntimeResourcePaths = {
@@ -72,7 +72,8 @@ export function resolveBundledRemoteRuntimeResourcePaths(
 
 export function getBundledRemoteRuntimeRoot(
   paths: BundledRemoteRuntimeResourcePaths,
-  architecture: AgentArchitecture
+  architecture: AgentArchitecture,
+  runtimeId: 'opencode' | 'continue' = 'opencode'
 ): string {
-  return paths.runtimeRoots[architecture]
+  return runtimeId === 'opencode' ? paths.runtimeRoots[architecture] : join(dirname(paths.runtimeRoots[architecture]), runtimeId)
 }

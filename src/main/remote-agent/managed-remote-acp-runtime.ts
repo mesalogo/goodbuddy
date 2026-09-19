@@ -43,7 +43,7 @@ type ManagedRemoteTransportIdentity = {
 }
 
 type ManagedRemoteRuntimeIdentity = {
-  runtimeId: 'opencode'
+  runtimeId: 'opencode' | 'continue'
   runtimeVersion: string
   bundleDigest: string
   runtimeAdapterDigest: string
@@ -80,9 +80,9 @@ export async function createManagedRemoteAcpRuntime(
   options: ManagedRemoteAcpRuntimeOptions
 ): Promise<AgentRuntime> {
   const descriptor = options.executionSpace
-  if (options.selection.provider !== 'opencode') {
+  if (options.selection.provider !== 'opencode' && options.selection.provider !== 'continue') {
     throw new Error(
-      'Managed remote execution requires the OpenCode Runtime'
+      'Managed remote execution requires OpenCode or Continue'
     )
   }
   const workspaceBinding = workspaceProjectBinding(descriptor)
@@ -114,8 +114,11 @@ export async function createManagedRemoteAcpRuntime(
     const runtimeInstallation =
       await options.runtimeInstallationManager.activateInstalled(
         descriptor.hostId,
-        { agentInstallationId: agent.installationId }
+        { agentInstallationId: agent.installationId, runtimeId: options.selection.provider }
       )
+    if (runtimeInstallation.runtimeId !== options.selection.provider) {
+      throw new Error('Installed Runtime does not match the selected provider')
+    }
     const capabilities = await activeConnection.refreshCapabilities()
     assertConnectionMatches(workspaceBinding, agent, activeConnection)
     const runtime = runtimeIdentityFromCapabilities(
@@ -137,8 +140,8 @@ export async function createManagedRemoteAcpRuntime(
       transport: ManagedRemoteTransportIdentity
     ): AcpRemoteRuntime => {
       const remoteOptions: AcpRemoteRuntimeOptions = {
-        runtimeId: 'opencode',
-        label: 'OpenCode（远程托管）',
+        runtimeId: runtime.runtimeId,
+        label: `${runtime.runtimeId === 'continue' ? 'Continue' : 'OpenCode'}（远程托管）`,
         workspacePath: descriptor.remoteRootPath,
         identity: {
           controllerId,
@@ -180,7 +183,7 @@ export async function createManagedRemoteAcpRuntime(
         ...(options.usage
           ? {
               usage: {
-                runtime: 'opencode',
+                runtime: runtime.runtimeId,
                 provider: options.usage.provider,
                 model: options.usage.model
               }
@@ -296,7 +299,7 @@ class ManagedRemoteRuntimeResources {
       connection: this.connection,
       openIdentity: {
         bindingId,
-        runtimeId: 'opencode',
+        runtimeId: this.runtime.runtimeId,
         runtimeBundleDigest: this.runtime.bundleDigest,
         workspaceIdentity: this.workspaceIdentity
       }
@@ -429,7 +432,7 @@ class ManagedRemoteAcpRuntime implements AgentRuntime {
   readonly requiresToolApproval = false
   readonly supportsScopedDataTools = false
   readonly capability = 'chat' as const
-  readonly runtimeId = 'opencode' as const
+  get runtimeId(): 'opencode' | 'continue' { return this.remote.runtimeId as 'opencode' | 'continue' }
   #disposePromise?: Promise<void>
   #transitionTail: Promise<void> = Promise.resolve()
   #activeRuns = 0
@@ -660,7 +663,7 @@ function runtimeIdentityFromCapabilities(
   >['capabilities']
 ): ManagedRemoteRuntimeIdentity {
   if (
-    installation.runtimeId !== 'opencode' ||
+    (installation.runtimeId !== 'opencode' && installation.runtimeId !== 'continue') ||
     (installation.platform !== 'linux' && !(installation.platform === 'darwin' && installation.architecture === 'arm64'))
   ) {
     throw new Error(
@@ -668,7 +671,7 @@ function runtimeIdentityFromCapabilities(
     )
   }
   const runtime: ManagedRemoteRuntimeIdentity = {
-    runtimeId: 'opencode',
+    runtimeId: installation.runtimeId,
     runtimeVersion: installation.runtimeVersion,
     bundleDigest: installation.bundleDigest,
     runtimeAdapterDigest: installation.runtimeAdapterDigest,
@@ -718,7 +721,7 @@ function assertRuntimeAdvertised(
     (entry) => entry.name === RUNTIME_ACP_CAPABILITY.name
   )
   const advertised = capabilities.runtimes.filter(
-    (entry) => entry.runtimeId === 'opencode'
+    (entry) => entry.runtimeId === runtime.runtimeId
   )
   if (
     capability === undefined ||

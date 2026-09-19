@@ -47,8 +47,8 @@ type ExpectedCatalog = {
     version: string
   }
   runtimes: Array<{
-    runtimeId: 'opencode'
-    provider: 'opencode'
+    runtimeId: 'opencode' | 'continue'
+    provider: 'opencode' | 'continue'
     version: string
   }>
 }
@@ -480,7 +480,7 @@ async function loadExpectedCatalog(
     },
     runtimes: Object.entries(runtimeLock.runtimes)
       .map(([runtimeId, runtime]) => ({
-        runtimeId: runtimeId as 'opencode',
+        runtimeId: runtimeId as 'opencode' | 'continue',
         provider: runtime.provider,
         version: runtime.version
       }))

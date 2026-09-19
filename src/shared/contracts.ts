@@ -1251,6 +1251,7 @@ export const subagentEventSchema = z.union([
 export type SubagentEvent = z.infer<typeof subagentEventSchema>
 
 export type AgentEvent =
+  | { type: 'checklist'; requestId: string; checklist: import('./runtime-checklist').RuntimeChecklist }
   | {
       requestId: string
       type: 'status'

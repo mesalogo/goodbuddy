@@ -2,6 +2,12 @@ import type { TranslationShape } from '../../resource-types'
 import type { app as chineseApp } from '../zh-CN/app'
 
 export const app = {
+  runtimeChecklist: {
+    title: 'Execution checklist', count: '{{completed}}/{{total}} completed',
+    finished: 'Request completed', failed: 'Request failed',
+    status: { pending: 'Pending', in_progress: 'In progress', completed: 'Completed', cancelled: 'Cancelled' },
+    priority: { low: 'Low priority', medium: 'Medium priority', high: 'High priority' }
+  },
   applications: {
     alwaysShown: 'Always shown', optional: 'Optional',
     manage: 'Manage Apps',

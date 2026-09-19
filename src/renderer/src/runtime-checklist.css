@@ -1,0 +1,84 @@
+.conversation-context-strips {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-height: 45vh;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.conversation-context-strips > .conversation-task-strip,
+.conversation-context-strips > .runtime-checklist {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 46px;
+}
+
+.conversation-context-strips .conversation-task-strip__header,
+.runtime-checklist__toggle {
+  flex: 0 0 auto;
+}
+
+.conversation-context-strips .conversation-task-strip__content {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 20vh;
+  overflow: auto;
+}
+
+.runtime-checklist {
+  min-width: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: var(--font-caption);
+  padding: 0 max(var(--page-gutter), calc((100% - var(--content-reading)) / 2));
+}
+
+.runtime-checklist__toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 46px;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.runtime-checklist__toggle:hover { background: var(--surface-subtle); }
+.runtime-checklist__toggle:focus-visible,
+.runtime-checklist__content:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.runtime-checklist__toggle strong { color: var(--text-primary); }
+.runtime-checklist__toggle svg { flex: 0 0 auto; }
+.runtime-checklist__current {
+  flex: 1 1 6em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runtime-checklist__result { overflow-wrap: anywhere; }
+.runtime-checklist__content { flex: 0 1 auto; min-height: 0; max-height: 20vh; overflow: auto; }
+.runtime-checklist__content ol { margin: 0; padding: var(--space-2); list-style: none; }
+.runtime-checklist__content li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.runtime-checklist__text { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.runtime-checklist__status { display: inline-flex; align-items: baseline; gap: var(--space-1); }
+.runtime-checklist__status svg { align-self: center; flex: 0 0 auto; }
+.runtime-checklist__status--completed { color: var(--success); }
+.runtime-checklist__status--in_progress { color: var(--accent); }
+.runtime-checklist__content small { font-size: inherit; }

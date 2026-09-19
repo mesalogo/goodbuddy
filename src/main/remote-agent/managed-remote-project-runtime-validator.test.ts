@@ -186,6 +186,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
 
     expect(test.calls).toEqual(['model', 'activate', 'refresh'])
     expect(test.activateInstalled).toHaveBeenCalledWith('host-1', {
+      runtimeId: 'opencode',
       agentInstallationId,
       signal: test.input.signal
     })
@@ -209,7 +210,7 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
     expect(() => lease.assertCurrent()).toThrow(/not ready/iu)
   })
 
-  it('rejects non-OpenCode selections before installation', async () => {
+  it('rejects unsupported selections before installation', async () => {
     const test = harness({
       selection: {
         provider: 'model',
@@ -218,10 +219,26 @@ describe('ManagedRemoteProjectRuntimeValidator', () => {
     })
 
     await expect(test.validator.validate(test.input)).rejects.toThrow(
-      /OpenCode Runtime/iu
+      /OpenCode or Continue/iu
     )
     expect(test.activateInstalled).not.toHaveBeenCalled()
     expect(test.refreshCapabilities).not.toHaveBeenCalled()
+  })
+
+  it('validates Continue against its own installed bundle and capability', async () => {
+    const refreshed = advertisedCapabilities()
+    refreshed.runtimes[0]!.runtimeId = 'continue'
+    const test = harness({
+      selection: { provider: 'continue' },
+      installed: { ...installation, runtimeId: 'continue' },
+      refreshed
+    })
+    const lease = await test.validator.validate(test.input)
+    expect(test.activateInstalled).toHaveBeenCalledWith('host-1', {
+      runtimeId: 'continue', agentInstallationId, signal: test.input.signal
+    })
+    expect(() => lease.assertCurrent()).not.toThrow()
+    lease.release()
   })
 
   it('requires the installed Runtime architecture to exactly match the Agent', async () => {

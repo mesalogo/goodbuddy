@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { remoteImageToolMcpName } from '../../shared/remote-image-tool-node'
 import { remoteQuestionSchema } from '../../shared/remote-question-contracts'
+import { runtimeChecklistSchema } from '../../shared/runtime-checklist'
 import type { AgentQuestionAnswer } from '../../shared/contracts'
 import { isDeepStrictEqual } from 'node:util'
 import {
@@ -1404,7 +1405,9 @@ export class AcpRemoteRuntime implements AgentRuntime {
     let bindingId = binding?.bindingId ?? randomUUID()
     if (
       binding?.state === 'ready' &&
-      !this.bindingIdentityMatches(binding)
+      // Continue helper sessions live only in the remote process. A cold open
+      // must seed a new session from conversation history after that process exits.
+      (this.options.runtimeId === 'continue' || !this.bindingIdentityMatches(binding))
     ) {
       await this.closeIdleBinding(binding, signal)
       binding = undefined
@@ -1743,6 +1746,16 @@ export class AcpRemoteRuntime implements AgentRuntime {
     signal: AbortSignal
   ): Promise<SessionRecord> {
     let current = this.sessions.get(conversationId)
+    if (
+      current?.binding.activePromptOperationId &&
+      this.options.modelProfile !== undefined &&
+      !current.ownedPromptAttached
+    ) {
+      // A failed start has no confirmed attachment. Reopen through attach using
+      // the persisted operation, without advancing its sequence or closing its channel.
+      this.sessions.delete(conversationId)
+      current = undefined
+    }
     if (
       current?.binding.activePromptOperationId &&
       this.options.modelProfile === undefined
@@ -2153,8 +2166,23 @@ export class AcpRemoteRuntime implements AgentRuntime {
     prompt: ActivePrompt,
     update: SessionUpdate
   ): RuntimePublicEvent | undefined {
+    if (update._meta?.goodbuddyChecklist !== undefined) {
+      const checklist = runtimeChecklistSchema.safeParse(update._meta.goodbuddyChecklist)
+      if (this.options.runtimeId !== 'continue' || !prompt.open || !checklist.success || checklist.data.source !== 'continue') return undefined
+      return { requestId: prompt.requestId, type: 'checklist', checklist: checklist.data }
+    }
+    const todoEvent = update._meta?.goodbuddyTodoEvent
+    if (todoEvent !== undefined) {
+      if (this.options.runtimeId !== 'opencode' || !prompt.open ||
+        !todoEvent || typeof todoEvent !== 'object') return undefined
+      const native = todoEvent as { type?: unknown; properties?: { sessionID?: unknown; todos?: unknown } }
+      if (native.type !== 'todo.updated' || native.properties?.sessionID !== prompt.sessionId) return undefined
+      const checklist = runtimeChecklistSchema.safeParse({ source: 'opencode', items: native.properties.todos })
+      if (!checklist.success) return undefined
+      return { requestId: prompt.requestId, type: 'checklist', checklist: checklist.data }
+    }
     const extension = update._meta?.goodbuddyQuestion
-    if (this.options.runtimeId === 'opencode' && extension && typeof extension === 'object' &&
+    if ((this.options.runtimeId === 'opencode' || this.options.runtimeId === 'continue') && extension && typeof extension === 'object' &&
       prompt.open && prompt.context.channel.respondToQuestion) {
       const value = extension as { question?: unknown; childCallId?: unknown }
       const question = remoteQuestionSchema.parse(value.question)
@@ -2348,6 +2376,15 @@ export class AcpRemoteRuntime implements AgentRuntime {
       }
     }
     if (update.sessionUpdate === 'plan') {
+      if (this.options.runtimeId === 'opencode') {
+        if (!Array.isArray(update.entries) || update.entries.some(entry => !entry || typeof entry !== 'object')) return undefined
+        const checklist = runtimeChecklistSchema.safeParse({
+          source: 'opencode',
+          items: update.entries.map(({ content, status, priority }) => ({ content, status, priority }))
+        })
+        if (!checklist.success) return undefined
+        return { requestId: prompt.requestId, type: 'checklist', checklist: checklist.data }
+      }
       return {
         requestId: prompt.requestId,
         type: 'status',

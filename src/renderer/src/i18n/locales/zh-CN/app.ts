@@ -1,4 +1,10 @@
 export const app = {
+  runtimeChecklist: {
+    title: '执行清单', count: '已完成 {{completed}}/{{total}}',
+    finished: '请求已完成', failed: '请求失败',
+    status: { pending: '待处理', in_progress: '进行中', completed: '已完成', cancelled: '已取消' },
+    priority: { low: '低优先级', medium: '中优先级', high: '高优先级' }
+  },
   applications: {
     alwaysShown: '始终显示', optional: '可选',
     manage: '管理应用',

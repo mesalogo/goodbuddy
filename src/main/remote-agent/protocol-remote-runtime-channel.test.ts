@@ -594,6 +594,24 @@ describe('ProtocolRemoteRuntimeChannel', () => {
     await fixture.channel.close()
   })
 
+  it('allows cold native initialization beyond the ordinary control timeout without resending', async () => {
+    const fixture = await openChannel()
+    vi.useFakeTimers()
+    try {
+      fixture.client.responder = async (method, params) => {
+        if (method === 'runtime/startPrompt') await new Promise(resolve => setTimeout(resolve, 20_000))
+        return defaultResponse(method, params)
+      }
+      const started = fixture.channel.startOwnedPrompt({
+        bindingId: 'binding-1', operationId: 'operation-1', requestId: 'operation-1',
+        prompt: [{ type: 'text', text: 'hello' }]
+      })
+      await vi.advanceTimersByTimeAsync(20_000)
+      await expect(started).resolves.toMatchObject({ sessionId: 'session-owned-1' })
+      expect(fixture.client.requests.filter(request => request.method === 'runtime/startPrompt')).toHaveLength(1)
+    } finally { vi.useRealTimers(); await fixture.channel.close() }
+  })
+
   it('attaches the exact operation when a prompt start response is lost', async () => {
     const fixture = await openChannel()
     const deadlineAt = new Date(Date.now() + 10_000).toISOString()

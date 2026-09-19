@@ -927,7 +927,7 @@ export function ProjectSwitcher({
         name: draft.name,
         description: draft.description,
         runtimeSelection:
-          draft.runtimeSelection?.provider === 'opencode'
+          draft.runtimeSelection?.provider === 'opencode' || draft.runtimeSelection?.provider === 'continue'
             ? draft.runtimeSelection
             : ({ provider: 'opencode' } as const),
         hostId: remoteHostId,
@@ -1478,8 +1478,7 @@ export function ProjectSwitcher({
                         setDraft((current) => ({
                           ...current,
                           runtimeSelection:
-                            current.runtimeSelection?.provider ===
-                            'opencode'
+                            current.runtimeSelection?.provider === 'opencode' || current.runtimeSelection?.provider === 'continue'
                               ? current.runtimeSelection
                               : { provider: 'opencode' }
                         }))
@@ -1707,19 +1706,27 @@ export function ProjectSwitcher({
                         {t('projectSwitcher.remote.rootHelp')}
                       </small>
                     </label>
-                    <div className="remote-project-runtime">
+                    <label className="remote-project-runtime">
                       <span>
                         {t(
                           'projectSwitcher.dialog.fields.defaultRuntime'
                         )}
                       </span>
-                      <strong>OpenCode</strong>
+                      <select aria-label={t('projectSwitcher.dialog.fields.defaultRuntime')}
+                        disabled={remoteFieldsDisabled} value={draft.runtimeSelection?.provider ?? 'opencode'}
+                        onChange={event => {
+                          const provider = event.target.value === 'continue' ? 'continue' : 'opencode'
+                          setDraft(current => ({ ...current, runtimeSelection: { provider } }))
+                        }}>
+                        <option value="opencode">OpenCode</option>
+                        <option value="continue">Continue</option>
+                      </select>
                       <small>
                         {t(
                           'projectSwitcher.remote.runtimeHelp'
                         )}
                       </small>
-                    </div>
+                    </label>
                     <ProjectWorkModeFields
                       ariaLabel={t(
                         'projectSwitcher.dialog.fields.defaultMode'

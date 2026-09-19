@@ -1,5 +1,93 @@
 # 工作栏实现与验证进度
 
+## 2026-09-19 远程 CN 完整桌面验证
+
+默认联合开发包已包含 OC/CN，并通过桌面导入、验签、传输至共享 Linux x64、安装及
+CN 项目创建。真实输入框发送产生清单更新，顶部和消息保存一致；退出重启后恢复完成
+与待办状态。修复实测发现的 CN 冷会话续发及重复序号问题，复验重启续发、点击停止和
+取消后再次发送通过。证据、调用口径及平台边界见
+[远程记录](../remote-host/runtime-checklist-validation.md#2026-09-19-联合包与完整桌面验收)。
+
+任务与清单分别展开，容器高度有界，键盘可进入清单滚动区；状态图标不再影响文字
+基线。此前真实 Electron 视觉矩阵覆盖同时展开、长列表、窄窗口、浅深主题及 200% 缩放。
+本轮实际桌面截图进一步核对真实远程清单和取消状态。开发包未发布，非 x64 平台未实测。
+
+远程 CN 真实长清单为 55 项、5,601 字符，展示与落库一致；清空后退出重启仍保持空数组。
+本轮 Agent gateway 账本记录 16 次模型请求，其中 15 次完成、1 次取消结果未确认。
+测试 Host 目录、所属进程及本地隔离 profile 已清理。全量 4707 passed、67 skipped、
+1 failed；本地 OC 压缩失败项与远程 ACP、项目选择、清单组件专项复验共 136 passed。
+最终 typecheck、lint 和差异检查通过。
+
+## 2026-09-18 Remote Continue Checklist
+
+CL-P1、CL-P3 的远程 CN 源码已接入受管包、HTTP 宿主到 ACP 的适配、模型桥、项目
+校验和聊天选择。CN 原生成功 Checklist 经既有 semantic transcript 传递统一清单，
+不增加数据库或重连协议。修复聊天页把远程 CN 选择恢复为 OC、隐藏 Continue 菜单，
+以及复合包验包默认读取 OC payload 的遗漏。
+
+Linux x64 当前源码与开发包通过验包、prepare/commit、Agent bootstrap/health、CN
+激活、真实模型清单新增/清空、未 ACK 断线重放、取消和同对话 Ask 续发。本轮新增
+17 个外部模型 HTTP 请求；精确分项、临时探针、已清理的 Host 目录及剩余验收见
+[远程执行清单验证记录](../remote-host/runtime-checklist-validation.md#cn-部署与生命周期)。
+本阶段使用单 Runtime 开发包；后续联合包与完整桌面验证见上方 2026-09-19 记录。
+
+远程相关测试 27 文件、374 项通过；最终项目选择、顶部组件和安装管理 41 项、App
+远程选择与继承 3 项、CN 复合包安装专项通过。typecheck 和 lint 通过。
+全量测试完成一轮：4665 passed、67 skipped、6 failed。其中 CN 新增包测试的文件名
+错误已修正并复验；其余 5 项为 ActivityPanel/activity-store 的引用复用断言，本轮未
+修改这些文件。最终 typecheck、lint 和专项结果见上述远程记录。
+并行工作区更新后，ActivityPanel/activity-store 的 39 项专项复验全部通过。
+
+## 2026-09-18 Local Runtime Checklist Backend
+
+CL-P1 and the backend portion of CL-P2 are implemented. Shared contracts use
+`runtime-checklist.ts`, `AgentEvent.type = checklist`, and message field
+`runtimeChecklist`. Local OC validates parent Session, submitted message identity,
+assistant parent identity and native tool arguments. CN extracts before truncation,
+commits successful calls once, excludes startup history and retains explicit clears.
+Message metadata serialization, reconstruction, remote replay deduplication and
+terminalization preserve the field without a database migration. Existing IPC
+transport already forwards these events. Renderer and `acp-remote-runtime` were
+outside this backend change; no shared Linux Host acceptance is claimed here.
+
+The focused backend suite passed 275 tests across shared checklist, OC/CN Runtime,
+host adapter, permissions, real-binary lifecycle and assistant database tests.
+Coverage includes OC reused Sessions and stale/child updates, native event ordering,
+CN long lists and omitted success arguments, failure preservation, history dedupe,
+empty lists, database reopen and remote event replay/terminalization.
+`npm run typecheck` and `npm run lint` passed on the final validation run.
+The full `npm test` run completed with 4604 passed, 67 skipped and 9 failed:
+one Agent offline-package inventory test exceeded 60 seconds; eight failures were
+in concurrently changing Magic Notes renderer tests (including PDF `DOMMatrix`
+availability and canvas UI expectations). These files were not modified here.
+
+Real model evidence on Windows, using production local adapters and isolated
+temporary profiles:
+
+| Runtime | Version | Submitted tasks | Actual model HTTP POSTs | Observed result |
+| --- | --- | --- | --- | --- |
+| CN | 1.5.47 | 1 | 3 | Two successful Checklist calls, two structured snapshots; A pending then completed, B pending |
+| OC investigation | 1.18.29 | 2 | 6 | Native tools succeeded; revealed todo.updated precedes running input, initially no projected snapshot |
+| OC corrected ordering | 1.18.29 | 1 | 3 | Two native updates projected; done retained |
+| OC final sortable message ID | 1.18.29 | 1 | 3 | Two native updates projected; assistant parent IDs matched; done retained |
+
+Total: **15 actual external model HTTP POSTs**, all HTTP 200, **5 submitted tasks**.
+The unavailable old OC server probe and two isolated startup attempts dispatched
+zero model requests. Startup attempts were blocked by the probe's fetch wrapper
+not accepting Request objects; correcting that wrapper required no product change.
+The proxy allowed only the exact native checklist tool, with a per-run request cap.
+No business-file tools ran. Saved production settings were read through isolated
+credential handling; the existing explicit test connection was used in memory
+because its endpoint/model tuple differed from the saved connection. Credentials
+were not printed, original settings were unchanged, and isolated run data was removed.
+
+The real probes verified adapter extraction and OC Runtime events, not desktop
+rendering. CN Runtime event forwarding and persistence were verified by tests.
+Long lists, clears, cancellation boundaries and history replay were tested with
+fixtures/database tests, not exhaustively exercised through real models. Temporary
+probe sources: `cn-todo-probe.ts` / `cn-todo-run.cjs` under the approved OpenCode
+temporary directory; each run printed its dispatch count and structured results.
+
 ## 2026-09-17 连续请求取消与停止状态
 
 - 复现并修复 OpenCode 迟到的会话取消中断下一条请求：同一次运行复用一个有界 abort，

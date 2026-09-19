@@ -263,6 +263,25 @@ function claimManualScheduleQueueItem(
 }
 
 describe('AssistantDatabase', () => {
+  it('round trips long checklist metadata and explicit clears across reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-checklist-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(path)
+    await database.initialize(process.cwd())
+    const id = randomUUID()
+    const message = { id: randomUUID(), role: 'assistant' as const, state: 'complete' as const, content: '', createdAt: 1,
+      runtimeChecklist: { source: 'continue' as const, items: [{ content: 'task'.repeat(1500), status: 'pending' as const }] } }
+    database.replaceConversations([{ id, title: 'Checklist', updatedAt: 1, messages: [message] }])
+    database.close()
+    const reopened = new AssistantDatabase(path)
+    await reopened.initialize(process.cwd())
+    try {
+      expect(reopened.getConversation(id).messages[0]?.runtimeChecklist).toEqual(message.runtimeChecklist)
+      reopened.saveLocalConversations([{ header: { id, title: 'Checklist', updatedAt: 2 }, messages: [{ ...message, runtimeChecklist: { source: 'continue', items: [] } }] }])
+      expect(reopened.getConversation(id).messages[0]?.runtimeChecklist).toEqual({ source: 'continue', items: [] })
+    } finally { reopened.close() }
+  })
   it('lists lightweight history without dropping searchable text or full process metadata', async () => {
     const database = await createDatabase()
     try {
@@ -3828,6 +3847,13 @@ describe('AssistantDatabase', () => {
         }))
       ]
     })
+    const checklistEvent = { requestId: taskId, type: 'checklist' as const,
+      checklist: { source: 'opencode' as const, items: [{ content: 'task', status: 'in_progress' as const }] } }
+    expect(() => append('7', 1, { ...checklistEvent, checklist: { source: 'invalid' as never, items: [] } })).toThrow()
+    expect(append('7', 1, checklistEvent)).toBe(true)
+    expect(append('7', 1, checklistEvent)).toBe(false)
+    expect(database.getConversation(conversationId).messages[1]?.runtimeChecklist).toEqual(checklistEvent.checklist)
+    expect(append('7', 2, { ...checklistEvent, checklist: { source: 'opencode', items: [] } })).toBe(true)
     append('8', 0, {
       requestId: taskId,
       type: 'done'
@@ -3845,6 +3871,7 @@ describe('AssistantDatabase', () => {
     expect(recoveredMessage).toMatchObject({
       content: recoveredText,
       reasoning: '先验证状态',
+      runtimeChecklist: { source: 'opencode', items: [] },
       state: 'complete',
       artifactIds: [
         '00000000-0000-4000-8000-000000000707'
@@ -3961,6 +3988,7 @@ describe('AssistantDatabase', () => {
       id: assistantMessageId,
       content: recoveredText,
       state: 'error',
+      runtimeChecklist: { source: 'opencode', items: [] },
       status: '远端请求已不存在'
     })
     expect(reopened.listRecoverableRemoteTasks()).toEqual([])

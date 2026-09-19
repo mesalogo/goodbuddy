@@ -275,6 +275,7 @@ type MessageMetadata = {
   queueItemId?: string
   status?: string
   reasoning?: ConversationSnapshot['messages'][number]['reasoning']
+  runtimeChecklist?: ConversationMessage['runtimeChecklist']
   blocks?: ConversationSnapshot['messages'][number]['blocks']
   displayCaptureTruncated?: boolean
   contextCompression?: ConversationSnapshot['messages'][number]['contextCompression']
@@ -1171,6 +1172,7 @@ function toConversationSnapshot(
         role: message.role,
         content: message.content,
         reasoning: metadata.reasoning,
+        runtimeChecklist: metadata.runtimeChecklist,
         blocks: metadata.blocks,
         displayCaptureTruncated:
           metadata.displayCaptureTruncated,
@@ -1205,6 +1207,7 @@ function serializeConversationMessageMetadata(
     queueItemId: message.queueItemId,
     status: message.status,
     reasoning: message.reasoning,
+    runtimeChecklist: message.runtimeChecklist,
     blocks: message.blocks,
     displayCaptureTruncated: message.displayCaptureTruncated,
     contextCompression: message.contextCompression,
@@ -1373,6 +1376,8 @@ function reduceRecoveredAgentEvent(
       blocks,
       status: undefined
     }
+  } else if (event.type === 'checklist') {
+    next = { ...message, runtimeChecklist: event.checklist }
   } else if (event.type === 'status') {
     next = { ...message, status: event.message }
   } else if (event.type === 'context-compression') {
@@ -5015,6 +5020,7 @@ export class AssistantDatabase {
         createdAt: metadata.createdAt ?? Date.parse(row.created_at),
         status: metadata.status,
         reasoning: metadata.reasoning,
+        runtimeChecklist: metadata.runtimeChecklist,
         blocks: metadata.blocks,
         displayCaptureTruncated:
           metadata.displayCaptureTruncated,
@@ -5429,6 +5435,7 @@ export class AssistantDatabase {
           metadata.createdAt ?? Date.parse(row.created_at),
         status: metadata.status,
         reasoning: metadata.reasoning,
+        runtimeChecklist: metadata.runtimeChecklist,
         blocks: metadata.blocks,
         displayCaptureTruncated:
           metadata.displayCaptureTruncated,

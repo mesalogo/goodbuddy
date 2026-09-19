@@ -2638,7 +2638,7 @@ export class RuntimeAcpBackend {
   ): void {
     const manifest = verified.manifest
     if (
-      manifest.provider !== 'opencode' ||
+      (manifest.provider !== 'opencode' && manifest.provider !== 'continue') ||
       manifest.runtimeId !== preparation.runtimeId ||
       manifest.bundleDigest !== preparation.runtimeBundleDigest ||
       manifest.adapterDigest !== preparation.runtimeAdapterDigest ||

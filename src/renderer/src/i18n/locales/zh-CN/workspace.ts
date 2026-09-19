@@ -65,7 +65,7 @@ export const workspace = {
       stages: {
         network: '正在恢复网络连接…',
         agent: '正在恢复远端 Agent…',
-        runtime: '正在恢复 OpenCode Runtime…',
+        runtime: '正在恢复远端 Runtime…',
         cursor: '正在恢复对话，已同步到事件 {{current}}',
         completed: '恢复完成'
       },
@@ -167,7 +167,7 @@ export const workspace = {
         select: '选择此目录'
       },
       runtimeHelp:
-        '托管 SSH 项目仅使用 OpenCode Runtime。Ask 为只读；Execute 可使用所选 SSH 账户拥有的全部权限。保存时会检查主机、远端 Agent、工作区和 Runtime。',
+        '托管 SSH 项目可使用已安装的 OpenCode 或 Continue Runtime。Ask 为只读；Execute 可使用所选 SSH 账户拥有的全部权限。保存时会检查主机、远端 Agent、工作区和所选 Runtime。',
       actions: {
         save: '保存远程项目',
         saving: '正在保存远程项目…'
@@ -181,7 +181,7 @@ export const workspace = {
         host: 'SSH 主机',
         agent: '远端 Agent',
         workspace: '远端工作区',
-        runtime: 'OpenCode Runtime',
+        runtime: '远端 Runtime',
         saving: '项目设置'
       },
       validation: {

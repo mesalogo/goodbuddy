@@ -16,6 +16,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { agentPlatformSchema, type AgentPlatform } from '../../shared/agent-target'
 import {
   agentPackageArchiveName,
@@ -24,6 +25,7 @@ import {
   agentPackageInventorySchema,
   type AgentPackageCatalog,
   type AgentPackageCatalogEntry,
+  type AgentPackageDescriptor,
   type AgentPackageDownloadProgress,
   type AgentPackageInventory
 } from '../../shared/agent-package-contracts'
@@ -105,6 +107,7 @@ export type AgentPackageManagerOptions = {
 }
 
 export type VerifiedRemoteAgentInstallCandidate = {
+  additionalRuntimes?: AgentPackageDescriptor['additionalRuntimes']
   source: UpdateSource
   platform: AgentPlatform
   architecture: AgentArchitecture
@@ -115,8 +118,8 @@ export type VerifiedRemoteAgentInstallCandidate = {
     minor: number
   }
   remoteRuntime: {
-    runtimeId: 'opencode'
-    provider: 'opencode'
+    runtimeId: 'opencode' | 'continue'
+    provider: 'opencode' | 'continue'
     version: string
     bundleDigest: string
     protocol: {
@@ -138,8 +141,8 @@ export type VerifiedRemoteAgentEnvironmentCatalog = {
   expected: {
     agent: { version: string }
     runtimes: Array<{
-      runtimeId: 'opencode'
-      provider: 'opencode'
+      runtimeId: 'opencode' | 'continue'
+      provider: 'opencode' | 'continue'
       version: string
     }>
   }
@@ -170,15 +173,17 @@ export type AcquireInstallArchiveOptions = {
 
 function expectedCatalog(
   agentVersion: string,
-  runtimeVersion: string
+  runtimeVersion: string,
+  runtimeId: 'opencode' | 'continue' = 'opencode',
+  additionalRuntimes: NonNullable<AgentPackageDescriptor['additionalRuntimes']> = []
 ): VerifiedRemoteAgentEnvironmentCatalog['expected'] {
   return {
     agent: { version: agentVersion },
     runtimes: [{
-      runtimeId: 'opencode',
-      provider: 'opencode',
+      runtimeId,
+      provider: runtimeId,
       version: runtimeVersion
-    }]
+    }, ...additionalRuntimes.map(({ runtimeId, provider, version }) => ({ runtimeId, provider, version }))]
   }
 }
 
@@ -193,6 +198,7 @@ function candidateFromCatalogEntry(
     version: entry.version,
     minimumDesktopVersion: entry.minimumDesktopVersion,
     agentProtocol: { ...entry.agentProtocol },
+    ...(entry.additionalRuntimes ? { additionalRuntimes: structuredClone(entry.additionalRuntimes) } : {}),
     remoteRuntime: {
       ...entry.remoteRuntime,
       protocol: { ...entry.remoteRuntime.protocol }
@@ -217,6 +223,7 @@ function candidateFromVerifiedRecord(
     version: descriptor.version,
     minimumDesktopVersion: descriptor.minimumDesktopVersion,
     agentProtocol: { ...descriptor.agentProtocol },
+    ...(descriptor.additionalRuntimes ? { additionalRuntimes: structuredClone(descriptor.additionalRuntimes) } : {}),
     remoteRuntime: {
       ...descriptor.remoteRuntime,
       protocol: { ...descriptor.remoteRuntime.protocol }
@@ -399,7 +406,9 @@ export class AgentPackageManager {
       return {
         expected: expectedCatalog(
           installed.verified.descriptor.version,
-          installed.verified.descriptor.remoteRuntime.version
+          installed.verified.descriptor.remoteRuntime.version,
+          installed.verified.descriptor.remoteRuntime.runtimeId,
+          installed.verified.descriptor.additionalRuntimes
         ),
         candidate: null,
         candidateFailure: {
@@ -414,7 +423,9 @@ export class AgentPackageManager {
     }
     const expected = expectedCatalog(
       entry.version,
-      entry.remoteRuntime.version
+      entry.remoteRuntime.version,
+      entry.remoteRuntime.runtimeId,
+      entry.additionalRuntimes
     )
     try {
       return {
@@ -710,6 +721,7 @@ export class AgentPackageManager {
         candidate.agentProtocol.major &&
       descriptor.agentProtocol.minor ===
         candidate.agentProtocol.minor &&
+      isDeepStrictEqual(descriptor.additionalRuntimes ?? [], candidate.additionalRuntimes ?? []) &&
       descriptor.remoteRuntime.runtimeId ===
         candidate.remoteRuntime.runtimeId &&
       descriptor.remoteRuntime.provider ===
@@ -835,6 +847,7 @@ export class AgentPackageManager {
         entry.agentProtocol.major ||
       descriptor.agentProtocol.minor !==
         entry.agentProtocol.minor ||
+      !isDeepStrictEqual(descriptor.additionalRuntimes ?? [], entry.additionalRuntimes ?? []) ||
       descriptor.remoteRuntime.runtimeId !==
         entry.remoteRuntime.runtimeId ||
       descriptor.remoteRuntime.provider !==
@@ -1981,6 +1994,7 @@ function assertCandidateMatchesCatalogEntry(
       entry.agentProtocol.major ||
     candidate.agentProtocol.minor !==
       entry.agentProtocol.minor ||
+    !isDeepStrictEqual(candidate.additionalRuntimes ?? [], entry.additionalRuntimes ?? []) ||
     candidate.remoteRuntime.runtimeId !==
       entry.remoteRuntime.runtimeId ||
     candidate.remoteRuntime.provider !==

@@ -389,21 +389,23 @@ export class RemoteEnvironmentPreparer implements Preparer {
     signal.throwIfAborted()
 
     emit(method, 'installing-runtime')
+    for (const runtime of [identity.runtime, ...(identity.additionalRuntimes ?? [])]) {
     assertAgentCommandSucceeded(
       await lease.runAgentRuntimeAction(
         installationId,
         {
           kind: 'runtime-activate',
-          runtimeId: identity.runtime.runtimeId,
-          bundleDigest: identity.runtime.bundleDigest,
-          architecture: identity.runtime.architecture,
+          runtimeId: runtime.runtimeId,
+          bundleDigest: runtime.bundleDigest,
+          architecture: runtime.architecture,
           forceVerification: true
         },
         signal
       ),
-      'OpenCode Runtime 激活'
+      `${runtime.runtimeId} Runtime 激活`
     )
     signal.throwIfAborted()
+    }
   }
 
   async #prepareUploadedArchive(options: {
@@ -693,6 +695,14 @@ function assertPackageIdentity(
   identity: SshRemotePackageIdentity,
   candidate: VerifiedRemoteAgentInstallCandidate
 ): void {
+  const extras = identity.additionalRuntimes ?? []
+  const expected = candidate.additionalRuntimes ?? []
+  if (extras.length !== expected.length || extras.some((runtime, index) => {
+    const item = expected[index]!
+    return runtime.runtimeId !== item.runtimeId || runtime.runtimeVersion !== item.version ||
+      runtime.bundleDigest !== item.bundleDigest || runtime.platform !== candidate.platform ||
+      runtime.architecture !== candidate.architecture || !isDeepStrictEqual(runtime.protocol, item.protocol)
+  })) throw new Error('Additional Runtime identity does not match the signed package')
   if (
     identity.archiveSha256 !== candidate.sha256 ||
     identity.agent.agentVersion !== candidate.version ||

@@ -24,6 +24,34 @@ afterEach(() => {
 })
 
 describe('OpenCode direct launch profile', () => {
+  it.each(['ask', 'execute'] as const)('launches Continue through the managed HTTP facade in %s', (workMode) => {
+    const fixture = createFixture()
+    const manifest = remoteRuntimeBundleManifestSchema.parse({
+      ...fixture.manifest, runtimeId: 'continue', provider: 'continue', runtimeVersion: '1.5.47',
+      files: fixture.manifest.files.map(file => file.path === 'bin/opencode' ? { ...file, path: 'lib/continue/dist/cn.js' } : file),
+      entrypoint: { ...fixture.manifest.entrypoint, identity: 'continue-acp', path: 'lib/continue/dist/cn.js', argvPrefix: [] }
+    })
+    expect(() => createOpenCodeLaunchProfile({ ...fixture, manifest, workMode })).toThrow(/model bridge/)
+    const profile = createOpenCodeLaunchProfile({ ...fixture, manifest, workMode,
+      modelBridge: {
+        agentExecutablePath: resolve(fixture.bundleDirectory, 'agent', 'goodbuddy-agent'),
+        bridgeDirectory: resolve(fixture.bundleDirectory, 'bridge'),
+        socketPath: resolve(fixture.bundleDirectory, 'bridge', 'model.sock'),
+        sharedSessions: true,
+        policy: { protocol: 'openai-responses', model: 'selected-model',
+          modelProfileDigest: `sha256:${'9'.repeat(64)}`, supportsImageInput: true }
+      }
+    })
+    expect(profile.args).toEqual(expect.arrayContaining([
+      'model-bridge-helper', '--runtime-id', 'continue', '--continue-entrypoint',
+      resolve(fixture.bundleDirectory, 'lib/continue/dist/cn.js'), '--work-mode', workMode,
+      '--shared-sessions', 'true'
+    ]))
+    expect(profile.args).not.toContain('acp')
+    expect(profile.cwd).toBe(fixture.workspaceDirectory)
+    expect(profile.env.OPENCODE_CONFIG_CONTENT === process.env.OPENCODE_CONFIG_CONTENT).toBe(true)
+  })
+
   it.each(['ask', 'execute'] as const)(
     'disables unused automatic Git snapshots for %s',
     (workMode) => {

@@ -80,6 +80,16 @@ export const agentPackageFileSchema = z
   })
   .strict()
 
+const packagedRuntimeSchema = z.object({
+  runtimeId: z.enum(['opencode', 'continue']),
+  provider: z.enum(['opencode', 'continue']),
+  version: semanticVersionSchema,
+  bundleDigest: sha256DigestSchema,
+  protocol: agentProtocolVersionSchema
+}).strict().refine(value => value.runtimeId === value.provider, {
+  message: 'Runtime provider must match its identity'
+})
+
 const agentPackageDescriptorObjectSchema = z
   .object({
     format: z.literal(AGENT_PACKAGE_FORMAT),
@@ -92,15 +102,8 @@ const agentPackageDescriptorObjectSchema = z
     architecture: agentArchitectureSchema,
     signingKeyId: signingKeyIdSchema,
     agentProtocol: agentProtocolVersionSchema,
-    remoteRuntime: z
-      .object({
-        runtimeId: z.literal('opencode'),
-        provider: z.literal('opencode'),
-        version: semanticVersionSchema,
-        bundleDigest: sha256DigestSchema,
-        protocol: agentProtocolVersionSchema
-      })
-      .strict(),
+    remoteRuntime: packagedRuntimeSchema,
+    additionalRuntimes: z.array(packagedRuntimeSchema).max(1).optional(),
     contentDigest: sha256DigestSchema,
     files: z
       .array(agentPackageFileSchema)
@@ -112,6 +115,9 @@ const agentPackageDescriptorObjectSchema = z
 export const agentPackageDescriptorSchema =
   agentPackageDescriptorObjectSchema
   .superRefine((descriptor, context) => {
+    if (descriptor.additionalRuntimes?.some(runtime => runtime.runtimeId === descriptor.remoteRuntime.runtimeId)) {
+      context.addIssue({ code: 'custom', path: ['additionalRuntimes'], message: 'Duplicate packaged Runtime' })
+    }
     const paths = descriptor.files.map((file) => file.path)
     if (new Set(paths).size !== paths.length) {
       context.addIssue({
@@ -152,6 +158,9 @@ export const agentPackageCatalogEntrySchema =
     })
     .strict()
     .superRefine((entry, context) => {
+      if (entry.additionalRuntimes?.some(runtime => runtime.runtimeId === entry.remoteRuntime.runtimeId)) {
+        context.addIssue({ code: 'custom', path: ['additionalRuntimes'], message: 'Duplicate packaged Runtime' })
+      }
       if (
         entry.archive !==
         agentPackageArchiveName(entry.version, entry.architecture, entry.platform)

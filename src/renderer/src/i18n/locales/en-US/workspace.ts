@@ -68,7 +68,7 @@ export const workspace = {
       stages: {
         network: 'Restoring network connection…',
         agent: 'Restoring remote Agent…',
-        runtime: 'Restoring OpenCode Runtime…',
+        runtime: 'Restoring remote Runtime…',
         cursor: 'Restoring conversation at event {{current}}',
         completed: 'Recovery completed'
       },
@@ -172,7 +172,7 @@ export const workspace = {
         select: 'Select this directory'
       },
       runtimeHelp:
-        'Managed SSH projects use OpenCode Runtime only. Ask is read-only; Execute can use every permission available to the selected SSH account. Saving checks the Host, Agent, workspace, and Runtime.',
+        'Managed SSH projects can use an installed OpenCode or Continue Runtime. Ask is read-only; Execute can use every permission available to the selected SSH account. Saving checks the Host, Agent, workspace, and selected Runtime.',
       actions: {
         save: 'Save remote project',
         saving: 'Saving remote project…'
@@ -186,7 +186,7 @@ export const workspace = {
         host: 'SSH host',
         agent: 'Remote Agent',
         workspace: 'Remote workspace',
-        runtime: 'OpenCode Runtime',
+        runtime: 'Remote Runtime',
         saving: 'Project settings'
       },
       validation: {

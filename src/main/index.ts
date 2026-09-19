@@ -674,11 +674,13 @@ if (hasSingleInstanceLock) {
             await settingsStore.getResolvedSettings(),
             selection
           ),
-        resolveModelProfile: async (selection) =>
-          applyRuntimeSelection(
+        resolveModelProfile: async (selection) => {
+          const resolved = applyRuntimeSelection(
             await settingsStore.getResolvedSettings(),
             selection
-          ).settings.opencodeModelProfile
+          ).settings
+          return selection.provider === 'continue' ? resolved.continueModelProfile : resolved.opencodeModelProfile
+        }
       })
     await startupManagedRemoteExecutionServices.initialize()
     managedRemoteExecutionServices =
@@ -1081,10 +1083,10 @@ if (hasSingleInstanceLock) {
         selection
       )
       if (executionSpace?.kind === 'ssh') {
-        const profile = resolved.settings.opencodeModelProfile
+        const profile = selection.provider === 'continue' ? resolved.settings.continueModelProfile : resolved.settings.opencodeModelProfile
         if (profile === undefined) {
           throw new Error(
-            '托管远程 OpenCode 需要选择一个可用的文本模型配置'
+            '托管远程 Runtime 需要选择一个可用的文本模型配置'
           )
         }
         return await startupManagedRemoteExecutionServices.createRuntime({

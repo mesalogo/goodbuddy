@@ -218,7 +218,7 @@ export async function verifyPublishedRuntimeBundle(
       'Published Runtime entrypoint metadata changed'
     )
   }
-  await assertElfArchitecture(
+  if (manifest.provider === 'opencode') await assertElfArchitecture(
     executablePath,
     options.architecture,
     'Runtime executable',
@@ -414,13 +414,15 @@ export function assertRuntimeManifestMatchesLock(
   lock: RemoteRuntimeLock,
   architecture: AgentArchitecture
 ): void {
-  const expected = lock.runtimes.opencode
+  const expected = manifest.runtimeId === 'opencode' ? lock.runtimes.opencode
+    : manifest.runtimeId === 'continue' ? lock.runtimes.continue : undefined
+  if (!expected) throw new Error('Runtime manifest does not match a locked profile')
   const target = manifest.platform === 'darwin'
     ? expected.targets['darwin-arm64']
     : expected.targets[architecture]
   if (
     target === undefined ||
-    manifest.runtimeId !== 'opencode' ||
+    manifest.runtimeId !== expected.provider ||
     manifest.provider !== expected.provider ||
     manifest.runtimeVersion !== expected.version ||
     manifest.architecture !== architecture ||

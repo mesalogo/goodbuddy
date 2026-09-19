@@ -21,7 +21,6 @@ import { remoteHostTargetIdentityKey } from './remote-host-target-identity'
 const MAXIMUM_METADATA_BYTES = 1024 * 1024
 const RUNTIME_REGISTRY_PATH =
   '.goodbuddy/runtimes/registry.json'
-const OPENCODE_ROOT = '.goodbuddy/runtimes/opencode'
 
 export type RemoteRuntimeInstallationPhase =
   | 'inspecting-host'
@@ -45,6 +44,7 @@ export interface RemoteRuntimeInstallationTargetResolver {
 }
 
 export type RemoteRuntimeActivationRequestOptions = {
+  runtimeId?: 'opencode' | 'continue'
   signal?: AbortSignal
   onProgress?: (phase: RemoteRuntimeInstallationPhase) => void
   agentInstallationId?: VerifiedAgentInstallationId
@@ -117,7 +117,8 @@ export class RemoteRuntimeInstallationManager {
     this.#coordinator.assertAvailable()
     options.signal?.throwIfAborted()
     emitOne(options.onProgress, 'inspecting-host')
-    const agentKey = options.agentInstallationId ?? ''
+    const runtimeId = options.runtimeId ?? 'opencode'
+    const agentKey = `${options.agentInstallationId ?? ''}\0${runtimeId}`
     const earlyCached =
       this.#coordinator.cachedForHost(hostId, agentKey)
     if (earlyCached !== undefined) {
@@ -154,6 +155,7 @@ export class RemoteRuntimeInstallationManager {
         this.#activateRegistered(
           target,
           options.agentInstallationId,
+          runtimeId,
           signal,
           progress
         )
@@ -171,6 +173,7 @@ export class RemoteRuntimeInstallationManager {
   async #activateRegistered(
     target: SshConnectionPoolTarget,
     agentInstallationId: VerifiedAgentInstallationId | undefined,
+    runtimeId: 'opencode' | 'continue',
     signal: AbortSignal,
     progress: (phase: RemoteRuntimeInstallationPhase) => void
   ): Promise<RemoteRuntimeInstallationIdentity> {
@@ -182,7 +185,7 @@ export class RemoteRuntimeInstallationManager {
       const probe = await lease.runAgentBootstrapProbe(signal)
       if (!probe.ready) {
         throw new RemoteRuntimeInstallationError(
-          `Remote host cannot activate OpenCode Runtime: ${probe.reason}`,
+          `Remote host cannot activate ${runtimeId} Runtime: ${probe.reason}`,
           'incompatible',
           probe.reason
         )
@@ -222,12 +225,12 @@ export class RemoteRuntimeInstallationManager {
       )
       const current = registry.current.find(
         (entry) =>
-          entry.runtimeId === 'opencode' &&
+          entry.runtimeId === runtimeId &&
           entry.architecture === probe.architecture
       )
       if (current === undefined) {
         throw new RemoteRuntimeInstallationError(
-          'The Host has no current OpenCode Runtime for this architecture',
+          `The Host has no current ${runtimeId} Runtime for this architecture`,
           'incompatible'
         )
       }
@@ -236,7 +239,7 @@ export class RemoteRuntimeInstallationManager {
         current.runtimeAdapterDigest
       if (runtimeAdapterDigest === undefined) {
         const manifestPath =
-          `${OPENCODE_ROOT}/${digestDirectoryName(
+          `.goodbuddy/runtimes/${runtimeId}/${digestDirectoryName(
             current.bundleDigest
           )}/manifest.json`
         const manifest =
@@ -288,7 +291,7 @@ export class RemoteRuntimeInstallationManager {
       }
       if (isMissingPathError(error)) {
         throw new RemoteRuntimeInstallationError(
-          'The Host has no current OpenCode Runtime',
+          `The Host has no current ${runtimeId} Runtime`,
           'incompatible',
           error
         )

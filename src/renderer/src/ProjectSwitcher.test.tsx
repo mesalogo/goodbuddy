@@ -1245,7 +1245,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
     expect(input).toHaveValue('/typed/path')
   })
 
-  it('saves Execute in one request without extra confirmation checklists', async () => {
+  it.each(['opencode', 'continue'])('saves %s Execute in one request without extra confirmation checklists', async (provider) => {
     const api = installRemoteApi()
     const { onRemoteCommitted } = renderSwitcher()
     fireEvent.click(screen.getByLabelText('新建项目'))
@@ -1263,6 +1263,9 @@ describe('ProjectSwitcher managed SSH projects', () => {
     })
     fireEvent.change(within(dialog).getByLabelText('远端工作目录'), {
       target: { value: '/srv/project' }
+    })
+    fireEvent.change(within(dialog).getByRole('combobox', { name: '新对话默认 Runtime' }), {
+      target: { value: provider }
     })
     const modeGroup = within(dialog)
       .getAllByRole('group', { name: '默认模式' })
@@ -1285,6 +1288,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
       intent: 'create',
       draft: expect.objectContaining({
         defaultWorkMode: 'execute',
+        runtimeSelection: { provider },
         hostId,
         remoteRootPath: '/srv/project'
       })

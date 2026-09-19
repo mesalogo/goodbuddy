@@ -142,7 +142,7 @@ function packageFileMode(path) {
   if (path.startsWith('agent/')) {
     return expectedAgentManifestMode(path.slice('agent/'.length))
   }
-  return /\/bin\/opencode$/u.test(path) ? '0755' : '0644'
+  return /(?:\/bin\/opencode|\/lib\/continue\/dist\/cn\.js)$/u.test(path) ? '0755' : '0644'
 }
 
 function stagePackagePayload(options) {
@@ -153,10 +153,13 @@ function stagePackagePayload(options) {
     join(
       staging,
       'runtime',
-      'opencode',
+      options.runtimeId ?? 'opencode',
       basename(options.runtimeBundle)
     )
   )
+  for (const runtime of options.additionalRuntimes ?? []) {
+    copyTree(runtime.bundleDirectory, join(staging, 'runtime', runtime.manifest.runtimeId, basename(runtime.bundleDirectory)))
+  }
   for (const [value, destination] of [
     [
       options.registry,
@@ -420,13 +423,22 @@ function assembleAgentPackage(options) {
     join(tmpdir(), `goodbuddy-agent-package-${target}-`)
   )
   try {
+    const additionalRuntimes = (options.additionalRuntimeBundles ?? []).map(directory => verifyRuntimeBundle(directory, {
+      platform, projectRoot, architecture, registry, lock: runtimeLock,
+      verificationEnvironment: options.testSigningIdentity ? 'test' : 'production'
+    }))
+    if (new Set([runtime, ...additionalRuntimes].map(value => value.manifest.runtimeId)).size !== additionalRuntimes.length + 1) {
+      throw new Error('Duplicate packaged Runtime')
+    }
     stagePackagePayload({
       staging,
       registry,
       agentLock,
       runtimeLock,
       agentBundle: resolve(options.agentBundle),
-      runtimeBundle: runtime.bundleDirectory
+      runtimeBundle: runtime.bundleDirectory,
+      runtimeId: runtime.manifest.runtimeId,
+      additionalRuntimes
     })
     const payload = payloadFiles(staging)
     const initial = {
@@ -447,6 +459,10 @@ function assembleAgentPackage(options) {
         bundleDigest: runtime.manifest.bundleDigest,
         protocol: runtime.manifest.protocol
       },
+      ...(additionalRuntimes.length ? { additionalRuntimes: additionalRuntimes.map(({ manifest }) => ({
+        runtimeId: manifest.runtimeId, provider: manifest.provider, version: manifest.runtimeVersion,
+        bundleDigest: manifest.bundleDigest, protocol: manifest.protocol
+      })) } : {}),
       contentDigest: `sha256:${'0'.repeat(64)}`,
       files: payload.files
     }
@@ -510,6 +526,7 @@ function buildAgentPackage(options) {
         : { signingIdentity })
     })
     const runtime = buildRuntimeBundle({
+      runtimeId: options.runtimeId,
       platform: options.platform ?? 'linux',
       projectRoot,
       architecture: options.architecture,
@@ -521,6 +538,16 @@ function buildAgentPackage(options) {
         ? { testSigningIdentity: options.testSigningIdentity }
         : { signingIdentity })
     })
+    const additionalRuntimeBundles = []
+    if (!options.runtimeId || options.runtimeId === 'opencode') {
+      if (!options.continueArchive) throw new Error('Default Agent package requires the locked Continue archive')
+      additionalRuntimeBundles.push(buildRuntimeBundle({
+        runtimeId: 'continue', platform: options.platform ?? 'linux', projectRoot,
+        architecture: options.architecture, runtimeArchive: options.continueArchive, outputRoot: runtimeRoot,
+        registry, ...(options.runtimeLock ? { lock: options.runtimeLock } : {}),
+        ...(options.testSigningIdentity ? { testSigningIdentity: options.testSigningIdentity } : { signingIdentity })
+      }).bundleDirectory)
+    }
     return assembleAgentPackage({
       ...options,
       projectRoot,
@@ -529,7 +556,8 @@ function buildAgentPackage(options) {
         ? {}
         : { signingIdentity }),
       agentBundle,
-      runtimeBundle: runtime.bundleDirectory
+      runtimeBundle: runtime.bundleDirectory,
+      additionalRuntimeBundles
     })
   } finally {
     rmSync(agentRoot, { recursive: true, force: true })
@@ -555,6 +583,9 @@ function parseArguments(argv) {
         '--minimum-desktop-version',
         '--node-archive',
         '--runtime-archive',
+        '--runtime-id',
+        '--continue-archive',
+        '--continue-bundle',
         '--agent-bundle',
         '--runtime-bundle',
         '--output'
@@ -579,10 +610,14 @@ function parseArguments(argv) {
     throw new Error('Agent package arguments are incomplete')
   }
   const common = {
+    runtimeId: options.runtimeId ?? 'opencode',
     platform: options.platform ?? 'linux',
     architecture: options.arch,
     minimumDesktopVersion: options.minimumDesktopVersion,
     output: resolve(options.output)
+  }
+  if (!['opencode', 'continue'].includes(common.runtimeId)) {
+    throw new Error('Unsupported Agent package Runtime')
   }
   targetName(common.architecture, common.platform)
   if (command === 'build') {
@@ -593,7 +628,8 @@ function parseArguments(argv) {
       command,
       ...common,
       nodeArchive: resolve(options.nodeArchive),
-      runtimeArchive: resolve(options.runtimeArchive)
+      runtimeArchive: resolve(options.runtimeArchive),
+      continueArchive: options.continueArchive ? resolve(options.continueArchive) : undefined
     }
   }
   if (!options.agentBundle || !options.runtimeBundle) {
@@ -603,7 +639,8 @@ function parseArguments(argv) {
     command,
     ...common,
     agentBundle: resolve(options.agentBundle),
-    runtimeBundle: resolve(options.runtimeBundle)
+    runtimeBundle: resolve(options.runtimeBundle),
+    additionalRuntimeBundles: options.continueBundle ? [resolve(options.continueBundle)] : []
   }
 }
 

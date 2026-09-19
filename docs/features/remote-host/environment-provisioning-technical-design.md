@@ -16,6 +16,10 @@ bootstrap 能力元数据。公开直连能力仍须完成本文末尾 GitHub/�
 [SSH 远程主机与 GoodBuddy Agent 实现说明](./technical-design.md)
 和源码为准。
 
+2026-09-18 补注：现有单 Runtime 复合包格式也支持 CN，安装器按包内 Runtime 身份
+选择并登记 payload。CN 开发包的 Linux 验证及联合分发的剩余工作见
+[执行清单验证记录](./runtime-checklist-validation.md#cn-部署与生命周期)。
+
 ## 设计结论
 
 将安装和更新从项目切换移到 Host 管理是合理的，原因如下：

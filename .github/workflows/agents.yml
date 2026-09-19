@@ -305,11 +305,13 @@ jobs:
           rm -rf "$directory"
           mkdir -p "$directory"
           agent_version="$(node -p "require('./agent-runtime-lock.json').agentVersion")"
+          continue_archive="$(node build/acquire-continue-runtime.cjs "$RUNNER_TEMP/goodbuddy-continue-runtime" "$AGENT_ARCH" "$AGENT_PLATFORM")"
           node build/agent-ci-bundle.cjs \
             --platform "$AGENT_PLATFORM" \
             --arch "$AGENT_ARCH" \
             --node-archive "$RUNNER_TEMP/goodbuddy-agent-node/$NODE_ARCHIVE" \
             --opencode-archive "$RUNNER_TEMP/goodbuddy-opencode-runtime/$OPENCODE_ARCHIVE" \
+            --continue-archive "$continue_archive" \
             --output-directory "$directory/bundle" \
             --archive "$directory/goodbuddy-agent-$agent_version-$AGENT_PLATFORM-$AGENT_ARCH.gbagent" |
             tee "$directory/result.json"

@@ -288,6 +288,45 @@ async function collectRun(
 }
 
 describe("OpenCodeRuntime embedded launcher", () => {
+  it('attributes todos to the current parent message and running call in reused sessions', async () => {
+    const setup = runClient([]);
+    let previousMessage = 'old-message';
+    const items = [{ content: 'task', status: 'pending', priority: 'low' }];
+    vi.mocked(setup.event.subscribe).mockImplementation(async () => ({
+      stream: (async function* () {
+        const current = vi.mocked(setup.session.promptAsync).mock.calls.at(-1)![0]!.messageID!;
+        const update = (parentID: string) => ({ type: 'message.updated', properties: { sessionID: 'session-1', info: { id: parentID + '-assistant', sessionID: 'session-1', role: 'assistant', parentID, time: { created: Date.now() } } } });
+        const tool = (parentID: string, todos: unknown[], status = 'running', callID = 'call') => ({ type: 'message.part.updated', properties: { sessionID: 'session-1', part: { id: 'part', callID, sessionID: 'session-1', messageID: parentID + '-assistant', type: 'tool', tool: 'todowrite', state: { status, input: { todos } } } } });
+        const todo = (sessionID: string, todos: unknown[]) => ({ type: 'todo.updated', properties: { sessionID, todos } });
+        yield update(previousMessage);
+        yield tool(previousMessage, items);
+        yield todo('session-1', items);
+        yield update(current);
+        yield tool(current, [], 'pending');
+        yield todo('session-1', items);
+        yield tool(current, items);
+        yield todo('child-session', items);
+        yield todo('session-1', [{ content: 'late old task', status: 'pending' }]);
+        yield todo('session-1', items);
+        yield completedToolEvent('call', 'todowrite');
+        yield tool(current, [], 'running', 'clear');
+        yield todo('session-1', []);
+        yield completedToolEvent('clear', 'todowrite');
+        previousMessage = current;
+        yield { type: 'session.idle', properties: { sessionID: 'session-1' } };
+      })()
+    }) as never);
+    const runtime = embeddedRuntime(setup.client);
+    try {
+      for (let round = 0; round < 2; round++) {
+        const events = await collectRun(runtime);
+        expect(events.filter(event => event.type === 'checklist')).toEqual([
+          { type: 'checklist', requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef', checklist: { source: 'opencode', items } },
+          { type: 'checklist', requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef', checklist: { source: 'opencode', items: [] } }
+        ]);
+      }
+    } finally { await runtime.dispose(); }
+  });
   it.each(["native", "profile"] as const)(
     "disables unused automatic Git snapshots with %s model configuration",
     async (configuration) => {
@@ -4831,6 +4870,7 @@ describe("OpenCodeRuntime native customization", () => {
         command: "review",
         arguments: "--staged",
         agent: "build",
+        messageID: expect.stringMatching(/^msg_/u),
       },
       expect.objectContaining({
         signal: expect.any(AbortSignal),

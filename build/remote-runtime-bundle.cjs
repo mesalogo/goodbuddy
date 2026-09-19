@@ -49,6 +49,17 @@ const profileDigests = Object.freeze({
     "sha256:ac7696abe504bbea444d8ad80dd8faa96437e6dbb27ed987ce46e1045f3dd365",
   acp: "sha256:0e3764ab897258bc0234162357c2eefc3faeb9918080ae81b60e2084ed7996a6",
 });
+function runtimeProfileDigests(runtimeId) {
+  if (runtimeId === 'opencode') return profileDigests;
+  if (runtimeId !== 'continue') throw new Error('Unsupported Runtime');
+  return {
+    adapter: `sha256:${sha256('GoodBuddy Continue HTTP ACP facade v1')}`,
+    acp: `sha256:${sha256(canonicalJson({ protocolVersion: 1, capabilities: {
+      loadSession: true, mcpCapabilities: { http: true }, promptCapabilities: { image: true },
+      sessionCapabilities: { resume: {}, close: {} }
+    } }))}`
+  };
+}
 const fixedLimits = Object.freeze({
   // Zero leaves prompt duration to its requested deadline and cancellation.
   maximumPromptRuntimeMilliseconds: 0,
@@ -365,9 +376,9 @@ function validateManifestShape(manifest) {
   if (
     manifest?.formatVersion !== 2 ||
     manifest.product !== "GoodBuddy" ||
-    manifest.runtimeId !== "opencode" ||
-    manifest.runtimeVersion !== "1.18.29" ||
-    manifest.provider !== "opencode" ||
+    !['opencode', 'continue'].includes(manifest.runtimeId) ||
+    manifest.runtimeVersion !== (manifest.runtimeId === 'continue' ? '1.5.47' : '1.18.29') ||
+    manifest.provider !== manifest.runtimeId ||
     !(
       manifest.platform === "linux" ||
       (manifest.platform === "darwin" && manifest.architecture === "arm64")
@@ -396,10 +407,10 @@ function validateManifestShape(manifest) {
     throw new Error("Runtime manifest limits contract is invalid");
   }
   if (
-    manifest.entrypoint?.identity !== "opencode-acp" ||
-    manifest.entrypoint.path !== "bin/opencode" ||
+    manifest.entrypoint?.identity !== `${manifest.runtimeId}-acp` ||
+    manifest.entrypoint.path !== (manifest.runtimeId === 'continue' ? 'lib/continue/dist/cn.js' : 'bin/opencode') ||
     !/^[a-f0-9]{64}$/u.test(manifest.entrypoint.sha256) ||
-    JSON.stringify(manifest.entrypoint.argvPrefix) !== JSON.stringify(["acp"])
+    JSON.stringify(manifest.entrypoint.argvPrefix) !== JSON.stringify(manifest.runtimeId === 'continue' ? [] : ['acp'])
   ) {
     throw new Error("Runtime manifest entrypoint is invalid");
   }
@@ -436,13 +447,14 @@ function assertManifestMatchesLock(
   architecture,
   platform = "linux",
 ) {
-  const expected = lock.runtimes.opencode;
+  const expected = lock.runtimes[manifest.runtimeId];
+  if (!expected) throw new Error('Runtime is not locked');
   const target =
     expected.targets[
       platform === "linux" ? architecture : targetName(architecture, platform)
     ];
   if (
-    manifest.runtimeId !== "opencode" ||
+    manifest.runtimeId !== expected.provider ||
     manifest.runtimeVersion !== expected.version ||
     manifest.provider !== expected.provider ||
     manifest.platform !== platform ||
@@ -457,8 +469,8 @@ function assertManifestMatchesLock(
       JSON.stringify(expected.allowedEnvironmentNames) ||
     manifest.protocol?.major !== expected.protocol.major ||
     manifest.protocol?.minor !== expected.protocol.minor ||
-    manifest.adapterDigest !== profileDigests.adapter ||
-    manifest.acpCapabilitiesDigest !== profileDigests.acp
+    manifest.adapterDigest !== runtimeProfileDigests(manifest.runtimeId).adapter ||
+    manifest.acpCapabilitiesDigest !== runtimeProfileDigests(manifest.runtimeId).acp
   ) {
     throw new Error(
       "Runtime manifest does not match the locked OpenCode profile",
@@ -572,7 +584,7 @@ function verifyBundleDirectory(bundleDirectoryInput, options = {}) {
   ) {
     throw new Error("Runtime entrypoint payload is missing");
   }
-  assertElfArchitecture(
+  if (manifest.runtimeId === 'opencode') assertElfArchitecture(
     join(bundleDirectory, ...manifest.entrypoint.path.split("/")),
     architecture,
     platform,
@@ -584,8 +596,8 @@ function verifyBundleDirectory(bundleDirectoryInput, options = {}) {
   };
 }
 
-function lockedArchive(lock, architecture, archivePath, platform = "linux") {
-  const input = resolveLockedRuntimeInput(lock, architecture, platform);
+function lockedArchive(lock, architecture, archivePath, platform = "linux", runtimeId = 'opencode') {
+  const input = resolveLockedRuntimeInput(lock, architecture, platform, runtimeId);
   if (!archivePath || !existsSync(archivePath)) {
     throw new Error(`Locked OpenCode archive is required: ${input.archive}`);
   }
@@ -603,14 +615,15 @@ function lockedArchive(lock, architecture, archivePath, platform = "linux") {
       `Runtime archive integrity mismatch for ${targetName(architecture)}`,
     );
   }
-  return lock.runtimes.opencode.targets[
+  return lock.runtimes[runtimeId].targets[
     platform === "linux" ? architecture : targetName(architecture, platform)
   ];
 }
 
-function resolveLockedRuntimeInput(lock, architecture, platform = "linux") {
+function resolveLockedRuntimeInput(lock, architecture, platform = "linux", runtimeId = 'opencode') {
   targetName(architecture, platform);
-  const runtime = lock.runtimes.opencode;
+  const runtime = lock.runtimes[runtimeId];
+  if (!runtime) throw new Error('Runtime is not locked');
   const target =
     runtime.targets[
       platform === "linux" ? architecture : targetName(architecture, platform)
@@ -619,7 +632,7 @@ function resolveLockedRuntimeInput(lock, architecture, platform = "linux") {
     packageName: target.package,
     version: runtime.version,
     integrity: target.integrity,
-    archive: `${target.package}-${runtime.version}.tgz`,
+    archive: `${target.package.replace('@', '').replace('/', '-')}-${runtime.version}.tgz`,
   };
 }
 
@@ -636,24 +649,24 @@ function createManifest(bundleDirectory, metadata) {
         path,
         size: statSync(filePath).size,
         sha256: sha256FileSync(filePath),
-        mode: path === "bin/opencode" ? "0755" : "0644",
+        mode: path === metadata.runtime.entrypoint ? "0755" : "0644",
       };
     });
-  const entrypoint = files.find((file) => file.path === "bin/opencode");
+  const entrypoint = files.find((file) => file.path === metadata.runtime.entrypoint);
   if (!entrypoint) {
     throw new Error("Runtime entrypoint is missing");
   }
   const initial = {
     formatVersion: 2,
     product: "GoodBuddy",
-    runtimeId: "opencode",
+    runtimeId: metadata.runtime.provider,
     runtimeVersion: metadata.runtime.version,
     provider: metadata.runtime.provider,
     platform: metadata.platform ?? "linux",
     architecture: metadata.architecture,
     signingKeyId: metadata.signingKeyId,
     bundleDigest: `sha256:${"0".repeat(64)}`,
-    adapterDigest: profileDigests.adapter,
+    adapterDigest: runtimeProfileDigests(metadata.runtime.provider).adapter,
     sourcePackage: metadata.sourcePackage,
     entrypoint: {
       identity: metadata.runtime.entrypointIdentity,
@@ -664,15 +677,15 @@ function createManifest(bundleDirectory, metadata) {
     files,
     licenses: [
       {
-        package: "opencode-ai",
+        package: metadata.runtime.provider === 'continue' ? '@continuedev/cli' : 'opencode-ai',
         version: metadata.runtime.version,
-        spdx: "MIT",
-        path: "licenses/opencode-MIT.txt",
+        spdx: metadata.runtime.provider === 'continue' ? 'Apache-2.0' : 'MIT',
+        path: metadata.runtime.provider === 'continue' ? 'licenses/continue-Apache-2.0.txt' : 'licenses/opencode-MIT.txt',
       },
     ],
     allowedEnvironmentNames: metadata.runtime.allowedEnvironmentNames,
     protocol: metadata.runtime.protocol,
-    acpCapabilitiesDigest: profileDigests.acp,
+    acpCapabilitiesDigest: runtimeProfileDigests(metadata.runtime.provider).acp,
     limits: fixedLimits,
   };
   return {
@@ -685,11 +698,11 @@ function defaultOutputRoot(projectRoot = root) {
   return join(projectRoot, ".remote-runtime-resources");
 }
 
-function bundleDirectory(outputRoot, architecture, digest, platform = "linux") {
+function bundleDirectory(outputRoot, architecture, digest, platform = "linux", runtimeId = 'opencode') {
   return join(
     outputRoot,
     targetName(architecture, platform),
-    "opencode",
+    runtimeId,
     digest.slice("sha256:".length),
   );
 }
@@ -699,12 +712,14 @@ function buildRuntimeBundle(options) {
   const architecture = options.architecture;
   const platform = options.platform ?? "linux";
   const lock = options.lock ?? readRemoteRuntimeLock(projectRoot);
-  const runtime = lock.runtimes.opencode;
+  const runtimeId = options.runtimeId ?? 'opencode';
+  const runtime = lock.runtimes[runtimeId];
   const sourcePackage = lockedArchive(
     lock,
     architecture,
     options.runtimeArchive,
     platform,
+    runtimeId,
   );
   const registry = options.registry ?? readTrustedKeyRegistry(projectRoot);
   const signingIdentity =
@@ -730,6 +745,7 @@ function buildRuntimeBundle(options) {
       sync: true,
       strict: true,
       filter(path) {
+        if (runtimeId === 'continue') return path === 'package/package.json' || path.startsWith('package/dist/') || path === 'package/LICENSE';
         return (
           path === "package/package.json" || path === "package/bin/opencode"
         );
@@ -753,6 +769,15 @@ function buildRuntimeBundle(options) {
         "OpenCode source package version does not match the lock",
       );
     }
+    if (runtimeId === 'continue') {
+      mkdirSync(join(staging, 'lib'), { mode: 0o700 });
+      cpSync(join(extracted, 'package'), join(staging, 'lib', 'continue'), { recursive: true });
+      for (const file of listFiles(staging)) chmodSync(file, 0o644);
+      chmodSync(join(staging, runtime.entrypoint), 0o755);
+      mkdirSync(join(staging, 'licenses'), { mode: 0o700 });
+      // The pinned CN package declares Apache-2.0 but omits the license text.
+      copyFileSync(join(projectRoot, 'node_modules', '@agentclientprotocol', 'sdk', 'LICENSE'), join(staging, 'licenses', 'continue-Apache-2.0.txt'));
+    } else {
     mkdirSync(join(staging, "bin"), { mode: 0o700 });
     copyFileSync(
       join(extracted, "package", "bin", "opencode"),
@@ -780,6 +805,7 @@ function buildRuntimeBundle(options) {
       join(staging, "licenses", "opencode-MIT.txt"),
     );
     chmodSync(join(staging, "licenses", "opencode-MIT.txt"), 0o644);
+    }
     const manifest = createManifest(staging, {
       platform,
       architecture,
@@ -811,6 +837,7 @@ function buildRuntimeBundle(options) {
       architecture,
       manifest.bundleDigest,
       platform,
+      runtimeId,
     );
     mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
     if (existsSync(destination)) {
@@ -849,6 +876,8 @@ function buildRuntimeBundle(options) {
 
 function createRuntimeArchive(bundleDirectoryInput, archivePath) {
   const directory = resolve(bundleDirectoryInput);
+  const manifest = readJson(join(directory, manifestFileName), 'Runtime manifest');
+  const modes = new Map(manifest.files.map(file => [file.path, parseInt(file.mode, 8)]));
   const entries = listFiles(directory)
     .map((filePath) => posixRelative(directory, filePath))
     .sort(compareUtf8);
@@ -862,6 +891,9 @@ function createRuntimeArchive(bundleDirectoryInput, archivePath) {
       portable: true,
       noPax: true,
       mtime: new Date(0),
+      onWriteEntry(entry) {
+        if (entry.stat) entry.stat.mode = modes.get(entry.path) ?? 0o644;
+      },
     },
     entries,
   );
@@ -896,6 +928,8 @@ function importRuntimeArchive(archivePath, options) {
       outputRoot,
       architecture,
       verified.manifest.bundleDigest,
+      verified.manifest.platform,
+      verified.manifest.runtimeId,
     );
     mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
     if (existsSync(destination)) {
@@ -917,8 +951,8 @@ function importRuntimeArchive(archivePath, options) {
   }
 }
 
-function findOnlyBundle(outputRoot, architecture) {
-  const runtimeRoot = join(outputRoot, targetName(architecture), "opencode");
+function findOnlyBundle(outputRoot, architecture, runtimeId = 'opencode') {
+  const runtimeRoot = join(outputRoot, targetName(architecture), runtimeId);
   const entries = existsSync(runtimeRoot)
     ? readdirSync(runtimeRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
@@ -954,6 +988,7 @@ function parseArguments(argv) {
   const allowed = new Set([
     "--arch",
     "--runtime-archive",
+    "--runtime-id",
     "--archive",
     "--output-root",
     "--bundle",
@@ -997,6 +1032,7 @@ function main(argv = process.argv.slice(2)) {
   if (options.command === "build") {
     const verified = buildRuntimeBundle({
       architecture: options.arch,
+      runtimeId: options.runtimeId,
       runtimeArchive: resolve(options.runtimeArchive ?? ""),
       outputRoot,
     });
@@ -1006,7 +1042,7 @@ function main(argv = process.argv.slice(2)) {
           root,
           "dist",
           "remote-runtime-bundles",
-          `goodbuddy-opencode-${targetName(options.arch)}.tar`,
+          `goodbuddy-${options.runtimeId ?? 'opencode'}-${targetName(options.arch)}.tar`,
         );
     createRuntimeArchive(verified.bundleDirectory, archivePath);
     console.log(
@@ -1027,7 +1063,7 @@ function main(argv = process.argv.slice(2)) {
   verifyBundleDirectory(
     options.bundle
       ? resolve(options.bundle)
-      : findOnlyBundle(outputRoot, options.arch),
+      : findOnlyBundle(outputRoot, options.arch, options.runtimeId),
     { architecture: options.arch },
   );
   console.log(`Remote Runtime bundle verified: ${targetName(options.arch)}`);

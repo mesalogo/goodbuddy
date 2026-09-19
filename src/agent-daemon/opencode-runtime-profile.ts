@@ -45,14 +45,19 @@ export function createOpenCodeLaunchProfile(input: {
   };
 }): OpenCodeLaunchProfile {
   const manifest = remoteRuntimeBundleManifestSchema.parse(input.manifest);
+  const isContinue = manifest.runtimeId === "continue" && manifest.provider === "continue";
   if (
-    manifest.runtimeId !== "opencode" ||
+    !isContinue && (manifest.runtimeId !== "opencode" ||
     manifest.provider !== "opencode" ||
     manifest.entrypoint.identity !== "opencode-acp" ||
     manifest.entrypoint.argvPrefix.length !== 1 ||
-    manifest.entrypoint.argvPrefix[0] !== "acp"
+    manifest.entrypoint.argvPrefix[0] !== "acp")
   ) {
     throw new Error("Runtime manifest is not the fixed OpenCode ACP profile");
+  }
+  if (isContinue && (manifest.entrypoint.identity !== "continue-acp" ||
+    manifest.entrypoint.path !== "lib/continue/dist/cn.js" || manifest.entrypoint.argvPrefix.length !== 0 || !input.modelBridge)) {
+    throw new Error("Continue requires its managed ACP facade and model bridge");
   }
   if (
     [...manifest.allowedEnvironmentNames].sort().join("\0") !==
@@ -135,25 +140,26 @@ export function createOpenCodeLaunchProfile(input: {
             "--work-mode",
             input.workMode,
             ...(modelBridge.sharedSessions ? ["--shared-sessions", "true"] : []),
-            "--opencode-entrypoint",
+            ...(isContinue ? ["--runtime-id", "continue"] : []),
+            isContinue ? "--continue-entrypoint" : "--opencode-entrypoint",
             executablePath,
           ],
         };
 
   const environmentBase = {
     ...executeEnvironment(process.env, workspaceDirectory),
-    ...OPEN_CODE_RUNTIME_ENVIRONMENT,
-    OPENCODE_CONFIG_DIR: join(bundleDirectory, "config", "opencode"),
+    ...(isContinue ? {} : { ...OPEN_CODE_RUNTIME_ENVIRONMENT,
+      OPENCODE_CONFIG_DIR: join(bundleDirectory, "config", "opencode") }),
   };
   const permission = input.workMode === "ask" ? "ask" : "allow";
   const environment = {
     ...environmentBase,
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+    ...(isContinue ? {} : { OPENCODE_CONFIG_CONTENT: JSON.stringify({
       // Native snapshot summaries are not consumed by GoodBuddy.
       snapshot: false,
       permission,
       agent: { build: { permission } },
-    }),
+    }) }),
   };
   return {
     ...runtimeCommand,

@@ -1,5 +1,5 @@
 /**
- * OpenCode's ACP adapter omits native questions and child sessions. Native
+ * OpenCode's ACP adapter omits native todos, questions and child sessions. Native
  * events use ACP metadata; question replies use a process-local capability.
  */
 export function openCodeSubagentPluginSource(modelBridgeOrigin?: string): string {
@@ -155,6 +155,7 @@ async function plugin(input?: {
         requestID?: string
         status?: { type?: string }
         sessionID?: string
+        todos?: unknown
         part?: {
           sessionID?: string
           type: string
@@ -168,6 +169,15 @@ async function plugin(input?: {
     } }) => {
       const properties = event.properties
       if (closed) return
+      if (event.type === 'todo.updated' && properties.sessionID) {
+        // Keep the native Session identity: child todos must not become root todos.
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: properties.sessionID,
+          update: { sessionUpdate: 'tool_call_update', toolCallId: 'goodbuddy-native-todos',
+            _meta: { goodbuddyTodoEvent: event } }
+        } }) + '\n')
+        return
+      }
       if (event.type === 'session.status' && properties.status?.type === 'idle' && properties.sessionID) {
         for (const [key, route] of modelMessages) {
           if (route.sessionId === properties.sessionID) modelMessages.delete(key)

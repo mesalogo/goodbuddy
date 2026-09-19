@@ -1116,7 +1116,10 @@ export class ProtocolRemoteRuntimeChannel
         this.#state.client,
         method,
         params,
-        this.#state.controlTimeoutMs,
+        // Cold OpenCode ACP initialization on the shared Host exceeds 15 seconds.
+        method === 'runtime/startPrompt'
+          ? Math.max(this.#state.controlTimeoutMs, 30_000)
+          : this.#state.controlTimeoutMs,
         this.#lifetime.signal
       )
       this.#assertCurrent()

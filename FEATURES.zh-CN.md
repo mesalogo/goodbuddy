@@ -140,6 +140,8 @@
 
 ### 开放接口、团队协作与远程执行
 
+- [x] **远程 Continue 交付**：已接入 CN 1.5.47 受管包、Agent HTTP-to-ACP 适配、模型路由、项目选择和原生清单。默认包同时携带 OC/CN；Windows 桌面到 Linux x64 已通过安装、真实模型清单更新、长清单、取消及重启恢复验证。开发包尚未发布，详见[验证记录](./docs/features/remote-host/runtime-checklist-validation.md)。
+
 - [x] **远程任务委派**：仅在用户显式配置端点和令牌后启用，按全局内网兼容模式使用 HTTP(S)，结果进入持久化发件箱。
 - [ ] **Headless Runtime API**（规划中）：提供本机优先的任务、事件、状态和成果 API，以及有范围、有效期、限流和撤销能力的令牌。
 - [ ] **GoodBuddy Team Hub**（规划中）：以可选服务提供组织、RBAC、项目共享、远程 Agent、策略下发和租户审计。

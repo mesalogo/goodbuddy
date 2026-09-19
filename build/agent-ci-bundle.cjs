@@ -38,6 +38,7 @@ function parseArguments(argv) {
         '--platform',
         '--node-archive',
         '--opencode-archive',
+        '--continue-archive',
         '--output-directory',
         '--archive'
       ].includes(argument)
@@ -63,6 +64,7 @@ function parseArguments(argv) {
   for (const key of [
     'nodearchive',
     'opencodearchive',
+    'continuearchive',
     'outputdirectory',
     'archive'
   ]) {
@@ -77,6 +79,7 @@ function parseArguments(argv) {
     platform,
     nodeArchive: resolve(options.nodearchive),
     opencodeArchive: resolve(options.opencodearchive),
+    continueArchive: resolve(options.continuearchive),
     outputDirectory: resolve(options.outputdirectory),
     archive: resolve(options.archive)
   }
@@ -160,6 +163,11 @@ async function buildCiAgentBundle(options) {
       registry: signing.registry,
       testSigningIdentity: identity
     })
+    const continueRuntime = buildRuntimeBundle({
+      platform, runtimeId: 'continue', lock: runtimeLock, projectRoot, architecture: options.arch,
+      runtimeArchive: options.continueArchive, outputRoot: runtimeRoot,
+      registry: signing.registry, testSigningIdentity: identity
+    })
     const assemble = (archive) =>
       assembleAgentPackage({
         platform,
@@ -170,6 +178,7 @@ async function buildCiAgentBundle(options) {
         output: archive,
         agentBundle: options.outputDirectory,
         runtimeBundle: runtime.bundleDirectory,
+        additionalRuntimeBundles: [continueRuntime.bundleDirectory],
         agentLock: lock,
         runtimeLock,
         registry: signing.registry,

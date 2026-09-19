@@ -1,4 +1,5 @@
 import spawn from 'cross-spawn'
+import { parseContinueChecklist, runtimeChecklistSchema, type RuntimeChecklist } from '../../shared/runtime-checklist'
 import { toolOperationSummary } from './tool-operation-summary'
 import { createHash, randomBytes } from 'node:crypto'
 import {
@@ -113,6 +114,7 @@ const continueHostStreamEventSchema = z.discriminatedUnion('type', [
       name: z.string().min(1).max(200),
       state: z.enum(['running', 'completed', 'failed']),
       input: z.string().max(4_000).optional(),
+      runtimeChecklist: runtimeChecklistSchema.optional(),
       summary: z.string().max(240).optional(),
       output: z.string().max(16_000).optional(),
       error: z.string().max(1_000).optional()
@@ -179,6 +181,7 @@ export type ContinueHostUsage = {
 }
 
 export type ContinueHostTool = {
+  runtimeChecklist?: RuntimeChecklist
   callId: string
   name: string
   state: 'pending' | 'running' | 'completed' | 'failed'
@@ -197,6 +200,7 @@ export type ContinueHostRunResult = {
 }
 
 export type ContinueHostStreamEvent =
+  | { type: 'checklist'; checklist: RuntimeChecklist }
   | { type: 'text'; delta: string }
   | { type: 'tool'; tool: ContinueHostTool }
   | {
@@ -729,6 +733,7 @@ function extractContinueTools(
           ? boundedToolDetail(state.output, 16_000)
           : undefined
       tools.set(callId, {
+        runtimeChecklist: parseContinueChecklist(name, (toolFunction as Record<string, unknown>).arguments),
         callId,
         name: name.trim().slice(0, 200),
         state: normalizedState,
@@ -756,6 +761,7 @@ function mergeContinueTools(
       ...previous,
       ...tool,
       input: tool.input ?? previous?.input,
+      runtimeChecklist: tool.runtimeChecklist ?? previous?.runtimeChecklist,
       summary: tool.summary ?? previous?.summary,
       output: tool.output ?? previous?.output,
       error: tool.error ?? previous?.error
@@ -987,7 +993,7 @@ export class ContinueHostAdapter {
     patched = replaceExactly(
       patched,
       'state:"running",input:(()=>',
-      `state:"running",summary:(${toolOperationSummary.toString()})(l),input:(()=>`
+      `state:"running",runtimeChecklist:(${parseContinueChecklist.toString()})(u,l),summary:(${toolOperationSummary.toString()})(l),input:(()=>`
     )
     patched = replaceExactly(
       patched,
@@ -1600,6 +1606,7 @@ export class ContinueHostAdapter {
     let streamTruncated = false
     let streamEventBytes = 0
     const observedToolCallIds = new Set<string>()
+    const submittedChecklists = new Set<string>()
     try {
       const initialState = await this.waitForStartup(
         child,
@@ -1692,6 +1699,7 @@ export class ContinueHostAdapter {
             continue
           }
           const tool: ContinueHostTool = {
+            runtimeChecklist: event.runtimeChecklist,
             callId: event.callId,
             name: event.name,
             state: event.state,
@@ -1711,6 +1719,12 @@ export class ContinueHostAdapter {
             type: 'tool',
             tool: observedTools.find((item) => item.callId === tool.callId)!
           })
+        }
+        for (const tool of observedTools) {
+          if (tool.name === 'Checklist' && tool.state === 'completed' && tool.runtimeChecklist && !submittedChecklists.has(tool.callId)) {
+            submittedChecklists.add(tool.callId)
+            await runOptions.onEvent?.({ type: 'checklist', checklist: tool.runtimeChecklist })
+          }
         }
         const pendingQuestion = state.goodbuddyQuestion
         if (

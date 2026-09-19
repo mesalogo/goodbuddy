@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   AgentSideConnection,
   PROTOCOL_VERSION,
@@ -35,7 +38,7 @@ import type {
   RemotePromptOperationReconciliationResult,
   RemoteRuntimeChannel
 } from './remote-runtime-channel'
-import { MemoryRuntimeSessionBindingStore } from './runtime-session-binding-store'
+import { MemoryRuntimeSessionBindingStore, SqliteRuntimeSessionBindingStore, type RuntimeSessionBindingStore } from './runtime-session-binding-store'
 import { AssistantDatabase } from '../assistant/assistant-database'
 
 type FakeServer = {
@@ -277,7 +280,7 @@ function runtime(
 
 function factoryRuntime(
   factory: (bindingId: string) => Promise<RemoteRuntimeChannel>,
-  store = new MemoryRuntimeSessionBindingStore(),
+  store: RuntimeSessionBindingStore = new MemoryRuntimeSessionBindingStore(),
   overrides: Partial<AcpRemoteRuntimeOptions> = {}
 ): AcpRemoteRuntime {
   return new AcpRemoteRuntime({
@@ -1459,7 +1462,7 @@ describe('AcpRemoteRuntime', () => {
       'text',
       'reasoning',
       'tool',
-      'status',
+      'checklist',
       'context-metrics',
       'model-usage',
       'done'
@@ -2591,6 +2594,8 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
   }
 
   function ownedChannel(options?: {
+    runtimeId?: 'opencode' | 'continue'
+    bindingStore?: RuntimeSessionBindingStore
     updates?: SessionUpdate[]
     state?: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown'
     terminalPayload?: unknown
@@ -2803,11 +2808,12 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
       })),
       close: vi.fn(async () => {})
     }
-    const store = new MemoryRuntimeSessionBindingStore()
+    const store = options?.bindingStore ?? new MemoryRuntimeSessionBindingStore()
     const instance = factoryRuntime(
       async () => channel,
       store,
       {
+        runtimeId: options?.runtimeId ?? 'opencode',
         modelBridgePolicy,
         modelProfile: ownedModelProfile
       }
@@ -2824,6 +2830,166 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
       escalateCancellation: channel.escalateCancellation
     }
   }
+
+  it.each(['continue', 'opencode'] as const)('continues %s after reopening the desktop binding database', async (runtimeId) => {
+    const directory = mkdtempSync(join(tmpdir(), 'remote-runtime-restart-'))
+    const databasePath = join(directory, 'bindings.sqlite')
+    let store = new SqliteRuntimeSessionBindingStore(databasePath)
+    const first = ownedChannel({ runtimeId, bindingStore: store })
+    let replacement: AcpRemoteRuntime | undefined
+    try {
+      await collect(first.instance.run(request, new AbortController().signal))
+      const original = (await store.getByConversation(request.conversationId))!
+      await first.instance.dispose()
+      store.close()
+      store = new SqliteRuntimeSessionBindingStore(databasePath)
+      const next = ownedChannel({ runtimeId, bindingStore: store })
+      replacement = next.instance
+      if (runtimeId === 'continue') {
+        next.startOwnedPrompt.mockImplementationOnce(async input => {
+          if ('acpSessionId' in input) throw new Error('Continue Session is unavailable')
+          return { bindingId: input.bindingId, operationId: input.operationId, requestId: input.requestId,
+            sessionId: 'owned-session', state: 'running', latestSemanticSequence: '0' }
+        })
+      }
+      const history = [{ role: 'user' as const, content: 'previous question' },
+        { role: 'assistant' as const, content: 'previous answer' }]
+      const events = await collect(replacement.run({ ...request, requestId: 'second', history }, new AbortController().signal))
+      expect(events.some(event => event.type === 'done')).toBe(true)
+      const resumed = (await store.getByConversation(request.conversationId))!
+      const start = next.startOwnedPrompt.mock.calls[0]![0]
+      if (runtimeId === 'continue') {
+        expect(resumed.bindingId).not.toBe(original.bindingId)
+        expect(await store.getById(original.bindingId)).toMatchObject({ state: 'closed' })
+        expect(start).not.toHaveProperty('acpSessionId')
+        expect(JSON.stringify(start)).toContain('previous answer')
+        expect(resumed.promptSequence).toBe(0)
+      } else {
+        expect(resumed.bindingId).toBe(original.bindingId)
+        expect(start).toHaveProperty('acpSessionId', original.acpSessionId)
+        expect(resumed.promptSequence).toBe(1)
+      }
+      await collect(replacement.run({ ...request, requestId: 'third' }, new AbortController().signal))
+      expect(await store.getByConversation(request.conversationId)).toMatchObject({
+        bindingId: resumed.bindingId, state: 'ready', promptSequence: resumed.promptSequence + 1
+      })
+      expect(next.startOwnedPrompt).toHaveBeenCalledTimes(2)
+      expect(next.startOwnedPrompt.mock.calls[1]![0]).toHaveProperty('acpSessionId', resumed.acpSessionId)
+      expect(next.attachOwnedPrompt).not.toHaveBeenCalled()
+    } finally {
+      await replacement?.dispose()
+      await first.instance.dispose()
+      store.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.each([true, false])('attaches a cached request after start rejection without advancing its prompt sequence (available: %s)', async available => {
+    const fixture = ownedChannel({ runtimeId: 'continue' })
+    fixture.startOwnedPrompt.mockRejectedValueOnce(new Error('Remote Runtime runtime/startPrompt rejected RPC -32602'))
+    try {
+      await expect(collect(fixture.instance.run(request, new AbortController().signal))).rejects.toThrow('runtime/startPrompt')
+      const pending = (await fixture.store.getByConversation(request.conversationId))!
+      fixture.attachOwnedPrompt.mockImplementationOnce(async input => {
+        expect(fixture.channel.close).not.toHaveBeenCalled()
+        if (!available) throw Object.assign(new Error('Remote Runtime runtime/attachPrompt rejected RPC -32602'), {
+          remoteRequestOutcome: 'rejected', remoteMethod: 'runtime/attachPrompt'
+        })
+        return { ...input, sessionId: 'owned-session', state: 'running', latestSemanticSequence: '0' }
+      })
+      const recovery = collect(fixture.instance.run({ ...request, remoteRecoveryOnly: true }, new AbortController().signal))
+      if (available) {
+        expect((await recovery).some(event => event.type === 'done')).toBe(true)
+      } else {
+        await expect(recovery).rejects.toBeInstanceOf(RemotePromptRecoveryUnavailableError)
+      }
+      expect(await fixture.store.getByConversation(request.conversationId)).toMatchObject({
+        bindingId: pending.bindingId, state: available ? 'ready' : 'prompt-running', promptSequence: pending.promptSequence
+      })
+      expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+      expect(fixture.attachOwnedPrompt).toHaveBeenCalledOnce()
+    } finally {
+      await fixture.instance.dispose()
+    }
+  })
+
+  it('replays complete native checklists and clears with stable provenance without starting another prompt', async () => {
+    const items = [{ content: 'full content '.repeat(500).trim(), status: 'cancelled', priority: 'low' }]
+    const native = (todos: unknown, sessionID = 'owned-session'): SessionUpdate => ({
+      sessionUpdate: 'tool_call_update', toolCallId: 'goodbuddy-native-todos',
+      _meta: { goodbuddyTodoEvent: { type: 'todo.updated', properties: { sessionID, todos } } }
+    })
+    const fixture = ownedChannel({ updates: [
+      native(items), native([], 'child-session'), native([{ content: 'bad', status: 'failed' }]),
+      { sessionUpdate: 'tool_call', toolCallId: 'todo-tool', title: 'todowrite', status: 'completed', rawInput: { todos: [] } },
+      native([])
+    ] })
+    const first: RuntimeEvent[] = []
+    for await (const event of fixture.instance.run(request, new AbortController().signal)) {
+      first.push(event)
+      if (event.type === 'done') break
+    }
+    const replacement = factoryRuntime(async () => fixture.channel, fixture.store, { modelBridgePolicy, modelProfile: ownedModelProfile })
+    try {
+      const replay = await collect(replacement.run({ ...request, remoteRecoveryOnly: true, remoteSemanticAfterSequence: '0' }, new AbortController().signal))
+      const checklists = first.filter(event => event.type === 'checklist')
+      expect(checklists).toHaveLength(2)
+      expect(checklists[0]).toMatchObject({ requestId: request.requestId, checklist: { source: 'opencode', items } })
+      expect(checklists[1]).toMatchObject({ checklist: { source: 'opencode', items: [] } })
+      expect(replay.filter(event => event.type === 'checklist')).toEqual(checklists)
+      expect(first.filter(event => event.type === 'tool')).toHaveLength(1)
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledTimes(1)
+      expect(fixture.attachOwnedPrompt).toHaveBeenCalledTimes(1)
+    } finally { await replacement.dispose(); await fixture.instance.dispose() }
+  })
+
+  it('replays complete Continue checklists and ignores wrong-source and malformed updates', async () => {
+    const items = [{ content: 'complete checklist content '.repeat(300).trim(), status: 'pending' }]
+    const native = (checklist: unknown): SessionUpdate => ({
+      sessionUpdate: 'tool_call_update', toolCallId: 'goodbuddy-native-checklist',
+      _meta: { goodbuddyChecklist: checklist as never }
+    })
+    const fixture = ownedChannel({ runtimeId: 'continue', updates: [
+      native({ source: 'continue', items }), native({ source: 'opencode', items: [] }),
+      native({ source: 'continue', items: [{ content: 'bad', status: 'failed' }] }),
+      { sessionUpdate: 'tool_call', toolCallId: 'native-tool', title: 'Checklist', status: 'completed', rawInput: { checklist: '' } },
+      native({ source: 'continue', items: [] })
+    ] })
+    const first: RuntimeEvent[] = []
+    for await (const event of fixture.instance.run(request, new AbortController().signal)) {
+      first.push(event)
+      if (event.type === 'done') break
+    }
+    const replacement = factoryRuntime(async () => fixture.channel, fixture.store, {
+      runtimeId: 'continue', modelBridgePolicy, modelProfile: ownedModelProfile
+    })
+    try {
+      const replay = await collect(replacement.run({ ...request, remoteRecoveryOnly: true, remoteSemanticAfterSequence: '0' }, new AbortController().signal))
+      const checklists = first.filter(event => event.type === 'checklist')
+      expect(checklists).toHaveLength(2)
+      expect(checklists[0]).toMatchObject({ checklist: { source: 'continue', items } })
+      expect(checklists[1]).toMatchObject({ checklist: { source: 'continue', items: [] } })
+      expect(replay.filter(event => event.type === 'checklist')).toEqual(checklists)
+      expect(first.filter(event => event.type === 'tool')).toHaveLength(1)
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    } finally { await replacement.dispose(); await fixture.instance.dispose() }
+  })
+
+  it('keeps unconfirmed plan variants as activity, not checklist replacement', async () => {
+    const fixture = ownedChannel({ updates: [
+      { sessionUpdate: 'plan', entries: [] },
+      { sessionUpdate: 'plan', entries: [null] } as unknown as SessionUpdate,
+      { sessionUpdate: 'plan', entries: [{ content: 'bad', status: 'failed', priority: 'high' }] } as unknown as SessionUpdate,
+      { sessionUpdate: 'plan_removed', id: 'plan' },
+      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '- [x] not a native checklist' } }
+    ] })
+    const events = await collect(fixture.instance.run(request, new AbortController().signal))
+    expect(events.filter(event => event.type === 'checklist')).toEqual([
+      expect.objectContaining({ checklist: { source: 'opencode', items: [] } })
+    ])
+    await fixture.instance.dispose()
+  })
 
   it('starts once, maps multiple rounds, and ACKs only after consumption', async () => {
     const fixture = ownedChannel({

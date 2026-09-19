@@ -492,6 +492,22 @@ describe('ContinueAgentRuntime', () => {
     } finally { await runtime.dispose() }
   })
 
+  it('forwards committed checklist replacements with the request identity including clears', async () => {
+    mocks.runHost.mockImplementation(async (_prompt, _signal, _authorize, options) => {
+      options.onEvent({ type: 'checklist', checklist: { source: 'continue', items: [{ content: 'task', status: 'pending' }] } })
+      options.onEvent({ type: 'checklist', checklist: { source: 'continue', items: [] } })
+      return { text: 'OK' }
+    })
+    const runtime = createRuntime()
+    try {
+      const events = await collectEvents(runtime, 'execute')
+      expect(events.filter(event => event.type === 'checklist')).toEqual([
+        { type: 'checklist', requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef', checklist: { source: 'continue', items: [{ content: 'task', status: 'pending' }] } },
+        { type: 'checklist', requestId: '3f496642-f47d-4e0a-8944-a32c77b0d6ef', checklist: { source: 'continue', items: [] } }
+      ])
+    } finally { await runtime.dispose() }
+  })
+
   it('adds assigned Skill instructions to the Continue prompt', async () => {
     let hostOptions: ContinueHostAdapterOptions | undefined
     const runtime = new ContinueAgentRuntime({

@@ -39,6 +39,7 @@ type RuntimeBundleVerifier = (
 ) => Promise<VerifiedRuntimeBundle>
 
 export type RemoteRuntimeResourceLoaderOptions = {
+  runtimeId?: 'opencode' | 'continue'
   verificationEnvironment?: 'production' | 'test'
   verifyRuntimeBundle?: RuntimeBundleVerifier
 }
@@ -74,7 +75,7 @@ export async function loadVerifiedRemoteRuntimeResourceBundle(
   const metadata =
     await loadRemoteRuntimeVerificationMetadata(paths)
   const bundleDirectory = await resolveSingleDigestDirectory(
-    getBundledRemoteRuntimeRoot(paths, architecture)
+    getBundledRemoteRuntimeRoot(paths, architecture, options.runtimeId)
   )
   const verifier = options.verifyRuntimeBundle ?? verifyRuntimeBundle
   const verified = await verifier(bundleDirectory, {
@@ -89,7 +90,8 @@ export async function loadVerifiedRemoteRuntimeResourceBundle(
     bundleDirectory,
     architecture,
     metadata.canonicalReleaseKeyRegistryBytes,
-    metadata.canonicalRemoteRuntimeLockBytes
+    metadata.canonicalRemoteRuntimeLockBytes,
+    options.runtimeId ?? 'opencode'
   )
 }
 
@@ -258,15 +260,16 @@ async function validateVerifiedBundle(
   bundleDirectory: string,
   architecture: AgentArchitecture,
   keyRegistryBytes: Buffer,
-  runtimeLockBytes: Buffer
+  runtimeLockBytes: Buffer,
+  runtimeId: 'opencode' | 'continue'
 ): Promise<VerifiedRemoteRuntimeResourceBundle> {
   const manifest = remoteRuntimeBundleManifestSchema.parse(
     verified.manifest
   )
   if (
     verified.bundleDirectory !== bundleDirectory ||
-    manifest.runtimeId !== 'opencode' ||
-    manifest.provider !== 'opencode' ||
+    manifest.runtimeId !== runtimeId ||
+    manifest.provider !== runtimeId ||
     (manifest.platform !== 'linux' && !(manifest.platform === 'darwin' && manifest.architecture === 'arm64')) ||
     manifest.architecture !== architecture
   ) {

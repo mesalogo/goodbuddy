@@ -1,3 +1,4 @@
+import { runtimeChecklistSchema, type RuntimeChecklist } from '../../shared/runtime-checklist';
 import {
   createOpencodeClient,
   type AssistantMessage,
@@ -2445,6 +2446,13 @@ export class OpenCodeRuntime implements AgentRuntime {
         };
       };
       let hasResponseTextAfterFailure = false;
+      // Match OC's sortable 48-bit timestamp prefix so reused-session history stays ordered.
+      const messageTime = ((BigInt(Date.now()) << 12n) & 0xffffffffffffn).toString(16).padStart(12, '0');
+      const promptMessageId = `msg_${messageTime}${crypto.randomUUID().replaceAll('-', '').slice(0, 14)}`;
+      const checklistMessageIds = new Set<string>();
+      const checklistCalls = new Map<string, unknown>();
+      const submittedChecklistCalls = new Set<string>();
+      const pendingChecklistUpdates: RuntimeChecklist[] = [];
       try {
         const promptText = promptWithUntrustedConversationHistory(
           request,
@@ -2462,6 +2470,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                 sessionID: sessionId,
                 directory,
                 command: selectedCommand.name,
+                messageID: promptMessageId,
                 arguments: selectedCommand.arguments,
                 ...(selectedAgent ? { agent: selectedAgent } : {}),
                 ...(this.options.modelProfile
@@ -2482,6 +2491,7 @@ export class OpenCodeRuntime implements AgentRuntime {
                   {
                     sessionID: sessionId,
                     directory,
+                    messageID: promptMessageId,
                     model: this.options.modelProfile
                       ? {
                           providerID: resolveOpenCodeProvider(
@@ -2538,6 +2548,43 @@ export class OpenCodeRuntime implements AgentRuntime {
           subscription.stream,
           subscriptionController,
         )) {
+          if (signal.aborted) break;
+          if (event.type === 'message.updated' &&
+              event.properties.info.sessionID === sessionId &&
+              event.properties.info.role === 'assistant' &&
+              event.properties.info.parentID === promptMessageId) {
+            checklistMessageIds.add(event.properties.info.id);
+          }
+          if (event.type === 'message.part.updated') {
+            const part = event.properties.part;
+            if (part.sessionID === sessionId && part.type === 'tool' &&
+                part.tool === 'todowrite' && checklistMessageIds.has(part.messageID)) {
+              if (part.state.status === 'pending' && !submittedChecklistCalls.has(part.callID)) {
+                checklistCalls.set(part.callID, undefined);
+              } else if (part.state.status === 'running' && !submittedChecklistCalls.has(part.callID)) {
+                checklistCalls.set(part.callID, part.state.input.todos);
+              } else {
+                checklistCalls.delete(part.callID);
+              }
+            }
+          }
+          if (event.type === 'todo.updated' && event.properties.sessionID === sessionId) {
+            const parsed = runtimeChecklistSchema.safeParse({ source: 'opencode', items: event.properties.todos });
+            if (parsed.success && checklistCalls.size > 0) pendingChecklistUpdates.push(parsed.data);
+          }
+          // OC 1.18.29 publishes todo.updated before the tool's running input frame.
+          for (const [callId, items] of checklistCalls) {
+            const candidate = runtimeChecklistSchema.safeParse({ source: 'opencode', items });
+            if (!candidate.success) continue;
+            const index = pendingChecklistUpdates.findIndex(update => JSON.stringify(update) === JSON.stringify(candidate.data));
+            if (index >= 0) {
+              const checklist = pendingChecklistUpdates.splice(index, 1)[0]!;
+              submittedChecklistCalls.add(callId);
+              checklistCalls.delete(callId);
+              yield { type: 'checklist', requestId: request.requestId, checklist };
+            }
+          }
+          if (checklistCalls.size === 0) pendingChecklistUpdates.length = 0;
           const childProgress = subagentProgress.update(event);
           if (
             childProgress &&

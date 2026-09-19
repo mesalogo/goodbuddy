@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { runtimeChecklistSchema } from './runtime-checklist'
 import { externalKnowledgeLocatorSchema } from './external-knowledge-contracts'
 import { agentRuntimeSelectionSchema } from './runtime-selection-contracts'
 import { sshHostIdSchema } from './ssh-host-contracts'
@@ -367,6 +368,7 @@ export const conversationMessageSchema = z
     role: z.enum(['user', 'assistant']),
     content: z.string(),
     reasoning: z.string().optional(),
+    runtimeChecklist: runtimeChecklistSchema.optional(),
     blocks: conversationMessageBlocksSchema.optional(),
     displayCaptureTruncated: z.boolean().optional(),
     createdAt: z.number().int().nonnegative(),

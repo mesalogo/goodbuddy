@@ -38,6 +38,20 @@
           "integrity": "sha512-Lr7XXik5wPJZBV5RW+aR6Uogf1n5GogpB565m+D/jiO/vRXr9LhvCpixgAr1tiwuH1ZfMsqOOlbFQz5jgH3Tqg=="
         }
       }
+    },
+    "continue": {
+      "version": "1.5.47",
+      "provider": "continue",
+      "entrypoint": "lib/continue/dist/cn.js",
+      "entrypointIdentity": "continue-acp",
+      "argvPrefix": [],
+      "allowedEnvironmentNames": ["HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"],
+      "protocol": { "major": 1, "minor": 0 },
+      "targets": {
+        "x64": { "package": "@continuedev/cli", "integrity": "sha512-gtpewV3RoIOD9dyTtKIBi1SY0VOHRu3Ehe7C/mmnswm+j34MPyrcQhQaWj/m+jdfGO4fNIKdrgGIlLso1ULDFw==" },
+        "arm64": { "package": "@continuedev/cli", "integrity": "sha512-gtpewV3RoIOD9dyTtKIBi1SY0VOHRu3Ehe7C/mmnswm+j34MPyrcQhQaWj/m+jdfGO4fNIKdrgGIlLso1ULDFw==" },
+        "darwin-arm64": { "package": "@continuedev/cli", "integrity": "sha512-gtpewV3RoIOD9dyTtKIBi1SY0VOHRu3Ehe7C/mmnswm+j34MPyrcQhQaWj/m+jdfGO4fNIKdrgGIlLso1ULDFw==" }
+      }
     }
   }
 }

@@ -805,6 +805,14 @@ records are listed separately and do not introduce another feature status.
 
 ### Open interfaces, team collaboration, and remote execution
 
+- [x] **Remote Continue delivery**: Current source supports a
+  managed CN 1.5.47 package, Agent HTTP-to-ACP adaptation, model routing, project
+  selection, and native checklists. Linux x64 development packages passed real
+  model, cancellation and reconnection checks. Default packages include OC/CN;
+  Windows desktop-to-Linux checks cover installation, checklist updates, long lists,
+  cancellation and restart recovery. Packages are not yet published; see the
+  [validation record](./docs/features/remote-host/runtime-checklist-validation.md).
+
 - [x] **Remote task delegation**: Enabled only after the user explicitly
   configures an endpoint and token, uses HTTP(S) according to the global
   private-network compatibility setting, and writes results to a persistent

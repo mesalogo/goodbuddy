@@ -202,6 +202,8 @@ describe('GoodBuddy Agents workflow', () => {
         'node.tar.gz',
         '--opencode-archive',
         'opencode.tgz',
+        '--continue-archive',
+        'continue.tgz',
         '--output-directory',
         'bundle',
         '--archive',
@@ -243,6 +245,7 @@ describe('GoodBuddy Agents workflow', () => {
       '--platform', 'darwin', '--arch', 'arm64',
       '--node-archive', 'node.tar.gz',
       '--opencode-archive', 'opencode.tgz',
+      '--continue-archive', 'continue.tgz',
       '--output-directory', 'bundle',
       '--archive', 'goodbuddy-agent-1.0.0-darwin-arm64.gbagent'
     ])).toMatchObject({ platform: 'darwin', arch: 'arm64' })

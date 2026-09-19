@@ -67,6 +67,7 @@ type AgentBundleModule = {
 
 type RuntimeBundleModule = {
   buildRuntimeBundle(options: {
+    runtimeId?: 'opencode' | 'continue'
     projectRoot: string
     architecture: 'x64' | 'arm64'
     runtimeArchive: string
@@ -91,6 +92,7 @@ type AgentPackageModule = {
     output: string
     agentBundle: string
     runtimeBundle: string
+    additionalRuntimeBundles?: string[]
     agentLock: AgentRuntimeLock
     runtimeLock: RemoteRuntimeLock
     registry: AgentReleaseKeyRegistry
@@ -369,6 +371,56 @@ afterAll(() => {
 })
 
 describe('compound Agent packages', () => {
+  it.each([false, true])('verifies and installs a Continue compound package through the production installer (joint=%s)', async (joint) => {
+    const root = join(temporaryRoot, `continue-package-${joint}`)
+    const source = join(root, 'source')
+    mkdirSync(join(source, 'package', 'dist'), { recursive: true })
+    writeFileSync(join(source, 'package', 'package.json'), JSON.stringify({ name: '@continuedev/cli', version: '1.5.47' }))
+    writeFileSync(join(source, 'package', 'dist', 'cn.js'), 'console.log("1.5.47")\n')
+    const archive = join(root, 'continuedev-cli-1.5.47.tgz')
+    createTar({ cwd: source, file: archive, sync: true, gzip: true }, ['package'])
+    const lock = JSON.parse(readFileSync(join(process.cwd(), 'remote-runtime-lock.json'), 'utf8')) as RemoteRuntimeLock
+    const integrity = `sha512-${createHash('sha512').update(readFileSync(archive)).digest('base64')}`
+    lock.runtimes.continue!.targets.x64.integrity = integrity
+    lock.runtimes.opencode = remoteRuntimeLock.runtimes.opencode
+    const built = runtimeBundle.buildRuntimeBundle({
+      projectRoot: process.cwd(), runtimeId: 'continue', architecture: 'x64', runtimeArchive: archive,
+      outputRoot: join(root, 'runtime'), lock, registry,
+      testSigningIdentity: { keyId: 'agent-package-fixture', privateKey }, enforceFilesystemMode: false
+    })
+    const result = agentPackage.assembleAgentPackage({
+      projectRoot: process.cwd(), architecture: 'x64', minimumDesktopVersion: '0.13.6',
+      output: join(root, agentPackageArchiveName(agentLock.agentVersion, 'x64')),
+      agentBundle: join(temporaryRoot, 'agent'), runtimeBundle: joint ? runtimeBundle.buildRuntimeBundle({
+        projectRoot: temporaryRoot, architecture: 'x64', runtimeArchive: createRuntimeInput('x64'),
+        outputRoot: join(root, 'opencode'), lock, registry,
+        testSigningIdentity: { keyId: 'agent-package-fixture', privateKey }, enforceFilesystemMode: false
+      }).bundleDirectory : built.bundleDirectory,
+      ...(joint ? { additionalRuntimeBundles: [built.bundleDirectory] } : {}),
+      agentLock, runtimeLock: lock, registry, testSigningIdentity: { keyId: 'agent-package-fixture', privateKey }
+    })
+    await expect(extractAndVerifyAgentPackage({
+      archivePath: join(root, result.archive), destinationDirectory: join(root, 'verified'), architecture: 'x64',
+      desktopVersion: '0.13.6', trustedRegistry: registry
+    })).resolves.toMatchObject({ descriptor: joint
+      ? { remoteRuntime: { runtimeId: 'opencode' }, additionalRuntimes: [{ runtimeId: 'continue', version: '1.5.47' }] }
+      : { remoteRuntime: { runtimeId: 'continue', version: '1.5.47' } } })
+    const options = { operationRoot: join(root, 'operation'), archive: join(root, result.archive),
+      expectedSha256: result.sha256, homeDirectory: join(root, 'home') }
+    mkdirSync(options.homeDirectory, { mode: 0o700 })
+    const expected = joint ? { runtime: { runtimeId: 'opencode' }, additionalRuntimes: [{ runtimeId: 'continue' }] } : { runtime: { runtimeId: 'continue' } }
+    expect(packageInstaller.preparePackage(options)).toMatchObject({ status: 'prepared', ...expected })
+    expect(packageInstaller.commitPackage(options)).toMatchObject({ status: 'committed', ...expected })
+    const contents = unzipSync(new Uint8Array(readFileSync(join(root, result.archive))))
+    const cnEntry = Object.keys(contents).find(path => path.endsWith('/lib/continue/dist/cn.js'))!
+    contents[cnEntry] = new TextEncoder().encode('tampered')
+    const corrupted = join(root, 'corrupted.gbagent')
+    writeFileSync(corrupted, zipSync(contents, { level: 0 }))
+    await expect(extractAndVerifyAgentPackage({ archivePath: corrupted,
+      destinationDirectory: join(root, 'corrupted'), architecture: 'x64', desktopVersion: '0.13.6', trustedRegistry: registry
+    })).rejects.toThrow()
+  })
+
   it('verifies and installs offline dependency inventories larger than one MiB', async () => {
     const projectRoot = join(temporaryRoot, 'large-offline-config')
     const config = createOpenCodeConfigFixture(projectRoot)

@@ -152,8 +152,8 @@ function assertPackageDescriptor(descriptor) {
     descriptor.files.length > 50_000 ||
     typeof descriptor.remoteRuntime !== 'object' ||
     descriptor.remoteRuntime === null ||
-    descriptor.remoteRuntime.runtimeId !== 'opencode' ||
-    descriptor.remoteRuntime.provider !== 'opencode' ||
+    !['opencode', 'continue'].includes(descriptor.remoteRuntime.runtimeId) ||
+    descriptor.remoteRuntime.provider !== descriptor.remoteRuntime.runtimeId ||
     !semanticVersionPattern.test(
       descriptor.remoteRuntime.version ?? ''
     ) ||
@@ -164,6 +164,7 @@ function assertPackageDescriptor(descriptor) {
     throw new Error('Agent package descriptor is invalid')
   }
   assertProtocol(descriptor.agentProtocol, 'Agent protocol')
+  assertAdditionalRuntimes(descriptor)
   assertProtocol(
     descriptor.remoteRuntime.protocol,
     'Remote Runtime protocol'
@@ -592,8 +593,8 @@ function assertCatalog(catalog) {
       entry.formatVersion !== 1 ||
       entry.product !== 'GoodBuddy' ||
       entry.component !== 'agent' ||
-      entry.remoteRuntime?.runtimeId !== 'opencode' ||
-      entry.remoteRuntime?.provider !== 'opencode' ||
+      !['opencode', 'continue'].includes(entry.remoteRuntime?.runtimeId) ||
+      entry.remoteRuntime?.provider !== entry.remoteRuntime?.runtimeId ||
       !semanticVersionPattern.test(
         entry.remoteRuntime?.version ?? ''
       ) ||
@@ -604,6 +605,7 @@ function assertCatalog(catalog) {
       throw new Error('Agent catalog entry is invalid')
     }
     assertProtocol(entry.agentProtocol, 'Agent protocol')
+    assertAdditionalRuntimes(entry)
     assertProtocol(
       entry.remoteRuntime.protocol,
       'Remote Runtime protocol'
@@ -632,6 +634,18 @@ function readVerifiedCatalog(catalogPath, signaturePath, registry) {
     'Agent catalog'
   )
   return catalog
+}
+
+function assertAdditionalRuntimes(value) {
+  if (value.additionalRuntimes === undefined) return
+  if (!Array.isArray(value.additionalRuntimes) || value.additionalRuntimes.length > 1) throw new Error('Invalid additional Runtimes')
+  for (const runtime of value.additionalRuntimes) {
+    if (!runtime || !['opencode', 'continue'].includes(runtime.runtimeId) || runtime.runtimeId === value.remoteRuntime.runtimeId ||
+      runtime.provider !== runtime.runtimeId || !semanticVersionPattern.test(runtime.version ?? '') || !/^sha256:[a-f0-9]{64}$/u.test(runtime.bundleDigest ?? '')) {
+      throw new Error('Invalid additional Runtime identity')
+    }
+    assertProtocol(runtime.protocol, 'Additional Runtime protocol')
+  }
 }
 
 function parseVersion(value) {
@@ -710,6 +724,10 @@ function createCatalog(options) {
     ...(options.darwinArm64Package ? [readPackageMetadata(options.darwinArm64Package, registry)] : [])
   ]
   const [first, second] = packages
+  const additionalIdentity = descriptor => canonicalJson((descriptor.additionalRuntimes ?? []).map(({ bundleDigest: _digest, ...identity }) => { void _digest; return identity }))
+  if (packages.some(value => additionalIdentity(value.descriptor) !== additionalIdentity(first.descriptor))) {
+    throw new Error('Agent package matrix has inconsistent additional Runtimes')
+  }
   const {
     bundleDigest: _firstRuntimeDigest,
     ...firstRuntimeIdentity

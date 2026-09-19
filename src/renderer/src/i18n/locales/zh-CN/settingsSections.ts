@@ -543,7 +543,7 @@ export const settingsSections = {
       agentInventory: {
         title: 'GoodBuddy Agent 包',
         description:
-          'Agent 包独立发布，包含 Agent、固定 Node 和桌面版本适配的远端 OpenCode Runtime。打开此页只读取小型签名目录并显示可用更新，不会自动下载 Agent 包；在线操作使用“关于与更新”中选择的更新源。',
+          'Agent 包独立发布，包含 Agent、固定 Node 和桌面版本适配的远端 OpenCode、Continue Runtime。打开此页只读取小型签名目录并显示可用更新，不会自动下载 Agent 包；在线操作使用“关于与更新”中选择的更新源。',
         loading: '正在校验本地 Agent 包并检查在线版本…',
         refresh: '刷新包清单',
         import: '导入离线包',

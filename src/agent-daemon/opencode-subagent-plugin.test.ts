@@ -5,6 +5,31 @@ import { describe, expect, it, vi } from 'vitest'
 import { openCodeSubagentPluginSource } from './opencode-subagent-plugin'
 
 describe('OpenCode ACP child event plugin', () => {
+  it('forwards native todos intact under their own Session and stops after disposal', async () => {
+    const write = vi.fn()
+    const factory = runInNewContext(
+      `(${openCodeSubagentPluginSource().replace(/^import .*\n/gmu, '').replace('export default ', '')})`,
+      { process: { stdout: { write } }, createServer, randomBytes }
+    )
+    const hooks = await factory()
+    const items = [{ content: 'long'.repeat(2000), status: 'cancelled', priority: 'low' }]
+    for (const sessionID of ['root', 'child']) {
+      for (const todos of [items, []]) {
+        const event = { type: 'todo.updated', properties: { sessionID, todos } }
+        await hooks.event({ event })
+        expect(JSON.parse(write.mock.calls.at(-1)![0]).params).toEqual({
+          sessionId: sessionID, update: {
+            sessionUpdate: 'tool_call_update', toolCallId: 'goodbuddy-native-todos',
+            _meta: { goodbuddyTodoEvent: event }
+          }
+        })
+      }
+    }
+    await hooks.dispose()
+    await hooks.event({ event: { type: 'todo.updated', properties: { sessionID: 'root', todos: [] } } })
+    expect(write).toHaveBeenCalledTimes(4)
+  })
+
   it('hides foreign image tools and removes the current image tool in Ask on a reused Session', async () => {
     let mode = 'execute'
     const imageToolName = `goodbuddy_image_${'a'.repeat(24)}`

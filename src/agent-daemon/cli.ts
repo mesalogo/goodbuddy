@@ -45,6 +45,7 @@ import {
   type VerifiedRuntimeBundle
 } from './runtime-bundle-verifier'
 import { createProductionRuntimeProtocol } from './runtime-composition'
+import { runContinueAcpHelper } from './continue-acp-helper'
 import {
   runOpenCodeModelBridgeHelper,
   type ModelBridgeProtocol
@@ -86,7 +87,7 @@ export type AgentCliDependencies = {
   loadRegisteredInstallation?: typeof loadRegisteredAgentBundle
   runtimePaths?: (
     installationId: string,
-    runtimeId: 'opencode',
+    runtimeId: 'opencode' | 'continue',
     bundleDigest: string
   ) => ManagedRuntimePaths
   runtimeReleaseKeyRegistry?: AgentReleaseKeyRegistry
@@ -187,6 +188,8 @@ async function runModelBridgeHelper(
     'supports-image-input',
     'work-mode',
     'shared-sessions',
+    'runtime-id',
+    'continue-entrypoint',
     'opencode-entrypoint'
   ])
   requireOptions(options, [
@@ -194,8 +197,7 @@ async function runModelBridgeHelper(
     'protocol',
     'model',
     'supports-image-input',
-    'work-mode',
-    'opencode-entrypoint'
+    'work-mode'
   ])
   const protocol = options.protocol
   if (
@@ -216,6 +218,16 @@ async function runModelBridgeHelper(
   if (options['shared-sessions'] !== undefined && options['shared-sessions'] !== 'true') {
     throw new Error('Invalid model bridge shared-sessions option')
   }
+  if (options['runtime-id'] === 'continue') {
+    requireOptions(options, ['continue-entrypoint'])
+    return runContinueAcpHelper({
+      socketPath: options['socket-path']!, protocol, model: options.model!,
+      supportsImageInput: imageInput === 'true', workMode,
+      sharedSessions: options['shared-sessions'] === 'true', entrypoint: options['continue-entrypoint']!
+    })
+  }
+  if (options['runtime-id'] !== undefined && options['runtime-id'] !== 'opencode') throw new Error('Invalid Runtime helper identity')
+  requireOptions(options, ['opencode-entrypoint'])
   return await (
     dependencies.runModelBridgeHelper ??
     runOpenCodeModelBridgeHelper
@@ -943,7 +955,7 @@ function resolveInstallationPaths(
 
 function resolveRuntimePaths(
   installationId: string,
-  runtimeId: 'opencode',
+  runtimeId: 'opencode' | 'continue',
   bundleDigest: string,
   dependencies: AgentCliDependencies
 ): ManagedRuntimePaths {
@@ -997,8 +1009,8 @@ function validateInstallationId(value: string): string {
   return value
 }
 
-function validateRuntimeId(value: string): 'opencode' {
-  if (value !== 'opencode') {
+function validateRuntimeId(value: string): 'opencode' | 'continue' {
+  if (value !== 'opencode' && value !== 'continue') {
     throw new Error('Invalid Runtime ID')
   }
   return value
@@ -1022,13 +1034,13 @@ function validateRuntimeArchitecture(
 
 function assertActivatedRuntimeIdentity(
   verified: VerifiedRuntimeBundle,
-  runtimeId: 'opencode',
+  runtimeId: 'opencode' | 'continue',
   bundleDigest: string,
   architecture: AgentArchitecture
 ): void {
   if (
     verified.manifest.runtimeId !== runtimeId ||
-    verified.manifest.provider !== 'opencode' ||
+    verified.manifest.provider !== runtimeId ||
     verified.manifest.bundleDigest !== bundleDigest ||
     verified.manifest.architecture !== architecture
   ) {

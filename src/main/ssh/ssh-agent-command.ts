@@ -32,7 +32,7 @@ const lifecycleActions = [
   'stop'
 ] as const
 const runtimeArchitectures = ['x64', 'arm64'] as const
-const RUNTIME_ID = 'opencode' as const
+const runtimeIds = ['opencode', 'continue'] as const
 
 declare const verifiedInstallationIdBrand: unique symbol
 
@@ -46,7 +46,7 @@ export type AgentRuntimeArchitecture =
 
 export type AgentRuntimeActivationAction = {
   kind: 'runtime-activate'
-  runtimeId: typeof RUNTIME_ID
+  runtimeId: (typeof runtimeIds)[number]
   bundleDigest: string
   architecture: AgentRuntimeArchitecture
   forceVerification?: true
@@ -216,7 +216,7 @@ export function buildFixedAgentCliArgv(
       }
       return [action.action, ...installationOption]
     case 'runtime-activate': {
-      if (action.runtimeId !== RUNTIME_ID) {
+      if (!runtimeIds.includes(action.runtimeId)) {
         throw new Error('GoodBuddy Agent Runtime ID 无效')
       }
       if (!sha256DigestSchema.safeParse(action.bundleDigest).success) {

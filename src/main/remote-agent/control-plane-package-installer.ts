@@ -103,7 +103,7 @@ export type PackageInstallerAgentIdentity = {
 }
 
 export type PackageInstallerRuntimeIdentity = {
-  runtimeId: 'opencode'
+  runtimeId: 'opencode' | 'continue'
   runtimeVersion: string
   bundleDigest: string
   manifestDigest: string
@@ -121,6 +121,7 @@ export type PackageInstallerResult = {
   archiveSha256: string
   agent: PackageInstallerAgentIdentity
   runtime: PackageInstallerRuntimeIdentity
+  additionalRuntimes?: PackageInstallerRuntimeIdentity[]
 }
 
 export type PackageInstallerEvent =
@@ -166,6 +167,7 @@ type VerifiedPackage = {
   runtimeManifestDigest: string
   agent: PackageInstallerAgentIdentity
   runtime: PackageInstallerRuntimeIdentity
+  additionalRuntimes?: PackageInstallerRuntimeIdentity[]
 }
 
 type PreparedState = {
@@ -178,6 +180,7 @@ type PreparedState = {
   packageSignatureSha256: string
   agent: PackageInstallerAgentIdentity
   runtime: PackageInstallerRuntimeIdentity
+  additionalRuntimes?: PackageInstallerRuntimeIdentity[]
 }
 
 function canonicalJson(value: unknown): string {
@@ -811,6 +814,7 @@ function assertOuterDescriptor(
       'signingKeyId',
       'agentProtocol',
       'remoteRuntime',
+      ...(descriptor.additionalRuntimes === undefined ? [] : ['additionalRuntimes']),
       'contentDigest',
       'files'
     ],
@@ -839,8 +843,8 @@ function assertOuterDescriptor(
     'Agent package Runtime identity'
   )
   if (
-    remoteRuntime.runtimeId !== 'opencode' ||
-    remoteRuntime.provider !== 'opencode' ||
+    !['opencode', 'continue'].includes(String(remoteRuntime.runtimeId)) ||
+    remoteRuntime.provider !== remoteRuntime.runtimeId ||
     !versionPattern.test(String(remoteRuntime.version)) ||
     !digestPattern.test(String(remoteRuntime.bundleDigest))
   ) {
@@ -848,6 +852,18 @@ function assertOuterDescriptor(
   }
   protocol(descriptor.agentProtocol, 'Agent package protocol')
   protocol(remoteRuntime.protocol, 'Agent package Runtime protocol')
+  if (descriptor.additionalRuntimes !== undefined) {
+    if (!Array.isArray(descriptor.additionalRuntimes) || descriptor.additionalRuntimes.length > 1) throw new Error('Invalid additional Runtimes')
+    for (const extra of descriptor.additionalRuntimes) {
+      if (!isRecord(extra)) throw new Error('Invalid additional Runtime')
+      exactKeys(extra, ['runtimeId', 'provider', 'version', 'bundleDigest', 'protocol'], 'Additional Runtime')
+      if (!['opencode', 'continue'].includes(String(extra.runtimeId)) || extra.runtimeId === remoteRuntime.runtimeId ||
+        extra.provider !== extra.runtimeId || !versionPattern.test(String(extra.version)) || !digestPattern.test(String(extra.bundleDigest))) {
+        throw new Error('Invalid additional Runtime identity')
+      }
+      protocol(extra.protocol, 'Additional Runtime protocol')
+    }
+  }
   const { contentDigest: _contentDigest, ...content } = descriptor
   void _contentDigest
   if (
@@ -864,6 +880,11 @@ function assertOuterDescriptor(
     'Agent package'
   )
   const files = parseFiles(descriptor.files, 'Agent package')
+  const runtimePrefixes = [remoteRuntime, ...((descriptor.additionalRuntimes as JsonRecord[] | undefined) ?? [])]
+    .map(runtime => `runtime/${String(runtime.runtimeId)}/${String(runtime.bundleDigest).slice(7)}/`)
+  if (files.some(file => file.path.startsWith('runtime/') && !runtimePrefixes.some(prefix => file.path.startsWith(prefix)))) {
+    throw new Error('Agent package contains an undeclared Runtime')
+  }
   const expected = new Set([
     ...files.map((file) => file.path),
     PACKAGE_DESCRIPTOR,
@@ -1093,8 +1114,9 @@ function assertRuntimeManifest(
     ],
     'Runtime manifest'
   )
-  const runtime = isRecord(lock.runtimes) && isRecord(lock.runtimes.opencode)
-    ? lock.runtimes.opencode
+  const remote = descriptor.remoteRuntime as JsonRecord
+  const runtime = isRecord(lock.runtimes) && isRecord(lock.runtimes[String(remote.runtimeId)])
+    ? lock.runtimes[String(remote.runtimeId)] as JsonRecord
     : undefined
   const targetKey = descriptor.platform === 'darwin' ? 'darwin-arm64' : String(descriptor.architecture)
   const target =
@@ -1103,12 +1125,11 @@ function assertRuntimeManifest(
     isRecord(runtime.targets[targetKey])
       ? runtime.targets[targetKey]
       : undefined
-  const remote = descriptor.remoteRuntime as JsonRecord
   if (
     manifest.formatVersion !== 2 ||
     manifest.product !== 'GoodBuddy' ||
-    manifest.runtimeId !== 'opencode' ||
-    manifest.provider !== 'opencode' ||
+    manifest.runtimeId !== remote.runtimeId ||
+    manifest.provider !== remote.provider ||
     manifest.platform !== descriptor.platform ||
     manifest.architecture !== descriptor.architecture ||
     !versionPattern.test(String(manifest.runtimeVersion)) ||
@@ -1195,14 +1216,14 @@ function assertRuntimeManifest(
   )
   const files = parseFiles(manifest.files, 'Runtime manifest')
   const digestDirectory = String(manifest.bundleDigest).slice('sha256:'.length)
-  const prefix = `runtime/opencode/${digestDirectory}/`
+  const prefix = `runtime/${String(remote.runtimeId)}/${digestDirectory}/`
   const expectedRuntimePaths = new Set([
     ...files.map((file) => `${prefix}${file.path}`),
     `${prefix}manifest.json`,
     `${prefix}manifest.sig`
   ])
   const actualRuntimePaths = [...packageFiles.keys()].filter((path) =>
-    path.startsWith('runtime/')
+    path.startsWith(`runtime/${String(remote.runtimeId)}/`)
   )
   if (
     actualRuntimePaths.length !== expectedRuntimePaths.size ||
@@ -1214,7 +1235,7 @@ function assertRuntimeManifest(
     if (!safeManifestPath(file.path)) {
       throw new Error(`Runtime manifest path is invalid: ${file.path}`)
     }
-    const expectedMode = file.path === 'bin/opencode' ? '0755' : '0644'
+    const expectedMode = file.path === entrypoint.path ? '0755' : '0644'
     const outer = packageFiles.get(`${prefix}${file.path}`)
     if (
       file.mode !== expectedMode ||
@@ -1232,20 +1253,20 @@ function assertRuntimeManifest(
     'Runtime manifest'
   )
   const openCodeLicense = runtimeLicenses.find(
-    (license) => license.package === 'opencode-ai'
+    (license) => license.package === (remote.runtimeId === 'continue' ? '@continuedev/cli' : 'opencode-ai')
   )
   if (
     openCodeLicense?.version !== manifest.runtimeVersion ||
-    openCodeLicense?.spdx !== 'MIT' ||
-    openCodeLicense?.path !== 'licenses/opencode-MIT.txt'
+    openCodeLicense?.spdx !== (remote.runtimeId === 'continue' ? 'Apache-2.0' : 'MIT') ||
+    openCodeLicense?.path !== (remote.runtimeId === 'continue' ? 'licenses/continue-Apache-2.0.txt' : 'licenses/opencode-MIT.txt')
   ) {
     throw new Error('Runtime license declaration is invalid')
   }
   if (
-    entrypoint.path !== 'bin/opencode' ||
+    entrypoint.path !== (remote.runtimeId === 'continue' ? 'lib/continue/dist/cn.js' : 'bin/opencode') ||
     !files.some(
       (file) =>
-        file.path === 'bin/opencode' &&
+        file.path === entrypoint.path &&
         file.sha256 === entrypoint.sha256
     )
   ) {
@@ -1299,12 +1320,13 @@ function elfArchitecture(bytes: Buffer, platform: Platform): Architecture | unde
 function assertExtractedArchitectures(
   preparedRoot: string,
   architecture: Architecture,
-  platform: Platform
+  platform: Platform,
+  runtimeId: 'opencode' | 'continue'
 ): void {
   for (const path of [
     join(preparedRoot, 'agent', 'node'),
     ...nativeKoffiPaths(platform, architecture).map(path => join(preparedRoot, 'agent', path)),
-    join(preparedRoot, 'runtime', 'bin', 'opencode')
+    ...(runtimeId === 'opencode' ? [join(preparedRoot, 'runtime', 'bin', 'opencode')] : [])
   ]) {
     if (
       elfArchitecture(readFileHeader(path, 64), platform) !== architecture
@@ -1460,13 +1482,14 @@ function verifyArchive(
     const runtimeDigest = String(
       (descriptor.remoteRuntime as JsonRecord).bundleDigest
     ).slice('sha256:'.length)
+    const runtimeId = (descriptor.remoteRuntime as JsonRecord).runtimeId as 'opencode' | 'continue'
     const runtimeManifestBytes = readEntry(
       handle,
       entries,
-      `runtime/opencode/${runtimeDigest}/manifest.json`
+      `runtime/${runtimeId}/${runtimeDigest}/manifest.json`
     )
     assertDeclaredMetadata(
-      `runtime/opencode/${runtimeDigest}/manifest.json`,
+      `runtime/${runtimeId}/${runtimeDigest}/manifest.json`,
       runtimeManifestBytes,
       declaredMap
     )
@@ -1481,7 +1504,7 @@ function verifyArchive(
       declaredMap
     )
     const runtimeSignaturePath =
-      `runtime/opencode/${runtimeDigest}/manifest.sig`
+      `runtime/${runtimeId}/${runtimeDigest}/manifest.sig`
     const runtimeSignatureBytes = readEntry(
       handle,
       entries,
@@ -1503,6 +1526,16 @@ function verifyArchive(
       descriptor,
       declaredMap
     )
+    const additionalRuntimes = (descriptor.additionalRuntimes as JsonRecord[] | undefined)?.map(remote => {
+      const prefix = `runtime/${String(remote.runtimeId)}/${String(remote.bundleDigest).slice(7)}/`
+      const bytes = readEntry(handle, entries, `${prefix}manifest.json`)
+      const signature = readEntry(handle, entries, `${prefix}manifest.sig`)
+      assertDeclaredMetadata(`${prefix}manifest.json`, bytes, declaredMap)
+      assertDeclaredMetadata(`${prefix}manifest.sig`, signature, declaredMap)
+      const verified = assertRuntimeManifest(bytes, signature, registry,
+        parseCanonicalJson(remoteRuntimeLockBytes, 'Remote Runtime lock'), { ...descriptor, remoteRuntime: remote }, declaredMap)
+      return runtimeIdentity(verified, descriptor)
+    })
     if (!sameSnapshot(snapshot, fstatSync(handle))) {
       throw new Error('Agent package archive changed during verification')
     }
@@ -1522,6 +1555,7 @@ function verifyArchive(
       runtimeManifest: runtime.manifest,
       agentManifestSha256,
       runtimeManifestDigest: runtime.manifestDigest,
+      ...(additionalRuntimes ? { additionalRuntimes } : {}),
       agent: {
         installationId: `agent-${agentManifestSha256}`,
         agentVersion: String(agentManifest.agentVersion),
@@ -1533,7 +1567,7 @@ function verifyArchive(
         supervisor: 'detached-on-demand'
       },
       runtime: {
-        runtimeId: 'opencode',
+        runtimeId,
         runtimeVersion: String(runtime.manifest.runtimeVersion),
         bundleDigest: String(runtime.manifest.bundleDigest),
         manifestDigest: runtime.manifestDigest,
@@ -1646,7 +1680,8 @@ function persistPreparedState(
     packageSignatureSha256:
       sha256(verified.packageSignatureBytes),
     agent: verified.agent,
-    runtime: verified.runtime
+    runtime: verified.runtime,
+    ...(verified.additionalRuntimes ? { additionalRuntimes: verified.additionalRuntimes } : {})
   }
   const bytes = prettyBytes(state)
   if (bytes.length > MAXIMUM_METADATA_BYTES) {
@@ -1728,7 +1763,10 @@ function extractPayload(
     mkdirSync(join(temporary, 'agent'), { recursive: true, mode: 0o700 })
     mkdirSync(join(temporary, 'runtime'), { recursive: true, mode: 0o700 })
     const runtimePrefix =
-      `runtime/opencode/${verified.runtime.bundleDigest.slice('sha256:'.length)}/`
+      `runtime/${verified.runtime.runtimeId}/${verified.runtime.bundleDigest.slice('sha256:'.length)}/`
+    const extraPrefixes = (verified.additionalRuntimes ?? []).map(runtime => ({
+      prefix: `runtime/${runtime.runtimeId}/${runtime.bundleDigest.slice(7)}/`, directory: `runtime-${runtime.runtimeId}`
+    }))
     const declared = new Map(
       parseFiles(verified.descriptor.files, 'Agent package')
         .map((file) => [file.path, file])
@@ -1757,6 +1795,9 @@ function extractPayload(
             ...name.slice(runtimePrefix.length).split('/')
           )
         }
+        for (const extra of extraPrefixes) {
+          if (name.startsWith(extra.prefix)) target = join(temporary, extra.directory, ...name.slice(extra.prefix.length).split('/'))
+        }
         if (target !== undefined) {
           const actual = streamEntry(handle, entry, target)
           const expected = declared.get(name)
@@ -1777,7 +1818,11 @@ function extractPayload(
     } finally {
       closeSync(handle)
     }
-    assertExtractedArchitectures(temporary, verified.agent.architecture, verified.agent.platform)
+    assertExtractedArchitectures(temporary, verified.agent.architecture, verified.agent.platform, verified.runtime.runtimeId)
+    if (verified.additionalRuntimes?.some(runtime => runtime.runtimeId === 'opencode') &&
+      elfArchitecture(readFileHeader(join(temporary, 'runtime-opencode/bin/opencode'), 64), verified.agent.platform) !== verified.agent.architecture) {
+      throw new Error('Additional OpenCode executable architecture mismatch')
+    }
     chmodSync(temporary, 0o700)
     renameSync(temporary, destinationRoot)
   } catch (error) {
@@ -1812,7 +1857,8 @@ export function preparePackage(options: InstallerOptions): PackageInstallerResul
       status: 'prepared',
       archiveSha256: state.archiveSha256,
       agent: state.agent,
-      runtime: state.runtime
+      runtime: state.runtime,
+      ...(state.additionalRuntimes ? { additionalRuntimes: state.additionalRuntimes } : {})
     }
     options.emit?.(result)
     return result
@@ -1843,7 +1889,8 @@ export function preparePackage(options: InstallerOptions): PackageInstallerResul
     status: 'prepared',
     archiveSha256: verified.archiveSha256,
     agent: verified.agent,
-    runtime: verified.runtime
+    runtime: verified.runtime,
+    ...(verified.additionalRuntimes ? { additionalRuntimes: verified.additionalRuntimes } : {})
   }
   options.emit?.(result)
   return result
@@ -2070,6 +2117,7 @@ function readPreparedState(path: string): PreparedState {
       'packageSignatureSha256',
       'agent',
       'runtime'
+      ,...(value.additionalRuntimes === undefined ? [] : ['additionalRuntimes'])
     ],
     'Prepared package state'
   )
@@ -2097,6 +2145,11 @@ function readPreparedState(path: string): PreparedState {
     throw new Error('Prepared package state is invalid')
   }
   const agent = value.agent
+  if (value.additionalRuntimes !== undefined && (!Array.isArray(value.additionalRuntimes) || value.additionalRuntimes.length > 1 ||
+    value.additionalRuntimes.some(extra => !isRecord(extra) || !['opencode', 'continue'].includes(String(extra.runtimeId)) ||
+      extra.runtimeId === (value.runtime as JsonRecord).runtimeId || !digestPattern.test(String(extra.bundleDigest))))) {
+    throw new Error('Invalid prepared additional Runtimes')
+  }
   const runtime = value.runtime
   exactKeys(
     agent,
@@ -2141,7 +2194,7 @@ function readPreparedState(path: string): PreparedState {
     !isSupportedTarget(agent.platform, agent.architecture) ||
     !['x64', 'arm64'].includes(String(agent.architecture)) ||
     agent.supervisor !== 'detached-on-demand' ||
-    runtime.runtimeId !== 'opencode' ||
+    !['opencode', 'continue'].includes(String(runtime.runtimeId)) ||
     !versionPattern.test(String(runtime.runtimeVersion)) ||
     !digestPattern.test(String(runtime.bundleDigest)) ||
     !digestPattern.test(String(runtime.manifestDigest)) ||
@@ -2155,6 +2208,7 @@ function readPreparedState(path: string): PreparedState {
   return {
     formatVersion: 1,
     archiveSha256: String(value.archiveSha256),
+    ...(value.additionalRuntimes ? { additionalRuntimes: value.additionalRuntimes as PackageInstallerRuntimeIdentity[] } : {}),
     releaseKeyRegistrySha256:
       String(value.releaseKeyRegistrySha256),
     agentRuntimeLockSha256:
@@ -2176,7 +2230,7 @@ function readPreparedState(path: string): PreparedState {
       supervisor: 'detached-on-demand'
     },
     runtime: {
-      runtimeId: 'opencode',
+      runtimeId: runtime.runtimeId as 'opencode' | 'continue',
       runtimeVersion: String(runtime.runtimeVersion),
       bundleDigest: String(runtime.bundleDigest),
       manifestDigest: String(runtime.manifestDigest),
@@ -2230,6 +2284,16 @@ function readBoundedRegularFile(
   }
 }
 
+function runtimeIdentity(runtime: { manifest: JsonRecord; manifestDigest: string }, descriptor: JsonRecord): PackageInstallerRuntimeIdentity {
+  return {
+    runtimeId: runtime.manifest.runtimeId as 'opencode' | 'continue',
+    runtimeVersion: String(runtime.manifest.runtimeVersion), bundleDigest: String(runtime.manifest.bundleDigest),
+    manifestDigest: runtime.manifestDigest, runtimeAdapterDigest: String(runtime.manifest.adapterDigest),
+    acpCapabilitiesDigest: String(runtime.manifest.acpCapabilitiesDigest), platform: descriptor.platform as Platform,
+    architecture: descriptor.architecture as Architecture, protocol: protocol(runtime.manifest.protocol, 'Runtime protocol')
+  }
+}
+
 function assertPreparedIdentity(
   agentRoot: string,
   runtimeRoot: string,
@@ -2238,12 +2302,17 @@ function assertPreparedIdentity(
   agentRuntimeLockBytes: Buffer,
   remoteRuntimeLockBytes: Buffer,
   descriptorBytes: Buffer,
-  packageSignatureBytes: Buffer
+  packageSignatureBytes: Buffer,
+  selectedRuntime = state.runtime
 ): void {
   const descriptor = parseCanonicalJson(
     descriptorBytes,
     'Prepared Agent package descriptor'
   )
+  const packagedRuntimes = [descriptor.remoteRuntime, ...((descriptor.additionalRuntimes as JsonRecord[] | undefined) ?? [])] as JsonRecord[]
+  if (packagedRuntimes.length !== 1 + (state.additionalRuntimes?.length ?? 0)) throw new Error('Prepared Runtime inventory differs from package')
+  const remoteRuntime = packagedRuntimes.find(runtime => runtime.runtimeId === selectedRuntime.runtimeId)
+  if (!remoteRuntime) throw new Error('Prepared Runtime is not declared in package')
   const declared = parseFiles(
     descriptor.files,
     'Prepared Agent package'
@@ -2323,7 +2392,7 @@ function assertPreparedIdentity(
       remoteRuntimeLockBytes,
       'Prepared Remote Runtime lock'
     ),
-    descriptor,
+    { ...descriptor, remoteRuntime },
     packageFiles
   )
   const agentManifestSha256 = sha256(agentManifestBytes)
@@ -2339,7 +2408,7 @@ function assertPreparedIdentity(
     supervisor: 'detached-on-demand'
   }
   const expectedRuntime: PackageInstallerRuntimeIdentity = {
-    runtimeId: 'opencode',
+    runtimeId: runtime.manifest.runtimeId as 'opencode' | 'continue',
     runtimeVersion: String(runtime.manifest.runtimeVersion),
     bundleDigest: String(runtime.manifest.bundleDigest),
     manifestDigest: runtime.manifestDigest,
@@ -2356,7 +2425,7 @@ function assertPreparedIdentity(
   }
   if (
     canonicalJson(state.agent) !== canonicalJson(expectedAgent) ||
-    canonicalJson(state.runtime) !== canonicalJson(expectedRuntime)
+    canonicalJson(selectedRuntime) !== canonicalJson(expectedRuntime)
   ) {
     throw new Error(
       'Prepared package identity does not match the authenticated archive'
@@ -2473,6 +2542,15 @@ export function commitPackage(options: InstallerOptions): PackageInstallerResult
     join(managedRoot, 'runtimes', 'release-keys.json'),
     join(managedRoot, 'runtimes', 'remote-runtime-lock.json')
   ] as const
+  const extraPublications = (state.additionalRuntimes ?? []).map(runtime => {
+    ensureOwnedManagedHierarchy(home, runtime.runtimeId)
+    const source = join(payloadRoot, `runtime-${runtime.runtimeId}`)
+    const destination = join(managedRoot, 'runtimes', runtime.runtimeId, runtime.bundleDigest.slice(7))
+    assertPreparedIdentity(agentSourceExists ? agentSource : agentDestination,
+      existsSync(source) ? source : destination, state, releaseKeyRegistryBytes, agentRuntimeLockBytes,
+      remoteRuntimeLockBytes, descriptorBytes, packageSignatureBytes, runtime)
+    return { source, destination }
+  })
   if (!agentSourceExists || !runtimeSourceExists) {
     assertPreparedIdentity(
       agentSourceExists ? agentSource : agentDestination,
@@ -2507,6 +2585,9 @@ export function commitPackage(options: InstallerOptions): PackageInstallerResult
         )
       )
     }
+    for (const extra of extraPublications) {
+      if (existsSync(extra.source)) published.push(publishDirectory(extra.source, extra.destination, inputs.operationRoot))
+    }
     progress('publishing-metadata')
     writePrivateFileAtomic(
       metadataPaths[0],
@@ -2529,7 +2610,8 @@ export function commitPackage(options: InstallerOptions): PackageInstallerResult
       status: 'committed',
       archiveSha256: state.archiveSha256,
       agent: state.agent,
-      runtime: state.runtime
+      runtime: state.runtime,
+      ...(state.additionalRuntimes ? { additionalRuntimes: state.additionalRuntimes } : {})
     }
     options.emit?.(result)
     return result

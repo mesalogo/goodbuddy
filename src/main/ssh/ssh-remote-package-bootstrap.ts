@@ -134,7 +134,7 @@ export type SshRemotePackageAgentIdentity = {
 };
 
 export type SshRemotePackageRuntimeIdentity = {
-  runtimeId: "opencode";
+  runtimeId: "opencode" | "continue";
   runtimeVersion: string;
   bundleDigest: string;
   manifestDigest: string;
@@ -149,6 +149,7 @@ export type SshRemotePackageIdentity = {
   archiveSha256: string;
   agent: SshRemotePackageAgentIdentity;
   runtime: SshRemotePackageRuntimeIdentity;
+  additionalRuntimes?: SshRemotePackageRuntimeIdentity[];
 };
 
 export type SshRemotePackageBootstrapPrepareResult =
@@ -275,6 +276,7 @@ type TerminalMessage =
       archiveSha256: string;
       agent: SshRemotePackageAgentIdentity;
       runtime: SshRemotePackageRuntimeIdentity;
+      additionalRuntimes?: SshRemotePackageRuntimeIdentity[];
     }
   | {
       type: "result";
@@ -935,6 +937,7 @@ function parsePackageIdentity(
       "archiveSha256",
       "agent",
       "runtime",
+      ...(message.additionalRuntimes === undefined ? [] : ["additionalRuntimes"]),
     ]) ||
     message.type !== "result" ||
     message.command !== action ||
@@ -985,7 +988,7 @@ function parsePackageIdentity(
     (architecture !== "x64" && architecture !== "arm64") ||
     !agentProtocol ||
     agent.supervisor !== "detached-on-demand" ||
-    runtime.runtimeId !== "opencode" ||
+    (runtime.runtimeId !== "opencode" && runtime.runtimeId !== "continue") ||
     !isVersion(runtime.runtimeVersion) ||
     typeof runtime.bundleDigest !== "string" ||
     !DIGEST_PATTERN.test(runtime.bundleDigest) ||
@@ -1001,10 +1004,22 @@ function parsePackageIdentity(
   ) {
     return undefined;
   }
+  const additionalRuntimes: SshRemotePackageRuntimeIdentity[] = [];
+  if (message.additionalRuntimes !== undefined) {
+    if (!Array.isArray(message.additionalRuntimes) || message.additionalRuntimes.length > 1) return undefined;
+    for (const extra of message.additionalRuntimes) {
+      const { additionalRuntimes: _extras, ...base } = message;
+      void _extras;
+      const parsed = parsePackageIdentity({ ...base, runtime: extra }, action, candidate);
+      if (!parsed || !("runtime" in parsed) || parsed.runtime.runtimeId === runtime.runtimeId) return undefined;
+      additionalRuntimes.push(parsed.runtime);
+    }
+  }
   return {
     type: "result",
     command: action,
     status: expectedStatus,
+    ...(additionalRuntimes.length ? { additionalRuntimes } : {}),
     archiveSha256: candidate.sha256,
     agent: {
       installationId: agent.installationId,
@@ -1017,7 +1032,7 @@ function parsePackageIdentity(
       supervisor: "detached-on-demand",
     },
     runtime: {
-      runtimeId: "opencode",
+      runtimeId: runtime.runtimeId,
       runtimeVersion: runtime.runtimeVersion,
       bundleDigest: runtime.bundleDigest,
       manifestDigest: runtime.manifestDigest,
@@ -1444,6 +1459,7 @@ export function createSshRemotePackageBootstrapExecutor(
           archiveSha256: result.archiveSha256,
           agent: result.agent,
           runtime: result.runtime,
+          ...(result.additionalRuntimes ? { additionalRuntimes: result.additionalRuntimes } : {}),
         },
       };
     }
@@ -1487,6 +1503,7 @@ export function createSshRemotePackageBootstrapExecutor(
           archiveSha256: result.archiveSha256,
           agent: result.agent,
           runtime: result.runtime,
+          ...(result.additionalRuntimes ? { additionalRuntimes: result.additionalRuntimes } : {}),
         },
       };
     }
@@ -1602,6 +1619,7 @@ export function createSshRemotePackageBootstrapExecutor(
             archiveSha256: result.archiveSha256,
             agent: result.agent,
             runtime: result.runtime,
+            ...(result.additionalRuntimes ? { additionalRuntimes: result.additionalRuntimes } : {}),
           },
         };
       }
