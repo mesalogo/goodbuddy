@@ -7684,7 +7684,7 @@ function App(): React.JSX.Element {
                   ? prompt.slice(0, 24)
                   : conversation.title,
               updatedAt: Date.now(),
-              messages: [...conversation.messages.slice(-499), userMessage],
+              messages: [...conversation.messages, userMessage],
             }
           : conversation,
       ),
@@ -7754,7 +7754,7 @@ function App(): React.JSX.Element {
               ...conversation,
               updatedAt: Date.now(),
               messages: [
-                ...conversation.messages.slice(-499),
+                ...conversation.messages,
                 assistantMessage,
               ],
               activeRequest: undefined,

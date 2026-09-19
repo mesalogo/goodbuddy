@@ -2791,7 +2791,7 @@ export class AssistantDatabase {
     return this.readConversationList(new Set(detailIds))
   }
 
-  private listConversationRows(extraIds: ReadonlySet<string> = new Set()): ConversationRow[] {
+  private listConversationRows(): ConversationRow[] {
     const database = this.requireDatabase()
     return database
       .prepare(
@@ -2803,24 +2803,14 @@ export class AssistantDatabase {
                 pinned, updated_at
          FROM conversations
          WHERE status = 'active'
-           AND (
-             id IN (SELECT id FROM conversations WHERE status = 'active'
-                    ORDER BY updated_at DESC LIMIT 100)
-             OR id IN (SELECT conversation_id FROM (${activeVisibleTaskSelect}))
-             OR id IN (SELECT value FROM json_each(?))
-             OR pinned = 1
-             OR EXISTS (SELECT 1 FROM messages
-                        WHERE conversation_id = conversations.id
-                          AND state = 'streaming')
-           )
          ORDER BY pinned DESC, updated_at DESC`
       )
-      .all(JSON.stringify([...extraIds])) as ConversationRow[]
+      .all() as ConversationRow[]
   }
 
   private readConversationList(detailIds?: ReadonlySet<string>): import('../../shared/assistant-contracts').ConversationListSnapshot[] {
     const database = this.requireDatabase()
-    const conversations = this.listConversationRows(detailIds)
+    const conversations = this.listConversationRows()
     const messageStatement = database.prepare(
       `SELECT id, conversation_id, role, content, state, metadata_json,
               created_at
@@ -2859,14 +2849,14 @@ export class AssistantDatabase {
     })
   }
 
-  searchConversations(query: string, conversationIds: string[] = []): string[] {
+  searchConversations(query: string): string[] {
     const normalized = query.trim().toLocaleLowerCase()
     if (!normalized) return []
     const database = this.requireDatabase()
     // Read only searchable text, never tool/subagent/image metadata. Use the
     // same Unicode case folding as the renderer's existing search.
     const messages = database.prepare('SELECT content FROM messages WHERE conversation_id = ?')
-    return this.listConversationRows(new Set(conversationIds)).filter(conversation =>
+    return this.listConversationRows().filter(conversation =>
       conversation.title.toLocaleLowerCase().includes(normalized) ||
       (messages.all(conversation.id) as { content: string }[]).some(message =>
         message.content.toLocaleLowerCase().includes(normalized))

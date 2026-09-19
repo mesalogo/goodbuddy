@@ -390,8 +390,8 @@ describe('AssistantDatabase', () => {
       expect(database.searchConversations('   ')).toEqual([])
       const added = { id: randomUUID(), title: 'Newer', updatedAt: 1000 }
       database.saveLocalConversations([{ header: added, messages: [] }])
-      expect(database.listConversationSummaries().some(item => item.id === id)).toBe(false)
-      expect(database.searchConversations('äpfel 中文 0 %_', [id])).toEqual([id])
+      expect(database.listConversationSummaries().some(item => item.id === id)).toBe(true)
+      expect(database.searchConversations('äpfel 中文 0 %_')).toEqual([id])
       expect(database.listConversationSummaries([id]).find(item => item.id === id)?.messages).toHaveLength(16)
       // A header-only save of a summary cannot replace or erase messages.
       database.saveLocalConversations([{ header: { id, title: 'Renamed', updatedAt: 101 }, messages: [] }])
@@ -5832,7 +5832,7 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
-  it('gets a targeted conversation outside the latest 100', async () => {
+  it('lists and searches all conversations beyond the latest 100', async () => {
     const database = await createDatabase()
     database.saveLocalConversations(
       Array.from({ length: 100 }, (_, index) => ({
@@ -5856,12 +5856,14 @@ describe('AssistantDatabase', () => {
       }
     ])
 
-    expect(database.listConversations()).toHaveLength(100)
+    expect(database.listConversations()).toHaveLength(101)
     expect(
       database.listConversations().some(
         (conversation) => conversation.id === oldestId
       )
-    ).toBe(false)
+    ).toBe(true)
+    expect(database.listConversationSummaries()).toHaveLength(101)
+    expect(database.searchConversations('第 101 个对话')).toEqual([oldestId])
     expect(database.getConversation(oldestId)).toMatchObject({
       id: oldestId,
       title: '第 101 个对话',

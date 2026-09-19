@@ -5628,7 +5628,7 @@ describe("App", () => {
     });
   });
 
-  it("sends all persisted history beyond 500 messages", async () => {
+  it("retains all history beyond 500 messages across consecutive sends", async () => {
     const messages = Array.from({ length: 502 }, (_, index) => ({
       id: crypto.randomUUID(),
       role: index % 2 ? "assistant" as const : "user" as const,
@@ -5653,6 +5653,22 @@ describe("App", () => {
     expect(run.mock.calls[0]?.[0].historyMessageIds).toEqual(
       messages.map(({ id }) => id),
     );
+    const requestId = run.mock.calls[0]![0].requestId;
+    act(() => {
+      agentListener?.({ requestId, type: "text", delta: "Continued reply" });
+      agentListener?.({ requestId, type: "done" });
+    });
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "Continue again" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(run.mock.calls[1]?.[0].history).toEqual([
+      ...messages.map(({ role, content }) => ({ role, content })),
+      { role: "user", content: "Continue" },
+      { role: "assistant", content: "Continued reply" },
+    ]);
   });
 
   it("keeps a tool failure in details and hides retry after continuing", async () => {
