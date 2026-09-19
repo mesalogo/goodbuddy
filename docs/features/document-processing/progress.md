@@ -154,6 +154,7 @@ restructure 可核对 1 次，另最多 1 次状态不明。未将 2026-09-18 �
 对应 FR-H12。检查实际工作区后保留已有 OCR、存储、预览与队列实现，修正草稿、历史消息
 及队列预览的操作布局。查看结果与更多操作改为同排 32px 图标按钮，草稿移除使用同尺寸
 叉号；保留含附件名的可访问名称、悬停提示和键盘聚焦说明。文件名省略，状态与大小可换行。
+导入中的取消按钮也改为图标，进度卡使用三列，避免取消文字挤入固定宽度按钮。
 
 文件名核对覆盖 `ContextManager` 导入、显式 OCR、重解析、`ConversationAttachmentStorage`
 和结果清单。源码将 UUID 用于资源标识，显示名来自导入文件名；已有存储测试验证原名称在
@@ -167,15 +168,23 @@ restructure 可核对 1 次，另最多 1 次状态不明。未将 2026-09-18 �
 
 新增 Electron 用例初次受系统缩放的亚像素取整影响，测得根容器宽 360.57px；驱动固定
 device scale factor 后复验。驱动 Enter 未产生按钮激活，改用原生 Space 后菜单流程通过。
-这两次失败未记作产品通过，也未通过修改页面溢出样式绕过测量。
+这些驱动失败未记作产品通过，也未通过修改页面溢出样式绕过测量。
 
 定向 10 文件、116 项测试通过，覆盖 HTTP 客户端及 loopback、解析服务、设置、会话文件
-存储、ContextManager、预览、附件操作及共享 UI。新增 Electron 用例单独通过；最终
-`npm run typecheck`、`npm run lint` 通过。全仓测试结果完成后补记。
+存储、ContextManager、预览、附件操作及共享 UI。App 附件筛选的 3 项测试通过，包含导入
+进度中的图标取消入口；新增 Electron 用例单独通过。最终
+`npm run typecheck`、`npm run lint` 通过。`npm test` 完整运行 885.06 秒：400 个文件
+通过、9 个跳过；4,782 项通过、67 项跳过。该运行启动时尚未创建新增 Electron 用例，
+因此其通过结果单独记录；导入取消入口的最终改动由随后 App 定向测试覆盖。
+日志仍有既有 jsdom Canvas 提示和测试临时仓库的换行提示，没有测试失败。
 
 本轮未修改 Main、Preload、Agent 或 Runtime 请求链路，未发起真实 OCR、文本或视觉模型
 请求。前轮实际调用与未测验收项仍以上节记录为准，不能由本次界面回归推断全部高级选项、
 Runtime 组合和跨平台验收已完成。没有提交或推送。
+
+复核前轮 `document-app-GXKuZv/report.json`、`document-app-fuFTEY/restart-report.json`
+及 `document-app-iZSxV8/report.json`：设置和显式图片 OCR、重启后无 OCR 读取、远端图片
+消费记录均为 passed。文档扫描无阻断项；复核候选为字段清单和验证边界，保留其事实限定。
 
 ## 复现
 
