@@ -84,18 +84,6 @@ describe('WorkspacePrimitives', () => {
     cleanup()
   })
 
-  it('uses semantic colors for compact Runtime status dots', () => {
-    expect(stylesheet).toMatch(
-      /\.runtime-status--ready \.runtime-status__dot\s*\{[^}]*background:\s*var\(--success\);/u
-    )
-    expect(stylesheet).toMatch(
-      /\.runtime-status--connecting \.runtime-status__dot\s*\{[^}]*background:\s*var\(--warning\);/u
-    )
-    expect(stylesheet).toMatch(
-      /\.runtime-status--unavailable \.runtime-status__dot\s*\{[^}]*background:\s*var\(--text-muted\);/u
-    )
-  })
-
   it('wraps long model names, prompts, and errors inside shared message status cards', () => {
     expect(stylesheet).toMatch(
       /\.message-retrieval-status\s*\{[^}]*overflow-wrap:\s*anywhere;/u

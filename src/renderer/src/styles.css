@@ -5419,51 +5419,6 @@ button > svg {
   gap: 3px;
 }
 
-.runtime-status {
-  display: flex;
-  min-width: 0;
-  max-width: clamp(108px, 18vw, 220px);
-  align-items: center;
-  padding: 6px 10px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  margin-right: 8px;
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  font-size: var(--font-caption);
-  font-weight: 600;
-  gap: 6px;
-}
-
-.runtime-status__dot {
-  flex: 0 0 auto;
-}
-
-.runtime-status__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtime-status__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-
-.runtime-status--ready .runtime-status__dot {
-  background: var(--success);
-}
-
-.runtime-status--connecting .runtime-status__dot {
-  background: var(--warning);
-}
-
-.runtime-status--unavailable .runtime-status__dot {
-  background: var(--text-muted);
-}
-
 .chat-scroll-region {
   position: relative;
   min-height: 0;
@@ -16234,7 +16189,6 @@ details.settings-section > :not(summary) + :not(summary) {
   .user-card,
   .icon-button,
   .assistant-sidebar__row,
-  .runtime-status,
   .welcome__description,
   .tool-activity,
   .context-chip,
@@ -16822,7 +16776,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
   :root :is(
     .task-status-dot,
-    .runtime-status__dot,
     .heartbeat-center__pulse-dot,
     .heartbeat-center__timeline-dot
   ) {

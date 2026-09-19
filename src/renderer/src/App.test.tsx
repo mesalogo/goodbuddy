@@ -2109,22 +2109,8 @@ describe("App", () => {
     await screen.findByRole("heading", {
       name: "今天想一起完成什么？",
     });
-    const runtimeStatus =
-      document.querySelector<HTMLElement>(".runtime-status");
-    expect(runtimeStatus).not.toBeNull();
-    expect(within(runtimeStatus!).queryByText("就绪")).not.toBeInTheDocument();
-    expect(runtimeStatus).toHaveClass("runtime-status--ready");
-    expect(
-      runtimeStatus?.querySelector(".runtime-status__dot"),
-    ).toBeInTheDocument();
-    expect(runtimeStatus).toHaveAttribute(
-      "aria-describedby",
-      "topbar-runtime-detail",
-    );
-    expect(screen.getByText("Ready", { selector: ".sr-only" })).toHaveAttribute(
-      "id",
-      "topbar-runtime-detail",
-    );
+    expect(document.querySelector(".runtime-status")).not.toBeInTheDocument();
+    expect(document.getElementById("topbar-runtime-detail")).toBeNull();
     expect(
       screen.getByText(
         /你好，我是 GoodBuddy。你可以直接向我提问、添加本地文件/u,
@@ -2137,14 +2123,24 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("uses a compact color indicator while connecting to a Runtime", () => {
+  it("notifies when automatic Runtime status checks fail", async () => {
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: "00000000-0000-4000-8000-000000000951",
+      projectId,
+      title: "Runtime check",
+      updatedAt: Date.now(),
+      messages: [],
+      runtimeSelection: { provider: "opencode" },
+    }]);
+    vi.mocked(api.agent.getStatus).mockImplementation(async (selection) => {
+      if (selection) throw new Error("Runtime status check failed");
+      return { id: "model", label: "sonnet-5", available: true, supportsToolExecution: true, detail: "Ready" };
+    });
     render(<App />);
-    const connectingStatus =
-      document.querySelector<HTMLElement>(".runtime-status");
-    expect(connectingStatus).toHaveClass("runtime-status--connecting");
-    expect(
-      within(connectingStatus!).queryByText("连接中"),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Runtime status check failed");
+    const sendButton = screen.getByRole("button", { name: "发送" });
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAccessibleDescription("Runtime status check failed");
   });
 
   it("loads customized branding into the primary sidebar", async () => {

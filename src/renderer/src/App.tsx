@@ -3952,6 +3952,16 @@ function App(): React.JSX.Element {
         }
         setRuntime(status);
         setRuntimeStatusKey(activeRuntimeSelectionKey);
+        if (!status.available) {
+          notify({
+            tone: "error",
+            message: tRef.current("runtime.selectionUnavailable", {
+              label: status.label,
+              detail: status.detail,
+            }),
+            dedupeKey: "runtime-status",
+          });
+        }
         if (!status.available && !runtimeSetupPromptedRef.current) {
           runtimeSetupPromptedRef.current = true;
           setView("settings");
@@ -3961,19 +3971,20 @@ function App(): React.JSX.Element {
         if (runtimeStatusRequestRef.current !== requestId) {
           return;
         }
+        const detail = reason instanceof Error
+          ? reason.message
+          : tRef.current("runtime.errors.readStatus");
         setRuntime({
           id: "setup",
           label: tRef.current("runtime.unavailable"),
           available: false,
           supportsToolExecution: false,
-          detail:
-            reason instanceof Error
-              ? reason.message
-              : tRef.current("runtime.errors.readStatus"),
+          detail,
         });
         setRuntimeStatusKey(activeRuntimeSelectionKey);
+        notify({ tone: "error", message: detail, dedupeKey: "runtime-status" });
       });
-  }, [activeRuntimeSelectionKey, runtimeSettings, setView]);
+  }, [activeRuntimeSelectionKey, runtimeSettings, setView, notify]);
 
   const startNewConversation = useCallback(
     (projectId?: string, preview?: { ready: (conversation: Conversation) => void }): boolean => {
@@ -8852,7 +8863,7 @@ function App(): React.JSX.Element {
       : runtime.available
         ? "ready"
         : "unavailable";
-  const runtimeDetailId = "topbar-runtime-detail";
+  const runtimeDetailId = "composer-runtime-detail";
   const runtimeDetail =
     runtimeState === "connecting"
       ? t("runtime.connecting")
@@ -9735,24 +9746,6 @@ function App(): React.JSX.Element {
             </>
           )}
           <div className="topbar__actions">
-            <span
-              aria-describedby={runtimeDetailId}
-              className={`runtime-status runtime-status--${runtimeState}`}
-              title={runtimeDetail}
-            >
-              <span className="runtime-status__dot" />
-              <span className="runtime-status__label">
-                {runtime?.label ?? t("runtime.detecting")}
-              </span>
-              {runtime?.capability === "image-generation" && (
-                <span className="runtime-capability-badge">
-                  {t("runtime.imageGeneration")}
-                </span>
-              )}
-            </span>
-            <span className="sr-only" id={runtimeDetailId}>
-              {runtimeDetail}
-            </span>
             <button
               aria-controls="assistant-sidebar"
               aria-expanded={assistantSidebarOpen}
@@ -10829,6 +10822,9 @@ function App(): React.JSX.Element {
                                   />
                                 </button>
                               )}
+                              <span className="sr-only" id={runtimeDetailId}>
+                                {runtimeDetail}
+                              </span>
                               <button
                                 aria-describedby={
                                   runtimeState !== "ready"
