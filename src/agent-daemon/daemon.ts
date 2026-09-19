@@ -465,14 +465,3 @@ function mergeProtocolMethods(
   }
   return { ...workspaceMethods, ...runtimeMethods }
 }
-
-export class UnsupportedPeerIdentityProvider
-  implements UnixPeerIdentityProvider
-{
-  async getPeerIdentity(): Promise<never> {
-    throw new AgentUnsupportedError(
-      'A certified SO_PEERCRED helper is unavailable',
-      'peer-identity-unavailable'
-    )
-  }
-}

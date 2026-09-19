@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
 import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
+import { appendConversationQuestionBlock } from '../../shared/conversation-question-blocks'
 import { DatabaseSync } from 'node:sqlite'
 import { statSync } from 'node:fs'
 import { MagicNoteStorage } from '../magic-notes/magic-note-storage'
@@ -1382,6 +1383,11 @@ function reduceRecoveredAgentEvent(
       reasoning: `${reasoning}${delta}`,
       blocks,
       status: undefined
+    }
+  } else if (event.type === 'question') {
+    next = {
+      ...message,
+      blocks: appendConversationQuestionBlock(message.blocks, event.questionId)
     }
   } else if (event.type === 'checklist') {
     next = { ...message, runtimeChecklist: event.checklist }
@@ -5097,6 +5103,27 @@ export class AssistantDatabase {
         }
         return candidate
       })
+  }
+
+  recordRemoteTaskQuestionArrival(taskIdInput: string, questionId: string): boolean {
+    const taskId = assistantIdSchema.parse(taskIdInput)
+    const database = this.requireDatabase()
+    const row = database.prepare(
+      `SELECT m.id, m.metadata_json
+       FROM tasks t JOIN messages m
+         ON m.id = t.current_assistant_message_id
+           AND m.conversation_id = t.conversation_id AND m.request_id = t.id
+       WHERE t.id = ? AND t.remote_recoverable = 1 AND m.role = 'assistant'`
+    ).get(taskId) as { id: string; metadata_json: string } | undefined
+    if (!row) return false
+    const metadata = JSON.parse(row.metadata_json) as MessageMetadata
+    const blocks = appendConversationQuestionBlock(metadata.blocks, questionId)
+    if (blocks !== metadata.blocks) {
+      metadata.blocks = blocks
+      database.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?')
+        .run(JSON.stringify(metadata), row.id)
+    }
+    return true
   }
 
   recordRemoteTaskQuestionAnswer(

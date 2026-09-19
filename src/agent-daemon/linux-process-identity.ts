@@ -1,5 +1,4 @@
 import {
-  lstatSync,
   readFileSync,
   readlinkSync,
   realpathSync
@@ -113,25 +112,6 @@ export class LinuxProcessInspector {
       throw error
     }
   }
-}
-
-export function currentLinuxProcessIdentity(
-  options: LinuxProcessInspectorOptions = {}
-): LinuxProcessIdentity {
-  const identity = new LinuxProcessInspector(options).inspect(process.pid)
-  if (identity === undefined) {
-    throw new Error('Current Linux process identity is unavailable')
-  }
-  return identity
-}
-
-export function canonicalExecutablePath(path: string): string {
-  const normalized = assertAbsoluteManagedPath(resolve(path))
-  const stat = lstatSync(normalized)
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw new Error('Agent executable must be a regular file')
-  }
-  return assertAbsoluteManagedPath(realpathSync(normalized))
 }
 
 function parseStarttime(contents: string): string {

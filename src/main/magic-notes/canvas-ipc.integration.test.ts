@@ -41,7 +41,7 @@ vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: (_name: string, api: DesktopApi) => { bridge.api = api } }
 }))
 // Disable unrelated environment integrations; persistence, schemas and handlers are real.
-vi.mock('../channels/channel-env', () => ({ startEnvironmentChannels: () => [], isReadOnlyChannelMessage: () => true }))
+vi.mock('../channels/channel-env', () => ({ startEnvironmentChannels: () => [] }))
 
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='
 function canvas(): MagicNoteCanvasContent {

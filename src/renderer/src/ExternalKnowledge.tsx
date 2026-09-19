@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { InlineHelp } from './InlineHelp'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Database, Eye, EyeOff, FolderOpen, RefreshCw, X } from 'lucide-react'
 import type { KnowledgeLibrary, KnowledgeSnapshot } from '../../shared/contracts'
@@ -347,7 +348,7 @@ export function ExternalInstanceManager({ instances, libraries, onClose, onChang
           <Field label={t('external.address')}><input type="url" required value={draft.baseUrl} aria-describedby={/^http:\/\//i.test(draft.baseUrl) ? `${keyId}-transport` : undefined} onChange={event => change({ baseUrl: event.currentTarget.value })} /></Field>
           {/^http:\/\//i.test(draft.baseUrl) && <p className="external-knowledge__help" id={`${keyId}-transport`}>{t('external.transportNote')}</p>}
           <fieldset className="external-knowledge__group">
-          <legend>{t('external.authentication')}</legend>
+          <legend><span className="inline-help-label">{t('external.authentication')}<InlineHelp label={t('external.authentication')}>{t('external.credentialNote')}</InlineHelp></span></legend>
           {draft.id && <Field label={t('external.credentialAction')}><select value={draft.credential.action} onChange={event => { setShowKey(false); change({ credential: event.currentTarget.value === 'replace' ? { action: 'replace', value: '' } : { action: event.currentTarget.value as 'keep' | 'clear' } }) }}>
             {draft.id && <option value="keep">{t('external.keep')}</option>}<option value="replace">{t('external.replace')}</option>{draft.id && <option value="clear">{t('external.clear')}</option>}
           </select></Field>}
@@ -357,7 +358,7 @@ export function ExternalInstanceManager({ instances, libraries, onClose, onChang
               <button type="button" className="icon-button" aria-label={t(showKey ? 'external.hideKey' : 'external.showKey')} title={t(showKey ? 'external.hideKey' : 'external.showKey')} aria-pressed={showKey} onClick={() => setShowKey(value => !value)}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
             </div>
           </div>}
-          <p className="external-knowledge__help" id={`${keyId}-note`}>{t('external.credentialNote')}</p>
+          <span className="sr-only" id={`${keyId}-note`}>{t('external.credentialNote')}</span>
           {draft.credential.action === 'clear' && <label><input type="checkbox" checked={clearConfirmed} onChange={event => setClearConfirmed(event.currentTarget.checked)} />{t('external.clearConfirm')}</label>}
           </fieldset>
           <div className="external-knowledge__fields">

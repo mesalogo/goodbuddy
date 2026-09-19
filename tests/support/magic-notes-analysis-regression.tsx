@@ -8,9 +8,11 @@ import type { MagicNoteCanvasContent } from '../../src/shared/magic-notes-contra
 import i18n from '../../src/renderer/src/i18n'
 import '../../src/renderer/src/styles.css'
 import '../../src/renderer/src/magic-canvas.css'
+import { liveNotesAnalysisRegression } from './magic-notes-analysis-live-regression'
 
 async function notesAnalysisRegression() {
   await i18n.changeLanguage('en-US')
+  if (new URLSearchParams(location.search).get('live') === '1') return liveNotesAnalysisRegression()
   const api = window.goodbuddy.magicNotes
   const initialSettings = await window.goodbuddy.updates.getSettings()
   if (initialSettings.magicNoteCanvasPageCount !== 1) throw new Error('Expected default page count 1')

@@ -10,7 +10,6 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
-  CircleHelp,
   Cpu,
   HeartPulse,
   Library,
@@ -19,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import {
   defaultApplicationNavigation,
   type ApplicationSettings,
@@ -117,24 +117,28 @@ export function ApplicationSettingsView({
           />
           <span>{t('applications.enable')}</span>
         </label>
-        <label className="toggle-row">
-          <input
-            role="switch"
-            type="checkbox"
-            checked={navigation.pinned[id]}
-            disabled={pending}
-            onChange={(event) =>
-              void onUpdate({
-                applicationNavigation: {
-                  ...navigation,
-                  pinned: { ...navigation.pinned, [id]: event.target.checked },
-                },
-              })
-            }
-          />
-          <span>{t('applications.pin')}</span>
-        </label>
-        <p className="settings-notice">{t('applications.enableHelp')}</p>
+        <div className="inline-help-label">
+          <label className="toggle-row">
+            <input
+              role="switch"
+              type="checkbox"
+              checked={navigation.pinned[id]}
+              aria-describedby="application-pin-help"
+              disabled={pending}
+              onChange={(event) =>
+                void onUpdate({
+                  applicationNavigation: {
+                    ...navigation,
+                    pinned: { ...navigation.pinned, [id]: event.target.checked },
+                  },
+                })
+              }
+            />
+            <span>{t('applications.pin')}</span>
+          </label>
+          <InlineHelp label={t('applications.pin')} id="application-pin-help">{t('applications.pinHelp')}</InlineHelp>
+        </div>
+        <p className="settings-notice">{t('applications.disableHelp')}</p>
         {id === 'magic-notes' && (
           <label className="toggle-row">
             <input
@@ -161,12 +165,10 @@ export function ApplicationSettingsView({
           <div className="platform-feature-option application-settings__compact-option">
             <div className="application-settings__label-with-help">
               <label htmlFor="magic-note-canvas-page-count">{t('platformFeatures.magicNotes.canvasPageCount', { ns: 'settingsSections' })}</label>
-              <button type="button" className="icon-button"
-                aria-label={t('platformFeatures.magicNotes.canvasPageCount', { ns: 'settingsSections' })}
-                aria-describedby="magic-note-canvas-page-count-help"
-                title={t('platformFeatures.magicNotes.canvasPageCountHelp', { ns: 'settingsSections' })}>
-                <CircleHelp size={14} aria-hidden="true" />
-              </button>
+              <InlineHelp label={t('platformFeatures.magicNotes.canvasPageCount', { ns: 'settingsSections' })}
+                id="magic-note-canvas-page-count-help">
+                {t('platformFeatures.magicNotes.canvasPageCountHelp', { ns: 'settingsSections' })}
+              </InlineHelp>
             </div>
             <div className="field">
               <select id="magic-note-canvas-page-count" disabled={pending} value={settings.magicNoteCanvasPageCount ?? 1}
@@ -176,9 +178,6 @@ export function ApplicationSettingsView({
               </select>
             </div>
           </div>
-          <span id="magic-note-canvas-page-count-help" className="sr-only">
-            {t('platformFeatures.magicNotes.canvasPageCountHelp', { ns: 'settingsSections' })}
-          </span>
           <div className="platform-feature-option">
             <span>
               {t('platformFeatures.magicNotes.commentMode', {

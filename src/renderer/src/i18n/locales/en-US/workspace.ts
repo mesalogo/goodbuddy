@@ -436,10 +436,7 @@ export const workspace = {
         ready: 'Browser ready',
         failed: 'Browser operation failed',
         stopped: 'Browser stopped'
-      },
-      frameAlt: 'Live Agent browser view',
-      noFrame: 'Could not capture the page',
-      waitingFrame: 'Waiting for the first page frame…'
+      }
     },
     errors: {
       workspacePreview: 'Could not preview the workspace file',

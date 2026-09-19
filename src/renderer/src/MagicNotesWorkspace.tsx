@@ -31,6 +31,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import { createPortal } from 'react-dom'
 import type {
   MagicNoteAnalysisOptions,
@@ -1991,7 +1992,7 @@ export function MagicNotesWorkspace({
             )}
           </>
         }
-        description={detailView ? undefined : t('page.description')}
+        help={detailView ? undefined : t('page.description')}
         headingId="magic-notes-title"
         icon={<Sparkles size={20} />}
         scope={{ kind: 'global' }}
@@ -2397,21 +2398,24 @@ export function MagicNotesWorkspace({
                               <section aria-label={t('comments.paneLabel')} className="magic-todo-comments">
                                 <strong>{t('comments.paneLabel')}</strong>
                                 <div className="magic-notes-ai-controls">
-                                  <label>
-                                    <span>{t('comments.directionLabel')}</span>
+                                  <div>
+                                    <div className="inline-help-label">
+                                      <label htmlFor="magic-todo-comment-direction">{t('comments.directionLabel')}</label>
+                                      <InlineHelp label={t('comments.directionLabel')}>{t('comments.directionHelp')}</InlineHelp>
+                                    </div>
                                     <select
+                                      id="magic-todo-comment-direction"
                                       aria-label={t('comments.directionAriaLabel')}
                                       onChange={(event) => setCommentDirection(event.target.value as MagicNoteCommentDirection)}
                                       value={commentDirection}
                                     >
                                       {commentDirections.map((direction) => <option key={direction.value} value={direction.value}>{direction.label}</option>)}
                                     </select>
-                                  </label>
+                                  </div>
                                   <button className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeTodo(selectedTodo.id)} type="button">
                                     <Bot aria-hidden="true" size={14} />
                                     {t(busy === `analyze-todo-${selectedTodo.id}` ? 'actions.analyzing' : selectedTodo.analyzedAt ? 'actions.analyzeAgain' : 'actions.analyze')}
                                   </button>
-                                  <small>{t('comments.directionHelp')}</small>
                                 </div>
                                 {liveAnalysis && busy === `analyze-todo-${selectedTodo.id}` && (
                                   <div className="magic-notes-ai-live" aria-live="polite">
@@ -2549,6 +2553,12 @@ export function MagicNotesWorkspace({
                 <div className="magic-note-composer__header">
                 <div className="magic-note-entry-type" role="group" aria-label={t('canvas.entryType')}>
                   {(['text', 'canvas'] as const).map((value) => <button key={value} type="button" className="secondary-button" aria-pressed={entryType === value} disabled={Boolean(busy) || entryType === value} onClick={() => void requestDraftSwitch({ kind: 'entry-type', value })}>{t(`canvas.${value}`)}</button>)}
+                  {entryType === 'text' && <InlineHelp label={t('notes.newEntryLabel')}>
+                    <p>{commentMode === 'immediate'
+                      ? t('notes.composerImmediateHint')
+                      : t('notes.composerRichTextHint')}</p>
+                    {commentMode === 'after-save-auto' && <p>{t('comments.autoHint')}</p>}
+                  </InlineHelp>}
                 </div>
                 {entryType === 'canvas' && <div className="magic-note-canvas-actions">
                   <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void analyzeCanvasDraft(false)}>{t('canvas.analyzeDraft')}</button>
@@ -2606,12 +2616,7 @@ export function MagicNotesWorkspace({
                     {validation.message}
                   </p>
                 )}
-                {entryType === 'text' && <footer>
-                  <span>
-                    {commentMode === 'immediate'
-                      ? t('notes.composerImmediateHint')
-                      : t('notes.composerRichTextHint')}
-                  </span>
+                {entryType === 'text' && <footer style={{ justifyContent: 'flex-end' }}>
                   <button
                     className="primary-button"
                     disabled={Boolean(busy)}
@@ -2882,9 +2887,13 @@ export function MagicNotesWorkspace({
           id="magic-notes-ai-pane"
         >
           <div className="magic-notes-ai-controls">
-            <label>
-              <span>{t('comments.directionLabel')}</span>
+            <div>
+              <div className="inline-help-label">
+                <label htmlFor="magic-note-comment-direction">{t('comments.directionLabel')}</label>
+                <InlineHelp label={t('comments.directionLabel')}>{t('comments.directionHelp')}</InlineHelp>
+              </div>
               <select
+                id="magic-note-comment-direction"
                 aria-label={t('comments.directionAriaLabel')}
                 onChange={(event) =>
                   setCommentDirection(
@@ -2899,10 +2908,7 @@ export function MagicNotesWorkspace({
                   </option>
                 ))}
               </select>
-            </label>
-            <small>
-              {t('comments.directionHelp')}
-            </small>
+            </div>
           </div>
           {liveAnalysis?.format === 'structured' ? (
             <p className="magic-notes-muted" role="status">

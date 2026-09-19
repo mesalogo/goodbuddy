@@ -21,8 +21,6 @@ export const GRAPH_LIMITS = {
   maximumRelations: 400,
   maximumFieldLength: 120,
   maximumQuoteLength: 500,
-  maximumSearchEntities: 50,
-  maximumSearchRelations: 100,
   maximumWarnings: 20,
   maximumWarningLength: 240
 } as const
@@ -89,16 +87,6 @@ export interface ExtractKnowledgeGraphOptions {
   signal?: AbortSignal
   ontology?: KnowledgeOntologySettings
   modelRetryBackoffMilliseconds?: number
-}
-
-export interface GraphSearchOptions {
-  maximumEntities?: number
-  maximumRelations?: number
-  maximumDepth?: number
-}
-
-export interface GraphSearchResult extends KnowledgeGraph {
-  matchedEntityIds: string[]
 }
 
 const emptyGraph = (): KnowledgeGraph => ({ entities: [], relations: [] })
@@ -1001,154 +989,5 @@ export async function extractKnowledgeGraph(
     strategy,
     requiresModelApproval: strategy === 'ask',
     warnings: [...context.warnings].slice(0, GRAPH_LIMITS.maximumWarnings)
-  }
-}
-
-function bestEvidenceConfidence(evidence: readonly GraphEvidence[]): number {
-  return evidence.reduce(
-    (maximum, item) => Math.max(maximum, item.confidence),
-    0
-  )
-}
-
-function entityMatchScore(entity: GraphEntity, query: string): number {
-  const key = normalizeEntityAlias(entity.name)
-  const type = normalizeEntityAlias(entity.type)
-  const aliases = entity.aliases.map(normalizeEntityAlias)
-  if (key === query || aliases.includes(query)) {
-    return 100
-  }
-  if (key.startsWith(query) || aliases.some((alias) => alias.startsWith(query))) {
-    return 80
-  }
-  if (key.includes(query) || aliases.some((alias) => alias.includes(query))) {
-    return 60
-  }
-  if (type.includes(query)) {
-    return 30
-  }
-  return 0
-}
-
-export function searchGraph(
-  graph: KnowledgeGraph,
-  query: string,
-  options: GraphSearchOptions = {}
-): GraphSearchResult {
-  const normalizedQuery = normalizeEntityAlias(query)
-  if (!normalizedQuery) {
-    return { ...emptyGraph(), matchedEntityIds: [] }
-  }
-  const maximumEntities = Math.max(
-    1,
-    Math.min(
-      options.maximumEntities ?? 20,
-      GRAPH_LIMITS.maximumSearchEntities
-    )
-  )
-  const maximumRelations = Math.max(
-    0,
-    Math.min(
-      options.maximumRelations ?? 40,
-      GRAPH_LIMITS.maximumSearchRelations
-    )
-  )
-  const maximumDepth = Math.max(0, Math.min(options.maximumDepth ?? 1, 3))
-  const entitiesById = new Map(
-    graph.entities
-      .slice(0, GRAPH_LIMITS.maximumEntities)
-      .map((entity) => [entity.id, entity])
-  )
-  const validRelations = graph.relations
-    .slice(0, GRAPH_LIMITS.maximumRelations)
-    .filter(
-      (relation) =>
-        entitiesById.has(relation.sourceId) &&
-        entitiesById.has(relation.targetId)
-    )
-  const scored = [...entitiesById.values()]
-    .map((entity) => ({
-      entity,
-      score: entityMatchScore(entity, normalizedQuery)
-    }))
-    .filter((item) => item.score > 0)
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        bestEvidenceConfidence(right.entity.evidence) -
-          bestEvidenceConfidence(left.entity.evidence) ||
-        left.entity.name.localeCompare(right.entity.name)
-    )
-  const matchedEntityIds = scored
-    .slice(0, maximumEntities)
-    .map((item) => item.entity.id)
-  const selected = new Set(matchedEntityIds)
-  let frontier = new Set(matchedEntityIds)
-  for (
-    let depth = 0;
-    depth < maximumDepth && selected.size < maximumEntities;
-    depth += 1
-  ) {
-    const candidates = new Map<string, number>()
-    for (const relation of validRelations) {
-      const neighbor = frontier.has(relation.sourceId)
-        ? relation.targetId
-        : frontier.has(relation.targetId)
-          ? relation.sourceId
-          : undefined
-      if (neighbor && !selected.has(neighbor)) {
-        candidates.set(
-          neighbor,
-          Math.max(
-            candidates.get(neighbor) ?? 0,
-            bestEvidenceConfidence(relation.evidence)
-          )
-        )
-      }
-    }
-    const next = [...candidates]
-      .sort(
-        ([leftId, leftScore], [rightId, rightScore]) =>
-          rightScore - leftScore ||
-          (entitiesById.get(leftId)?.name ?? '').localeCompare(
-            entitiesById.get(rightId)?.name ?? ''
-          )
-      )
-      .slice(0, maximumEntities - selected.size)
-      .map(([id]) => id)
-    frontier = new Set(next)
-    for (const id of next) {
-      selected.add(id)
-    }
-  }
-  const entities = [...selected]
-    .map((id) => entitiesById.get(id))
-    .filter((entity): entity is GraphEntity => entity !== undefined)
-  const relations = validRelations
-    .filter(
-      (relation) =>
-        selected.has(relation.sourceId) && selected.has(relation.targetId)
-    )
-    .sort(
-      (left, right) =>
-        Number(matchedEntityIds.includes(right.sourceId)) +
-          Number(matchedEntityIds.includes(right.targetId)) -
-          Number(matchedEntityIds.includes(left.sourceId)) -
-          Number(matchedEntityIds.includes(left.targetId)) ||
-        bestEvidenceConfidence(right.evidence) -
-          bestEvidenceConfidence(left.evidence) ||
-        left.id.localeCompare(right.id)
-    )
-    .slice(0, maximumRelations)
-  const connected = new Set(
-    relations.flatMap((relation) => [relation.sourceId, relation.targetId])
-  )
-  return {
-    entities: entities.filter(
-      (entity) =>
-        matchedEntityIds.includes(entity.id) || connected.has(entity.id)
-    ),
-    relations,
-    matchedEntityIds
   }
 }

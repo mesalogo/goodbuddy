@@ -4,6 +4,7 @@ import type { ContextAttachment } from '../../shared/contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { AttachmentResultButton } from './AttachmentResultButton'
 import { AttachmentActions, AttachmentStatus } from './AttachmentActions'
+import { InlineHelp } from './InlineHelp'
 
 export function QueuedAttachmentsDialog({ itemId, onClose }: { itemId: string; onClose: () => void }): React.JSX.Element {
   const close = useRef<HTMLButtonElement>(null)
@@ -22,8 +23,7 @@ export function QueuedAttachmentsDialog({ itemId, onClose }: { itemId: string; o
       trapTabFocus(event, event.currentTarget)
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose() }
     }}>
-      <header><strong>入队时的附件</strong><button type="button" className="secondary-button" ref={close} onClick={onClose}>关闭附件预览</button></header>
-      <p>这里显示入队时的内容。需要修改附件时，请先将整条输入恢复到草稿。</p>
+      <header><span className="inline-help-label"><strong>入队时的附件</strong><InlineHelp label="入队时的附件">这里显示入队时的内容。需要修改附件时，请先将整条输入恢复到草稿。</InlineHelp></span><button type="button" className="secondary-button" ref={close} onClick={onClose}>关闭附件预览</button></header>
       {error && <p role="alert">{error}</p>}
       {!items && !error && <p role="status">正在读取附件</p>}
       {items?.length === 0 && <p>此输入没有附件。</p>}

@@ -1,5 +1,40 @@
 # Magic Notes Progress
 
+## 2026-09-20: Shared Inline Help
+
+The canvas page-count question mark now uses `InlineHelp`, superseding the native
+`title` mechanism recorded below. The overview description, comment-direction
+help and new text-entry hints also use the shared component. Interaction rules
+are maintained in [the UI design system](../../../UI-DESIGN.md#614-inlinehelp-同行帮助).
+
+The final verification ran `npm test -- --reporter=default --reporter=json
+--outputFile.json=<temporary-report>`: **412 files passed, 9 skipped; 4,858 tests
+passed, 67 skipped, no failures**, in 1,016.17 seconds. The JSON report confirms
+`success: true`. `npm run typecheck` and `npm run lint` passed. The focused help,
+application, SSH, Skills and MCP run also passed **6 files / 54 tests**. SSH password
+help now keeps authentication and encrypted-storage consequences visible; Skills
+and MCP headers no longer retain an empty description paragraph. Pin help and
+disable consequences use separate Chinese and English translation keys.
+
+`tests/inline-help.electron.test.ts` renders production `ApplicationCenter` /
+`ApplicationSettingsView`, `SettingsPanel`, retrieval and activity components with
+fixture data. Native Electron input verified hover, focus, click pinning, Escape
+isolation, outside dismissal and Modal ownership. Chromium AX checks confirmed
+unique description IDs and accessible text before, during and after expansion.
+Light/dark checks cover 1280x800 and 640x480 consumer views, plus 1000x700 and
+360x320 shared-component views. Computed styles and captured screenshots confirm
+that canvas-count and pin help match model settings: 28px buttons, 14px icons,
+4px label gaps, zero center offset, identical button colors/margins and tooltip
+typography/padding/borders in each theme. No CSS difference was reproduced, so
+this pass adds comparison assertions without changing styles.
+
+The focused run retained 28 screenshots and `evidence.json` under the temporary
+`inline-help-final` artifact directory selected by `GOODBUDDY_HELP_ARTIFACTS`.
+This validates real Electron rendering with fixture services, not a packaged
+full App or live provider. Help actions triggered zero consumer operations and
+zero model calls. The full suite also passed both production canvas-analysis
+Electron cases with substituted model output; live-provider checks remain opt-in.
+
 ## 2026-09-19: Compact Page Count Setting
 
 - The page-count select now uses the existing `.field` settings control styling.

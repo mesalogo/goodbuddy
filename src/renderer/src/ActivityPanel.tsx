@@ -1,6 +1,7 @@
 import { Activity, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import type {
   AssistantProject,
   TokenUsageSummary
@@ -694,7 +695,7 @@ export function ActivityPanel({
       className="activity-panel"
     >
       <PageHeader
-        description={t('header.description')}
+        help={t('header.description')}
         headingId="activity-panel-title"
         icon={<Activity size={20} />}
         scope={{ kind: 'all-projects' }}
@@ -822,9 +823,10 @@ export function ActivityPanel({
               aria-label={t('timeline.ariaLabel')}
               className="activity-tracks"
             >
-              <p className="activity-tracks__description">
-                {t('timeline.description')}
-              </p>
+              <div className="inline-help-label">
+                <strong>{t('tabs.timeline')}</strong>
+                <InlineHelp label={t('tabs.timeline')}>{t('timeline.description')}</InlineHelp>
+              </div>
               <ul
                 aria-label={t('timeline.legendAriaLabel')}
                 className="activity-tracks__legend"

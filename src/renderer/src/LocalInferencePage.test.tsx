@@ -49,7 +49,10 @@ describe('LocalInferencePage', () => {
   it('keeps the service toolbar responsive', async () => {
     render(<LocalInferencePage onClose={vi.fn()} />)
     await screen.findByRole('heading', { name: '向量生成' })
-    const toolbar = screen.getByText('每 5 秒刷新 · CPU 100% = 一个逻辑核心').parentElement!
+    expect(screen.queryByText('每 5 秒刷新 · CPU 100% = 一个逻辑核心')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '本机推理监控' }))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('每 5 秒刷新 · CPU 100% = 一个逻辑核心')
+    const toolbar = screen.getByRole('button', { name: '刷新状态' }).closest<HTMLElement>('.local-inference-toolbar')!
     expect(toolbar).toHaveClass('local-inference-toolbar')
     expect(within(toolbar).getByRole('button', { name: '刷新状态' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
@@ -138,10 +141,12 @@ describe('LocalInferencePage', () => {
     render(<LocalInferencePage onClose={onClose} />)
     expect(screen.getByRole('button', { name: '关闭本机推理监控' })).toHaveFocus()
     await screen.findByRole('heading', { name: '向量生成' })
-    fireEvent.keyDown(screen.getByRole('button', { name: '关闭本机推理监控' }), { key: 'Tab', shiftKey: true })
+    const help = screen.getByRole('button', { name: '本机推理监控' })
+    help.focus()
+    fireEvent.keyDown(help, { key: 'Tab', shiftKey: true })
     expect(screen.getByRole('button', { name: '重启服务' })).toHaveFocus()
     fireEvent.keyDown(screen.getByRole('button', { name: '重启服务' }), { key: 'Tab' })
-    expect(screen.getByRole('button', { name: '关闭本机推理监控' })).toHaveFocus()
+    expect(help).toHaveFocus()
     const stop = screen.getByRole('button', { name: '停止服务' })
     stop.focus()
     fireEvent.click(stop)

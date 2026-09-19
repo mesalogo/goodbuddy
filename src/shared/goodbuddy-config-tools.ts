@@ -66,13 +66,6 @@ export const goodbuddyConfigToolCatalog = {
   GoodBuddyConfigToolDefinition
 >
 
-export const goodbuddyConfigToolKeys = [
-  'capabilities',
-  'get',
-  'plan',
-  'apply'
-] as const
-
 export const goodbuddyConfigTools = [
   goodbuddyConfigToolCatalog.capabilities,
   goodbuddyConfigToolCatalog.get,

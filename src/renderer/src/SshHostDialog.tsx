@@ -20,6 +20,7 @@ import type {
 } from '../../shared/ssh-host-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { displayErrorMessage } from './error-message'
+import { InlineHelp } from './InlineHelp'
 
 type HostDraft = {
   name: string
@@ -121,6 +122,7 @@ export function SshHostDialog({
   const titleId = useId()
   const descriptionId = useId()
   const formErrorId = useId()
+  const passwordId = useId()
   const api = window.goodbuddy.sshHosts
   const targetUnchanged = targetMatchesHost(draft, host)
   const canKeepPassword =
@@ -652,9 +654,16 @@ export function SshHostDialog({
                   )}
                   {(!canKeepPassword ||
                     passwordAction === 'replace') && (
-                    <label className="custom-task-dialog__field">
-                      <span>{t('sshHosts.fields.password')}</span>
+                    <div className="custom-task-dialog__field">
+                      <div className="inline-help-label">
+                        <label htmlFor={passwordId}>{t('sshHosts.fields.password')}</label>
+                        <InlineHelp label={t('sshHosts.fields.password')} id={`${passwordId}-help`}>
+                          {t('sshHosts.passwordHelp')}
+                        </InlineHelp>
+                      </div>
                       <input
+                        id={passwordId}
+                        aria-describedby={`${passwordId}-notice ${passwordId}-help`}
                         autoComplete="new-password"
                         maxLength={
                           SSH_HOST_LIMITS.maximumPasswordLength
@@ -667,8 +676,8 @@ export function SshHostDialog({
                         type="password"
                         value={password}
                       />
-                      <small>{t('sshHosts.passwordHelp')}</small>
-                    </label>
+                      <small id={`${passwordId}-notice`}>{t('sshHosts.passwordNotice')}</small>
+                    </div>
                   )}
                 </>
               ) : (

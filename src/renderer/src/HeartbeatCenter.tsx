@@ -414,7 +414,7 @@ export function HeartbeatCenter({
             </>
           )
         }
-        description={t('center.description')}
+        help={t('center.description')}
         headingId="heartbeat-center-title"
         icon={<HeartPulse size={22} />}
         scope={heartbeatScope}

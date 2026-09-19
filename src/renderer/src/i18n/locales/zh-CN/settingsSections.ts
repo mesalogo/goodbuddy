@@ -33,8 +33,9 @@ export const settingsSections = {
       keep: '保留已保存密码',
       replace: '输入新密码'
     },
+    passwordNotice: '密码用于 SSH 认证，验证成功后加密保存到系统安全存储。',
     passwordHelp:
-      '密码仅用于本次认证，并在验证成功后由 Main 进程写入系统安全存储；不会写入命令行、日志或普通设置文件。',
+      '由 Main 进程处理密码，不会写入命令行、日志或普通设置文件。',
     credentialSources: {
       none: '尚未配置',
       encrypted: '已由系统安全存储加密',

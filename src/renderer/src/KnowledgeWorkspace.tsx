@@ -43,6 +43,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
+import { InlineHelp } from './InlineHelp'
 import type { TFunction } from 'i18next'
 import type {
   KnowledgeDocumentItem as SharedKnowledgeDocumentItem,
@@ -663,6 +664,8 @@ function CreateLibraryWizard({
   const [description, setDescription] = useState('')
   const [storageMode, setStorageMode] =
     useState<KnowledgeStorageMode>('reference')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const advancedId = useId()
   const [graphEnabled, setGraphEnabled] = useState(false)
   const [graphStrategy, setGraphStrategy] =
     useState<KnowledgeGraphStrategy>('rules')
@@ -730,14 +733,21 @@ function CreateLibraryWizard({
           value={description}
         />
       </label>
-      <details className="knowledge-create__advanced">
-        <summary>
+      <div className="inline-help-label">
+      <details className="knowledge-create__advanced" open={advancedOpen}>
+        <summary aria-controls={advancedOpen ? advancedId : undefined} onClick={(event) => {
+          event.preventDefault()
+          setAdvancedOpen(!advancedOpen)
+        }}>
           <span>
             <strong>{t('create.advanced')}</strong>
-            <small>{t('create.advancedDescription')}</small>
           </span>
         </summary>
-        <div className="knowledge-create__advanced-content">
+      </details>
+      <InlineHelp label={t('create.advanced')}>{t('create.advancedDescription')}</InlineHelp>
+      </div>
+      {advancedOpen && (
+        <div className="knowledge-create__advanced-content" id={advancedId}>
       <fieldset className="knowledge-create__storage">
         <legend>
           {t('fields.storageMode')}
@@ -809,7 +819,7 @@ function CreateLibraryWizard({
         </label>
       )}
         </div>
-      </details>
+      )}
       {error && (
         <p
           aria-live="polite"
@@ -2470,11 +2480,11 @@ function KnowledgeSettingsView({
     >
       {mode === 'index' && (
         <section className="knowledge-settings__section">
-          <div>
+          <div className="inline-help-label">
             <h3>{t('settings.retrieval.title')}</h3>
-            <p className="knowledge-section-description">
+            <InlineHelp label={t('settings.retrieval.title')}>
               {t('settings.retrieval.description')}
-            </p>
+            </InlineHelp>
           </div>
           <div className="knowledge-settings__actions">
             <button
@@ -2734,13 +2744,13 @@ function KnowledgeSettingsView({
         aria-labelledby="knowledge-ontology-settings-title"
         className="knowledge-settings__ontology knowledge-settings__section"
       >
-        <div>
+        <div className="inline-help-label">
           <h3 id="knowledge-ontology-settings-title">
             {t('settings.ontology.title')}
           </h3>
-          <p className="knowledge-section-description">
+          <InlineHelp label={t('settings.ontology.title')}>
             {t('settings.ontology.description')}
-          </p>
+          </InlineHelp>
         </div>
         {library.ontologyRebuildRequired && (
           <p className="knowledge-settings__rebuild-note" role="status">
@@ -3889,6 +3899,7 @@ function GraphView({
             <RotateCcw aria-hidden="true" size={15} />
             {t('graph.fitView')}
           </button>
+          <InlineHelp label={t('graph.canvasAriaLabel')}>{t('graph.interactionHint')}</InlineHelp>
           {reextractError && (
             <span
               className="knowledge-graph__toolbar-error"
@@ -3946,9 +3957,6 @@ function GraphView({
                 })}
               </span>
             </div>
-            <p className="knowledge-graph__interaction-hint">
-              {t('graph.interactionHint')}
-            </p>
             {visibleRelations.length === 0 ? (
               <p className="knowledge-graph__panel-empty">
                 {t('graph.visibleRelations.empty')}

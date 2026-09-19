@@ -2036,6 +2036,7 @@ export function registerIpcHandlers(
       )) {
         if (rawEvent.type === 'question' || rawEvent.type === 'question-resolved') {
           if (rawEvent.type === 'question') {
+            assistantDatabase.recordRemoteTaskQuestionArrival(task.taskId, rawEvent.questionId)
             pendingAgentQuestions.set(rawEvent.questionId, {
               requestId: task.taskId, runtime: recoveredRuntime, question: rawEvent
             })
@@ -4798,6 +4799,7 @@ export function registerIpcHandlers(
             toolStates.delete(publicEvent.runtimeCallId)
           }
           if (publicEvent.type === 'question') {
+            assistantDatabase.recordRemoteTaskQuestionArrival(request.requestId, publicEvent.questionId)
             pendingAgentQuestions.set(publicEvent.questionId, {
               requestId: request.requestId,
               runtime: selectedRuntime,

@@ -26,6 +26,23 @@ function futureLocalDateTime(): string {
 }
 
 describe('CustomTaskDialog', () => {
+  it('keeps descriptions accessible and opens help outside field labels', () => {
+    const onClose = vi.fn()
+    render(<CustomTaskDialog currentConversationAvailable={false} onClose={onClose} onCreate={vi.fn()} projectName="Project" workspaceLabel="Workspace" />)
+    const dialog = screen.getByRole('dialog', { name: '新建定制任务' })
+    expect(document.getElementById(dialog.getAttribute('aria-describedby')!)).toHaveClass('sr-only')
+    const name = screen.getByRole('textbox', { name: '任务名称' })
+    expect(document.getElementById(name.getAttribute('aria-describedby')!)).toHaveClass('sr-only')
+    const help = screen.getByRole('button', { name: '任务名称' })
+    expect(help.closest('label')).toBeNull()
+    fireEvent.click(help)
+    expect(screen.getByRole('tooltip')).toHaveTextContent(document.getElementById('custom-task-name-help')!.textContent!)
+    fireEvent.keyDown(help, { key: 'Escape' })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(dialog).toBeInTheDocument()
+  })
+
   it('keeps dialog spacing and form controls inside their layout bounds', () => {
     expect(stylesheet).toMatch(/--space-5:\s*20px;/u)
     expect(stylesheet).toMatch(
@@ -72,7 +89,7 @@ describe('CustomTaskDialog', () => {
     expect(screen.getByLabelText('关联会话')).toHaveValue('current')
     expect(screen.getByLabelText('任务内容')).toHaveFocus()
 
-    fireEvent.change(screen.getByLabelText('任务名称'), {
+    fireEvent.change(screen.getByRole('textbox', { name: '任务名称' }), {
       target: { value: '每周项目总结' }
     })
     fireEvent.change(screen.getByLabelText('任务内容'), {
@@ -190,7 +207,7 @@ describe('CustomTaskDialog', () => {
     expect(screen.queryByRole('option', { name: '当前项目会话' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('关联会话'), { target: { value: otherId } })
     fireEvent.change(screen.getByLabelText('任务内容'), { target: { value: '检查项目' } })
-    fireEvent.change(screen.getByLabelText('任务名称'), { target: { value: ' 自定义名称 ' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '任务名称' }), { target: { value: ' 自定义名称 ' } })
     fireEvent.click(screen.getByRole('button', { name: '创建任务' }))
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: otherId, title: '自定义名称' }),
@@ -256,7 +273,7 @@ describe('CustomTaskDialog', () => {
     const create = screen.getByRole('button', { name: '创建任务' })
     create.focus()
     fireEvent.keyDown(create, { key: 'Tab' })
-    expect(screen.getByRole('button', { name: '关闭新建定制任务' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: '新建定制任务' })).toHaveFocus()
     unmount()
     expect(opener).toHaveFocus()
     opener.remove()

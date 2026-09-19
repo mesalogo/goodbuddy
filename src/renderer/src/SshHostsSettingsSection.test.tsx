@@ -300,7 +300,19 @@ describe('SshHostsSettingsSection', () => {
     expect(validateAndSave).not.toHaveBeenCalled()
     expect(screen.getByText(new RegExp(fingerprint))).toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText(/^SSH 密码/u), {
+    const passwordInput = screen.getByLabelText(/^SSH 密码/u, { selector: 'input' })
+    const passwordHelp = screen.getByRole('button', { name: 'SSH 密码' })
+    expect(passwordHelp.closest('label')).toBeNull()
+    expect(screen.getByText(/密码用于 SSH 认证/)).toBeVisible()
+    expect(screen.getByText(/由 Main 进程处理密码/)).not.toBeVisible()
+    fireEvent.click(passwordHelp)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('不会写入命令行、日志或普通设置文件')
+    expect(passwordInput).toHaveValue('')
+    expect(validateAndSave).not.toHaveBeenCalled()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(passwordInput).toHaveAccessibleDescription(/密码用于 SSH 认证.*由 Main 进程处理密码/)
+    fireEvent.change(passwordInput, {
       target: { value: 'private password' }
     })
     fireEvent.click(
@@ -390,7 +402,7 @@ describe('SshHostsSettingsSection', () => {
     openNewHostDialog()
     fillConnectionDetails()
     await inspectAndConfirmFirstKey()
-    const password = screen.getByLabelText(/^SSH 密码/u)
+    const password = screen.getByLabelText(/^SSH 密码/u, { selector: 'input' })
     fireEvent.change(password, {
       target: { value: 'wrong password' }
     })

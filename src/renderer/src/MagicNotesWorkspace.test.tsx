@@ -161,6 +161,23 @@ async function openNote(title = detail.title): Promise<void> {
   await screen.findByDisplayValue(title)
 }
 
+it.each(['immediate', 'after-save-auto', 'after-save-manual'] as const)('shows complete text composer help for %s without triggering analysis', async (mode) => {
+  getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: mode })
+  render(<MagicNotesWorkspace onNotify={onNotify} />)
+  await openNote()
+  const help = screen.getByRole('button', { name: '新记录内容' })
+  expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  expect(help.closest('label, button button, [role="tab"]')).toBeNull()
+  fireEvent.click(help)
+  const tooltip = screen.getByRole('tooltip')
+  expect(tooltip).toHaveTextContent('输入 -、1.、[ ] 或 [x] 后按空格可创建列表')
+  expect(tooltip).toHaveTextContent(mode === 'immediate' ? '停止输入 5 秒后自动评论' : '也可粘贴或拖入本地文件')
+  if (mode === 'after-save-auto') expect(tooltip).toHaveTextContent('保存记录后，AI 会自动评论。')
+  expect(screen.getByRole('button', { name: '保存记录' })).toBeVisible()
+  expect(analyzeDraft).not.toHaveBeenCalled()
+  expect(analyze).not.toHaveBeenCalled()
+})
+
 function back(): void {
   fireEvent.click(screen.getByRole('button', { name: '返回总览' }))
 }

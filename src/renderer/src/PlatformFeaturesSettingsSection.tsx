@@ -13,6 +13,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import type {
   ApplicationSettings,
   ModelDownloadSource
@@ -553,12 +554,12 @@ export function PlatformFeaturesSettingsSection({
       >
         <article className="capability-card">
           <div className="capability-card__header">
-            <div>
+            <span className="inline-help-label">
               <strong>{t('platformFeatures.shortcut.title')}</strong>
-              <small>
+              <InlineHelp label={t('platformFeatures.shortcut.title')}>
                 {t('platformFeatures.shortcut.description')}
-              </small>
-            </div>
+              </InlineHelp>
+            </span>
           </div>
           {shortcutDraft && shortcutSnapshot ? (
             <>
@@ -660,14 +661,14 @@ export function PlatformFeaturesSettingsSection({
         {settings && (
           <article className="capability-card">
             <div className="capability-card__header">
-              <div>
+              <span className="inline-help-label">
                 <strong>
                   {t('platformFeatures.conversationHtml.title')}
                 </strong>
-                <small>
+                <InlineHelp label={t('platformFeatures.conversationHtml.title')}>
                   {t('platformFeatures.conversationHtml.description')}
-                </small>
-              </div>
+                </InlineHelp>
+              </span>
             </div>
             <label className="toggle-row">
               <input
@@ -690,16 +691,16 @@ export function PlatformFeaturesSettingsSection({
         {settings ? (
         <article className="capability-card">
           <div className="capability-card__header">
-            <div>
+            <span className="inline-help-label">
               <strong>
                 {t('platformFeatures.modelDownloadSource.title')}
               </strong>
-              <small>
+              <InlineHelp label={t('platformFeatures.modelDownloadSource.title')}>
                 {t(
                   'platformFeatures.modelDownloadSource.description'
                 )}
-              </small>
-            </div>
+              </InlineHelp>
+            </span>
           </div>
           <fieldset className="model-download-source">
             <legend className="sr-only">
@@ -762,16 +763,16 @@ export function PlatformFeaturesSettingsSection({
         {settings ? (
           <article className="capability-card">
             <div className="capability-card__header">
-              <div>
+              <span className="inline-help-label">
                 <strong>
                   {t('platformFeatures.remoteProjects.title')}
                 </strong>
-                <small>
+                <InlineHelp label={t('platformFeatures.remoteProjects.title')}>
                   {t(
                     'platformFeatures.remoteProjects.description'
                   )}
-                </small>
-              </div>
+                </InlineHelp>
+              </span>
             </div>
             <label className="toggle-row">
               <input

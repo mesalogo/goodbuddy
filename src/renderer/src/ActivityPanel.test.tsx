@@ -77,6 +77,17 @@ function makeTokenUsage(): TokenUsageSummary {
 }
 
 describe('ActivityPanel', () => {
+  it('opens timeline guidance separately from tab navigation', () => {
+    render(<ActivityPanel onClear={vi.fn()} onOpenConversation={vi.fn()} records={[makeRecord(1)]} tokenUsage={makeTokenUsage()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '活动时间线' }))
+    const help = screen.getByRole('button', { name: '活动时间线' })
+    expect(help.closest('[role="tab"]')).toBeNull()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    fireEvent.click(help)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('所有轨道共享同一执行顺序')
+    expect(screen.getByRole('tab', { name: '活动时间线' })).toHaveAttribute('aria-selected', 'true')
+  })
+
   afterEach(async () => {
     cleanup()
     await i18n.changeLanguage('zh-CN')
@@ -106,6 +117,7 @@ describe('ActivityPanel', () => {
       screen.getByRole('heading', { level: 1, name: 'Run history' })
     ).toBeInTheDocument()
     expect(screen.queryByText('RUN HISTORY')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Run history' }))
     expect(
       screen.getByText(
         'Review execution details by project, task, and conversation, or browse the activity timeline and model usage.'
@@ -705,8 +717,9 @@ describe('ActivityPanel', () => {
       ).getByText('G')
     ).toBeInTheDocument()
     expect(within(timeline).getByText('项目：项目甲')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '活动时间线' }))
     expect(
-      within(timeline).getByText(
+      screen.getByText(
         '所有轨道共享同一执行顺序，节点按发生时间依次展开；点击节点可查看身份和活动详情。'
       )
     ).toBeInTheDocument()

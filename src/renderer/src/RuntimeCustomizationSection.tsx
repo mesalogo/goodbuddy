@@ -16,6 +16,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import {
   runtimeCustomizationLimits,
   type ContinueConfigurationPreset,
@@ -669,12 +670,19 @@ export const RuntimeCustomizationSection = forwardRef<
       ) : null}
 
       {provider === 'opencode' && settings && snapshot ? (
-        <label
+        <div
           aria-busy={saving}
           className="field runtime-customization-editor"
         >
-          <span>{t('runtime.customization.opencode.defaultAgent')}</span>
+          <span className="inline-help-label">
+            <label htmlFor="opencode-default-agent">{t('runtime.customization.opencode.defaultAgent')}</label>
+            <InlineHelp label={t('runtime.customization.opencode.defaultAgent')} id="opencode-default-agent-help">
+              {t('runtime.customization.opencode.agentDescription')}
+            </InlineHelp>
+          </span>
           <select
+            id="opencode-default-agent"
+            aria-describedby="opencode-default-agent-help"
             aria-label={t(
               'runtime.customization.opencode.defaultAgent'
             )}
@@ -705,10 +713,7 @@ export const RuntimeCustomizationSection = forwardRef<
                 </option>
               ))}
           </select>
-          <small>
-            {t('runtime.customization.opencode.agentDescription')}
-          </small>
-        </label>
+        </div>
       ) : null}
 
       {provider === 'continue' && settings && snapshot ? (

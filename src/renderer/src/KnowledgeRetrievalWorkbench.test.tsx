@@ -106,6 +106,27 @@ describe('KnowledgeRetrievalWorkbench', () => {
     ).not.toHaveAttribute('open')
   })
 
+  it('consolidates static help while keeping unavailable channels and validation visible', () => {
+    render(<KnowledgeRetrievalWorkbench {...createProps({ graphAvailable: false })} />)
+    openAdvancedSettings()
+    const help = screen.getByRole('button', { name: '通道融合占比（合计 100%）' })
+    expect(help.closest('label, summary')).toBeNull()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    fireEvent.click(help)
+    expect(screen.getAllByRole('tooltip')).toHaveLength(1)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('按相对占比参与融合；可用通道建议合计 100%')
+    expect(screen.getAllByText('按相对占比参与融合；可用通道建议合计 100%')).toHaveLength(1)
+    expect(screen.getByText('当前知识库未启用图谱，此权重暂不生效。')).toBeVisible()
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('未启用')
+    fireEvent.keyDown(help, { key: 'Escape' })
+    const adjacent = screen.getByRole('spinbutton', { name: '相邻分块数' })
+    fireEvent.change(adjacent, { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: '测试检索' }))
+    expect(screen.getByText('相邻分块数必须是 0 至 2 的整数。')).toBeVisible()
+    expect(adjacent).toHaveAccessibleDescription('相邻分块数必须是 0 至 2 的整数。')
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('provides dialog semantics, focuses the persistent query, and returns focus on close', async () => {
     function Harness(): React.JSX.Element {
       const [open, setOpen] = useState(false)

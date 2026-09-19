@@ -24,6 +24,8 @@
 该值。请求体说明明确列出直连、Continue 和受管远程 OpenCode 支持，并说明本地
 OpenCode 与 DeepSeek Harness 不使用该值。
 
+两项说明使用标签同行的 `InlineHelp`，交互遵循[同行帮助规范](../../../UI-DESIGN.md#614-inlinehelp-同行帮助)。下列警告及字段错误保持常显。
+
 同一区域还必须说明：
 
 - Runtime、协议和认证生成的字段优先。
@@ -32,7 +34,7 @@ OpenCode 与 DeepSeek Harness 不使用该值。
 
 ## 无障碍与键盘
 
-- 每个文本域有稳定的可访问名称，并通过 `aria-describedby` 关联兼容性说明。
+- 每个文本域有稳定的可访问名称，并通过 `aria-describedby` 关联兼容性说明。帮助关闭时保留隐藏说明，展开时替换为同 ID 的浮层，避免关联丢失或 ID 重复。
 - 无效状态不能只依赖颜色，必须同时提供错误文字和 `aria-invalid`。
 - 文本域遵循标准键盘编辑、选择、复制和粘贴行为；保存继续使用设置页唯一的主保存操作。
 - 焦点边框、字体、间距、颜色和深浅主题全部复用全局语义令牌。
@@ -49,7 +51,7 @@ Runtime 入口恢复跟随。该展示规则不改变模型解析、远程 Agent
 DeepSeek Harness 的 `platform` 选项命名为“管理员环境优先，回退 GoodBuddy 兼容连接”，
 不能沿用 OpenCode/Continue 的“Runtime 自有配置”标签。来源规则以
 [Harness 模型配置](../deepseek-harness/technical-design.md#121-配置来源)为准。
-帮助文字与选择器通过 `aria-describedby` 关联，并明确此选项不加载用户 profile 或
+帮助文字收进标签同行的 `InlineHelp`，与选择器通过 `aria-describedby` 持续关联，并明确此选项不加载用户 profile 或
 配置文件；无兼容 GoodBuddy 连接时仍可选择管理员环境来源。
 
 概览使用 Main 提供的[平台来源投影](./technical-design.md#9-harness-平台来源公开投影)，

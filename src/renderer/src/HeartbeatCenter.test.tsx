@@ -153,6 +153,7 @@ describe('HeartbeatCenter', () => {
   it('renders English interface copy while preserving heartbeat content', async () => {
     await i18n.changeLanguage('en-US')
     render(<HeartbeatCenter {...createProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Smart Heartbeat' }))
 
     expect(
       screen.getByRole('heading', {
@@ -327,6 +328,7 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: '智能心跳' })
     ).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: '智能心跳' })[1]!)
     expect(
       screen.getByText('心跳计划按时只读运行，不调用工具。')
     ).toBeInTheDocument()
@@ -423,6 +425,18 @@ describe('HeartbeatCenter', () => {
     expect(confirmation).toHaveTextContent(
       '将永久删除此计划、运行历史和关联结果，且无法恢复。'
     )
+  })
+
+  it('keeps scope choices visible while showing help for the selected scope', () => {
+    render(<HeartbeatCenter {...createProps()} />)
+    fireEvent.click(screen.getByRole('tab', { name: '心跳计划' }))
+    const help = screen.getByRole('button', { name: '回顾范围' })
+    expect(help.closest('label, [role="tab"]')).toBeNull()
+    fireEvent.click(help)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('回顾所有可用项目中的有界对话与任务')
+    fireEvent.click(screen.getByRole('button', { name: '指定项目' }))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('一次运行共同回顾所选项目')
+    expect(screen.getByRole('checkbox', { name: '默认项目' })).toBeVisible()
   })
 
   it('creates one heartbeat plan for multiple selected projects', async () => {

@@ -8,6 +8,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { SegmentedControl } from './WorkspacePrimitives'
+import { InlineHelp } from './InlineHelp'
 import './custom-task-dialog.css'
 
 export type CustomTaskDestination = 'current' | 'new'
@@ -175,10 +176,13 @@ export function CustomTaskDialog({
               <ClockFading aria-hidden="true" size={14} />
               {t('customTask.eyebrow')}
             </span>
-            <h2 id="custom-task-title">{t('customTask.title')}</h2>
-            <p id="custom-task-description">
+            <div className="inline-help-label">
+              <h2 id="custom-task-title">{t('customTask.title')}</h2>
+              <InlineHelp label={t('customTask.title')}>{t('customTask.description')}</InlineHelp>
+            </div>
+            <span className="sr-only" id="custom-task-description">
               {t('customTask.description')}
-            </p>
+            </span>
           </div>
           <button
             aria-label={t('customTask.close')}
@@ -218,9 +222,14 @@ export function CustomTaskDialog({
             )}
           </label>
 
-          <label className="custom-task-dialog__field">
-            <span id="custom-task-name-label">{t('customTask.fields.name')}</span>
+          <div className="custom-task-dialog__field">
+            <div className="inline-help-label">
+              <label htmlFor="custom-task-name" id="custom-task-name-label">{t('customTask.fields.name')}</label>
+              <small>{t('applications.optional')}</small>
+              <InlineHelp label={t('customTask.fields.name')}>{t('customTask.nameHelp')}</InlineHelp>
+            </div>
             <input
+              id="custom-task-name"
               aria-labelledby="custom-task-name-label"
               aria-describedby="custom-task-name-help"
               maxLength={120}
@@ -228,8 +237,8 @@ export function CustomTaskDialog({
               placeholder={generatedTitle}
               value={title}
             />
-            <small id="custom-task-name-help">{t('customTask.nameHelp')}</small>
-          </label>
+            <span className="sr-only" id="custom-task-name-help">{t('customTask.nameHelp')}</span>
+          </div>
 
           <label className="custom-task-dialog__field">
             <span id="custom-task-destination-label">{t('customTask.fields.destination')}</span>

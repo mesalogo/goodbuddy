@@ -1620,7 +1620,12 @@ describe("App", () => {
       vi.mocked(api.conversations.list).mockResolvedValue([{
         ...saved, updatedAt: saved.updatedAt + 120_000,
         messages: saved.messages.map((message) => message.role === "assistant"
-          ? { ...message, state: "complete", content: "Persisted terminal result" } : message),
+          ? {
+            ...message, state: "complete", content: "Persisted terminal result",
+            blocks: [...(message.blocks ?? []), {
+              id: crypto.randomUUID(), type: "text" as const, content: "Persisted terminal result",
+            }],
+          } : message),
       }]);
       act(() => conversationQueueChangeListener?.(request.conversationId!));
       await screen.findByText("Persisted terminal result");
@@ -11817,6 +11822,66 @@ describe("App", () => {
         "session",
       ),
     );
+  });
+
+  it("keeps interactive questions in event order after a late answer response and history reload", async () => {
+    const response = deferred<void>();
+    vi.mocked(api.agent.respondQuestion).mockReturnValueOnce(response.promise);
+    const view = render(<App />);
+    fireEvent.change(await screen.findByLabelText("向 GoodBuddy 提问"), {
+      target: { value: "Question order regression" },
+    });
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const requestId = run.mock.calls[0]![0].requestId;
+    const question: Extract<AgentEvent, { type: "question" }> = {
+      requestId, type: "question", questionId: "ordered-question",
+      questions: [{
+        header: "休息日", question: "你想怎样安排？",
+        options: [{ label: "探索美食", description: "" }], multiple: false, custom: false,
+      }],
+    };
+    act(() => {
+      agentListener?.({ requestId, type: "text", delta: "Before question" });
+      agentListener?.(question);
+      agentListener?.(question);
+    });
+    expect(document.querySelectorAll(".agent-question-card")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("radio", { name: "探索美食" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+    await waitFor(() => expect(api.agent.respondQuestion).toHaveBeenCalledWith("ordered-question", [["探索美食"]]));
+    act(() => {
+      agentListener?.({
+        requestId, type: "tool", callId: "after-question", name: "after_question",
+        state: "completed", summary: "after_question",
+      });
+      agentListener?.({ requestId, type: "text", delta: "Selection received" });
+      agentListener?.({ requestId, type: "done" });
+    });
+    await act(async () => response.resolve());
+    const assertOrder = () => {
+      const card = screen.getByText("问题与回答").closest(".agent-question-review")!;
+      expect(card.closest(".message-blocks")).not.toBeNull();
+      expect(screen.getByText("Before question").compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+      expect(card.compareDocumentPosition(screen.getByText("Selection received")) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    };
+    await waitFor(assertOrder);
+    let persisted: ConversationSnapshot | undefined;
+    await waitFor(() => {
+      const saved = vi.mocked(api.conversations.saveLocal).mock.calls
+        .flatMap(([batch]) => batch)
+        .filter(item => item.messages.some(message => message.answeredQuestions?.some(answer => answer.questionId === question.questionId)))
+        .at(-1);
+      expect(saved).toBeDefined();
+      const message = saved!.messages.find(message => message.answeredQuestions?.length)!;
+      expect(message.blocks?.map(block => block.type)).toEqual(["text", "question", "tool", "text"]);
+      expect(message.blocks?.filter(block => block.type === "question")).toHaveLength(1);
+      persisted = { ...saved!.header, messages: saved!.messages };
+    });
+    view.unmount();
+    vi.mocked(api.conversations.list).mockResolvedValue([persisted!]);
+    render(<App />);
+    await waitFor(assertOrder);
   });
 
   it("queues concurrent task questions by ID without losing drafts on duplicates or failed replies", async () => {

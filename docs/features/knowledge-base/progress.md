@@ -16,6 +16,14 @@
 
 ## 验证证据
 
+### 2026-09-20 清理孤立的内存图谱搜索
+
+- 删除仅剩测试调用的 `searchGraph`、专属评分/遍历辅助函数、搜索上限及测试 fixture。
+  实际检索仍通过 `KnowledgeDatabase.hybridSearchWithDiagnostics` 与 `graphSearchScored`；
+  图谱抽取、归一化、合并、数据库结构和已发布迁移均保持不变。
+- `graph-extractor.test.ts` 与 `knowledge-database.test.ts` 合计 55 项通过，保留合并时
+  丢弃失去端点关系的回归；没有调用外部模型。
+
 ### 2026-09-13 知识库布局与自动名称修复
 
 - 创建类型的共享分段控件被长表单压缩，修复共享不收缩规则，不添加页面专属高度。

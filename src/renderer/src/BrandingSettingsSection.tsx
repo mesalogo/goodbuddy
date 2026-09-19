@@ -1,6 +1,7 @@
 import { ImagePlus, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import {
   brandingLogoMaximumBytes,
   brandingNameMaximumLength,
@@ -201,14 +202,17 @@ export function BrandingSettingsSection({
           ref={fileInputRef}
           type="file"
         />
-        <button
-          className="secondary-button"
-          onClick={() => fileInputRef.current?.click()}
-          type="button"
-        >
-          <ImagePlus aria-hidden="true" size={13} />
-          {t('appearance.branding.logo.select')}
-        </button>
+        <span className="inline-help-label">
+          <button
+            className="secondary-button"
+            onClick={() => fileInputRef.current?.click()}
+            type="button"
+          >
+            <ImagePlus aria-hidden="true" size={13} />
+            {t('appearance.branding.logo.select')}
+          </button>
+          <InlineHelp label={t('appearance.branding.logo.select')}>{t('appearance.branding.logo.help')}</InlineHelp>
+        </span>
         {draft.logoDataUrl && (
           <button
             className="secondary-button"
@@ -227,7 +231,6 @@ export function BrandingSettingsSection({
             {t('appearance.branding.logo.useDefault')}
           </button>
         )}
-        <small>{t('appearance.branding.logo.help')}</small>
       </div>
 
       {error && (

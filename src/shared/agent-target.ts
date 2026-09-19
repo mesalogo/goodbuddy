@@ -21,9 +21,3 @@ export function agentTargetKey(target: {
   )) throw new Error(`Unsupported Agent target: ${target.platform}-${target.architecture}`)
   return `${target.platform}-${target.architecture}` as AgentTargetKey
 }
-
-export function currentAgentPlatform(): AgentPlatform {
-  const platform = agentPlatformSchema.parse(process.platform)
-  agentTargetKey({ platform, architecture: process.arch })
-  return platform
-}

@@ -24,6 +24,7 @@ import {
 } from '../../shared/knowledge-contracts'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { SegmentedControl } from './WorkspacePrimitives'
+import { InlineHelp } from './InlineHelp'
 
 export type KnowledgeRetrievalChannel =
   SharedKnowledgeRetrievalChannel
@@ -458,9 +459,9 @@ export function KnowledgeRetrievalWorkbench({
             className="knowledge-workbench-section"
           >
             <div className="knowledge-workbench-section__heading">
-              <div>
+              <div className="inline-help-label">
                 <h3 id={`${titleId}-query`}>{t('retrieval.query.title')}</h3>
-                <p>{t('retrieval.query.help')}</p>
+                <InlineHelp label={t('retrieval.query.title')}>{t('retrieval.query.help')}</InlineHelp>
               </div>
               <span className="knowledge-character-count">
                 {t('retrieval.query.count', { count: query.length })}
@@ -587,11 +588,11 @@ export function KnowledgeRetrievalWorkbench({
               >
                 <div className="knowledge-workbench-settings__group-heading">
                   <span>1</span>
-                  <div>
+                  <div className="inline-help-label">
                     <h4 id={`${titleId}-recall-settings`}>
                       {t('retrieval.settings.groups.recall.title')}
                     </h4>
-                    <p>{t('retrieval.settings.groups.recall.description')}</p>
+                    <InlineHelp label={t('retrieval.settings.groups.recall.title')}>{t('retrieval.settings.groups.recall.description')}</InlineHelp>
                   </div>
                 </div>
                 <div className="knowledge-workbench-settings__grid knowledge-workbench-settings__grid--three">
@@ -655,9 +656,10 @@ export function KnowledgeRetrievalWorkbench({
                   </label>
                 </div>
                 <div className="knowledge-workbench-settings__weights">
-                  <span className="knowledge-workbench-settings__subheading">
-                    {t('retrieval.settings.channelWeights')}
-                  </span>
+                  <div className="inline-help-label">
+                    <span className="knowledge-workbench-settings__subheading">{t('retrieval.settings.channelWeights')}</span>
+                    <InlineHelp label={t('retrieval.settings.channelWeights')}>{t('retrieval.settings.weightHelp')}</InlineHelp>
+                  </div>
                   <div className="knowledge-workbench-settings__grid knowledge-workbench-settings__grid--three">
                     {(
                       weightKeys
@@ -682,13 +684,11 @@ export function KnowledgeRetrievalWorkbench({
                           />
                           <span aria-hidden="true">%</span>
                         </span>
-                        <small>
+                        {(showSettingsValidation && validationErrors[key] || key === 'graphWeight' && !graphAvailable) && <small>
                           {showSettingsValidation && validationErrors[key]
                             ? validationErrors[key]
-                            : key === 'graphWeight' && !graphAvailable
-                              ? t('retrieval.settings.graphUnavailable')
-                              : t('retrieval.settings.weightHelp')}
-                        </small>
+                            : t('retrieval.settings.graphUnavailable')}
+                        </small>}
                       </label>
                     ))}
                   </div>
@@ -701,11 +701,11 @@ export function KnowledgeRetrievalWorkbench({
               >
                 <div className="knowledge-workbench-settings__group-heading">
                   <span>2–4</span>
-                  <div>
+                  <div className="inline-help-label">
                     <h4 id={`${titleId}-output-settings`}>
                       {t('retrieval.settings.groups.output.title')}
                     </h4>
-                    <p>{t('retrieval.settings.groups.output.description')}</p>
+                    <InlineHelp label={t('retrieval.settings.groups.output.title')}>{t('retrieval.settings.groups.output.description')}</InlineHelp>
                   </div>
                 </div>
                 <div className="field">
@@ -794,9 +794,14 @@ export function KnowledgeRetrievalWorkbench({
                         : t('retrieval.settings.contextBudgetHelp')}
                     </small>
                   </label>
-                  <label className="field">
-                    <span>{t('retrieval.settings.adjacentCount')}</span>
+                  <div className="field">
+                    <div className="inline-help-label">
+                      <label htmlFor={`${titleId}-adjacent-count`}>{t('retrieval.settings.adjacentCount')}</label>
+                      <InlineHelp label={t('retrieval.settings.adjacentCount')}>{t('retrieval.settings.adjacentCountHelp')}</InlineHelp>
+                    </div>
                     <input
+                      id={`${titleId}-adjacent-count`}
+                      aria-describedby={showSettingsValidation && validationErrors.adjacentChunkCount ? `${titleId}-adjacent-error` : undefined}
                       aria-invalid={
                         showSettingsValidation &&
                         Boolean(validationErrors.adjacentChunkCount)
@@ -817,13 +822,8 @@ export function KnowledgeRetrievalWorkbench({
                           : draftSettings.adjacentChunkCount
                       }
                     />
-                    <small>
-                      {showSettingsValidation &&
-                      validationErrors.adjacentChunkCount
-                        ? validationErrors.adjacentChunkCount
-                        : t('retrieval.settings.adjacentCountHelp')}
-                    </small>
-                  </label>
+                    {showSettingsValidation && validationErrors.adjacentChunkCount && <small id={`${titleId}-adjacent-error`}>{validationErrors.adjacentChunkCount}</small>}
+                  </div>
                 </div>
               </section>
             </div>

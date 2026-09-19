@@ -17,6 +17,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import { createPortal } from 'react-dom'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type {
@@ -2195,10 +2196,10 @@ export function SettingsPanel({
               <div className="settings-section appearance-settings">
                 <div className="settings-section__title">
                   <SunMoon size={17} />
-                  <div>
+                  <span className="inline-help-label">
                     <strong>{t('appearance.theme.title')}</strong>
-                    <small>{t('appearance.theme.description')}</small>
-                  </div>
+                    <InlineHelp label={t('appearance.theme.title')}>{t('appearance.theme.description')}</InlineHelp>
+                  </span>
                 </div>
                 <div
                   aria-label={t('appearance.theme.ariaLabel')}
@@ -2242,10 +2243,10 @@ export function SettingsPanel({
               </div>
               <div className="settings-section appearance-settings">
                 <div className="settings-section__title">
-                  <div>
+                  <span className="inline-help-label">
                     <strong>{t('appearance.language.title')}</strong>
-                    <small>{t('appearance.language.description')}</small>
-                  </div>
+                    <InlineHelp label={t('appearance.language.title')}>{t('appearance.language.description')}</InlineHelp>
+                  </span>
                 </div>
                 <div
                   aria-label={t('appearance.language.ariaLabel')}
@@ -2308,10 +2309,10 @@ export function SettingsPanel({
           <div className="settings-section">
             <div className="settings-section__title">
               <FolderOpen size={17} />
-              <div>
+              <span className="inline-help-label">
                 <strong>{t('runtime.workspace.title')}</strong>
-                <small>{t('runtime.workspace.description')}</small>
-              </div>
+                <InlineHelp label={t('runtime.workspace.title')}>{t('runtime.workspace.description')}</InlineHelp>
+              </span>
             </div>
             <label className="field">
               <span>{t('runtime.workspace.directoryLabel')}</span>
@@ -2836,9 +2837,15 @@ export function SettingsPanel({
                   runtime: 'DeepSeek Harness'
                 })}
               />
-              <label className="field">
-                <span>{t('runtime.deepseekHarness.connection')}</span>
+              <div className="field">
+                <span className="inline-help-label">
+                  <label htmlFor="deepseek-harness-connection">{t('runtime.deepseekHarness.connection')}</label>
+                  <InlineHelp label={t('runtime.deepseekHarness.connection')} id="deepseek-harness-connection-description">
+                    {t('runtime.deepseekHarness.connectionDescription')}
+                  </InlineHelp>
+                </span>
                 <select
+                  id="deepseek-harness-connection"
                   aria-label={`DeepSeek Harness ${t(
                     'runtime.deepseekHarness.connection'
                   )}`}
@@ -2869,12 +2876,7 @@ export function SettingsPanel({
                     </option>
                   ))}
                 </select>
-                <small id="deepseek-harness-connection-description">
-                  {t(
-                    'runtime.deepseekHarness.connectionDescription'
-                  )}
-                </small>
-              </label>
+              </div>
               <details className="settings-section">
                 <summary>{t('runtime.advanced')}</summary>
                 <p className="settings-panel__description">
@@ -3342,9 +3344,16 @@ export function SettingsPanel({
                           {t('model.profile.supportsImageInputDescription')}
                         </small>
                       </div>
-                      <label className="field">
-                        <span>{t('model.profile.contextWindow')}</span>
+                      <div className="field">
+                        <span className="inline-help-label">
+                          <label htmlFor={`model-context-window-${profile.id}`}>{t('model.profile.contextWindow')} (K tokens)</label>
+                          <InlineHelp label={t('model.profile.contextWindow')} id={`model-context-window-help-${profile.id}`}>
+                            {t('model.profile.contextWindowDescription')}
+                          </InlineHelp>
+                        </span>
                         <input
+                          id={`model-context-window-${profile.id}`}
+                          aria-describedby={`model-context-window-help-${profile.id}`}
                           aria-label={t('model.profile.contextWindow')}
                           inputMode="numeric"
                           max={10_000}
@@ -3365,14 +3374,18 @@ export function SettingsPanel({
                               : profile.contextWindowTokens / 1_000
                           }
                         />
-                        <small>
-                          {t('model.profile.contextWindowDescription')}
-                        </small>
-                      </label>
+                      </div>
                       {profile.protocol === 'anthropic-messages' && (
-                        <label className="field">
-                          <span>{t('model.profile.maximumOutput')}</span>
+                        <div className="field">
+                          <span className="inline-help-label">
+                            <label htmlFor={`model-maximum-output-${profile.id}`}>{t('model.profile.maximumOutput')} (K tokens)</label>
+                            <InlineHelp label={t('model.profile.maximumOutput')} id={`model-maximum-output-help-${profile.id}`}>
+                              {t('model.profile.maximumOutputDescription')}
+                            </InlineHelp>
+                          </span>
                           <input
+                            id={`model-maximum-output-${profile.id}`}
+                            aria-describedby={`model-maximum-output-help-${profile.id}`}
                             aria-label={t('model.profile.maximumOutput')}
                             inputMode="numeric"
                             max={10_000}
@@ -3392,18 +3405,22 @@ export function SettingsPanel({
                                 defaultAnthropicMaximumOutputTokens) / 1_000
                             }
                           />
-                          <small>
-                            {t('model.profile.maximumOutputDescription')}
-                          </small>
-                        </label>
+                        </div>
                       )}
                     </>
                   )}
                   {profile.protocol ===
                     'openai-images-generations' && (
-                      <label className="field">
-                        <span>{t('model.profile.imageQuality')}</span>
+                      <div className="field">
+                        <span className="inline-help-label">
+                          <label htmlFor={`model-image-quality-${profile.id}`}>{t('model.profile.imageQuality')}</label>
+                          <InlineHelp label={t('model.profile.imageQuality')} id={`model-image-quality-help-${profile.id}`}>
+                            {t('model.profile.imageQualityDescription')}
+                          </InlineHelp>
+                        </span>
                         <select
+                          id={`model-image-quality-${profile.id}`}
+                          aria-describedby={`model-image-quality-help-${profile.id}`}
                           aria-label={t(
                             'model.profile.imageQualityAriaLabel',
                             { name: modelProfileDisplayName(profile) }
@@ -3429,14 +3446,17 @@ export function SettingsPanel({
                             {t('model.profile.quality.high')}
                           </option>
                         </select>
-                        <small>
-                          {t('model.profile.imageQualityDescription')}
-                        </small>
-                      </label>
+                      </div>
                     )}
-                  <label className="field">
-                    <span>{t('model.profile.requestHeaders')}</span>
+                  <div className="field">
+                    <span className="inline-help-label">
+                      <label htmlFor={`model-request-headers-${profile.id}`}>{t('model.profile.requestHeaders')}</label>
+                      <InlineHelp label={t('model.profile.requestHeaders')} id={`model-request-headers-help-${profile.id}`}>
+                        {t('model.profile.requestHeadersDescription')}
+                      </InlineHelp>
+                    </span>
                     <textarea
+                      id={`model-request-headers-${profile.id}`}
                       aria-describedby={`model-request-headers-help-${profile.id}`}
                       aria-label={t('model.profile.requestHeaders')}
                       aria-invalid={
@@ -3453,20 +3473,21 @@ export function SettingsPanel({
                       spellCheck={false}
                       value={profile.requestHeadersText}
                     />
-                    <small
-                      id={`model-request-headers-help-${profile.id}`}
-                    >
-                      {t('model.profile.requestHeadersDescription')}
-                    </small>
                     {!requestHeadersValid && (
                       <small className="field-error" role="alert">
                         {t('model.profile.requestHeadersInvalid')}
                       </small>
                     )}
-                  </label>
-                  <label className="field">
-                    <span>{t('model.profile.requestBody')}</span>
+                  </div>
+                  <div className="field">
+                    <span className="inline-help-label">
+                      <label htmlFor={`model-request-body-${profile.id}`}>{t('model.profile.requestBody')}</label>
+                      <InlineHelp label={t('model.profile.requestBody')} id={`model-request-body-help-${profile.id}`}>
+                        {t('model.profile.requestBodyDescription')}
+                      </InlineHelp>
+                    </span>
                     <textarea
+                      id={`model-request-body-${profile.id}`}
                       aria-describedby={`model-request-body-help-${profile.id}`}
                       aria-label={t('model.profile.requestBody')}
                       aria-invalid={
@@ -3483,17 +3504,12 @@ export function SettingsPanel({
                       spellCheck={false}
                       value={profile.requestBodyText}
                     />
-                    <small
-                      id={`model-request-body-help-${profile.id}`}
-                    >
-                      {t('model.profile.requestBodyDescription')}
-                    </small>
                     {!requestBodyValid && (
                       <small className="field-error" role="alert">
                         {t('model.profile.requestBodyInvalid')}
                       </small>
                     )}
-                  </label>
+                  </div>
                   <p className="settings-warning">
                     {t('model.profile.requestCustomizationWarning')}
                   </p>
@@ -3734,9 +3750,14 @@ export function SettingsPanel({
                   />
                   <span>{t('model.rerank.enabled')}</span>
                 </label>
-                <label className="field">
-                  <span>{t('model.rerank.endpoint')}</span>
+                <div className="field">
+                  <span className="inline-help-label">
+                    <label htmlFor="model-rerank-endpoint">{t('model.rerank.endpoint')}</label>
+                    <InlineHelp label={t('model.rerank.endpoint')} id="model-rerank-endpoint-help">{t('model.rerank.endpointDescription')}</InlineHelp>
+                  </span>
                   <input
+                    id="model-rerank-endpoint"
+                    aria-describedby="model-rerank-endpoint-help"
                     aria-label={t('model.rerank.endpoint')}
                     disabled={!knowledgeRerankEnabled}
                     inputMode="url"
@@ -3746,8 +3767,7 @@ export function SettingsPanel({
                     placeholder="https://api.cohere.com/v1/rerank"
                     value={knowledgeRerankEndpoint}
                   />
-                  <small>{t('model.rerank.endpointDescription')}</small>
-                </label>
+                </div>
                 <label className="field">
                   <span>{t('model.rerank.modelName')}</span>
                   <input
@@ -3837,21 +3857,24 @@ export function SettingsPanel({
             <>
               <div className="settings-section">
                 <div className="field">
-                  <label className="toggle-row">
-                    <input
-                      checked={contextCompression.enabled}
-                      onChange={(event) =>
-                        setContextCompression((current) => ({
-                          ...current,
-                          enabled: event.target.checked
-                        }))
-                      }
-                      role="switch"
-                      type="checkbox"
-                    />
-                    <span>{t('contextControl.enabled')}</span>
-                  </label>
-                  <small>{t('contextControl.enabledDescription')}</small>
+                  <div className="inline-help-label">
+                    <label className="toggle-row">
+                      <input
+                        aria-describedby="context-compression-help"
+                        checked={contextCompression.enabled}
+                        onChange={(event) =>
+                          setContextCompression((current) => ({
+                            ...current,
+                            enabled: event.target.checked
+                          }))
+                        }
+                        role="switch"
+                        type="checkbox"
+                      />
+                      <span>{t('contextControl.enabled')}</span>
+                    </label>
+                    <InlineHelp label={t('contextControl.enabled')} id="context-compression-help">{t('contextControl.enabledDescription')}</InlineHelp>
+                  </div>
                   <small>{t('contextControl.usageNotice')}</small>
                 </div>
               </div>
@@ -3914,9 +3937,14 @@ export function SettingsPanel({
                     })}
                   </small>
                 </label>
-                <label className="field">
-                  <span>{t('contextControl.summaryModel')}</span>
+                <div className="field">
+                  <span className="inline-help-label">
+                    <label htmlFor="context-summary-model">{t('contextControl.summaryModel')}</label>
+                    <InlineHelp label={t('contextControl.summaryModel')} id="context-summary-model-help">{t('contextControl.summaryModelDescription')}</InlineHelp>
+                  </span>
                   <select
+                    id="context-summary-model"
+                    aria-describedby="context-summary-model-help"
                     aria-label={t('contextControl.summaryModel')}
                     disabled={!contextCompression.enabled}
                     onChange={(event) =>
@@ -3951,8 +3979,7 @@ export function SettingsPanel({
                         </option>
                       ))}
                   </select>
-                  <small>{t('contextControl.summaryModelDescription')}</small>
-                </label>
+                </div>
                 <p className="settings-panel__description">
                   {t('contextControl.fixedTarget')}
                 </p>
@@ -4125,12 +4152,13 @@ export function SettingsPanel({
             <>
               <div className="settings-section subagent-routing-settings">
                 <div className="settings-section__title">
-                  <div>
+                  <span className="inline-help-label">
                     <strong>{t('roles.smartRouting.title')}</strong>
-                    <small>
+                    <InlineHelp label={t('roles.smartRouting.title')} id="subagent-smart-routing-help">
                       {t('roles.smartRouting.description')}
-                    </small>
-                  </div>
+                      <p>{t('roles.smartRouting.help')}</p>
+                    </InlineHelp>
+                  </span>
                 </div>
                 <label className="toggle-row">
                   <input
@@ -4144,9 +4172,6 @@ export function SettingsPanel({
                   />
                   <span>{t('roles.smartRouting.enabled')}</span>
                 </label>
-                <small id="subagent-smart-routing-help">
-                  {t('roles.smartRouting.help')}
-                </small>
               </div>
               <RolePromptSettingsSection
                 defaultModelProfileId={savedRoleDefaultModelProfileId}

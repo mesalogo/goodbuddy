@@ -264,6 +264,13 @@ export const conversationMessageBlockSchema = z.discriminatedUnion('type', [
       type: z.literal('subagent'),
       childTaskId: assistantIdSchema
     })
+    .strict(),
+  z
+    .object({
+      id: assistantIdSchema,
+      type: z.literal('question'),
+      questionId: z.string().min(1)
+    })
     .strict()
 ])
 

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import { createPortal } from 'react-dom'
 import QRCode from 'qrcode'
 import type {
@@ -687,7 +688,10 @@ function WeixinChannelEditor({
       <article className="capability-card channel-settings-card">
         <div className="capability-card__header">
           <div>
-            <strong>{t('channels.tabs.weixin')}</strong>
+            <span className="inline-help-label">
+              <strong>{t('channels.tabs.weixin')}</strong>
+              <InlineHelp label={t('channels.tabs.weixin')} id="channel-weixin-behavior-help">{t('channels.weixin.behaviorHelp')}</InlineHelp>
+            </span>
             <small>
               {settings.bindingConfigured
                 ? t('channels.weixin.bindingSaved', {
@@ -712,6 +716,7 @@ function WeixinChannelEditor({
             checked={enabled}
             disabled={!settings.bindingConfigured}
             id="channel-weixin-enabled"
+            aria-describedby="channel-weixin-behavior-help"
             onChange={(event) =>
               onEnabledChange(event.target.checked)
             }
@@ -755,9 +760,6 @@ function WeixinChannelEditor({
             {t('channels.weixin.disconnectHelp')}
           </small>
         )}
-        <small>
-          {t('channels.weixin.behaviorHelp')}
-        </small>
 
       </article>
       <ChannelProjectCard

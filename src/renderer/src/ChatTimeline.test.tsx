@@ -80,6 +80,84 @@ function createMessages(): Message[] {
 }
 
 describe('ChatTimeline', () => {
+  it('keeps a question before later tools and text when its answer arrives and history reopens', () => {
+    const props = {
+      artifactById: new Map(), conversationId: 'question-order',
+      hiddenMessageCount: 0, isUnusedConversation: false, locale: 'zh-CN' as const,
+      messageStartIndex: 0, ...callbacks, retryContent: '', totalMessageCount: 1
+    }
+    const question = {
+      requestId: 'request', type: 'question' as const, questionId: 'question-1',
+      questions: [{
+        header: '休息日', question: '你想怎样安排？',
+        options: [{ label: '探索美食', description: '' }], multiple: false, custom: false
+      }]
+    }
+    const message: Message = {
+      id: 'ordered-message', role: 'assistant', content: '提问前\n选择结果已收到',
+      createdAt: 0, state: 'streaming', pendingQuestions: [question],
+      blocks: [
+        { id: 'before', type: 'text', content: '提问前' },
+        { id: 'question', type: 'question', questionId: question.questionId },
+        { id: 'tool', type: 'tool', tool: { callId: 'call-1', name: 'after_question', state: 'completed', summary: 'after_question' } },
+        { id: 'after', type: 'text', content: '选择结果已收到' }
+      ]
+    }
+    const view = render(<ChatTimeline {...props} messages={[message]} />)
+    const assertOrder = (questionSelector: string) => {
+      const blocks = view.container.querySelector('.message-blocks')!
+      const card = blocks.querySelector(questionSelector)!
+      expect(card).not.toBeNull()
+      expect(screen.getByText('提问前').compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+      expect(card.compareDocumentPosition(blocks.querySelector('.tool-execution-list')!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+      expect(card.compareDocumentPosition(screen.getByText('选择结果已收到')) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    }
+    assertOrder('.agent-question-card')
+    const completed: Message = {
+      ...message, state: 'complete', pendingQuestions: undefined,
+      answeredQuestions: [{ questionId: question.questionId, questions: [{
+        ...question.questions[0]!, answer: ['探索美食']
+      }] }]
+    }
+    view.rerender(<ChatTimeline {...props} messages={[completed]} />)
+    assertOrder('.agent-question-review')
+    expect(screen.getAllByText('问题与回答')).toHaveLength(1)
+    view.unmount()
+    const reopened = render(<ChatTimeline {...props} messages={[JSON.parse(JSON.stringify(completed))]} />)
+    const card = reopened.container.querySelector('.agent-question-review')!
+    expect(card.closest('.message-blocks')).not.toBeNull()
+    expect(card.compareDocumentPosition(screen.getByText('选择结果已收到')) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+  })
+
+  it('uses question marker order rather than answer-array order and retains unanchored legacy answers', () => {
+    const review = (questionId: string) => ({
+      questionId, skipped: true,
+      questions: [{ header: questionId, question: `${questionId}?`, options: [], multiple: false, custom: true }]
+    })
+    const view = render(<ChatTimeline
+      artifactById={new Map()} conversationId="multiple-questions"
+      hiddenMessageCount={0} isUnusedConversation={false} locale="zh-CN"
+      messageStartIndex={0} {...callbacks} retryContent="" totalMessageCount={1}
+      messages={[{
+        id: 'message', role: 'assistant', content: 'Between', state: 'complete', createdAt: 0,
+        blocks: [
+          { id: 'q1', type: 'question', questionId: 'first' },
+          { id: 'text', type: 'text', content: 'Between' },
+          { id: 'q2', type: 'question', questionId: 'second' }
+        ],
+        answeredQuestions: [review('second'), review('first'), review('legacy')]
+      }]}
+    />)
+    const cards = [...view.container.querySelectorAll('.agent-question-review')]
+    expect(cards).toHaveLength(3)
+    expect(cards.map(card => card.querySelector('.agent-question-review__question span')!.textContent)).toEqual([
+      'first', 'second', 'legacy'
+    ])
+    expect(cards[0]!.compareDocumentPosition(screen.getByText('Between')) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    expect(screen.getByText('Between').compareDocumentPosition(cards[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    expect(cards[2]!.closest('.message-blocks')).toBeNull()
+  })
+
   it.each([
     ['read', 'OpenCode 工具：read', false],
     ['read', 'Continue 工具：read', false],

@@ -12,6 +12,7 @@ import {
   type ReactNode
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 
 export type WorkspaceScope =
   | { kind: 'global' }
@@ -142,6 +143,7 @@ export function PageHeader({
   description,
   eyebrow,
   headingId,
+  help,
   icon,
   scope,
   title
@@ -151,6 +153,7 @@ export function PageHeader({
   description?: ReactNode
   eyebrow?: string
   headingId: string
+  help?: ReactNode
   icon?: ReactNode
   scope?: WorkspaceScope
   title: string
@@ -169,7 +172,7 @@ export function PageHeader({
               {icon}
             </span>
           )}
-          <h1 id={headingId}>{title}</h1>
+          <h1 id={headingId}>{help != null ? <span className="inline-help-label">{title}<InlineHelp label={title}>{help}</InlineHelp></span> : title}</h1>
           {scope && <ScopeBadge scope={scope} />}
         </div>
         {description && (

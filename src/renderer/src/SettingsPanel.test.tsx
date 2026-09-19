@@ -1120,7 +1120,7 @@ describe('SettingsPanel runtime files', () => {
       configurable: true,
       value: DecodableBrandImage
     })
-    fireEvent.change(screen.getByLabelText('选择 Logo'), {
+    fireEvent.change(screen.getByLabelText('选择 Logo', { selector: 'input' }), {
       target: {
         files: [
           new File(
@@ -1304,13 +1304,11 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    const contextWindow = await screen.findByLabelText(
-      '上下文上限（可选）'
-    )
+    const contextWindow = await screen.findByRole('spinbutton', { name: '上下文上限（可选）' })
     expect(contextWindow).toHaveValue(null)
     expect(contextWindow).toHaveAttribute('min', '32')
     fireEvent.change(contextWindow, { target: { value: '256' } })
-    const maximumOutput = screen.getByLabelText('Anthropic 最大输出')
+    const maximumOutput = screen.getByRole('spinbutton', { name: 'Anthropic 最大输出' })
     expect(maximumOutput).toHaveValue(32)
     expect(maximumOutput).toHaveAttribute('min', '1')
     fireEvent.change(maximumOutput, { target: { value: '48' } })
@@ -2770,6 +2768,12 @@ describe('SettingsPanel runtime files', () => {
       name: '启用 Subagent 智能路由'
     })
     expect(smartRouting).not.toBeChecked()
+    expect(screen.getByText(/仅在 Ask 模式/)).not.toBeVisible()
+    expect(smartRouting).toHaveAccessibleDescription(/仅在 Ask 模式/)
+    const routingHelp = screen.getByRole('button', { name: 'Subagent 智能路由' })
+    expect(routingHelp.closest('label, summary')).toBeNull()
+    fireEvent.click(routingHelp)
+    expect(smartRouting).not.toBeChecked()
     expect(screen.getByText(/仅在 Ask 模式/)).toHaveTextContent(
       '自动选择 1 位专家'
     )
@@ -3170,6 +3174,8 @@ describe('SettingsPanel runtime files', () => {
     expect(screen.getByText(locale === 'zh-CN'
       ? `未配置完整的管理员预置；已保存配置中的实际回退：${resolvedName}。`
       : `No complete administrator preset; actual fallback in saved settings: ${resolvedName}.`)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: locale === 'zh-CN'
+      ? 'OpenAI 兼容模型连接' : 'OpenAI-compatible model connection' }))
     expect(source).toHaveAccessibleDescription(/Harness/)
   })
 
@@ -3435,7 +3441,7 @@ describe('SettingsPanel runtime files', () => {
 
     render(<RuntimeCustomizationTestHarness provider="opencode" />)
 
-    const agent = await screen.findByLabelText('默认 Agent')
+    const agent = await screen.findByRole('combobox', { name: '默认 Agent' })
     expect(agent).toHaveValue('planner')
     expect(
       screen.queryByText('OpenCode 原生能力已就绪')
@@ -4180,12 +4186,18 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    const headers = await screen.findByLabelText('自定义请求头')
-    const body = screen.getByLabelText('自定义请求体')
+    const headers = await screen.findByRole('textbox', { name: '自定义请求头' })
+    const body = screen.getByRole('textbox', { name: '自定义请求体' })
     expect(headers).toHaveValue('{}')
     expect(body).toHaveValue('{}')
     expect(headers).toHaveAttribute('maxlength')
     expect(body).toHaveAttribute('maxlength')
+    const bodyHelp = screen.getByRole('button', { name: '自定义请求体' })
+    expect(bodyHelp.closest('label, summary')).toBeNull()
+    expect(screen.getByText(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)).not.toBeVisible()
+    expect(body).toHaveAccessibleDescription(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
+    fireEvent.click(bodyHelp)
+    expect(body).toHaveAccessibleDescription(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
     expect(
       screen.getByText(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
     ).toBeInTheDocument()
@@ -4238,7 +4250,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
-    const headers = await screen.findByLabelText('自定义请求头')
+    const headers = await screen.findByRole('textbox', { name: '自定义请求头' })
     fireEvent.change(headers, {
       target: { value: '{"Authorization":"replacement"}' }
     })
@@ -4901,7 +4913,7 @@ describe('SettingsPanel runtime files', () => {
     })
     expect(rerankSwitch).not.toBeChecked()
     fireEvent.click(rerankSwitch)
-    fireEvent.change(screen.getByLabelText('重排接口 URL'), {
+    fireEvent.change(screen.getByRole('textbox', { name: '重排接口 URL' }), {
       target: { value: 'https://rerank.example/v1/rerank' }
     })
     fireEvent.change(screen.getByLabelText('模型名称'), {
@@ -5262,6 +5274,7 @@ describe('SettingsPanel runtime files', () => {
       within(capabilityTabs).getByRole('tab', { name: 'Skills' })
     ).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByText('文档写作')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Skills' }))
     expect(
       screen.getByText(
         '支持直连模型、OpenCode、Continue 和 DeepSeek Harness'
@@ -5946,7 +5959,7 @@ describe('SettingsPanel runtime files', () => {
       )
     )
 
-    fireEvent.change(screen.getByLabelText('路由关键词'), {
+    fireEvent.change(screen.getByRole('textbox', { name: '路由关键词' }), {
       target: { value: 'x' }
     })
     fireEvent.click(screen.getByRole('button', { name: '保存角色' }))
@@ -5955,7 +5968,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(updateExpert).toHaveBeenCalledTimes(1)
 
-    fireEvent.change(screen.getByLabelText('路由关键词'), {
+    fireEvent.change(screen.getByRole('textbox', { name: '路由关键词' }), {
       target: {
         value: ' TypeScript，代码 审查\nTYPESCRIPT '
       }

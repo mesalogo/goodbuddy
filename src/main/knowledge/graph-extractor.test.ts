@@ -7,7 +7,6 @@ import {
   extractKnowledgeGraph,
   mergeKnowledgeGraphs,
   normalizeEntityAlias,
-  searchGraph,
   validateModelGraph,
   type GraphChunk,
   type KnowledgeGraph
@@ -867,9 +866,9 @@ describe('extraction strategies', () => {
   })
 })
 
-describe('graph merge and search', () => {
+describe('graph merge', () => {
   const evidence = {
-    chunkId: 'search',
+    chunkId: 'merge',
     quote: 'evidence',
     start: 0,
     end: 8,
@@ -883,27 +882,6 @@ describe('graph merge and search', () => {
         name: 'API Gateway',
         type: 'service',
         aliases: ['gateway'],
-        evidence: [{ ...evidence, confidence: 0.9 }]
-      },
-      {
-        id: 'users',
-        name: 'User Service',
-        type: 'service',
-        aliases: [],
-        evidence: [evidence]
-      },
-      {
-        id: 'database',
-        name: 'User Database',
-        type: 'database',
-        aliases: [],
-        evidence: [{ ...evidence, confidence: 0.6 }]
-      },
-      {
-        id: 'unrelated',
-        name: 'Billing',
-        type: 'service',
-        aliases: [],
         evidence: [evidence]
       }
     ],
@@ -913,76 +891,10 @@ describe('graph merge and search', () => {
         sourceId: 'api',
         targetId: 'users',
         type: 'calls',
-        evidence: [{ ...evidence, confidence: 0.95 }]
-      },
-      {
-        id: 'users-db',
-        sourceId: 'users',
-        targetId: 'database',
-        type: 'uses',
-        evidence: [{ ...evidence, confidence: 0.8 }]
-      },
-      {
-        id: 'orphan',
-        sourceId: 'api',
-        targetId: 'missing',
-        type: 'calls',
         evidence: [evidence]
       }
     ]
   }
-
-  it('ranks exact/alias matches, traverses adjacency, and returns a bounded subgraph', () => {
-    const result = searchGraph(graph, 'gateway', {
-      maximumEntities: 2,
-      maximumRelations: 1,
-      maximumDepth: 2
-    })
-
-    expect(result.matchedEntityIds[0]).toBe('api')
-    expect(result.entities.map((entity) => entity.id)).toEqual(['api', 'users'])
-    expect(result.relations.map((relation) => relation.id)).toEqual([
-      'api-users'
-    ])
-    expect(searchGraph(graph, 'not found')).toEqual({
-      entities: [],
-      relations: [],
-      matchedEntityIds: []
-    })
-  })
-
-  it('never exceeds global search limits even when callers request more', () => {
-    const entities = Array.from(
-      { length: GRAPH_LIMITS.maximumSearchEntities + 10 },
-      (_, index) => ({
-        id: `node-${index}`,
-        name: `node ${index}`,
-        type: 'node',
-        aliases: [],
-        evidence: [evidence]
-      })
-    )
-    const largeGraph: KnowledgeGraph = {
-      entities,
-      relations: entities.slice(1).map((entity, index) => ({
-        id: `edge-${index}`,
-        sourceId: entities[0]?.id ?? '',
-        targetId: entity.id,
-        type: 'links',
-        evidence: [evidence]
-      }))
-    }
-    const result = searchGraph(largeGraph, 'node', {
-      maximumEntities: 10_000,
-      maximumRelations: 10_000
-    })
-    expect(result.entities.length).toBeLessThanOrEqual(
-      GRAPH_LIMITS.maximumSearchEntities
-    )
-    expect(result.relations.length).toBeLessThanOrEqual(
-      GRAPH_LIMITS.maximumSearchRelations
-    )
-  })
 
   it('discards relations whose endpoints disappear during merge', () => {
     const merged = mergeKnowledgeGraphs(

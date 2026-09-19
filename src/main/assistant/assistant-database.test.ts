@@ -4131,6 +4131,73 @@ describe('AssistantDatabase', () => {
     database.close()
   })
 
+  it.each([false, true])('keeps remote questions in arrival order through replay and reopen (legacy=%s)', async legacy => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-question-order-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(databasePath)
+    database.initialize('C:\\Workspace')
+    try {
+      const project = database.createSshProject(validatedSshProjectWrite())
+      const conversationId = randomUUID()
+      const taskId = randomUUID()
+      const assistantMessageId = randomUUID()
+      database.saveLocalConversations([{
+        header: { id: conversationId, projectId: project.id, title: 'Question order', updatedAt: Date.now() },
+        messages: []
+      }])
+      database.createTask({
+        id: taskId, projectId: project.id, conversationId, title: 'Question order',
+        instructions: 'Ask then acknowledge', workMode: 'execute',
+        remoteRecovery: { recoverable: true, currentUserMessageId: randomUUID(), currentAssistantMessageId: assistantMessageId }
+      })
+      if (legacy) {
+        const raw = new DatabaseSync(databasePath)
+        try {
+          raw.prepare("UPDATE messages SET metadata_json = json_remove(metadata_json, '$.blocks') WHERE id = ?").run(assistantMessageId)
+        } finally { raw.close() }
+      }
+      const append = (sequence: string, event: Parameters<AssistantDatabase['appendRemoteConversationTaskEventOnce']>[0]['event']) =>
+        database.appendRemoteConversationTaskEventOnce({
+          taskId, conversationId, assistantMessageId, bindingId: 'question-binding',
+          operationId: 'question-operation', semanticSequence: sequence, eventIndex: 0, event
+        })
+      const question = {
+        requestId: taskId, type: 'question' as const, questionId: 'first-question',
+        questions: [{ header: 'Choice', question: 'Choose one', options: [{ label: 'Yes', description: 'Continue' }], multiple: false, custom: false }]
+      }
+      expect(append('1', question)).toBe(true)
+      const initialBlocks = database.getConversation(conversationId).messages[1]!.blocks
+      expect(initialBlocks).toEqual(legacy ? undefined : [expect.objectContaining({ type: 'question', questionId: question.questionId })])
+      expect(append('1', question)).toBe(false)
+      expect(append('2', { requestId: taskId, type: 'text', delta: 'After first. ' })).toBe(true)
+      expect(append('3', { requestId: taskId, type: 'tool', callId: 'read-1', name: 'read', state: 'running', summary: 'Read fixture' })).toBe(true)
+      expect(database.recordRemoteTaskQuestionArrival(taskId, 'second-question')).toBe(true)
+      expect(database.recordRemoteTaskQuestionArrival(taskId, 'second-question')).toBe(true)
+      expect(append('4', { ...question, questionId: 'second-question' })).toBe(true)
+      // A fresh semantic envelope for the same live question must not move its marker.
+      expect(append('5', question)).toBe(true)
+      expect(append('6', { requestId: taskId, type: 'text', delta: 'After second.' })).toBe(true)
+      const answer = { questionId: question.questionId, skipped: false, questions: question.questions.map(item => ({ ...item, answer: ['Yes'] })) }
+      expect(database.recordRemoteTaskQuestionAnswer(taskId, answer)).toBe(true)
+      expect(database.recordRemoteTaskQuestionAnswer(taskId, answer)).toBe(true)
+      expect(database.recordRemoteTaskQuestionAnswer(taskId, { questionId: 'second-question', skipped: true, questions: question.questions })).toBe(true)
+      const beforeTerminal = database.getConversation(conversationId).messages[1]!
+      expect(beforeTerminal.blocks?.map(block => block.type)).toEqual(legacy ? undefined : ['question', 'text', 'tool', 'question', 'text'])
+      if (!legacy) expect(beforeTerminal.blocks?.[0]).toEqual(initialBlocks?.[0])
+      expect(append('7', { requestId: taskId, type: 'done' })).toBe(true)
+      const completed = database.getConversation(conversationId).messages[1]!
+      expect(completed.answeredQuestions).toHaveLength(2)
+      expect(completed.content).toBe('After first. After second.')
+      expect(completed.state).toBe('complete')
+      expect(completed.blocks?.filter(block => block.type === 'question')).toEqual(beforeTerminal.blocks?.filter(block => block.type === 'question'))
+      database.close()
+      database.initialize('C:\\Workspace')
+      expect(append('1', question)).toBe(false)
+      expect(database.getConversation(conversationId).messages[1]).toEqual(completed)
+    } finally { database.close() }
+  })
+
   it('rolls back a recovered event when its message update fails', async () => {
     const directory = await mkdtemp(
       join(tmpdir(), 'goodbuddy-remote-event-atomic-')

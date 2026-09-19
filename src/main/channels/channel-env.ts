@@ -1,4 +1,3 @@
-import type { ChannelInboundText } from '../../shared/channel-contracts'
 import type { ChannelExecutor } from './channel-driver'
 import { ChannelService } from './channel-service'
 import {
@@ -221,10 +220,4 @@ export function startEnvironmentChannels(
     return service
   })
   return services
-}
-
-export function isReadOnlyChannelMessage(
-  message: ChannelInboundText
-): boolean {
-  return message.workMode === 'ask'
 }

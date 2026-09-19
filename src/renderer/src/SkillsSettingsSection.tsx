@@ -93,7 +93,7 @@ export function SkillsSettingsSection(): React.JSX.Element {
             </button>
           </>
         }
-        description={t('skills.description')}
+        help={t('skills.description')}
         error={error}
         headingLevel={3}
         headingId="skills-settings-heading"

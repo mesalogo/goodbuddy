@@ -38,8 +38,9 @@ export const settingsSections = {
       keep: 'Keep saved password',
       replace: 'Enter a new password'
     },
+    passwordNotice: 'The password is used for SSH authentication and saved encrypted in system secure storage after validation succeeds.',
     passwordHelp:
-      'The password is used only for this authentication attempt. After validation succeeds, the Main process writes it to system secure storage. It is never written to command-line arguments, logs, or regular settings files.',
+      'The Main process handles the password. It is never written to command-line arguments, logs, or regular settings files.',
     credentialSources: {
       none: 'Not configured',
       encrypted: 'Encrypted by system secure storage',

@@ -9,6 +9,7 @@ import {
   type SettingsCategoryId
 } from './settings-categories'
 import { translateSettingsWarning } from './settings-warnings'
+import { InlineHelp } from './InlineHelp'
 
 export function SettingsWarningList({
   warnings
@@ -62,13 +63,15 @@ export function SettingsSectionHeader({
   description,
   error,
   headingLevel = 2,
+  help,
   headingId,
   title
 }: {
   actions?: ReactNode
-  description: string
+  description?: string
   error?: string
   headingLevel?: 2 | 3
+  help?: ReactNode
   headingId: string
   title: string
 }): React.JSX.Element {
@@ -76,8 +79,8 @@ export function SettingsSectionHeader({
   return (
     <header className="settings-category-header">
       <div className="settings-category-header__content">
-        <Heading id={headingId}>{title}</Heading>
-        <p>{description}</p>
+        <Heading id={headingId}>{help != null ? <span className="inline-help-label">{title}<InlineHelp label={title}>{help}</InlineHelp></span> : title}</Heading>
+        {description && <p>{description}</p>}
       </div>
       {actions && (
         <div className="settings-category-header__actions">

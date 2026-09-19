@@ -56,6 +56,7 @@ import type { ProjectActivityCountsProps } from './ProjectActivity'
 import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 import { ChannelIcon } from './ChannelIcon'
 import { SegmentedControl } from './WorkspacePrimitives'
+import { InlineHelp } from './InlineHelp'
 import { displayErrorMessage } from './error-message'
 
 type ProjectSwitcherProps = {
@@ -1582,11 +1583,15 @@ export function ProjectSwitcher({
                   </>
                 ) : (
                   <div className="remote-project-fields">
-                    <label>
-                      <span>
+                    <div className="field">
+                      <div className="inline-help-label">
+                      <label htmlFor="project-remote-host">
                         {t('projectSwitcher.remote.fields.host')}
-                      </span>
+                      </label>
+                      <InlineHelp label={t('projectSwitcher.remote.fields.host')}>{t('projectSwitcher.remote.hostHelp')}</InlineHelp>
+                      </div>
                       <select
+                        id="project-remote-host"
                         aria-label={t(
                           'projectSwitcher.remote.fields.host'
                         )}
@@ -1638,9 +1643,6 @@ export function ProjectSwitcher({
                           )
                         })}
                       </select>
-                      <small>
-                        {t('projectSwitcher.remote.hostHelp')}
-                      </small>
                       {remoteHostId &&
                         selectedRemoteHostReadiness && (
                           <small
@@ -1657,7 +1659,7 @@ export function ProjectSwitcher({
                             )}
                           </small>
                         )}
-                    </label>
+                    </div>
                     <label>
                       <span>
                         {t('projectSwitcher.remote.fields.root')}

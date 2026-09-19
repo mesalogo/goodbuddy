@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import type {
   LocalToolEnvironmentSettings,
   LocalToolEnvironmentSnapshot,
@@ -340,9 +341,9 @@ export function ToolEnvironmentSettingsSection({
     return (
       <article className="tool-environment-card">
         <div className="tool-environment-card__header">
-          <div>
+          <div className="inline-help-label">
             <h3>{t(`toolEnvironment.runtimes.${kind}.title`)}</h3>
-            <p>{t(`toolEnvironment.runtimes.${kind}.description`)}</p>
+            <InlineHelp label={t(`toolEnvironment.runtimes.${kind}.title`)}>{t(`toolEnvironment.runtimes.${kind}.description`)}</InlineHelp>
           </div>
           <button
             className="secondary-button"
@@ -731,9 +732,9 @@ export function ToolEnvironmentSettingsSection({
       )}
       <section className="tool-environment-card">
         <div className="tool-environment-card__header">
-          <div>
+          <div className="inline-help-label">
             <h3>{t('toolEnvironment.downloadSource.title')}</h3>
-            <p>{t('toolEnvironment.downloadSource.description')}</p>
+            <InlineHelp label={t('toolEnvironment.downloadSource.title')}>{t('toolEnvironment.downloadSource.description')}</InlineHelp>
           </div>
           <button
             className="secondary-button"

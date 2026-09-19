@@ -38,6 +38,7 @@ import {
 import { modelOperationPercent } from './model-download-presentation'
 import { defaultHttpOcrSettings } from '../../shared/document-parsing-contracts'
 import { SegmentedControl } from './WorkspacePrimitives'
+import { InlineHelp } from './InlineHelp'
 import { HttpOcrSettings } from './HttpOcrSettings'
 import { DocumentResultPreview } from './DocumentResultPreview'
 import { AnchoredMenu } from './AnchoredMenu'
@@ -621,10 +622,12 @@ export function DocumentParsingSettingsSection({
         <div className="settings-section__title">
           <FileText aria-hidden="true" size={17} />
           <div>
+            <span className="inline-help-label">
             <strong id="document-parsing-workflows-title">
               {t('documentParsing.workflows.title')}
             </strong>
-            <small>{t('documentParsing.workflows.description')}</small>
+            <InlineHelp label={t('documentParsing.workflows.title')}>{t('documentParsing.workflows.description')}</InlineHelp>
+            </span>
           </div>
         </div>
         <div className="document-parsing-grid">
@@ -721,10 +724,12 @@ export function DocumentParsingSettingsSection({
         <div className="settings-section__title settings-section__title--actions">
           <ScanText aria-hidden="true" size={17} />
           <div>
+            <span className="inline-help-label">
             <strong id="document-parsing-ocr-title">
               {t('documentParsing.ocr.title')}
             </strong>
-            <small>{t('documentParsing.ocr.description')}</small>
+            <InlineHelp label={t('documentParsing.ocr.title')}>{t('documentParsing.ocr.description')}</InlineHelp>
+            </span>
           </div>
           <button
             className="secondary-button"

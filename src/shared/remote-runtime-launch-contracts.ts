@@ -15,14 +15,8 @@ import {
   utf8StringSchema,
   type OperationIdentity
 } from './agent-protocol/contracts'
-import {
-  createOperationIdentity,
-  digestCanonicalOperation
-} from './agent-protocol/canonical'
-import {
-  remotePromptOperationPreparationSchema,
-  type RemotePromptOperationPreparation
-} from './remote-agent-contracts'
+import { digestCanonicalOperation } from './agent-protocol/canonical'
+import { remotePromptOperationPreparationSchema } from './remote-agent-contracts'
 
 export const REMOTE_RUNTIME_LAUNCH_LIMITS = {
   maximumFiles: 10_000,
@@ -638,96 +632,6 @@ export type RemoteRuntimeQueryResult = z.infer<
   typeof remoteRuntimeQueryResultSchema
 >
 
-export async function digestRemoteRuntimePreparation(
-  preparation: RemotePromptOperationPreparation
-): Promise<string> {
-  const parsed = remotePromptOperationPreparationSchema.parse(preparation)
-  return digestCanonicalOperation({
-    method: 'runtime/preparePrompt',
-    scope: {
-      kind: 'run',
-      sessionId: parsed.bindingId,
-      requestId: parsed.requestId
-    },
-    payload: parsed
-  })
-}
-
-export async function createRemoteRuntimeStartRequest(input: {
-  controllerId: string
-  operationId: string
-  prompt: unknown
-  adapterParameters?: unknown
-  deadlineAt?: string
-}): Promise<RemoteRuntimeStartRequest> {
-  const prompt = remotePromptOperationPreparationSchema.parse(input.prompt)
-  const deadlineAt = input.deadlineAt ?? prompt.deadlineAt
-  if (Date.parse(deadlineAt) > Date.parse(prompt.deadlineAt)) {
-    throw new Error('Runtime start deadline exceeds the prompt deadline')
-  }
-  const payload = remoteRuntimeStartPayloadSchema.parse({
-    bindingId: prompt.bindingId,
-    requestId: prompt.requestId,
-    workMode: prompt.workMode,
-    runtimeId: prompt.runtimeId,
-    adapterParameters: input.adapterParameters ?? [],
-    deadlineAt,
-    budget: prompt.budget
-  })
-  const identity = await createOperationIdentity({
-    controllerId: agentIdentifierSchema.parse(input.controllerId),
-    operationId: agentIdentifierSchema.parse(input.operationId),
-    scope: {
-      kind: 'run',
-      sessionId: prompt.bindingId,
-      requestId: prompt.requestId
-    },
-    method: 'runtime/startPrompt',
-    payload
-  })
-  return remoteRuntimeStartRequestSchema.parse({ identity, payload })
-}
-
-export async function createRemoteRuntimeStopRequest(input: {
-  controllerId: string
-  operationId: string
-  payload: unknown
-}): Promise<RemoteRuntimeStopRequest> {
-  const payload = remoteRuntimeStopPayloadSchema.parse(input.payload)
-  const identity = await createOperationIdentity({
-    controllerId: input.controllerId,
-    operationId: input.operationId,
-    scope: {
-      kind: 'run',
-      sessionId: payload.bindingId,
-      requestId: payload.requestId
-    },
-    method: 'runtime/stopPrompt',
-    payload
-  })
-  return remoteRuntimeStopRequestSchema.parse({ identity, payload })
-}
-
-export async function createRemoteRuntimeQueryRequest(input: {
-  controllerId: string
-  operationId: string
-  payload: unknown
-}): Promise<RemoteRuntimeQueryRequest> {
-  const payload = remoteRuntimeQueryPayloadSchema.parse(input.payload)
-  const identity = await createOperationIdentity({
-    controllerId: input.controllerId,
-    operationId: input.operationId,
-    scope: {
-      kind: 'run',
-      sessionId: payload.bindingId,
-      requestId: payload.requestId
-    },
-    method: 'runtime/queryPrompt',
-    payload
-  })
-  return remoteRuntimeQueryRequestSchema.parse({ identity, payload })
-}
-
 export async function digestRemoteRuntimeBundleManifest(
   manifest: unknown
 ): Promise<string> {
@@ -773,19 +677,6 @@ export async function assertDetachedRemoteRuntimeBundleDigest(
     throw new Error('Detached Runtime manifest digest does not match')
   }
   return parsed
-}
-
-export async function assertRemoteRuntimeOperationDigest(
-  request: RemoteRuntimeStartRequest | RemoteRuntimeStopRequest | RemoteRuntimeQueryRequest
-): Promise<void> {
-  const expectedDigest = await digestCanonicalOperation({
-    method: request.identity.method,
-    scope: request.identity.scope,
-    payload: request.payload
-  })
-  if (request.identity.payloadDigest !== expectedDigest) {
-    throw new Error('Runtime operation payload digest does not match')
-  }
 }
 
 function addOperationBindingIssues(

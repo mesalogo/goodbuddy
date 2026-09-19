@@ -112,12 +112,21 @@ type MessageBlockRenderItem =
       id: string
       childTaskIds: string[]
     }
+  | {
+      kind: 'question'
+      id: string
+      questionId: string
+    }
 
 function groupMessageBlocks(
   blocks: ConversationMessageBlock[]
 ): MessageBlockRenderItem[] {
   const items: MessageBlockRenderItem[] = []
   for (const block of blocks) {
+    if (block.type === 'question') {
+      items.push({ kind: 'question', id: block.id, questionId: block.questionId })
+      continue
+    }
     if (block.type === 'subagent') {
       const previous = items.at(-1)
       if (previous?.kind === 'subagents') {
@@ -437,7 +446,7 @@ const SubagentStatusCard = memo(function SubagentStatusCard({
                         ? { ...tool, state: subagent.state === 'cancelled' ? 'cancelled' : 'interrupted' }
                         : tool
                     )} />
-                  ) : item.kind === 'subagents' ? null
+                  ) : item.kind === 'subagents' || item.kind === 'question' ? null
                     : item.block.type === 'reasoning' ? (
                       <MessageReasoning
                         key={item.block.id}
@@ -643,6 +652,52 @@ function ChatMessageRowView({
   const question = message.pendingQuestions?.[0]
   const questionTask = question?.childTaskId ? subagentsById.get(question.childTaskId) : undefined
   const questionFormId = `agent-question-${message.id}`
+  const orderedQuestionIds = useMemo(() => new Set(
+    message.blocks?.filter(block => block.type === 'question').map(block => block.questionId)
+  ), [message.blocks])
+  const answeredQuestionsById = useMemo(() => new Map(
+    message.answeredQuestions?.map(review => [review.questionId, review])
+  ), [message.answeredQuestions])
+  const renderQuestion = (questionId: string): React.JSX.Element | null => {
+    if (question?.questionId === questionId) {
+      return (
+        <AgentQuestionCard
+          id={questionFormId}
+          pendingCount={message.pendingQuestions?.length}
+          taskTitle={questionTask?.reason ??
+            (questionTask && 'expertName' in questionTask ? questionTask.expertName : undefined) ?? message.task?.title}
+          key={questionId}
+          onReject={() => onRespondQuestion(conversationId, message.id, questionId)}
+          onSubmit={(answers) => onRespondQuestion(conversationId, message.id, questionId, answers)}
+          value={question}
+        />
+      )
+    }
+    const review = answeredQuestionsById.get(questionId)
+    if (!review) return null
+    return (
+      <div className="agent-question-review" key={questionId}>
+        <header>
+          <CircleHelp aria-hidden="true" size={16} />
+          <strong>{t('chat.questionReview.title')}</strong>
+        </header>
+        {review.questions.map((item, index) => (
+          <div className="agent-question-review__item" key={`${questionId}:${index}`}>
+            <p className="agent-question-review__question">
+              <span>{item.header}</span>
+              {item.question}
+            </p>
+            <p className="agent-question-review__answer">
+              <span>{t('chat.questionReview.answerLabel')}</span>
+              {review.skipped || !item.answer?.length
+                ? t('chat.questionReview.skipped')
+                : item.answer.join('、')}
+            </p>
+          </div>
+        ))}
+      </div>
+    )
+  }
   const activeTool = message.tools?.find((tool) =>
     tool.state === 'pending' || tool.state === 'running')
   const activeSubagent = message.subagents?.some((subagent) =>
@@ -788,7 +843,8 @@ function ChatMessageRowView({
         {message.blocks && message.blocks.length > 0 ? (
           <div className="message-blocks">
             {groupMessageBlocks(message.blocks).map((item) =>
-              item.kind === 'tools' ? (
+              item.kind === 'question' ? renderQuestion(item.questionId)
+              : item.kind === 'tools' ? (
                 <ToolExecutionList key={item.id} tools={item.tools} onCopy={onCopyMessage} />
               ) : item.kind === 'subagents' ? (
                 <SubagentStatusList
@@ -1149,58 +1205,9 @@ function ChatMessageRowView({
             )}
           </div>
         )}
-        {question && (
-          <AgentQuestionCard
-            id={questionFormId}
-            pendingCount={message.pendingQuestions?.length}
-            taskTitle={questionTask?.reason ??
-              (questionTask && 'expertName' in questionTask ? questionTask.expertName : undefined) ?? message.task?.title}
-            key={question.questionId}
-            onReject={() =>
-              onRespondQuestion(
-                conversationId,
-                message.id,
-                question.questionId
-              )
-            }
-            onSubmit={(answers) =>
-              onRespondQuestion(
-                conversationId,
-                message.id,
-                question.questionId,
-                answers
-              )
-            }
-            value={question}
-          />
-        )}
-        {message.answeredQuestions?.map((review) => (
-          <div className="agent-question-review" key={review.questionId}>
-            <header>
-              <CircleHelp aria-hidden="true" size={16} />
-              <strong>{t('chat.questionReview.title')}</strong>
-            </header>
-            {review.questions.map((question, index) => (
-              <div
-                className="agent-question-review__item"
-                key={`${review.questionId}:${index}`}
-              >
-                <p className="agent-question-review__question">
-                  <span>{question.header}</span>
-                  {question.question}
-                </p>
-                <p className="agent-question-review__answer">
-                  <span>{t('chat.questionReview.answerLabel')}</span>
-                  {review.skipped ||
-                  !question.answer ||
-                  question.answer.length === 0
-                    ? t('chat.questionReview.skipped')
-                    : question.answer.join('、')}
-                </p>
-              </div>
-            ))}
-          </div>
-        ))}
+        {question && !orderedQuestionIds.has(question.questionId) && renderQuestion(question.questionId)}
+        {message.answeredQuestions?.filter(review => !orderedQuestionIds.has(review.questionId))
+          .map(review => renderQuestion(review.questionId))}
         {message.role === 'assistant' && message.imageContextNotice && (
           <p className="message__image-context-note">
             {t(`chat.images.contextNotice.${message.imageContextNotice}`)}

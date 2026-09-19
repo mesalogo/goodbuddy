@@ -1361,8 +1361,6 @@ vi.mock('./assistant/heartbeat-service', () => ({
 vi.mock('./agent/create-runtime', () => runtimeFactoryMocks)
 
 vi.mock('./channels/channel-env', () => ({
-  isReadOnlyChannelMessage: (message: { workMode: string }) =>
-    message.workMode === 'ask',
   startEnvironmentChannels: vi.fn(
     (options: { executor: typeof channelMocks.executor }) => {
       channelMocks.executor = options.executor
@@ -5143,6 +5141,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       hasRemoteResponseTextAfterToolFailure: vi.fn<AssistantDatabase['hasRemoteResponseTextAfterToolFailure']>(() => false),
       getRemoteTaskActivityStates: vi.fn<AssistantDatabase['getRemoteTaskActivityStates']>(() => ({ tools: new Map(), subagents: new Map() })),
       endRecoverableRemoteTask: vi.fn(),
+      recordRemoteTaskQuestionArrival: vi.fn<AssistantDatabase['recordRemoteTaskQuestionArrival']>(),
       recordRemoteTaskQuestionAnswer: vi.fn<AssistantDatabase['recordRemoteTaskQuestionAnswer']>(),
       getTask: vi.fn<AssistantDatabase['getTask']>(),
       updateTaskStatus: vi.fn(),
@@ -7013,6 +7012,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     harness.assistantDatabase.appendRemoteConversationTaskEventOnce.mockImplementation(database.appendRemoteConversationTaskEventOnce.bind(database))
     harness.assistantDatabase.updateTaskStatus.mockImplementation(database.updateTaskStatus.bind(database))
     harness.assistantDatabase.getTask.mockImplementation(database.getTask.bind(database))
+    harness.assistantDatabase.recordRemoteTaskQuestionArrival.mockImplementation(database.recordRemoteTaskQuestionArrival.bind(database))
     harness.assistantDatabase.recordRemoteTaskQuestionAnswer.mockImplementation(
       (...args) => database.recordRemoteTaskQuestionAnswer(...args)
     )
@@ -7059,6 +7059,7 @@ describe('registerIpcHandlers agent terminal state', () => {
           expect(reopened.getTask(task.taskId).status).toBe('completed')
           expect(reopened.getConversation(task.conversationId).messages[1]).toMatchObject({
             id: task.currentAssistantMessageId, state: 'complete',
+            blocks: [expect.objectContaining({ type: 'question', questionId: task.taskId })],
             answeredQuestions: [{
               questionId: task.taskId, skipped: index === 0,
               questions: [{

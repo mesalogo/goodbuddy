@@ -359,6 +359,10 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
   未发布进程复用源码补齐 Desktop 重启后的多任务并行附加、实时待答快照及 Main 答案
   持久化，详见[恢复与终态投影](../assistant-workbar/runtime-process-reuse-technical-design.md#63-恢复与终态投影)；
   不把该待答投影当作 durable transcript 或旧版本已经支持的行为。
+  Desktop Main 接收实时问题时保存其消息位置，回答后不移动到后续输出之后；实时待答
+  快照不伪造语义来源。位置去重、旧会话边界见
+  [Runtime 交互边界](../assistant-workbar/runtime-interactions.md#运行与失败)，
+  当前源码的真实 Host 证据见[问答位置持久化](../assistant-workbar/progress.md#2026-09-19-问答位置持久化)。
 - ACP 工具结果同时支持文本 `content` 和 `rawOutput.output`，移除 OpenCode 的
   `<task><task_result>` 外层包装后渲染正文。恢复已有子代理时使用 ACP 所带的所属
   `toolCallId` 继续路由，不等待新的父 Task metadata，也不重放模型请求。
@@ -850,6 +854,23 @@ goodbuddy-agent diagnostics --installation-id <installationId>
   规范 Base64、有效 Ed25519 key、环境和撤销列表，不把 CRLF/LF 或普通 JSON 空白作为
   信任条件。上传到 Host 前重新序列化为确定性 LF JSON。签名目录、描述符、manifest 和
   payload 仍按原始签名字节及 SHA-256 验证。
+
+## 2026-09-20 冗余代码清理验证
+
+- 删除没有生产调用的结构化命令 runner、两个进程身份辅助函数、占位 peer provider、
+  平台查询辅助函数和五个旧 Runtime 请求构造/摘要辅助函数。保留实际 CLI、进程检查器、
+  请求 schema、原生 peer 校验及包签名验证，不改变 Ask/Execute 或协议行为。
+- 清理后的当前源码 Agent、Main attach transport 和 protocol client 在共享 Linux x64
+  Host 上通过固定 Host Key 连接，完成启动、状态/能力读取、只读工作区打开及真实文件读取，
+  断开后再次连接并重复读取。验证没有使用模拟 Agent 或旧安装包的 Agent 实现。
+- 本轮测试进程剩余 0；专属 Host 目录、上传文件及本地隔离 profile 已删除。
+  文本和图片模型请求均为 **0 次**。这是未使用代码删除后的启动/连接验证，不是新增的
+  Runtime 模型调用、安装更新或其他架构验收。
+- 临时证据为 `redundancy-cleanup-host-{build,run}.cjs` 与
+  `redundancy-cleanup-host-live.log`；定向回归 230 项通过，typecheck、lint 通过。
+- 同期全量 `npm test` 为 4,844 通过、67 跳过、11 失败；失败来自并行修改中的五个
+  Renderer 帮助提示/焦点测试套件。更新后的五个套件连同更新设置大小展示回归共 64 项
+  定向复跑全部通过；未把这次复跑记为又一轮全量通过。
 
 ## 发布前完整回归（不能替代开发验证）
 

@@ -298,6 +298,13 @@ describe('KnowledgeWorkspace', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '新建知识库' }))
+    const advancedHelp = screen.getByRole('button', { name: '高级设置' })
+    const advancedDetails = screen.getByText('高级设置').closest('details')!
+    expect(advancedHelp.closest('summary, label, button button')).toBeNull()
+    fireEvent.click(advancedHelp)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('仅在需要托管副本或知识图谱时调整。')
+    expect(advancedDetails).not.toHaveAttribute('open')
+    fireEvent.keyDown(advancedHelp, { key: 'Escape' })
     fireEvent.change(screen.getByLabelText('名称'), {
       target: { value: '客户研究' }
     })
@@ -305,6 +312,9 @@ describe('KnowledgeWorkspace', () => {
       target: { value: '访谈与反馈' }
     })
     fireEvent.click(screen.getByText('高级设置'))
+    fireEvent.click(advancedHelp)
+    expect(advancedDetails).toHaveAttribute('open')
+    fireEvent.keyDown(advancedHelp, { key: 'Escape' })
     fireEvent.click(screen.getByLabelText(/引用原文件/))
     expect(
       screen.getByRole('switch', { name: /启用知识图谱/u })
@@ -1502,10 +1512,10 @@ describe('KnowledgeWorkspace', () => {
     fireEvent.change(screen.getByLabelText('选择图谱实体'), {
       target: { value: 'entity-1' }
     })
-    expect(screen.getByLabelText('知识图谱画布').parentElement).toHaveClass(
+    expect(screen.getByRole('region', { name: '知识图谱画布' }).parentElement).toHaveClass(
       'knowledge-graph'
     )
-    expect(screen.getByLabelText('知识图谱画布').parentElement)
+    expect(screen.getByRole('region', { name: '知识图谱画布' }).parentElement)
       .not.toHaveClass('knowledge-graph--with-details')
     expect(screen.getByLabelText('实体详情')).toHaveClass(
       'knowledge-graph__detail'

@@ -2,6 +2,7 @@ import { Bot, Plus, Save, Trash2 } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import type {
   AssistantExpert,
   ExpertCreateInput
@@ -378,9 +379,13 @@ export function RolePromptSettingsSection({
                 })}
               </small>
             </label>
-            <label className="field">
-              <span>{t('roles.fields.modelConnection')}</span>
+            <div className="field">
+              <span className="inline-help-label">
+                <label htmlFor="role-model-profile">{t('roles.fields.modelConnection')}</label>
+                <InlineHelp label={t('roles.fields.modelConnection')} id="role-model-profile-help">{t('roles.fields.modelHelp')}</InlineHelp>
+              </span>
               <select
+                id="role-model-profile"
                 aria-describedby={
                   selectedModelProfileAvailable
                     ? 'role-model-profile-help'
@@ -408,9 +413,6 @@ export function RolePromptSettingsSection({
                   </option>
                 ))}
               </select>
-              <small id="role-model-profile-help">
-                {t('roles.fields.modelHelp')}
-              </small>
               {!selectedModelProfileAvailable && (
                 <small
                   className="field-error"
@@ -424,10 +426,14 @@ export function RolePromptSettingsSection({
                     : t('roles.fields.modelFallback')}
                 </small>
               )}
-            </label>
-            <label className="field">
-              <span>{t('roles.fields.routingKeywords')}</span>
+            </div>
+            <div className="field">
+              <span className="inline-help-label">
+                <label htmlFor="role-routing-keywords">{t('roles.fields.routingKeywords')}</label>
+                <InlineHelp label={t('roles.fields.routingKeywords')} id="role-routing-keywords-help">{t('roles.fields.routingHelp')}</InlineHelp>
+              </span>
               <textarea
+                id="role-routing-keywords"
                 aria-describedby={
                   routingKeywordsError
                     ? 'role-routing-keywords-error role-routing-keywords-help'
@@ -446,9 +452,6 @@ export function RolePromptSettingsSection({
                 rows={3}
                 value={draft.routingKeywordsText}
               />
-              <small id="role-routing-keywords-help">
-                {t('roles.fields.routingHelp')}
-              </small>
               {routingKeywordsError && (
                 <small
                   className="field-error"
@@ -458,7 +461,7 @@ export function RolePromptSettingsSection({
                   {routingKeywordsError}
                 </small>
               )}
-            </label>
+            </div>
             <div className="role-prompt-detail__actions">
               {draft.id ? (
                 <DestructiveConfirmActions

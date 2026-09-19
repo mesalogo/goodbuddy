@@ -409,7 +409,7 @@ export function McpSettingsSection({
             </button>
           ) : undefined
         }
-        description={t('mcp.description')}
+        help={t('mcp.description')}
         error={!editor ? error : undefined}
         headingLevel={3}
         headingId="mcp-settings-heading"

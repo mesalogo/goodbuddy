@@ -3,10 +3,6 @@ import { createOperationIdentity } from './agent-protocol/canonical'
 import {
   REMOTE_RUNTIME_LAUNCH_LIMITS,
   assertDetachedRemoteRuntimeBundleDigest,
-  assertRemoteRuntimeOperationDigest,
-  createRemoteRuntimeQueryRequest,
-  createRemoteRuntimeStartRequest,
-  createRemoteRuntimeStopRequest,
   detachedSignedRemoteRuntimeBundleSchema,
   digestRemoteRuntimeBundleIdentity,
   digestRemoteRuntimeBundleManifest,
@@ -86,30 +82,6 @@ const signedBundle = {
   }
 }
 
-const commonPreparation = {
-  bindingId: 'binding-1',
-  operationId: 'operation-1',
-  requestId: 'request-1',
-  workMode: 'ask' as const,
-  controllerId: 'controller-1',
-  controllerGeneration: 1,
-  connectionGeneration: 1,
-  channelEpoch: '1',
-  hostId: 'host-1',
-  hostRevision: 1,
-  hostKeyGeneration: 1,
-  workspaceIdentity: 'workspace-1',
-  agentInstallationId: 'installation-1',
-  runtimeId: 'runtime-1',
-  runtimeBundleDigest: digest,
-  runtimeAdapterDigest: digest,
-  deadlineAt,
-  budget: {
-    maximumInputBytes: 10,
-    maximumOutputBytes: 100
-  }
-}
-
 const startPayload = {
   bindingId: 'binding-1',
   requestId: 'request-1',
@@ -119,7 +91,10 @@ const startPayload = {
     { name: 'modelProfileId' as const, value: 'model-1' }
   ],
   deadlineAt,
-  budget: commonPreparation.budget
+  budget: {
+    maximumInputBytes: 10,
+    maximumOutputBytes: 100
+  }
 }
 
 async function operationRequest<T>(
@@ -278,68 +253,14 @@ describe('remote Runtime launch contracts', () => {
     ).rejects.toThrow(/digest does not match/iu)
   })
 
-  it('constructs the exact start operation identity and canonical digest', async () => {
-    const request = await createRemoteRuntimeStartRequest({
-      controllerId: 'controller-1',
-      operationId: 'start-operation-1',
-      prompt: commonPreparation,
-      adapterParameters: startPayload.adapterParameters,
-      deadlineAt
-    })
-    expect(request.identity.method).toBe('runtime/startPrompt')
-    expect(request.identity.scope).toEqual({
-      kind: 'run',
-      sessionId: 'binding-1',
-      requestId: 'request-1'
-    })
-    const expected = await createOperationIdentity({
-      controllerId: 'controller-1',
-      operationId: 'start-operation-1',
-      scope: request.identity.scope,
-      method: 'runtime/startPrompt',
-      payload: request.payload
-    })
-    expect(request.identity.payloadDigest).toBe(expected.payloadDigest)
-    expect(request.payload.workMode).toBe('ask')
-    await expect(
-      createRemoteRuntimeStartRequest({
-        controllerId: 'controller-1',
-        operationId: commonPreparation.operationId,
-        prompt: commonPreparation,
-        deadlineAt: '2031-01-01T00:00:00.000Z'
-      })
-    ).rejects.toThrow(/prompt deadline/iu)
-  })
-
-  it('rejects caller digest mismatches', async () => {
+  it('validates start requests without adapter flags, paths or process-control fields', async () => {
     const valid = await operationRequest(
       'runtime/startPrompt',
       'start-operation-1',
       'request-1',
       startPayload
     )
-    const changedPayload = {
-      ...startPayload,
-      runtimeId: 'runtime-2'
-    }
-    await expect(
-      assertRemoteRuntimeOperationDigest({
-        ...valid,
-        payload: changedPayload
-      })
-    ).rejects.toThrow(/digest does not match/iu)
-    await expect(
-      assertRemoteRuntimeOperationDigest(valid)
-    ).resolves.toBeUndefined()
-    await expect(
-      assertRemoteRuntimeOperationDigest({
-        ...valid,
-        identity: { ...valid.identity, payloadDigest: digest }
-      })
-    ).rejects.toThrow(/digest does not match/iu)
-  })
-
-  it('rejects adapter flag and path tunneling plus all process-control fields', async () => {
+    expect(remoteRuntimeStartRequestSchema.parse(valid)).toEqual(valid)
     for (const value of [
       '--flag',
       '/tmp/model',
@@ -347,24 +268,16 @@ describe('remote Runtime launch contracts', () => {
       'models\\model',
       '..'
     ]) {
-      await expect(
-        createRemoteRuntimeStartRequest({
-          controllerId: 'controller-1',
-          operationId: 'start-operation-1',
-          prompt: commonPreparation,
-          adapterParameters: [
-            { name: 'modelProfileId', value }
-          ],
-          deadlineAt
+      expect(() =>
+        remoteRuntimeStartRequestSchema.parse({
+          ...valid,
+          payload: {
+            ...startPayload,
+            adapterParameters: [{ name: 'modelProfileId', value }]
+          }
         })
-      ).rejects.toThrow()
+      ).toThrow()
     }
-    const valid = await operationRequest(
-      'runtime/startPrompt',
-      'start-operation-1',
-      'request-1',
-      startPayload
-    )
     for (const forbidden of forbiddenLaunchFields) {
       expect(() =>
         remoteRuntimeStartRequestSchema.parse({
@@ -398,23 +311,19 @@ describe('remote Runtime launch contracts', () => {
       reason: 'user-cancelled' as const,
       deadlineAt
     }
-    const stop = await createRemoteRuntimeStopRequest({
-      controllerId: 'controller-1',
-      operationId: 'stop-1',
-      payload: stopPayload
-    })
+    const stop = await operationRequest(
+      'runtime/stopPrompt', 'stop-1', stopPayload.requestId, stopPayload
+    )
     expect(remoteRuntimeStopRequestSchema.parse(stop)).toEqual(stop)
-    const query = await createRemoteRuntimeQueryRequest({
-      controllerId: 'controller-1',
-      operationId: 'query-1',
-      payload: {
+    const query = await operationRequest(
+      'runtime/queryPrompt', 'query-1', 'query-request-1', {
         launchId: 'launch-1',
         bindingId: 'binding-1',
         runtimeId: 'runtime-1',
         startOperationId: 'start-operation-1',
         requestId: 'query-request-1'
       }
-    })
+    )
     expect(remoteRuntimeQueryRequestSchema.parse(query)).toEqual(query)
     expect(() =>
       remoteRuntimeStopRequestSchema.parse({

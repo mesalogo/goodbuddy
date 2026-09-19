@@ -1430,7 +1430,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
         within(dialog).getByRole('option', { name: /Build host/u })
       ).toBeInTheDocument()
     )
-    expect(within(dialog).getByLabelText('SSH 主机')).toBeDisabled()
+    expect(within(dialog).getByRole('combobox', { name: 'SSH 主机' })).toBeDisabled()
     expect(within(dialog).getByLabelText('远端工作目录')).toBeDisabled()
     fireEvent.click(
       within(dialog).getByRole('button', {
@@ -1512,7 +1512,7 @@ describe('ProjectSwitcher managed SSH projects', () => {
         /此主机尚未完成 Host Key 和连接验证/u
       )
     ).toBeInTheDocument()
-    expect(within(dialog).getByLabelText('SSH 主机')).toHaveValue(hostId)
+    expect(within(dialog).getByRole('combobox', { name: 'SSH 主机' })).toHaveValue(hostId)
     expect(
       within(dialog).getByRole('option', {
         name: /Build host.*需要验证/u

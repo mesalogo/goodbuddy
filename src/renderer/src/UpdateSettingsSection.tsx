@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import type {
   ApplicationSettings,
   UpdateSource,
@@ -21,13 +22,7 @@ import {
   displayNetworkAwareErrorMessage
 } from './error-message'
 import { FeedbackDialog } from './FeedbackDialog'
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) {
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+import { formatModelPackageBytes } from './model-download-presentation'
 
 export function UpdateSettingsSection({
   onNotify
@@ -233,9 +228,14 @@ export function UpdateSettingsSection({
           <span>{t('updates.checkOnStartup')}</span>
         </label>
 
-        <label className="field update-settings__source">
-          <span>{t('updates.source.label')}</span>
+        <div className="field update-settings__source">
+          <span className="inline-help-label">
+            <label htmlFor="update-source">{t('updates.source.label')}</label>
+            <InlineHelp label={t('updates.source.label')} id="update-source-help">{t('updates.source.description')}</InlineHelp>
+          </span>
           <select
+            id="update-source"
+            aria-describedby="update-source-help"
             aria-label={t('updates.source.label')}
             disabled={
               !settings ||
@@ -256,8 +256,7 @@ export function UpdateSettingsSection({
               {t('updates.source.options.mirror')}
             </option>
           </select>
-          <small>{t('updates.source.description')}</small>
-        </label>
+        </div>
 
         <div className="update-settings__actions">
           <button
@@ -309,7 +308,7 @@ export function UpdateSettingsSection({
             {result.target.files.map((file) => (
               <li key={file.name}>
                 <code>{file.name}</code>
-                <span>{formatBytes(file.size)}</span>
+                <span>{formatModelPackageBytes(file.size)}</span>
               </li>
             ))}
           </ul>

@@ -425,10 +425,7 @@ export const workspace = {
         ready: '浏览器已就绪',
         failed: '浏览器操作失败',
         stopped: '浏览器已停止'
-      },
-      frameAlt: 'Agent 实时浏览器画面',
-      noFrame: '未能获取页面画面',
-      waitingFrame: '等待首个页面画面…'
+      }
     },
     errors: {
       workspacePreview: '工作区文件预览失败',

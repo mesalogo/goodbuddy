@@ -1,5 +1,25 @@
 # 工作栏实现与验证进度
 
+## 2026-09-19 问答位置持久化
+
+- Main 在收到问题时保存消息位置块，而不是等回答成功才追加；前台及重启恢复的实时待答
+  快照、带来源的语义事件投影共用同一去重函数。答案写入不移动位置块，旧消息不补造历史
+  顺序；规则见[Runtime 交互边界](./runtime-interactions.md#运行与失败)。未改变 schema。
+- `npm exec -- vitest run src/main/assistant/assistant-database.test.ts src/main/ipc.test.ts`
+  通过 227 项，覆盖真实 SQLite 的问题/正文/工具交错、重复和重放、回答/跳过、完成及
+  重新打开，以及三个设置重载入口的并行远程问题恢复。
+  `npm exec -- tsc --noEmit -p tsconfig.node.json` 通过。
+- 共享 Linux x64 Host 使用已保存凭据与固定 Host Key，经 LAN 路由运行当前源码 Agent、
+  Desktop Runtime 适配器和 Main SQLite 投影，使用真实 OpenCode `1.18.29`。首轮暴露实时
+  问题没有语义来源的实际分支，使用 1 次真实文本模型请求后停止；补齐 Main 接收入口后，
+  最终一轮 2 次请求，验证回答前位置块已经落库，回答后为 `tool → question → text`，
+  完成重开后消息完全一致。合计真实文本模型调用 **3 次**，每次最多 1024 输出 token，
+  每轮有限调用预算与 120 秒请求超时；图片模型调用 **0 次**。
+- 临时复验脚本为既有批准临时目录中的 `question-order-host-build.cjs`、
+  `question-order-host-run.cjs`，最终日志为 `question-order-host-live.log`。
+  两轮均停止测试 daemon，所属进程剩余 0，移除本轮专属 Host 目录及上传文件。
+  该记录只覆盖 Main/Agent 路径，不代替 Renderer 视觉验收或最终全量验证。
+
 ## 2026-09-19 远程 CN 完整桌面验证
 
 默认联合开发包已包含 OC/CN，并通过桌面导入、验签、传输至共享 Linux x64、安装及

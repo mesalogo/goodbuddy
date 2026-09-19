@@ -122,13 +122,13 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
   }}>
     <div className="custom-task-dialog__header">
     <PageHeader headingId="local-inference-title" title="本机推理监控" scope={{ kind: 'global' }}
+      help={enabled ? '每 5 秒刷新 · CPU 100% = 一个逻辑核心' : undefined}
       actions={<button ref={close} type="button" className="icon-button" aria-label="关闭本机推理监控" title="关闭本机推理监控" disabled={busy || Boolean(control)} onClick={() => { if (!operation.current && !control) onClose() }}><X size={20} aria-hidden="true" /></button>} />
     </div>
     <div className="local-inference-modal__body">
     {!enabled && <div className="local-inference-actions"><strong>应用已关闭</strong></div>}
     <div className="local-inference-workspace" hidden={!enabled} inert={!enabled}>
     <div className="local-inference-toolbar">
-    <p className="local-inference-note">每 5 秒刷新 · CPU 100% = 一个逻辑核心</p>
     <div className="local-inference-actions"><button className="secondary-button" type="button" disabled={busy} onClick={() => void window.goodbuddy.localInference.openSettings().catch((reason: unknown) => setOperationError(String(reason)))}>模型与连接设置</button><button className="secondary-button" type="button" disabled={refreshing || busy} onClick={() => setReload((value) => value + 1)}>刷新状态</button></div>
     </div>
     {error && <div className="local-inference-feedback" role="alert"><p>{snapshot ? '状态刷新失败；以下为上次成功读取的状态，操作已禁用。' : '无法读取本机推理状态。'} {error}</p><button type="button" className="secondary-button" onClick={() => setReload((value) => value + 1)}>重试</button></div>}

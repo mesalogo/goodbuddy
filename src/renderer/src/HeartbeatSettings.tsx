@@ -1,6 +1,7 @@
 import { HeartPulse, Pencil } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InlineHelp } from './InlineHelp'
 import {
   heartbeatCreateSchema,
   type AssistantHeartbeatConfig,
@@ -179,11 +180,13 @@ export function HeartbeatSettings({
   return (
     <div className="heartbeat-settings">
       <div className="heartbeat-settings__intro">
-        <h2>
-          <HeartPulse size={15} />
-          {t('settings.title')}
-        </h2>
-        <p>{t('settings.description')}</p>
+        <div className="inline-help-label">
+          <h2>
+            <HeartPulse size={15} />
+            {t('settings.title')}
+          </h2>
+          <InlineHelp label={t('settings.title')}>{t('settings.description')}</InlineHelp>
+        </div>
       </div>
       <div className="heartbeat-settings__editor">
         <div className="heartbeat-settings__editor-heading">
@@ -212,7 +215,16 @@ export function HeartbeatSettings({
           />
         </label>
         <fieldset className="heartbeat-settings__scope">
-          <legend>{t('settings.scope.legend')}</legend>
+          <legend>
+            <span className="inline-help-label">
+              {t('settings.scope.legend')}
+              <InlineHelp label={t('settings.scope.legend')}>
+                {scopeKind === 'global'
+                  ? t('settings.scope.globalHelp')
+                  : t('settings.scope.projectsHelp')}
+              </InlineHelp>
+            </span>
+          </legend>
           <SegmentedControl
             ariaLabel={t('settings.scope.ariaLabel')}
             disabled={pendingAction !== undefined}
@@ -229,11 +241,6 @@ export function HeartbeatSettings({
             ]}
             value={scopeKind}
           />
-          <p>
-            {scopeKind === 'global'
-              ? t('settings.scope.globalHelp')
-              : t('settings.scope.projectsHelp')}
-          </p>
           {scopeKind === 'projects' && (
             <div className="heartbeat-settings__project-list">
               {selectableProjects.length === 0 ? (

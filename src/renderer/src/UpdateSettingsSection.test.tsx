@@ -61,6 +61,11 @@ describe('UpdateSettingsSection', () => {
             name: 'GoodBuddy-0.9.0-windows-x64-setup.exe',
             size: 1024 * 1024,
             sha256: 'a'.repeat(64)
+          },
+          {
+            name: 'GoodBuddy-0.9.0-windows-x64-portable.zip',
+            size: 1.5 * 1024 * 1024 * 1024,
+            sha256: 'b'.repeat(64)
           }
         ]
       }
@@ -106,7 +111,7 @@ describe('UpdateSettingsSection', () => {
       name: '检查更新源'
     })
     const startupRow = startup.closest('label')
-    const sourceRow = source.closest('label')
+    const sourceRow = source.closest('.field')
     expect(source).toHaveValue('github')
     expect(sourceRow).toHaveClass('update-settings__source')
     expect(
@@ -142,6 +147,8 @@ describe('UpdateSettingsSection', () => {
     expect(
       screen.getByText('GoodBuddy-0.9.0-windows-x64-setup.exe')
     ).toBeInTheDocument()
+    expect(screen.getByText('1.0 MB')).toBeInTheDocument()
+    expect(screen.getByText('1.5 GB')).toBeInTheDocument()
 
     const feedbackTrigger = screen.getByRole('button', {
       name: '提交反馈'

@@ -206,6 +206,7 @@ import {
 } from "./CustomTaskDialog";
 import { ConversationTaskStrip } from "./ConversationTaskStrip";
 import { RuntimeChecklistStrip } from "./RuntimeChecklistStrip";
+import { appendConversationQuestionBlock } from "../../shared/conversation-question-blocks";
 import { ConversationInputQueue } from "./ConversationInputQueue";
 import { OverflowMarquee } from "./OverflowMarquee";
 import { findTaskSchedule } from "./TaskScheduleActions";
@@ -5082,6 +5083,7 @@ function App(): React.JSX.Element {
           return {
             ...message,
             status: undefined,
+            blocks: appendConversationQuestionBlock(message.blocks, event.questionId),
             pendingQuestions: [...(message.pendingQuestions ?? []), event],
           };
         });

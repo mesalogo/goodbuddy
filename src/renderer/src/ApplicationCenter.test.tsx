@@ -6,6 +6,7 @@ import {
   within,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { changeUiLocale } from './i18n'
 import {
   applicationSettingsSchema,
   defaultApplicationNavigation,
@@ -40,9 +41,34 @@ const pinnedSettings = {
     pinned: { 'magic-notes': true, 'local-inference': true },
   },
 }
-afterEach(cleanup)
+afterEach(async () => {
+  cleanup()
+  await changeUiLocale('zh-CN')
+})
 
 describe('Application Center', () => {
+  it.each(['zh-CN', 'en-US'] as const)('keeps disable consequences visible and pin help separate in %s', async (locale) => {
+    await changeUiLocale(locale)
+    const onUpdate = vi.fn(async () => true)
+    const { container } = render(<ApplicationSettingsView id="magic-notes" settings={settings} pending={false} onUpdate={onUpdate} />)
+    const pinLabel = locale === 'zh-CN' ? '常驻左侧菜单' : 'Pin to sidebar'
+    const explanation = locale === 'zh-CN' ? '常驻只控制左侧捷径。' : 'Pinning only controls the sidebar shortcut.'
+    const consequence = locale === 'zh-CN' ? /不停止已有请求或后台服务/ : /without stopping existing requests or background services/
+    expect(screen.getByText(explanation)).not.toBeVisible()
+    expect(screen.getByText(consequence)).toBeVisible()
+    const help = screen.getByRole('button', { name: pinLabel })
+    expect(container.querySelector('label .inline-help, button .inline-help, summary .inline-help')).toBeNull()
+    const pin = screen.getByRole('switch', { name: pinLabel })
+    expect(pin).toHaveAccessibleDescription(explanation)
+    const checked = (pin as HTMLInputElement).checked
+    fireEvent.click(help)
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect((pin as HTMLInputElement).checked).toBe(checked)
+    expect(screen.getByRole('tooltip')).toHaveTextContent(explanation)
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent(consequence)
+    expect(pin).toHaveAccessibleDescription(explanation)
+  })
+
   it('returns from compact settings through header navigation without losing the search', () => {
     render(<ApplicationCenter {...props()} />)
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '笔记' } })
@@ -282,13 +308,17 @@ describe('Application Center', () => {
     const pageCount = screen.getByRole('combobox', { name: '发送画布页数' })
     expect(pageCount).toHaveValue('1')
     expect(within(pageCount).getAllByRole('option')).toHaveLength(8)
-    expect(pageCount).toHaveAccessibleDescription(expect.stringContaining('不是笔记记录数量'))
     expect(pageCount.parentElement).toHaveClass('field')
     const help = screen.getByRole('button', { name: '发送画布页数' })
-    expect(help).toHaveClass('icon-button')
-    expect(help).toHaveAccessibleDescription(help.getAttribute('title')!)
-    expect(help).toHaveAttribute('title', expect.stringContaining('不是笔记记录数量'))
-    expect(document.getElementById('magic-note-canvas-page-count-help')).toHaveClass('sr-only')
+    expect(help).toHaveClass('inline-help')
+    expect(help).not.toHaveAttribute('title')
+    expect(help.closest('label, summary')).toBeNull()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    fireEvent.click(help)
+    expect(pageCount).toHaveValue('1')
+    expect(onUpdate).toHaveBeenCalledTimes(1)
+    expect(pageCount).toHaveAccessibleDescription(expect.stringContaining('不是笔记记录数量'))
+    expect(screen.getByRole('tooltip')).toHaveAttribute('id', 'magic-note-canvas-page-count-help')
     fireEvent.change(pageCount, { target: { value: '8' } })
     expect(onUpdate).toHaveBeenLastCalledWith({ magicNoteCanvasPageCount: 8 })
     fireEvent.click(screen.getByRole('switch', { name: '显示未完成待办数量' }))
