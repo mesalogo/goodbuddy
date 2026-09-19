@@ -748,8 +748,8 @@ function ChatMessageRowView({
                   <span className="message-attachment__details">
                     <strong title={attachment.name}>{attachment.name}</strong>
                     <span className="attachment-metadata">
-                    <AttachmentStatus attachment={attachment} />
-                    <small>{formatAttachmentSize(attachment.size)}</small>
+                      <AttachmentStatus attachment={attachment} />
+                      <small>{formatAttachmentSize(attachment.size)}</small>
                     </span>
                     <span className="attachment-actions">
                       {attachment.resultId && <AttachmentResultButton resultId={attachment.resultId} name={attachment.name} />}

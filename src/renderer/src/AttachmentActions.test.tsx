@@ -33,7 +33,7 @@ it('keeps attachment actions icon-only and named, and restores keyboard focus af
   const more = screen.getByRole('button', { name: `更多附件操作：${attachment.name}` })
   for (const button of [preview, more]) {
     expect(button).toHaveClass('icon-button', 'attachment-action')
-    expect(button).toHaveTextContent('')
+    expect(button.textContent).toBe('')
     expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
     expect(button.getAttribute('title')).toBe(button.getAttribute('data-tooltip'))
   }

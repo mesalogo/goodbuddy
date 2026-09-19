@@ -6954,9 +6954,9 @@ button > svg {
 .context-chip--processing {
   display: grid;
   width: min(100%, 320px);
-  min-width: 240px;
+  min-width: 0;
   max-width: 320px;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   cursor: wait;
 }
 

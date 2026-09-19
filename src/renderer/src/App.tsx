@@ -10005,10 +10005,10 @@ function App(): React.JSX.Element {
                                   <span>
                                     <strong title={attachment.name}>{attachment.name}</strong>
                                     <span className="attachment-metadata">
-                                    <AttachmentStatus attachment={attachment} />
-                                    <small>
-                                      {formatAttachmentSize(attachment.size)}
-                                    </small>
+                                      <AttachmentStatus attachment={attachment} />
+                                      <small>
+                                        {formatAttachmentSize(attachment.size)}
+                                      </small>
                                     </span>
                                     <span className="attachment-actions">
                                       {attachment.resultId && <AttachmentResultButton resultId={attachment.resultId} name={attachment.name} conversationId={activeId} />}
@@ -10044,7 +10044,6 @@ function App(): React.JSX.Element {
                                   className="context-chip context-chip--processing"
                                   role="status"
                                 >
-                                  <button type="button" onClick={() => void window.goodbuddy.context.cancelImport(fileSelectionProgress?.operationId)}>取消文件导入</button>
                                   <LoaderCircle
                                     aria-hidden="true"
                                     className="context-chip__spinner"
@@ -10079,6 +10078,7 @@ function App(): React.JSX.Element {
                                           )}
                                     </small>
                                   </span>
+                                  <button type="button" className="icon-button attachment-action" aria-label="取消文件导入" title="取消文件导入" data-tooltip="取消文件导入" onClick={() => void window.goodbuddy.context.cancelImport(fileSelectionProgress?.operationId)}><X size={16} aria-hidden="true" /></button>
                                   <progress
                                     aria-label={t(
                                       "composer.attachmentProgress.progressLabel",
