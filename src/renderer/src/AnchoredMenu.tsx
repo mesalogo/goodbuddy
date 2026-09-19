@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react'
-import { createPortal, flushSync } from 'react-dom'
+import { flushSync } from 'react-dom'
+import { FloatingPortal } from './FloatingPortal'
 import './anchored-menu.css'
 
 export function AnchoredMenu({ anchorRef, id, label, onClose, children }: {
@@ -87,6 +88,6 @@ export function AnchoredMenu({ anchorRef, id, label, onClose, children }: {
       if (document.activeElement === document.body || menu.contains(document.activeElement)) anchor?.focus()
     }
   }, [anchorRef])
-  return createPortal(<div ref={menuRef} id={id} role="menu" aria-label={label}
-    tabIndex={-1} className="anchored-menu">{children}</div>, document.body)
+  return <FloatingPortal anchorRef={anchorRef}><div ref={menuRef} id={id} role="menu" aria-label={label}
+    tabIndex={-1} className="anchored-menu">{children}</div></FloatingPortal>
 }

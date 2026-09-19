@@ -1,6 +1,5 @@
 .anchored-menu {
   position: fixed;
-  z-index: calc(var(--z-dialog) - 1);
   box-sizing: border-box;
   overflow-y: auto;
   padding: var(--space-2);

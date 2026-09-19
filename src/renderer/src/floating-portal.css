@@ -1,0 +1,23 @@
+.floating-portal {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+  pointer-events: none;
+}
+
+.floating-portal::backdrop {
+  background: transparent;
+  pointer-events: none;
+}
+
+.floating-portal > * {
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}

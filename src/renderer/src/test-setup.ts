@@ -7,6 +7,11 @@ if (typeof Element !== 'undefined') {
   Element.prototype.scrollTo = vi.fn()
 }
 
+// jsdom does not implement top-layer rendering; Electron tests cover it.
+if (typeof HTMLElement !== 'undefined') {
+  HTMLElement.prototype.showPopover = vi.fn()
+}
+
 if (typeof ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class {
     observe = vi.fn()

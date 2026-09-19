@@ -12398,7 +12398,6 @@ details.settings-section > :not(summary) + :not(summary) {
 
 .app-notification-viewport {
   position: fixed;
-  z-index: 75;
   top: 54px;
   right: var(--space-4);
   display: grid;

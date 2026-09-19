@@ -252,6 +252,7 @@ import {
   type KeepAliveCacheEntry,
 } from "./keep-alive-cache";
 import { activateModalFocus, trapTabFocus } from "./dialog-focus";
+import { FloatingPortal } from "./FloatingPortal";
 import {
   displayErrorMessage,
   displayNetworkAwareErrorMessage,
@@ -486,7 +487,7 @@ function AppNotificationItem({
   );
 }
 
-function AppNotificationViewport({
+export function AppNotificationViewport({
   notifications,
   dispatch,
 }: {
@@ -499,7 +500,7 @@ function AppNotificationViewport({
     return null;
   }
   return (
-    <section
+    <FloatingPortal><section
       aria-label={t("notifications.viewport")}
       className="app-notification-viewport"
     >
@@ -510,7 +511,7 @@ function AppNotificationViewport({
           notification={notification}
         />
       ))}
-    </section>
+    </section></FloatingPortal>
   );
 }
 

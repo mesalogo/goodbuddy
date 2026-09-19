@@ -16,7 +16,7 @@
 | 知识库 | `App.tsx` 已提供 `PageShell variant="master-detail"`，`KnowledgeWorkspace.tsx` 内含库导航与 DocumentsView；需在文档区域新增解析详情及返回列表，不再嵌套页面壳层或新建知识库级页签 |
 | 解析预览 | 新增共享内容视图，分别嵌入设置诊断 Modal、聊天附件 Modal 和知识库文档详情；共享数据和交互，外层容器负责标题、范围、关闭与滚动 |
 | 页签与选择 | `WorkspacePrimitives.tsx` 的 `PageTabs variant="segmented"` 承载正文、图片、详情；来源及过滤模式使用 `SegmentedControl`，不能用它替换页签语义 |
-| 浮层 | 沿用 `createPortal(..., document.body)`、`activateModalFocus`、`trapTabFocus`；当前没有可直接调用的通用 Modal 组件，不虚构组件 API |
+| 浮层 | Modal 沿用 body Portal、`activateModalFocus` 与 `trapTabFocus`；测试及附件菜单复用 `AnchoredMenu`，由共享 `FloatingPortal` 挂入所属 Modal 并在 top layer 绘制。通知遵循根 UI 规范 |
 | 图文内容 | 复用 `MarkdownRenderer.tsx` 的排版、表格滚动和静态 HTML 处理边界；补齐受管图片与 OCR HTML 表格适配，现有 Markdown 渲染器并未直接支持这些资源 |
 | 状态与反馈 | `ScopeBadge`、`EmptyState`、共享按钮、`toggle-row` Switch、应用 `onNotify`；图片多选用 Checkbox，失败重试就地显示 |
 
