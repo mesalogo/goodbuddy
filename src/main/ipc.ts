@@ -8214,7 +8214,7 @@ export function registerIpcHandlers(
     ipcChannels.magicNotesAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { entryId, requestId, direction, format, canvasImages, expectedRevision } =
+      const { entryId, requestId, direction, format, canvasImages, canvasPageText, expectedRevision } =
         magicNoteAnalyzeSchema.parse(input)
       const settings = await settingsStore.getResolvedSettings()
       const entry = assistantDatabase.getMagicNoteEntry(entryId)
@@ -8222,6 +8222,7 @@ export function registerIpcHandlers(
         throw new Error('记录已被更新，请重新捕获并分析')
       }
       const note = assistantDatabase.getMagicNoteContext(entry.noteId)
+      const canvasPageCount = (await applicationSettingsStore?.get())?.magicNoteCanvasPageCount ?? 1
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
         settings
@@ -8238,7 +8239,7 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicNoteEntry(
           analysisRuntime,
           entry,
-          { requestId, direction, format, canvasImages },
+          { requestId, direction, format, canvasImages, canvasPageText },
           format === 'structured'
             ? undefined
             : (delta) => {
@@ -8256,7 +8257,7 @@ export function registerIpcHandlers(
                 }
               },
           persistModelUsage,
-          { supportsImageInput: settings.supportsImageInput === true }
+          { supportsImageInput: settings.supportsImageInput === true, canvasPageCount }
         )
         const analyzedNote = assistantDatabase.saveMagicNoteAnalysis({
           entryId,
@@ -8289,11 +8290,12 @@ export function registerIpcHandlers(
       const content = validateMagicNoteContent(parsed.content)
       const plainText = magicNotePlainText(content)
       const settings = await settingsStore.getResolvedSettings()
+      const canvasPageCount = (await applicationSettingsStore?.get())?.magicNoteCanvasPageCount ?? 1
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
         settings
       )
-      const { requestId, direction, format, canvasImages } = parsed
+      const { requestId, direction, format, canvasImages, canvasPageText } = parsed
       assistantDatabase.createTask({
         id: requestId,
         title: '分析未保存笔记草稿',
@@ -8306,7 +8308,7 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicNoteDraft(
           analysisRuntime,
           plainText,
-          { requestId, direction, format, canvasImages },
+          { requestId, direction, format, canvasImages, canvasPageText },
           format === 'structured'
             ? undefined
             : (delta) => {
@@ -8324,7 +8326,7 @@ export function registerIpcHandlers(
                 }
               },
           persistModelUsage,
-          { supportsImageInput: settings.supportsImageInput === true, content }
+          { supportsImageInput: settings.supportsImageInput === true, content, canvasPageCount }
         )
         assistantDatabase.updateTaskStatus(requestId, 'completed')
         return {
@@ -8383,10 +8385,11 @@ export function registerIpcHandlers(
     ipcChannels.magicTodosAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { todoId, requestId, direction, format, canvasImages, sourceEntryRevision } =
+      const { todoId, requestId, direction, format, canvasImages, canvasPageText, sourceEntryRevision } =
         magicTodoIdSchema.parse(input)
       const settings = await settingsStore.getResolvedSettings()
       const todo = assistantDatabase.getMagicTodo(todoId)
+      const canvasPageCount = (await applicationSettingsStore?.get())?.magicNoteCanvasPageCount ?? 1
       const entry = assistantDatabase.getMagicNoteEntry(todo.entryId)
       if (sourceEntryRevision !== undefined && entry.revision !== sourceEntryRevision) {
         throw new Error('来源记录已被更新，请重新捕获并分析')
@@ -8407,7 +8410,7 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicTodo(
           analysisRuntime,
           todo,
-          { requestId, direction, format, canvasImages },
+          { requestId, direction, format, canvasImages, canvasPageText },
           format === 'structured'
             ? undefined
             : (delta) => {
@@ -8425,7 +8428,7 @@ export function registerIpcHandlers(
                 }
               },
           persistModelUsage,
-          { supportsImageInput: settings.supportsImageInput === true, content: entry.content }
+          { supportsImageInput: settings.supportsImageInput === true, content: entry.content, canvasPageCount }
         )
         const analyzedTodo = assistantDatabase.saveMagicTodoAnalysis({
           todoId,

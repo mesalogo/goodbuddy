@@ -44,6 +44,26 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it('defaults missing historical canvas page counts and persists updates without resetting other preferences', async () => {
+    const { filePath, store } = await createStore()
+    const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 12,
+      lastSeenReleaseNotesVersion: null, magicNoteCommentMode: 'after-save-manual' }
+    delete legacy.magicNoteCanvasPageCount
+    await writeFile(filePath, JSON.stringify(legacy))
+    expect(await store.get()).toMatchObject({ magicNoteCanvasPageCount: 1, magicNoteCommentMode: 'after-save-manual' })
+    const changed = vi.fn()
+    store.onChanged(changed)
+    expect(await store.update({ magicNoteCanvasPageCount: 8 })).toMatchObject({ magicNoteCanvasPageCount: 8 })
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ magicNoteCanvasPageCount: 8 }))
+    await store.update({ magicNotesEnabled: false })
+    expect(await createApplicationSettingsStore(filePath).get()).toMatchObject({ magicNoteCanvasPageCount: 8, magicNotesEnabled: false, magicNoteCommentMode: 'after-save-manual' })
+    for (const count of [0, 9, -1, 1.5, '2', null]) {
+      await expect(store.update({ magicNoteCanvasPageCount: count })).rejects.toThrow()
+    }
+    expect((await createApplicationSettingsStore(filePath).get()).magicNoteCanvasPageCount).toBe(8)
+    expect((await store.update({ magicNoteCanvasPageCount: 1 })).magicNoteCanvasPageCount).toBe(1)
+  })
+
   it.each([
     { order: ['local-inference', 'magic-notes'], expected: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] },
     { order: ['local-inference'], expected: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] },

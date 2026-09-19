@@ -77,7 +77,7 @@ const settings: ApplicationSettings = {
   localToolEnvironment: defaultLocalToolEnvironmentSettings, applicationNavigation: defaultApplicationNavigation,
   localInferenceEnabled: true, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false,
   magicNotesEnabled: true, magicNotesShowIncompleteTodoCount: true,
-  magicNoteCommentMode: 'immediate', magicNoteCommentFormat: 'combined'
+  magicNoteCommentMode: 'immediate', magicNoteCommentFormat: 'combined', magicNoteCanvasPageCount: 1
 }
 const list = vi.fn<DesktopApi['magicNotes']['list']>()
 const get = vi.fn<DesktopApi['magicNotes']['get']>()
@@ -1256,8 +1256,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     // The selected profile wins over a stale top-level capability flag.
     getRuntime.mockResolvedValue({ supportsImageInput: true, defaultModelProfileId: 'text', modelProfiles: [{ id: 'vision', supportsImageInput: true }, { id: 'text', supportsImageInput: false }] })
     get.mockResolvedValue({ ...detail, entries: [{ ...detail.entries[0]!, content: canvasContent }] })
-    canvas.capture.mockRejectedValue(new Error('capture must not run'))
-    canvas.viewCapture.mockRejectedValue(new Error('viewer capture must not run'))
+    canvas.capture.mockResolvedValue([{ pageId: 'page-1', text: 'First page', dataUrl: '' }])
+    canvas.viewCapture.mockResolvedValue([{ pageId: 'page-1', text: 'First page', dataUrl: '' }])
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     if (action === 'todo') {
       await openTodo()
@@ -1281,8 +1281,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await waitFor(() => expect(analyzeCall).toHaveBeenCalledOnce())
     expect(analyzeCall.mock.calls[0]![1]).not.toHaveProperty('canvasImages')
     expect(getRuntime).toHaveBeenCalledOnce()
-    expect(canvas.capture).not.toHaveBeenCalled()
-    expect(canvas.viewCapture).not.toHaveBeenCalled()
+    expect(action === 'entry' || action === 'todo' ? canvas.viewCapture : canvas.capture).toHaveBeenCalledWith(1, false)
+    expect(analyzeCall.mock.calls[0]![1]).toHaveProperty('canvasPageText', [{ pageId: 'page-1', text: 'First page' }])
   })
 
   it('reads fresh capability for every analysis rather than caching the previous model', async () => {
@@ -1298,7 +1298,8 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await waitFor(() => expect(analyzeDraft).toHaveBeenCalledTimes(2))
     expect(analyzeDraft.mock.calls[0]![1]).toHaveProperty('canvasImages', canvasImages)
     expect(analyzeDraft.mock.calls[1]![1]).not.toHaveProperty('canvasImages')
-    expect(canvas.capture).toHaveBeenCalledOnce()
+    expect(canvas.capture).toHaveBeenNthCalledWith(1, 1, true)
+    expect(canvas.capture).toHaveBeenNthCalledWith(2, 1, false)
     expect(getRuntime).toHaveBeenCalledTimes(2)
   })
 
@@ -1493,6 +1494,7 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await waitFor(() => expect(call).toHaveBeenCalledOnce())
     expect(call.mock.calls[0]![1]).toEqual({
       requestId: expect.any(String), direction: 'general', format: 'combined', canvasImages,
+      canvasPageText: [{ pageId: 'page-1', text: '' }],
       ...(action === 'todo' ? { sourceEntryRevision: 7 } : action === 'draft' ? {} : { expectedRevision: action === 'entry' ? 7 : 11 })
     })
     if (action !== 'todo' && action !== 'draft') expect(analyze.mock.calls[0]![0]).toBe(savedId)

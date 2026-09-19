@@ -62,7 +62,8 @@ describe('GoodBuddy configuration contracts', () => {
           operation: 'application.update',
           updates: {
             magicNotesEnabled: true,
-            magicNoteCommentMode: 'after-save-manual'
+            magicNoteCommentMode: 'after-save-manual',
+            magicNoteCanvasPageCount: 8
           }
         },
         {
@@ -161,7 +162,8 @@ describe('GoodBuddy configuration contracts', () => {
         magicNotesEnabled: true,
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: 'immediate',
-        magicNoteCommentFormat: 'combined'
+        magicNoteCommentFormat: 'combined',
+        magicNoteCanvasPageCount: 1
       },
       skills: [],
       mcpServers: [

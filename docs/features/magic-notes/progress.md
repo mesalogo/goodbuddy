@@ -1,5 +1,56 @@
 # Magic Notes Progress
 
+## 2026-09-19: Compact Page Count Setting
+
+- The page-count select now uses the existing `.field` settings control styling.
+  A title-adjacent `CircleHelp` icon uses the shared `icon-button` and native
+  `title` hint; the full description is screen-reader-only and remains associated
+  with both controls through `aria-describedby`. The compact row uses flex and
+  keeps the label and help icon together with inline-flex, including at narrow
+  widths. Control styling and the native hint mechanism remain shared. Page
+  selection and persistence behavior are unchanged.
+- `npx vitest run src/renderer/src/ApplicationCenter.test.tsx` passed 14 tests.
+  Focused ESLint and a temporary TypeScript configuration rooted at
+  `ApplicationCenter.tsx` with its imported dependencies passed. No full suite,
+  full typecheck, Electron/live-model test or model request was run in this UI pass.
+- The commit preparation had only inspected status, diffs and history. The index
+  remained empty and HEAD remained `ecf09f4`; no staging or commit was performed.
+  The later same-line adjustment passed the same 14-test UI suite before commit.
+- The coordinating agent subsequently reported full typecheck and lint passing.
+  The first full test command timed out at 200 seconds; the second completed but
+  exposed only the RUN banner without a summary. No full-suite pass is claimed.
+
+## 2026-09-19: Canvas Pages to Send
+
+- Implemented the page-count preference and input selection described in
+  [Canvas Analysis and Comments](./technical-design.md#canvas-analysis-and-comments).
+  Application settings and configuration tools persist the same field; historical
+  missing values read as 1. All three production analysis handlers use the saved
+  count for text and images. Saving retains the complete canvas.
+- Focused verification passed **15 files / 271 tests**:
+  `npx vitest run src/main/application-settings-store.test.ts src/main/magic-notes/magic-note-analyzer.test.ts src/main/magic-notes/canvas-ipc.integration.test.ts src/renderer/src/ApplicationCenter.test.tsx src/renderer/src/MagicNotesWorkspace.test.tsx src/renderer/src/MagicCanvasEditor.test.tsx src/renderer/src/MagicCanvasThumbnail.test.tsx src/renderer/src/magic-canvas src/shared/goodbuddy-config-contracts.test.ts src/shared/magic-note-pages.test.ts src/main/goodbuddy-config-service.test.ts src/renderer/src/UpdateSettingsSection.test.tsx`.
+  Coverage includes 1/8 boundaries, invalid counts, missing historical fields,
+  restart persistence, settings events, config-tool writes, 50-page source
+  preservation, current page-array order, selected PDF/object/flow text, missing
+  flow text and selected pages with no readable text.
+- `npx vitest run tests/magic-notes-analysis.electron.test.ts` passed **2 tests**,
+  one per image capability. The real settings form changes the default from 1 to
+  2 through production preload/IPC and the file-backed settings store. Workspace,
+  Quill and Fabric then analyze saved entries, edited saves, new drafts, new saves
+  and canvas-source todos through registered IPC/analyzer/SQLite. Explicit page
+  breaks and automatic overflow both exclude later-page text. Browsing page three
+  at 75% zoom still sends pages one and two. This exposed scaled DOMRect rounding
+  at column starts; the corrected boundary retains each page's first character.
+- `npx vitest run src/renderer/src/App.test.tsx -t application` passed **5 tests**
+  with 279 unrelated cases filtered out. Focused ESLint and `git diff --check`
+  passed. Full `npm test`, typecheck and lint were not run, per user request.
+- Electron uses an isolated feature window, real application code and temporary
+  data, with DOM actions/Quill edits and substituted model output. It does not
+  validate a packaged full App, physical input devices or a live provider.
+  Real model calls: **0**. Analysis uses desktop `createDefaultModelRuntime`;
+  deployed gbagent and desktop-to-Agent execution are unaffected. Existing user
+  changes were retained; no commits or user-data writes were made by this task.
+
 ## 2026-09-19: Canvas Content and History Preservation
 
 - Page-break deletion now removes only the embed, retaining existing paragraph

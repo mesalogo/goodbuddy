@@ -148,6 +148,20 @@
   width: fit-content;
   max-width: 100%;
 }
+.application-settings .application-settings__compact-option {
+  display: flex;
+  justify-content: space-between;
+}
+.application-settings__label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+.application-settings__label-with-help label {
+  font-size: var(--font-body);
+  font-weight: 600;
+}
 @media (max-width: 720px) {
   .application-center .settings-panel__header {
     padding: var(--space-4);

@@ -84,7 +84,7 @@ describe('magic note analyzer', () => {
     const { runtime, requests } = recordingRuntime()
     const comments = await analyzeMagicTodo(
       runtime, canvasTodo, options, undefined, undefined,
-      { supportsImageInput, content: canvasEntry.content }
+      { supportsImageInput, content: canvasEntry.content, canvasPageCount: 2 }
     )
     expect(requests).toHaveLength(1)
     expect(requests[0]?.prompt).toContain(canvasTodo.title)
@@ -127,7 +127,7 @@ describe('magic note analyzer', () => {
     const usage: RuntimeModelUsageEvent[] = []
     const comments = await analyzeMagicNoteEntry(
       runtime, canvasEntry, options, undefined,
-      (event) => usage.push(event), { supportsImageInput: true }
+      (event) => usage.push(event), { supportsImageInput: true, canvasPageCount: 2 }
     )
     expect(requests).toHaveLength(1)
     expect(requests[0]?.images).toEqual([
@@ -149,24 +149,49 @@ describe('magic note analyzer', () => {
       pages: canvasEntry.content.pages.map((page) => ({ ...page, objects: [] }))
     }
     const comments = await analyzeMagicNoteDraft(runtime, '', options, undefined, undefined, { supportsImageInput: true, content })
-    expect(requests[0]?.images).toHaveLength(2)
+    expect(requests[0]?.images).toHaveLength(1)
     expect(comments[0]?.inputMode).toBe('canvas-images')
   })
 
-  it('falls back to all extracted text for a text model, without silently slicing later pages', async () => {
+  it('limits both continuous flow and objects to the first page for a text model', async () => {
     const { runtime, requests } = recordingRuntime()
     const content = {
       ...canvasEntry.content,
-      pages: canvasEntry.content.pages.map((page) => ({
-        ...page, objects: [{ text: '最后一页的结论' }]
+      pages: canvasEntry.content.pages.map((page, index) => ({
+        ...page, objects: [{ text: index === 0 ? '首页结论' : '最后一页的结论' }]
       })),
-      flow: { ops: [{ insert: '文'.repeat(30_001) }] }
+      flow: { version: 1 as const, ops: [{ insert: '首页正文\n末页正文\n' }] }
     }
-    const comments = await analyzeMagicNoteEntry(runtime, { ...canvasEntry, content }, options, undefined, undefined, { supportsImageInput: false })
+    const comments = await analyzeMagicNoteEntry(runtime, { ...canvasEntry, content }, {
+      ...options, canvasPageText: [{ pageId: 'first', text: '首页正文\n' }, { pageId: 'second', text: '末页正文\n' }]
+    }, undefined, undefined, { supportsImageInput: false })
     expect(requests[0]?.images).toBeUndefined()
-    expect(requests[0]?.prompt).toContain('最后一页的结论')
+    expect(requests[0]?.prompt).toContain('首页正文')
+    expect(requests[0]?.prompt).toContain('首页结论')
+    expect(requests[0]?.prompt).not.toContain('最后一页的结论')
+    expect(requests[0]?.prompt).not.toContain('末页正文')
     expect(requests[0]?.prompt).toContain('未查看页面图像')
     expect(comments[0]?.inputMode).toBe('text-fallback')
+  })
+
+  it('rejects incomplete flow page text without sending the full cross-page body', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const content = { ...canvasEntry.content, flow: { version: 1 as const, ops: [{ insert: 'First and later pages\n' }] } }
+    for (const canvasPageText of [undefined, [], [{ pageId: 'second', text: 'Later' }],
+      [{ pageId: 'first', text: 'A' }, { pageId: 'first', text: 'B' }]]) {
+      await expect(analyzeMagicNoteDraft(runtime, 'Full text', { ...options, canvasPageText }, undefined, undefined,
+        { supportsImageInput: false, content })).rejects.toThrow('分页文字缺失')
+    }
+    expect(requests).toHaveLength(0)
+  })
+
+  it('does not use later-page text when the selected first page is visual-only', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const content = { ...canvasEntry.content, pages: canvasEntry.content.pages.map((page, index) => ({ ...page,
+      objects: index === 0 ? [] : [{ text: 'Later-page text' }] })) }
+    await expect(analyzeMagicNoteDraft(runtime, 'Later-page text', options, undefined, undefined,
+      { supportsImageInput: false, content })).rejects.toThrow('所选画布页中没有')
+    expect(requests).toHaveLength(0)
   })
 
   it('rejects visual-only text fallback before issuing a request', async () => {
@@ -174,9 +199,9 @@ describe('magic note analyzer', () => {
     const content = {
       ...canvasEntry.content,
       pages: canvasEntry.content.pages.map((page) => ({ ...page, objects: [] })),
-      flow: { ops: [{ insert: { image: 'placeholder' } }] }
+      flow: { version: 1 as const, ops: [{ insert: { image: 'placeholder' } }] }
     }
-    await expect(analyzeMagicNoteEntry(runtime, { ...canvasEntry, content, plainText: '  ' }, options, undefined, undefined, { supportsImageInput: false })).rejects.toThrow('请切换支持图像输入的默认模型')
+    await expect(analyzeMagicNoteEntry(runtime, { ...canvasEntry, content, plainText: '  ' }, options, undefined, undefined, { supportsImageInput: false, canvasPageCount: 2 })).rejects.toThrow('请切换支持图像输入的默认模型')
     expect(requests).toHaveLength(0)
   })
 
@@ -190,7 +215,7 @@ describe('magic note analyzer', () => {
     const { runtime, requests } = recordingRuntime(error)
     await expect(analyzeMagicNoteEntry(runtime, canvasEntry, options, undefined, undefined, { supportsImageInput: true })).rejects.toThrow(error)
     expect(requests).toHaveLength(1)
-    expect(requests[0]?.images).toHaveLength(2)
+    expect(requests[0]?.images).toHaveLength(1)
   })
 
   it('keeps ordinary notes text-only even when the model supports images', async () => {
@@ -214,7 +239,7 @@ describe('magic note analyzer', () => {
       }))
     }
     await analyzeMagicNoteDraft(runtime, '', options, undefined, undefined, {
-      supportsImageInput: false, content
+      supportsImageInput: false, content, canvasPageCount: 2
     })
     expect(requests[0]?.prompt).toContain('第 2 页：\\nPDF 原生文字 2')
     expect(requests[0]?.images).toBeUndefined()

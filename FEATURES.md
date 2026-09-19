@@ -643,7 +643,9 @@ records are listed separately and do not introduce another feature status.
   is per annotation page or Quill mode, not global document history; there is no
   infinite canvas or PNG download button. Drafts, saved entries and canvas-source
   todos use the default model's image-input capability for page images plus text,
-  or an explicitly labelled text-only fallback. Purely visual entries/drafts
+  or an explicitly labelled text-only fallback. Canvas pages to send selects the
+  first 1-8 pages in current order (default 1) for both text and images; saving and
+  exporting still support 50 pages. Purely visual entries/drafts
   require an image-capable model. Immediate-comment mode offers manual canvas
   analysis; after-save automatic analysis failures do not block or undo saving.
   Text-only comments survive unchanged extracted text; visual comments are

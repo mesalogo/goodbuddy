@@ -21,7 +21,7 @@ type MagicCanvasEditorProps = {
 type MagicCanvasEditorHandle = {
   flush(): Promise<MagicNoteCanvasContent>
   focus(): void
-  capturePages(): Promise<{ pageId: string; dataUrl: string }[]>
+  capturePages(pageLimit?: number, includeImages?: boolean): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
 }
 ```
 
@@ -48,7 +48,11 @@ The core controller accepts `capturePages({ firstPageOnly: true, thumbnailWidth:
 to composite only page zero, including the background, body and annotations.
 Visible thumbnails are queued and cached by content identity; they do not leave
 full editors mounted in the record list. The React editor's AI capture method
-continues to capture every page.
+passes the configured page limit (1-8, default 1) before compositing. The core
+equivalent is `capturePages({ pageLimit, includeImages })`; it returns only the
+current first N pages and their measured Quill flow text. `includeImages: false`
+skips PNG compositing and returns empty data URLs for text-only analysis. Omitting
+`pageLimit` retains the all-page API for existing export and core callers.
 
 The same module exports `createEmptyCanvasContent()` and
 `canvasHasContent(content?)`.

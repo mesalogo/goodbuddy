@@ -3,7 +3,7 @@ import type { CoreContent } from './model'
 export interface CanvasController {
   content(): CoreContent
   flush(): Promise<CoreContent>
-  capturePages(options?: { firstPageOnly?: boolean; thumbnailWidth?: number }): Promise<{ pageId: string; dataUrl: string }[]>
+  capturePages(options?: { firstPageOnly?: boolean; thumbnailWidth?: number; pageLimit?: number; includeImages?: boolean }): Promise<{ pageId: string; dataUrl: string; text?: string }[]>
   focus(): void
   setDisabled(value: boolean): void
   destroy(): Promise<void>

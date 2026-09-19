@@ -75,9 +75,8 @@ An abort listener calls core `destroy()` immediately: PDF render cancellation an
 the Fabric abort happen synchronously, before waiting for capture to settle.
 The `finally` path awaits the same destruction promise and removes the temporary
 surface, without destroying twice or waiting for capture before cancellation.
-AI capture retains its existing
-all-page behavior. Main canvas page height, wheel handling and file storage are
-unchanged.
+AI capture uses the configured page prefix described under Canvas Analysis and
+Comments. Main canvas page height, wheel handling and file storage are unchanged.
 
 Background refresh preserves dirty editing content and its original optimistic
 revision, including externally deleted entries. Clean editors adopt refreshed
@@ -249,18 +248,39 @@ model profile's `supportsImageInput` (or the resolved default setting when no
 profile is selected). Main resolves settings again for the actual request. This
 does not change an Agent runtime or desktop-to-Agent protocol.
 
+`magicNoteCanvasPageCount` is an application preference: an integer from 1 to 8,
+defaulting to 1 when absent in historical settings. The application center and
+`goodbuddy_config` application.update/get share the settings schema, store and
+change event. It counts pages within the canvas being analyzed, never entries.
+The first N pages follow the current `content.pages` array order, independent of
+the viewed page, page IDs or PDF source page numbers. Fewer than N pages selects
+the whole canvas. Saving and PDF export retain the 50-page canvas limit.
+
+Renderer and Main share `selectMagicNotePages`. The core selects the prefix before
+compositing, so it never captures 50 pages just to discard 49. Analysis capture
+returns the selected pages' Quill text measured from the actual CSS columns;
+binary searches locate the character boundaries for explicit and automatic page
+breaks. Text-only requests skip image compositing but still read page text.
+The transient `canvasPageText` IPC field carries these page IDs and text, without
+changing saved canvas content. Main reads the persisted page count for all three
+handlers, selects page text, PDF text, objects and images in the same order, and
+ignores captures outside the prefix. A partial canvas with flow requires matching
+page text; missing data fails instead of including the full cross-page flow.
+Prompts state the selected and total page counts. A changed setting applies to
+the next analysis; existing comments are not automatically regenerated.
+
 | Default model capability | Analysis input and result |
 | --- | --- |
-| Image input supported | Renderer captures all pages; Main checks page IDs and PNG/JPEG encoding. Images are ordered by page alongside flow, PDF and object text. Comments carry `inputMode: canvas-images`. |
-| No image input | No page capture is required. Extracted text is used with an explicit instruction that handwriting, images and layout were not seen. Comments carry `inputMode: text-fallback`. |
-| No image input and no extracted text in an entry/draft | Analysis fails with guidance to switch to an image-capable default model; no visual understanding is claimed. |
+| Image input supported | Renderer captures the selected prefix; Main requires each selected page's PNG/JPEG capture and sends it alongside that page's flow, PDF and object text. Comments carry `inputMode: canvas-images`. |
+| No image input | Only text from the selected prefix is sent, with an explicit instruction that handwriting, images and layout were not seen. Comments carry `inputMode: text-fallback`. |
+| No image input and no extracted text in the selected entry/draft pages | Analysis fails with guidance to switch to an image-capable default model; no visual understanding is claimed. |
 
 Todo analysis includes its title and instructions plus the source canvas context,
 and uses the same capability and capture rules. Non-canvas content keeps the text
 analysis path. All analysis remains read-only with no tool calls.
 
 Saved-entry requests accept `expectedRevision`; todo requests accept
-`sourceEntryRevision`. Nonempty `canvasImages` requires the corresponding revision,
+`sourceEntryRevision`. Nonempty `canvasImages` or `canvasPageText` requires the corresponding revision,
 even when the resolved model uses text fallback. Main loads the source after
 resolving settings and checks the supplied revision before model invocation.
 Existing rich-text callers may omit these fields. Entry writeback retains its

@@ -1094,6 +1094,7 @@ function installRemoteProjectsSetting(enabled: boolean): {
     magicNotesShowIncompleteTodoCount: true,
     magicNoteCommentMode: "immediate",
     magicNoteCommentFormat: "combined",
+    magicNoteCanvasPageCount: 1,
   };
   const updateSettings = vi.fn<
     NonNullable<DesktopApi["updates"]>["updateSettings"]
@@ -3092,6 +3093,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       updateSettings: vi.fn(),
       check: vi.fn(),
@@ -3193,6 +3195,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
@@ -3206,6 +3209,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
@@ -3305,6 +3309,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: true,
@@ -3318,6 +3323,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       check,
       openReleasePage: vi.fn(async () => {}),
@@ -5529,6 +5535,7 @@ describe("App", () => {
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: "immediate",
       magicNoteCommentFormat: "combined",
+      magicNoteCanvasPageCount: 1,
     };
     let shortcutSnapshot: GlobalShortcutSettingsSnapshot = {
       settings: {
@@ -13228,6 +13235,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
@@ -13241,6 +13249,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
@@ -13291,6 +13300,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       updateSettings: vi.fn(),
       check: vi.fn(),
@@ -13348,6 +13358,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: false,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       updateSettings: vi.fn(),
       check: vi.fn(),
@@ -13382,6 +13393,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       updateSettings: vi.fn(async () => ({
         checkUpdatesOnStartup: false,
@@ -13395,6 +13407,7 @@ describe("App", () => {
         magicNotesShowIncompleteTodoCount: true,
         magicNoteCommentMode: "immediate" as const,
         magicNoteCommentFormat: "combined" as const,
+        magicNoteCanvasPageCount: 1,
       })),
       check: vi.fn(),
       openReleasePage: vi.fn(async () => {}),
@@ -13454,6 +13467,7 @@ describe("App", () => {
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: "immediate",
       magicNoteCommentFormat: "combined",
+      magicNoteCanvasPageCount: 1,
     };
     const updateSettings = vi.fn<
       NonNullable<DesktopApi["updates"]>["updateSettings"]
@@ -13510,6 +13524,7 @@ describe("App", () => {
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: "immediate",
       magicNoteCommentFormat: "combined",
+      magicNoteCanvasPageCount: 1,
     };
     api.updates = {
       getSettings: vi.fn(async () => ({ ...applicationSettings })),

@@ -10,6 +10,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  CircleHelp,
   Cpu,
   HeartPulse,
   Library,
@@ -157,6 +158,27 @@ export function ApplicationSettingsView({
       </div>
       {id === 'magic-notes' && (
         <div className="application-settings__group">
+          <div className="platform-feature-option application-settings__compact-option">
+            <div className="application-settings__label-with-help">
+              <label htmlFor="magic-note-canvas-page-count">{t('platformFeatures.magicNotes.canvasPageCount', { ns: 'settingsSections' })}</label>
+              <button type="button" className="icon-button"
+                aria-label={t('platformFeatures.magicNotes.canvasPageCount', { ns: 'settingsSections' })}
+                aria-describedby="magic-note-canvas-page-count-help"
+                title={t('platformFeatures.magicNotes.canvasPageCountHelp', { ns: 'settingsSections' })}>
+                <CircleHelp size={14} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="field">
+              <select id="magic-note-canvas-page-count" disabled={pending} value={settings.magicNoteCanvasPageCount ?? 1}
+                aria-describedby="magic-note-canvas-page-count-help"
+                onChange={event => void onUpdate({ magicNoteCanvasPageCount: Number(event.target.value) })}>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map(count => <option key={count} value={count}>{count}</option>)}
+              </select>
+            </div>
+          </div>
+          <span id="magic-note-canvas-page-count-help" className="sr-only">
+            {t('platformFeatures.magicNotes.canvasPageCountHelp', { ns: 'settingsSections' })}
+          </span>
           <div className="platform-feature-option">
             <span>
               {t('platformFeatures.magicNotes.commentMode', {

@@ -279,6 +279,18 @@ describe('Application Center', () => {
     )
     fireEvent.click(screen.getByRole('switch', { name: '启用应用' }))
     expect(onUpdate).toHaveBeenLastCalledWith({ magicNotesEnabled: false })
+    const pageCount = screen.getByRole('combobox', { name: '发送画布页数' })
+    expect(pageCount).toHaveValue('1')
+    expect(within(pageCount).getAllByRole('option')).toHaveLength(8)
+    expect(pageCount).toHaveAccessibleDescription(expect.stringContaining('不是笔记记录数量'))
+    expect(pageCount.parentElement).toHaveClass('field')
+    const help = screen.getByRole('button', { name: '发送画布页数' })
+    expect(help).toHaveClass('icon-button')
+    expect(help).toHaveAccessibleDescription(help.getAttribute('title')!)
+    expect(help).toHaveAttribute('title', expect.stringContaining('不是笔记记录数量'))
+    expect(document.getElementById('magic-note-canvas-page-count-help')).toHaveClass('sr-only')
+    fireEvent.change(pageCount, { target: { value: '8' } })
+    expect(onUpdate).toHaveBeenLastCalledWith({ magicNoteCanvasPageCount: 8 })
     fireEvent.click(screen.getByRole('switch', { name: '显示未完成待办数量' }))
     expect(onUpdate).toHaveBeenLastCalledWith({
       magicNotesShowIncompleteTodoCount: false,

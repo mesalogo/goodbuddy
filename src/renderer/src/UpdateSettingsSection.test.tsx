@@ -32,7 +32,8 @@ describe('UpdateSettingsSection', () => {
       magicNotesEnabled: true,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate' as const,
-      magicNoteCommentFormat: 'combined' as const
+      magicNoteCommentFormat: 'combined' as const,
+      magicNoteCanvasPageCount: 1
     }
     const updateSettings = vi.fn<
       NonNullable<DesktopApi['updates']>['updateSettings']

@@ -103,12 +103,13 @@ describe('GoodBuddyConfigService', () => {
     const current = await application.get()
     const applicationNavigation = { ...current.applicationNavigation, order: [...current.applicationNavigation.order].reverse() }
     const plan = await service.plan('settings-sync', workspace, {
-      operations: [{ operation: 'application.update', updates: { applicationNavigation } }],
+      operations: [{ operation: 'application.update', updates: { applicationNavigation, magicNoteCanvasPageCount: 8 } }],
     })
     expect(changed).not.toHaveBeenCalled()
     await service.apply('settings-sync', { planId: plan.planId }, new AbortController().signal, async () => true)
     expect(changed).toHaveBeenCalledExactlyOnceWith(await application.get())
     expect(changed.mock.calls[0]![0].applicationNavigation).toEqual(applicationNavigation)
+    expect((await service.getSnapshot()).application.magicNoteCanvasPageCount).toBe(8)
     unsubscribe()
     await application.update({ localInferenceEnabled: false })
     expect(changed).toHaveBeenCalledOnce()

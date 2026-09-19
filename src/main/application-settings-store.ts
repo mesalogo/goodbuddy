@@ -258,7 +258,8 @@ export const defaultApplicationSettings: ApplicationSettings = {
   magicNotesEnabled: true,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
-  magicNoteCommentFormat: 'combined'
+  magicNoteCommentFormat: 'combined',
+  magicNoteCanvasPageCount: 1
 }
 
 export class ApplicationSettingsStore {
@@ -286,8 +287,10 @@ export class ApplicationSettingsStore {
       | 'version'
       | 'applicationNavigation'
       | 'localInferenceEnabled'
+      | 'magicNoteCanvasPageCount'
     > & {
       conversationHtmlRenderingEnabled?: boolean
+      magicNoteCanvasPageCount?: number
       version: number
     }
   ): Promise<StoredApplicationSettings> {
@@ -525,6 +528,7 @@ export class ApplicationSettingsStore {
         stored.magicNotesShowIncompleteTodoCount,
       magicNoteCommentMode: stored.magicNoteCommentMode,
       magicNoteCommentFormat: stored.magicNoteCommentFormat,
+      magicNoteCanvasPageCount: stored.magicNoteCanvasPageCount,
       ...(this.warnings.length > 0 ? { warnings: [...this.warnings] } : {})
     }
   }
@@ -563,7 +567,8 @@ export class ApplicationSettingsStore {
         magicNotesShowIncompleteTodoCount:
           next.magicNotesShowIncompleteTodoCount,
         magicNoteCommentMode: next.magicNoteCommentMode,
-        magicNoteCommentFormat: next.magicNoteCommentFormat
+        magicNoteCommentFormat: next.magicNoteCommentFormat,
+        magicNoteCanvasPageCount: next.magicNoteCanvasPageCount
       }
       for (const listener of this.listeners) listener(settings)
       return settings

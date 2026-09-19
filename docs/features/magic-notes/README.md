@@ -61,8 +61,11 @@ changing saved content or export dimensions; see the
 [canvas zoom reference](../../../src/renderer/src/magic-canvas/README.md#view-zoom).
 
 Drafts, saved entries and todos sourced from canvases support AI comments using
-the default model's image-input capability. Image-capable models receive complete
-page captures and extracted text. Text-only models receive an explicitly labelled
+the default model's image-input capability. The Canvas pages to send setting
+selects the first 1-8 pages in current canvas order, defaulting to 1. It counts
+pages in one canvas, not entries, and leaves full-canvas saving and export intact.
+Image-capable models receive complete captures and extracted text for that prefix.
+Text-only models receive the same page range as an explicitly labelled
 text fallback; a purely visual canvas entry or draft reports that an image-capable
 default model is required. Canvas comments are requested manually in `immediate`
 mode, or after a manual save in `after-save-auto` mode. Analysis failure does not

@@ -14,9 +14,9 @@ export type MagicCanvasContentHandle = Pick<MagicCanvasEditorHandle, 'capturePag
 export const MagicCanvasContent = forwardRef<MagicCanvasContentHandle, MagicCanvasContentProps>(function MagicCanvasContent({ content, onError, onEdit }, ref) {
   const { t } = useTranslation('magicNotes')
   const editorRef = useRef<MagicCanvasEditorHandle>(null)
-  useImperativeHandle(ref, () => ({ async capturePages() {
+  useImperativeHandle(ref, () => ({ async capturePages(pageLimit, includeImages) {
     if (!editorRef.current) throw new Error(t('canvas.notReady'))
-    return editorRef.current.capturePages()
+    return editorRef.current.capturePages(pageLimit, includeImages)
   } }), [t])
   const [snapshot, setSnapshot] = useState({ content, revision: 0 })
   if (snapshot.content !== content) setSnapshot({ content, revision: snapshot.revision + 1 })

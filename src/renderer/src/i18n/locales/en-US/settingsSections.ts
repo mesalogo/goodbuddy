@@ -694,6 +694,8 @@ export const settingsSections = {
       commentModeHelp:
         'Immediate mode comments on an unsaved draft 5 seconds after you press Enter and stop typing. Automatic mode comments after saving. Manual mode comments only after you select Analyze with AI.',
       commentFormat: 'AI comment format',
+      canvasPageCount: 'Canvas pages to send',
+      canvasPageCountHelp: 'Send the first N pages in the current canvas order for each AI analysis. Default: 1; range: 1–8. If fewer pages exist, send them all. This counts pages in one canvas, not note entries. Text and images use the same range, including text-only models. Applies to entries, drafts and to-do source canvases. Saving and exporting the full canvas are unaffected.',
       commentFormatAria: 'Magic Notes AI comment format',
       formats: {
         combined: 'Long-form + points',

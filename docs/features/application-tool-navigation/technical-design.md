@@ -140,8 +140,9 @@ const visible = featureEnabled && applicationNavigation.pinned[id]
 
 `magicNotesEnabled` 保留为笔记启用的唯一权威键，`localInferenceEnabled` 为本机推理监控应用启用键，默认 `true`，不在导航配置再复制 enabled map。心跳没有应用级启用字段，单条计划 enabled 的业务含义和存储不变。关闭可选应用时保留常驻控件和恢复入口。
 
-笔记配置继续使用 `magicNotesShowIncompleteTodoCount`、`magicNoteCommentMode` 和
-`magicNoteCommentFormat`，应用中心与笔记页使用同一 schema 和更新链路。未配置的笔记
+笔记配置使用 `magicNotesShowIncompleteTodoCount`、`magicNoteCommentMode`、
+`magicNoteCommentFormat` 和 `magicNoteCanvasPageCount`，应用中心与笔记页使用同一 schema 和更新链路。
+画布发送页数默认 1、范围 1～8，具体选择规则见[画布分析契约](../magic-notes/technical-design.md#canvas-analysis-and-comments)。未配置的笔记
 布尔值（含 `magicNotesEnabled`）默认 `true`；迁移必须用字段是否存在区分缺失与显式 `false`，
 不能用 `value || true`。已有单选值保留，缺失时分别使用 `immediate` 和 `combined`。
 若旧“显示入口”实际绑定 `magicNotesEnabled`，保留其启用含义和原值；独立常驻使用新字段，

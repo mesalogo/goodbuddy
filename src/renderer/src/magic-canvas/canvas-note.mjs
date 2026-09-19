@@ -10,6 +10,7 @@ import {
 } from 'fabric';
 import { jsPDF as JsPdf } from 'jspdf';
 import { mountFlowText, normalizeFlowContent } from './canvas-flow.mjs';
+import { selectMagicNotePages } from '../../../shared/magic-note-pages.mjs';
 
 const VERSION = 2;
 const MAX_PAGES = 50;
@@ -1608,7 +1609,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       fabricCanvas.discardActiveObject();
       applyMode();
     },
-    async capturePages({ firstPageOnly = false, thumbnailWidth } = {}) {
+    async capturePages({ firstPageOnly = false, thumbnailWidth, pageLimit, includeImages = true } = {}) {
       await operationQueue;
       flushPendingText();
       captureCurrentObjects();
@@ -1619,9 +1620,15 @@ export function mountCanvasNote(host, initialContent, options = {}) {
         setBusy(true);
         try {
           const result = [];
-          for (let index = 0; index < (firstPageOnly ? Math.min(1, pages.length) : pages.length); index += 1) {
+          const selected = pageLimit === undefined ? pages : selectMagicNotePages(pages, pageLimit);
+          for (let index = 0; index < (firstPageOnly ? Math.min(1, selected.length) : selected.length); index += 1) {
             if (destroyed || options.signal?.aborted) throw new DOMException('Destroyed', 'AbortError');
             const page = pages[index];
+            const text = pageLimit === undefined ? undefined : flowEditor.pageText(index);
+            if (!includeImages) {
+              result.push({ pageId: page.id, dataUrl: '', text });
+              continue;
+            }
             const composite = document.createElement('canvas');
             await paintPageBackground(composite, page);
             const context = composite.getContext('2d');
@@ -1641,7 +1648,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
                 output.height = Math.round(page.height * thumbnailWidth / page.width);
                 output.getContext('2d').drawImage(composite, 0, 0, output.width, output.height);
               }
-              result.push({ pageId: page.id, dataUrl: output.toDataURL('image/png') });
+              result.push({ pageId: page.id, dataUrl: output.toDataURL('image/png'), ...(text !== undefined ? { text } : {}) });
             } finally {
               await objectCanvas.dispose();
             }

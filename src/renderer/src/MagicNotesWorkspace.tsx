@@ -534,6 +534,7 @@ export function MagicNotesWorkspace({
   const createAnalysisOptions = useCallback(
     async (canvas?: MagicCanvasContentHandle | null): Promise<MagicNoteAnalysisOptions> => {
       let format = commentFormat
+      let pageCount = applicationSettings?.magicNoteCanvasPageCount ?? 1
       // Read capability for this request, never reuse a previous profile's flag.
       const runtimePromise = canvas !== undefined
         ? window.goodbuddy.settings.getRuntime()
@@ -544,6 +545,7 @@ export function MagicNotesWorkspace({
       // Keep the last loaded format if application settings cannot be refreshed.
       if (settingsResult.status === 'fulfilled' && settingsResult.value) {
         format = settingsResult.value.magicNoteCommentFormat
+        pageCount = settingsResult.value.magicNoteCanvasPageCount ?? 1
         setCommentFormat(format)
       }
       const options: MagicNoteAnalysisOptions = {
@@ -556,14 +558,14 @@ export function MagicNotesWorkspace({
       if (runtime) {
         const profile = runtime.modelProfiles.find((candidate) => candidate.id === runtime.defaultModelProfileId)
         const supportsImages = (profile ? profile.supportsImageInput : runtime.supportsImageInput) === true
-        if (supportsImages) {
-          if (!canvas) throw new Error(tRef.current('canvas.notReady'))
-          options.canvasImages = await canvas.capturePages()
-        }
+        if (!canvas) throw new Error(tRef.current('canvas.notReady'))
+        const pages = await canvas.capturePages(pageCount, supportsImages)
+        options.canvasPageText = pages.map(({ pageId, text }) => ({ pageId, text: text ?? '' }))
+        if (supportsImages) options.canvasImages = pages.map(({ pageId, dataUrl }) => ({ pageId, dataUrl }))
       }
       return options
     },
-    [commentDirection, commentFormat]
+    [commentDirection, commentFormat, applicationSettings?.magicNoteCanvasPageCount]
   )
 
   const getLayoutBounds = useCallback((): {

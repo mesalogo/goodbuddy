@@ -360,6 +360,7 @@ export const magicNoteAnalysisOptionsSchema = z
     requestId: z.string().uuid(),
     direction: magicNoteCommentDirectionSchema,
     format: magicNoteCommentFormatSchema,
+    canvasPageText: z.array(z.object({ pageId: z.string().min(1), text: z.string().max(20_001) }).strict()).max(8).optional(),
     canvasImages: z.array(z.object({ pageId: z.string().min(1), dataUrl: z.string().regex(/^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/) }).strict()).max(50).optional()
   })
   .strict()
@@ -374,8 +375,8 @@ export const magicNoteAnalyzeSchema = z
     ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
-  .refine((input) => !input.canvasImages?.length || input.expectedRevision !== undefined, {
-    message: '画布截图必须提供记录版本', path: ['expectedRevision']
+  .refine((input) => !(input.canvasImages?.length || input.canvasPageText?.length) || input.expectedRevision !== undefined, {
+    message: '画布截图或分页文字必须提供记录版本', path: ['expectedRevision']
   })
 
 export type MagicNoteEntryAnalysisOptions = MagicNoteAnalysisOptions & { expectedRevision?: number }
@@ -394,8 +395,8 @@ export const magicTodoIdSchema = z
     ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
-  .refine((input) => !input.canvasImages?.length || input.sourceEntryRevision !== undefined, {
-    message: '画布截图必须提供来源记录版本', path: ['sourceEntryRevision']
+  .refine((input) => !(input.canvasImages?.length || input.canvasPageText?.length) || input.sourceEntryRevision !== undefined, {
+    message: '画布截图或分页文字必须提供来源记录版本', path: ['sourceEntryRevision']
   })
 
 export type MagicTodoAnalysisOptions = MagicNoteAnalysisOptions & { sourceEntryRevision?: number }

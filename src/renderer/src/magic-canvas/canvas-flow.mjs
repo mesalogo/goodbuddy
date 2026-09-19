@@ -431,6 +431,25 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
       await scheduleLayout();
       return cloneJson(content());
     },
+    pageText(pageIndex) {
+      // CSS columns determine automatic page breaks; Delta alone has no page geometry.
+      const scale = surface.getBoundingClientRect().width / layout.width || 1;
+      const span = layout.width + layout.gap;
+      const boundary = (target) => {
+        let low = 0, high = quill.getLength();
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2);
+          const bounds = quill.getBounds(middle, 1);
+          // Half a logical pixel absorbs scaled DOMRect rounding at column starts.
+          const column = layout.pageIndex + Math.floor(((Number(bounds?.left) || 0) / scale + 0.5) / span);
+          if (column < target) low = middle + 1;
+          else high = middle;
+        }
+        return low;
+      };
+      const start = boundary(pageIndex);
+      return quill.getText(start, boundary(pageIndex + 1) - start);
+    },
     async renderPage(pageIndex, pageWidth, pageHeight) {
       const canvas = document.createElement('canvas');
       canvas.width = pageWidth;

@@ -26,6 +26,7 @@ export const magicNoteCommentModeSchema = z.enum([
 ])
 
 export type MagicNoteCommentMode = z.infer<typeof magicNoteCommentModeSchema>
+export const magicNoteCanvasPageCountSchema = z.number().int().min(1).max(8)
 
 export const updateSourceSchema = z.enum(['github', 'mirror'])
 export type UpdateSource = z.infer<typeof updateSourceSchema>
@@ -59,7 +60,8 @@ const applicationPreferencesSchema = z
     magicNotesEnabled: z.boolean().default(true),
     magicNotesShowIncompleteTodoCount: z.boolean().default(true),
     magicNoteCommentMode: magicNoteCommentModeSchema.default('immediate'),
-    magicNoteCommentFormat: magicNoteCommentFormatSchema.default('combined')
+    magicNoteCommentFormat: magicNoteCommentFormatSchema.default('combined'),
+    magicNoteCanvasPageCount: magicNoteCanvasPageCountSchema.default(1)
   })
   .strict()
 
@@ -77,7 +79,8 @@ export const applicationSettingsUpdateSchema = applicationPreferencesSchema
     magicNotesEnabled: z.boolean().optional(),
     magicNotesShowIncompleteTodoCount: z.boolean().optional(),
     magicNoteCommentMode: magicNoteCommentModeSchema.optional(),
-    magicNoteCommentFormat: magicNoteCommentFormatSchema.optional()
+    magicNoteCommentFormat: magicNoteCommentFormatSchema.optional(),
+    magicNoteCanvasPageCount: magicNoteCanvasPageCountSchema.optional()
   })
   .refine((input) => Object.keys(input).length > 0, {
     message: 'At least one application setting is required'

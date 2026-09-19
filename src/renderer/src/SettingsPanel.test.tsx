@@ -554,7 +554,8 @@ applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true
   magicNotesEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
-  magicNoteCommentFormat: 'combined'
+  magicNoteCommentFormat: 'combined',
+  magicNoteCanvasPageCount: 1
 }
 const agentPackageInventory: AgentPackageInventory = {
   checkedAt: '2026-08-24T00:00:00.000Z',
@@ -846,7 +847,8 @@ describe('SettingsPanel runtime files', () => {
       magicNotesEnabled: false,
       magicNotesShowIncompleteTodoCount: true,
       magicNoteCommentMode: 'immediate',
-      magicNoteCommentFormat: 'combined'
+      magicNoteCommentFormat: 'combined',
+      magicNoteCanvasPageCount: 1
     }
     getAgentPackageInventory.mockReset()
     getAgentPackageInventory.mockResolvedValue(

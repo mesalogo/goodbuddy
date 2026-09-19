@@ -648,6 +648,8 @@ export const settingsSections = {
       commentModeHelp:
         '即时模式会在按回车并停止输入 5 秒后评论未保存草稿；自动模式在保存后评论；手动模式仅在点击 AI 分析后评论。',
       commentFormat: 'AI 评论形式',
+      canvasPageCount: '发送画布页数',
+      canvasPageCountHelp: '每次 AI 分析按当前画布页面顺序发送前 N 页，默认 1 页，可选 1～8 页；不足 N 页时发送全部页。这是单个画布的页数，不是笔记记录数量。文字和图片使用相同范围，不支持图像的模型也只接收这些页的文字。适用于记录、草稿和待办来源画布，不影响保存或导出全部画布。',
       commentFormatAria: '魔法笔记 AI 评论形式',
       formats: {
         combined: '长评 + 要点',

@@ -8,6 +8,7 @@ import type { MagicNoteCanvasContent, MagicNoteDetail } from '../../shared/magic
 import { AssistantDatabase } from '../assistant/assistant-database'
 import { registerIpcHandlers } from '../ipc'
 import type { AgentExecutionRequest } from '../agent/runtime'
+import { ApplicationSettingsStore } from '../application-settings-store'
 
 const modelFactory = vi.hoisted(() => vi.fn())
 vi.mock('../agent/create-runtime', async (importOriginal) => ({
@@ -59,6 +60,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
   let database: AssistantDatabase
   let dispose: (() => Promise<void>) | undefined
   let api: DesktopApi['magicNotes']
+  let applicationSettings: ApplicationSettingsStore
   const webContents = { id: 91, mainFrame: { url: 'file:///canvas-test/index.html' },
     getURL: () => 'file:///canvas-test/index.html', isDestroyed: () => false, send: vi.fn() }
   const window = { webContents, isDestroyed: () => false, isMaximized: () => false,
@@ -71,7 +73,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     dispose = registerIpcHandlers(window as never, { capability: 'text' } as never,
       'CommandOrControl+Shift+Space', { getResolvedSettings } as never, {} as never,
       { clear: vi.fn(), cancelImport: vi.fn() } as never, {} as never, database,
-      { clear: vi.fn() } as never, {} as never, async () => {})
+      { clear: vi.fn() } as never, {} as never, async () => {}, undefined, undefined, undefined, undefined, applicationSettings)
   }
   async function reopen() {
     await dispose?.()
@@ -82,6 +84,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     getResolvedSettings.mockReset()
     modelFactory.mockReset()
     directory = await mkdtemp(join(tmpdir(), 'goodbuddy-canvas-ipc-'))
+    applicationSettings = new ApplicationSettingsStore(join(directory, 'application.json'))
     bridge.event = { sender: webContents, senderFrame: webContents.mainFrame }
     await import('../../preload/index')
     api = bridge.api!.magicNotes
@@ -92,6 +95,42 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     database?.close()
     bridge.handlers.clear()
     await rm(directory, { recursive: true, force: true })
+  })
+
+  it.each([true, false])('limits saved, draft and todo input using persisted page order and count (vision=%s)', async (supportsImageInput) => {
+    getResolvedSettings.mockResolvedValue({ workspacePath: directory, supportsImageInput })
+    const requests: AgentExecutionRequest[] = []
+    modelFactory.mockReturnValue({ dispose: vi.fn(), async *run(request: AgentExecutionRequest) {
+      requests.push(request)
+      yield { type: 'text', delta: '{"comments":[{"kind":"summary","content":"Reviewed"}]}' }
+      yield { type: 'done' }
+    } })
+    const content = canvas()
+    content.pages = Array.from({ length: 50 }, (_, index) => ({ ...content.pages[0]!, id: `page-${50 - index}`,
+      background: { type: 'template', template: 'blank' },
+      objects: [{ type: 'IText', text: `OBJECT_TOKEN_${index + 1}_END` }] }))
+    const note = await api.create({ title: 'Fifty pages' })
+    const saved = await api.createEntry({ noteId: note.id, content })
+    const entry = saved.entries[0]!
+    const todo = (await api.listTodos()).todos[0]!
+    for (const count of [1, 8]) {
+      await applicationSettings.update({ magicNoteCanvasPageCount: count })
+      const options = { requestId: crypto.randomUUID(), direction: 'general' as const, format: 'structured' as const,
+        canvasImages: [...content.pages].reverse().map(page => ({ pageId: page.id, dataUrl: png })),
+        canvasPageText: content.pages.slice(0, count).map((page, index) => ({ pageId: page.id, text: `FLOW_TOKEN_${index + 1}_END` })) }
+      await api.analyze(entry.id, { ...options, expectedRevision: database.getMagicNoteEntry(entry.id).revision })
+      await api.analyzeDraft(content, { ...options, requestId: crypto.randomUUID() })
+      await api.analyzeTodo(todo.id, { ...options, requestId: crypto.randomUUID(), sourceEntryRevision: database.getMagicNoteEntry(entry.id).revision })
+      for (const request of requests.slice(-3)) {
+        expect(request.prompt).toContain(`OBJECT_TOKEN_${count}_END`)
+        expect(request.prompt).toContain(`FLOW_TOKEN_${count}_END`)
+        expect(request.prompt).not.toContain(`OBJECT_TOKEN_${count + 1}_END`)
+        expect(request.prompt).not.toContain(`FLOW_TOKEN_${count + 1}_END`)
+        expect(request.images?.length ?? 0).toBe(supportsImageInput ? count : 0)
+      }
+    }
+    expect(database.getMagicNoteEntry(entry.id).content).toEqual(content)
+    expect(requests).toHaveLength(6)
   })
 
   it.each([

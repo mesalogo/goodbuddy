@@ -10,7 +10,7 @@ import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
-it('analyzes saved, edited, created and todo canvases through production Electron IPC', async () => {
+it.each([true, false])('analyzes selected canvas pages through production Electron UI and IPC (vision=%s)', async (supportsImageInput) => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-notes-analysis-'))
   const server = await createServer({ configFile: false, root: resolve('.'), cacheDir: join(directory, 'vite'),
     plugins: [react(), { name: 'notes-analysis', configureServer(server) {
@@ -30,7 +30,7 @@ it('analyzes saved, edited, created and todo canvases through production Electro
         build.onLoad({ filter: /.*/, namespace: 'probe' }, ({ path }) => ({ contents: path === 'channels'
           ? 'export const startEnvironmentChannels=()=>[]; export const isReadOnlyChannelMessage=()=>true;'
           : `export const createDefaultModelRuntime=()=>({ dispose:async()=>{}, releaseConversation:async()=>{}, async *run(request) {
-              if (!request.images?.length) throw new Error('Expected real canvas captures');
+              (globalThis.analysisRequests ??= []).push({ prompt: request.prompt, imageCount: request.images?.length ?? 0 });
               yield {requestId:request.requestId,type:'text',delta:'{"comments":[{"kind":"summary","content":"Canvas reviewed."}]}'};
               yield {requestId:request.requestId,type:'done'};
             }}); export const createModelProfileRuntime=createDefaultModelRuntime;` }))
@@ -45,7 +45,7 @@ it('analyzes saved, edited, created and todo canvases through production Electro
     await server.listen()
     const bootstrap = join(directory, 'bootstrap.cjs')
     await writeFile(bootstrap, `import(${JSON.stringify(pathToFileURL(driver).href)}).catch(error => { console.error(error); require('electron').app.exit(1) })`)
-    const env: NodeJS.ProcessEnv = { ...process.env, GB_NOTES_PROBE_DIRECTORY: directory, GB_NOTES_PROBE_URL: server.resolvedUrls!.local[0] + 'analysis.html' }
+    const env: NodeJS.ProcessEnv = { ...process.env, GB_NOTES_PROBE_VISION: String(supportsImageInput), GB_NOTES_PROBE_DIRECTORY: directory, GB_NOTES_PROBE_URL: server.resolvedUrls!.local[0] + 'analysis.html' }
     delete env.ELECTRON_RUN_AS_NODE
     const child = spawn(createRequire(import.meta.url)('electron'), [bootstrap], { env, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
@@ -56,7 +56,16 @@ it('analyzes saved, edited, created and todo canvases through production Electro
       expect(await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) }), output).toBe(0)
     } finally { clearTimeout(timeout) }
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
-    expect(result).toEqual({ errors: [], manualRevision: 1, editedRevision: 3, createdAnalyzed: true, todoAnalyzed: 'canvas-images' })
+    expect(result).toMatchObject({ errors: [], manualRevision: 1, editedRevision: 3, createdAnalyzed: true, todoAnalyzed: supportsImageInput ? 'canvas-images' : 'text-fallback' })
+    expect(result.requests).toHaveLength(6)
+    for (const request of result.requests.slice(0, 5)) {
+      expect(request.imageCount).toBe(supportsImageInput ? 2 : 0)
+      expect(request.prompt).toContain('Included second')
+      expect(request.prompt).not.toContain('Excluded third')
+    }
+    expect(result.requests[5].prompt).toContain('Automatic start')
+    expect(result.requests[5].prompt).not.toContain('Automatic excluded tail')
+    expect(result.requests[5].imageCount).toBe(supportsImageInput ? 2 : 0)
   } finally {
     await server.close()
     await rm(directory, { recursive: true, force: true })
