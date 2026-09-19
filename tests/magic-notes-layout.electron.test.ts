@@ -130,7 +130,8 @@ it('resizes record columns with native Electron input and preserves desktop widt
     let output = ''
     child.stdout.on('data', data => { output += data })
     child.stderr.on('data', data => { output += data })
-    const timeout = setTimeout(() => child.kill(), 60000)
+    // Hidden Electron windows can run rAF at 1 Hz; the measured scenario takes 63s.
+    const timeout = setTimeout(() => child.kill(), 90000)
     try {
       const code = await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
       expect(code, output).toBe(0)
@@ -140,6 +141,6 @@ it('resizes record columns with native Electron input and preserves desktop widt
     expect(result.persisted).toBe(true)
   } finally {
     await server.close()
-    await rm(directory, { recursive: true, force: true })
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
-}, 90000)
+}, 120000)

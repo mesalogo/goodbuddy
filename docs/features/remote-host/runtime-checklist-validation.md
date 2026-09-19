@@ -223,3 +223,30 @@ provider HTTP 请求计数在 Agent gateway 的外部 fetch 层完成。
 最终另复验项目选择、顶部清单和安装管理 3 文件、41 项通过；App 远程 Runtime 选择与
 继承 3 项通过。`npm run typecheck`、`npm run lint` 均通过。中文审校扫描阻断项为 0，
 复核项为测试列举、请求数分项与必要验收边界，按事实保留。
+
+## 2026-09-19 Continue 会话 MCP 交付回归
+
+模型桥 helper 原先把 Session MCP 写入原生配置，但独立模型 profile 生成分支只保留
+显式能力，导致 Execute 最终配置丢失 MCP。修复后通过 run options 传递会话 HTTP
+服务器；本机原生 MCP 隔离和 Ask 只读规则不变，具体机制见[Runtime](./technical-design.md#runtime)。
+`continue-acp-helper.test.ts` 联合运行实际 helper 与 adapter 配置生成器，覆盖初次交付、
+续接替换、Ask 排除、加载空列表以及本机 profile 不继承原生 MCP。
+
+共享 Linux x64 Host 经 LAN 固定身份连接，使用保存的 GoodBuddy 凭据，当前源码 Agent、
+helper、adapter 与 CN 1.5.47 在专用目录运行。Main 受管 Runtime → Agent-owned ACP →
+Continue → Agent HTTP MCP → Main 工具桥往返通过；仅最末端图片服务替换为无计费
+测试接收端，校验输入并返回 `SAFE_MCP_ROUNDTRIP`，未连接图片 Provider。
+同一对话依次 Execute、Ask、Execute：两次 Execute 各实际调用工具一次，Ask 没有工具调用
+并回复 `ASK_NO_IMAGE_TOOL`；三次均正常终结。最终源码再次构建后完整重复该顺序。
+
+首轮成功目录 `/root/tmp/gb-cn-runtime-2kQ7wc`，最终复验目录
+`/root/tmp/gb-cn-runtime-NNM89D`。每轮 5 次真实文本 Provider HTTP 请求，合计 **10 次**，
+全部 HTTP 200；每轮上限 6 次，单次最大输出 1,024 tokens，单 Prompt 验证超时 120 秒。
+图片 Provider 请求 **0 次**。此前一次测试目录权限错误在 Runtime 验证阶段退出，模型请求
+0 次；修正测试目录权限后通过，未放宽产品校验。每轮结束确认所属剩余进程 0，专用运行
+及上传目录已清理，原 Host 安装未修改。此验证不包含正式包安装、UI 点击或真实图片生成。
+
+复查脚本位于上述本机临时目录：`mcp-host-build.cjs`、`mcp-host-run.cjs`，
+最终日志 `mcp-host-live.log`。专项 4 文件 38 项通过；改动文件 ESLint 和 Agent 类型检查
+通过。主任务随后完成合并后的 `npm test`：405 个文件通过、9 个跳过，4,826 项通过、
+67 项跳过，耗时 982.48 秒，无失败；最终完整类型检查与 lint 通过。

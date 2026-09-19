@@ -44,12 +44,66 @@ function mount(initial) {
   const toolbar = document.createElement('div');
   document.body.append(layer, toolbar);
   const onError = vi.fn();
-  const editor = mountFlowText(layer, toolbar, initial, { onError });
+  const onChange = vi.fn();
+  const editor = mountFlowText(layer, toolbar, initial, { onError, onChange });
   mounted.push(editor);
-  return { editor, quill: Quill.find(layer.firstElementChild), onError };
+  const quill = Quill.find(layer.firstElementChild);
+  // jsdom has no Range geometry; actual selection scrolling runs in Electron.
+  vi.spyOn(quill, 'scrollSelectionIntoView').mockImplementation(() => {});
+  return { editor, quill, onError, onChange };
 }
 
 describe('canvas flow limits', () => {
+  it('keeps normal accepted undo/redo and does not replace other Quill editors history modules', () => {
+    const History = Quill.import('modules/history');
+    const { editor, quill, onError } = mount({ version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] });
+    quill.insertText(19995, 'HELLO', 'user');
+    editor.undo();
+    expect(editor.text()).toBe('x'.repeat(19995));
+    editor.redo();
+    expect(editor.text()).toBe('x'.repeat(19995) + 'HELLO');
+    expect(onError).not.toHaveBeenCalled();
+    expect(Quill.import('modules/history')).toBe(History);
+    expect(quill.history.constructor).not.toBe(History);
+  });
+
+  it.each([false, true])('retains accepted undo and redo after overflow (cutoff: %s)', (cutoff) => {
+    const { editor, quill, onError, onChange } = mount({ version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] });
+    quill.setSelection(19995, 0, 'api');
+    quill.insertText(19995, 'HELLO', 'user');
+    quill.setSelection(20000, 0, 'api');
+    if (cutoff) quill.history.cutoff();
+    quill.insertText(20000, '!', 'user');
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(quill.getSelection()).toEqual({ index: 20000, length: 0 });
+    expect(quill.history.stack.undo).toHaveLength(1);
+    editor.undo();
+    expect(editor.text()).toBe('x'.repeat(19995));
+    expect(editor.canRedo()).toBe(true);
+    quill.setSelection(3, 4, 'api');
+    quill.insertText(3, 'REJECTED', 'user');
+    expect(quill.getSelection()).toEqual({ index: 3, length: 4 });
+    expect(editor.text()).toBe('x'.repeat(19995));
+    expect(editor.canUndo()).toBe(false);
+    expect(editor.canRedo()).toBe(true);
+    editor.redo();
+    expect(editor.text()).toBe('x'.repeat(19995) + 'HELLO');
+  });
+
+  it('preserves replacement selections and accepted formatting when rejecting an oversized paste', () => {
+    const { editor, quill } = mount({ version: 1, ops: [{ insert: 'x'.repeat(20000) + '\n' }] });
+    quill.formatText(0, 5, 'bold', true, 'user');
+    const accepted = editor.content();
+    quill.setSelection(10, 3, 'api');
+    const Delta = Quill.import('delta');
+    quill.updateContents(new Delta().retain(10).delete(3).insert('TOO LONG'), 'user');
+    expect(editor.content()).toEqual(accepted);
+    expect(quill.getSelection()).toEqual({ index: 10, length: 3 });
+    editor.undo();
+    expect(editor.content()).toEqual({ version: 1, ops: [{ insert: 'x'.repeat(20000) + '\n' }] });
+  });
+
   it.each([0.25, 0.5, 2, 3])('measures logical columns and selection at %sx display scale', (scale) => {
     const { editor, quill } = mount({ version: 1, ops: [{ insert: 'Body\n' }] });
     editor.setLayout(640, 960, 1);
@@ -91,5 +145,36 @@ describe('canvas flow limits', () => {
     quill.setText('x'.repeat(20001), 'api');
     await expect(editor.flush()).rejects.toThrow(/20,000/);
     expect(quill.getText()).toHaveLength(20002);
+  });
+});
+
+describe('canvas page-break removal', () => {
+  it.each([{ list: 'unchecked' }, { list: 'checked' }, { header: 1 }, { blockquote: true }, {}])(
+    'preserves existing paragraph terminators and formats: %j', (attributes) => {
+      const { editor, quill } = mount({ version: 1, ops: [
+        { insert: 'Task' }, { insert: '\n', attributes }, { insert: '\n' }
+      ] });
+      const original = editor.content();
+      quill.setSelection(5, 0, 'api');
+      expect(editor.insertPageBreak('page-2')).toBe(true);
+      expect(editor.insertPageBreak('page-2')).toBe(false);
+      expect(editor.removePageBreak('missing')).toBe(false);
+      expect(editor.removePageBreak('page-2')).toBe(true);
+      expect(editor.content()).toEqual(original);
+      expect(editor.removePageBreak('page-2')).toBe(false);
+    }
+  );
+
+  it('retains Quill paragraph splitting and both checklist formats when inserting within a line', () => {
+    const { editor, quill } = mount({ version: 1, ops: [
+      { insert: 'Task body' }, { insert: '\n', attributes: { list: 'unchecked' } }
+    ] });
+    quill.setSelection(4, 0, 'api');
+    editor.insertPageBreak('page-2');
+    editor.removePageBreak('page-2');
+    expect(editor.content()).toEqual({ version: 1, ops: [
+      { insert: 'Task' }, { insert: '\n', attributes: { list: 'unchecked' } },
+      { insert: ' body' }, { insert: '\n', attributes: { list: 'unchecked' } }
+    ] });
   });
 });

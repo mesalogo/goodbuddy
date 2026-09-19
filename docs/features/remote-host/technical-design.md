@@ -230,7 +230,13 @@ Composer Runtime 菜单显示 OpenCode、Continue 和管理入口，不显示直
 DeepSeek Harness。项目与历史会话保留 OC/CN 选择；不支持的旧 selection 恢复为项目
 默认值。Main 校验已安装 Runtime 身份与选择一致，按相应 CN/OC 模型 profile 建立模型桥。
 本机配置的 SKILL 包和 stdio MCP Server 不上传或分配给远程 Runtime；远程 ACP Session
-继续使用空 MCP Server 列表。Node.js、Python 等工具执行环境同样不修改或同步到 Host，
+仅接收当前请求由 Agent 管理的 HTTP MCP 能力（例如 Execute 图片工具），不继承本机原生
+MCP 配置。Continue helper 将 ACP Session 的服务器作为显式 `sessionMcpServers` 交给
+共享 `ContinueHostAdapter`，与模型桥配置一起生成最终配置；不先写入会被独立模型分支
+丢弃的原生配置。新建、加载和续接 Session 使用当前列表，空列表清除旧能力；Ask 在 helper
+和 adapter 两层均不注入这些 Execute 能力。本机独立模型 profile 仍不继承原生 MCP，
+既有知识库和自定义 MCP 的显式分配规则不变。
+Node.js、Python 等工具执行环境同样不修改或同步到 Host，
 完整边界见[工具执行环境](../local-tool-environment/README.md)。
 
 ### Ask

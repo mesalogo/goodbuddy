@@ -1,5 +1,4 @@
 import { extname } from 'node:path'
-import { convert } from 'html-to-text'
 import {
   documentParsingDiagnosticSchema,
   documentParsingSettingsUpdateSchema,
@@ -16,6 +15,7 @@ import type { DocumentOcrBroker } from './document-ocr-broker'
 import type { DocumentOcrModelManager } from './document-ocr-model-manager'
 import type { DocumentParsingSettingsStore } from './document-parsing-settings-store'
 import { HttpDocumentOcr } from './http-document-ocr'
+import { hasExtractedDocumentText } from './document-extracted-text'
 import { renderOcrPdf, renderSelectedOcrPdf } from './render-ocr-pdf'
 import type { DocumentResultStorage } from './document-result-storage'
 import { extractPptxPages } from './knowledge/pptx-parser'
@@ -242,7 +242,7 @@ export class DocumentParsingService {
       warnings = result.warnings
     }
     const content = sections.map((section) => section.content).join('\n\n')
-    if (!convert(content.replace(/!\[[^\]]*\]\([^)]*\)/gu, ''), { wordwrap: false }).trim()) throw new Error('未提取到文字，原图片发送方式保持不变')
+    if (!hasExtractedDocumentText(content)) throw new Error('未提取到文字，原图片发送方式保持不变')
     ensureNotAborted(signal)
     return { title: name, sourceFormat: extname(name).toLowerCase(), content, sections, warnings, pageCount: 1, images, missingImages, parsingSettings: settings, parsingDurationMs: Date.now() - startedAt }
   }

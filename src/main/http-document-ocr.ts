@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { loadImage } from '@napi-rs/canvas'
-import { convert } from 'html-to-text'
 import { z } from 'zod'
 import {
   maximumDocumentExtractedCharacters,
   type httpOcrSettingsSchema
 } from '../shared/document-parsing-contracts'
 import type { ParsedDocument, ParsedSection } from './knowledge/document-parser'
+import { hasExtractedDocumentText } from './document-extracted-text'
 
 type Settings = z.infer<typeof httpOcrSettingsSchema>
 export type ParsedDocumentImage = {
@@ -203,8 +203,9 @@ export class HttpDocumentOcr {
       }
     }
     signal?.throwIfAborted()
-    const text = sections.map((section) => convert(section.content.replace(/!\[[^\]]*\]\([^)]*\)/gu, '').replace(/\[第 \d+ 页图片未保存：[^\]]*\]/gu, ''), { wordwrap: false })).join('').trim()
-    if (!text && images.length === 0) throw new Error('HTTP OCR 未返回文字或有效图片')
+    if (!hasExtractedDocumentText(sections.map((section) => section.content).join('\n\n')) && images.length === 0) {
+      throw new Error('HTTP OCR 未返回文字或有效图片')
+    }
     return { sections, images, missingImages, warnings, ...(restructure ? { restructure } : {}) }
   }
 }

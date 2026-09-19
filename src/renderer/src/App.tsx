@@ -9939,8 +9939,8 @@ function App(): React.JSX.Element {
                           onRemove={removeConversationQueueItem}
                           onRestore={async (itemId) => {
                             await attachmentSaveQueue.current;
-                            const restored = await window.goodbuddy.conversationQueue.restoreToDraft(itemId, input);
-                            setInput(restored.prompt);
+                            const restored = await window.goodbuddy.conversationQueue.restoreToDraft(itemId, "");
+                            setInput((current) => [current, restored.prompt].filter(Boolean).join("\n\n"));
                           }}
                           running={conversationExecutionRunning}
                         />

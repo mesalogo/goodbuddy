@@ -7,6 +7,8 @@ import { join, resolve } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
+import { AssistantDatabase } from '../src/main/assistant/assistant-database'
+import type { MagicNoteCanvasContent } from '../src/shared/magic-notes-contracts'
 
 it('preserves annotations when flow removes the active page and renders scoped thumbnails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-canvas-core-'))
@@ -54,6 +56,33 @@ it('preserves annotations when flow removes the active page and renders scoped t
       expect(code, output).toBe(0)
     } finally { clearTimeout(timeout) }
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
+    expect(result.checklistAfter).toEqual(result.checklistBefore)
+    expect(result.overflowErrors).toHaveLength(2)
+    expect(result.selectionAfterRejection).toEqual({ index: 20000, length: 0 })
+    expect(result.selectionWithRedo).toEqual({ index: 3, length: 4 })
+    expect(result.acceptedLength).toBe(20000)
+    expect(result.undoneLength).toBe(19995)
+    expect(result.retainedRedo).toBe(true)
+    expect(result.redoneLength).toBe(20000)
+    const database = new AssistantDatabase(join(directory, 'assistant.sqlite'))
+    try {
+      database.initialize(directory)
+      const content: MagicNoteCanvasContent = {
+        version: 2, kind: 'paged-canvas', assets: [], flow: result.checklistBefore,
+        pages: [{ id: 'page-1', width: 794, height: 1123, objects: [],
+          background: { type: 'template', template: 'blank' } }]
+      }
+      const entry = database.createMagicNote({ title: 'Checklist preservation', content }).entries[0]!
+      const todos = database.listMagicTodos()
+      expect(todos).toHaveLength(1)
+      database.updateMagicNoteEntry({ entryId: entry.id, expectedRevision: entry.revision,
+        content: { ...content, flow: result.checklistAfter }, plainText: '' })
+      expect(database.listMagicTodos()).toEqual(todos)
+      database.close()
+      database.initialize(directory)
+      expect(database.listMagicTodos()).toEqual(todos)
+      expect(database.getMagicNoteEntry(entry.id).content).toEqual({ ...content, flow: result.checklistAfter })
+    } finally { database.close() }
     console.info('Canvas Electron regression:', JSON.stringify(result))
     expect(result.errors).toEqual([])
     expect(result.initialPages).toBe(2)

@@ -1225,6 +1225,9 @@ describe("App", () => {
         return item;
       });
     vi.mocked(api.conversationQueue.remove).mockReset().mockResolvedValue();
+    vi.mocked(api.conversationQueue.restoreToDraft).mockReset().mockResolvedValue({
+      conversationId: "", prompt: "", attachments: [],
+    });
     vi.mocked(api.conversationQueue.interruptAndRun)
       .mockReset()
       .mockResolvedValue();
@@ -2231,6 +2234,86 @@ describe("App", () => {
         "00000000-0000-4000-8000-000000000953",
       ),
     );
+  });
+
+  it.each(["empty", "existing", "edited", "cleared"] as const)(
+    "merges restored queued text into the latest %s draft",
+    async (draftState) => {
+      const conversationId = "00000000-0000-4000-8000-000000000951";
+      const itemId = "00000000-0000-4000-8000-000000000953";
+      vi.mocked(api.conversations.list).mockResolvedValue([{
+        id: conversationId, projectId, title: "恢复草稿", updatedAt: Date.now(), messages: [],
+      }]);
+      vi.mocked(api.conversationQueue.list).mockResolvedValue([{
+        id: itemId, conversationId, source: "user", label: "待恢复输入",
+        createdAt: "2026-09-19T00:00:00.000Z",
+      }]);
+      const response = deferred<Awaited<ReturnType<DesktopApi["conversationQueue"]["restoreToDraft"]>>>();
+      vi.mocked(api.conversationQueue.restoreToDraft).mockReset().mockReturnValue(response.promise);
+      render(<App />);
+      const restore = await screen.findByRole("button", { name: "恢复到草稿：待恢复输入" });
+      const input = screen.getByLabelText("向 GoodBuddy 提问");
+      const original = draftState === "empty" ? "" : "Original draft";
+      fireEvent.change(input, { target: { value: original } });
+      fireEvent.click(restore);
+      await waitFor(() => expect(api.conversationQueue.restoreToDraft).toHaveBeenCalledWith(itemId, ""));
+      expect(input).not.toBeDisabled();
+      const latest = draftState === "edited" ? "Edited while restoring"
+        : draftState === "cleared" ? "" : original;
+      fireEvent.change(input, { target: { value: latest } });
+      await act(async () => response.resolve({
+        conversationId, prompt: "Queued prompt", attachments: [],
+      }));
+      await waitFor(() => expect(input).toHaveValue([latest, "Queued prompt"].filter(Boolean).join("\n\n")));
+    },
+  );
+
+  it("preserves draft text when queued restoration fails", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000951";
+    vi.mocked(api.conversations.list).mockResolvedValue([{
+      id: conversationId, projectId, title: "恢复失败", updatedAt: Date.now(), messages: [],
+    }]);
+    vi.mocked(api.conversationQueue.list).mockResolvedValue([{
+      id: "00000000-0000-4000-8000-000000000953", conversationId,
+      source: "user", label: "不可恢复输入", createdAt: "2026-09-19T00:00:00.000Z",
+    }]);
+    const response = deferred<Awaited<ReturnType<DesktopApi["conversationQueue"]["restoreToDraft"]>>>();
+    vi.mocked(api.conversationQueue.restoreToDraft).mockReset().mockReturnValue(response.promise);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "恢复到草稿：不可恢复输入" }));
+    await waitFor(() => expect(api.conversationQueue.restoreToDraft).toHaveBeenCalled());
+    const input = screen.getByLabelText("向 GoodBuddy 提问");
+    fireEvent.change(input, { target: { value: "Retained draft" } });
+    await act(async () => response.reject(new Error("Restore failed")));
+    expect(input).toHaveValue("Retained draft");
+    expect(await screen.findByText("Restore failed")).toBeInTheDocument();
+  });
+
+  it("keeps queued restoration attached to its original conversation after switching", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000951";
+    const otherId = "00000000-0000-4000-8000-000000000954";
+    const item = {
+      id: "00000000-0000-4000-8000-000000000953", conversationId,
+      source: "user" as const, label: "原会话输入", createdAt: "2026-09-19T00:00:00.000Z",
+    };
+    vi.mocked(api.conversations.list).mockResolvedValue([
+      { id: conversationId, projectId, title: "Original draft conversation", updatedAt: 200, messages: [] },
+      { id: otherId, projectId, title: "Other draft conversation", updatedAt: 100, messages: [] },
+    ]);
+    vi.mocked(api.conversationQueue.list).mockImplementation(async id => !id || id === conversationId ? [item] : []);
+    const response = deferred<Awaited<ReturnType<DesktopApi["conversationQueue"]["restoreToDraft"]>>>();
+    vi.mocked(api.conversationQueue.restoreToDraft).mockReset().mockReturnValue(response.promise);
+    render(<App />);
+    const restore = await screen.findByRole("button", { name: "恢复到草稿：原会话输入" });
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Original draft" } });
+    fireEvent.click(restore);
+    await waitFor(() => expect(api.conversationQueue.restoreToDraft).toHaveBeenCalled());
+    fireEvent.click(screen.getByText("Other draft conversation").closest("button")!);
+    fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), { target: { value: "Other draft" } });
+    await act(async () => response.resolve({ conversationId, prompt: "Queued prompt", attachments: [] }));
+    expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("Other draft");
+    fireEvent.click(screen.getByText("Original draft conversation").closest("button")!);
+    await waitFor(() => expect(screen.getByLabelText("向 GoodBuddy 提问")).toHaveValue("Original draft\n\nQueued prompt"));
   });
 
   it("preserves scoped queue updates that arrive during another refresh", async () => {

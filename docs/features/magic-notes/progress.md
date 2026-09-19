@@ -1,5 +1,26 @@
 # Magic Notes Progress
 
+## 2026-09-19: Canvas Content and History Preservation
+
+- Page-break deletion now removes only the embed, retaining existing paragraph
+  terminators and checklist/heading formats. Mid-line insertion retains Quill's
+  native paragraph split rather than guessing which newline is disposable.
+- Oversized input is rejected before the canvas-local History records it, then
+  reverted with its inverse Delta. Accepted undo/redo and user selections survive;
+  normal rich-text editors retain their original History module.
+- `npx vitest run tests/canvas-core.electron.test.ts src/renderer/src/magic-canvas`
+  passed 35 tests across 5 files. Electron exercised actual Quill selection and history, then production
+  SQLite/file create, update and reopen retained the same checklist todo.
+  This uses Quill API edits in an isolated Electron window, not physical keyboard
+  input or the full App/IPC save flow.
+- Focused ESLint for the four changed source/test files and `git diff --check`
+  passed. The integrated full suite passed 4,826 tests with 67 skipped
+  (405 files passed, 9 skipped); full typecheck and lint passed.
+  The existing hidden-window layout scenario measured about 63 seconds, so its
+  child deadline is now 90 seconds with bounded temporary-directory cleanup
+  retries. All geometry, input and persistence assertions remain intact and passed.
+  No model calls, persistence/schema changes, remote Runtime changes or commits.
+
 ## 2026-09-19: Canvas Image Import Size
 
 - Raised the canvas image file limit to 20 MiB inclusive and updated its error

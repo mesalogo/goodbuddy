@@ -140,14 +140,16 @@ it('includes older pinned conversations beyond the recent 100 and sorts pins by 
     database.saveLocalConversations(headers.map(header => ({ header, messages: [] })))
     database.setConversationPinned({ conversationId: headers[0]!.id, pinned: true })
     database.setConversationPinned({ conversationId: headers[1]!.id, pinned: true })
-    const expectedIds = [headers[1]!.id, headers[0]!.id, ...headers.slice(3).reverse().map(header => header.id)]
+    const expectedIds = [headers[1]!.id, headers[0]!.id, ...headers.slice(2).reverse().map(header => header.id)]
     expect(database.listConversations().map(item => item.id)).toEqual(expectedIds)
     const summaries = database.listConversationSummaries()
     expect(summaries.map(item => item.id)).toEqual(expectedIds)
     expect(summaries.slice(0, 2).every(item => item.pinned)).toBe(true)
     expect(database.searchConversations('Conversation 0')).toEqual([headers[0]!.id])
     database.setConversationPinned({ conversationId: headers[0]!.id, pinned: false })
-    expect(database.listConversations().map(item => item.id)).toEqual(expectedIds.filter(id => id !== headers[0]!.id))
+    expect(database.listConversations().map(item => item.id)).toEqual([
+      headers[1]!.id, ...headers.slice(2).reverse().map(header => header.id), headers[0]!.id
+    ])
     expect(database.getConversation(headers[0]!.id)).toMatchObject({ pinned: false, updatedAt: 1000 })
   } finally {
     database.close()
@@ -450,7 +452,7 @@ describe('AssistantDatabase', () => {
     }
   })
 
-  it('includes old live schedule and streaming conversations beyond recent history without exposing hidden or archived entries', async () => {
+  it('lists all active conversations while preserving task visibility and excluding archived conversations', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-live-history-'))
     temporaryDirectories.push(directory)
     const databasePath = join(directory, 'assistant.sqlite')
@@ -466,7 +468,7 @@ describe('AssistantDatabase', () => {
           projectId, title, prompt: title, recurrence: 'daily',
           nextRunAt: '2027-01-01T00:00:00Z'
         }))
-      const [running, approval, pending, , hidden, archived] = schedules
+      const [running, approval, pending, idle, hidden, archived] = schedules
       for (const schedule of [running!, approval!, hidden!, archived!]) {
         claimManualScheduleQueueItem(database, schedule.id)
       }
@@ -516,6 +518,7 @@ describe('AssistantDatabase', () => {
       })
       const tasks = database.listTasks(1)
       expect(tasks).toHaveLength(6)
+      expect(tasks.some(task => task.id === hidden!.taskId)).toBe(false)
       expect(tasks).toEqual(expect.arrayContaining([
         historyTask,
         expect.objectContaining({ id: running!.taskId, status: 'running' }),
@@ -523,18 +526,19 @@ describe('AssistantDatabase', () => {
         expect.objectContaining({ id: archived!.taskId, status: 'running' })
       ]))
       const conversations = database.listConversations()
-      expect(conversations).toHaveLength(105)
+      expect(conversations).toHaveLength(109)
       expect(new Set(conversations.map((conversation) => conversation.id))).toEqual(
         new Set([
-          ...recent.slice(1).map((conversation) => conversation.header.id),
-          running!.conversationId, approval!.conversationId, streamingId,
+          ...recent.map((conversation) => conversation.header.id),
+          running!.conversationId, approval!.conversationId, pending!.conversationId,
+          idle!.conversationId, hidden!.conversationId, streamingId,
           ...liveConversations
         ])
       )
       expect(conversations.find((conversation) => conversation.id === streamingId))
         .toMatchObject({ projectId, messages: [streamingMessage] })
-      expect(conversations.slice(0, 100).map((conversation) => conversation.id))
-        .toEqual(recent.slice(1).reverse().map((conversation) => conversation.header.id))
+      expect(conversations.slice(0, recent.length).map((conversation) => conversation.id))
+        .toEqual(recent.slice().reverse().map((conversation) => conversation.header.id))
     } finally {
       raw.close()
       database.close()

@@ -10,6 +10,24 @@ const INLINE_FORMATS = ['bold', 'italic', 'underline', 'strike', 'code'];
 const BLOCK_FORMATS = ['header', 'blockquote', 'code-block', 'list', 'indent'];
 const FLOW_FORMATS = [...INLINE_FORMATS, ...BLOCK_FORMATS, 'canvasPageBreak'];
 
+class FlowHistory extends Quill.import('modules/history') {
+  record(delta, oldDelta) {
+    try {
+      normalizeFlowContent({ version: FLOW_VERSION, ops: oldDelta.compose(delta).ops });
+    } catch {
+      // Reject before History merges the edit or clears accepted redo entries.
+      this.rejectedRange = this.currentRange;
+      return;
+    }
+    super.record(delta, oldDelta);
+  }
+}
+
+// Keep the custom History module local to canvas editors.
+class FlowQuill extends Quill {
+  static imports = { ...Quill.imports, 'modules/history': FlowHistory };
+}
+
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -173,7 +191,7 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
   layerHost.appendChild(editorHost);
   toolbarHost.appendChild(toolbar);
 
-  const quill = new Quill(editorHost, {
+  const quill = new FlowQuill(editorHost, {
     theme: 'snow',
     placeholder: '输入正文，内容超过纸张后会自动分页',
     formats: FLOW_FORMATS,
@@ -307,7 +325,18 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
       try {
         content();
       } catch (error) {
-        quill.setContents(oldDelta, 'silent');
+        const history = quill.history;
+        const range = history.rejectedRange;
+        history.ignoreChange = true;
+        try {
+          quill.updateContents(delta.invert(oldDelta), 'silent');
+        } finally {
+          history.ignoreChange = false;
+        }
+        if (range) quill.setSelection(range, 'silent');
+        history.currentRange = range;
+        history.rejectedRange = null;
+        suppressUserFollowSelection = false;
         options.onError?.(error.message);
         scheduleLayout();
         return;
@@ -359,10 +388,6 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
       if (index < 0) return false;
       suppressUserFollowSelection = true;
       quill.deleteText(index, 1, 'user');
-      if (index > 0 && quill.getText(index - 1, 1) === '\n') {
-        suppressUserFollowSelection = true;
-        quill.deleteText(index - 1, 1, 'user');
-      }
       scheduleLayout();
       return true;
     },

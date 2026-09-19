@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -88,15 +88,13 @@ export async function runContinueAcpHelper(options: {
         return await response.json() as { operationId: string; workMode: 'ask' | 'execute' }
       }) : undefined
       const workMode = route?.workMode ?? options.workMode
-      const configPath = join(root, `${sessionId}.json`)
-      await writeFile(configPath, JSON.stringify({ name: 'GoodBuddy', version: '1.0.0', schema: 'v1',
-        mcpServers: workMode === 'execute' ? session.mcpServers.map(server => {
-          if (!('type' in server) || server.type !== 'http') throw new Error('Continue remote MCP requires HTTP')
-          return { name: server.name, type: 'streamable-http', url: server.url,
-            requestOptions: { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } }
-        }) : [] }), { mode: 0o600 })
+      const sessionMcpServers = workMode === 'execute' ? session.mcpServers.map(server => {
+        if (!('type' in server) || server.type !== 'http') throw new Error('Continue remote MCP requires HTTP')
+        return { name: server.name, type: 'streamable-http' as const, url: server.url,
+          requestOptions: { headers: Object.fromEntries(server.headers.map(header => [header.name, header.value])) } }
+      }) : []
       const adapter = new ContinueHostAdapter({
-        binaryPath: options.entrypoint, configPath, workspace: session.cwd, cacheRoot: root, mode: 'chat',
+        binaryPath: options.entrypoint, configPath: '', workspace: session.cwd, cacheRoot: root, mode: 'chat',
         modelProfile: { id: 'agent-bridge', name: 'GoodBuddy', modelName: options.model,
           protocol: options.protocol, authentication: 'api-key', apiKey: MODEL_BRIDGE_SDK_AUTH_SENTINEL,
           baseUrl: `${origin}/v1`, supportsImageInput: options.supportsImageInput,
@@ -114,7 +112,7 @@ export async function runContinueAcpHelper(options: {
       try {
         const result = await adapter.run(promptWithUntrustedConversationHistory({ prompt: text, history: session.history }, true), abort.signal,
           async () => workMode === 'execute' ? 'once' : 'deny', {
-            workMode, images,
+            workMode, images, sessionMcpServers,
             onEvent: async event => {
               if (event.type === 'text') await connection.sessionUpdate({ sessionId, update: {
                 sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: event.delta }
@@ -156,7 +154,6 @@ export async function runContinueAcpHelper(options: {
       } finally {
         await adapter.dispose()
         for (const [id, pending] of questions) if (pending.adapter === adapter) questions.delete(id)
-        await rm(configPath, { force: true })
         session.active = undefined
         finish()
       }

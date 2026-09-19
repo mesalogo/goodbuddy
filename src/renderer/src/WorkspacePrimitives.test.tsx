@@ -267,17 +267,9 @@ describe('WorkspacePrimitives', () => {
   })
 
   it('keeps forced-color and docked split contracts authoritative', () => {
-    const forcedColorsStart = stylesheet.indexOf(
-      '@media (forced-colors: active)'
-    )
-    const forcedColorsEnd = stylesheet.indexOf(
-      '@media (prefers-reduced-motion: reduce)',
-      forcedColorsStart
-    )
-    const forcedColors = stylesheet.slice(
-      forcedColorsStart,
-      forcedColorsEnd
-    )
+    const forcedColors = [...stylesheet.matchAll(
+      /@media \(forced-colors: active\)\s*\{(?:[^{}]|\{[^{}]*\})*\}/gu
+    )].map(([block]) => block).join('\n')
     expect(forcedColors).toContain(':root :is(')
     expect(forcedColors).not.toContain(':where(')
     expect(forcedColors).toMatch(

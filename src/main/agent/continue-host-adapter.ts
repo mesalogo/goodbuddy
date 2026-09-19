@@ -253,6 +253,13 @@ export type ContinueHostAdapterDependencies = {
 export type ContinueHostRunOptions = {
   workMode?: 'ask' | 'execute'
   images?: AgentImage[]
+  /** Explicit session capabilities, not MCP servers from a local model config. */
+  sessionMcpServers?: Array<{
+    name: string
+    type: 'streamable-http'
+    url: string
+    requestOptions: { headers: Record<string, string> }
+  }>
   knowledgeCapability?: {
     endpoint: string
     token: string
@@ -1257,6 +1264,9 @@ export class ContinueHostAdapter {
       )
     }
     const capabilityServers = [
+      ...(runOptions.workMode === 'execute'
+        ? runOptions.sessionMcpServers ?? []
+        : []),
       ...(knowledgeCapability
         ? [
             createLoopbackMcpServer(
@@ -1274,6 +1284,11 @@ export class ContinueHostAdapter {
           ]
         : [])
     ]
+    if (capabilityServers.length > maximumConfiguredMcpServers) {
+      throw new Error(
+        `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
+      )
+    }
     const selectedPreset = presetConfig(runOptions.preset)
     const hasPresetContent =
       selectedPreset.rules.length > 0 ||

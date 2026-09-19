@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
-import { convert } from 'html-to-text'
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { documentResultSchema, type DocumentResult } from '../shared/document-result-contracts'
 import type { DocumentParsingSettings } from '../shared/document-parsing-contracts'
 import type { ParsedDocument } from './knowledge/document-parser'
+import { hasExtractedDocumentText } from './document-extracted-text'
 
 export function parsedCompleteness(parsed: ParsedDocument): DocumentResult['completeness'] {
-  const text = convert(parsed.content.replace(/!\[[^\]]*\]\([^)]*\)/gu, ''), { wordwrap: false }).trim()
-  return !text && parsed.images?.length ? 'images-only' : parsed.warnings.length ? 'partial' : 'complete'
+  return !hasExtractedDocumentText(parsed.content) && parsed.images?.length
+    ? 'images-only' : parsed.warnings.length ? 'partial' : 'complete'
 }
 
 export function originalImageMime(data: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | undefined {

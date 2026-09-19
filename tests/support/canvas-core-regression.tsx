@@ -1,4 +1,5 @@
 import Quill from 'quill'
+import { mountFlowText } from '../../src/renderer/src/magic-canvas/canvas-flow.mjs'
 import { createRoot } from 'react-dom/client'
 import { mountCanvasNote } from '../../src/renderer/src/magic-canvas/canvas-note.mjs'
 import { MagicCanvasThumbnail } from '../../src/renderer/src/MagicCanvasThumbnail'
@@ -88,10 +89,47 @@ async function canvasRegression() {
     await editor.destroy()
   }
   host.remove()
+  const layer = document.createElement('div')
+  const toolbar = document.createElement('div')
+  document.body.append(layer, toolbar)
+  let flow = mountFlowText(layer, toolbar, { version: 1, ops: [
+    { insert: 'Task' }, { insert: '\n', attributes: { list: 'unchecked' } }, { insert: '\n' }
+  ] })
+  let flowQuill = Quill.find(layer.firstElementChild!) as Quill
+  const checklistBefore = flow.content()
+  flowQuill.setSelection(5, 0, 'api')
+  flow.insertPageBreak('page-2')
+  flow.removePageBreak('page-2')
+  const checklistAfter = await flow.flush()
+  flow.destroy()
+  const overflowErrors: string[] = []
+  flow = mountFlowText(layer, toolbar, { version: 1, ops: [{ insert: 'x'.repeat(19995) + '\n' }] },
+    { onError: (error: string) => overflowErrors.push(error) })
+  flowQuill = Quill.find(layer.firstElementChild!) as Quill
+  flowQuill.setSelection(19995, 0, 'api')
+  flowQuill.insertText(19995, 'HELLO', 'user')
+  flowQuill.setSelection(20000, 0, 'api')
+  flowQuill.history.cutoff()
+  flowQuill.insertText(20000, '!', 'user')
+  const selectionAfterRejection = flowQuill.getSelection()
+  const acceptedLength = flow.text().length
+  flow.undo()
+  const undoneLength = flow.text().length
+  flowQuill.setSelection(3, 4, 'api')
+  flowQuill.insertText(3, 'REJECTED', 'user')
+  const selectionWithRedo = flowQuill.getSelection()
+  const retainedRedo = flow.canRedo()
+  flow.redo()
+  const redoneLength = flow.text().length
+  flow.destroy()
+  layer.remove()
+  toolbar.remove()
   return { errors, initialPages: initial.pages.length, initialObjects: initial.pages[0].objects,
     beforeShrink, afterShrink, savedPages: saved.pages.length, savedObjects: saved.pages[0].objects,
     reopenedObjects: reopened.pages[0].objects, visibleInkBefore, visibleInkAfter, reopenedInk, flowTransform,
-    editorStyles, thumbnailStyles, thumbnailMatchesEditor, imageImports }
+    editorStyles, thumbnailStyles, thumbnailMatchesEditor, imageImports,
+    checklistBefore, checklistAfter, overflowErrors, selectionAfterRejection, selectionWithRedo,
+    acceptedLength, undoneLength, retainedRedo, redoneLength }
 }
 
 Object.assign(window, { canvasRegression })

@@ -228,6 +228,13 @@ PDF text layer. `capturePages()` provides PNG data URLs for AI input, not a PNG
 download button. Undo/redo is per annotation page or Quill mode; page operations
 and PDF imports are not global undo steps.
 
+Flow page-break removal and rejected-input history handling follow the
+[canvas editing and limit rules](../../../src/renderer/src/magic-canvas/README.md#editing-and-assets).
+`canvas-core.electron.test.ts` feeds the real Electron flow's before/after content
+into production `AssistantDatabase` create/update and reopen, checking that the
+derived checklist todo and its identity survive page-break removal. History
+coverage exercises accepted typing, rejected overflow, selection and redo.
+
 The [canvas integration reference](../../../src/renderer/src/magic-canvas/README.md)
 owns core limits, import behavior and lifecycle details. Vite bundles Fabric,
 Quill, jsPDF, PDF.js workers and binary assets; PDF workers use explicit module

@@ -73,7 +73,10 @@ reference refreshes the viewer. It does not own a modal or persistence.
 - Pen, highlighter, whole-object eraser, Fabric selection/move/scale/rotation,
   floating editable text, and JPEG/PNG/GIF/WebP images.
 - Quill body text flows across pages. Adding a page in flow mode inserts a page
-  break. Deleting a page removes its break and reflows body text. Deleting a
+  break. Deleting a page removes only its break and reflows body text, retaining
+  paragraph terminators and their checklist/heading formats. Mid-paragraph
+  insertion uses Quill's normal block split; removing the break does not merge
+  the resulting paragraphs or discard either paragraph's formatting. Deleting a
   nonempty annotation/PDF page requires a second click within five seconds.
 - Undo/redo is per annotation page or Quill body mode, matching PeopleLib.
   Page insertion/deletion and PDF import are not document-wide undo steps.
@@ -112,7 +115,11 @@ Canvas assets do not use the rich-text image or aggregate attachment budgets.
 The shared canvas schema and Main validation accept this image size; persistence
 stores decoded assets in files and hydrates them on read without a smaller byte cap.
 Exactly 20,000 body code units plus Quill's terminal newline round-trip intact.
-Oversized user edits revert to the preceding Delta and call `onError`.
+Oversized user edits apply only the rejected edit's inverse Delta and call
+`onError`, preserving the previous selection and accepted undo/redo history.
+The canvas-local History module validates before recording, so rejection cannot
+merge into accepted typing or clear redo; other Quill editors keep their normal
+History module. Rejection does not emit an accepted content change.
 Oversized initial/API content throws a `RangeError`; `flush()` rejects rather
 than returning a document with missing flow text. Callers must not save a
 replacement empty document after that rejection.

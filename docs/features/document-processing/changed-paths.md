@@ -11,6 +11,8 @@ src/main/context-manager.ts
 src/main/context-manager.test.ts
 src/main/conversation-attachment-storage.ts
 src/main/conversation-attachment-storage.test.ts
+src/main/document-extracted-text.ts
+src/main/document-extracted-text.test.ts
 src/main/document-parsing-service.ts
 src/main/document-parsing-service.test.ts
 src/main/document-parsing-settings-store.ts
@@ -92,6 +94,7 @@ docs/features/document-processing/chat-attachments-technical-design.md
 docs/features/document-processing/implementation.md
 docs/features/document-processing/progress.md
 docs/features/document-processing/changed-paths.md
+docs/quality/recurring-defects.md
 ```
 
 `scripts/paddleocr-vl-probe.mjs` 和导航 README 原有未提交内容保留，本轮未修改。

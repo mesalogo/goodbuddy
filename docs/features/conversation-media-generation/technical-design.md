@@ -71,7 +71,7 @@ Main 仅在图片和会话引用持久化成功后发布完成事件。素材必
 | GoodBuddy Agent 远程适用 Runtime | 复用桌面与 Agent 通信及工具桥接，将请求绑定原会话，由 Main 调用图片模型 | 逐一验证实际支持的远程 Runtime，覆盖真实 Host 工具往返、生成编辑、本地与远程双向切换、断连及成果归属 |
 | 无工具能力的聊天模型 | 说明自动调用限制，可使用已有直连图片工作流 | 不解析普通文字伪装工具调用，不新增表单；Ask 不提交 |
 
-本地 OpenCode、Continue 和 DeepSeek Harness 经内部 MCP gateway 注入；直连 Model 使用内置工具分发。远程通过 `main-image-tool-session.ts`、Agent 协议和 `image-tool-mcp.ts` 回到同一 Main 服务。现有 GoodBuddy Agent 的受管远程 Runtime 为 OpenCode，项目校验和 Runtime 创建均沿用此范围；共享契约包含其他 Runtime 不表示存在其远程执行路径。保留会话在目录清空时也刷新 MCP，Continue 准备失败时释放本次分配的令牌。工具发现成功或 Skill 注入成功不能代替真实生成与编辑。
+本地 OpenCode、Continue 和 DeepSeek Harness 经内部 MCP gateway 注入；直连 Model 使用内置工具分发。远程通过 `main-image-tool-session.ts`、Agent 协议和 `image-tool-mcp.ts` 回到同一 Main 服务。当前受管远程 Runtime 包括 OpenCode 和 Continue；Continue 模型桥的会话 MCP 交付及 Ask 边界见[远程 Runtime](../remote-host/technical-design.md#runtime)。保留会话在目录清空时也刷新 MCP，Continue 准备失败时释放本次分配的令牌。工具发现、无计费测试接收端往返或 Skill 注入成功不能代替真实生成与编辑。
 
 Main 已接收的请求在桌面仍运行时独立于远程连接继续；未确认是否接收的请求不自动重放。聊天回合停止等待与用户取消图片是不同动作，须验证现有取消传播不会误杀 Main 图片请求。
 
