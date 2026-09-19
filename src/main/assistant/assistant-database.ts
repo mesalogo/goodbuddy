@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { DatabaseSync } from 'node:sqlite'
+import { statSync } from 'node:fs'
+import { MagicNoteStorage } from '../magic-notes/magic-note-storage'
+import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
 import {
   builtInDefaultProjectSeedDescription,
   builtInDefaultProjectSeedName,
@@ -79,8 +82,10 @@ import {
   MAGIC_NOTE_MAX_NOTE_EMBED_BYTES,
   type MagicNoteComment,
   type MagicNoteDetail,
+  type MagicNoteEntryCreateResult,
   type MagicNoteEntry,
   type MagicNoteRichContent,
+  type MagicNoteContent,
   type MagicNoteSearchResult,
   type MagicNoteSummary,
   type MagicTodoItem,
@@ -99,7 +104,8 @@ import {
   magicNoteImageBytes,
   magicNotePlainText,
   magicNotePreview,
-  setMagicNoteChecklistCompletion
+  setMagicNoteChecklistCompletion,
+  validateMagicNoteContent
 } from '../magic-notes/rich-content'
 import { computeNextHeartbeatRun } from './heartbeat-recurrence'
 import {
@@ -107,7 +113,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 36
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 38
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -643,11 +649,11 @@ function toTask(row: TaskRow): AssistantTask {
   }
 }
 
-function toMagicNoteEntry(row: MagicNoteEntryRow): MagicNoteEntry {
+function toMagicNoteEntry(row: MagicNoteEntryRow, content: MagicNoteContent): MagicNoteEntry {
   return {
     id: row.id,
     noteId: row.note_id,
-    content: JSON.parse(row.content_json) as MagicNoteRichContent,
+    content,
     plainText: row.plain_text,
     comments: JSON.parse(row.comments_json) as MagicNoteComment[],
     analyzedAt: row.analyzed_at ?? undefined,
@@ -1774,6 +1780,9 @@ function deleteProjectRecords(
 
 export class AssistantDatabase {
   private database?: DatabaseSync
+  private readonly noteStorage: MagicNoteStorage
+  private readonly dirtyMagicNotes = new Set<string>()
+  private readonly pendingMagicNoteCleanup = new Set<string | undefined>()
   private subagentProgress?: SubagentProgressStorage
   private channelEventWrites = 0
   private channelOutboxWrites = 0
@@ -1784,10 +1793,130 @@ export class AssistantDatabase {
       onMagicNotesChanged?: () => void
       onMagicTodosChanged?: () => void
     } = {}
-  ) {}
+  ) {
+    this.noteStorage = new MagicNoteStorage(databasePath)
+  }
 
   private notifyMagicTodosChanged(): void {
     this.options.onMagicTodosChanged?.()
+  }
+
+  // Called by the existing startup worker before the business connection opens.
+  upgradeMagicNoteStorage(
+    onProgress: (progress: AssistantStorageProgress) => void,
+    isCancelled: () => boolean
+  ): void {
+    const database = new DatabaseSync(this.databasePath, { timeout: 5_000 })
+    try {
+      database.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
+      this.migrate(database)
+      this.database = database
+      this.repairMagicNoteStorage(onProgress, isCancelled)
+      if (isCancelled()) throw new DOMException('Upgrade cancelled', 'AbortError')
+      const free = database.prepare('PRAGMA freelist_count').get() as { freelist_count: number }
+      if (free.freelist_count > 0) {
+        onProgress({ stage: 'compacting', processed: 0, total: 0, bytesBefore: statSync(this.databasePath).size })
+        database.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM;')
+      }
+      database.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } finally {
+      this.database = undefined
+      database.close()
+    }
+  }
+
+  private hydrateMagicNoteEntry(row: MagicNoteEntryRow): MagicNoteEntry {
+    return toMagicNoteEntry(row, this.noteStorage.read(row.note_id, row.id).content)
+  }
+
+  private writeMagicNoteBody(noteId: string, id: string, content: MagicNoteContent, revision: number, updatedAt: string): string {
+    this.dirtyMagicNotes.add(noteId)
+    this.noteStorage.write({ noteId, id, content, revision, updatedAt })
+    return JSON.stringify({ storage: 'file', version: content.version, revision })
+  }
+
+  private reconcileMagicNoteFiles(noteId?: string): void {
+    const database = this.database!
+    // SQL and authoritative bodies are already committed. Cleanup must never
+    // turn an accepted save/delete/reset into a retryable UI write failure.
+    if (noteId) this.dirtyMagicNotes.delete(noteId)
+    this.pendingMagicNoteCleanup.add(noteId)
+    try {
+      if (noteId === undefined) {
+        const notes = database.prepare('SELECT id FROM magic_notes').all() as Array<{ id: string }>
+        if (notes.length) this.noteStorage.reconcileNotes(new Set(notes.map((note) => note.id)))
+        else this.noteStorage.clear()
+      } else if (database.prepare('SELECT id FROM magic_notes WHERE id = ?').get(noteId)) {
+        const entries = database.prepare('SELECT id FROM magic_note_entries WHERE note_id = ? ORDER BY created_at, rowid').all(noteId) as Array<{ id: string }>
+        this.noteStorage.reconcile(noteId, entries.map((entry) => entry.id))
+      } else {
+        this.noteStorage.deleteNote(noteId)
+      }
+      this.pendingMagicNoteCleanup.delete(noteId)
+    } catch (error) {
+      console.warn('Magic note file cleanup deferred', { noteId, error })
+    }
+  }
+
+  private repairMagicNoteStorage(
+    onProgress?: (progress: AssistantStorageProgress) => void,
+    isCancelled: () => boolean = () => false,
+    noteIds?: ReadonlySet<string>
+  ): void {
+    const database = this.database!
+    const notes = noteIds
+      ? [...noteIds].flatMap((id) => {
+        const row = database.prepare('SELECT id FROM magic_notes WHERE id = ?').get(id) as { id: string } | undefined
+        if (!row) this.reconcileMagicNoteFiles(id)
+        return row ? [row] : []
+      })
+      : database.prepare('SELECT id FROM magic_notes').all() as Array<{ id: string }>
+    const total = (database.prepare('SELECT COUNT(*) AS count FROM magic_note_entries').get() as { count: number }).count
+    const bytesBefore = this.databasePath === ':memory:' ? 0 : statSync(this.databasePath).size
+    let processed = 0
+    let migrated = false
+    for (const note of notes) {
+      const entries = database.prepare('SELECT id FROM magic_note_entries WHERE note_id = ? ORDER BY created_at, rowid').all(note.id) as Array<{ id: string }>
+      for (const { id } of entries) {
+        if (isCancelled()) throw new DOMException('Upgrade cancelled', 'AbortError')
+        database.exec('BEGIN IMMEDIATE')
+        try {
+          // One payload at a time: a canvas may contain a large PDF.
+          const row = database.prepare('SELECT * FROM magic_note_entries WHERE id = ?').get(id) as MagicNoteEntryRow
+          const pointer = JSON.parse(row.content_json) as { storage?: string; revision?: number }
+          if (pointer.storage !== 'file') {
+            const content = JSON.parse(row.content_json) as MagicNoteContent
+            this.noteStorage.write({ noteId: note.id, id, content, revision: row.revision, updatedAt: row.updated_at })
+            if (JSON.stringify(this.noteStorage.read(note.id, id).content) !== JSON.stringify(content)) {
+              throw new Error(`Note migration verification failed: ${id}`)
+            }
+            database.prepare('UPDATE magic_note_entries SET content_json = ?, plain_text = ?, image_bytes = ? WHERE id = ?').run(
+              JSON.stringify({ storage: 'file', version: content.version, revision: row.revision }),
+              magicNotePlainText(content), magicNoteEmbeddedBytes(content), id
+            )
+            migrated = true
+          } else if (this.noteStorage.revision(note.id, id) !== pointer.revision) {
+            const saved = this.noteStorage.read(note.id, id)
+            database.prepare(`UPDATE magic_note_entries SET content_json = ?, plain_text = ?, image_bytes = ?,
+              revision = MAX(revision, ?), updated_at = ?, comments_json = '[]', analyzed_at = NULL WHERE id = ?`).run(
+              JSON.stringify({ storage: 'file', version: saved.content.version, revision: saved.revision }),
+              magicNotePlainText(saved.content), magicNoteEmbeddedBytes(saved.content), saved.revision, saved.updatedAt, id
+            )
+            database.prepare('UPDATE magic_notes SET revision = revision + 1, updated_at = ? WHERE id = ?').run(saved.updatedAt, note.id)
+            this.syncMagicNoteTodos(database, note.id, id, saved.content, saved.updatedAt)
+          }
+          database.exec('COMMIT')
+        } catch (error) {
+          database.exec('ROLLBACK')
+          throw error
+        }
+        processed++
+        if (migrated) onProgress?.({ stage: 'converting', processed, total, bytesBefore })
+      }
+      this.reconcileMagicNoteFiles(note.id)
+    }
+    if (!noteIds) this.reconcileMagicNoteFiles()
+    this.dirtyMagicNotes.clear()
   }
 
   initialize(defaultRootPath: string): void {
@@ -1806,6 +1935,7 @@ export class AssistantDatabase {
       `)
       this.migrate(database)
       this.database = database
+      this.repairMagicNoteStorage()
       this.subagentProgress = new SubagentProgressStorage(database)
       this.channelEventWrites = (
         database
@@ -2035,6 +2165,7 @@ export class AssistantDatabase {
       }
     } catch (error) {
       database.close()
+      this.database = undefined
       throw error
     }
   }
@@ -2043,6 +2174,7 @@ export class AssistantDatabase {
     this.database?.close()
     this.database = undefined
     this.subagentProgress = undefined
+    if (this.databasePath === ':memory:') this.noteStorage.clear()
   }
 
   clearAssistantData(): void {
@@ -2084,6 +2216,9 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+    this.dirtyMagicNotes.clear()
+    this.pendingMagicNoteCleanup.clear()
+    this.reconcileMagicNoteFiles()
     this.options.onMagicNotesChanged?.()
   }
 
@@ -3687,7 +3822,7 @@ export class AssistantDatabase {
       .all(noteId) as MagicNoteEntryRow[]
     return {
       ...toMagicNoteSummary(row),
-      entries: entryRows.map(toMagicNoteEntry)
+      entries: entryRows.map((entry) => this.hydrateMagicNoteEntry(entry))
     }
   }
 
@@ -3715,15 +3850,21 @@ export class AssistantDatabase {
 
   createMagicNote(input: {
     title: string
-    content?: MagicNoteRichContent
+    content?: MagicNoteContent
   }): MagicNoteDetail {
     const id = randomUUID()
     const now = new Date().toISOString()
     const database = this.requireDatabase()
+    if (input.content) {
+      input = { ...input, content: validateMagicNoteContent(input.content) }
+    }
     const embeddedBytes = input.content
       ? magicNoteEmbeddedBytes(input.content)
       : 0
-    if (embeddedBytes > MAGIC_NOTE_MAX_NOTE_EMBED_BYTES) {
+    if (
+      input.content?.version !== 2 &&
+      embeddedBytes > MAGIC_NOTE_MAX_NOTE_EMBED_BYTES
+    ) {
       throw new Error('一篇笔记中的图片、视频和附件总大小不能超过 64 MB')
     }
     database.exec('BEGIN IMMEDIATE')
@@ -3737,6 +3878,7 @@ export class AssistantDatabase {
         .run(id, null, input.title, input.content ? 1 : 0, now, now)
       if (input.content) {
         const entryId = randomUUID()
+        const pointer = this.writeMagicNoteBody(id, entryId, input.content, 0, now)
         database
           .prepare(
             `INSERT INTO magic_note_entries
@@ -3748,7 +3890,7 @@ export class AssistantDatabase {
           .run(
             entryId,
             id,
-            JSON.stringify(input.content),
+            pointer,
             magicNotePlainText(input.content),
             now,
             now,
@@ -3767,6 +3909,7 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+    this.reconcileMagicNoteFiles(id)
     const detail = this.getMagicNote(id)
     this.options.onMagicNotesChanged?.()
     if (input.content) {
@@ -3813,17 +3956,20 @@ export class AssistantDatabase {
     if (result.changes !== 1) {
       throw new Error('笔记不存在')
     }
+    this.reconcileMagicNoteFiles(noteId)
     this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
   }
 
   createMagicNoteEntry(input: {
     noteId: string
-    content: MagicNoteRichContent
+    content: MagicNoteContent
     plainText: string
-  }): MagicNoteDetail {
+  }): MagicNoteEntryCreateResult {
     const database = this.requireDatabase()
     const entryId = randomUUID()
+    const content = validateMagicNoteContent(input.content)
+    input = { ...input, content, plainText: magicNotePlainText(content) }
     const now = new Date().toISOString()
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -3838,6 +3984,7 @@ export class AssistantDatabase {
       if (noteResult.changes !== 1) {
         throw new Error('笔记不存在')
       }
+      const pointer = this.writeMagicNoteBody(input.noteId, entryId, input.content, 0, now)
       database
         .prepare(
           `INSERT INTO magic_note_entries
@@ -3849,7 +3996,7 @@ export class AssistantDatabase {
         .run(
           entryId,
           input.noteId,
-          JSON.stringify(input.content),
+          pointer,
           input.plainText,
           now,
           now,
@@ -3867,44 +4014,58 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+    this.reconcileMagicNoteFiles(input.noteId)
     const detail = this.getMagicNote(input.noteId)
     this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
-    return detail
+    return { ...detail, createdEntryId: entryId }
   }
 
   updateMagicNoteEntry(input: {
     entryId: string
-    content: MagicNoteRichContent
+    content: MagicNoteContent
     plainText: string
     expectedRevision: number
   }): MagicNoteDetail {
     const database = this.requireDatabase()
     const existing = database
-      .prepare('SELECT note_id FROM magic_note_entries WHERE id = ?')
-      .get(input.entryId) as { note_id: string } | undefined
+      .prepare('SELECT * FROM magic_note_entries WHERE id = ?')
+      .get(input.entryId) as MagicNoteEntryRow | undefined
     if (!existing) {
       throw new Error('记录不存在')
     }
+    const content = validateMagicNoteContent(input.content)
+    input = { ...input, content, plainText: magicNotePlainText(content) }
+    const previous = this.hydrateMagicNoteEntry(existing)
+    const preserveComments = content.version === 2 && previous.content.version === 2 && (
+      JSON.stringify(content) === JSON.stringify(previous.content) ||
+      (input.plainText === previous.plainText &&
+        previous.comments.every((comment) => comment.inputMode === 'text-fallback' || comment.inputMode === 'text'))
+    )
     const now = new Date().toISOString()
     database.exec('BEGIN IMMEDIATE')
     try {
+      const current = database.prepare('SELECT revision FROM magic_note_entries WHERE id = ?').get(input.entryId) as { revision: number } | undefined
+      if (current?.revision !== input.expectedRevision) throw new Error('记录已被更新，请刷新后重试')
       this.assertMagicNoteEmbedBudget(
         existing.note_id,
         input.content,
         input.entryId
       )
+      const pointer = this.writeMagicNoteBody(existing.note_id, input.entryId, input.content, input.expectedRevision + 1, now)
       const result = database
         .prepare(
           `UPDATE magic_note_entries
-           SET content_json = ?, plain_text = ?, comments_json = '[]',
-               analyzed_at = NULL, revision = revision + 1, updated_at = ?,
+           SET content_json = ?, plain_text = ?, comments_json = ?,
+                analyzed_at = ?, revision = revision + 1, updated_at = ?,
                image_bytes = ?
            WHERE id = ? AND revision = ?`
         )
         .run(
-          JSON.stringify(input.content),
+          pointer,
           input.plainText,
+          preserveComments ? existing.comments_json : '[]',
+          preserveComments ? existing.analyzed_at : null,
           now,
           magicNoteEmbeddedBytes(input.content),
           input.entryId,
@@ -3932,6 +4093,7 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+    this.reconcileMagicNoteFiles(existing.note_id)
     const detail = this.getMagicNote(existing.note_id)
     this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
@@ -3964,6 +4126,7 @@ export class AssistantDatabase {
       database.exec('ROLLBACK')
       throw error
     }
+    this.reconcileMagicNoteFiles(existing.note_id)
     const detail = this.getMagicNote(existing.note_id)
     this.options.onMagicNotesChanged?.()
     this.notifyMagicTodosChanged()
@@ -3977,7 +4140,7 @@ export class AssistantDatabase {
     if (!row) {
       throw new Error('记录不存在')
     }
-    return toMagicNoteEntry(row)
+    return this.hydrateMagicNoteEntry(row)
   }
 
   saveMagicNoteAnalysis(input: {
@@ -4138,10 +4301,11 @@ export class AssistantDatabase {
       }
 
       const content = setMagicNoteChecklistCompletion(
-        JSON.parse(existing.content_json) as MagicNoteRichContent,
+        this.noteStorage.read(existing.note_id, existing.entry_id).content,
         existing.source_index,
         input.completed
       )
+      const pointer = this.writeMagicNoteBody(existing.note_id, existing.entry_id, content, existing.entry_revision + 1, now)
       const result = database
         .prepare(
           `UPDATE magic_note_entries
@@ -4150,7 +4314,7 @@ export class AssistantDatabase {
            WHERE id = ? AND revision = ?`
         )
         .run(
-          JSON.stringify(content),
+          pointer,
           magicNotePlainText(content),
           now,
           existing.entry_id,
@@ -8343,7 +8507,7 @@ export class AssistantDatabase {
     database: DatabaseSync,
     noteId: string,
     entryId: string,
-    content: MagicNoteRichContent,
+    content: MagicNoteContent,
     now: string
   ): void {
     const note = database
@@ -8505,14 +8669,15 @@ export class AssistantDatabase {
 
   private assertMagicNoteEmbedBudget(
     noteId: string,
-    content: MagicNoteRichContent,
+    content: MagicNoteContent,
     excludedEntryId?: string
   ): void {
+    if (content.version === 2) return
     const existing = this.requireDatabase()
       .prepare(
         `SELECT COALESCE(SUM(image_bytes), 0) AS image_bytes
          FROM magic_note_entries
-         WHERE note_id = ? AND id <> ?`
+         WHERE note_id = ? AND id <> ? AND json_extract(content_json, '$.version') = 1`
       )
       .get(noteId, excludedEntryId ?? '') as { image_bytes: number }
     if (
@@ -9045,7 +9210,7 @@ export class AssistantDatabase {
             database,
             entry.note_id,
             entry.id,
-            JSON.parse(entry.content_json) as MagicNoteRichContent,
+            JSON.parse(entry.content_json) as MagicNoteContent,
             entry.updated_at
           )
         }
@@ -9107,7 +9272,7 @@ export class AssistantDatabase {
         for (const entry of entries) {
           updateImageBytes.run(
             magicNoteImageBytes(
-              JSON.parse(entry.content_json) as MagicNoteRichContent
+              JSON.parse(entry.content_json) as MagicNoteContent
             ),
             entry.id
           )
@@ -10265,11 +10430,24 @@ export class AssistantDatabase {
         throw error
       }
     }
+    if (version.user_version < 37) {
+      // v2 canvas JSON must not be opened by clients that assume Quill v1.
+      database.exec('BEGIN IMMEDIATE; PRAGMA user_version = 37; COMMIT;')
+    }
+    if (version.user_version < 38) {
+      database.exec('BEGIN IMMEDIATE; PRAGMA user_version = 38; COMMIT;')
+    }
   }
 
   private requireDatabase(): DatabaseSync {
     if (!this.database) {
       throw new Error('助手数据库尚未初始化')
+    }
+    if (this.dirtyMagicNotes.size && !this.database.isTransaction) {
+      this.repairMagicNoteStorage(undefined, undefined, this.dirtyMagicNotes)
+    }
+    if (!this.database.isTransaction) {
+      for (const noteId of [...this.pendingMagicNoteCleanup]) this.reconcileMagicNoteFiles(noteId)
     }
     return this.database
   }

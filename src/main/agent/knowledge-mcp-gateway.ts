@@ -44,6 +44,7 @@ import type {
   MagicNoteDetail,
   MagicNoteEntry,
   MagicNoteRichContent,
+  MagicNoteContent,
   MagicNoteSearchResult,
   MagicNoteSummary
 } from '../../shared/magic-notes-contracts'
@@ -129,7 +130,7 @@ export type MagicNotesDatabase = {
   searchMagicNotes(query: string, limit: number): MagicNoteSearchResult[]
   createMagicNote(input: {
     title: string
-    content?: MagicNoteRichContent
+    content?: MagicNoteContent
   }): MagicNoteDetail
   updateMagicNote(input: {
     noteId: string
@@ -140,12 +141,12 @@ export type MagicNotesDatabase = {
   deleteMagicNote(noteId: string): void
   createMagicNoteEntry(input: {
     noteId: string
-    content: MagicNoteRichContent
+    content: MagicNoteContent
     plainText: string
   }): MagicNoteDetail
   updateMagicNoteEntry(input: {
     entryId: string
-    content: MagicNoteRichContent
+    content: MagicNoteContent
     plainText: string
     expectedRevision: number
   }): MagicNoteDetail
@@ -168,6 +169,9 @@ export type MagicNoteToolSummary = {
 export type MagicNoteToolEntry = {
   id: string
   content: string
+  contentKind: 'rich-text' | 'paged-canvas'
+  contentVersion: 1 | 2
+  plainTextEditable: boolean
   revision: number
   createdAt: string
   updatedAt: string
@@ -1337,6 +1341,9 @@ export class KnowledgeMcpGateway {
       const item: MagicNoteToolEntry = {
         id: entry.id,
         content: entry.plainText.slice(0, 12_000),
+        contentKind: entry.content.version === 2 ? 'paged-canvas' : 'rich-text',
+        contentVersion: entry.content.version,
+        plainTextEditable: entry.content.version === 1,
         revision: entry.revision,
         createdAt: entry.createdAt,
         updatedAt: entry.updatedAt
@@ -1431,6 +1438,9 @@ export class KnowledgeMcpGateway {
   ): MagicNoteToolDetail {
     const { database } = this.requireMagicNotes(token, 'write')
     const parsed = magicNoteEntryUpdateTool.inputSchema.parse(input)
+    if (database.getMagicNoteEntry(parsed.entryId).content.version === 2) {
+      throw new Error('画布记录不能通过纯文本工具覆盖，请在画布编辑器中修改，或追加新的纯文本记录')
+    }
     const content = textContent(parsed.content)
     const detail = database.updateMagicNoteEntry({
       entryId: parsed.entryId,

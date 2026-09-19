@@ -155,6 +155,7 @@ import type {
   MagicNoteAnalysisStreamEvent,
   MagicNoteDraftAnalysis,
   MagicNoteDetail,
+  MagicNoteEntryCreateResult,
   MagicNotesSnapshot,
   MagicTodoItem,
   MagicTodoStatus,
@@ -1595,7 +1596,7 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.magicNotesCreateEntry,
         input
-      ) as Promise<MagicNoteDetail>,
+      ) as Promise<MagicNoteEntryCreateResult>,
     updateEntry: (input) =>
       ipcRenderer.invoke(
         ipcChannels.magicNotesUpdateEntry,

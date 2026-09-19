@@ -222,6 +222,26 @@
         "to": "licenses/katex-MIT.txt"
       },
       {
+        "from": "node_modules/fabric/LICENSE",
+        "to": "licenses/fabric-MIT.txt"
+      },
+      {
+        "from": "node_modules/jspdf/LICENSE",
+        "to": "licenses/jspdf-MIT.txt"
+      },
+      {
+        "from": "node_modules/quill/LICENSE",
+        "to": "licenses/quill-BSD-3-Clause.txt"
+      },
+      {
+        "from": "node_modules/pdfjs-dist/LICENSE",
+        "to": "licenses/pdfjs-Apache-2.0.txt"
+      },
+      {
+        "from": "src/renderer/src/magic-canvas/NOTICE.md",
+        "to": "licenses/peoplelib-canvas-NOTICE.md"
+      },
+      {
         "from": "node_modules/mermaid/LICENSE",
         "to": "licenses/mermaid-MIT.txt"
       },
@@ -315,9 +335,11 @@
     "dingtalk-stream": "^2.1.6-beta.1",
     "dompurify": "^3.4.13",
     "fflate": "^0.8.3",
+    "fabric": "7.4.0",
     "html-to-text": "^10.0.0",
     "i18next": "^25.10.10",
     "json5": "^2.2.3",
+    "jspdf": "4.2.1",
     "katex": "^0.16.47",
     "koffi": "3.1.4",
     "lucide-react": "^1.27.0",

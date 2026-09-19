@@ -1,10 +1,23 @@
 import { useEffect, useRef } from 'react'
 import Quill from 'quill'
 import { useTranslation } from 'react-i18next'
-import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
+import type { MagicNoteContent as NoteContent, MagicNoteRichContent } from '../../shared/magic-notes-contracts'
+import { MagicCanvasContent, type MagicCanvasContentHandle } from './MagicCanvasContent'
 import './magic-note-embeds'
 
 export function MagicNoteContent({
+  content, onError, canvasRef
+}: {
+  content: NoteContent
+  onError?: (message: string) => void
+  canvasRef?: React.Ref<MagicCanvasContentHandle>
+}): React.JSX.Element {
+  return content.version === 2
+    ? <MagicCanvasContent ref={canvasRef} content={content} onError={onError} />
+    : <RichNoteContent content={content} />
+}
+
+function RichNoteContent({
   content
 }: {
   content: MagicNoteRichContent

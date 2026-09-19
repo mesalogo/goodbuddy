@@ -38,6 +38,7 @@ export type MagicNoteEditorProps = {
   ariaInvalid?: boolean
   ariaLabel: string
   onChange: (content: MagicNoteRichContent) => void
+  onReady?: (content: MagicNoteRichContent) => void
   onError: (message: string) => void
   onParagraphCommit?: (content: MagicNoteRichContent) => void
 }
@@ -101,6 +102,7 @@ export function MagicNoteEditor({
   ariaInvalid = false,
   ariaLabel,
   onChange,
+  onReady,
   onError,
   onParagraphCommit
 }: MagicNoteEditorProps): React.JSX.Element {
@@ -111,6 +113,7 @@ export function MagicNoteEditor({
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const quillRef = useRef<Quill | null>(null)
   const onChangeRef = useRef(onChange)
+  const onReadyRef = useRef(onReady)
   const onErrorRef = useRef(onError)
   const onParagraphCommitRef = useRef(onParagraphCommit)
   const translateRef = useRef(t)
@@ -118,10 +121,11 @@ export function MagicNoteEditor({
 
   useEffect(() => {
     onChangeRef.current = onChange
+    onReadyRef.current = onReady
     onErrorRef.current = onError
     onParagraphCommitRef.current = onParagraphCommit
     translateRef.current = t
-  }, [onChange, onError, onParagraphCommit, t])
+  }, [onChange, onReady, onError, onParagraphCommit, t])
 
   const insertFiles = async (
     files: File[],
@@ -259,6 +263,7 @@ export function MagicNoteEditor({
           }
         }))
       )
+      if (quillRef.current !== quill) return
       let index = quill.getSelection(true)?.index ?? quill.getLength() - 1
       for (const embed of embeds) {
         if (embed.kind === 'image') {
@@ -360,7 +365,8 @@ export function MagicNoteEditor({
       }
     }
     quill.on('text-change', handleChange)
-    emitChange()
+    const initialValue = emitChange()
+    onReadyRef.current?.(initialValue)
     return () => {
       quill.off('text-change', handleChange)
       quillRef.current = null

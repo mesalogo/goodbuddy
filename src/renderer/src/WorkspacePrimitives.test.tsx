@@ -37,7 +37,7 @@ const fontSetup = readFileSync(
 )
 
 function themeTokens(selector: string): Record<string, string> {
-  const selectorIndex = stylesheet.indexOf(selector)
+  const selectorIndex = stylesheet.indexOf(`${selector} {`)
   const blockStart = stylesheet.indexOf('{', selectorIndex)
   const blockEnd = stylesheet.indexOf('}', blockStart)
   if (selectorIndex < 0 || blockStart < 0 || blockEnd < 0) {

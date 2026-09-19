@@ -5,6 +5,8 @@ import {
   MAGIC_NOTE_VIDEO_TYPES,
   magicNoteDataBytes,
   magicNoteRichContentSchema,
+  magicNoteContentSchema,
+  type MagicNoteContent,
   type MagicNoteRichContent
 } from '../../shared/magic-notes-contracts'
 
@@ -31,7 +33,7 @@ const signatures = {
 
 type SupportedImageType = keyof typeof signatures
 
-function validateImage(dataUrl: string): void {
+function validateImage(dataUrl: string, maxBytes = MAGIC_NOTE_MAX_IMAGE_BYTES): void {
   const match = /^data:image\/(jpeg|png|gif|webp);base64,(.+)$/.exec(
     dataUrl
   )
@@ -43,7 +45,7 @@ function validateImage(dataUrl: string): void {
   const bytes = Buffer.from(payload, 'base64')
   if (
     bytes.length === 0 ||
-    bytes.length > MAGIC_NOTE_MAX_IMAGE_BYTES
+    bytes.length > maxBytes
   ) {
     throw new Error('每张图片必须小于 2 MB')
   }
@@ -139,26 +141,35 @@ export function validateMagicNoteRichContent(
 }
 
 export function magicNotePlainText(
-  content: MagicNoteRichContent
+  content: MagicNoteContent
 ): string {
+  if (content.version === 2) {
+    const text: string[] = [magicNotePlainText(flowContent(content))]
+    const visit = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return
+      if (Array.isArray(value)) { value.forEach(visit); return }
+      for (const [key, child] of Object.entries(value)) {
+        if ((key === 'text' || key === 'insert') && typeof child === 'string') text.push(child)
+        else if (typeof child === 'object') visit(child)
+      }
+    }
+    for (const page of content.pages) {
+      if (page.background.type === 'pdf' && page.background.text) text.push(page.background.text)
+      visit(page.objects)
+    }
+    return text.filter(Boolean).join('\n').trim()
+  }
   return content.ops
-    .map((operation) =>
-      typeof operation.insert === 'string'
-        ? operation.insert
-        : 'image' in operation.insert
-          ? '[图片]'
-          : 'localVideo' in operation.insert
-            ? `[视频：${operation.insert.localVideo.name}]`
-            : `[附件：${operation.insert.attachment.name}]`
-    )
+    .map((operation) => insertText(operation.insert))
     .join('')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
 
 export function magicNoteImageBytes(
-  content: MagicNoteRichContent
+  content: MagicNoteContent
 ): number {
+  if (content.version === 2) return canvasResourceBytes(content, true)
   return content.ops.reduce((total, operation) => {
     if (typeof operation.insert === 'string') {
       return total
@@ -173,8 +184,9 @@ export function magicNoteImageBytes(
 }
 
 export function magicNoteEmbeddedBytes(
-  content: MagicNoteRichContent
+  content: MagicNoteContent
 ): number {
+  if (content.version === 2) return canvasResourceBytes(content, false)
   return content.ops.reduce((total, operation) => {
     if (typeof operation.insert === 'string') {
       return total
@@ -208,19 +220,16 @@ function isChecklist(
 }
 
 export function magicNoteChecklistItems(
-  content: MagicNoteRichContent
+  content: MagicNoteContent
 ): MagicNoteChecklistItem[] {
+  if (content.version === 2) return magicNoteChecklistItems(flowContent(content))
   const items: MagicNoteChecklistItem[] = []
   let line = ''
   let sourceIndex = 0
   for (const operation of content.ops) {
     if (typeof operation.insert !== 'string') {
-      line +=
-        'image' in operation.insert
-          ? '[图片]'
-          : 'localVideo' in operation.insert
-            ? `[视频：${operation.insert.localVideo.name}]`
-            : `[附件：${operation.insert.attachment.name}]`
+      if ('canvasPageBreak' in operation.insert) continue
+      line += insertText(operation.insert)
       continue
     }
     const segments = operation.insert.split(/(\n)/u)
@@ -246,10 +255,15 @@ export function magicNoteChecklistItems(
 }
 
 export function setMagicNoteChecklistCompletion(
-  content: MagicNoteRichContent,
+  content: MagicNoteContent,
   targetIndex: number,
   completed: boolean
-): MagicNoteRichContent {
+): MagicNoteContent {
+  if (content.version === 2) {
+    if (!content.flow) return content
+    const updated = setMagicNoteChecklistCompletion(flowContent(content), targetIndex, completed) as MagicNoteRichContent
+    return { ...content, flow: { ...content.flow, ops: updated.ops } }
+  }
   let sourceIndex = 0
   return {
     ...content,
@@ -280,4 +294,66 @@ export function setMagicNoteChecklistCompletion(
       })
     })
   }
+}
+
+function flowContent(content: Extract<MagicNoteContent, { version: 2 }>): MagicNoteRichContent {
+  // Checklist code only interprets Quill text and list attributes; other fields survive writeback.
+  return { version: 1, ops: (content.flow?.ops ?? []) as MagicNoteRichContent['ops'] }
+}
+
+function insertText(insert: string | Record<string, unknown>): string {
+  if (typeof insert === 'string') return insert
+  if ('canvasPageBreak' in insert) return '\n'
+  if ('image' in insert) return '[图片]'
+  for (const [key, label] of [['localVideo', '视频'], ['attachment', '附件']] as const) {
+    const value = insert[key]
+    if (value && typeof value === 'object' && 'name' in value && typeof value.name === 'string') return `[${label}：${value.name}]`
+  }
+  return '[嵌入内容]'
+}
+
+function canvasResourceBytes(content: Extract<MagicNoteContent, { version: 2 }>, imagesOnly: boolean): number {
+  let total = 0
+  const visit = (value: unknown): void => {
+    if (typeof value === 'string' && /^data:[^;]+;base64,/.test(value)) {
+      if (!imagesOnly || value.startsWith('data:image/')) total += magicNoteDataBytes(value)
+    } else if (Array.isArray(value)) value.forEach(visit)
+    else if (value && typeof value === 'object') Object.values(value).forEach(visit)
+  }
+  visit(content)
+  return total
+}
+
+export function validateMagicNoteContent(input: unknown): MagicNoteContent {
+  const content = magicNoteContentSchema.parse(input)
+  if (content.version === 1) return validateMagicNoteRichContent(content)
+  const assets = new Map(content.assets.map((asset) => [asset.id, asset]))
+  if (assets.size !== content.assets.length) throw new Error('画布资源 ID 重复')
+  if (new Set(content.pages.map((page) => page.id)).size !== content.pages.length) throw new Error('画布页面 ID 重复')
+  for (const asset of content.assets) {
+    const bytes = decodeEmbeddedFile({ ...asset, size: magicNoteDataBytes(asset.dataUrl) }, Number.MAX_SAFE_INTEGER)
+    if (asset.mimeType.startsWith('image/')) validateImage(asset.dataUrl, Number.MAX_SAFE_INTEGER)
+    if (asset.mimeType === 'application/pdf' && bytes.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('PDF 内容与声明的格式不一致')
+  }
+  const visit = (value: unknown): void => {
+    if (typeof value === 'string' && value.startsWith('data:image/')) validateImage(value, Number.MAX_SAFE_INTEGER)
+    else if (Array.isArray(value)) value.forEach(visit)
+    else if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>
+      if (record.assetId !== undefined && (typeof record.assetId !== 'string' || !assets.has(record.assetId))) throw new Error('画布引用的资源不存在')
+      if (record.type === 'Image' || record.type === 'image' || record.canvasKind === 'image') {
+        if (record.assetId !== undefined) {
+          if (!assets.get(record.assetId as string)?.mimeType.startsWith('image/')) throw new Error('图片资源类型错误')
+        } else if (typeof record.src !== 'string') throw new Error('图片需要内嵌数据或资源 ID')
+        if (record.src !== undefined) validateImage(String(record.src), Number.MAX_SAFE_INTEGER)
+      }
+      Object.values(record).forEach(visit)
+    }
+  }
+  for (const page of content.pages) {
+    if (page.background.type === 'pdf' && assets.get(page.background.assetId)?.mimeType !== 'application/pdf') throw new Error('PDF 背景资源不存在或类型错误')
+    visit(page.objects)
+  }
+  visit(content.flow)
+  return content
 }

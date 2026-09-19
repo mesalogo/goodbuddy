@@ -378,7 +378,7 @@ import type {
 } from './goodbuddy-config-service'
 import {
   magicNotePlainText,
-  validateMagicNoteRichContent
+  validateMagicNoteContent
 } from './magic-notes/rich-content'
 import { weixinVerificationInputSchema } from '../shared/weixin-channel-contracts'
 import type { RemoteChannelActivity } from '../shared/remote-channel-contracts'
@@ -7929,7 +7929,7 @@ export function registerIpcHandlers(
     (event, input: unknown) => {
       assertTrustedSender(event, window)
       const parsed = magicNoteEntryCreateSchema.parse(input)
-      const content = validateMagicNoteRichContent(parsed.content)
+      const content = validateMagicNoteContent(parsed.content)
       return assistantDatabase.createMagicNoteEntry({
         noteId: parsed.noteId,
         content,
@@ -7943,7 +7943,7 @@ export function registerIpcHandlers(
     (event, input: unknown) => {
       assertTrustedSender(event, window)
       const parsed = magicNoteEntryUpdateSchema.parse(input)
-      const content = validateMagicNoteRichContent(parsed.content)
+      const content = validateMagicNoteContent(parsed.content)
       return assistantDatabase.updateMagicNoteEntry({
         entryId: parsed.entryId,
         expectedRevision: parsed.expectedRevision,
@@ -7966,7 +7966,7 @@ export function registerIpcHandlers(
     ipcChannels.magicNotesAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { entryId, requestId, direction, format } =
+      const { entryId, requestId, direction, format, canvasImages } =
         magicNoteAnalyzeSchema.parse(input)
       const entry = assistantDatabase.getMagicNoteEntry(entryId)
       const note = assistantDatabase.getMagicNoteContext(entry.noteId)
@@ -7987,7 +7987,7 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicNoteEntry(
           analysisRuntime,
           entry,
-          { requestId, direction, format },
+          { requestId, direction, format, canvasImages },
           format === 'structured'
             ? undefined
             : (delta) => {
@@ -8004,7 +8004,8 @@ export function registerIpcHandlers(
                   )
                 }
               },
-          persistModelUsage
+          persistModelUsage,
+          { supportsImageInput: settings.supportsImageInput === true }
         )
         const analyzedNote = assistantDatabase.saveMagicNoteAnalysis({
           entryId,
@@ -8034,14 +8035,14 @@ export function registerIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const parsed = magicNoteDraftAnalyzeSchema.parse(input)
-      const content = validateMagicNoteRichContent(parsed.content)
+      const content = validateMagicNoteContent(parsed.content)
       const plainText = magicNotePlainText(content)
       const settings = await settingsStore.getResolvedSettings()
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
         settings
       )
-      const { requestId, direction, format } = parsed
+      const { requestId, direction, format, canvasImages } = parsed
       assistantDatabase.createTask({
         id: requestId,
         title: '分析未保存笔记草稿',
@@ -8054,7 +8055,7 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicNoteDraft(
           analysisRuntime,
           plainText,
-          { requestId, direction, format },
+          { requestId, direction, format, canvasImages },
           format === 'structured'
             ? undefined
             : (delta) => {
@@ -8071,12 +8072,14 @@ export function registerIpcHandlers(
                   )
                 }
               },
-          persistModelUsage
+          persistModelUsage,
+          { supportsImageInput: settings.supportsImageInput === true, content }
         )
         assistantDatabase.updateTaskStatus(requestId, 'completed')
         return {
           id: randomUUID(),
           comments,
+          inputMode: comments[0]?.inputMode,
           analyzedAt: new Date().toISOString()
         }
       } catch (error) {
@@ -8129,9 +8132,10 @@ export function registerIpcHandlers(
     ipcChannels.magicTodosAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { todoId, requestId, direction, format } =
+      const { todoId, requestId, direction, format, canvasImages } =
         magicTodoIdSchema.parse(input)
       const todo = assistantDatabase.getMagicTodo(todoId)
+      const entry = assistantDatabase.getMagicNoteEntry(todo.entryId)
       const settings = await settingsStore.getResolvedSettings()
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
@@ -8149,7 +8153,7 @@ export function registerIpcHandlers(
         const comments = await analyzeMagicTodo(
           analysisRuntime,
           todo,
-          { requestId, direction, format },
+          { requestId, direction, format, canvasImages },
           format === 'structured'
             ? undefined
             : (delta) => {
@@ -8166,7 +8170,8 @@ export function registerIpcHandlers(
                   )
                 }
               },
-          persistModelUsage
+          persistModelUsage,
+          { supportsImageInput: settings.supportsImageInput === true, content: entry.content }
         )
         const analyzedTodo = assistantDatabase.saveMagicTodoAnalysis({
           todoId,

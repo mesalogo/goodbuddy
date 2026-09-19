@@ -1,0 +1,90 @@
+.magic-canvas-editor, .magic-canvas-content {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  font-family: var(--font-family-ui);
+}
+.magic-canvas-editor .canvas-note-root {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+.magic-canvas-editor .canvas-note-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border-default);
+}
+.magic-canvas-editor .canvas-note-tool-group, .magic-canvas-editor .canvas-note-page-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.magic-canvas-editor .canvas-note-tool-group { border-right: 1px solid var(--border-subtle); padding-right: var(--space-1); }
+.magic-canvas-editor .canvas-note-page-controls { margin-left: auto; }
+.magic-canvas-editor .canvas-note-button, .magic-canvas-editor .canvas-note-toolbar select, .magic-canvas-editor .canvas-note-color, .magic-canvas-open {
+  height: 32px;
+  min-width: 32px;
+  padding: var(--space-1);
+  margin: 0;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  font: inherit;
+  font-size: var(--font-body);
+  cursor: pointer;
+}
+.magic-canvas-editor .canvas-note-button { display: inline-flex; justify-content: center; align-items: center; }
+.magic-canvas-editor .canvas-note-icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.magic-canvas-editor .canvas-note-color { width: 34px; }
+.magic-canvas-editor .canvas-note-page-counter { min-width: 48px; color: var(--text-secondary); text-align: center; font-size: var(--font-body); }
+.magic-canvas-editor button:hover:not(:disabled), .magic-canvas-open:hover { background: var(--accent-subtle); border-color: var(--accent); }
+.magic-canvas-editor .canvas-note-button.canvas-note-active { background: var(--accent-subtle); border-color: var(--accent-selected); color: var(--accent); }
+.magic-canvas-editor .canvas-note-delete-confirm { color: var(--danger); border-color: var(--danger-border); background: var(--danger-subtle); }
+.magic-canvas-editor :disabled { opacity: .5; cursor: not-allowed; }
+.magic-canvas-editor :focus-visible, .magic-canvas-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.magic-canvas-editor .canvas-note-viewport { min-width: 0; min-height: 0; flex: 0 0 auto; overflow: auto; padding: var(--space-4); background: var(--surface-canvas); }
+.magic-canvas-editor .canvas-note-page { position: relative; margin: 0 auto; flex-shrink: 0; overflow: hidden; box-shadow: var(--shadow-card); }
+.magic-canvas-editor .canvas-note-background { z-index: 0; display: block; }
+.magic-canvas-editor .canvas-note-fabric-container { z-index: 2; }
+.magic-canvas-editor .canvas-note-fabric-container canvas { display: block; }
+.magic-canvas-editor .canvas-flow-layer { position: absolute; z-index: 1; left: 50%; overflow: hidden; transform: translateX(-50%); pointer-events: none; }
+.magic-canvas-editor .canvas-flow-active { cursor: text; outline: 1px dashed var(--accent); outline-offset: var(--space-1); }
+/* 纸张是导出内容，始终保留实际墨色，不跟随应用主题反色。 */
+.magic-canvas-editor .canvas-flow-quill.ql-container.ql-snow { overflow: hidden; border: 0; color: #111827; font-family: var(--font-family-ui); font-size: 16px; }
+.magic-canvas-editor .canvas-flow-surface.ql-editor { min-height: 0; max-height: none; padding: 0; overflow: visible; column-fill: auto; color: #111827; line-height: 1.7; }
+.magic-canvas-editor .canvas-flow-surface.ql-blank::before { left: 0; right: 0; }
+.magic-canvas-editor .canvas-flow-layer:not(.canvas-flow-active) .ql-blank::before { display: none; }
+.magic-canvas-editor .canvas-flow-page-break { width: 100%; height: 1px; margin: 0; padding: 0; break-after: column; border: 0; }
+.magic-canvas-editor .canvas-flow-toolbar-host { flex: 0 0 auto; background: var(--surface-subtle); border-bottom: 1px solid var(--border-default); }
+.magic-canvas-editor .canvas-flow-toolbar-host.hidden { display: none; }
+.magic-canvas-editor .canvas-flow-toolbar.ql-toolbar { border: 0; font: inherit; }
+.magic-canvas-editor .canvas-flow-toolbar .ql-formats { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin: 0; }
+.magic-canvas-editor .canvas-flow-toolbar button { width: 32px; height: 32px; }
+.magic-canvas-editor .canvas-flow-toolbar .ql-picker { color: var(--text-primary); }
+.magic-canvas-editor .canvas-flow-toolbar .ql-stroke { stroke: var(--text-primary); }
+.magic-canvas-editor .canvas-flow-toolbar .ql-fill { fill: var(--text-primary); }
+.magic-canvas-editor .canvas-flow-toolbar .ql-picker-options { color: var(--text-primary); background: var(--surface-raised); border-color: var(--border-control); box-shadow: var(--shadow-card); }
+.magic-canvas-editor .canvas-flow-toolbar button.ql-active .ql-stroke { stroke: var(--accent); }
+.magic-canvas-content .canvas-note-tool-group, .magic-canvas-content .canvas-note-add-page, .magic-canvas-content .canvas-note-delete-page { display: none; }
+.magic-canvas-open { align-self: flex-end; margin-bottom: var(--space-2); padding-inline: var(--space-3); }
+@media (max-width: 720px) {
+  .magic-canvas-editor .canvas-note-page-controls { flex-basis: 100%; justify-content: flex-end; }
+  .magic-canvas-editor .canvas-note-viewport { padding: var(--space-2); }
+}

@@ -21,6 +21,47 @@ import type { ImageOperation } from '../../shared/image-generation-contracts'
 
 const temporaryDirectories: string[] = []
 
+it('roundtrips canvas assets and keeps todos stable across geometry edits and completion', async () => {
+  const database = await createDatabase()
+  try {
+    const content = {
+      version: 2 as const, kind: 'paged-canvas' as const,
+      pages: [{ id: 'page', width: 794, height: 1123,
+        background: { type: 'template' as const, template: 'grid' as const },
+        objects: [{ type: 'IText', text: 'Canvas annotation', left: 1 }] }],
+      flow: { version: 1 as const, ops: [{ insert: 'Canvas task' }, { insert: '\n', attributes: { list: 'unchecked' } }] },
+      assets: [{ id: 'file', name: 'file.txt', mimeType: 'text/plain', dataUrl: 'data:text/plain;base64,aGVsbG8=' }]
+    }
+    const note = database.createMagicNote({ title: 'Canvas', content })
+    const entry = note.entries[0]!
+    const todo = database.listMagicTodos()[0]!
+    database.saveMagicNoteAnalysis({ entryId: entry.id, expectedRevision: entry.revision, comments: [{ id: randomUUID(), kind: 'summary', content: 'Old analysis', inputMode: 'canvas-images' }] })
+    const analyzed = database.getMagicNoteEntry(entry.id)
+    const moved = { ...content, pages: [{ ...content.pages[0]!, objects: [{ type: 'IText', text: 'Canvas annotation', left: 500 }] }] }
+    database.updateMagicNoteEntry({ entryId: entry.id, content: moved, plainText: 'stale text', expectedRevision: analyzed.revision })
+    expect(database.getMagicNoteEntry(entry.id)).toMatchObject({ content: moved, plainText: 'Canvas task\nCanvas annotation', comments: [] })
+    expect(database.listMagicTodos()[0]).toMatchObject({ id: todo.id, sourceIndex: 0, revision: todo.revision })
+    database.updateMagicTodo({ todoId: todo.id, completed: true, expectedRevision: todo.revision })
+    const saved = database.getMagicNoteEntry(entry.id)
+    expect(saved.content).toMatchObject({ pages: moved.pages, assets: content.assets, flow: { ops: [{ insert: 'Canvas task' }, { insert: '\n', attributes: { list: 'checked' } }] } })
+    expect(() => database.updateMagicNoteEntry({ entryId: entry.id, content, plainText: '', expectedRevision: entry.revision })).toThrow('已被更新')
+    database.close()
+    database.initialize('C:\\Workspace')
+    expect(database.getMagicNoteEntry(entry.id)).toEqual(saved)
+    expect(database.searchMagicNotes('Canvas annotation', 10)).toHaveLength(1)
+    database.saveMagicNoteAnalysis({ entryId: entry.id, expectedRevision: saved.revision, comments: [{ id: randomUUID(), kind: 'summary', content: 'Text analysis', inputMode: 'text-fallback' }] })
+    const textAnalyzed = database.getMagicNoteEntry(entry.id)
+    const repositioned = { ...moved, pages: [{ ...moved.pages[0]!, objects: [{ type: 'IText', text: 'Canvas annotation', left: 200 }] }] }
+    database.updateMagicNoteEntry({ entryId: entry.id, content: repositioned, plainText: '', expectedRevision: textAnalyzed.revision })
+    const textPreserved = database.getMagicNoteEntry(entry.id)
+    expect(textPreserved.comments).toEqual(textAnalyzed.comments)
+    expect(textPreserved.analyzedAt).toEqual(textAnalyzed.analyzedAt)
+    const revised = { ...repositioned, pages: [{ ...repositioned.pages[0]!, objects: [{ type: 'IText', text: 'Changed annotation', left: 200 }] }] }
+    database.updateMagicNoteEntry({ entryId: entry.id, content: revised, plainText: '', expectedRevision: textPreserved.revision })
+    expect(database.getMagicNoteEntry(entry.id).comments).toEqual([])
+  } finally { database.close() }
+})
+
 it('persists conversation pins without changing timestamps or allowing autosaves to overwrite them', async () => {
   const database = await createDatabase()
   const header = { id: randomUUID(), title: 'Pinned conversation', updatedAt: 1000 }
@@ -100,7 +141,7 @@ it('migrates schema 35 conversations to unpinned while retaining existing data a
   }
   const inspected = new DatabaseSync(path)
   try {
-    expect(inspected.prepare('PRAGMA user_version').get()).toEqual({ user_version: 36 })
+    expect(inspected.prepare('PRAGMA user_version').get()).toEqual({ user_version: ASSISTANT_DATABASE_SCHEMA_VERSION })
     expect(inspected.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
     expect(inspected.prepare('SELECT created_at, updated_at FROM conversations WHERE id = ?').get(header.id)).toEqual({
       created_at: new Date(1000).toISOString(), updated_at: new Date(1000).toISOString()
@@ -1648,9 +1689,11 @@ describe('AssistantDatabase', () => {
       },
       plainText: '迁移待办'
     })
+    const legacyContent = initial.getMagicNote(note.id).entries[0]!.content
     initial.close()
 
     const legacy = new DatabaseSync(databasePath)
+    legacy.prepare('UPDATE magic_note_entries SET content_json = ? WHERE note_id = ?').run(JSON.stringify(legacyContent), note.id)
     legacy.exec(`
       DELETE FROM magic_todos;
       ALTER TABLE conversations DROP COLUMN pinned;
@@ -6773,9 +6816,8 @@ describe('AssistantDatabase', () => {
       completed: true,
       revision: todo.revision + 1
     })
-    expect(
-      database.getMagicNote(note.id).entries[0]!.content.ops
-    ).toEqual([
+    const updatedContent = database.getMagicNote(note.id).entries[0]!.content
+    expect(updatedContent.version === 1 && updatedContent.ops).toEqual([
       { insert: '核对发布材料' },
       { insert: '\n', attributes: { list: 'checked' } }
     ])

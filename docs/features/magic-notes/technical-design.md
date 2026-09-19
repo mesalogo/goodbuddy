@@ -1,5 +1,255 @@
 # Magic Notes Technical Design
 
+## Continuous Record Workspace
+
+The detail mounts every entry in a continuous newest-first stream. The left index
+and AI source buttons scroll to an entry ID without changing the active editor,
+clearing a composer, flushing content or invoking the draft-switch guard. Opening
+a note shows a blank composer below the title and above the stream, without a New
+record button. Editing another entry or
+leaving the note still checks unsaved content after flushing canvas changes.
+The shared store returns `MagicNoteEntryCreateResult`, the existing detail shape
+plus a required `createdEntryId`. Production IPC and preload preserve that ID.
+Creating an entry selects this exact ID and resets the composer through its key;
+it does not enter editing, including after automatic analysis. Text/canvas selection
+is retained. Canvas capture for automatic analysis completes before the reset.
+the renderer never infers it from a list difference or timestamp. Agent/MCP
+creation delegates to the same store; its existing public note projection is
+unchanged.
+Explicit Edit opens a saved record. Update and automatic-analysis responses advance its revision, so subsequent
+saves use `updateEntry` and the returned revision. Failed writes retain the draft.
+
+The dirty baseline belongs to the mounted editor. `MagicNoteEditor.onReady` reports
+Quill's normalized contents after loading; `MagicCanvasEditor.onReady` reports the
+first completed core flush, after Fabric restoration and flow pagination. Canvas
+input stays disabled until this baseline exists, and imperative flush waits for
+the same initialization promise. Raw stored JSON is not a valid comparison baseline
+for an initialized editor: Quill can add its terminal newline, and Fabric/flow
+serialization can add defaults or change field order. Later changes and navigation
+flushes compare with the initialized baseline without resetting it. A successful
+save remounts at the returned revision and establishes a new baseline; an unchanged
+background revision retains the existing editor and baseline. Aborted canvas
+initialization and file reads for an unmounted text editor cannot write back.
+
+The real saved formatted-text probe reproduced identical values with different
+Delta key order: storage returned `{insert, attributes}` and Quill emitted
+`{attributes, insert}`. The old `JSON.stringify` comparison therefore reported
+dirty after a successful save. The saved PDF probe's initialized content and
+subsequent flush were byte-for-byte equal; readiness is still awaited for canvas
+restoration rather than assumed from the save response.
+
+Saving or leaving an editing context clears the immediate-analysis timer, queued
+content and streamed draft comments through the shared draft-analysis cleanup.
+The context counter rejects late results and prevents dispatch after abandoned
+settings preparation. This cleanup does not clear the new-entry composer's content.
+
+The left index is 168px wide. Its toggle stays in the detail header immediately
+before the title; collapsing hides the entire index and removes its grid column,
+border and occupied width. AI has a separate
+right pane with its existing resize separator and header toggle. Both panes scroll
+independently and persist independent desktop visibility. At container widths of
+800px or less, the index defaults to hidden and the same header toggle opens or
+closes a 168px drawer below the header, without reserving a rail; choosing
+an item or pressing Escape closes it. AI moves below the stream, limited to 40%
+of layout height and 280px. Overview search, scroll, task selection and return
+focus stay mounted.
+
+`MagicCanvasThumbnail` lazily queues visible records through a temporary core
+renderer and caches results by content identity in a WeakMap. Core `capturePages`
+accepts `firstPageOnly` and `thumbnailWidth`; thumbnails capture page zero at 240px
+width, including paper/PDF background, Quill flow, images and Fabric objects.
+They do not capture all pages or leave an editor mounted for every record.
+An abort listener calls core `destroy()` immediately: PDF render cancellation and
+the Fabric abort happen synchronously, before waiting for capture to settle.
+The `finally` path awaits the same destruction promise and removes the temporary
+surface, without destroying twice or waiting for capture before cancellation.
+AI capture retains its existing
+all-page behavior. Main canvas page height, wheel handling and file storage are
+unchanged.
+
+Background refresh preserves dirty editing content and its original optimistic
+revision, including externally deleted entries. Clean editors adopt refreshed
+entries; deleting a clean selection updates `selectedEntryId` to a remaining
+entry or the empty state. Later appends preserve that actual selection, rather
+than recalculating a render-only fallback. Dirty deleted entries remain open
+until explicitly discarded. No background refresh saves a draft.
+
+## Canvas Storage Contract
+
+`MagicNoteContent` is the union of unchanged v1 Quill rich content and v2
+`paged-canvas`. The shared schema is authoritative. Canvas pages carry dimensions,
+template/PDF backgrounds, opaque Fabric object records and optional `flowAuto`.
+The optional Quill flow accepts native PeopleLib `version: 1` and page-break
+embeds. Template names are `blank`, `ruled`, `grid`, `dot`; PDF backgrounds use
+one-based `pageNumber` and optional extracted `text`.
+
+API assets are document-local `{id,name,mimeType,dataUrl}` records. Backgrounds and
+image objects reference stable asset IDs; image objects can also embed raster
+data directly. Main validates data encoding, image/PDF signatures and references.
+Canvas has no v1 resource-size budget. `image_bytes` counts decoded embedded
+resource bytes for new entries. Bodies and binary assets use the file storage
+contract below; there is no separate resource table, resource staging or extra
+resource IPC. Renderer, preload and IPC continue to exchange hydrated v1/v2
+content with data URLs.
+
+Schema 38 replaces SQLite body payloads with file markers. Schema 37 was the
+earlier canvas compatibility marker; its embedded-payload layout is historical.
+Plain text combines flow text, PDF extracted text and object text for search.
+Checklist indexes depend only on flow checklist lines; moving objects does not
+change todo identity. Completion updates flow without replacing pages or assets.
+Entry edits retain optimistic revisions. Canvas comment retention depends on the
+actual analysis input, as described below.
+
+`note_get` reports content kind/version and `plainTextEditable`. The text update
+tool rejects canvas entries before mutation. These tools execute in the desktop
+gateway; remote gbagent's injected image MCP server is unaffected. Browser page
+renders can be sent as `analysisOptions.canvasImages`; analysis comments and draft
+results can retain the actual `inputMode` used.
+
+## File Storage and Writes
+
+`MagicNoteStorage` owns files under `dirname(assistantDatabasePath)/notes`:
+
+```text
+notes/<noteId>/
+  note.json                  # Derived {id, entries} membership manifest
+  entries/<entryId>.json      # Authoritative body envelope
+  assets/<sha256>.<ext>       # Binary assets deduplicated within this note
+```
+
+Each body envelope contains `id`, `noteId`, `revision`, `updatedAt` and `content`.
+SQLite owns note metadata, entry membership, search/plain-text and byte indexes,
+optimistic revisions, todos and comments. Entry `content_json` contains only
+`{storage: "file", version: <content version>, revision: <body revision>}`.
+Comment-only revision increments do not change the indexed body revision.
+
+Known media fields become `{$asset: "assets/<sha256>.<ext>", mimeType: "..."}`
+on disk and hydrate back to data URLs on API reads. These fields are v1
+`insert.image`, `localVideo.dataUrl` and `attachment.dataUrl`; canvas
+`assets[].dataUrl`, `preview`, flow embeds and image-object `src`, including
+nested objects. Ordinary text, insert strings, names and arbitrary `$asset`
+objects remain unchanged. Canvas asset IDs and PDF references are preserved.
+Write, read and garbage collection use the same scoped field traversal.
+
+Revision checks run under `BEGIN IMMEDIATE` before file writes. Assets are
+written before the temporary body file is atomically renamed over the entry
+file; the database then commits its marker and indexes. This is not a single
+atomic transaction spanning SQLite and the filesystem. If a replacement body
+was renamed but indexing failed, the next database access or reopen reads it
+back, repairs plain text, byte counts and todos, advances revisions and
+invalidates old analysis. Missing bodies raise an error instead of becoming
+empty content. Failed creates leave no accepted database membership; their
+unaccepted files are removed on the next access or reopen.
+
+After commit, reconciliation derives `note.json` from database membership and
+scans all retained entry files before removing unreferenced assets. Manifest or
+GC failures log `console.warn` with the note ID and error and remain in an
+in-memory retry set. Later database access retries; reopening derives cleanup
+again from membership. These cleanup failures do not turn a committed save,
+delete or reset into a failed operation or suppress its notifications. Body
+persistence and index-repair failures still propagate. Entry deletion, note
+deletion and assistant-data reset share this cleanup path; deferred whole-tree
+cleanup checks current membership so it preserves notes created after reset.
+There is no persistent retry journal, and renderer-only drafts create no files.
+
+## Schema 38 Migration
+
+The existing startup storage worker runs before the business connection opens.
+It upgrades the schema and converts legacy payloads one entry per SQLite
+transaction: write assets and body, read back hydrated content, compare JSON
+equality, then replace the old `content_json` payload with its file marker.
+Already converted entries are reconciled on retry. Matching body revisions do
+not require rehydrating binary payloads. Direct `AssistantDatabase.initialize`
+callers and tests also run storage repair.
+
+Space reclamation is separate from conversion. Every worker attempt checks
+`PRAGMA freelist_count` and runs checkpoint/VACUUM when free pages remain.
+Cancellation after the last converted entry or a VACUUM failure therefore
+allows reclamation to retry on the next startup, even with no legacy rows left.
+The schema marker alone does not establish that conversion and reclamation
+finished. General migration requirements are in the
+[database migration guide](../../development/database-migrations.md).
+
+## Backup and Restore
+
+A restorable backup must pair a consistent SQLite backup with the adjacent
+`notes/` tree from the same period with note writes paused, or with the app
+closed. Handle active WAL through SQLite's consistent backup mechanism; copying
+only the database main file while it is active is insufficient. Restore both
+parts together. SQLite-only backups of file-backed entries cannot recover
+bodies or assets, and `note.json` alone cannot recover database metadata,
+revisions, todos or comments.
+
+The product has no one-click assistant backup action. This is an operational
+backup boundary, not a new UI capability. The tested backup/restore and migration
+scope, including the lack of a real user historical database run, is recorded
+in [progress](./progress.md).
+
+## Canvas Editor and Export
+
+`MagicNotesWorkspace` selects rich-text or canvas content for new entries and
+opens saved canvases in `MagicCanvasEditor`; `MagicNoteContent` delegates saved
+canvas rendering to the paginated `MagicCanvasContent` viewer. The React adapter
+wraps the retained PeopleLib Fabric + Quill core. Fabric owns page annotations;
+Quill owns the continuous body flow. Saving awaits `flush()` so queued imports,
+text edits and pagination reach the existing preload/IPC create/update handlers.
+There is no autosave or separate canvas persistence path.
+
+Editor and viewer heights follow the current paper element's displayed height
+through natural CSS layout, including wrapped toolbars and viewport padding.
+No fixed preview height or viewport-height cap clips the page. The outer note
+stream scrolls vertically; the paper viewport retains horizontal scrolling.
+
+Paper templates, pen, highlighter, whole-object eraser, selection/transforms,
+floating text, images and PDF page backgrounds are integrated. Native PDF text
+is stored on its background for search and analysis; scanned pages remain visual
+without automatic OCR. The toolbar exports a raster PDF through jsPDF, composing
+background, flow text and annotations per page. It does not retain a searchable
+PDF text layer. `capturePages()` provides PNG data URLs for AI input, not a PNG
+download button. Undo/redo is per annotation page or Quill mode; page operations
+and PDF imports are not global undo steps.
+
+The [canvas integration reference](../../../src/renderer/src/magic-canvas/README.md)
+owns core limits, import behavior and lifecycle details. Vite bundles Fabric,
+Quill, jsPDF, PDF.js workers and binary assets; PDF workers use explicit module
+Workers and local assets under the production `file://` CSP. The renderer does
+not need Node integration or remote asset services.
+
+## Canvas Analysis and Comments
+
+Draft, saved-entry and todo analysis use the existing typed preload/IPC methods
+and `createDefaultModelRuntime`. Each canvas request reads the current default
+model profile's `supportsImageInput` (or the resolved default setting when no
+profile is selected). Main resolves settings again for the actual request. This
+does not change an Agent runtime or desktop-to-Agent protocol.
+
+| Default model capability | Analysis input and result |
+| --- | --- |
+| Image input supported | Renderer captures all pages; Main checks page IDs and PNG/JPEG encoding. Images are ordered by page alongside flow, PDF and object text. Comments carry `inputMode: canvas-images`. |
+| No image input | No page capture is required. Extracted text is used with an explicit instruction that handwriting, images and layout were not seen. Comments carry `inputMode: text-fallback`. |
+| No image input and no extracted text in an entry/draft | Analysis fails with guidance to switch to an image-capable default model; no visual understanding is claimed. |
+
+Todo analysis includes its title and instructions plus the source canvas context,
+and uses the same capability and capture rules. Non-canvas content keeps the text
+analysis path. All analysis remains read-only with no tool calls.
+
+Canvas `immediate` mode provides an Analyze canvas draft action without a persistent
+instruction banner; pen strokes do not trigger automatic requests. `after-save-auto`
+prepares analysis input and then saves manually submitted content. Settings or
+capture errors are caught so storage still proceeds; after a successful save,
+the UI reports that automatic analysis failed. A later model error likewise
+does not roll back the save. Failure to flush the document itself still prevents
+saving incomplete content.
+
+For v2-to-v2 entry updates, identical content retains saved comments. If all
+comments have `text` or `text-fallback` input mode, equal extracted `plainText`
+also retains comments across layout-only changes. Other changed canvas content,
+including layout changes with `canvas-images` comments, clears saved entry
+comments and `analyzed_at`. In `after-save-auto`, visual comments trigger renewed
+analysis when content changes, while existing text-only comments trigger it when
+extracted text changes. A changed draft clears its prior canvas draft analysis.
+The UI labels the actual input mode so a text fallback is visible to the user.
+
 ## Change Notifications
 
 `AssistantDatabase` accepts `onMagicNotesChanged: () => void`. Every successful
@@ -44,10 +294,10 @@ state are not reset.
 
 Background application of a detail reads the current draft state after the
 asynchronous fetch. A dirty title is retained, and the composer is not remounted.
-An entry editor uses its original editing content and revision for both its React
-key and save request; external revisions cannot remount it or bypass optimistic
-concurrency checks. Deleted entries remain displayed only while their editor is
-open. If an externally deleted note has a draft, its editor remains available
+A dirty entry editor uses its original editing content and revision for both its
+React key and save request; external revisions cannot remount that draft or bypass
+optimistic concurrency checks. Clean editors adopt newer revisions. Deleted entries
+remain displayed only while their editor has a draft. If an externally deleted note has a draft, its editor remains available
 with a deletion explanation instead of moving the draft to another note.
 
 Read failures use the existing retryable refresh error and retain successful
@@ -77,10 +327,18 @@ retains selection and focuses this visible return button on narrow layouts.
 There is no todo detail route, separate AI sidebar or resize handle. Note detail
 retains its existing AI pane preferences.
 
-The shared segmented `PageTabs` lives in `PageHeader.actions` before New note,
-retaining tab/panel IDs, roving focus and arrow-key navigation. Its width follows
-content at all sizes. The shared status `SegmentedControl` follows search in one
-wrapping toolbar. These layout changes do not change Main, preload or storage.
+A single secondary button lives in `PageHeader.actions` before New note. Its
+label and icon describe the destination, and `requestDraftSwitch` retains the
+existing draft guard. Focus returns to the same `magic-library-switch` button
+after switching. The overview section keeps its localized list `aria-label`;
+there are no tab, tablist or tabpanel roles or tab-label references. The button
+follows content width at all sizes. The shared status `SegmentedControl` follows
+search in one wrapping toolbar.
+
+Only note detail applies `magic-notes-layout--detail` to remove the layout frame
+and corner radius. Its stream pane has no extra padding; editor borders and the
+AI divider remain. Overview cards and the independent todo layout keep their
+existing frame and spacing. These changes do not affect Main, preload or storage.
 
 ## Note List Actions
 
@@ -113,6 +371,17 @@ daemon implementation update.
 
 ## Validation
 
+- `magic-note-storage.test.ts` uses real files and SQLite for migration equality,
+  reopen/repair, binary deduplication, coordinated backup/restore and physical
+  database shrink. Failure injection covers body rename, manifest/GC cleanup,
+  delete/reset retries, post-conversion cancellation and VACUUM retry.
+- Canvas integration coverage includes `MagicCanvasEditor.test.tsx`,
+  `MagicNoteContent.test.tsx`, `rich-content.test.ts`,
+  `magic-note-analyzer.test.ts` and `tests/magic-note-canvas-text.test.ts`.
+  `canvas-ipc.integration.test.ts` runs production preload and registered IPC
+  handlers against real SQLite with mocked Electron transport and model output.
+  Interactive workspace/SQLite and production core export evidence is recorded
+  separately in [progress](./progress.md).
 - `assistant-database.test.ts` checks committed writes with a second SQLite
   connection, successful mutation coverage, failures, no-op completion and reset.
 - `knowledge-mcp-gateway.test.ts` exercises real database CRUD through Agent/MCP
@@ -127,4 +396,6 @@ daemon implementation update.
   coverage includes portal placement, keyboard navigation, dismissal, delete
   confirmation, target selection, revision failures and draft preservation.
 
-No schema migration, dependency, refresh control or network service is added.
+Schema 38 and the file layout above govern current persistence; refresh
+notifications need no separate storage or network service. Dated validation
+results and remaining repository checks are owned by [progress](./progress.md).

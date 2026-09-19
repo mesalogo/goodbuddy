@@ -1,5 +1,347 @@
 # Magic Notes Progress
 
+## 2026-09-19: Default Composer
+
+- Opening a note now shows a blank text/canvas composer below its title and above
+  the continuous history. Removed the New record button, locale keys and creation
+  visibility state. A successful create resets the editor key and content while
+  retaining its type; automatic analysis does not enter editing. Existing records
+  still require explicit Edit and retain normalized dirty baselines and revision keys.
+- The index toggle stands directly before the title. Header height now explicitly
+  supplies the narrow drawer offset without relying on the removed button.
+  This supersedes the explicit-create and post-create-edit behavior recorded below.
+- Focused validation: 5 files, 149 tests passed (`MagicNotesWorkspace`, both editors,
+  `MagicCanvasThumbnail`, `WorkspacePrimitives`). `npm run typecheck`, `npm run lint`
+  and `git diff --check` passed. No full test suite was run.
+- Temp Electron validation rebuilt current Workspace/PageShell, Quill, Fabric, CSS,
+  production preload and registered IPC, backed by AssistantDatabase and note files.
+  Text/canvas create-save-reopen, blank composer return without confirmation, real
+  editor changes requiring confirmation, thumbnail scroll preserving the top draft,
+  explicit text/canvas edit-save and database close/reopen all passed. Automatic
+  analysis capture-before-reset is covered by the focused regression; model calls: 0.
+- Light/dark checks at actual content widths 1287, 947, 547 and 362px passed document
+  overflow, continuous history, narrow drawer width, placement below the title and
+  close-on-navigation assertions. Reviewed wide light and narrow dark drawer PNGs.
+  Evidence: `C:/Users/jiang/AppData/Local/Temp/opencode/composer-default-Tq8Ui8/`;
+  runner: `node C:/Users/jiang/AppData/Local/Temp/opencode/run-composer-default.mjs`.
+- Probe boundaries: isolated feature window, not the full App shell; Quill API input
+  and DOM button clicks, not native keyboard coverage. Early probe failures came
+  from inactive canvas text-tool input, an unconstrained fixture parent, and measuring
+  the inner navigation width instead of the drawer border box. Corrected probes
+  passed without further production changes. No commits or real user-data writes.
+
+## 2026-09-19: Independent Layout Review
+
+- Rechecked the action-placement changes in Electron using production PageShell,
+  Workspace, Fabric, Quill and CSS. The earlier bare-workspace screenshots omitted
+  PageShell gutters; no extra stream padding was added to compensate for that fixture.
+- Fixed narrow record headers forcing each action onto a separate full-width row,
+  touching canvas inner/outer borders in create/read mode, and missing spacing below
+  the Records / AI tabs. Canvas create/edit/read inner frames now share 12px insets.
+- Fixed Quill percentage heights stretching an empty text composer beyond the
+  visible area. The text save footer and validation now belong to the same composer
+  card. Save handlers, analysis rules and draft-switch semantics are unchanged.
+- Text toolbar SVGs and picker menus use theme colors; native scrollbars in the
+  notes workspace follow light/dark mode.
+- Final Temp probe: `canvas-layout-review.mjs final`, with captures prefixed
+  `canvas-layout-final-` and measurements in `canvas-layout-final-metrics.json`.
+  Checked create/edit/read for canvas and text at 1300x950, 960x800, 560x800 and
+  375x720 content sizes in both themes (48 combinations), plus AI-pane captures.
+  Assertions passed for document/main horizontal overflow, canvas action bounds
+  and equal heights, independent side scrolling, reachable text Save, and side
+  collapse/reopen. Inspected final wide, medium, narrow and deep-narrow dark images.
+- Focused validation: `npx vitest run src/renderer/src/MagicNotesWorkspace.test.tsx
+  src/renderer/src/MagicNoteEditor.test.tsx src/renderer/src/MagicCanvasEditor.test.tsx`
+  passed 102 tests. `npm run typecheck` and `npm run lint` passed. No full suite run.
+- Scope: actual Windows Electron renderer with an in-memory DesktopApi fixture,
+  not a packaged full-App or persistent-IPC validation. No model calls, runtime or
+  remote changes, commits, or user-data writes.
+
+## 2026-09-19: Canvas Action Placement
+
+- Canvas creation places Analyze and Save at the right of the type selector;
+  editing places Analyze, Cancel and Save in the record header. Save remains the
+  primary action. Canvas hints and footer actions were removed, including unused
+  English/Chinese locale keys. Text actions and existing handlers are unchanged.
+- Focused workspace/editor tests: 2 files, 93 passed. Typecheck and lint passed.
+  Coverage includes all three comment modes, top placement, order, no duplicate
+  footer, cancellation, saving and manual/automatic analysis. No full suite run.
+- A Temp Electron/Vite probe uses production Workspace, Fabric, Quill and CSS
+  with an in-memory DesktopApi fixture. Creation and editing were checked at
+  1300px and 560px window widths for top placement, visible Save and no horizontal
+  document overflow. Screenshots are `canvas-actions-{create,edit}-{wide,narrow}.png`
+  in the Temp opencode directory. No real model calls were made.
+
+## 2026-09-19: Review Corrections
+
+- Fixed local creation selecting an Agent's concurrent append. The database
+  returns the exact `createdEntryId` alongside detail, typed through shared API
+  and preload. The workspace uses that ID for selection, analysis and subsequent
+  edits. Existing Agent/MCP note projections retain their public shape.
+- Text-edit save/cancel now use the shared analysis cleanup: pending timers and
+  queued content are removed, late comments are ignored, and abandoned settings
+  preparation cannot dispatch a draft request. The composer content is independent.
+- Local and external deletion reconcile the actual selected ID when no dirty
+  editor must be retained. A later append no longer changes the fallback selection.
+- Thumbnail abort immediately invokes core destruction, whose synchronous phase
+  cancels PDF/Fabric work. Final cleanup awaits the same promise and removes the
+  temporary surface. Regression tests cover both unmount and content replacement
+  while capture is pending, and verify the next queued thumbnail completes.
+- Post-fix focused run: **13 files, 257 passed, 0 failed**. Coverage includes
+  `MagicNotesWorkspace`, `MagicCanvasThumbnail`, editor/content/core/model tests,
+  production canvas IPC integration, note storage, assistant database, MCP gateway
+  and preload note events. `npm run typecheck` and `npm run lint` passed.
+- The user reported a full-suite result of **4,713 passed, 0 failed before these
+  review corrections**. That result does not validate the fixes above. No full
+  suite or Electron probe was rerun in this correction pass. Model calls: 0.
+
+## 2026-09-19: Record Index Header Toggle Correction
+
+- Moved the record index toggle immediately before New record in the detail
+  header, retaining its accessible name, title, controls and expanded state.
+  Collapsing hides the whole index and removes its grid column and border width.
+  Narrow layouts use the same toggle for a 168px overlay below the header, with
+  no reserved rail. This supersedes the 40px rail described in the earlier run.
+- Focused validation: `npx vitest run src/renderer/src/MagicNotesWorkspace.test.tsx
+  src/renderer/src/WorkspacePrimitives.test.tsx` passed 130/130 tests.
+  `npm run typecheck` and `npm run lint` passed. No full suite was run.
+- Actual Electron geometry checks compiled the current Workspace and production
+  CSS with fixture note data, covering window widths 1300, 960, 700 and 375px with
+  AI both open and closed. Wide stream widths increased by exactly 168px on
+  collapse; narrow stream widths stayed at 687.43 and 362.29px. Hidden index
+  geometry was zero, closed streams began at the layout's left edge, and no
+  horizontal overflow occurred. The header toggle remained hit-testable directly
+  before New record. Native Tab skipped hidden records, programmatic focus on
+  hidden records failed, Enter reopened the index, and narrow Escape restored
+  toggle focus. AI widths were unchanged by index toggling.
+- Evidence: `C:/Users/jiang/AppData/Local/Temp/opencode/record-index-results-Xvgnsw/results.json`.
+  Reproduce with `node C:/Users/jiang/AppData/Local/Temp/opencode/run-record-index-geometry.mjs`.
+  This checks an isolated Electron renderer, not the full App shell or storage
+  path. Model calls: 0.
+
+## 2026-09-19: Continuous Stream and Save Baseline Correction
+
+- Restored all entries to the continuous stream, including while composing. The
+  168px left index and independent right AI pane collapse separately. Index and
+  AI source clicks scroll without discarding drafts or remounting the editor.
+  At widths up to 800px the index uses a 40px rail with a 168px drawer; AI retains
+  its bounded bottom layout. This supersedes the single-record interaction below.
+- Dirty checks now compare against the editor's initialized content. Canvas waits
+  for its initial flush before enabling input or reporting readiness; text reports
+  Quill's initialized Delta. Save/analysis revisions remount with a fresh baseline,
+  while unchanged background revisions retain it. Failed writes do not advance it.
+- The actual saved formatted-text callback had the same values but a different
+  Delta field order (`insert, attributes` in storage; `attributes, insert` from
+  Quill), reproducing the old false dirty comparison. Saved PDF content matched
+  both the readiness callback and subsequent flush in the final probe.
+- Final focused validation: 15 files / 222 tests passed, covering Workspace, both
+  editors, thumbnail/content, shared primitives, canvas core/model, analyzer, file
+  storage, production canvas IPC and canvas text. `npm run typecheck` and
+  `npm run lint` passed.
+- The full suite completed with 4,730 passed, 1 failed and 67 skipped (713.99s).
+  Its sole failure was the shared contrast test finding the first dark descendant
+  rule instead of the root token block. The test now matches the exact root
+  selector; all 36 shared primitive tests passed afterward, also included in the
+  final 222-test run. The full suite was not repeated after that test fix and the
+  final editor initialization regression additions.
+- Actual Electron 43.2.0 validation used built renderer assets over `file://`, the
+  production preload, IPC handlers, AssistantDatabase and note files. It verified
+  three simultaneous entries, real thumbnail pixels, scroll-only draft retention,
+  independent collapse, text/canvas create and update followed by a clean return,
+  a new post-save edit requiring confirmation, and a real revision conflict keeping
+  the failed draft. A two-page PDF survived database reopen and three consecutive
+  saves in the same editing context, with unchanged PDF bytes, advancing revisions
+  and no prompt on return. Six entries remained mounted through the layout checks.
+- Layout captures covered light/dark at content widths 1287, 947, 547 and 362px,
+  with no document horizontal overflow. Narrow drawer opening, 168px geometry,
+  record navigation and automatic closing passed. Temporary evidence is under
+  `C:/Users/jiang/AppData/Local/Temp/opencode/canvas-sqlite-N9japl/`; reproduction:
+  `node C:/Users/jiang/AppData/Local/Temp/opencode/run-canvas-sqlite.mjs continuous-notes.html`.
+  The earlier development-server attempt hit Vite PDF dependency optimization;
+  the built-asset run passed. This validates the production feature path in an
+  isolated Electron window, not the full App shell or a packaged distribution.
+- `node tests/magic-canvas-wheel.electron.mjs` passed all 34 wheel and full-page
+  height checks. No storage/core wheel changes or model calls were needed.
+
+## 2026-09-19: Single-Record Workspace (Superseded)
+
+- Note detail mounts one selected record or an explicitly opened new-entry editor.
+  Saving a new entry selects it; further saves update the same ID and use revisions
+  returned by saves and automatic comments. Record/AI source switches share draft
+  confirmation, and clean external changes refresh without replacing dirty drafts.
+- A collapsible Records / AI comments region defaults to Records. Each canvas
+  record has one real first-page thumbnail with total page count; text records show
+  summaries. Visible thumbnails render serially and capture only page zero at 240px.
+  The main editor and side region scroll independently; narrow layouts retain the
+  bounded bottom region. UI contract: [design system](../../../UI-DESIGN.md#137-魔法笔记).
+- Focused validation: 9 files / 142 tests passed across workspace, canvas editor,
+  content, shared primitives, canvas core/model and canvas IPC integration.
+  `npm run typecheck` and `npm run lint` passed. No full `npm test` run in this task.
+- Actual Electron renderer probe used production Workspace, Quill, Fabric and CSS
+  with an in-memory DesktopApi fixture. It verified one main entry, real thumbnail
+  pixels, one thumbnail for a two-page entry, record switching, independent scroll,
+  collapse/reopen, AI switching, discard/cancel, AI and todo source selection,
+  returning to todo context, and preserving canvas drafts through external updates
+  and deletion. One create followed by three updates included two
+  canvas updates and continuing to edit a newly created record. At 547px content
+  width the document scroll width remained 547px. This is renderer validation,
+  not a complete App-shell or persistent-IPC end-to-end run.
+- Reproducible local probe: `C:/Users/jiang/AppData/Local/Temp/opencode/run-single-entry-probe.mjs`;
+  screenshot: `single-entry-narrow.png` in the same temporary directory.
+- Existing `node tests/magic-canvas-wheel.electron.mjs` passed all 34 Electron
+  checks for wheel behavior and full-page editor/viewer height at 900px and 360px.
+  Storage, wheel and page-height behavior were retained. Model calls: 0.
+
+## 2026-09-19: Full-Page Canvas Height
+
+- Removed fixed saved-viewer and composer heights. Natural layout includes the
+  current paper, toolbar and padding, with outer vertical scrolling and inner
+  horizontal scrolling. Different page sizes still paginate within one entry.
+- `node tests/magic-canvas-wheel.electron.mjs`: 34 checks passed in Electron
+  43.2.0, including editor/saved-viewer geometry at 900px and 360px, portrait to
+  landscape pagination, no inner vertical or outer horizontal overflow, and
+  native outer vertical scrolling. This mounts the production core with product
+  CSS and representative wrappers, not the complete App shell. The original
+  wheel fixture has an explicit test-only height constraint to retain both-axis
+  coverage; edge tests wait for the compositor after programmatic scrolling.
+- Focused canvas/editor/content/workspace tests: 7 files, 95 tests passed.
+  Full typecheck and lint passed; the final probe edit also passed focused lint.
+  The full test suite was not rerun for this height-only change. Model calls: 0.
+
+## 2026-09-19: File Storage and Schema 38
+
+- Replaced SQLite body payloads with file-backed rich-text and canvas entries.
+  SQLite retains metadata, membership, indexes, revisions, todos and comments;
+  hydrated API content stays compatible. File layout, write/repair semantics,
+  migration and backup requirements are defined in the
+  [storage contract](./technical-design.md#file-storage-and-writes).
+- The startup worker converts one entry per transaction and verifies hydrated
+  readback before clearing the legacy payload. Reclamation checks the freelist
+  on every attempt, including retries after conversion has finished. Committed
+  saves/deletes/resets remain successful when manifest or GC cleanup fails;
+  failures are logged and cleanup is retried on later access or reopen.
+- Storage implementation handoff reports 135/135 focused tests passed across
+  `magic-note-storage`, `assistant-database`, `assistant-storage-upgrade` and
+  `canvas-ipc.integration`, with full `npm run typecheck` and `npm run lint`
+  passing after the review fixes. Filesystem rename/rm failure injection uses
+  real SQLite and files. A 1 MiB PDF retained its binary mtime across 20 updates
+  while SQLite growth stayed below 2 MiB; the migration regression verified
+  more than 2 MiB of physical shrink and restored SQLite plus the notes tree.
+- Session validation reports the real Electron -> IPC -> SQLite/files path
+  successfully created text, image and canvas/PDF entries, completed three
+  consecutive updates and reopened persisted data after process restart.
+  Migration also passed with an on-disk schema 37 fixture. This was a constructed
+  fixture, not a user's historical database; no real user database was migrated.
+  Actual model calls for this storage validation: 0.
+- Backups require coordinated SQLite and `notes/` copies while writes are paused
+  or the app is closed. No product one-click backup was added.
+- Final full test run: 4,705 passed, 3 failed, 67 skipped (760.91 seconds).
+  All three failures were in `acp-remote-runtime.test.ts`, which was being changed
+  concurrently: a launch-response schema mismatch and two channel-close recovery
+  assertions. That file subsequently passed all 100 tests on a targeted rerun.
+  No note-storage test failed; this does not claim a second all-green full run.
+
+## 2026-09-19: Canvas Wheel Navigation
+
+- The shared canvas viewport explicitly handles horizontal and vertical wheel
+  input in annotation, flow-text and read-only modes. Shift with vertical-only
+  input scrolls horizontally. Ctrl input is left to the existing browser path.
+  Default scrolling is prevented only when the viewport actually moves; page
+  scrolling remains available at boundaries or without canvas overflow.
+- Removed scroll-chain containment. The Electron baseline reproduced boundary
+  trapping, but not a universal failure of native horizontal input. The new
+  Electron regression passed 30 scenarios; focused unit tests passed 13 tests.
+  Run `node tests/magic-canvas-wheel.electron.mjs` to repeat the native-input
+  fixture. It does not validate a physical mouse or the complete App shell.
+- Typecheck and lint passed. The full test run during this fix reported 4,682
+  passed, 67 skipped and one unrelated Agent package inventory timeout.
+
+## 2026-09-19: Single Navigation Button and Unframed Note Detail
+
+- Replaced the two header tabs with one destination-labelled button and icon,
+  immediately before New note. Switching retains the same button and restores
+  focus to it. The list section keeps its localized accessible name; tab roles
+  and references are removed. Navigation still uses the existing draft guard.
+- Note detail removes the surrounding layout border/radius and stream padding.
+  Composer and entry borders, page margins and the AI divider remain. Overview
+  cards and the independent todo layout retain their frame and spacing.
+- Focused workspace, editor, shared-primitives and i18n suites passed 122 tests.
+  `npm run typecheck`, `npm run lint` and `git diff --check` passed. The full suite
+  was not rerun for this change, as requested.
+- Updated the existing `magic-notes-render-electron.cjs` probe in the session's
+  `opencode` temporary directory and ran `magic-notes-render-run.cjs` against the
+  current workspace component and real Quill in Electron. At 1280x820, 600x760,
+  600x520 dark and 420x640, the switch measures 104x36px and precedes New note.
+  Pointer and Space activation restore switch focus; no tab semantics remain.
+- Computed detail border/radius and stream padding are all zero. Composer and
+  entry borders and the AI divider remain 1px. At 1280px, closing AI expands the
+  stream from 927px to the full 1216px layout width. Narrow layouts keep only the
+  native scrollbar width between layout and content, with no horizontal overflow.
+  AI moves below the editor and closing it increases editor height.
+- The same probe passed card/scroll return, actual Quill draft cancellation and
+  discard, todo split/narrow layouts, source-note return, creation and completion
+  filters. Screenshots were reviewed; results are in
+  `magic-notes-render-results.json`. Console errors: 0; model calls: 0. Data and
+  AI output use fixtures. The esbuild probe emits an existing IIFE/import.meta
+  warning for the canvas PDF module; this run does not exercise PDF import.
+
+## 2026-09-18: Integrated Canvas and Validation
+
+Historical snapshot before file storage: the embedded payload and schema 37
+statements below describe this stage only. Current persistence and its validation
+are recorded in the schema 38 entry above.
+
+- Implementation is complete across the workspace, PeopleLib Fabric + Quill
+  editor/viewer, shared v1/v2 contract, preload/IPC, SQLite and AI analysis.
+  Available operations include paged flow text, pen/highlighter, selection and
+  transforms, floating text, images, PDF import/native text extraction and raster
+  PDF export. Saving is manual; undo/redo is local to the page or Quill mode.
+  The toolbar has no PNG download action; PNG capture is an API used for analysis.
+- Assets are embedded in SQLite `content_json`, not a separate resource table.
+  Schema 37 is a compatibility marker without conversion of existing records.
+  Flow checklist identity survives object moves and completion writes back to
+  flow. MCP exposes readable canvas metadata/text and rejects plain-text
+  replacement. See the [technical contract](./technical-design.md).
+- Entry, draft and canvas-source todo analysis use the default model's
+  `supportsImageInput`: complete page captures plus extracted text, or labelled
+  text-only fallback. Purely visual entries/drafts fail clearly with a text-only
+  model. Canvas `immediate` mode explicitly offers manual analysis;
+  `after-save-auto` catches capture/settings errors without blocking storage.
+  Text-only entry comments survive equal `plainText`; layout changes invalidate
+  visual comments and trigger renewed analysis in after-save-auto mode.
+- Confirmed interactive validation used the real workspace, preload, registered
+  IPC and SQLite to save an image and a two-page PDF, reopen them, and complete
+  three consecutive saves successfully. This covers persistence beyond the
+  earlier renderer-only fixtures. The temporary probe uses
+  `canvas-sqlite.tsx`, `canvas-sqlite-main.ts` and `run-canvas-sqlite.mjs` under
+  the session's `opencode` temporary directory.
+- The isolated canvas core probe passed with a Vite production build loaded via
+  `file://` and the unchanged application CSP, including PDF import, PNG capture
+  and raster PDF download. The export review also verified the 20,000-character
+  flow boundary and list markers in captured pages and re-rendered exported PDF.
+  These are core rendering/export results, distinct from workspace persistence.
+- Regression coverage includes storage reopening, checklist writeback, comment
+  retention/invalidation, revision conflicts, MCP protection, renderer integration
+  and analysis input selection. The preload/IPC integration suite uses real
+  SQLite but mocked Electron transport and model output; it is not evidence of
+  a live model request.
+- Final `npm run typecheck`, `npm run lint` and `npm run build` passed. The full
+  test rerun completed with 4,665 passed, 7 failed and 67 skipped. Failures were
+  in Agent packaging (missing compound-package fixture and an inventory timeout)
+  and activity record/DOM reuse assertions. Those files were under concurrent
+  modification; this is not a fixed-snapshot all-green result. No Magic Notes or
+  App regression failed in that run. The earlier two App failures from eager
+  PDF.js loading were fixed with on-demand PDF imports and passed their targeted
+  rerun; core/editor/workspace focused coverage passed 87 tests.
+- Live provider validation was blocked before any request: an isolated Electron
+  process could not decrypt the configured default model credential
+  (`runtime-model-credential-unreadable`). Settings were only read and remained
+  unchanged. Actual model calls: 0. Runtime request tests verify image input and
+  text fallback, but do not establish successful live provider generation.
+- This canvas change does not alter the deployed Agent runtime or the
+  desktop-to-Agent production path, so it requires no separate remote Linux
+  validation. Concurrent runtime work has its own validation scope.
+
 ## 2026-09-18: Stable Todo Split View and Header Navigation
 
 - Supersedes the inline task expansion described in the earlier entry below.

@@ -246,6 +246,42 @@ export type MagicNoteRichContent = z.infer<
   typeof magicNoteRichContentSchema
 >
 
+const canvasDataUrlSchema = embeddedDataUrlSchema(Number.MAX_SAFE_INTEGER)
+export const magicNoteCanvasContentSchema = z.object({
+  version: z.literal(2),
+  kind: z.literal('paged-canvas'),
+  pages: z.array(z.object({
+    id: z.string().min(1),
+    width: z.number().finite().positive().max(3000),
+    height: z.number().finite().positive().max(3000),
+    background: z.union([
+      z.object({ type: z.literal('template'), template: z.enum(['blank', 'ruled', 'grid', 'dot']) }).strict(),
+      z.object({ type: z.literal('pdf'), assetId: z.string().min(1), pageNumber: z.number().int().positive(), text: z.string().optional() }).strict()
+    ]),
+    objects: z.array(z.record(z.string(), z.unknown())),
+    flowAuto: z.boolean().optional()
+  }).strict()).min(1).max(50),
+  flow: z.object({ version: z.literal(1).optional(), ops: z.array(z.object({
+    insert: z.union([z.string(), z.record(z.string(), z.unknown())]),
+    attributes: z.record(z.string(), z.unknown()).optional()
+  }).strict()).max(5000) }).strict().superRefine((flow, context) => {
+    const length = flow.ops.reduce((total, op) => total + (typeof op.insert === 'string' ? op.insert.length : 0), 0)
+    const last = flow.ops.at(-1)?.insert
+    const terminalNewline = typeof last === 'string' && last.endsWith('\n') ? 1 : 0
+    if (length - terminalNewline > 20_000) context.addIssue({ code: 'custom', message: '画布正文不能超过 20,000 字符（不含末尾换行）', path: ['ops'] })
+  }).optional(),
+  assets: z.array(z.object({
+    id: z.string().min(1), name: embeddedFileNameSchema,
+    mimeType: embeddedMimeTypeSchema, dataUrl: canvasDataUrlSchema
+  }).strict()),
+  preview: z.string().optional()
+}).strict()
+
+export type MagicNoteCanvasContent = z.infer<typeof magicNoteCanvasContentSchema>
+export const magicNoteContentSchema = z.union([magicNoteRichContentSchema, magicNoteCanvasContentSchema])
+export type MagicNoteContent = z.infer<typeof magicNoteContentSchema>
+export type MagicNoteAnalysisInputMode = 'text' | 'images' | 'canvas-images' | 'text-fallback'
+
 export const magicNoteCreateSchema = z
   .object({
     title: z.string().trim().min(1).max(100)
@@ -275,7 +311,7 @@ export const magicNoteDeleteSchema = z
 export const magicNoteEntryCreateSchema = z
   .object({
     noteId: magicNoteIdSchema,
-    content: magicNoteRichContentSchema
+    content: magicNoteContentSchema
   })
   .strict()
 export type MagicNoteEntryCreateInput = z.infer<
@@ -285,7 +321,7 @@ export type MagicNoteEntryCreateInput = z.infer<
 export const magicNoteEntryUpdateSchema = z
   .object({
     entryId: magicNoteIdSchema,
-    content: magicNoteRichContentSchema,
+    content: magicNoteContentSchema,
     expectedRevision: z.number().int().nonnegative()
   })
   .strict()
@@ -323,7 +359,8 @@ export const magicNoteAnalysisOptionsSchema = z
   .object({
     requestId: z.string().uuid(),
     direction: magicNoteCommentDirectionSchema,
-    format: magicNoteCommentFormatSchema
+    format: magicNoteCommentFormatSchema,
+    canvasImages: z.array(z.object({ pageId: z.string().min(1), dataUrl: z.string().regex(/^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/) }).strict()).max(50).optional()
   })
   .strict()
 export type MagicNoteAnalysisOptions = z.infer<
@@ -339,7 +376,7 @@ export const magicNoteAnalyzeSchema = z
 
 export const magicNoteDraftAnalyzeSchema = z
   .object({
-    content: magicNoteRichContentSchema,
+    content: magicNoteContentSchema,
     ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
@@ -375,6 +412,7 @@ export type MagicNoteComment = {
   direction?: MagicNoteCommentDirection
   format?: MagicNoteCommentFormat
   analyzedAt?: string
+  inputMode?: MagicNoteAnalysisInputMode
 }
 
 export type MagicNoteAnalysisStreamEvent = {
@@ -388,7 +426,7 @@ export type MagicNoteAnalysisStreamEvent = {
 export type MagicNoteEntry = {
   id: string
   noteId: string
-  content: MagicNoteRichContent
+  content: MagicNoteContent
   plainText: string
   comments: MagicNoteComment[]
   analyzedAt?: string
@@ -410,6 +448,10 @@ export type MagicNoteSummary = {
 
 export type MagicNoteDetail = MagicNoteSummary & {
   entries: MagicNoteEntry[]
+}
+
+export type MagicNoteEntryCreateResult = MagicNoteDetail & {
+  createdEntryId: string
 }
 
 export type MagicNotesSnapshot = {
@@ -450,6 +492,7 @@ export type MagicNoteDraftAnalysis = {
   id: string
   comments: MagicNoteComment[]
   analyzedAt: string
+  inputMode?: MagicNoteAnalysisInputMode
 }
 
 export type MagicNoteSearchResult = {

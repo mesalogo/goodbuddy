@@ -1,14 +1,20 @@
 export const magicNotes = {
+  records: { title: '记录', pane: '记录索引', hide: '收起记录索引', show: '展开记录索引', pages: '{{count}} 页', firstPage: '画布首页', previewFailed: '首页预览加载失败' },
+  canvas: {
+    savedAnalysisFailed: '记录已保存，但自动分析失败：{{error}}。可稍后重新分析。',
+    entryType: '新记录类型', text: '文字', canvas: '画布', edit: '展开编辑画布',
+    analyzeDraft: '分析画布草稿', notReady: '画布尚未加载，请稍后重试',
+    discardDescription: '切换后，当前未保存的文字、画布和附件将被丢弃。',
+    inputMode: { text: '仅文字分析', images: '图像分析', 'canvas-images': '画布图像分析', 'text-fallback': '仅文字分析（未使用画布图像）' }
+  },
   page: {
     title: '魔法笔记',
     description: '全局记录富文本、本地媒体、附件和待办清单，由 AI 提供只读评论。',
     contentLabel: '魔法笔记内容'
   },
-  tabs: {
-    notes: '笔记',
-    todos: '待办'
-  },
   actions: {
+    switchToTodos: '切换到待办',
+    switchToNotes: '切换到笔记',
     more: '更多笔记操作 {{title}}',
     cancel: '取消',
     retry: '重试',
@@ -51,7 +57,7 @@ export const magicNotes = {
     noteDeleted: '笔记已删除',
     entrySaved: '记录已保存',
     entryDeleted: '记录已删除',
-    entryUpdated: '记录已更新，原 AI 评论已清除',
+    entryUpdated: '记录已更新',
     aiCommentAdded: 'AI 评论已添加',
     todoCompleted: '待办已完成',
     todoReopened: '待办已恢复为未完成'

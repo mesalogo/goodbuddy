@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentExecutionRequest, AgentRuntime } from '../agent/runtime'
+import type { AgentExecutionRequest, AgentRuntime, RuntimeModelUsageEvent } from '../agent/runtime'
 import type {
   MagicNoteEntry,
+  MagicNoteAnalysisOptions,
   MagicTodoItem
 } from '../../shared/magic-notes-contracts'
 import {
   analyzeMagicNoteEntry,
+  analyzeMagicNoteDraft,
   analyzeMagicTodo
 } from './magic-note-analyzer'
 
@@ -21,6 +23,203 @@ const entry: MagicNoteEntry = {
 }
 
 describe('magic note analyzer', () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII='
+  const canvasEntry = {
+    ...entry,
+    content: {
+      version: 2,
+      kind: 'paged-canvas',
+      pages: ['first', 'second'].map((id, index) => ({
+        id, width: 800, height: 1000,
+        background: { type: 'template', template: 'blank' }, objects: [{ text: index === 0 ? '目标' : '验收' }]
+      })),
+      assets: []
+    },
+    plainText: '第 1 页：目标\n第 2 页：验收'
+  } satisfies MagicNoteEntry
+  const options: MagicNoteAnalysisOptions = {
+    requestId: '00000000-0000-4000-8000-000000000506',
+    direction: 'general', format: 'structured',
+    canvasImages: ['second', 'first'].map((pageId) => ({
+      pageId, dataUrl: `data:image/png;base64,${png}`
+    }))
+  }
+
+  function recordingRuntime(error?: string) {
+    const requests: AgentExecutionRequest[] = []
+    const runtime: AgentRuntime = {
+      requiresToolApproval: false,
+      supportsToolExecution: false,
+      async getStatus() {
+        return { id: 'model', label: 'Test model', available: true, detail: 'Ready', supportsToolExecution: false }
+      },
+      async dispose() {},
+      async *run(input: AgentExecutionRequest) {
+        requests.push(input)
+        if (error) {
+          yield { requestId: input.requestId, type: 'error', status: 'failed', message: error } as const
+          return
+        }
+        yield { requestId: input.requestId, type: 'text', delta: '{"comments":[{"kind":"summary","content":"明确目标与验收条件。"}]}' } as const
+        yield {
+          requestId: input.requestId, type: 'model-usage', callId: 'analysis-call',
+          runtime: 'model', provider: 'test', model: 'test', inputTokens: 25,
+          outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0
+        } as const
+        yield { requestId: input.requestId, type: 'done' } as const
+      }
+    }
+    return { runtime, requests }
+  }
+
+  const canvasTodo: MagicTodoItem = {
+    id: '00000000-0000-4000-8000-000000000601',
+    noteId: entry.noteId, entryId: entry.id, noteTitle: 'Canvas',
+    sourceIndex: 0, source: 'note', title: 'Review release',
+    instructions: 'Check acceptance criteria', completed: false,
+    comments: [], revision: 0, createdAt: entry.createdAt, updatedAt: entry.updatedAt
+  }
+
+  it.each([true, false])('analyzes canvas todos with task text and source context (vision=%s)', async (supportsImageInput) => {
+    const { runtime, requests } = recordingRuntime()
+    const comments = await analyzeMagicTodo(
+      runtime, canvasTodo, options, undefined, undefined,
+      { supportsImageInput, content: canvasEntry.content }
+    )
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.prompt).toContain(canvasTodo.title)
+    expect(requests[0]?.prompt).toContain(canvasTodo.instructions)
+    expect(requests[0]?.prompt).toContain('第 2 页：\\n验收')
+    expect(requests[0]?.conversationId).toBe(`magic-todos:${canvasTodo.id}`)
+    expect(requests[0]?.workMode).toBe('ask')
+    if (supportsImageInput) {
+      expect(requests[0]?.images).toHaveLength(2)
+    } else {
+      expect(requests[0]?.images).toBeUndefined()
+      expect(requests[0]?.prompt).toContain('未查看页面图像')
+    }
+    expect(comments[0]?.inputMode).toBe(supportsImageInput ? 'canvas-images' : 'text-fallback')
+  })
+
+  it('rejects missing canvas todo captures instead of pretending to see the source', async () => {
+    const { runtime, requests } = recordingRuntime()
+    await expect(analyzeMagicTodo(
+      runtime, canvasTodo, { ...options, canvasImages: undefined }, undefined, undefined,
+      { supportsImageInput: true, content: canvasEntry.content }
+    )).rejects.toThrow('截图缺失或与当前页面不匹配')
+    expect(requests).toHaveLength(0)
+  })
+
+  it('keeps legacy todo analysis limited to its title and instructions', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const comments = await analyzeMagicTodo(
+      runtime, canvasTodo, options, undefined, undefined,
+      { supportsImageInput: true, content: entry.content }
+    )
+    expect(requests[0]?.images).toBeUndefined()
+    expect(requests[0]?.prompt).toContain(canvasTodo.instructions)
+    expect(requests[0]?.prompt).not.toContain(entry.plainText)
+    expect(comments[0]?.inputMode).toBe('text')
+  })
+
+  it('passes complete composited pages in document order to AgentRuntime with page labels and text', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const usage: RuntimeModelUsageEvent[] = []
+    const comments = await analyzeMagicNoteEntry(
+      runtime, canvasEntry, options, undefined,
+      (event) => usage.push(event), { supportsImageInput: true }
+    )
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.images).toEqual([
+      { name: 'page-1.png', mediaType: 'image/png', data: png },
+      { name: 'page-2.png', mediaType: 'image/png', data: png }
+    ])
+    expect(requests[0]?.prompt).toContain('第 1 页 = page-1.png')
+    expect(requests[0]?.prompt).toContain('第 2 页 = page-2.png')
+    expect(requests[0]?.prompt).toContain('验收')
+    expect(requests[0]?.workMode).toBe('ask')
+    expect(comments[0]?.inputMode).toBe('canvas-images')
+    expect(usage).toEqual([expect.objectContaining({ callId: 'analysis-call', inputTokens: 25 })])
+  })
+
+  it('analyzes a visual-only draft using page images', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const content = {
+      ...canvasEntry.content,
+      pages: canvasEntry.content.pages.map((page) => ({ ...page, objects: [] }))
+    }
+    const comments = await analyzeMagicNoteDraft(runtime, '', options, undefined, undefined, { supportsImageInput: true, content })
+    expect(requests[0]?.images).toHaveLength(2)
+    expect(comments[0]?.inputMode).toBe('canvas-images')
+  })
+
+  it('falls back to all extracted text for a text model, without silently slicing later pages', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const content = {
+      ...canvasEntry.content,
+      pages: canvasEntry.content.pages.map((page) => ({
+        ...page, objects: [{ text: '最后一页的结论' }]
+      })),
+      flow: { ops: [{ insert: '文'.repeat(30_001) }] }
+    }
+    const comments = await analyzeMagicNoteEntry(runtime, { ...canvasEntry, content }, options, undefined, undefined, { supportsImageInput: false })
+    expect(requests[0]?.images).toBeUndefined()
+    expect(requests[0]?.prompt).toContain('最后一页的结论')
+    expect(requests[0]?.prompt).toContain('未查看页面图像')
+    expect(comments[0]?.inputMode).toBe('text-fallback')
+  })
+
+  it('rejects visual-only text fallback before issuing a request', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const content = {
+      ...canvasEntry.content,
+      pages: canvasEntry.content.pages.map((page) => ({ ...page, objects: [] })),
+      flow: { ops: [{ insert: { image: 'placeholder' } }] }
+    }
+    await expect(analyzeMagicNoteEntry(runtime, { ...canvasEntry, content, plainText: '  ' }, options, undefined, undefined, { supportsImageInput: false })).rejects.toThrow('请切换支持图像输入的默认模型')
+    expect(requests).toHaveLength(0)
+  })
+
+  it.each([undefined, [], [options.canvasImages![0]!], [options.canvasImages![0]!, options.canvasImages![0]!]])('rejects missing or incomplete canvas captures (%j)', async (canvasImages) => {
+    const { runtime, requests } = recordingRuntime()
+    await expect(analyzeMagicNoteEntry(runtime, canvasEntry, { ...options, canvasImages }, undefined, undefined, { supportsImageInput: true })).rejects.toThrow('截图缺失或与当前页面不匹配')
+    expect(requests).toHaveLength(0)
+  })
+
+  it.each(['401 Unauthorized', 'network connection failed', 'context length exceeded'])('preserves provider errors without retrying text-only: %s', async (error) => {
+    const { runtime, requests } = recordingRuntime(error)
+    await expect(analyzeMagicNoteEntry(runtime, canvasEntry, options, undefined, undefined, { supportsImageInput: true })).rejects.toThrow(error)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.images).toHaveLength(2)
+  })
+
+  it('keeps ordinary notes text-only even when the model supports images', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const comments = await analyzeMagicNoteEntry(runtime, entry, options, undefined, undefined, { supportsImageInput: true })
+    expect(requests[0]?.images).toBeUndefined()
+    expect(requests[0]?.prompt).toContain(entry.plainText)
+    expect(comments[0]?.inputMode).toBe('text')
+  })
+
+  it('includes native PDF text with its canvas page number during text fallback', async () => {
+    const { runtime, requests } = recordingRuntime()
+    const content = {
+      ...canvasEntry.content,
+      pages: canvasEntry.content.pages.map((page, index) => ({
+        ...page,
+        background: {
+          type: 'pdf' as const, assetId: 'pdf-source',
+          pageNumber: index + 10, text: `PDF 原生文字 ${index + 1}`
+        }
+      }))
+    }
+    await analyzeMagicNoteDraft(runtime, '', options, undefined, undefined, {
+      supportsImageInput: false, content
+    })
+    expect(requests[0]?.prompt).toContain('第 2 页：\\nPDF 原生文字 2')
+    expect(requests[0]?.images).toBeUndefined()
+  })
+
   it('uses ask mode and converts bounded JSON into comments only', async () => {
     let request: AgentExecutionRequest | undefined
     const runtime = {

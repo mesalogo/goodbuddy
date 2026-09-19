@@ -53,7 +53,7 @@ current limitations.
 | Area | Available in GoodBuddy |
 | --- | --- |
 | Agent Runtimes | Direct model connections, OpenCode, Continue, and the preview DeepSeek Harness |
-| Data and execution | Local SQLite storage, read-only `Ask`, full-account `Execute`, and recorded tool activity |
+| Data and execution | Local SQLite and note-file storage, read-only `Ask`, full-account `Execute`, and recorded tool activity |
 | Knowledge | File, folder, and web imports with full-text, Chinese phrase, vector, and knowledge graph retrieval |
 | Desktop releases | Official Windows, macOS, and Linux builds for `x64` and `arm64`, plus an experimental LoongArch preview |
 | Integrations | Local or hosted model endpoints, custom MCP servers, WeChat ClawBot, WeCom, and DingTalk |
@@ -67,6 +67,15 @@ current limitations.
 ![GoodBuddy knowledge graph](./docs/screenshots/knowledge-graph.png)
 
 ### Magic Notes and Smart Heartbeat
+
+Magic Notes displays a continuous record stream, with a narrow left index and
+independent right AI comments. Both panes can collapse; thumbnails scroll to a
+record while preserving drafts. It supports rich-text entries and paged canvases with flowing text,
+handwriting, highlights, images and PDF backgrounds. Import PDF text and export
+annotated pages as a raster PDF. Canvas saves are manual; AI comments use the
+default model's image-input capability, with an explicit text-only fallback when
+images are unsupported. See the [Magic Notes documentation](./docs/features/magic-notes/README.md)
+for behavior and final validation status.
 
 ![GoodBuddy Magic Notes](./docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
 

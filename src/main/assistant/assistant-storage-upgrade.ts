@@ -2,6 +2,7 @@ import { statSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import type { ConversationMessageBlock } from '../../shared/assistant-contracts'
 import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
+import { AssistantDatabase } from './assistant-database'
 import {
   compactSubagentPayload,
   restoreSubagentPayload,
@@ -9,6 +10,15 @@ import {
 } from './subagent-progress-storage'
 
 export function upgradeAssistantStorage(
+  databasePath: string,
+  onProgress: (progress: AssistantStorageProgress) => void,
+  isCancelled: () => boolean = () => false
+): void {
+  upgradeSubagentStorage(databasePath, onProgress, isCancelled)
+  new AssistantDatabase(databasePath).upgradeMagicNoteStorage(onProgress, isCancelled)
+}
+
+function upgradeSubagentStorage(
   databasePath: string,
   onProgress: (progress: AssistantStorageProgress) => void,
   isCancelled: () => boolean = () => false

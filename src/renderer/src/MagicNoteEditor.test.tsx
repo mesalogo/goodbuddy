@@ -14,6 +14,37 @@ const stylesheet = readFileSync(
 )
 
 describe('MagicNoteEditor', () => {
+  it('establishes the baseline from real Quill normalization and reports later edits separately', () => {
+    const onReady = vi.fn()
+    const onChange = vi.fn()
+    const { container, unmount } = render(<MagicNoteEditor ariaLabel="笔记正文" initialContent={{ version: 1, ops: [{ insert: 'Saved' }] }} onReady={onReady} onChange={onChange} onError={vi.fn()} />)
+    expect(onReady).toHaveBeenCalledWith({ version: 1, ops: [{ insert: 'Saved\n' }] })
+    const quill = Quill.find(container.querySelector('.ql-container')!) as Quill
+    quill.setText('Changed', 'user')
+    expect(onReady).toHaveBeenCalledOnce()
+    expect(onChange).toHaveBeenLastCalledWith({ version: 1, ops: [{ insert: 'Changed\n' }] })
+    unmount()
+  })
+
+  it('emits the initial document when no readiness callback is supplied', () => {
+    const onChange = vi.fn()
+    const { unmount } = render(<MagicNoteEditor ariaLabel="笔记正文" onChange={onChange} onError={vi.fn()} />)
+    expect(onChange).toHaveBeenCalledWith({ version: 1, ops: [{ insert: '\n' }] })
+    unmount()
+  })
+
+  it('normalizes persisted formatted Delta field order without reporting a new edit', () => {
+    const stored: MagicNoteRichContent = { version: 1, ops: [{ insert: 'Saved', attributes: { bold: true } }, { insert: '\n' }] }
+    const onReady = vi.fn()
+    const onChange = vi.fn()
+    const { unmount } = render(<MagicNoteEditor ariaLabel="笔记正文" initialContent={stored} onReady={onReady} onChange={onChange} onError={vi.fn()} />)
+    const normalized = onReady.mock.calls[0]![0]
+    expect(normalized).toEqual(stored)
+    expect(JSON.stringify(normalized)).not.toBe(JSON.stringify(stored))
+    expect(onChange).toHaveBeenCalledOnce()
+    expect(onChange).toHaveBeenCalledWith(normalized)
+    unmount()
+  })
   it('uses the themed muted text color for its placeholder', () => {
     expect(stylesheet).toMatch(
       /\.magic-note-editor__content\s+\.ql-editor\.ql-blank::before\s*\{\s*color:\s*var\(--text-muted\);\s*\}/

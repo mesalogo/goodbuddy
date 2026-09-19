@@ -600,10 +600,15 @@ records are listed separately and do not introduce another feature status.
   cancelled states, and expose cited context or safely open its source.
 - [x] **Magic Notes**: A local-first notes and todo workbench with scope
   management, editing, filtering, and controlled AI comments. Notes open from a
-  responsive card overview. The separate To-dos tab offers search, status filters,
+  responsive card overview. Detail displays a continuous stream with independently
+  collapsible left index and right AI pane. Real first-page thumbnails scroll to
+  records without replacing editors. Successful saves establish the editor's
+   normalized baseline; only unsaved changes require confirmation on leaving. Opening
+   a note shows a blank text/canvas composer above the history, and creation resets it
+   for the next record. Explicit editing updates a saved record. The separate To-dos view offers search, status filters,
   grouped tasks and direct completion, with instructions, source entries and AI
   comments in a right detail pane beside a stable task list. Narrow views offer
-  on-demand detail with an explicit return to the list. Content-sized tabs sit
+  on-demand detail with an explicit return to the list. A content-sized switch sits
   beside New note in the header; status filters follow search. Source-note
   navigation returns to the same task context, without
   showing the previous item's source after a selection change. Failed reads
@@ -611,6 +616,24 @@ records are listed separately and do not introduce another feature status.
   navigation can show the incomplete-todo count, and create, save, and comment
   results use application-wide notifications. Agent/MCP note writes automatically
   refresh the open workbench while preserving selection and unsaved drafts.
+- [x] **Paged canvas notes**: The integrated PeopleLib Fabric + Quill editor
+  combines flowing body text with pen/highlighter, object selection/transforms,
+  floating text, images and paper templates. Import PDFs as page backgrounds
+  with native text extraction, then export a raster PDF of text and annotations;
+  exported PDFs do not retain a searchable text layer. Manual saves store entry
+  bodies and binary assets in local note files; SQLite retains metadata, indexes,
+  revisions, todos and comments. Backups must coordinate SQLite and the notes
+  directory; there is no one-click backup action. Undo/redo
+  is per annotation page or Quill mode, not global document history; there is no
+  infinite canvas or PNG download button. Drafts, saved entries and canvas-source
+  todos use the default model's image-input capability for page images plus text,
+  or an explicitly labelled text-only fallback. Purely visual entries/drafts
+  require an image-capable model. Immediate-comment mode offers manual canvas
+  analysis; after-save automatic analysis failures do not block or undo saving.
+  Text-only comments survive unchanged extracted text; visual comments are
+  invalidated by layout changes and reanalyzed in after-save-auto mode. MCP
+  rejects plain-text replacement of canvas entries. Implementation is complete;
+  final validation status is tracked in the [feature progress record](./docs/features/magic-notes/progress.md).
 - [ ] **MCP Server Control Plane** (planned): Unified MCP lifecycle, health
   checks, reconnection, schema cache, isolation, approval, and audit.
 - [ ] **Traceable note excerpts and AI editing** (planned): Collects sourced

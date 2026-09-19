@@ -38,7 +38,7 @@ GoodBuddy 是用于模型对话、编程 Agent、知识检索、笔记和定时�
 | 范围 | GoodBuddy 提供的能力 |
 | --- | --- |
 | Agent Runtime | 直连模型、OpenCode、Continue 和预览版 DeepSeek Harness |
-| 数据与执行 | 本地 SQLite、只读 `Ask`、使用当前账号完整权限的 `Execute`、工具调用记录 |
+| 数据与执行 | 本地 SQLite 与笔记文件存储、只读 `Ask`、使用当前账号完整权限的 `Execute`、工具调用记录 |
 | 知识库 | 导入文件、目录和网页，通过全文、中文词组、向量和知识图谱检索 |
 | 桌面版本 | Windows、macOS、Linux 的 `x64` 与 `arm64` 正式版本，以及龙芯 LoongArch 实验预览版 |
 | 外部连接 | 本机或内网模型服务、自定义 MCP、微信 ClawBot、企业微信和钉钉 |
@@ -52,6 +52,12 @@ GoodBuddy 是用于模型对话、编程 Agent、知识检索、笔记和定时�
 ![GoodBuddy 知识图谱](./docs/screenshots/knowledge-graph.png)
 
 ### 魔法笔记与智能心跳
+
+魔法笔记连续展示全部记录，左侧窄栏索引与右侧 AI 评论可独立收起，点击缩略图滚动定位并保留草稿。
+支持富文本记录和分页画布，可混排跨页正文、手写笔迹、高亮、图片与 PDF 底版，
+导入 PDF 时提取原生文字，并将批注页面导出为栅格 PDF。画布由用户手动保存；AI 评论按
+默认模型的图像输入能力分析，不支持图像时明确提示仅文字降级。具体行为与最终验证状态见
+[魔法笔记文档](./docs/features/magic-notes/README.md)。
 
 ![GoodBuddy 魔法笔记](./docs/screenshots/GoodBuddy_MFSGeK0NoT.gif)
 

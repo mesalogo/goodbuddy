@@ -68,10 +68,11 @@ import type {
   MagicNoteAnalysisStreamEvent,
   MagicNoteDraftAnalysis,
   MagicNoteDetail,
+  MagicNoteEntryCreateResult,
   MagicNoteCreateInput,
   MagicNoteEntryCreateInput,
   MagicNoteEntryUpdateInput,
-  MagicNoteRichContent,
+  MagicNoteContent,
   MagicNotesSnapshot,
   MagicNoteUpdateInput,
   MagicTodoItem,
@@ -2270,7 +2271,7 @@ export type DesktopApi = {
     remove: (noteId: string) => Promise<void>
     createEntry: (
       input: MagicNoteEntryCreateInput
-    ) => Promise<MagicNoteDetail>
+    ) => Promise<MagicNoteEntryCreateResult>
     updateEntry: (
       input: MagicNoteEntryUpdateInput
     ) => Promise<MagicNoteDetail>
@@ -2280,7 +2281,7 @@ export type DesktopApi = {
       options: MagicNoteAnalysisOptions
     ) => Promise<MagicNoteDetail>
     analyzeDraft: (
-      content: MagicNoteRichContent,
+      content: MagicNoteContent,
       options: MagicNoteAnalysisOptions
     ) => Promise<MagicNoteDraftAnalysis>
     listTodos: () => Promise<MagicTodosSnapshot>

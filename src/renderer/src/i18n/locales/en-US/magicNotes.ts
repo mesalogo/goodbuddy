@@ -2,17 +2,23 @@ import type { TranslationShape } from '../../resource-types'
 import type { magicNotes as chineseMagicNotes } from '../zh-CN/magicNotes'
 
 export const magicNotes = {
+  records: { title: 'Records', pane: 'Record index', hide: 'Hide record index', show: 'Show record index', pages: '{{count}} pages', firstPage: 'Canvas first page', previewFailed: 'First page preview unavailable' },
+  canvas: {
+    savedAnalysisFailed: 'Entry saved, but automatic analysis failed: {{error}}. You can analyze it again later.',
+    entryType: 'New entry type', text: 'Text', canvas: 'Canvas', edit: 'Expand canvas editor',
+    analyzeDraft: 'Analyze canvas draft', notReady: 'Canvas is not ready. Try again shortly.',
+    discardDescription: 'Switching will discard unsaved text, canvas changes, and attachments.',
+    inputMode: { text: 'Text only', images: 'Image analysis', 'canvas-images': 'Canvas image analysis', 'text-fallback': 'Text only (canvas images not used)' }
+  },
   page: {
     title: 'Magic Notes',
     description:
       'Capture rich text, local media, attachments, and to-do lists globally, with read-only comments from AI.',
     contentLabel: 'Magic Notes content'
   },
-  tabs: {
-    notes: 'Notes',
-    todos: 'To-dos'
-  },
   actions: {
+    switchToTodos: 'Switch to to-dos',
+    switchToNotes: 'Switch to notes',
     more: 'More note actions {{title}}',
     cancel: 'Cancel',
     retry: 'Retry',
@@ -55,7 +61,7 @@ export const magicNotes = {
     noteDeleted: 'Note deleted',
     entrySaved: 'Entry saved',
     entryDeleted: 'Entry deleted',
-    entryUpdated: 'Entry updated and previous AI comments cleared',
+    entryUpdated: 'Entry updated',
     aiCommentAdded: 'AI comment added',
     todoCompleted: 'To-do completed',
     todoReopened: 'To-do marked incomplete'
