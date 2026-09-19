@@ -1,5 +1,18 @@
 import type { MagicNoteCanvasContent } from './magic-notes-contracts'
 
+export function magicNoteCanvasAnalysisText(content: MagicNoteCanvasContent): string {
+  const flowText = (content.flow?.ops ?? [])
+    .map(({ insert }) => typeof insert === 'string' ? insert : '')
+    .join('').trim()
+  return [
+    flowText ? `连续正文（跨页）：\n${flowText}` : '',
+    ...content.pages.map((page, index) => {
+      const text = magicNoteCanvasPlainText({ ...content, flow: undefined, pages: [page] })
+      return text ? `第 ${index + 1} 页：\n${text}` : ''
+    })
+  ].filter(Boolean).join('\n\n')
+}
+
 // Keep canvas text comparisons identical in the renderer and persistence layer.
 export function magicNoteCanvasPlainText(content: MagicNoteCanvasContent): string {
   const flow = (content.flow?.ops ?? []).map(({ insert }) => {

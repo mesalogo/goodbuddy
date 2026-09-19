@@ -81,7 +81,7 @@ import type {
   VectorSearchOptions
 } from './types'
 
-const DATABASE_VERSION = 12
+const DATABASE_VERSION = 13
 const MAX_ID_LENGTH = 128
 const MAX_NAME_LENGTH = 512
 const MAX_LOCATION_LENGTH = 8192
@@ -1950,6 +1950,11 @@ export class KnowledgeDatabase {
       this.pruneUnreferencedGeneratedGraph(knowledgeBaseId)
     })
     return this.requiredDocument(id)
+  }
+
+  getDocumentByParsedResultId(id: string): Document | undefined {
+    const row = this.requireDatabase().prepare("SELECT * FROM documents WHERE json_extract(metadata, '$.parsedResultId') = ?").get(id)
+    return row ? mapDocument(row) : undefined
   }
 
   getDocument(id: string): Document | undefined {
@@ -4621,6 +4626,10 @@ export class KnowledgeDatabase {
         );`)
         database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
           .run(12, new Date().toISOString())
+      }
+      if (currentVersion < 13) {
+        database.exec("CREATE INDEX IF NOT EXISTS documents_parsed_result ON documents(json_extract(metadata, '$.parsedResultId'))")
+        database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(13, new Date().toISOString())
       }
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}`)
       database.exec('COMMIT')

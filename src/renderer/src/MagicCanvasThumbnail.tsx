@@ -19,7 +19,7 @@ export function MagicCanvasThumbnail({ content }: { content: MagicNoteCanvasCont
         const cached = images.get(content)
         if (cached) { setResult({ content, url: cached }); return }
         const surface = document.createElement('div')
-        surface.className = 'magic-note-thumbnail-renderer'
+        surface.className = 'magic-note-thumbnail-renderer magic-canvas-editor'
         surface.setAttribute('aria-hidden', 'true')
         surface.inert = true
         document.body.append(surface)

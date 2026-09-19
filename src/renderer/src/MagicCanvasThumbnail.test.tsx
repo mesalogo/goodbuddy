@@ -31,6 +31,7 @@ describe('MagicCanvasThumbnail cleanup', () => {
       .mockReturnValueOnce(second as unknown as ReturnType<typeof mountCanvasNote>)
     const view = render(<MagicCanvasThumbnail content={content} />)
     await waitFor(() => expect(first.capturePages).toHaveBeenCalledOnce())
+    expect(vi.mocked(mountCanvasNote).mock.calls[0]?.[0]).toHaveClass('magic-canvas-editor')
     if (action === 'unmount') view.unmount()
     else view.rerender(<MagicCanvasThumbnail content={structuredClone(content)} />)
     expect(first.destroy).toHaveBeenCalledOnce()

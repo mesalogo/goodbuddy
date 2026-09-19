@@ -8,6 +8,12 @@ clearing a composer, flushing content or invoking the draft-switch guard. Openin
 a note shows a blank composer below the title and above the stream, without a New
 record button. Editing another entry or
 leaving the note still checks unsaved content after flushing canvas changes.
+`MagicNotesWorkspace.onBeforeLeave` registers this same check with the App navigation
+gate, including sidebar, application launcher and conversation jumps. The gate waits
+for canvas flush, then offers Continue editing or Discard draft and switch for dirty
+body or title content. Workspace cache eviction does not serve as draft protection.
+Non-title detail responses retain a dirty title. A title-save response acknowledges
+only the submitted input; text entered while that request runs remains a draft.
 The shared store returns `MagicNoteEntryCreateResult`, the existing detail shape
 plus a required `createdEntryId`. Production IPC and preload preserve that ID.
 Creating an entry selects this exact ID and resets the composer through its key;
@@ -43,13 +49,19 @@ content and streamed draft comments through the shared draft-analysis cleanup.
 The context counter rejects late results and prevents dispatch after abandoned
 settings preparation. This cleanup does not clear the new-entry composer's content.
 
-The left index is 168px wide. Its toggle stays in the detail header immediately
+The left index defaults to 168px and resizes from its right edge between 140px
+and 320px. It shares the AI pane's pointer-capture handlers, separator styling
+and keyboard semantics (16px arrow steps, Home/End limits). Both widths are
+stored in `goodbuddy.magic-notes-layout.v1`; missing index width defaults to
+168px. Displayed widths clamp together to reserve at least 300px for the stream,
+without overwriting saved widths when the window shrinks. The index toggle stays in the detail header immediately
 before the title; collapsing hides the entire index and removes its grid column,
-border and occupied width. AI has a separate
+border, resize separator and occupied width. AI has a separate
 right pane with its existing resize separator and header toggle. Both panes scroll
 independently and persist independent desktop visibility. At container widths of
 800px or less, the index defaults to hidden and the same header toggle opens or
-closes a 168px drawer below the header, without reserving a rail; choosing
+closes a fixed 168px drawer below the header, without reserving a rail or showing
+an index resize separator; choosing
 an item or pressing Escape closes it. AI moves below the stream, limited to 40%
 of layout height and 280px. Overview search, scroll, task selection and return
 focus stay mounted.
@@ -233,6 +245,15 @@ Todo analysis includes its title and instructions plus the source canvas context
 and uses the same capability and capture rules. Non-canvas content keeps the text
 analysis path. All analysis remains read-only with no tool calls.
 
+Saved-entry requests accept `expectedRevision`; todo requests accept
+`sourceEntryRevision`. Nonempty `canvasImages` requires the corresponding revision,
+even when the resolved model uses text fallback. Main loads the source after
+resolving settings and checks the supplied revision before model invocation.
+Existing rich-text callers may omit these fields. Entry writeback retains its
+revision check; canvas todo writeback also requires the source entry revision,
+including when no comments existed at request time. No additional stored snapshot
+or schema migration is needed.
+
 Canvas `immediate` mode provides an Analyze canvas draft action without a persistent
 instruction banner; pen strokes do not trigger automatic requests. `after-save-auto`
 prepares analysis input and then saves manually submitted content. Settings or
@@ -242,13 +263,24 @@ does not roll back the save. Failure to flush the document itself still prevents
 saving incomplete content.
 
 For v2-to-v2 entry updates, identical content retains saved comments. If all
-comments have `text` or `text-fallback` input mode, equal extracted `plainText`
+comments have `text` or `text-fallback` input mode, equal analysis text from shared
+`magicNoteCanvasAnalysisText(content)` (including page numbers)
 also retains comments across layout-only changes. Other changed canvas content,
 including layout changes with `canvas-images` comments, clears saved entry
-comments and `analyzed_at`. In `after-save-auto`, visual comments trigger renewed
+comments and `analyzed_at`. Source canvas changes apply the same rule to saved
+todo comments and increment the affected todo revision without replacing its ID.
+In `after-save-auto`, visual comments trigger renewed
 analysis when content changes, while existing text-only comments trigger it when
-extracted text changes. A changed draft clears its prior canvas draft analysis.
+analysis text changes. A changed draft clears its prior canvas draft analysis.
 The UI labels the actual input mode so a text fallback is visible to the user.
+
+Workspace captures the saved entry and its revision before awaiting image capture;
+an external refresh cannot pair an old capture with a newer revision. Automatic
+post-save analysis takes the revision from the save response using `createdEntryId`
+or the edited entry ID. Todo capture uses the selected source entry's actual page
+IDs and revision. Renderer text-only change detection uses the same shared
+analysis-text helper as persistence, so inserting a blank page before text triggers
+renewed analysis when its cited page number changes. Draft analysis remains unversioned.
 
 ## Change Notifications
 

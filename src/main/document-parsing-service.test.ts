@@ -87,6 +87,7 @@ function createService(overrides?: {
       }))
   )
   const settingsStore = {
+    forOperation: vi.fn(async () => ({ settings, apiKey: () => undefined })),
     get: vi.fn(async () => settings),
     update: vi.fn(async () => settings)
   }

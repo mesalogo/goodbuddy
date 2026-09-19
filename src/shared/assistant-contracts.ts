@@ -158,6 +158,19 @@ export const conversationAttachmentSchema = z
     size: z.number().int().nonnegative().max(12 * 1024 * 1024),
     preview: z.string().max(500),
     kind: z.enum(['text', 'image']),
+    resourceId: z.string().uuid().optional(),
+    attachmentId: z.string().uuid().optional(),
+    resultId: z.string().uuid().optional(),
+    completeness: z.enum(['complete', 'partial', 'images-only']).optional(),
+    parsingState: z.enum(['parsing', 'failed', 'interrupted']).optional(),
+    parsingError: z.string().max(1000).optional(),
+    originalName: z.string().max(500).optional(),
+    originalSize: z.number().int().nonnegative().max(20 * 1024 * 1024).optional(),
+    originalMime: z.enum(['image/png', 'image/jpeg', 'image/webp']).optional(),
+    imageWidth: z.number().int().positive().optional(),
+    imageHeight: z.number().int().positive().optional(),
+    sendMode: z.enum(['image', 'text']).optional(),
+    provenance: z.object({ resultId: z.string().uuid(), imageId: z.string().uuid(), documentName: z.string().max(500), pageNumber: z.number().int() }).optional(),
     thumbnailUrl: z
       .string()
       .max(2_000_000)
@@ -187,6 +200,7 @@ export type ConversationAttachment = z.infer<
 
 export const conversationQueueItemSchema = z
   .object({
+    error: z.string().max(1000).optional(),
     id: assistantIdSchema,
     conversationId: assistantIdSchema,
     source: z.enum(['user', 'schedule']),

@@ -86,7 +86,7 @@ describe('KnowledgeDatabase', () => {
     const inspection = new DatabaseSync(path)
     expect(
       inspection.prepare('PRAGMA user_version').get()
-    ).toEqual({ user_version: 12 })
+    ).toEqual({ user_version: 13 })
     expect(
       inspection
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
@@ -103,7 +103,8 @@ describe('KnowledgeDatabase', () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
-      { version: 12 }
+      { version: 12 },
+      { version: 13 }
     ])
     inspection.close()
 
@@ -144,14 +145,14 @@ describe('KnowledgeDatabase', () => {
     expect(repaired.listDocuments(knowledgeBase.id)).toHaveLength(1)
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 12
+      user_version: 13
     })
     inspection.close()
   })
 
   it.each([
-    ['migration version', 'INSERT INTO schema_migrations VALUES (13, ?)', true],
-    ['user version', 'PRAGMA user_version = 13', false]
+    ['migration version', 'INSERT INTO schema_migrations VALUES (14, ?)', true],
+    ['user version', 'PRAGMA user_version = 14', false]
   ])('rejects a future %s without downgrading it', async (
     _label,
     statement,
@@ -169,18 +170,18 @@ describe('KnowledgeDatabase', () => {
 
     const unsupported = new KnowledgeDatabase(path)
     expect(() => unsupported.initialize()).toThrow(
-      'newer than supported version 12'
+      'newer than supported version 13'
     )
 
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: hasParameter ? 12 : 13
+      user_version: hasParameter ? 13 : 14
     })
     expect(
       inspection
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: hasParameter ? 13 : 12 })
+    ).toEqual({ version: hasParameter ? 14 : 13 })
     inspection.close()
   })
 
@@ -330,7 +331,7 @@ describe('KnowledgeDatabase', () => {
     upgraded.initialize()
     const inspection = new DatabaseSync(path)
     expect(inspection.prepare('PRAGMA user_version').get()).toEqual({
-      user_version: 12
+      user_version: 13
     })
     expect(
       inspection

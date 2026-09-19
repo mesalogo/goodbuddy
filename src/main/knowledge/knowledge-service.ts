@@ -13,6 +13,7 @@ import { watch, type FSWatcher } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   basename,
+  dirname,
   extname,
   join,
   relative,
@@ -25,6 +26,8 @@ import {
   supportedDocumentExtensions,
   type ParsedDocument
 } from './document-parser'
+import type { DocumentResultStorage } from '../document-result-storage'
+import { parsedCompleteness } from '../document-result-storage'
 import {
   knowledgeChunkDeleteInputSchema,
   knowledgeChunksListInputSchema,
@@ -146,6 +149,7 @@ export type KnowledgeSnapshot = {
 }
 
 export type KnowledgeServiceOptions = {
+  documentResults?: DocumentResultStorage
   credentialCipher?: import('../settings-credential-cipher').SettingsCredentialCipher
   externalFetcher?: typeof fetch
   databasePath: string
@@ -170,6 +174,7 @@ const maximumFilesPerSource = 2_000
 const maximumEmbeddingChunksPerBatch = 32
 
 type PreparedDocumentPublication = {
+  signal?: AbortSignal
   input: Parameters<KnowledgeDatabase['publishDocument']>[0]
   chunks: ReplaceChunkInput[]
   graph?: GraphExtractionResult
@@ -215,6 +220,7 @@ export class KnowledgeService {
   readonly external: ExternalKnowledgeService
   readonly database: KnowledgeDatabase
   private readonly managedRoot: string
+  private readonly documentResults?: DocumentResultStorage
   private readonly extractStructured?: ExtractStructured
   private readonly urlImporter: UrlImporter
   private readonly documentParser: NonNullable<
@@ -262,6 +268,12 @@ export class KnowledgeService {
     this.database = new KnowledgeDatabase(options.databasePath)
     this.external = new ExternalKnowledgeService(this.database, options.credentialCipher, options.externalFetcher)
     this.managedRoot = resolve(options.managedRoot)
+    this.documentResults = options.documentResults
+    this.documentResults?.setPersistentLookup((id) => {
+      const document = this.database.getDocumentByParsedResultId(id)
+      if (!document?.sourceLocation) return undefined
+      return { directory: this.resultDirectory(document.knowledgeBaseId, document.id, id), original: document.sourceLocation }
+    })
     this.extractStructured = options.extractStructured
     this.urlImporter = options.urlImporter ?? new UrlImporter()
     this.documentParser =
@@ -285,6 +297,7 @@ export class KnowledgeService {
   async initialize(): Promise<void> {
     await mkdir(this.managedRoot, { recursive: true })
     this.database.initialize()
+    await this.reconcileDocumentResults()
     for (const library of this.database.listKnowledgeBases()) {
       for (const source of this.database.listSourcesForSnapshot(library.id)) {
         if (
@@ -298,8 +311,8 @@ export class KnowledgeService {
     }
   }
 
-  async dispose(): Promise<void> {
-    this.external.dispose()
+  beginShutdown(): void {
+    if (this.lifecycleController.signal.aborted) return
     this.lifecycleController.abort(
       new Error('Knowledge service is shutting down')
     )
@@ -310,6 +323,11 @@ export class KnowledgeService {
     for (const controller of this.libraryRebuildControllers.values()) {
       controller.abort(new Error('Knowledge rebuild cancelled during shutdown'))
     }
+  }
+
+  async dispose(): Promise<void> {
+    this.external.dispose()
+    this.beginShutdown()
     for (const timer of this.syncTimers.values()) {
       clearTimeout(timer)
     }
@@ -742,7 +760,9 @@ export class KnowledgeService {
   ): Promise<PreparedDocumentPublication> {
     signal?.throwIfAborted()
     const documentId = input.id ?? randomUUID()
-    const chunks = this.createDocumentChunks(parsed, library)
+    const imagesOnly = parsedCompleteness(parsed) === 'images-only'
+    if (imagesOnly && this.database.getDocument(documentId)?.metadata.status === 'ready') throw new Error('未提取到可索引文字，保留上次正文与索引')
+    const chunks = imagesOnly ? [] : this.createDocumentChunks(parsed, library)
     let embeddingReplacement: PreparedEmbeddingReplacement | undefined
     let embeddingFailure: PreparedDocumentPublication['embeddingFailure']
     const embeddingProvider = this.embeddingProvider
@@ -754,10 +774,10 @@ export class KnowledgeService {
       scope: 'document',
       kind: 'embedding'
     })
-    if (!embeddingProvider) {
+    if (!embeddingProvider || imagesOnly) {
       this.updateKnowledgeTask(embeddingTask.id, {
         status: 'skipped',
-        message: '未启用向量化'
+        message: imagesOnly ? '无可索引文字，不生成向量' : '未启用向量化'
       })
     } else {
       this.updateKnowledgeTask(embeddingTask.id, {
@@ -768,7 +788,7 @@ export class KnowledgeService {
       })
     }
     try {
-      embeddingReplacement = await this.prepareDocumentEmbeddings(
+      embeddingReplacement = imagesOnly ? undefined : await this.prepareDocumentEmbeddings(
         documentId,
         chunks,
         signal
@@ -810,7 +830,7 @@ export class KnowledgeService {
     })
     try {
       signal?.throwIfAborted()
-      if (library.graphEnabled && library.graphStrategy !== 'ask') {
+      if (!imagesOnly && library.graphEnabled && library.graphStrategy !== 'ask') {
         this.updateKnowledgeTask(graphTask.id, {
           status: 'running',
           stage: 'graph',
@@ -827,7 +847,7 @@ export class KnowledgeService {
       } else {
         this.updateKnowledgeTask(graphTask.id, {
           status: 'skipped',
-          message: library.graphEnabled
+          message: imagesOnly ? '无可索引文字，不抽取知识图谱' : library.graphEnabled
             ? '按需询问策略不自动抽取'
             : '知识图谱未启用'
         })
@@ -836,15 +856,7 @@ export class KnowledgeService {
     } catch (error) {
       if (!signal?.aborted && options.allowGraphFailure) {
         this.failKnowledgeTask(graphTask.id, error)
-        return {
-          input: { ...input, id: documentId },
-          chunks,
-          embeddingReplacement,
-          embeddingFailure,
-          embeddingTaskId: embeddingTask.id,
-          graphTaskId: graphTask.id
-        }
-      }
+      } else {
       if (embeddingReplacement) {
         this.database.discardDocumentEmbeddingReplacement(
           embeddingReplacement.replacementId
@@ -884,9 +896,28 @@ export class KnowledgeService {
         this.failKnowledgeTask(graphTask.id, error)
       }
       throw error
+      }
+    }
+    let metadata: PreparedDocumentPublication['input']['metadata'] = imagesOnly ? { ...input.metadata, status: 'failed', error: '仅图片，无可索引文字；可查看并选择图片' } : { ...input.metadata }
+    if (!imagesOnly) delete metadata.error
+    if (this.documentResults && parsed.parsingSettings && input.sourceLocation && !/^https?:/iu.test(input.sourceLocation)) {
+      let resultId: string | undefined
+      try {
+        signal?.throwIfAborted()
+        const result = await this.documentResults.save(basename(input.sourceLocation), undefined, parsed, parsed.parsingSettings, parsed.parsingDurationMs ?? 0, input.sourceLocation, signal)
+        resultId = result.id
+        await this.documentResults.move(result.id, this.resultDirectory(library.id, documentId, result.id))
+        signal?.throwIfAborted()
+        metadata = { ...metadata, parsedResultId: result.id }
+      } catch (error) {
+        if (resultId) await this.documentResults.release(resultId)
+        if (embeddingReplacement) this.database.discardDocumentEmbeddingReplacement(embeddingReplacement.replacementId)
+        throw error
+      }
     }
     return {
-      input: { ...input, id: documentId },
+      signal,
+      input: { ...input, id: documentId, metadata },
       chunks,
       graph,
       embeddingReplacement,
@@ -900,7 +931,10 @@ export class KnowledgeService {
     library: KnowledgeBase,
     prepared: PreparedDocumentPublication
   ): Document {
+    const previous = prepared.input.id ? this.database.getDocument(prepared.input.id) : undefined
+    let published = false
     try {
+      prepared.signal?.throwIfAborted()
       const document = this.database.publishDocument(
         prepared.input,
         prepared.chunks,
@@ -914,6 +948,8 @@ export class KnowledgeService {
             : undefined
         }
       )
+      published = true
+      if (typeof document.metadata.parsedResultId === 'string') this.documentResults?.detach(document.metadata.parsedResultId)
       if (prepared.embeddingReplacement) {
         this.updateKnowledgeTask(prepared.embeddingTaskId, {
           documentId: document.id,
@@ -942,8 +978,15 @@ export class KnowledgeService {
           documentName: document.title
         })
       }
+      if (typeof previous?.metadata.parsedResultId === 'string' && previous.metadata.parsedResultId !== document.metadata.parsedResultId) {
+        void rm(this.resultDirectory(previous.knowledgeBaseId, previous.id, previous.metadata.parsedResultId), { recursive: true, force: true }).catch(() => undefined)
+      }
       return document
     } catch (error) {
+      if (published) throw error
+      if (typeof prepared.input.metadata?.parsedResultId === 'string' && prepared.input.metadata.parsedResultId !== previous?.metadata.parsedResultId) {
+        void this.documentResults?.release(prepared.input.metadata.parsedResultId).catch(() => undefined)
+      }
       const currentEmbeddingTask =
         this.database.getKnowledgeTask(prepared.embeddingTaskId)
       if (prepared.embeddingReplacement) {
@@ -1067,6 +1110,7 @@ export class KnowledgeService {
     await embeddingCoordinator?.waitForCompletion()
     this.embeddingIndexCoordinators.delete(id)
     const deleted = this.database.deleteKnowledgeBase(id)
+    if (deleted) await rm(join(dirname(this.managedRoot), 'knowledge-assets', id), { recursive: true, force: true })
     if (deleted && library.storageMode === 'managed') {
       const path = join(this.managedRoot, id)
       if (isPathInside(this.managedRoot, path)) {
@@ -2866,8 +2910,10 @@ export class KnowledgeService {
         ),
       'Knowledge source deleted'
     )
+    const sourceDocuments = this.database.listDocumentsForSource(sourceId)
     const removed = this.database.removeSource(sourceId)
     if (removed) {
+      await Promise.all(sourceDocuments.map((document) => rm(join(dirname(this.managedRoot), 'knowledge-assets', library.id, document.id), { recursive: true, force: true })))
       this.database.pruneUnreferencedGeneratedGraph(library.id)
     }
     if (
@@ -2882,6 +2928,28 @@ export class KnowledgeService {
       )
     }
     return removed
+  }
+
+  private resultDirectory(libraryId: string, documentId: string, resultId: string): string {
+    return join(dirname(this.managedRoot), 'knowledge-assets', libraryId, documentId, resultId)
+  }
+
+  private async reconcileDocumentResults(): Promise<void> {
+    const root = join(dirname(this.managedRoot), 'knowledge-assets')
+    const directories = async (path: string): Promise<string[]> => {
+      try { return (await readdir(path, { withFileTypes: true })).filter((entry) => entry.isDirectory() && /^[0-9a-f-]{36}$/iu.test(entry.name)).map((entry) => entry.name) }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
+    }
+    for (const libraryId of await directories(root)) {
+      for (const documentId of await directories(join(root, libraryId))) {
+        for (const resultId of await directories(join(root, libraryId, documentId))) {
+          if (this.documentResults?.isTemporaryResult(resultId)) continue
+          const document = this.database.getDocument(documentId)
+          if (document?.knowledgeBaseId === libraryId && document.metadata.parsedResultId === resultId) continue
+          await rm(this.resultDirectory(libraryId, documentId, resultId), { recursive: true, force: true })
+        }
+      }
+    }
   }
 
   private async performSyncSource(
@@ -3014,7 +3082,9 @@ export class KnowledgeService {
           document.id,
           () => {
             this.cancelScheduledEmbeddingReindex(document.id)
-            return this.database.removeDocument(document.id)
+            const removed = this.database.removeDocument(document.id)
+            if (removed) void rm(join(dirname(this.managedRoot), 'knowledge-assets', library.id, document.id), { recursive: true, force: true }).catch(() => undefined)
+            return removed
           },
           signal
         )

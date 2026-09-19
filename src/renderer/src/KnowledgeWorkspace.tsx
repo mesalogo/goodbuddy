@@ -1,3 +1,4 @@
+import { DocumentResultPreview } from './DocumentResultPreview'
 import {
   AlertCircle,
   ArrowLeft,
@@ -78,6 +79,7 @@ import {
   EmptyState,
   PageHeader,
   PageTabs,
+  ScopeBadge,
   SegmentedControl,
   type PageTab
 } from './WorkspacePrimitives'
@@ -1346,6 +1348,9 @@ function DocumentsView({
   const { i18n, t } = useTranslation('knowledge')
   const locale = resolvedLocale(i18n.resolvedLanguage ?? i18n.language)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [viewedDocumentId, setViewedDocumentId] = useState<string>()
+  const previewBackRef = useRef<HTMLButtonElement>(null)
+  const previewOriginRef = useRef<{ trigger: HTMLElement; scroll?: HTMLElement; top: number } | undefined>(undefined)
   const [urlOpen, setUrlOpen] = useState(false)
   const [url, setUrl] = useState('')
   const [query, setQuery] = useState('')
@@ -1396,9 +1401,27 @@ function DocumentsView({
         .includes(normalized)
     )
   }, [documents, locale, query])
+  const viewedDocument = useMemo(() => documents.find((document) => document.id === viewedDocumentId), [documents, viewedDocumentId])
 
   return (
     <div className="knowledge-documents">
+      {viewedDocument?.resultId && <section aria-label={`解析结果：${viewedDocument.name}`}>
+        <div className="document-result-actions">
+          <button ref={previewBackRef} type="button" className="secondary-button" onClick={() => {
+            setViewedDocumentId(undefined)
+            requestAnimationFrame(() => {
+              previewOriginRef.current?.trigger.focus()
+              if (previewOriginRef.current?.scroll) previewOriginRef.current.scroll.scrollTop = previewOriginRef.current.top
+            })
+          }}>返回文档列表</button>
+          <strong>{library.name} · {viewedDocument.name}</strong><ScopeBadge scope={{ kind: 'global' }} />
+          <button type="button" className="secondary-button" disabled={Boolean(pending)} onClick={() => void run(`retry:${viewedDocument.id}`, () => onRebuildDocument(library.id, viewedDocument.id))}>使用当前设置重新解析</button>
+        </div>
+        {pending && <p role="status">正在重新解析，当前显示上次结果</p>}
+        {error && <p role="alert">本次解析失败，上次结果仍可用：{error}</p>}
+        <DocumentResultPreview key={viewedDocument.resultId} resultId={viewedDocument.resultId} allowAddImages />
+      </section>}
+      <div hidden={Boolean(viewedDocument?.resultId)}>
       <section aria-labelledby="sources-title">
         <div
           className="knowledge-documents__section-heading"
@@ -1862,6 +1885,13 @@ function DocumentsView({
                     </td>
                     <td>
                       <div className="knowledge-document-actions">
+                        {document.resultId && <button type="button" className="secondary-button" onClick={(event) => {
+                          const scroll = event.currentTarget.closest<HTMLElement>('.workspace-panel-scroll') ?? undefined
+                          previewOriginRef.current = { trigger: event.currentTarget, scroll, top: scroll?.scrollTop ?? 0 }
+                          setViewedDocumentId(document.id)
+                          requestAnimationFrame(() => { previewBackRef.current?.focus(); if (scroll) scroll.scrollTop = 0 })
+                        }}>查看解析结果</button>}
+                        {document.resultId && document.status !== 'failed' && <button type="button" className="secondary-button" disabled={Boolean(activeTask) || pending === `retry:${document.id}`} onClick={() => void run(`retry:${document.id}`, () => onRebuildDocument(library.id, document.id))}>使用当前设置重新解析</button>}
                         {relatedTasks.length > 0 && (
                           <button
                             className="secondary-button"
@@ -1941,6 +1971,7 @@ function DocumentsView({
           storageMode={library.storageMode}
         />
       )}
+      </div>
     </div>
   )
 }

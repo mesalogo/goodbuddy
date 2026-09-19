@@ -92,6 +92,8 @@ import { DocumentParsingSettingsStore } from './document-parsing-settings-store'
 import { DocumentOcrModelManager } from './document-ocr-model-manager'
 import { DocumentOcrBroker } from './document-ocr-broker'
 import { DocumentParsingService } from './document-parsing-service'
+import { DocumentResultStorage } from './document-result-storage'
+import { ConversationAttachmentStorage } from './conversation-attachment-storage'
 import { ReleaseNotesService } from './release-notes-service'
 import { GoodBuddyConfigService } from './goodbuddy-config-service'
 import {
@@ -216,6 +218,8 @@ let browserService: BrowserService | undefined
 let globalTlsPolicy: GlobalTlsPolicy | undefined
 let feedbackService: FeedbackService | undefined
 let documentOcrBroker: DocumentOcrBroker | undefined
+let documentParsingService: DocumentParsingService | undefined
+let conversationAttachmentStorage: ConversationAttachmentStorage | undefined
 let documentOcrModelManager: DocumentOcrModelManager | undefined
 let embeddingModelManager: EmbeddingModelManager | undefined
 const embeddingBrokers = new Set<EmbeddingInferenceBroker>()
@@ -780,7 +784,8 @@ if (hasSingleInstanceLock) {
     })
     const documentParsingSettingsStore =
       new DocumentParsingSettingsStore(
-        join(app.getPath('userData'), 'document-parsing-settings.json')
+        join(app.getPath('userData'), 'document-parsing-settings.json'),
+        secureCipher
       )
     documentOcrModelManager = new DocumentOcrModelManager({
       userDataDirectory: app.getPath('userData'),
@@ -789,14 +794,15 @@ if (hasSingleInstanceLock) {
         (await applicationSettingsStore.get()).modelDownloadSource
     })
     documentOcrBroker = new DocumentOcrBroker(mainWindow)
-    const documentParsingService = new DocumentParsingService(
+    documentParsingService = new DocumentParsingService(
       documentParsingSettingsStore,
       documentOcrModelManager,
-      documentOcrBroker
+      documentOcrBroker,
+      new DocumentResultStorage(join(app.getPath('userData'), 'temp', 'document-parsing'))
     )
     localInferenceService.register('ocr', {
       snapshot: async () => {
-        const snapshot = await documentParsingService.snapshot()
+        const snapshot = await documentParsingService!.snapshot()
         const model = snapshot.status.localOcr
         return {
           id: 'ocr', name: '文字识别', engine: 'PaddleOCR / ONNX Web', ownership: 'renderer-worker',
@@ -886,6 +892,7 @@ if (hasSingleInstanceLock) {
           runtimeExtensionStore.markStartupFailed(extensionIds)
       })
     const startupKnowledgeService = new KnowledgeService({
+      documentResults: documentParsingService.results,
       credentialCipher: secureCipher,
       databasePath: join(app.getPath('userData'), 'knowledge.sqlite'),
       managedRoot: join(app.getPath('userData'), 'knowledge'),
@@ -1202,8 +1209,14 @@ if (hasSingleInstanceLock) {
       createSelectedStatusRuntime,
       (conversationId) => localRuntimeRegistry.releaseConversation(conversationId)
     )
+    conversationAttachmentStorage = new ConversationAttachmentStorage(app.getPath('userData'), documentParsingService.results!)
+    conversationAttachmentStorage.reconcile((conversationId, kind, ownerId) => startupAssistantDatabase.hasAttachmentOwner(conversationId, kind, ownerId), true)
     const contextManager = new ContextManager({
-      parseDocument: documentParsingService.parse
+      parseDocument: documentParsingService.parse,
+      assets: conversationAttachmentStorage,
+      validateConversation: (id) => {
+        if (!startupAssistantDatabase.hasAttachmentOwner(id, 'draft', id)) throw new Error('目标会话已删除')
+      }
     })
     const approvalBroker = new ToolApprovalBroker()
 
@@ -1561,6 +1574,7 @@ app.on('before-quit', (event) => {
           () => removeFeedbackIpcHandler?.(),
           () => dshExtensionInstaller?.dispose(),
           () => imageGenerationService?.dispose(),
+          () => knowledgeService?.beginShutdown(),
           () => removeIpcHandlers?.()
         ],
         [() => stopRuntimeReconfiguration?.()],
@@ -1583,7 +1597,9 @@ app.on('before-quit', (event) => {
             ).then(() => undefined),
           () => embeddingModelManager?.dispose(),
           () => documentOcrModelManager?.dispose(),
-          () => documentOcrBroker?.dispose()
+          () => documentOcrBroker?.dispose(),
+          () => documentParsingService?.dispose(),
+          () => conversationAttachmentStorage?.close()
         ],
         [() => localRuntimeRegistry.dispose()],
         [() => terminalSessionManager?.dispose()],

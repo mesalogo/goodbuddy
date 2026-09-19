@@ -104,7 +104,7 @@ it('rolls metadata back with binding failures and rejects concurrent duplicate c
   try {
     await expect(service.external.saveBinding({ ...bindingInput(saved.id), knowledgeBaseId: first.knowledgeBaseId, name: 'Changed' })).rejects.toThrow('binding failed')
     expect(service.database.getKnowledgeBase(first.knowledgeBaseId)?.name).toBe('Handbook')
-    expect(inspection.prepare('PRAGMA user_version').get()).toEqual({ user_version: 12 })
+    expect(inspection.prepare('PRAGMA user_version').get()).toEqual({ user_version: 13 })
   } finally { inspection.close() }
   const outcomes = await Promise.allSettled([service.external.saveBinding(bindingInput(saved.id, 'new')), service.external.saveBinding(bindingInput(saved.id, 'new'))])
   expect(outcomes.filter(item => item.status === 'fulfilled')).toHaveLength(1)

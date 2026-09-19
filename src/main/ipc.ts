@@ -22,6 +22,8 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
+import { documentResourceInputSchema } from '../shared/document-result-contracts'
+import { maximumAttachmentsPerMessage } from '../shared/attachment-limits'
 import {
   formatShortcutForDisplay,
   globalShortcutSettingsUpdateSchema
@@ -1057,6 +1059,7 @@ function getKnowledgeSnapshot(
       libraryId: document.knowledgeBaseId,
       sourceId: document.sourceId,
       name: document.title,
+      resultId: typeof document.metadata.parsedResultId === 'string' ? document.metadata.parsedResultId : undefined,
       path: document.sourceLocation,
       status: document.status,
       textIndexStatus: document.textIndexStatus,
@@ -1410,6 +1413,8 @@ export function registerIpcHandlers(
   let shuttingDown = false
   let executionPaused = false
   let clearLocalDataOperation: Promise<void> | undefined
+  let contextImports = 0
+  const diagnosticOperations = new Set<string>()
   let rendererPersistenceReady = false
   const pendingRendererPersistence = new Map<string, () => void>()
   let pendingGoodBuddyConfigReload = false
@@ -1507,6 +1512,20 @@ export function registerIpcHandlers(
       )
     }
     return selectedRuntimes.getRuntime(selection, executionSpace)
+  }
+  const assertImageInputSupport = async (request: AgentRequest): Promise<void> => {
+    const selected = await resolveRequestRuntime(request)
+    if (selected.capability === 'image-generation') return
+    const target = runtimeTargetFor(selected)
+    const configured = await settingsStore.getResolvedSettings()
+    const projectSelection = request.projectId ? assistantDatabase.getProject(request.projectId).runtimeSelection : undefined
+    const selection = request.runtimeSelection ?? projectSelection
+    const effective = selection ? applyRuntimeSelection(configured, selection).settings : configured
+    const supported = target === 'model' ? effective.supportsImageInput
+      : target === 'opencode' ? effective.opencodeModelProfile?.supportsImageInput
+        : target === 'continue' ? effective.continueModelProfile?.supportsImageInput
+          : target === 'deepseek-harness' ? effective.deepseekHarnessModelProfile?.supportsImageInput : false
+    if (supported !== true) throw new Error('当前模型与 Runtime 未确认支持图片输入。请切换模型或 Runtime、提取图片文字，或移除图片；附件保留在草稿中。')
   }
   const channels = Object.values(ipcChannels).filter(
     (channel) =>
@@ -2240,6 +2259,7 @@ export function registerIpcHandlers(
     }
   }
   const readyConversationQueues = new Set<string>()
+  const conversationQueueErrors = new Map<string, string>()
   const preferredConversationQueueItems = new Map<string, string>()
   const reservedConversationQueueItems = new Map<string, string>()
   const preparingRequestConversations = new Map<string, string>()
@@ -2355,11 +2375,16 @@ export function registerIpcHandlers(
                 item: claimed.item,
                 input: parseConversationQueueUserPayload(claimed.payloadJson, true)
               }
-        } catch {
+          if (!dispatch.scheduled && contextManager.hasImageInputs(dispatch.input.attachments.map((item) => item.id))) {
+            await assertImageInputSupport({ ...dispatch.input, requestId: randomUUID() })
+          }
+          conversationQueueErrors.delete(claimed.item.id)
+        } catch (error) {
+          conversationQueueErrors.set(claimed.item.id, (error instanceof Error ? error.message : '队列附件无法恢复').slice(0, 1000))
           assistantDatabase.releaseConversationUserQueueItem(
             claimed.item.id
           )
-          readyConversationQueues.add(conversationId)
+          readyConversationQueues.delete(conversationId)
           publishConversationQueueChange(conversationId)
           return
         }
@@ -3255,7 +3280,7 @@ export function registerIpcHandlers(
           accountDisplay: senderDisplay,
           runtimeSelection
         })
-      assistantDatabase.appendRemoteConversationMessage({
+      const incomingMessageId = assistantDatabase.appendRemoteConversationMessage({
         conversationId: remoteConversation.id,
         role: 'user',
         content: parsed.prompt,
@@ -3266,6 +3291,7 @@ export function registerIpcHandlers(
             : '对话'
         }`
       })
+      contextManager.assets?.reference(remoteConversation.id, 'message', incomingMessageId, contextIds)
       publishRemoteConversationChange()
     const remoteTaskId = randomUUID()
     assistantDatabase.createTask({
@@ -3572,6 +3598,8 @@ export function registerIpcHandlers(
         await executionTracker.drain()
         await onBeforeClearLocalData?.()
         assistantDatabase.clearAssistantData()
+        contextManager.clear()
+        contextManager.assets?.reconcile((conversationId, kind, ownerId) => assistantDatabase.hasAttachmentOwner(conversationId, kind, ownerId), false, contextManager.activeContextIds())
         readyConversationQueues.clear()
         preferredConversationQueueItems.clear()
         reservedConversationQueueItems.clear()
@@ -4042,6 +4070,9 @@ export function registerIpcHandlers(
     }
     const imageGeneration =
       selectedRuntime.capability === 'image-generation'
+    if (parsedRequest.contextIds?.length && contextManager.hasImageInputs(parsedRequest.contextIds)) {
+      await assertImageInputSupport(parsedRequest)
+    }
     const attachedRequest = contextManager.enrichRequest(
       parsedRequest
     )
@@ -4285,6 +4316,7 @@ export function registerIpcHandlers(
         assistantDatabase.completeConversationUserQueueItem(
           parsedInput.queueItemId
         )
+        contextManager.assets?.release('queue', parsedInput.queueItemId)
         if (queuedItem?.source === 'schedule' && queuedItem.taskId) {
           assistantDatabase.updateTaskStatus(queuedItem.taskId, 'running')
         }
@@ -6024,7 +6056,7 @@ export function registerIpcHandlers(
       if (!documentParsingService) {
         throw new Error('文档解析设置服务不可用')
       }
-      const { purpose } =
+      const { purpose, operationId } =
         documentParsingTestInputSchema.parse(input)
       const result = await dialog.showOpenDialog(window, {
         title: '选择测试文档',
@@ -6048,11 +6080,16 @@ export function registerIpcHandlers(
         if (!fileStat.isFile() || fileStat.size > 20 * 1024 * 1024) {
           throw new Error('测试文档必须小于 20MB 且不能是目录')
         }
+        const buffer = await readFile(canonicalPath)
+        const diagnosticId = operationId ?? randomUUID()
+        if (shuttingDown) throw new Error('应用正在退出')
+        diagnosticOperations.add(diagnosticId)
         return documentParsingService.diagnose(
           basename(canonicalPath),
-          await readFile(canonicalPath),
-          purpose
-        )
+          buffer,
+          purpose,
+          diagnosticId
+        ).finally(() => diagnosticOperations.delete(diagnosticId))
       } catch (error) {
         if (error instanceof Error && !('code' in error)) {
           throw error
@@ -6502,9 +6539,163 @@ export function registerIpcHandlers(
         .map((connection) => ({ id: connection.id, name: connection.name, model: connection.modelName })) ?? []
     }
   })
-  registerHandler(ipcChannels.localInferenceOpenSettings, (event) => {
+
+  registerHandler(ipcChannels.documentParsingCheckHttp, (event) => {
     assertTrustedSender(event, window)
-    window.webContents.send(ipcChannels.settingsOpen)
+    if (!documentParsingService) throw new Error('文档解析服务不可用')
+    return documentParsingService.checkHttp()
+  })
+
+  registerHandler(ipcChannels.documentParsingResult, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    if (!documentParsingService?.results) throw new Error('解析结果服务不可用')
+    return documentParsingService.results.get(documentResourceInputSchema.parse(input).id)
+  })
+  registerHandler(ipcChannels.documentParsingImage, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    if (!documentParsingService?.results) throw new Error('解析结果服务不可用')
+    const { id, imageId, thumbnail } = documentResourceInputSchema.parse(input)
+    if (!imageId) throw new Error('未选择图片')
+    return documentParsingService.results.image(id, imageId, thumbnail)
+  })
+  registerHandler(ipcChannels.documentParsingOriginal, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    if (!documentParsingService?.results) throw new Error('解析结果服务不可用')
+    const error = await shell.openPath(documentParsingService.results.original(documentResourceInputSchema.parse(input).id))
+    if (error) throw new Error('无法打开保存的原文件')
+  })
+  registerHandler(ipcChannels.documentParsingRelease, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return documentParsingService?.results?.release(documentResourceInputSchema.parse(input).id)
+  })
+  registerHandler(ipcChannels.documentParsingCancel, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    documentParsingService?.cancelDiagnostic(documentResourceInputSchema.parse(input).id)
+  })
+
+  registerHandler(ipcChannels.contextGetDraft, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId } = z.object({ conversationId: z.string().uuid() }).strict().parse(input)
+    return contextManager.getDraft(conversationId)
+  })
+  registerHandler(ipcChannels.contextCancelImport, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    contextManager.cancelImport(false, assistantIdSchema.optional().parse(input))
+  })
+  let selectedImageOperation = Promise.resolve()
+  const attachmentParsing = new Map<string, AbortController>()
+  registerHandler(ipcChannels.contextImageCapability, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, runtimeSelection } = z.object({ conversationId: z.string().uuid(), runtimeSelection: agentRuntimeSelectionSchema.optional() }).strict().parse(input)
+    try {
+      const conversation = assistantDatabase.getConversation(conversationId)
+      await assertImageInputSupport({ requestId: randomUUID(), conversationId, projectId: conversation.projectId, runtimeSelection, prompt: '', workMode: 'ask' })
+      return { supported: true }
+    } catch (error) { return { supported: false, reason: error instanceof Error ? error.message : '尚未确认图片输入能力' } }
+  })
+  registerHandler(ipcChannels.contextCopyToDraft, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, id, operationId } = z.object({ conversationId: z.string().uuid(), id: z.string().uuid(), operationId: z.string().uuid() }).strict().parse(input)
+    if (!documentParsingService || !contextManager.assets) throw new Error('解析服务不可用')
+    const validate = (): void => { if (assistantDatabase.getConversation(conversationId).remote) throw new Error('此会话草稿不可编辑') }
+    validate()
+    if (attachmentParsing.has(operationId)) throw new Error('解析任务正在运行')
+    const controller = new AbortController()
+    attachmentParsing.set(operationId, controller)
+    try {
+      const image = Boolean(contextManager.assets.get(id).sendMode)
+      const attachments = await contextManager.copyToDraft(conversationId, id, (name, data) => image
+        ? documentParsingService.extractImage(name, data, controller.signal)
+        : documentParsingService.parse(name, data, 'chat-attachment', controller.signal), controller.signal, validate)
+      window.webContents.send(ipcChannels.contextDraftChanged, conversationId, attachments)
+      return attachments
+    } finally { attachmentParsing.delete(operationId) }
+  })
+  registerHandler(ipcChannels.contextPendingParsing, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return contextManager.assets?.pendingParsing(assistantIdSchema.parse(input)) ?? []
+  })
+  registerHandler(ipcChannels.contextDismissParsing, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, id } = z.object({ conversationId: z.string().uuid(), id: z.string().uuid() }).strict().parse(input)
+    if (!contextManager.assets?.pendingParsing(conversationId).some((item) => item.id === id)) throw new Error('解析记录不存在')
+    contextManager.assets.release('parsing', id)
+    contextManager.remove(id)
+  })
+  registerHandler(ipcChannels.contextRetryParsing, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, id, operationId } = z.object({ conversationId: z.string().uuid(), id: z.string().uuid(), operationId: z.string().uuid() }).strict().parse(input)
+    if (assistantDatabase.getConversation(conversationId).remote) throw new Error('此会话草稿不可编辑')
+    if (attachmentParsing.has(operationId)) throw new Error('解析任务正在运行')
+    const controller = new AbortController()
+    attachmentParsing.set(operationId, controller)
+    try {
+      const attachments = await contextManager.retryParsing(conversationId, id, controller.signal)
+      window.webContents.send(ipcChannels.contextDraftChanged, conversationId, attachments)
+      return attachments
+    } finally { attachmentParsing.delete(operationId) }
+  })
+  registerHandler(ipcChannels.contextOpenOriginal, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const original = contextManager.assets?.original(assistantIdSchema.parse(input))
+    if (!original) throw new Error('此附件未保存原件')
+    const error = await shell.openPath(original.path)
+    if (error) throw new Error('原文件无法打开')
+  })
+  registerHandler(ipcChannels.contextCancelParsing, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    attachmentParsing.get(assistantIdSchema.parse(input))?.abort(new Error('文档解析已取消'))
+  })
+  registerHandler(ipcChannels.contextReparse, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, id, operationId } = z.object({ conversationId: z.string().uuid(), id: z.string().uuid(), operationId: z.string().uuid() }).strict().parse(input)
+    if (!documentParsingService || !contextManager.assets) throw new Error('文档解析服务不可用')
+    if (assistantDatabase.getConversation(conversationId).remote) throw new Error('此会话草稿不可编辑')
+    if (attachmentParsing.has(operationId)) throw new Error('任务已在运行')
+    const controller = new AbortController()
+    attachmentParsing.set(operationId, controller)
+    try {
+      const image = Boolean(contextManager.assets.get(id).sendMode)
+      const attachments = await contextManager.reparseDraft(conversationId, id, (name, data) => image
+        ? documentParsingService.extractImage(name, data, controller.signal)
+        : documentParsingService.parse(name, data, 'chat-attachment', controller.signal), controller.signal)
+      window.webContents.send(ipcChannels.contextDraftChanged, conversationId, attachments)
+      return attachments
+    } finally { attachmentParsing.delete(operationId) }
+  })
+  registerHandler(ipcChannels.contextSendOriginal, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, id } = z.object({ conversationId: z.string().uuid(), id: z.string().uuid() }).strict().parse(input)
+    const attachments = contextManager.sendOriginal(conversationId, id)
+    window.webContents.send(ipcChannels.contextDraftChanged, conversationId, attachments)
+    return attachments
+  })
+  registerHandler(ipcChannels.contextAddResultImages, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, resultId, imageIds } = z.object({ conversationId: z.string().uuid(), resultId: z.string().uuid(), imageIds: z.array(z.string().uuid()).min(1).max(maximumAttachmentsPerMessage) }).strict().parse(input)
+    const operation = selectedImageOperation.then(async () => {
+      const conversation = assistantDatabase.getConversation(conversationId)
+      if (conversation.remote) throw new Error('请选择可编辑的本地或托管 SSH 会话')
+      if (!documentParsingService?.results) throw new Error('解析结果服务不可用')
+      const attachments = await contextManager.addResultImages(conversationId, resultId, imageIds, documentParsingService.results, () => {
+        if (assistantDatabase.getConversation(conversationId).remote) throw new Error('目标会话不可编辑')
+      })
+      window.webContents.send(ipcChannels.contextDraftChanged, conversationId, attachments)
+      return attachments
+    })
+    selectedImageOperation = operation.then(() => undefined, () => undefined)
+    return operation
+  })
+  registerHandler(ipcChannels.contextSaveDraft, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { conversationId, ids } = z.object({ conversationId: z.string().uuid(), ids: z.array(z.string().uuid()).max(maximumAttachmentsPerMessage) }).strict().parse(input)
+    contextManager.saveDraft(conversationId, ids)
+    window.webContents.send(ipcChannels.contextDraftChanged, conversationId, contextManager.getDraft(conversationId))
+  })
+  registerHandler(ipcChannels.localInferenceOpenSettings, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const category = z.enum(['model', 'document-parsing']).optional().parse(input) ?? 'model'
+    window.webContents.send(ipcChannels.settingsOpen, category)
   })
   registerHandler(ipcChannels.localInferenceAct, (event, input: unknown) => {
     assertTrustedSender(event, window)
@@ -6867,9 +7058,11 @@ export function registerIpcHandlers(
     ipcChannels.conversationsSaveLocal,
     (event, input: unknown) => {
       assertTrustedSender(event, window)
-      assistantDatabase.saveLocalConversations(
-        localConversationSaveBatchSchema.parse(input)
-      )
+      const batch = localConversationSaveBatchSchema.parse(input)
+      for (const save of batch) for (const message of save.messages) {
+        contextManager.assets?.reference(save.header.id, 'message', message.id, message.attachments?.map((attachment) => attachment.resourceId ?? attachment.id) ?? [])
+      }
+      assistantDatabase.saveLocalConversations(batch)
     }
   )
 
@@ -6880,6 +7073,8 @@ export function registerIpcHandlers(
       assistantDatabase.setConversationPinned(
         conversationSetPinnedSchema.parse(input)
       )
+      contextManager.assets?.reconcile((conversationId, kind, ownerId) => assistantDatabase.hasAttachmentOwner(conversationId, kind, ownerId), false, contextManager.activeContextIds())
+      if (contextManager.assets) contextManager.cancelUnavailableImport()
       publishConversationChange()
     }
   )
@@ -6892,9 +7087,9 @@ export function registerIpcHandlers(
       if (isConversationExecuting(parsed.sourceConversationId)) {
         throw new Error('当前会话仍有正在执行的请求，请等待完成后再创建分支')
       }
-      return assistantDatabase.branchLocalConversation(
-        parsed
-      )
+      const branch = assistantDatabase.branchLocalConversation(parsed)
+      for (const message of branch.messages) contextManager.assets?.reference(branch.id, 'message', message.id, message.attachments?.map((attachment) => attachment.resourceId ?? attachment.id) ?? [])
+      return branch
     }
   )
 
@@ -6923,6 +7118,8 @@ export function registerIpcHandlers(
       const deleted = assistantDatabase.deleteLocalConversation(
         conversationId
       )
+      if (deleted) contextManager.assets?.deleteConversation(conversationId, contextManager.activeContextIds())
+      if (deleted && contextManager.assets) contextManager.cancelUnavailableImport()
       preferredConversationQueueItems.delete(conversationId)
       readyConversationQueues.delete(conversationId)
       rendererReadyConversationQueues.delete(conversationId)
@@ -6955,21 +7152,30 @@ export function registerIpcHandlers(
       assertTrustedSender(event, window)
       return assistantDatabase.listConversationQueueItems(
         assistantIdSchema.optional().parse(input)
-      )
+      ).map((item) => conversationQueueErrors.has(item.id) ? { ...item, error: conversationQueueErrors.get(item.id) } : item)
     }
   )
 
   registerHandler(
     ipcChannels.conversationQueueEnqueueUser,
-    (event, input: unknown) => {
+    async (event, input: unknown) => {
       assertTrustedSender(event, window)
       if (executionPaused || shuttingDown) {
         throw new Error('本地数据维护期间暂不接受新消息')
       }
       const parsed = conversationQueueUserInputSchema.parse(input)
+      if (contextManager.assets) {
+        parsed.attachments = parsed.attachments.map((attachment) => contextManager.assets!.has(attachment.id) ? contextManager.assets!.get(attachment.id) : attachment)
+      }
+      if (contextManager.hasImageInputs(parsed.attachments.map((attachment) => attachment.id))) {
+        await assertImageInputSupport({
+          ...parsed, requestId: randomUUID(), contextIds: parsed.attachments.map((attachment) => attachment.id)
+        })
+      }
       const serializedContexts = contextManager.serializeForQueue(
         parsed.attachments.map((attachment) => attachment.id)
       )
+      contextManager.validateForSend(parsed.attachments.map((attachment) => attachment.id))
       const item = assistantDatabase.enqueueConversationUserInput({
         conversationId: parsed.conversationId,
         label: parsed.prompt,
@@ -6978,6 +7184,13 @@ export function registerIpcHandlers(
           serializedContexts
         })
       })
+      try {
+        contextManager.assets?.reference(parsed.conversationId, 'queue', item.id, parsed.attachments.map((attachment) => attachment.id))
+      } catch (error) {
+        assistantDatabase.removeConversationUserQueueItem(item.id)
+        throw error
+      }
+      contextManager.assets?.release('draft', parsed.conversationId)
       for (const attachment of parsed.attachments) {
         contextManager.remove(attachment.id)
       }
@@ -7012,6 +7225,8 @@ export function registerIpcHandlers(
           parseConversationQueueUserPayload(payloadJson)
       }
       assistantDatabase.cancelConversationQueueItem(itemId)
+      conversationQueueErrors.delete(itemId)
+      contextManager.assets?.release('queue', itemId)
       if (
         preferredConversationQueueItems.get(item.conversationId) ===
         itemId
@@ -7030,6 +7245,36 @@ export function registerIpcHandlers(
       }
     }
   )
+
+  registerHandler(ipcChannels.conversationQueueRestoreDraft, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { itemId, draftText } = z.object({ itemId: z.string().uuid(), draftText: z.string().max(1_000_000) }).strict().parse(input)
+    const item = assistantDatabase.getConversationQueueItem(itemId)
+    if (!item || item.source !== 'user' || assistantDatabase.isConversationUserQueueItemDispatching(itemId)) throw new Error('此队列输入已开始执行或不可恢复')
+    const payload = assistantDatabase.getConversationUserQueuePayloadJson(itemId)
+    if (!payload) throw new Error('队列输入不存在')
+    const queued = parseConversationQueueUserPayload(payload, true)
+    const previous = contextManager.getDraft(item.conversationId)
+    const merged = [...previous]
+    for (const attachment of queued.attachments) {
+      if (!merged.some((current) => current.id === attachment.id || (current.provenance && attachment.provenance && current.provenance.resultId === attachment.provenance.resultId && current.provenance.imageId === attachment.provenance.imageId))) merged.push(attachment)
+    }
+    contextManager.saveDraft(item.conversationId, merged.map((attachment) => attachment.id))
+    try { assistantDatabase.removeConversationUserQueueItem(itemId) }
+    catch (error) { contextManager.saveDraft(item.conversationId, previous.map((attachment) => attachment.id)); throw error }
+    contextManager.assets?.release('queue', itemId)
+    conversationQueueErrors.delete(itemId)
+    const attachments = contextManager.getDraft(item.conversationId)
+    window.webContents.send(ipcChannels.contextDraftChanged, item.conversationId, attachments)
+    publishConversationQueueChange(item.conversationId)
+    return { conversationId: item.conversationId, prompt: [draftText, queued.prompt].filter(Boolean).join('\n\n'), attachments }
+  })
+  registerHandler(ipcChannels.conversationQueueAttachments, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const payload = assistantDatabase.getConversationUserQueuePayloadJson(assistantIdSchema.parse(input))
+    if (!payload) throw new Error('队列输入已开始执行或已移除')
+    return parseConversationQueueUserPayload(payload).attachments
+  })
 
   registerHandler(
     ipcChannels.conversationQueueInterruptAndRun,
@@ -7835,8 +8080,10 @@ export function registerIpcHandlers(
     }
   )
 
-  registerHandler(ipcChannels.contextSelectFiles, (event) => {
+  registerHandler(ipcChannels.contextSelectFiles, (event, input: unknown) => {
     assertTrustedSender(event, window)
+    const conversationId = assistantIdSchema.optional().parse(input)
+    contextImports += 1
     return contextManager.selectFiles(window, (progress) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send(
@@ -7844,17 +8091,18 @@ export function registerIpcHandlers(
           progress
         )
       }
-    })
+    }, ...(conversationId ? [conversationId] as const : [])).finally(() => { contextImports -= 1 })
   })
 
   registerHandler(ipcChannels.contextImportFiles, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    const { paths } = contextImportFilesSchema.parse(input)
+    const { paths, conversationId } = contextImportFilesSchema.parse(input)
+    contextImports += 1
     return contextManager.importFiles(paths, (progress) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send(ipcChannels.contextFileSelectionProgress, progress)
       }
-    })
+    }, ...(conversationId ? [conversationId] as const : [])).finally(() => { contextImports -= 1 })
   })
 
   registerHandler(
@@ -7966,11 +8214,14 @@ export function registerIpcHandlers(
     ipcChannels.magicNotesAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { entryId, requestId, direction, format, canvasImages } =
+      const { entryId, requestId, direction, format, canvasImages, expectedRevision } =
         magicNoteAnalyzeSchema.parse(input)
-      const entry = assistantDatabase.getMagicNoteEntry(entryId)
-      const note = assistantDatabase.getMagicNoteContext(entry.noteId)
       const settings = await settingsStore.getResolvedSettings()
+      const entry = assistantDatabase.getMagicNoteEntry(entryId)
+      if (expectedRevision !== undefined && entry.revision !== expectedRevision) {
+        throw new Error('记录已被更新，请重新捕获并分析')
+      }
+      const note = assistantDatabase.getMagicNoteContext(entry.noteId)
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
         settings
@@ -8132,11 +8383,14 @@ export function registerIpcHandlers(
     ipcChannels.magicTodosAnalyze,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
-      const { todoId, requestId, direction, format, canvasImages } =
+      const { todoId, requestId, direction, format, canvasImages, sourceEntryRevision } =
         magicTodoIdSchema.parse(input)
+      const settings = await settingsStore.getResolvedSettings()
       const todo = assistantDatabase.getMagicTodo(todoId)
       const entry = assistantDatabase.getMagicNoteEntry(todo.entryId)
-      const settings = await settingsStore.getResolvedSettings()
+      if (sourceEntryRevision !== undefined && entry.revision !== sourceEntryRevision) {
+        throw new Error('来源记录已被更新，请重新捕获并分析')
+      }
       const analysisRuntime = createDefaultModelRuntime(
         settings.workspacePath,
         settings
@@ -8176,6 +8430,7 @@ export function registerIpcHandlers(
         const analyzedTodo = assistantDatabase.saveMagicTodoAnalysis({
           todoId,
           expectedRevision: todo.revision,
+          sourceEntryRevision: entry.revision,
           comments
         })
         assistantDatabase.updateTaskStatus(requestId, 'completed')
@@ -8798,6 +9053,9 @@ export function registerIpcHandlers(
 
   return async () => {
     shuttingDown = true
+    for (const id of diagnosticOperations) documentParsingService?.cancelDiagnostic(id)
+    if (contextImports > 0) contextManager.cancelImport(true)
+    for (const controller of attachmentParsing.values()) controller.abort(new Error('应用正在退出'))
     removeApplicationSettingsListener?.()
     removeLocalToolEnvironmentProgressListener?.()
     await localToolEnvironmentService?.dispose()

@@ -1,5 +1,119 @@
 # Magic Notes Progress
 
+## 2026-09-19: Resizable Record Index
+
+- The record index defaults to 168px and supports pointer resizing from its right
+  edge and keyboard resizing between 140px and 320px. Index and AI separators share
+  event handlers, styles and accessibility semantics. The existing layout storage
+  key now includes `indexPaneWidth`; constrained window sizes do not overwrite the
+  saved desktop width. Layout behavior is defined in the
+  [technical design](./technical-design.md).
+- Collapsing removes both the column and its 9px separator while retaining the
+  header toggle. At widths up to 800px the existing fixed 168px drawer remains,
+  without an index separator. Thumbnail images retain contain sizing.
+- Focused verification: 147 tests passed across `MagicNotesWorkspace.test.tsx`,
+  `MagicCanvasThumbnail.test.tsx` and `WorkspacePrimitives.test.tsx`. Coverage includes
+  pointer bounds/cancel, unrelated pointer IDs, keyboard limits, persistence,
+  independent collapse and narrow layouts. `npm run typecheck`, `npm run lint`
+  and `git diff --check` passed. No full test suite was run for this change.
+- `npx vitest run tests/magic-notes-layout.electron.test.ts` passed with current
+  production Workspace/CSS/i18n in Electron and fixture note IPC. Native mouse and
+  keyboard input verified default/min/max widths, both pane handles, resizing with
+  AI open and closed, a 329px stream increase when a 320px index is hidden, and
+  actual localStorage restoration after page reload. Content sizes were 1280x800,
+  820x720 and 720x640; the constrained desktop stream remained at least 300px,
+  narrow drawer width was 168px, and no document horizontal overflow occurred.
+  This verifies renderer geometry and browser layout preferences, not the full App
+  shell or note database persistence. No model calls were made.
+
+## 2026-09-19: Final Full-Suite Verification of Six Fixes
+
+- Ran `npm test` with a 1,200,000 ms command timeout: **4,756 passed,
+  11 failed, 67 skipped**; files: **395 passed, 1 failed, 9 skipped**.
+  Started at 12:59:14 and completed in 754.02 seconds. This was a shared,
+  concurrently changing worktree, not a frozen source snapshot.
+- All full-run failures were in `src/main/magic-notes/canvas-ipc.integration.test.ts`.
+  `TypeError: contextManager.cancelImport is not a function` occurred during
+  disposal at test line 91 and reopen at line 77 (cases at 198, 238 and 265).
+  Evidence: the concurrent attachment-import diff adds `ContextManager.cancelImport`
+  and calls it unconditionally from the IPC disposer; the notes fixture supplied
+  only `clear`. The output mapped the IPC frame to line 8942; the inspected current
+  source had the actual call at line 8967.
+- Added only the missing no-op `cancelImport` to the notes IPC fixture and the
+  equivalent environment fixture in `tests/support/magic-notes-analysis-main.ts`.
+  The latter was exposed by the first focused rerun: **397 passed, 1 failed,
+  0 skipped**, with the same disposal error reported at
+  `tests/magic-notes-analysis.electron.test.ts:56`. No production code was changed
+  in this verification pass.
+- Final five-file focused command: `npx vitest run
+  src/main/magic-notes/canvas-ipc.integration.test.ts
+  src/renderer/src/MagicNotesWorkspace.test.tsx src/renderer/src/App.test.tsx
+  tests/magic-notes-analysis.electron.test.ts tests/magic-notes-navigation.electron.test.ts`.
+  Result: **396 passed, 2 failed, 0 skipped** in 121.12 seconds; files:
+  **4 passed, 1 failed**. Notes Workspace (108), IPC (11) and both Electron probes
+  (2) all passed, totaling **121 notes tests**.
+- The remaining failures are App project-activity cases acknowledging foreground
+  and background local success from persisted messages, at
+  `src/renderer/src/App.test.tsx:1430` (missing completion text) and `:1418`
+  (still running instead of completed). Standalone `npx vitest run
+  src/renderer/src/App.test.tsx` reproduced **275 passed, 2 failed, 0 skipped**
+  in 58.44 seconds. Evidence of the unrelated attachment interaction: test line
+  1394 takes `saveLocal.mock.calls.at(-1)` and lines 1408-1411 build completion
+  messages from that call; the concurrent App diff adds an attachment-save queue
+  calling `saveLocal` with `messages: []` at line 2741, including when send clears
+  attachments at line 7620. These tests do not enter notes. App and attachment
+  files were left unchanged by this verification pass.
+- Focused ESLint passed for both adjusted fixtures. The previously reported full
+  typecheck/lint results were not rerun. `git diff --check` passed after the
+  documentation update (only LF-to-CRLF warnings). The full suite
+  was not repeated after fixture fixes; this is not an all-green full-suite claim.
+  Live model calls in this pass: 0. No commits. Earlier progress sections retained.
+
+## 2026-09-19: App Leave Guard and Title Drafts
+
+- App navigation registers the workspace's existing canvas-flush and dirty-draft
+  confirmation through `onBeforeLeave`. Sidebar, launcher and conversation jumps
+  share the gate. Settings closes after its own leave approval before notes asks
+  for confirmation. Cache limits and continuous-record/index behavior are unchanged.
+- Non-title responses preserve dirty titles; title-save responses acknowledge only
+  the submitted input and retain later edits.
+- Focused suites passed: `MagicNotesWorkspace.test.tsx` (99 tests) and `App.test.tsx`
+  (277 tests). The expanded settings-to-notes confirmation cases also passed.
+  `npm run typecheck`, `npm run lint` and `git diff --check` passed.
+- `tests/magic-notes-navigation.electron.test.ts` passed with actual Windows Electron,
+  Workspace, Quill and canvas components. It checks AI-time title input, pending
+  canvas flow input, Continue editing and confirmed discard. API responses are
+  controlled fixtures; this is not a packaged full-App/persistent-IPC probe.
+  Model calls: 0. Full repository test suite was not run.
+
+## 2026-09-19: Analysis Source Revisions
+
+- Main/shared/DB implement the source revision and comment invalidation rules in
+  [Canvas Analysis and Comments](./technical-design.md#canvas-analysis-and-comments).
+  Canvas todo writeback rejects stale sources even without pre-existing comments;
+  affected saved todo comments are cleared with a revision increment and stable ID.
+- Shared `magicNoteCanvasAnalysisText` preserves analyzer page-number semantics.
+  Regression coverage includes blank-page insertion with unchanged plain text,
+  geometry changes, missing/stale capture revisions and source edits during runs.
+- Focused Vitest: 5 files, 162 tests passed (database, storage, rich content,
+  analyzer and production preload/IPC integration). `npm run typecheck` and focused
+  ESLint passed for the initial Main/shared changes.
+- Workspace now passes capture revisions, save-response revisions selected by the
+  exact created/edited entry ID, and selected todo source revisions. It uses the
+  shared page-numbered analysis text for automatic text-comment analysis decisions.
+  Draft analysis is unchanged. Regression coverage includes an external refresh
+  completing during capture without pairing the old image with a newer revision.
+- UI adaptation validation: Workspace (108 tests), production IPC integration
+  (11 tests), both Electron probes (2 tests), and App (277 tests) passed, 398 total.
+  Workspace fixtures validate every analysis request with the production schemas.
+  `npm run typecheck`, `npm run lint` and `git diff --check` passed.
+- `tests/magic-notes-analysis.electron.test.ts` runs actual Workspace/Quill/Fabric
+  captures through production preload, registered Electron IPC, source revision
+  checks, analyzer and SQLite. Saved-entry analysis, edit/create automatic analysis
+  and source-canvas todo analysis all persist `canvas-images` comments. Only model
+  output and unrelated environment services are substituted; live model calls: 0.
+  The earlier navigation/title Electron regression also passes. No full suite run.
+
 ## 2026-09-19: Default Composer
 
 - Opening a note now shows a blank text/canvas composer below its title and above

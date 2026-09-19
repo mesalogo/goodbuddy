@@ -7,6 +7,10 @@ import {
 } from '../shared/document-parsing-contracts'
 import type { SettingsWarning } from '../shared/settings-warning-contracts'
 import {
+  decryptSettingsCredential, encryptedSettingsCredentialSchema,
+  encryptSettingsCredential, type SettingsCredentialCipher
+} from './settings-credential-cipher'
+import {
   assertSupportedSettingsVersion,
   isolateCorruptSettingsFile,
   isMissingFileError,
@@ -14,12 +18,13 @@ import {
   writeJsonFileAtomically
 } from './settings-file-utils'
 
-const CURRENT_SETTINGS_VERSION = 3
+const CURRENT_SETTINGS_VERSION = 4
 
 const storedDocumentParsingSettingsSchema =
   documentParsingSettingsSchema
     .extend({
-      version: z.literal(CURRENT_SETTINGS_VERSION)
+      version: z.literal(CURRENT_SETTINGS_VERSION),
+      credential: encryptedSettingsCredentialSchema.optional()
     })
     .strict()
 
@@ -102,7 +107,10 @@ export class DocumentParsingSettingsStore {
   private warnings: SettingsWarning[] = []
   private updateQueue: Promise<void> = Promise.resolve()
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly cipher?: SettingsCredentialCipher
+  ) {}
 
   private async isolateCorruptFile(): Promise<void> {
     await isolateCorruptSettingsFile(
@@ -147,6 +155,11 @@ export class DocumentParsingSettingsStore {
       const result =
         storedDocumentParsingSettingsSchema.safeParse(parsed)
       if (!result.success) {
+        const versionThree = documentParsingSettingsSchema.extend({ version: z.literal(3) }).safeParse(parsed)
+        if (versionThree.success) {
+          this.settings = { ...versionThree.data, version: CURRENT_SETTINGS_VERSION }
+          return this.settings
+        }
         const versionTwo =
           legacyVersionTwoSettingsSchema.safeParse(parsed)
         if (versionTwo.success) {
@@ -195,8 +208,9 @@ export class DocumentParsingSettingsStore {
   }
 
   async get(): Promise<DocumentParsingSettings> {
-    const { version: _version, ...settings } = await this.loadStored()
+    const { version: _version, credential: _credential, ...settings } = await this.loadStored()
     void _version
+    void _credential
     return documentParsingSettingsSchema.parse(settings)
   }
 
@@ -204,12 +218,42 @@ export class DocumentParsingSettingsStore {
     return this.warnings
   }
 
+  async credentialConfigured(): Promise<boolean> {
+    return Boolean((await this.loadStored()).credential)
+  }
+
+  async getApiKey(): Promise<string | undefined> {
+    const { credential } = await this.loadStored()
+    return this.decryptCredential(credential)
+  }
+
+  private decryptCredential(credential: StoredDocumentParsingSettings['credential']): string | undefined {
+    if (!credential) return undefined
+    if (!this.cipher?.isAvailable()) throw new Error('OCR 凭据加密存储不可用')
+    return z.string().min(1).parse(decryptSettingsCredential(this.cipher, credential))
+  }
+
+  async forOperation(): Promise<{ settings: DocumentParsingSettings; apiKey: () => string | undefined }> {
+    const stored = await this.loadStored()
+    const { version: _version, credential: _credential, ...settings } = stored
+    void _version
+    void _credential
+    return { settings: documentParsingSettingsSchema.parse(settings), apiKey: () => this.decryptCredential(stored.credential) }
+  }
+
   update(input: unknown): Promise<DocumentParsingSettings> {
     const operation = this.updateQueue.then(async () => {
-      const updates = documentParsingSettingsUpdateSchema.parse(input)
+      const { apiKey, clearApiKey, ...updates } = documentParsingSettingsUpdateSchema.parse(input)
+      let credential = (await this.loadStored()).credential
+      if (clearApiKey) credential = undefined
+      if (apiKey) {
+        if (!this.cipher?.isAvailable()) throw new Error('OCR 凭据加密存储不可用')
+        credential = encryptSettingsCredential(this.cipher, apiKey)
+      }
       const next: StoredDocumentParsingSettings = {
         version: CURRENT_SETTINGS_VERSION,
-        ...updates
+        ...updates,
+        ...(credential ? { credential } : {})
       }
       await writeJsonFileAtomically(this.filePath, next)
       this.settings = next

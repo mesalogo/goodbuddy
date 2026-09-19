@@ -147,6 +147,7 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
             {service.error && <p className="local-inference-error">{service.error}</p>}
           </div>
           <div className="local-inference-actions">
+            {service.id === 'ocr' && <button className="secondary-button" type="button" disabled={busy} onClick={() => void window.goodbuddy.localInference.openSettings('document-parsing').catch((reason: unknown) => setOperationError(String(reason)))}>文档解析设置</button>}
             {service.actions.map((action) => <button type="button" className="secondary-button" key={action} disabled={busy || refreshing || Boolean(error)} onClick={() => selectAction(service, action)}>{actionLabels[action]}</button>)}
             {service.id === 'ocr' && <button type="button" className="secondary-button" disabled={busy || refreshing || Boolean(error) || ocr.busy || service.state === 'unavailable'} onClick={() => selectAction(service, ocr.loaded ? 'release' : 'load')}>{ocr.loaded ? '释放模型' : '加载模型'}</button>}
           </div>

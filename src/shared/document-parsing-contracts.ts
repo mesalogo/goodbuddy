@@ -247,18 +247,71 @@ export const documentOcrModelInstallInputSchema = z
   })
   .strict()
 
+export const httpOcrOptionsSchema = z.object({
+  useDocOrientationClassify: z.boolean().optional(),
+  useDocUnwarping: z.boolean().optional(),
+  useLayoutDetection: z.boolean().optional(),
+  useChartRecognition: z.boolean().optional(),
+  useSealRecognition: z.boolean().optional(),
+  useOcrForImageBlock: z.boolean().optional(),
+  prettifyMarkdown: z.boolean().optional(),
+  showFormulaNumber: z.boolean().optional(),
+  formatBlockContent: z.boolean().optional(),
+  mergeLayoutBlocks: z.boolean().optional(),
+  layoutThreshold: z.number().min(0).max(1).optional(),
+  layoutUnclipRatio: z.number().positive().optional(),
+  layoutMergeBboxesMode: z.string().trim().min(1).max(64).optional(),
+  layoutNms: z.boolean().optional(),
+  layoutShapeMode: z.enum(['rect', 'quad', 'poly', 'auto']).optional(),
+  promptLabel: z.string().max(500).optional(),
+  repetitionPenalty: z.number().positive().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  topP: z.number().min(0).max(1).optional(),
+  minPixels: z.number().int().positive().optional(),
+  maxPixels: z.number().int().positive().optional(),
+  maxNewTokens: z.number().int().positive().optional()
+}).strict()
+
+export const httpOcrSettingsSchema = z.object({
+  baseUrl: z.string().trim().max(2048).refine((value) => {
+    if (!value) return true
+    try {
+      const url = new URL(value)
+      return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash
+    } catch { return false }
+  }, '请输入不含凭据、查询参数或片段的 HTTP 服务地址'),
+  authentication: z.enum(['none', 'bearer']),
+  timeoutSeconds: z.number().int().min(10).max(300),
+  filterMode: z.enum(['default', 'all', 'custom']),
+  ignoredLabels: z.array(z.string().trim().min(1).max(100)).max(100),
+  options: httpOcrOptionsSchema,
+  mergeTables: z.boolean(),
+  relevelTitles: z.boolean()
+}).strict()
+
+export const defaultHttpOcrSettings = httpOcrSettingsSchema.parse({
+  baseUrl: '', authentication: 'none', timeoutSeconds: 60,
+  filterMode: 'default', ignoredLabels: [], options: {},
+  mergeTables: false, relevelTitles: false
+})
+
 export const documentParsingSettingsSchema = z
   .object({
     chatWorkflow: chatDocumentWorkflowSchema,
     knowledgeWorkflow: knowledgeDocumentWorkflowSchema,
     localOcrModelId: localOcrModelIdSchema,
     maximumPages: z.number().int().min(1).max(500),
-    pageTimeoutSeconds: z.number().int().min(10).max(300)
+    pageTimeoutSeconds: z.number().int().min(10).max(300),
+    ocrProvider: z.enum(['local', 'paddleocr-vl']).optional(),
+    httpOcr: httpOcrSettingsSchema.optional()
   })
   .strict()
 
 export const documentParsingSettingsUpdateSchema =
-  documentParsingSettingsSchema
+  documentParsingSettingsSchema.extend({
+    apiKey: z.string().trim().max(4096).optional(),
+    clearApiKey: z.boolean().optional()
+  })
 
 export const documentParsingModelStatusSchema = z
   .object({
@@ -284,18 +337,22 @@ export const documentParsingSnapshotSchema = z
     settings: documentParsingSettingsSchema,
     status: documentParsingStatusSchema,
     ocrModels: documentOcrModelSnapshotSchema,
+    httpCredentialConfigured: z.boolean().optional(),
     warnings: settingsWarningsSchema.optional()
   })
   .strict()
 
 export const documentParsingTestInputSchema = z
   .object({
-    purpose: documentParsingTestPurposeSchema
+    purpose: documentParsingTestPurposeSchema,
+    operationId: z.string().uuid().optional()
   })
   .strict()
 
 export const documentParsingDiagnosticSchema = z
   .object({
+    provider: z.enum(['native', 'local', 'paddleocr-vl']).optional(),
+    resultId: z.string().uuid().optional(),
     fileName: z.string().trim().min(1).max(500),
     sourceFormat: z.string().trim().min(1).max(32),
     pageCount: z.number().int().nonnegative().max(maximumPdfPageCount),
@@ -381,7 +438,7 @@ export const documentOcrSectionSchema = z
       .trim()
       .min(1)
       .max(maximumDocumentOcrSectionCharacters),
-    confidence: z.number().min(0).max(1)
+    confidence: z.number().min(0).max(1).optional()
   })
   .strict()
 

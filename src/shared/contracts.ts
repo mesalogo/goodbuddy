@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { maximumAttachmentsPerMessage, maximumContextBytes } from './attachment-limits'
 import {
   modelRequestBodySchema,
   modelRequestHeadersSchema,
@@ -346,7 +347,7 @@ export const agentRequestSchema = z
       .max(20)
       .default([]),
     knowledgeRetrievalMode: knowledgeRetrievalModeSchema.default('auto'),
-    contextIds: z.array(z.string().uuid()).max(8).optional(),
+    contextIds: z.array(z.string().uuid()).max(maximumAttachmentsPerMessage).optional(),
     imageContextArtifactIds: z.array(assistantIdSchema).max(8).optional(),
     history: z
       .array(conversationHistoryMessageSchema)
@@ -388,7 +389,7 @@ export const conversationQueueUserInputSchema = z
     workMode: legacyWorkModeSchema,
     includeMemoryContext: z.boolean().default(true),
     prompt: z.string().trim().min(1).max(100_000),
-    attachments: z.array(conversationAttachmentSchema).max(8).default([]),
+    attachments: z.array(conversationAttachmentSchema).max(maximumAttachmentsPerMessage).default([]),
     imageContextArtifactIds: z.array(assistantIdSchema).max(8).optional(),
     knowledgeLibraryIds: z
       .array(z.string().uuid())
@@ -1138,17 +1139,19 @@ export type RuntimeSettings = {
 export type ContextAttachment = ConversationAttachment
 
 export type ContextFileSelectionProgress = {
-  phase: 'reading' | 'parsing'
+  phase: 'reading' | 'parsing' | 'saving'
+  operationId?: string
   fileName: string
   fileNumber: number
   fileCount: number
 }
 
-export const maximumPastedImageBytes = 12 * 1024 * 1024
+export const maximumPastedImageBytes = maximumContextBytes
 
 export const clipboardTextSchema = z.string()
 
 export const contextImportFilesSchema = z.object({
+  conversationId: z.string().uuid().optional(),
   paths: z.array(z.string().min(1).max(32768)).min(1).max(8)
 }).strict()
 
@@ -1670,6 +1673,7 @@ export type KnowledgeSourceItem = {
 }
 
 export type KnowledgeDocumentItem = {
+  resultId?: string
   id: string
   libraryId: string
   sourceId?: string
@@ -1765,7 +1769,7 @@ export type DesktopApi = {
     onBeforeQuit: (listener: () => Promise<void>) => () => void
     clearLocalData: () => Promise<void>
     onNewConversation: (listener: () => void) => () => void
-    onOpenSettings: (listener: () => void) => () => void
+    onOpenSettings: (listener: (category?: 'model' | 'document-parsing') => void) => () => void
   }
   clipboard: {
     readText: () => Promise<string>
@@ -1998,13 +2002,20 @@ export type DesktopApi = {
     removeModel: (modelId: string) => Promise<EmbeddingModelSnapshot>
   }
   documentParsing?: {
+    getResult: (id: string) => Promise<import('./document-result-contracts').DocumentResult>
+    readResultImage: (id: string, imageId: string, thumbnail?: boolean) => Promise<string>
+    openResultOriginal: (id: string) => Promise<void>
+    releaseResult: (id: string) => Promise<void>
+    cancelTest: (operationId: string) => Promise<void>
+    checkHttp: () => Promise<{ checkedAt: string; declaredOptions: string[] }>
     getSnapshot: () => Promise<DocumentParsingSnapshot>
     getOcrModelProgress: () => Promise<DocumentOcrModelProgressSnapshot>
     update: (
-      input: DocumentParsingSettings
+      input: DocumentParsingSettings & { apiKey?: string; clearApiKey?: boolean }
     ) => Promise<DocumentParsingSnapshot>
     test: (
-      purpose: DocumentParsingTestPurpose
+      purpose: DocumentParsingTestPurpose,
+      operationId?: string
     ) => Promise<DocumentParsingDiagnostic | undefined>
     installOcrModel: (
       modelId: string,
@@ -2077,6 +2088,8 @@ export type DesktopApi = {
     ) => () => void
   }
   conversationQueue: {
+    getAttachments: (itemId: string) => Promise<ContextAttachment[]>
+    restoreToDraft: (itemId: string, draftText: string) => Promise<{ conversationId: string; prompt: string; attachments: ContextAttachment[] }>
     list: (conversationId?: string) => Promise<ConversationQueueItem[]>
     enqueueUser: (
       input: ConversationQueueUserInput
@@ -2248,9 +2261,23 @@ export type DesktopApi = {
     ) => Promise<RuntimeNativeSnapshot>
   }
   context: {
-    selectFiles: () => Promise<ContextAttachment[]>
+    imageCapability: (conversationId: string, runtimeSelection?: AgentRuntimeSelection) => Promise<{ supported: boolean; reason?: string }>
+    copyToDraft: (conversationId: string, id: string, operationId: string) => Promise<ContextAttachment[]>
+    pendingParsing: (conversationId: string) => Promise<ContextAttachment[]>
+    retryParsing: (conversationId: string, id: string, operationId: string) => Promise<ContextAttachment[]>
+    dismissParsing: (conversationId: string, id: string) => Promise<void>
+    cancelImport: (operationId?: string) => Promise<void>
+    reparseDraft: (conversationId: string, id: string, operationId: string) => Promise<ContextAttachment[]>
+    cancelParsing: (operationId: string) => Promise<void>
+    sendOriginal: (conversationId: string, id: string) => Promise<ContextAttachment[]>
+    openOriginal: (id: string) => Promise<void>
+    addResultImages: (conversationId: string, resultId: string, imageIds: string[]) => Promise<ContextAttachment[]>
+    onDraftChanged: (listener: (conversationId: string, attachments: ContextAttachment[]) => void) => () => void
+    getDraft: (conversationId: string) => Promise<ContextAttachment[]>
+    saveDraft: (conversationId: string, ids: string[]) => Promise<void>
+    selectFiles: (conversationId?: string) => Promise<ContextAttachment[]>
     getFilePath: (file: File) => string
-    importFiles: (paths: string[]) => Promise<ContextAttachment[]>
+    importFiles: (paths: string[], conversationId?: string) => Promise<ContextAttachment[]>
     onFileSelectionProgress: (
       listener: (progress: ContextFileSelectionProgress) => void
     ) => () => void
@@ -2278,7 +2305,7 @@ export type DesktopApi = {
     removeEntry: (entryId: string) => Promise<MagicNoteDetail>
     analyze: (
       entryId: string,
-      options: MagicNoteAnalysisOptions
+      options: import('./magic-notes-contracts').MagicNoteEntryAnalysisOptions
     ) => Promise<MagicNoteDetail>
     analyzeDraft: (
       content: MagicNoteContent,
@@ -2291,7 +2318,7 @@ export type DesktopApi = {
     ) => Promise<MagicTodoUpdateResult>
     analyzeTodo: (
       todoId: string,
-      options: MagicNoteAnalysisOptions
+      options: import('./magic-notes-contracts').MagicTodoAnalysisOptions
     ) => Promise<MagicTodoItem>
     onAnalysisEvent: (
       listener: (event: MagicNoteAnalysisStreamEvent) => void

@@ -1,3 +1,5 @@
+import { AttachmentResultButton } from './AttachmentResultButton'
+import { AttachmentActions, AttachmentStatus } from './AttachmentActions'
 import {
   Bot,
   Check,
@@ -744,8 +746,15 @@ function ChatMessageRowView({
                     </span>
                   )}
                   <span className="message-attachment__details">
-                    <strong>{attachment.name}</strong>
+                    <strong title={attachment.name}>{attachment.name}</strong>
+                    <span className="attachment-metadata">
+                    <AttachmentStatus attachment={attachment} />
                     <small>{formatAttachmentSize(attachment.size)}</small>
+                    </span>
+                    <span className="attachment-actions">
+                      {attachment.resultId && <AttachmentResultButton resultId={attachment.resultId} name={attachment.name} />}
+                      <AttachmentActions attachment={attachment} />
+                    </span>
                     {imageItem && (
                       <span className="message-image-actions">
                         <button

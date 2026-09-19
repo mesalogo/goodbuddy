@@ -530,6 +530,8 @@ const api: DesktopApi = {
     onChanged: vi.fn(() => () => undefined),
   },
   conversationQueue: {
+    getAttachments: vi.fn(async () => []),
+    restoreToDraft: vi.fn(async () => ({ conversationId: '', prompt: '', attachments: [] })),
     list: vi.fn(async () => []),
     enqueueUser: vi.fn(async (input) => {
       const item = {
@@ -787,6 +789,20 @@ const api: DesktopApi = {
     })),
   },
   context: {
+    imageCapability: vi.fn(async () => ({ supported: true })),
+    copyToDraft: vi.fn(async () => []),
+    pendingParsing: vi.fn(async () => []),
+    retryParsing: vi.fn(async () => []),
+    dismissParsing: vi.fn(async () => undefined),
+    cancelImport: vi.fn(async () => undefined),
+    reparseDraft: vi.fn(async () => []),
+    cancelParsing: vi.fn(async () => undefined),
+    sendOriginal: vi.fn(async () => []),
+    openOriginal: vi.fn(async () => undefined),
+    addResultImages: vi.fn(async () => []),
+    onDraftChanged: vi.fn(() => () => undefined),
+    getDraft: vi.fn(async () => []),
+    saveDraft: vi.fn(async () => undefined),
     getFilePath: vi.fn(() => ""),
     importFiles: vi.fn(async () => []),
     selectFiles: vi.fn(async () => []),
@@ -6511,7 +6527,7 @@ describe("App", () => {
     expect(screen.getByText("正在解析 扫描材料.pdf")).toBeInTheDocument();
     expect(screen.getByText("第 1 / 1 个文件")).toBeInTheDocument();
     fireEvent.click(addButton);
-    expect(api.context.selectFiles).toHaveBeenCalledOnce();
+    await waitFor(() => expect(api.context.selectFiles).toHaveBeenCalledOnce());
 
     act(() => resolveSelection?.([attachment]));
     expect(await screen.findByText("扫描材料.pdf")).toBeInTheDocument();
@@ -6612,7 +6628,7 @@ describe("App", () => {
     const input = await screen.findByLabelText("向 GoodBuddy 提问");
     fireEvent.change(input, { target: { value: "Read these files" } });
     expect(fireEvent.paste(input, { clipboardData: { files } })).toBe(false);
-    expect(api.context.importFiles).toHaveBeenCalledExactlyOnceWith(["C:\\notes.txt", "C:\\report.docx"]);
+    await waitFor(() => expect(api.context.importFiles).toHaveBeenCalledExactlyOnceWith(["C:\\notes.txt", "C:\\report.docx"], expect.any(String)));
     expect(screen.getByLabelText("添加附件")).toBeDisabled();
     act(() => fileSelectionProgressListener?.({
       phase: "parsing", fileName: "report.docx", fileNumber: 2, fileCount: 2,
@@ -13569,6 +13585,53 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole('button', { name: '魔法笔记' }))
     await waitFor(() => expect(document.querySelector('.magic-notes-page')).toBeInTheDocument())
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
+  })
+
+  it.each(['title', 'text'])('guards real App navigation to multiple apps and discards only after confirmation (%s)', async (draft) => {
+    await api.updates!.updateSettings({ magicNotesEnabled: true })
+    const note = {
+      id: '00000000-0000-4000-8000-000000000601', title: 'Navigation note', preview: '',
+      entryCount: 0, pinned: false, revision: 1, createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z', entries: [],
+    }
+    vi.mocked(api.magicNotes.list).mockResolvedValue({ notes: [note] })
+    vi.mocked(api.magicNotes.get).mockResolvedValue(note)
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '魔法笔记' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Navigation note.*条记录/ }))
+    const title = await screen.findByLabelText('笔记标题')
+    if (draft === 'title') fireEvent.change(title, { target: { value: 'Unsaved navigation title' } })
+    else {
+      const { default: Quill } = await import('quill')
+      await waitFor(() => expect(document.querySelector('.magic-note-composer .ql-container')).not.toBeNull())
+      act(() => (Quill.find(document.querySelector('.magic-note-composer .ql-container')!) as InstanceType<typeof Quill>).setText('Unsaved body', 'user'))
+    }
+    for (const name of ['知识库', '智能心跳', '运行记录', '对话']) {
+      fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name }))
+      expect(await screen.findByRole('alertdialog')).toBeVisible()
+      expect(title).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+      if (draft === 'title') expect(title).toHaveValue('Unsaved navigation title')
+      else expect(document.querySelector('.magic-note-composer .ql-editor')).toHaveTextContent('Unsaved body')
+    }
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await screen.findByRole('button', { name: '关闭设置' })
+    fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: '知识库' }))
+    expect(await screen.findByRole('alertdialog')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '关闭设置' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '知识库' }))
+    expect(await screen.findByRole('alertdialog')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '放弃草稿并切换' }))
+    expect(await screen.findByLabelText('知识工作区')).toBeVisible()
+    for (const name of ['智能心跳', '运行记录', '对话', '魔法笔记']) {
+      fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name }))
+      await act(async () => {})
+    }
+    expect(screen.queryByDisplayValue('Unsaved navigation title')).not.toBeInTheDocument()
+    expect(screen.queryByText('Unsaved body')).not.toBeInTheDocument()
+    expect(api.magicNotes.update).not.toHaveBeenCalled()
   })
 
   it('keeps fixed apps available when application settings cannot be loaded', async () => {

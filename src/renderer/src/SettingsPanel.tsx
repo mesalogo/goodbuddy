@@ -4013,6 +4013,7 @@ export function SettingsPanel({
 
           {activeTab === 'document-parsing' && (
             <DocumentParsingSettingsSection
+              onBusyChange={setTesting}
               onDirtyChange={setDocumentParsingDirty}
               onNotify={onNotify}
               onOpenModelDownloadSourceSettings={() =>

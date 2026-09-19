@@ -168,6 +168,8 @@ export const magicNotes = {
   },
   accessibility: {
     resizeAiPane: '调整编辑区与 AI 评论宽度',
+    resizeIndexPane: '调整记录索引宽度',
+    indexPaneWidth: '记录索引宽度 {{width}} 像素',
     aiPaneWidth: 'AI 评论栏 {{width}} 像素'
   },
   editor: {

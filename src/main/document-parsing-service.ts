@@ -1,8 +1,10 @@
 import { extname } from 'node:path'
+import { convert } from 'html-to-text'
 import {
   documentParsingDiagnosticSchema,
   documentParsingSettingsUpdateSchema,
   documentParsingSnapshotSchema,
+  defaultHttpOcrSettings,
   maximumDocumentExtractedCharacters,
   maximumDocumentParsingWarnings,
   type DocumentParsingDiagnostic,
@@ -13,6 +15,9 @@ import {
 import type { DocumentOcrBroker } from './document-ocr-broker'
 import type { DocumentOcrModelManager } from './document-ocr-model-manager'
 import type { DocumentParsingSettingsStore } from './document-parsing-settings-store'
+import { HttpDocumentOcr } from './http-document-ocr'
+import { renderOcrPdf, renderSelectedOcrPdf } from './render-ocr-pdf'
+import type { DocumentResultStorage } from './document-result-storage'
 import { extractPptxPages } from './knowledge/pptx-parser'
 import {
   assertDocumentBuffer,
@@ -153,10 +158,12 @@ function nativePdfSections(pages: PdfTextPage[]): ParsedSection[] {
 }
 
 export class DocumentParsingService {
+  private readonly diagnosticOperations = new Map<string, AbortController>()
   constructor(
     private readonly settingsStore: DocumentParsingSettingsStore,
     private readonly modelManager: DocumentOcrModelManager,
-    private readonly ocrBroker: DocumentOcrBroker
+    private readonly ocrBroker: DocumentOcrBroker,
+    readonly results?: DocumentResultStorage
   ) {}
 
   async snapshot(): Promise<DocumentParsingSnapshot> {
@@ -173,6 +180,7 @@ export class DocumentParsingService {
         localOcr
       },
       ocrModels,
+      httpCredentialConfigured: await this.settingsStore.credentialConfigured(),
       ...(this.settingsStore.getWarnings().length > 0
         ? { warnings: [...this.settingsStore.getWarnings()] }
         : {})
@@ -183,7 +191,12 @@ export class DocumentParsingService {
     const nextSettings =
       documentParsingSettingsUpdateSchema.parse(input)
     const currentSettings = await this.settingsStore.get()
+    if (nextSettings.ocrProvider === 'paddleocr-vl') {
+      if (!nextSettings.httpOcr?.baseUrl) throw new Error('请输入 HTTP OCR 服务地址')
+      if (nextSettings.httpOcr.authentication === 'bearer' && !nextSettings.apiKey && (nextSettings.clearApiKey || !await this.settingsStore.credentialConfigured())) throw new Error('请输入 Bearer API Key，或选择无需认证')
+    }
     if (
+      nextSettings.ocrProvider !== 'paddleocr-vl' &&
       nextSettings.localOcrModelId !==
       currentSettings.localOcrModelId
     ) {
@@ -198,22 +211,77 @@ export class DocumentParsingService {
     return this.snapshot()
   }
 
+  async checkHttp(): Promise<{ checkedAt: string; declaredOptions: string[] }> {
+    return this.httpProvider(await this.settingsStore.forOperation()).check()
+  }
+
+  async extractImage(name: string, buffer: Buffer, signal?: AbortSignal): Promise<ParsedDocument> {
+    const startedAt = Date.now()
+    ensureNotAborted(signal)
+    assertDocumentBuffer(buffer)
+    const operation = await this.settingsStore.forOperation()
+    const { settings } = operation
+    let sections: ParsedSection[]
+    let images: ParsedDocument['images']
+    let missingImages: ParsedDocument['missingImages']
+    let warnings: string[]
+    if (settings.ocrProvider === 'paddleocr-vl') {
+      const result = await this.httpProvider(operation).recognize(buffer, 1, [1], signal)
+      sections = result.sections
+      images = result.images
+      missingImages = result.missingImages
+      warnings = result.warnings
+    } else {
+      const status = await this.modelManager.getStatus(settings.localOcrModelId)
+      if (!status.available || !status.verified) throw new Error(status.detail)
+      const mimeType = extname(name).toLowerCase() === '.png' ? 'image/png' as const
+        : extname(name).toLowerCase() === '.webp' ? 'image/webp' as const : 'image/jpeg' as const
+      const result = await this.ocrBroker.recognize({ modelId: settings.localOcrModelId, fileName: name, mimeType,
+        data: Uint8Array.from(buffer).buffer, maximumPages: 1, pageTimeoutSeconds: settings.pageTimeoutSeconds }, signal)
+      sections = result.sections.map((section) => ({ ...section, method: 'ocr' }))
+      warnings = result.warnings
+    }
+    const content = sections.map((section) => section.content).join('\n\n')
+    if (!convert(content.replace(/!\[[^\]]*\]\([^)]*\)/gu, ''), { wordwrap: false }).trim()) throw new Error('未提取到文字，原图片发送方式保持不变')
+    ensureNotAborted(signal)
+    return { title: name, sourceFormat: extname(name).toLowerCase(), content, sections, warnings, pageCount: 1, images, missingImages, parsingSettings: settings, parsingDurationMs: Date.now() - startedAt }
+  }
+
+  private httpProvider(operation: Awaited<ReturnType<DocumentParsingSettingsStore['forOperation']>>): HttpDocumentOcr {
+    const { settings } = operation
+    const http = settings.httpOcr ?? defaultHttpOcrSettings
+    return new HttpDocumentOcr(http, http.authentication === 'bearer' ? operation.apiKey() : undefined)
+  }
+
   parse: ParseDocumentForPurpose = async (
     name,
     buffer,
     purpose,
     signal
   ) => {
+    const started = Date.now()
+    const operation = await this.settingsStore.forOperation()
+    const parsed = await this.parseInput(name, buffer, purpose, operation, signal)
+    return { ...parsed, parsingSettings: operation.settings, parsingDurationMs: Date.now() - started }
+  }
+
+  private async parseInput(
+    name: string,
+    buffer: Buffer,
+    purpose: DocumentParsingPurpose,
+    operation: Awaited<ReturnType<DocumentParsingSettingsStore['forOperation']>>,
+    signal?: AbortSignal
+  ): Promise<ParsedDocument> {
+    const { settings } = operation
     ensureNotAborted(signal)
     assertDocumentBuffer(buffer)
     if (extname(name).toLowerCase() === '.pptx') {
-      return this.parsePptx(name, buffer, purpose, signal)
+      return this.parsePptx(name, buffer, purpose, operation, signal)
     }
     if (extname(name).toLowerCase() !== '.pdf') {
       return parseDocument(name, buffer, signal)
     }
 
-    const settings = await this.settingsStore.get()
     const extracted = await extractPdfTextPages(buffer, { signal })
     const { pages } = extracted
     ensureNotAborted(signal)
@@ -266,6 +334,58 @@ export class DocumentParsingService {
       )
     }
     const native = nativePdfSections(pages)
+    if (settings.ocrProvider === 'paddleocr-vl') {
+      const provider = this.httpProvider(operation)
+      const recognized: ParsedSection[] = []
+      const images: NonNullable<ParsedDocument['images']> = []
+      const missingImages: NonNullable<ParsedDocument['missingImages']> = []
+      const warnings: string[] = []
+      let restructure: ParsedDocument['restructure']
+      try {
+        if (ocrPageNumbers.length === extracted.pageCount && (mode === 'always' || settings.httpOcr?.mergeTables || settings.httpOcr?.relevelTitles)) {
+          const result = await provider.recognize(buffer, 0, ocrPageNumbers, signal)
+          recognized.push(...result.sections)
+          images.push(...(result.images ?? []))
+          missingImages.push(...(result.missingImages ?? []))
+          warnings.push(...result.warnings)
+          restructure = result.restructure
+        } else if (settings.httpOcr?.mergeTables || settings.httpOcr?.relevelTitles) {
+          const groups: number[][] = []
+          for (const page of ocrPageNumbers) {
+            const current = groups.at(-1)
+            if (current && current.at(-1) === page - 1) current.push(page)
+            else groups.push([page])
+          }
+          for (const group of groups) {
+            const selected = await renderSelectedOcrPdf(buffer, group, signal)
+            const result = await provider.recognize(selected, 0, group, signal)
+            recognized.push(...result.sections)
+            images.push(...(result.images ?? []))
+            missingImages.push(...(result.missingImages ?? []))
+            warnings.push(...result.warnings)
+            if (result.restructure) restructure = { changed: Boolean(restructure?.changed || result.restructure.changed), sourcePages: [...(restructure?.sourcePages ?? []), ...group] }
+          }
+        } else {
+          for await (const page of renderOcrPdf(buffer, ocrPageNumbers, signal)) {
+            const result = await provider.recognize(page.data, 1, [page.pageNumber], signal)
+            recognized.push(...result.sections)
+            images.push(...(result.images ?? []))
+            missingImages.push(...(result.missingImages ?? []))
+            warnings.push(...result.warnings)
+          }
+        }
+        if (warnings.length && (mode === 'always' || purpose === 'knowledge-index')) {
+          throw new Error(warnings.join('；'))
+        }
+      } catch (error) {
+        ensureNotAborted(signal)
+        if (mode !== 'auto' || purpose === 'knowledge-index' || !native.some((section) => hasUsefulText(section.content))) throw error
+        return buildPagedDocument(name, native, extracted.pageCount, [`HTTP OCR 未完成，已保留原生文本：${error instanceof Error ? error.message : '请求失败'}`])
+      }
+      const merged = [...native.filter((section) => !ocrPageNumbers.includes(section.pageNumber!)), ...recognized]
+        .sort((left, right) => (left.pageNumber ?? left.sourcePages?.[0] ?? 0) - (right.pageNumber ?? right.sourcePages?.[0] ?? 0))
+      return { ...buildPagedDocument(name, merged, extracted.pageCount, warnings), images, missingImages, restructure }
+    }
     const modelStatus = await this.modelManager.getStatus(
       settings.localOcrModelId
     )
@@ -340,7 +460,7 @@ export class DocumentParsingService {
     )
     if (
       missingOcrPage !== undefined &&
-      purpose === 'knowledge-index'
+      (purpose === 'knowledge-index' || mode === 'always')
     ) {
       throw new Error(`第 ${missingOcrPage} 页未识别到可索引文本`)
     }
@@ -378,6 +498,7 @@ export class DocumentParsingService {
       extracted.pageCount,
       [
         ...ocr.warnings,
+        ...(missingOcrPage === undefined ? [] : [`第 ${missingOcrPage} 页未完成 OCR，当前为部分解析结果`]),
         ...(extracted.truncated
           ? ['文档提取文本超过 5,000,000 字符，已截断']
           : [])
@@ -389,9 +510,10 @@ export class DocumentParsingService {
     name: string,
     buffer: Buffer,
     purpose: DocumentParsingPurpose,
+    operation: Awaited<ReturnType<DocumentParsingSettingsStore['forOperation']>>,
     signal?: AbortSignal
   ): Promise<ParsedDocument> {
-    const settings = await this.settingsStore.get()
+    const { settings } = operation
     const mode = effectiveOcrMode(settings, purpose)
     if (mode === 'disabled') {
       try {
@@ -423,15 +545,18 @@ export class DocumentParsingService {
       )
     }
     const sections = [...native]
+    const images: NonNullable<ParsedDocument['images']> = []
+    const missingImages: NonNullable<ParsedDocument['missingImages']> = []
     const warnings: string[] = []
     let extractedCharacters = native.reduce(
       (total, section) => total + section.content.length, 0
     )
     if (imagePages.length > 0) {
       try {
-        const status = await this.modelManager.getStatus(settings.localOcrModelId)
-        if (!status.available || !status.verified) {
-          throw new Error(status.detail)
+        const http = settings.ocrProvider === 'paddleocr-vl' ? this.httpProvider(operation) : undefined
+        if (!http) {
+          const status = await this.modelManager.getStatus(settings.localOcrModelId)
+          if (!status.available || !status.verified) throw new Error(status.detail)
         }
         ocrPages: for (const page of imagePages) {
           for (const [index, image] of page.images.entries()) {
@@ -448,9 +573,12 @@ export class DocumentParsingService {
               maximumPages: 1,
               pageTimeoutSeconds: settings.pageTimeoutSeconds
             }
-            const result = await (signal
+            const result = http ? await http.recognize(Buffer.from(image.data), 1, [page.pageNumber], signal) : await (signal
               ? this.ocrBroker.recognize(request, signal)
               : this.ocrBroker.recognize(request))
+            if ('images' in result) images.push(...(result.images ?? []).map((image) => ({ ...image, locator })))
+            if ('missingImages' in result) missingImages.push(...(result.missingImages ?? []))
+            if (http && result.warnings.length && (mode === 'always' || purpose === 'knowledge-index')) throw new Error(result.warnings.join('；'))
             ensureNotAborted(signal)
             sections.push(...result.sections.map((section): ParsedSection => ({
               locator,
@@ -491,23 +619,34 @@ export class DocumentParsingService {
       }
     }
     sections.sort((left, right) => (left.pageNumber ?? 0) - (right.pageNumber ?? 0))
-    return buildPagedDocument(name, sections, pages.length, warnings, '.pptx')
+    return { ...buildPagedDocument(name, sections, pages.length, warnings, '.pptx'), ...(images.length ? { images } : {}), ...(missingImages.length ? { missingImages } : {}) }
   }
 
   async diagnose(
     name: string,
     buffer: Buffer,
-    purpose: DocumentParsingPurpose = 'diagnostic'
+    purpose: DocumentParsingPurpose = 'diagnostic',
+    operationId?: string
   ): Promise<DocumentParsingDiagnostic> {
     const startedAt = Date.now()
-    const parsed = await this.parse(name, buffer, purpose)
+    const controller = new AbortController()
+    if (operationId) {
+      if (this.diagnosticOperations.has(operationId)) throw new Error('解析任务已在运行')
+      this.diagnosticOperations.set(operationId, controller)
+    }
+    try {
+    const parsed = await this.parse(name, buffer, purpose, controller.signal)
+    controller.signal.throwIfAborted()
+    const saved = parsed.parsingSettings ? await this.results?.save(name, buffer, parsed, parsed.parsingSettings, Date.now() - startedAt, undefined, controller.signal) : undefined
     const ocrPageCount = new Set(parsed.sections.filter(
       (section) => section.method === 'ocr'
-    ).map((section) => section.pageNumber ?? section.locator)).size
+    ).flatMap((section) => (section.sourcePages ?? [section.pageNumber ?? section.locator]).map(String))).size
     const nativePageCount = parsed.sections.filter(
       (section) => section.method !== 'ocr'
     ).length
     return documentParsingDiagnosticSchema.parse({
+      provider: ocrPageCount ? parsed.parsingSettings?.ocrProvider ?? 'local' : 'native',
+      ...(saved ? { resultId: saved.id } : {}),
       fileName: name,
       sourceFormat:
         parsed.sourceFormat.replace(/^\./u, '').toUpperCase() || 'UNKNOWN',
@@ -527,5 +666,17 @@ export class DocumentParsingService {
       preview: parsed.content.slice(0, 2_000),
       warnings: parsed.warnings
     })
+    } finally {
+      if (operationId) this.diagnosticOperations.delete(operationId)
+    }
+  }
+
+  cancelDiagnostic(operationId: string): void {
+    this.diagnosticOperations.get(operationId)?.abort(new Error('文档解析已取消'))
+  }
+
+  async dispose(): Promise<void> {
+    for (const controller of this.diagnosticOperations.values()) controller.abort(new Error('应用正在退出'))
+    await this.results?.close()
   }
 }

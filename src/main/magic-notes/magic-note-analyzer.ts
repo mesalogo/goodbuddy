@@ -13,7 +13,7 @@ import type {
   MagicNoteEntry,
   MagicTodoItem
 } from '../../shared/magic-notes-contracts'
-import { magicNotePlainText } from './rich-content'
+import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
 
 const structuredOutputMarker = '<<<GOODBUDDY_STRUCTURED_COMMENTS>>>'
 
@@ -33,21 +33,7 @@ function canvasAnalysisInput(
   inputMode: MagicNoteAnalysisInputMode
 } {
   if (content?.version !== 2) return { inputMode: 'text' }
-  const flowText = (content.flow?.ops ?? [])
-    .map((operation) =>
-      typeof operation.insert === 'string' ? operation.insert : ''
-    )
-    .join('')
-    .trim()
-  const source = [
-    flowText ? `连续正文（跨页）：\n${flowText}` : '',
-    ...content.pages.map((page, index) => {
-      const text = magicNotePlainText({
-        ...content, flow: undefined, pages: [page]
-      }).trim()
-      return text ? `第 ${index + 1} 页：\n${text}` : ''
-    })
-  ].filter(Boolean).join('\n\n')
+  const source = magicNoteCanvasAnalysisText(content)
   if (!supportsImageInput) {
     return {
       source,

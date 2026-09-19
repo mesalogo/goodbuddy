@@ -12,6 +12,7 @@ import {
   defaultDocumentParsingSettings,
   DocumentParsingSettingsStore
 } from './document-parsing-settings-store'
+import { defaultHttpOcrSettings } from '../shared/document-parsing-contracts'
 
 const temporaryDirectories: string[] = []
 
@@ -41,6 +42,23 @@ afterEach(async () => {
 })
 
 describe('DocumentParsingSettingsStore', () => {
+  it('freezes credentials with the task settings and keeps hidden provider configuration', async () => {
+    const { filePath } = await createStore()
+    const cipher = { isAvailable: () => true, encrypt: (value: string) => Buffer.from(value).reverse(), decrypt: (value: Buffer) => Buffer.from(value).reverse().toString('utf8') }
+    const store = new DocumentParsingSettingsStore(filePath, cipher)
+    await store.update({ ...defaultDocumentParsingSettings, ocrProvider: 'paddleocr-vl', httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://first.test', authentication: 'bearer' }, apiKey: 'fixture-key-a' })
+    const operation = await store.forOperation()
+    await store.update({ ...(await store.get()), ocrProvider: 'local', httpOcr: { ...defaultHttpOcrSettings, baseUrl: 'http://second.test', authentication: 'bearer' }, apiKey: 'fixture-key-b' })
+    expect(operation.settings.httpOcr?.baseUrl).toBe('http://first.test')
+    expect(operation.apiKey()).toBe('fixture-key-a')
+    expect(await store.getApiKey()).toBe('fixture-key-b')
+    expect(JSON.stringify(await store.get())).not.toContain('fixture-key')
+    expect(await readFile(filePath, 'utf8')).not.toContain('fixture-key')
+    await store.update({ ...(await store.get()), apiKey: '' })
+    expect(await store.getApiKey()).toBe('fixture-key-b')
+    await store.update({ ...(await store.get()), clearApiKey: true })
+    expect(await store.getApiKey()).toBeUndefined()
+  })
   it('returns local-first defaults without creating a file', async () => {
     const { directory, store } = await createStore()
 
@@ -61,7 +79,7 @@ describe('DocumentParsingSettingsStore', () => {
 
     await expect(store.update(settings)).resolves.toEqual(settings)
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual({
-      version: 3,
+      version: 4,
       ...settings
     })
     await expect(

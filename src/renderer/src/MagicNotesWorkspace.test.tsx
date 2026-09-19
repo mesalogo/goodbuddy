@@ -5,6 +5,7 @@ import i18n from './i18n'
 import type { DesktopApi } from '../../shared/contracts'
 import { defaultLocalToolEnvironmentSettings, defaultApplicationNavigation, type ApplicationSettings } from '../../shared/application-settings-contracts'
 import type { MagicNoteContent as NoteContent, MagicNoteCanvasContent, MagicNoteDetail, MagicNoteRichContent, MagicNotesSnapshot, MagicTodoItem } from '../../shared/magic-notes-contracts'
+import { magicNoteAnalyzeSchema, magicNoteDraftAnalyzeSchema, magicTodoIdSchema } from '../../shared/magic-notes-contracts'
 import type { MagicCanvasEditorProps, MagicCanvasEditorHandle } from './MagicCanvasEditor'
 import { MagicNotesWorkspace } from './MagicNotesWorkspace'
 
@@ -137,7 +138,10 @@ beforeEach(async () => {
   getSettings.mockResolvedValue(settings)
   getRuntime.mockResolvedValue({ supportsImageInput: true, defaultModelProfileId: 'default', modelProfiles: [{ id: 'default', supportsImageInput: true }] })
   Object.defineProperty(window, 'goodbuddy', { configurable: true, value: {
-    magicNotes: { list, get, listTodos, create, remove, update, createEntry, updateEntry, removeEntry, analyze, updateTodo, analyzeTodo, analyzeDraft,
+    magicNotes: { list, get, listTodos, create, remove, update, createEntry, updateEntry, removeEntry, updateTodo,
+      analyze: (...[entryId, options]: Parameters<typeof analyze>) => { magicNoteAnalyzeSchema.parse({ entryId, ...options }); return analyze(entryId, options) },
+      analyzeTodo: (...[todoId, options]: Parameters<typeof analyzeTodo>) => { magicTodoIdSchema.parse({ todoId, ...options }); return analyzeTodo(todoId, options) },
+      analyzeDraft: (...[content, options]: Parameters<typeof analyzeDraft>) => { magicNoteDraftAnalyzeSchema.parse({ content, ...options }); return analyzeDraft(content, options) },
       onChanged: (listener: () => void) => { changeListener = listener; return unsubscribeChanges },
       onAnalysisEvent: (listener: NonNullable<typeof analysisListener>) => { analysisListener = listener; return vi.fn() }
     }, updates: { getSettings }, settings: { getRuntime }
@@ -179,6 +183,61 @@ async function openTodo(): Promise<void> {
 }
 
 describe('MagicNotesWorkspace overview navigation', () => {
+  it('flushes pending canvas input before an App leave and retains it when continuing', async () => {
+    let requestLeave: ((leave: () => void) => void) | undefined
+    const leave = vi.fn()
+    render(<MagicNotesWorkspace onNotify={onNotify} onBeforeLeave={(requester) => { requestLeave = requester }} />)
+    await openNote()
+    fireEvent.click(screen.getByRole('button', { name: '画布' }))
+    let finish!: (content: NoteContent) => void
+    canvas.flush.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    act(() => requestLeave!(leave))
+    expect(leave).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await act(async () => finish(canvasContent))
+    expect(screen.getByRole('alertdialog')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    expect(leave).not.toHaveBeenCalled()
+    act(() => requestLeave!(leave))
+    await screen.findByRole('alertdialog')
+    fireEvent.click(screen.getByRole('button', { name: '放弃草稿并切换' }))
+    expect(leave).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a title typed during AI analysis and saves it with the returned revision', async () => {
+    getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-manual' })
+    let finish!: (value: MagicNoteDetail) => void
+    analyze.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    fireEvent.click(screen.getByRole('button', { name: '重新分析' }))
+    await waitFor(() => expect(analyze).toHaveBeenCalled())
+    const title = screen.getByLabelText('笔记标题')
+    fireEvent.change(title, { target: { value: 'AI 期间的新标题' } })
+    fireEvent.blur(title)
+    expect(update).not.toHaveBeenCalled()
+    await act(async () => finish({ ...detail, revision: 2 }))
+    expect(title).toHaveValue('AI 期间的新标题')
+    fireEvent.blur(title)
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ noteId, title: 'AI 期间的新标题', expectedRevision: 2 }))
+  })
+
+  it('acknowledges only the submitted title while retaining subsequent input', async () => {
+    let finish!: (value: MagicNoteDetail) => void
+    update.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    const title = screen.getByLabelText('笔记标题')
+    fireEvent.change(title, { target: { value: '  First title  ' } })
+    fireEvent.blur(title)
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    fireEvent.change(title, { target: { value: 'Later title' } })
+    await act(async () => finish({ ...detail, title: 'First title', revision: 2 }))
+    expect(title).toHaveValue('Later title')
+    fireEvent.blur(title)
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith({ noteId, title: 'Later title', expectedRevision: 2 }))
+  })
+
   it('keeps the default top draft while navigating thumbnails and guards leaving', async () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
@@ -745,8 +804,8 @@ describe('MagicNotesWorkspace detail behavior', () => {
     showAi()
     expect(screen.queryByRole('group', { name: 'AI 评论形式' })).not.toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'AI 评论方向' })).toBeVisible()
-    fireEvent.keyDown(screen.getByRole('separator'), { key: 'End' })
-    const width = screen.getByRole('separator').getAttribute('aria-valuenow')
+    fireEvent.keyDown(screen.getByRole('separator', { name: '调整编辑区与 AI 评论宽度' }), { key: 'End' })
+    const width = screen.getByRole('separator', { name: '调整编辑区与 AI 评论宽度' }).getAttribute('aria-valuenow')
     fireEvent.click(screen.getAllByRole('button', { name: '隐藏 AI 评论' })[0]!)
     expect(screen.queryByRole('complementary', { name: 'AI 评论' })).not.toBeInTheDocument()
     back()
@@ -756,8 +815,8 @@ describe('MagicNotesWorkspace detail behavior', () => {
     render(<MagicNotesWorkspace onNotify={onNotify} />)
     await openNote()
     fireEvent.click(screen.getByRole('button', { name: '显示 AI 评论' }))
-    expect(screen.getByRole('separator')).toHaveAttribute('aria-valuenow', width)
-    expect(JSON.parse(localStorage.getItem('goodbuddy.magic-notes-layout.v1')!)).toEqual({ indexPaneOpen: true, aiPaneOpen: true, aiPaneWidth: Number(width) })
+    expect(screen.getByRole('separator', { name: '调整编辑区与 AI 评论宽度' })).toHaveAttribute('aria-valuenow', width)
+    expect(JSON.parse(localStorage.getItem('goodbuddy.magic-notes-layout.v1')!)).toEqual({ indexPaneOpen: true, indexPaneWidth: 168, aiPaneOpen: true, aiPaneWidth: Number(width) })
   })
 
   it('resizes AI with pointer and keyboard and disables resizing in narrow layouts', async () => {
@@ -786,6 +845,57 @@ describe('MagicNotesWorkspace detail behavior', () => {
     await openNote()
     expect(screen.getByRole('separator')).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByRole('separator')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('resizes the record column, clamps against AI, and preserves preferences across hidden and narrow layouts', async () => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1200)
+    const view = render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    const separator = screen.getByRole('separator', { name: '调整记录索引宽度' })
+    const layout = separator.closest('.magic-notes-layout') as HTMLElement
+    expect(separator).toHaveAttribute('aria-valuenow', '168')
+    expect(separator).toHaveAttribute('aria-controls', 'magic-notes-index')
+    Object.defineProperties(separator, { setPointerCapture: { value: vi.fn() }, hasPointerCapture: { value: () => true }, releasePointerCapture: { value: vi.fn() } })
+    fireEvent.pointerDown(separator, { button: 0, clientX: 168, pointerId: 7 })
+    fireEvent.pointerMove(separator, { clientX: 900, pointerId: 8 })
+    expect(layout.style.getPropertyValue('--magic-notes-index-width')).toBe('168px')
+    fireEvent.pointerMove(separator, { clientX: 900, pointerId: 7 })
+    expect(layout.style.getPropertyValue('--magic-notes-index-width')).toBe('320px')
+    fireEvent.pointerUp(separator, { pointerId: 7 })
+    expect(separator).toHaveAttribute('aria-valuenow', '320')
+    fireEvent.pointerDown(separator, { button: 0, clientX: 320, pointerId: 9 })
+    fireEvent.pointerMove(separator, { clientX: -100, pointerId: 9 })
+    expect(layout.style.getPropertyValue('--magic-notes-index-width')).toBe('140px')
+    fireEvent.pointerCancel(separator, { pointerId: 9 })
+    expect(layout).not.toHaveClass('magic-notes-layout--resizing')
+    fireEvent.keyDown(separator, { key: 'Home' })
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    expect(separator).toHaveAttribute('aria-valuenow', '140')
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    expect(separator).toHaveAttribute('aria-valuenow', '156')
+    fireEvent.keyDown(separator, { key: 'End' })
+    expect(separator).toHaveAttribute('aria-valuenow', '320')
+    fireEvent.click(document.getElementById('magic-notes-index-toggle')!)
+    expect(screen.queryByRole('separator', { name: '调整记录索引宽度' })).not.toBeInTheDocument()
+    expect(layout).toHaveClass('magic-notes-layout--index-hidden')
+    fireEvent.click(document.getElementById('magic-notes-index-toggle')!)
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(820)
+    back()
+    await openNote()
+    const index = screen.getByRole('separator', { name: '调整记录索引宽度' })
+    const ai = screen.getByRole('separator', { name: '调整编辑区与 AI 评论宽度' })
+    expect(Number(index.getAttribute('aria-valuenow')) + Number(ai.getAttribute('aria-valuenow')) + 18 + 300).toBeLessThanOrEqual(818)
+    expect(JSON.parse(localStorage.getItem('goodbuddy.magic-notes-layout.v1')!).indexPaneWidth).toBe(320)
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(700)
+    back()
+    await openNote()
+    fireEvent.click(document.getElementById('magic-notes-index-toggle')!)
+    expect(screen.queryByRole('separator', { name: '调整记录索引宽度' })).not.toBeInTheDocument()
+    view.unmount()
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1200)
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    expect(screen.getByRole('separator', { name: '调整记录索引宽度' })).toHaveAttribute('aria-valuenow', '320')
   })
 
   it('shows loading then the AI empty state for a note without entries', async () => {
@@ -1323,6 +1433,88 @@ describe('MagicNotesWorkspace canvas integration', () => {
     expect(canvas.flush.mock.invocationCallOrder[0]).toBeLessThan(createEntry.mock.invocationCallOrder[0]!)
   })
 
+  it.each(['create', 'edit', 'entry', 'todo', 'draft'] as const)('sends the captured source revision through the production schema for %s analysis', async (action) => {
+    getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-auto' })
+    const source = { ...detail.entries[0]!, content: canvasContent, revision: 7 }
+    get.mockResolvedValue({ ...detail, revision: 20, entries: [source] })
+    const changed = { ...canvasContent, flow: { ops: [{ insert: 'Changed body\n' }] } }
+    canvas.flush.mockResolvedValue(changed)
+    const savedId = action === 'create' ? createdEntryId : entryId
+    const saved = { ...detail, revision: 30, entries: [
+      { ...source, id: savedId, content: changed, revision: 11 },
+      { ...source, id: secondNoteId, revision: 91 }
+    ] }
+    createEntry.mockResolvedValue({ ...saved, createdEntryId: savedId })
+    updateEntry.mockResolvedValue(saved)
+    analyze.mockResolvedValue(saved)
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    if (action === 'todo') {
+      await openTodo()
+      await screen.findByTestId('canvas-content')
+      fireEvent.click(screen.getByRole('button', { name: 'AI 分析' }))
+    } else {
+      await openNote()
+      if (action === 'entry') fireEvent.click(screen.getByRole('button', { name: '重新分析' }))
+      else if (action === 'edit') {
+        fireEvent.click(screen.getByRole('button', { name: '展开编辑画布' }))
+        await screen.findByTestId('canvas-editor')
+        fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: '画布' }))
+        fireEvent.click(screen.getByRole('button', { name: action === 'draft' ? '分析画布草稿' : '保存记录' }))
+      }
+    }
+    const call = action === 'todo' ? analyzeTodo : action === 'draft' ? analyzeDraft : analyze
+    await waitFor(() => expect(call).toHaveBeenCalledOnce())
+    expect(call.mock.calls[0]![1]).toEqual({
+      requestId: expect.any(String), direction: 'general', format: 'combined', canvasImages,
+      ...(action === 'todo' ? { sourceEntryRevision: 7 } : action === 'draft' ? {} : { expectedRevision: action === 'entry' ? 7 : 11 })
+    })
+    if (action !== 'todo' && action !== 'draft') expect(analyze.mock.calls[0]![0]).toBe(savedId)
+  })
+
+  it.each(['entry', 'todo'] as const)('keeps the original %s revision when an external refresh finishes during capture', async (action) => {
+    getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-manual' })
+    const source = { ...detail, entries: [{ ...detail.entries[0]!, content: canvasContent, revision: 7 }] }
+    get.mockResolvedValue(source)
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    if (action === 'todo') await openTodo()
+    else await openNote()
+    await screen.findByTestId('canvas-content')
+    let finishRefresh!: (detail: MagicNoteDetail) => void
+    get.mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve }))
+    listTodos.mockResolvedValue({ todos: [{ ...todo }, { ...otherTodo }] })
+    act(() => changeListener?.())
+    await waitFor(() => expect(finishRefresh).toBeDefined())
+    let finishCapture!: (images: typeof canvasImages) => void
+    canvas.viewCapture.mockImplementationOnce(() => new Promise(resolve => { finishCapture = resolve }))
+    fireEvent.click(screen.getByRole('button', { name: action === 'todo' ? 'AI 分析' : '重新分析' }))
+    await waitFor(() => expect(finishCapture).toBeDefined())
+    await act(async () => finishRefresh({ ...source, revision: 50, entries: [{ ...source.entries[0]!, revision: 19 }] }))
+    await act(async () => finishCapture(canvasImages))
+    const call = action === 'todo' ? analyzeTodo : analyze
+    await waitFor(() => expect(call).toHaveBeenCalledOnce())
+    expect(call.mock.calls[0]![1]).toEqual(expect.objectContaining({ canvasImages,
+      ...(action === 'todo' ? { sourceEntryRevision: 7 } : { expectedRevision: 7 })
+    }))
+  })
+
+  it.each(['text', 'text-fallback'] as const)('re-analyzes %s comments when a blank page changes text page numbers', async (inputMode) => {
+    getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-auto' })
+    get.mockResolvedValue({ ...detail, entries: [{ ...detail.entries[0]!, content: canvasContent,
+      comments: [{ ...detail.entries[0]!.comments[0]!, inputMode }] }] })
+    canvas.flush.mockResolvedValue({ ...canvasContent, pages: [
+      { ...canvasContent.pages[0]!, id: 'blank', objects: [] }, ...canvasContent.pages
+    ] })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    fireEvent.click(screen.getByRole('button', { name: '展开编辑画布' }))
+    await screen.findByTestId('canvas-editor')
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(analyze).toHaveBeenCalledOnce())
+    expect(canvas.capture).toHaveBeenCalledOnce()
+  })
+
   it('captures before resetting the composer in after-save-auto mode', async () => {
     getSettings.mockResolvedValue({ ...settings, magicNoteCommentMode: 'after-save-auto' })
     render(<MagicNotesWorkspace onNotify={onNotify} />)
@@ -1335,7 +1527,7 @@ describe('MagicNotesWorkspace canvas integration', () => {
       return canvasImages
     })
     fireEvent.click(screen.getByRole('button', { name: '保存记录' }))
-    await waitFor(() => expect(analyze).toHaveBeenCalledWith(createdEntryId, expect.objectContaining({ canvasImages })))
+    await waitFor(() => expect(analyze).toHaveBeenCalledWith(createdEntryId, expect.objectContaining({ canvasImages, expectedRevision: 1 })))
     expect(canvas.flush.mock.invocationCallOrder[0]).toBeLessThan(canvas.capture.mock.invocationCallOrder[0]!)
     expect(canvas.capture.mock.invocationCallOrder[0]).toBeLessThan(createEntry.mock.invocationCallOrder[0]!)
     expect(screen.queryByTestId('canvas-editor')).not.toBe(editor)
@@ -1391,7 +1583,7 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await openNote()
     expect(screen.getByTestId('canvas-content')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '重新分析' }))
-    await waitFor(() => expect(analyze).toHaveBeenCalledWith(entryId, expect.objectContaining({ canvasImages })))
+    await waitFor(() => expect(analyze).toHaveBeenCalledWith(entryId, expect.objectContaining({ canvasImages, expectedRevision: 1 })))
     await waitFor(() => expect(screen.getByRole('button', { name: '展开编辑画布' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '展开编辑画布' }))
     await screen.findByTestId('canvas-editor')
@@ -1412,7 +1604,7 @@ describe('MagicNotesWorkspace canvas integration', () => {
     await openTodo()
     await screen.findByTestId('canvas-content')
     fireEvent.click(screen.getByRole('button', { name: 'AI 分析' }))
-    await waitFor(() => expect(analyzeTodo).toHaveBeenCalledWith(todo.id, expect.objectContaining({ canvasImages })))
+    await waitFor(() => expect(analyzeTodo).toHaveBeenCalledWith(todo.id, expect.objectContaining({ canvasImages, sourceEntryRevision: 1 })))
   })
 
   it('protects an edited canvas on cancellation and retains it after update failure', async () => {

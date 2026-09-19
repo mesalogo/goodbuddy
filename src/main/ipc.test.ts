@@ -3682,7 +3682,8 @@ describe('registerIpcHandlers document parsing', () => {
     expect(documentParsingService.diagnose).toHaveBeenCalledWith(
       'diagnostic.pdf',
       expect.any(Buffer),
-      'knowledge-index'
+      'knowledge-index',
+      expect.any(String)
     )
 
     await expect(
@@ -5260,6 +5261,8 @@ describe('registerIpcHandlers agent terminal state', () => {
       })),
       remove: vi.fn(),
       serializeForQueue: vi.fn(() => '[]'),
+      hasImageInputs: vi.fn(() => false),
+      validateForSend: vi.fn(),
       restoreFromQueue: vi.fn(),
       clear: vi.fn()
     }
@@ -7455,6 +7458,23 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it('rejects unconfirmed image capability before accepting a queued input', async () => {
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', supportsToolExecution: false,
+      async *run(request: { requestId: string }) { yield { requestId: request.requestId, type: 'done' } as const }
+    })
+    harness.contextManager.hasImageInputs.mockReturnValue(true)
+    try {
+      await expect(electronMocks.handlers.get(ipcChannels.conversationQueueEnqueueUser)?.(trustedEvent(harness.webContents), {
+        conversationId: '00000000-0000-4000-8000-000000000731',
+        runtimeSelection: { provider: 'auto' }, workMode: 'ask', prompt: 'Read the picture',
+        attachments: [{ id: '00000000-0000-4000-8000-000000000734', name: 'image.png', size: 10, preview: '', kind: 'image' }],
+        knowledgeLibraryIds: [], knowledgeRetrievalMode: 'auto'
+      })).rejects.toThrow('图片输入')
+      expect(harness.assistantDatabase.enqueueConversationUserInput).not.toHaveBeenCalled()
+      expect(harness.contextManager.remove).not.toHaveBeenCalled()
+    } finally { await harness.dispose() }
+  })
+
   it('claims an idle user message before notifying the renderer and accepts its dispatch', async () => {
     const runtime = {
       runtimeId: 'model',
@@ -7521,7 +7541,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     )
     harness.webContents.send.mockClear()
     expect(
-      enqueueHandler?.(trustedEvent(harness.webContents), input)
+      await enqueueHandler?.(trustedEvent(harness.webContents), input)
     ).toEqual(item)
     expect(harness.webContents.send).toHaveBeenCalledWith(
       ipcChannels.conversationQueueDispatch,

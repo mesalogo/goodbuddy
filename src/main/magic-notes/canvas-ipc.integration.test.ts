@@ -70,7 +70,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     database.initialize(directory)
     dispose = registerIpcHandlers(window as never, { capability: 'text' } as never,
       'CommandOrControl+Shift+Space', { getResolvedSettings } as never, {} as never,
-      { clear: vi.fn() } as never, {} as never, database,
+      { clear: vi.fn(), cancelImport: vi.fn() } as never, {} as never, database,
       { clear: vi.fn() } as never, {} as never, async () => {})
   }
   async function reopen() {
@@ -120,6 +120,7 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     const result = await api.analyzeTodo(todo.id, {
       requestId: '00000000-0000-4000-8000-000000000709',
       direction: 'general', format: 'structured',
+      sourceEntryRevision: saved.entries[0]!.revision,
       canvasImages: [{ pageId: 'page-1', dataUrl: png }]
     })
     expect(getResolvedSettings).toHaveBeenCalledOnce()
@@ -140,6 +141,44 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     expect(result.revision).toBe(todo.revision + 1)
     expect(runtime.releaseConversation).toHaveBeenCalledWith(`magic-todos:${todo.id}`)
     expect(runtime.dispose).toHaveBeenCalledOnce()
+  })
+
+  it.each(['entry', 'todo'] as const)('rejects missing and stale screenshot revisions before %s model calls', async (kind) => {
+    getResolvedSettings.mockResolvedValue({ workspacePath: directory, supportsImageInput: true })
+    const note = await api.create({ title: 'Stale captures' })
+    const saved = await api.createEntry({ noteId: note.id, content: canvas() })
+    const entry = saved.entries[0]!
+    const todo = database.listMagicTodos()[0]!
+    const options = { requestId: '00000000-0000-4000-8000-000000000710', direction: 'general' as const,
+      format: 'structured' as const, canvasImages: [{ pageId: 'page-1', dataUrl: png }] }
+    const analyze = (revision?: number) => kind === 'entry'
+      ? api.analyze(entry.id, { ...options, expectedRevision: revision })
+      : api.analyzeTodo(todo.id, { ...options, sourceEntryRevision: revision })
+    await expect(analyze()).rejects.toThrow('版本')
+    const content = canvas()
+    content.pages[0]!.objects[0]!.left = 500
+    await api.updateEntry({ entryId: entry.id, expectedRevision: entry.revision, content })
+    await expect(analyze(entry.revision)).rejects.toThrow('已被更新')
+    expect(modelFactory).not.toHaveBeenCalled()
+  })
+
+  it.each(['entry', 'todo'] as const)('rejects late %s analysis after a source edit with no existing comments', async (kind) => {
+    getResolvedSettings.mockResolvedValue({ workspacePath: directory, supportsImageInput: false })
+    const note = await api.create({ title: 'Late analysis' })
+    const saved = await api.createEntry({ noteId: note.id, content: canvas() })
+    const entry = saved.entries[0]!
+    const todo = database.listMagicTodos()[0]!
+    modelFactory.mockReturnValue({ dispose: vi.fn(), async *run() {
+      const content = canvas()
+      content.pages[0]!.objects[0]!.text = 'Changed context'
+      database.updateMagicNoteEntry({ entryId: entry.id, expectedRevision: entry.revision, content, plainText: '' })
+      yield { type: 'text', delta: '{"comments":[{"kind":"summary","content":"Old result"}]}' }
+      yield { type: 'done' }
+    } })
+    const options = { requestId: '00000000-0000-4000-8000-000000000711', direction: 'general' as const, format: 'structured' as const }
+    await expect(kind === 'entry' ? api.analyze(entry.id, options) : api.analyzeTodo(todo.id, options)).rejects.toThrow('已被更新')
+    expect(database.getMagicTodo(todo.id).comments).toEqual([])
+    expect(database.getMagicNoteEntry(entry.id).comments).toEqual([])
   })
 
   it('returns the exact created ID through production IPC after an Agent append', async () => {

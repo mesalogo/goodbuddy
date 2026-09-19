@@ -475,6 +475,7 @@ export const app = {
       selecting: '正在添加附件…',
       reading: '正在读取 {{name}}',
       parsing: '正在解析 {{name}}',
+      saving: '正在保存 {{name}}',
       waiting: '选择文件后将自动读取并解析',
       fileCount: '第 {{current}} / {{total}} 个文件',
       progressLabel: '附件读取与解析进度',

@@ -395,6 +395,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   const normalized = normalizeContent(initialContent);
   let pages = normalized.pages.map(makeRuntimePage);
   let currentIndex = 0;
+  let loadedPageId = null;
   let tool = 'select';
   let style = { color: '#ff4d4f', width: 3 };
   let restoring = false;
@@ -646,7 +647,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   }
 
   function captureCurrentObjects() {
-    if (destroyed || restoring || !pages.length) return;
+    if (destroyed || restoring || !pages.length || currentPage().id !== loadedPageId) return;
     const value = fabricCanvas.toObject(SERIAL_PROPS);
     currentPage().objects = normalizeObjects(value?.objects);
     if (currentPage().objects.length) currentPage().flowAuto = false;
@@ -943,6 +944,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     if (destroyed) return;
     const page = currentPage();
     restoring = true;
+    loadedPageId = null;
     if (textTimer) {
       clearTimeout(textTimer);
       textTimer = 0;
@@ -959,6 +961,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       restoring = false;
     }
     if (destroyed || options.signal?.aborted) return;
+    loadedPageId = page.id;
     applyMode();
     await paintVisibleBackground();
     updateControls();
@@ -1129,6 +1132,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
 
   async function syncFlowPages(requiredCount) {
     if (destroyed) return;
+    flushPendingText();
+    captureCurrentObjects();
     const requested = Math.max(1, Math.round(Number(requiredCount) || 1));
     const target = Math.min(MAX_PAGES, requested);
     let changed = false;
@@ -1156,6 +1161,9 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     }
     if (!changed) return;
     currentIndex = Math.min(currentIndex, pages.length - 1);
+    // Pagination can remove the loaded page; finish restoration in the same queue as flush.
+    if (currentPage().id !== loadedPageId) await loadCurrentPage();
+    else setPageDimensions(currentPage());
     updateControls();
     emitChange();
   }

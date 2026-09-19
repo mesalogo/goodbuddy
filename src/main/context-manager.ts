@@ -26,6 +26,10 @@ import type {
 import { encodeBoundedJpeg } from './bounded-jpeg'
 import { parseDocument } from './knowledge/document-parser'
 import type { ParsedDocument } from './knowledge/document-parser'
+import type { ConversationAttachmentStorage } from './conversation-attachment-storage'
+import type { DocumentResultStorage } from './document-result-storage'
+import { originalImageMime, parsedCompleteness } from './document-result-storage'
+import { maximumAttachmentsPerMessage, maximumContextBytes, maximumContextCount } from '../shared/attachment-limits'
 
 type StoredTextContext = ContextAttachment & {
   kind: 'text'
@@ -42,9 +46,6 @@ type StoredContext = StoredTextContext | StoredImageContext
 
 const maximumFileSize = 256 * 1024
 const maximumDocumentFileSize = 20 * 1024 * 1024
-const maximumContextBytes = 12 * 1024 * 1024
-const maximumContextCount = 16
-const maximumAttachmentsPerMessage = 8
 const supportedExtensions = new Set([
   '.c',
   '.cpp',
@@ -107,24 +108,37 @@ function remoteAttachmentName(value: string): string {
 }
 
 export class ContextManager {
+  private importController?: AbortController
+  private importInterrupted = false
+  private shuttingDown = false
+  private importConversationId?: string
+  private importOperationId?: string
+  private readonly validateConversation?: (conversationId: string) => void
+  readonly assets?: ConversationAttachmentStorage
   private readonly contexts = new Map<string, StoredContext>()
   private totalBytes = 0
   private readonly documentParser: (
     name: string,
     buffer: Buffer,
-    purpose: 'chat-attachment'
+    purpose: 'chat-attachment',
+    signal?: AbortSignal
   ) => Promise<ParsedDocument>
 
   constructor(options?: {
+    validateConversation?: (conversationId: string) => void
+    assets?: ConversationAttachmentStorage
     parseDocument?: (
       name: string,
       buffer: Buffer,
-      purpose: 'chat-attachment'
+      purpose: 'chat-attachment',
+      signal?: AbortSignal
     ) => Promise<ParsedDocument>
   }) {
+    this.assets = options?.assets
+    this.validateConversation = options?.validateConversation
     this.documentParser =
       options?.parseDocument ??
-      ((name, buffer) => parseDocument(name, buffer))
+      ((name, buffer, _purpose, signal) => parseDocument(name, buffer, signal))
   }
 
   private toPublic(context: StoredContext): ContextAttachment {
@@ -134,6 +148,16 @@ export class ContextManager {
       size: context.size,
       preview: context.preview,
       kind: context.kind,
+      ...(context.resourceId ? { resourceId: context.resourceId } : {}),
+      ...(context.attachmentId ? { attachmentId: context.attachmentId } : {}),
+      ...(context.resultId ? { resultId: context.resultId } : {}),
+      ...(context.completeness ? { completeness: context.completeness } : {}),
+      ...(context.originalName ? { originalName: context.originalName } : {}),
+      ...(context.originalSize === undefined ? {} : { originalSize: context.originalSize }),
+      ...(context.originalMime ? { originalMime: context.originalMime } : {}),
+      ...(context.imageWidth ? { imageWidth: context.imageWidth, imageHeight: context.imageHeight } : {}),
+      ...(context.sendMode ? { sendMode: context.sendMode } : {}),
+      ...(context.provenance ? { provenance: context.provenance } : {}),
       thumbnailUrl: context.thumbnailUrl,
       contentUrl:
         context.kind === 'image'
@@ -151,26 +175,33 @@ export class ContextManager {
     }
   }
 
-  private storeText(name: string, content: string): ContextAttachment {
+  private storeText(name: string, content: string, id?: string, original?: Buffer): ContextAttachment {
     const size = Buffer.byteLength(content)
     if (size === 0) {
       throw new Error('所选内容为空')
     }
     this.assertCapacity(size)
     const context: StoredTextContext = {
-      id: crypto.randomUUID(),
+      id: id ?? crypto.randomUUID(),
       name,
       size,
       preview: content.slice(0, 160).replace(/\s+/g, ' ').trim(),
       kind: 'text',
       content
     }
+    if (this.assets && !id) {
+      context.resourceId = context.id
+      context.attachmentId = context.id
+      context.originalName = name
+      context.originalSize = original?.length ?? Buffer.byteLength(content)
+      this.assets.save(this.toPublic(context), JSON.stringify(context), original ?? Buffer.from(content))
+    }
     this.contexts.set(context.id, context)
     this.totalBytes += context.size
     return this.toPublic(context)
   }
 
-  private storeImage(name: string, image: NativeImage): ContextAttachment {
+  private storeImage(name: string, image: NativeImage, original?: Buffer): ContextAttachment {
     if (image.isEmpty()) {
       throw new Error('没有可用的图片内容')
     }
@@ -192,6 +223,18 @@ export class ContextManager {
       mediaType: 'image/jpeg',
       data: buffer.toString('base64')
     }
+    if (this.assets) {
+      const source = original ?? image.toPNG()
+      context.resourceId = context.id
+      context.attachmentId = context.id
+      context.originalName = name
+      context.originalSize = source.length
+      context.originalMime = originalImageMime(source)
+      context.imageWidth = size.width
+      context.imageHeight = size.height
+      context.sendMode = 'image'
+      this.assets.save(this.toPublic(context), JSON.stringify(context), source)
+    }
     this.contexts.set(context.id, context)
     this.totalBytes += context.size
     return this.toPublic(context)
@@ -212,8 +255,9 @@ export class ContextManager {
       throw new Error('粘贴图片大小无效')
     }
     return this.storeImage(
-      '粘贴图片.jpg',
-      nativeImage.createFromBuffer(Buffer.from(input.data))
+      `粘贴图片.${input.mimeType === 'image/jpeg' ? 'jpg' : input.mimeType === 'image/webp' ? 'webp' : 'png'}`,
+      nativeImage.createFromBuffer(Buffer.from(input.data)),
+      Buffer.from(input.data)
     )
   }
 
@@ -243,7 +287,8 @@ export class ContextManager {
       }
       return this.storeImage(
         name,
-        nativeImage.createFromBuffer(data)
+        nativeImage.createFromBuffer(data),
+        data
       )
     }
     if (supportedDocumentExtensions.has(extension)) {
@@ -252,10 +297,7 @@ export class ContextManager {
         data,
         'chat-attachment'
       )
-      return this.storeText(
-        name,
-        formatParsedDocument(parsed.sections)
-      )
+      return this.storeParsed(name, data, parsed)
     }
     if (!supportedExtensions.has(extension)) {
       throw new Error(`暂不支持此远程文件类型：${extension || '未知'}`)
@@ -266,12 +308,13 @@ export class ContextManager {
     const content = new TextDecoder('utf-8', {
       fatal: true
     }).decode(data)
-    return this.storeText(name, content)
+    return this.storeText(name, content, undefined, data)
   }
 
   async selectFiles(
     window: BrowserWindow,
-    onProgress?: (progress: ContextFileSelectionProgress) => void
+    onProgress?: (progress: ContextFileSelectionProgress) => void,
+    conversationId?: string
   ): Promise<ContextAttachment[]> {
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile', 'multiSelections'],
@@ -300,26 +343,38 @@ export class ContextManager {
       return []
     }
 
-    return this.importFiles(result.filePaths, onProgress)
+    return this.importFiles(result.filePaths, onProgress, conversationId)
   }
 
   async importFiles(
     paths: string[],
-    onProgress?: (progress: ContextFileSelectionProgress) => void
+    onProgress?: (progress: ContextFileSelectionProgress) => void,
+    conversationId?: string
   ): Promise<ContextAttachment[]> {
+    if (this.shuttingDown) throw new Error('应用正在退出')
+    if (this.importController) throw new Error('已有文件正在导入')
+    const controller = new AbortController()
+    this.importController = controller
+    this.importOperationId = crypto.randomUUID()
+    this.importConversationId = conversationId
+    this.importInterrupted = false
+    const pending: string[] = []
     const attachments: ContextAttachment[] = []
     const selectedPaths = paths.slice(
       0,
       maximumAttachmentsPerMessage
     )
-    for (const [index, selectedPath] of selectedPaths.entries()) {
-      try {
+    try {
+      for (const [index, selectedPath] of selectedPaths.entries()) {
+        controller.signal.throwIfAborted()
+        if (conversationId) this.validateConversation?.(conversationId)
         const canonicalPath = await realpath(selectedPath)
         const fileName = basename(canonicalPath)
         const reportProgress = (
           phase: ContextFileSelectionProgress['phase']
         ): void =>
           onProgress?.({
+            operationId: this.importOperationId,
             phase,
             fileName,
             fileNumber: index + 1,
@@ -345,12 +400,12 @@ export class ContextManager {
             ) {
               throw new Error('图片必须小于 12MB 且不能是目录')
             }
-            const image = nativeImage.createFromBuffer(
-              await handle.readFile()
-            )
+            const original = await handle.readFile()
+            const image = nativeImage.createFromBuffer(original)
             attachments.push(
-              this.storeImage(basename(canonicalPath), image)
+              this.storeImage(basename(canonicalPath), image, original)
             )
+            controller.signal.throwIfAborted()
           } finally {
             await handle.close()
           }
@@ -365,24 +420,27 @@ export class ContextManager {
             ) {
               throw new Error('PDF 或 Office 文档必须小于 20MB 且不能是目录')
             }
+            const original = await handle.readFile()
+            if (conversationId && this.assets) pending.push(this.assets.beginParsing(conversationId, fileName, original))
             reportProgress('parsing')
             const parsed = await this.documentParser(
               fileName,
-              await handle.readFile(),
-              'chat-attachment'
+              original,
+              'chat-attachment',
+              controller.signal
             )
+            if (this.assets) reportProgress('saving')
             attachments.push(
-              this.storeText(
-                fileName,
-                formatParsedDocument(parsed.sections)
-              )
+              await this.storeParsed(fileName, original, parsed)
             )
+            controller.signal.throwIfAborted()
           } finally {
             await handle.close()
           }
           continue
         }
         let content: string
+        let originalText: Buffer
         try {
           const fileStat = await handle.stat()
           if (!fileStat.isFile() || fileStat.size > maximumFileSize) {
@@ -393,26 +451,45 @@ export class ContextManager {
           if (result.bytesRead > maximumFileSize) {
             throw new Error('文件必须小于 256KB')
           }
-          content = buffer
-            .subarray(0, result.bytesRead)
-            .toString('utf8')
+          originalText = buffer.subarray(0, result.bytesRead)
+          content = originalText.toString('utf8')
         } finally {
           await handle.close()
         }
-        attachments.push(this.storeText(basename(canonicalPath), content))
-      } catch (error) {
-        for (const attachment of attachments) {
-          this.remove(attachment.id)
-        }
-        if (error instanceof Error && !('code' in error)) {
-          throw error
-        }
-        // Filesystem causes can contain absolute paths and must not cross IPC.
-        // eslint-disable-next-line preserve-caught-error
-        throw new Error('无法读取所选文件，请检查文件权限和状态')
+        attachments.push(this.storeText(basename(canonicalPath), content, undefined, originalText))
+        controller.signal.throwIfAborted()
       }
-    }
-    return attachments
+      controller.signal.throwIfAborted()
+      if (conversationId) this.validateConversation?.(conversationId)
+      for (const id of pending) this.assets?.release('parsing', id)
+      this.assets?.collect([...this.contexts.keys()])
+      return attachments
+    } catch (error) {
+      for (const attachment of attachments) this.remove(attachment.id)
+      for (const id of pending) {
+        if (!this.assets?.has(id)) continue
+        if (controller.signal.aborted && !this.importInterrupted) this.assets.release('parsing', id)
+        else this.assets.parsingFailed(id, this.importInterrupted, error instanceof Error && !('code' in error) ? error.message : '文档读取或保存失败，请检查文件权限与磁盘空间')
+      }
+      this.assets?.collect([...this.contexts.keys()])
+      if (error instanceof Error && !('code' in error)) throw error
+      // Filesystem causes can contain absolute paths and must not cross IPC.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error('无法读取所选文件，请检查文件权限和状态')
+    } finally { this.importController = undefined; this.importConversationId = undefined; this.importOperationId = undefined; this.importInterrupted = false }
+  }
+
+  cancelImport(interrupted = false, operationId?: string): void {
+    if (operationId && operationId !== this.importOperationId) return
+    this.importInterrupted = interrupted
+    this.shuttingDown ||= interrupted
+    this.importController?.abort(new Error(interrupted ? '解析已中断' : '文件导入已取消'))
+  }
+
+  cancelUnavailableImport(): void {
+    if (!this.importConversationId) return
+    try { this.validateConversation?.(this.importConversationId) }
+    catch { this.cancelImport() }
   }
 
   async captureScreen(window: BrowserWindow): Promise<ContextAttachment> {
@@ -436,7 +513,7 @@ export class ContextManager {
       throw new Error('无法获取屏幕画面，请检查系统录屏权限')
     }
     return this.storeImage(
-      `屏幕截图-${new Date().toISOString().replaceAll(':', '-')}.jpg`,
+      `屏幕截图-${new Date().toISOString().replaceAll(':', '-')}.png`,
       source.thumbnail
     )
   }
@@ -486,7 +563,7 @@ export class ContextManager {
     return this.storeImage(
       `窗口-${source.name.slice(0, 80)}-${new Date()
         .toISOString()
-        .replaceAll(':', '-')}.jpg`,
+        .replaceAll(':', '-')}.png`,
       source.thumbnail
     )
   }
@@ -498,12 +575,14 @@ export class ContextManager {
     }
     const image = clipboard.readImage()
     if (!image.isEmpty()) {
-      return this.storeImage('剪贴板图片.jpg', image)
+      return this.storeImage('剪贴板图片.png', image)
     }
     throw new Error('剪贴板中没有可用的文本或图片')
   }
 
   enrichRequest(request: AgentRequest): AgentExecutionRequest {
+    this.validateForSend(request.contextIds ?? [])
+    for (const id of request.contextIds ?? []) this.restoreAsset(id)
     const normalizedRequest: AgentExecutionRequest = {
       ...request,
       workMode: request.workMode === 'execute' ? 'execute' : 'ask'
@@ -517,20 +596,22 @@ export class ContextManager {
     }
 
     const textContexts = selected.filter(
-      (context): context is StoredTextContext => context.kind === 'text'
+      (context): context is StoredTextContext => context.kind === 'text' && context.completeness !== 'images-only'
     )
-    const context = textContexts
+    const imageSources = selected.filter((item) => item.kind === 'image' && item.provenance).map((item) =>
+      `<attachment-json>${JSON.stringify({ name: item.name, source: item.provenance!.documentName, pageNumber: item.provenance!.pageNumber })}</attachment-json>`)
+    const context = [...textContexts
       .map(
         (attachment) =>
           `<attachment-json>${JSON.stringify({
             name: attachment.name,
             content: attachment.content
           })}</attachment-json>`
-      )
+      ), ...imageSources]
       .join('\n\n')
 
     const prompt =
-      textContexts.length > 0
+      textContexts.length > 0 || imageSources.length > 0
         ? [
             request.prompt,
             '',
@@ -564,6 +645,7 @@ export class ContextManager {
       this.totalBytes -= context.size
       this.contexts.delete(contextId)
     }
+    this.assets?.collect([...this.contexts.keys()])
   }
 
   serializeForQueue(contextIds: string[]): string {
@@ -571,6 +653,7 @@ export class ContextManager {
       throw new Error('单次消息最多添加 8 个附件')
     }
     const contexts = contextIds.map((contextId) => {
+      this.restoreAsset(contextId)
       const context = this.contexts.get(contextId)
       if (!context) {
         throw new Error('附件上下文已失效，请重新添加')
@@ -677,6 +760,7 @@ export class ContextManager {
         }
       }
       restoredIds.add(context.id)
+      if (this.assets?.has(context.id)) Object.assign(context, this.assets.get(context.id))
       restoredContexts.push(context)
     }
     const restoredBytes = restoredContexts.reduce(
@@ -701,5 +785,178 @@ export class ContextManager {
   clear(): void {
     this.contexts.clear()
     this.totalBytes = 0
+  }
+
+  private async storeParsed(name: string, original: Buffer, parsed: ParsedDocument): Promise<ContextAttachment> {
+    const text = [formatParsedDocument(parsed.sections), ...parsed.warnings.map((warning) => `[解析警告：${warning}]`)].join('\n\n')
+    if (!this.assets) return this.storeText(name, text)
+    const id = await this.assets.saveDocument(name, original, parsed)
+    try {
+      this.storeText(name, text, id)
+      const context = this.contexts.get(id)!
+      context.resourceId = id
+      context.attachmentId = id
+      context.resultId = id
+      context.completeness = parsedCompleteness(parsed)
+      context.originalName = name
+      context.originalSize = original.length
+      context.originalMime = originalImageMime(original)
+      this.assets.adoptDocument(this.toPublic(context), JSON.stringify(context))
+      return this.toPublic(context)
+    } catch (error) {
+      this.remove(id)
+      await this.assets.discardResult(id)
+      throw error
+    }
+  }
+
+  private restoreAsset(id: string): void {
+    if (this.contexts.has(id) || !this.assets?.has(id)) return
+    this.restoreFromQueue(`[${this.assets.request(id)}]`)
+    Object.assign(this.contexts.get(id)!, this.assets.get(id))
+  }
+
+  getDraft(conversationId: string): ContextAttachment[] {
+    const attachments = this.assets?.draft(conversationId) ?? []
+    return attachments
+  }
+
+  activeContextIds(): string[] { return [...this.contexts.keys()] }
+
+  hasImageInputs(ids: string[]): boolean {
+    return ids.some((id) => (this.contexts.get(id) ?? (this.assets?.has(id) ? this.assets.get(id) : undefined))?.kind === 'image')
+  }
+
+  validateForSend(ids: string[]): void {
+    const selected = ids.map((id) => {
+      this.restoreAsset(id)
+      const context = this.contexts.get(id)
+      if (!context) throw new Error('附件上下文已失效，请重新添加')
+      return context
+    })
+    for (const parent of selected.filter((context) => context.completeness === 'images-only')) {
+      if (!selected.some((context) => context.provenance?.resultId === parent.resultId && (context.kind === 'image' || context.sendMode === 'text'))) throw new Error('此文档仅有图片。请选择至少一张文档图片，或移除该文档后发送。')
+    }
+  }
+
+  async copyToDraft(conversationId: string, id: string, parse: (name: string, data: Buffer) => Promise<ParsedDocument>, signal?: AbortSignal, validateTarget?: () => void): Promise<ContextAttachment[]> {
+    if (!this.assets) throw new Error('附件资源存储不可用')
+    if (this.getDraft(conversationId).length >= maximumAttachmentsPerMessage) throw new Error('草稿附件已满，请先整理附件')
+    const previous = this.assets.get(id)
+    const original = this.assets.original(id)
+    const parsed = await parse(original.name, original.data)
+    const next = await this.storeParsed(original.name, original.data, parsed)
+    try {
+      signal?.throwIfAborted()
+      validateTarget?.()
+      if (!this.assets.has(id)) throw new Error('来源附件已不可用')
+      const stored = this.contexts.get(next.id)!
+      stored.provenance = previous.provenance
+      if (previous.sendMode) { stored.sendMode = 'text'; stored.name = `${original.name} · 提取文字` }
+      this.assets.update(this.toPublic(stored), JSON.stringify(stored))
+      this.saveDraft(conversationId, [...this.getDraft(conversationId).map((item) => item.id), next.id])
+      return this.getDraft(conversationId)
+    } catch (error) { this.remove(next.id); throw error }
+  }
+
+  async retryParsing(conversationId: string, id: string, signal?: AbortSignal): Promise<ContextAttachment[]> {
+    if (!this.assets?.pendingParsing(conversationId).some((item) => item.id === id)) throw new Error('中断记录不存在')
+    const current = this.getDraft(conversationId)
+    if (current.length >= maximumAttachmentsPerMessage) throw new Error('草稿附件已满，请先整理附件')
+    const original = this.assets.original(id)
+    const parsed = await this.documentParser(original.name, original.data, 'chat-attachment', signal)
+    const next = await this.storeParsed(original.name, original.data, parsed)
+    try {
+      signal?.throwIfAborted()
+      this.saveDraft(conversationId, [...this.getDraft(conversationId).map((item) => item.id), next.id])
+      this.assets.release('parsing', id)
+      this.assets.collect([...this.contexts.keys()])
+      return this.getDraft(conversationId)
+    } catch (error) { this.remove(next.id); throw error }
+  }
+
+  saveDraft(conversationId: string, ids: string[]): void {
+    this.validateConversation?.(conversationId)
+    if (ids.length > maximumAttachmentsPerMessage) throw new Error('单次消息最多添加 8 个附件')
+    this.serializeForQueue(ids)
+    this.assets?.reference(conversationId, 'draft', conversationId, ids)
+    this.assets?.collect([...this.contexts.keys()])
+  }
+
+  async addResultImages(conversationId: string, resultId: string, imageIds: string[], results: DocumentResultStorage, validateTarget?: () => void): Promise<ContextAttachment[]> {
+    if (!this.assets) throw new Error('附件资源存储不可用')
+    const draft = this.getDraft(conversationId)
+    const selected = [...new Set(imageIds)].filter((id) => !draft.some((attachment) => attachment.provenance?.resultId === resultId && attachment.provenance.imageId === id))
+    if (draft.length + selected.length > maximumAttachmentsPerMessage) throw new Error(`草稿已有 ${draft.length} 个附件，本次选择 ${selected.length} 张；每条消息最多 8 个附件`)
+    const result = await results.get(resultId)
+    const images = selected.map((id) => {
+      const image = result.images.find((image) => image.id === id)
+      if (!image) throw new Error('所选图片已不可用，请重新打开解析结果')
+      return image
+    })
+    const created: ContextAttachment[] = []
+    try {
+      for (const image of images) {
+        const encoded = await results.image(resultId, image.id)
+        const original = Buffer.from(encoded.slice(encoded.indexOf(',') + 1), 'base64')
+        const extension = image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType === 'image/png' ? 'png' : 'webp'
+        const location = image.locator ?? `${result.sourceFormat === '.pptx' ? `幻灯片 ${image.pageNumber}` : `第 ${image.pageNumber} 页`} · 图片 ${result.images.indexOf(image) + 1}`
+        const attachment = this.storeImage(`${result.fileName} · ${location}.${extension}`, nativeImage.createFromBuffer(original), original)
+        created.push(attachment)
+        const stored = this.contexts.get(attachment.id)!
+        stored.provenance = { resultId, imageId: image.id, documentName: result.fileName, pageNumber: image.pageNumber }
+        this.assets.update(this.toPublic(stored), JSON.stringify(stored))
+      }
+      validateTarget?.()
+      this.saveDraft(conversationId, [...this.getDraft(conversationId), ...created].map((attachment) => attachment.id))
+      return this.getDraft(conversationId)
+    } catch (error) {
+      for (const attachment of created) this.remove(attachment.id)
+      throw error
+    }
+  }
+
+  async reparseDraft(conversationId: string, id: string, parse: (name: string, data: Buffer) => Promise<ParsedDocument>, signal?: AbortSignal): Promise<ContextAttachment[]> {
+    if (!this.assets) throw new Error('附件资源存储不可用')
+    const draft = this.getDraft(conversationId)
+    const previous = draft.find((attachment) => attachment.id === id)
+    if (!previous) throw new Error('附件不在此会话草稿中')
+    const original = this.assets.original(id)
+    const parsed = await parse(original.name, original.data)
+    const next = await this.storeParsed(original.name, original.data, parsed)
+    try {
+      signal?.throwIfAborted()
+      if (!this.getDraft(conversationId).some((attachment) => attachment.id === id)) throw new Error('解析期间附件已从草稿移除')
+      const context = this.contexts.get(next.id)!
+      context.provenance = previous.provenance
+      context.attachmentId = previous.attachmentId ?? previous.id
+      if (previous.kind === 'image' || previous.sendMode) {
+        context.sendMode = 'text'
+        context.name = `${original.name} · 提取文字`
+      }
+      this.assets.update(this.toPublic(context), JSON.stringify(context))
+      this.saveDraft(conversationId, this.getDraft(conversationId).map((attachment) => attachment.id === id ? next.id : attachment.id))
+      this.remove(id)
+      return this.getDraft(conversationId)
+    } catch (error) { this.remove(next.id); throw error }
+  }
+
+  sendOriginal(conversationId: string, id: string): ContextAttachment[] {
+    if (!this.assets) throw new Error('附件资源存储不可用')
+    const draft = this.getDraft(conversationId)
+    const previous = draft.find((attachment) => attachment.id === id)
+    if (!previous?.sendMode) throw new Error('请选择图片草稿附件')
+    const original = this.assets.original(id)
+    const next = this.storeImage(original.name, nativeImage.createFromBuffer(original.data), original.data)
+    const stored = this.contexts.get(next.id)!
+    stored.provenance = previous.provenance
+    stored.attachmentId = previous.attachmentId ?? previous.id
+    try {
+      if (this.assets.copyResult(id, next.id)) { stored.resultId = next.id; stored.completeness = previous.completeness }
+      this.assets.update(this.toPublic(stored), JSON.stringify(stored))
+      this.saveDraft(conversationId, draft.map((attachment) => attachment.id === id ? next.id : attachment.id))
+      this.remove(id)
+      return this.getDraft(conversationId)
+    } catch (error) { this.remove(next.id); throw error }
   }
 }

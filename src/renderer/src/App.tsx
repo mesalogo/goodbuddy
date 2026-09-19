@@ -1,6 +1,12 @@
 import { ImageCapabilityNotice } from "./ImageCapabilityNotice";
 import LocalInferencePage from "./LocalInferencePage";
 import { ApplicationMenu } from './ApplicationMenu';
+import { AttachmentResultButton } from './AttachmentResultButton';
+import { AttachmentActions, AttachmentStatus } from './AttachmentActions';
+import { PendingDocumentImports } from './PendingDocumentImports';
+import { AttachmentCapabilityNotice } from './AttachmentCapabilityNotice';
+import { DocumentConversationContext } from './DocumentConversationContext';
+import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits';
 import {
   ApplicationAvailability,
   ApplicationCenter,
@@ -2437,6 +2443,10 @@ function App(): React.JSX.Element {
   const settingsLeaveRequesterRef = useRef<SettingsLeaveRequester | undefined>(
     undefined,
   );
+  const notesLeaveRequesterRef = useRef<SettingsLeaveRequester | undefined>(undefined);
+  const registerNotesLeaveRequester = useCallback((requester: SettingsLeaveRequester | undefined): void => {
+    notesLeaveRequesterRef.current = requester;
+  }, []);
   const [cachedWorkspaceViews, setCachedWorkspaceViews] = useState<
     KeepAliveCacheEntry<WorkspaceView>[]
   >(() => [{ key: "chat", lastVisitedAt: Date.now() }]);
@@ -2508,6 +2518,21 @@ function App(): React.JSX.Element {
       });
     }
   }, []);
+  const requestWorkspaceLeave = useCallback((next: WorkspaceView, leave: () => void): void => {
+    const leaveNotes = (): void => {
+      if (viewRef.current === "magic-notes" && next !== "magic-notes" && notesLeaveRequesterRef.current) {
+        if (settingsOpenRef.current) commitView(viewRef.current);
+        notesLeaveRequesterRef.current(leave);
+      } else {
+        leave();
+      }
+    };
+    if (settingsOpenRef.current && settingsLeaveRequesterRef.current) {
+      settingsLeaveRequesterRef.current(leaveNotes);
+    } else {
+      leaveNotes();
+    }
+  }, [commitView]);
   const setView = useCallback(
     (update: SetStateAction<WorkspaceView>): void => {
       const next =
@@ -2534,16 +2559,9 @@ function App(): React.JSX.Element {
         setSettingsOpen(true);
         return;
       }
-      if (settingsOpenRef.current) {
-        const requestLeave = settingsLeaveRequesterRef.current;
-        if (requestLeave) {
-          requestLeave(() => commitView(next));
-          return;
-        }
-      }
-      commitView(next);
+      requestWorkspaceLeave(next, () => commitView(next));
     },
-    [commitView],
+    [commitView, requestWorkspaceLeave],
   );
   const registerSettingsLeaveRequester = useCallback(
     (requester: SettingsLeaveRequester | undefined): void => {
@@ -2695,6 +2713,21 @@ function App(): React.JSX.Element {
   const [imageReferencesByConversation, setImageReferencesByConversation] = useState<Record<string, AssistantArtifact[]>>({});
   const imageReferences = imageReferencesByConversation[activeId] ?? [];
   const attachmentsRef = useRef(new Map<string, ContextAttachment[]>());
+  const attachmentSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => window.goodbuddy.context.onDraftChanged((conversationId, saved) => {
+    attachmentsRef.current.set(conversationId, saved);
+    setAttachmentsByConversation((current) => ({ ...current, [conversationId]: saved }));
+  }), []);
+  useEffect(() => {
+    let active = true;
+    if (attachmentsRef.current.has(activeId) || conversationsRef.current.find((conversation) => conversation.id === activeId)?.remote) return;
+    void window.goodbuddy.context.getDraft(activeId).then((saved) => {
+      if (!active || attachmentsRef.current.has(activeId) || !saved.length) return;
+      attachmentsRef.current.set(activeId, saved);
+      setAttachmentsByConversation((current) => ({ ...current, [activeId]: saved }));
+    }).catch((error: unknown) => notify({ tone: 'error', message: error instanceof Error ? error.message : '附件草稿读取失败' }));
+    return () => { active = false; };
+  }, [activeId]);
   const updateAttachments = useCallback(
     (
       update:
@@ -2703,6 +2736,16 @@ function App(): React.JSX.Element {
     ): void => {
       const current = attachmentsRef.current.get(activeId) ?? [];
       const next = typeof update === "function" ? update(current) : update;
+      attachmentSaveQueue.current = attachmentSaveQueue.current.catch(() => undefined).then(async () => {
+        await conversationPersistenceQueueRef.current;
+        const owner = conversationsRef.current.find((conversation) => conversation.id === activeId);
+        if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
+        if (next.length && !persistedLocalConversationsRef.current.has(activeId)) {
+          await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: [] }]);
+        }
+        await window.goodbuddy.context.saveDraft(activeId, next.map((attachment) => attachment.id));
+      });
+      void attachmentSaveQueue.current.catch((error: unknown) => notify({ tone: 'error', message: error instanceof Error ? error.message : '附件草稿保存失败' }));
       if (next.length > 0) {
         attachmentsRef.current.set(activeId, next);
       } else {
@@ -2724,6 +2767,12 @@ function App(): React.JSX.Element {
     useState<ContextFileSelectionProgress>();
   const [selectingContextFiles, setSelectingContextFiles] = useState(false);
   const selectingContextFilesRef = useRef(false);
+  const [attachmentOperations, setAttachmentOperations] = useState(0);
+  const attachmentOperationsRef = useRef(0);
+  const updateAttachmentBusy = useCallback((busy: boolean): void => {
+    attachmentOperationsRef.current = Math.max(0, attachmentOperationsRef.current + (busy ? 1 : -1));
+    setAttachmentOperations(attachmentOperationsRef.current);
+  }, []);
   const [imageViewerItem, setImageViewerItem] = useState<ImageViewerItem>();
   const [citationDialog, setCitationDialog] = useState<{
     reference: KnowledgeSearchReference;
@@ -3926,10 +3975,10 @@ function App(): React.JSX.Element {
   }, [activeRuntimeSelectionKey, runtimeSettings, setView]);
 
   const startNewConversation = useCallback(
-    (projectId?: string): boolean => {
+    (projectId?: string, preview?: { ready: (conversation: Conversation) => void }): boolean => {
       const project = projects.find((candidate) => candidate.id === projectId);
       if (project?.kind === "channel") {
-        setView("chat");
+        if (!preview) setView("chat");
         notify({
           tone: "info",
           message: tRef.current("notices.channelConversationAutomatic"),
@@ -3946,8 +3995,8 @@ function App(): React.JSX.Element {
         currentConversation.projectId === projectId &&
         isUnusedConversation(currentConversation)
       ) {
-        setView("chat");
-        requestAnimationFrame(() => inputRef.current?.focus());
+        if (preview) preview.ready(currentConversation);
+        else { setView("chat"); requestAnimationFrame(() => inputRef.current?.focus()); }
         return true;
       }
       const conversation = createConversation(
@@ -3961,9 +4010,8 @@ function App(): React.JSX.Element {
         conversations: nextConversations,
       };
       setConversations(nextConversations);
-      setActiveId(conversation.id);
-      setView("chat");
-      requestAnimationFrame(() => inputRef.current?.focus());
+      if (preview) preview.ready(conversation);
+      else { setActiveId(conversation.id); setView("chat"); requestAnimationFrame(() => inputRef.current?.focus()); }
       return true;
     },
     [notify, projects, setActiveId, setView],
@@ -5414,6 +5462,7 @@ function App(): React.JSX.Element {
         flushConversationPersistenceAfterRenderRef.current = false;
         persistLocalConversationChanges();
         await conversationPersistenceQueueRef.current;
+        await attachmentSaveQueue.current;
       }),
     [
       conversationStoreReady,
@@ -6517,9 +6566,10 @@ function App(): React.JSX.Element {
         }),
       }));
     });
-    const removeOpenSettingsListener = window.goodbuddy.app.onOpenSettings(() =>
-      setView("settings"),
-    );
+    const removeOpenSettingsListener = window.goodbuddy.app.onOpenSettings((category) => {
+      setSettingsInitialCategory(category ?? "runtime");
+      setView("settings");
+    });
     return () => {
       removeAgentListener();
       removeImageListener();
@@ -6954,6 +7004,7 @@ function App(): React.JSX.Element {
       deletingLocalConversationIdsRef.current.add(conversationId);
       try {
         await conversationPersistenceQueueRef.current;
+        await attachmentSaveQueue.current;
         await window.goodbuddy.conversations.deleteLocal(conversationId);
         persistedLocalConversationsRef.current.delete(conversationId);
       } catch {
@@ -7437,7 +7488,7 @@ function App(): React.JSX.Element {
       await releaseQueuedItem();
       return;
     }
-    if (!queuedInput && selectingContextFilesRef.current) {
+    if (!queuedInput && (selectingContextFilesRef.current || attachmentOperationsRef.current > 0)) {
       notify({
         tone: "info",
         message: t("composer.attachmentProgress.waitBeforeSending"),
@@ -7573,6 +7624,7 @@ function App(): React.JSX.Element {
         ) {
           throw new Error(t("notices.conversationPersistenceFailed"));
         }
+        await attachmentSaveQueue.current;
         await window.goodbuddy.conversationQueue.enqueueUser(queueInput);
         setComposerMenuOpen(undefined);
         setRuntimeMenuOpen(false);
@@ -8048,13 +8100,19 @@ function App(): React.JSX.Element {
     const conversationId = activeId;
     setContextError(undefined);
     try {
+      await conversationPersistenceQueueRef.current;
+      if (!persistedLocalConversationsRef.current.has(conversationId)) {
+        const owner = conversationsRef.current.find((conversation) => conversation.id === conversationId);
+        if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
+        await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: owner.messages.map(toConversationMessage) }]);
+      }
       const result = await action();
       const selected = Array.isArray(result) ? result : [result];
       const current = attachmentsRef.current.get(conversationId) ?? [];
       const unique = selected.filter(
         (item) => !current.some((existing) => existing.id === item.id),
       );
-      const accepted = unique.slice(0, Math.max(0, 8 - current.length));
+      const accepted = unique.slice(0, Math.max(0, maximumAttachmentsPerMessage - current.length));
       for (const attachment of unique.slice(accepted.length)) {
         void window.goodbuddy.context.remove(attachment.id);
       }
@@ -8104,8 +8162,8 @@ function App(): React.JSX.Element {
     setFileSelectionProgress(undefined);
     try {
       await addContext(() => paths
-        ? window.goodbuddy.context.importFiles(paths)
-        : window.goodbuddy.context.selectFiles());
+        ? window.goodbuddy.context.importFiles(paths, activeId)
+        : window.goodbuddy.context.selectFiles(activeId));
     } finally {
       selectingContextFilesRef.current = false;
       setSelectingContextFiles(false);
@@ -8412,12 +8470,7 @@ function App(): React.JSX.Element {
       commitView("chat");
       if (narrowWindow) closeNarrowSidebar();
     };
-    const requestLeave = settingsLeaveRequesterRef.current;
-    if (settingsOpenRef.current && requestLeave) {
-      requestLeave(() => { void open(); });
-    } else {
-      void open();
-    }
+    requestWorkspaceLeave("chat", () => { void open(); });
   };
 
   const openAssistantTask = (task: AssistantTask): void => {
@@ -8825,6 +8878,19 @@ function App(): React.JSX.Element {
 
   return (
     <div className="app-shell">
+      <DocumentConversationContext value={{
+        activeId: activeConversation?.remote ? undefined : activeId,
+        create: () => new Promise((resolve, reject) => {
+          const created = startNewConversation(activeProjectId || undefined, { ready: (conversation) => {
+            void window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(conversation), messages: conversation.messages.map(toConversationMessage) }])
+              .then(() => resolve({ id: conversation.id, title: conversation.title }), reject);
+          } });
+          if (!created) reject(new Error('当前项目不能创建会话，请先选择普通项目'));
+        }),
+        navigate: (id) => { setActiveId(id); setView('chat'); },
+        notify: (message) => notify({ tone: 'success', message }),
+        openImage: (src, title, trigger) => { imageViewerTriggerRef.current = trigger; setImageViewerItem({ src, title }); }
+      }}>
       <aside
         aria-label={
           narrowWindow && sidebarOpen ? t("sidebar.label") : undefined
@@ -9877,6 +9943,11 @@ function App(): React.JSX.Element {
                           onError={handleConversationQueueError}
                           onInterruptAndRun={interruptConversationQueueItem}
                           onRemove={removeConversationQueueItem}
+                          onRestore={async (itemId) => {
+                            await attachmentSaveQueue.current;
+                            const restored = await window.goodbuddy.conversationQueue.restoreToDraft(itemId, input);
+                            setInput(restored.prompt);
+                          }}
                           running={conversationExecutionRunning}
                         />
                         <div className="composer">
@@ -9893,6 +9964,8 @@ function App(): React.JSX.Element {
                               {composerOptionSummary}
                             </div>
                           )}
+                          <PendingDocumentImports key={activeId} conversationId={activeId} refreshing={selectingContextFiles} onBusyChange={updateAttachmentBusy} />
+                          {attachments.some((attachment) => attachment.kind === 'image') && <AttachmentCapabilityNotice key={`${activeId}:${activeRuntimeSelectionKey}`} conversationId={activeId} selection={activeRuntimeSelection} revision={`${attachments.map((item) => item.id).join(',')}:${runtimeSettings?.defaultModelProfileId}:${runtimeStatusKey}`} />}
                           {(attachments.length > 0 || imageReferences.length > 0 ||
                             selectingContextFiles) && (
                             <div
@@ -9916,7 +9989,7 @@ function App(): React.JSX.Element {
                               {attachments.map((attachment) => (
                                 <div
                                   className="context-chip"
-                                  key={attachment.id}
+                                  key={attachment.attachmentId ?? attachment.id}
                                   title={attachment.preview}
                                 >
                                   {attachment.kind === "image" &&
@@ -9930,12 +10003,22 @@ function App(): React.JSX.Element {
                                     <FileText size={14} />
                                   )}
                                   <span>
-                                    <strong>{attachment.name}</strong>
+                                    <strong title={attachment.name}>{attachment.name}</strong>
+                                    <span className="attachment-metadata">
+                                    <AttachmentStatus attachment={attachment} />
                                     <small>
                                       {formatAttachmentSize(attachment.size)}
                                     </small>
+                                    </span>
+                                    <span className="attachment-actions">
+                                      {attachment.resultId && <AttachmentResultButton resultId={attachment.resultId} name={attachment.name} conversationId={activeId} />}
+                                      <AttachmentActions attachment={attachment} conversationId={activeId} onBusyChange={updateAttachmentBusy} />
+                                    </span>
                                   </span>
                                   <button
+                                    className="icon-button attachment-action"
+                                    title={t("composer.removeAttachment", { name: attachment.name })}
+                                    data-tooltip={t("composer.removeAttachment", { name: attachment.name })}
                                     aria-label={t("composer.removeAttachment", {
                                       name: attachment.name,
                                     })}
@@ -9951,7 +10034,7 @@ function App(): React.JSX.Element {
                                     }}
                                     type="button"
                                   >
-                                    ×
+                                    <X size={16} aria-hidden="true" />
                                   </button>
                                 </div>
                               ))}
@@ -9961,6 +10044,7 @@ function App(): React.JSX.Element {
                                   className="context-chip context-chip--processing"
                                   role="status"
                                 >
+                                  <button type="button" onClick={() => void window.goodbuddy.context.cancelImport(fileSelectionProgress?.operationId)}>取消文件导入</button>
                                   <LoaderCircle
                                     aria-hidden="true"
                                     className="context-chip__spinner"
@@ -10031,7 +10115,7 @@ function App(): React.JSX.Element {
                                     setContextError(t("composer.attachmentProgress.waitBeforeSending"));
                                     return;
                                   }
-                                  if (files.length > 8) {
+                                  if (files.length > maximumAttachmentsPerMessage) {
                                     setContextError(t("composer.errors.attachmentLimit"));
                                     return;
                                   }
@@ -10110,7 +10194,7 @@ function App(): React.JSX.Element {
                                       : undefined
                                   }
                                   aria-invalid={contextError ? true : undefined}
-                                  disabled={selectingContextFiles}
+                                  disabled={selectingContextFiles || attachmentOperations > 0}
                                   ref={attachmentButtonRef}
                                   onClick={() => void selectContextFiles()}
                                   title={t("composer.addAttachment")}
@@ -10767,7 +10851,7 @@ function App(): React.JSX.Element {
                                           command.id === selectedRuntimeCommand,
                                       )
                                     )) ||
-                                  selectingContextFiles ||
+                                  selectingContextFiles || attachmentOperations > 0 ||
                                   activeProjectRecoveryBlocked ||
                                   !runtime?.available ||
                                   runtimeSwitching ||
@@ -10974,7 +11058,7 @@ function App(): React.JSX.Element {
                           <RouteLoadingStatus label={t("route.loading")} />
                         }
                       >
-                        <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} />
+                        <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} onBeforeLeave={registerNotesLeaveRequester} />
                       </Suspense>
                     </RouteErrorBoundary>
                   </PageShell>
@@ -11723,6 +11807,7 @@ function App(): React.JSX.Element {
           />
         </div>
       </div>
+      </DocumentConversationContext>
     </div>
   );
 }

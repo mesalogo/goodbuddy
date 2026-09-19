@@ -67,6 +67,17 @@ records are listed separately and do not introduce another feature status.
   model memory after 60 seconds without active or queued work and reloads on
   demand; fast text/index modes still skip OCR. See the
   [parsing behavior and real-file evidence](./docs/features/document-processing/chat-attachments-technical-design.md).
+- [x] **HTTP OCR and persistent attachment previews**: Configure HTTP
+  PaddleOCR-VL under Settings > Document Parsing, shared by chat documents and
+  knowledge imports. Saves originals and extracted images and provides
+  text/image/detail previews, explicit image-to-text actions, and selecting
+  document images into a named conversation draft before sending. Ordinary chat
+  images use image input by default, subject to the effective model and Runtime.
+  This adds no Application Center entry; Local Inference Monitor manages local
+  services only. Real validation covers Windows, direct visual input, and managed
+  OpenCode on the shared Linux Host. Deployment-specific advanced OCR models and
+  other Runtime combinations need separate verification. See
+  [scope and evidence](./docs/features/document-processing/README.md).
 - [x] **Per-file workspace diffs**: Changed files expose separate staged and
   unstaged diffs, including deleted, renamed, and untracked files. Refresh
   reloads the selected diff, browsed directory, and expanded directories; more than 50 changes
@@ -601,7 +612,10 @@ records are listed separately and do not introduce another feature status.
 - [x] **Magic Notes**: A local-first notes and todo workbench with scope
   management, editing, filtering, and controlled AI comments. Notes open from a
   responsive card overview. Detail displays a continuous stream with independently
-  collapsible left index and right AI pane. Real first-page thumbnails scroll to
+  collapsible left index and right AI pane. The index defaults to 168px and supports
+  pointer and keyboard resizing from 140px to 320px, with saved width preferences;
+  narrow layouts retain the fixed-width drawer without a resize handle.
+  Real first-page thumbnails scroll to
   records without replacing editors. Successful saves establish the editor's
    normalized baseline; only unsaved changes require confirmation on leaving. Opening
    a note shows a blank text/canvas composer above the history, and creation resets it

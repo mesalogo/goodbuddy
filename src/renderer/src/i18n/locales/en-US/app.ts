@@ -494,6 +494,7 @@ export const app = {
       selecting: 'Adding attachments…',
       reading: 'Reading {{name}}',
       parsing: 'Parsing {{name}}',
+      saving: 'Saving {{name}}',
       waiting: 'Files will be read and parsed after selection',
       fileCount: 'File {{current}} of {{total}}',
       progressLabel: 'Attachment reading and parsing progress',

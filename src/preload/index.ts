@@ -277,7 +277,8 @@ const desktopApi: DesktopApi = {
       return () => ipcRenderer.removeListener(ipcChannels.conversationNew, handler)
     },
     onOpenSettings: (listener) => {
-      const handler = (): void => listener()
+      const handler = (_event: Electron.IpcRendererEvent, category?: unknown): void =>
+        listener(category === 'model' || category === 'document-parsing' ? category : undefined)
       ipcRenderer.on(ipcChannels.settingsOpen, handler)
       return () => ipcRenderer.removeListener(ipcChannels.settingsOpen, handler)
     }
@@ -790,7 +791,7 @@ const desktopApi: DesktopApi = {
     }
   },
   localInference: {
-    openSettings: () => ipcRenderer.invoke(ipcChannels.localInferenceOpenSettings),
+    openSettings: (category) => ipcRenderer.invoke(ipcChannels.localInferenceOpenSettings, category),
     getSnapshot: () => ipcRenderer.invoke(ipcChannels.localInferenceGet),
     act: (input) => ipcRenderer.invoke(ipcChannels.localInferenceAct, input),
     cancel: (taskId) => ipcRenderer.invoke(ipcChannels.localInferenceCancel, { taskId })
@@ -899,6 +900,12 @@ const desktopApi: DesktopApi = {
       ) as Promise<EmbeddingModelSnapshot>
   },
   documentParsing: {
+    getResult: (id) => ipcRenderer.invoke(ipcChannels.documentParsingResult, { id }),
+    readResultImage: (id, imageId, thumbnail) => ipcRenderer.invoke(ipcChannels.documentParsingImage, { id, imageId, thumbnail }),
+    openResultOriginal: (id) => ipcRenderer.invoke(ipcChannels.documentParsingOriginal, { id }),
+    releaseResult: (id) => ipcRenderer.invoke(ipcChannels.documentParsingRelease, { id }),
+    cancelTest: (operationId) => ipcRenderer.invoke(ipcChannels.documentParsingCancel, { id: operationId }),
+    checkHttp: () => ipcRenderer.invoke(ipcChannels.documentParsingCheckHttp),
     getSnapshot: () =>
       ipcRenderer.invoke(
         ipcChannels.documentParsingGet
@@ -907,15 +914,15 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.documentOcrModelsProgress
       ) as Promise<DocumentOcrModelProgressSnapshot>,
-    update: (input: DocumentParsingSettings) =>
+    update: (input: DocumentParsingSettings & { apiKey?: string; clearApiKey?: boolean }) =>
       ipcRenderer.invoke(
         ipcChannels.documentParsingUpdate,
         input
       ) as Promise<DocumentParsingSnapshot>,
-    test: (purpose: DocumentParsingTestPurpose) =>
+    test: (purpose: DocumentParsingTestPurpose, operationId?: string) =>
       ipcRenderer.invoke(
         ipcChannels.documentParsingTest,
-        { purpose }
+        { purpose, ...(operationId ? { operationId } : {}) }
       ) as Promise<DocumentParsingDiagnostic | undefined>,
     installOcrModel: (
       modelId: string,
@@ -1131,6 +1138,8 @@ const desktopApi: DesktopApi = {
     }
   },
   conversationQueue: {
+    getAttachments: (itemId) => ipcRenderer.invoke(ipcChannels.conversationQueueAttachments, itemId),
+    restoreToDraft: (itemId, draftText) => ipcRenderer.invoke(ipcChannels.conversationQueueRestoreDraft, { itemId, draftText }),
     list: (conversationId?: string) =>
       ipcRenderer.invoke(
         ipcChannels.conversationQueueList,
@@ -1522,15 +1531,34 @@ const desktopApi: DesktopApi = {
       ) as Promise<RuntimeNativeSnapshot>
   },
   context: {
+    imageCapability: (conversationId, runtimeSelection) => ipcRenderer.invoke(ipcChannels.contextImageCapability, { conversationId, runtimeSelection }),
+    copyToDraft: (conversationId, id, operationId) => ipcRenderer.invoke(ipcChannels.contextCopyToDraft, { conversationId, id, operationId }),
+    pendingParsing: (conversationId) => ipcRenderer.invoke(ipcChannels.contextPendingParsing, conversationId),
+    retryParsing: (conversationId, id, operationId) => ipcRenderer.invoke(ipcChannels.contextRetryParsing, { conversationId, id, operationId }),
+    dismissParsing: (conversationId, id) => ipcRenderer.invoke(ipcChannels.contextDismissParsing, { conversationId, id }),
+    cancelImport: (operationId) => ipcRenderer.invoke(ipcChannels.contextCancelImport, operationId),
+    reparseDraft: (conversationId, id, operationId) => ipcRenderer.invoke(ipcChannels.contextReparse, { conversationId, id, operationId }),
+    cancelParsing: (operationId) => ipcRenderer.invoke(ipcChannels.contextCancelParsing, operationId),
+    sendOriginal: (conversationId, id) => ipcRenderer.invoke(ipcChannels.contextSendOriginal, { conversationId, id }),
+    openOriginal: (id) => ipcRenderer.invoke(ipcChannels.contextOpenOriginal, id),
+    addResultImages: (conversationId, resultId, imageIds) => ipcRenderer.invoke(ipcChannels.contextAddResultImages, { conversationId, resultId, imageIds }),
+    onDraftChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, conversationId: string, attachments: ContextAttachment[]): void => listener(conversationId, attachments)
+      ipcRenderer.on(ipcChannels.contextDraftChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.contextDraftChanged, handler)
+    },
+    getDraft: (conversationId) => ipcRenderer.invoke(ipcChannels.contextGetDraft, { conversationId }),
+    saveDraft: (conversationId, ids) => ipcRenderer.invoke(ipcChannels.contextSaveDraft, { conversationId, ids }),
     getFilePath: (file) => webUtils.getPathForFile(file),
-    importFiles: (paths) =>
+    importFiles: (paths, conversationId) =>
       ipcRenderer.invoke(
         ipcChannels.contextImportFiles,
-        { paths }
+        { paths, ...(conversationId ? { conversationId } : {}) }
       ) as Promise<ContextAttachment[]>,
-    selectFiles: () =>
+    selectFiles: (conversationId) =>
       ipcRenderer.invoke(
-        ipcChannels.contextSelectFiles
+        ipcChannels.contextSelectFiles,
+        ...(conversationId ? [conversationId] : [])
       ) as Promise<ContextAttachment[]>,
     onFileSelectionProgress: (listener) => {
       const handler = (

@@ -370,9 +370,15 @@ export type MagicNoteAnalysisOptions = z.infer<
 export const magicNoteAnalyzeSchema = z
   .object({
     entryId: magicNoteIdSchema,
+    expectedRevision: z.number().int().nonnegative().optional(),
     ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
+  .refine((input) => !input.canvasImages?.length || input.expectedRevision !== undefined, {
+    message: '画布截图必须提供记录版本', path: ['expectedRevision']
+  })
+
+export type MagicNoteEntryAnalysisOptions = MagicNoteAnalysisOptions & { expectedRevision?: number }
 
 export const magicNoteDraftAnalyzeSchema = z
   .object({
@@ -384,9 +390,15 @@ export const magicNoteDraftAnalyzeSchema = z
 export const magicTodoIdSchema = z
   .object({
     todoId: magicNoteIdSchema,
+    sourceEntryRevision: z.number().int().nonnegative().optional(),
     ...magicNoteAnalysisOptionsSchema.shape
   })
   .strict()
+  .refine((input) => !input.canvasImages?.length || input.sourceEntryRevision !== undefined, {
+    message: '画布截图必须提供来源记录版本', path: ['sourceEntryRevision']
+  })
+
+export type MagicTodoAnalysisOptions = MagicNoteAnalysisOptions & { sourceEntryRevision?: number }
 
 export const magicTodoUpdateSchema = z
   .object({

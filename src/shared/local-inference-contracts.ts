@@ -49,7 +49,7 @@ export type LocalInferenceSnapshot = {
   externalConnections?: { id: string; name: string; model: string }[]
 }
 export type LocalInferenceApi = {
-  openSettings: () => Promise<void>
+  openSettings: (category?: 'model' | 'document-parsing') => Promise<void>
   getSnapshot: () => Promise<LocalInferenceSnapshot>
   act: (input: InferenceAction) => Promise<void>
   cancel: (taskId: string) => Promise<void>

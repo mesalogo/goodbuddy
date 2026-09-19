@@ -180,6 +180,8 @@ export const magicNotes = {
   },
   accessibility: {
     resizeAiPane: 'Resize the editor and AI comments panes',
+    resizeIndexPane: 'Resize the record index',
+    indexPaneWidth: 'Record index width {{width}} pixels',
     aiPaneWidth: 'AI comments pane, {{width}} pixels'
   },
   editor: {

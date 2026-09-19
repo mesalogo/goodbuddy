@@ -11,6 +11,7 @@ import type {
   DocumentParsingSettings,
   DocumentParsingSnapshot
 } from '../../shared/document-parsing-contracts'
+import { defaultHttpOcrSettings } from '../../shared/document-parsing-contracts'
 import { changeUiLocale } from './i18n'
 import { DocumentParsingSettingsSection } from './DocumentParsingSettingsSection'
 
@@ -285,7 +286,7 @@ describe('DocumentParsingSettingsSection', () => {
     })
     expect(
       screen.getByRole('button', {
-        name: '测试聊天与成果模式'
+        name: '测试解析'
       })
     ).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
@@ -517,10 +518,11 @@ describe('DocumentParsingSettingsSection', () => {
     await screen.findByText('PP-OCRv6 Tiny')
 
     const trigger = screen.getByRole('button', {
-      name: '测试聊天与成果模式'
+      name: '测试解析'
     })
     trigger.focus()
     fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: '测试聊天与成果模式' }))
 
     const dialog = await screen.findByRole('dialog', {
       name: '解析测试结果'
@@ -543,7 +545,28 @@ describe('DocumentParsingSettingsSection', () => {
     )
     await waitFor(() => expect(trigger).toHaveFocus())
     expect(container.inert).toBe(false)
-    expect(test).toHaveBeenCalledWith('chat-attachment')
+    expect(test).toHaveBeenCalledWith('chat-attachment', expect.any(String))
     expect(update).not.toHaveBeenCalled()
+  })
+
+  it('keeps custom and unknown excluded labels across provider and filter switches', async () => {
+    getSnapshot.mockResolvedValueOnce({ ...snapshot, settings: { ...settings, ocrProvider: 'paddleocr-vl', httpOcr: {
+      ...defaultHttpOcrSettings, baseUrl: 'http://ocr.test', filterMode: 'custom', ignoredLabels: ['header', 'text']
+    } } })
+    render(<DocumentParsingSettingsSection />)
+    await screen.findByText('已保存来源：HTTP PaddleOCR-VL')
+    fireEvent.click(screen.getByText('HTTP 高级设置'))
+    expect(screen.getByRole('switch', { name: '保留页眉文字' })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: '保留text' })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: '服务默认' }))
+    fireEvent.click(screen.getByRole('button', { name: '全部保留' }))
+    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
+    expect(screen.getByRole('switch', { name: '保留text' })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('switch', { name: '保留页眉文字' }))
+    fireEvent.click(screen.getByRole('button', { name: '本地模型' }))
+    fireEvent.click(screen.getByRole('button', { name: '远程服务' }))
+    expect(screen.getByRole('button', { name: '测试解析' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ httpOcr: expect.objectContaining({ filterMode: 'custom', ignoredLabels: ['text'] }) })))
   })
 })

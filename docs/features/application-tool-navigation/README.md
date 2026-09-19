@@ -117,3 +117,4 @@ Notion 收藏和 VS Code Profiles，当前版本已移除场景工具包与快�
 - [助手工作栏多终端页签 PRD](../assistant-workbar/terminal-tabs-prd.md)
 - [智能心跳 PRD](../smart-heartbeat/prd.md)
 - [知识库功能文档](../knowledge-base/README.md)
+- [文档解析入口与职责](../document-processing/ui-design.md#11-入口与职责)：全局 OCR 配置、附件与知识文档操作的目标分工；不新增应用中心成员，本机推理监控不管理 HTTP OCR 服务。

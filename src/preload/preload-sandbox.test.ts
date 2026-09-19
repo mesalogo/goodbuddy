@@ -173,10 +173,10 @@ describe('sandboxed preload', () => {
       'utf8'
     )
     expect(source).toContain(
-      'test: (purpose: DocumentParsingTestPurpose)'
+      'test: (purpose: DocumentParsingTestPurpose, operationId?: string)'
     )
     expect(source).toMatch(
-      /ipcChannels\.documentParsingTest,\r?\n {8}\{ purpose \}/u
+      /ipcChannels\.documentParsingTest,\r?\n {8}\{ purpose, \.\.\.\(operationId/u
     )
   })
 

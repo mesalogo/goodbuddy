@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
 import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { DatabaseSync } from 'node:sqlite'
 import { statSync } from 'node:fs'
@@ -113,7 +114,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 38
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 39
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -1801,6 +1802,14 @@ export class AssistantDatabase {
     this.options.onMagicTodosChanged?.()
   }
 
+  hasAttachmentOwner(conversationId: string, kind: string, ownerId: string): boolean {
+    const database = this.requireDatabase()
+    if (kind === 'draft' || kind === 'parsing') return Boolean(database.prepare('SELECT 1 FROM conversations WHERE id = ?').get(conversationId))
+    if (kind === 'message') return Boolean(database.prepare('SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?').get(ownerId, conversationId))
+    if (kind === 'queue') return Boolean(database.prepare('SELECT 1 FROM conversation_queue_items WHERE id = ? AND conversation_id = ?').get(ownerId, conversationId))
+    return false
+  }
+
   // Called by the existing startup worker before the business connection opens.
   upgradeMagicNoteStorage(
     onProgress: (progress: AssistantStorageProgress) => void,
@@ -2042,10 +2051,20 @@ export class AssistantDatabase {
                    AND json_extract(
                      messages.metadata_json,
                      '$.queueItemId'
-                   ) = conversation_queue_items.id
+                    ) = conversation_queue_items.id
+                    AND NOT EXISTS (
+                      SELECT 1 FROM json_each(messages.metadata_json, '$.attachments') attachment
+                      WHERE json_extract(attachment.value, '$.resourceId') IS NOT NULL
+                    )
                )`
           )
           .run()
+        database.exec(`DELETE FROM messages WHERE json_extract(metadata_json, '$.queueItemId') IN (
+          SELECT id FROM conversation_queue_items WHERE source = 'user'
+        ) AND EXISTS (
+          SELECT 1 FROM json_each(messages.metadata_json, '$.attachments') attachment
+          WHERE json_extract(attachment.value, '$.resourceId') IS NOT NULL
+        )`)
         database.exec(`
           INSERT OR IGNORE INTO conversation_queue_items
             (id, conversation_id, source, label, payload_json,
@@ -3512,8 +3531,9 @@ export class AssistantDatabase {
     attachments?: ConversationSnapshot['messages'][number]['attachments']
     artifactIds?: string[]
     task?: ConversationSnapshot['messages'][number]['task']
-  }): void {
+  }): string {
     const database = this.requireDatabase()
+    const messageId = randomUUID()
     const now = Date.now()
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -3542,7 +3562,7 @@ export class AssistantDatabase {
            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`
         )
         .run(
-          randomUUID(),
+          messageId,
           input.conversationId,
           input.role,
           input.content,
@@ -3567,6 +3587,7 @@ export class AssistantDatabase {
         )
         .run(new Date(now).toISOString(), input.conversationId)
       database.exec('COMMIT')
+      return messageId
     } catch (error) {
       database.exec('ROLLBACK')
       throw error
@@ -3580,8 +3601,8 @@ export class AssistantDatabase {
     status?: string
     attachments?: ConversationSnapshot['messages'][number]['attachments']
     artifactIds?: string[]
-  }): void {
-    this.appendConversationMessage(input)
+  }): string {
+    return this.appendConversationMessage(input)
   }
 
   claimChannelEvent(
@@ -4039,7 +4060,7 @@ export class AssistantDatabase {
     const previous = this.hydrateMagicNoteEntry(existing)
     const preserveComments = content.version === 2 && previous.content.version === 2 && (
       JSON.stringify(content) === JSON.stringify(previous.content) ||
-      (input.plainText === previous.plainText &&
+      (magicNoteCanvasAnalysisText(content) === magicNoteCanvasAnalysisText(previous.content) &&
         previous.comments.every((comment) => comment.inputMode === 'text-fallback' || comment.inputMode === 'text'))
     )
     const now = new Date().toISOString()
@@ -4086,7 +4107,8 @@ export class AssistantDatabase {
         existing.note_id,
         input.entryId,
         input.content,
-        now
+        now,
+        previous.content
       )
       database.exec('COMMIT')
     } catch (error) {
@@ -4300,8 +4322,9 @@ export class AssistantDatabase {
         return this.getMagicTodo(input.todoId)
       }
 
+      const previousContent = this.noteStorage.read(existing.note_id, existing.entry_id).content
       const content = setMagicNoteChecklistCompletion(
-        this.noteStorage.read(existing.note_id, existing.entry_id).content,
+        previousContent,
         existing.source_index,
         input.completed
       )
@@ -4335,7 +4358,8 @@ export class AssistantDatabase {
         existing.note_id,
         existing.entry_id,
         content,
-        now
+        now,
+        previousContent
       )
       database.exec('COMMIT')
     } catch (error) {
@@ -4351,14 +4375,20 @@ export class AssistantDatabase {
   saveMagicTodoAnalysis(input: {
     todoId: string
     expectedRevision: number
+    sourceEntryRevision?: number
     comments: MagicNoteComment[]
   }): MagicTodoItem {
     const database = this.requireDatabase()
     const existing = database
-      .prepare('SELECT comments_json FROM magic_todos WHERE id = ?')
-      .get(input.todoId) as { comments_json: string } | undefined
+      .prepare('SELECT comments_json, entry_id FROM magic_todos WHERE id = ?')
+      .get(input.todoId) as { comments_json: string; entry_id: string } | undefined
     if (!existing) {
       throw new Error('待办不存在')
+    }
+    const source = this.getMagicNoteEntry(existing.entry_id)
+    if ((source.content.version === 2 || input.sourceEntryRevision !== undefined) &&
+        source.revision !== input.sourceEntryRevision) {
+      throw new Error('来源记录已被更新，请重新分析')
     }
     const now = new Date().toISOString()
     const comments = [
@@ -8508,7 +8538,8 @@ export class AssistantDatabase {
     noteId: string,
     entryId: string,
     content: MagicNoteContent,
-    now: string
+    now: string,
+    previousContent?: MagicNoteContent
   ): void {
     const note = database
       .prepare('SELECT id FROM magic_notes WHERE id = ?')
@@ -8519,7 +8550,7 @@ export class AssistantDatabase {
     const items = magicNoteChecklistItems(content)
     const existing = database
       .prepare(
-        `SELECT id, project_id, note_id, source_index, title, completed
+        `SELECT id, project_id, note_id, source_index, title, completed, comments_json
          FROM magic_todos
          WHERE entry_id = ? AND source = 'note'`
       )
@@ -8530,7 +8561,15 @@ export class AssistantDatabase {
       source_index: number
       title: string
       completed: number
+      comments_json: string
     }>
+    const canvasChanged = previousContent !== undefined &&
+      (previousContent.version === 2 || content.version === 2) &&
+      JSON.stringify(previousContent) !== JSON.stringify(content)
+    const analysisTextChanged = canvasChanged && (
+      previousContent?.version !== 2 || content.version !== 2 ||
+      magicNoteCanvasAnalysisText(previousContent) !== magicNoteCanvasAnalysisText(content)
+    )
     const unmatched = new Set(existing)
     const byExactPosition = new Map(
       existing.map((todo) => [
@@ -8638,6 +8677,11 @@ export class AssistantDatabase {
         continue
       }
       const titleChanged = matched.title !== item.title
+      const comments = JSON.parse(matched.comments_json) as MagicNoteComment[]
+      const sourceChanged = canvasChanged && comments.length > 0 && (
+        analysisTextChanged || comments.some((comment) =>
+          comment.inputMode !== 'text-fallback' && comment.inputMode !== 'text')
+      )
       const completionChanged =
         Boolean(matched.completed) !== item.completed
       const positionChanged =
@@ -8649,7 +8693,8 @@ export class AssistantDatabase {
         !titleChanged &&
         !completionChanged &&
         !positionChanged &&
-        !scopeChanged
+        !scopeChanged &&
+        !sourceChanged
       ) {
         continue
       }
@@ -8659,8 +8704,8 @@ export class AssistantDatabase {
         item.sourceIndex,
         item.title,
         Number(item.completed),
-        Number(titleChanged),
-        Number(titleChanged),
+        Number(titleChanged || sourceChanged),
+        Number(titleChanged || sourceChanged),
         now,
         matched.id
       )
@@ -10436,6 +10481,10 @@ export class AssistantDatabase {
     }
     if (version.user_version < 38) {
       database.exec('BEGIN IMMEDIATE; PRAGMA user_version = 38; COMMIT;')
+    }
+    if (version.user_version < 39) {
+      // Older clients reject the persisted file-backed attachment metadata.
+      database.exec('BEGIN IMMEDIATE; PRAGMA user_version = 39; COMMIT;')
     }
   }
 

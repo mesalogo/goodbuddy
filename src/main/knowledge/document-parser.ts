@@ -1,11 +1,13 @@
 import { convert } from 'html-to-text'
 import { unzipSync } from 'fflate'
 import { extname } from 'node:path'
+import type { ParsedDocumentImage } from '../http-document-ocr'
 import type {
   KnowledgeChunkingSettings,
   KnowledgeChunkRole
 } from '../../shared/knowledge-contracts'
 import {
+  type DocumentParsingSettings,
   maximumDocumentExtractedCharacters,
   maximumPdfPageCount
 } from '../../shared/document-parsing-contracts'
@@ -16,17 +18,23 @@ export type ParsedSection = {
   method?: 'native' | 'ocr' | 'converted' | 'vision'
   confidence?: number
   pageNumber?: number
+  sourcePages?: number[]
   headingPath?: string[]
   blockKind?: DocumentBlockKind
 }
 
 export type ParsedDocument = {
+  parsingSettings?: DocumentParsingSettings
+  parsingDurationMs?: number
   title: string
   sourceFormat: string
   content: string
   sections: ParsedSection[]
   warnings: string[]
   pageCount?: number
+  images?: ParsedDocumentImage[]
+  missingImages?: Array<{ pageNumber: number; key: string; reason: string }>
+  restructure?: { changed: boolean; sourcePages: number[] }
 }
 
 export type DocumentChunk = {

@@ -21,6 +21,44 @@ import type { ImageOperation } from '../../shared/image-generation-contracts'
 
 const temporaryDirectories: string[] = []
 
+it.each(['text-fallback', 'canvas-images'] as const)('invalidates canvas source comments by actual %s input while retaining todo identity', async (inputMode) => {
+  const database = await createDatabase()
+  try {
+    const content = {
+      version: 2 as const, kind: 'paged-canvas' as const,
+      pages: [{ id: 'text-page', width: 794, height: 1123,
+        background: { type: 'template' as const, template: 'blank' as const },
+        objects: [{ type: 'IText', text: 'Context', left: 1 }] }],
+      flow: { ops: [{ insert: 'Task' }, { insert: '\n', attributes: { list: 'unchecked' } }] }, assets: []
+    }
+    const entry = database.createMagicNote({ title: 'Source', content }).entries[0]!
+    const todo = database.listMagicTodos()[0]!
+    const comments = [{ id: randomUUID(), kind: 'summary' as const, content: 'Analysis', inputMode }]
+    database.saveMagicTodoAnalysis({ todoId: todo.id, expectedRevision: todo.revision, sourceEntryRevision: entry.revision, comments })
+    database.saveMagicNoteAnalysis({ entryId: entry.id, expectedRevision: entry.revision, comments })
+    const analyzed = database.getMagicNoteEntry(entry.id)
+    const analyzedTodo = database.getMagicTodo(todo.id)
+    const moved = structuredClone(content)
+    moved.pages[0]!.objects[0]!.left = 50
+    database.updateMagicNoteEntry({ entryId: entry.id, expectedRevision: analyzed.revision, content: moved, plainText: '' })
+    const afterMove = database.getMagicNoteEntry(entry.id)
+    const todoAfterMove = database.getMagicTodo(todo.id)
+    expect(afterMove.comments.length).toBe(inputMode === 'text-fallback' ? 1 : 0)
+    expect(todoAfterMove.comments.length).toBe(inputMode === 'text-fallback' ? 1 : 0)
+    expect(todoAfterMove.revision).toBe(analyzedTodo.revision + (inputMode === 'canvas-images' ? 1 : 0))
+    if (inputMode === 'text-fallback') {
+      // Inserting a blank first page leaves plainText identical but changes cited page numbers.
+      moved.pages.unshift({ ...moved.pages[0]!, id: 'blank-page', objects: [] })
+      database.updateMagicNoteEntry({ entryId: entry.id, expectedRevision: afterMove.revision, content: moved, plainText: '' })
+      expect(database.getMagicNoteEntry(entry.id)).toMatchObject({ plainText: afterMove.plainText, comments: [] })
+      expect(database.getMagicTodo(todo.id)).toMatchObject({ id: todo.id, comments: [], revision: todoAfterMove.revision + 1 })
+    }
+    expect(() => database.saveMagicTodoAnalysis({ todoId: todo.id, expectedRevision: database.getMagicTodo(todo.id).revision,
+      sourceEntryRevision: entry.revision, comments })).toThrow('来源记录已被更新')
+    expect(() => database.saveMagicTodoAnalysis({ todoId: todo.id, expectedRevision: database.getMagicTodo(todo.id).revision, comments })).toThrow('来源记录已被更新')
+  } finally { database.close() }
+})
+
 it('roundtrips canvas assets and keeps todos stable across geometry edits and completion', async () => {
   const database = await createDatabase()
   try {

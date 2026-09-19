@@ -2,12 +2,15 @@ import {
   ClockFading,
   CornerDownRight,
   ListRestart,
+  Paperclip,
+  Undo2,
   LoaderCircle,
   Trash2
 } from 'lucide-react'
 import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ConversationQueueItem } from '../../shared/assistant-contracts'
+import { QueuedAttachmentsDialog } from './QueuedAttachmentsDialog'
 
 type ConversationInputQueueProps = {
   items: ConversationQueueItem[]
@@ -15,6 +18,7 @@ type ConversationInputQueueProps = {
   onError: (message: string) => void
   onInterruptAndRun: (itemId: string) => Promise<void>
   onRemove: (itemId: string) => Promise<void>
+  onRestore?: (itemId: string) => Promise<void>
 }
 
 export const ConversationInputQueue = memo(
@@ -23,12 +27,14 @@ export const ConversationInputQueue = memo(
     running,
     onError,
     onInterruptAndRun,
-    onRemove
+    onRemove,
+    onRestore
   }: ConversationInputQueueProps): React.JSX.Element | null {
     const { t } = useTranslation('app')
+    const [viewing, setViewing] = useState<string>()
     const [pendingAction, setPendingAction] = useState<{
       itemId: string
-      action: 'run' | 'remove'
+      action: 'run' | 'remove' | 'restore'
     }>()
 
     if (items.length === 0) {
@@ -37,7 +43,7 @@ export const ConversationInputQueue = memo(
 
     const runAction = async (
       itemId: string,
-      actionName: 'run' | 'remove',
+      actionName: 'run' | 'remove' | 'restore',
       action: () => Promise<void>
     ): Promise<void> => {
       setPendingAction({ itemId, action: actionName })
@@ -67,7 +73,7 @@ export const ConversationInputQueue = memo(
                 ? t('composer.queue.scheduledTask')
                 : t('composer.queue.message')
             return (
-              <li key={item.id}>
+              <li key={item.id} className={item.error ? 'conversation-input-queue__item--error' : undefined}>
                 <span
                   aria-label={sourceLabel}
                   className="conversation-input-queue__source"
@@ -84,8 +90,11 @@ export const ConversationInputQueue = memo(
                   title={item.label}
                 >
                   {item.label}
+                  {item.error && <small className="knowledge-inline-error" role="alert">{item.error}</small>}
                 </span>
                 <span className="conversation-input-queue__actions">
+                  {item.source === 'user' && <button type="button" aria-label={`查看入队附件：${item.label}`} title="查看附件" onClick={() => setViewing(item.id)}><Paperclip aria-hidden="true" size={13} /><span>查看附件</span></button>}
+                  {onRestore && item.source === 'user' && <button type="button" disabled={pendingAction !== undefined} aria-label={`恢复到草稿：${item.label}`} title="恢复到草稿" onClick={() => void runAction(item.id, 'restore', () => onRestore(item.id))}><Undo2 aria-hidden="true" size={13} /><span>恢复到草稿</span></button>}
                   <button
                     aria-label={t(
                       running
@@ -150,6 +159,7 @@ export const ConversationInputQueue = memo(
             )
           })}
         </ol>
+        {viewing && items.some((item) => item.id === viewing) && <QueuedAttachmentsDialog itemId={viewing} onClose={() => setViewing(undefined)} />}
       </section>
     )
   }
