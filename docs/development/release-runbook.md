@@ -15,12 +15,12 @@ below.
 Product publicity is an optional companion to a release, not a release blocker
 or a replacement for the approved bilingual release notes. When requested,
 follow the [PR article workflow](../pr-articles/README.md) and choose either the
-[featured article](../pr-articles/featured-template.md) or
-[regular update](../pr-articles/regular-template.md) template based on user value,
+[featured article](../pr-articles/README.md#重点稿模板) or
+[regular update](../pr-articles/README.md#常规与综合稿模板) template based on user value,
 not version size or commit count.
 
 Prepare the draft and real screenshots against the candidate commit using the
-[isolated screenshot procedure](../pr-articles/screenshot-guide.md). This does
+[isolated screenshot procedure](../pr-articles/README.md#截图执行步骤). This does
 not waive the build, packaging, or launch restrictions below. Keep missing
 materials in the article's review record without delaying the software release.
 Before external publication, verify the final version, download links, upgrade
