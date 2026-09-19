@@ -14,11 +14,13 @@ import { mountFlowText, normalizeFlowContent } from './canvas-flow.mjs';
 const VERSION = 2;
 const MAX_PAGES = 50;
 const HISTORY_LIMIT = 50;
-const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_DATA_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 128;
 const DEFAULT_WIDTH = 794;
 const DEFAULT_HEIGHT = 1123;
 const MAX_DIMENSION = 3000;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 3;
 const MAX_CANVAS_PIXELS = 24 * 1024 * 1024;
 const SERIAL_PROPS = ['canvasKind'];
 const COMMON_OBJECT_KEYS = [
@@ -319,6 +321,8 @@ function drawTemplate(context, width, height, template) {
 }
 
 const BUTTON_ICONS = Object.freeze({
+  'zoom-out': '<path d="M5 12h14"/>',
+  'zoom-in': '<path d="M5 12h14M12 5v14"/>',
   'tool-select': '<path d="m5 3 13 9-6 1.5L9 19Z"/><path d="m13 14 4 6"/>',
   'tool-pen': '<path d="m4 20 4.5-1 10-10a2 2 0 0 0-3-3l-10 10Z"/><path d="m14 7 3 3M4 20l1.5-4"/>',
   'tool-highlight': '<path d="m7 15 8-11 4 3-8 11H7Z"/><path d="m13 7 4 3M4 20h16"/>',
@@ -328,8 +332,8 @@ const BUTTON_ICONS = Object.freeze({
   'tool-flow-text': '<path d="M4 5h16M8 5v14M5 19h6"/><path d="M14 11h6M14 15h6M14 19h6"/>',
   undo: '<path d="m9 7-5 5 5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/>',
   redo: '<path d="m15 7 5 5-5 5"/><path d="M19 12h-8a6 6 0 0 0-6 6"/>',
-  'import-pdf': '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M12 10v7M9 14l3 3 3-3"/>',
-  'export-pdf': '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M12 18v-7M9 14l3-3 3 3"/>',
+  'import-pdf': '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M12 18v-7M9 14l3-3 3 3"/>',
+  'export-pdf': '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M12 10v7M9 14l3 3 3-3"/>',
   'previous-page': '<path d="m14 6-6 6 6 6"/>',
   'next-page': '<path d="m10 6 6 6-6 6"/>',
   'add-page': '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 14h6M12 11v6"/>',
@@ -408,6 +412,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   let destroyPromise = null;
   let suggestedPdfName = 'GoodBuddy-笔记.pdf';
   let readOnly = Boolean(options.disabled);
+  let zoom = 1;
+  let fitWidth = false;
 
   const pdfDocuments = new Map();
   const backgroundCache = new Map();
@@ -509,7 +515,16 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   const addPageButton = makeButton('加页', '添加页面', 'add-page');
   const deletePageButton = makeButton('删页', '删除当前页面', 'delete-page');
   pageControls.append(previousButton, pageCounter, nextButton, addPageButton, deletePageButton);
-  toolbar.append(toolGroup, styleGroup, historyGroup, documentGroup, pageControls);
+  const zoomControls = document.createElement('span');
+  zoomControls.className = 'canvas-note-zoom-controls';
+  zoomControls.setAttribute('role', 'group');
+  zoomControls.setAttribute('aria-label', '画布缩放');
+  const zoomOutButton = makeButton('-', '缩小（最低 25%；Ctrl/Command + 滚轮）', 'zoom-out');
+  const zoomResetButton = makeButton('100%', '还原为 100%', 'zoom-reset');
+  const zoomInButton = makeButton('+', '放大（最高 300%；Ctrl/Command + 滚轮）', 'zoom-in');
+  const zoomFitButton = makeButton('适应宽度', '适应宽度（随窗口调整）', 'zoom-fit');
+  zoomControls.append(zoomOutButton, zoomResetButton, zoomInButton, zoomFitButton);
+  toolbar.append(toolGroup, styleGroup, historyGroup, documentGroup, zoomControls, pageControls);
 
   const imageInput = document.createElement('input');
   imageInput.type = 'file';
@@ -527,6 +542,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   const pageShell = document.createElement('div');
   pageShell.className = 'canvas-note-page';
   pageShell.style.position = 'relative';
+  const pageSurface = document.createElement('div');
+  pageSurface.className = 'canvas-note-page-surface';
 
   const backgroundElement = document.createElement('canvas');
   backgroundElement.className = 'canvas-note-background';
@@ -540,7 +557,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
   const flowLayer = document.createElement('div');
   flowLayer.className = 'canvas-flow-layer';
 
-  pageShell.append(backgroundElement, annotationElement, flowLayer);
+  pageSurface.append(backgroundElement, annotationElement, flowLayer);
+  pageShell.appendChild(pageSurface);
   viewport.appendChild(pageShell);
   root.append(toolbar, flowToolbarHost, viewport, imageInput);
   host.textContent = '';
@@ -684,9 +702,14 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     }
     if (readOnly) {
       for (const control of toolbar.querySelectorAll('button, input, select')) {
-        if (control !== previousButton && control !== nextButton && control !== exportButton) control.disabled = true;
+        if (control !== previousButton && control !== nextButton && control !== exportButton
+          && !zoomControls.contains(control)) control.disabled = true;
       }
     }
+    zoomOutButton.disabled = busy || zoom <= MIN_ZOOM;
+    zoomInButton.disabled = busy || zoom >= MAX_ZOOM;
+    zoomResetButton.disabled = busy;
+    zoomFitButton.disabled = busy;
   }
 
   function pushHistory(emit = true) {
@@ -761,11 +784,39 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     if (tool === 'flow-text') flowEditor.focus();
   }
 
+  function applyZoom() {
+    if (destroyed) return;
+    const page = currentPage();
+    if (fitWidth && viewport.clientWidth > 0) {
+      const css = globalThis.getComputedStyle(viewport);
+      const available = viewport.clientWidth - (parseFloat(css.paddingLeft) || 0) - (parseFloat(css.paddingRight) || 0);
+      zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, available / page.width));
+    }
+    // Only the outer box participates in layout; all three layers share logical coordinates.
+    pageShell.style.width = `${page.width * zoom}px`;
+    pageShell.style.height = `${page.height * zoom}px`;
+    pageSurface.style.transform = `scale(${zoom})`;
+    fabricCanvas.calcOffset?.();
+    zoomResetButton.textContent = `${Math.round(zoom * 100)}%`;
+    zoomResetButton.setAttribute('aria-label', `当前缩放 ${Math.round(zoom * 100)}%，还原为 100%`);
+    zoomFitButton.setAttribute('aria-pressed', String(fitWidth));
+    zoomFitButton.classList.toggle('canvas-note-active', fitWidth);
+    updateControls();
+  }
+
+  function setZoom(value, fit = false) {
+    if (destroyed || busy) return;
+    fitWidth = fit;
+    zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
+    applyZoom();
+  }
+
   function setPageDimensions(page) {
-    pageShell.style.width = `${page.width}px`;
-    pageShell.style.height = `${page.height}px`;
-    backgroundElement.width = page.width;
-    backgroundElement.height = page.height;
+    pageSurface.style.width = `${page.width}px`;
+    pageSurface.style.height = `${page.height}px`;
+    // Flow pagination can update layout without repainting the current background.
+    if (backgroundElement.width !== page.width) backgroundElement.width = page.width;
+    if (backgroundElement.height !== page.height) backgroundElement.height = page.height;
     fabricCanvas.setDimensions({ width: page.width, height: page.height });
     if (fabricContainer) {
       fabricContainer.style.width = `${page.width}px`;
@@ -781,6 +832,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     );
     flowLayer.style.top = `${Math.max(0, Math.round((page.height - writableHeight) / 2))}px`;
     flowEditor.setLayout(writableWidth, writableHeight, currentIndex);
+    applyZoom();
   }
 
   async function getPdfDocument(background, suppliedBytes = null) {
@@ -1084,7 +1136,7 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       throw new Error('请选择 JPEG、PNG、GIF 或 WebP 图片');
     }
     if (!Number.isFinite(file.size) || file.size <= 0 || file.size > MAX_IMAGE_BYTES) {
-      throw new Error('单张图片不能超过 2 MB');
+      throw new Error('单张图片不能超过 20 MB');
     }
     const dataUrl = await readFileDataUrl(file);
     if (!isSafeImageDataUrl(dataUrl)) {
@@ -1475,7 +1527,13 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     signal: uiAbort.signal
   });
   viewport.addEventListener('wheel', (event) => {
-    if (event.defaultPrevented || event.ctrlKey) return;
+    if (event.defaultPrevented) return;
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1;
+      if (event.deltaY) setZoom(zoom * Math.exp(-event.deltaY * unit * 0.002));
+      return;
+    }
     // Some drivers already map Shift to deltaX; only remap a vertical-only wheel.
     const horizontal = event.shiftKey && event.deltaX === 0;
     const dx = horizontal ? event.deltaY : event.deltaX;
@@ -1489,6 +1547,23 @@ export function mountCanvasNote(host, initialContent, options = {}) {
     // Leave boundary/no-overflow events available for normal ancestor scrolling.
     if (viewport.scrollLeft !== left || viewport.scrollTop !== top) event.preventDefault();
   }, { passive: false, signal: uiAbort.signal });
+  zoomOutButton.addEventListener('click', () => setZoom(zoom - 0.25), { signal: uiAbort.signal });
+  zoomInButton.addEventListener('click', () => setZoom(zoom + 0.25), { signal: uiAbort.signal });
+  zoomResetButton.addEventListener('click', () => setZoom(1), { signal: uiAbort.signal });
+  zoomFitButton.addEventListener('click', () => setZoom(zoom, true), { signal: uiAbort.signal });
+  let resizeFrame = 0;
+  let viewportWidth = -1;
+  const resizeObserver = globalThis.ResizeObserver ? new globalThis.ResizeObserver(([entry]) => {
+    const width = entry.contentRect.width;
+    if (width === viewportWidth) return;
+    viewportWidth = width;
+    if (resizeFrame) globalThis.cancelAnimationFrame(resizeFrame);
+    resizeFrame = globalThis.requestAnimationFrame(() => {
+      resizeFrame = 0;
+      if (fitWidth) applyZoom();
+    });
+  }) : null;
+  resizeObserver?.observe(viewport);
   imageInput.addEventListener('change', () => {
     const file = imageInput.files?.[0] || null;
     imageInput.value = '';
@@ -1616,6 +1691,8 @@ export function mountCanvasNote(host, initialContent, options = {}) {
       captureCurrentObjects();
       destroyed = true;
       uiAbort.abort();
+      resizeObserver?.disconnect();
+      if (resizeFrame) globalThis.cancelAnimationFrame(resizeFrame);
       clearDeleteConfirmation();
       flowEditor.destroy();
       for (const task of renderTasks) {

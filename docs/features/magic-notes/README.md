@@ -56,6 +56,9 @@ object erasing and selection/transforms, floating text, images, PDF backgrounds
 with native text extraction, and raster PDF export. Saves are manual. Undo/redo
 belongs to the current annotation page or Quill body mode; it is not a global
 document history. There is no infinite canvas or PNG download button.
+Editors and saved viewers support view zoom and responsive Fit width without
+changing saved content or export dimensions; see the
+[canvas zoom reference](../../../src/renderer/src/magic-canvas/README.md#view-zoom).
 
 Drafts, saved entries and todos sourced from canvases support AI comments using
 the default model's image-input capability. Image-capable models receive complete

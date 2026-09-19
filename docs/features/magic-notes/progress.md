@@ -1,5 +1,22 @@
 # Magic Notes Progress
 
+## 2026-09-19: Canvas Image Import Size
+
+- Raised the canvas image file limit to 20 MiB inclusive and updated its error
+  message and derived restoration bound. The authoritative limit is in the
+  [canvas integration reference](../../../src/renderer/src/magic-canvas/README.md#editor-limits).
+- Real Electron exercised File input, FileReader, Fabric insertion, flush, model
+  conversion and remount: 2 MiB + 1 byte and exactly 20 MiB were retained;
+  20 MiB + 1 byte was rejected with the updated message. Fixtures use a valid
+  one-pixel PNG padded to each byte boundary, not a large decoded pixel image.
+- Production preload/registered IPC handlers with mocked Electron transport and
+  real SQLite/files passed 20 MiB create, update and database reopen checks.
+  Shared canvas validation and file persistence impose no smaller byte budget.
+  Rich-text attachment budgets and the PDF import limit are unchanged.
+- Validation: `npx vitest run tests/canvas-core.electron.test.ts src/main/magic-notes/canvas-ipc.integration.test.ts src/main/magic-notes/magic-note-storage.test.ts src/main/magic-notes/rich-content.test.ts src/renderer/src/magic-canvas`
+  passed 66 tests in 8 files. `npm run typecheck` and `npm run lint` passed.
+  The full suite and a combined native Electron IPC save scenario were not run.
+
 ## 2026-09-19: Resizable Record Index
 
 - The record index defaults to 168px and supports pointer resizing from its right
@@ -359,7 +376,8 @@
 
 - The shared canvas viewport explicitly handles horizontal and vertical wheel
   input in annotation, flow-text and read-only modes. Shift with vertical-only
-  input scrolls horizontally. Ctrl input is left to the existing browser path.
+  input scrolls horizontally. Ctrl input was initially left to the browser;
+  the View Zoom update below assigns Ctrl/Command + wheel to canvas zoom.
   Default scrolling is prevented only when the viewport actually moves; page
   scrolling remains available at boundaries or without canvas overflow.
 - Removed scroll-chain containment. The Electron baseline reproduced boundary
@@ -369,6 +387,36 @@
   fixture. It does not validate a physical mouse or the complete App shell.
 - Typecheck and lint passed. The full test run during this fix reported 4,682
   passed, 67 skipped and one unrelated Agent package inventory timeout.
+
+## 2026-09-19: Canvas View Zoom
+
+- Implemented editor/read-only zoom using the shared core. Controls and view-only
+  invariants are documented in the
+  [canvas reference](../../../src/renderer/src/magic-canvas/README.md#view-zoom)
+  and root UI design. The persisted model and export dimensions are unchanged.
+- Real PDF plus flow validation reproduced an existing cleared-background defect:
+  automatic pagination reassigned an unchanged canvas width/height, erasing its
+  bitmap. Layout now retains the bitmap when dimensions are unchanged.
+- Focused validation passed 9 files / 140 tests: `canvas-wheel`, `canvas-flow`,
+  `canvas-note`, canvas `model`, `MagicCanvasEditor`, `MagicCanvasThumbnail`,
+  `MagicNoteContent`, `MagicNotesWorkspace`, and `tests/canvas-core.electron.test.ts`.
+- `node tests/magic-canvas-wheel.electron.mjs`: 41 checks passed in Electron 43.2.0.
+  Native input covered pen coordinates and object move/scale at 50% and 200%,
+  second-page Quill click/typing, Ctrl wheel, ordinary/Shift/diagonal wheel and
+  boundary propagation. Real PDF background pixels, unchanged PNG captures and
+  794-by-1123 output dimensions, stable flow pagination, zero view-only changes,
+  readonly controls, displayed page heights and fit-width resize all passed.
+  Dark narrow layout included a real 560px window resize across the responsive
+  padding breakpoint while the host width remained 360px.
+- `npm run typecheck` and focused ESLint on all six changed JavaScript/test files
+  passed. Final `npm run lint` encountered two `react-hooks/immutability` errors
+  at lines 18/27 of concurrently added `src/renderer/src/FloatingPortal.tsx`;
+  those parallel changes were left intact. `git diff --check` passed.
+- No full test suite, production build, physical-device test or macOS session was
+  run in this change. Meta-wheel is covered by focused tests. The Electron fixture
+  uses production canvas modules/styles with real Fabric, Quill and PDF.js; it
+  does not claim complete App-shell or release-package validation. No model calls
+  or commits were made. Deployed Agent paths are unaffected.
 
 ## 2026-09-19: Single Navigation Button and Unframed Note Detail
 

@@ -211,6 +211,13 @@ Editor and viewer heights follow the current paper element's displayed height
 through natural CSS layout, including wrapped toolbars and viewport padding.
 No fixed preview height or viewport-height cap clips the page. The outer note
 stream scrolls vertically; the paper viewport retains horizontal scrolling.
+View zoom is local to each mounted core instance. A displayed-size outer box and
+one transformed logical-size surface keep PDF, flow and Fabric aligned; Quill
+screen measurements are converted back to logical coordinates. Neither zoom nor
+fit-width resize calls `onChange`, changes the persisted model, invalidates AI
+comments or alters PNG/PDF export dimensions. See the
+[view zoom implementation](../../../src/renderer/src/magic-canvas/README.md#view-zoom)
+for controls, bounds, page-switch policy and observer cleanup.
 
 Paper templates, pen, highlighter, whole-object eraser, selection/transforms,
 floating text, images and PDF page backgrounds are integrated. Native PDF text

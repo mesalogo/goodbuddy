@@ -101,16 +101,46 @@ it('clamps at edges and only consumes events that can move the viewport', () => 
   expect(wheel().defaultPrevented).toBe(false);
 });
 
-it('leaves unscrollable axes, Ctrl zoom and previously handled events alone', () => {
+it('leaves unscrollable axes and previously handled events alone', () => {
   Object.defineProperty(viewport, 'scrollWidth', { value: 500 });
   expect(wheel({ deltaX: 100 }).defaultPrevented).toBe(false);
   expect(wheel({ deltaY: 100, shiftKey: true }).defaultPrevented).toBe(false);
-  expect(wheel({ deltaY: 100, ctrlKey: true }).defaultPrevented).toBe(false);
   target.addEventListener('wheel', event => event.preventDefault(), { once: true });
   wheel({ deltaY: 100 });
   expect([viewport.scrollLeft, viewport.scrollTop]).toEqual([0, 0]);
   Object.defineProperty(viewport, 'scrollHeight', { value: 400 });
   expect(wheel({ deltaY: 100 }).defaultPrevented).toBe(false);
+});
+
+it.each(['ctrlKey', 'metaKey'])('zooms with %s without scrolling or changing content, including readonly', (modifier) => {
+  editor.setDisabled(true);
+  const before = editor.content();
+  expect(wheel({ deltaY: -100, [modifier]: true }).defaultPrevented).toBe(true);
+  expect(parseFloat(host.querySelector('.canvas-note-zoom-reset').textContent)).toBeGreaterThan(100);
+  expect([viewport.scrollLeft, viewport.scrollTop]).toEqual([0, 0]);
+  expect(editor.content()).toEqual(before);
+});
+
+it('clamps toolbar zoom, resets to 100%, and keeps logical sizes and readonly controls', () => {
+  const before = editor.content();
+  editor.setDisabled(true);
+  const click = suffix => host.querySelector(`.canvas-note-zoom-${suffix}`).click();
+  for (let i = 0; i < 20; i++) click('in');
+  expect(host.querySelector('.canvas-note-zoom-reset').textContent).toBe('300%');
+  expect(host.querySelector('.canvas-note-zoom-in').disabled).toBe(true);
+  expect(host.querySelector('.canvas-note-page').style.height).toBe('3369px');
+  for (let i = 0; i < 20; i++) click('out');
+  expect(host.querySelector('.canvas-note-zoom-reset').textContent).toBe('25%');
+  expect(host.querySelector('.canvas-note-zoom-out').disabled).toBe(true);
+  click('reset');
+  expect(host.querySelector('.canvas-note-zoom-reset').textContent).toBe('100%');
+  expect(host.querySelector('.canvas-note-page-surface').style.width).toBe('794px');
+  click('fit');
+  expect(host.querySelector('.canvas-note-zoom-fit').getAttribute('aria-pressed')).toBe('true');
+  expect(parseFloat(host.querySelector('.canvas-note-page').style.width)).toBeCloseTo(500);
+  click('in');
+  expect(host.querySelector('.canvas-note-zoom-fit').getAttribute('aria-pressed')).toBe('false');
+  expect(editor.content()).toEqual(before);
 });
 
 it('removes the wheel listener on destroy', async () => {

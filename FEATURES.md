@@ -632,7 +632,9 @@ records are listed separately and do not introduce another feature status.
   refresh the open workbench while preserving selection and unsaved drafts.
 - [x] **Paged canvas notes**: The integrated PeopleLib Fabric + Quill editor
   combines flowing body text with pen/highlighter, object selection/transforms,
-  floating text, images and paper templates. Import PDFs as page backgrounds
+  floating text, images and paper templates. Editors and read-only viewers support
+  25%-300% view zoom, 100% reset and responsive Fit width, without changing saved
+  content or export dimensions. Import PDFs as page backgrounds
   with native text extraction, then export a raster PDF of text and annotations;
   exported PDFs do not retain a searchable text layer. Manual saves store entry
   bodies and binary assets in local note files; SQLite retains metadata, indexes,

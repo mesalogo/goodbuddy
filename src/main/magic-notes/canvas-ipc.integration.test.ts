@@ -219,6 +219,22 @@ describe('production preload -> registered IPC -> SQLite canvas persistence', ()
     expect(await api.get(note.id)).toEqual(saved)
   })
 
+  it('saves and reopens a 20 MiB canvas image through create and update IPC', async () => {
+    const content = canvas()
+    const bytes = Buffer.alloc(20 * 1024 * 1024)
+    Buffer.from(png.split(',')[1]!, 'base64').copy(bytes)
+    content.assets[0]!.dataUrl = `data:image/png;base64,${bytes.toString('base64')}`
+    const note = await api.create({ title: 'Large canvas image' })
+    const created = await api.createEntry({ noteId: note.id, content })
+    await reopen()
+    const entry = (await api.get(note.id)).entries.find(item => item.id === created.createdEntryId)!
+    expect(entry.content).toEqual(content)
+    content.flow!.ops[0] = { insert: 'Edited large image note' }
+    await api.updateEntry({ entryId: entry.id, expectedRevision: entry.revision, content })
+    await reopen()
+    expect((await api.get(note.id)).entries.find(item => item.id === entry.id)!.content).toEqual(content)
+  })
+
   it('preserves a real generated PDF and all page references through three reopen/save cycles', async () => {
     const { jsPDF } = await import('jspdf')
     const pdf = new jsPDF()

@@ -218,11 +218,12 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
 
   function pageCount() {
     const rootRect = surface.getBoundingClientRect();
+    const scale = rootRect.width / layout.width || 1;
     const span = layout.width + layout.gap;
     let maxColumn = 0;
     for (const child of surface.children) {
       for (const rect of child.getClientRects()) {
-        const relativeLeft = rect.left - rootRect.left;
+        const relativeLeft = (rect.left - rootRect.left) / scale;
         maxColumn = Math.max(maxColumn, Math.max(0, Math.round(relativeLeft / span)));
       }
     }
@@ -248,8 +249,9 @@ export function mountFlowText(layerHost, toolbarHost, initialContent, options = 
     if (!range) return layout.pageIndex;
     const index = Math.min(Math.max(0, range.index), Math.max(0, quill.getLength() - 1));
     const bounds = quill.getBounds(index, Math.max(0, range.length));
+    const scale = surface.getBoundingClientRect().width / layout.width || 1;
     const span = layout.width + layout.gap;
-    return Math.max(0, Math.round((Number(bounds?.left) || 0) / span));
+    return Math.max(0, layout.pageIndex + Math.round((Number(bounds?.left) || 0) / scale / span));
   }
 
   function followSelection() {

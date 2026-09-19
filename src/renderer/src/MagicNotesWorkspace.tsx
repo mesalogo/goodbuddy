@@ -1946,19 +1946,16 @@ export function MagicNotesWorkspace({
             <button
               aria-controls="magic-notes-ai-pane"
               aria-expanded={aiPaneOpen}
-              className="secondary-button"
+              aria-label={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
+              className={`icon-button${aiPaneOpen ? ' icon-button--active' : ''}`}
               onClick={() => setAiPaneOpen((current) => !current)}
+              title={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
               type="button"
             >
               {aiPaneOpen ? (
                 <PanelRightClose aria-hidden="true" size={15} />
               ) : (
                 <PanelRightOpen aria-hidden="true" size={15} />
-              )}
-              {t(
-                aiPaneOpen
-                  ? 'actions.hideAiComments'
-                  : 'actions.showAiComments'
               )}
             </button>
             )}
@@ -1992,11 +1989,11 @@ export function MagicNotesWorkspace({
             )}
           </>
         }
-        description={t('page.description')}
+        description={detailView ? undefined : t('page.description')}
         headingId="magic-notes-title"
         icon={<Sparkles size={20} />}
         scope={{ kind: 'global' }}
-        title={t('page.title')}
+        title={detailView && detail ? detail.title : t('page.title')}
       />
 
       {loadStatus === 'error' ? (
@@ -2882,18 +2879,6 @@ export function MagicNotesWorkspace({
           hidden={!aiPaneOpen}
           id="magic-notes-ai-pane"
         >
-          <div className="magic-notes-pane-heading">
-            <strong>{t('comments.paneLabel')}</strong>
-            <button
-              aria-label={t('actions.hideAiComments')}
-              className="icon-button"
-              onClick={() => setAiPaneOpen(false)}
-              title={t('actions.hideAiComments')}
-              type="button"
-            >
-              <PanelRightClose aria-hidden="true" size={15} />
-            </button>
-          </div>
           <div className="magic-notes-ai-controls">
             <label>
               <span>{t('comments.directionLabel')}</span>

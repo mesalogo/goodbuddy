@@ -35,6 +35,11 @@ it('resizes record columns with native Electron input and preserves desktop widt
           webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
         const js = code => win.webContents.executeJavaScript(code).catch(error => { throw new Error(code + ': ' + error.message); });
         const settle = () => js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        const screenshot = async name => {
+          if (process.env.GOODBUDDY_NOTES_SCREENSHOT_DIR) {
+            fs.writeFileSync(require('node:path').join(process.env.GOODBUDDY_NOTES_SCREENSHOT_DIR, name + '.png'), (await win.webContents.capturePage()).toPNG());
+          }
+        };
         const wait = async code => { for (let i = 0; i < 400; i++) {
           if (await js(code)) return;
           await new Promise(resolve => setTimeout(resolve, 25));
@@ -61,9 +66,19 @@ it('resizes record columns with native Electron input and preserves desktop widt
           await click('[id^=magic-note-select-]'); await wait('!!document.querySelector(".magic-note-record")'); await settle(); };
         await win.loadURL(${JSON.stringify(server.resolvedUrls!.local[0] + 'layout.html')});
         await open(); await js('document.fonts.ready'); win.focus(); win.webContents.focus();
+        const editor = '.magic-note-composer .magic-note-editor__content .ql-editor';
+        const emptyHeight = (await rect(editor)).height;
+        assert(emptyHeight >= 110 && emptyHeight <= 125, 'Empty composer height: ' + emptyHeight);
+        assert.equal(await js('document.querySelector("#magic-notes-title").textContent'), 'Layout note');
+        assert.equal(await js('document.querySelector(".page-header__description")'), null);
+        await screenshot('magic-notes-light');
+        await js('document.documentElement.dataset.theme = "dark"'); await settle();
+        assert.equal((await rect(editor)).height, emptyHeight);
+        await screenshot('magic-notes-dark');
+        await js('document.documentElement.dataset.theme = "light"'); await settle();
         const index = '.magic-notes-index-pane', handle = '.magic-notes-index-resize-handle', stream = '.magic-notes-stream-pane';
         assert.equal((await rect(index)).width, 168);
-        await drag(handle, 80); const dragged = (await rect(index)).width; assert(dragged > 240 && dragged < 260);
+        await drag(handle, 80); const dragged = (await rect(index)).width; assert(dragged > 240 && dragged < 260, 'Dragged index width: ' + dragged);
         await key(handle, 'Home'); assert.equal((await rect(index)).width, 140);
         await key(handle, 'Right'); assert.equal((await rect(index)).width, 156);
         await key(handle, 'End'); assert.equal((await rect(index)).width, 320);
@@ -89,9 +104,23 @@ it('resizes record columns with native Electron input and preserves desktop widt
         assert(await js('document.documentElement.scrollWidth <= innerWidth'));
         const narrowStream = (await rect(stream)).width;
         await click('#magic-notes-index-toggle'); assert.equal((await rect(stream)).width, narrowStream);
+        await screenshot('magic-notes-narrow');
         win.setContentSize(1280, 800); await settle(); await settle();
         assert.equal((await rect(index)).width, withoutAi);
-        fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify({ dragged, withoutAi, constrained, narrowStream, persisted: true }));
+        await js('document.querySelector(' + JSON.stringify(editor) + ').focus()');
+        await win.webContents.insertText('Composer growth check\\n'.repeat(30)); await settle();
+        const grownHeight = (await rect(editor)).height;
+        assert(grownHeight > emptyHeight + 400, 'Composer must grow with content');
+        assert(await js('(() => { const el = document.querySelector(' + JSON.stringify(editor) + '); return el.scrollHeight <= el.clientHeight + 1; })()'), 'Quill content must not be clipped');
+        assert(await js('(() => { const el = document.querySelector(".magic-notes-stream-pane"); el.scrollTop = el.scrollHeight; return el.scrollTop > 0; })()'), 'Long draft must remain reachable through the note stream');
+        await settle();
+        await screenshot('magic-notes-long-draft');
+        win.webContents.debugger.attach('1.3');
+        await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+        assert.equal(await js('getComputedStyle(document.querySelector(".magic-notes-stream-pane")).scrollbarWidth'), 'auto');
+        assert.equal(await js('getComputedStyle(document.querySelector(".magic-notes-stream-pane")).scrollbarColor'), 'auto');
+        win.webContents.debugger.detach();
+        fs.writeFileSync(${JSON.stringify(join(directory, 'result.json'))}, JSON.stringify({ emptyHeight, grownHeight, dragged, withoutAi, constrained, narrowStream, persisted: true }));
         app.exit(0);
       }).catch(error => { console.error(error); app.exit(1); });
     `)

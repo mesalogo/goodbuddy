@@ -44,6 +44,8 @@ if (!process.env.CANVAS_WHEEL_DRIVER) {
               import '/node_modules/quill/dist/quill.snow.css';
               import '/src/renderer/src/magic-canvas.css';
               import { mountCanvasNote } from '/src/renderer/src/magic-canvas/canvas-note.mjs';
+              import { setupZoom } from '/tests/support/canvas-zoom-regression.mjs';
+              window.setupZoom = setupZoom;
               window.setupLayout = async (width, saved) => {
                 await window.editor?.destroy();
                 document.querySelector('#outer').style.display = 'none';
@@ -180,13 +182,15 @@ if (!process.env.CANVAS_WHEEL_DRIVER) {
         const diagonal = await wheel(70, 60);
         assert.ok(diagonal.x > 0 && diagonal.y > vertical.y, JSON.stringify(diagonal));
       });
-      await check(`${mode}: Ctrl wheel is not consumed`, async () => {
+      await check(`${mode}: Ctrl wheel zooms without scrolling or editing`, async () => {
         const before = await run('snapshot()');
         const state = await wheel(0, 60, ['control']);
         assert.equal(state.wheels.at(-1).ctrl, true);
-        assert.equal(state.wheels.at(-1).prevented, false);
+        assert.equal(state.wheels.at(-1).prevented, true);
         assert.equal(state.x, before.x);
         assert.equal(state.y, before.y);
+        assert.ok(await run('parseFloat(document.querySelector(".canvas-note-zoom-reset").textContent) < 100'));
+        await run('document.querySelector(".canvas-note-zoom-reset").click()');
       });
       await check(`${mode}: right edge chains to outer page`, async () => {
         await run('viewport.scrollLeft = viewport.scrollWidth');
@@ -245,6 +249,79 @@ if (!process.env.CANVAS_WHEEL_DRIVER) {
         });
       }
     }
+    for (const scale of [0.5, 2]) {
+      await run(`setupZoom(${scale})`);
+      await check(`zoom ${scale}: native pen coordinates and selection transforms`, async () => {
+        const point = async (x, y) => run(`zoomFixture.point(${x}, ${y})`);
+        const drag = async (from, to) => {
+          win.webContents.sendInputEvent({ type: 'mouseMove', ...from });
+          win.webContents.sendInputEvent({ type: 'mouseDown', ...from, button: 'left', clickCount: 1 });
+          for (let step = 1; step <= 5; step++) {
+            win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(from.x + (to.x - from.x) * step / 5),
+              y: Math.round(from.y + (to.y - from.y) * step / 5), button: 'left' });
+            await sleep(20);
+          }
+          win.webContents.sendInputEvent({ type: 'mouseUp', ...to, button: 'left', clickCount: 1 });
+          await sleep(80);
+        };
+        await drag(await point(50, 50), await point(100, 80));
+        const pen = await run('editor.flush().then(content => content.pages[0].objects.at(-1))');
+        assert.equal(pen.canvasKind, 'pen');
+        assert.ok(Math.abs(pen.path[0][1] - 50) < 2 && Math.abs(pen.path[0][2] - 50) < 2, JSON.stringify(pen));
+        assert.ok(Math.abs(pen.width - 50) < 2 && Math.abs(pen.height - 30) < 2, JSON.stringify(pen));
+        await run('zoomFixture.tool("select")');
+        await drag(await point(200, 130), await point(220, 150));
+        const moved = await run('editor.flush().then(content => content.pages[0].objects[0])');
+        assert.ok(Math.abs(moved.left - 180) < 2 && Math.abs(moved.top - 120) < 2, JSON.stringify(moved));
+        await drag(await point(261, 181), await point(281, 201));
+        const resized = await run('editor.flush().then(content => content.pages[0].objects[0])');
+        assert.ok(resized.scaleX > moved.scaleX && resized.scaleY > moved.scaleY, JSON.stringify(resized));
+      });
+      await check(`zoom ${scale}: PDF, flow, export, pagination and no dirty`, async () => {
+        const result = await run('zoomFixture.verify()');
+        assert.deepEqual(result.errors, []);
+        assert.equal(result.sameContent, true, JSON.stringify(result));
+        assert.equal(result.changes, 0);
+        assert.equal(result.samePng, true, JSON.stringify(result));
+        assert.deepEqual(result.pngSize, [794, 1123]);
+        assert.equal(result.pdfInk, true, JSON.stringify(result));
+        assert.equal(result.maxY, 0);
+        assert.ok(Math.abs(result.pageHeight - 1123 * scale) < 1);
+        assert.equal(result.pageCount, 2);
+        assert.equal(result.followedPage, '2 / 2');
+        assert.equal(result.retainedZoom, true, JSON.stringify(result));
+      });
+      await check(`zoom ${scale}: native flow click and typing on page two`, async () => {
+        const point = await run('zoomFixture.flowPoint()');
+        win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+        win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+        win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+        await win.webContents.insertText('Typed zoom ');
+        await run('editor.flush()');
+        await sleep(100);
+        assert.equal(await run('editor.content().flow.ops.some(op => typeof op.insert === "string" && op.insert.includes("Typed zoom "))'), true);
+        assert.equal(await run('document.querySelector("#layout .canvas-note-page-counter").textContent'), '2 / 2');
+      });
+    }
+    await check('zoom: readonly, fit resize, different page widths, narrow dark and full height', async () => {
+      const result = await run('zoomFixture.verifyLayout()');
+      assert.deepEqual(result.errors, []);
+      for (const state of result.states) {
+        assert.equal(state.maxY, 0, JSON.stringify(state));
+        assert.equal(state.maxX, 0, JSON.stringify(state));
+        assert.equal(state.outerX, 0, JSON.stringify(state));
+        assert.ok(Math.abs(state.pageWidth - state.available) < 1, JSON.stringify(state));
+        assert.ok(Math.abs(state.pageHeight - state.logicalHeight * state.scale) < 1, JSON.stringify(state));
+        assert.equal(state.enabled, true);
+        assert.equal(state.visible, true);
+      }
+      assert.equal(result.sameContent, true);
+      assert.equal(result.changes, 0);
+      win.setSize(560, 800);
+      await sleep(220);
+      assert.equal(await run('zoomFixture.resizeCheck()'), true, 'Fit must follow responsive padding even at an unchanged host width');
+      await run('editor.destroy()');
+    });
     console.log(JSON.stringify({ electron: process.versions.electron, passed, failures }));
     win.destroy();
     app.exit(failures.length ? 1 : 0);

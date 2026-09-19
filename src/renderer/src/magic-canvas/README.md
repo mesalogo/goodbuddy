@@ -63,7 +63,7 @@ type MagicCanvasContentProps = {
 }
 ```
 
-The viewer supports previous/next page. When `onEdit` is supplied, it displays
+The viewer supports previous/next page and the same zoom controls as the editor. When `onEdit` is supplied, it displays
 an edit action for the workspace to open the editor. Passing a new content
 reference refreshes the viewer. It does not own a modal or persistence.
 
@@ -102,12 +102,15 @@ following limits on input and serialization.
 | Flow text | 20,000 UTF-16 code units (`string.length`), excluding exactly one terminal newline. Internal newlines count; page-break embeds do not. |
 | Flow operations | 5,000 input Delta operations, including newline and page-break operations. |
 | Pages | 50, including automatic flow pages and PDF pages. Initial page normalization currently keeps the first 50. Flow beyond 50 pages reports an error. |
-| Images | 2 MiB per JPEG/PNG/GIF/WebP image. |
+| Images | 20 MiB (`20 * 1024 * 1024` bytes) per JPEG/PNG/GIF/WebP file, inclusive. The same derived Data URL length bound applies when restoring image objects. |
 | PDF file input | 32 MiB per input file; imported pages also count toward the 50-page limit. |
 | Page dimensions | Positive dimensions at most 3,000 per side, rounded to integers; invalid dimensions fall back to 794 by 1123 defaults per axis. |
 | List indent | Integer levels 1 through 8, or omitted for level zero. |
 
 Input validation and serialization use the same flow text/operation checks.
+Canvas assets do not use the rich-text image or aggregate attachment budgets.
+The shared canvas schema and Main validation accept this image size; persistence
+stores decoded assets in files and hydrates them on read without a smaller byte cap.
 Exactly 20,000 body code units plus Quill's terminal newline round-trip intact.
 Oversized user edits revert to the preceding Delta and call `onError`.
 Oversized initial/API content throws a `RangeError`; `flush()` rejects rather
@@ -129,6 +132,29 @@ wrap the toolbar and scroll horizontally within the paper viewport. Editors and
 saved viewers grow naturally to the current page's displayed height plus their
 toolbars and padding; vertical scrolling belongs to the surrounding note stream.
 Pagination replaces the current page within the same entry, including its height.
+
+### View Zoom
+
+Editor and viewer toolbars provide minus/plus (25 percentage points), a current
+percentage button that resets to 100%, and Fit width. The range is 25%-300%, with
+100% as the initial value. Ctrl/Command + wheel continuously zooms over the paper;
+ordinary wheel and Shift horizontal scrolling retain their existing behavior.
+Fit width follows the actual viewport's width minus its computed padding, within
+the same range. Resizing the window or a workspace column updates it automatically.
+Page navigation preserves the selected fixed scale or fit policy. Remounting a
+document starts at 100%; the view preference is not persisted.
+
+`canvas-note-page` is the displayed-size layout box. Its absolutely positioned
+logical-size surface applies one CSS scale to the PDF/template, Fabric and Quill
+layers. Fabric's existing client-to-canvas coordinate conversion handles pointer
+input; Quill column and selection measurements divide screen coordinates by the
+display scale. Page dimensions, object coordinates, flow widths and export
+canvases remain logical. Zoom never enters the model, history or `onChange`.
+The width observer defers updates to the next animation frame and is disconnected,
+with any pending frame cancelled, on destroy. Flow pagination does not reset an
+unchanged background bitmap's dimensions, which would clear the rendered PDF.
+
+The UI contract is in [UI-DESIGN.md](../../../../UI-DESIGN.md#137-魔法笔记).
 
 ## Lifecycle And Validation
 

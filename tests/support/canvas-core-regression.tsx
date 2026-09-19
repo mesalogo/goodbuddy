@@ -2,7 +2,7 @@ import Quill from 'quill'
 import { createRoot } from 'react-dom/client'
 import { mountCanvasNote } from '../../src/renderer/src/magic-canvas/canvas-note.mjs'
 import { MagicCanvasThumbnail } from '../../src/renderer/src/MagicCanvasThumbnail'
-import { fromCoreContent } from '../../src/renderer/src/magic-canvas/model'
+import { fromCoreContent, toCoreContent } from '../../src/renderer/src/magic-canvas/model'
 import '../../src/renderer/src/i18n'
 import 'quill/dist/quill.snow.css'
 import '../../src/renderer/src/styles.css'
@@ -65,11 +65,33 @@ async function canvasRegression() {
   root.unmount()
   observer.disconnect()
   thumbnailHost.remove()
+  const imageImports = []
+  const pixel = document.createElement('canvas')
+  pixel.width = pixel.height = 1
+  const png = await new Promise<Blob>((resolve) => pixel.toBlob(blob => resolve(blob!), 'image/png'))
+  for (const size of [2 * 1024 * 1024 + 1, 20 * 1024 * 1024, 20 * 1024 * 1024 + 1]) {
+    const importErrors: string[] = []
+    editor = mountCanvasNote(host, undefined, { onError: error => importErrors.push(error) })
+    await editor.flush()
+    const input = host.querySelector<HTMLInputElement>('.canvas-note-image-input')!
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([png, new Uint8Array(size - png.size)], 'boundary.png', { type: 'image/png' }))
+    input.files = transfer.files
+    input.dispatchEvent(new Event('change'))
+    const imported = await editor.flush()
+    const persisted = fromCoreContent(imported, [])
+    await editor.destroy()
+    editor = mountCanvasNote(host, toCoreContent(persisted), { onError: error => importErrors.push(error) })
+    const restored = await editor.flush()
+    imageImports.push({ size, imported: imported.pages[0].objects.length,
+      restored: restored.pages[0].objects.length, errors: importErrors })
+    await editor.destroy()
+  }
   host.remove()
   return { errors, initialPages: initial.pages.length, initialObjects: initial.pages[0].objects,
     beforeShrink, afterShrink, savedPages: saved.pages.length, savedObjects: saved.pages[0].objects,
     reopenedObjects: reopened.pages[0].objects, visibleInkBefore, visibleInkAfter, reopenedInk, flowTransform,
-    editorStyles, thumbnailStyles, thumbnailMatchesEditor }
+    editorStyles, thumbnailStyles, thumbnailMatchesEditor, imageImports }
 }
 
 Object.assign(window, { canvasRegression })

@@ -68,6 +68,11 @@ it('preserves annotations when flow removes the active page and renders scoped t
     expect(result.flowTransform).toBe('translateX(0px)')
     expect(result.thumbnailStyles).toEqual(result.editorStyles)
     expect(result.thumbnailMatchesEditor).toBe(true)
+    expect(result.imageImports).toEqual([
+      { size: 2 * 1024 * 1024 + 1, imported: 1, restored: 1, errors: [] },
+      { size: 20 * 1024 * 1024, imported: 1, restored: 1, errors: [] },
+      { size: 20 * 1024 * 1024 + 1, imported: 0, restored: 0, errors: ['单张图片不能超过 20 MB'] }
+    ])
   } finally {
     await server.close()
     await rm(directory, { recursive: true, force: true })

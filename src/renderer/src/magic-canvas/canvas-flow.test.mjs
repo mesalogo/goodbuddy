@@ -50,6 +50,16 @@ function mount(initial) {
 }
 
 describe('canvas flow limits', () => {
+  it.each([0.25, 0.5, 2, 3])('measures logical columns and selection at %sx display scale', (scale) => {
+    const { editor, quill } = mount({ version: 1, ops: [{ insert: 'Body\n' }] });
+    editor.setLayout(640, 960, 1);
+    vi.spyOn(quill.root, 'getBoundingClientRect').mockReturnValue({ left: 10, width: 640 * scale });
+    vi.spyOn(quill.root.firstElementChild, 'getClientRects').mockReturnValue([{ left: 10 + 688 * 2 * scale }]);
+    vi.spyOn(quill, 'getSelection').mockReturnValue({ index: 0, length: 0 });
+    vi.spyOn(quill, 'getBounds').mockReturnValue({ left: 688 * scale });
+    expect(editor.pageCount()).toBe(3);
+    expect(editor.activePageIndex()).toBe(2);
+  });
   it('round trips exactly 20,000 characters with a separate formatted terminal newline', () => {
     const content = { version: 1, ops: [{ insert: '中'.repeat(20000) }, { insert: '\n', attributes: { list: 'checked', indent: 2 } }] };
     expect(normalizeFlowContent(content)).toEqual(content);
