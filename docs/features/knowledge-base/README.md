@@ -31,6 +31,13 @@ FastGPT/RAGFlow 完整 App 与专属配置、真实远程预检索仍待验收�
 | [2026-09-13 产品验证摘要](./external-knowledge-validation-2026-09-13.json) | 生产服务与本机 HTTP MCP、Dify 桌面、凭据重开、调用计数、最终自动检查状态及远程阻断的脱敏证据 |
 | [2026-09-13 UI 与真实生成复验](./external-knowledge-follow-up-2026-09-13.json) | 后续 UI 修正、三家生产 IPC 生成、Dify 完整 App 回答与引用、视觉 fixture 及本轮请求计数 |
 
+## 模型图谱抽取
+
+图谱抽取不设置独立的输出 token 预算。OpenAI Chat Completions 和 Responses
+请求省略输出上限参数，由模型服务决定；Anthropic 必填的 `max_tokens` 沿用默认文本
+模型连接的最大输出配置，未配置时使用应用共享协议默认值，不再固定为 8192。
+服务端仍可能因自身限制返回长度截断；既有超时、取消、响应大小边界和失败诊断保持不变。
+
 ## 术语
 
 - **外部实例**：一个由用户配置的 Dify、FastGPT 或 RAGFlow 服务地址及其认证信息。

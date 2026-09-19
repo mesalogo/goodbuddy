@@ -1,4 +1,5 @@
 import type { RuntimeSettingsStore } from '../runtime-settings-store'
+import { defaultAnthropicMaximumOutputTokens } from '../../shared/contracts'
 import {
   createOpenAIChatCompletionsUrl,
   createOpenAIResponsesUrl
@@ -208,7 +209,6 @@ export function createModelGraphExtractor(
       protocol === 'openai-responses'
         ? {
             model: settings.modelName,
-            max_output_tokens: 8192,
             stream: false,
             instructions: system,
             input: userPrompt
@@ -216,14 +216,17 @@ export function createModelGraphExtractor(
         : protocol === 'anthropic-messages'
           ? {
               model: settings.modelName,
-              max_tokens: 8192,
+              // Anthropic requires this field; reuse the connection's protocol limit.
+              max_tokens:
+                settings.modelProfiles.find(
+                  (profile) => profile.id === settings.defaultModelProfileId
+                )?.maximumOutputTokens ?? defaultAnthropicMaximumOutputTokens,
               stream: false,
               system,
               messages: [{ role: 'user', content: userPrompt }]
             }
           : {
               model: settings.modelName,
-              max_tokens: 8192,
               stream: false,
               messages: [
                 { role: 'system', content: system },

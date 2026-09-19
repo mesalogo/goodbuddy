@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { defaultAnthropicMaximumOutputTokens } from '../../shared/contracts'
 import type {
   ResolvedRuntimeSettings,
   RuntimeSettingsStore
@@ -14,6 +15,8 @@ function store(
     modelName: 'intranet-model',
     modelProtocol: 'anthropic-messages',
     modelAuthentication: 'none',
+    modelProfiles: [],
+    defaultModelProfileId: 'default-model',
     ...overrides
   } as ResolvedRuntimeSettings
   return {
@@ -29,6 +32,70 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 describe('createModelGraphExtractor', () => {
+  it.each([
+    'openai-chat-completions',
+    'openai-responses'
+  ] as const)('does not impose an output budget for %s', async (protocol) => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      jsonResponse({
+        choices: [{ message: { content: '{"entities":[]}' } }],
+        output_text: '{"entities":[]}'
+      })
+    )
+    const extract = createModelGraphExtractor(
+      store({
+        modelProtocol: protocol,
+        modelProfiles: [{
+          id: 'default-model',
+          name: 'Default model',
+          baseUrl: 'http://localhost:8000',
+          modelName: 'intranet-model',
+          protocol,
+          authentication: 'none',
+          maximumOutputTokens: 8192
+        }]
+      }),
+      fetcher
+    )
+
+    await expect(extract('extract this')).resolves.toEqual({ entities: [] })
+    const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))
+    expect(body).not.toHaveProperty('max_tokens')
+    expect(body).not.toHaveProperty('max_completion_tokens')
+    expect(body).not.toHaveProperty('max_output_tokens')
+  })
+
+  it.each([undefined, 48_000])(
+    'uses the Anthropic connection protocol limit (%s), not an extraction budget',
+    async (maximumOutputTokens) => {
+      const fetcher = vi.fn<typeof fetch>(async () =>
+        jsonResponse({ content: [{ type: 'text', text: '{"entities":[]}' }] })
+      )
+      const profile = {
+        name: 'Model',
+        baseUrl: 'http://localhost:8000',
+        modelName: 'intranet-model',
+        protocol: 'anthropic-messages' as const,
+        authentication: 'none' as const
+      }
+      const extract = createModelGraphExtractor(
+        store({
+          modelProfiles: [
+            { ...profile, id: 'other-model', maximumOutputTokens: 1024 },
+            { ...profile, id: 'default-model', maximumOutputTokens }
+          ]
+        }),
+        fetcher
+      )
+
+      await expect(extract('extract this')).resolves.toEqual({ entities: [] })
+      const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))
+      expect(body.max_tokens).toBe(
+        maximumOutputTokens ?? defaultAnthropicMaximumOutputTokens
+      )
+    }
+  )
+
   it('uses an unauthenticated Anthropic endpoint with its path and query', async () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({

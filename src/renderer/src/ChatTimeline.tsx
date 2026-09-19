@@ -769,11 +769,13 @@ function ChatMessageRowView({
                           aria-label={t('chat.images.downloadNamed', {
                             title: attachment.name
                           })}
+                          className="icon-button attachment-action"
+                          title={t('chat.images.downloadImage')}
+                          data-tooltip={t('chat.images.downloadImage')}
                           onClick={() => onDownloadImage(imageItem)}
                           type="button"
                         >
-                          <Download size={12} />
-                          {t('chat.images.download')}
+                          <Download size={16} aria-hidden="true" />
                         </button>
                       </span>
                     )}
@@ -911,6 +913,9 @@ function ChatMessageRowView({
                   aria-label={t('chat.images.downloadNamed', {
                     title: artifact.title
                   })}
+                  className="icon-button attachment-action"
+                  title={t('chat.images.downloadImage')}
+                  data-tooltip={t('chat.images.downloadImage')}
                   onClick={() =>
                     onDownloadImage({
                       src: artifact.content!,
@@ -919,8 +924,7 @@ function ChatMessageRowView({
                   }
                   type="button"
                 >
-                  <Download size={12} />
-                  {t('chat.images.download')}
+                  <Download size={16} aria-hidden="true" />
                 </button>
               </div>
             </figure>

@@ -11670,12 +11670,14 @@ function App(): React.JSX.Element {
                   </strong>
                   <div>
                     <button
-                      className="secondary-button"
+                      aria-label={t("chat.images.downloadImage")}
+                      className="icon-button attachment-action"
+                      title={t("chat.images.downloadImage")}
+                      data-tooltip={t("chat.images.downloadImage")}
                       onClick={() => downloadImage(imageViewerItem)}
                       type="button"
                     >
-                      <Download size={14} />
-                      {t("chat.images.downloadImage")}
+                      <Download size={16} aria-hidden="true" />
                     </button>
                     <button
                       aria-label={t("chat.images.closeViewer")}
