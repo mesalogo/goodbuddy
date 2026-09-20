@@ -45,9 +45,10 @@ to a public channel; follow the user's explicit publication instruction.
   workflow. It validates and builds `out` once, then packages on six native
   runners: Windows, macOS, and Linux, each for x64 and arm64.
 - Linux source validation configures the installed Electron `chrome-sandbox`
-  helper with root ownership and mode `4755`, then runs the full test suite
-  under Xvfb. Keep Electron sandboxing enabled; do not skip UI tests or add
-  `--no-sandbox` to work around runner setup failures.
+  helper with root ownership and mode `4755`, rehydrates the Electron
+  distribution without cache when the helper is missing, then runs the full
+  test suite under Xvfb. Keep Electron sandboxing enabled; do not skip UI tests
+  or add `--no-sandbox` to work around runner setup failures.
 - The experimental Linux LoongArch (`loong64`) preview is built separately
   through `build/loongarch-cross` by following
   `docs/development/loongarch-preview-build.md`. It is not part of

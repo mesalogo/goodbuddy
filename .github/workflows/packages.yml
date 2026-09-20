@@ -44,8 +44,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes xvfb xauth
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          sandbox="node_modules/electron/dist/chrome-sandbox"
+          if [[ ! -f "$sandbox" ]]; then
+            rm -rf node_modules/electron/dist
+            force_no_cache=true node node_modules/electron/install.js
+          fi
+          test -f "$sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
 
       - name: Run validators
         run: |
