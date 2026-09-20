@@ -12,6 +12,7 @@ const parsed = parse(workflow) as {
     string,
     {
       needs?: string | string[]
+      'timeout-minutes'?: number
       environment?: { name?: string }
       strategy?: {
         matrix?: {
@@ -50,6 +51,10 @@ function jobNeeds(name: string): string[] {
 }
 
 describe('desktop packages workflow', () => {
+  it('allows enough time for the full source validation and bundle build', () => {
+    expect(parsed.jobs.validate?.['timeout-minutes']).toBe(30)
+  })
+
   it('prepares a sandbox and virtual display before running Electron tests', () => {
     const steps = parsed.jobs.validate?.steps ?? []
     const installIndex = steps.findIndex(step => step.run === 'npm ci')
