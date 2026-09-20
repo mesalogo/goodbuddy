@@ -44,6 +44,10 @@ to a public channel; follow the user's explicit publication instruction.
 - `.github/workflows/packages.yml` is the canonical cross-platform packaging
   workflow. It validates and builds `out` once, then packages on six native
   runners: Windows, macOS, and Linux, each for x64 and arm64.
+- Linux source validation configures the installed Electron `chrome-sandbox`
+  helper with root ownership and mode `4755`, then runs the full test suite
+  under Xvfb. Keep Electron sandboxing enabled; do not skip UI tests or add
+  `--no-sandbox` to work around runner setup failures.
 - The experimental Linux LoongArch (`loong64`) preview is built separately
   through `build/loongarch-cross` by following
   `docs/development/loongarch-preview-build.md`. It is not part of
@@ -79,7 +83,7 @@ to a public channel; follow the user's explicit publication instruction.
   Host.
 - Each independently published Linux x64, Linux arm64, or macOS arm64 `.gbagent` contains the
   Agent daemon, pinned Node, and the desktop-maintained compatible OpenCode
-  Runtime. Build all three targets on native GitHub Actions runners from one
+  and Continue Runtimes. Build all three targets on native GitHub Actions runners from one
   immutable `agent-v<agentVersion>` tag.
 - Keep the GoodBuddy Agent source, shared protocol/contracts, runtime lock,
   bundle tooling, and tests in this repository so a desktop commit identifies
@@ -89,7 +93,7 @@ to a public channel; follow the user's explicit publication instruction.
 - `.github/workflows/agents.yml` is the branch and pull-request build
   verification workflow for GoodBuddy Agent. It must build Linux x64 and
   arm64 on native runners from the checked-out commit, acquire the locked
-  official Node archive and locked OpenCode npm archive, verify every locked
+  official Node archive and locked OpenCode and Continue npm archives, verify every locked
   digest, use only an ephemeral in-memory test signing identity, and verify the
   resulting compound package and deterministic archive. It must not read
   production signing secrets, publish installable release artifacts, or modify

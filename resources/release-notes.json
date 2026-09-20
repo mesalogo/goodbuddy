@@ -2,6 +2,78 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.7",
+      "releasedAt": "2026-09-20",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**分页画布笔记**：在魔法笔记中混排正文、笔迹、高亮和图片，也可导入 PDF 页面进行批注。支持手动保存后继续编辑、25%–300% 缩放、适应宽度和 PDF 导出。",
+            "**选择送给 AI 的画布页数**：在笔记设置中选择发送前 1～8 页，默认 1 页，文字与图片使用相同范围。保存和导出仍保留完整画布，最多支持 50 页；页面图像分析需要支持图片输入的模型。",
+            "**接入 HTTP PaddleOCR-VL**：在文档解析设置中配置 OCR 服务，供聊天附件和知识库导入共用，无需在本机加载该服务的模型权重。可用实际文件测试解析结果，并配置服务支持的版面、表格等处理选项。",
+            "**文档图文可以保留和复用**：附件原件及解析插图随引用保存，重开会话后可继续查看正文、图片和详情。可选择文档中的图片加入指定会话草稿，也可对图片显式提取文字；旧历史中已缺失的文件不会自动补齐。",
+            "**统一管理内置应用**：从应用中心打开管理页面，调整四个内置应用的顺序，菜单和侧栏同步排列。魔法笔记与本机推理监控可设置启用和常驻，知识库与智能心跳始终显示；私有化应用市场仍属后续规划。",
+            "**笔记与待办分开浏览**：笔记详情连续展示记录，通过缩略图索引定位，并可独立收起索引和 AI 评论栏。待办页提供搜索、状态筛选和详情，返回来源笔记后可恢复原任务位置。",
+            "**对话中查看执行清单**：OpenCode 和 Continue 的原生清单显示在对话顶部，可展开查看进度，并随会话保存。清单由 Runtime 更新，不是手动待办；停止任务不会把未完成条目自动标为完成。",
+            "**远程项目支持 Continue**：更新配套 Agent 后，可在托管 SSH 项目中选择 Continue，使用模型、执行清单和 Execute 模式下的会话 MCP 工具。支持取消、断线恢复以及重启后继续对话，Ask 保持只读。",
+            "**常用会话置顶与完成提示**：会话可置顶并在重启后保留。后台会话成功完成后，在本次客户端运行期间保留提示，进入对应聊天后清除。",
+            "**本机推理监控与任务统计**：可查看本地服务状态，并执行各服务支持的停止、重启或释放操作；向量服务显示独立进程 CPU 和内存，语音与 OCR 保留共享进程的统计限制。任务中心补充状态数量和筛选，便于找到正在运行或需要处理的任务。",
+            "**说明按需查看**：页面和设置中的补充说明移到标题或字段旁的帮助入口，支持鼠标与键盘操作。减少常驻说明文字，同时保留关键操作后果和错误提示。"
+          ],
+          "fixes": [
+            "**较早会话和长历史不再被数量截断**：会话列表与搜索不再只覆盖最近 100 个会话，连续发送不再截断超过 500 条的历史。模型上下文限制仍然有效，已经丢失的历史无法恢复。",
+            "**保留草稿和画布编辑**：恢复队列文字时不再覆盖新输入，画布删页保留正文与清单格式。超限输入被拒绝后仍保留已有撤销记录，图片 OCR 没有正文时保留原图发送方式。",
+            "**问答卡片保持原位置**：回答后，交互问题不再被排到后续输出末尾。重新打开会话仍保留原有问答顺序。",
+            "**取消后可以继续发送**：修复本地 OpenCode 取消影响下一次请求，以及回复完成后仍显示停止状态的问题。空闲队列不再反复闪动，子代理过程内容也不再被裁切。",
+            "**工具错误可以纠正后继续**：远程任务在工具失败后已正常完成时，不再仍被误判为失败。内置 MCP 参数错误返回可纠正提示，笔记搜索单次最多支持 100 条结果。",
+            "**菜单、通知和网页链接正常打开**：修复菜单及通知被模态窗口遮挡的问题。内置浏览器中需要新窗口的网页链接可在受管页签中打开。",
+            "**知识图谱抽取不再额外限制为 8192 tokens**：OpenAI 协议请求由模型服务决定输出上限，Anthropic 沿用模型连接配置。服务商限制、超时与取消仍然有效。",
+            "**桌面升级不再误拒绝旧 Agent 包**：签名、完整性和协议仍兼容的旧包，不会仅因其内置组件版本与桌面锁定版本不同而被拒绝。使用远程 Continue 等新能力仍需更新配套 Agent。"
+          ],
+          "notices": [
+            "首次启动会升级数据库并将笔记正文迁移到本地文件，可能需要时间和额外磁盘空间。升级前请备份完整用户数据；旧客户端不能打开升级后的数据库，回退应使用升级前备份。",
+            "后续笔记备份必须同时包含一致的数据库与相邻 `notes/` 目录。画布需手动保存，导出的 PDF 为栅格图像，不保留可搜索文字层。",
+            "HTTP OCR 会把待识别内容发送到配置的服务，可能产生费用；高级选项效果取决于实际部署。快速文本／索引模式跳过 OCR，显式图片文字提取仍会调用所选 OCR。",
+            "远程用户请先升级 **Desktop 0.13.7**，再下载并更新 **Agent 0.13.1**。远程项目仍为技术预览，Execute 使用所选 SSH 账号的权限。",
+            "标准桌面包覆盖 Windows、macOS、Linux 的 x64／arm64，本次不构建龙芯实验预览。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Paged canvas notes**: Combine body text, handwriting, highlights, and images in Magic Notes, or import PDF pages for annotation. Manually save and resume editing, zoom from 25% to 300%, fit the width, and export to PDF.",
+            "**Choose canvas pages for AI analysis**: Select the first 1–8 pages in note settings, with a default of one page and the same range for text and images. Saving and export retain the complete canvas of up to 50 pages; visual page analysis requires an image-capable model.",
+            "**Connect HTTP PaddleOCR-VL**: Configure an OCR service in Document Parsing for both chat attachments and knowledge imports, without loading that service’s model weights locally. Test parsing with real files and configure layout, table, and other options supported by the service.",
+            "**Keep and reuse document text and images**: Attachment originals and extracted images are retained while referenced, with text, image, and detail previews available after reopening conversations. Select document images into a named conversation draft or explicitly extract text from images; files already missing from older history are not recovered.",
+            "**Manage built-in applications together**: Reorder four built-in applications from App Center, with matching order in the launcher and sidebar. Magic Notes and Local Inference Monitor have enablement and pinning settings, while Knowledge and Smart Heartbeat remain visible; a privately deployable application marketplace is still planned.",
+            "**Browse notes and to-dos separately**: Note details show a continuous record stream with thumbnail navigation and independently collapsible index and AI-comment panes. The to-do view provides search, status filters, and details, preserving task position when returning from its source note.",
+            "**View execution checklists in conversations**: Native OpenCode and Continue checklists appear above the conversation, expand to show progress, and persist with its history. The Runtime updates this read-only checklist; stopping a task does not mark unfinished items complete.",
+            "**Use Continue in remote projects**: With the matching Agent update, managed SSH projects can select Continue for model requests, checklists, and conversation MCP tools in Execute. Cancellation, reconnection, and conversation continuation after restart are supported; Ask remains read-only.",
+            "**Pin conversations and retain completion notices**: Pinned conversations remain pinned after restarting the app. Successful background conversations retain a completion notice during the current client session until their chat is opened.",
+            "**Local inference monitoring and task statistics**: Inspect local service status and use each service’s supported stop, restart, or release actions; embedding shows independent-process CPU and memory, while speech and OCR retain shared-process measurement limitations. Task Center adds status counts and filters to find running tasks and those needing attention.",
+            "**Read supplementary help on demand**: Page and settings explanations move into help controls beside titles or fields, accessible by mouse and keyboard. This reduces persistent explanatory text while keeping important operation consequences and errors visible."
+          ],
+          "fixes": [
+            "**Keep older conversations and long histories accessible**: Conversation lists and search are no longer limited to the latest 100 conversations, and consecutive sends no longer truncate history beyond 500 messages. Model context limits still apply, and previously lost history cannot be recovered.",
+            "**Preserve drafts and canvas edits**: Restoring queued text no longer overwrites newer input, and deleting canvas pages preserves body and checklist formatting. Rejected oversized input retains existing undo history, and image OCR without usable text preserves image delivery.",
+            "**Keep question cards in their original position**: Answered interactive questions no longer move behind later output. Reopening the conversation preserves the question-and-answer order.",
+            "**Continue sending after cancellation**: Fixed local OpenCode cancellation affecting the next request and completed replies retaining the Stop state. Idle queues no longer flicker repeatedly, and subagent progress is no longer clipped.",
+            "**Recover from correctable tool errors**: Remote tasks that complete normally after a tool error are no longer incorrectly marked failed. Built-in MCP argument errors provide corrective guidance, and note searches support up to 100 results per request.",
+            "**Open menus, notifications, and browser links correctly**: Fixed menus and notifications appearing behind modal windows. Browser links requesting a new window can open in managed tabs.",
+            "**Remove the extra 8192-token graph-extraction limit**: OpenAI-protocol requests use provider output limits, while Anthropic follows the model connection setting. Provider limits, timeouts, and cancellation still apply.",
+            "**Keep compatible older Agent packages usable**: Older packages with valid signatures, integrity, and compatible protocols are no longer rejected solely because bundled component versions differ from Desktop’s locks. New capabilities such as remote Continue still require the matching Agent update."
+          ],
+          "notices": [
+            "First launch upgrades the database and moves note bodies into local files, which may take time and require additional disk space. Back up all user data first; older clients cannot open the upgraded database, so use a pre-upgrade backup for rollback.",
+            "Subsequent note backups must include a consistent database and its adjacent `notes/` directory. Canvas notes require manual saving, and exported PDFs are raster images without a searchable text layer.",
+            "HTTP OCR sends recognition content to the configured service and may incur charges; advanced-option results depend on the deployment. Fast text/index modes skip OCR, while explicit image text extraction still invokes the selected OCR.",
+            "Remote users should upgrade to **Desktop 0.13.7** before downloading and updating to **Agent 0.13.1**. Remote projects remain a technical preview, and Execute uses the selected SSH account’s permissions.",
+            "Standard desktop packages cover Windows, macOS, and Linux on x64/arm64, without a LoongArch experimental preview."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.6",
       "releasedAt": "2026-09-15",
       "notes": {

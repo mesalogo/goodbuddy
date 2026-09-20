@@ -24,7 +24,7 @@ records are listed separately and do not introduce another feature status.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.13.6. See the
+  releases and automatic updates; no preview is planned for 0.13.7. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -45,6 +45,16 @@ records are listed separately and do not introduce another feature status.
   menus provide keyboard navigation and exact conversation opening without a
   full activity dialog. The summary hides when idle, long conversation submenus
   scroll independently, and project selection continues to show activity counts.
+  Successful background conversations retain a completion notice during the
+  current client session until their chat is visible and loaded, not across restarts.
+- [x] **Pinned conversations and complete saved history**: Pin common
+  conversations and retain their position after restart. Lists and search no
+  longer stop at 100 conversations, and consecutive sends no longer truncate
+  saved history beyond 500 messages. Model context limits still apply;
+  previously lost messages cannot be restored.
+- [x] **On-demand contextual help**: Supplementary page and settings
+  explanations use shared title- or field-adjacent help controls with mouse
+  and keyboard access. Important operation consequences and errors remain visible.
 - [x] **Compact conversation controls**: Composer options share a compact
   settings panel while Runtime, mode, sending, and queue controls remain
   available. Conversation search has an inline clear action that restores the
@@ -122,7 +132,7 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Project Agent Space** (planned): Unifies roles, knowledge, Skills/MCP,
   models, approval policy, budgets, and timeouts in a Project, with reusable
   templates.
-- [ ] **Application center and navigation** (integration pending):
+- [x] **Application center and navigation**:
   Clicking the bottom App Center opens a lightweight upward anchored popup with enabled apps,
   regardless of pinning or opening history, and no modal backdrop. Clicking an app row closes
   the popup; Local Inference Monitor opens a separate modal preserving the workspace, while other apps
@@ -144,13 +154,16 @@ records are listed separately and do not introduce another feature status.
   than inferred from active requests. Supported service controls retain impact confirmation;
   failed operations refresh the list and require a new confirmation. TTS remains unavailable.
   Cancelling inference remains active in service-stop impact until worker
-  acknowledgement or exit. Previous validation: typecheck and `npx eslint src` passed; full `npm test` finished with
-  4,448 passed, 67 skipped, and two unchanged Heartbeat migration failures (`duplicate column
-  name: pinned`). Full lint still reports 22 unrelated story-graph demo `document` errors.
-  Eight Electron fixture theme/size scenarios cover keyboard, focus, geometry, native-view
-  occlusion, and actual settings-store persistence, not full production App acceptance.
-  Latest validation, prior real local-engine evidence, and remaining limits are preserved in
+  acknowledgement or exit. Implementation is connected to production App;
+  acceptance records distinguish full-App checks, component fixtures, real
+  local-engine checks, and remaining platform/package coverage. Historical
+  failures are not the current full-suite result. See the
   [validation progress](./docs/features/application-tool-navigation/progress.md).
+- [ ] **Privately deployable application marketplace** (planned): Extends
+  application management with an organization-owned catalog and application
+  distribution. Current management covers built-in apps only, not marketplace
+  browsing or installation. See
+  [FR-15](./docs/features/application-tool-navigation/prd.md#fr-15-私有化市场与-yaml-交换后续).
 - [ ] **Additional assistant workbar and execution-space capabilities**
   (planned): Builds on the current workbar and multiple terminals with
   supervision, unified Runtime monitoring, managed processes, safe static HTML
@@ -251,7 +264,7 @@ records are listed separately and do not introduce another feature status.
   first; invalid paths fail at actual launch. On managed Linux ARM Hosts,
   Runtime activation reuses the registry and manifest verified during setup
   instead of rehashing or rechecking the complete OpenCode binary.
-- [x] **Managed SSH OpenCode loop (technical preview)**: Controlled by the
+- [x] **Managed SSH OpenCode and Continue (technical preview)**: Controlled by the
   separate Remote Projects (Technical Preview) tab under Settings / Platform
   Features and disabled by default. Disabling it does not affect local
   projects, ordinary desktop capabilities, or desktop releases. When enabled,
@@ -275,7 +288,7 @@ records are listed separately and do not introduce another feature status.
   state for Linux x64, Linux arm64, and macOS arm64. Intel Macs are not supported.
   Downloads occur only after a user action, and
   packages can also be imported or exported offline. Each compound `.gbagent`
-  package contains the Agent, fixed Node, and the compatible OpenCode Runtime
+  package contains the Agent, fixed Node, and compatible OpenCode and Continue Runtimes
   maintained by the desktop source. Online sources follow the GitHub/Beijing
   OSS choice in About and Updates. The cumulative signed catalog binds minimum
   Desktop version, Agent protocol, platform, architecture, size, SHA-256, and fixed URL.
@@ -289,7 +302,8 @@ records are listed separately and do not introduce another feature status.
   SSH only for that architecture. Projects store only Host, remote path,
   Runtime selection, and mode. Current Host identity is read when a
   Workspace/Runtime is first used, then reused by other projects in the same
-  process. Managed SSH conversations expose only supported OpenCode choices.
+  process. Managed SSH conversations expose supported OpenCode and Continue choices;
+  Continue requires the updated compound package and matching Desktop.
   Multiple projects and conversations can run concurrently on one Host;
   Agent-owned prompts are not stopped at a fixed model-call count or
   prompt-wide output-token total, and Runtime output uses transport
@@ -301,7 +315,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.0`, while the current Desktop release candidate is `0.13.5`; formal
+  `0.13.1`, while the current Desktop release candidate is `0.13.7`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -388,13 +402,19 @@ records are listed separately and do not introduce another feature status.
   and a newly started managed Runtime;
   this does not extend question support to arbitrary ACP services.
   Successful answers and skips retain the original questions and answers
-  across rounds and local conversation reloads; answers discarded by older
+  at their original position across rounds and local conversation reloads; answers discarded by older
   versions cannot be recovered.
   Concurrent questions wait in order, duplicate events preserve drafts, and
   failed submissions remain retryable. Cancelling a pending managed SSH
   question allows another message in the same conversation.
   Execute permission confirmations are handled automatically rather than
   waiting for another approval. See the [interaction boundaries](./docs/features/assistant-workbar/runtime-interactions.md).
+- [x] **Native execution checklists**: OpenCode and Continue update a
+  read-only checklist above the conversation, with progress saved in history.
+  Explicit clears and remote replay retain request ownership; cancellation
+  does not mark unfinished items complete. Remote delivery requires the matching
+  Agent package. See the
+  [checklist contract](./docs/features/assistant-workbar/runtime-checklist-technical-design.md).
 - [x] **Experts and Subagents**: Supports explicit experts, team analysis, and
   up to three experts running in parallel. Experts inherit the parent
   Ask/Execute mode and can use enabled local direct-model tools; Ask remains
@@ -590,6 +610,8 @@ records are listed separately and do not introduce another feature status.
   [validation evidence and remaining work](./docs/features/knowledge-base/progress.md).
 - [x] **Knowledge graph**: Supports rule-based, model-based, and hybrid
   extraction plus entity, relationship, alias, and evidence maintenance.
+  Model extraction adds no fixed 8192-token output cap: OpenAI follows provider
+  limits, and Anthropic uses the model connection's output setting.
 - [x] **Embedding configuration and retrieval**: Configures compatible
   Embeddings endpoints and uses them for semantic retrieval.
 - [x] **Embedding diagnostics and indexing jobs**: Provides real embedding
@@ -652,6 +674,9 @@ records are listed separately and do not introduce another feature status.
   invalidated by layout changes and reanalyzed in after-save-auto mode. MCP
   rejects plain-text replacement of canvas entries. Implementation is complete;
   final validation status is tracked in the [feature progress record](./docs/features/magic-notes/progress.md).
+  The first upgrade migrates stored bodies into files and raises the database
+  schema to 39 together with attachment changes. Older clients cannot reopen
+  that database; rollback requires a pre-upgrade backup.
 - [ ] **MCP Server Control Plane** (planned): Unified MCP lifecycle, health
   checks, reconnection, schema cache, isolation, approval, and audit.
 - [ ] **Traceable note excerpts and AI editing** (planned): Collects sourced
@@ -699,6 +724,8 @@ records are listed separately and do not introduce another feature status.
   Run Now actions. See the
   [Task Center PRD](./docs/features/task-and-job/task-center-prd.md) and
   [Scheduled Task PRD](./docs/features/task-and-job/scheduled-task-prd.md).
+  Status counts and filters identify running tasks and those needing attention;
+  task approvals remain actionable in their task cards.
 - [x] **Memory and Smart Heartbeat**: Provides periodic review, suggested
   memories, insights, follow-up tasks, and auditable run history.
 - [x] **Improved Smart Heartbeat entry and scope**: Smart Heartbeat / Heartbeat
@@ -798,11 +825,11 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.6` and Agent `0.13.0`, with
-  OpenCode pinned to `1.18.29`. Publication status follows the independent
+- Current source candidates are Desktop `0.13.7` and Agent `0.13.1`, with
+  OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
-- Agent `0.13.0` adds remote image-tool integration and shared Runtime processes
-  with conversation recovery fixes. Its packages require Desktop `0.13.5`;
+- Agent `0.13.1` packages both OpenCode and Continue and delivers native execution
+  checklists. Its packages require Desktop `0.13.7`;
   update Desktop first, then the Host environment. Node remains `24.19.0`.
 - Validation records remain separate from implementation status. Current-source
   storage validation covers real local and Linux x64 Host tool workloads,
@@ -814,16 +841,14 @@ records are listed separately and do not introduce another feature status.
   covered by those records. The candidate still requires main CI and
   native release packaging. See the [Runtime evidence](./docs/features/assistant-workbar/progress.md)
   and [image-tool evidence](./docs/features/conversation-media-generation/progress.md).
-- Desktop 0.13.6 history fixes passed 4,301 tests with 67 skipped, type checking,
-  scoped lint, isolated production Electron validation, and three paired
-  synthetic-history comparisons. Development validation used three real text
-  calls, including two on the current-source Linux Agent with Session
-  continuation; it did not alter Agent protocols. Release preparation does not
-  repeat local production builds. The exact candidate still requires its
-  main-branch CI and native tag packaging. At the user's request, the local
-  release-candidate rerun was cancelled after release-note verification; CI is
-  the candidate validation authority. Agent 0.13.0 is not republished for this
-  Desktop update.
+- Before release preparation, `9836a4c` passed 4,858 local tests with 67 skipped,
+  full typecheck and lint; real-provider canvas analysis remains unverified.
+  Its three native Agent CI builds passed. Desktop CI run `35485936807`
+  passed 4,875 tests but failed eight Electron tests before UI assertions because
+  the Linux sandbox helper was not configured. The candidate configures the
+  helper and runs tests under Xvfb without disabling sandboxing. Candidate-local
+  validation, main-branch CI and native tag packaging are tracked separately;
+  no local production build or package is part of release preparation.
 - [x] **0BSD open-source license**: Original code can be freely used, copied,
   modified, distributed, and commercialized. Third-party components and
   resources retain their own licenses.
@@ -851,7 +876,10 @@ records are listed separately and do not introduce another feature status.
   selection, and native checklists. Linux x64 development packages passed real
   model, cancellation and reconnection checks. Default packages include OC/CN;
   Windows desktop-to-Linux checks cover installation, checklist updates, long lists,
-  cancellation and restart recovery. Packages are not yet published; see the
+  cancellation and restart recovery. Execute session MCP delivery passed real
+  text-model Host checks with a substituted image service, not real image generation.
+  Candidate Agent `0.13.1` requires Desktop `0.13.7`; publication and native
+  platform acceptance remain separate from Linux development evidence. See the
   [validation record](./docs/features/remote-host/runtime-checklist-validation.md).
 
 - [x] **Remote task delegation**: Enabled only after the user explicitly

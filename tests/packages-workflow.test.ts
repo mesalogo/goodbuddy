@@ -50,6 +50,23 @@ function jobNeeds(name: string): string[] {
 }
 
 describe('desktop packages workflow', () => {
+  it('prepares a sandbox and virtual display before running Electron tests', () => {
+    const steps = parsed.jobs.validate?.steps ?? []
+    const installIndex = steps.findIndex(step => step.run === 'npm ci')
+    const prepareIndex = steps.findIndex(step => step.name === 'Prepare sandboxed Electron tests')
+    const validatorsIndex = steps.findIndex(step => step.name === 'Run validators')
+    expect(installIndex).toBeGreaterThanOrEqual(0)
+    expect(prepareIndex).toBeGreaterThan(installIndex)
+    expect(validatorsIndex).toBeGreaterThan(prepareIndex)
+    expect(steps[prepareIndex]?.run).toContain('sudo apt-get install --no-install-recommends --yes xvfb xauth')
+    expect(steps[prepareIndex]?.run).toContain('sudo chown root:root node_modules/electron/dist/chrome-sandbox')
+    expect(steps[prepareIndex]?.run).toContain('sudo chmod 4755 node_modules/electron/dist/chrome-sandbox')
+    expect(steps[validatorsIndex]?.run).toContain('xvfb-run --auto-servernum npm test')
+    expect(steps[validatorsIndex]?.run).toContain('npm run typecheck')
+    expect(steps[validatorsIndex]?.run).toContain('npm run lint')
+    expect(jobScripts('validate')).not.toContain('--no-sandbox')
+  })
+
   it('builds only DMG for both signed and unsigned macOS jobs', () => {
     const steps = parsed.jobs.package?.steps?.filter(
       (step) => step.name?.endsWith('macOS release packages') &&
