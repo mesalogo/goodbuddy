@@ -7,7 +7,6 @@ import {
   Copy,
   ExternalLink,
   FileText,
-  Filter,
   Maximize2,
   Minimize2,
   Plus,
@@ -48,7 +47,6 @@ import {
   isBrowserViewportOccluded
 } from './browser-viewport-occlusion'
 import {
-  findTaskSchedule,
   TaskScheduleActions
 } from './TaskScheduleActions'
 import type {
@@ -883,8 +881,7 @@ export function RightAssistantSidebar({
     useState('')
   const [taskFilter, setTaskFilter] = useState<
     'all' | 'active' | 'paused' | 'finished'
-  >('all')
-  const [taskFiltersExpanded, setTaskFiltersExpanded] = useState(false)
+  >('active')
   const [taskListExpanded, setTaskListExpanded] = useState(false)
   const [actionErrorState, setActionErrorState] = useState({
     scope: { instanceId: activeWorkbarInstanceId, open },
@@ -1027,6 +1024,14 @@ export function RightAssistantSidebar({
       }),
     [approvalsByTask, taskFilter, topLevelTasks]
   )
+  const schedulesByTaskKey = useMemo(() => {
+    const byKey = new Map<string, AssistantSchedule>()
+    for (const schedule of schedules) {
+      byKey.set(schedule.id, schedule)
+      byKey.set(schedule.taskId, schedule)
+    }
+    return byKey
+  }, [schedules])
 
   useEffect(() => {
     // Context switches preserve the selected instance and its pinned binding.
@@ -1981,21 +1986,8 @@ export function RightAssistantSidebar({
               >
                 <Plus aria-hidden="true" size={13} />
               </button>
-              <button
-                className="secondary-button task-center__filter-toggle"
-                aria-label={t('sidebar.tasks.filters.ariaLabel')}
-                title={t('sidebar.tasks.filters.ariaLabel')}
-                aria-expanded={taskListExpanded && taskFiltersExpanded}
-                aria-controls={`task-filters-${instance.id}`}
-                data-active={taskFilter !== 'all'}
-                onClick={() => {
-                  setTaskListExpanded(true)
-                  setTaskFiltersExpanded((expanded) => !expanded)
-                }}
-                type="button"
-              ><Filter aria-hidden="true" size={14} /></button>
             </div>
-            <div className="task-center__filters" id={`task-filters-${instance.id}`} hidden={!taskListExpanded || !taskFiltersExpanded}
+            <div className="task-center__filters" id={`task-filters-${instance.id}`} hidden={!taskListExpanded}
               onFocusCapture={(event) => event.target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })}>
               <SegmentedControl
                 ariaLabel={t('sidebar.tasks.filters.ariaLabel')}
@@ -2018,10 +2010,6 @@ export function RightAssistantSidebar({
                 value={taskFilter}
               />
             </div>
-            {taskListExpanded && taskFilter !== 'all' && <div className="task-center__filter-summary">
-              <span>{t('sidebar.tasks.filters.summary', { filter: t(`sidebar.tasks.filters.${taskFilter}`), count: filteredTasks.length })}</span>
-              <button type="button" onClick={() => setTaskFilter('all')}>{t('sidebar.tasks.filters.clear')}</button>
-            </div>}
             {unassociatedApprovals.length > 0 && <>
               <h3><ShieldAlert size={15} />{t('sidebar.tasks.approvalsTitle')}</h3>
               {unassociatedApprovals.map((approval) => (
@@ -2037,7 +2025,9 @@ export function RightAssistantSidebar({
               </p>
             ) : (
               filteredTasks.map((task) => {
-                const schedule = findTaskSchedule(task, schedules)
+                const schedule =
+                  schedulesByTaskKey.get(task.scheduleId ?? '') ??
+                  schedulesByTaskKey.get(task.id)
                 const conversationTitle = task.conversationId
                   ? conversationTitles.get(task.conversationId)
                   : undefined

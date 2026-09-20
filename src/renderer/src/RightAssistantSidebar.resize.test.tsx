@@ -363,6 +363,7 @@ describe('RightAssistantSidebar resizing', () => {
     }
     const view = render(sidebarElement(props))
     fireEvent.click(screen.getByRole('button', { name: '项目任务 2' }))
+    fireEvent.click(screen.getByRole('button', { name: '全部' }))
     const stats = within(screen.getByRole('region', { name: '当前会话统计' }))
     expect(stats.getByText('01:01:01')).toBeVisible()
     expect(stats.getByText('24')).toBeVisible()
@@ -385,29 +386,22 @@ describe('RightAssistantSidebar resizing', () => {
     for (const task of tasks) expect(screen.queryByText(task.title)).not.toBeInTheDocument()
   })
 
-  it('keeps an applied filter visible when collapsed and clears it without opening the filter panel', () => {
+  it('shows the task status tabs when expanded and defaults to active tasks', () => {
     renderSidebar({ tasks: [{
       id: 'completed', projectId: currentProject.id, title: 'Completed task', instructions: '',
       origin: 'schedule', status: 'completed', createdAt: '2026-09-17T00:00:00Z'
     }] })
-    const toggle = screen.getByRole('button', { name: '筛选任务' })
-    expect(screen.getByText('Completed task')).toBeVisible()
-    fireEvent.click(toggle)
-    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
-    fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(toggle).toHaveAttribute('data-active', 'true')
-    expect(screen.queryByRole('group', { name: '筛选任务' })).not.toBeInTheDocument()
-    expect(screen.getByText('筛选：进行中 · 0 项')).toBeVisible()
-    expect(screen.getByText('当前筛选条件下没有任务。')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
-    expect(toggle).toHaveAttribute('data-active', 'false')
+    expect(screen.queryByText('Completed task')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '筛选任务' })).not.toBeInTheDocument()
+    const filters = within(screen.getByRole('group', { name: '筛选任务' }))
+    expect(filters.getByRole('button', { name: '进行中' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('Completed task')).not.toBeInTheDocument()
+    fireEvent.click(filters.getByRole('button', { name: '已结束' }))
     expect(screen.getByText('Completed task')).toBeVisible()
   })
 
   it('scrolls the focused task filter into view when keyboard navigation reaches either end', () => {
     renderSidebar()
-    fireEvent.click(screen.getByRole('button', { name: '筛选任务' }))
     const filters = within(screen.getByRole('group', { name: '筛选任务' }))
     const first = filters.getByRole('button', { name: '全部' })
     const last = filters.getByRole('button', { name: '已结束' })
@@ -658,7 +652,7 @@ describe('RightAssistantSidebar resizing', () => {
     expect(list).toBeVisible()
     fireEvent.click(toggle)
     expect(list).not.toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '筛选任务' }))
+    fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(list).toBeVisible()
   })
@@ -676,7 +670,7 @@ describe('RightAssistantSidebar resizing', () => {
     expect(within(stats).getByText(`项目：${currentProject.name}`)).toBeVisible()
     expect(screen.getByRole('button', { name: '项目任务 4' })).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByText('2 运行中')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '筛选任务' }))
+    fireEvent.click(screen.getByRole('button', { name: '项目任务 4' }))
     fireEvent.click(within(screen.getByRole('group', { name: '筛选任务' })).getByRole('button', { name: '已结束' }))
     expect(screen.getByText('2 运行中')).toBeVisible()
     view.rerender(sidebarElement({ tab: 'tasks', tasks: [] }))
@@ -701,10 +695,7 @@ describe('RightAssistantSidebar resizing', () => {
     )
     fireEvent.click(newTaskButton)
     expect(onCreateCustomTask).toHaveBeenCalledOnce()
-    expect(
-      screen.queryByRole('group', { name: '筛选任务' })
-    ).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '筛选任务' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('group', { name: '筛选任务' })).toBeVisible()
     expect(screen.queryByLabelText('定时任务标题')).not.toBeInTheDocument()
     expect(screen.queryByText('最近任务')).not.toBeInTheDocument()
   })
@@ -736,7 +727,6 @@ describe('RightAssistantSidebar resizing', () => {
       approvals: [approval], onOpenTask, onRespondApproval
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '筛选任务' }))
     const filters = within(screen.getByRole('group', { name: '筛选任务' }))
     expect(filters.getAllByRole('button').map((button) => button.textContent))
       .toEqual(['全部', '进行中', '暂停', '已结束'])
@@ -782,7 +772,6 @@ describe('RightAssistantSidebar resizing', () => {
     }
     const onRespondApproval = vi.fn()
     renderSidebar({ tasks: [task], approvals: [approval], onRespondApproval })
-    fireEvent.click(screen.getByRole('button', { name: '筛选任务' }))
     const row = screen.getByText(task.title).closest('article')!
     expect(within(row).getByLabelText('等待审批: Confirm write')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '等待审批' })).not.toBeInTheDocument()
