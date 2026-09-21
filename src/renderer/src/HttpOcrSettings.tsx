@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import type { defaultHttpOcrSettings } from '../../shared/document-parsing-contracts'
-import { SegmentedControl } from './WorkspacePrimitives'
+import { defaultHttpOcrSettings } from '../../shared/document-parsing-contracts'
 
 type HttpSettings = typeof defaultHttpOcrSettings
 const booleanOptions = {
@@ -29,7 +28,7 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
   const [checking, setChecking] = useState(false)
   const [check, setCheck] = useState('')
   const [error, setError] = useState('')
-  return <section className="settings-section">
+  return <section className="settings-section http-ocr-settings">
     <strong>HTTP PaddleOCR-VL</strong>
     <label className="field"><span>服务地址</span><input type="url" value={value.baseUrl}
       onChange={(event) => onChange({ ...value, baseUrl: event.target.value })} /></label>
@@ -56,17 +55,20 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
     {check && <p role="status">{check}</p>}{error && <p role="alert">{error}</p>}
     <details><summary>HTTP 高级设置</summary>
       <p>高级能力取决于服务部署；接口声明不代表模型已安装或效果已经实测。</p>
-      <SegmentedControl ariaLabel="内容过滤" value={value.filterMode}
-        options={[{ value: 'default', label: '服务默认' }, { value: 'all', label: '全部保留' }, { value: 'custom', label: '自定义' }]}
-        onChange={(filterMode) => onChange({ ...value, filterMode })} />
-      {value.filterMode === 'custom' && <>
-        <small>未设置自定义排除项时，从全部保留开始。</small>
+      <div className="document-parsing-control-header">
+        <strong>内容过滤</strong>
+        <button type="button" className="secondary-button" onClick={() => onChange({
+          ...value, filterMode: defaultHttpOcrSettings.filterMode, ignoredLabels: []
+        })}>恢复默认</button>
+      </div>
+      <small>直接选择需要保留的内容；修改后将使用自定义过滤设置。</small>
+      <div className="document-parsing-filter-list">
         {[...new Set([...Object.keys(labels), ...value.ignoredLabels])].map((key) => <label className="toggle-row" key={key}>
           <span>保留{labels[key] ?? key}</span><input type="checkbox" role="switch" checked={!value.ignoredLabels.includes(key)}
-            onChange={(event) => onChange({ ...value, ignoredLabels: event.target.checked
+            onChange={(event) => onChange({ ...value, filterMode: 'custom', ignoredLabels: event.target.checked
               ? value.ignoredLabels.filter((label) => label !== key) : [...value.ignoredLabels, key] })} />
         </label>)}
-      </>}
+      </div>
       <div className="document-parsing-grid">
         {Object.entries(booleanOptions).map(([key, label]) => <label className="field" key={key}><span>{label}</span>
           <select value={String(value.options[key as keyof typeof booleanOptions] ?? 'default')}
@@ -80,7 +82,7 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
         <label className="field"><span>HTTP 请求超时（秒）</span><input type="number" min={10} max={300} value={value.timeoutSeconds}
           onChange={(event) => onChange({ ...value, timeoutSeconds: Number(event.target.value) })} /></label>
       </div>
-      <details><summary>版面与生成参数</summary><p>留空使用服务默认；接口字段的实际边界与效果需用当前部署测试。</p>
+      <details className="document-parsing-subsection"><summary>版面与生成参数</summary><p>留空使用服务默认；接口字段的实际边界与效果需用当前部署测试。</p>
         <div className="document-parsing-grid">
           {Object.entries(numericOptions).map(([key, label]) => <label className="field" key={key}><span>{label}</span>
             <input type="number" step="any" value={value.options[key as keyof typeof numericOptions] ?? ''} onChange={(event) => {
