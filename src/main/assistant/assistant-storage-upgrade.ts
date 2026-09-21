@@ -2,18 +2,64 @@ import { statSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import type { ConversationMessageBlock } from '../../shared/assistant-contracts'
 import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
-import { AssistantDatabase } from './assistant-database'
+import {
+  ASSISTANT_DATABASE_SCHEMA_VERSION,
+  AssistantDatabase
+} from './assistant-database'
 import {
   compactSubagentPayload,
   restoreSubagentPayload,
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
+export function hasPendingAssistantStorageUpgrade(
+  databasePath: string
+): boolean {
+  const database = new DatabaseSync(databasePath, {
+    readOnly: true,
+    timeout: 5_000
+  })
+  try {
+    const row = database.prepare('PRAGMA user_version').get() as {
+      user_version: number
+    }
+    if (row.user_version < ASSISTANT_DATABASE_SCHEMA_VERSION) {
+      return true
+    }
+    const noteTable = database.prepare(
+      `SELECT 1
+       FROM sqlite_master
+       WHERE type = 'table' AND name = 'magic_note_entries'
+       LIMIT 1`
+    ).get()
+    if (!noteTable) return false
+    const noteEntry = database.prepare(
+      'SELECT 1 FROM magic_note_entries LIMIT 1'
+    ).get()
+    if (!noteEntry) return false
+    const hasLegacyPayload = Boolean(database.prepare(
+      `SELECT 1
+       FROM magic_note_entries
+       WHERE json_extract(content_json, '$.storage') IS NULL
+          OR json_extract(content_json, '$.storage') <> 'file'
+       LIMIT 1`
+    ).get())
+    if (hasLegacyPayload) return true
+    const free = database.prepare('PRAGMA freelist_count').get() as {
+      freelist_count: number
+    }
+    return free.freelist_count > 0
+  } finally {
+    database.close()
+  }
+}
+
 export function upgradeAssistantStorage(
   databasePath: string,
   onProgress: (progress: AssistantStorageProgress) => void,
   isCancelled: () => boolean = () => false
 ): void {
+  if (!hasPendingAssistantStorageUpgrade(databasePath)) return
   upgradeSubagentStorage(databasePath, onProgress, isCancelled)
   new AssistantDatabase(databasePath).upgradeMagicNoteStorage(onProgress, isCancelled)
 }

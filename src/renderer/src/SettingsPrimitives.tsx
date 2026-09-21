@@ -39,11 +39,15 @@ export function SettingsCategoryHeader({
   actions,
   category,
   error,
+  navigation,
+  sticky = true,
   headingId = `settings-category-${category}`
 }: {
   actions?: ReactNode
   category: SettingsCategoryId
   error?: string
+  navigation?: ReactNode
+  sticky?: boolean
   headingId?: string
 }): React.JSX.Element {
   const definition = settingsCategories[category]
@@ -52,6 +56,8 @@ export function SettingsCategoryHeader({
       actions={actions}
       description={definition.description}
       error={error}
+      navigation={navigation}
+      sticky={sticky}
       headingId={headingId}
       title={definition.label}
     />
@@ -62,6 +68,8 @@ export function SettingsSectionHeader({
   actions,
   description,
   error,
+  navigation,
+  sticky = false,
   headingLevel = 2,
   help,
   headingId,
@@ -70,6 +78,8 @@ export function SettingsSectionHeader({
   actions?: ReactNode
   description?: string
   error?: string
+  navigation?: ReactNode
+  sticky?: boolean
   headingLevel?: 2 | 3
   help?: ReactNode
   headingId: string
@@ -77,7 +87,7 @@ export function SettingsSectionHeader({
 }): React.JSX.Element {
   const Heading = headingLevel === 3 ? 'h3' : 'h2'
   return (
-    <header className="settings-category-header">
+    <header className={`settings-category-header${sticky ? ' settings-category-header--sticky' : ''}`}>
       <div className="settings-category-header__content">
         <Heading id={headingId}>{help != null ? <span className="inline-help-label">{title}<InlineHelp label={title}>{help}</InlineHelp></span> : title}</Heading>
         {description && <p>{description}</p>}
@@ -91,6 +101,9 @@ export function SettingsSectionHeader({
         <p className="settings-warning" role="alert">
           {error}
         </p>
+      )}
+      {navigation && (
+        <div className="settings-category-header__navigation">{navigation}</div>
       )}
     </header>
   )

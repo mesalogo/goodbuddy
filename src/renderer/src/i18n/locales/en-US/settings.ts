@@ -135,6 +135,7 @@ export const settings = {
     discardAndNavigate: 'Discard changes and continue'
   },
   errors: {
+    invalidModelUrl: 'Model connection “{{name}}” has an invalid endpoint URL. Enter a complete HTTP or HTTPS URL (up to 2048 characters).',
     readSettings: 'Could not load settings',
     detectRuntimes: 'Could not detect Agent Runtimes',
     readEmbeddingStatus: 'Could not load embedding model status',
@@ -718,6 +719,12 @@ export const settings = {
     },
     profile: {
       seededDefaultName: 'Default model',
+      copy: 'Copy connection',
+      copyAriaLabel: 'Copy model connection {{name}}',
+      copySuffix: ' (copy {{index}})',
+      copyDescription: 'Copy the current configuration and API key; changes take effect when saved',
+      credentialCopyPending: 'The source API key will be copied on save',
+      advanced: 'Advanced settings',
       generatedName: 'Model connection {{count}}',
       title: 'LLM model connections',
       description:

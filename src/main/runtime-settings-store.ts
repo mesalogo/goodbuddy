@@ -2230,7 +2230,23 @@ export class RuntimeSettingsStore {
           requestHeaders: profile.requestHeaders ?? {},
           requestBody: profile.requestBody ?? {}
         }
-        if (
+        if (profile.apiKey.action === 'copy') {
+          const sourceProfileId = profile.apiKey.sourceProfileId
+          const source = current.modelProfiles.find(
+            (candidate) => candidate.id === sourceProfileId
+          )
+          if (!source) {
+            throw new Error('复制凭据的源模型连接不存在，请重新选择连接')
+          }
+          const environmentKey = source.id === current.defaultModelProfileId
+            ? this.getEnvironmentApiKey()
+            : undefined
+          if (environmentKey) {
+            nextProfile.credential = encryptSavedApiKey(this.cipher, environmentKey)
+          } else if (source.credential) {
+            nextProfile.credential = source.credential
+          }
+        } else if (
           profile.apiKey.action === 'keep' &&
           existing?.credential
         ) {

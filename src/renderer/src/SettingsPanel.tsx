@@ -1,5 +1,5 @@
 import {
-  FolderOpen,
+  Copy,
   KeyRound,
   LockKeyhole,
   Plus,
@@ -44,6 +44,7 @@ import {
   isAgentRuntimeModelProtocol,
   isDeepSeekHarnessModelProfile,
   MODEL_REQUEST_CUSTOMIZATION_LIMITS,
+  modelConnectionUrlSchema,
   modelRequestBodySchema,
   modelRequestHeadersSchema
 } from '../../shared/contracts'
@@ -100,6 +101,7 @@ type ModelProfileDraft = Omit<
   requestBodyText: string
   apiKey: string
   clearApiKey: boolean
+  copyApiKeyFromProfileId?: string
 }
 type EmbeddingConnectionDraft =
   Omit<
@@ -668,6 +670,7 @@ export function SettingsPanel({
       defaultRuntimeSettings.provider
     )
   const [modelProfiles, setModelProfiles] = useState<ModelProfileDraft[]>([])
+  const [modelValidationAttempted, setModelValidationAttempted] = useState(false)
   const [selectedModelProfileId, setSelectedModelProfileId] =
     useState('')
   const [defaultModelProfileId, setDefaultModelProfileId] = useState('')
@@ -840,6 +843,7 @@ export function SettingsPanel({
       value: RuntimeSettings,
       preserveSelectedProfile = false
     ): void => {
+      setModelValidationAttempted(false)
       hydrateRuntimeSettings(
         value,
         {
@@ -1398,6 +1402,23 @@ export function SettingsPanel({
           profile
         ])
       )
+      setModelValidationAttempted(true)
+      const invalidProfiles = modelProfiles.filter((profile) =>
+        !modelConnectionUrlSchema.safeParse(
+          profile.credentialSource === 'environment'
+            ? configuredProfiles.get(profile.id)?.baseUrl ?? profile.baseUrl
+            : profile.baseUrl
+        ).success
+      )
+      if (invalidProfiles.length) {
+        setActiveTab('model')
+        setModelType('llm')
+        setSelectedModelProfileId(invalidProfiles[0]!.id)
+        if (settingsBodyRef.current) settingsBodyRef.current.scrollTop = 0
+        throw new Error(invalidProfiles.map((profile) =>
+          t('errors.invalidModelUrl', { name: modelProfileDisplayName(profile) })
+        ).join('\n'))
+      }
       const profileInputs = modelProfiles.map((profile) => {
         const configured = configuredProfiles.get(profile.id)
         const environmentManaged =
@@ -1407,6 +1428,9 @@ export function SettingsPanel({
           profile.requestHeadersText
         )
         if (!requestHeaders.success) {
+          setActiveTab('model')
+          setModelType('llm')
+          setSelectedModelProfileId(profile.id)
           throw new Error(
             t('errors.invalidModelRequestHeaders', {
               name: modelProfileDisplayName(profile)
@@ -1417,6 +1441,9 @@ export function SettingsPanel({
           profile.requestBodyText
         )
         if (!requestBody.success) {
+          setActiveTab('model')
+          setModelType('llm')
+          setSelectedModelProfileId(profile.id)
           throw new Error(
             t('errors.invalidModelRequestBody', {
               name: modelProfileDisplayName(profile)
@@ -1449,6 +1476,11 @@ export function SettingsPanel({
                   action: 'replace',
                   value: profile.apiKey.trim()
                 } as const)
+              : profile.copyApiKeyFromProfileId
+                ? ({
+                    action: 'copy',
+                    sourceProfileId: profile.copyApiKeyFromProfileId
+                  } as const)
               : ({ action: 'keep' } as const)
         }
       })
@@ -1519,7 +1551,9 @@ export function SettingsPanel({
               }
             : { action: 'keep' },
         workspacePath,
-        apiKey: defaultProfileInput.apiKey,
+        apiKey: defaultProfileInput.apiKey.action === 'copy'
+          ? { action: 'keep' }
+          : defaultProfileInput.apiKey,
         modelProfiles: profileInputs,
         defaultModelProfileId: defaultProfile.id,
         defaultImageModelProfileId,
@@ -1806,6 +1840,7 @@ export function SettingsPanel({
   }
 
   const addModelProfile = (): void => {
+    if (modelProfiles.length >= 20) return
     const id = crypto.randomUUID()
     setModelProfiles((profiles) => [
       ...profiles,
@@ -1834,6 +1869,34 @@ export function SettingsPanel({
     if (!defaultModelProfileId) {
       setDefaultModelProfileId(id)
     }
+    setSelectedModelProfileId(id)
+  }
+
+  const copyModelProfile = (source: ModelProfileDraft): void => {
+    if (modelProfiles.length >= 20) return
+    const id = crypto.randomUUID()
+    let name = ''
+    let index = 1
+    do {
+      const suffix = t('model.profile.copySuffix', { index })
+      name = `${modelProfileDisplayName(source).trim().slice(0, 64 - suffix.length)}${suffix}`
+      index += 1
+    } while (modelProfiles.some((profile) =>
+      profile.name.trim().toLowerCase() === name.toLowerCase()
+    ))
+    const copyApiKeyFromProfileId = !source.clearApiKey && source.apiKeyConfigured
+      ? source.copyApiKeyFromProfileId ?? source.id
+      : undefined
+    setModelProfiles((profiles) => [...profiles, {
+      ...source,
+      id,
+      name,
+      apiKey: source.clearApiKey ? '' : source.apiKey,
+      clearApiKey: false,
+      copyApiKeyFromProfileId,
+      apiKeyConfigured: Boolean(copyApiKeyFromProfileId),
+      credentialSource: copyApiKeyFromProfileId ? 'encrypted' : 'none'
+    }])
     setSelectedModelProfileId(id)
   }
 
@@ -2189,6 +2252,39 @@ export function SettingsPanel({
               }
               category={activeTab}
               error={error}
+              navigation={
+                activeTab === 'runtime' ? (
+                  <div className="model-type-navigation agent-runtime-navigation">
+                    <SegmentedControl
+                      ariaLabel="Agent Runtime"
+                      onChange={setAgentRuntimeType}
+                      options={[
+                        { label: 'OpenCode', value: 'opencode' },
+                        { label: 'Continue', value: 'continue' },
+                        {
+                          label: t('runtime.deepseekHarness.selectorLabel'),
+                          value: 'deepseek-harness'
+                        }
+                      ]}
+                      value={agentRuntimeType}
+                    />
+                  </div>
+                ) : activeTab === 'model' ? (
+                <div className="model-type-navigation">
+                  <SegmentedControl
+                    ariaLabel={t('model.typeAriaLabel')}
+                    onChange={setModelType}
+                    options={[
+                      { label: t('model.types.llm.label'), value: 'llm' },
+                      { label: t('model.types.embedding.label'), value: 'embedding' },
+                      { label: t('model.types.rerank.label'), value: 'rerank' },
+                      { label: t('model.types.speech.label'), value: 'speech' }
+                    ]}
+                    value={modelType}
+                  />
+                </div>
+              ) : undefined
+              }
             />
           )}
           {activeTab === 'appearance' && (
@@ -2299,6 +2395,8 @@ export function SettingsPanel({
               onRemoteProjectsEnabledChange={
                 onRemoteProjectsEnabledChange
               }
+              onWorkspacePathChange={setWorkspacePath}
+              workspacePath={workspacePath}
               onNotify={onNotify}
               onShortcutSettingsChanged={onShortcutSettingsChanged}
             />
@@ -2306,65 +2404,6 @@ export function SettingsPanel({
           {activeTab === 'runtime' && (
             <>
               <SettingsWarningList warnings={settings?.warnings} />
-          <div className="settings-section">
-            <div className="settings-section__title">
-              <FolderOpen size={17} />
-              <span className="inline-help-label">
-                <strong>{t('runtime.workspace.title')}</strong>
-                <InlineHelp label={t('runtime.workspace.title')}>{t('runtime.workspace.description')}</InlineHelp>
-              </span>
-            </div>
-            <label className="field">
-              <span>{t('runtime.workspace.directoryLabel')}</span>
-              <div className="workspace-picker">
-                <input
-                  aria-label={t('runtime.workspace.directoryLabel')}
-                  onChange={(event) => setWorkspacePath(event.target.value)}
-                  value={workspacePath}
-                />
-                <button
-                  className="secondary-button"
-                  onClick={() => {
-                    void window.goodbuddy.settings
-                      .selectWorkspace()
-                      .then((selected) => {
-                        if (selected) {
-                          setWorkspacePath(selected)
-                        }
-                      })
-                      .catch((reason: unknown) => {
-                        setError(
-                          settingsErrorMessage(
-                            reason,
-                            t('errors.selectWorkspace')
-                          )
-                        )
-                      })
-                  }}
-                  type="button"
-                >
-                  {t('actions.select')}
-                </button>
-              </div>
-            </label>
-          </div>
-
-          <div className="model-type-navigation agent-runtime-navigation">
-            <SegmentedControl
-              ariaLabel="Agent Runtime"
-              onChange={setAgentRuntimeType}
-              options={[
-                { label: 'OpenCode', value: 'opencode' },
-                { label: 'Continue', value: 'continue' },
-                {
-                  label: t('runtime.deepseekHarness.selectorLabel'),
-                  value: 'deepseek-harness'
-                }
-              ]}
-              value={agentRuntimeType}
-            />
-          </div>
-
           {agentRuntimeType === 'opencode' && (
             <div className="settings-section">
               <div className="settings-section__title">
@@ -2920,28 +2959,6 @@ export function SettingsPanel({
 
           {activeTab === 'model' && (
             <>
-          <div className="model-type-navigation">
-            <SegmentedControl
-              ariaLabel={t('model.typeAriaLabel')}
-              onChange={setModelType}
-              options={[
-                { label: t('model.types.llm.label'), value: 'llm' },
-                {
-                  label: t('model.types.embedding.label'),
-                  value: 'embedding'
-                },
-                {
-                  label: t('model.types.rerank.label'),
-                  value: 'rerank'
-                },
-                {
-                  label: t('model.types.speech.label'),
-                  value: 'speech'
-                }
-              ]}
-              value={modelType}
-            />
-          </div>
           {modelType === 'llm' && (
           <div className="settings-section">
             <div className="settings-section__title settings-section__title--actions">
@@ -2954,6 +2971,7 @@ export function SettingsPanel({
               </div>
               <button
                 className="secondary-button model-connection-add"
+                disabled={modelProfiles.length >= 20}
                 onClick={addModelProfile}
                 type="button"
               >
@@ -3025,6 +3043,8 @@ export function SettingsPanel({
                   const profile = selectedModelProfile
                   const environmentManaged =
                     profile.credentialSource === 'environment'
+                  const endpointInvalid = modelValidationAttempted &&
+                    !modelConnectionUrlSchema.safeParse(profile.baseUrl).success
                   const requestHeadersValid =
                     parseRequestHeadersDraft(
                       profile.requestHeadersText
@@ -3063,6 +3083,19 @@ export function SettingsPanel({
                       </span>
                     )}
                     <button
+                      aria-label={t('model.profile.copyAriaLabel', {
+                        name: modelProfileDisplayName(profile)
+                      })}
+                      className="secondary-button"
+                      disabled={modelProfiles.length >= 20}
+                      onClick={() => copyModelProfile(profile)}
+                      title={t('model.profile.copyDescription')}
+                      type="button"
+                    >
+                      <Copy aria-hidden="true" size={14} />
+                      {t('model.profile.copy')}
+                    </button>
+                    <button
                       aria-label={t('model.profile.deleteAriaLabel', {
                         name: modelProfileDisplayName(profile)
                       })}
@@ -3091,6 +3124,8 @@ export function SettingsPanel({
                     <input
                       disabled={environmentManaged}
                       inputMode="url"
+                      aria-invalid={endpointInvalid || undefined}
+                      aria-describedby={endpointInvalid ? `model-url-error-${profile.id}` : undefined}
                       onChange={(event) =>
                         updateModelProfile(profile.id, {
                           baseUrl: event.target.value
@@ -3099,6 +3134,11 @@ export function SettingsPanel({
                       placeholder="https://api.example.com/v1"
                       value={profile.baseUrl}
                     />
+                    {endpointInvalid && (
+                      <small className="field-error" id={`model-url-error-${profile.id}`} role="alert">
+                        {t('errors.invalidModelUrl', { name: modelProfileDisplayName(profile) })}
+                      </small>
+                    )}
                   </label>
                   <label className="field">
                     <span>{t('model.profile.model')}</span>
@@ -3261,9 +3301,9 @@ export function SettingsPanel({
                       <div className="credential-state">
                         <LockKeyhole size={15} />
                         <span>
-                          {t(
-                            `credentials.${profile.credentialSource}`
-                          )}
+                          {profile.copyApiKeyFromProfileId
+                            ? t('model.profile.credentialCopyPending')
+                            : t(`credentials.${profile.credentialSource}`)}
                         </span>
                         {profile.credentialSource === 'encrypted' && (
                           <button
@@ -3448,6 +3488,8 @@ export function SettingsPanel({
                         </select>
                       </div>
                     )}
+                  <details className="settings-section" open={!requestHeadersValid || !requestBodyValid}>
+                    <summary>{t('model.profile.advanced')}</summary>
                   <div className="field">
                     <span className="inline-help-label">
                       <label htmlFor={`model-request-headers-${profile.id}`}>{t('model.profile.requestHeaders')}</label>
@@ -3513,6 +3555,7 @@ export function SettingsPanel({
                   <p className="settings-warning">
                     {t('model.profile.requestCustomizationWarning')}
                   </p>
+                  </details>
                   <small className="model-connection-detail__compatibility">
                     {t('model.profile.compatibilitySummary', {
                       directCapability:

@@ -76,6 +76,15 @@ API Key 继续由现有 Main 加密设置和 Prompt-scoped Agent 凭据路径管
 Body 是普通可见连接设置，不提供第二套通用秘密存储；UI 必须提示不要把密钥放入这两个
 JSON 对象，标准认证 Header 也由 schema 拒绝。
 
+模型连接输入使用 `modelConnectionUrlSchema`，先在 Renderer 以连接名称标识无效 URL，
+再由共享契约拒绝空值、超过 2048 个字符或非 HTTP/HTTPS 地址。页头错误保留完整错误上下文，
+字段错误通过 `aria-describedby` 关联到 URL 控件。
+
+复制连接不在 Renderer 读取或暴露已保存 API Key。复制草稿提交
+`{ action: 'copy', sourceProfileId }`，Main 在同一设置更新事务中从当前加密凭据或默认连接
+的环境凭据创建目标凭据。源连接不存在时整个更新失败；目标连接的其他字段仍由普通输入
+校验。正在编辑但尚未保存的 Key 仍以一次性 `replace` 值提交，因而不与旧凭据混合。
+
 ## 7. 验证
 
 - 共享 schema：JSON 类型、边界、保留字段和优先级。
@@ -84,7 +93,8 @@ JSON 对象，标准认证 Header 也由 schema 拒绝。
 - Runtime：真实 bundled OpenCode/Continue 对 loopback Provider 的请求探针；DeepSeek
   Utility 启动配置和 Pi-AI Provider 配置。
 - 远程：Main/Agent 网关合并、认证优先级、摘要绑定、大小限制和不重放。
-- UI：默认值、保存、无效 JSON 保留和 Runtime 支持说明。
+- UI：默认值、保存、无效 JSON 保留、连接级 URL 错误、粘附标题/页签、折叠高级设置和
+  包含凭据的连接复制。
 
 ## 8. 通道直连模型选择修复
 

@@ -1,5 +1,16 @@
 # 工作栏实现与验证进度
 
+## 2026-09-21 修复重复历史迁移
+
+- 启动时历史优化 Worker 之前只判断 `assistant.sqlite` 是否存在，没有先判断
+  `PRAGMA user_version` 是否已经达到当前 Assistant schema，因此已完成迁移的数据库仍会
+  重复进入启动准备流程。现在仅对低于当前 schema 的数据库启动 Worker；已完成迁移的
+  数据库直接进入正常启动，聊天、退出和再次打开不会重新显示历史迁移页面。
+- 该问题来自 `49377206` 引入的启动迁移入口；本次修复不改变旧数据库的实际迁移逻辑，
+  仍保留首次升级、取消后重试和已提交批次续跑行为。
+- `npx vitest run src/main/assistant-storage-startup.test.ts src/main/assistant/assistant-storage-upgrade.test.ts src/main/assistant/assistant-database.test.ts`：
+  **115 项通过**；`npm run typecheck`、`npm run lint`：通过。
+
 ## 2026-09-19 问答位置持久化
 
 - Main 在收到问题时保存消息位置块，而不是等回答成功才追加；前台及重启恢复的实时待答

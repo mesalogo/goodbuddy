@@ -1561,12 +1561,15 @@ describe("App", () => {
       await screen.findByRole("button", { name: /全项目活动/u });
       fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
+      fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
       fireEvent.change(await screen.findByLabelText("默认工作区目录"), { target: { value: "C:\\Unsaved activity draft" } });
       fireEvent.click(screen.getByRole("button", { name: /全项目活动/u }));
       fireEvent.click(screen.getByRole("menuitem", { name: /Background project/u }));
       fireEvent.click(screen.getByRole("menuitem", { name: /Exact background discussion/u }));
       expect(screen.getByRole("heading", { name: "设置中心" })).toBeVisible();
-      expect(screen.getByRole("alert")).toHaveTextContent("当前设置有未保存更改");
+      expect(screen.getAllByRole("alert").some((alert) =>
+        alert.textContent?.includes("当前设置有未保存更改")
+      )).toBe(true);
       expect(screen.getByRole("button", { name: "当前项目" })).not.toHaveTextContent("Background project");
       expect(screen.getByLabelText("默认工作区目录")).toHaveValue("C:\\Unsaved activity draft");
       fireEvent.click(screen.getByRole("button", { name: "放弃更改并关闭" }));
@@ -5444,6 +5447,7 @@ describe("App", () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '设置' }));
     await screen.findByRole("heading", { name: "设置中心" });
+    fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
     fireEvent.change(await screen.findByLabelText("默认工作区目录"), {
       target: { value: "C:\\Unsaved from App" },
     });
@@ -5453,7 +5457,9 @@ describe("App", () => {
     fireEvent.click(knowledgeNavigation);
 
     expect(screen.getByRole("heading", { name: "设置中心" })).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent("当前设置有未保存更改");
+    expect(screen.getAllByRole("alert").some((alert) =>
+      alert.textContent?.includes("当前设置有未保存更改")
+    )).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "放弃更改并关闭" }));
     expect(
       await screen.findByRole("heading", { name: "知识库" }),

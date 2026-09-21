@@ -31,10 +31,6 @@ import type {
   WebSearchTestResult
 } from '../../shared/capability-contracts'
 import { trapTabFocus } from './dialog-focus'
-import {
-  SettingsSectionHeader,
-  SettingsWarningList
-} from './SettingsPrimitives'
 import { PageTabs } from './WorkspacePrimitives'
 
 const configurableMcpTargets: RuntimeTarget[] = [
@@ -393,29 +389,6 @@ export function McpSettingsSection({
 
   return (
     <>
-      <SettingsSectionHeader
-        actions={
-          activeTab === 'custom' ? (
-            <button
-              className="secondary-button"
-              disabled={Boolean(busy) || Boolean(editor)}
-              onClick={(event) =>
-                openEditor({ ...emptyEditor }, event.currentTarget)
-              }
-              type="button"
-            >
-              <Plus aria-hidden="true" size={14} />
-              {t('mcp.addServer')}
-            </button>
-          ) : undefined
-        }
-        help={t('mcp.description')}
-        error={!editor ? error : undefined}
-        headingLevel={3}
-        headingId="mcp-settings-heading"
-        title={t('mcp.title')}
-      />
-      <SettingsWarningList warnings={snapshot?.warnings} />
       <div className="mcp-settings__tabs">
         <PageTabs
           ariaLabel={t('mcp.tabs.ariaLabel')}
@@ -458,9 +431,25 @@ export function McpSettingsSection({
       >
 
       {activeTab === 'custom' && (
-        <p className="settings-notice">
-          {t('mcp.customNotice')}
-        </p>
+        <>
+          <div className="settings-content-actions">
+            <button
+              className="secondary-button"
+              disabled={Boolean(busy) || Boolean(editor)}
+              onClick={(event) =>
+                openEditor({ ...emptyEditor }, event.currentTarget)
+              }
+              type="button"
+            >
+              <Plus aria-hidden="true" size={14} />
+              {t('mcp.addServer')}
+            </button>
+          </div>
+          {error && !editor && (
+            <p className="settings-warning" role="alert">{error}</p>
+          )}
+          <p className="settings-notice">{t('mcp.customNotice')}</p>
+        </>
       )}
       {activeTab === 'computer' && (
         <section

@@ -121,6 +121,7 @@ export const settings = {
     discardAndNavigate: '放弃更改并切换'
   },
   errors: {
+    invalidModelUrl: '模型连接“{{name}}”的模型接口 URL 无效，请填写完整的 HTTP 或 HTTPS 地址（最多 2048 个字符）。',
     readSettings: '读取设置失败',
     detectRuntimes: 'Runtime 自动检测失败',
     readEmbeddingStatus: '读取向量模型状态失败',
@@ -663,6 +664,12 @@ export const settings = {
     },
     profile: {
       seededDefaultName: '默认模型',
+      copy: '复制连接',
+      copyAriaLabel: '复制模型连接 {{name}}',
+      copySuffix: '（副本 {{index}}）',
+      copyDescription: '复制当前配置和 API Key，保存后生效',
+      credentialCopyPending: '保存时复制源连接的 API Key',
+      advanced: '高级设置',
       generatedName: '模型连接 {{count}}',
       title: 'LLM 模型连接',
       description:

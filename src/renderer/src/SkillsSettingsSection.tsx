@@ -6,7 +6,6 @@ import type {
   CapabilitySnapshot,
   RuntimeTarget
 } from '../../shared/capability-contracts'
-import { SettingsSectionHeader } from './SettingsPrimitives'
 
 export function SkillsSettingsSection(): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
@@ -61,52 +60,40 @@ export function SkillsSettingsSection(): React.JSX.Element {
   }
 
   return (
-    <>
-      <SettingsSectionHeader
-        actions={
-          <>
-            <button
-              className="secondary-button"
-              disabled={Boolean(busy)}
-              onClick={() =>
-                void run('import', () =>
-                  window.goodbuddy.capabilities.importSkill('directory')
-                )
-              }
-              type="button"
-            >
-              <Download aria-hidden="true" size={14} />
-              {t('skills.actions.importDirectory')}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={Boolean(busy)}
-              onClick={() =>
-                void run('import', () =>
-                  window.goodbuddy.capabilities.importSkill('zip')
-                )
-              }
-              type="button"
-            >
-              <Download aria-hidden="true" size={14} />
-              {t('skills.actions.importZip')}
-            </button>
-          </>
-        }
-        help={t('skills.description')}
-        error={error}
-        headingLevel={3}
-        headingId="skills-settings-heading"
-        title={t('skills.title')}
-      />
-      <section
+    <section
         aria-label={t('skills.listLabel')}
         className="settings-section"
       >
-
-      <p className="settings-notice">
-        {t('skills.notice')}
-      </p>
+      <div className="settings-content-actions">
+        <button
+          className="secondary-button"
+          disabled={Boolean(busy)}
+          onClick={() =>
+            void run('import', () =>
+              window.goodbuddy.capabilities.importSkill('directory')
+            )
+          }
+          type="button"
+        >
+          <Download aria-hidden="true" size={14} />
+          {t('skills.actions.importDirectory')}
+        </button>
+        <button
+          className="secondary-button"
+          disabled={Boolean(busy)}
+          onClick={() =>
+            void run('import', () =>
+              window.goodbuddy.capabilities.importSkill('zip')
+            )
+          }
+          type="button"
+        >
+          <Download aria-hidden="true" size={14} />
+          {t('skills.actions.importZip')}
+        </button>
+      </div>
+      {error && <p className="settings-warning" role="alert">{error}</p>}
+      <p className="settings-notice">{t('skills.notice')}</p>
       {!snapshot && !error && (
         <p className="settings-empty">{t('skills.loading')}</p>
       )}
@@ -205,7 +192,6 @@ export function SkillsSettingsSection(): React.JSX.Element {
           </article>
         ))}
       </div>
-      </section>
-    </>
+    </section>
   )
 }

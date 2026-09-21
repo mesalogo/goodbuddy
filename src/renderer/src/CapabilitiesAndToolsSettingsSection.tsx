@@ -29,38 +29,40 @@ export function CapabilitiesAndToolsSettingsSection({
       <SettingsCategoryHeader
         category="capabilities"
         headingId="capabilities-settings-heading"
+        navigation={
+          <div className="capabilities-settings__tabs">
+            <PageTabs
+              ariaLabel={t('capabilities.tabs.ariaLabel')}
+              idPrefix="capabilities-settings"
+              onChange={(tab) => {
+                setActiveTab(tab)
+                if (tab === 'mcp') {
+                  setMcpVisited(true)
+                }
+                if (tab === 'tools') {
+                  setToolsVisited(true)
+                }
+              }}
+              tabs={[
+                {
+                  id: 'skills',
+                  label: t('capabilities.tabs.skills')
+                },
+                {
+                  id: 'mcp',
+                  label: t('capabilities.tabs.mcp')
+                },
+                {
+                  id: 'tools',
+                  label: t('capabilities.tabs.tools')
+                }
+              ]}
+              value={activeTab}
+              variant="segmented"
+            />
+          </div>
+        }
       />
-      <div className="capabilities-settings__tabs">
-        <PageTabs
-          ariaLabel={t('capabilities.tabs.ariaLabel')}
-          idPrefix="capabilities-settings"
-          onChange={(tab) => {
-            setActiveTab(tab)
-            if (tab === 'mcp') {
-              setMcpVisited(true)
-            }
-            if (tab === 'tools') {
-              setToolsVisited(true)
-            }
-          }}
-          tabs={[
-            {
-              id: 'skills',
-              label: t('capabilities.tabs.skills')
-            },
-            {
-              id: 'mcp',
-              label: t('capabilities.tabs.mcp')
-            },
-            {
-              id: 'tools',
-              label: t('capabilities.tabs.tools')
-            }
-          ]}
-          value={activeTab}
-          variant="segmented"
-        />
-      </div>
       <section
         aria-labelledby="capabilities-settings-tab-skills"
         className="capabilities-settings__panel"

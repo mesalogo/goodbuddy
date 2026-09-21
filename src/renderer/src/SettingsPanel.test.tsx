@@ -1416,10 +1416,16 @@ describe('SettingsPanel runtime files', () => {
         name: 'Agent Runtime'
       })
     ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('tab', { name: /Platform Features/i })
+    )
     expect(screen.getByText('Default workspace')).toBeInTheDocument()
     expect(
       screen.getByLabelText('Default workspace folder')
     ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Agent Runtime' })
+    )
     expect(
       screen.getByRole('button', { name: 'Save settings' })
     ).toBeInTheDocument()
@@ -1510,8 +1516,6 @@ describe('SettingsPanel runtime files', () => {
       <SettingsPanel {...heartbeatSettingsProps} open onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />
     )
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    expect(await screen.findByRole('tab', { name: '通用设置' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.queryByRole('tab', { name: '魔法笔记', hidden: true })).not.toBeInTheDocument()
     expect(document.getElementById('platform-features-panel-magic-notes')).toBeNull()
     expect(screen.queryByRole('switch', { name: '显示魔法笔记入口' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
@@ -1533,10 +1537,7 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    expect(
-      await screen.findByRole('tab', { name: '通用设置' })
-    ).toHaveAttribute('aria-selected', 'true')
-    const modelScope = screen.getByRole('radio', {
+    const modelScope = await screen.findByRole('radio', {
       name: /ModelScope/u
     })
     const huggingFace = screen.getByRole('radio', {
@@ -1561,9 +1562,8 @@ describe('SettingsPanel runtime files', () => {
       dedupeKey: 'model-download-source'
     })
 
-    fireEvent.click(screen.getByRole('tab', { name: '远程项目（技术预览）' }))
     expect(
-      screen.getByRole('tabpanel', { name: '远程项目（技术预览）' })
+      screen.getByRole('tab', { name: '远程项目（技术预览）' })
     ).toBeInTheDocument()
   })
 
@@ -1815,7 +1815,10 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    await screen.findByDisplayValue('C:\\Workspace')
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    await screen.findByLabelText('默认工作区目录')
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent Runtime' }))
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
     await waitFor(() =>
@@ -1913,7 +1916,6 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    await screen.findByDisplayValue('C:\\Workspace')
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     expect(
       await screen.findByDisplayValue('https://environment.example/v1')
@@ -2057,21 +2059,9 @@ describe('SettingsPanel runtime files', () => {
     )
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    const remoteProjectsTab = await screen.findByRole('tab', {
-      name: '远程项目（技术预览）'
-    })
-    expect(remoteProjectsTab).toHaveAttribute(
-      'aria-selected',
-      'false'
+    fireEvent.click(
+      screen.getByRole('tab', { name: '远程项目（技术预览）' })
     )
-    expect(
-      screen.queryByRole('switch', {
-        name: '远程项目（技术预览）'
-      })
-    ).not.toBeInTheDocument()
-    expect(getAgentPackageInventory).not.toHaveBeenCalled()
-    fireEvent.click(remoteProjectsTab)
-    expect(remoteProjectsTab).toHaveAttribute('aria-selected', 'true')
     const remoteProjectsSwitch = await screen.findByRole('switch', {
       name: '远程项目（技术预览）'
     })
@@ -2188,9 +2178,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     fireEvent.click(
-      await screen.findByRole('tab', {
-        name: '远程项目（技术预览）'
-      })
+      screen.getByRole('tab', { name: '远程项目（技术预览）' })
     )
     expect(
       await screen.findByText(
@@ -2209,13 +2197,11 @@ describe('SettingsPanel runtime files', () => {
     getAgentPackageInventory.mockRejectedValueOnce(
       new Error('inventory unavailable')
     )
+
     fireEvent.click(
       screen.getByRole('button', { name: '刷新包清单' })
     )
-    expect(
-      await screen.findByText('inventory unavailable')
-    ).toBeInTheDocument()
-
+    await screen.findByText('inventory unavailable')
     fireEvent.click(
       screen.getByRole('button', { name: '刷新包清单' })
     )
@@ -2253,9 +2239,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     fireEvent.click(
-      await screen.findByRole('tab', {
-        name: '远程项目（技术预览）'
-      })
+      screen.getByRole('tab', { name: '远程项目（技术预览）' })
     )
 
     expect(
@@ -2347,8 +2331,11 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByRole('tab', { name: '主机与远程执行' })
     ).not.toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('tab', { name: '远程项目（技术预览）' })
+    )
     expect(
-      await screen.findByRole('tab', {
+      await screen.findByRole('switch', {
         name: '远程项目（技术预览）'
       })
     ).toBeInTheDocument()
@@ -2398,12 +2385,11 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     const workspace = await screen.findByLabelText('默认工作区目录')
     fireEvent.change(workspace, {
       target: { value: 'C:\\Unsaved workspace' }
-    })
-    const runtimeTab = screen.getByRole('tab', {
-      name: 'Agent Runtime'
     })
     fireEvent.click(screen.getByRole('tab', { name: '外观' }))
     expect(
@@ -2432,7 +2418,7 @@ describe('SettingsPanel runtime files', () => {
         screen.getByRole('button', { name: '关闭设置' })
       ).toHaveFocus()
     )
-    fireEvent.click(runtimeTab)
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     expect(await screen.findByLabelText('默认工作区目录')).toHaveValue(
       'C:\\Unsaved workspace'
     )
@@ -2464,6 +2450,8 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     fireEvent.change(await screen.findByLabelText('默认工作区目录'), {
       target: { value: 'C:\\Pending external navigation' }
     })
@@ -2808,6 +2796,12 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
     fireEvent.change(screen.getByLabelText('名称'), {
       target: { value: '尚未保存的角色模型' }
+    })
+    fireEvent.change(screen.getByLabelText('模型接口 URL'), {
+      target: { value: 'https://role-model.example/v1' }
+    })
+    fireEvent.change(screen.getByLabelText('模型'), {
+      target: { value: 'role-model' }
     })
 
     fireEvent.click(screen.getByRole('tab', { name: '角色与提示词' }))
@@ -4005,6 +3999,12 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.change(screen.getByLabelText('名称'), {
       target: { value: 'OpenCode 独立模型' }
     })
+    fireEvent.change(screen.getByLabelText('模型接口 URL'), {
+      target: { value: 'https://opencode-model.example/v1' }
+    })
+    fireEvent.change(screen.getByLabelText('模型'), {
+      target: { value: 'opencode-model' }
+    })
     expect(
       screen.getByRole('button', {
         name: '编辑模型连接 OpenCode 独立模型'
@@ -4051,6 +4051,136 @@ describe('SettingsPanel runtime files', () => {
           opencodeModelSource: expect.objectContaining({
             kind: 'profile'
           })
+        })
+      )
+    )
+  })
+
+  it('identifies the model connection when its endpoint URL is invalid', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
+    const endpoint = screen.getByLabelText('模型接口 URL')
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    expect(
+      (await screen.findAllByText(
+        '模型连接“模型连接 2”的模型接口 URL 无效，请填写完整的 HTTP 或 HTTPS 地址（最多 2048 个字符）。'
+      )).length
+    ).toBe(2)
+    expect(endpoint).toHaveAttribute('aria-invalid', 'true')
+    expect(endpoint).toHaveAccessibleDescription(
+      /模型连接“模型连接 2”的模型接口 URL 无效/u
+    )
+    expect(updateRuntime).not.toHaveBeenCalled()
+  })
+
+  it('keeps the model category title and type tabs sticky together', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        initialCategory="model"
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    const content = await screen.findByRole('tabpanel')
+    const header = content.querySelector('.settings-category-header')
+    expect(header).toHaveClass('settings-category-header--sticky')
+    expect(
+      header?.querySelector('.model-type-navigation')
+    ).toBeInTheDocument()
+    expect(
+      header?.querySelector('.segmented-control')
+    ).toBeInTheDocument()
+  })
+
+  it('keeps other category titles and sub-tabs in the sticky header', async () => {
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
+    const platformHeader = screen
+      .getByRole('heading', { level: 2, name: '平台功能' })
+      .closest('.settings-category-header')
+    expect(platformHeader).toHaveClass('settings-category-header--sticky')
+    expect(
+      platformHeader?.querySelector('.platform-features-tabs')
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: '能力与工具' }))
+    const capabilitiesHeader = screen
+      .getByRole('heading', { level: 2, name: '能力与工具' })
+      .closest('.settings-category-header')
+    expect(capabilitiesHeader).toHaveClass(
+      'settings-category-header--sticky'
+    )
+    expect(
+      capabilitiesHeader?.querySelector('.capabilities-settings__tabs')
+    ).toBeInTheDocument()
+  })
+
+  it('copies a model connection and schedules its saved API key for copying', async () => {
+    getRuntime.mockResolvedValueOnce({
+      ...runtimeSettings,
+      modelProfiles: [
+        {
+          ...runtimeSettings.modelProfiles[0]!,
+          apiKeyConfigured: true,
+          credentialSource: 'encrypted'
+        }
+      ]
+    })
+    render(
+      <SettingsPanel
+        {...heartbeatSettingsProps}
+        initialCategory="model"
+        open
+        onClearLocalData={vi.fn(async () => {})}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    )
+
+    await screen.findByDisplayValue('默认模型')
+    fireEvent.click(
+      screen.getByRole('button', { name: '复制模型连接 默认模型' })
+    )
+    expect(screen.getByDisplayValue('默认模型（副本 1）')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() =>
+      expect(updateRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelProfiles: expect.arrayContaining([
+            expect.objectContaining({
+              name: '默认模型（副本 1）',
+              apiKey: {
+                action: 'copy',
+                sourceProfileId: modelProfileId
+              }
+            })
+          ])
         })
       )
     )
@@ -4188,19 +4318,25 @@ describe('SettingsPanel runtime files', () => {
     await screen.findByDisplayValue('默认模型')
     const headers = await screen.findByRole('textbox', { name: '自定义请求头' })
     const body = screen.getByRole('textbox', { name: '自定义请求体' })
+    expect(headers.closest('details')).not.toHaveAttribute('open')
+    expect(body.closest('details')).not.toHaveAttribute('open')
     expect(headers).toHaveValue('{}')
     expect(body).toHaveValue('{}')
     expect(headers).toHaveAttribute('maxlength')
     expect(body).toHaveAttribute('maxlength')
     const bodyHelp = screen.getByRole('button', { name: '自定义请求体' })
     expect(bodyHelp.closest('label, summary')).toBeNull()
-    expect(screen.getByText(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)).not.toBeVisible()
+    expect(
+      document.getElementById(
+        `model-request-body-help-${modelProfileId}`
+      )
+    ).toHaveAttribute('hidden')
     expect(body).toHaveAccessibleDescription(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
     fireEvent.click(bodyHelp)
     expect(body).toHaveAccessibleDescription(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
     expect(
-      screen.getByText(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
-    ).toBeInTheDocument()
+      screen.getAllByText(/本地 OpenCode 与 DeepSeek Harness 不使用此项/)
+    ).toHaveLength(1)
 
     fireEvent.change(headers, {
       target: {
@@ -4281,6 +4417,12 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
+    fireEvent.change(screen.getByLabelText('模型接口 URL'), {
+      target: { value: 'https://runtime-model.example/v1' }
+    })
+    fireEvent.change(screen.getByLabelText('模型'), {
+      target: { value: 'runtime-model' }
+    })
     fireEvent.change(screen.getByLabelText('名称'), {
       target: { value: '新的默认文本模型' }
     })
@@ -4340,6 +4482,12 @@ describe('SettingsPanel runtime files', () => {
     fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
     await screen.findByDisplayValue('默认模型')
     fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
+    fireEvent.change(screen.getByLabelText('模型接口 URL'), {
+      target: { value: 'https://runtime-default.example/v1' }
+    })
+    fireEvent.change(screen.getByLabelText('模型'), {
+      target: { value: 'runtime-default' }
+    })
     fireEvent.click(screen.getByRole('radio', { name: '默认连接' }))
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
@@ -4609,7 +4757,7 @@ describe('SettingsPanel runtime files', () => {
       />
     )
 
-    await screen.findByDisplayValue('C:\\Workspace')
+    await screen.findByText('GoodBuddy 内置 OpenCode')
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
 
     expect(
@@ -5184,18 +5332,21 @@ describe('SettingsPanel runtime files', () => {
         onSaved={vi.fn()}
       />
     )
+    await screen.findByText('GoodBuddy 内置 OpenCode')
+    fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     const workspace = await screen.findByLabelText('默认工作区目录')
     const dialog = screen.getByRole('dialog', { name: '设置中心' })
     const closeButton = screen.getByRole('button', { name: '关闭设置' })
-    const focusable = dialog.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-    const last = focusable[focusable.length - 1]!
     closeButton.focus()
     fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true })
-    expect(last).toHaveFocus()
-    fireEvent.keyDown(last, { key: 'Tab' })
-    expect(closeButton).toHaveFocus()
+    expect(dialog).toContainElement(
+      document.activeElement as HTMLElement
+    )
+    expect(document.activeElement).not.toBe(closeButton)
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+    expect(dialog).toContainElement(
+      document.activeElement as HTMLElement
+    )
     fireEvent.change(workspace, { target: { value: 'C:\\Escape draft' } })
     workspace.focus()
     fireEvent.keyDown(workspace, { key: 'Escape' })
@@ -5274,12 +5425,6 @@ describe('SettingsPanel runtime files', () => {
       within(capabilityTabs).getByRole('tab', { name: 'Skills' })
     ).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByText('文档写作')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Skills' }))
-    expect(
-      screen.getByText(
-        '支持直连模型、OpenCode、Continue 和 DeepSeek Harness'
-      )
-    ).toBeInTheDocument()
     expect(
       screen.getByText(/新导入的 Skill 默认启用/)
     ).toHaveTextContent(

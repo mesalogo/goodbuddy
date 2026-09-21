@@ -51,6 +51,8 @@ app.whenReady().then(async () => {
     await settle()
   }
   const key = async keyCode => {
+    win.focus()
+    win.webContents.focus()
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode })
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode })
     await settle()
@@ -78,7 +80,9 @@ app.whenReady().then(async () => {
       await key('Escape')
       await wait('!document.querySelector("[role=tooltip]")')
       assert(await js('!!document.querySelector("[aria-modal=true]")'), `Hover Escape closed modal: ${theme} ${width}x${height}`)
-      await mouse('#outside')
+      // Re-establish a native keyboard starting point after hover-only Escape.
+      await mouse('#outside', true)
+      assert(await js('document.activeElement.id === "outside"'))
       await key('Tab')
       await wait('!!document.querySelector("[role=tooltip]")')
       assert(await js('document.activeElement.matches(".inline-help")'))
@@ -199,6 +203,9 @@ app.whenReady().then(async () => {
       await wait(`!!document.querySelector('${context}')`)
       assert.equal(await js(`document.querySelector('${context}').value`), '128')
       checked.push(await checkHelp('.inline-help[aria-label="上下文上限（可选）"]', '.settings-panel', context))
+      assert(await js('!document.querySelector(".model-connection-detail details.settings-section").open'), 'Advanced model settings should start collapsed')
+      await mouse('.model-connection-detail details.settings-section > summary', true)
+      await wait('document.querySelector(".model-connection-detail details.settings-section").open')
       checked.push(await checkHelp('.inline-help[aria-label="自定义请求体"]', '.settings-panel', '#model-request-body-' + profileId))
       for (const applicationHelp of checked.slice(0, 2)) {
         assert.deepEqual(applicationHelp.appearance, checked[2].appearance, 'Application/settings help button styles differ')

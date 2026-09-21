@@ -4,11 +4,14 @@ import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationMessageBlock } from '../../shared/assistant-contracts'
 import type { SubagentEvent } from '../../shared/contracts'
 import { AssistantDatabase, ASSISTANT_DATABASE_SCHEMA_VERSION } from './assistant-database'
-import { upgradeAssistantStorage } from './assistant-storage-upgrade'
+import {
+  hasPendingAssistantStorageUpgrade,
+  upgradeAssistantStorage
+} from './assistant-storage-upgrade'
 import {
   compactSubagentPayload,
   restoreSubagentPayload,
@@ -18,6 +21,7 @@ import {
 const directories: string[] = []
 const databases: AssistantDatabase[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const database of databases.splice(0)) database.close()
   await Promise.all(directories.splice(0).map(
     (path) => rm(path, { recursive: true, force: true })
@@ -50,6 +54,40 @@ function subagent(requestId: string): SubagentEvent {
 }
 
 describe('subagent progress storage', () => {
+  it('does not migrate or vacuum ordinary chat free pages on repeated startup', async () => {
+    const { path, database } = await fixture()
+    const header = { id: randomUUID(), title: 'Chat restart', updatedAt: 1000 }
+    const message = {
+      id: randomUUID(), role: 'assistant' as const, state: 'complete' as const,
+      content: 'Long draft'.repeat(100_000), createdAt: 1000
+    }
+    database.saveLocalConversations([{ header, messages: [message] }])
+    database.saveLocalConversations([{ header, messages: [{ ...message, content: 'Final response' }] }])
+    const expected = database.getConversation(header.id)
+    database.close()
+    const sql = new DatabaseSync(path)
+    try {
+      const free = sql.prepare('PRAGMA freelist_count').get()!.freelist_count
+      expect(free).toBeGreaterThan(0)
+      expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
+      expect(hasPendingAssistantStorageUpgrade(path)).toBe(false)
+      const exec = vi.spyOn(DatabaseSync.prototype, 'exec')
+      for (let restart = 0; restart < 2; restart++) {
+        const progress = vi.fn()
+        upgradeAssistantStorage(path, progress)
+        expect(progress).not.toHaveBeenCalled()
+        expect(exec.mock.calls.some(([statement]) => /VACUUM/i.test(statement))).toBe(false)
+        const reopened = new AssistantDatabase(path)
+        try {
+          reopened.initialize(tmpdir())
+          expect(reopened.getConversation(header.id)).toEqual(expected)
+        } finally { reopened.close() }
+      }
+      expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBe(free)
+      expect(sql.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    } finally { sql.close() }
+  })
+
   it('roundtrips every snapshot including corrections, reordered blocks and empty progress', () => {
     const event = subagent(randomUUID())
     const textId = randomUUID()

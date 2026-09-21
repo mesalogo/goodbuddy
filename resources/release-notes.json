@@ -2,12 +2,14 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.13.7",
+      "version": "0.13.8",
       "releasedAt": "2026-09-20",
       "notes": {
         "zh-CN": {
           "highlights": [],
           "features": [
+            "**设置页面滚动更顺手**：设置分类标题和当前分类的页签会固定在内容区顶部，平台功能、能力与工具、消息通道以及 Runtime 的子页签滚动长表单时仍可切换。低频配置继续放在默认收起的高级设置中。",
+            "**复制模型连接**：在模型连接详情中复制已有连接，地址、模型、协议、请求定制和认证设置会带到新连接。已保存的 API Key 由主进程从加密凭据复制，不需要再次输入，也不会暴露给界面。",
             "**分页画布笔记**：在魔法笔记中混排正文、笔迹、高亮和图片，也可导入 PDF 页面进行批注。支持手动保存后继续编辑、25%–300% 缩放、适应宽度和 PDF 导出。",
             "**选择送给 AI 的画布页数**：在笔记设置中选择发送前 1～8 页，默认 1 页，文字与图片使用相同范围。保存和导出仍保留完整画布，最多支持 50 页；页面图像分析需要支持图片输入的模型。",
             "**接入 HTTP PaddleOCR-VL**：在文档解析设置中配置 OCR 服务，供聊天附件和知识库导入共用，无需在本机加载该服务的模型权重。可用实际文件测试解析结果，并配置服务支持的版面、表格等处理选项。",
@@ -21,6 +23,8 @@
             "**说明按需查看**：页面和设置中的补充说明移到标题或字段旁的帮助入口，支持鼠标与键盘操作。减少常驻说明文字，同时保留关键操作后果和错误提示。"
           ],
           "fixes": [
+            "**历史数据迁移只在需要时执行**：首次升级旧数据库时仍会整理重复的执行记录；数据库完成当前版本升级后，聊天、退出并重新打开应用不会再次显示历史迁移页面。",
+            "**模型 URL 错误更容易处理**：保存模型连接时，空白、过长或不支持的地址会明确指出具体连接，并在 URL 字段旁保留可访问的错误提示，不再只显示笼统的“Invalid URL”。",
             "**较早会话和长历史不再被数量截断**：会话列表与搜索不再只覆盖最近 100 个会话，连续发送不再截断超过 500 条的历史。模型上下文限制仍然有效，已经丢失的历史无法恢复。",
             "**保留草稿和画布编辑**：恢复队列文字时不再覆盖新输入，画布删页保留正文与清单格式。超限输入被拒绝后仍保留已有撤销记录，图片 OCR 没有正文时保留原图发送方式。",
             "**问答卡片保持原位置**：回答后，交互问题不再被排到后续输出末尾。重新打开会话仍保留原有问答顺序。",
@@ -34,13 +38,15 @@
             "首次启动会升级数据库并将笔记正文迁移到本地文件，可能需要时间和额外磁盘空间。升级前请备份完整用户数据；旧客户端不能打开升级后的数据库，回退应使用升级前备份。",
             "后续笔记备份必须同时包含一致的数据库与相邻 `notes/` 目录。画布需手动保存，导出的 PDF 为栅格图像，不保留可搜索文字层。",
             "HTTP OCR 会把待识别内容发送到配置的服务，可能产生费用；高级选项效果取决于实际部署。快速文本／索引模式跳过 OCR，显式图片文字提取仍会调用所选 OCR。",
-            "远程用户请先升级 **Desktop 0.13.7**，再下载并更新 **Agent 0.13.1**。远程项目仍为技术预览，Execute 使用所选 SSH 账号的权限。",
+            "远程用户请先升级 **Desktop 0.13.8**，再下载并更新 **Agent 0.13.2**。远程项目仍为技术预览，Execute 使用所选 SSH 账号的权限。",
             "标准桌面包覆盖 Windows、macOS、Linux 的 x64／arm64，本次不构建龙芯实验预览。"
           ]
         },
         "en-US": {
           "highlights": [],
           "features": [
+            "**Smoother settings scrolling**: Settings category titles and the active category tabs stay pinned at the top of the content area. Platform Features, Capabilities and Tools, message channels, and Runtime sub-tabs remain available while long forms scroll. Less frequently used controls stay in collapsed Advanced settings.",
+            "**Copy model connections**: Copy an existing model connection from its detail view, including its endpoint, model, protocol, request customization, and authentication settings. Main copies a saved API key from encrypted credentials without exposing it to the UI or requiring re-entry.",
             "**Paged canvas notes**: Combine body text, handwriting, highlights, and images in Magic Notes, or import PDF pages for annotation. Manually save and resume editing, zoom from 25% to 300%, fit the width, and export to PDF.",
             "**Choose canvas pages for AI analysis**: Select the first 1–8 pages in note settings, with a default of one page and the same range for text and images. Saving and export retain the complete canvas of up to 50 pages; visual page analysis requires an image-capable model.",
             "**Connect HTTP PaddleOCR-VL**: Configure an OCR service in Document Parsing for both chat attachments and knowledge imports, without loading that service’s model weights locally. Test parsing with real files and configure layout, table, and other options supported by the service.",
@@ -54,6 +60,8 @@
             "**Read supplementary help on demand**: Page and settings explanations move into help controls beside titles or fields, accessible by mouse and keyboard. This reduces persistent explanatory text while keeping important operation consequences and errors visible."
           ],
           "fixes": [
+            "**Run history migration only when needed**: The first launch after upgrading an older database still compacts repeated execution records. Once the database reaches the current schema, chatting and reopening GoodBuddy no longer show the history migration screen again.",
+            "**Make model URL errors actionable**: Saving a model connection now identifies the specific connection when its endpoint is blank, too long, or unsupported, and keeps an accessible error beside the URL field instead of showing only a generic “Invalid URL”.",
             "**Keep older conversations and long histories accessible**: Conversation lists and search are no longer limited to the latest 100 conversations, and consecutive sends no longer truncate history beyond 500 messages. Model context limits still apply, and previously lost history cannot be recovered.",
             "**Preserve drafts and canvas edits**: Restoring queued text no longer overwrites newer input, and deleting canvas pages preserves body and checklist formatting. Rejected oversized input retains existing undo history, and image OCR without usable text preserves image delivery.",
             "**Keep question cards in their original position**: Answered interactive questions no longer move behind later output. Reopening the conversation preserves the question-and-answer order.",
@@ -67,7 +75,7 @@
             "First launch upgrades the database and moves note bodies into local files, which may take time and require additional disk space. Back up all user data first; older clients cannot open the upgraded database, so use a pre-upgrade backup for rollback.",
             "Subsequent note backups must include a consistent database and its adjacent `notes/` directory. Canvas notes require manual saving, and exported PDFs are raster images without a searchable text layer.",
             "HTTP OCR sends recognition content to the configured service and may incur charges; advanced-option results depend on the deployment. Fast text/index modes skip OCR, while explicit image text extraction still invokes the selected OCR.",
-            "Remote users should upgrade to **Desktop 0.13.7** before downloading and updating to **Agent 0.13.1**. Remote projects remain a technical preview, and Execute uses the selected SSH account’s permissions.",
+            "Remote users should upgrade to **Desktop 0.13.8** before downloading and updating to **Agent 0.13.2**. Remote projects remain a technical preview, and Execute uses the selected SSH account’s permissions.",
             "Standard desktop packages cover Windows, macOS, and Linux on x64/arm64, without a LoongArch experimental preview."
           ]
         }

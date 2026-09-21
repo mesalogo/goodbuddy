@@ -1173,23 +1173,24 @@ export function ChannelSettingsSection({
         category="channels"
         error={error}
         headingId="channel-settings-heading"
+        navigation={
+          <div className="channel-settings__tabs">
+            <PageTabs
+              ariaLabel={t('channels.sectionAriaLabel')}
+              idPrefix="channel-settings"
+              onChange={setActiveChannel}
+              tabs={channelTabs}
+              value={activeChannel}
+              variant="segmented"
+            />
+          </div>
+        }
       />
       <section
         aria-label={t('channels.sectionAriaLabel')}
         className="settings-section channel-settings"
       >
       <SettingsWarningList warnings={snapshot.warnings} />
-
-      <div className="channel-settings__tabs">
-        <PageTabs
-          ariaLabel={t('channels.sectionAriaLabel')}
-          idPrefix="channel-settings"
-          onChange={setActiveChannel}
-          tabs={channelTabs}
-          value={activeChannel}
-          variant="segmented"
-        />
-      </div>
 
       <div
         aria-labelledby={`channel-settings-tab-${activeChannel}`}

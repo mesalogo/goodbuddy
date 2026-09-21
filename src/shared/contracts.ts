@@ -617,11 +617,27 @@ export {
 export const defaultAnthropicMaximumOutputTokens = 32_000
 export const maximumModelOutputTokens = 10_000_000
 
+export const modelConnectionUrlSchema = z
+  .string()
+  .trim()
+  .min(1, '模型服务地址不能为空')
+  .max(2_048, '模型服务地址不能超过 2048 个字符')
+  .refine(
+    (value) => {
+      try {
+        return ['http:', 'https:'].includes(new URL(value).protocol)
+      } catch {
+        return false
+      }
+    },
+    '模型服务地址必须是完整的 HTTP 或 HTTPS 地址'
+  )
+
 const modelProfileInputSchema = z
   .object({
     id: modelProfileIdSchema,
     name: z.string().trim().min(1).max(64),
-    baseUrl: z.string().url().max(2_048),
+    baseUrl: modelConnectionUrlSchema,
     modelName: z
       .string()
       .trim()
@@ -647,7 +663,13 @@ const modelProfileInputSchema = z
     imageGenerationQuality: imageGenerationQualitySchema,
     requestHeaders: modelRequestHeadersSchema.optional(),
     requestBody: modelRequestBodySchema.optional(),
-    apiKey: modelApiKeyUpdateSchema
+    apiKey: z.union([
+      modelApiKeyUpdateSchema,
+      z.object({
+        action: z.literal('copy'),
+        sourceProfileId: modelProfileIdSchema
+      }).strict()
+    ])
   })
   .strict()
 
@@ -694,7 +716,7 @@ export const runtimeModelSourceSchema = z.discriminatedUnion('kind', [
 export const runtimeSettingsInputSchema = z
   .object({
     provider: runtimeProviderSchema,
-    modelBaseUrl: z.string().url().max(2_048),
+    modelBaseUrl: modelConnectionUrlSchema,
     modelName: z
       .string()
       .trim()
@@ -765,19 +787,6 @@ export const runtimeSettingsInputSchema = z
         path: ['apiKey'],
         message: '无认证模型连接不得配置 API Key'
       })
-    }
-    const endpoints = settings.modelProfiles?.map((profile, index) => ({
-      path: ['modelProfiles', index, 'baseUrl'] as (string | number)[],
-      value: profile.baseUrl
-    })) ?? [{ path: ['modelBaseUrl'], value: settings.modelBaseUrl }]
-    for (const endpoint of endpoints) {
-      if (!['http:', 'https:'].includes(new URL(endpoint.value).protocol)) {
-        context.addIssue({
-          code: 'custom',
-          path: endpoint.path,
-          message: '模型服务地址必须使用 HTTP 或 HTTPS'
-        })
-      }
     }
     if (settings.modelProfiles) {
       for (const [index, profile] of settings.modelProfiles.entries()) {

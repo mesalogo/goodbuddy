@@ -1,6 +1,7 @@
 import {
   Cpu,
   Download,
+  FolderOpen,
   RefreshCw,
   RotateCcw,
   Save,
@@ -32,9 +33,7 @@ import {
   type GlobalShortcutUpdateErrorCode
 } from '../../shared/shortcut'
 import type { AppNotificationInput } from './notifications'
-import {
-  PageTabs
-} from './WorkspacePrimitives'
+import { PageTabs } from './WorkspacePrimitives'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
@@ -46,6 +45,8 @@ type PlatformFeaturesSettingsSectionProps = {
     enabled: boolean
   ) => void
   onRemoteProjectsEnabledChange: (enabled: boolean) => void
+  onWorkspacePathChange: (path: string) => void
+  workspacePath: string
   onNotify?: (notification: AppNotificationInput) => void
   onDirtyChange?: (dirty: boolean) => void
   onShortcutSettingsChanged?: (
@@ -53,9 +54,7 @@ type PlatformFeaturesSettingsSectionProps = {
   ) => void
 }
 
-type PlatformFeaturesTab =
-  | 'general'
-  | 'remote-projects'
+type PlatformFeaturesTab = 'general' | 'remote-projects'
 
 const shortcutErrorTranslationKeys: Record<
   GlobalShortcutUpdateErrorCode,
@@ -72,11 +71,14 @@ const shortcutErrorTranslationKeys: Record<
 export function PlatformFeaturesSettingsSection({
   onConversationHtmlRenderingEnabledChange,
   onRemoteProjectsEnabledChange,
+  onWorkspacePathChange,
+  workspacePath,
   onNotify,
   onDirtyChange,
   onShortcutSettingsChanged
 }: PlatformFeaturesSettingsSectionProps): React.JSX.Element {
   const { t } = useTranslation('settingsSections')
+  const { t: settingsT } = useTranslation('settings')
   const [activeSection, setActiveSection] =
     useState<PlatformFeaturesTab>('general')
   const [settings, setSettings] = useState<ApplicationSettings>()
@@ -523,35 +525,84 @@ export function PlatformFeaturesSettingsSection({
         category="platform-features"
         error={error}
         headingId="platform-features-heading"
+        navigation={
+          <div className="platform-features-tabs">
+            <PageTabs
+              ariaLabel={t('platformFeatures.tabs.ariaLabel')}
+              idPrefix="platform-features"
+              onChange={setActiveSection}
+              tabs={[
+                {
+                  id: 'general',
+                  label: t('platformFeatures.tabs.general')
+                },
+                {
+                  id: 'remote-projects',
+                  label: t('platformFeatures.remoteProjects.title')
+                }
+              ]}
+              value={activeSection}
+              variant="segmented"
+            />
+          </div>
+        }
       />
       <SettingsWarningList warnings={settings?.warnings} />
-      <div className="platform-features-tabs">
-        <PageTabs
-          ariaLabel={t('platformFeatures.tabs.ariaLabel')}
-          idPrefix="platform-features"
-          onChange={setActiveSection}
-          tabs={[
-            {
-              id: 'general',
-              label: t('platformFeatures.tabs.general')
-            },
-            {
-              id: 'remote-projects',
-              label: t('platformFeatures.remoteProjects.title')
-            }
-          ]}
-          value={activeSection}
-          variant="segmented"
-        />
-      </div>
 
-      <section
-        aria-labelledby="platform-features-tab-general"
-        className="settings-section"
-        hidden={activeSection !== 'general'}
-        id="platform-features-panel-general"
-        role="tabpanel"
-      >
+      {activeSection === 'general' && (
+        <section
+          aria-labelledby="platform-features-tab-general"
+          className="settings-section"
+          id="platform-features-panel-general"
+          role="tabpanel"
+        >
+        <article className="capability-card">
+          <div className="capability-card__header">
+            <span className="inline-help-label">
+              <FolderOpen aria-hidden="true" size={16} />
+              <strong>{settingsT('runtime.workspace.title')}</strong>
+              <InlineHelp label={settingsT('runtime.workspace.title')}>
+                {settingsT('runtime.workspace.description')}
+              </InlineHelp>
+            </span>
+          </div>
+          <label className="field">
+            <span>{settingsT('runtime.workspace.directoryLabel')}</span>
+            <div className="workspace-picker">
+              <input
+                aria-label={settingsT('runtime.workspace.directoryLabel')}
+                onChange={(event) =>
+                  onWorkspacePathChange(event.target.value)
+                }
+                value={workspacePath}
+              />
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  void window.goodbuddy.settings
+                    .selectWorkspace()
+                    .then((selected) => {
+                      if (selected) {
+                        onWorkspacePathChange(selected)
+                      }
+                    })
+                    .catch((reason: unknown) => {
+                      setError(
+                        displayErrorMessage(
+                          reason,
+                          settingsT('errors.selectWorkspace')
+                        )
+                      )
+                    })
+                }}
+                type="button"
+              >
+                {settingsT('actions.select')}
+              </button>
+            </div>
+          </label>
+        </article>
+
         <article className="capability-card">
           <div className="capability-card__header">
             <span className="inline-help-label">
@@ -751,15 +802,16 @@ export function PlatformFeaturesSettingsSection({
             </p>
           )
         )}
-      </section>
+        </section>
+      )}
 
-      <section
-        aria-labelledby="platform-features-tab-remote-projects"
-        className="settings-section"
-        hidden={activeSection !== 'remote-projects'}
-        id="platform-features-panel-remote-projects"
-        role="tabpanel"
-      >
+      {activeSection === 'remote-projects' && (
+        <section
+          aria-labelledby="platform-features-tab-remote-projects"
+          className="settings-section"
+          id="platform-features-panel-remote-projects"
+          role="tabpanel"
+        >
         {settings ? (
           <article className="capability-card">
             <div className="capability-card__header">
@@ -1045,7 +1097,8 @@ export function PlatformFeaturesSettingsSection({
             </p>
           )}
         </article>
-      </section>
+        </section>
+      )}
 
     </>
   )

@@ -8403,6 +8403,21 @@ button > svg {
   min-width: 0;
 }
 
+.settings-category-header--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: 0 0 auto;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+
+.settings-category-header__navigation {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
 .settings-category-header__content :is(h2, h3) {
   margin: 0;
   color: var(--text-primary);
@@ -9220,6 +9235,9 @@ button > svg {
 
 .model-type-navigation {
   display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  overflow-x: auto;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
@@ -10272,6 +10290,17 @@ details.settings-section > :not(summary) + :not(summary) {
 .update-settings__actions {
   display: flex;
   flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.settings-content-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.settings-content-actions button {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-2);
 }
 

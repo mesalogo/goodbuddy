@@ -24,7 +24,7 @@ records are listed separately and do not introduce another feature status.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.13.7. See the
+  releases and automatic updates; no preview is planned for 0.13.8. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -315,7 +315,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.1`, while the current Desktop release candidate is `0.13.7`; formal
+  `0.13.2`, while the current Desktop release candidate is `0.13.8`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -825,11 +825,11 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.7` and Agent `0.13.1`, with
+- Current source candidates are Desktop `0.13.8` and Agent `0.13.2`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
-- Agent `0.13.1` packages both OpenCode and Continue and delivers native execution
-  checklists. Its packages require Desktop `0.13.7`;
+- Agent `0.13.2` packages both OpenCode and Continue and delivers native execution
+  checklists. Its packages require Desktop `0.13.8`;
   update Desktop first, then the Host environment. Node remains `24.19.0`.
 - Validation records remain separate from implementation status. Current-source
   storage validation covers real local and Linux x64 Host tool workloads,
@@ -878,7 +878,7 @@ records are listed separately and do not introduce another feature status.
   Windows desktop-to-Linux checks cover installation, checklist updates, long lists,
   cancellation and restart recovery. Execute session MCP delivery passed real
   text-model Host checks with a substituted image service, not real image generation.
-  Candidate Agent `0.13.1` requires Desktop `0.13.7`; publication and native
+  Candidate Agent `0.13.2` requires Desktop `0.13.8`; publication and native
   platform acceptance remain separate from Linux development evidence. See the
   [validation record](./docs/features/remote-host/runtime-checklist-validation.md).
 

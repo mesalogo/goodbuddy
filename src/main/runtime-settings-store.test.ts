@@ -126,6 +126,75 @@ describe('RuntimeSettingsStore', () => {
     expect((await reloaded.update({ ...input, modelProfiles: [text], defaultImageModelProfileId: null })).defaultImageModelProfileId).toBeNull()
   })
 
+  it('copies an existing model credential to a new profile without exposing it', async () => {
+    const { store } = await createStore()
+    const initial = await store.getPublicSettings()
+    const source = initial.modelProfiles[0]!
+    const copiedId = '00000000-0000-4000-8000-000000000123'
+    await store.update(
+      runtimeSettingsInputSchema.parse({
+        ...settings(),
+        modelAuthentication: 'api-key',
+        modelProfiles: [
+          {
+            id: source.id,
+            name: source.name,
+            baseUrl: source.baseUrl,
+            modelName: source.modelName,
+            protocol: source.protocol,
+            authentication: 'api-key',
+            imageGenerationQuality: source.imageGenerationQuality,
+            apiKey: { action: 'replace', value: 'source-secret' }
+          }
+        ],
+        defaultModelProfileId: source.id
+      })
+    )
+    const copied = await store.update(
+      runtimeSettingsInputSchema.parse({
+        ...settings(),
+        modelAuthentication: 'api-key',
+        modelProfiles: [
+          {
+            id: source.id,
+            name: source.name,
+            baseUrl: source.baseUrl,
+            modelName: source.modelName,
+            protocol: source.protocol,
+            authentication: 'api-key',
+            imageGenerationQuality: source.imageGenerationQuality,
+            apiKey: { action: 'keep' }
+          },
+          {
+            id: copiedId,
+            name: 'Copied model',
+            baseUrl: source.baseUrl,
+            modelName: source.modelName,
+            protocol: source.protocol,
+            authentication: 'api-key',
+            imageGenerationQuality: source.imageGenerationQuality,
+            apiKey: {
+              action: 'copy',
+              sourceProfileId: source.id
+            }
+          }
+        ],
+        defaultModelProfileId: source.id
+      })
+    )
+    expect(copied.modelProfiles.find((profile) => profile.id === copiedId))
+      .toMatchObject({
+        apiKeyConfigured: true,
+        credentialSource: 'encrypted'
+      })
+    expect(JSON.stringify(copied)).not.toContain('source-secret')
+    await expect(store.getResolvedSettings()).resolves.toMatchObject({
+      modelProfiles: expect.arrayContaining([
+        expect.objectContaining({ id: copiedId, apiKey: 'source-secret' })
+      ])
+    })
+  })
+
   it('rejects malformed conversation image settings', () => {
     expect(runtimeSettingsInputSchema.safeParse(settings({ defaultImageModelProfileId: 'not-a-uuid' })).success).toBe(false)
     expect(runtimeSettingsInputSchema.safeParse({ ...settings(), modelProfiles: [{ id: '00000000-0000-4000-8000-000000000001', name: 'Image', baseUrl: 'https://example.com', modelName: 'image', protocol: 'openai-images-generations', authentication: 'none', imageGenerationQuality: 'auto', apiKey: { action: 'keep' }, allowConversationInvocation: 'true' }] }).success).toBe(false)

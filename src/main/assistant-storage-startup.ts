@@ -10,6 +10,7 @@ import {
 } from '../shared/assistant-storage-contracts'
 import { ipcChannels } from '../shared/ipc-channels'
 import { assertTrustedSender } from './trusted-ipc-sender'
+import { hasPendingAssistantStorageUpgrade } from './assistant/assistant-storage-upgrade'
 import { loadMainWindow } from './window'
 
 export async function prepareAssistantStorage(
@@ -22,6 +23,7 @@ export async function prepareAssistantStorage(
     throw error
   })
   if (!file) return
+  if (!hasPendingAssistantStorageUpgrade(databasePath)) return
   let progress: AssistantStorageProgress = {
     stage: 'scanning', processed: 0, total: 0, bytesBefore: file.size
   }
