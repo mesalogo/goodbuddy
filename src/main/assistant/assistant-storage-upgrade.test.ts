@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationMessageBlock } from '../../shared/assistant-contracts'
@@ -84,6 +84,58 @@ describe('subagent progress storage', () => {
         } finally { reopened.close() }
       }
       expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBe(free)
+      expect(sql.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    } finally { sql.close() }
+  })
+
+  it('does not re-show migration after a note is already migrated and later chats free pages', async () => {
+    const { path, database } = await fixture()
+    const note = database.createMagicNote({ title: 'Legacy note', content: { version: 1, ops: [{ insert: 'note body\n' }] } })
+    database.close()
+    const legacy = new DatabaseSync(path)
+    try {
+      legacy.prepare('UPDATE magic_note_entries SET content_json = ? WHERE id = ?')
+        .run(JSON.stringify(note.entries[0]!.content), note.entries[0]!.id)
+      legacy.exec('PRAGMA user_version = 37')
+    } finally { legacy.close() }
+    expect(hasPendingAssistantStorageUpgrade(path)).toBe(true)
+    upgradeAssistantStorage(path, () => undefined)
+    expect(hasPendingAssistantStorageUpgrade(path)).toBe(false)
+    database.initialize(dirname(path))
+    expect(database.getMagicNote(note.id)).toEqual(note)
+    const entry = database.createMagicNoteEntry({
+      noteId: note.id, content: { version: 1, ops: [{ insert: 'New entry\n' }] }, plainText: ''
+    }).entries[1]!
+    database.updateMagicNoteEntry({
+      entryId: entry.id, expectedRevision: entry.revision,
+      content: { version: 1, ops: [{ insert: 'Edited entry\n' }] }, plainText: ''
+    })
+    const expectedNote = database.getMagicNote(note.id)
+    const header = { id: randomUUID(), title: 'Chat after note', updatedAt: 1000 }
+    const message = {
+      id: randomUUID(), role: 'assistant' as const, state: 'complete' as const,
+      content: 'Long draft'.repeat(100_000), createdAt: 1000
+    }
+    database.saveLocalConversations([{ header, messages: [message] }])
+    database.saveLocalConversations([{ header, messages: [{ ...message, content: 'Final response' }] }])
+    const expectedConversation = database.getConversation(header.id)
+    database.close()
+    const sql = new DatabaseSync(path)
+    try {
+      expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBeGreaterThan(0)
+      expect(sql.prepare("SELECT COUNT(*) AS count FROM magic_note_entries WHERE json_extract(content_json, '$.storage') = 'file'").get()!.count).toBe(2)
+      const exec = vi.spyOn(DatabaseSync.prototype, 'exec')
+      for (let restart = 0; restart < 3; restart++) {
+        expect(hasPendingAssistantStorageUpgrade(path)).toBe(false)
+        const progress = vi.fn()
+        upgradeAssistantStorage(path, progress)
+        expect(progress).not.toHaveBeenCalled()
+        database.initialize(dirname(path))
+        expect(database.getMagicNote(note.id)).toEqual(expectedNote)
+        expect(database.getConversation(header.id)).toEqual(expectedConversation)
+        database.close()
+      }
+      expect(exec.mock.calls.some(([statement]) => /VACUUM/i.test(statement))).toBe(false)
       expect(sql.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
     } finally { sql.close() }
   })

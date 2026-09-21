@@ -140,7 +140,8 @@
 
 ### 开源、构建与发布
 
-- 当前源码候选为 Desktop `0.13.8`、Agent `0.13.2`，OpenCode 固定为 `1.18.29`、Continue 为 `1.5.47`；正式发布状态以独立发布渠道为准。
+- 当前源码候选为 Desktop `0.13.9`、Agent `0.13.2`，OpenCode 固定为 `1.18.29`、Continue 为 `1.5.47`；正式发布状态以独立发布渠道为准。
+- Desktop `0.13.9` 修复已有文件格式笔记时，正常写入后重启仍重复进入迁移的问题。Agent 与存储格式均不变；候选仍需主分支 CI 和原生发布打包，本次不构建 LoongArch 预览。
 - Agent `0.13.2` 同时携带 OpenCode 和 Continue，并交付原生执行清单；复合包要求 Desktop `0.13.8`，请先升级 Desktop，再更新 Host 环境。Node 保持 `24.19.0`。
 - 验证记录与功能状态分开。存储已有本地及 Linux x64 Host 真实工具任务、多项目多会话、取消和无损迁移验证；进程复用有 Windows 完整 App 与 Linux x64 Host 证据，PPTX OCR 与空闲内存释放有 Windows 真实文件证据。图片工具已有真实服务商生成/编辑及 Host 传输证据，这些记录未覆盖完整界面自然语言调用和本地/远程切换。候选仍需主分支 CI 及原生发布打包，详见[Runtime 验证记录](./docs/features/assistant-workbar/progress.md)与[图片工具验证记录](./docs/features/conversation-media-generation/progress.md)。
 - 发布准备前，`9836a4c` 已通过本地 4,858 项测试（67 项跳过）、完整类型检查和 lint；真实服务商画布分析仍未验证。该提交的三个原生 Agent CI 构建通过；桌面 CI `35485936807` 为 4,875 项通过、8 项 Electron 测试失败，均因 Linux 沙箱辅助程序未配置，在页面断言前退出。候选配置该程序并在 Xvfb 下运行测试，不关闭沙箱；候选本地验证、主分支 CI 与原生标签打包分别记录，不在发布准备中运行本地生产构建或打包。

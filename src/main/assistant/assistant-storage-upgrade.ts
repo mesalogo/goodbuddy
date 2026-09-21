@@ -33,22 +33,13 @@ export function hasPendingAssistantStorageUpgrade(
        LIMIT 1`
     ).get()
     if (!noteTable) return false
-    const noteEntry = database.prepare(
-      'SELECT 1 FROM magic_note_entries LIMIT 1'
-    ).get()
-    if (!noteEntry) return false
-    const hasLegacyPayload = Boolean(database.prepare(
+    return Boolean(database.prepare(
       `SELECT 1
        FROM magic_note_entries
        WHERE json_extract(content_json, '$.storage') IS NULL
           OR json_extract(content_json, '$.storage') <> 'file'
        LIMIT 1`
     ).get())
-    if (hasLegacyPayload) return true
-    const free = database.prepare('PRAGMA freelist_count').get() as {
-      freelist_count: number
-    }
-    return free.freelist_count > 0
   } finally {
     database.close()
   }
@@ -57,9 +48,10 @@ export function hasPendingAssistantStorageUpgrade(
 export function upgradeAssistantStorage(
   databasePath: string,
   onProgress: (progress: AssistantStorageProgress) => void,
-  isCancelled: () => boolean = () => false
+  isCancelled: () => boolean = () => false,
+  options: { pendingUpgradeConfirmed?: boolean } = {}
 ): void {
-  if (!hasPendingAssistantStorageUpgrade(databasePath)) return
+  if (!options.pendingUpgradeConfirmed && !hasPendingAssistantStorageUpgrade(databasePath)) return
   upgradeSubagentStorage(databasePath, onProgress, isCancelled)
   new AssistantDatabase(databasePath).upgradeMagicNoteStorage(onProgress, isCancelled)
 }

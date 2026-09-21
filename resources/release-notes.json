@@ -2,6 +2,32 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.9",
+      "releasedAt": "2026-09-21",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**修复重启后重复显示历史迁移**：修复已有笔记的用户正常聊天后，再次打开应用仍进入迁移页面的问题。已完成升级的数据继续按新格式保存，正常读写产生的数据库空闲页不再触发迁移；真正的旧数据仍会正常升级。"
+          ],
+          "notices": [
+            "本次仅更新 Desktop，Agent 保持 0.13.2，无需因此更新 Host 环境。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Stop repeated history migration after restart**: Fixed users with existing notes seeing the migration screen again after normal chat activity and reopening the app. Upgraded data continues to use the new storage format, and free database pages from normal writes no longer trigger migration; genuinely older data still upgrades normally."
+          ],
+          "notices": [
+            "This release updates Desktop only. Agent remains at 0.13.2, with no Host environment update required for this fix."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.8",
       "releasedAt": "2026-09-20",
       "notes": {

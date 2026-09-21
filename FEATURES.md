@@ -24,7 +24,7 @@ records are listed separately and do not introduce another feature status.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.13.8. See the
+  releases and automatic updates; no preview is planned for 0.13.9. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -315,7 +315,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.2`, while the current Desktop release candidate is `0.13.8`; formal
+  `0.13.2`, while the current Desktop release candidate is `0.13.9`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -825,9 +825,12 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.8` and Agent `0.13.2`, with
+- Current source candidates are Desktop `0.13.9` and Agent `0.13.2`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.13.9` fixes repeated startup migration after normal writes when
+  file-backed notes already exist. Agent and storage formats remain unchanged;
+  candidate main-branch CI and native release packaging are still required.
 - Agent `0.13.2` packages both OpenCode and Continue and delivers native execution
   checklists. Its packages require Desktop `0.13.8`;
   update Desktop first, then the Host environment. Node remains `24.19.0`.

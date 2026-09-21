@@ -1,15 +1,18 @@
 # 工作栏实现与验证进度
 
-## 2026-09-21 修复重复历史迁移
+## 2026-09-21 重复历史迁移补修（Desktop 0.13.9 候选）
 
-- 启动时历史优化 Worker 之前只判断 `assistant.sqlite` 是否存在，没有先判断
-  `PRAGMA user_version` 是否已经达到当前 Assistant schema，因此已完成迁移的数据库仍会
-  重复进入启动准备流程。现在仅对低于当前 schema 的数据库启动 Worker；已完成迁移的
-  数据库直接进入正常启动，聊天、退出和再次打开不会重新显示历史迁移页面。
-- 该问题来自 `49377206` 引入的启动迁移入口；本次修复不改变旧数据库的实际迁移逻辑，
-  仍保留首次升级、取消后重试和已提交批次续跑行为。
-- `npx vitest run src/main/assistant-storage-startup.test.ts src/main/assistant/assistant-storage-upgrade.test.ts src/main/assistant/assistant-database.test.ts`：
-  **115 项通过**；`npm run typecheck`、`npm run lint`：通过。
+- 0.13.8 的检查仍在已有笔记时把 `freelist_count > 0` 当作迁移依据；正常聊天更新
+  也会释放页。此前无笔记的回归提前返回，漏掉这一场景，不能证明该版本已修复。
+- 启动检查现在只依据旧 schema 或旧笔记 payload；空闲页只用于已进入迁移流程的
+  压缩步骤。同一启动流程的 Worker 重试显式复用已确认的迁移决定，不持久化额外标记。
+  若正文已转换但仅压缩中断，退出后重新启动不因剩余空闲页再次迁移，SQLite 可复用这些页。
+- 新回归先复现旧实现错误，再覆盖真实 SQLite 的旧笔记迁移、新建与编辑笔记、
+  聊天释放页、连续三次重开、内容一致性和完整性；断言没有进度回调或 VACUUM。
+- 此次仅修改 Desktop 启动流程；新写入格式、schema、Agent 和远程协议不变。
+- 迁移、Magic Notes、数据库专项复跑 **135 项通过**（30 秒单测上限）；此前一个
+  listTasks 测试超时，独立复跑通过。加强后的迁移与笔记专项 **32 项通过**。
+  全量测试此前被取消，候选全量验证和 CI 尚待完成。
 
 ## 2026-09-19 问答位置持久化
 

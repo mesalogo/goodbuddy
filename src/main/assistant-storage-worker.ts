@@ -7,10 +7,12 @@ const input = workerData as {
 }
 const cancellation = new Int32Array(input.cancellation)
 try {
+  // Startup checks for legacy data before spawning this worker, including retries.
   upgradeAssistantStorage(
     input.databasePath,
     (progress) => parentPort?.postMessage({ progress }),
-    () => Atomics.load(cancellation, 0) !== 0
+    () => Atomics.load(cancellation, 0) !== 0,
+    { pendingUpgradeConfirmed: true }
   )
   parentPort?.postMessage({ done: true })
 } catch (error) {

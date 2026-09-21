@@ -163,7 +163,9 @@ describe('Magic note SQLite and filesystem storage', () => {
     expect(sql.prepare("SELECT json_extract(content_json, '$.storage') AS storage FROM magic_note_entries").get()!.storage).toBe('file')
     expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBeGreaterThan(0)
     const stages: string[] = []
-    upgradeAssistantStorage(path, (progress) => stages.push(progress.stage))
+    upgradeAssistantStorage(path, (progress) => stages.push(progress.stage), () => false, {
+      pendingUpgradeConfirmed: true
+    })
     expect(stages).toContain('compacting')
     expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBe(0)
   })
