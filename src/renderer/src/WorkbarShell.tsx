@@ -10,6 +10,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import {
+  Activity,
   useCallback,
   useEffect,
   useId,
@@ -75,6 +76,15 @@ export type WorkbarShellProps = {
   appDefinitions?: readonly WorkbarAppDefinition[]
   onResolveUnavailableApp?: (definition: WorkbarAppDefinition) => void
   className?: string
+}
+
+type WorkbarPanelProps = {
+  instance: WorkbarTabInstance
+  renderPanel: (instance: WorkbarTabInstance) => ReactNode
+}
+
+function WorkbarPanel({ instance, renderPanel }: WorkbarPanelProps): React.JSX.Element {
+  return <>{renderPanel(instance)}</>
 }
 
 function joinClassNames(...values: (string | false | undefined)[]): string {
@@ -525,7 +535,11 @@ export function WorkbarShell({
             role="tabpanel"
             tabIndex={0}
           >
-            {renderPanel(instance)}
+            {instance.appId === 'tasks' ? (
+              <Activity mode={!catalogOpen && instance.id === activeInstanceId ? 'visible' : 'hidden'}>
+                <WorkbarPanel instance={instance} renderPanel={renderPanel} />
+              </Activity>
+            ) : <WorkbarPanel instance={instance} renderPanel={renderPanel} />}
           </div>
         ))}
 

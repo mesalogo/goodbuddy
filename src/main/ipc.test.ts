@@ -1324,6 +1324,7 @@ describe('registerIpcHandlers model download source routing', () => {
 vi.mock('electron', () => ({
   nativeImage: { createFromBuffer: (buffer: Buffer) => ({ isEmpty: () => false, toPNG: () => buffer }) },
   app: {
+    getAppPath: vi.fn(() => process.cwd()),
     getName: vi.fn(() => 'GoodBuddy'),
     getVersion: vi.fn(() => '0.1.0')
   },
@@ -4382,7 +4383,7 @@ describe('registerIpcHandlers token usage', () => {
       queueDueSchedules: vi.fn(() => []),
       listConversationQueueItems: vi.fn(() => []),
       listPendingConversationQueueIds: vi.fn(() => []),
-      getExecutionStats: vi.fn(() => summary)
+      getExecutionStatsAsync: vi.fn(async () => summary)
     }
     const webContents = {
       mainFrame: { url: 'file:///goodbuddy/index.html' },
@@ -4400,13 +4401,13 @@ describe('registerIpcHandlers token usage', () => {
       const event = { sender: webContents, senderFrame: webContents.mainFrame }
       const id = '00000000-0000-4000-8000-000000000301'
       for (const scope of [{ conversationId: id }, { projectId: id }]) {
-        expect(handler(event, scope)).toBe(summary)
-        expect(assistantDatabase.getExecutionStats).toHaveBeenLastCalledWith(scope, new Set())
+        await expect(handler(event, scope)).resolves.toEqual(summary)
+        expect(assistantDatabase.getExecutionStatsAsync).toHaveBeenLastCalledWith(scope, new Set(), expect.stringContaining('execution-stats-worker.js'))
       }
       expect(() => handler(event, {})).toThrow()
       expect(() => handler(event, { projectId: id, conversationId: id })).toThrow()
       expect(() => handler({ sender: {}, senderFrame: webContents.mainFrame }, { projectId: id })).toThrow()
-      expect(assistantDatabase.getExecutionStats).toHaveBeenCalledTimes(2)
+      expect(assistantDatabase.getExecutionStatsAsync).toHaveBeenCalledTimes(2)
     } finally {
       await dispose()
     }

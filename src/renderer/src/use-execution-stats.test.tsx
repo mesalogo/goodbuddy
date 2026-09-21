@@ -49,6 +49,16 @@ afterEach(() => {
 })
 
 describe('useExecutionStats', () => {
+  it('retains snapshot references for identical cached polling results', async () => {
+    getExecutionStats.mockImplementation(async () => stats(10))
+    const { result } = renderStats()
+    await act(async () => {})
+    const before = result.current
+    await act(async () => { vi.advanceTimersByTime(5_000) })
+    expect(result.current.conversation).toBe(before.conversation)
+    expect(result.current.project).toBe(before.project)
+    expect(getExecutionStats).toHaveBeenCalledTimes(4)
+  })
   it.each(['project', 'conversation'] as const)(
     'clears the previous %s selection and ignores its late polling result', async (scope) => {
       const { result, rerender } = renderStats()

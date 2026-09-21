@@ -7504,9 +7504,10 @@ export function registerIpcHandlers(
   })
   registerHandler(ipcChannels.tasksExecutionStats, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return assistantDatabase.getExecutionStats(
+    return assistantDatabase.getExecutionStatsAsync(
       executionStatsInputSchema.parse(input),
-      new Set([...activeRequests].filter(([, lease]) => lease.isReply && !lease.controller.signal.aborted).map(([id]) => id))
+      new Set([...activeRequests].filter(([, lease]) => lease.isReply && !lease.controller.signal.aborted).map(([id]) => id)),
+      join(app.getAppPath(), 'out/main/execution-stats-worker.js')
     )
   })
   registerHandler(ipcChannels.tasksSetStatus, (event, input: unknown) => {

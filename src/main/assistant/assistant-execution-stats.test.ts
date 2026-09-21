@@ -67,6 +67,58 @@ describe('execution duration evidence', () => {
     expect(database.getExecutionStats({ conversationId: randomUUID() })).toMatchObject({ durationMs: 0, requestCount: 0 })
   })
 
+  it('invalidates cached scopes for local messages, remote events and external deletion', () => {
+    expect(database.getExecutionStats({ conversationId }).requestCount).toBe(0)
+    database.saveLocalConversations([{
+      header: { id: conversationId, projectId, title: 'History', updatedAt: epoch },
+      messages: [{ id: randomUUID(), role: 'assistant', content: 'Retained', state: 'complete', createdAt: epoch }]
+    }])
+    expect(database.getExecutionStats({ conversationId }).requestCount).toBe(1)
+    const id = request()
+    database.getExecutionStats({ projectId })
+    database.appendRemoteTaskEventOnce({ taskId: id, bindingId: randomUUID(), operationId: randomUUID(), semanticSequence: '1', eventIndex: 0, kind: 'done', payload: { requestId: id, type: 'done' } })
+    expect(database.getExecutionStats({ projectId }).incompleteRequestCount).toBe(1)
+    const raw = new DatabaseSync(join(directory, 'assistant.sqlite'))
+    try {
+      raw.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId)
+      raw.prepare('DELETE FROM tasks WHERE id = ?').run(id)
+      expect(database.getExecutionStats({ conversationId }).requestCount).toBe(0)
+      expect(database.getExecutionStats({ projectId }).requestCount).toBe(0)
+    } finally { raw.close() }
+  })
+
+  it('does not cache transaction snapshots across rollback, or serve a closed connection', () => {
+    const connection = (database as unknown as { database: DatabaseSync }).database
+    const id = request()
+    expect(database.getExecutionStats({ conversationId }).requestCount).toBe(0)
+    connection.exec('BEGIN')
+    text(id)
+    expect(database.getExecutionStats({ conversationId }).requestCount).toBe(1)
+    connection.exec('ROLLBACK')
+    expect(database.getExecutionStats({ conversationId }).requestCount).toBe(0)
+    database.close()
+    expect(() => database.getExecutionStats({ conversationId })).toThrow()
+    database.initialize(directory)
+    expect(database.getExecutionStats({ conversationId }).requestCount).toBe(0)
+  })
+
+  it('bounds cache scopes, expires idle entries and isolates returned objects', () => {
+    const prepare = vi.spyOn(DatabaseSync.prototype, 'prepare')
+    const reads = (): number => prepare.mock.calls.filter(([sql]) => sql.includes('WITH scoped AS MATERIALIZED')).length
+    try {
+      const first = database.getExecutionStats({ projectId })
+      first.requestCount = 999
+      expect(database.getExecutionStats({ projectId }).requestCount).toBe(0)
+      expect(reads()).toBe(1)
+      for (let index = 0; index < 8; index++) database.getExecutionStats({ conversationId: randomUUID() })
+      database.getExecutionStats({ projectId })
+      expect(reads()).toBe(10)
+      at(31)
+      database.getExecutionStats({ projectId })
+      expect(reads()).toBe(11)
+    } finally { prepare.mockRestore() }
+  })
+
   it('excludes stable schedules, nested experts, and status-only maintenance but includes scheduled reply requests', () => {
     const schedule = database.createSchedule({ projectId, title: 'Schedule', prompt: 'Reply', workMode: 'ask', recurrence: 'daily', nextRunAt: new Date(epoch).toISOString() })
     database.updateTaskStatus(schedule.taskId, 'running')

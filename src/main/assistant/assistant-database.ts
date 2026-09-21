@@ -3,6 +3,7 @@ import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text
 import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { appendConversationQuestionBlock } from '../../shared/conversation-question-blocks'
 import { DatabaseSync } from 'node:sqlite'
+import { ExecutionStatsReader } from './execution-stats-reader'
 import { statSync } from 'node:fs'
 import { MagicNoteStorage } from '../magic-notes/magic-note-storage'
 import type { AssistantStorageProgress } from '../../shared/assistant-storage-contracts'
@@ -1786,13 +1787,20 @@ function deleteProjectRecords(
 }
 
 export class AssistantDatabase {
+  private static readonly executionStatsCacheTtlMs = 30_000
+  private static readonly executionStatsCacheLimit = 8
   private database?: DatabaseSync
+  private executionStatsReader?: ExecutionStatsReader
   private readonly noteStorage: MagicNoteStorage
   private readonly dirtyMagicNotes = new Set<string>()
   private readonly pendingMagicNoteCleanup = new Set<string | undefined>()
   private subagentProgress?: SubagentProgressStorage
   private channelEventWrites = 0
   private channelOutboxWrites = 0
+  private readonly executionStatsCache = new Map<
+    string,
+    { value: ExecutionStats; cachedAt: number; dataVersion: number; totalChanges: number }
+  >()
 
   constructor(
     private readonly databasePath: string,
@@ -2196,6 +2204,9 @@ export class AssistantDatabase {
   }
 
   close(): void {
+    this.executionStatsReader?.close()
+    this.executionStatsReader = undefined
+    this.executionStatsCache.clear()
     this.database?.close()
     this.database = undefined
     this.subagentProgress = undefined
@@ -4520,11 +4531,82 @@ export class AssistantDatabase {
     activeRequestIds: ReadonlySet<string> = new Set()
   ): ExecutionStats {
     const scope = executionStatsInputSchema.parse(input)
+    const cacheKey = 'conversationId' in scope
+      ? `conversation:${scope.conversationId}`
+      : `project:${scope.projectId}`
+    const database = this.requireDatabase()
+    // Never retain values read from a transaction that its caller can roll back.
+    if (database.isTransaction || activeRequestIds.size > 0) {
+      this.executionStatsCache.clear()
+      return this.readExecutionStatsSnapshot(scope, activeRequestIds)
+    }
+    const dataVersion = Number((database.prepare('PRAGMA data_version').get() as { data_version: number }).data_version)
+    const totalChanges = Number((database.prepare('SELECT total_changes() AS total_changes').get() as { total_changes: number }).total_changes)
+    const cached = activeRequestIds.size === 0
+      ? this.executionStatsCache.get(cacheKey)
+      : undefined
+    if (cached && cached.dataVersion === dataVersion && cached.totalChanges === totalChanges &&
+      Date.now() - cached.cachedAt < AssistantDatabase.executionStatsCacheTtlMs) {
+      this.executionStatsCache.delete(cacheKey)
+      this.executionStatsCache.set(cacheKey, cached)
+      return structuredClone(cached.value)
+    }
+    const result = this.readExecutionStatsSnapshot(scope, activeRequestIds)
+    this.executionStatsCache.delete(cacheKey)
+    this.executionStatsCache.set(cacheKey, {
+      value: structuredClone(result), cachedAt: Date.now(), dataVersion, totalChanges
+    })
+    while (this.executionStatsCache.size > AssistantDatabase.executionStatsCacheLimit) {
+      this.executionStatsCache.delete(this.executionStatsCache.keys().next().value!)
+    }
+    return result
+  }
+
+  getExecutionStatsAsync(
+    input: ExecutionStatsInput,
+    activeRequestIds: ReadonlySet<string>,
+    workerPath: string
+  ): Promise<ExecutionStats> {
+    this.requireDatabase()
+    const scope = executionStatsInputSchema.parse(input)
+    if (this.databasePath === ':memory:') {
+      return Promise.resolve(this.getExecutionStats(scope, activeRequestIds))
+    }
+    this.executionStatsReader ??= new ExecutionStatsReader(this.databasePath, workerPath)
+    return this.executionStatsReader.read(scope, activeRequestIds)
+  }
+
+  openReadOnly(): void {
+    if (this.database) throw new Error('Database already open')
+    this.database = new DatabaseSync(this.databasePath, { readOnly: true, timeout: 5_000 })
+  }
+
+  private readExecutionStatsSnapshot(
+    scope: ExecutionStatsInput,
+    activeRequestIds: ReadonlySet<string>
+  ): ExecutionStats {
+    const database = this.requireDatabase()
+    if (database.isTransaction) return this.computeExecutionStats(scope, activeRequestIds)
+    database.exec('BEGIN')
+    try {
+      const result = this.computeExecutionStats(scope, activeRequestIds)
+      database.exec('COMMIT')
+      return result
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  private computeExecutionStats(
+    scope: ExecutionStatsInput,
+    activeRequestIds: ReadonlySet<string>
+  ): ExecutionStats {
+    const database = this.requireDatabase()
     const result: ExecutionStats = {
       durationMs: 0, requestCount: 0, incompleteRequestCount: 0,
       activeRequestCount: 0, asOf: Date.now(), taskDurations: []
     }
-    const database = this.requireDatabase()
     const scopeId = 'conversationId' in scope ? scope.conversationId : scope.projectId
     const scopeColumn = 'conversationId' in scope ? 'conversation_id' : 'project_id'
     const durations = new Map<string, ExecutionStats['taskDurations'][number]>()

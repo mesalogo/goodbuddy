@@ -113,6 +113,7 @@ export default defineConfig({
         input: {
           index: resolve('src/main/index.ts'),
           'assistant-storage-worker': resolve('src/main/assistant-storage-worker.ts'),
+          'execution-stats-worker': resolve('src/main/execution-stats-worker.ts'),
           'wechat-sidecar': resolve(
             'src/main/channels/wechat-sidecar.ts'
           ),

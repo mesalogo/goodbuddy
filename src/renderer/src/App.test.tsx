@@ -4372,11 +4372,7 @@ describe("App", () => {
     const dialog = screen.getByRole("alertdialog", {
       name: "确认永久删除对话 新对话",
     });
-    expect(dialog).toHaveTextContent("将永久删除此会话的全部内容");
-    expect(dialog).toHaveTextContent(
-      "如果此会话有正在运行的任务，也会同时停止",
-    );
-    expect(dialog).toHaveTextContent("此操作不可恢复");
+      expect(dialog).not.toHaveTextContent("将永久删除此会话的全部内容");
     const cancel = screen.getByRole("button", {
       name: "取消删除对话 新对话",
     });

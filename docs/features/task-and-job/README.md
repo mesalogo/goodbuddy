@@ -11,6 +11,8 @@
 5. [Job 与 Subjob PRD](./job-and-subjob-prd.md)：Task 内部串行、并行和委派执行。
 6. [技术设计](./technical-design.md)：统计查询契约、请求证据与不完整数据边界，以及立即创建的事务和入队规则。
 
+统计读取与共享存储、worker 生命周期和 Renderer 调度的通用约束见[运行时存储架构](../../architecture/runtime-storage.md)。
+
 正式功能范围固定为当前项目：顶部显示当前会话消息总数和 Agent 累计回复时间，下方列出本项目全部会话的任务。创建默认立即执行并关联当前会话，可选择本项目其他会话、新会话或定时周期；产品与验收规则见 Task Center PRD 和 Scheduled Task PRD。
 
 ## 阅读顺序

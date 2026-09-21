@@ -1,5 +1,25 @@
 # Execution Statistics Query
 
+## Runtime Read Path
+
+WAL、连接所有权、内存缓存和后台读取的通用规则见
+[运行时存储架构](../../architecture/runtime-storage.md)。
+
+`tasks:execution-stats` 在 Main 校验来源、范围和当前回复租约，然后经
+`AssistantDatabase.getExecutionStatsAsync` 调用独立的 `execution-stats-worker`。
+worker 使用只读连接和短读事务执行下文查询，不运行数据库初始化或任务恢复。
+查询错误返回调用方，关闭数据库时终止 worker 并拒绝未完成请求。
+
+worker 内按项目或会话范围缓存结果，最多 8 项、30 秒；每次读取先检查 SQLite 连接版本。
+活动回复绕过缓存，事务内读取清空并绕过缓存，关闭连接清空缓存。写入提交后的下一次读取
+会重新计算，覆盖本地消息、远程事件、任务删除和恢复。统计数据仍以查询快照时刻为准。
+
+Renderer 保留可见时 5 秒刷新以及 revision、focus、visibility 触发刷新；失败的范围显示
+不可用，旧范围的迟到结果丢弃。重复缓存结果保留对象引用，更新通过 `startTransition`
+提交，避免无变化的轮询反复更新 App 的任务时长映射。任务面板使用 React `Activity`
+保留状态并降低隐藏时的渲染优先级；面板工厂在该边界内部调用。浏览器和终端沿用原有挂载
+与 effect 生命周期。
+
 ## Contract
 
 `window.goodbuddy.tasks.getExecutionStats(input)` invokes `tasks:execution-stats`.
@@ -61,10 +81,10 @@ Message counts used to detect missing history stay in Main; no bodies are return
   `completed_at` as an execution endpoint. Missing or invalid timing also marks
   the request incomplete; unknown time is not replaced with zero-length certainty.
 - A non-aborted reply lease confirms current execution: an open local interval
-  with a reliable start contributes through `asOf` and is not marked incomplete
-  just because it is active. Manual context compression leases are excluded.
+  with a reliable start contributes through `asOf` and remains complete while active.
+  Manual context compression leases are excluded.
   Without a live lease, stop at the latest evidence and mark an open interval
-  incomplete. Renderer must requery rather than extrapolate beyond `asOf`.
+  incomplete. Renderer must query again after `asOf`; it does not extrapolate.
 - Remote-recoverable records, tasks in persisted SSH project execution spaces,
   and events with remote operation provenance are
   incomplete and contribute no duration: their receipt timestamps cannot establish
@@ -100,7 +120,7 @@ terminal events. Only status payloads use JSON extraction. Request membership an
 remote provenance inspect scalar event columns; last-event and pre-interruption
 timestamps use `(task_id, id)` index seeks. This preserves a tool/delta event as
 the last reliable boundary without loading its body. Grouped assistant-message
-counts still read task metadata from message rows rather than from every event.
+counts read task metadata from message rows; event rows are not scanned for that count.
 It adds no tables, columns, migration, or persisted timing totals. Stable task
 lifecycle timestamps are never duration endpoints.
 

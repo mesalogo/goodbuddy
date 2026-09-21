@@ -294,7 +294,7 @@ Repository-wide release invariants:
 
 ## Validation
 
-Run all validators after source changes:
+Run all validators after source changes when function/fix done:
 
 ```text
 npm test

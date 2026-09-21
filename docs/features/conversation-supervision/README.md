@@ -11,6 +11,7 @@
 | [逻辑设计](./logic-design.md) | 整体架构图、图谱对象关系图、状态规则与需求映射 |
 | [UI 设计](./ui-design.md) | 应用导航、工作回顾、侧栏反馈及页面状态 |
 | [User Stories](./user-stories.md) | 监督者与故事线图谱的用户操作和验收场景 |
+| [技术设计](./technical-design.md) | Main/Renderer 分层、数据模型、IPC、安全边界和实施顺序 |
 | [故事线图谱设计](../story-graph/prd.md) | 图谱对象、环绕时间轴与实体交互 |
 
-统一应用的技术设计与实施进度尚未制定；逻辑待定项见[逻辑设计](./logic-design.md)。现有心跳行为见[智能心跳](../smart-heartbeat/README.md)，原型范围见[Story Graph 演示](../story-graph/README.md)。
+统一应用尚未接入产品，实施状态仍以代码和后续进度文档为准。逻辑待定项见[逻辑设计](./logic-design.md)，实施边界与阶段见[技术设计](./technical-design.md)。现有心跳行为见[智能心跳](../smart-heartbeat/README.md)，原型范围见[Story Graph 演示](../story-graph/README.md)。

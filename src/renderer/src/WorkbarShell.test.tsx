@@ -10,6 +10,7 @@ import {
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  useEffect,
   useState,
   type ReactNode
 } from 'react'
@@ -86,6 +87,34 @@ function ControlledShell({
 }
 
 describe('WorkbarShell', () => {
+  it('preserves task state and latest props while keeping hidden terminal and browser effects live', () => {
+    const stopped = vi.fn()
+    function Panel({ id, value }: { id: string; value: string }): ReactNode {
+      const [count, setCount] = useState(0)
+      useEffect(() => () => stopped(id), [id])
+      return <button onClick={() => setCount(count + 1)}>{id}:{value}:{count}</button>
+    }
+    const props = {
+      instances: [...DEFAULT_WORKBAR_INSTANCES, terminalOne],
+      onActiveInstanceChange: vi.fn(), onCloseInstance: vi.fn(), onCreateInstance: vi.fn(),
+      onResolveTerminalTarget: (): WorkbarTargetRef => ({ type: 'local' })
+    }
+    const panel = (value: string) => (instance: WorkbarTabInstance): ReactNode =>
+      <Panel id={instance.appId} value={value} />
+    const { rerender } = render(<WorkbarShell {...props}
+      activeInstanceId={DEFAULT_WORKBAR_INSTANCES[0]!.id} renderPanel={panel('old')} />)
+    fireEvent.click(screen.getByRole('button', { name: 'tasks:old:0' }))
+    rerender(<WorkbarShell {...props} activeInstanceId={terminalOne.id} renderPanel={panel('new')} />)
+    expect(stopped).toHaveBeenCalledWith('tasks')
+    expect(stopped).not.toHaveBeenCalledWith('terminal')
+    expect(stopped).not.toHaveBeenCalledWith('browser')
+    rerender(<WorkbarShell {...props}
+      activeInstanceId={DEFAULT_WORKBAR_INSTANCES[0]!.id} renderPanel={panel('latest')} />)
+    expect(screen.getByRole('button', { name: 'tasks:latest:1' })).toBeVisible()
+    expect(stopped).not.toHaveBeenCalledWith('terminal')
+    expect(stopped).not.toHaveBeenCalledWith('browser')
+  })
+
   it('shows overflow controls, scrolls without switching tabs, and hides them after widening', () => {
     let resize = (): void => {}
     vi.stubGlobal('ResizeObserver', class {

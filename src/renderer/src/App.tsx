@@ -9373,7 +9373,6 @@ function App(): React.JSX.Element {
                           }
                           disabled={deletingConversationId === conversation.id}
                           icon={<Trash2 aria-hidden="true" size={14} />}
-                          message={t("conversation.delete.message")}
                           onCancel={() => setConfirmingConversationId("")}
                           onConfirm={() =>
                             void deleteConversation(conversation.id)

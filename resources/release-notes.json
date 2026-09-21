@@ -2,6 +2,42 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.10",
+      "releasedAt": "2026-09-21",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**任务统计使用后台只读读取**：执行统计通过独立只读 worker 查询 WAL 数据，避免较重的统计 SQL 占用 Electron 主进程；统计缓存有明确的容量、有效期和失效边界。",
+            "**任务中心切换更顺畅**：隐藏任务面板保留运行状态并降低后台渲染优先级，切换任务中心、工作区、浏览器和成果页时减少重复渲染。"
+          ],
+          "fixes": [
+            "**修复 Agent 回复期间任务中心阶段性卡顿**：减少任务事件写入、统计刷新和 tab 切换渲染叠加造成的 UI 阻塞。",
+            "**完善运行时存储边界**：明确 WAL、主数据库连接、启动迁移 worker、统计 worker 和 Renderer 的职责，避免把启动迁移缓存误当作运行时统计缓存。",
+            "**删除对话确认更简洁**：移除重复的底部警告文案，保留明确的取消和永久删除操作。"
+          ],
+          "notices": [
+            "本次仅更新 Desktop，Agent 保持 **0.13.2**，无需更新 Host 环境。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Run execution statistics through a background read-only path**: Execution statistics now query WAL data through a dedicated read-only worker, keeping heavier aggregation SQL off the Electron Main thread with explicit cache capacity, lifetime, and invalidation rules.",
+            "**Smoother Task Center switching**: Hidden task panels preserve their running state while receiving lower-priority background rendering, reducing repeated work when switching between Task Center, Workspace, Browser, and Results."
+          ],
+          "fixes": [
+            "**Reduce intermittent Task Center stalls during Agent replies**: Reduced UI contention caused by task-event persistence, statistics refreshes, and tab-switch rendering occurring at the same time.",
+            "**Clarify runtime storage boundaries**: Documented the separate responsibilities of WAL, the business database connection, the startup migration worker, the statistics worker, and Renderer scheduling.",
+            "**Simplify conversation deletion confirmation**: Removed the duplicate bottom warning text while keeping clear Cancel and Permanently Delete actions."
+          ],
+          "notices": [
+            "This release updates Desktop only. Agent remains at **0.13.2**; no Host update is required."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.9",
       "releasedAt": "2026-09-21",
       "notes": {
