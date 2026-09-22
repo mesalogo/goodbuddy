@@ -8,10 +8,9 @@ export function useExecutionStats(
   revision: string,
   enabled: boolean
 ): { conversation?: ExecutionStats; project?: ExecutionStats } {
-  const [snapshot, setSnapshot] = useState<{
-    conversationId?: string; projectId?: string
-    conversation?: ExecutionStats; project?: ExecutionStats
-  }>({})
+  const [snapshots, setSnapshots] = useState(() => new Map<string, ExecutionStats>())
+  const conversationKey = JSON.stringify([projectId, conversationId])
+  const projectKey = JSON.stringify([projectId])
   useEffect(() => {
     if (!enabled || !projectId) return
     let cancelled = false
@@ -26,17 +25,20 @@ export function useExecutionStats(
         window.goodbuddy.tasks.getExecutionStats({ projectId })
       ])
       pending = false
-      if (!cancelled) startTransition(() => setSnapshot((current) => {
-        const next = {
-          conversationId, projectId,
-          conversation: conversation.status === 'fulfilled' ? conversation.value : undefined,
-          project: project.status === 'fulfilled' ? project.value : undefined
-        }
+      if (!cancelled) startTransition(() => setSnapshots((current) => {
+        if (cancelled) return current
+        const next = new Map(current)
         // IPC clones cached snapshots. Preserve references when their contents are unchanged
         // so idle polling does not rerender App and rebuild task duration maps.
-        return current.conversationId === conversationId && current.projectId === projectId &&
-          JSON.stringify(current.conversation) === JSON.stringify(next.conversation) &&
-          JSON.stringify(current.project) === JSON.stringify(next.project) ? current : next
+        for (const [key, result] of [[conversationKey, conversation], [projectKey, project]] as const) {
+          const value = result.status === 'fulfilled' ? result.value : undefined
+          if (JSON.stringify(current.get(key)) === JSON.stringify(value)) continue
+          if (value) next.set(key, value)
+          else next.delete(key)
+        }
+        return next.size === current.size &&
+          next.get(conversationKey) === current.get(conversationKey) &&
+          next.get(projectKey) === current.get(projectKey) ? current : next
       }))
     }
     void refresh()
@@ -50,10 +52,10 @@ export function useExecutionStats(
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onFocus)
     }
-  }, [conversationId, projectId, revision, enabled])
+  }, [conversationId, projectId, conversationKey, projectKey, revision, enabled])
   return {
-    conversation: enabled && snapshot.projectId === projectId && snapshot.conversationId === conversationId
-      ? snapshot.conversation : undefined,
-    project: enabled && snapshot.projectId === projectId ? snapshot.project : undefined
+    conversation: enabled && projectId && conversationId
+      ? snapshots.get(conversationKey) : undefined,
+    project: enabled && projectId ? snapshots.get(projectKey) : undefined
   }
 }

@@ -49,6 +49,31 @@ afterEach(() => {
 })
 
 describe('useExecutionStats', () => {
+  it.each(['conversation', 'project'] as const)(
+    'restores cached statistics immediately when returning to a %s', async (scope) => {
+      const { result, rerender } = renderStats()
+      await act(async () => {})
+      const cached = result.current
+      getExecutionStats.mockResolvedValue(stats(20))
+      rerender({
+        ...initialProps, conversationId: 'chat-b',
+        projectId: scope === 'project' ? 'project-b' : 'project-a'
+      })
+      await act(async () => {})
+      const conversation = deferred()
+      const project = deferred()
+      getExecutionStats.mockReturnValueOnce(conversation.promise).mockReturnValueOnce(project.promise)
+      rerender(initialProps)
+      expect(result.current.conversation).toBe(cached.conversation)
+      expect(result.current.project).toEqual(scope === 'project' ? cached.project : stats(20))
+      await act(async () => {
+        conversation.resolve(stats(30))
+        project.resolve(stats(40))
+      })
+      expect(result.current).toEqual({ conversation: stats(30), project: stats(40) })
+    }
+  )
+
   it('retains snapshot references for identical cached polling results', async () => {
     getExecutionStats.mockImplementation(async () => stats(10))
     const { result } = renderStats()
