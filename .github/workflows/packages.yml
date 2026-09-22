@@ -458,6 +458,7 @@ jobs:
         env:
           OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
           OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+          OSS_UPLOAD_ENDPOINT: https://oss-accelerate.aliyuncs.com
           OSS_REGION: ${{ steps.oss-release.outputs.region }}
         run: |
           set -euo pipefail
@@ -472,7 +473,7 @@ jobs:
             name="$(basename "$file")"
             ossutil cp "$file" \
               "oss://${OSS_BUCKET}/releases/${GITHUB_REF_NAME}/${name}" \
-              --endpoint "$OSS_ENDPOINT" \
+              --endpoint "$OSS_UPLOAD_ENDPOINT" \
               --region "$OSS_REGION" \
               --update
           done

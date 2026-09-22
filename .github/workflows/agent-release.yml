@@ -486,6 +486,7 @@ jobs:
           AGENT_VERSION: ${{ needs.authorize.outputs.version }}
           OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
           OSS_ENDPOINT: ${{ vars.ALIYUN_OSS_ENDPOINT }}
+          OSS_UPLOAD_ENDPOINT: https://oss-accelerate.aliyuncs.com
         run: |
           set -euo pipefail
           export OSS_ACCESS_KEY_ID="$ALIBABA_CLOUD_ACCESS_KEY_ID"
@@ -499,7 +500,7 @@ jobs:
             name="$(basename "$file")"
             ossutil cp "$file" \
               "oss://${OSS_BUCKET}/agent-releases/v${AGENT_VERSION}/${name}" \
-              --endpoint "$OSS_ENDPOINT" \
+              --endpoint "$OSS_UPLOAD_ENDPOINT" \
               --region "$region" \
               --update
           done
