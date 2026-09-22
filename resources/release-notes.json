@@ -2,6 +2,28 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.11",
+      "releasedAt": "2026-09-22",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**优化发布资源上传**：发布资源上传支持 OSS 传输加速，改善跨地域网络环境下的大文件上传稳定性。"
+          ],
+          "notices": []
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Improve release asset uploads**: Release asset uploads now support OSS transfer acceleration for better stability when uploading large files across regions."
+          ],
+          "notices": []
+        }
+      }
+    },
+    {
       "version": "0.13.10",
       "releasedAt": "2026-09-21",
       "notes": {
