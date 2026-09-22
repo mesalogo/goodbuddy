@@ -134,7 +134,8 @@ npm run lint
 
 扫描二维码加入 GoodBuddy 微信群：
 
-<img width="1250" height="1743" alt="46b5c3b5936388b0a55db6fe034a7d7f" src="https://github.com/user-attachments/assets/cc094468-2885-447a-afb4-91c7ac117fd3" />
+<img width="1250" height="1743" alt="8d6cd5dc3f347a0f3f1cf3844071b4d3" src="https://github.com/user-attachments/assets/e2cd4874-0b6c-40d4-8867-0a9e843a7cb5" />
+
 
 
 
