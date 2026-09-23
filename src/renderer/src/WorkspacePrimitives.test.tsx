@@ -620,6 +620,15 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
+  it('gives Supervisor a separate wide shell without widening dashboards', () => {
+    render(<PageShell variant="supervisor"><p>Supervisor canvas</p></PageShell>)
+    expect(screen.getByText('Supervisor canvas').closest('.page-shell')).toHaveClass('page-shell--supervisor')
+    expect(stylesheet).toContain('--content-supervisor: 1440px;')
+    expect(stylesheet).toContain('--content-dashboard: 1040px;')
+    expect(stylesheet).toMatch(/\.page-shell--supervisor\s*\{[^}]*var\(--page-gutter\)[^}]*var\(--content-supervisor\)/u)
+    expect(stylesheet).toMatch(/\.page-shell--dashboard\s*\{[^}]*var\(--content-dashboard\)/u)
+  })
+
   it('supports arrow-key tab and segmented-control selection', () => {
     const onTabChange = vi.fn()
     const onSegmentChange = vi.fn()

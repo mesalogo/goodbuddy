@@ -183,6 +183,7 @@ export type WorkbarExecutionTargetRef = z.infer<
 
 export const workbarTargetRefSchema = z.union([
   workbarExecutionTargetRefSchema,
+  z.object({ type: z.literal('task'), taskId: z.string().min(1).max(128) }).strict(),
   z
     .object({
       type: z.literal('conversation'),
@@ -206,7 +207,7 @@ export const workbarTabInstanceSchema = z
   .superRefine((instance, context) => {
     if (
       instance.appId === 'terminal' &&
-      (!instance.targetRef || instance.targetRef.type === 'conversation')
+      (!instance.targetRef || !['local', 'project'].includes(instance.targetRef.type))
     ) {
       context.addIssue({
         code: 'custom',
@@ -227,13 +228,17 @@ export const workbarTabInstanceSchema = z
     }
     if (
       instance.appId !== 'browser' &&
+      instance.appId !== 'tasks' &&
       instance.targetRef?.type === 'conversation'
     ) {
       context.addIssue({
         code: 'custom',
         path: ['targetRef'],
-        message: 'Conversation bindings are reserved for browser instances'
+        message: 'Conversation bindings require browser or tasks instances'
       })
+    }
+    if (instance.targetRef?.type === 'task' && instance.appId !== 'tasks') {
+      context.addIssue({ code: 'custom', path: ['targetRef'], message: 'Task bindings require tasks instances' })
     }
   })
 export type WorkbarTabInstance = z.infer<

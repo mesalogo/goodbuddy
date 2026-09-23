@@ -38,7 +38,7 @@ const pinnedSettings = {
   ...settings,
   applicationNavigation: {
     ...defaultApplicationNavigation,
-    pinned: { 'magic-notes': true, 'local-inference': true },
+    pinned: { 'magic-notes': true, heartbeat: true, 'local-inference': true },
   },
 }
 afterEach(async () => {
@@ -86,25 +86,35 @@ describe('Application Center', () => {
     expect(dialog).not.toHaveClass('application-center--detail')
   })
 
-  it.each([['知识库', 'knowledge'], ['智能心跳', 'heartbeat']])('keeps %s always shown with sorting but no settings or toggles', (title, id) => {
+  it('keeps 知识库 always shown with sorting but no settings or toggles', () => {
     const handlers = props()
     render(<ApplicationCenter {...handlers} />)
-    const card = screen.getByText(title, { exact: true }).closest('article')!
+    const card = screen.getByText('知识库', { exact: true }).closest('article')!
     expect(card).toHaveAttribute('draggable', 'true')
     expect(within(card).getByText('始终显示')).toBeInTheDocument()
     expect(within(card).queryByRole('switch')).not.toBeInTheDocument()
     expect(within(card).getAllByRole('button')).toHaveLength(3)
     fireEvent.click(within(card).getByRole('button', { name: '打开' }))
-    expect(handlers.onOpen).toHaveBeenCalledWith(id)
+    expect(handlers.onOpen).toHaveBeenCalledWith('knowledge')
     const notes = screen.getByText('魔法笔记', { exact: true }).closest('article')!
     fireEvent.dragStart(notes)
     fireEvent.drop(card)
-    expect(handlers.onUpdate).toHaveBeenCalledWith({ applicationNavigation: {
+      expect(handlers.onUpdate).toHaveBeenCalledWith({ applicationNavigation: {
       ...defaultApplicationNavigation,
-      order: id === 'knowledge'
-        ? ['magic-notes', 'knowledge', 'heartbeat', 'local-inference']
-        : ['knowledge', 'magic-notes', 'heartbeat', 'local-inference'],
-    } })
+        order: ['magic-notes', 'knowledge', 'heartbeat', 'local-inference'],
+      } })
+  })
+
+  it('provides a supervisor enable switch while preserving the heartbeat route id', () => {
+    const handlers = props()
+    render(<ApplicationCenter {...handlers} />)
+    const card = screen.getByText('监督者', { exact: true }).closest('article')!
+    expect(within(card).getByText('可选 · 已启用')).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('button', { name: '监督者 应用设置' }))
+    const enable = screen.getByRole('switch', { name: '启用应用' })
+    expect(enable).toBeChecked()
+    fireEvent.click(enable)
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ heartbeatEnabled: false })
   })
   it('searches disabled and unpinned applications, opens without pinning, and restores focus', () => {
     const handlers = props()
@@ -186,7 +196,7 @@ describe('Application Center', () => {
     const handlers = props()
     const { rerender } = render(<ApplicationCenter {...handlers} settings={pinnedSettings} />)
     const displayedOrder = () => screen.getAllByRole('article').map((row) => row.querySelector('strong')?.textContent)
-    expect(displayedOrder()).toEqual(['知识库', '智能心跳', '魔法笔记', '本机推理监控'])
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控'])
     expect(screen.getByRole('button', { name: '上移 知识库' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '下移 本机推理监控' })).toBeDisabled()
     const moveUp = screen.getByRole('button', { name: '上移 本机推理监控' })
@@ -201,12 +211,12 @@ describe('Application Center', () => {
     })
     expect(screen.getByRole('button', { name: '下移 本机推理监控' })).toBeDisabled()
     expect(await screen.findByRole('status')).not.toBeEmptyDOMElement()
-    expect(displayedOrder()).toEqual(['知识库', '智能心跳', '魔法笔记', '本机推理监控'])
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '魔法笔记', '本机推理监控'])
     rerender(<ApplicationCenter {...handlers} settings={{
       ...pinnedSettings,
       applicationNavigation: { ...pinnedSettings.applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] },
     }} />)
-    expect(displayedOrder()).toEqual(['知识库', '智能心跳', '本机推理监控', '魔法笔记'])
+    expect(displayedOrder()).toEqual(['知识库', '监督者', '本机推理监控', '魔法笔记'])
     expect(screen.getByRole('button', { name: '下移 魔法笔记' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '下移 本机推理监控' }))
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ applicationNavigation: pinnedSettings.applicationNavigation })

@@ -33,6 +33,7 @@ import { AssistantDatabase } from './assistant/assistant-database'
 import { ImageGenerationService } from './agent/image-generation-service'
 import type { AgentExecutionRequest } from './agent/runtime'
 import { KnowledgeService } from './knowledge/knowledge-service'
+import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
 import { RemotePromptCancelledError } from './agent/acp-remote-runtime'
 import {
@@ -5584,6 +5585,133 @@ describe('registerIpcHandlers agent terminal state', () => {
       workMode: 'execute'
     })
     await harness.dispose()
+  })
+
+  it.each(['global', 'projects'] as const)('collects supervision within the exact UI timeRange before limits (%s)', async (kind) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-22T08:00:00.000Z'))
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const project = database.createProject({ name: 'Review', description: '', rootPath: process.cwd(), defaultWorkMode: 'ask' })
+    const conversationId = crypto.randomUUID()
+    const from = '2026-09-22T10:00:00.000Z'
+    const to = '2026-09-22T10:15:00.000Z'
+    const after = '2026-09-22T10:15:00.001Z'
+    const oldTask = database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Old completed task', instructions: 'Review', workMode: 'ask' })
+    const memory = database.createMemory({ scope: 'global', type: 'fact', content: 'Current background content' })
+    vi.setSystemTime(new Date(from))
+    const newTask = database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Created in range', instructions: 'Review', workMode: 'ask' })
+    vi.setSystemTime(new Date(to))
+    database.updateTaskStatus(oldTask.id, 'completed')
+    vi.setSystemTime(new Date(after))
+    database.updateTaskStatus(newTask.id, 'completed')
+    database.createTask({ id: crypto.randomUUID(), projectId: project.id, title: 'Future task', instructions: 'Review', workMode: 'ask' })
+    database.setMemoryStatus(memory.id, 'confirmed')
+    const message = (content: string, timestamp: string) => ({ id: crypto.randomUUID(), role: 'user' as const, state: 'complete' as const, content, createdAt: Date.parse(timestamp) })
+    database.saveLocalConversations([{
+      header: { id: conversationId, projectId: project.id, title: 'Review', updatedAt: Date.parse(after) },
+      messages: [message('Before range', '2026-09-22T09:59:59.999Z'), message('At start', from), message('At end', to),
+        ...Array.from({ length: 25 }, () => message('After range', after))]
+    }, ...Array.from({ length: 21 }, () => ({
+      header: { id: crypto.randomUUID(), projectId: project.id, title: 'Future-only conversation', updatedAt: Date.parse(after) + 1 },
+      messages: [message('Future-only message', after)]
+    }))])
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify({ summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'))
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database)
+    try {
+      const scope = kind === 'global' ? { kind } : { kind, projectIds: [project.id] }
+      const input = { trigger: 'manual', scope, timeRange: { from, to } }
+      const result = await electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), input) as import('./assistant/supervisor-service').StoredSupervisionResult
+      expect(result.request).toEqual(input)
+      expect(result.evidence.filter(item => item.sourceType === 'conversation').map(item => item.content)).toEqual(['At start', 'At end'])
+      expect(result.evidence.filter(item => item.sourceType === 'task')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sourceId: oldTask.id, occurredAt: to }),
+        expect.objectContaining({ sourceId: newTask.id, occurredAt: from })
+      ]))
+      expect(result.evidence.filter(item => item.sourceType === 'task')).toHaveLength(2)
+      expect(result.evidence.find(item => item.sourceType === 'memory')).toMatchObject({
+        content: memory.content, occurredAt: after,
+        locator: { temporalRole: 'current-background', createdAt: memory.createdAt, updatedAt: after }
+      })
+      expect(run.mock.calls[0]![0].prompt).toContain(JSON.stringify(input.timeRange))
+      expect(run.mock.calls[0]![0].prompt).toContain('not a historical content snapshot')
+      const overview = await electronMocks.handlers.get(ipcChannels.supervisionOverview)!(trustedEvent(harness.webContents), { target: { type: 'conversation', conversationId } }) as Array<{ id: string; storyLineId: string; sourceId: string }>
+      expect(overview).toHaveLength(1)
+      expect(database.getSupervisionSource(overview[0]!.sourceId)?.sourceId).toBe(conversationId)
+      const graph = await electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: overview[0]!.storyLineId }) as { sources: unknown[] }
+      expect(graph.sources).toHaveLength(result.evidence.length)
+      expect(() => electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: 'wrong-story' })).toThrow('不匹配')
+      expect(() => electronMocks.handlers.get(ipcChannels.supervisionContinueContext)!(trustedEvent(harness.webContents), { resultId: 'wrong-result', sourceId: overview[0]!.sourceId })).toThrow('不匹配')
+      const legacy = database.buildHeartbeatInput({ scope, lookbackHours: 1 }, new Date(to))
+      expect(legacy.tasks.some(task => task.id === oldTask.id)).toBe(false)
+      expect(legacy.tasks.some(task => task.title === 'Future task')).toBe(true)
+      database.setProjectArchived(project.id, true)
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), {
+        ...input, scope: { kind: 'projects', projectIds: [project.id] }
+      })).rejects.toThrow('must exist and be active')
+      expect(run).toHaveBeenCalledOnce()
+    } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
+  })
+
+  it('dispatches supervision continuation through the real queue payload parser', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const conversationId = crypto.randomUUID()
+    database.saveLocalConversations([{ header: { id: conversationId, title: 'Continue', updatedAt: Date.now(), workMode: 'ask', runtimeSelection: { provider: 'opencode' } }, messages: [] }])
+    const harness = createHarness({ capability: 'chat' }, undefined, 'always', undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database)
+    try {
+      await electronMocks.handlers.get(ipcChannels.supervisionContinue)!(trustedEvent(harness.webContents), { conversationId, prompt: 'Continue this review' })
+      await vi.waitFor(() => expect(harness.webContents.send).toHaveBeenCalledWith(ipcChannels.conversationQueueDispatch,
+        expect.objectContaining({ input: expect.objectContaining({ conversationId, prompt: 'Continue this review', attachments: [] }) })))
+      const dispatch = harness.webContents.send.mock.calls.find(([channel]) => channel === ipcChannels.conversationQueueDispatch)![1] as ConversationQueueDispatch
+      expect(database.isConversationUserQueueItemDispatching(dispatch.item.id)).toBe(true)
+      expect(harness.contextManager.restoreFromQueue).not.toHaveBeenCalled()
+    } finally { await harness.dispose(); database.close() }
+  })
+
+  it('validates supervision knowledge preview and commit against actual local entity ownership', async () => {
+    const database = new KnowledgeDatabase(':memory:')
+    database.initialize()
+    const library = database.createKnowledgeBase({ name: 'Target', storageMode: 'reference' })
+    const other = database.createKnowledgeBase({ name: 'Other', storageMode: 'reference' })
+    const entity = database.createEntity({ knowledgeBaseId: other.id, name: 'Original', type: 'Concept' })
+    const harness = createHarness({ capability: 'chat' }, undefined, 'always', undefined, false, undefined, { database })
+    Object.assign(harness.assistantDatabase, { getSupervisionSource: () => ({ id: 'source', title: 'Source', content: 'Evidence' }) })
+    const event = trustedEvent(harness.webContents)
+    const preview = electronMocks.handlers.get(ipcChannels.supervisionKnowledgePreview)!
+    const commit = electronMocks.handlers.get(ipcChannels.supervisionKnowledgeCommit)!
+    const input = { operation: 'update-entity', libraryId: library.id, entityId: entity.id, label: 'Revised', type: 'Concept', description: 'Preview description', aliases: ['Alias'], sourceId: 'source' }
+    try {
+      expect(() => preview(event, input)).toThrow('不属于所选知识库')
+      expect(() => preview(event, { ...input, entityId: crypto.randomUUID() })).toThrow('不属于所选知识库')
+      expect(() => preview(event, { ...input, operation: 'create-entity', libraryId: crypto.randomUUID() })).toThrow('知识库不存在')
+      const binding = vi.spyOn(database.externalStore, 'hasBinding').mockReturnValue(true)
+      expect(() => preview(event, { ...input, operation: 'create-entity' })).toThrow('EXTERNAL_KB_READ_ONLY')
+      binding.mockReturnValue(false)
+      const valid = { ...input, libraryId: other.id }
+      const first = await preview(event, valid) as { previewId: string }
+      expect(first).toMatchObject({ entity: valid, source: { content: 'Evidence' } })
+      binding.mockReturnValue(true)
+      expect(() => commit(event, { previewId: first.previewId })).toThrow('EXTERNAL_KB_READ_ONLY')
+      expect(database.getEntity(entity.id)?.name).toBe('Original')
+      binding.mockReturnValue(false)
+      const second = await preview(event, valid) as { previewId: string }
+      const getEntity = vi.spyOn(database, 'getEntity').mockReturnValue({ ...entity, knowledgeBaseId: library.id })
+      expect(() => commit(event, { previewId: second.previewId })).toThrow('不属于所选知识库')
+      getEntity.mockRestore()
+      const third = await preview(event, valid) as { previewId: string }
+      await commit(event, { previewId: third.previewId })
+      expect(database.getEntity(entity.id)).toMatchObject({ name: 'Revised', description: 'Preview description', locked: true })
+      const create = await preview(event, { ...input, operation: 'create-entity', entityId: undefined }) as { previewId: string }
+      await commit(event, { previewId: create.previewId })
+      expect(database.listEntities(library.id)).toEqual([expect.objectContaining({ name: 'Revised', locked: true })])
+    } finally { vi.restoreAllMocks(); await harness.dispose(); database.close() }
   })
 
   it.each(['completed', 'failed'] as const)('creates an immediate task into the production queue and dispatches exactly one ordinary run (%s)', async (status) => {

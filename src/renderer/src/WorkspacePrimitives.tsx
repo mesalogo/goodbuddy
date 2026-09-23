@@ -60,7 +60,7 @@ export function PageShell({
   variant
 }: {
   children: ReactNode
-  variant: 'reading' | 'standard' | 'dashboard' | 'master-detail'
+  variant: 'reading' | 'standard' | 'dashboard' | 'supervisor' | 'master-detail'
 }): React.JSX.Element {
   return (
     <div

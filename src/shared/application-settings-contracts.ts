@@ -33,17 +33,19 @@ export type UpdateSource = z.infer<typeof updateSourceSchema>
 
 export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference'] as const
 export type BuiltInApplicationId = typeof builtInApplicationIds[number]
-export const editableApplicationIds = ['magic-notes', 'local-inference'] as const
+export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference'] as const
 export type EditableApplicationId = typeof editableApplicationIds[number]
 export const defaultApplicationNavigation = {
   order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference'] as BuiltInApplicationId[],
-  pinned: { 'magic-notes': true, 'local-inference': false }
+  pinned: { 'magic-notes': true, heartbeat: true, 'local-inference': false }
 }
 export const applicationNavigationSchema = z.object({
   order: z.array(z.enum(builtInApplicationIds)).length(builtInApplicationIds.length)
     .refine(ids => new Set(ids).size === builtInApplicationIds.length, 'Each application must occur exactly once'),
   pinned: z.object({
-    'magic-notes': z.boolean(), 'local-inference': z.boolean()
+    'magic-notes': z.boolean(),
+    heartbeat: z.boolean().default(true),
+    'local-inference': z.boolean()
   }).strict()
 }).strict()
 
@@ -58,6 +60,7 @@ const applicationPreferencesSchema = z
     applicationNavigation: applicationNavigationSchema.default(defaultApplicationNavigation),
     localInferenceEnabled: z.boolean().default(true),
     magicNotesEnabled: z.boolean().default(true),
+    heartbeatEnabled: z.boolean().optional(),
     magicNotesShowIncompleteTodoCount: z.boolean().default(true),
     magicNoteCommentMode: magicNoteCommentModeSchema.default('immediate'),
     magicNoteCommentFormat: magicNoteCommentFormatSchema.default('combined'),
@@ -77,6 +80,7 @@ export const applicationSettingsUpdateSchema = applicationPreferencesSchema
     applicationNavigation: applicationNavigationSchema.optional(),
     localInferenceEnabled: z.boolean().optional(),
     magicNotesEnabled: z.boolean().optional(),
+    heartbeatEnabled: z.boolean().optional(),
     magicNotesShowIncompleteTodoCount: z.boolean().optional(),
     magicNoteCommentMode: magicNoteCommentModeSchema.optional(),
     magicNoteCommentFormat: magicNoteCommentFormatSchema.optional(),

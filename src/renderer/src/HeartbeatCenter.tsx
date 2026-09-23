@@ -11,7 +11,7 @@ import {
   Sparkles,
   XCircle
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   AssistantHeartbeatConfig,
@@ -24,11 +24,14 @@ import type {
   HeartbeatUpdateInput
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import { SupervisorWorkspace, type SupervisionGraphNavigation } from './SupervisorWorkspace'
+import './supervisor-workspace.css'
 import { getProjectDisplayText } from './project-display'
 import {
   EmptyState,
   PageHeader,
   PageTabs,
+  ScopeBadge,
   type WorkspaceScope
 } from './WorkspacePrimitives'
 
@@ -39,6 +42,7 @@ type HeartbeatCenterTab =
   | 'plans'
 
 export type HeartbeatCenterProps = {
+  graphNavigation?: SupervisionGraphNavigation
   configs: AssistantHeartbeatConfig[]
   runs: AssistantHeartbeatRun[]
   entries: AssistantHeartbeatEntry[]
@@ -82,7 +86,63 @@ function byNewest<T extends { createdAt: string }>(left: T, right: T): number {
   )
 }
 
-export function HeartbeatCenter({
+export function HeartbeatCenter(props: HeartbeatCenterProps): React.JSX.Element {
+  return <UnifiedSupervisorCenter {...props} />
+}
+
+function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element {
+  const { t } = useTranslation('heartbeat')
+  const centerRef = useRef<HTMLElement>(null)
+  const [pageTab, setPageTab] = useState<'overview' | 'graph' | 'settings'>(props.graphNavigation ? 'graph' : 'overview')
+  const [appliedNavigation, setAppliedNavigation] = useState(props.graphNavigation)
+  if (appliedNavigation !== props.graphNavigation) {
+    setAppliedNavigation(props.graphNavigation)
+    if (props.graphNavigation) setPageTab('graph')
+  }
+  useEffect(() => {
+    if (props.graphNavigation) {
+      centerRef.current?.querySelector<HTMLElement>('#supervisor-tab-graph')?.focus()
+    }
+  }, [props.graphNavigation])
+  return (
+    <section ref={centerRef} className="heartbeat-center" aria-labelledby="supervisor-title">
+      <PageHeader
+        headingId="supervisor-title"
+        title={t('center.title')}
+        help={t('center.description')}
+        icon={<HeartPulse size={22} />}
+      />
+      <PageTabs
+        ariaLabel={t('supervisor.navigation')}
+        idPrefix="supervisor"
+        value={pageTab}
+        onChange={setPageTab}
+        tabs={[
+          { id: 'overview', label: t('supervisor.recap') },
+          { id: 'graph', label: t('supervisor.graph') },
+          { id: 'settings', label: t('supervisor.settings') }
+        ]}
+      />
+      <div
+        role="tabpanel"
+        id={`supervisor-panel-${pageTab}`}
+        aria-labelledby={`supervisor-tab-${pageTab}`}
+      >
+        <div hidden={pageTab === 'settings'}>
+          <SupervisorWorkspace
+            graphNavigation={props.graphNavigation}
+            tab={pageTab}
+            onTabChange={setPageTab}
+            projects={props.projects}
+          />
+        </div>
+        {pageTab === 'settings' && <HeartbeatAutomationSettings {...props} />}
+      </div>
+    </section>
+  )
+}
+
+function HeartbeatAutomationSettings({
   configs,
   runs,
   entries,
@@ -368,58 +428,57 @@ export function HeartbeatCenter({
 
   return (
     <section
-      aria-labelledby="heartbeat-center-title"
+      aria-label={t('supervisor.settings')}
       className="heartbeat-center"
     >
-      <PageHeader
-        actions={
-          initialLoadBlocked ? undefined : (
+      <div className="supervisor-workspace__section-heading">
+        <div>
+          <h2>{t('supervisor.settings')}</h2>
+          <ScopeBadge scope={heartbeatScope} />
+        </div>
+        <div className="supervisor-workspace__actions">
+          {!initialLoadBlocked && (
             <>
-            <button
-              aria-label={t('center.actions.refreshAriaLabel')}
-              className="secondary-button"
-              disabled={loading || pendingAction !== undefined}
-              onClick={() => void runAction('refresh', onRefresh)}
-              type="button"
-            >
-              <RefreshCw aria-hidden="true" size={14} />
-              {t('center.actions.refresh')}
-            </button>
-            {primaryConfig ? (
               <button
-                className="primary-button"
+                aria-label={t('center.actions.refreshAriaLabel')}
+                className="secondary-button"
                 disabled={loading || pendingAction !== undefined}
-                onClick={() =>
-                  void runAction(`run:${primaryConfig.id}`, () =>
-                    onRunNow(primaryConfig.id)
-                  )
-                }
+                onClick={() => void runAction('refresh', onRefresh)}
                 type="button"
               >
-                <Play aria-hidden="true" size={14} />
-                {pendingAction === `run:${primaryConfig.id}`
-                  ? t('center.actions.running')
-                  : t('center.actions.runOnce')}
+                <RefreshCw aria-hidden="true" size={14} />
+                {t('center.actions.refresh')}
               </button>
-            ) : (
-              <button
-                className="primary-button"
-                disabled={loading}
-                onClick={() => setTab('plans')}
-                type="button"
-              >
-                {t('center.actions.configure')}
-              </button>
-            )}
+              {primaryConfig ? (
+                <button
+                  className="primary-button"
+                  disabled={loading || pendingAction !== undefined}
+                  onClick={() =>
+                    void runAction(`run:${primaryConfig.id}`, () =>
+                      onRunNow(primaryConfig.id)
+                    )
+                  }
+                  type="button"
+                >
+                  <Play aria-hidden="true" size={14} />
+                  {pendingAction === `run:${primaryConfig.id}`
+                    ? t('center.actions.running')
+                    : t('center.actions.runOnce')}
+                </button>
+              ) : (
+                <button
+                  className="primary-button"
+                  disabled={loading}
+                  onClick={() => setTab('plans')}
+                  type="button"
+                >
+                  {t('center.actions.configure')}
+                </button>
+              )}
             </>
-          )
-        }
-        help={t('center.description')}
-        headingId="heartbeat-center-title"
-        icon={<HeartPulse size={22} />}
-        scope={heartbeatScope}
-        title={t('center.title')}
-      />
+          )}
+        </div>
+      </div>
 
       {error && (
         <p className="heartbeat-center__error" role="alert">

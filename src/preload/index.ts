@@ -1379,6 +1379,19 @@ const desktopApi: DesktopApi = {
         entries: AssistantHeartbeatEntry[]
       }>
   },
+  supervision: {
+    overview: (input) => ipcRenderer.invoke(ipcChannels.supervisionOverview, input),
+    run: (input: unknown) => ipcRenderer.invoke(ipcChannels.supervisionRun, input),
+    graph: (input) => ipcRenderer.invoke(ipcChannels.supervisionGraph, input) as Promise<Record<string, unknown>>,
+    source: (sourceId: string) => ipcRenderer.invoke(ipcChannels.supervisionSource, { sourceId }) as Promise<Record<string, unknown> | undefined>,
+    sourceContext: (sourceId: string) => ipcRenderer.invoke(ipcChannels.supervisionSourceContext, { sourceId }) as Promise<Record<string, unknown>>,
+    continueContext: (input) => ipcRenderer.invoke(ipcChannels.supervisionContinueContext, input) as Promise<Record<string, unknown>>,
+    continue: async (input) => { await ipcRenderer.invoke(ipcChannels.supervisionContinue, input) },
+    knowledgePreview: (input) => ipcRenderer.invoke(ipcChannels.supervisionKnowledgePreview, input) as Promise<Record<string, unknown>>,
+    knowledgeCommit: (input) => ipcRenderer.invoke(ipcChannels.supervisionKnowledgeCommit, input) as Promise<Record<string, unknown>>,
+    entityAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionEntityAction, input) as Promise<void>,
+    relationAction: (input) => ipcRenderer.invoke(ipcChannels.supervisionRelationAction, input) as Promise<void>
+  },
   experts: {
     list: () =>
       ipcRenderer.invoke(

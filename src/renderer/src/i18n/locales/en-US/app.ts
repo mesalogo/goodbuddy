@@ -11,7 +11,7 @@ export const app = {
   applications: {
     alwaysShown: 'Always shown', optional: 'Optional',
     manage: 'Manage Apps',
-    title: 'Application Center', description: 'Open and reorder built-in applications, and manage optional apps and pins. Knowledge and Smart Heartbeat are always shown and can be moved.',
+    title: 'Application Center', description: 'Open and reorder built-in applications, and manage optional apps and pins. Knowledge is always shown; Supervisor can be enabled or disabled.',
     localInference: 'Local Inference Monitor', settings: 'Application settings', enable: 'Enable application', pin: 'Pin to sidebar',
     pinHelp: 'Pinning only controls the sidebar shortcut.',
     disableHelp: 'Disabling preserves data and pins without stopping existing requests or background services.',
@@ -22,7 +22,7 @@ export const app = {
     confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
     descriptions: {
       'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
-      heartbeat: 'Review heartbeat suggestions and schedules.', 'local-inference': 'Inspect local inference tasks and execution services.'
+      heartbeat: 'Review work evolution, explore the story graph, and configure automatic wake-ups.', 'local-inference': 'Inspect local inference tasks and execution services.'
     }
   },
   notifications: {
@@ -67,7 +67,7 @@ export const app = {
     chat: 'Chat',
     magicNotes: 'Magic Notes',
     knowledge: 'Knowledge',
-    heartbeat: 'Smart Heartbeat',
+    heartbeat: 'Supervisor',
     activity: 'Run history',
     incompleteTodos: '{{count}} incomplete to-dos',
     pendingSuggestions: '{{count}} pending suggestions'
@@ -745,10 +745,10 @@ export const app = {
     resultHistoryReadFailed: 'Failed to read result history',
     knowledgeReadFailed: 'Failed to read the local knowledge base',
     selectProject: 'Select a project first',
-    heartbeatReadFailed: 'Failed to read Smart Heartbeat',
-    heartbeatRefreshFailed: 'Failed to refresh Smart Heartbeat',
+     heartbeatReadFailed: 'Failed to read Supervisor',
+     heartbeatRefreshFailed: 'Failed to refresh Supervisor',
     heartbeatTaskPrompt:
-      'Create an actionable plan from this Smart Heartbeat suggestion:',
+       'Create an actionable plan from this Supervisor suggestion:',
     heartbeatTaskAdded:
       'Added “{{title}}” to the conversation. Review it before sending.',
     userStartedTask: 'User started a conversation task',

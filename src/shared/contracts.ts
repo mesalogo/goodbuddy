@@ -2191,6 +2191,19 @@ export type DesktopApi = {
       entries: AssistantHeartbeatEntry[]
     }>
   }
+  supervision: {
+    overview: (input?: { target?: import('./supervision-contracts').SupervisionTarget }) => Promise<import('./supervision-contracts').SupervisionResultView[]>
+    run: (input: unknown) => Promise<unknown>
+    graph: (input?: import('./supervision-contracts').SupervisionGraphRequest) => Promise<Record<string, unknown>>
+    source: (sourceId: string) => Promise<Record<string, unknown> | undefined>
+    sourceContext: (sourceId: string) => Promise<Record<string, unknown>>
+    continueContext: (input: import('./supervision-contracts').SupervisionContinueContextRequest) => Promise<Record<string, unknown>>
+    continue: (input: import('./supervision-contracts').SupervisionContinueRequest) => Promise<void>
+    knowledgePreview: (input: import('./supervision-contracts').SupervisionKnowledgePreviewRequest) => Promise<Record<string, unknown>>
+    knowledgeCommit: (input: import('./supervision-contracts').SupervisionKnowledgeCommitRequest) => Promise<Record<string, unknown>>
+    entityAction: (input: import('./supervision-contracts').SupervisionEntityAction) => Promise<void>
+    relationAction: (input: import('./supervision-contracts').SupervisionRelationAction) => Promise<void>
+  }
   experts: {
     list: () => Promise<AssistantExpert[]>
     create: (input: ExpertCreateInput) => Promise<AssistantExpert>

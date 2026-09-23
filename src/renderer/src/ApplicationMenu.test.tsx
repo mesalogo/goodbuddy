@@ -25,13 +25,13 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 it('filters the shared order by enablement only, including reordered always-shown apps', () => {
   const value = { ...settings, magicNotesEnabled: true, localInferenceEnabled: true,
     applicationNavigation: { order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] as ApplicationSettings['applicationNavigation']['order'],
-      pinned: { 'magic-notes': false, 'local-inference': false } } }
+       pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false } } }
   const onOpen = vi.fn()
   const { rerender } = render(<Harness value={value} onOpen={onOpen} />)
   fireEvent.click(screen.getByText('Launcher'))
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '智能心跳', '魔法笔记', '知识库', '管理应用'])
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '监督者', '魔法笔记', '知识库', '管理应用'])
   rerender(<Harness value={{ ...value, magicNotesEnabled: false }} onOpen={onOpen} />)
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '智能心跳', '知识库', '管理应用'])
+  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['本机推理监控', '监督者', '知识库', '管理应用'])
   fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
   expect(onOpen).toHaveBeenCalledWith('local-inference')
   expect(screen.queryByRole('menu')).not.toBeInTheDocument()
@@ -43,7 +43,7 @@ it('shows loading and actionable errors without treating unknown settings as dis
   fireEvent.click(screen.getByText('Launcher'))
   expect(screen.getByRole('status')).toBeInTheDocument()
   expect(screen.getByRole('menuitem', { name: '知识库' })).toBeInTheDocument()
-  expect(screen.getByRole('menuitem', { name: '智能心跳' })).toBeInTheDocument()
+  expect(screen.getByRole('menuitem', { name: '监督者' })).toBeInTheDocument()
   rerender(<Harness value={null} error="Cannot read settings" onRetry={onRetry} />)
   expect(screen.queryByRole('status')).not.toBeInTheDocument()
   expect(screen.getByRole('alert')).toHaveTextContent('Cannot read settings')

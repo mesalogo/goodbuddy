@@ -18,6 +18,7 @@ import {
 } from './assistant-database'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import type { ImageOperation } from '../../shared/image-generation-contracts'
+import type { StoredSupervisionResult } from './supervisor-service'
 
 const temporaryDirectories: string[] = []
 
@@ -251,6 +252,147 @@ async function createDatabase(
   database.initialize('C:\\Workspace')
   return database
 }
+
+it('persists supervision knowledge locators and keeps memory sources distinct', async () => {
+  const database = await createDatabase()
+  try {
+    const result: StoredSupervisionResult = {
+      request: {
+        trigger: 'manual', scope: { kind: 'global' },
+        timeRange: { from: '2026-09-01T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' }
+      },
+      evidence: [
+        {
+          id: 'knowledge-ref', sourceType: 'knowledge', sourceId: 'chunk-1',
+          title: '本地文档', content: '引用片段', occurredAt: '2026-09-21T00:00:00.000Z',
+          locator: { libraryId: 'library-1', documentId: 'document-1', chunkId: 'chunk-1' }
+        },
+        {
+          id: 'memory-ref', sourceType: 'memory', sourceId: 'memory-1',
+          title: '已确认记忆', content: '记忆内容', occurredAt: '2026-09-21T00:00:00.000Z'
+        }
+      ],
+      output: { summary: '回顾', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
+    }
+    database.saveSupervisionResult(result)
+    const graph = database.getSupervisionGraph()
+    expect(graph.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source_type: 'knowledge', locator_json: JSON.stringify({ libraryId: 'library-1', documentId: 'document-1', chunkId: 'chunk-1' }) }),
+      expect.objectContaining({ source_type: 'memory', locator_json: null })
+    ]))
+    const source = (graph.sources as Array<{ id: string; source_type: string }>).find((item) => item.source_type === 'knowledge')!
+    expect(database.getSupervisionSource(source.id)).toMatchObject({ sourceType: 'knowledge', locatorJson: JSON.stringify({ libraryId: 'library-1', documentId: 'document-1', chunkId: 'chunk-1' }) })
+  } finally {
+    database.close()
+  }
+})
+
+it('preserves existing supervision data when upgrading schema 41 and reopening', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-supervision-migration-'))
+  temporaryDirectories.push(directory)
+  const path = join(directory, 'assistant.sqlite')
+  const database = new AssistantDatabase(path)
+  database.initialize(process.cwd())
+  database.saveSupervisionResult({
+    request: { trigger: 'manual', scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' } },
+    evidence: [{ id: 'source', sourceType: 'knowledge', sourceId: 'chunk', title: 'Source', content: 'Keep content', occurredAt: '2026-09-21T00:00:00.000Z', locator: { chunkId: 'chunk' } }],
+    output: { summary: 'Keep summary', changeDigest: '', openItems: [],
+      entities: [{ id: 'entity', label: 'Keep label', description: 'Keep description', sourceReferenceIds: ['source'] }],
+      events: [], entityChanges: [], relations: [] }
+  })
+  const graph = database.getSupervisionGraph()
+  const entityId = (graph.entities as Array<{ id: string }>)[0]!.id
+  database.applySupervisionEntityAction({ entityId, action: 'confirm' })
+  const results = database.listSupervisionResults()
+  const source = database.getSupervisionSource(String(results[0]!.sourceId))
+  database.close()
+  const legacy = new DatabaseSync(path)
+  legacy.exec(`ALTER TABLE supervision_entities DROP COLUMN source_reference_ids_json;
+    ALTER TABLE supervision_entity_changes DROP COLUMN source_reference_ids_json;
+    ALTER TABLE supervision_relations DROP COLUMN source_reference_ids_json;
+    ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+    PRAGMA user_version = 41;`)
+  legacy.close()
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      database.initialize(process.cwd())
+      expect(database.listSupervisionResults()).toEqual(results)
+      expect(database.getSupervisionSource(String(results[0]!.sourceId))).toEqual(source)
+      expect(database.getSupervisionGraph().entities).toEqual([expect.objectContaining({ id: entityId,
+        canonical_label: 'Keep label', description: 'Keep description', confirmation_state: 'confirmed', source_reference_ids_json: '[]' })])
+      database.close()
+    }
+  } finally { database.close() }
+})
+
+it.each(['same-project', 'different-project'] as const)('isolates supervision model IDs across overlapping runs (%s)', async (scope) => {
+  const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-supervision-'))
+  temporaryDirectories.push(directory)
+  const path = join(directory, 'assistant.sqlite')
+  const database = new AssistantDatabase(path)
+  database.initialize(process.cwd())
+  const projectId = randomUUID()
+  const result: StoredSupervisionResult = {
+    request: { trigger: 'manual', scope: { kind: 'projects', projectIds: [projectId] },
+      timeRange: { from: '2026-09-01T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' } },
+    evidence: [{ id: 'source', sourceType: 'knowledge', sourceId: 'chunk', title: 'First source', content: 'First content',
+      occurredAt: '2026-09-21T00:00:00.000Z', locator: { libraryId: 'library', documentId: 'document', chunkId: 'chunk' } }],
+    output: { summary: 'First', changeDigest: '', openItems: [],
+      entities: ['entity', 'other'].map((id) => ({ id, label: id, description: 'Original', sourceReferenceIds: ['source'] })),
+      events: [{ title: 'Event', description: '', occurredAt: '2026-09-21T00:00:00.000Z', eventType: 'discussion', entityIds: ['entity', 'other'], sourceReferenceIds: ['source'] }],
+      entityChanges: [{ entityId: 'entity', changeType: 'added', description: 'Change', sourceReferenceIds: ['source'] }],
+      relations: [{ fromEntityId: 'entity', toEntityId: 'other', relationType: 'related', reason: 'Reason', sourceReferenceIds: ['source'] }] }
+  }
+  try {
+    database.saveSupervisionResult(result)
+    const firstGraph = database.getSupervisionGraph()
+    const entity = (firstGraph.entities as Array<{ id: string; canonical_label: string }>).find((item) => item.canonical_label === 'entity')!
+    database.applySupervisionEntityAction({ entityId: entity.id, action: 'revise', label: 'User label', description: 'User description' })
+    const next = structuredClone(result)
+    if (scope === 'different-project') next.request.scope = { kind: 'projects', projectIds: [randomUUID()] }
+    next.output.summary = 'Second'
+    next.output.entities[0]!.label = 'Model replacement'
+    next.evidence[0]!.title = 'Second source'
+    next.evidence[0]!.locator = { libraryId: 'second-library', documentId: 'second-document', chunkId: 'chunk' }
+    database.saveSupervisionResult(next)
+    database.close()
+    database.initialize(process.cwd())
+    const results = database.listSupervisionResults()
+    expect(results).toHaveLength(2)
+    expect(new Set(results.map((item) => item.sourceId)).size).toBe(2)
+    for (const row of results) {
+      expect(database.getSupervisionSource(String(row.sourceId))).toMatchObject({ resultId: row.id,
+        title: row.summary === 'First' ? 'First source' : 'Second source' })
+    }
+    const inspected = new DatabaseSync(path)
+    try {
+      expect(inspected.prepare('SELECT * FROM supervision_entities WHERE id = ?').get(entity.id)).toMatchObject({
+        canonical_label: 'User label', description: 'User description', confirmation_state: 'revised'
+      })
+      expect(inspected.prepare('SELECT id FROM supervision_entities').all()).toHaveLength(4)
+      const events = inspected.prepare('SELECT * FROM supervision_events').all() as Array<{ id: string; result_id: string; story_line_id: string }>
+      for (const event of events) {
+        const sourceId = String(results.find((row) => row.id === event.result_id)!.sourceId)
+        expect(inspected.prepare('SELECT source_id FROM supervision_event_sources WHERE event_id = ?').all(event.id)).toEqual([{ source_id: sourceId }])
+        const entities = inspected.prepare(`SELECT e.* FROM supervision_entities e JOIN supervision_event_entities ee ON ee.entity_id = e.id WHERE ee.event_id = ?`).all(event.id) as Array<{ id: string; story_line_id: string; source_reference_ids_json: string }>
+        expect(entities).toHaveLength(2)
+        expect(entities.every((item) => item.story_line_id === event.story_line_id && item.source_reference_ids_json === JSON.stringify([sourceId]))).toBe(true)
+        const change = inspected.prepare('SELECT * FROM supervision_entity_changes WHERE result_id = ?').get(event.result_id) as Record<string, unknown>
+        expect(entities.map((item) => item.id)).toContain(change.entity_id)
+        expect(change.source_reference_ids_json).toBe(JSON.stringify([sourceId]))
+        const relation = inspected.prepare('SELECT * FROM supervision_relations WHERE from_entity_id = ?').get(change.entity_id as string) as Record<string, unknown>
+        expect(entities.map((item) => item.id)).toContain(relation.to_entity_id)
+        expect(relation.source_reference_ids_json).toBe(JSON.stringify([sourceId]))
+        const graph = database.getSupervisionGraph({ storyLineId: event.story_line_id, resultId: event.result_id })
+        expect(graph.events).toHaveLength(1)
+        expect(graph.entities).toHaveLength(2)
+        expect(graph.sources).toHaveLength(1)
+        expect(graph.sources).toEqual(expect.arrayContaining([expect.objectContaining({ id: sourceId, locator_json: JSON.stringify(results.find((row) => row.id === event.result_id)!.summary === 'First' ? result.evidence[0]!.locator : next.evidence[0]!.locator) })]))
+      }
+      expect(inspected.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    } finally { inspected.close() }
+  } finally { database.close() }
+})
 
 const validatedSshHostId =
   '00000000-0000-4000-8000-000000000321'

@@ -43,6 +43,7 @@ export const applicationDefinitions = {
   heartbeat: {
     icon: HeartPulse,
     title: 'navigation.heartbeat',
+    enabled: 'heartbeatEnabled',
   },
   'local-inference': {
     icon: Cpu,
@@ -55,7 +56,8 @@ export function isApplicationEnabled(
   settings: ApplicationSettings | undefined,
   id: BuiltInApplicationId,
 ): boolean {
-  if (id === 'knowledge' || id === 'heartbeat') return true
+  if (id === 'knowledge') return true
+  if (id === 'heartbeat' && settings === undefined) return true
   return (
     settings !== undefined &&
     settings[applicationDefinitions[id].enabled] !== false
@@ -424,7 +426,7 @@ export function ApplicationCenter({
                 const definition = applicationDefinitions[id]
                 const Icon = definition.icon
                 const enabled = isApplicationEnabled(settings, id)
-                const alwaysShown = id === 'knowledge' || id === 'heartbeat'
+                const alwaysShown = id === 'knowledge'
                 return (
                   <article
                     className="application-center__item"

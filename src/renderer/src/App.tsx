@@ -2202,6 +2202,9 @@ function App(): React.JSX.Element {
   );
   const [heartbeatLoading, setHeartbeatLoading] = useState(true);
   const [heartbeatLoadError, setHeartbeatLoadError] = useState<string>();
+  const [supervisionGraphNavigation, setSupervisionGraphNavigation] = useState<
+    import('./SupervisorWorkspace').SupervisionGraphNavigation
+  >();
   const [assistantExperts, setAssistantExperts] = useState<AssistantExpert[]>(
     [],
   );
@@ -2623,7 +2626,7 @@ function App(): React.JSX.Element {
   const [incompleteMagicTodoCount, setIncompleteMagicTodoCount] = useState(0);
   const applicationNavigation = applicationSettings?.applicationNavigation ?? defaultApplicationNavigation;
   const visibleApplications = useMemo(() => applicationNavigation.order.filter(id =>
-    id === 'knowledge' || id === 'heartbeat' || (applicationNavigation.pinned[id] && (id === 'magic-notes' ? magicNotesEnabled : isApplicationEnabled(applicationSettings, id)))
+    id === 'knowledge' || (Boolean((applicationNavigation.pinned as Record<string, boolean | undefined>)[id]) && (id === 'magic-notes' ? magicNotesEnabled : isApplicationEnabled(applicationSettings, id)))
   ), [applicationNavigation, applicationSettings, magicNotesEnabled]);
   const applyApplicationSettings = useCallback((settings: ApplicationSettings): void => {
     setApplicationSettings(settings);
@@ -7409,6 +7412,7 @@ function App(): React.JSX.Element {
 
   const submit = async (
     queuedDispatch?: ConversationQueueDispatch,
+    promptOverride?: string,
   ): Promise<void> => {
     let queuedInput: ConversationQueueUserInput | undefined =
       queuedDispatch && !queuedDispatch.scheduled ? queuedDispatch.input : undefined;
@@ -7492,7 +7496,7 @@ function App(): React.JSX.Element {
             (candidate) => candidate.id === selectedRuntimeCommand,
           )
         : undefined;
-    const commandArguments = queuedInput ? "" : input.trim();
+    const commandArguments = queuedInput ? "" : (promptOverride ?? input).trim();
     const prompt =
       queuedInput?.prompt ??
       (command
@@ -11412,7 +11416,7 @@ function App(): React.JSX.Element {
             {(view === "heartbeat" ||
               cachedWorkspaceViewKeys.has("heartbeat")) && (
               <KeepAliveRoute active={view === "heartbeat"} route="heartbeat">
-                <PageShell variant="dashboard">
+                <PageShell variant="supervisor">
                   <RouteErrorBoundary
                     key="heartbeat"
                     fallback={
@@ -11427,7 +11431,8 @@ function App(): React.JSX.Element {
                         <RouteLoadingStatus label={t("route.loading")} />
                       }
                     >
-                      <HeartbeatCenter
+                      {isApplicationEnabled(applicationSettings, 'heartbeat') ? <HeartbeatCenter
+                        graphNavigation={supervisionGraphNavigation}
                         configs={assistantHeartbeats}
                         entries={heartbeatEntries}
                         loadError={heartbeatLoadError}
@@ -11446,7 +11451,7 @@ function App(): React.JSX.Element {
                         projects={projects}
                         runs={heartbeatRuns}
                         tasks={assistantTasks}
-                      />
+                      /> : <p role="status">{t('applications.disabledPage')}</p>}
                     </Suspense>
                   </RouteErrorBoundary>
                 </PageShell>
@@ -11734,6 +11739,20 @@ function App(): React.JSX.Element {
             browserStates={browserStates}
             conversationTitles={conversationTitles}
             currentProject={activeProject}
+            supervisionLibraries={knowledgeSnapshot.libraries}
+            onOpenSupervisionGraph={(resultId) => {
+              requestWorkspaceLeave('heartbeat', () => {
+                setSupervisionGraphNavigation({ resultId });
+                commitView('heartbeat');
+              });
+            }}
+            onOpenSupervisionConversation={(conversationId) => setActiveId(conversationId)}
+            onContinueSupervision={async (prompt, conversationId) => {
+              await window.goodbuddy.supervision.continue({
+                conversationId,
+                prompt,
+              })
+            }}
             onCreateCustomTask={() => openCustomTaskDialog("current")}
             schedules={assistantSchedules}
             selectedTaskId={selectedAssistantTaskId}

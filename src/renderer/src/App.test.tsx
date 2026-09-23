@@ -37,6 +37,11 @@ import {
 } from "../../shared/assistant-contracts";
 import { agentRuntimeSelectionKey } from "../../shared/runtime-selection-contracts";
 
+const defaultTestApplicationNavigation: ApplicationSettings["applicationNavigation"] = {
+  ...defaultApplicationNavigation,
+  pinned: { ...defaultApplicationNavigation.pinned, heartbeat: true },
+};
+
 const speechRecognitionMocks = vi.hoisted(() => ({
   startPcmRecording: vi.fn(),
 }));
@@ -685,6 +690,19 @@ const api: DesktopApi = {
     })),
     history: vi.fn(async () => ({ runs: [], entries: [] })),
   },
+  supervision: {
+    overview: vi.fn(async () => []),
+    run: vi.fn(async () => undefined),
+    graph: vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [] })),
+    source: vi.fn(async () => undefined),
+    entityAction: vi.fn(async () => undefined),
+    relationAction: vi.fn(async () => undefined),
+    sourceContext: vi.fn(async () => ({})),
+    continueContext: vi.fn(async () => ({})),
+    continue: vi.fn(async () => undefined),
+    knowledgePreview: vi.fn(async () => ({})),
+    knowledgeCommit: vi.fn(async () => ({}))
+  },
   experts: {
     list: vi.fn(async () => []),
     create: vi.fn(async (input) => ({
@@ -1087,7 +1105,8 @@ function installRemoteProjectsSetting(enabled: boolean): {
     updateSource: "github",
     modelDownloadSource: "modelscope",
     localToolEnvironment: defaultLocalToolEnvironmentSettings,
-    applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+    applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+    heartbeatEnabled: true,
     conversationHtmlRenderingEnabled: true,
     remoteProjectsEnabled: enabled,
     magicNotesEnabled: false,
@@ -2935,8 +2954,8 @@ describe("App", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
     await screen.findByRole("heading", { name: "知识库" });
-    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
-    await screen.findByRole("heading", { name: "智能心跳" });
+    fireEvent.click(screen.getByRole("button", { name: "监督者" }));
+    await screen.findByRole("heading", { name: "监督者" });
     fireEvent.click(screen.getByRole("button", { name: "运行记录" }));
     await screen.findByRole("heading", { name: "运行记录" });
     fireEvent.click(screen.getByRole("button", { name: "对话" }));
@@ -3094,7 +3113,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
@@ -3196,7 +3216,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -3210,7 +3231,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -3310,7 +3332,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -3324,7 +3347,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -5535,7 +5559,8 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-      applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -12798,19 +12823,20 @@ describe("App", () => {
     });
   });
 
-  it("opens Smart Heartbeat as a first-class workspace", async () => {
+  it("opens Supervisor as a first-class workspace", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "智能心跳" }));
+    fireEvent.click(await screen.findByRole("button", { name: "监督者" }));
 
     expect(
-      await screen.findByRole("heading", { name: "智能心跳" }),
+      await screen.findByRole("heading", { name: "监督者" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '监督者' }).closest('.page-shell')).toHaveClass('page-shell--supervisor');
+    expect(
+      await screen.findByRole("tab", { name: "工作回顾" }),
     ).toBeInTheDocument();
     expect(
-      await screen.findByRole("tab", { name: "运行概览" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "配置智能心跳" }),
+      screen.getByRole("button", { name: "回顾当前进展" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("切换助手工作栏")).toBeInTheDocument();
   });
@@ -12976,24 +13002,52 @@ describe("App", () => {
     ).toHaveAttribute("aria-current", "page");
   });
 
-  it("shows retryable page-local heartbeat errors without first-time guidance", async () => {
-    vi.mocked(api.heartbeats.list).mockRejectedValue(
-      new Error("心跳数据库暂时不可用"),
+  it("shows retryable page-local Supervisor errors without first-time guidance", async () => {
+    vi.mocked(api.supervision.overview).mockRejectedValueOnce(
+      new Error("监督者数据库暂时不可用"),
     );
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "智能心跳" }));
-    expect(await screen.findByText("智能心跳加载失败")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "配置智能心跳" }),
-    ).not.toBeInTheDocument();
-
+    fireEvent.click(await screen.findByRole("button", { name: "监督者" }));
+    expect(await screen.findByText("监督者加载失败")).toBeInTheDocument();
     const retry = await screen.findByRole("button", { name: "重试" });
-    vi.mocked(api.heartbeats.list).mockResolvedValue([]);
     fireEvent.click(retry);
-    expect(
-      await screen.findByRole("button", { name: "配置智能心跳" }),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("监督者加载失败")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "回顾当前进展" })).toBeInTheDocument();
+  });
+
+  it("graph navigation opens the pinned sidebar result and reenters the keepalive heartbeat route", async () => {
+    const makeResult = (id: string) => ({ id, storyLineId: `story-${id}`, sourceId: null, summary: `${id} recap`, changeDigest: '', openItems: [], scope: { kind: 'global' as const }, createdAt: '2026-09-23T00:00:00Z', timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-23T00:00:00Z' } });
+    const a = makeResult('A');
+    const b = makeResult('B');
+    let matched = a;
+    vi.mocked(api.supervision.overview).mockImplementation(async (request) => request?.target ? [matched] : [b, a]);
+    vi.mocked(api.supervision.graph).mockImplementation(async (request) => ({ storyLine: null, events: [{ id: request!.resultId!, title: `${request!.resultId} event`, description: '', occurred_at: a.createdAt }], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: '切换助手工作栏' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '任务中心' }));
+    fireEvent.click(await screen.findByRole('button', { name: '固定监督目标' }));
+    fireEvent.click(await screen.findByRole('button', { name: '在图谱中查看' }));
+    expect(await screen.findByRole('tab', { name: '故事线图谱' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(api.supervision.graph).toHaveBeenLastCalledWith({ resultId: 'A', storyLineId: 'story-A' }));
+    expect(api.supervision.graph).toHaveBeenCalledTimes(1);
+    const center = screen.getByRole('region', { name: '监督者' });
+    fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }));
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }));
+    matched = b;
+    fireEvent.click(screen.getByRole('button', { name: '刷新监督回顾' }));
+    await screen.findByText('B recap');
+    fireEvent.click(screen.getByRole('button', { name: '在图谱中查看' }));
+    await waitFor(() => expect(api.supervision.graph).toHaveBeenLastCalledWith({ resultId: 'B', storyLineId: 'story-B' }));
+    expect(screen.getByRole('region', { name: '监督者' })).toBe(center);
+    expect(screen.getByRole('tab', { name: '故事线图谱' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: '取消固定监督目标' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }));
+    fireEvent.click(screen.getByRole('button', { name: '在图谱中查看' }));
+    await waitFor(() => expect(api.supervision.graph).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole('tab', { name: '故事线图谱' })).toHaveFocus();
   });
 
   it("keeps heartbeat plans independent of the active project", async () => {
@@ -13028,11 +13082,11 @@ describe("App", () => {
     ]);
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "智能心跳" }));
-    fireEvent.click(await screen.findByRole("tab", { name: "心跳计划" }));
+    fireEvent.click(await screen.findByRole("button", { name: "监督者" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
     expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
     selectProjectOption(secondProject.name);
-    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    fireEvent.click(screen.getByRole("button", { name: "监督者" }));
 
     expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
   });
@@ -13299,7 +13353,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -13313,7 +13368,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -13364,7 +13420,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -13422,7 +13479,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: true,
@@ -13457,7 +13515,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
@@ -13471,7 +13530,8 @@ describe("App", () => {
         updateSource: "github" as const,
         modelDownloadSource: "modelscope" as const,
         localToolEnvironment: defaultLocalToolEnvironmentSettings,
-        applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
         conversationHtmlRenderingEnabled: true,
         remoteProjectsEnabled: false,
         magicNotesEnabled: false,
@@ -13531,7 +13591,8 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-      applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -13588,7 +13649,8 @@ describe("App", () => {
       updateSource: "github",
       modelDownloadSource: "modelscope",
       localToolEnvironment: defaultLocalToolEnvironmentSettings,
-      applicationNavigation: defaultApplicationNavigation, localInferenceEnabled: true,
+       applicationNavigation: defaultTestApplicationNavigation, localInferenceEnabled: true,
+       heartbeatEnabled: true,
       conversationHtmlRenderingEnabled: true,
       remoteProjectsEnabled: false,
       magicNotesEnabled: false,
@@ -13669,31 +13731,31 @@ describe("App", () => {
     await waitFor(() => expect(move).toBeEnabled())
     fireEvent.click(move)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '智能心跳', '知识库', '魔法笔记', '本机推理监控',
+      '监督者', '知识库', '魔法笔记', '本机推理监控',
     ]))
     await waitFor(() => expect(screen.getByRole('button', { name: '上移 本机推理监控' })).toBeEnabled())
     const cards = within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article')
     fireEvent.dragStart(cards[3]!)
     fireEvent.drop(cards[1]!)
     await waitFor(() => expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual([
-      '智能心跳', '本机推理监控', '知识库', '魔法笔记',
+      '监督者', '本机推理监控', '知识库', '魔法笔记',
     ]))
     expect((await updates.getSettings()).applicationNavigation.order).toEqual(['heartbeat', 'local-inference', 'knowledge', 'magic-notes'])
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
     expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual([
-      '对话', '智能心跳', '知识库', '魔法笔记', '运行记录',
+      '对话', '监督者', '知识库', '魔法笔记', '运行记录',
     ])
     fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['智能心跳', '本机推理监控', '知识库', '魔法笔记', '管理应用'])
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记', '管理应用'])
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['智能心跳', '本机推理监控', '知识库', '魔法笔记'])
+    expect(within(screen.getByRole('dialog', { name: '应用中心' })).getAllByRole('article').map(card => card.querySelector('strong')?.textContent)).toEqual(['监督者', '本机推理监控', '知识库', '魔法笔记'])
   })
 
   it('refreshes externally changed all-app order before editing and filters sidebar pins', async () => {
     const updates = api.updates!
     const original = await updates.getSettings()
     render(<App />)
-    await screen.findByRole('button', { name: '智能心跳' })
+    await screen.findByRole('button', { name: '监督者' })
     const external = {
       ...original,
       applicationNavigation: {
@@ -13711,7 +13773,7 @@ describe("App", () => {
     await waitFor(() => expect(pin).not.toBeDisabled())
     const nav = screen.getByRole('navigation', { name: '主导航' })
     expect(within(nav).getAllByRole('button').map(button => button.textContent)).toEqual([
-      '对话', '本机推理监控', '智能心跳', '知识库', '运行记录',
+      '对话', '本机推理监控', '监督者', '知识库', '运行记录',
     ])
     fireEvent.click(pin)
     await waitFor(() => expect(updates.updateSettings).toHaveBeenCalledWith({
@@ -13724,7 +13786,7 @@ describe("App", () => {
 
   it.each(['read', 'mutation'] as const)('keeps a settings event authoritative over a stale %s reply', async (operation) => {
     const updates = api.updates!
-    await updates.updateSettings({ applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, 'local-inference': true } } })
+     await updates.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
     const original = await updates.getSettings()
     let changed!: Parameters<typeof updates.onSettingsChanged>[0]
     vi.mocked(updates.onSettingsChanged).mockImplementation(listener => {
@@ -13732,7 +13794,7 @@ describe("App", () => {
       return vi.fn()
     })
     render(<App />)
-    await screen.findByRole('button', { name: '智能心跳' })
+    await screen.findByRole('button', { name: '监督者' })
     const reply = deferred<ApplicationSettings>()
     if (operation === 'read') vi.mocked(updates.getSettings).mockReturnValueOnce(reply.promise)
     fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
@@ -13757,7 +13819,7 @@ describe("App", () => {
     await waitFor(() => expect(pin).not.toBeDisabled())
     expect(pin).not.toBeChecked()
     expect(within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', { name: '本机推理监控' })).not.toBeInTheDocument()
-    expect(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: '智能心跳' })).toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: '监督者' })).toBeInTheDocument()
     fireEvent.click(pin)
     expect(updates.updateSettings).toHaveBeenLastCalledWith({
       applicationNavigation: { ...external.applicationNavigation, pinned: { ...external.applicationNavigation.pinned, 'local-inference': true } },
@@ -13791,7 +13853,7 @@ describe("App", () => {
       await waitFor(() => expect(document.querySelector('.magic-note-composer .ql-container')).not.toBeNull())
       act(() => (Quill.find(document.querySelector('.magic-note-composer .ql-container')!) as InstanceType<typeof Quill>).setText('Unsaved body', 'user'))
     }
-    for (const name of ['知识库', '智能心跳', '运行记录', '对话']) {
+    for (const name of ['知识库', '监督者', '运行记录', '对话']) {
       fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name }))
       expect(await screen.findByRole('alertdialog')).toBeVisible()
       expect(title).toBeVisible()
@@ -13810,7 +13872,7 @@ describe("App", () => {
     expect(await screen.findByRole('alertdialog')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '放弃草稿并切换' }))
     expect(await screen.findByLabelText('知识工作区')).toBeVisible()
-    for (const name of ['智能心跳', '运行记录', '对话', '魔法笔记']) {
+    for (const name of ['监督者', '运行记录', '对话', '魔法笔记']) {
       fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name }))
       await act(async () => {})
     }
@@ -13825,18 +13887,18 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
     expect(await screen.findByLabelText('知识工作区')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '智能心跳' }))
-    expect(await screen.findByRole('heading', { name: '智能心跳' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '监督者' }))
+    expect(await screen.findByRole('heading', { name: '监督者' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
     expect(api.heartbeats.update).not.toHaveBeenCalled()
   })
 
   it.each(['sidebar', 'menu', 'center'])('opens local inference from %s as a modal preserving the workspace', async (entry) => {
-    if (entry === 'sidebar') await api.updates!.updateSettings({ applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, 'local-inference': true } } })
+     if (entry === 'sidebar') await api.updates!.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
     render(<App />)
     await waitFor(() => expect(api.updates!.getSettings).toHaveBeenCalled())
     const nav = entry === 'sidebar' ? await screen.findByRole('button', { name: '本机推理监控' }) : screen.getByRole('button', { name: '应用中心' })
-    if (entry !== 'sidebar') expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual(['对话', '知识库', '智能心跳', '运行记录'])
+    if (entry !== 'sidebar') expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual(['对话', '知识库', '监督者', '运行记录'])
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
     const workspace = await screen.findByLabelText('知识工作区')
     if (entry === 'sidebar') {
@@ -13865,8 +13927,52 @@ describe("App", () => {
     expect(entry === 'sidebar' ? nav : screen.getByRole('button', { name: '应用中心' })).toHaveFocus()
   })
 
+  it('hides the Supervisor sidebar entry without deleting automatic wake-up plans', async () => {
+    const plan = {
+      id: 'supervisor-plan-1',
+      scope: { kind: 'projects' as const, projectIds: [projectId] },
+      name: '每日回顾',
+      timezone: 'Asia/Shanghai',
+      recurrence: { type: 'daily' as const, localTime: '09:00' },
+      enabled: true,
+      lookbackHours: 24,
+      retentionDays: 30,
+      nextRunAt: '2026-08-05T01:00:00.000Z',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    }
+    vi.mocked(api.heartbeats.list).mockResolvedValue([plan])
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: '监督者' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '监督者 应用设置' }))
+    const enable = screen.getByRole('switch', { name: '启用应用' })
+    await waitFor(() => expect(enable).toBeEnabled())
+    expect(enable).toBeChecked()
+    fireEvent.click(enable)
+
+    await waitFor(() =>
+      expect(api.updates!.updateSettings).toHaveBeenLastCalledWith({
+        heartbeatEnabled: false,
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
+    expect(
+      within(screen.getByRole('navigation', { name: '主导航' })).queryByRole(
+        'button',
+        { name: '监督者' },
+      ),
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用中心' }))
+    expect(screen.queryByRole('menuitem', { name: '监督者' })).not.toBeInTheDocument()
+    expect(api.heartbeats.remove).not.toHaveBeenCalled()
+    expect(await api.heartbeats.list()).toEqual([plan])
+  })
+
   it('opens an unpinned app and recovers a disabled current page without remounting it', async () => {
-    await api.updates!.updateSettings({ applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, 'local-inference': true } } })
+     await api.updates!.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
     let changed!: Parameters<NonNullable<typeof api.updates>['onSettingsChanged']>[0]
     vi.mocked(api.updates!.onSettingsChanged).mockImplementation(listener => {
       changed = listener
@@ -13944,7 +14050,7 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps Smart Heartbeat available when the runtime is not configured", async () => {
+  it("keeps Supervisor available when the runtime is not configured", async () => {
     vi.mocked(api.agent.getStatus).mockResolvedValue({
       id: "setup",
       label: "需要配置模型",
@@ -13958,10 +14064,10 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "设置中心" }),
     ).toBeInTheDocument();
     await waitFor(() => expect(api.agent.getStatus).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("button", { name: "智能心跳" }));
+    fireEvent.click(screen.getByRole("button", { name: "监督者" }));
 
     expect(
-      await screen.findByRole("heading", { name: "智能心跳" }),
+      await screen.findByRole("heading", { name: "监督者" }),
     ).toBeInTheDocument();
     expect(api.agent.getStatus).toHaveBeenCalledOnce();
   });

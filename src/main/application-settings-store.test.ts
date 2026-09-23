@@ -80,7 +80,7 @@ describe('ApplicationSettingsStore', () => {
     const settings = await store.get()
     expect(settings.warnings).toBeUndefined()
     expect(settings.magicNotesEnabled).toBe(false)
-    expect(settings.applicationNavigation).toEqual({ order: expected, pinned: { 'magic-notes': false, 'local-inference': false } })
+    expect(settings.applicationNavigation).toEqual({ order: expected, pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false } })
     expect(applicationSettingsSchema.parse(settings)).toEqual(settings)
     await store.update({ checkUpdatesOnStartup: false })
     expect(JSON.parse(await readFile(filePath, 'utf8')).applicationNavigation).toEqual(settings.applicationNavigation)
@@ -91,7 +91,7 @@ describe('ApplicationSettingsStore', () => {
     const { store, filePath } = await createStore()
     const applicationNavigation = {
       order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'],
-      pinned: { 'magic-notes': false, 'local-inference': false },
+      pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false },
     }
     const changed = vi.fn()
     store.onChanged(changed)
@@ -135,7 +135,7 @@ describe('ApplicationSettingsStore', () => {
       pinned: { 'magic-notes': false, 'local-inference': pinned }
     }
     await writeFile(filePath, JSON.stringify({ ...defaultApplicationSettings, applicationNavigation, version: 11, lastSeenReleaseNotesVersion: null }), 'utf8')
-    const normalized = { ...applicationNavigation, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] }
+    const normalized = { ...applicationNavigation, pinned: { ...applicationNavigation.pinned, heartbeat: true }, order: ['knowledge', 'heartbeat', 'local-inference', 'magic-notes'] }
     expect((await store.get()).applicationNavigation).toEqual(normalized)
     await store.update({ checkUpdatesOnStartup: false })
     expect((await createApplicationSettingsStore(filePath).get()).applicationNavigation).toEqual(normalized)
@@ -164,8 +164,6 @@ describe('ApplicationSettingsStore', () => {
       { ...navigation, order: ['magic-notes', 'local-inference'] },
       { ...navigation, order: ['knowledge', 'local-inference'] },
       { ...navigation, order: ['heartbeat', 'local-inference'] },
-      { ...navigation, pinned: { ...navigation.pinned, heartbeat: true } },
-      { ...navigation, pinned: { ...navigation.pinned, knowledge: true } },
       { ...navigation, pinned: { ...navigation.pinned, extra: true } },
       { ...navigation, pinned: { knowledge: true } }
     ]) expect(applicationSettingsUpdateSchema.safeParse({ applicationNavigation: invalid }).success).toBe(false)

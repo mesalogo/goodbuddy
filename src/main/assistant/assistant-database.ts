@@ -60,6 +60,8 @@ import type {
   TokenUsageRecord,
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
+import type { StoredSupervisionResult } from './supervisor-service'
+import { supervisionResultViewSchema, type SupervisionTarget, type SupervisionGraphRequest } from '../../shared/supervision-contracts'
 import type { AgentEvent } from '../../shared/contracts'
 import type {
   SshHostProjectReference
@@ -116,7 +118,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 39
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 43
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -513,9 +515,11 @@ export type HeartbeatInputSnapshot = {
     title: string
     updatedAt: string
     messages: Array<{
+      id: string
       role: 'user' | 'assistant'
       content: string
       createdAt: string
+      sourceReferences?: ConversationSnapshot['messages'][number]['sourceReferences']
     }>
   }>
   tasks: Array<{
@@ -532,6 +536,8 @@ export type HeartbeatInputSnapshot = {
     type: AssistantMemory['type']
     content: string
     scope: AssistantMemory['scope']
+    createdAt: string
+    updatedAt: string
   }>
 }
 
@@ -2222,6 +2228,16 @@ export class AssistantDatabase {
         'magic_note_entries',
         'magic_notes',
         'heartbeat_configs',
+        'supervision_event_sources',
+        'supervision_event_entities',
+        'supervision_entity_changes',
+        'supervision_relations',
+        'supervision_events',
+        'supervision_entities',
+        'supervision_sources',
+        'supervision_results',
+        'supervision_runs',
+        'story_lines',
         'delegation_outbox',
         'delegations',
         'notifications',
@@ -8083,38 +8099,50 @@ export class AssistantDatabase {
   }
 
   buildHeartbeatInput(
-    config: AssistantHeartbeatConfig,
-    now = new Date()
+    config: Pick<AssistantHeartbeatConfig, 'scope' | 'lookbackHours'>,
+    now = new Date(),
+    timeRange?: { from: string; to: string }
   ): HeartbeatInputSnapshot {
     const database = this.requireDatabase()
-    const since = new Date(
-      now.getTime() - config.lookbackHours * 60 * 60_000
-    ).toISOString()
+    const since = timeRange
+      ? new Date(timeRange.from).toISOString()
+      : new Date(now.getTime() - config.lookbackHours * 60 * 60_000).toISOString()
     const projectIds =
       config.scope.kind === 'projects' ? config.scope.projectIds : []
+    const until = timeRange ? new Date(timeRange.to).toISOString() : undefined
+    if (timeRange) this.assertHeartbeatProjectIds(projectIds)
+    const timeParameters = until ? [since, until] : [since]
+    const conversationTimeFilter = until
+      ? `EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+           AND m.created_at >= ? AND m.created_at <= ? AND m.role IN ('user', 'assistant'))`
+      : 'c.updated_at >= ?'
+    const taskTimeFilter = until
+      ? '((t.created_at >= ? AND t.created_at <= ?) OR (t.completed_at >= ? AND t.completed_at <= ?))'
+      : 't.created_at >= ?'
+    const taskTimeParameters = until ? [...timeParameters, ...timeParameters] : timeParameters
     const projectPlaceholders = projectIds.map(() => '?').join(', ')
     const conversations = (
       config.scope.kind === 'projects'
         ? database
             .prepare(
-              `SELECT id, project_id, title, updated_at
-               FROM conversations
-               WHERE status = 'active'
-                 AND project_id IN (${projectPlaceholders})
-                 AND updated_at >= ?
-               ORDER BY updated_at DESC LIMIT 20`
+              `SELECT c.id, c.project_id, c.title, c.updated_at
+               FROM conversations c
+               WHERE c.status = 'active'
+                 AND c.project_id IN (${projectPlaceholders})
+                 AND ${conversationTimeFilter}
+               ORDER BY c.updated_at DESC LIMIT 20`
             )
-            .all(...projectIds, since)
+            .all(...projectIds, ...timeParameters)
         : database
             .prepare(
               `SELECT c.id, c.project_id, c.title, c.updated_at
                FROM conversations c
                JOIN projects p ON p.id = c.project_id
                WHERE c.status = 'active' AND p.status = 'active'
-                 AND c.updated_at >= ?
+                 AND ${conversationTimeFilter}
                ORDER BY c.updated_at DESC LIMIT 20`
             )
-            .all(since)
+            .all(...timeParameters)
     ) as Array<{
       id: string
       project_id: string
@@ -8122,10 +8150,11 @@ export class AssistantDatabase {
       updated_at: string
     }>
     const messageStatement = database.prepare(
-      `SELECT role, content, created_at FROM (
-         SELECT role, content, created_at, sequence
+      `SELECT id, role, content, metadata_json, created_at FROM (
+          SELECT id, role, content, metadata_json, created_at, sequence
          FROM messages
          WHERE conversation_id = ? AND created_at >= ?
+            ${until ? 'AND created_at <= ?' : ''}
            AND role IN ('user', 'assistant')
          ORDER BY sequence DESC LIMIT 20
        ) ORDER BY sequence`
@@ -8136,23 +8165,23 @@ export class AssistantDatabase {
             .prepare(
               `SELECT id, project_id, title, status, created_at,
                       completed_at
-               FROM tasks
+               FROM tasks t
                WHERE project_id IN (${projectPlaceholders})
-                 AND visible = 1 AND created_at >= ?
+                 AND visible = 1 AND ${taskTimeFilter}
                ORDER BY created_at DESC LIMIT 100`
             )
-            .all(...projectIds, since)
+            .all(...projectIds, ...taskTimeParameters)
         : database
             .prepare(
               `SELECT t.id, t.project_id, t.title, t.status,
                       t.created_at, t.completed_at
                FROM tasks t
                LEFT JOIN projects p ON p.id = t.project_id
-               WHERE t.visible = 1 AND t.created_at >= ?
+               WHERE t.visible = 1 AND ${taskTimeFilter}
                  AND (t.project_id IS NULL OR p.status = 'active')
                ORDER BY t.created_at DESC LIMIT 100`
             )
-            .all(since)
+            .all(...taskTimeParameters)
     ) as Array<{
       id: string
       project_id: string | null
@@ -8165,7 +8194,7 @@ export class AssistantDatabase {
       config.scope.kind === 'projects'
         ? database
             .prepare(
-              `SELECT id, scope_id, type, content, scope
+              `SELECT id, scope_id, type, content, scope, created_at, updated_at
                FROM memory_items
                WHERE status = 'confirmed'
                  AND (scope = 'global' OR
@@ -8176,7 +8205,7 @@ export class AssistantDatabase {
             .all(...projectIds)
         : database
             .prepare(
-              `SELECT id, scope_id, type, content, scope
+              `SELECT id, scope_id, type, content, scope, created_at, updated_at
                FROM memory_items
                WHERE status = 'confirmed' AND scope = 'global'
                ORDER BY updated_at DESC LIMIT 100`
@@ -8188,6 +8217,8 @@ export class AssistantDatabase {
       type: AssistantMemory['type']
       content: string
       scope: AssistantMemory['scope']
+      created_at: string
+      updated_at: string
     }>
     return {
       scope: config.scope,
@@ -8197,15 +8228,19 @@ export class AssistantDatabase {
         title: conversation.title,
         updatedAt: conversation.updated_at,
         messages: (
-          messageStatement.all(conversation.id, since) as Array<{
+          messageStatement.all(conversation.id, ...timeParameters) as Array<{
+            id: string
             role: 'user' | 'assistant'
             content: string
+            metadata_json: string
             created_at: string
           }>
         ).map((message) => ({
+          id: message.id,
           role: message.role,
           content: message.content,
-          createdAt: message.created_at
+          createdAt: message.created_at,
+          sourceReferences: (JSON.parse(message.metadata_json) as MessageMetadata).sourceReferences
         }))
       })),
       tasks: tasks.map((task) => ({
@@ -8221,8 +8256,272 @@ export class AssistantDatabase {
         projectId: memory.scope_id ?? undefined,
         type: memory.type,
         content: memory.content,
-        scope: memory.scope
+        scope: memory.scope,
+        createdAt: memory.created_at,
+        updatedAt: memory.updated_at
       }))
+    }
+  }
+
+  getHeartbeatEntry(entryId?: string): AssistantHeartbeatEntry | undefined {
+    if (!entryId) return undefined
+    const row = this.requireDatabase().prepare(
+      'SELECT * FROM heartbeat_entries WHERE id = ?'
+    ).get(entryId) as HeartbeatEntryRow | undefined
+    return row ? toHeartbeatEntry(row) : undefined
+  }
+
+  listSupervisionCandidates(request: StoredSupervisionResult['request']): Array<{ id: string; label: string; description: string }> {
+    return this.requireDatabase().prepare(`SELECT e.id, e.canonical_label AS label, e.description
+      FROM supervision_entities e JOIN story_lines s ON s.id = e.story_line_id
+      WHERE s.scope_json = ? AND e.confirmation_state != 'revoked'
+      ORDER BY e.updated_at DESC, e.id LIMIT 100`).all(JSON.stringify(request.scope)) as Array<{ id: string; label: string; description: string }>
+  }
+
+  saveSupervisionResult(result: StoredSupervisionResult): void {
+    const database = this.requireDatabase()
+    const timestamp = new Date().toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      let story = database.prepare(
+        'SELECT id FROM story_lines WHERE scope_json = ? LIMIT 1'
+      ).get(JSON.stringify(result.request.scope)) as { id: string } | undefined
+      if (!story) {
+        story = { id: randomUUID() }
+        database.prepare(
+          'INSERT INTO story_lines (id, scope_json, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+        ).run(story.id, JSON.stringify(result.request.scope), '工作故事线', timestamp, timestamp)
+      }
+      const runId = randomUUID()
+      const resultId = randomUUID()
+      database.prepare(`INSERT INTO supervision_runs
+        (id, trigger, scope_json, time_range_json, status, started_at, completed_at, created_at)
+        VALUES (?, ?, ?, ?, 'completed', ?, ?, ?)`).run(
+        runId, result.request.trigger, JSON.stringify(result.request.scope),
+        JSON.stringify(result.request.timeRange), timestamp, timestamp, timestamp
+      )
+      database.prepare(`INSERT INTO supervision_results
+        (id, run_id, summary, change_digest, open_items_json, coverage_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        resultId, runId, result.output.summary, result.output.changeDigest,
+        JSON.stringify(result.output.openItems), JSON.stringify({ evidence: result.evidence.length }), timestamp
+      )
+      // Model IDs are local to one result, never persistent cross-run identities.
+      const sourceIds = new Map(result.evidence.map((source) => [source.id, randomUUID()]))
+      const candidates = new Set((result.candidates ?? []).map((entity) => entity.id))
+      const currentCandidate = database.prepare("SELECT id FROM supervision_entities WHERE id = ? AND story_line_id = ? AND confirmation_state != 'revoked'")
+      const entityIds = new Map<string, string>()
+      for (const entity of result.output.entities) {
+        if (entityIds.has(entity.id) || (entity.persistedId &&
+            (!candidates.has(entity.persistedId) || !currentCandidate.get(entity.persistedId, story.id) || [...entityIds.values()].includes(entity.persistedId)))) {
+          throw new Error('监督者实体身份不属于本次范围或重复')
+        }
+        entityIds.set(entity.id, entity.persistedId ?? randomUUID())
+      }
+      const persistentId = (ids: Map<string, string>, id: string): string => {
+        const mapped = ids.get(id)
+        if (!mapped) throw new Error(`Unknown supervision reference: ${id}`)
+        return mapped
+      }
+      const sourceReferences = (ids: string[]): string =>
+        JSON.stringify(ids.map((id) => persistentId(sourceIds, id)))
+      const insertSource = database.prepare(`INSERT INTO supervision_sources
+        (id, result_id, source_type, source_id, title, occurred_at, content, locator_json, availability)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')`)
+      for (const source of result.evidence) {
+        insertSource.run(persistentId(sourceIds, source.id), resultId, source.sourceType, source.sourceId, source.title, source.occurredAt, source.content, source.locator ? JSON.stringify(source.locator) : null)
+      }
+      const insertEntity = database.prepare(`INSERT INTO supervision_entities
+        (id, story_line_id, canonical_label, description, confirmation_state, updated_at, source_reference_ids_json)
+        VALUES (?, ?, ?, ?, 'automatic', ?, ?)
+        ON CONFLICT(id) DO UPDATE SET canonical_label = excluded.canonical_label,
+          description = excluded.description, updated_at = excluded.updated_at,
+          source_reference_ids_json = excluded.source_reference_ids_json
+        WHERE supervision_entities.confirmation_state = 'automatic'`)
+      for (const entity of result.output.entities) {
+        insertEntity.run(persistentId(entityIds, entity.id), story.id, entity.label, entity.description, timestamp, sourceReferences(entity.sourceReferenceIds))
+      }
+      const insertChange = database.prepare(`INSERT INTO supervision_entity_changes
+        (id, entity_id, result_id, change_type, description, confirmation_state, source_reference_ids_json)
+        VALUES (?, ?, ?, ?, ?, 'automatic', ?)`)
+      for (const change of result.output.entityChanges) insertChange.run(
+        randomUUID(), persistentId(entityIds, change.entityId), resultId, change.changeType, change.description, sourceReferences(change.sourceReferenceIds)
+      )
+      const insertEvent = database.prepare(`INSERT INTO supervision_events
+        (id, story_line_id, result_id, occurred_at, title, description, event_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      for (const event of result.output.events) {
+        const eventId = randomUUID()
+        insertEvent.run(eventId, story.id, resultId, event.occurredAt, event.title, event.description, event.eventType)
+        for (const sourceId of event.sourceReferenceIds) database.prepare(
+          'INSERT INTO supervision_event_sources (event_id, source_id) VALUES (?, ?)'
+        ).run(eventId, persistentId(sourceIds, sourceId))
+        for (const entityId of event.entityIds) database.prepare(
+          'INSERT OR IGNORE INTO supervision_event_entities (event_id, entity_id, change_type) VALUES (?, ?, ?)'
+        ).run(eventId, persistentId(entityIds, entityId), 'associated')
+      }
+      const insertRelation = database.prepare(`INSERT INTO supervision_relations
+        (id, story_line_id, from_entity_id, to_entity_id, relation_type, reason, confirmation_state, source_reference_ids_json)
+        VALUES (?, ?, ?, ?, ?, ?, 'automatic', ?)
+        ON CONFLICT(story_line_id, from_entity_id, to_entity_id, relation_type)
+        DO UPDATE SET reason = excluded.reason, source_reference_ids_json = excluded.source_reference_ids_json
+        WHERE supervision_relations.confirmation_state = 'automatic'`)
+      for (const relation of result.output.relations) insertRelation.run(
+        randomUUID(), story.id, persistentId(entityIds, relation.fromEntityId), persistentId(entityIds, relation.toEntityId), relation.relationType, relation.reason, sourceReferences(relation.sourceReferenceIds)
+      )
+      const entities = result.output.entities.map((entity) => ({
+        ...database.prepare('SELECT * FROM supervision_entities WHERE id = ?').get(persistentId(entityIds, entity.id)),
+        source_reference_ids_json: sourceReferences(entity.sourceReferenceIds)
+      }))
+      const relations = result.output.relations.map((relation) => ({ ...database.prepare(`SELECT * FROM supervision_relations
+        WHERE story_line_id = ? AND from_entity_id = ? AND to_entity_id = ? AND relation_type = ?`).get(
+        story.id, persistentId(entityIds, relation.fromEntityId), persistentId(entityIds, relation.toEntityId), relation.relationType),
+        source_reference_ids_json: sourceReferences(relation.sourceReferenceIds)
+      }))
+      database.prepare('UPDATE supervision_results SET graph_snapshot_json = ? WHERE id = ?')
+        .run(JSON.stringify({ entities, relations }), resultId)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  getSupervisionResult(id: string): { id: string; summary: string } | undefined {
+    return this.requireDatabase().prepare('SELECT id, summary FROM supervision_results WHERE id = ?').get(id) as { id: string; summary: string } | undefined
+  }
+
+  listSupervisionResults(limit = 20, target?: SupervisionTarget) {
+    const owner = target?.type === 'conversation' ? this.getConversation(target.conversationId)
+      : target?.type === 'task' ? this.getTask(target.taskId) : undefined
+    const sourceType = target?.type ?? null
+    const sourceId = target?.type === 'conversation' ? target.conversationId : target?.taskId ?? null
+    return this.requireDatabase().prepare(`SELECT id, run_id AS runId, summary,
+      (SELECT sl.id FROM story_lines sl JOIN supervision_runs sr ON sr.scope_json = sl.scope_json WHERE sr.id = run_id) AS storyLineId,
+      change_digest AS changeDigest, open_items_json AS openItems, coverage_json AS coverage,
+      (SELECT id FROM supervision_sources WHERE result_id = supervision_results.id
+        AND (? IS NULL OR (source_type = ? AND source_id = ?)) ORDER BY occurred_at LIMIT 1) AS sourceId,
+      (SELECT scope_json FROM supervision_runs WHERE id = run_id) AS scope,
+      (SELECT time_range_json FROM supervision_runs WHERE id = run_id) AS timeRange,
+      created_at AS createdAt FROM supervision_results
+      WHERE (? IS NULL OR (EXISTS (SELECT 1 FROM supervision_sources s WHERE s.result_id = supervision_results.id AND s.source_type = ? AND s.source_id = ?)
+        AND EXISTS (SELECT 1 FROM supervision_runs sr WHERE sr.id = run_id AND
+          (json_extract(sr.scope_json, '$.kind') = 'global' OR EXISTS
+            (SELECT 1 FROM json_each(sr.scope_json, '$.projectIds') WHERE value = ?)))))
+      ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(sourceType, sourceType, sourceId, sourceType, sourceType, sourceId, owner?.projectId ?? null, limit).map((row) => {
+        const result = row as Record<string, unknown>
+        return supervisionResultViewSchema.parse({ ...result, scope: JSON.parse(String(result.scope)), timeRange: JSON.parse(String(result.timeRange)), openItems: JSON.parse(String(result.openItems)) })
+      })
+  }
+
+  getSupervisionGraph(input: SupervisionGraphRequest = {}): Record<string, unknown> {
+    const database = this.requireDatabase()
+    let { storyLineId } = input
+    if (input.resultId) {
+      const result = database.prepare(`SELECT sl.id FROM supervision_results r JOIN supervision_runs sr ON sr.id = r.run_id
+        JOIN story_lines sl ON sl.scope_json = sr.scope_json WHERE r.id = ?`).get(input.resultId) as { id: string } | undefined
+      if (!result || (storyLineId && storyLineId !== result.id)) throw new Error('监督结果与故事线不匹配')
+      storyLineId = result.id
+    }
+    const story = storyLineId
+      ? database.prepare('SELECT * FROM story_lines WHERE id = ?').get(storyLineId)
+      : database.prepare(`SELECT * FROM story_lines ORDER BY COALESCE(
+          (SELECT MAX(r.created_at) FROM supervision_results r
+            JOIN supervision_runs sr ON sr.id = r.run_id WHERE sr.scope_json = story_lines.scope_json), updated_at) DESC LIMIT 1`).get()
+    if (!story) return { storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }
+    const id = (story as { id: string }).id
+    if (input.resultId) {
+      const row = database.prepare('SELECT graph_snapshot_json FROM supervision_results WHERE id = ?').get(input.resultId) as { graph_snapshot_json: string }
+      const snapshot = JSON.parse(row.graph_snapshot_json) as { entities: unknown[]; relations: Array<{ confirmation_state: string }> }
+      return {
+        storyLine: story, ...snapshot, relations: snapshot.relations.filter((relation) => relation.confirmation_state !== 'revoked'),
+        events: database.prepare('SELECT * FROM supervision_events WHERE result_id = ? ORDER BY occurred_at').all(input.resultId),
+        sources: database.prepare('SELECT * FROM supervision_sources WHERE result_id = ?').all(input.resultId),
+        eventEntities: database.prepare(`SELECT ee.event_id, ee.entity_id FROM supervision_event_entities ee JOIN supervision_events e ON e.id = ee.event_id WHERE e.result_id = ?`).all(input.resultId),
+        eventSources: database.prepare(`SELECT es.event_id, es.source_id FROM supervision_event_sources es JOIN supervision_events e ON e.id = es.event_id WHERE e.result_id = ?`).all(input.resultId)
+      }
+    }
+    return {
+      storyLine: story,
+      events: database.prepare('SELECT * FROM supervision_events WHERE story_line_id = ? ORDER BY occurred_at').all(id),
+      entities: database.prepare('SELECT * FROM supervision_entities WHERE story_line_id = ? ORDER BY canonical_label').all(id),
+      relations: database.prepare("SELECT * FROM supervision_relations WHERE story_line_id = ? AND confirmation_state != 'revoked'").all(id),
+      eventEntities: database.prepare(`SELECT ee.event_id, ee.entity_id FROM supervision_event_entities ee
+        JOIN supervision_events e ON e.id = ee.event_id WHERE e.story_line_id = ?`).all(id),
+      eventSources: database.prepare(`SELECT es.event_id, es.source_id FROM supervision_event_sources es
+        JOIN supervision_events e ON e.id = es.event_id WHERE e.story_line_id = ?`).all(id),
+      sources: database.prepare(`SELECT DISTINCT s.* FROM supervision_sources s
+        JOIN supervision_results r ON r.id = s.result_id
+        JOIN supervision_runs sr ON sr.id = r.run_id
+        WHERE sr.scope_json = (SELECT scope_json FROM story_lines WHERE id = ?)`
+      ).all(id)
+    }
+  }
+
+  getSupervisionSource(sourceId: string): Record<string, unknown> | undefined {
+    return this.requireDatabase().prepare(`SELECT id, result_id AS resultId,
+      source_type AS sourceType, source_id AS sourceId, title, occurred_at AS occurredAt,
+      content, locator_json AS locatorJson, availability FROM supervision_sources WHERE id = ?`).get(sourceId) as
+      Record<string, unknown> | undefined
+  }
+
+  applySupervisionEntityAction(input: {
+    resultId?: string
+    entityId: string
+    action: 'confirm' | 'revise' | 'revoke'
+    label?: string
+    description?: string
+  }): void {
+    const database = this.requireDatabase()
+    const entity = database.prepare('SELECT id FROM supervision_entities WHERE id = ?').get(input.entityId)
+    if (!entity) throw new Error('监督者实体不存在')
+    const state = input.action === 'confirm' ? 'confirmed' : input.action === 'revoke' ? 'revoked' : 'revised'
+    this.updateSupervisionSnapshot(input.resultId, 'entities', input.entityId, (snapshot) => {
+      database.prepare(`UPDATE supervision_entities SET
+      canonical_label = COALESCE(?, canonical_label),
+      description = COALESCE(?, description), confirmation_state = ?, updated_at = ?
+      WHERE id = ?`).run(input.label ?? snapshot?.canonical_label ?? null, input.description ?? snapshot?.description ?? null, state, new Date().toISOString(), input.entityId)
+      return database.prepare('SELECT * FROM supervision_entities WHERE id = ?').get(input.entityId)!
+    })
+  }
+
+  applySupervisionRelationAction(input: {
+    resultId?: string
+    relationId: string
+    action: 'confirm' | 'revoke'
+  }): void {
+    const database = this.requireDatabase()
+    const relation = database.prepare('SELECT id FROM supervision_relations WHERE id = ?').get(input.relationId)
+    if (!relation) throw new Error('监督者关系不存在')
+    this.updateSupervisionSnapshot(input.resultId, 'relations', input.relationId, (snapshot) => {
+    if (input.action === 'revoke') {
+      database.prepare("UPDATE supervision_relations SET confirmation_state = 'revoked' WHERE id = ?").run(input.relationId)
+    } else {
+      database.prepare(`UPDATE supervision_relations SET confirmation_state = 'confirmed', reason = COALESCE(?, reason)
+        WHERE id = ?`).run(snapshot?.reason ?? null, input.relationId)
+    }
+    return database.prepare('SELECT * FROM supervision_relations WHERE id = ?').get(input.relationId)!
+    })
+  }
+
+  private updateSupervisionSnapshot(resultId: string | undefined, kind: 'entities' | 'relations', id: string,
+    update: (snapshot?: Record<string, import('node:sqlite').SQLInputValue>) => Record<string, unknown>): void {
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = resultId ? database.prepare('SELECT graph_snapshot_json FROM supervision_results WHERE id = ?').get(resultId) : undefined
+      const snapshot = row ? JSON.parse(String(row.graph_snapshot_json)) as Record<'entities' | 'relations', Array<Record<string, import('node:sqlite').SQLInputValue>>> : undefined
+      const selected = snapshot?.[kind].find((item) => item.id === id)
+      if (resultId && !selected) throw new Error('监督对象与结果不匹配')
+      const updated = update(selected)
+      if (snapshot && resultId) {
+        snapshot[kind] = snapshot[kind].map((item) => item.id === id ? { ...updated, source_reference_ids_json: item.source_reference_ids_json } as typeof item : item)
+        database.prepare('UPDATE supervision_results SET graph_snapshot_json = ? WHERE id = ?').run(JSON.stringify(snapshot), resultId)
+      }
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
     }
   }
 
@@ -10584,6 +10883,114 @@ export class AssistantDatabase {
     if (version.user_version < 39) {
       // Older clients reject the persisted file-backed attachment metadata.
       database.exec('BEGIN IMMEDIATE; PRAGMA user_version = 39; COMMIT;')
+    }
+    if (version.user_version < 40) {
+      database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS story_lines (
+          id TEXT PRIMARY KEY, scope_json TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS supervision_runs (
+          id TEXT PRIMARY KEY, trigger TEXT NOT NULL, scope_json TEXT NOT NULL,
+          time_range_json TEXT NOT NULL, status TEXT NOT NULL, error TEXT,
+          started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS supervision_results (
+          id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES supervision_runs(id) ON DELETE CASCADE,
+          summary TEXT NOT NULL, change_digest TEXT NOT NULL, open_items_json TEXT NOT NULL,
+          coverage_json TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS supervision_sources (
+          id TEXT PRIMARY KEY, result_id TEXT NOT NULL REFERENCES supervision_results(id) ON DELETE CASCADE,
+          source_type TEXT NOT NULL, source_id TEXT NOT NULL, title TEXT NOT NULL,
+          occurred_at TEXT NOT NULL, content TEXT NOT NULL,
+          availability TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS supervision_entities (
+          id TEXT PRIMARY KEY, story_line_id TEXT NOT NULL REFERENCES story_lines(id) ON DELETE CASCADE,
+          canonical_label TEXT NOT NULL, description TEXT NOT NULL,
+          confirmation_state TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS supervision_entity_changes (
+          id TEXT PRIMARY KEY, entity_id TEXT NOT NULL REFERENCES supervision_entities(id),
+          result_id TEXT NOT NULL REFERENCES supervision_results(id) ON DELETE CASCADE,
+          change_type TEXT NOT NULL, description TEXT NOT NULL, confirmation_state TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS supervision_events (
+          id TEXT PRIMARY KEY, story_line_id TEXT NOT NULL REFERENCES story_lines(id) ON DELETE CASCADE,
+          result_id TEXT NOT NULL REFERENCES supervision_results(id) ON DELETE CASCADE,
+          occurred_at TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, event_type TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS supervision_event_sources (
+          event_id TEXT NOT NULL REFERENCES supervision_events(id) ON DELETE CASCADE,
+          source_id TEXT NOT NULL REFERENCES supervision_sources(id), PRIMARY KEY(event_id, source_id)
+        );
+        CREATE TABLE IF NOT EXISTS supervision_event_entities (
+          event_id TEXT NOT NULL REFERENCES supervision_events(id) ON DELETE CASCADE,
+          entity_id TEXT NOT NULL REFERENCES supervision_entities(id), change_type TEXT NOT NULL,
+          PRIMARY KEY(event_id, entity_id)
+        );
+        CREATE TABLE IF NOT EXISTS supervision_relations (
+          id TEXT PRIMARY KEY, story_line_id TEXT NOT NULL REFERENCES story_lines(id) ON DELETE CASCADE,
+          from_entity_id TEXT NOT NULL REFERENCES supervision_entities(id),
+          to_entity_id TEXT NOT NULL REFERENCES supervision_entities(id), relation_type TEXT NOT NULL,
+          reason TEXT NOT NULL, confirmation_state TEXT NOT NULL,
+          UNIQUE(story_line_id, from_entity_id, to_entity_id, relation_type)
+        );
+        CREATE INDEX IF NOT EXISTS supervision_events_time ON supervision_events(story_line_id, occurred_at);
+        PRAGMA user_version = 40;
+        COMMIT;
+      `)
+    }
+    if (version.user_version < 41) {
+      const columns = database.prepare('PRAGMA table_info(supervision_sources)').all() as Array<{ name: string }>
+      database.exec('BEGIN IMMEDIATE')
+      if (!columns.some((column) => column.name === 'locator_json')) {
+        database.exec('ALTER TABLE supervision_sources ADD COLUMN locator_json TEXT')
+      }
+      database.exec('PRAGMA user_version = 41; COMMIT;')
+    }
+    if (version.user_version < 42) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        for (const table of ['supervision_entities', 'supervision_entity_changes', 'supervision_relations']) {
+          const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+          if (!columns.some((column) => column.name === 'source_reference_ids_json')) {
+            database.exec(`ALTER TABLE ${table} ADD COLUMN source_reference_ids_json TEXT NOT NULL DEFAULT '[]'`)
+          }
+        }
+        database.exec('PRAGMA user_version = 42; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 43) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec("ALTER TABLE supervision_results ADD COLUMN graph_snapshot_json TEXT NOT NULL DEFAULT '{\"entities\":[],\"relations\":[]}'")
+        const results = database.prepare('SELECT id FROM supervision_results').all() as Array<{ id: string }>
+        for (const result of results) {
+          // Recover membership from stored references, not labels or local model IDs.
+          const entities = database.prepare(`SELECT DISTINCT e.* FROM supervision_entities e WHERE
+            EXISTS (SELECT 1 FROM supervision_event_entities ee JOIN supervision_events ev ON ev.id = ee.event_id
+              WHERE ee.entity_id = e.id AND ev.result_id = ?)
+            OR EXISTS (SELECT 1 FROM supervision_entity_changes c WHERE c.entity_id = e.id AND c.result_id = ?)
+            OR EXISTS (SELECT 1 FROM json_each(e.source_reference_ids_json) ref JOIN supervision_sources s ON s.id = ref.value WHERE s.result_id = ?)`)
+            .all(result.id, result.id, result.id) as Array<{ id: string }>
+          const ids = entities.map((entity) => entity.id)
+          const placeholders = ids.map(() => '?').join(',')
+          const relations = ids.length ? database.prepare(`SELECT * FROM supervision_relations
+            WHERE from_entity_id IN (${placeholders}) AND to_entity_id IN (${placeholders})`).all(...ids, ...ids) : []
+          database.prepare('UPDATE supervision_results SET graph_snapshot_json = ? WHERE id = ?')
+            .run(JSON.stringify({ entities, relations }), result.id)
+        }
+        database.exec('PRAGMA user_version = 43; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
     }
   }
 

@@ -107,6 +107,8 @@ Runtime
 使用门槛：
 
 - 监督默认选择当前会话，用户可以改选其他 Conversation、Task 或实验对象。
+
+当前监督卡片已支持 Conversation/Task 跟随与固定，绑定保存在 tasks 实例的 `targetRef`；绑定只影响监督卡片，任务列表继续跟随当前项目。实现范围与验证见[监督者进度](../conversation-supervision/progress.md)。实验对象仍属后续工作。
 - Runtime 默认跟随当前会话或 Task；执行事件可以查看，但 Job/Run 不作为独立选择对象。
 - 终端创建时固定到当前项目执行空间，由项目配置自动决定本机或托管 SSH；没有当前项目时
   使用本机 Home。

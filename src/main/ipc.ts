@@ -337,6 +337,20 @@ import {
   resolveWorkspaceEntryPath
 } from './assistant/workspace-changes-service'
 import { HeartbeatService } from './assistant/heartbeat-service'
+import { SupervisorService } from './assistant/supervisor-service'
+import {
+  supervisionEntityActionSchema,
+  supervisionOverviewRequestSchema,
+  supervisionGraphRequestSchema,
+  supervisionRelationActionSchema,
+  supervisionRunRequestSchema,
+  supervisionSourceRequestSchema,
+  supervisionContinueContextRequestSchema,
+  supervisionContinueRequestSchema,
+  supervisionKnowledgePreviewRequestSchema,
+  supervisionKnowledgeCommitRequestSchema,
+  type SupervisionEvidence
+} from '../shared/supervision-contracts'
 import { showDesktopNotificationWhenUnfocused } from './desktop-notification'
 import {
   SubagentRunError,
@@ -1895,6 +1909,18 @@ export function registerIpcHandlers(
     },
     () => {
       throw new Error('Heartbeat tool use is always denied')
+    },
+    async ({ config, run }) => {
+      if (!supervisorService || run.status !== 'completed') return
+      const to = run.completedAt ?? run.scheduledFor
+      const from = new Date(
+        Date.parse(to) - config.lookbackHours * 3_600_000
+      ).toISOString()
+      await supervisorService.run({
+        trigger: 'heartbeat',
+        scope: config.scope,
+        timeRange: { from, to }
+      })
     }
   )
   const publishRemoteActivity = (
@@ -7080,6 +7106,79 @@ export function registerIpcHandlers(
       publishConversationChange()
     }
   )
+  const supervisorService = new SupervisorService(
+    {
+      collect: async (request) => {
+        const input = assistantDatabase.buildHeartbeatInput({
+          scope: request.scope, lookbackHours: 0
+        }, new Date(request.timeRange.to), request.timeRange)
+        const evidence: SupervisionEvidence[] = [
+          ...input.conversations.flatMap((conversation) => conversation.messages.flatMap((message) => {
+            const conversationEvidence = [{
+              id: `${conversation.id}:${message.createdAt}`, sourceType: 'conversation' as const,
+              sourceId: conversation.id, title: conversation.title, content: message.content, occurredAt: message.createdAt
+            }]
+            const knowledgeEvidence = (message.sourceReferences ?? []).map((reference, index) => ({
+              id: `${conversation.id}:${message.id}:knowledge:${index}`,
+              sourceType: 'knowledge' as const,
+              sourceId: reference.chunkId ?? reference.documentId ?? reference.external?.sourceUrl ?? reference.libraryId,
+              title: reference.documentName || reference.sourceName,
+              content: reference.snippet,
+              occurredAt: message.createdAt,
+              locator: {
+                libraryId: reference.libraryId,
+                documentId: reference.documentId,
+                chunkId: reference.chunkId,
+                documentTitle: reference.documentName,
+                sourceDisplayName: reference.sourceName,
+                sourceLocation: reference.sourceLocation,
+                locator: reference.locator,
+                external: reference.external
+              }
+            }))
+            return [...conversationEvidence, ...knowledgeEvidence]
+          })),
+          ...input.tasks.map((task) => ({
+            id: `task:${task.id}`, sourceType: 'task' as const, sourceId: task.id,
+            title: task.title, content: `当前状态：${task.status}；创建时间：${task.createdAt}${task.completedAt ? `；完成时间：${task.completedAt}` : ''}`,
+            occurredAt: task.completedAt && Date.parse(task.completedAt) >= Date.parse(request.timeRange.from)
+              && Date.parse(task.completedAt) <= Date.parse(request.timeRange.to) ? task.completedAt : task.createdAt
+          })),
+          ...input.confirmedMemories.map((memory) => ({
+            id: `memory:${memory.id}`, sourceType: 'memory' as const, sourceId: memory.id,
+            title: '已确认记忆（当前背景，非区间事件）', content: memory.content, occurredAt: memory.updatedAt,
+            locator: { temporalRole: 'current-background', createdAt: memory.createdAt, updatedAt: memory.updatedAt }
+          }))
+        ]
+        return evidence
+      }
+    },
+    {
+      summarize: async (request) => {
+        const runtime = await resolveRequestRuntime({ workMode: 'ask' })
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 4 * 60_000)
+        let output = ''
+        const conversationId = `supervision:${randomUUID()}`
+        try {
+          for await (const event of runtime.run({
+            requestId: randomUUID(), conversationId, workMode: 'ask',
+            prompt: [request.systemInstruction, 'OUTPUT CONTRACT:', request.outputContract,
+               'REVIEW TIME RANGE:', JSON.stringify(request.request.timeRange),
+               'KNOWN ENTITIES:', JSON.stringify(request.candidates),
+              'BOUNDED EVIDENCE:', JSON.stringify(request.evidence), 'Return only JSON.'].join('\n\n')
+          }, controller.signal, async (approval) => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })) {
+            if (event.type === 'text') output += event.delta
+            if (event.type === 'tool') throw new Error('监督者只允许只读模型摘要，不允许工具调用')
+            if (event.type === 'error') throw new Error(event.message)
+          }
+          return output
+        } finally { clearTimeout(timeout); await runtime.releaseConversation?.(conversationId) }
+      }
+    },
+    { candidates: async (request) => assistantDatabase.listSupervisionCandidates(request),
+      save: async (result) => assistantDatabase.saveSupervisionResult(result) }
+  )
 
   registerHandler(
     ipcChannels.conversationsBranchLocal,
@@ -7784,6 +7883,139 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.heartbeatsHistory, (event, input: unknown) => {
     assertTrustedSender(event, window)
     return heartbeatService.history(input)
+  })
+
+  registerHandler(ipcChannels.supervisionOverview, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.listSupervisionResults(20, supervisionOverviewRequestSchema.parse(input ?? {}).target)
+  })
+  registerHandler(ipcChannels.supervisionRun, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    if (executionPaused || shuttingDown) throw new Error('本地数据维护期间暂不接受新任务')
+    return trackExecution(supervisorService.run(supervisionRunRequestSchema.parse(input)))
+  })
+  registerHandler(ipcChannels.supervisionGraph, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getSupervisionGraph(supervisionGraphRequestSchema.parse(input ?? {}))
+  })
+  registerHandler(ipcChannels.supervisionSource, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return assistantDatabase.getSupervisionSource(
+      supervisionSourceRequestSchema.parse(input).sourceId
+    )
+  })
+  registerHandler(ipcChannels.supervisionSourceContext, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const source = assistantDatabase.getSupervisionSource(
+      supervisionSourceRequestSchema.parse(input).sourceId
+    )
+    if (!source) throw new Error('监督来源不存在')
+    if (source.sourceType === 'conversation') {
+      const conversation = assistantDatabase.getConversation(String(source.sourceId))
+      const messages = conversation.messages ?? []
+      const message = messages.find((candidate) => candidate.createdAt === source.occurredAt)
+      return { ...source, contextType: 'conversation', conversationId: conversation.id, messageId: message?.id, content: message?.content ?? source.content }
+    }
+    if (source.sourceType === 'knowledge') {
+      const locator = source.locatorJson ? JSON.parse(String(source.locatorJson)) as Record<string, unknown> : undefined
+      if (!locator?.libraryId || !locator.documentId || !locator.chunkId) {
+        return { ...source, contextType: 'unavailable', availability: 'unavailable', error: '该知识来源缺少本地文档或分块定位信息' }
+      }
+      try {
+        return { ...source, contextType: 'knowledge', ...(knowledgeService.getReferenceContext({ knowledgeBaseId: String(locator.libraryId), documentId: String(locator.documentId), chunkId: String(locator.chunkId) })) }
+      } catch {
+        return { ...source, contextType: 'unavailable', availability: 'unavailable', error: '该知识来源已失效或无法读取' }
+      }
+    }
+    if (source.sourceType === 'memory') return { ...source, contextType: 'stored', content: source.content }
+    return { ...source, contextType: 'stored', content: source.content }
+  })
+  registerHandler(ipcChannels.supervisionContinueContext, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionContinueContextRequestSchema.parse(input)
+    const source = assistantDatabase.getSupervisionSource(request.sourceId)
+    if (!source) throw new Error('监督来源不存在')
+    if (source.resultId !== request.resultId) throw new Error('监督来源与结果不匹配')
+    const result = assistantDatabase.getSupervisionResult(request.resultId)
+    if (!result) throw new Error('监督结果不存在')
+    return {
+      source: { title: source.title, sourceType: source.sourceType, sourceId: source.sourceId, content: source.content, occurredAt: source.occurredAt },
+      summary: String(result.summary ?? ''),
+      prompt: `请基于以下监督回顾继续讨论。\n\n回顾摘要：\n${String(result.summary ?? '')}\n\n来源：${source.title}\n${source.content}`
+    }
+  })
+  registerHandler(ipcChannels.supervisionContinue, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionContinueRequestSchema.parse(input)
+    if (executionPaused || shuttingDown) throw new Error('本地数据维护期间暂不接受新消息')
+    const conversation = assistantDatabase.getConversation(request.conversationId)
+    const queueInput = conversationQueueUserInputSchema.parse({
+      conversationId: conversation.id,
+      projectId: request.projectId ?? conversation.projectId ?? undefined,
+      runtimeSelection: request.runtimeSelection ?? conversation.runtimeSelection,
+      workMode: conversation.workMode ?? 'ask',
+      includeMemoryContext: true,
+      prompt: request.prompt,
+      attachments: [],
+      knowledgeLibraryIds: conversation.knowledgeLibraryIds ?? [],
+      knowledgeRetrievalMode: conversation.knowledgeRetrievalMode ?? 'auto'
+    })
+    const item = assistantDatabase.enqueueConversationUserInput({
+      conversationId: queueInput.conversationId,
+      label: queueInput.prompt,
+      payloadJson: JSON.stringify({ input: queueInput })
+    })
+    rendererReadyConversationQueues.add(item.conversationId)
+    if (!isConversationExecuting(item.conversationId)) {
+      readyConversationQueues.add(item.conversationId)
+      void pumpConversationQueue(item.conversationId)
+    }
+    publishConversationQueueChange(item.conversationId)
+  })
+  const supervisionKnowledgePreviews = new Map<string, ReturnType<typeof supervisionKnowledgePreviewRequestSchema.parse>>()
+  const validateSupervisionKnowledgeTarget = (request: ReturnType<typeof supervisionKnowledgePreviewRequestSchema.parse>): void => {
+    if (knowledgeService.database.externalStore.hasBinding(request.libraryId)) {
+      throw new Error('EXTERNAL_KB_READ_ONLY')
+    }
+    if (!knowledgeService.database.getKnowledgeBase(request.libraryId)) throw new Error('知识库不存在')
+    if (request.operation === 'update-entity') {
+      const entity = knowledgeService.database.getEntity(request.entityId!)
+      if (!entity || entity.knowledgeBaseId !== request.libraryId) {
+        throw new Error('知识实体不属于所选知识库')
+      }
+    }
+  }
+  registerHandler(ipcChannels.supervisionKnowledgePreview, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionKnowledgePreviewRequestSchema.parse(input)
+    const source = assistantDatabase.getSupervisionSource(request.sourceId)
+    if (!source) throw new Error('监督来源不存在，无法预览知识变更')
+    validateSupervisionKnowledgeTarget(request)
+    const previewId = randomUUID()
+    supervisionKnowledgePreviews.set(previewId, request)
+    return { previewId, operation: request.operation, libraryId: request.libraryId, source: { id: source.id, title: source.title, content: source.content }, entity: request }
+  })
+  registerHandler(ipcChannels.supervisionKnowledgeCommit, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { previewId } = supervisionKnowledgeCommitRequestSchema.parse(input)
+    const request = supervisionKnowledgePreviews.get(previewId)
+    if (!request) throw new Error('知识变更预览已失效，请重新预览')
+    supervisionKnowledgePreviews.delete(previewId)
+    validateSupervisionKnowledgeTarget(request)
+    if (request.operation === 'create-entity') {
+      knowledgeService.database.createEntity({ knowledgeBaseId: request.libraryId, name: request.label, type: request.type, description: request.description || undefined, aliases: request.aliases, locked: true })
+      return { operation: request.operation, status: 'committed' }
+    }
+    knowledgeService.database.updateEntity(request.entityId!, { name: request.label, type: request.type, description: request.description || null, aliases: request.aliases, locked: true })
+    return { operation: request.operation, status: 'committed' }
+  })
+  registerHandler(ipcChannels.supervisionEntityAction, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    assistantDatabase.applySupervisionEntityAction(supervisionEntityActionSchema.parse(input))
+  })
+  registerHandler(ipcChannels.supervisionRelationAction, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    assistantDatabase.applySupervisionRelationAction(supervisionRelationActionSchema.parse(input))
   })
 
   registerHandler(ipcChannels.expertsList, (event) => {

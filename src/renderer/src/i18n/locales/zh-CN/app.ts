@@ -8,7 +8,7 @@ export const app = {
   applications: {
     alwaysShown: '始终显示', optional: '可选',
     manage: '管理应用',
-    title: '应用中心', description: '打开和排列内置应用，管理可选应用的启用与常驻。知识库和智能心跳始终显示，位置可调整。',
+    title: '应用中心', description: '打开和排列内置应用，管理可选应用的启用与常驻。知识库始终显示，监督者可启用或关闭。',
     localInference: '本机推理监控', settings: '应用设置', enable: '启用应用', pin: '常驻左侧菜单',
     pinHelp: '常驻只控制左侧捷径。',
     disableHelp: '关闭应用保留数据和常驻偏好，不停止已有请求或后台服务。',
@@ -19,7 +19,7 @@ export const app = {
     confirmFailed: '无法确认保存结果，请重新读取后再修改。',
     descriptions: {
       'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
-      heartbeat: '查看智能心跳建议与计划。', 'local-inference': '查看本机推理任务与执行服务。'
+      heartbeat: '回顾工作演变、查看故事线图谱，并配置自动唤醒。', 'local-inference': '查看本机推理任务与执行服务。'
     }
   },
   notifications: {
@@ -64,7 +64,7 @@ export const app = {
     chat: '对话',
     magicNotes: '魔法笔记',
     knowledge: '知识库',
-    heartbeat: '智能心跳',
+    heartbeat: '监督者',
     activity: '运行记录',
     incompleteTodos: '{{count}} 个未完成待办',
     pendingSuggestions: '{{count}} 条待处理建议'
@@ -695,9 +695,9 @@ export const app = {
     resultHistoryReadFailed: '历史成果读取失败',
     knowledgeReadFailed: '本地知识库读取失败',
     selectProject: '请先选择项目',
-    heartbeatReadFailed: '智能心跳读取失败',
-    heartbeatRefreshFailed: '智能心跳刷新失败',
-    heartbeatTaskPrompt: '请根据以下智能心跳建议制定可执行方案：',
+     heartbeatReadFailed: '监督者读取失败',
+     heartbeatRefreshFailed: '监督者刷新失败',
+     heartbeatTaskPrompt: '请根据以下监督反馈制定可执行方案：',
     heartbeatTaskAdded: '已将“{{title}}”带入对话，请确认后发送',
     userStartedTask: '用户发起对话任务',
     userDecision: '用户选择了{{decision}}',

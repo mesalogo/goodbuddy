@@ -13,6 +13,13 @@ const terminalId = '00000000-0000-4000-8000-000000000102'
 const projectId = '00000000-0000-4000-8000-000000000201'
 
 describe('workbar contracts', () => {
+  it('persists supervision conversation and task targets without allowing task terminal bindings', () => {
+    for (const targetRef of [{ type: 'conversation', conversationId: 'A' }, { type: 'task', taskId: 'task-A' }]) {
+      const instance = { id: taskId, appId: 'tasks', title: 'Tasks', targetRef }
+      expect(workbarTabInstanceSchema.parse(instance).targetRef).toEqual(targetRef)
+      expect(workbarTabInstanceSchema.safeParse({ ...instance, appId: 'terminal' }).success).toBe(false)
+    }
+  })
   it('freezes the first application catalog and instance policies', () => {
     expect(
       WORKBAR_APP_DEFINITIONS.map(({ id, instancePolicy, defaultContext, defaultOpen, required, closable, reorderable }) => ({

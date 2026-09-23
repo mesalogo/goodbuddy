@@ -151,6 +151,7 @@ function sidebarElement({
   workspaceProjectId,
   restoreFocusRef,
   activeConversationId,
+  supervisionLibraries,
   conversationStats,
   taskDurations,
   selectedTaskId,
@@ -189,6 +190,7 @@ function sidebarElement({
   workspaceProjectId?: string
   restoreFocusRef?: { current: HTMLElement | null }
   activeConversationId?: string
+  supervisionLibraries?: React.ComponentProps<typeof RightAssistantSidebar>['supervisionLibraries']
   conversationStats?: React.ComponentProps<typeof RightAssistantSidebar>['conversationStats']
   taskDurations?: React.ComponentProps<typeof RightAssistantSidebar>['taskDurations']
   selectedTaskId?: string
@@ -208,6 +210,7 @@ function sidebarElement({
       <RightAssistantSidebar
         approvals={approvals}
         activeConversationId={activeConversationId}
+        supervisionLibraries={supervisionLibraries}
         conversationStats={conversationStats}
         taskDurations={taskDurations}
         selectedTaskId={selectedTaskId}
@@ -253,6 +256,49 @@ function renderSidebar(options: Parameters<typeof sidebarElement>[0] = {}): HTML
     name: '助手工作栏'
   })
 }
+
+it('pins the supervision target across conversation switches and restores following when unpinned', async () => {
+  const overview = vi.fn(async () => [])
+  Object.assign(window.goodbuddy, { supervision: { overview } })
+  const view = render(sidebarElement({ activeConversationId: 'A' }))
+  await waitFor(() => expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'A' } }))
+  fireEvent.click(screen.getByRole('button', { name: '固定监督目标' }))
+  view.rerender(sidebarElement({ activeConversationId: 'B' }))
+  expect(screen.getByRole('button', { name: '取消固定监督目标' })).toBeInTheDocument()
+  expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'A' } })
+  expect(localStorage.getItem('goodbuddy.workbar-layout.v1')).toContain('"conversationId":"A"')
+  fireEvent.click(screen.getByRole('button', { name: '取消固定监督目标' }))
+  await waitFor(() => expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'B' } }))
+})
+
+it.each(['cancel', 'failure'] as const)('retries supervision knowledge preview after %s and shows returned content', async (outcome) => {
+  const knowledgePreview = vi.fn(async () => ({ previewId: 'preview', libraryId: 'library', operation: 'create-entity',
+    entity: { label: 'Returned label', type: 'Returned type', description: 'Returned description', aliases: ['Returned alias'] },
+    source: { title: 'Returned source', content: 'Returned evidence' } }))
+  const knowledgeCommit = vi.fn(async () => ({}))
+  if (outcome === 'failure') knowledgeCommit.mockRejectedValueOnce(new Error('Write failed'))
+  Object.assign(window.goodbuddy, { supervision: {
+    overview: vi.fn(async () => [{ id: 'result', storyLineId: 'story', sourceId: 'source', summary: 'Summary', scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' } }]),
+    sourceContext: vi.fn(async () => ({ id: 'source', title: 'Source', content: 'Content' })), knowledgePreview, knowledgeCommit
+  } })
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(outcome !== 'cancel').mockReturnValue(true)
+  try {
+    renderSidebar({ activeConversationId: 'conversation', supervisionLibraries: [{ id: 'library', name: 'Target library' } as never] })
+    fireEvent.click(await screen.findByRole('button', { name: '查看来源' }))
+    const button = await screen.findByRole('button', { name: '预览并写入实体' })
+    fireEvent.click(button)
+    await waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+    for (const text of ['Target library', 'Returned label', 'Returned type', 'Returned description', 'Returned alias', 'Returned source', 'Returned evidence']) {
+      expect(confirm.mock.calls[0]![0]).toContain(text)
+    }
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(knowledgeCommit).toHaveBeenCalledTimes(outcome === 'cancel' ? 0 : 1)
+    fireEvent.click(button)
+    expect(await screen.findByText('知识实体已写入')).toBeInTheDocument()
+    expect(knowledgePreview).toHaveBeenCalledTimes(2)
+    expect(button).toBeEnabled()
+  } finally { confirm.mockRestore() }
+})
 
 describe('RightAssistantSidebar tab titles', () => {
   it('updates application titles in place when the locale changes without rewriting the layout', async () => {

@@ -4,14 +4,36 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 目标技术设计，尚未实现 |
+| 状态 | 已接入结果定位、目标过滤及同 scope 候选身份复用；完整历史回放、无变化状态和取消语义仍未完成 |
 | 日期 | 2026-09-20 |
 | 产品设计 | [监督者应用产品设计](./supervisor-prd.md) |
 | 行为规则 | [监督者逻辑设计](./logic-design.md) |
 | 界面设计 | [监督者 UI 设计](./ui-design.md) |
-| 实施进度 | 尚未建立，首个实现阶段完成后补充 |
+| 实施进度 | 共享契约、`SupervisorService`、SQLite schema 43、Preload IPC、定时投影、工作回顾、结果图谱、来源读取、实体/关系状态操作、会话继续讨论、知识库预览写入和目标侧栏已接入 |
 
 本文回答如何在现有 GoodBuddy 桌面端中实现监督者。它不改变产品范围，也不把模拟 Demo 当作生产数据模型。
+
+当前实现边界：`src/main/assistant/supervisor-service.ts` 接收冻结的范围和时间区间，通过现有 AssistantDatabase 取得有界会话、任务、消息已有知识引用和已确认记忆，调用 ask Runtime 的结构化摘要器，校验来源引用与实体关系后在 SQLite 事务中保存。消息引用中的本地 library/document/chunk 和外部 locator 元数据写入监督来源；source-context 对本地引用调用现有 `KnowledgeService` 解析。记忆使用独立的 `memory` 来源类型，外部引用不触发远端全库检索。
+
+模型实体 `id` 只在单次输出内有效。Main 从同一 scope 的故事线提供最多 100 个未撤销实体候选，模型可用独立的 `persistedId` 引用其中一个 UUID。服务校验候选集成员和重复映射，保存事务再次按实体主键校验故事线归属及撤销状态。没有 `persistedId` 时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。
+
+schema 42 为实体、实体变化和关系增加 `source_reference_ids_json`，保存映射后的来源 ID。升级只补列，旧记录、ID、确认状态及 locator 保留；此前未保存的引用使用空数组，已被覆盖或忽略的历史内容无法据此恢复。
+
+schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、说明、确认状态、关系理由及本次来源引用。后续 run 只更新 `automatic` 的当前实体与关系，已确认、修订或移除状态受保护。历史结果读取自身内容；人工操作带 `resultId` 时先校验成员归属，在事务内更新当前对象及所选结果，其他结果不变。移除关系记录 `revoked`，防止后续相同端点和类型的自动关系恢复它。
+
+升级从现有事件实体关联、实体变化和来源引用恢复结果成员，不猜测名称匹配；旧数据缺失的归属或已经覆盖的内容无法还原，原对象仍保留。新结果即使实体没有事件或来源，也会保存完整成员。结果内容与运行、事件、来源在同一事务提交。
+
+`overview({ target? })` 返回稳定的 `id`、`storyLineId` 及来源 ID。指定 Conversation/Task 时，Main 读取目标实际项目，查询同时要求目标来源匹配、结果 scope 为 global 或包含该项目；LIMIT 在过滤之后。卡片展示结果真实范围，global 结果不会伪装成单会话摘要。`graph({ resultId, storyLineId? })` 校验二者归属，只返回该结果的事件、对象和来源；显式 ID 无效时不回退到最新结果。继续讨论按结果主键读取，并验证来源属于该结果。
+
+工作回顾保存所选结果，切换或刷新使用请求序号忽略迟到图谱。侧栏按目标重建卡片，清空来源和预览，并忽略旧请求；工作栏 tasks 实例的 `targetRef` 可保存 conversation/task 固定目标，取消固定后恢复跟随当前选择。该绑定只控制监督卡片，不改变任务列表的项目范围。继续讨论预览显示实际目标名称和 ID，发送回调显式携带该会话 ID，由 Main 使用该会话的 Runtime 与项目。
+
+侧栏通过 `onOpenSupervisionGraph(resultId)` 交给 App 导航；App 遵守现有离页检查，向 HeartbeatCenter / SupervisorWorkspace 传递类型化 `graphNavigation`，复用 `heartbeat` 路由及 keepalive 页面。每次点击创建新的导航请求，打开 graph 页签并更新历史选择共用的 resultId。overview 未包含该 ID 时仍直接请求其 graph；旧 overview、graph、来源和操作响应通过同一请求序号失效，不覆盖新结果。没有新增 window 事件、页面或持久化字段。
+
+继续讨论入队时，无附件请求省略 `serializedContexts`；请求未指定 Runtime 时使用会话保存的选择。知识库预览与提交均检查目标库存在且为本地可写库，更新实体还检查其实际所属库。侧栏确认框展示 Main 返回的实体字段、目标库和来源正文，取消或写入失败后可以重新预览。
+
+监督者 collector 将 UI 请求的 `timeRange` 原样传入 `buildHeartbeatInput` 的可选明确区间参数，查询时归一化为 UTC，不再换算成至少一小时。消息按 `from <= created_at <= to` 在 LIMIT 前过滤，会话也在 LIMIT 前检查存在区间内消息；所选项目复用现有存在且 active 的校验。任务在创建时间或完成时间落入闭区间时收集，证据时间优先使用区间内完成时间，否则使用创建时间；任务状态明确为当前状态，不还原区间结束时的状态。未传明确区间的普通 Heartbeat 保留原来的回顾窗口与下界查询行为。
+
+已确认记忆作为当前背景收集，不受事件时间区间筛选；`occurredAt` 使用数据库 `updated_at`，locator 保存真实创建、更新时间及 `current-background` 标识。模型指令禁止将当前记忆内容推断成历史时点的内容或区间事件。记忆没有历史内容快照；本次修复不增加历史还原能力，也不追溯修正已有监督结果。既有会话、消息、任务及总证据预算继续生效，严格时间筛选不代表区间内所有记录都会进入摘要。
 
 ## 1. 总体方案
 
@@ -107,7 +129,7 @@ erDiagram
 | 对象 | 关键字段 | 说明 |
 | --- | --- | --- |
 | `supervision_runs` | `id`, `trigger`, `scope_json`, `time_range_json`, `status`, `error`, `started_at`, `completed_at` | 一次手动或心跳整理；保存冻结范围，不从当前配置回推历史 |
-| `supervision_results` | `id`, `run_id`, `summary`, `change_digest`, `coverage_json` | 工作回顾、监督反馈和图谱共同读取的结果版本 |
+| `supervision_results` | `id`, `run_id`, `summary`, `change_digest`, `coverage_json`, `graph_snapshot_json` | 工作回顾、监督反馈和图谱共同读取的结果版本 |
 | `story_lines` | `id`, `scope_json`, `title`, `created_at`, `updated_at` | 用户选择的工作故事线，不等同于 Project |
 | `story_events` | `id`, `story_line_id`, `result_id`, `occurred_at`, `title`, `description`, `event_type`, `confidence` | 时间轴上的事件；同日聚合只在查询或 UI 层处理 |
 | `knowledge_entities` | `id`, `canonical_label`, `description`, `state`, `confirmation_state`, `updated_at` | 可被多条故事线引用的持续认识，不与知识库文档一一对应 |
@@ -122,7 +144,7 @@ erDiagram
 - 关系对 `(from_entity_id, to_entity_id, relation_type)` 建唯一约束，允许同一实体对存在不同关系类型。
 - 删除故事线只删除其组织关系，不删除共享实体、来源或知识库资料；删除知识库资料后来源标为不可用。
 - 整理结果、实体变化、关系变化和来源引用在同一 SQLite 事务中提交，提交失败全部回滚。
-- 早期不建立完整内容快照或独立向量索引；历史能力只依赖已保存的整理结果和原来源可用性。
+- 只保存整理结果自身的对象内容与有界来源，不建立原会话、记忆或知识库的完整历史快照和独立向量索引。
 
 模型输出使用版本化共享契约，至少包含 `events`、`entities`、`entityChanges`、`relations`、`summary`、`openItems` 和每项的 `sourceReferenceIds`。Main 必须做数量、字符、枚举、ID 所属范围和引用存在性校验，未知字段拒绝或按契约版本处理，不能直接把模型 JSON 写入数据库。
 
@@ -169,8 +191,8 @@ IPC 返回图谱查询结果时使用分页和有界字段；详情中的来源�
 
 ### 阶段 B：接入证据引用和阶段回顾
 
-- 实现 `EvidenceCollector`，先接入会话、任务和已有心跳输入；再接入魔法笔记与本地知识库引用。
-- 建立 `supervision_runs`、`supervision_results` 和 `source_references`，让回顾结果可定位来源。
+- 实现 `EvidenceCollector`，接入会话、任务、消息已有知识引用和记忆；魔法笔记仍未接入。
+- 建立 `supervision_runs`、`supervision_results` 和 `supervision_sources`，保存来源 locator，并通过 `KnowledgeService` 解析本地文档/分块。
 - 在现有智能心跳页面增加监督者工作回顾入口；不先改应用名称和导航 ID。
 
 ### 阶段 C：实现最小故事线图谱
@@ -183,14 +205,14 @@ IPC 返回图谱查询结果时使用分页和有界字段；详情中的来源�
 ### 阶段 D：接入用户确认和知识库双向定位
 
 - 增加关系确认、修订、撤销和实体拆分的最小交互。
-- 从知识库资料定位到图谱，从图谱返回本地资料及引用位置。
+- 从图谱返回本地会话资料及引用位置；知识库文档定位依赖来源中存在文档/分块元数据。
 - 新建或补充本地条目必须经过预览和确认；外部知识库保持只读。
 
 ### 阶段 E：侧栏反馈与增量整理
 
-- 将结果摘要投影到跟随／固定目标侧栏。
+- 将结果摘要投影到现有右侧助手栏，并沿用当前会话生命周期。
 - 心跳只负责触发，监督者根据新证据决定有无变化和是否反馈。
-- 在运行去重、用户修订保护和来源失效提示稳定后，再评估事件唤醒与自动阶段识别。
+- 在运行去重、用户修订保护和来源失效提示稳定后，再评估更复杂的跨目标固定策略、事件唤醒和自动阶段识别。
 
 ## 7. 验证策略
 
@@ -213,3 +235,11 @@ IPC 返回图谱查询结果时使用分页和有界字段；详情中的来源�
 - 无依据的实体自动合并、旧观点自动失效和静默覆盖用户确认。
 - 应用市场建设作为监督者开发前置依赖。
 - 在没有增量和去重证据前实现事件触发、自动阶段识别和全量后台重算。
+
+## 当前剩余差距
+
+- 实体与关系 revoke 保存状态；界面没有 undo 或恢复入口。
+- 跨 run identity 依赖同 scope 候选 UUID 的显式引用，不自动合并历史重复实体；模型漏选候选时会创建新身份。
+- 结果图谱使用真实事件实体连线，侧栏已按固定目标过滤并支持结果直达图谱；逐事件状态回放和 Experiment 尚未实现。
+- `no_change`、用户取消及其旧结果保留尚未贯通监督运行的生产状态链路。
+- 监督知识实体与知识库正文条目仍是不同对象，知识正文只能通过现有条目定位和预览接口处理。

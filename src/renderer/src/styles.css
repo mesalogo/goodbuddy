@@ -61,6 +61,7 @@
   --content-reading: 820px;
   --content-standard: 960px;
   --content-dashboard: 1040px;
+  --content-supervisor: 1440px;
   --radius-control: 10px;
   --radius-card: 14px;
   --control-height: 36px;
@@ -12877,6 +12878,16 @@ details.settings-section > :not(summary) + :not(summary) {
     max(
       var(--page-gutter),
       calc((100% - var(--content-dashboard)) / 2)
+    );
+  container-type: inline-size;
+}
+
+.page-shell--supervisor {
+  min-width: 0;
+  padding-inline:
+    max(
+      var(--page-gutter),
+      calc((100% - var(--content-supervisor)) / 2)
     );
   container-type: inline-size;
 }

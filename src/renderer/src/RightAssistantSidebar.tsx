@@ -34,6 +34,8 @@ import type {
   WorkspaceDirectoryListing,
   WorkspaceFilePreview
 } from '../../shared/assistant-contracts'
+import type { KnowledgeLibrary } from '../../shared/contracts'
+import type { SupervisionResultView, SupervisionTarget } from '../../shared/supervision-contracts'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type {
   ApprovalDecision,
@@ -132,6 +134,10 @@ export type RightAssistantSidebarProps = {
   taskDurations?: ReadonlyMap<string, SidebarTaskDuration>
   browserStates?: Readonly<Record<string, Readonly<Record<string, BrowserLiveState>>>>
   currentProject?: AssistantProject
+  supervisionLibraries?: KnowledgeLibrary[]
+  onOpenSupervisionGraph?: (resultId: string) => void
+  onContinueSupervision?: (prompt: string, conversationId: string) => Promise<void>
+  onOpenSupervisionConversation?: (conversationId: string) => void
   restoreFocusRef?: { current: HTMLElement | null }
   onBackBrowser?: (conversationId: string, tabId: BrowserTabId) => Promise<void>
   onNavigateBrowser?: (conversationId: string, tabId: BrowserTabId, url: string) => Promise<void>
@@ -202,6 +208,124 @@ function SidebarApproval({ approval, onRespondApproval }: {
       </div>
     </article>
   )
+}
+
+type SupervisionCardProps = {
+  onOpenSupervisionGraph?: (resultId: string) => void
+  target?: SupervisionTarget
+  activeConversationId?: string
+  conversationTitle?: string
+  supervisionLibraries?: KnowledgeLibrary[]
+  onContinueSupervision?: (prompt: string, conversationId: string) => Promise<void>
+  onOpenSupervisionConversation?: (conversationId: string) => void
+}
+
+export function SupervisionCard(props: SupervisionCardProps): React.JSX.Element {
+  return <SupervisionCardContent key={`${JSON.stringify(props.target)}:${props.activeConversationId ?? ''}`} {...props} />
+}
+
+function SupervisionCardContent({
+  target,
+  activeConversationId,
+  conversationTitle,
+  supervisionLibraries: libraries,
+  onContinueSupervision: onContinue,
+  onOpenSupervisionGraph,
+  onOpenSupervisionConversation: onOpenConversation
+}: SupervisionCardProps): React.JSX.Element {
+  const { t } = useTranslation('heartbeat')
+  const [result, setResult] = useState<SupervisionResultView>()
+  const mounted = useRef(false)
+  const [refresh, setRefresh] = useState(0)
+  const [source, setSource] = useState<Record<string, unknown>>()
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [libraryId, setLibraryId] = useState(libraries?.[0]?.id ?? '')
+  const targetKey = target ? JSON.stringify(target) : undefined
+
+  useEffect(() => {
+    mounted.current = true
+    let current = true
+    if (!window.goodbuddy.supervision || !targetKey) return () => { mounted.current = false }
+    void window.goodbuddy.supervision.overview({ target: JSON.parse(targetKey) as SupervisionTarget }).then((items) => {
+      if (current) setResult(items[0])
+    }).catch((error: unknown) => {
+      if (current) setMessage(error instanceof Error ? error.message : '监督反馈读取失败')
+    })
+    return () => { current = false; mounted.current = false }
+  }, [targetKey, refresh])
+
+  const openSource = async (sourceId: string): Promise<void> => {
+    setLoading(true); setMessage('')
+    try {
+        if (!sourceId) throw new Error('监督结果没有可定位来源')
+        const context = await window.goodbuddy.supervision.sourceContext(sourceId)
+      if (!mounted.current) return
+      setSource(context)
+      if (context.contextType === 'conversation' && context.conversationId) {
+        onOpenConversation?.(String(context.conversationId))
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '来源不可用')
+    } finally { setLoading(false) }
+  }
+
+  const continueDiscussion = async (): Promise<void> => {
+    if (!result || !source || !activeConversationId || !onContinue) return
+    setLoading(true); setMessage('')
+    try {
+      const preview = await window.goodbuddy.supervision.continueContext({ sourceId: String(source.id), resultId: result.id })
+      if (!mounted.current) return
+      if (!window.confirm(`确认将以下监督上下文发送到会话「${conversationTitle ?? activeConversationId}」 (${activeConversationId})？\n\n` + String(preview.prompt ?? ''))) return
+      await onContinue(String(preview.prompt ?? ''), activeConversationId)
+    } catch (error) { setMessage(error instanceof Error ? error.message : '继续讨论失败') }
+    finally { setLoading(false) }
+  }
+
+  const commitEntity = async (): Promise<void> => {
+    if (!result || !source || !libraryId) return
+    setLoading(true); setMessage('')
+    try {
+      const preview = await window.goodbuddy.supervision.knowledgePreview({
+        operation: 'create-entity', libraryId, label: '监督回顾', type: '概念',
+        description: String(result.summary ?? ''), aliases: [], sourceId: String(source.id)
+      })
+      const nextPreviewId = String(preview.previewId ?? '')
+      if (!mounted.current) return
+      const entity = preview.entity as Record<string, unknown>
+      const evidence = preview.source as Record<string, unknown>
+      if (window.confirm([
+        '确认写入以下知识实体预览？',
+        `知识库：${libraries?.find((library) => library.id === preview.libraryId)?.name ?? preview.libraryId}`,
+        `名称：${entity.label}`, `类型：${entity.type}`,
+        `描述：${entity.description}`, `别名：${(entity.aliases as string[]).join('、') || '无'}`,
+        `来源：${evidence.title}`, String(evidence.content ?? '')
+      ].join('\n\n'))) {
+        await window.goodbuddy.supervision.knowledgeCommit({ previewId: nextPreviewId })
+        setMessage('知识实体已写入')
+      }
+    } catch (error) { setMessage(error instanceof Error ? error.message : '知识库提交失败') }
+    finally { setLoading(false) }
+  }
+
+  return <section className="assistant-sidebar__section supervision-card" aria-label="监督反馈">
+    <h3>监督反馈</h3>
+    {target && <p>{target.type === 'conversation' ? `会话：${conversationTitle ?? target.conversationId}` : `任务：${target.taskId}`}</p>}
+    <button type="button" className="link-button" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setMessage(''); setRefresh((value) => value + 1) }}>刷新监督回顾</button>
+    {!result ? <p className="assistant-sidebar__empty">{message || '暂无监督回顾'}</p> : <>
+      <p>{result.summary || '监督回顾没有摘要'}</p>
+      <p>{result.scope.kind === 'global' ? '全局回顾' : `项目范围：${result.scope.projectIds.join('、')}`} · {new Date(result.timeRange.from).toLocaleString()} – {new Date(result.timeRange.to).toLocaleString()}</p>
+      {result.createdAt && <small>{new Date(result.createdAt).toLocaleString()}</small>}
+      <div className="supervision-card__actions">
+        {onOpenSupervisionGraph && <button type="button" className="secondary-button" onClick={() => onOpenSupervisionGraph(result.id)}>{t('supervisor.viewInGraph')}</button>}
+        <button type="button" className="secondary-button" disabled={loading} onClick={() => void openSource(String((result as Record<string, unknown>).sourceId ?? ''))}>查看来源</button>
+        <button type="button" className="primary-button" disabled={loading || !activeConversationId || !source} title={!activeConversationId ? '没有当前会话，无法继续讨论' : undefined} onClick={() => void continueDiscussion()}>继续讨论</button>
+      </div>
+      {source && <div className="supervision-card__source"><strong>{String(source.title ?? '来源')}</strong><p>{String(source.content ?? source.error ?? '')}</p>{source.error !== undefined && <small>{String(source.error)}</small>}</div>}
+      {libraries && libraries.length > 0 && source && <div className="supervision-card__actions"><select aria-label="选择知识库" value={libraryId} onChange={(event) => setLibraryId(event.target.value)}>{libraries.map((library) => <option key={library.id} value={library.id}>{library.name}</option>)}</select><button type="button" className="secondary-button" disabled={loading} onClick={() => void commitEntity()}>预览并写入实体</button></div>}
+      {message && <p role="status">{message}</p>}
+    </>}
+  </section>
 }
 
 function loadPersistedWorkbarLayout(): ReturnType<
@@ -682,6 +806,10 @@ export function RightAssistantSidebar({
   taskDurations,
   browserStates = {},
   currentProject,
+  supervisionLibraries,
+  onOpenSupervisionGraph,
+  onContinueSupervision,
+  onOpenSupervisionConversation,
   restoreFocusRef,
   onBackBrowser = async () => {},
   onNavigateBrowser = async () => {},
@@ -1893,8 +2021,8 @@ export function RightAssistantSidebar({
           </p>
         ) : null}
         {instance.appId === 'terminal' &&
-        instance.targetRef &&
-        instance.targetRef.type !== 'conversation' ? (
+         instance.targetRef &&
+         (instance.targetRef.type === 'local' || instance.targetRef.type === 'project') ? (
           <Suspense
             fallback={
               <section
@@ -1939,6 +2067,24 @@ export function RightAssistantSidebar({
         ) : null}
         {instance.appId === 'tasks' && (
           <section className="assistant-sidebar__section task-center">
+            <button type="button" className="link-button" disabled={!instance.targetRef && !selectedTaskId && !activeConversationId}
+              onClick={() => setWorkbarInstances((current) => current.map((item) => item.id === instance.id
+                ? { ...item, targetRef: item.targetRef ? undefined : selectedTaskId ? { type: 'task', taskId: selectedTaskId } : activeConversationId ? { type: 'conversation', conversationId: activeConversationId } : undefined }
+                : item))}>
+              {instance.targetRef ? '取消固定监督目标' : '固定监督目标'}
+            </button>
+            <SupervisionCard
+              target={instance.targetRef?.type === 'conversation' || instance.targetRef?.type === 'task'
+                ? instance.targetRef
+                : selectedTaskId ? { type: 'task', taskId: selectedTaskId }
+                : activeConversationId ? { type: 'conversation', conversationId: activeConversationId } : undefined}
+              activeConversationId={instance.targetRef?.type === 'conversation' ? instance.targetRef.conversationId : instance.targetRef?.type === 'task' ? tasks.find((task) => instance.targetRef?.type === 'task' && task.id === instance.targetRef.taskId)?.conversationId : activeConversationId}
+              conversationTitle={instance.targetRef?.type === 'conversation' ? conversationTitles.get(instance.targetRef.conversationId) : undefined}
+              supervisionLibraries={supervisionLibraries}
+              onOpenSupervisionGraph={onOpenSupervisionGraph}
+              onContinueSupervision={onContinueSupervision}
+              onOpenSupervisionConversation={onOpenSupervisionConversation}
+            />
             <section className="task-center__stats" aria-label={t('sidebar.tasks.stats.label')}>
             <p className="task-center__scope">{currentProject
               ? t('sidebar.tasks.projectScope', { project: currentProject.name })

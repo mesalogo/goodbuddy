@@ -3,38 +3,57 @@ import type { heartbeat as chineseHeartbeat } from '../zh-CN/heartbeat'
 
 export const heartbeat = {
   common: {
-    operationFailed: 'Smart Heartbeat operation failed',
+    operationFailed: 'Supervisor operation failed',
     unavailable: 'Not available',
     unknownTime: 'Unknown time'
   },
+  supervisor: {
+    projectScope: 'Project: {{names}}',
+    canvasTitle: 'How the work took shape', canvasNote: 'Read counter-clockwise · Select a node to explore knowledge and sources', readingGuide: 'Reading the graph',
+    visibleCounts: '{{events}} events / {{entities}} entities on canvas', showAll: 'Show all connections', connections: 'Graph connections',
+    loadingHint: 'Reading saved reviews, events, and sources.', unavailableHint: 'Reopen the application to try again. Saved reviews remain on this device.',
+    selection: 'Graph selection', canvas: 'Story graph canvas', inspector: 'Details and sources',
+    counts: '{{events}} events · {{entities}} entities', canvasCaption: 'Events are evenly spaced in time order, not by elapsed time. Each batch shows up to 8 events and 6 entities; select from the list to switch batches and read full names. Scroll the canvas horizontally on narrow screens. Browsing events does not restore historical entity state.',
+    legendLabel: 'Graph legend', eventImpact: 'Event impact', playback: 'Browse events', previousStage: 'Previous event', nextStage: 'Next event',
+    navigation: 'Supervisor views', recap: 'Work review', graph: 'Story graph', settings: 'Settings',
+    viewInGraph: 'View in graph',
+    unavailable: 'Supervisor service is unavailable', loading: 'Loading Supervisor review', scope: 'Review scope', period: 'Time range', days: '{{count}} days',
+    sourcesHint: 'A review reads only sources in its explicit scope and time range; automatic wake-up does not change manual review scope.', latest: 'Latest successful review', openItems: 'Open items', history: 'Review history',
+    empty: 'No successful review yet', emptyHint: 'You can review current progress manually even without an automatic wake-up plan.', run: 'Review current progress', running: 'Reviewing…', retryRun: 'Retry review', dismiss: 'Dismiss',
+    graphScope: 'Graph scope', graphEmpty: 'No story events in this scope', legend: 'Solid lines show event impact on entities; dashed lines show entity relations. Time runs counter-clockwise with a visible gap.', start: 'Start', end: 'End',
+    events: 'Time events', entities: 'Knowledge entities', relations: 'Entity relations', eventSources: 'Event sources', sources: 'Related sources', noSources: 'No related sources are available.', selectHint: 'Select an event, entity, or relation to inspect it.', sourceSnapshot: 'Source details', sourceMissing: 'Source not found',
+    confirm: 'Confirm', revise: 'Revise', remove: 'Remove relation', label: 'Entity name', save: 'Save revision', cancel: 'Cancel', removeHint: 'This changes graph organization only; the original source remains available.',
+    relationTypes: { supports: 'Supports', 'depends-on': 'Depends on', contrasts: 'Contrasts', related: 'Related' },
+    states: { automatic: 'Automatic · needs review', confirmed: 'Confirmed by user', revised: 'Revised by user', revoked: 'Removed' }
+  },
   center: {
-    title: 'Smart Heartbeat',
+    title: 'Supervisor',
     description:
-      'Runs scheduled, read-only reviews of the selected scope without using tools.',
+      'Reviews work progress and knowledge evolution. Smart Heartbeat wakes Supervisor on a schedule.',
     scope: {
       currentProject: 'Current project',
       global: 'Global'
     },
     actions: {
-      refreshAriaLabel: 'Refresh Smart Heartbeat',
+      refreshAriaLabel: 'Refresh Supervisor',
       refresh: 'Refresh',
-      running: 'Running heartbeat…',
-      runOnce: 'Run heartbeat now',
-      configure: 'Configure Smart Heartbeat',
+      running: 'Waking Supervisor…',
+      runOnce: 'Review now',
+      configure: 'Configure automatic wake-up',
       retry: 'Retry'
     },
     loading: {
       description: 'Loading heartbeat plans, runs, and reports.',
-      title: 'Loading Smart Heartbeat',
-      failedTitle: 'Could not load Smart Heartbeat',
-      refreshFailedTitle: 'Could not refresh Smart Heartbeat'
+      title: 'Loading Supervisor',
+      failedTitle: 'Could not load Supervisor',
+      refreshFailedTitle: 'Could not refresh Supervisor'
     },
     tabs: {
-      ariaLabel: 'Smart Heartbeat views',
-      overview: 'Run overview',
+      ariaLabel: 'Supervisor automatic wake-up views',
+      overview: 'Wake-up overview',
       suggestions: 'Pending suggestions',
       history: 'Reports and runs',
-      plans: 'Heartbeat plans'
+      plans: 'Automatic wake-up settings'
     },
     currentStatus: {
       title: 'Current status',
@@ -67,7 +86,7 @@ export const heartbeat = {
       resume: 'Resume'
     },
     metrics: {
-      ariaLabel: 'Smart Heartbeat run metrics',
+      ariaLabel: 'Automatic wake-up run metrics',
       health: 'Heartbeat health',
       successfulRuns: '{{completed}}/{{total}} completed successfully',
       healthRateAriaLabel: 'Heartbeat success rate {{percent}}',
@@ -111,7 +130,7 @@ export const heartbeat = {
       ignore: 'Ignore',
       taskTitle: 'Suggested actions',
       taskCount: 'Items: {{formattedCount}}',
-      taskEmpty: 'Smart Heartbeat has not suggested any actions.',
+      taskEmpty: 'Automatic wake-up has not suggested any actions.',
       useInConversation: 'Handle in conversation',
       markCompleted: 'Mark completed',
       ignoreSuggestion: 'Ignore suggestion'
@@ -128,7 +147,7 @@ export const heartbeat = {
       loadMoreReports: 'Load more heartbeat reports',
       auditTitle: 'Run history',
       runCount: 'Runs: {{formattedCount}}',
-      emptyRuns: 'There are no Smart Heartbeat runs yet.',
+      emptyRuns: 'There are no automatic wake-up runs yet.',
       manualRun: 'Manual run',
       scheduledRun: 'Scheduled run',
       attempt: 'Attempt {{formattedCount}}',
@@ -161,9 +180,9 @@ export const heartbeat = {
     }
   },
   settings: {
-    title: 'Smart Heartbeat',
+    title: 'Automatic wake-up',
     description:
-      'Heartbeat plans run on schedule in read-only mode without tools.',
+      'Automatic wake-ups run on schedule in read-only mode without tools.',
     recurrenceAriaLabel: 'Heartbeat recurrence',
     recurrenceLabel: 'Recurrence',
     daily: 'Daily',
@@ -178,7 +197,7 @@ export const heartbeat = {
     cancelEdit: 'Cancel editing',
     editAriaLabel: 'Edit {{name}}',
     edit: 'Edit',
-    saveAriaLabel: 'Save heartbeat plan',
+    saveAriaLabel: 'Save automatic wake-up plan',
     save: 'Save changes',
     lookbackLabel: 'Review window (hours)',
     lookbackAriaLabel: 'Heartbeat review window in hours',
@@ -201,11 +220,11 @@ export const heartbeat = {
       selectedProjectsSummary: '{{count}} projects: {{names}}',
       nameSeparator: ', '
     },
-    enableAriaLabel: 'Enable Smart Heartbeat',
+    enableAriaLabel: 'Enable automatic wake-up',
     enabling: 'Enabling…',
-    enable: 'Enable Smart Heartbeat',
+    enable: 'Enable automatic wake-up',
     defaultName: 'Scheduled review',
-    empty: 'Smart Heartbeat is not configured for this scope.',
+    empty: 'Automatic wake-up is not configured for this scope.',
     running: 'Running',
     paused: 'Paused',
     next: 'Next: {{date}}',

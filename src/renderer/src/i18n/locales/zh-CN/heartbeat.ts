@@ -1,36 +1,55 @@
 export const heartbeat = {
   common: {
-    operationFailed: '智能心跳操作失败',
+    operationFailed: '监督者操作失败',
     unavailable: '暂无',
     unknownTime: '时间未知'
   },
+  supervisor: {
+    projectScope: '项目：{{names}}',
+    canvasTitle: '工作的来路', canvasNote: '沿外圈逆时针阅读 · 选择节点，查看知识与来源', readingGuide: '如何读图',
+    visibleCounts: '画布中 {{events}} 个事件 / {{entities}} 个实体', showAll: '显示全部关联', connections: '图谱关联',
+    loadingHint: '正在读取已保存的回顾、事件与来源。', unavailableHint: '请重新打开应用后重试；已保存的回顾仍保留在本机。',
+    selection: '图谱选择', canvas: '故事图谱画布', inspector: '详情与来源',
+    counts: '{{events}} 个事件 · {{entities}} 个实体', canvasCaption: '事件按时间顺序等距排列，不表示时间间隔。画布每批最多显示 8 个事件和 6 个实体；从列表选择可切换批次并查看完整名称，窄屏可横向滚动画布。当前实体状态不随事件浏览还原。',
+    legendLabel: '图谱图例', eventImpact: '事件影响', playback: '事件浏览', previousStage: '上一事件', nextStage: '下一事件',
+    navigation: '监督者视图', recap: '工作回顾', graph: '故事线图谱', settings: '设置',
+    viewInGraph: '在图谱中查看',
+    unavailable: '监督者服务暂不可用', loading: '正在读取监督回顾', scope: '关注范围', period: '时间范围', days: '{{count}} 天',
+    sourcesHint: '回顾只读取本次明确范围和时间区间内的来源；自动唤醒计划不会改变手动回顾范围。', latest: '最近一次成功回顾', openItems: '未解决事项', history: '历史结果',
+    empty: '还没有成功回顾', emptyHint: '即使没有自动唤醒计划，也可以手动回顾当前进展。', run: '回顾当前进展', running: '回顾整理中…', retryRun: '重试回顾', dismiss: '关闭提示',
+    graphScope: '图谱范围', graphEmpty: '当前范围没有故事线事件', legend: '实线表示事件影响实体，虚线表示实体关系。时间轴逆时针排列，起止之间保留缺口。', start: '起点', end: '终点',
+    events: '时间事件', entities: '知识实体', relations: '实体关系', eventSources: '事件来源', sources: '关联来源', noSources: '没有可用的关联来源。', selectHint: '选择事件、实体或关系查看详情。', sourceSnapshot: '来源详情', sourceMissing: '来源不存在',
+    confirm: '确认', revise: '修订', remove: '移除关系', label: '实体名称', save: '保存修订', cancel: '取消', removeHint: '这只改变图谱中的关系组织，原始来源仍然保留。',
+    relationTypes: { supports: '支持', 'depends-on': '依赖', contrasts: '对比', related: '相关' },
+    states: { automatic: '自动归纳 · 待核对', confirmed: '用户已确认', revised: '用户已修订', revoked: '已移除' }
+  },
   center: {
-    title: '智能心跳',
-    description: '按计划只读回顾所选范围，不调用工具。',
+    title: '监督者',
+    description: '持续回顾工作进展、追踪知识演变；智能心跳负责按计划唤醒监督者。',
     scope: {
       currentProject: '当前项目',
       global: '全局'
     },
     actions: {
-      refreshAriaLabel: '刷新智能心跳',
+      refreshAriaLabel: '刷新监督者',
       refresh: '刷新',
-      running: '心跳中…',
-      runOnce: '运行一次心跳',
-      configure: '配置智能心跳',
+      running: '自动唤醒中…',
+      runOnce: '立即回顾',
+      configure: '配置自动唤醒',
       retry: '重试'
     },
     loading: {
       description: '正在读取心跳计划、运行记录和心跳报告。',
-      title: '正在加载智能心跳',
-      failedTitle: '智能心跳加载失败',
-      refreshFailedTitle: '智能心跳刷新失败'
+      title: '正在加载监督者',
+      failedTitle: '监督者加载失败',
+      refreshFailedTitle: '监督者刷新失败'
     },
     tabs: {
-      ariaLabel: '智能心跳视图',
-      overview: '运行概览',
+      ariaLabel: '监督者自动唤醒视图',
+      overview: '自动唤醒概览',
       suggestions: '待处理建议',
       history: '报告与记录',
-      plans: '心跳计划'
+      plans: '自动唤醒设置'
     },
     currentStatus: {
       title: '当前状态',
@@ -63,7 +82,7 @@ export const heartbeat = {
       resume: '恢复'
     },
     metrics: {
-      ariaLabel: '智能心跳运行统计',
+      ariaLabel: '自动唤醒运行统计',
       health: '心跳健康',
       successfulRuns: '{{completed}}/{{total}} 次成功完成',
       healthRateAriaLabel: '心跳成功率 {{percent}}',
@@ -107,7 +126,7 @@ export const heartbeat = {
       ignore: '忽略',
       taskTitle: '行动建议',
       taskCount: '{{formattedCount}} 个',
-      taskEmpty: '当前没有由智能心跳产生的行动建议。',
+      taskEmpty: '当前没有由自动唤醒产生的行动建议。',
       useInConversation: '带入对话处理',
       markCompleted: '标记完成',
       ignoreSuggestion: '忽略建议'
@@ -123,7 +142,7 @@ export const heartbeat = {
       loadMoreReports: '加载更多心跳报告',
       auditTitle: '运行记录',
       runCount: '{{formattedCount}} 次',
-      emptyRuns: '尚无智能心跳运行记录。',
+      emptyRuns: '尚无自动唤醒运行记录。',
       manualRun: '手动运行',
       scheduledRun: '周期运行',
       attempt: '第 {{formattedCount}} 次尝试',
@@ -156,8 +175,8 @@ export const heartbeat = {
     }
   },
   settings: {
-    title: '智能心跳',
-    description: '心跳计划按时只读运行，不调用工具。',
+    title: '自动唤醒',
+    description: '自动唤醒按时只读运行，不调用工具。',
     recurrenceAriaLabel: '心跳重复规则',
     recurrenceLabel: '重复规则',
     daily: '每天',
@@ -172,7 +191,7 @@ export const heartbeat = {
     cancelEdit: '取消编辑',
     editAriaLabel: '编辑 {{name}}',
     edit: '编辑',
-    saveAriaLabel: '保存心跳计划',
+    saveAriaLabel: '保存自动唤醒计划',
     save: '保存修改',
     lookbackLabel: '回顾范围（小时）',
     lookbackAriaLabel: '心跳回顾小时数',
@@ -194,11 +213,11 @@ export const heartbeat = {
       selectedProjectsSummary: '{{count}} 个项目：{{names}}',
       nameSeparator: '、'
     },
-    enableAriaLabel: '启用智能心跳',
+    enableAriaLabel: '启用自动唤醒',
     enabling: '启用中…',
-    enable: '启用智能心跳',
+    enable: '启用自动唤醒',
     defaultName: '定期回顾',
-    empty: '当前范围尚未配置智能心跳。',
+    empty: '当前范围尚未配置自动唤醒。',
     running: '运行中',
     paused: '已暂停',
     next: '下次 {{date}}',
