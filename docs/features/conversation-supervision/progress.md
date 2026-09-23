@@ -8,13 +8,13 @@
 
 - 共享监督者契约已接入 Main 服务，模型请求包含系统指令；证据总字符预算为 48,000，输出仍限制为 100KB，并校验本次证据集内的来源引用、输出局部实体 ID 和关系端点。手动回顾当前收集会话、任务、消息已有的知识引用和已确认记忆；记忆使用 `memory` 来源类型。
 - SQLite schema 43 包含监督运行、结果、来源、故事线、事件、实体、实体关联和关系表，并保存每次结果的实体与关系内容。来源保存本地 library/document/chunk 或外部 locator 元数据；持久化与升级规则见[技术设计](./technical-design.md)。
-- 监督者入口现在只有一个页面页头和三项顶层页签：工作回顾、故事线图谱、设置。原有计划、概览、建议、历史和审计内容保留在设置页内部；手动运行仍通过 Supervisor 通道，未绑定自动计划时也可用。
+- 监督者入口只有一个页面页头和四项顶层页签：工作回顾、故事线图谱、活动、设置。原有计划、概览、建议及报告内容保留在设置页内部；手动运行仍通过 Supervisor 通道，未绑定自动计划时也可用。
 - 工作回顾显示结果自身冻结的 scope/time range。故事线视图使用真实数据库结果，外围事件按实际时间逆时针排列并保留缺口，事件实体连线和来源过滤来自 Main 查询投影，图形不可用时仍可通过事件/实体/关系列表操作。
 - `HeartbeatService` 在定时或手动心跳成功落库后调用同一个 `SupervisorService`，按心跳范围和回顾窗口自动保存监督结果；投影失败不会改写已经成功的心跳状态。
 - 监督图谱提供 Main/Preload IPC 的来源读取、实体确认/修订/撤销和关系确认/移除；关系移除保存 `revoked` 状态，不删除来源，后续自动 run 不恢复相同身份的关系。
 - 右侧助手栏已读取监督反馈，支持来源查看、继续讨论预览与确认发送，以及本地知识库实体写入预览和确认提交。
 - 本地会话来源可按会话 ID 和发生时间读取上下文；没有当前会话时，继续讨论操作明确禁用。
-- 应用中心已增加监督者开关，继续复用 `heartbeat` 导航 ID；关闭后已打开页面显示关闭状态并禁用工作区操作，不删除既有心跳计划或历史数据。导航显示同时遵守 enabled 和 pinned 语义。
+- 应用中心已增加监督者开关，继续复用 `heartbeat` 导航 ID；关闭后已打开页面显示关闭状态并禁用工作区操作，不删除既有心跳计划或历史数据。导航显示同时遵守 enabled 和 pinned 语义。默认值及执行边界以[应用启停与执行](./logic-design.md#应用启停与执行)为准。
 
 ## 验证证据
 
@@ -72,10 +72,45 @@
 - 本轮涉及的 10 个 TS/TSX 文件定向 ESLint 通过，0 error、0 warning。`npx tsc --noEmit -p tsconfig.node.json` 与 `npx tsc --noEmit -p tsconfig.web.json` 各一次有效源码检查通过；此前附加 `--incremental false` 的启动因 composite 配置报 TS6379，未执行源码检查。`git diff --check` 通过，仅有现有行尾提示。
 - 未运行 App 整文件、全量测试、全量 lint、Agent typecheck、Electron 或真实模型请求；模型调用为 0。此次仅修改桌面 Renderer 导航和异步展示，不影响 Agent/远程 Runtime。保留全部其他 dirty 改动，未提交。
 
+### 2026-09-23 自动监督设置
+
+- 对应 US-S22 至 US-S24：监督者设置直接显示完整自动监督配置，运行概览、建议、报告与记录保留为次要面板。界面统一中英文命名，保留内部 heartbeat 标识和已有内容。无计划时明确显示仅支持手动回顾，填写草稿不触发保存或运行。
+- 核对共享 recurrence 合同及实际调度器后，仅展示已支持的每日、每周指定时间；页面明确说明不支持分钟间隔。编辑保留原时区和暂停状态，计划列表显示范围、周期、时区、回顾窗口与保留期限，继续提供编辑、暂停、恢复、运行及确认删除。
+- 已核对 App、Preload、Main 和 HeartbeatService 的既有 CRUD 接线，本轮未修改调度器或创建默认计划。保留工作区原有默认关闭及 Main 启用检查改动。
+- 定向测试：`HeartbeatCenter.test.tsx` 23 项、`application-settings-store.test.ts` 50 项通过；`heartbeat-recurrence.test.ts`、`heartbeat-service.test.ts`、`heartbeat-database.test.ts` 合计 17 项通过；`ipc.test.ts -t 'heartbeat enabled gates'` 4 项通过、128 项未运行。覆盖中英文直接入口、每日/每周提交、多项目、无效窗口、失败保留草稿、时区及暂停状态、各项计划操作，以及默认关闭、无计划不运行和启停行为。首轮整文件运行发现原有顶层图谱测试未清理 DOM，补充文件级 cleanup 后通过。
+- `tests/supervisor-layout.electron.test.ts` 通过：生产 React 组件的自动监督设置在 1440、1024、390px 和浅深主题下测量无横向溢出，周频表单全部控件边界可达，默认配置页及未配置说明存在。该测试使用隔离 fixture；未将其表述为真实模型或用户数据库端到端验收。
+- `npm run typecheck` 通过；本轮 9 个 TS/TSX 文件及 Electron driver 的定向 ESLint 通过。按要求未运行全量测试，真实模型调用 0 次；没有 Agent 或远程 Runtime 改动，未提交或推送。
+
+### 2026-09-23 活动页签
+
+- 对应 FR-S10、US-S26：schema 45 复用运行表保存监督开始、完成和失败，并按真实心跳 ID 合并报告和下游监督。手动失败、报告完成但下游运行中/失败、回调失败、应用重开后的未完成记录均有真实 SQLite 测试。没有新的执行引擎或取消协议。
+- 类型化活动 IPC/Preload 已接入生产页面；关闭应用不查询，页签或路由离开停止刷新并忽略迟到响应。每页 50 条，串行轮询，读取失败可重试。历史结果通过 resultId 定位，保留现有自动监督设置。
+- `npx vitest run src/main/assistant/supervision-activity.test.ts src/main/assistant/supervisor-service.test.ts src/main/assistant/heartbeat-service.test.ts src/preload/supervision-activity.test.ts src/renderer/src/SupervisorActivity.test.tsx src/renderer/src/HeartbeatCenter.test.tsx src/renderer/src/SupervisorWorkspace.test.tsx`：7 个文件、58 项通过。
+- `npx vitest run src/main/assistant/supervision-activity.test.ts src/main/assistant/heartbeat-database.test.ts src/main/assistant/supervision-history.test.ts`：3 个文件、14 项通过，包含 schema 44 升级及重开保留。
+- `npx vitest run src/main/ipc.test.ts -t 'supervision|heartbeat enabled gates'`：8 项通过、124 项未运行。新增活动查询首次运行暴露 UNION 排序列缺少别名，修正后真实 SQLite 和 IPC 均通过。
+- `npx vitest run tests/supervisor-layout.electron.test.ts`：1 项通过，新增活动页 1440、1024、390px 浅深主题测量，长错误、元数据和操作无横向溢出，短窗口页签保持高度。测试使用生产组件和隔离 fixture，没有读取用户库。
+- `npm run typecheck` 通过；定向 ESLint 通过。未跑全量测试或真实模型，模型调用 0 次。没有修改 Agent/远程 Runtime；工作区其他改动保留，未提交或推送。
+- App 定向命令 `npx vitest run src/renderer/src/App.test.tsx -t 'Supervisor|graph navigation'`：5 项通过、281 项未运行。刷新互斥及焦点收尾后，`SupervisorActivity.test.tsx`、`HeartbeatCenter.test.tsx`、`supervisor-service.test.ts` 合计 31 项通过；22 个相关 TS/TSX/MJS 文件的定向 ESLint 为 0 error、0 warning。
+- 结束时间收尾：手动心跳使用真实报告完成时间，下游失败单独记录结束时间。`npx vitest run src/main/assistant/supervision-activity.test.ts src/main/assistant/heartbeat-service.test.ts src/main/assistant/heartbeat-database.test.ts src/main/assistant/supervision-history.test.ts`：4 个文件、21 项通过，新增受控时钟用例区分 10:00 开始、10:02 报告完成、10:03 下游失败。随后 Node typecheck 和这 3 个改动源码/测试文件的 ESLint 通过。
+- 已存在的手动失败无法补回；旧心跳没有冻结范围和关联 ID，保留缺失提示。心跳仍按原保留期限清理，监督结果独立保存。取消和人工修改时间序列审计未实现；`no_change` 的后续接入见下节。
+
 ### 其他边界
 
 - 来源读取对本地会话可精确定位到会话和时间；本地知识引用通过现有 `KnowledgeService` 解析文档/分块，失效时显示不可用；外部引用只使用已保存 locator，不调用远端全库。
 - 继续讨论和知识库写入使用现有本地会话队列与知识库实体接口，并要求先预览、再由用户确认提交。侧栏已支持结果直达图谱，尚无可编辑的上下文预览。
 - 关系移除保留撤销状态及原始来源；界面没有提供恢复入口。
-- 候选集最多 100 个实体，复用依赖模型显式选择；不会自动合并历史重复实体或跨 scope 合并。结果级历史内容已保存，事件滑块仍不重建逐事件的实体演变。Experiment、完整图谱回放、`no_change`/取消状态尚未贯通生产链路。
+- 候选集最多 100 个实体，复用依赖模型显式选择；不会自动合并历史重复实体或跨 scope 合并。结果级历史内容已保存，事件滑块仍不重建逐事件的实体演变。Experiment、完整图谱回放和取消状态尚未贯通生产链路。
+
+## 2026-09-23 自动增量验证
+
+对应 FR-S4、FR-S10、US-S27。自动心跳报告与下游监督均已接入来源版本和处理位置；无变化跳过模型并保存 `no_change`。消息修订、任务状态、知识引用变化分别参与增量判定，已确认记忆只作背景。实现、预算和删除语义见[自动增量收集](./technical-design.md#自动增量收集)。
+
+- schema 46 增加最小来源进度与消息版本，扩展已有心跳状态 CHECK。来源片段进度与对应结果原子保存，模型或事务失败不推进。未送入模型的来源及正文余段保留待处理资格。
+- `incremental-review.test.ts` 使用真实 SQLite 和生产服务，覆盖重开数据库、重复零调用、消息修订后复用实体 ID、105 个长来源分批读完、模型及结果事务失败、任务状态、范围排序、记忆背景、知识引用、报告保存失败和 schema 45 有数据升级。
+- 真实模型使用已有加密默认文本配置，经 `RuntimeSettingsStore` 和 Electron `safeStorage` 读取隔离副本，生产 `createDefaultModelRuntime`、`HeartbeatService`、`SupervisorService` 和 SQLite 执行。`tests/incremental-review-live.electron.test.ts` 于本日通过：首次自动运行 2 次 HTTP 请求，重复自动运行 0 次，修改消息后的监督回顾 1 次，再次监督检查 0 次，总计 **3 次真实文本请求**。工具与附件均为 0。
+- 真实输出通过结构、来源及实体引用校验，修改后的 Atlas 实体至少复用一个原持久化 ID；无变化检查前后图谱相同。测试检查原设置字节未变、外键与数据库完整性。隔离数据库、配置快照和加密 Local State 随测试目录删除，未改用户计划或数据库。
+- 实时测试命令：设置 `GB_REVIEW_LIVE_SETTINGS` 为已有运行时配置路径后，执行 `npx vitest run tests/incremental-review-live.electron.test.ts`。无该环境变量时跳过；每次测试最多 3 个真实请求，不记录凭据。
+- 最终聚焦验证：10 个服务、SQLite、Preload 和 Renderer 测试文件共 76 项通过；`npx vitest run src/main/ipc.test.ts -t 'supervision|heartbeat|application enable'` 另有 9 项通过，124 项按过滤条件跳过。`npm run typecheck`（Node、Agent、Web）和本次改动的 19 个 TypeScript 文件 scoped ESLint 均通过。
+
+真实测试覆盖来源较短的单次自动回顾、重复检查及修改后的实体复用。长正文和大量来源预算由确定性 SQLite 回归验证；没有执行全量测试或真实用户数据库升级。事件驱动、清空或重建图谱和语义近似去重不在本次实现范围。
 - 知识正文条目与监督实体仍是两个模型，当前不会把监督实体当作知识正文条目。

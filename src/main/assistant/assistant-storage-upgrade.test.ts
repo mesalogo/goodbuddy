@@ -99,6 +99,9 @@ describe('subagent progress storage', () => {
       legacy.exec(`ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
         DROP TABLE activity_history_records;
         ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+        DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+        DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+        DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
         PRAGMA user_version = 37`)
     } finally { legacy.close() }
     expect(hasPendingAssistantStorageUpgrade(path)).toBe(true)
@@ -414,6 +417,9 @@ describe('subagent progress storage', () => {
         ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
         DROP TABLE activity_history_records;
         ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+        DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+        DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+        DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
         PRAGMA user_version = ${sourceVersion}; BEGIN`)
       const insert = legacy.prepare(
         `INSERT INTO task_events(

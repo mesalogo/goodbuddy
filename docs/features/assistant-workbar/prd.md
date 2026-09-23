@@ -485,7 +485,7 @@ and obtain fresh element references. Detailed lifecycle and routing rules are de
 
 新建或重新创建的空白标签页尚无已提交 URL 时禁用刷新；只输入地址草稿不会启用刷新。
 首次导航期间仍可停止加载。操作错误仅在当前面板本次打开期间显示，切换面板、关闭当前
-页签或收起工作栏后清除，已离开面板的异步失败不得重新显示旧提示。
+页签或收起工作栏后清除；关闭失败后重试成功也清除原错误，已离开面板的异步失败不得重新显示旧提示。
 
 同一 Conversation 下的 Browser Tab 共享隔离存储和代理上下文，但每个 Tab 拥有独立页面、
 导航状态、操作队列和元素引用空间。模型请求开始时绑定一个确定的 Browser Tab；用户切换

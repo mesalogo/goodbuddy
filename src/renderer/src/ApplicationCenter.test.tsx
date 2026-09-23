@@ -16,6 +16,7 @@ import {
   ApplicationAvailability,
   ApplicationCenter,
   ApplicationSettingsView,
+  isApplicationEnabled,
 } from './ApplicationCenter'
 
 const settings = applicationSettingsSchema.parse({
@@ -107,14 +108,55 @@ describe('Application Center', () => {
 
   it('provides a supervisor enable switch while preserving the heartbeat route id', () => {
     const handlers = props()
-    render(<ApplicationCenter {...handlers} />)
+    render(<ApplicationCenter {...handlers} settings={{ ...settings, heartbeatEnabled: true }} />)
     const card = screen.getByText('监督者', { exact: true }).closest('article')!
     expect(within(card).getByText('可选 · 已启用')).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('button', { name: '打开' }))
+    expect(handlers.onOpen).toHaveBeenCalledWith('heartbeat')
     fireEvent.click(within(card).getByRole('button', { name: '监督者 应用设置' }))
     const enable = screen.getByRole('switch', { name: '启用应用' })
     expect(enable).toBeChecked()
     fireEvent.click(enable)
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ heartbeatEnabled: false })
+  })
+
+  it.each([undefined, false])('keeps the supervisor disabled with preference %s until explicitly enabled', (heartbeatEnabled) => {
+    const handlers = props()
+    render(<ApplicationCenter {...handlers} settings={{ ...settings, heartbeatEnabled }} />)
+    const card = screen.getByText('监督者', { exact: true }).closest('article')!
+    expect(within(card).getByText('可选 · 已关闭')).toBeInTheDocument()
+    const open = within(card).getByRole('button', { name: '打开' })
+    expect(open).toBeDisabled()
+    fireEvent.click(open)
+    expect(handlers.onOpen).not.toHaveBeenCalled()
+    fireEvent.click(within(card).getByRole('button', { name: '监督者 应用设置' }))
+    const enable = screen.getByRole('switch', { name: '启用应用' })
+    expect(enable).not.toBeChecked()
+    fireEvent.click(enable)
+    expect(handlers.onUpdate).toHaveBeenLastCalledWith({ heartbeatEnabled: true })
+  })
+
+  it.each([
+    { state: 'loading', settings: undefined },
+    { state: 'missing preference', settings },
+    { state: 'explicitly disabled', settings: { ...settings, heartbeatEnabled: false } },
+  ])('hides supervisor content when settings are $state', ({ settings: current }) => {
+    const enabled = isApplicationEnabled(current, 'heartbeat')
+    expect(enabled).toBe(false)
+    const { rerender } = render(
+      <ApplicationAvailability enabled={enabled}>
+        <button>Supervisor content</button>
+      </ApplicationAvailability>,
+    )
+    expect(screen.queryByRole('button', { name: 'Supervisor content' })).not.toBeInTheDocument()
+    expect(screen.getByText('Supervisor content')).not.toBeVisible()
+    expect(screen.getByText('Supervisor content').closest('.application-page-content')).toHaveAttribute('inert')
+    rerender(
+      <ApplicationAvailability enabled={isApplicationEnabled({ ...settings, heartbeatEnabled: true }, 'heartbeat')}>
+        <button>Supervisor content</button>
+      </ApplicationAvailability>,
+    )
+    expect(screen.getByRole('button', { name: 'Supervisor content' })).toBeVisible()
   })
   it('searches disabled and unpinned applications, opens without pinning, and restores focus', () => {
     const handlers = props()

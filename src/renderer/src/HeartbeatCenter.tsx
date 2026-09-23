@@ -25,6 +25,7 @@ import type {
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
 import { SupervisorWorkspace, type SupervisionGraphNavigation } from './SupervisorWorkspace'
+import { SupervisorActivity } from './SupervisorActivity'
 import './supervisor-workspace.css'
 import { getProjectDisplayText } from './project-display'
 import {
@@ -42,6 +43,7 @@ type HeartbeatCenterTab =
   | 'plans'
 
 export type HeartbeatCenterProps = {
+  active?: boolean
   graphNavigation?: SupervisionGraphNavigation
   configs: AssistantHeartbeatConfig[]
   runs: AssistantHeartbeatRun[]
@@ -93,17 +95,22 @@ export function HeartbeatCenter(props: HeartbeatCenterProps): React.JSX.Element 
 function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element {
   const { t } = useTranslation('heartbeat')
   const centerRef = useRef<HTMLElement>(null)
-  const [pageTab, setPageTab] = useState<'overview' | 'graph' | 'settings'>(props.graphNavigation ? 'graph' : 'overview')
+  const [pageTab, setPageTab] = useState<'overview' | 'graph' | 'activity' | 'settings'>(props.graphNavigation ? 'graph' : 'overview')
+  const [activityNavigation, setActivityNavigation] = useState<SupervisionGraphNavigation>()
   const [appliedNavigation, setAppliedNavigation] = useState(props.graphNavigation)
   if (appliedNavigation !== props.graphNavigation) {
     setAppliedNavigation(props.graphNavigation)
-    if (props.graphNavigation) setPageTab('graph')
+    if (props.graphNavigation) {
+      setActivityNavigation(undefined)
+      setPageTab('graph')
+    }
   }
   useEffect(() => {
-    if (props.graphNavigation) {
-      centerRef.current?.querySelector<HTMLElement>('#supervisor-tab-graph')?.focus()
+    const navigation = activityNavigation ?? props.graphNavigation
+    if (navigation) {
+      centerRef.current?.querySelector<HTMLElement>(`#supervisor-tab-${navigation.tab ?? 'graph'}`)?.focus()
     }
-  }, [props.graphNavigation])
+  }, [props.graphNavigation, activityNavigation])
   return (
     <section ref={centerRef} className="heartbeat-center" aria-labelledby="supervisor-title">
       <PageHeader
@@ -120,6 +127,7 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
         tabs={[
           { id: 'overview', label: t('supervisor.recap') },
           { id: 'graph', label: t('supervisor.graph') },
+          { id: 'activity', label: t('activity.title') },
           { id: 'settings', label: t('supervisor.settings') }
         ]}
       />
@@ -128,14 +136,22 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
         id={`supervisor-panel-${pageTab}`}
         aria-labelledby={`supervisor-tab-${pageTab}`}
       >
-        <div hidden={pageTab === 'settings'}>
+        <div hidden={pageTab === 'settings' || pageTab === 'activity'}>
           <SupervisorWorkspace
-            graphNavigation={props.graphNavigation}
+            graphNavigation={activityNavigation ?? props.graphNavigation}
             tab={pageTab}
             onTabChange={setPageTab}
             projects={props.projects}
           />
         </div>
+        {pageTab === 'activity' && <SupervisorActivity
+          active={props.active !== false}
+          projects={props.projects}
+          onOpenResult={(resultId, tab) => {
+            setActivityNavigation({ resultId, tab })
+            setPageTab(tab)
+          }}
+        />}
         {pageTab === 'settings' && <HeartbeatAutomationSettings {...props} />}
       </div>
     </section>
@@ -164,7 +180,7 @@ function HeartbeatAutomationSettings({
 }: HeartbeatCenterProps): React.JSX.Element {
   const { t, i18n } = useTranslation('heartbeat')
   const { t: tWorkspace } = useTranslation('workspace')
-  const [tab, setTab] = useState<HeartbeatCenterTab>('overview')
+  const [tab, setTab] = useState<HeartbeatCenterTab>('plans')
   const [pendingAction, setPendingAction] = useState<string>()
   const [error, setError] = useState<string>()
   const [expandedEntryId, setExpandedEntryId] = useState<string>()
@@ -212,6 +228,7 @@ function HeartbeatAutomationSettings({
     string
   > = {
     claimed: t('statuses.run.claimed'),
+    no_change: t('statuses.run.no_change'),
     completed: t('statuses.run.completed'),
     failed: t('statuses.run.failed'),
     skipped: t('statuses.run.skipped')
@@ -416,14 +433,14 @@ function HeartbeatAutomationSettings({
     label: string
     count?: number
   }> = [
+    { id: 'plans', label: t('center.tabs.plans') },
     { id: 'overview', label: t('center.tabs.overview') },
     {
       id: 'suggestions',
       label: t('center.tabs.suggestions'),
       count: attentionCount
     },
-    { id: 'history', label: t('center.tabs.history') },
-    { id: 'plans', label: t('center.tabs.plans') }
+    { id: 'history', label: t('center.tabs.history') }
   ]
 
   return (
@@ -431,14 +448,10 @@ function HeartbeatAutomationSettings({
       aria-label={t('supervisor.settings')}
       className="heartbeat-center"
     >
-      <div className="supervisor-workspace__section-heading">
-        <div>
-          <h2>{t('supervisor.settings')}</h2>
-          <ScopeBadge scope={heartbeatScope} />
-        </div>
-        <div className="supervisor-workspace__actions">
-          {!initialLoadBlocked && (
-            <>
+      <div className="supervisor-workspace__action-bar">
+        <ScopeBadge scope={heartbeatScope} />
+        {!initialLoadBlocked && (
+          <div className="supervisor-workspace__actions">
               <button
                 aria-label={t('center.actions.refreshAriaLabel')}
                 className="secondary-button"
@@ -449,7 +462,7 @@ function HeartbeatAutomationSettings({
                 <RefreshCw aria-hidden="true" size={14} />
                 {t('center.actions.refresh')}
               </button>
-              {primaryConfig ? (
+              {tab !== 'plans' && (primaryConfig ? (
                 <button
                   className="primary-button"
                   disabled={loading || pendingAction !== undefined}
@@ -474,10 +487,9 @@ function HeartbeatAutomationSettings({
                 >
                   {t('center.actions.configure')}
                 </button>
-              )}
-            </>
-          )}
-        </div>
+              ))}
+          </div>
+        )}
       </div>
 
       {error && (

@@ -144,6 +144,14 @@ Object.defineProperty(window, 'goodbuddy', {
       ? {}
       : {
           supervision: {
+            activity: async () => ['running', 'failed', 'completed'].map((status, index) => ({
+              id: `activity-${index}`, kind: index === 2 ? 'supervision' : 'heartbeat', trigger: index === 2 ? 'manual' : 'scheduled', status,
+              scope: { kind: 'global' }, startedAt: '2026-09-23T08:00:00Z', completedAt: status === 'running' ? null : '2026-09-23T08:01:00Z',
+              timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-23T00:00:00Z' },
+              error: status === 'failed' ? 'SIMULATED: 下游监督回顾失败，已保存心跳报告。'.repeat(8) : null,
+              summary: 'SIMULATED: 已保存的执行摘要。', resultId: status === 'completed' ? 'fixture-result' : null,
+              heartbeatStatus: index === 2 ? null : 'completed', supervisionStatus: status
+            })),
             overview: async () => {
               if (state === 'loading') return new Promise(() => {})
               if (state === 'error')

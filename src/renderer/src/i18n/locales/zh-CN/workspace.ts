@@ -96,7 +96,7 @@ export const workspace = {
       danger: {
         title: '危险操作',
         description:
-          '删除项目会永久移除 GoodBuddy 中的项目、对话、任务、计划、心跳、记忆和成果，但不会删除磁盘上的项目目录或文件。',
+          '删除项目会永久移除 GoodBuddy 中的项目、对话、任务、计划、自动监督、记忆和成果，但不会删除磁盘上的项目目录或文件。',
         delete: '删除项目',
         confirmation: '输入“{{projectName}}”确认删除',
         cancel: '取消删除',

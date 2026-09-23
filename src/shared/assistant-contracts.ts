@@ -1036,6 +1036,7 @@ export type HeartbeatSummaryOutput = z.infer<
 
 export type HeartbeatRunStatus =
   | 'claimed'
+  | 'no_change'
   | 'completed'
   | 'failed'
   | 'skipped'

@@ -2,6 +2,56 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.12",
+      "releasedAt": "2026-09-23",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**监督者工作回顾与故事线图谱**：从应用中心启用监督者后，可按范围和时间回顾工作，查看历史结果及其事件、实体、关系和来源。会话侧栏可固定到会话或任务并定位对应图谱，核对后可继续讨论或预览写入本地知识库实体。",
+            "**自动监督与活动记录**：在设置中保存并启用每日或每周计划，自动回顾窗口内新增、修改或尚未处理的来源片段；没有待处理输入时不调用模型，也不生成重复报告。活动页显示手动及自动运行、各阶段状态和失败原因，并可打开对应历史结果；手动回顾会重新整理所选区间。",
+            "**Mermaid 完整图片导出**：在大图窗口中可下载完整 PNG，导出不受当前缩放和拖动位置影响。放大后也可滚动查看图表各个边缘。"
+          ],
+          "fixes": [
+            "**远程任务结束后释放空闲进程**：更新配套 Agent 后，任务完成会回收空闲 Runtime，下一轮恢复对话历史；共享进程仍有任务或待答问题时继续保留。被更新替换的 Agent 等已有任务完成后退出，当前 Agent 保持常驻；远程项目移除技术预览标识，仍默认关闭。",
+            "**用量与回复时长更容易查看**：项目和会话用量先显示汇总，展开后查看 Runtime 与模型明细。切回已查看的会话时立即显示缓存的累计回复时长，并在后台刷新。",
+            "**减少流式回复期间的磁盘写入**：活动更新只保存变化的记录，避免反复重写整份历史。升级保留已有活动内容和顺序。",
+            "**工作区和笔记操作更清楚**：Git 分支选择器悬浮显示，不再挤动文件列表和提交历史。笔记索引开关移到返回按钮旁，索引与 AI 评论开关都显示文字。",
+            "**通知更简洁**：成功与提示通知采用紧凑布局，两秒后自动消失。错误通知继续保留，直到手动关闭。",
+            "**浏览器关闭重试后清除旧错误**：关闭页签失败时仍保留页签，方便重试。重试成功后清除原错误提示。"
+          ],
+          "notices": [
+            "监督者默认关闭，缺失启用设置时也按关闭处理，已明确保存的选择保留；升级后请在应用中心检查开关。关闭后保留计划和历史，停止接受新回顾，已在执行的运行可完成；启用应用不会自动创建计划。",
+            "监督回顾只读且不调用工具，但生成内容会调用已配置模型并可能产生费用。当前不支持分钟间隔、用户取消、逐事件完整回放、Experiment 目标或人工修改的时间序列审计；输入预算与回顾窗口仍有限制，删除报告不会重置自动进度。",
+            "首次启动会升级数据库。升级前请备份完整用户数据，包括数据库和相邻 notes/ 目录；旧客户端不能打开升级后的数据库，回退需使用升级前备份。",
+            "远程用户请先升级 Desktop **0.13.12**，再下载并更新 Host 上的 Agent **0.13.3**。已有旧进程不会热更新，Execute 继续使用所选 SSH 账号的权限。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Supervisor work reviews and story graphs**: Enable Supervisor in App Center to review a selected scope and time range, inspect past results, and trace their events, entities, relations, and sources. The conversation sidebar can pin a conversation or task and open its matching graph, with confirmed continuation and previews for writing entities to a local knowledge base.",
+            "**Automatic supervision and activity history**: Save and enable a daily or weekly plan to review new, changed, or unprocessed source portions within its window; checks without pending input make no model call and create no duplicate report. Activity shows manual and automatic runs, stage status, failures, and links to the exact saved result; manual review reprocesses the selected period.",
+            "**Complete Mermaid image export**: Download the entire diagram as PNG from the large-diagram viewer, independently of zoom and pan. All diagram edges remain reachable when zoomed in."
+          ],
+          "fixes": [
+            "**Release idle processes after remote tasks**: With the matching Agent update, completed tasks release idle Runtimes and the next turn restores conversation history; shared processes remain alive while tasks or pending questions are active. Replaced Agents finish existing work before exiting while the current Agent stays resident; Remote Projects loses its technical preview label and remains disabled by default.",
+            "**Clearer usage totals and reply duration**: Project and conversation usage shows totals first, with Runtime and model details available by expanding each row. Returning to a viewed conversation immediately restores its cached cumulative reply duration while refreshing it in the background.",
+            "**Fewer disk writes during streaming replies**: Activity updates save only changed records, avoiding repeated writes of the entire history. Upgrades preserve existing activity content and order.",
+            "**Clearer workspace and note controls**: The Git branch picker floats above the workspace without displacing files or commit history. The note index toggle sits beside Back, and both index and AI comment toggles display text labels.",
+            "**Simpler notifications**: Success and informational notifications use a compact layout and dismiss after two seconds. Errors remain visible until manually dismissed.",
+            "**Clear browser close errors after a successful retry**: A failed close keeps the tab available for retry. Once the retry succeeds, the earlier error is cleared."
+          ],
+          "notices": [
+            "Supervisor defaults to off, including when the enabled preference is missing; explicit saved choices are preserved. Check its App Center switch after upgrading: disabling it retains plans and history and blocks new reviews while in-flight runs may finish; enabling it does not create plans automatically.",
+            "Supervision reviews are read-only and cannot call tools, but generating content uses the configured model and may incur charges. Minute intervals, user cancellation, full event-by-event replay, Experiment targets, and a chronological audit of manual edits are not supported; input budgets and review windows still apply, and deleting reports does not reset automatic progress.",
+            "The first launch upgrades the database. Back up complete user data, including the database and adjacent notes/ directory, before upgrading; older clients cannot open the upgraded database, and rollback requires a pre-upgrade backup.",
+            "Remote users should upgrade Desktop to **0.13.12** before downloading and updating Host environments to Agent **0.13.3**. Existing older processes are not hot-updated, and Execute retains the selected SSH account's permissions."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.11",
       "releasedAt": "2026-09-22",
       "notes": {

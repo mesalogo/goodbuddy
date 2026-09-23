@@ -11432,6 +11432,7 @@ function App(): React.JSX.Element {
                       }
                     >
                       {isApplicationEnabled(applicationSettings, 'heartbeat') ? <HeartbeatCenter
+                        active={view === 'heartbeat'}
                         graphNavigation={supervisionGraphNavigation}
                         configs={assistantHeartbeats}
                         entries={heartbeatEntries}
@@ -11739,6 +11740,7 @@ function App(): React.JSX.Element {
             browserStates={browserStates}
             conversationTitles={conversationTitles}
             currentProject={activeProject}
+            supervisionEnabled={isApplicationEnabled(applicationSettings, 'heartbeat')}
             supervisionLibraries={knowledgeSnapshot.libraries}
             onOpenSupervisionGraph={(resultId) => {
               requestWorkspaceLeave('heartbeat', () => {

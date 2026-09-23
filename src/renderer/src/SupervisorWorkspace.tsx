@@ -13,12 +13,12 @@ import {
 } from '../../shared/supervision-contracts'
 
 type Selection = { kind: 'event' | 'entity' | 'relation'; id: string }
-export type SupervisionGraphNavigation = { resultId: string }
+export type SupervisionGraphNavigation = { resultId: string; tab?: 'overview' | 'graph' }
 type Props = {
   graphNavigation?: SupervisionGraphNavigation
-  tab?: 'overview' | 'graph' | 'settings'
+  tab?: 'overview' | 'graph' | 'activity' | 'settings'
   projects?: AssistantProject[]
-  onTabChange?: (tab: 'overview' | 'graph' | 'settings') => void
+  onTabChange?: (tab: 'overview' | 'graph' | 'activity' | 'settings') => void
 }
 const emptyGraph: SupervisionGraphView = {
   storyLine: null,
@@ -121,6 +121,11 @@ export function SupervisorWorkspace({
     try {
       const overview = (await api.overview()).map((item) => supervisionResultViewSchema.parse(item))
       if (generation !== loadGeneration.current) return
+      if (requestedId && !overview.some((item) => item.id === requestedId)) {
+        const selected = await api.overview({ resultId: requestedId })
+        if (generation !== loadGeneration.current) return
+        overview.push(...selected.map((item) => supervisionResultViewSchema.parse(item)))
+      }
       const selected = requestedId ? overview.find((item) => item.id === requestedId) : overview[0]
       setResults(overview)
       const nextId = requestedId ?? selected?.id
@@ -578,9 +583,8 @@ export function SupervisorWorkspace({
           )}
           {tab === 'graph' && (
             <>
-              <div className="supervisor-workspace__section-heading">
-                <div>
-                  <h2>{t('supervisor.graph')}</h2>
+              <div className="supervisor-workspace__action-bar">
+                {(graphScope || latest) && <div>
                   {graphScope && (
                     <p>
                       {t('supervisor.graphScope')}: {scopeText(graphScope)}
@@ -592,7 +596,7 @@ export function SupervisorWorkspace({
                       {date(latest.timeRange.to)} · {date(latest.createdAt)}
                     </p>
                   )}
-                </div>
+                </div>}
                 <button
                   className="secondary-button"
                   disabled={busy}

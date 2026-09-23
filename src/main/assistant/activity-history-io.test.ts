@@ -25,6 +25,9 @@ it('migrates activity history and writes only changed records during streaming',
     records[1]!.id = records[0]!.id
     raw.exec(`DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version=43`)
     const legacySave = raw.prepare('UPDATE activity_history SET records_json = ?, legacy_history_may_be_incomplete = 1')
     legacySave.run(JSON.stringify(records))

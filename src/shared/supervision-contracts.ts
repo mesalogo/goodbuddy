@@ -24,6 +24,27 @@ export const supervisionRunRequestSchema = z
 
 export type SupervisionRunRequest = z.infer<typeof supervisionRunRequestSchema>
 
+export const supervisionActivityRequestSchema = z.object({
+  limit: z.number().int().min(1).max(100).default(50),
+  offset: z.number().int().min(0).max(100_000).default(0)
+}).strict()
+export type SupervisionActivityRequest = z.input<typeof supervisionActivityRequestSchema>
+export type SupervisionActivity = {
+  id: string
+  kind: 'supervision' | 'heartbeat'
+  trigger: 'manual' | 'scheduled' | 'heartbeat'
+  status: 'running' | 'completed' | 'failed' | 'skipped' | 'no_change'
+  scope: SupervisionRunRequest['scope'] | null
+  startedAt: string
+  completedAt: string | null
+  timeRange: SupervisionRunRequest['timeRange'] | null
+  error: string | null
+  summary: string | null
+  resultId: string | null
+  heartbeatStatus: 'claimed' | 'completed' | 'failed' | 'skipped' | 'no_change' | null
+  supervisionStatus: 'running' | 'completed' | 'failed' | 'no_change' | null
+}
+
 export const supervisionEvidenceSchema = z
   .object({
     id: z.string().min(1).max(256),
@@ -168,7 +189,7 @@ export const supervisionTargetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('task'), taskId: z.string().min(1).max(128) }).strict()
 ])
 export type SupervisionTarget = z.infer<typeof supervisionTargetSchema>
-export const supervisionOverviewRequestSchema = z.object({ target: supervisionTargetSchema.optional() }).strict()
+export const supervisionOverviewRequestSchema = z.object({ target: supervisionTargetSchema.optional(), resultId: z.string().min(1).max(256).optional() }).strict()
 export const supervisionGraphRequestSchema = z.object({
   resultId: z.string().min(1).optional(), storyLineId: z.string().min(1).optional()
 }).strict()

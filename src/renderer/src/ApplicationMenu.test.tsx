@@ -23,7 +23,7 @@ function Harness({ value = settings, pending = false, error, onOpen = vi.fn(), o
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 it('filters the shared order by enablement only, including reordered always-shown apps', () => {
-  const value = { ...settings, magicNotesEnabled: true, localInferenceEnabled: true,
+  const value = { ...settings, magicNotesEnabled: true, localInferenceEnabled: true, heartbeatEnabled: true,
     applicationNavigation: { order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] as ApplicationSettings['applicationNavigation']['order'],
        pinned: { 'magic-notes': false, heartbeat: true, 'local-inference': false } } }
   const onOpen = vi.fn()
@@ -37,13 +37,13 @@ it('filters the shared order by enablement only, including reordered always-show
   expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 })
 
-it('shows loading and actionable errors without treating unknown settings as disabled', () => {
+it('shows loading and actionable errors while keeping Supervisor unavailable until enabled', () => {
   const onRetry = vi.fn()
   const { rerender } = render(<Harness value={null} pending onRetry={onRetry} />)
   fireEvent.click(screen.getByText('Launcher'))
   expect(screen.getByRole('status')).toBeInTheDocument()
   expect(screen.getByRole('menuitem', { name: '知识库' })).toBeInTheDocument()
-  expect(screen.getByRole('menuitem', { name: '监督者' })).toBeInTheDocument()
+  expect(screen.queryByRole('menuitem', { name: '监督者' })).not.toBeInTheDocument()
   rerender(<Harness value={null} error="Cannot read settings" onRetry={onRetry} />)
   expect(screen.queryByRole('status')).not.toBeInTheDocument()
   expect(screen.getByRole('alert')).toHaveTextContent('Cannot read settings')

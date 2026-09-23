@@ -691,6 +691,7 @@ const api: DesktopApi = {
     history: vi.fn(async () => ({ runs: [], entries: [] })),
   },
   supervision: {
+    activity: vi.fn(async () => []),
     overview: vi.fn(async () => []),
     run: vi.fn(async () => undefined),
     graph: vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [] })),
@@ -13003,13 +13004,15 @@ describe("App", () => {
   });
 
   it("shows retryable page-local Supervisor errors without first-time guidance", async () => {
-    vi.mocked(api.supervision.overview).mockRejectedValueOnce(
-      new Error("监督者数据库暂时不可用"),
-    );
+    vi.mocked(api.supervision.overview).mockImplementation(async (request) => {
+      if (request?.target) return [];
+      throw new Error("监督者数据库暂时不可用");
+    });
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "监督者" }));
     expect(await screen.findByText("监督者加载失败")).toBeInTheDocument();
+    vi.mocked(api.supervision.overview).mockResolvedValue([]);
     const retry = await screen.findByRole("button", { name: "重试" });
     fireEvent.click(retry);
     await waitFor(() =>

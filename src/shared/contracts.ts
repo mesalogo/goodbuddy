@@ -2192,7 +2192,8 @@ export type DesktopApi = {
     }>
   }
   supervision: {
-    overview: (input?: { target?: import('./supervision-contracts').SupervisionTarget }) => Promise<import('./supervision-contracts').SupervisionResultView[]>
+    activity: (input?: import('./supervision-contracts').SupervisionActivityRequest) => Promise<import('./supervision-contracts').SupervisionActivity[]>
+    overview: (input?: { target?: import('./supervision-contracts').SupervisionTarget; resultId?: string }) => Promise<import('./supervision-contracts').SupervisionResultView[]>
     run: (input: unknown) => Promise<unknown>
     graph: (input?: import('./supervision-contracts').SupervisionGraphRequest) => Promise<Record<string, unknown>>
     source: (sourceId: string) => Promise<Record<string, unknown> | undefined>

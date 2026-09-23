@@ -44,6 +44,47 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it.each([11, 12])('defaults missing supervisor preference to off in version %s through unrelated updates and reload', async (version) => {
+    const { filePath, store } = await createStore()
+    const legacy = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null }
+    delete legacy.heartbeatEnabled
+    await writeFile(filePath, JSON.stringify(legacy), 'utf8')
+
+    expect(await store.get()).toEqual({ ...defaultApplicationSettings, heartbeatEnabled: false })
+    const changed = vi.fn()
+    store.onChanged(changed)
+    const updated = await store.update({ checkUpdatesOnStartup: false })
+    expect(updated).toMatchObject({ heartbeatEnabled: false, checkUpdatesOnStartup: false })
+    expect(changed).toHaveBeenCalledExactlyOnceWith(updated)
+    expect(await createApplicationSettingsStore(filePath).get()).toEqual(updated)
+  })
+
+  it.each([
+    { version: 11, heartbeatEnabled: true },
+    { version: 11, heartbeatEnabled: false },
+    { version: 12, heartbeatEnabled: true },
+    { version: 12, heartbeatEnabled: false },
+  ])('preserves supervisor preference $heartbeatEnabled in version $version through unrelated updates and reload', async ({ version, heartbeatEnabled }) => {
+    const { filePath, store } = await createStore()
+    await writeFile(filePath, JSON.stringify({
+      ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null, heartbeatEnabled,
+    }), 'utf8')
+
+    expect((await store.get()).heartbeatEnabled).toBe(heartbeatEnabled)
+    expect((await store.update({ checkUpdatesOnStartup: false })).heartbeatEnabled).toBe(heartbeatEnabled)
+    expect(JSON.parse(await readFile(filePath, 'utf8')).heartbeatEnabled).toBe(heartbeatEnabled)
+    expect((await createApplicationSettingsStore(filePath).get()).heartbeatEnabled).toBe(heartbeatEnabled)
+  })
+
+  it('persists explicit supervisor enable and disable choices', async () => {
+    const { filePath, store } = await createStore()
+    for (const heartbeatEnabled of [true, false]) {
+      expect((await store.update({ heartbeatEnabled })).heartbeatEnabled).toBe(heartbeatEnabled)
+      await store.update({ checkUpdatesOnStartup: false })
+      expect((await createApplicationSettingsStore(filePath).get()).heartbeatEnabled).toBe(heartbeatEnabled)
+    }
+  })
+
   it('defaults missing historical canvas page counts and persists updates without resetting other preferences', async () => {
     const { filePath, store } = await createStore()
     const legacy: Record<string, unknown> = { ...defaultApplicationSettings, version: 12,
@@ -173,6 +214,7 @@ describe('ApplicationSettingsStore', () => {
     const { directory, store } = await createStore()
 
     await expect(store.get()).resolves.toEqual(defaultApplicationSettings)
+    expect(defaultApplicationSettings.heartbeatEnabled).toBe(false)
     expect(await store.get()).toMatchObject({ localInferenceEnabled: true, applicationNavigation: defaultApplicationSettings.applicationNavigation })
     await expect(readdir(directory)).resolves.toEqual([])
   })

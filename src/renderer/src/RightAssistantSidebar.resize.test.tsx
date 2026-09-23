@@ -151,6 +151,7 @@ function sidebarElement({
   workspaceProjectId,
   restoreFocusRef,
   activeConversationId,
+  supervisionEnabled,
   supervisionLibraries,
   conversationStats,
   taskDurations,
@@ -190,6 +191,7 @@ function sidebarElement({
   workspaceProjectId?: string
   restoreFocusRef?: { current: HTMLElement | null }
   activeConversationId?: string
+  supervisionEnabled?: boolean
   supervisionLibraries?: React.ComponentProps<typeof RightAssistantSidebar>['supervisionLibraries']
   conversationStats?: React.ComponentProps<typeof RightAssistantSidebar>['conversationStats']
   taskDurations?: React.ComponentProps<typeof RightAssistantSidebar>['taskDurations']
@@ -210,6 +212,7 @@ function sidebarElement({
       <RightAssistantSidebar
         approvals={approvals}
         activeConversationId={activeConversationId}
+        supervisionEnabled={supervisionEnabled}
         supervisionLibraries={supervisionLibraries}
         conversationStats={conversationStats}
         taskDurations={taskDurations}
@@ -257,13 +260,36 @@ function renderSidebar(options: Parameters<typeof sidebarElement>[0] = {}): HTML
   })
 }
 
+it.each([false, undefined])('does not mount or query supervision when enabled is %s', async (supervisionEnabled) => {
+  const overview = vi.fn(async () => [])
+  const onCreateCustomTask = vi.fn()
+  Object.assign(window.goodbuddy, { supervision: { overview } })
+  const view = render(sidebarElement({ activeConversationId: 'A', supervisionEnabled, onCreateCustomTask }))
+  expect(screen.queryByRole('region', { name: '监督反馈' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '固定监督目标' })).not.toBeInTheDocument()
+  expect(overview).not.toHaveBeenCalled()
+  expect(screen.getByRole('region', { name: '当前会话统计' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: '新建任务' }))
+  expect(onCreateCustomTask).toHaveBeenCalledOnce()
+
+  view.rerender(sidebarElement({ activeConversationId: 'A', supervisionEnabled: true }))
+  await waitFor(() => expect(overview).toHaveBeenCalledOnce())
+  fireEvent.click(screen.getByRole('button', { name: '固定监督目标' }))
+  view.rerender(sidebarElement({ activeConversationId: 'B', supervisionEnabled }))
+  expect(screen.queryByRole('region', { name: '监督反馈' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '取消固定监督目标' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '刷新监督回顾' })).not.toBeInTheDocument()
+  expect(overview).toHaveBeenCalledOnce()
+  expect(screen.getByRole('region', { name: '当前会话统计' })).toBeVisible()
+})
+
 it('pins the supervision target across conversation switches and restores following when unpinned', async () => {
   const overview = vi.fn(async () => [])
   Object.assign(window.goodbuddy, { supervision: { overview } })
-  const view = render(sidebarElement({ activeConversationId: 'A' }))
+  const view = render(sidebarElement({ activeConversationId: 'A', supervisionEnabled: true }))
   await waitFor(() => expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'A' } }))
   fireEvent.click(screen.getByRole('button', { name: '固定监督目标' }))
-  view.rerender(sidebarElement({ activeConversationId: 'B' }))
+  view.rerender(sidebarElement({ activeConversationId: 'B', supervisionEnabled: true }))
   expect(screen.getByRole('button', { name: '取消固定监督目标' })).toBeInTheDocument()
   expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'A' } })
   expect(localStorage.getItem('goodbuddy.workbar-layout.v1')).toContain('"conversationId":"A"')
@@ -283,7 +309,7 @@ it.each(['cancel', 'failure'] as const)('retries supervision knowledge preview a
   } })
   const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(outcome !== 'cancel').mockReturnValue(true)
   try {
-    renderSidebar({ activeConversationId: 'conversation', supervisionLibraries: [{ id: 'library', name: 'Target library' } as never] })
+    renderSidebar({ activeConversationId: 'conversation', supervisionEnabled: true, supervisionLibraries: [{ id: 'library', name: 'Target library' } as never] })
     fireEvent.click(await screen.findByRole('button', { name: '查看来源' }))
     const button = await screen.findByRole('button', { name: '预览并写入实体' })
     fireEvent.click(button)

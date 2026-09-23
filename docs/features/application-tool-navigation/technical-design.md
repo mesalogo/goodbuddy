@@ -72,7 +72,7 @@ type BuiltInApplicationDefinition = {
 }
 ```
 
-全部应用 ID 在 `application-settings-contracts.ts` 的 `BuiltInApplicationId` 定义；`EditableApplicationId` 仅包含 `magic-notes`、`local-inference`。Renderer 的 `applicationDefinitions` 映射图标、国际化键和可选应用启用键，知识库和智能心跳始终可用。
+全部应用 ID 在 `application-settings-contracts.ts` 的 `BuiltInApplicationId` 定义；`EditableApplicationId` 包含 `magic-notes`、`heartbeat`、`local-inference`。Renderer 的 `applicationDefinitions` 映射图标、国际化键和可选应用启用键，知识库始终可用。
 `App.tsx` 默认导入 `LocalInferencePage`，传入 `onClose`、`enabled` 和 `restoreFocus`。`local-inference` 保留为入口 ID，`setView` 在提交工作区切换前将其转为 `localInferenceOpen = true` 并返回，不更新 `view` 或 KeepAlive 缓存；组件按该独立状态挂载及卸载。
 静态清单复用既有应用页面和国际化键。管理 Modal 的搜索只过滤该清单，包含未常驻和关闭的应用，不请求
 远程目录。启用、常驻和排序从确认配置派生，不在清单中持久化第二份状态。
@@ -82,7 +82,7 @@ type BuiltInApplicationDefinition = {
 应用中心调用既有 `navigateFromSidebar` 或同一页面导航函数，沿用未保存离开检查和焦点
 策略。打开前检查确认的启用值；未常驻但已启用的应用不附带常驻写入。本机推理监控从常驻入口、菜单及管理 Modal 均经 `setView('local-inference')` 打开独立 Modal，保留底层工作区与设置草稿；其他应用继续页面导航。
 `ApplicationMenu` 按四个应用共用的持久化顺序派生清单，仅按启用过滤，不读取常驻或打开历史。应用行先关闭菜单再导航；底部“管理应用”关闭菜单、恢复锚点焦点并打开既有 `ApplicationCenter` Modal。
-应用中心对应行的设置操作仅接受 `EditableApplicationId`；应用页和全局设置不提供重复入口。知识库和智能心跳的管理行提供“打开”和排序，原工作区实际配置保留，不添加通用空设置页。
+应用中心对应行的设置操作仅接受 `EditableApplicationId`；应用页和全局设置不提供重复入口。知识库的管理行提供“打开”和排序，原工作区实际配置保留，不添加通用空设置页。
 共同页复用设置 Modal 容器、配置读取及更新方法，不建立独立配置存储或重复表单。
 
 ### 3.3 工作栏选择与创建
@@ -124,21 +124,21 @@ type ApplicationNavigationSettings = {
 }
 ```
 
-`applicationNavigation` 保存四个应用的完整顺序和两个可选应用的常驻布尔值。默认顺序为
-`knowledge`、`heartbeat`、`magic-notes`、`local-inference`；可选应用常驻分别默认 `true`、`false`。
-权威返回 schema 和更新 schema 均要求四个 ID 各出现一次，拒绝重复、未知和缺失 ID；`pinned` 仅接受两个可选应用的完整布尔映射。Renderer 直接读取该顺序，再按各入口的可见性过滤。知识库和智能心跳始终启用、常驻，无可写开关键。
+`applicationNavigation` 保存四个应用的完整顺序和三个可选应用的常驻布尔值。默认顺序为
+`knowledge`、`heartbeat`、`magic-notes`、`local-inference`；心跳和魔法笔记常驻默认 `true`，本机推理监控默认 `false`。
+权威返回 schema 和更新 schema 均要求四个 ID 各出现一次，拒绝重复、未知和缺失 ID；`pinned` 包含三个可选应用，缺失 `heartbeat` 时补 `true`，显式布尔值保留。Renderer 直接读取该顺序，再按各入口的可见性过滤。知识库始终启用、常驻，无可写开关键。
 按[排序规则](./logic-design.md#3-主导航组合规则)提交完整顺序；不持久化可推导的可见 ID 列表。
 首期不预建插件字段，也不为未发布的旧隐藏 ID 草案增加迁移读取器。
 
 ### 4.2 与现有开关组合
 
-可选应用侧栏入口可见条件如下，知识库和智能心跳按保存位置始终显示：
+可选应用侧栏入口可见条件如下，知识库按保存位置始终显示：
 
 ```ts
 const visible = featureEnabled && applicationNavigation.pinned[id]
 ```
 
-`magicNotesEnabled` 保留为笔记启用的唯一权威键，`localInferenceEnabled` 为本机推理监控应用启用键，默认 `true`，不在导航配置再复制 enabled map。心跳没有应用级启用字段，单条计划 enabled 的业务含义和存储不变。关闭可选应用时保留常驻控件和恢复入口。
+`magicNotesEnabled` 保留为笔记启用的唯一权威键，`localInferenceEnabled` 为本机推理监控应用启用键，默认 `true`，不在导航配置再复制 enabled map。`heartbeatEnabled` 控制心跳与监督者应用；Renderer 仅将 `settings?.heartbeatEnabled === true` 视为启用，设置未加载时也不开放入口。默认值及运行边界见[应用启停与执行](../conversation-supervision/logic-design.md#应用启停与执行)，Main 与侧栏接入见[监督者运行路径](../conversation-supervision/technical-design.md#2-运行路径)。关闭可选应用时保留常驻控件和恢复入口。
 
 笔记配置使用 `magicNotesShowIncompleteTodoCount`、`magicNoteCommentMode`、
 `magicNoteCommentFormat` 和 `magicNoteCanvasPageCount`，应用中心与笔记页使用同一 schema 和更新链路。
@@ -168,7 +168,7 @@ Main 继续校验可信 sender、Zod 输入，复用 `ApplicationSettingsStore` 
 
 仅存储读取允许补齐旧数据：缺失的 `knowledge`、`heartbeat` 按此顺序前置，再保留已有 ID 的相对顺序，最后按默认顺序追加缺失的可选应用。旧 `[local-inference, magic-notes]` 因此变为 `[knowledge, heartbeat, local-inference, magic-notes]`；完整四项顺序原样保留。缺失或空顺序采用默认顺序，部分 `pinned` 映射仅补缺失键，显式 `false` 保留。重复或未知 ID 仍按现有损坏文件处理规则处理，不静默去重或丢弃。版本 11 迁移时写入归一化结果；版本 12 读取时归一化，下一次设置保存时写入完整结果。IPC 和配置工具写入不接受这些部分数据。
 
-版本 12 属于未发布的分支格式，原草案 `knowledgeEnabled`、`heartbeatEnabled` 已移除，不为这些开关键增加兼容读取器。
+版本 12 属于未发布的分支格式，原草案 `knowledgeEnabled` 已移除，不增加兼容读取器。`heartbeatEnabled` 是当前应用启用字段，由 Store 归一化缺失值并保留显式保存值。
 
 ## 5. 侧栏底部重构
 
@@ -203,7 +203,7 @@ Renderer 从同一确认快照派生可选应用主导航、中心状态和页�
 应用中心对应行的设置进入。笔记页面直接消费确认的评论配置，
 不因修改评论方式而重建编辑器。
 
-知识库和智能心跳不经过 `ApplicationAvailability`；会话知识按钮、范围、检索方式和标签继续遵守原知识库规则，心跳计划 enabled 保持不变。
+知识库不经过 `ApplicationAvailability`；会话知识按钮、范围、检索方式和标签继续遵守原知识库规则。心跳页面受应用可用性控制，单条计划 enabled 保持不变。
 请求构建没有应用级禁用知识库的裁剪或守卫；本机、托管 SSH 和排队请求沿用原知识上下文链路。
 单个知识库实例的配置、停用、删除及取消清理仍由知识库功能负责。
 
@@ -336,7 +336,7 @@ resourceMonitor.getLocalSnapshot(input: {
 - US-B6：底部菜单向上锚定且无遮罩，只列已启用应用，不受常驻或打开历史影响；点击行关闭菜单并导航，“管理应用”进入既有可搜索 Modal，包含关闭及未常驻应用。
 - US-F3／US-F5：三个入口均打开本机推理监控 Modal 并保留底层工作区；覆盖嵌套确认的焦点循环、逐层 Escape、提交期间禁止关闭与重复执行、关闭后的入口及后备焦点恢复，以及停用内容后的键盘焦点。
 - US-B7：常驻、取消常驻、键盘及拖动排序成功后同步，重新开启及重启保留原偏好和顺序。
-- US-B8：知识库和智能心跳始终启用且常驻，对应行提供打开与排序，不提供启用或常驻开关，心跳计划 enabled 不变；可选应用关闭后的不可用页保留草稿，重新开启不自动导航或重放。
+- US-B8：知识库始终启用且常驻，对应行提供打开与排序，不提供启用或常驻开关；心跳应用启停按监督者逻辑验收，单条计划 enabled 不变；可选应用关闭后的不可用页保留草稿，重新开启不自动导航或重放。
 - US-B9：应用中心对应行进入笔记表单，管理启用、常驻、待办数量、评论方式及形式；笔记页和全局设置无重复入口。
 - US-B5：所有入口共享 pending，保存失败保留相同确认值；重开刷新期间锁定修改，较新事件使旧读取失效；结果未知时重读，不自动重发。
 - 文件复用不可关闭单实例；选择任一已有终端或浏览器 Tab 保留确切目标，“+”每次创建额外实例。
@@ -348,11 +348,11 @@ resourceMonitor.getLocalSnapshot(input: {
 
 ### 10.2 Main 与契约测试
 
-- 顺序包含四个应用 ID 各一次；公开写入拒绝重复、缺失、未知 ID 及无效常驻字段；旧存储顺序按迁移规则补齐，不为未发布的两个旧启用键添加迁移。
-- 未配置启用及笔记布尔项默认开启，本机推理监控默认不常驻；已保存的常驻值和评论单选值经迁移及重启保留。
+- 顺序包含四个应用 ID 各一次；公开写入拒绝重复、缺失、未知 ID 及无效常驻字段；旧存储顺序按迁移规则补齐，不为未发布的 `knowledgeEnabled` 添加迁移。
+- 未配置的心跳应用默认关闭，其余应用启用及笔记布尔项默认开启，本机推理监控默认不常驻；已保存的启用、常驻值和评论单选值经迁移及重启保留。
 - 更新常驻或顺序不修改启用、计划或业务数据；笔记既有配置键保持语义。
 - 串行 patch 在 Main 最新快照上合并，原子写入失败不发布目标状态；响应丢失后重读实际结果。
-- Store 持久化后才发布变更，工具配置写入使用同一通知链路；知识库和智能心跳不受可选应用偏好影响。
+- Store 持久化后才发布变更，工具配置写入使用同一通知链路；知识库不受可选应用偏好影响。
 - 保存启用失败不会改变业务判断；会话关联和历史知识引用不因入口隐藏被清空。
 - 资源快照拒绝 NaN、Infinity、负数字节数、越界百分比和未知错误码。
 - 采集超时、权限不足和磁盘 IO 不支持时返回有界部分结果。
@@ -389,7 +389,7 @@ US-F4 取消、US-F5 服务生命周期。PRD、User Stories、配套设计与�
 1. 底部入口使用向上锚定的轻量菜单，通过“管理应用”进入既有整窗 Modal；核对已发布配置的迁移来源。
 2. 接入现有内置应用页面与最底部应用中心入口，保留独立设置和固定运行记录入口。
 3. 实现常驻、完整顺序及启用契约，迁移时保留明确旧值，通过串行保存与确认快照同步所有界面。
-4. 迁移魔法笔记共同设置，保留知识库、智能心跳始终可用及原工作区配置、单条计划 enabled，验证可选应用关闭和重新开启。
+4. 迁移魔法笔记共同设置，保留知识库始终可用及原工作区配置、心跳单条计划 enabled，验证可选应用关闭和重新开启。
 5. 验证右侧现有文件、终端、浏览器 Tab 的确切目标与“+”额外实例行为，不实现左侧重复工具条。
 6. 单独实现资源快照契约、Main 采集服务、Preload API 与右侧 `resources` 单实例面板。
 7. 验证键盘、焦点、浅深主题、窄窗口、设置失败、重启持久化和跨平台行为。

@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { reviewScope, type ReviewBatch } from './review-checkpoint'
 import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
 import { knowledgeReferenceKey } from '../../shared/knowledge-reference'
 import { appendConversationQuestionBlock } from '../../shared/conversation-question-blocks'
@@ -61,7 +62,7 @@ import type {
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
 import type { StoredSupervisionResult } from './supervisor-service'
-import { supervisionResultViewSchema, type SupervisionTarget, type SupervisionGraphRequest } from '../../shared/supervision-contracts'
+import { supervisionResultViewSchema, type SupervisionTarget, type SupervisionGraphRequest, type SupervisionRunRequest, type SupervisionActivity } from '../../shared/supervision-contracts'
 import type { AgentEvent } from '../../shared/contracts'
 import type {
   SshHostProjectReference
@@ -118,7 +119,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 44
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 46
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -508,6 +509,8 @@ export type SshProjectWrite = {
 }
 
 export type HeartbeatInputSnapshot = {
+  previousSummary?: string
+  evidence?: ReviewBatch['evidence']
   scope: AssistantHeartbeatConfig['scope']
   conversations: Array<{
     id: string
@@ -1963,6 +1966,10 @@ export class AssistantDatabase {
         PRAGMA busy_timeout = 5000;
       `)
       this.migrate(database)
+      database.prepare("UPDATE supervision_runs SET status = 'failed', error = 'Application stopped before supervision finished', completed_at = ? WHERE status = 'running'")
+        .run(new Date().toISOString())
+      database.prepare("UPDATE heartbeat_runs SET projection_status = 'failed', projection_error = 'Application stopped before supervision finished', projection_completed_at = ? WHERE status IN ('completed', 'no_change') AND projection_status = 'running'")
+        .run(new Date().toISOString())
       this.database = database
       this.repairMagicNoteStorage()
       this.subagentProgress = new SubagentProgressStorage(database)
@@ -8308,6 +8315,137 @@ export class AssistantDatabase {
     }
   }
 
+  collectIncrementalReview(request: SupervisionRunRequest, stage: ReviewBatch['stage'], budget = 48_000): ReviewBatch {
+    const database = this.requireDatabase()
+    const scope = reviewScope(request.scope)
+    const projects = request.scope.kind === 'projects' ? request.scope.projectIds : []
+    const from = new Date(request.timeRange.from).toISOString()
+    const to = new Date(request.timeRange.to).toISOString()
+    this.assertHeartbeatProjectIds(projects)
+    database.function('review_revision', { deterministic: true }, (value) =>
+      createHash('sha256').update(String(value)).digest('hex'))
+    // Filter processed revisions before LIMIT. Only dirty source portions cross into JS.
+    const rows = database.prepare(`WITH sources AS (
+      SELECT 'message:' || m.id AS source, 'conversation' AS type, c.id AS owner,
+        c.title AS title, m.created_at AS occurred,
+        m.content AS body,
+        json_array(m.review_revision, c.project_id, c.title, m.role, m.created_at) AS context,
+        json_object('messageId', m.id, 'role', m.role, 'projectId', c.project_id) AS locator
+      FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN projects p ON p.id = c.project_id
+      WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant')
+        AND m.created_at >= ? AND m.created_at <= ?
+        AND (? = 'global' OR c.project_id IN (SELECT value FROM json_each(?)))
+      UNION ALL
+      SELECT 'task:' || t.id, 'task', t.id, t.title,
+        CASE WHEN t.completed_at >= ? AND t.completed_at <= ? THEN t.completed_at ELSE t.created_at END,
+        json_object('title', t.title, 'status', t.status, 'createdAt', t.created_at, 'completedAt', t.completed_at),
+        json_array(t.project_id, t.title, t.status, t.created_at, t.completed_at), json_object('projectId', t.project_id)
+      FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
+      WHERE t.visible = 1 AND (t.project_id IS NULL OR p.status = 'active')
+        AND ((t.created_at >= ? AND t.created_at <= ?) OR (t.completed_at >= ? AND t.completed_at <= ?))
+        AND (? = 'global' OR t.project_id IN (SELECT value FROM json_each(?)))
+      UNION ALL
+      SELECT 'knowledge:' || m.id || ':' || ref.key, 'knowledge',
+        COALESCE(json_extract(ref.value, '$.chunkId'), json_extract(ref.value, '$.documentId'),
+          json_extract(ref.value, '$.external.sourceUrl'), json_extract(ref.value, '$.libraryId')),
+        COALESCE(json_extract(ref.value, '$.documentName'), json_extract(ref.value, '$.sourceName'), ''),
+        m.created_at, COALESCE(json_extract(ref.value, '$.snippet'), ''),
+        json_array(c.project_id, ref.value, m.created_at), ref.value
+      FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN projects p ON p.id = c.project_id
+        JOIN json_each(m.metadata_json, '$.sourceReferences') ref
+      WHERE c.status = 'active' AND p.status = 'active' AND m.role IN ('user', 'assistant')
+        AND m.created_at >= ? AND m.created_at <= ?
+        AND (? = 'global' OR c.project_id IN (SELECT value FROM json_each(?)))
+    ), revisions AS (
+      SELECT *, review_revision(context) AS revision FROM sources
+    ), pending AS (
+      SELECT s.*, CASE WHEN c.revision = s.revision THEN c.processed_offset ELSE 0 END AS start
+      FROM revisions s LEFT JOIN review_checkpoints c ON c.stage = ? AND c.scope = ? AND c.source = s.source
+      WHERE c.revision IS NULL OR c.revision != s.revision OR c.processed_offset < c.source_length
+    ) SELECT source, type, owner, substr(title, 1, 240) AS title, occurred, revision, start, locator,
+      substr(body, start + 1, 2000) AS content, MIN(length(body), start + 2000) AS finish, length(body) AS length
+      FROM pending WHERE length(body) > 0 ORDER BY occurred, source LIMIT 100`).all(
+      from, to, request.scope.kind, JSON.stringify(projects), from, to,
+      from, to, from, to,
+      request.scope.kind, JSON.stringify(projects), from, to,
+      request.scope.kind, JSON.stringify(projects), stage, scope
+    ) as Array<{ source: string; type: 'conversation' | 'task' | 'knowledge'; owner: string; title: string; occurred: string; revision: string; start: number; finish: number; length: number; content: string; locator: string }>
+    const batch: ReviewBatch = { stage, scope, evidence: [], checkpoints: [] }
+    for (const row of rows) {
+      if (row.content.length > budget) break
+      budget -= row.content.length
+      batch.evidence.push({ id: `${row.source}:${row.start}`, sourceType: row.type,
+        sourceId: row.owner, title: row.title, content: row.content, occurredAt: row.occurred,
+        locator: { ...JSON.parse(row.locator), source: row.source, start: row.start, end: row.finish } })
+      batch.checkpoints.push({ source: row.source, revision: row.revision, offset: row.finish, length: row.length })
+    }
+    return batch
+  }
+
+  resolveReviewScope(scope: SupervisionRunRequest['scope']): SupervisionRunRequest['scope'] {
+    const canonical = reviewScope(scope)
+    const rows = this.requireDatabase().prepare('SELECT scope_json FROM story_lines ORDER BY created_at, id').all()
+    for (const row of rows) {
+      const existing = JSON.parse(String(row.scope_json)) as SupervisionRunRequest['scope']
+      if (reviewScope(existing) === canonical) return existing
+    }
+    return JSON.parse(canonical) as SupervisionRunRequest['scope']
+  }
+
+  reviewSummary(scope: SupervisionRunRequest['scope'], stage: ReviewBatch['stage']): string | undefined {
+    const row = stage === 'supervisor' ? this.requireDatabase().prepare(`SELECT substr(r.summary, 1, 2000) AS summary
+      FROM supervision_results r JOIN supervision_runs s ON s.id = r.run_id
+      WHERE s.scope_json = ? ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`).get(JSON.stringify(this.resolveReviewScope(scope)))
+      : this.requireDatabase().prepare(`SELECT substr(e.summary, 1, 2000) AS summary FROM heartbeat_entries e
+        JOIN heartbeat_runs r ON r.id = e.run_id WHERE r.activity_scope_json = ? ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1`).get(JSON.stringify(scope))
+    return (row?.summary as string | undefined)?.slice(0, 2000)
+  }
+
+  reviewBackground(scope: SupervisionRunRequest['scope']): ReviewBatch['evidence'] {
+    const projects = scope.kind === 'projects' ? scope.projectIds : []
+    const rows = this.requireDatabase().prepare(`SELECT id, substr(content, 1, 500) AS content, updated_at
+      FROM memory_items WHERE status = 'confirmed' AND (scope = 'global' OR
+        (scope = 'project' AND scope_id IN (SELECT value FROM json_each(?))))
+      ORDER BY updated_at DESC, id LIMIT 4`).all(JSON.stringify(projects)) as Array<{ id: string; content: string; updated_at: string }>
+    return rows.map((row) => ({ id: `memory:${row.id}`, sourceType: 'memory', sourceId: row.id,
+      title: 'Current confirmed background', content: row.content.slice(0, 500), occurredAt: row.updated_at,
+      locator: { temporalRole: 'current-background' } }))
+  }
+
+  private saveReviewCheckpoints(batch: ReviewBatch): void {
+    const statement = this.requireDatabase().prepare(`INSERT INTO review_checkpoints
+      (stage, scope, source, revision, processed_offset, source_length) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(stage, scope, source) DO UPDATE SET revision = excluded.revision,
+        processed_offset = CASE WHEN review_checkpoints.revision = excluded.revision
+          THEN MAX(review_checkpoints.processed_offset, excluded.processed_offset) ELSE excluded.processed_offset END,
+        source_length = excluded.source_length`)
+    for (const item of batch.checkpoints) statement.run(batch.stage, batch.scope, item.source, item.revision, item.offset, item.length)
+  }
+
+  noChangeSupervisionRun(id: string): void {
+    this.requireDatabase().prepare("UPDATE supervision_runs SET status = 'no_change', completed_at = ? WHERE id = ? AND status = 'running'")
+      .run(new Date().toISOString(), id)
+  }
+
+  noChangeHeartbeatRun(claim: ClaimedHeartbeatRun, now: Date): AssistantHeartbeatRun {
+    const database = this.requireDatabase()
+    const timestamp = now.toISOString()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      const updated = database.prepare(`UPDATE heartbeat_runs SET status = 'no_change', completed_at = ?,
+        lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ? AND status = 'claimed'
+        AND lease_owner = ? AND lease_expires_at > ?`).run(timestamp, timestamp, claim.run.id, claim.leaseOwner, timestamp)
+      if (updated.changes !== 1) throw new Error('Heartbeat lease is no longer active')
+      database.prepare("UPDATE heartbeat_configs SET last_status = 'no_change', updated_at = ? WHERE id = ?").run(timestamp, claim.config.id)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+    this.pruneHeartbeatHistory(claim.config.id, now)
+    return this.getHeartbeatRun(claim.run.id)
+  }
+
   getHeartbeatEntry(entryId?: string): AssistantHeartbeatEntry | undefined {
     if (!entryId) return undefined
     const row = this.requireDatabase().prepare(
@@ -8321,6 +8459,58 @@ export class AssistantDatabase {
       FROM supervision_entities e JOIN story_lines s ON s.id = e.story_line_id
       WHERE s.scope_json = ? AND e.confirmation_state != 'revoked'
       ORDER BY e.updated_at DESC, e.id LIMIT 100`).all(JSON.stringify(request.scope)) as Array<{ id: string; label: string; description: string }>
+  }
+
+  startSupervisionRun(request: SupervisionRunRequest, heartbeatRunId?: string): string {
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+    this.requireDatabase().prepare(`INSERT INTO supervision_runs
+      (id, trigger, scope_json, time_range_json, status, started_at, created_at, heartbeat_run_id)
+      VALUES (?, ?, ?, ?, 'running', ?, ?, ?)`).run(id, request.trigger,
+      JSON.stringify(request.scope), JSON.stringify(request.timeRange), timestamp, timestamp, heartbeatRunId ?? null)
+    return id
+  }
+
+  failSupervisionRun(id: string, error: string): void {
+    this.requireDatabase().prepare("UPDATE supervision_runs SET status = 'failed', error = ?, completed_at = ? WHERE id = ? AND status = 'running'")
+      .run(error.slice(0, 4000), new Date().toISOString(), id)
+  }
+
+  setHeartbeatProjection(id: string, status: 'running' | 'completed' | 'failed', scope?: SupervisionRunRequest['scope'], error?: string): void {
+    this.requireDatabase().prepare(`UPDATE heartbeat_runs SET projection_status = ?, projection_error = ?,
+      projection_completed_at = ?, activity_scope_json = COALESCE(?, activity_scope_json) WHERE id = ?`)
+      .run(status, error?.slice(0, 4000) ?? null, status === 'running' ? null : new Date().toISOString(),
+        scope ? JSON.stringify(scope) : null, id)
+  }
+
+  listSupervisionActivity(limit = 50, offset = 0): SupervisionActivity[] {
+    const rows = this.requireDatabase().prepare(`
+      SELECT s.id AS id, 'supervision' AS kind, s.trigger, s.status, s.scope_json AS scope,
+        COALESCE(s.started_at, s.created_at) AS startedAt, s.completed_at AS completedAt,
+        s.time_range_json AS timeRange, s.error, r.summary, r.id AS resultId,
+        NULL AS heartbeatStatus, s.status AS supervisionStatus
+      FROM supervision_runs s LEFT JOIN supervision_results r ON r.run_id = s.id
+      WHERE s.heartbeat_run_id IS NULL OR NOT EXISTS (SELECT 1 FROM heartbeat_runs h WHERE h.id = s.heartbeat_run_id)
+      UNION ALL
+      SELECT h.id, 'heartbeat', h.trigger,
+        CASE WHEN h.status = 'claimed' THEN 'running'
+          WHEN h.status = 'failed' OR s.status = 'failed' OR h.projection_status = 'failed' THEN 'failed'
+          WHEN s.status = 'running' OR (h.status IN ('completed', 'no_change') AND h.projection_status = 'running') THEN 'running'
+          WHEN s.status = 'completed' THEN 'completed'
+          ELSE h.status END,
+        COALESCE(s.scope_json, h.activity_scope_json), COALESCE(h.started_at, h.created_at),
+        CASE WHEN s.status = 'running' OR h.status = 'claimed' OR h.projection_status = 'running' THEN NULL
+          ELSE COALESCE(s.completed_at, h.projection_completed_at, h.completed_at) END,
+        s.time_range_json, COALESCE(s.error, h.projection_error, h.error), COALESCE(r.summary, e.summary), r.id,
+        h.status, s.status
+      FROM heartbeat_runs h LEFT JOIN supervision_runs s ON s.heartbeat_run_id = h.id
+        LEFT JOIN supervision_results r ON r.run_id = s.id LEFT JOIN heartbeat_entries e ON e.id = h.entry_id
+      ORDER BY startedAt DESC, id DESC LIMIT ? OFFSET ?
+    `).all(Math.max(1, Math.min(100, Math.trunc(limit))), Math.max(0, Math.trunc(offset)))
+    return rows.map((row) => ({ ...row,
+      scope: row.scope ? JSON.parse(String(row.scope)) : null,
+      timeRange: row.timeRange ? JSON.parse(String(row.timeRange)) : null
+    })) as SupervisionActivity[]
   }
 
   saveSupervisionResult(result: StoredSupervisionResult): void {
@@ -8337,9 +8527,13 @@ export class AssistantDatabase {
           'INSERT INTO story_lines (id, scope_json, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
         ).run(story.id, JSON.stringify(result.request.scope), '工作故事线', timestamp, timestamp)
       }
-      const runId = randomUUID()
+      const runId = result.runId ?? randomUUID()
       const resultId = randomUUID()
-      database.prepare(`INSERT INTO supervision_runs
+      if (result.runId) {
+        const updated = database.prepare("UPDATE supervision_runs SET status = 'completed', completed_at = ? WHERE id = ? AND status = 'running'")
+          .run(timestamp, runId)
+        if (updated.changes !== 1) throw new Error('Supervision run is not running')
+      } else database.prepare(`INSERT INTO supervision_runs
         (id, trigger, scope_json, time_range_json, status, started_at, completed_at, created_at)
         VALUES (?, ?, ?, ?, 'completed', ?, ?, ?)`).run(
         runId, result.request.trigger, JSON.stringify(result.request.scope),
@@ -8425,6 +8619,7 @@ export class AssistantDatabase {
       }))
       database.prepare('UPDATE supervision_results SET graph_snapshot_json = ? WHERE id = ?')
         .run(JSON.stringify({ entities, relations }), resultId)
+      if (result.batch) this.saveReviewCheckpoints(result.batch)
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
@@ -8436,7 +8631,7 @@ export class AssistantDatabase {
     return this.requireDatabase().prepare('SELECT id, summary FROM supervision_results WHERE id = ?').get(id) as { id: string; summary: string } | undefined
   }
 
-  listSupervisionResults(limit = 20, target?: SupervisionTarget) {
+  listSupervisionResults(limit = 20, target?: SupervisionTarget, resultId?: string) {
     const owner = target?.type === 'conversation' ? this.getConversation(target.conversationId)
       : target?.type === 'task' ? this.getTask(target.taskId) : undefined
     const sourceType = target?.type ?? null
@@ -8449,11 +8644,11 @@ export class AssistantDatabase {
       (SELECT scope_json FROM supervision_runs WHERE id = run_id) AS scope,
       (SELECT time_range_json FROM supervision_runs WHERE id = run_id) AS timeRange,
       created_at AS createdAt FROM supervision_results
-      WHERE (? IS NULL OR (EXISTS (SELECT 1 FROM supervision_sources s WHERE s.result_id = supervision_results.id AND s.source_type = ? AND s.source_id = ?)
+      WHERE (? IS NULL OR id = ?) AND (? IS NULL OR (EXISTS (SELECT 1 FROM supervision_sources s WHERE s.result_id = supervision_results.id AND s.source_type = ? AND s.source_id = ?)
         AND EXISTS (SELECT 1 FROM supervision_runs sr WHERE sr.id = run_id AND
           (json_extract(sr.scope_json, '$.kind') = 'global' OR EXISTS
             (SELECT 1 FROM json_each(sr.scope_json, '$.projectIds') WHERE value = ?)))))
-      ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(sourceType, sourceType, sourceId, sourceType, sourceType, sourceId, owner?.projectId ?? null, limit).map((row) => {
+      ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(sourceType, sourceType, sourceId, resultId ?? null, resultId ?? null, sourceType, sourceType, sourceId, owner?.projectId ?? null, limit).map((row) => {
         const result = row as Record<string, unknown>
         return supervisionResultViewSchema.parse({ ...result, scope: JSON.parse(String(result.scope)), timeRange: JSON.parse(String(result.timeRange)), openItems: JSON.parse(String(result.openItems)) })
       })
@@ -8573,7 +8768,8 @@ export class AssistantDatabase {
   completeHeartbeatRun(
     claim: ClaimedHeartbeatRun,
     output: HeartbeatSummaryOutput,
-    now = new Date()
+    now = new Date(),
+    batch?: ReviewBatch
   ): AssistantHeartbeatRun {
     const database = this.requireDatabase()
     const timestamp = now.toISOString()
@@ -8726,6 +8922,7 @@ export class AssistantDatabase {
            WHERE id = ?`
         )
         .run(timestamp, claim.config.id)
+      if (batch) this.saveReviewCheckpoints(batch)
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')
@@ -8823,7 +9020,7 @@ export class AssistantDatabase {
         .prepare(
           `DELETE FROM heartbeat_runs
            WHERE config_id = ? AND created_at < ?
-             AND status IN ('completed', 'failed', 'skipped')`
+              AND status IN ('completed', 'failed', 'skipped', 'no_change')`
         )
         .run(configId, cutoff)
       const deleteArtifact = database.prepare(
@@ -11075,6 +11272,70 @@ export class AssistantDatabase {
       } catch (error) {
         database.exec('ROLLBACK')
         throw error
+      }
+    }
+    if (version.user_version < 45) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        for (const [table, column] of [
+          ['supervision_runs', 'heartbeat_run_id'], ['heartbeat_runs', 'activity_scope_json'],
+          ['heartbeat_runs', 'projection_status'], ['heartbeat_runs', 'projection_error'],
+          ['heartbeat_runs', 'projection_completed_at']
+        ]) {
+          const columns = database.prepare(`PRAGMA table_info(${table})`).all()
+          if (!columns.some((item) => item.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`)
+        }
+        database.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS supervision_runs_heartbeat ON supervision_runs(heartbeat_run_id);
+          CREATE INDEX IF NOT EXISTS supervision_runs_started ON supervision_runs(started_at DESC);
+          CREATE INDEX IF NOT EXISTS supervision_results_run ON supervision_results(run_id);
+          PRAGMA user_version = 45;
+          COMMIT;
+        `)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 46) {
+      database.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;')
+      try {
+        for (const table of ['heartbeat_configs', 'heartbeat_runs']) {
+          const definition = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string }
+          const indexes = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL").all(table) as Array<{ sql: string }>
+          database.exec(definition.sql.replace(table, `${table}_incremental`).replaceAll("'failed', 'skipped'", "'failed', 'skipped', 'no_change'"))
+          database.exec(`INSERT INTO ${table}_incremental SELECT * FROM ${table}; DROP TABLE ${table}; ALTER TABLE ${table}_incremental RENAME TO ${table};`)
+          for (const index of indexes) database.exec(index.sql)
+        }
+        database.exec(`
+        CREATE TABLE review_checkpoints (
+          stage TEXT NOT NULL, scope TEXT NOT NULL, source TEXT NOT NULL,
+          revision TEXT NOT NULL, processed_offset INTEGER NOT NULL, source_length INTEGER NOT NULL,
+          PRIMARY KEY(stage, scope, source)
+        );
+        ALTER TABLE messages ADD COLUMN review_revision TEXT NOT NULL DEFAULT '';
+        CREATE TRIGGER messages_review_insert AFTER INSERT ON messages BEGIN
+          UPDATE messages SET review_revision = hex(randomblob(16)) WHERE id = NEW.id;
+        END;
+        CREATE TRIGGER messages_review_update AFTER UPDATE OF content ON messages
+        WHEN OLD.content IS NOT NEW.content
+        BEGIN
+          UPDATE messages SET review_revision = hex(randomblob(16)) WHERE id = NEW.id;
+        END;
+        CREATE TRIGGER messages_review_delete AFTER DELETE ON messages BEGIN
+          DELETE FROM review_checkpoints WHERE source = 'message:' || OLD.id;
+          DELETE FROM review_checkpoints WHERE source LIKE 'knowledge:' || OLD.id || ':%';
+        END;
+        CREATE TRIGGER tasks_review_delete AFTER DELETE ON tasks BEGIN
+          DELETE FROM review_checkpoints WHERE source = 'task:' || OLD.id;
+        END;
+        PRAGMA user_version = 46;
+        COMMIT;`)
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      } finally {
+        database.exec('PRAGMA foreign_keys = ON')
       }
     }
   }

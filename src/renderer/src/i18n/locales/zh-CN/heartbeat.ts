@@ -1,4 +1,14 @@
 export const heartbeat = {
+  activity: {
+    title: '活动', description: '记录手动回顾和自动监督的实际执行，停留在此页签时自动刷新。实体与关系修改目前没有按时间保存的操作审计。',
+    loading: '正在读取活动', loadingHint: '读取已保存的执行记录。', empty: '暂无活动记录', emptyHint: '可手动回顾当前进展，或在设置中配置自动监督。',
+    kind: { supervision: '工作回顾', heartbeat: '自动监督' },
+    status: { running: '运行中', completed: '已完成', failed: '失败', skipped: '已跳过', no_change: '无变化（未调用模型）' },
+    triggers: { manual: '用户触发', scheduled: '定时计划', heartbeat: '心跳触发' },
+    trigger: '触发方式', started: '开始时间', finished: '结束时间', unknownScope: '未保存执行范围',
+    heartbeatStage: '心跳报告', supervisionStage: '监督回顾', notRecorded: '无执行记录',
+    openReview: '查看回顾', pagination: '活动分页', previous: '较新记录', next: '更早记录', page: '第 {{page}} 页'
+  },
   common: {
     operationFailed: '监督者操作失败',
     unavailable: '暂无',
@@ -15,8 +25,8 @@ export const heartbeat = {
     navigation: '监督者视图', recap: '工作回顾', graph: '故事线图谱', settings: '设置',
     viewInGraph: '在图谱中查看',
     unavailable: '监督者服务暂不可用', loading: '正在读取监督回顾', scope: '关注范围', period: '时间范围', days: '{{count}} 天',
-    sourcesHint: '回顾只读取本次明确范围和时间区间内的来源；自动唤醒计划不会改变手动回顾范围。', latest: '最近一次成功回顾', openItems: '未解决事项', history: '历史结果',
-    empty: '还没有成功回顾', emptyHint: '即使没有自动唤醒计划，也可以手动回顾当前进展。', run: '回顾当前进展', running: '回顾整理中…', retryRun: '重试回顾', dismiss: '关闭提示',
+    sourcesHint: '手动回顾会重新整理所选区间，包括已回顾的来源；自动监督只处理新增或修改的来源片段。删除报告不会重置自动处理进度，也不会重建图谱。', latest: '最近一次成功回顾', openItems: '未解决事项', history: '历史结果',
+    empty: '还没有成功回顾', emptyHint: '即使没有自动监督计划，也可以手动回顾当前进展。', run: '回顾当前进展', running: '回顾整理中…', retryRun: '重试回顾', dismiss: '关闭提示',
     graphScope: '图谱范围', graphEmpty: '当前范围没有故事线事件', legend: '实线表示事件影响实体，虚线表示实体关系。时间轴逆时针排列，起止之间保留缺口。', start: '起点', end: '终点',
     events: '时间事件', entities: '知识实体', relations: '实体关系', eventSources: '事件来源', sources: '关联来源', noSources: '没有可用的关联来源。', selectHint: '选择事件、实体或关系查看详情。', sourceSnapshot: '来源详情', sourceMissing: '来源不存在',
     confirm: '确认', revise: '修订', remove: '移除关系', label: '实体名称', save: '保存修订', cancel: '取消', removeHint: '这只改变图谱中的关系组织，原始来源仍然保留。',
@@ -25,7 +35,7 @@ export const heartbeat = {
   },
   center: {
     title: '监督者',
-    description: '持续回顾工作进展、追踪知识演变；智能心跳负责按计划唤醒监督者。',
+    description: '回顾工作进展、追踪知识演变；可手动回顾，也可配置自动监督计划。',
     scope: {
       currentProject: '当前项目',
       global: '全局'
@@ -33,32 +43,32 @@ export const heartbeat = {
     actions: {
       refreshAriaLabel: '刷新监督者',
       refresh: '刷新',
-      running: '自动唤醒中…',
+      running: '回顾中…',
       runOnce: '立即回顾',
-      configure: '配置自动唤醒',
+      configure: '配置自动监督',
       retry: '重试'
     },
     loading: {
-      description: '正在读取心跳计划、运行记录和心跳报告。',
+      description: '正在读取自动监督计划、运行记录和回顾报告。',
       title: '正在加载监督者',
       failedTitle: '监督者加载失败',
       refreshFailedTitle: '监督者刷新失败'
     },
     tabs: {
-      ariaLabel: '监督者自动唤醒视图',
-      overview: '自动唤醒概览',
+      ariaLabel: '自动监督设置与记录',
+      overview: '运行概览',
       suggestions: '待处理建议',
       history: '报告与记录',
-      plans: '自动唤醒设置'
+      plans: '自动监督'
     },
     currentStatus: {
       title: '当前状态',
       activePlans: '{{formattedCount}} 个计划运行中',
       disabled: '尚未启用',
-      emptyTitle: '尚未配置心跳计划',
+      emptyTitle: '尚未配置自动监督，目前仅支持手动回顾',
       emptyDescription:
         '创建每日或每周计划，GoodBuddy 将按范围回顾对话和任务并生成建议。',
-      createPlan: '创建心跳计划'
+      createPlan: '创建自动监督计划'
     },
     recurrence: {
       daily: '每天 {{time}}',
@@ -74,33 +84,33 @@ export const heartbeat = {
       saturday: '周六'
     },
     config: {
-      nextHeartbeat: '下次心跳',
+      nextHeartbeat: '下次回顾',
       lastStatus: '上次状态',
       neverRun: '尚未运行',
-      runNow: '立即心跳',
+      runNow: '立即运行',
       pause: '暂停',
       resume: '恢复'
     },
     metrics: {
-      ariaLabel: '自动唤醒运行统计',
-      health: '心跳健康',
+      ariaLabel: '自动监督运行统计',
+      health: '运行成功率',
       successfulRuns: '{{completed}}/{{total}} 次成功完成',
-      healthRateAriaLabel: '心跳成功率 {{percent}}',
+      healthRateAriaLabel: '回顾成功率 {{percent}}',
       memory: '记忆确认',
-      memoryDescription: '已确认记忆 / 心跳建议',
+      memoryDescription: '已确认记忆 / 监督建议',
       memoryRateAriaLabel: '记忆确认率 {{percent}}',
       insights: '报告洞察',
-      insightReports: '来自 {{formattedCount}} 份心跳报告',
+      insightReports: '来自 {{formattedCount}} 份回顾报告',
       latestInsights: '最近一次发现 {{formattedCount}} 条',
-      awaitingFirstRun: '等待首次心跳',
+      awaitingFirstRun: '等待首次回顾',
       action: '行动转化',
-      actionDescription: '已完成任务 / 心跳建议',
+      actionDescription: '已完成任务 / 监督建议',
       actionRateAriaLabel: '建议任务完成率 {{percent}}'
     },
     trend: {
       title: '报告趋势',
       empty:
-        '运行心跳后，这里会显示洞察、记忆和行动建议的数量变化。',
+        '运行回顾后，这里会显示洞察、记忆和行动建议的数量变化。',
       insight: '洞察',
       memory: '记忆',
       action: '行动',
@@ -108,11 +118,11 @@ export const heartbeat = {
         '{{date}}：{{insights}} 条洞察，{{memories}} 条记忆建议，{{actions}} 个行动建议'
     },
     latest: {
-      title: '本次心跳',
+      title: '最近回顾',
       viewHistory: '查看报告与记录',
       handleSuggestions: '处理 {{formattedCount}} 条建议',
       empty:
-        '尚无心跳报告。运行一次后，可在这里查看洞察、记忆和行动建议。'
+        '尚无回顾报告。运行一次后，可在这里查看洞察、记忆和行动建议。'
     },
     suggestions: {
       memoryTitle: '待确认记忆',
@@ -126,23 +136,23 @@ export const heartbeat = {
       ignore: '忽略',
       taskTitle: '行动建议',
       taskCount: '{{formattedCount}} 个',
-      taskEmpty: '当前没有由自动唤醒产生的行动建议。',
+      taskEmpty: '当前没有由自动监督产生的行动建议。',
       useInConversation: '带入对话处理',
       markCompleted: '标记完成',
       ignoreSuggestion: '忽略建议'
     },
     history: {
-      timelineTitle: '心跳报告',
+      timelineTitle: '回顾报告',
       reportCount: '{{formattedCount}} 份报告',
-      emptyTimeline: '每次运行生成的心跳报告会显示在这里。',
+      emptyTimeline: '每次运行生成的回顾报告会显示在这里。',
       reportSummary:
         '{{insights}} 条洞察 · {{memories}} 条记忆 · {{actions}} 个行动',
       collapseReport: '收起报告',
       expandReport: '展开完整报告',
-      loadMoreReports: '加载更多心跳报告',
+      loadMoreReports: '加载更多回顾报告',
       auditTitle: '运行记录',
       runCount: '{{formattedCount}} 次',
-      emptyRuns: '尚无自动唤醒运行记录。',
+      emptyRuns: '尚无自动监督运行记录。',
       manualRun: '手动运行',
       scheduledRun: '周期运行',
       attempt: '第 {{formattedCount}} 次尝试',
@@ -154,7 +164,8 @@ export const heartbeat = {
       claimed: '运行中',
       completed: '已完成',
       failed: '失败',
-      skipped: '已跳过'
+      skipped: '已跳过',
+      no_change: '无变化（未调用模型）'
     },
     task: {
       queued: '等待中',
@@ -175,31 +186,35 @@ export const heartbeat = {
     }
   },
   settings: {
-    title: '自动唤醒',
-    description: '自动唤醒按时只读运行，不调用工具。',
-    recurrenceAriaLabel: '心跳重复规则',
-    recurrenceLabel: '重复规则',
+    title: '自动监督',
+    description: '按计划只读回顾所选范围，不调用工具；建议由你确认和处理。',
+    scheduleHelp: '支持每天或每周在指定时间回顾，暂不支持按分钟间隔运行。填写后需保存并启用计划才会自动运行。',
+    timezone: '计划时区：{{timezone}}。新计划使用本机时区，编辑时保留原时区。',
+    windowSummary: '回顾最近 {{hours}} 小时 · 运行历史保留 {{days}} 天',
+    allPaused: '所有自动监督计划已暂停，目前仅支持手动回顾。',
+    recurrenceAriaLabel: '监督频率',
+    recurrenceLabel: '频率',
     daily: '每天',
     weekly: '每周',
-    weekdayAriaLabel: '心跳星期',
+    weekdayAriaLabel: '监督星期',
     weekdayLabel: '星期',
-    timeAriaLabel: '心跳时间',
+    timeAriaLabel: '监督时间',
     timeLabel: '时间',
     nameLabel: '计划名称',
-    createTitle: '创建心跳计划',
-    editTitle: '编辑心跳计划',
+    createTitle: '创建自动监督计划',
+    editTitle: '编辑自动监督计划',
     cancelEdit: '取消编辑',
     editAriaLabel: '编辑 {{name}}',
     edit: '编辑',
-    saveAriaLabel: '保存自动唤醒计划',
+    saveAriaLabel: '保存自动监督计划',
     save: '保存修改',
-    lookbackLabel: '回顾范围（小时）',
-    lookbackAriaLabel: '心跳回顾小时数',
+    lookbackLabel: '回顾窗口（小时）',
+    lookbackAriaLabel: '回顾窗口（小时）',
     retentionLabel: '历史保留（天）',
-    retentionAriaLabel: '心跳历史保留天数',
+    retentionAriaLabel: '历史保留（天）',
     scope: {
-      legend: '回顾范围',
-      ariaLabel: '选择心跳回顾范围',
+      legend: '项目范围',
+      ariaLabel: '选择自动监督项目范围',
       global: '全局',
       projects: '指定项目',
       globalHelp:
@@ -213,12 +228,12 @@ export const heartbeat = {
       selectedProjectsSummary: '{{count}} 个项目：{{names}}',
       nameSeparator: '、'
     },
-    enableAriaLabel: '启用自动唤醒',
-    enabling: '启用中…',
-    enable: '启用自动唤醒',
+    enableAriaLabel: '保存并启用计划',
+    enabling: '保存中…',
+    enable: '保存并启用计划',
     defaultName: '定期回顾',
-    empty: '当前范围尚未配置自动唤醒。',
-    running: '运行中',
+    empty: '尚未配置自动监督，目前仅支持手动回顾',
+    running: '已启用',
     paused: '已暂停',
     next: '下次 {{date}}',
     last: '上次 {{status}}',
@@ -226,8 +241,8 @@ export const heartbeat = {
     resumeAriaLabel: '恢复 {{name}}',
     pause: '暂停',
     resume: '恢复',
-    runNowAriaLabel: '立即心跳 {{name}}',
-    runNow: '立即心跳',
+    runNowAriaLabel: '立即运行 {{name}}',
+    runNow: '立即运行',
     cancelDeleteAriaLabel: '取消删除 {{name}}',
     confirmDeleteAriaLabel: '确认删除 {{name}}',
     confirmDelete: '确认删除计划',

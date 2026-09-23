@@ -340,6 +340,7 @@ import { HeartbeatService } from './assistant/heartbeat-service'
 import { SupervisorService } from './assistant/supervisor-service'
 import {
   supervisionEntityActionSchema,
+  supervisionActivityRequestSchema,
   supervisionOverviewRequestSchema,
   supervisionGraphRequestSchema,
   supervisionRelationActionSchema,
@@ -1911,7 +1912,8 @@ export function registerIpcHandlers(
       throw new Error('Heartbeat tool use is always denied')
     },
     async ({ config, run }) => {
-      if (!supervisorService || run.status !== 'completed') return
+      if (!supervisorService || (run.status !== 'completed' && run.status !== 'no_change')) return
+      if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return
       const to = run.completedAt ?? run.scheduledFor
       const from = new Date(
         Date.parse(to) - config.lookbackHours * 3_600_000
@@ -1920,7 +1922,7 @@ export function registerIpcHandlers(
         trigger: 'heartbeat',
         scope: config.scope,
         timeRange: { from, to }
-      })
+      }, run.id)
     }
   )
   const publishRemoteActivity = (
@@ -3124,6 +3126,8 @@ export function registerIpcHandlers(
     }
     heartbeatTickRunning = true
     try {
+      if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return
+      if (shuttingDown || executionPaused) return
       await heartbeatService.processDue()
     } finally {
       heartbeatTickRunning = false
@@ -7108,6 +7112,11 @@ export function registerIpcHandlers(
   )
   const supervisorService = new SupervisorService(
     {
+      incremental: async (request) => {
+        const batch = assistantDatabase.collectIncrementalReview(request, 'supervisor', 44_000)
+        if (batch.evidence.length) batch.evidence.push(...assistantDatabase.reviewBackground(request.scope))
+        return batch
+      },
       collect: async (request) => {
         const input = assistantDatabase.buildHeartbeatInput({
           scope: request.scope, lookbackHours: 0
@@ -7115,7 +7124,7 @@ export function registerIpcHandlers(
         const evidence: SupervisionEvidence[] = [
           ...input.conversations.flatMap((conversation) => conversation.messages.flatMap((message) => {
             const conversationEvidence = [{
-              id: `${conversation.id}:${message.createdAt}`, sourceType: 'conversation' as const,
+              id: `${conversation.id}:${message.id}`, sourceType: 'conversation' as const,
               sourceId: conversation.id, title: conversation.title, content: message.content, occurredAt: message.createdAt
             }]
             const knowledgeEvidence = (message.sourceReferences ?? []).map((reference, index) => ({
@@ -7165,7 +7174,8 @@ export function registerIpcHandlers(
             requestId: randomUUID(), conversationId, workMode: 'ask',
             prompt: [request.systemInstruction, 'OUTPUT CONTRACT:', request.outputContract,
                'REVIEW TIME RANGE:', JSON.stringify(request.request.timeRange),
-               'KNOWN ENTITIES:', JSON.stringify(request.candidates),
+                'KNOWN ENTITIES:', JSON.stringify(request.candidates),
+               'PREVIOUS SUMMARY (background only):', request.previousSummary ?? '',
               'BOUNDED EVIDENCE:', JSON.stringify(request.evidence), 'Return only JSON.'].join('\n\n')
           }, controller.signal, async (approval) => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })) {
             if (event.type === 'text') output += event.delta
@@ -7176,7 +7186,12 @@ export function registerIpcHandlers(
         } finally { clearTimeout(timeout); await runtime.releaseConversation?.(conversationId) }
       }
     },
-    { candidates: async (request) => assistantDatabase.listSupervisionCandidates(request),
+    { scope: (scope) => assistantDatabase.resolveReviewScope(scope),
+      summary: (request) => assistantDatabase.reviewSummary(request.scope, 'supervisor'),
+      start: (request, heartbeatRunId) => assistantDatabase.startSupervisionRun(request, heartbeatRunId),
+      fail: (runId, error) => assistantDatabase.failSupervisionRun(runId, error),
+      noChange: (runId) => assistantDatabase.noChangeSupervisionRun(runId),
+      candidates: async (request) => assistantDatabase.listSupervisionCandidates(request),
       save: async (result) => assistantDatabase.saveSupervisionResult(result) }
   )
 
@@ -7873,6 +7888,9 @@ export function registerIpcHandlers(
     ipcChannels.heartbeatsRunNow,
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
+      if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) {
+        throw new Error('智能督导未启用')
+      }
       if (executionPaused || shuttingDown) {
         throw new Error('本地数据维护期间暂不接受新任务')
       }
@@ -7885,12 +7903,22 @@ export function registerIpcHandlers(
     return heartbeatService.history(input)
   })
 
+  registerHandler(ipcChannels.supervisionActivity, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionActivityRequestSchema.parse(input ?? {})
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return []
+    return assistantDatabase.listSupervisionActivity(request.limit, request.offset)
+  })
   registerHandler(ipcChannels.supervisionOverview, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return assistantDatabase.listSupervisionResults(20, supervisionOverviewRequestSchema.parse(input ?? {}).target)
+    const request = supervisionOverviewRequestSchema.parse(input ?? {})
+    return assistantDatabase.listSupervisionResults(20, request.target, request.resultId)
   })
   registerHandler(ipcChannels.supervisionRun, async (event, input: unknown) => {
     assertTrustedSender(event, window)
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) {
+      throw new Error('智能督导未启用')
+    }
     if (executionPaused || shuttingDown) throw new Error('本地数据维护期间暂不接受新任务')
     return trackExecution(supervisorService.run(supervisionRunRequestSchema.parse(input)))
   })

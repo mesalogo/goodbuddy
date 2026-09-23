@@ -442,6 +442,60 @@ app
       join(artifacts, 'manual-review-error-390.png'),
       (await win.webContents.capturePage()).toPNG()
     )
+    await js('document.querySelector("#supervisor-tab-settings").click()')
+    await wait('!!document.querySelector(".heartbeat-settings")')
+    assert(await js('document.querySelector("#heartbeat-tab-plans").getAttribute("aria-selected") === "true"'))
+    await js(`(() => {
+      const select = document.querySelector('[aria-label="监督频率"]');
+      select.value = 'weekly'; select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`)
+    await wait('!!document.querySelector("[aria-label=监督星期]")')
+    for (const theme of ['light', 'dark']) {
+      await js(`document.documentElement.dataset.theme = '${theme}'`)
+      for (const width of [1440, 1024, 390]) {
+        win.setContentSize(width, 1100)
+        await settle()
+        const settings = await js(`(() => {
+          const root = document.querySelector('.heartbeat-settings');
+          return { width: innerWidth, pageWidth: document.documentElement.scrollWidth,
+            clientWidth: root.clientWidth, scrollWidth: root.scrollWidth,
+            fields: [...root.querySelectorAll('input, select')].map(e => {
+              const r = e.getBoundingClientRect();
+              return { left: r.left, right: r.right, height: r.height };
+            }), text: root.textContent };
+        })()`)
+        assert(settings.pageWidth <= width && settings.scrollWidth <= settings.clientWidth, 'Settings overflow')
+        assert(settings.fields.every(r => r.left >= 0 && r.right <= width && r.height >= 28), 'Clipped settings fields')
+        assert(settings.text.includes('尚未配置自动监督，目前仅支持手动回顾'), 'Missing unconfigured state')
+        reports.push({ scenario: 'automatic-supervision-settings', theme, ...settings })
+        await writeFile(join(artifacts, `settings-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
+      }
+    }
+    await js('document.querySelector("#supervisor-tab-activity").click()')
+    await wait('document.querySelectorAll(".supervisor-activity__item").length === 3')
+    for (const theme of ['light', 'dark']) {
+      await js(`document.documentElement.dataset.theme = '${theme}'`)
+      for (const width of [1440, 1024, 390]) {
+        win.setContentSize(width, width === 390 ? 720 : 1100)
+        await settle()
+        const activity = await js(`(() => {
+          const root = document.querySelector('.supervisor-activity');
+          const tabs = document.querySelector('#supervisor-tab-activity').closest('[role=tablist]');
+          return { width: innerWidth, pageWidth: document.documentElement.scrollWidth,
+            clientWidth: root.clientWidth, scrollWidth: root.scrollWidth,
+            tabsHeight: tabs.getBoundingClientRect().height,
+            fields: [...root.querySelectorAll('dd, button')].map(e => {
+              const r = e.getBoundingClientRect(); return { left: r.left, right: r.right };
+            }), text: root.textContent };
+        })()`)
+        assert(activity.pageWidth <= width && activity.scrollWidth <= activity.clientWidth, 'Activity overflow')
+        assert(activity.tabsHeight >= 32, 'Activity tabs must not collapse')
+        assert(activity.fields.every(r => r.left >= 0 && r.right <= width), 'Clipped activity metadata or actions')
+        assert(activity.text.includes('运行中') && activity.text.includes('失败') && activity.text.includes('已完成'), 'Missing execution states')
+        reports.push({ scenario: 'supervisor-activity', theme, ...activity })
+        await writeFile(join(artifacts, `activity-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
+      }
+    }
     assert.deepEqual(errors, [])
     await writeFile(
       join(artifacts, 'measurements.json'),

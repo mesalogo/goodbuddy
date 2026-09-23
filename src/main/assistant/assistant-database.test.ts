@@ -172,6 +172,9 @@ it('migrates schema 35 conversations to unpinned while retaining existing data a
     ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
     DROP TABLE activity_history_records;
     ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+    DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+    DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+    DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
     PRAGMA user_version = 35;`)
   legacy.close()
   try {
@@ -317,6 +320,9 @@ it('preserves existing supervision data when upgrading schema 41 and reopening',
     ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
     DROP TABLE activity_history_records;
     ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+    DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+    DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+    DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
     PRAGMA user_version = 41;`)
   legacy.close()
   try {
@@ -1077,6 +1083,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 3;
     `)
     oldDatabase.close()
@@ -1237,6 +1246,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 26;
     `)
     legacy.close()
@@ -1350,6 +1362,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1425,6 +1440,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1519,6 +1537,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1563,6 +1584,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1608,6 +1632,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1649,6 +1676,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1679,6 +1709,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1706,6 +1739,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 5;
     `)
     versionFive.close()
@@ -1830,6 +1866,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 21;
       COMMIT;
     `)
@@ -1923,6 +1962,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 9;
     `)
     legacy.close()
@@ -1978,6 +2020,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 16`)
     legacy.close()
 
@@ -2927,6 +2972,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 23`)
     legacy.close()
 
@@ -3066,6 +3114,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 18;
     `)
     legacy.close()
@@ -3576,6 +3627,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
       DROP TABLE activity_history_records;
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+      DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 31;
     `)
     legacy.close()

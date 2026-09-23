@@ -22,7 +22,7 @@ export const app = {
     confirmFailed: 'Could not confirm the save result. Reload settings before editing again.',
     descriptions: {
       'magic-notes': 'Write notes, organize to-dos, and receive AI comments.', knowledge: 'Manage knowledge sources and retrieve reference material for conversations.',
-      heartbeat: 'Review work evolution, explore the story graph, and configure automatic wake-ups.', 'local-inference': 'Inspect local inference tasks and execution services.'
+      heartbeat: 'Review work evolution, explore the story graph, and configure automatic supervision.', 'local-inference': 'Inspect local inference tasks and execution services.'
     }
   },
   notifications: {
@@ -755,7 +755,7 @@ export const app = {
     userDecision: 'User selected {{decision}}',
     conversationDeleted: 'The related conversation has been deleted',
     localDataCleared:
-      'Local conversations, tasks, memory, heartbeat data, automations, and knowledge indexes were cleared',
+      'Local conversations, tasks, memory, automatic supervision data, automations, and knowledge indexes were cleared',
     selectKnowledgeBase: 'Select a knowledge base first',
     knowledgeGraphRebuilt: 'Knowledge graph extracted again',
     knowledgeSettingsUpdated: 'Knowledge base settings updated',

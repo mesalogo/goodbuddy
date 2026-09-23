@@ -134,6 +134,7 @@ export type RightAssistantSidebarProps = {
   taskDurations?: ReadonlyMap<string, SidebarTaskDuration>
   browserStates?: Readonly<Record<string, Readonly<Record<string, BrowserLiveState>>>>
   currentProject?: AssistantProject
+  supervisionEnabled?: boolean
   supervisionLibraries?: KnowledgeLibrary[]
   onOpenSupervisionGraph?: (resultId: string) => void
   onContinueSupervision?: (prompt: string, conversationId: string) => Promise<void>
@@ -806,6 +807,7 @@ export function RightAssistantSidebar({
   taskDurations,
   browserStates = {},
   currentProject,
+  supervisionEnabled = false,
   supervisionLibraries,
   onOpenSupervisionGraph,
   onContinueSupervision,
@@ -1546,6 +1548,7 @@ export function RightAssistantSidebar({
             return false
           }
         }
+        if (instance.id === activeWorkbarInstanceId) setActionError('')
         removeWorkbarInstance(instance.id)
         return true
       }
@@ -2067,6 +2070,7 @@ export function RightAssistantSidebar({
         ) : null}
         {instance.appId === 'tasks' && (
           <section className="assistant-sidebar__section task-center">
+            {supervisionEnabled && <>
             <button type="button" className="link-button" disabled={!instance.targetRef && !selectedTaskId && !activeConversationId}
               onClick={() => setWorkbarInstances((current) => current.map((item) => item.id === instance.id
                 ? { ...item, targetRef: item.targetRef ? undefined : selectedTaskId ? { type: 'task', taskId: selectedTaskId } : activeConversationId ? { type: 'conversation', conversationId: activeConversationId } : undefined }
@@ -2085,6 +2089,7 @@ export function RightAssistantSidebar({
               onContinueSupervision={onContinueSupervision}
               onOpenSupervisionConversation={onOpenSupervisionConversation}
             />
+            </>}
             <section className="task-center__stats" aria-label={t('sidebar.tasks.stats.label')}>
             <p className="task-center__scope">{currentProject
               ? t('sidebar.tasks.projectScope', { project: currentProject.name })

@@ -44,6 +44,9 @@ export function HeartbeatSettings({
   const [editingId, setEditingId] = useState<string>()
   const [name, setName] = useState(t('settings.defaultName'))
   const [time, setTime] = useState('09:00')
+  const [timezone, setTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  )
   const [recurrence, setRecurrence] = useState<'daily' | 'weekly'>(
     'daily'
   )
@@ -74,6 +77,7 @@ export function HeartbeatSettings({
     string
   > = {
     claimed: t('statuses.run.claimed'),
+    no_change: t('statuses.run.no_change'),
     completed: t('statuses.run.completed'),
     failed: t('statuses.run.failed'),
     skipped: t('statuses.run.skipped')
@@ -83,6 +87,7 @@ export function HeartbeatSettings({
     setEditingId(undefined)
     setName(t('settings.defaultName'))
     setTime('09:00')
+    setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
     setRecurrence('daily')
     setWeekday(1)
     setScopeKind('global')
@@ -95,6 +100,7 @@ export function HeartbeatSettings({
     setEditingId(heartbeat.id)
     setName(heartbeat.name)
     setTime(heartbeat.recurrence.localTime)
+    setTimezone(heartbeat.timezone)
     setRecurrence(heartbeat.recurrence.type)
     setWeekday(
       heartbeat.recurrence.type === 'weekly'
@@ -139,8 +145,7 @@ export function HeartbeatSettings({
         ? { kind: 'global' }
         : { kind: 'projects', projectIds: selectedProjectIds },
     name: name.trim(),
-    timezone:
-      Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    timezone,
     recurrence:
       recurrence === 'daily'
         ? { type: 'daily', localTime: time }
@@ -187,6 +192,11 @@ export function HeartbeatSettings({
           </h2>
           <InlineHelp label={t('settings.title')}>{t('settings.description')}</InlineHelp>
         </div>
+        <p>{t('settings.scheduleHelp')}</p>
+        {heartbeats.length === 0 && <p role="status">{t('settings.empty')}</p>}
+        {heartbeats.length > 0 && heartbeats.every((heartbeat) => !heartbeat.enabled) && (
+          <p role="status">{t('settings.allPaused')}</p>
+        )}
       </div>
       <div className="heartbeat-settings__editor">
         <div className="heartbeat-settings__editor-heading">
@@ -206,6 +216,7 @@ export function HeartbeatSettings({
             </button>
           )}
         </div>
+        <p className="heartbeat-settings__empty">{t('settings.timezone', { timezone })}</p>
         <label className="heartbeat-settings__field">
           <span>{t('settings.nameLabel')}</span>
           <input
@@ -387,11 +398,7 @@ export function HeartbeatSettings({
           {error}
         </p>
       )}
-      {heartbeats.length === 0 ? (
-        <p className="heartbeat-settings__empty">
-          {t('settings.empty')}
-        </p>
-      ) : (
+      {heartbeats.length > 0 && (
         <div className="heartbeat-settings__list">
           {heartbeats.map((heartbeat) => (
             <article
@@ -402,15 +409,26 @@ export function HeartbeatSettings({
                 <strong>{heartbeat.name}</strong>
                 <small>{scopeLabel(heartbeat)}</small>
                 <small>
+                  {heartbeat.recurrence.type === 'weekly'
+                    ? t('center.recurrence.weekly', {
+                        weekday: t(`center.weekdays.${['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][heartbeat.recurrence.weekday]}`),
+                        time: heartbeat.recurrence.localTime
+                      })
+                    : t('center.recurrence.daily', { time: heartbeat.recurrence.localTime })}
+                  {' · '}{heartbeat.timezone}
+                </small>
+                <small>{t('settings.windowSummary', {
+                  hours: heartbeat.lookbackHours, days: heartbeat.retentionDays
+                })}</small>
+                <small>
                   {heartbeat.enabled
                     ? t('settings.running')
                     : t('settings.paused')}{' '}
-                  ·{' '}
-                  {t('settings.next', {
+                  {heartbeat.enabled && ` · ${t('settings.next', {
                     date: new Date(
                       heartbeat.nextRunAt
                     ).toLocaleString(locale)
-                  })}
+                  })}`}
                   {heartbeat.lastStatus
                     ? ` · ${t('settings.last', {
                         status:

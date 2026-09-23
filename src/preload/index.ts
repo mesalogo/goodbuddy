@@ -1380,6 +1380,7 @@ const desktopApi: DesktopApi = {
       }>
   },
   supervision: {
+    activity: (input) => ipcRenderer.invoke(ipcChannels.supervisionActivity, input),
     overview: (input) => ipcRenderer.invoke(ipcChannels.supervisionOverview, input),
     run: (input: unknown) => ipcRenderer.invoke(ipcChannels.supervisionRun, input),
     graph: (input) => ipcRenderer.invoke(ipcChannels.supervisionGraph, input) as Promise<Record<string, unknown>>,

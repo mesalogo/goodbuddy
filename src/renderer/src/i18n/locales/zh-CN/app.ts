@@ -19,7 +19,7 @@ export const app = {
     confirmFailed: '无法确认保存结果，请重新读取后再修改。',
     descriptions: {
       'magic-notes': '记录笔记、整理待办并获取 AI 评论。', knowledge: '管理知识来源，为会话检索资料。',
-      heartbeat: '回顾工作演变、查看故事线图谱，并配置自动唤醒。', 'local-inference': '查看本机推理任务与执行服务。'
+      heartbeat: '回顾工作演变、查看故事线图谱，并配置自动监督。', 'local-inference': '查看本机推理任务与执行服务。'
     }
   },
   notifications: {
@@ -703,7 +703,7 @@ export const app = {
     userDecision: '用户选择了{{decision}}',
     conversationDeleted: '对应对话已被删除',
     localDataCleared:
-      '本地对话、任务、记忆、心跳、自动化和知识库索引已清除',
+      '本地对话、任务、记忆、自动监督、自动化和知识库索引已清除',
     selectKnowledgeBase: '请先选择知识库',
     knowledgeGraphRebuilt: '知识图谱已重新抽取',
     knowledgeSettingsUpdated: '知识库设置已更新',

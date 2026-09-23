@@ -265,6 +265,7 @@ export const ipcChannels = {
   heartbeatsRunNow: 'heartbeats:run-now',
   heartbeatsHistory: 'heartbeats:history',
   supervisionOverview: 'supervision:overview',
+  supervisionActivity: 'supervision:activity',
   supervisionRun: 'supervision:run',
   supervisionGraph: 'supervision:graph',
   supervisionSource: 'supervision:source',

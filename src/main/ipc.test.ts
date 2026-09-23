@@ -1354,12 +1354,6 @@ vi.mock('electron', () => ({
   }
 }))
 
-vi.mock('./assistant/heartbeat-service', () => ({
-  HeartbeatService: class {
-    async processDue(): Promise<void> {}
-  }
-}))
-
 vi.mock('./agent/create-runtime', () => runtimeFactoryMocks)
 
 vi.mock('./channels/channel-env', () => ({
@@ -5114,7 +5108,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     capabilityServiceOverride?: Record<string, unknown>,
     browserControl?: Record<string, unknown>,
     imageService?: ImageGenerationService,
-    imageDatabase?: AssistantDatabase
+    imageDatabase?: AssistantDatabase,
+    heartbeatEnabled?: boolean
   ) {
     const assistantDatabase = {
       createTask: vi.fn(),
@@ -5287,6 +5282,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     const getApplicationSettings = vi.fn(
       async (): Promise<Record<string, unknown>> => ({
         magicNotesEnabled,
+        heartbeatEnabled,
         remoteProjectsEnabled: true
       })
     )
@@ -5587,6 +5583,114 @@ describe('registerIpcHandlers agent terminal state', () => {
     await harness.dispose()
   })
 
+  it.each([false, undefined])('heartbeat enabled gates block startup, timer claims, and manual runs (%s)', async (enabled) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'))
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const config = database.createHeartbeatConfig({
+      name: 'Due review', scope: { kind: 'global' }, timezone: 'UTC',
+      recurrence: { type: 'daily', localTime: '11:00' }, enabled: true,
+      lookbackHours: 24, retentionDays: 30
+    }, new Date('2026-09-23T00:00:00.000Z'))
+    const claimDue = vi.spyOn(database, 'claimDueHeartbeats')
+    const claimNow = vi.spyOn(database, 'claimHeartbeatNow')
+    const activityRead = vi.spyOn(database, 'listSupervisionActivity')
+    const collect = vi.spyOn(database, 'buildHeartbeatInput')
+    const queueSchedules = vi.spyOn(database, 'queueDueSchedules')
+    const run = vi.fn()
+    const harness = createHarness({ capability: 'chat', run }, undefined, 'always', undefined, false,
+      undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database, enabled)
+    try {
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(claimDue).not.toHaveBeenCalled()
+      expect(queueSchedules).toHaveBeenCalledTimes(3)
+      await expect(electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), {
+        id: config.id, idempotencyKey: crypto.randomUUID()
+      })).rejects.toThrow('智能督导未启用')
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), {
+        trigger: 'manual', scope: { kind: 'global' },
+        timeRange: { from: '2026-09-22T00:00:00.000Z', to: '2026-09-23T12:00:00.000Z' }
+      })).rejects.toThrow('智能督导未启用')
+      expect(claimNow).not.toHaveBeenCalled()
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionActivity)!(trustedEvent(harness.webContents), {})).resolves.toEqual([])
+      expect(activityRead).not.toHaveBeenCalled()
+      expect(collect).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+      expect(database.listHeartbeatRuns()).toEqual([])
+    } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
+  })
+
+  it('heartbeat enabled gates leave enabled startup and ticks idle without configured plans', async () => {
+    vi.useFakeTimers()
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const claimDue = vi.spyOn(database, 'claimDueHeartbeats')
+    const collect = vi.spyOn(database, 'buildHeartbeatInput')
+    const run = vi.fn()
+    const harness = createHarness({ capability: 'chat', run }, undefined, 'always', undefined, false,
+      undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database, true)
+    try {
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(claimDue).toHaveBeenCalledTimes(3)
+      expect(database.listHeartbeatConfigs()).toEqual([])
+      expect(database.listHeartbeatRuns()).toEqual([])
+      expect(database.listSupervisionResults()).toEqual([])
+      expect(collect).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+    } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
+  })
+
+  it('heartbeat enabled gates follow live toggles and suppress supervision after an in-flight completion', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-23T12:00:00.000Z'))
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'New input', updatedAt: Date.now() },
+      messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review this new decision', createdAt: Date.now() }] }])
+    database.createHeartbeatConfig({
+      name: 'Due review', scope: { kind: 'global' }, timezone: 'UTC',
+      recurrence: { type: 'daily', localTime: '11:00' }, enabled: true,
+      lookbackHours: 24, retentionDays: 30
+    }, new Date('2026-09-23T00:00:00.000Z'))
+    const claimDue = vi.spyOn(database, 'claimDueHeartbeats')
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      await pending
+      const output = request.conversationId?.startsWith('heartbeat:')
+        ? { summary: 'Review', highlights: [], proposedMemories: [], followUpTasks: [] }
+        : { summary: 'Review', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
+      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify(output) }
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    const harness = createHarness({ capability: 'chat', run }, undefined, 'always', undefined, false,
+      undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database, false)
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(claimDue).not.toHaveBeenCalled()
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(claimDue).toHaveBeenCalledOnce()
+      expect(database.listHeartbeatRuns()).toEqual([expect.objectContaining({ status: 'claimed' })])
+      expect(run).toHaveBeenCalledOnce()
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: false })
+      finish()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(database.listHeartbeatRuns()).toEqual([expect.objectContaining({ status: 'completed' })])
+      expect(database.listSupervisionResults()).toEqual([])
+      expect(run).toHaveBeenCalledOnce()
+      expect(claimDue).toHaveBeenCalledOnce()
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
+      const config = database.listHeartbeatConfigs()[0]!
+      await expect(electronMocks.handlers.get(ipcChannels.heartbeatsRunNow)!(trustedEvent(harness.webContents), {
+        id: config.id, idempotencyKey: crypto.randomUUID()
+      })).resolves.toMatchObject({ status: 'completed' })
+      expect(database.listSupervisionResults()).toHaveLength(1)
+      expect(run).toHaveBeenCalledTimes(3)
+    } finally { finish(); await harness.dispose(); database.close(); vi.useRealTimers() }
+  })
+
   it.each(['global', 'projects'] as const)('collects supervision within the exact UI timeRange before limits (%s)', async (kind) => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-22T08:00:00.000Z'))
@@ -5626,6 +5730,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     try {
       const scope = kind === 'global' ? { kind } : { kind, projectIds: [project.id] }
       const input = { trigger: 'manual', scope, timeRange: { from, to } }
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
       const result = await electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), input) as import('./assistant/supervisor-service').StoredSupervisionResult
       expect(result.request).toEqual(input)
       expect(result.evidence.filter(item => item.sourceType === 'conversation').map(item => item.content)).toEqual(['At start', 'At end'])
@@ -5642,6 +5747,13 @@ describe('registerIpcHandlers agent terminal state', () => {
       expect(run.mock.calls[0]![0].prompt).toContain('not a historical content snapshot')
       const overview = await electronMocks.handlers.get(ipcChannels.supervisionOverview)!(trustedEvent(harness.webContents), { target: { type: 'conversation', conversationId } }) as Array<{ id: string; storyLineId: string; sourceId: string }>
       expect(overview).toHaveLength(1)
+      const activity = electronMocks.handlers.get(ipcChannels.supervisionActivity)!
+      await expect(activity(trustedEvent(harness.webContents), { limit: 50, offset: 0 })).resolves.toEqual([
+        expect.objectContaining({ status: 'completed', resultId: overview[0]!.id, scope, trigger: 'manual' })
+      ])
+      await expect(activity(trustedEvent(harness.webContents), { limit: 101 })).rejects.toThrow()
+      await expect(activity({ sender: {} }, {})).rejects.toThrow()
+      expect(electronMocks.handlers.get(ipcChannels.supervisionOverview)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id })).toEqual(overview)
       expect(database.getSupervisionSource(overview[0]!.sourceId)?.sourceId).toBe(conversationId)
       const graph = await electronMocks.handlers.get(ipcChannels.supervisionGraph)!(trustedEvent(harness.webContents), { resultId: overview[0]!.id, storyLineId: overview[0]!.storyLineId }) as { sources: unknown[] }
       expect(graph.sources).toHaveLength(result.evidence.length)
@@ -5656,6 +5768,45 @@ describe('registerIpcHandlers agent terminal state', () => {
       })).rejects.toThrow('must exist and be active')
       expect(run).toHaveBeenCalledOnce()
     } finally { await harness.dispose(); database.close(); vi.useRealTimers() }
+  })
+
+  it('skips automatic repeats through real supervision IPC while manual review reprocesses history', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const now = Date.now()
+    const conversationId = crypto.randomUUID()
+    const messageId = crypto.randomUUID()
+    const write = (content: string) => database.saveLocalConversations([{
+      header: { id: conversationId, projectId: database.listProjects()[0]!.id, title: 'Atlas', updatedAt: now },
+      messages: [{ id: messageId, role: 'user', state: 'complete', createdAt: now, content }]
+    }])
+    write('Atlas uses SQLite')
+    const run = vi.fn(async function* (request: AgentExecutionRequest) {
+      yield { type: 'text' as const, requestId: request.requestId, delta: JSON.stringify({ summary: 'Atlas reviewed', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }) }
+      yield { type: 'done' as const, requestId: request.requestId }
+    })
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run }, undefined, 'always', undefined, false, undefined, undefined, undefined,
+      false, undefined, undefined, undefined, undefined, database)
+    try {
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
+      const input = { trigger: 'heartbeat', scope: { kind: 'global' }, timeRange: {
+        from: new Date(now - 1000).toISOString(), to: new Date(now + 1000).toISOString()
+      } }
+      const invoke = (request = input) => electronMocks.handlers.get(ipcChannels.supervisionRun)!(trustedEvent(harness.webContents), request)
+      await invoke()
+      await expect(invoke()).resolves.toMatchObject({ status: 'no_change', evidence: [] })
+      expect(run).toHaveBeenCalledTimes(1)
+      write('Atlas now uses WAL')
+      await invoke()
+      expect(run).toHaveBeenCalledTimes(2)
+      expect(run.mock.calls[1]![0].prompt).toContain('Atlas now uses WAL')
+      await invoke({ ...input, trigger: 'manual' })
+      await invoke({ ...input, trigger: 'manual' })
+      expect(run).toHaveBeenCalledTimes(4)
+      await expect(invoke()).resolves.toMatchObject({ status: 'no_change' })
+      expect(database.listSupervisionResults()).toHaveLength(4)
+      expect(database.listSupervisionActivity().filter((row) => row.status === 'no_change')).toHaveLength(2)
+    } finally { await harness.dispose(); database.close() }
   })
 
   it('dispatches supervision continuation through the real queue payload parser', async () => {

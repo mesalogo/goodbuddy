@@ -256,7 +256,7 @@ export const defaultApplicationSettings: ApplicationSettings = {
   applicationNavigation: defaultApplicationNavigation,
   localInferenceEnabled: true,
   magicNotesEnabled: true,
-  heartbeatEnabled: true,
+  heartbeatEnabled: false,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined',
@@ -526,7 +526,7 @@ export class ApplicationSettingsStore {
       applicationNavigation: stored.applicationNavigation,
       localInferenceEnabled: stored.localInferenceEnabled,
       magicNotesEnabled: stored.magicNotesEnabled,
-      heartbeatEnabled: stored.heartbeatEnabled,
+      heartbeatEnabled: stored.heartbeatEnabled ?? false,
       magicNotesShowIncompleteTodoCount:
         stored.magicNotesShowIncompleteTodoCount,
       magicNoteCommentMode: stored.magicNoteCommentMode,
@@ -567,7 +567,7 @@ export class ApplicationSettingsStore {
         applicationNavigation: next.applicationNavigation,
         localInferenceEnabled: next.localInferenceEnabled,
         magicNotesEnabled: next.magicNotesEnabled,
-        heartbeatEnabled: next.heartbeatEnabled,
+        heartbeatEnabled: next.heartbeatEnabled ?? false,
         magicNotesShowIncompleteTodoCount:
           next.magicNotesShowIncompleteTodoCount,
         magicNoteCommentMode: next.magicNoteCommentMode,

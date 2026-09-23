@@ -24,7 +24,7 @@ records are listed separately and do not introduce another feature status.
   packages target compatible x64 and arm64 environments, including UOS, Kylin,
   Hygon, Zhaoxin, Kunpeng, and Phytium systems. This is not vendor certification.
   LoongArch has a separate experimental loong64 preview outside standard
-  releases and automatic updates; no preview is planned for 0.13.9. See the
+  releases and automatic updates; it is built only on explicit request. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
   accelerator under Platform Features / General. The default remains
@@ -141,13 +141,14 @@ records are listed separately and do not introduce another feature status.
   open their main content pages. Manage Apps opens searchable cards with settings details;
   layout and interaction rules are defined in the [UI design](./docs/features/application-tool-navigation/ui-design.md).
   All four application cards support arrow and drag reordering regardless of enablement or pinning.
-  Cards, the launcher, and the filtered sidebar share one persisted order. Knowledge and Heartbeat
-  are always enabled and pinned, labeled Always shown, with Open and reorder controls but no
-  enable/pin toggles or generic empty settings. Existing workspace settings and Heartbeat
-  per-plan enabled states remain unchanged. Only Notes and Local Inference Monitor have optional
-  enablement, pinning, and shared settings. Older optional-app orders retain their relative order
-  when missing defaults are added. Unshipped `knowledgeEnabled` and
-  `heartbeatEnabled` fields were removed without migrations.
+  Cards, the launcher, and the filtered sidebar share one persisted order. Knowledge
+  is always enabled and pinned, with Open and reorder controls. Supervisor, Notes,
+  and Local Inference Monitor have enablement and pinning settings. Supervisor uses
+  the existing Heartbeat identity and defaults to off when no preference is saved;
+  explicit saved choices are preserved. Disabling it retains plans and history,
+  blocks new reviews, and hides sidebar feedback; in-flight work may finish.
+  Enabling the app does not create automatic plans. Older application orders retain
+  their relative order when missing defaults are added.
   Durable settings saves, including configuration-tool writes, synchronize through change events;
   reopening the center locks edits until refresh completes, and newer snapshots supersede stale reads.
   The `local-inference` modal shows a single service list without task history or external
@@ -168,8 +169,8 @@ records are listed separately and do not introduce another feature status.
   [FR-15](./docs/features/application-tool-navigation/prd.md#fr-15-私有化市场与-yaml-交换后续).
 - [ ] **Additional assistant workbar and execution-space capabilities**
   (planned): Builds on the current workbar and multiple terminals with
-  supervision, unified Runtime monitoring, managed processes, safe static HTML
-  preview, target-pinnable workspace/browser/artifact instances, bottom
+  broader execution supervision, unified Runtime monitoring, managed processes,
+  target-pinnable workspace/browser/artifact instances, bottom
   docking, and separate windows. Task Center remains the singleton Task index;
   attachments and knowledge remain in the conversation composer, while memory,
   when implemented, and historical execution context belong to the associated Task. See
@@ -321,7 +322,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.2`, while the current Desktop release candidate is `0.13.9`; formal
+  `0.13.3`, while the current Desktop release candidate is `0.13.12`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -736,19 +737,28 @@ records are listed separately and do not introduce another feature status.
   task approvals remain actionable in their task cards.
 - [x] **Memory and Smart Heartbeat**: Provides periodic review, suggested
   memories, insights, follow-up tasks, and auditable run history.
-- [x] **Improved Smart Heartbeat entry and scope**: Smart Heartbeat / Heartbeat
-  Plans is the sole authoritative full-configuration entry. Plans can be
+- [x] **Automatic supervision settings and scope**: Supervisor / Settings is
+  the sole authoritative full-configuration entry. Daily or weekly plans can be
   created and edited for Global or one or more selected Projects. Legacy
   single-project settings migrate without loss, and project-level memory and
   action output must explicitly target a Project in scope. Task Center and
   Settings no longer duplicate the form. Partition-aware review, candidate
   generation, and recall triggers remain to be designed. See the
   [Smart Heartbeat PRD](./docs/features/smart-heartbeat/prd.md).
-- [ ] **General supervision** (planned): Uses a fixed supervision section to
-  observe user-selected conversations, Tasks, automations, or experiments and
-  provide evidence-backed comments and requests for human intervention,
-  without automatically speaking, approving tools, or switching to Execute.
-  See the
+- [x] **Supervisor reviews, story graphs, and activity**: Review a selected scope
+  and period, inspect saved result graphs and sources, confirm or revise entities,
+  and preview local knowledge entity writes. Sidebar feedback follows or pins a
+  Conversation or Task and opens its matching result. Activity combines heartbeat
+  and downstream review stages, including failures and links to older results.
+  Automatic stages process only new, changed, or unprocessed source portions;
+  no-change checks skip model calls. Manual review reprocesses bounded history.
+  Calls remain read-only without tools and may incur model charges. See the
+  [implementation and evidence](./docs/features/conversation-supervision/progress.md).
+- [ ] **Further supervision capabilities** (planned): Full event-by-event replay,
+  Experiment targets, user cancellation, chronological manual-edit audits, event
+  triggers, and broader execution observation remain incomplete. Current automatic
+  review respects input budgets and the rolling window; deleting reports does not
+  reset processing progress or rebuild graphs. See the
   [Conversation Supervision PRD](./docs/features/conversation-supervision/prd.md).
 - [ ] **Batch runs and comparison lab** (planned): Compares model, Prompt,
   role, and workflow configurations in batches and summarizes quality,
@@ -833,15 +843,22 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.9` and Agent `0.13.2`, with
+- Current source candidates are Desktop `0.13.12` and Agent `0.13.3`, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
-- Desktop `0.13.9` fixes repeated startup migration after normal writes when
-  file-backed notes already exist. Agent and storage formats remain unchanged;
-  candidate main-branch CI and native release packaging are still required.
-- Agent `0.13.2` packages both OpenCode and Continue and delivers native execution
-  checklists. Its packages require Desktop `0.13.8`;
+- Desktop `0.13.12` adds Supervisor reviews, graphs, activity, and automatic
+  incremental processing, reduces streaming activity writes, and improves Mermaid,
+  usage totals, conversation duration, Git, notes, and notifications. Database
+  schema 46 requires a complete pre-upgrade backup for rollback to older clients.
+- Agent `0.13.3` reclaims idle Runtimes and retires displaced Agents after existing
+  work drains. Its packages require Desktop `0.13.12`;
   update Desktop first, then the Host environment. Node remains `24.19.0`.
+- Release preparation uses focused regression tests, notes verification, typecheck,
+  and lint. The full local suite is not rerun at the user's request; full main-branch
+  CI, its production build, native packaging, and publication verification remain
+  pending. No local production build or packaging is part of this preparation.
+  Existing Linux x64 lifecycle evidence used eight real provider requests and
+  incremental-review evidence used three; neither covers the complete native matrix.
 - Validation records remain separate from implementation status. Current-source
   storage validation covers real local and Linux x64 Host tool workloads,
   concurrent projects/conversations, cancellation, and lossless database migration.
@@ -889,7 +906,7 @@ records are listed separately and do not introduce another feature status.
   Windows desktop-to-Linux checks cover installation, checklist updates, long lists,
   cancellation and restart recovery. Execute session MCP delivery passed real
   text-model Host checks with a substituted image service, not real image generation.
-  Candidate Agent `0.13.2` requires Desktop `0.13.8`; publication and native
+  Candidate Agent `0.13.3` requires Desktop `0.13.12`; publication and native
   platform acceptance remain separate from Linux development evidence. See the
   [validation record](./docs/features/remote-host/runtime-checklist-validation.md).
 

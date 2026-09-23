@@ -47,7 +47,7 @@ export type HeartbeatHistory = {
 export type HeartbeatCompletion = {
   config: AssistantHeartbeatConfig
   run: AssistantHeartbeatRun
-  entry: AssistantHeartbeatEntry
+  entry?: AssistantHeartbeatEntry
 }
 
 const systemInstruction = `You are producing a private GoodBuddy heartbeat.
@@ -57,7 +57,10 @@ knowledge stores, clipboard data, network access, or external context.
 Return only JSON matching the requested heartbeat output schema. Memory suggestions
 are proposals for the user to review and must never be described as confirmed.
 For a project-scoped memory or task, copy an eligible projectId from the bounded
-input scope. Never infer or invent a projectId.`
+input scope. Never infer or invent a projectId.
+Automatic evidence may contain only the next portion of a source (locator start/end).
+Previous summaries and confirmed memories are background, not new events. Do not
+claim that a partial source or the entire lookback interval has been fully reviewed.`
 
 const heartbeatOutputContract = {
   summary: 'string (1-12000 characters)',
@@ -186,19 +189,20 @@ export class HeartbeatService {
 
   async runNow(
     input: unknown,
-    now = new Date()
+    now?: Date
   ): Promise<AssistantHeartbeatRun> {
     const parsed = heartbeatRunNowSchema.parse(input)
+    const startedAt = now ?? new Date()
     const claim = this.database.claimHeartbeatNow(
       parsed.id,
       parsed.idempotencyKey,
       this.workerId,
-      now
+      startedAt
     )
     if (!claim.acquired) {
       return claim.run
     }
-    return this.executeClaim(claim, now)
+    return this.executeClaim(claim, startedAt, now === undefined)
   }
 
   async processDue(now = new Date()): Promise<AssistantHeartbeatRun[]> {
@@ -219,7 +223,22 @@ export class HeartbeatService {
     useFreshCompletionTime = false
   ): Promise<AssistantHeartbeatRun> {
     try {
-      const input = boundInput(
+      this.database.setHeartbeatProjection(claim.run.id, 'running', claim.config.scope)
+      const batch = claim.run.trigger === 'scheduled' ? this.database.collectIncrementalReview({
+        trigger: 'heartbeat', scope: claim.config.scope, timeRange: {
+          from: new Date(now.getTime() - claim.config.lookbackHours * 3_600_000).toISOString(), to: now.toISOString()
+        }
+      }, 'heartbeat', 12_000) : undefined
+      if (batch && batch.evidence.length === 0) {
+        const run = this.database.noChangeHeartbeatRun(claim, useFreshCompletionTime ? new Date() : now)
+        await this.projectCompletion({ config: claim.config, run })
+        return run
+      }
+      const input: HeartbeatInputSnapshot = batch ? {
+        previousSummary: this.database.reviewSummary(claim.config.scope, 'heartbeat'),
+        scope: claim.config.scope, conversations: [], tasks: [], confirmedMemories: [],
+        evidence: [...batch.evidence, ...this.database.reviewBackground(claim.config.scope)]
+      } : boundInput(
         this.database.buildHeartbeatInput(claim.config, now)
       )
       const rawOutput = await this.summarizer.summarize({
@@ -271,25 +290,36 @@ export class HeartbeatService {
       const completedRun = this.database.completeHeartbeatRun(
         claim,
         output,
-        useFreshCompletionTime ? new Date() : now
+        useFreshCompletionTime ? new Date() : now,
+        batch
       )
       const entry = this.database.getHeartbeatEntry(completedRun.entryId)
-      if (entry && this.onCompleted) {
-        try {
-          await this.onCompleted({ config: claim.config, run: completedRun, entry })
-        } catch {
-          // Projection is best effort; the heartbeat report is already durable.
-        }
-      }
+      await this.projectCompletion({ config: claim.config, run: completedRun, entry })
       return completedRun
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Heartbeat failed'
+      this.database.setHeartbeatProjection(claim.run.id, 'failed', undefined, message)
       return this.database.failHeartbeatRun(
         claim,
         message,
         useFreshCompletionTime ? new Date() : now
       )
+    }
+  }
+
+  private async projectCompletion(completion: HeartbeatCompletion): Promise<void> {
+    if (this.onCompleted) {
+      try {
+        await this.onCompleted(completion)
+        this.database.setHeartbeatProjection(completion.run.id, 'completed')
+      } catch (error) {
+        // Keep the durable report, but expose downstream failure in Activity.
+        this.database.setHeartbeatProjection(completion.run.id, 'failed', undefined,
+          error instanceof Error ? error.message : 'Supervision failed')
+      }
+    } else {
+      this.database.setHeartbeatProjection(completion.run.id, 'completed')
     }
   }
 }

@@ -99,7 +99,7 @@ export const workspace = {
       danger: {
         title: 'Danger zone',
         description:
-          'Deleting this project permanently removes its conversations, tasks, schedules, heartbeats, memories, and results from GoodBuddy. It does not delete the project folder or files on disk.',
+          'Deleting this project permanently removes its conversations, tasks, schedules, automatic supervision data, memories, and results from GoodBuddy. It does not delete the project folder or files on disk.',
         delete: 'Delete project',
         confirmation: 'Enter “{{projectName}}” to confirm deletion',
         cancel: 'Cancel deletion',

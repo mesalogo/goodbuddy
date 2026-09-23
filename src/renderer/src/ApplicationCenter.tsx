@@ -57,7 +57,7 @@ export function isApplicationEnabled(
   id: BuiltInApplicationId,
 ): boolean {
   if (id === 'knowledge') return true
-  if (id === 'heartbeat' && settings === undefined) return true
+  if (id === 'heartbeat') return settings?.heartbeatEnabled === true
   return (
     settings !== undefined &&
     settings[applicationDefinitions[id].enabled] !== false
