@@ -62,3 +62,48 @@ Agent packaging and publication verification remain pending. No local production
 build or package was run. No push, tag, remote synchronization, or publication
 was performed during preparation. Approval must identify the exact candidate
 commit and both bilingual note files before either release tag is created.
+
+## Approved Candidate CI Attempt
+
+The user approved `bf8ece05902509411454b27b742ebfec930005ad` and both bilingual
+note files. On 2026-09-23 that exact commit was fast-forwarded to `main` on
+`origin` and `github`; both remote refs were verified. GitHub SSH stalled, so
+the GitHub push used HTTPS with the existing GitHub CLI keyring credentials.
+No persistent Git configuration was changed. GitHub reported the account's
+existing pull-request-rule bypass for this requested direct push.
+
+- [Desktop main CI](https://github.com/mesalogo/goodbuddy/actions/runs/35849362694)
+  failed in the full suite: 4 files failed, 418 passed, 13 skipped; 10 tests
+  failed, 4,997 passed, 43 skipped. Type checks, lint, and the production build
+  did not execute after the test failure.
+- [Agent main CI](https://github.com/mesalogo/goodbuddy/actions/runs/35849362799)
+  passed source validation and native Linux x64, Linux arm64, and Darwin arm64
+  deterministic compound-package verification with ephemeral test signatures.
+- Neither release tag was created or pushed. No Desktop or Agent publication
+  workflow was started, and no production release assets were verified.
+
+The follow-up changes are limited to tests. Two IPC tests clear the startup
+settings-read count before measuring interactive request lookups. The settings
+failure UI test now expects Supervisor to remain disabled. OpenCode isolation
+tests prepare their real configuration dependencies in a dedicated temporary
+directory instead of relying on a prior local package preparation; connection
+failures now include their diagnostic detail. The large activity-list and
+multi-page navigation and external knowledge binding tests have explicit
+15-second budgets; the binding test also waits up to five seconds for its
+resulting heading.
+Its snapshot fixture now selects by library ID, and its instance list remains
+available during polling instead of assuming a fixed number of asynchronous
+reads. Both mocks reset between tests; the binding test waits for the
+selected-library read.
+These budgets address timeouts observed in the full CI run without removing
+assertions or changing product behavior.
+
+The approved source and bilingual notes remain unchanged. These test changes
+need a revised candidate commit and approval before another release attempt;
+the failed commit must not be tagged. No local production build, package,
+external model request, or LoongArch build was performed.
+
+Follow-up validation: the seven selected IPC/UI regression cases and all seven
+OpenCode isolation cases passed locally. Type checks and lint passed. Full
+remote CI and the production build still require a new approved commit; these
+focused results do not satisfy that release gate.

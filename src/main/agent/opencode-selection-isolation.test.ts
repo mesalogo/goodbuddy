@@ -1,10 +1,11 @@
 // @vitest-environment node
 import { createServer } from 'node:http'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import spawn from 'cross-spawn'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { runtimeSettingsInputSchema } from '../../shared/contracts'
 import { RuntimeSettingsStore } from '../runtime-settings-store'
 import { applyRuntimeSelection } from './runtime-selection'
@@ -19,6 +20,19 @@ const newId = '00000000-0000-4000-8000-000000000123'
 const denial = "OpenCode's free tier can only be used from within OpenCode"
 
 describe('OpenCode isolated configuration paths', () => {
+  let fixtureRoot: string
+  let bundledConfigPath: string
+  beforeAll(async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), 'goodbuddy-opencode-config-isolation-'))
+    const { prepareBundledOpenCodeConfig } = createRequire(import.meta.url)(
+      '../../../build/opencode-config.cjs'
+    )
+    bundledConfigPath = prepareBundledOpenCodeConfig(fixtureRoot)
+  }, 60_000)
+  afterAll(async () => {
+    if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true })
+  })
+
   it.each(['default', 'profile', 'platform', 'external'] as const)(
     'resolves persisted %s source independently of the global default', async (source) => {
       const root = await mkdtemp(join(tmpdir(), 'goodbuddy-source-matrix-'))
@@ -95,7 +109,7 @@ describe('OpenCode isolated configuration paths', () => {
         embedded: true, binaryPath, defaultWorkspace: root,
         configPath: source === 'native-empty' ? '' : configPath,
         sharedCacheRoot: join(root, 'runtime-cache'),
-        bundledConfigPath: join(process.cwd(), '.runtime-resources', 'opencode-config'),
+        bundledConfigPath,
         ...(source === 'profile' ? { modelProfile: {
           id: newId, name: 'Local mock', baseUrl: baseURL, modelName: 'probe-model',
           protocol: 'openai-chat-completions' as const, authentication: 'none' as const
@@ -122,7 +136,8 @@ describe('OpenCode isolated configuration paths', () => {
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 25_000)
       try {
-        expect(await runtime.testConnection()).toMatchObject({ available: true })
+        const connection = await runtime.testConnection()
+        expect(connection, connection.detail).toMatchObject({ available: true })
         const config = JSON.parse(launchEnvironment.OPENCODE_CONFIG_CONTENT!)
         expect(config.model).toBe(source === 'profile' ? 'goodbuddy-openai-chat/probe-model' : undefined)
         expect(launchEnvironment.OPENCODE_CONFIG).toBe(source === 'native-file' ? configPath : undefined)

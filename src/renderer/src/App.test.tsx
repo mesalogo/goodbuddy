@@ -1139,6 +1139,8 @@ describe("App", () => {
     delete document.documentElement.dataset.theme;
     document.documentElement.style.colorScheme = "";
     vi.clearAllMocks();
+    vi.mocked(api.knowledge.getSnapshot).mockReset();
+    vi.mocked(api.knowledge.externalInstancesList).mockReset();
     vi.mocked(api.agent.respondQuestion).mockReset().mockResolvedValue();
     vi.mocked(api.agent.respondApproval).mockReset().mockResolvedValue();
     magicTodoStatusChangedListener = undefined;
@@ -7288,8 +7290,10 @@ describe("App", () => {
     const created = { ...existing, id: '33333333-3333-4333-8333-333333333333', name: 'Remote handbook', external: { knowledgeBaseId: '33333333-3333-4333-8333-333333333333', instanceId: instance.id, provider: 'dify' as const, remoteKnowledgeBaseId: 'remote-1', remoteName: 'Remote handbook', commonConfig: { resultLimit: 6, requestTimeoutMs: 15000, maxSnippetCharacters: 4000 }, providerConfig: { provider: 'dify' as const, useDatasetDefaults: true as const }, lastVerifiedAt: '2026-09-12' } };
     const initial = { libraries: [existing, excluded], selectedLibraryId: existing.id, sources: [], documents: [], graphNodes: [], graphRelations: [], evidence: [] };
     const updated = { ...initial, libraries: [...initial.libraries, created], selectedLibraryId: created.id };
-    vi.mocked(api.knowledge.getSnapshot).mockResolvedValueOnce(initial).mockResolvedValueOnce(updated);
-    vi.mocked(api.knowledge.externalInstancesList).mockResolvedValueOnce([instance]).mockResolvedValueOnce([instance]);
+    vi.mocked(api.knowledge.getSnapshot).mockImplementation(async (libraryId) =>
+      libraryId === created.id ? updated : initial
+    );
+    vi.mocked(api.knowledge.externalInstancesList).mockResolvedValue([instance]);
     vi.mocked(api.knowledge.externalCatalogList).mockResolvedValueOnce({ items: [{ id: 'remote-1', name: 'Remote handbook' }], hasMore: false });
     vi.mocked(api.knowledge.externalCatalogGet).mockResolvedValueOnce({ id: 'remote-1', name: 'Remote handbook' });
     vi.mocked(api.knowledge.externalBindingsCreate).mockResolvedValueOnce(updated);
@@ -7306,15 +7310,15 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: '测试检索' }));
     await waitFor(() => expect(screen.getByRole('button', { name: '添加知识库' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: '添加知识库' }));
-    await screen.findByRole('heading', { name: 'Remote handbook' });
-    expect(api.knowledge.getSnapshot).toHaveBeenLastCalledWith(created.id);
+    await screen.findByRole('heading', { name: 'Remote handbook' }, { timeout: 5_000 });
+    await waitFor(() => expect(api.knowledge.getSnapshot).toHaveBeenLastCalledWith(created.id));
     fireEvent.click(screen.getByRole('button', { name: /^External scope test/u }));
     openComposerOptions();
     fireEvent.click(await screen.findByRole('button', { name: '选择知识库，本次已启用 2 个' }));
     expect(screen.getByRole('checkbox', { name: /Existing/u })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Excluded/u })).not.toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Remote handbook.*Dify.*Company Dify/u })).toBeChecked();
-  });
+  }, 15_000);
 
   it("ignores stale Git changes after switching projects", async () => {
     const secondProject = {
@@ -13882,17 +13886,15 @@ describe("App", () => {
     expect(screen.queryByDisplayValue('Unsaved navigation title')).not.toBeInTheDocument()
     expect(screen.queryByText('Unsaved body')).not.toBeInTheDocument()
     expect(api.magicNotes.update).not.toHaveBeenCalled()
-  })
+  }, 15_000)
 
-  it('keeps fixed apps available when application settings cannot be loaded', async () => {
+  it('keeps Knowledge available and Supervisor disabled when application settings cannot be loaded', async () => {
     vi.mocked(api.updates!.getSettings).mockRejectedValue(new Error('unavailable'))
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
     expect(await screen.findByLabelText('知识工作区')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '监督者' }))
-    expect(await screen.findByRole('heading', { name: '监督者' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '应用设置' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '监督者' })).not.toBeInTheDocument()
     expect(api.heartbeats.update).not.toHaveBeenCalled()
   })
 

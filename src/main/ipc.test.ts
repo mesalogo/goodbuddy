@@ -9649,6 +9649,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       }
     )
     const event = trustedEvent(harness.webContents)
+    harness.getApplicationSettings.mockClear()
     const request = {
       requestId: '00000000-0000-4000-8000-000000000013',
       conversationId: 'duplicate-request',
@@ -9737,6 +9738,7 @@ describe('registerIpcHandlers agent terminal state', () => {
         getEnabledBuiltinMcpServerIds
       }
     )
+    harness.getApplicationSettings.mockClear()
     harness.getApplicationSettings.mockReturnValueOnce(
       applicationSettings
     )

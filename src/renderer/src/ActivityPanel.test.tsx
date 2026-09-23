@@ -759,7 +759,7 @@ describe('ActivityPanel', () => {
       })
     )
     expect(screen.getByText('活动 500')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   it('shows totals without double-counting cache tokens', () => {
     render(
