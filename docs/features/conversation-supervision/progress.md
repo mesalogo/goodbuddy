@@ -18,6 +18,19 @@
 
 ## 验证证据
 
+### 2026-09-23 Desktop 0.13.13 侧栏布局回归
+
+- 固定目标与刷新改用标题旁的共享图标按钮；目标显示会话/任务名称，缺失名称使用未命名文案。
+  对应 US-S25，行为见[会话侧栏](./ui-design.md#会话侧栏)，未改变监督运行或取消逻辑。
+- `RightAssistantSidebar.resize.test.tsx` 66 项和 `SupervisionCard.test.tsx` 4 项通过。
+  `tests/supervisor-layout.electron.test.ts` 的常规工作区场景通过，额外设置
+  `GOODBUDDY_SUPERVISOR_SIDEBAR=1` 后的侧栏场景也通过：480/300/200px、
+  浅深主题、长标题、34px 按钮、键盘焦点与无横向溢出，共 6 种布局。
+- 完整 typecheck、lint 通过，真实模型调用 0 次。使用隔离组件 fixture，不代表真实
+  用户数据库端到端验收；发布验证范围见[候选记录](../../development/release-preparation-0.13.13.md)。
+
+### 既有实现验证
+
 - `npx vitest run src/renderer/src/SupervisorWorkspace.test.tsx src/renderer/src/HeartbeatCenter.test.tsx`：17 个测试通过，覆盖统一页签、无计划手动回顾、加载状态、图谱真实连线与来源过滤。
 - `npx vitest run src/main/assistant/supervisor-service.test.ts src/main/assistant/assistant-database.test.ts src/main/application-settings-store.test.ts src/renderer/src/ApplicationCenter.test.tsx`：166 个测试通过。
 - `npm run typecheck`：通过。

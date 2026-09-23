@@ -2,6 +2,34 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.13",
+      "releasedAt": "2026-09-23",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**减少流式活动历史的重复读取**：活动历史较多时，连续保存流式更新不再每次重新读取整份历史。保留已有记录与顺序，保存失败后仍可重试。",
+            "**修复监督反馈侧栏布局**：固定目标与刷新操作使用标题旁的紧凑按钮，目标显示会话或任务名称。长标题和窄侧栏下保持内容可读，并保留键盘焦点提示。"
+          ],
+          "notices": [
+            "本次仅更新 Desktop，Agent 保持 **0.13.3**，无需因此更新 Host 环境。从 Desktop 0.13.12 升级不新增数据库格式迁移。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Reduce repeated activity-history reads during streaming**: With a large activity history, consecutive streaming saves no longer reread the entire history on every update. Existing records and ordering are preserved, and failed saves remain retryable.",
+            "**Fix the supervision feedback sidebar layout**: Pin and refresh actions now use compact buttons beside the heading, and targets show conversation or task names. Long titles remain readable in narrow sidebars, with visible keyboard focus."
+          ],
+          "notices": [
+            "This release updates Desktop only. Agent remains at **0.13.3**, with no Host update required for these fixes; upgrading from Desktop 0.13.12 adds no database format migration."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.12",
       "releasedAt": "2026-09-23",
       "notes": {

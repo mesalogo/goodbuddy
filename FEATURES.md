@@ -322,7 +322,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.3`, while the current Desktop release candidate is `0.13.12`; formal
+  `0.13.3`, while the current Desktop release candidate is `0.13.13`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -748,7 +748,9 @@ records are listed separately and do not introduce another feature status.
 - [x] **Supervisor reviews, story graphs, and activity**: Review a selected scope
   and period, inspect saved result graphs and sources, confirm or revise entities,
   and preview local knowledge entity writes. Sidebar feedback follows or pins a
-  Conversation or Task and opens its matching result. Activity combines heartbeat
+  Conversation or Task and opens its matching result. It shows target names with
+  compact pin/refresh buttons and preserves long-title readability and keyboard
+  focus in narrow sidebars. Activity combines heartbeat
   and downstream review stages, including failures and links to older results.
   Automatic stages process only new, changed, or unprocessed source portions;
   no-change checks skip model calls. Manual review reprocesses bounded history.
@@ -843,9 +845,12 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.12` and Agent `0.13.3`, with
+- The current Desktop candidate is `0.13.13`; published Agent `0.13.3` is unchanged, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.13.13` reduces repeated activity-history reads during streaming saves
+  and fixes supervision feedback sidebar controls and target names. It adds no
+  database format migration over `0.13.12` and requires no Host update.
 - Desktop `0.13.12` adds Supervisor reviews, graphs, activity, and automatic
   incremental processing, reduces streaming activity writes, and improves Mermaid,
   usage totals, conversation duration, Git, notes, and notifications. Database
@@ -857,8 +862,8 @@ records are listed separately and do not introduce another feature status.
   and lint. The full local suite is not rerun at the user's request; full main-branch
   CI, its production build, native packaging, and publication verification remain
   pending. No local production build or packaging is part of this preparation.
-  Existing Linux x64 lifecycle evidence used eight real provider requests and
-  incremental-review evidence used three; neither covers the complete native matrix.
+  Desktop `0.13.12` and Agent `0.13.3` have completed their native release jobs;
+  this does not replace development-time real-Host scenario coverage.
 - Validation records remain separate from implementation status. Current-source
   storage validation covers real local and Linux x64 Host tool workloads,
   concurrent projects/conversations, cancellation, and lossless database migration.
