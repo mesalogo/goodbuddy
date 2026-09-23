@@ -696,7 +696,9 @@ records are listed separately and do not introduce another feature status.
   without a persistent legacy-cache truncation warning; previously lost
   history is not restored. Token usage is grouped by Runtime and
   model and normalizes the different OpenAI-compatible and Anthropic Messages
-  cache-reporting semantics when showing cache hit rate. Activity is grouped
+  cache-reporting semantics when showing cache hit rate. Project and conversation
+  usage groups show collapsed totals by default and expand to Runtime/model child
+  rows; model grouping remains flat. Activity is grouped
   by conversation and collapsed by default so long histories do not fill the
   page.
 - [x] **Compact conversation tool records**: Expand individual tool records

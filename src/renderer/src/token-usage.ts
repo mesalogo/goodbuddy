@@ -17,6 +17,7 @@ export type TokenUsageGroupRow = TokenUsageTotals & {
   label: string
   model: string
   runtime: string
+  children?: TokenUsageGroupRow[]
 }
 
 type TokenUsageRecord = TokenUsageSummary['records'][number]
@@ -80,10 +81,10 @@ function groupIdentity(
       ? `project:${record.projectId}`
       : 'project:unassigned'
     return {
-      key: `${projectKey}:${runtimeModelKey}`,
+      key: projectKey,
       label: record.projectName?.trim() || '',
-      model,
-      runtime
+      model: '',
+      runtime: ''
     }
   }
 
@@ -92,10 +93,10 @@ function groupIdentity(
       ? `conversation:${record.conversationId}`
       : 'conversation:deleted'
     return {
-      key: `${conversationKey}:${runtimeModelKey}`,
+      key: conversationKey,
       label: record.conversationTitle?.trim() || '',
-      model,
-      runtime
+      model: '',
+      runtime: ''
     }
   }
 
@@ -118,9 +119,15 @@ export function groupTokenUsage(
   group: TokenUsageGroup
 ): TokenUsageGroupRow[] {
   const rows = new Map<string, TokenUsageGroupRow>()
+  const groupedRecords = new Map<string, TokenUsageRecord[]>()
 
   for (const record of tokenUsage.records) {
     const identity = groupIdentity(record, group)
+    if (group !== 'model') {
+      const records = groupedRecords.get(identity.key) ?? []
+      records.push(record)
+      groupedRecords.set(identity.key, records)
+    }
     const usage = usageNumbers(record, record.provider)
     const existing = rows.get(identity.key)
 
@@ -151,5 +158,15 @@ export function groupTokenUsage(
     })
   }
 
-  return [...rows.values()]
+  return [...rows.values()].map((row) =>
+    group === 'model'
+      ? row
+      : {
+          ...row,
+          children: groupTokenUsage(
+            { ...tokenUsage, records: groupedRecords.get(row.key)! },
+            'model'
+          )
+        }
+  )
 }

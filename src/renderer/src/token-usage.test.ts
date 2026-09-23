@@ -67,10 +67,11 @@ describe('token usage aggregation', () => {
     })
     expect(groupTokenUsage(usage, 'project')).toEqual([
       {
-        key: 'project:project-1:runtime:model:model:gpt-5',
+        key: 'project:project-1',
         label: '项目一',
-        model: 'gpt-5',
-        runtime: 'model',
+        model: '',
+        runtime: '',
+        children: groupTokenUsage(usage, 'model'),
         inputTokens: 112,
         outputTokens: 23,
         cacheReadTokens: 40,
@@ -143,7 +144,7 @@ describe('token usage aggregation', () => {
     expect(groupTokenUsage(usage, 'model')[0]?.label).toBe('')
   })
 
-  it('keeps project and conversation totals separated by model', () => {
+  it('aggregates project and conversation totals with model children', () => {
     const usage = makeTokenUsage()
     usage.records.push({
       ...usage.records[0]!,
@@ -154,8 +155,22 @@ describe('token usage aggregation', () => {
       output: 2
     })
 
-    expect(groupTokenUsage(usage, 'project')).toHaveLength(2)
-    expect(groupTokenUsage(usage, 'conversation')).toHaveLength(3)
+    const projects = groupTokenUsage(usage, 'project')
+    expect(projects).toHaveLength(1)
+    expect(projects[0]).toMatchObject({
+      inputTokens: 119,
+      outputTokens: 25,
+      cacheInputTokens: 169,
+      cacheHitRate: 80 / 169,
+      totalTokens: 144
+    })
+    expect(projects[0]?.children).toEqual(groupTokenUsage(usage, 'model'))
+    const conversations = groupTokenUsage(usage, 'conversation')
+    expect(conversations).toHaveLength(2)
+    expect(conversations[0]?.children).toHaveLength(2)
+    expect(conversations[0]?.totalTokens).toBe(129)
+    expect(conversations[1]?.children).toHaveLength(1)
+    expect(conversations[1]?.totalTokens).toBe(15)
   })
 
   it('groups identical model names by Runtime instead of provider', () => {

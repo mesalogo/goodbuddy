@@ -14786,6 +14786,43 @@ details.settings-section > :not(summary) + :not(summary) {
   text-align: left;
 }
 
+.token-usage__expand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.token-usage__expand:hover {
+  color: var(--accent);
+}
+
+.token-usage__expand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.token-usage__expand svg {
+  flex-shrink: 0;
+}
+
+.token-usage__expand[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.token-usage .token-usage__model-row th:first-child {
+  padding-left: var(--space-6);
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
 .token-usage tbody th span,
 .token-usage tbody th small {
   display: block;

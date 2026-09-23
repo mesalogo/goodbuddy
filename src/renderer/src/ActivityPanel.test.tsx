@@ -777,7 +777,7 @@ describe('ActivityPanel', () => {
     expect(within(stats).getByText('32%')).toBeInTheDocument()
 
     const projectRow = screen.getByRole('row', {
-      name: '项目甲直连模型 · gpt-5 100 20 10 40 40% 120'
+      name: '项目甲 100 20 10 40 40% 120'
     })
     expect(projectRow).toBeInTheDocument()
     expect(
@@ -808,6 +808,59 @@ describe('ActivityPanel', () => {
     expect(
       screen.getByText('直连模型 · 未知模型')
     ).toBeInTheDocument()
+  })
+
+  it('expands model children under project and conversation totals and keeps them current', () => {
+    const usage = makeTokenUsage()
+    usage.records.push({
+      ...usage.records[0]!,
+      requestId: 'request-other-model',
+      model: 'gpt-other'
+    })
+    const props = {
+      onClear: vi.fn(),
+      onOpenConversation: vi.fn(),
+      records: [],
+      tokenUsage: usage
+    }
+    const { rerender } = render(<ActivityPanel {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: '用量统计' }))
+    const project = screen.getByRole('button', { name: '项目甲' })
+    expect(project).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('直连模型 · gpt-5')).not.toBeInTheDocument()
+    expect(screen.getByRole('row', {
+      name: '项目甲 200 40 20 80 40% 240'
+    })).toBeInTheDocument()
+    fireEvent.click(project)
+    expect(project).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('直连模型 · gpt-5')).toBeInTheDocument()
+    expect(screen.getByText('直连模型 · gpt-other')).toBeInTheDocument()
+    const updated = {
+      ...usage,
+      records: [...usage.records, { ...usage.records[0]!, requestId: 'new' }]
+    }
+    rerender(<ActivityPanel {...props} tokenUsage={updated} />)
+    expect(screen.getByRole('row', {
+      name: '项目甲 300 60 30 120 40% 360'
+    })).toBeInTheDocument()
+    expect(screen.getByRole('row', {
+      name: '直连模型 · gpt-5 200 40 20 80 40% 240'
+    })).toBeInTheDocument()
+    fireEvent.click(project)
+    expect(screen.queryByText('直连模型 · gpt-5')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '按会话' }))
+    const conversation = screen.getByRole('button', { name: '会话甲' })
+    expect(conversation).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(conversation)
+    expect(screen.getByText('直连模型 · gpt-other')).toBeInTheDocument()
+    fireEvent.click(conversation)
+    expect(screen.queryByText('直连模型 · gpt-other')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '按模型' }))
+    const table = screen.getByRole('table')
+    expect(within(table).queryByRole('button')).not.toBeInTheDocument()
+    expect(within(table).getByText('直连模型 · gpt-5')).toBeInTheDocument()
   })
 
   it('shows Runtime names instead of internal provider identifiers', () => {

@@ -1,4 +1,4 @@
-import { Activity, Trash2 } from 'lucide-react'
+import { Activity, ChevronRight, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
@@ -253,6 +253,9 @@ export function ActivityPanel({
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const [tokenGroup, setTokenGroup] =
     useState<TokenUsageGroup>('project')
+  const [expandedTokenRows, setExpandedTokenRows] = useState<Set<string>>(
+    () => new Set()
+  )
   const [confirmingClear, setConfirmingClear] = useState(false)
   const [selectedTimelineRecordId, setSelectedTimelineRecordId] =
     useState<string>()
@@ -529,7 +532,7 @@ export function ActivityPanel({
   ]
   const localizeTokenRow = (
     row: (typeof tokenRows)[number]
-  ): { label: string; detail?: string } => {
+  ): { label: string } => {
     const modelLabel =
       row.model || t('tokenUsage.fallbacks.unknownModel')
     const runtimeLabel =
@@ -544,19 +547,15 @@ export function ActivityPanel({
               : row.runtime || t('tokenUsage.fallbacks.unknownRuntime')
     const label =
       tokenGroup === 'project' &&
-      row.key.startsWith('project:unassigned:')
+      row.key === 'project:unassigned'
         ? t('tokenUsage.fallbacks.unassignedProject')
         : tokenGroup === 'conversation' &&
-            row.key.startsWith('conversation:deleted:')
+            row.key === 'conversation:deleted'
           ? t('tokenUsage.fallbacks.deletedConversation')
-          : tokenGroup === 'model'
+          : !row.children
             ? `${runtimeLabel} · ${modelLabel}`
             : row.label
-    const detail =
-      tokenGroup === 'model'
-        ? undefined
-        : `${runtimeLabel} · ${modelLabel}`
-    return { label, detail }
+    return { label }
   }
   const renderRecordCard = (
     record: ActivityRecord,
@@ -1086,14 +1085,44 @@ export function ActivityPanel({
                       </td>
                     </tr>
                   ) : (
-                    tokenRows.map((row) => {
+                    tokenRows.flatMap((parent) => [
+                      { row: parent, isChild: false },
+                      ...(expandedTokenRows.has(parent.key)
+                        ? (parent.children ?? []).map((row) => ({
+                            row: { ...row, key: `${parent.key}:${row.key}` },
+                            isChild: true
+                          }))
+                        : [])
+                    ]).map(({ row, isChild }) => {
                       const localizedRow = localizeTokenRow(row)
                       return (
-                        <tr key={row.key}>
+                        <tr
+                          key={row.key}
+                          className={isChild ? 'token-usage__model-row' : undefined}
+                        >
                           <th scope="row">
-                            <span>{localizedRow.label}</span>
-                            {localizedRow.detail && (
-                              <small>{localizedRow.detail}</small>
+                            {row.children ? (
+                              <button
+                                type="button"
+                                className="token-usage__expand"
+                                aria-expanded={expandedTokenRows.has(row.key)}
+                                onClick={() =>
+                                  setExpandedTokenRows((current) => {
+                                    const next = new Set(current)
+                                    if (next.has(row.key)) {
+                                      next.delete(row.key)
+                                    } else {
+                                      next.add(row.key)
+                                    }
+                                    return next
+                                  })
+                                }
+                              >
+                                <ChevronRight aria-hidden="true" size={14} />
+                                <span>{localizedRow.label}</span>
+                              </button>
+                            ) : (
+                              <span>{localizedRow.label}</span>
                             )}
                           </th>
                           <td>
