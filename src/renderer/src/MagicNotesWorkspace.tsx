@@ -1947,10 +1947,27 @@ export function MagicNotesWorkspace({
             )}
             {detailView && (
             <button
+              id="magic-notes-index-toggle"
+              type="button"
+              className="secondary-button"
+              aria-controls="magic-notes-index"
+              aria-expanded={indexExpanded}
+              aria-label={t(indexExpanded ? 'records.hide' : 'records.show')}
+              title={t(indexExpanded ? 'records.hide' : 'records.show')}
+              onClick={() => isNarrowLayout
+                ? setNarrowIndexOpen((current) => !current)
+                : setIndexPaneOpen((current) => !current)}
+            >
+              {indexExpanded ? <PanelLeftClose aria-hidden="true" size={15} /> : <PanelLeftOpen aria-hidden="true" size={15} />}
+              {t(indexExpanded ? 'records.hide' : 'records.show')}
+            </button>
+            )}
+            {detailView && (
+            <button
               aria-controls="magic-notes-ai-pane"
               aria-expanded={aiPaneOpen}
               aria-label={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
-              className={`icon-button${aiPaneOpen ? ' icon-button--active' : ''}`}
+              className="secondary-button"
               onClick={() => setAiPaneOpen((current) => !current)}
               title={t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
               type="button"
@@ -1960,6 +1977,7 @@ export function MagicNotesWorkspace({
               ) : (
                 <PanelRightOpen aria-hidden="true" size={15} />
               )}
+              {t(aiPaneOpen ? 'actions.hideAiComments' : 'actions.showAiComments')}
             </button>
             )}
             {!detailView && (
@@ -2496,20 +2514,6 @@ export function MagicNotesWorkspace({
                 </div>
               )}
               <header className="magic-note-detail-header">
-                <button
-                  id="magic-notes-index-toggle"
-                  type="button"
-                  className="icon-button"
-                  aria-controls="magic-notes-index"
-                  aria-expanded={indexExpanded}
-                  aria-label={t(indexExpanded ? 'records.hide' : 'records.show')}
-                  title={t(indexExpanded ? 'records.hide' : 'records.show')}
-                  onClick={() => isNarrowLayout
-                    ? setNarrowIndexOpen((current) => !current)
-                    : setIndexPaneOpen((current) => !current)}
-                >
-                  {indexExpanded ? <PanelLeftClose aria-hidden="true" size={16} /> : <PanelLeftOpen aria-hidden="true" size={16} />}
-                </button>
                 <input
                   aria-describedby={
                     validation?.target === 'note-title'

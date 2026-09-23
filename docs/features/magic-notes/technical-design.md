@@ -54,8 +54,10 @@ and 320px. It shares the AI pane's pointer-capture handlers, separator styling
 and keyboard semantics (16px arrow steps, Home/End limits). Both widths are
 stored in `goodbuddy.magic-notes-layout.v1`; missing index width defaults to
 168px. Displayed widths clamp together to reserve at least 300px for the stream,
-without overwriting saved widths when the window shrinks. The index toggle stays in the detail header immediately
-before the title; collapsing hides the entire index and removes its grid column,
+without overwriting saved widths when the window shrinks. The page header places
+the index toggle immediately after the back button, followed by the AI toggle.
+All three use icons and visible localized text; pane toggle labels reflect their
+current show/hide action. Collapsing hides the entire index and removes its grid column,
 border, resize separator and occupied width. AI has a separate
 right pane with its existing resize separator and header toggle. Both panes scroll
 independently and persist independent desktop visibility. At container widths of
