@@ -81,6 +81,19 @@ describe('ConversationInputQueue', () => {
     )
   })
 
+  it.each([undefined, false, true])('shows attachment preview only for attached inputs (%s)', (hasAttachments) => {
+    render(
+      <ConversationInputQueue
+        items={[{ ...items[1]!, hasAttachments }]}
+        onError={vi.fn()}
+        onInterruptAndRun={vi.fn()}
+        onRemove={vi.fn()}
+        running={false}
+      />
+    )
+    expect(screen.queryByTitle('查看附件') !== null).toBe(hasAttachments === true)
+  })
+
   it('uses run-now wording while idle and reports action errors', async () => {
     const onError = vi.fn()
     render(

@@ -311,6 +311,7 @@ function sameConversationQueueItems(
         item.id === candidate.id &&
         item.conversationId === candidate.conversationId &&
         item.source === candidate.source &&
+        item.hasAttachments === candidate.hasAttachments &&
         item.label === candidate.label &&
         item.createdAt === candidate.createdAt &&
         item.scheduleRunId === candidate.scheduleRunId &&

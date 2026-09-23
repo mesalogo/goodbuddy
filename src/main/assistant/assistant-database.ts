@@ -782,7 +782,18 @@ function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
 function toConversationQueueItem(
   row: ConversationQueueRow
 ): ConversationQueueItem {
+  let hasAttachments = false
+  if (row.source === 'user' && row.payload_json) {
+    try {
+      const payload = JSON.parse(row.payload_json)
+      const input = payload?.input ?? payload
+      hasAttachments = Array.isArray(input?.attachments) && input.attachments.length > 0
+    } catch {
+      // Invalid queued payloads are reported when previewed or dispatched.
+    }
+  }
   return {
+    hasAttachments,
     id: row.id,
     conversationId: row.conversation_id,
     source: row.source,

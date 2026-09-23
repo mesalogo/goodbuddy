@@ -4618,6 +4618,22 @@ describe('AssistantDatabase', () => {
       }
     ])
 
+    for (const [payload, hasAttachments] of [
+      [{ prompt: 'text' }, false],
+      [{ input: { attachments: [] } }, false],
+      [{ input: { attachments: [{ id: 'attachment' }] } }, true],
+      [{ attachments: [{ id: 'attachment' }] }, true]
+    ] as const) {
+      const queued = initial.enqueueConversationUserInput({
+        conversationId,
+        label: 'Attachment visibility',
+        payloadJson: JSON.stringify(payload)
+      })
+      expect(queued.hasAttachments).toBe(hasAttachments)
+      expect(initial.listConversationQueueItems(conversationId)[0]?.hasAttachments).toBe(hasAttachments)
+      initial.cancelConversationQueueItem(queued.id)
+    }
+
     const first = initial.enqueueConversationUserInput({
       conversationId,
       label: '第一条消息',

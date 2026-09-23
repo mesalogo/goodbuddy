@@ -200,6 +200,7 @@ export type ConversationAttachment = z.infer<
 
 export const conversationQueueItemSchema = z
   .object({
+    hasAttachments: z.boolean().optional(),
     error: z.string().max(1000).optional(),
     id: assistantIdSchema,
     conversationId: assistantIdSchema,
