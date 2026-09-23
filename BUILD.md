@@ -59,6 +59,15 @@ two phases from overlapping. Existing file filters still work, for example
 use `npm test -- --project unit` or `npm test -- --project integration`. To inspect
 file selection without running tests, use `npx vitest list --filesOnly`.
 
+For activity-history persistence, run
+`npx vitest run src/main/assistant/activity-history-io.test.ts`. This checks both
+WAL growth and repeated full-history reads: consecutive saves compare against
+the last committed in-memory records, invalidated on close, data clearing or
+another SQLite connection's commit. It also checks rollback and retry. The cache
+does not change the database schema or the full-snapshot IPC contract. WAL size
+and SQL scan counts do not measure physical disk throughput or conversation
+message persistence; validate those separately when investigating live I/O.
+
 监听模式：
 
 ```bash

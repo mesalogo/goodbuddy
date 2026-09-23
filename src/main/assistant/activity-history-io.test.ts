@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { DatabaseSync } from 'node:sqlite'
-import { expect, it } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
+import { expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
 import { upgradeAssistantStorage } from './assistant-storage-upgrade'
 
@@ -43,12 +43,18 @@ it('migrates activity history and writes only changed records during streaming',
     expect(database.getActivityHistory()).toEqual({ records, legacyHistoryMayBeIncomplete: true })
     const migrated = (database as unknown as { database: DatabaseSync }).database
     migrated.exec('PRAGMA wal_checkpoint(TRUNCATE); PRAGMA wal_autocheckpoint=0')
+    const prepare = vi.spyOn(migrated, 'prepare')
     for (let index = 0; index < 10; index++) {
       records[0]!.detail += 'x'
       database.replaceActivityHistory({ records, legacyHistoryMayBeIncomplete: true })
     }
     const afterBytes = statSync(`${path}-wal`).size
-    console.log({ beforeBytes, afterBytes })
+    const historyScans = prepare.mock.calls.filter(([sql]) =>
+      /SELECT record_key, record_json FROM activity_history_records/.test(sql)
+    ).length
+    prepare.mockRestore()
+    console.log({ beforeBytes, afterBytes, historyScans })
+    expect(historyScans).toBeLessThanOrEqual(1)
     expect(afterBytes).toBeLessThan(beforeBytes / 100)
     database.replaceActivityHistory({ records, legacyHistoryMayBeIncomplete: true })
     expect(statSync(`${path}-wal`).size).toBe(afterBytes)
@@ -58,6 +64,49 @@ it('migrates activity history and writes only changed records during streaming',
     database.close()
     database.initialize(directory)
     expect(database.getActivityHistory()).toEqual({ records, legacyHistoryMayBeIncomplete: false })
+  } finally {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+it('keeps activity comparisons correct after rollback, external writes and clearing', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-save-io-'))
+  const path = join(directory, 'assistant.sqlite')
+  const database = new AssistantDatabase(path)
+  try {
+    database.initialize(directory)
+    const raw = (database as unknown as { database: DatabaseSync }).database
+    const snapshot = {
+      records: ['first', 'second'].map((id) => ({
+        id, conversationId: randomUUID(), requestId: randomUUID(),
+        scope: { kind: 'global' as const }, kind: 'tool' as const,
+        title: 'Tool', detail: 'initial', status: 'running' as const, createdAt: Date.now()
+      })),
+      legacyHistoryMayBeIncomplete: false
+    }
+    database.replaceActivityHistory(snapshot)
+    raw.exec(`CREATE TRIGGER reject_activity BEFORE UPDATE ON activity_history_records
+      WHEN json_extract(NEW.record_json, '$.id') = 'second'
+      BEGIN SELECT RAISE(ABORT, 'test failure'); END`)
+    for (const record of snapshot.records) record.detail = 'changed'
+    expect(() => database.replaceActivityHistory(snapshot)).toThrow('test failure')
+    expect(database.getActivityHistory().records.map((record) => record.detail)).toEqual(['initial', 'initial'])
+    raw.exec('DROP TRIGGER reject_activity')
+    database.replaceActivityHistory(snapshot)
+    expect(database.getActivityHistory()).toEqual(snapshot)
+
+    const external = new DatabaseSync(path)
+    try {
+      external.exec('DELETE FROM activity_history_records')
+    } finally {
+      external.close()
+    }
+    database.replaceActivityHistory(snapshot)
+    expect(database.getActivityHistory()).toEqual(snapshot)
+    database.clearAssistantData()
+    database.replaceActivityHistory(snapshot)
+    expect(database.getActivityHistory()).toEqual(snapshot)
   } finally {
     database.close()
     rmSync(directory, { recursive: true, force: true })

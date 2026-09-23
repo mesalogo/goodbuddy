@@ -1799,6 +1799,7 @@ export class AssistantDatabase {
   private static readonly executionStatsCacheTtlMs = 30_000
   private static readonly executionStatsCacheLimit = 8
   private database?: DatabaseSync
+  private activityHistoryCache?: { records: Map<string, string>; dataVersion: number }
   private executionStatsReader?: ExecutionStatsReader
   private readonly noteStorage: MagicNoteStorage
   private readonly dirtyMagicNotes = new Set<string>()
@@ -2220,6 +2221,7 @@ export class AssistantDatabase {
     this.executionStatsReader?.close()
     this.executionStatsReader = undefined
     this.executionStatsCache.clear()
+    this.activityHistoryCache = undefined
     this.database?.close()
     this.database = undefined
     this.subagentProgress = undefined
@@ -2277,6 +2279,7 @@ export class AssistantDatabase {
       throw error
     }
     this.dirtyMagicNotes.clear()
+    this.activityHistoryCache = undefined
     this.pendingMagicNoteCleanup.clear()
     this.reconcileMagicNoteFiles()
     this.options.onMagicNotesChanged?.()
@@ -4877,8 +4880,13 @@ export class AssistantDatabase {
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     try {
-      this.writeActivityHistory(database, snapshot)
+      const { data_version: dataVersion } = database.prepare('PRAGMA data_version').get() as { data_version: number }
+      const previous = this.activityHistoryCache?.dataVersion === dataVersion
+        ? this.activityHistoryCache.records : undefined
+      const records = this.writeActivityHistory(database, snapshot, undefined, previous)
       database.exec('COMMIT')
+      // Publish only committed records; a failed save must remain retryable.
+      this.activityHistoryCache = { records, dataVersion }
     } catch (error) {
       database.exec('ROLLBACK')
       throw error
@@ -4888,12 +4896,16 @@ export class AssistantDatabase {
   private writeActivityHistory(
     database: DatabaseSync,
     snapshot: ActivityHistorySnapshot,
-    onProgress?: (processed: number) => void
-  ): void {
-    const rows = database.prepare(
-      'SELECT record_key, record_json FROM activity_history_records'
-    ).all() as Array<{ record_key: string; record_json: string }>
-    const previous = new Map(rows.map((row) => [row.record_key, row.record_json]))
+    onProgress?: (processed: number) => void,
+    previous?: ReadonlyMap<string, string>
+  ): Map<string, string> {
+    if (!previous) {
+      const rows = database.prepare(
+        'SELECT record_key, record_json FROM activity_history_records'
+      ).all() as Array<{ record_key: string; record_json: string }>
+      previous = new Map(rows.map((row) => [row.record_key, row.record_json]))
+    }
+    const records = new Map<string, string>()
     const occurrences = new Map<string, number>()
     const order: string[] = []
     const upsert = database.prepare(
@@ -4909,10 +4921,12 @@ export class AssistantDatabase {
       const json = JSON.stringify(record)
       order.push(key)
       if (previous.get(key) !== json) upsert.run(key, json)
-      previous.delete(key)
+      records.set(key, json)
     }
     const remove = database.prepare('DELETE FROM activity_history_records WHERE record_key = ?')
-    for (const key of previous.keys()) remove.run(key)
+    for (const key of previous.keys()) {
+      if (!records.has(key)) remove.run(key)
+    }
     const orderJson = JSON.stringify(order)
     const incomplete = Number(snapshot.legacyHistoryMayBeIncomplete)
     database.prepare(
@@ -4921,6 +4935,7 @@ export class AssistantDatabase {
        WHERE singleton = 1
          AND (record_order_json != ? OR legacy_history_may_be_incomplete != ?)`
     ).run(orderJson, incomplete, orderJson, incomplete)
+    return records
   }
 
   createTask(input: {
