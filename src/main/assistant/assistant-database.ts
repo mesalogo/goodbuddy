@@ -118,7 +118,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 43
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 44
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -1838,7 +1838,7 @@ export class AssistantDatabase {
     const database = new DatabaseSync(this.databasePath, { timeout: 5_000 })
     try {
       database.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
-      this.migrate(database)
+      this.migrate(database, onProgress, isCancelled)
       this.database = database
       this.repairMagicNoteStorage(onProgress, isCancelled)
       if (isCancelled()) throw new DOMException('Upgrade cancelled', 'AbortError')
@@ -2254,13 +2254,14 @@ export class AssistantDatabase {
         'channel_events',
         'tasks',
         'messages',
-        'conversations'
+        'conversations',
+        'activity_history_records'
       ]) {
         database.exec(`DELETE FROM ${table}`)
       }
       database.exec(
         `UPDATE activity_history
-         SET records_json = '[]', legacy_history_may_be_incomplete = 0
+         SET record_order_json = '[]', legacy_history_may_be_incomplete = 0
          WHERE singleton = 1`
       )
       database.exec('COMMIT')
@@ -4838,20 +4839,27 @@ export class AssistantDatabase {
   }
 
   getActivityHistory(): ActivityHistorySnapshot {
-    const row = this.requireDatabase()
+    const database = this.requireDatabase()
+    const row = database
       .prepare(
-        `SELECT records_json, legacy_history_may_be_incomplete
+        `SELECT record_order_json, legacy_history_may_be_incomplete
          FROM activity_history
          WHERE singleton = 1`
       )
       .get() as
       | {
-          records_json: string
+          record_order_json: string
           legacy_history_may_be_incomplete: number
         }
       | undefined
+    const records = database.prepare(
+      `SELECT records.record_json
+       FROM json_each(?) AS ordering
+       JOIN activity_history_records AS records ON records.record_key = ordering.value
+       ORDER BY CAST(ordering.key AS INTEGER)`
+    ).all(row?.record_order_json ?? '[]') as Array<{ record_json: string }>
     return activityHistorySnapshotSchema.parse({
-      records: row ? JSON.parse(row.records_json) : [],
+      records: records.map((record) => JSON.parse(record.record_json)),
       legacyHistoryMayBeIncomplete:
         row?.legacy_history_may_be_incomplete === 1
     })
@@ -4859,16 +4867,53 @@ export class AssistantDatabase {
 
   replaceActivityHistory(input: ActivityHistorySnapshot): void {
     const snapshot = activityHistorySnapshotSchema.parse(input)
-    this.requireDatabase()
-      .prepare(
-        `UPDATE activity_history
-         SET records_json = ?, legacy_history_may_be_incomplete = ?
-         WHERE singleton = 1`
-      )
-      .run(
-        JSON.stringify(snapshot.records),
-        Number(snapshot.legacyHistoryMayBeIncomplete)
-      )
+    const database = this.requireDatabase()
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      this.writeActivityHistory(database, snapshot)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  private writeActivityHistory(
+    database: DatabaseSync,
+    snapshot: ActivityHistorySnapshot,
+    onProgress?: (processed: number) => void
+  ): void {
+    const rows = database.prepare(
+      'SELECT record_key, record_json FROM activity_history_records'
+    ).all() as Array<{ record_key: string; record_json: string }>
+    const previous = new Map(rows.map((row) => [row.record_key, row.record_json]))
+    const occurrences = new Map<string, number>()
+    const order: string[] = []
+    const upsert = database.prepare(
+      `INSERT INTO activity_history_records (record_key, record_json) VALUES (?, ?)
+       ON CONFLICT(record_key) DO UPDATE SET record_json = excluded.record_json`
+    )
+    for (const record of snapshot.records) {
+      if (order.length % 128 === 0) onProgress?.(order.length)
+      // IDs were never unique in the snapshot schema; retain every occurrence.
+      const occurrence = occurrences.get(record.id) ?? 0
+      occurrences.set(record.id, occurrence + 1)
+      const key = JSON.stringify([record.id, occurrence])
+      const json = JSON.stringify(record)
+      order.push(key)
+      if (previous.get(key) !== json) upsert.run(key, json)
+      previous.delete(key)
+    }
+    const remove = database.prepare('DELETE FROM activity_history_records WHERE record_key = ?')
+    for (const key of previous.keys()) remove.run(key)
+    const orderJson = JSON.stringify(order)
+    const incomplete = Number(snapshot.legacyHistoryMayBeIncomplete)
+    database.prepare(
+      `UPDATE activity_history
+       SET record_order_json = ?, legacy_history_may_be_incomplete = ?
+       WHERE singleton = 1
+         AND (record_order_json != ? OR legacy_history_may_be_incomplete != ?)`
+    ).run(orderJson, incomplete, orderJson, incomplete)
   }
 
   createTask(input: {
@@ -9131,7 +9176,11 @@ export class AssistantDatabase {
     }
   }
 
-  private migrate(database: DatabaseSync): void {
+  private migrate(
+    database: DatabaseSync,
+    onProgress?: (progress: AssistantStorageProgress) => void,
+    isCancelled?: () => boolean
+  ): void {
     const version = database
       .prepare('PRAGMA user_version')
       .get() as { user_version: number }
@@ -10987,6 +11036,42 @@ export class AssistantDatabase {
             .run(JSON.stringify({ entities, relations }), result.id)
         }
         database.exec('PRAGMA user_version = 43; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    }
+    if (version.user_version < 44) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const bytesBefore = onProgress && this.databasePath !== ':memory:'
+          ? statSync(this.databasePath).size
+          : 0
+        onProgress?.({ stage: 'scanning', processed: 0, total: 0, bytesBefore })
+        if (isCancelled?.()) throw new DOMException('Upgrade cancelled', 'AbortError')
+        const row = database.prepare(
+          'SELECT records_json, legacy_history_may_be_incomplete FROM activity_history WHERE singleton = 1'
+        ).get() as { records_json: string; legacy_history_may_be_incomplete: number }
+        onProgress?.({ stage: 'converting', processed: 0, total: 0, bytesBefore })
+        if (isCancelled?.()) throw new DOMException('Upgrade cancelled', 'AbortError')
+        const snapshot = activityHistorySnapshotSchema.parse({
+          records: JSON.parse(row.records_json),
+          legacyHistoryMayBeIncomplete: row.legacy_history_may_be_incomplete === 1
+        })
+        database.exec(`
+          CREATE TABLE activity_history_records (
+            record_key TEXT PRIMARY KEY NOT NULL,
+            record_json TEXT NOT NULL
+          );
+          ALTER TABLE activity_history RENAME COLUMN records_json TO record_order_json;
+        `)
+        this.writeActivityHistory(database, snapshot, onProgress || isCancelled ? (processed) => {
+          onProgress?.({ stage: 'converting', processed, total: snapshot.records.length, bytesBefore })
+          if (isCancelled?.()) throw new DOMException('Upgrade cancelled', 'AbortError')
+        } : undefined)
+        onProgress?.({ stage: 'converting', processed: snapshot.records.length, total: snapshot.records.length, bytesBefore })
+        if (isCancelled?.()) throw new DOMException('Upgrade cancelled', 'AbortError')
+        database.exec('PRAGMA user_version = 44; COMMIT;')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

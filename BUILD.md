@@ -43,6 +43,22 @@ npm run typecheck
 npm run lint
 ```
 
+Vitest runs two ordered projects from `vitest.config.ts`. The `unit` project runs
+first with up to four workers, bounded by Node's available CPU parallelism. Once
+it finishes, the `integration` project runs with one worker. The serial group
+contains all test files under `tests/` (including `*.electron.test.ts`),
+`src/main/agent/**/*runtime*.test.ts`, and
+`src/agent-daemon/private-endpoint.test.ts`. Other tests remain in the unit group.
+Both projects inherit the React plugin, jsdom environment, renderer setup, and
+existing exclusions; test-file isolation remains enabled.
+
+This preserves serialization for the process/socket tests that previously timed
+out on Linux with two workers (commit `93721d6`). `sequence.groupOrder` keeps the
+two phases from overlapping. Existing file filters still work, for example
+`npm test -- src/main/agent/opencode-runtime.test.ts`. To select a whole phase,
+use `npm test -- --project unit` or `npm test -- --project integration`. To inspect
+file selection without running tests, use `npx vitest list --filesOnly`.
+
 监听模式：
 
 ```bash

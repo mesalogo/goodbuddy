@@ -4403,6 +4403,57 @@ describe('SettingsPanel runtime files', () => {
     expect(headers).toHaveValue('{"Authorization":"replacement"}')
   })
 
+  it.each([false, true])('resolves a fresh persisted store after adding a text connection (default: %s)', async (makeDefault) => {
+    const { mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    // Load main-process code only in this integration test, outside the web TS project.
+    const storeModule = '../../main/runtime-settings-store'
+    const selectionModule = '../../main/agent/runtime-selection'
+    const { RuntimeSettingsStore } = await import(storeModule)
+    const { applyRuntimeSelection } = await import(selectionModule)
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-fresh-selection-'))
+    const cipher = {
+      isAvailable: () => false,
+      encrypt: () => { throw new Error('No credentials in this test') },
+      decrypt: () => { throw new Error('No credentials in this test') }
+    }
+    const path = join(root, 'runtime-settings.json')
+    const store = new RuntimeSettingsStore(path, cipher, {})
+    try {
+      const fresh = await store.getPublicSettings()
+      expect(fresh.opencodeModelSource).toEqual({ kind: 'default' })
+      expect(fresh.modelName).toBe('qwen3')
+      getRuntime.mockResolvedValueOnce(fresh)
+      updateRuntime.mockImplementationOnce((input) => store.update(input))
+      render(<SettingsPanel {...heartbeatSettingsProps} open
+        onClearLocalData={vi.fn(async () => {})} onClose={vi.fn()} onSaved={vi.fn()} />)
+      fireEvent.click(screen.getByRole('tab', { name: '模型连接' }))
+      await screen.findByDisplayValue('qwen3')
+      fireEvent.click(screen.getByRole('button', { name: '添加自定义' }))
+      fireEvent.change(screen.getByLabelText('模型接口 URL'), {
+        target: { value: 'http://127.0.0.1:12345/v1' }
+      })
+      fireEvent.change(screen.getByLabelText('模型'), { target: { value: 'isolated-new-model' } })
+      if (makeDefault) fireEvent.click(screen.getByRole('radio', { name: '默认连接' }))
+      fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+      await waitFor(() => expect(updateRuntime).toHaveBeenCalled())
+      await updateRuntime.mock.results[0]!.value
+      const reloaded = new RuntimeSettingsStore(path, cipher, {})
+      const selected = applyRuntimeSelection(await reloaded.getResolvedSettings(), { provider: 'opencode' })
+      expect(selected.settings.opencodeEmbedded).toBe(true)
+      expect(selected.settings.opencodeModelProfile).toMatchObject({
+        modelName: makeDefault ? 'isolated-new-model' : 'qwen3',
+        baseUrl: makeDefault ? 'http://127.0.0.1:12345/v1' : 'http://127.0.0.1:11434/v1',
+        authentication: 'none'
+      })
+      expect((await reloaded.getPublicSettings()).opencodeModelSource).toEqual({ kind: 'default' })
+    } finally {
+      cleanup()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps saved Runtime sources valid when defaulting a new text profile', async () => {
     render(
       <SettingsPanel

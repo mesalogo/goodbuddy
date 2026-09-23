@@ -1,5 +1,12 @@
+import { availableParallelism } from 'node:os'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
+
+const serialTests = [
+  ...configDefaults.include.map((pattern) => `tests/${pattern}`),
+  'src/main/agent/**/*runtime*.test.ts',
+  'src/agent-daemon/private-endpoint.test.ts'
+]
 
 export default defineConfig({
   plugins: [react()],
@@ -14,7 +21,27 @@ export default defineConfig({
       '**/build-server/**',
       '**/.git/**'
     ],
-    maxWorkers: 1,
+    maxWorkers: Math.min(4, availableParallelism()),
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          exclude: serialTests,
+          sequence: { groupOrder: 0 }
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration',
+          include: serialTests,
+          maxWorkers: 1,
+          // Keep process/socket tests separate from the parallel unit phase.
+          sequence: { groupOrder: 1 }
+        }
+      }
+    ],
     coverage: {
       reporter: ['text', 'html']
     }

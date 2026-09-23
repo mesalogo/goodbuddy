@@ -96,7 +96,10 @@ describe('subagent progress storage', () => {
     try {
       legacy.prepare('UPDATE magic_note_entries SET content_json = ? WHERE id = ?')
         .run(JSON.stringify(note.entries[0]!.content), note.entries[0]!.id)
-      legacy.exec('PRAGMA user_version = 37')
+      legacy.exec(`ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+        DROP TABLE activity_history_records;
+        ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+        PRAGMA user_version = 37`)
     } finally { legacy.close() }
     expect(hasPendingAssistantStorageUpgrade(path)).toBe(true)
     upgradeAssistantStorage(path, () => undefined)
@@ -408,6 +411,9 @@ describe('subagent progress storage', () => {
     const expected: SubagentEvent[] = []
     try {
       legacy.exec(`ALTER TABLE conversations DROP COLUMN pinned;
+        ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+        DROP TABLE activity_history_records;
+        ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
         PRAGMA user_version = ${sourceVersion}; BEGIN`)
       const insert = legacy.prepare(
         `INSERT INTO task_events(
