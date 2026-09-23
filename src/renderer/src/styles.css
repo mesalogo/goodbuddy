@@ -12479,7 +12479,7 @@ details.settings-section > :not(summary) + :not(summary) {
   top: 54px;
   right: var(--space-4);
   display: grid;
-  width: min(420px, calc(100vw - 32px));
+  width: min(360px, calc(100vw - 32px));
   max-height: calc(100vh - 70px);
   overflow-y: auto;
   gap: var(--space-2);
@@ -12489,30 +12489,20 @@ details.settings-section > :not(summary) + :not(summary) {
   display: grid;
   min-width: 0;
   align-items: center;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
   background: var(--surface-raised);
-  box-shadow: var(--shadow-dialog);
-  color: var(--text-secondary);
+  box-shadow: var(--shadow-card);
+  color: var(--text-primary);
   font-size: var(--font-body);
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--space-3);
+  line-height: 1.6;
+  grid-template-columns: 20px minmax(0, 1fr) 28px;
+  gap: var(--space-2);
 }
 
-.app-notification--success {
-  border-color: var(--success);
-  background: var(--success-subtle);
-}
-
-.app-notification--info {
-  border-color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.app-notification--error {
-  border-color: var(--danger-border);
-  background: var(--danger-subtle);
+.app-notification > svg {
+  justify-self: center;
 }
 
 .app-notification--success > svg {
@@ -12528,17 +12518,21 @@ details.settings-section > :not(summary) + :not(summary) {
 }
 
 .app-notification > div {
-  display: grid;
   min-width: 0;
-  gap: var(--space-1);
 }
 
+/* Keep the status label available to screen readers without a repeated heading. */
 .app-notification strong {
-  color: var(--text-primary);
-  font-size: var(--font-body);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .app-notification span {
+  display: block;
   overflow-wrap: anywhere;
 }
 
@@ -12547,11 +12541,14 @@ details.settings-section > :not(summary) + :not(summary) {
   width: 28px;
   height: 28px;
   flex: 0 0 28px;
+  padding: 0;
+  border: 0;
   place-items: center;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+  transition: background var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
 }
 
 .app-notification button:hover {

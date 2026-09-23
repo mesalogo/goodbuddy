@@ -450,7 +450,7 @@ function AppNotificationItem({
     }
     const timeout = window.setTimeout(() => {
       dispatch({ dismiss: notification.id });
-    }, 4_500);
+    }, 2_000);
     return () => window.clearTimeout(timeout);
   }, [dispatch, notification.id, notification.revision, notification.tone]);
 

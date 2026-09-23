@@ -65,6 +65,12 @@ app.whenReady().then(async () => {
       const before = await js('document.activeElement.className')
       await notify('success')
       assert.equal(await js('document.activeElement.className'), before, 'Notification stole focus')
+      assert(await js(`Array.from(document.querySelectorAll('.app-notification')).every(card => {
+        const center = element => { const r = element.getBoundingClientRect(); return r.top + r.height / 2 }
+        const middle = center(card)
+        return [card.querySelector(':scope > svg'), card.querySelector('span'), card.querySelector('button svg')]
+          .every(element => Math.abs(center(element) - middle) <= 1)
+      })`), 'Notification icon, text and close icon must share the vertical center')
       await screenshot(`${theme}-${width}-notification`)
       await click('.app-notification--error button')
       await click('.app-notification--success button')

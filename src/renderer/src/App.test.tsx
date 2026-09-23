@@ -10030,7 +10030,11 @@ describe("App", () => {
         "当前对话已切换到 Continue · 默认模型",
       );
 
-      act(() => vi.advanceTimersByTime(4_500));
+      act(() => vi.advanceTimersByTime(1_999));
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "当前对话已切换到 Continue · 默认模型",
+      );
+      act(() => vi.advanceTimersByTime(1));
       expect(
         screen.queryByText("当前对话已切换到 Continue · 默认模型"),
       ).not.toBeInTheDocument();
