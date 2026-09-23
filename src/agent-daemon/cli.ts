@@ -375,6 +375,15 @@ async function runDaemon(
     protocol: verified.manifest.protocol,
     stateDirectory: paths.stateDirectory,
     socketPath: paths.socketPath,
+    isSuperseded: () => {
+      const registry = dependencies.installationRegistry ?? new InstallationRegistry({
+        storagePath: resolve(dirname(dirname(dirname(paths.executablePath))), 'registry.json')
+      })
+      const snapshot = registry.snapshot()
+      return snapshot.current !== undefined &&
+        snapshot.current.installationId !== installationId &&
+        snapshot.candidate?.installationId !== installationId
+    },
     peerIdentityProvider:
       dependencies.peerIdentityProvider ??
       await createLinuxPeerIdentityProvider(),
@@ -413,7 +422,10 @@ async function runDaemon(
       'registered',
       verified
     ).recordCurrentDaemonReady(daemon.status().daemonBootId)
-    await (dependencies.waitForShutdown?.() ?? waitForShutdownSignal())
+    await Promise.race([
+      dependencies.waitForShutdown?.() ?? waitForShutdownSignal(),
+      daemon.retired
+    ])
   } finally {
     await daemon.stop()
   }
@@ -436,7 +448,8 @@ async function runAttach(
   const { verified } = await loadManagedInstallation(
     installationId,
     paths,
-    dependencies
+    dependencies,
+    true
   )
   prepareManagedSocketDirectory(paths)
   const stateDirectory = paths.stateDirectory
@@ -454,6 +467,8 @@ async function runAttach(
       connectionId = welcome.connectionId
     },
     ensureEndpoint: async () => {
+      // A displaced installation may still serve detached work, but must not restart.
+      await loadManagedInstallation(installationId, paths, dependencies)
       await createDetachedLifecycle(
         installationId,
         paths,
@@ -686,7 +701,8 @@ async function runLifecycle(
       const { verified } = await loadManagedInstallation(
         installationId,
         paths,
-        dependencies
+        dependencies,
+        true
       )
       const lifecycle = createDetachedLifecycle(
         installationId,
@@ -702,7 +718,8 @@ async function runLifecycle(
       const { verified } = await loadManagedInstallation(
         installationId,
         paths,
-        dependencies
+        dependencies,
+        true
       )
       const lifecycle = createDetachedLifecycle(
         installationId,
@@ -820,7 +837,8 @@ async function verifyManagedInstallation(
 async function loadManagedInstallation(
   installationId: string,
   paths: ManagedInstallationPaths,
-  dependencies: AgentCliDependencies
+  dependencies: AgentCliDependencies,
+  allowRetired = false
 ): Promise<{
   verified: VerifiedInstalledAgentBundle
   registry: InstallationRegistry
@@ -832,6 +850,11 @@ async function loadManagedInstallation(
     new InstallationRegistry({
       storagePath: resolve(agentRoot, 'registry.json')
     })
+  const snapshot = registry.snapshot()
+  if (allowRetired && snapshot.current?.installationId !== installationId &&
+    snapshot.candidate?.installationId !== installationId) {
+    return verifyManagedInstallation(installationId, paths, dependencies)
+  }
   const registered = registry.assertRegisteredRole(
     installationId,
     ['current', 'candidate']

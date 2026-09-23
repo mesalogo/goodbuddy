@@ -567,7 +567,7 @@ export const settingsSections = {
       enabled: 'Render HTML in conversations'
     },
     remoteProjects: {
-      title: 'Remote Projects (Technical Preview)',
+      title: 'Remote Projects',
       description:
         'Enables SSH Host management and GoodBuddy-managed remote projects.',
       enabled: 'Enable Remote Projects',

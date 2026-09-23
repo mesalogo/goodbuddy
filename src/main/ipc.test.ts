@@ -2201,7 +2201,7 @@ describe('registerIpcHandlers SSH hosts', () => {
     ).toHaveBeenCalledOnce()
   })
 
-  it('blocks disabled and unavailable preview access before remote services', async () => {
+  it('blocks disabled and unavailable remote-project access before remote services', async () => {
     const hostId = '00000000-0000-4000-8000-000000000105'
     const candidateId = '00000000-0000-4000-8000-000000000106'
     const projectId = '00000000-0000-4000-8000-000000000107'
@@ -2372,7 +2372,7 @@ describe('registerIpcHandlers SSH hosts', () => {
     for (const [channel, input] of disabledRequests) {
       await expect(
         electronMocks.handlers.get(channel)?.(event, input)
-      ).rejects.toThrow('远程项目（技术预览）未启用')
+      ).rejects.toThrow('远程项目未启用')
     }
 
     await expect(
@@ -2385,25 +2385,25 @@ describe('registerIpcHandlers SSH hosts', () => {
           defaultWorkMode: 'ask'
         }
       })
-    ).rejects.toThrow('远程项目（技术预览）未启用')
+    ).rejects.toThrow('远程项目未启用')
     await expect(
       electronMocks.handlers.get(ipcChannels.projectsSetArchived)?.(
         event,
         { projectId, archived: true }
       )
-    ).rejects.toThrow('远程项目（技术预览）未启用')
+    ).rejects.toThrow('远程项目未启用')
     await expect(
       electronMocks.handlers.get(ipcChannels.projectsDelete)?.(event, {
         projectId,
         confirmation: remoteProject.name
       })
-    ).rejects.toThrow('远程项目（技术预览）未启用')
+    ).rejects.toThrow('远程项目未启用')
     await expect(
       electronMocks.handlers.get(ipcChannels.workspaceFileRead)?.(
         event,
         { projectId, path: 'README.md' }
       )
-    ).rejects.toThrow('远程项目（技术预览）未启用')
+    ).rejects.toThrow('远程项目未启用')
 
     expect(sshHostService.getSnapshot).not.toHaveBeenCalled()
     expect(sshHostService.remove).not.toHaveBeenCalled()
@@ -2457,7 +2457,7 @@ describe('registerIpcHandlers SSH hosts', () => {
     )
     await expect(
       electronMocks.handlers.get(ipcChannels.sshHostsGet)?.(event)
-    ).rejects.toThrow('远程项目（技术预览）未启用')
+    ).rejects.toThrow('远程项目未启用')
     expect(sshHostService.getSnapshot).not.toHaveBeenCalled()
 
     await dispose()

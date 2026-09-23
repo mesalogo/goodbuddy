@@ -697,7 +697,6 @@ function assertConnectionMatches(
     connection.identity.binaryDigest !== agent.binaryDigest ||
     connection.identity.protocolMajor !== agent.protocol.major ||
     connection.status.state !== 'ready' ||
-    connection.status.draining ||
     connection.status.installationId !== agent.installationId ||
     connection.status.binaryDigest !== agent.binaryDigest ||
     connection.status.agentVersion !== agent.agentVersion ||

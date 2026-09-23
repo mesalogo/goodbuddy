@@ -2869,12 +2869,18 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
         expect(start).toHaveProperty('acpSessionId', original.acpSessionId)
         expect(resumed.promptSequence).toBe(1)
       }
-      await collect(replacement.run({ ...request, requestId: 'third' }, new AbortController().signal))
-      expect(await store.getByConversation(request.conversationId)).toMatchObject({
-        bindingId: resumed.bindingId, state: 'ready', promptSequence: resumed.promptSequence + 1
-      })
+      await collect(replacement.run({ ...request, requestId: 'third', history }, new AbortController().signal))
+      if (runtimeId === 'continue') {
+        expect(await store.getByConversation(request.conversationId)).toMatchObject({ state: 'ready', promptSequence: 0 })
+        expect(next.startOwnedPrompt.mock.calls[1]![0]).not.toHaveProperty('acpSessionId')
+        expect(JSON.stringify(next.startOwnedPrompt.mock.calls[1]![0])).toContain('previous answer')
+      } else {
+        expect(await store.getByConversation(request.conversationId)).toMatchObject({
+          bindingId: resumed.bindingId, state: 'ready', promptSequence: resumed.promptSequence + 1
+        })
+        expect(next.startOwnedPrompt.mock.calls[1]![0]).toHaveProperty('acpSessionId', resumed.acpSessionId)
+      }
       expect(next.startOwnedPrompt).toHaveBeenCalledTimes(2)
-      expect(next.startOwnedPrompt.mock.calls[1]![0]).toHaveProperty('acpSessionId', resumed.acpSessionId)
       expect(next.attachOwnedPrompt).not.toHaveBeenCalled()
     } finally {
       await replacement?.dispose()

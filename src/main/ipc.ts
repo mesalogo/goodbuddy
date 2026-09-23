@@ -1461,7 +1461,7 @@ export function registerIpcHandlers(
     } catch {
       // Keep the feature closed when its settings cannot be read.
     }
-    throw new Error('远程项目（技术预览）未启用')
+    throw new Error('远程项目未启用')
   }
   const registerHandler = (
     channel: Parameters<typeof ipcMain.handle>[0],

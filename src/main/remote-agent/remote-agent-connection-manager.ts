@@ -645,7 +645,6 @@ export class RemoteAgentConnectionManager {
     const expected = entry.installation
     if (
       status.state !== 'ready' ||
-      status.draining ||
       status.installationId !== expected.installationId ||
       status.binaryDigest !== expected.binaryDigest ||
       status.daemonBootId !== transport.welcome.daemonBootId

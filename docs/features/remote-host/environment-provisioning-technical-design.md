@@ -164,6 +164,10 @@ daemon 参与。两种 acquisition 的差别只在于如何把同一个签名 co
 5. Main 确认 adoption 后显式执行 cleanup。cleanup 失败不回滚已经健康的 Agent/Runtime，
    也不阻塞下一次更新。
 
+新安装成为 current 后，旧 Agent 排空已有任务再退出，空闲旧 Agent 直接退出；当前 Agent
+可以常驻。Runtime 回收、待答问题与旧任务重连的规则见
+[远程主机技术设计](./technical-design.md)。
+
 这不是两个并行安装管理器，也不存在把 Agent 与 Runtime payload 逐文件走 SFTP 安装的
 第二条路径。两种 acquisition 共享相同的 prepare、commit、adoption、finalize 与 cleanup。
 

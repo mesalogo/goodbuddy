@@ -1563,7 +1563,7 @@ describe('SettingsPanel runtime files', () => {
     })
 
     expect(
-      screen.getByRole('tab', { name: '远程项目（技术预览）' })
+      screen.getByRole('tab', { name: '远程项目' })
     ).toBeInTheDocument()
   })
 
@@ -2060,10 +2060,10 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目（技术预览）' })
+      screen.getByRole('tab', { name: '远程项目' })
     )
     const remoteProjectsSwitch = await screen.findByRole('switch', {
-      name: '远程项目（技术预览）'
+      name: '远程项目'
     })
     expect(remoteProjectsSwitch).not.toBeChecked()
     expect(
@@ -2178,7 +2178,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目（技术预览）' })
+      screen.getByRole('tab', { name: '远程项目' })
     )
     expect(
       await screen.findByText(
@@ -2239,7 +2239,7 @@ describe('SettingsPanel runtime files', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
     fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目（技术预览）' })
+      screen.getByRole('tab', { name: '远程项目' })
     )
 
     expect(
@@ -2332,11 +2332,11 @@ describe('SettingsPanel runtime files', () => {
       screen.queryByRole('tab', { name: '主机与远程执行' })
     ).not.toBeInTheDocument()
     fireEvent.click(
-      screen.getByRole('tab', { name: '远程项目（技术预览）' })
+      screen.getByRole('tab', { name: '远程项目' })
     )
     expect(
       await screen.findByRole('switch', {
-        name: '远程项目（技术预览）'
+        name: '远程项目'
       })
     ).toBeInTheDocument()
   })

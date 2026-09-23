@@ -48,6 +48,37 @@ afterEach(() => {
 })
 
 describe('Agent daemon lifecycle', () => {
+  it('keeps the current daemon resident and retires a superseded daemon only after detached work drains', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(PrivateEndpoint.prototype, 'listen').mockResolvedValue()
+    vi.spyOn(PrivateEndpoint.prototype, 'close').mockResolvedValue()
+    let superseded = false
+    let idle = false
+    const drain = vi.fn(async () => idle)
+    const daemon = daemonForTest({
+      isSuperseded: () => superseded,
+      runtimeProtocol: { runtimes: () => [], methods: {}, onAcpFrame: async () => {}, drain }
+    })
+    const retired = vi.fn()
+    void daemon.retired.then(retired)
+    try {
+      await daemon.start()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(drain).not.toHaveBeenCalled()
+      expect(retired).not.toHaveBeenCalled()
+      superseded = true
+      await vi.advanceTimersByTimeAsync(250)
+      expect(daemon.status().draining).toBe(true)
+      expect(retired).not.toHaveBeenCalled()
+      idle = true
+      await vi.advanceTimersByTimeAsync(250)
+      expect(retired).toHaveBeenCalledOnce()
+    } finally {
+      await daemon.stop()
+      vi.useRealTimers()
+    }
+  })
+
   it('returns the strict manifest-bound Linux daemon status', () => {
     const daemon = daemonForTest()
     const status = daemonStatusSchema.parse(daemon.status())

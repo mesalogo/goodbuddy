@@ -231,8 +231,9 @@ Agent 当前 Runtime installation + 兼容配置
   竞争读取同一 stdout。消息和 permission 按 sessionId 分派给 binding 的当前 operation。
 - `AgentAcpConnection` 统一连接级握手、stdio 解码与退出监听，Prompt
   生命周期仍留在 binding。同一 Session 串行，其他 Session 不等待它完成。
-- `closeAcpChannel`、取消和 release 只释放所属 binding/Session；最后一个 binding
-  离开后空闲 60 秒关闭进程。关闭 Session 时等待原生 `closeSession` 和原始 Prompt
+- `closeAcpChannel`、取消和 release 只释放所属 binding/Session；以活动 operation
+  判断共享进程是否空闲，最后一个任务结束即回收，不因历史 binding 保留进程。
+  待答问题仍占用活动 operation。关闭 Session 时等待原生 `closeSession` 和原始 Prompt
   结算，不等待排在 backend 控制队列后面的完成回调。只有原生控制面不响应时才有界
   终止共享进程，并向其余请求报告中断，不声称这类故障可以逐 Session 隔离。
 - terminal 与物理进程状态分开：取消/失败的 Session 也可返回

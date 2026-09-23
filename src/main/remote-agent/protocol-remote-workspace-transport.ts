@@ -356,7 +356,6 @@ function assertConnectionStatus(
   const installation = resolution.installation
   if (
     status.state !== 'ready' ||
-    status.draining ||
     status.installationId !== installation.installationId ||
     status.binaryDigest !== installation.binaryDigest ||
     status.agentVersion !== installation.agentVersion ||

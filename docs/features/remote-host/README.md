@@ -16,3 +16,6 @@
 跨会话共享 OpenCode 进程、ACP 连接与模型桥的实现设计，见
 [Runtime 进程复用技术设计](../assistant-workbar/runtime-process-reuse-technical-design.md#6-ssh-opencode-与-agent)。
 当前实现尚未发布；验收状态见[工作栏进度](../assistant-workbar/progress.md#2026-09-14-runtime-进程复用实施中)。
+
+更新退役、任务完成后 Runtime 回收和下一轮历史恢复的当前源码验证，见
+[2026-09-23 生命周期验证](./technical-design.md#生命周期验证2026-09-23)。

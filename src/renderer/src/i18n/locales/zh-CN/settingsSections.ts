@@ -538,7 +538,7 @@ export const settingsSections = {
       enabled: '在会话中渲染 HTML'
     },
     remoteProjects: {
-      title: '远程项目（技术预览）',
+      title: '远程项目',
       description: '启用 SSH Host 管理和由 GoodBuddy 托管的远程项目。',
       enabled: '启用远程项目',
       agentInventory: {

@@ -15,6 +15,8 @@ import type { RemoteRuntimeBundleManifest } from '../shared/remote-runtime-launc
 import type { ControllerLease } from './controller-registry'
 import { AgentModelGatewayError } from './agent-model-gateway'
 import { EventJournal, EventJournalCapacityError } from './event-journal'
+import { SemanticPromptStore } from './semantic-prompt-store'
+import { AgentAcpConnection } from './agent-acp-connection'
 import type { ProtocolMethodContext } from './protocol-server'
 import type {
   ModelBridgeBrokerDispatch,
@@ -183,6 +185,7 @@ class FakeProcess implements RuntimeAcpProcessOwner {
     maximumInputBytes: number
   }> = []
   completions = 0
+  onWrite?: (payload: Uint8Array) => void
   reconciliation: RuntimeAcpProcessReconciliation
   #listener?: (
     output: RuntimeAcpProcessOutput
@@ -222,6 +225,7 @@ class FakeProcess implements RuntimeAcpProcessOwner {
 
   writeStdin(payload: Uint8Array): void {
     this.writes.push(payload.slice())
+    this.onWrite?.(payload)
   }
 
   stop(input: { reason: string }): void {
@@ -288,6 +292,8 @@ function harness(input: {
   outputGate?: Promise<void>
   agentOwned?: boolean
   shareOwnedProcesses?: boolean
+  semanticStore?: SemanticPromptStore
+  configureProcess?: (process: FakeProcess) => void
   journal?: RuntimeAcpJournal
   modelGateway?: {
     dispatch: ReturnType<typeof vi.fn>
@@ -299,6 +305,7 @@ function harness(input: {
   let now = input.now ?? 1_000
   const journal = new MemoryAcpJournal()
   const process = new FakeProcess()
+  input.configureProcess?.(process)
   const outputFrames: string[] = []
   const launches: Array<{
     workMode: 'ask' | 'execute'
@@ -349,9 +356,12 @@ function harness(input: {
         workMode: launch.workMode,
         scratch: launch.scratch
       })
-      return input.uniqueProcesses && launches.length > 1
-        ? new FakeProcess(String(launches.length))
-        : process
+      if (input.uniqueProcesses && launches.length > 1) {
+        const next = new FakeProcess(String(launches.length))
+        input.configureProcess?.(next)
+        return next
+      }
+      return process
     }),
     now: () => now,
     diagnostics,
@@ -372,7 +382,7 @@ function harness(input: {
     },
     ...(semanticPrompts
       ? {
-          semanticPrompts: semanticPrompts as never,
+          semanticPrompts: (input.semanticStore ?? semanticPrompts) as never,
           modelGateway:
             (input.modelGateway ?? {
               dispatch: vi.fn(),
@@ -523,6 +533,94 @@ describe('RuntimeAcpBackend', () => {
       expect(fixture.launches).toHaveLength(1)
     } finally {
       await fixture.backend.dispose()
+    }
+  })
+
+  it.each([false, true])('reclaims completed owned processes, preserves detached peers and loads native history (shared=%s)', async shared => {
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-idle-runtime-'))
+    const transcript = new SemanticPromptStore(join(root, 'prompts.sqlite'))
+    const pending = new Map<string, () => Promise<void>>()
+    const processes: FakeProcess[] = []
+    const loaded: string[] = []
+    const setRoute = vi.spyOn(AgentAcpConnection.prototype, 'setModelRoute').mockResolvedValue()
+    let sessionSequence = 0
+    const fixture = harness({
+      agentOwned: true, shareOwnedProcesses: shared, uniqueProcesses: true, semanticStore: transcript,
+      configureProcess: process => {
+        processes.push(process)
+        process.onWrite = payload => {
+          const request = JSON.parse(Buffer.from(payload).toString())
+          if (request.id === undefined) return
+          const reply = (result: unknown) => process.emit('stdout', `${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`)
+          if (request.method === 'session/prompt') {
+            pending.set(request.params.sessionId, () => reply({ stopReason: 'end_turn' }))
+            return
+          }
+          let result: unknown = {}
+          if (request.method === 'initialize') result = { protocolVersion: 1, agentCapabilities: { loadSession: true } }
+          if (request.method === 'session/new') result = { sessionId: `native-${++sessionSequence}` }
+          if (request.method === 'session/load') loaded.push(request.params.sessionId)
+          if (request.method === 'session/set_config_option') result = {
+            configOptions: [{ id: 'model', name: 'Model', type: 'select', currentValue: request.params.value, options: [] }]
+          }
+          void reply(result)
+        }
+      }
+    })
+    const disconnect = new AbortController()
+    fixture.context.signal = disconnect.signal
+    const start = async (index: number, operationId: string, sessionId?: string) => {
+      const bindingId = `owned-${index}`
+      const channel = await invoke(fixture, 'runtime/openAcpChannel', { ...fixture.openRequest, bindingId }) as { channelEpoch: string }
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({ bindingId, channelEpoch: channel.channelEpoch,
+        operationId, requestId: operationId, promptSequence: sessionId ? 1 : 0 }))
+      return await invoke(fixture, 'runtime/startPrompt', { bindingId, operationId, requestId: operationId,
+        ...(sessionId ? { acpSessionId: sessionId } : {}), prompt: [{ type: 'text', text: 'Continue' }] }) as { sessionId: string }
+    }
+    try {
+      const first = await start(1, 'operation-1')
+      const second = await start(2, 'operation-2')
+      expect(processes).toHaveLength(shared ? 1 : 2)
+      await pending.get(first.sessionId)!()
+      await vi.waitFor(() => expect(transcript.attach('owned-1', 'operation-1', fixture.context.controller.controllerId).state).toBe('completed'))
+      expect(processes[0]!.stops).toHaveLength(shared ? 0 : 1)
+      expect(processes.at(-1)!.stops).toHaveLength(0)
+      await pending.get(second.sessionId)!()
+      await vi.waitFor(() => expect(transcript.attach('owned-2', 'operation-2', fixture.context.controller.controllerId).state).toBe('completed'))
+      expect(processes.every(process => process.stops.length === 1)).toBe(true)
+      const resumed = await start(1, 'operation-3', first.sessionId)
+      expect(loaded).toEqual([first.sessionId])
+      expect(resumed.sessionId).toBe(first.sessionId)
+      await processes.at(-1)!.emit('stdout', `${JSON.stringify({
+        jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: resumed.sessionId,
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '' },
+            _meta: { goodbuddyQuestion: {
+              endpoint: `http://127.0.0.1:12345/${'a'.repeat(43)}`,
+              question: { id: 'question-1', sessionID: resumed.sessionId,
+                questions: [{ header: 'Continue', question: 'Proceed?', options: [] }] }
+            } }
+          }
+        }
+      })}\n`)
+      await vi.waitFor(() => expect(transcript.page({
+        bindingId: 'owned-1', operationId: 'operation-3',
+        controllerId: fixture.context.controller.controllerId, afterSequence: '0', limit: 10
+      }).events.some(event => JSON.stringify(event.payload).includes('question-1'))).toBe(true))
+      disconnect.abort()
+      await expect(fixture.backend.drain()).resolves.toBe(false)
+      expect(processes.at(-1)!.stops).toHaveLength(0)
+      await pending.get(resumed.sessionId)!()
+      await vi.waitFor(() => expect(transcript.attach('owned-1', 'operation-3', fixture.context.controller.controllerId).state).toBe('completed'))
+      await expect(fixture.backend.drain()).resolves.toBe(true)
+      fixture.context.signal = new AbortController().signal
+      await expect(start(1, 'operation-4', first.sessionId)).rejects.toThrow('draining')
+      expect(transcript.attach('owned-1', 'operation-1', fixture.context.controller.controllerId).sessionId).toBe(first.sessionId)
+    } finally {
+      await fixture.backend.dispose()
+      setRoute.mockRestore()
+      transcript.close()
+      await rm(root, { recursive: true, force: true })
     }
   })
 

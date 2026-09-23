@@ -49,6 +49,7 @@ export type AgentDaemonOptions = {
   now?: () => number
   gitExecutable?: string
   workspaceRequestTimeoutMs?: number
+  isSuperseded?: () => boolean
   runtimeProtocol?: {
     runtimes: () =>
       | DaemonCapabilities['runtimes']
@@ -64,6 +65,7 @@ export type AgentDaemonOptions = {
       typeof AgentProtocolServer
     >[0]['authorizeBlobFrame']>
     dispose?: () => void | Promise<void>
+    drain?: () => Promise<boolean>
   }
   runtimeFactory?: (context: {
     events: EventJournal
@@ -118,6 +120,12 @@ export class AgentDaemon {
   #events?: EventJournal
   #workspaces?: WorkspaceRegistry
   #activeRuntimeProtocol?: AgentDaemonOptions['runtimeProtocol']
+  readonly #isSuperseded?: () => boolean
+  #draining = false
+  #activeRequests = 0
+  #retirementTimer?: NodeJS.Timeout
+  #resolveRetirement!: () => void
+  readonly retired = new Promise<void>(resolve => { this.#resolveRetirement = resolve })
 
   constructor(options: AgentDaemonOptions) {
     this.#installationId = agentIdentifierSchema.parse(options.installationId)
@@ -147,6 +155,7 @@ export class AgentDaemon {
     this.#peerIdentityProvider = options.peerIdentityProvider
     this.#gitExecutable = options.gitExecutable
     this.#workspaceRequestTimeoutMs = options.workspaceRequestTimeoutMs
+    this.#isSuperseded = options.isSuperseded
     this.#runtimeProtocol = options.runtimeProtocol
     this.#runtimeFactory = options.runtimeFactory
     if (
@@ -176,7 +185,7 @@ export class AgentDaemon {
       architecture: this.#architecture,
       supervisor: 'detached-on-demand',
       remoteUserIdentity: this.#remoteUserIdentity,
-      draining: false
+      draining: this.#draining
     })
   }
 
@@ -331,10 +340,17 @@ export class AgentDaemon {
             ...(reason === undefined ? {} : { reason })
           })
         },
-        methods: mergeProtocolMethods(
+        methods: Object.fromEntries(Object.entries(mergeProtocolMethods(
           workspaceMethods,
           this.#activeRuntimeProtocol?.methods
-        )
+        )).map(([name, handler]) => [name, async (params, context) => {
+          this.#activeRequests++
+          try {
+            return await handler(params, context)
+          } finally {
+            this.#activeRequests--
+          }
+        }]))
       })
       protocolBox.current = protocol
       this.#endpoint = new PrivateEndpoint({
@@ -364,6 +380,7 @@ export class AgentDaemon {
       })
       await this.#endpoint.listen()
       this.#state = 'ready'
+      if (this.#isSuperseded) this.#scheduleRetirementCheck()
       this.#diagnostics.tryRecord('daemon.ready', {
         daemonBootId: this.#bootId
       })
@@ -378,6 +395,7 @@ export class AgentDaemon {
   }
 
   async stop(): Promise<void> {
+    if (this.#retirementTimer) clearTimeout(this.#retirementTimer)
     if (this.#state !== 'stopped') {
       this.#diagnostics.tryRecord('daemon.stopping', {
         daemonBootId: this.#bootId
@@ -438,6 +456,26 @@ export class AgentDaemon {
         error
       )
     }
+  }
+
+  #scheduleRetirementCheck(): void {
+    this.#retirementTimer = setTimeout(() => {
+      void (async () => {
+        try {
+          this.#draining ||= this.#isSuperseded?.() === true
+          if (this.#draining &&
+            (await this.#activeRuntimeProtocol?.drain?.() ?? true) &&
+            this.#activeRequests === 0) {
+            this.#resolveRetirement()
+            return
+          }
+        } catch (error) {
+          this.#reportError('Agent retirement check failed', error)
+        }
+        if (this.#state === 'ready') this.#scheduleRetirementCheck()
+      })()
+    }, 250)
+    this.#retirementTimer.unref()
   }
 
 }

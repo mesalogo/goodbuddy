@@ -53,6 +53,7 @@ export type ProductionRuntimeProtocol = {
   onBlobFrame?: RuntimeAcpBackend['onBlobFrame']
   authorizeBlobFrame?: RuntimeAcpBackend['authorizeBlobFrame']
   dispose: () => Promise<void>
+  drain: () => Promise<boolean>
 }
 
 export type ProductionRuntimeCompositionOptions = {
@@ -348,6 +349,7 @@ export async function createProductionRuntimeProtocol(
       }
     },
     methods: backend.methods,
+    drain: () => backend.drain(),
     onAcpFrame: backend.onAcpFrame,
     ...(options.blobSink === undefined ||
     options.agentExecutablePath === undefined

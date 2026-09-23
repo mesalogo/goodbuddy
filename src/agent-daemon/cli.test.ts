@@ -252,6 +252,36 @@ describe('Agent CLI fixed command contract', () => {
     expect(bootstrap).toHaveBeenCalledTimes(2)
   })
 
+  it.each(['stop', 'retire'] as const)('can %s a verified displaced installation without promoting it', async action => {
+    const root = privateTemporaryDirectory()
+    const installationId = verifyAgentInstallationId('install-old')
+    const paths = {
+      executablePath: resolve(root, 'agent', 'goodbuddy-agent'),
+      stateDirectory: resolve(root, 'state', installationId),
+      socketPath: resolve(root, 'run', 'old.sock')
+    }
+    const installationRegistry = new InstallationRegistry({ storagePath: resolve(root, 'registry.json') })
+    const current = verifiedInstallation(paths, verifyAgentInstallationId('install-current'))
+    installationRegistry.stageCandidate(current)
+    installationRegistry.promoteCandidate('install-current')
+    const verified = verifiedInstallation(paths, installationId)
+    const verifyInstallation = vi.fn(async () => verified)
+    const terminate = vi.fn(async () => ({ state: 'absent' as const }))
+    const io = cliIo()
+    const result = await runAgentCli([action, '--installation-id', installationId], {
+      installationPaths: () => paths,
+      installationRegistry,
+      releaseKeyRegistry: { formatVersion: 1, keys: [], revocations: [] },
+      verifyInstallation,
+      createLifecycle: (() => ({ [action]: terminate })) as unknown as AgentCliDependencies['createLifecycle'],
+      io
+    })
+    expect(result, io.error.read()?.toString()).toBe(0)
+    expect(verifyInstallation).toHaveBeenCalledOnce()
+    expect(terminate).toHaveBeenCalledOnce()
+    expect(installationRegistry.snapshot().current?.installationId).toBe('install-current')
+  })
+
   it('exports only bounded diagnostics for a fixed installation ID as JSONL', async () => {
     const root = privateTemporaryDirectory()
     const stateDirectory = resolve(root, 'state', 'install-1')

@@ -286,7 +286,7 @@ describe('ProtocolRemoteWorkspaceTransport', () => {
     installationMismatch.close()
 
     const statusMismatch = createHarness({
-      connectionStatus: { draining: true }
+      connectionStatus: { state: 'offline' }
     })
     await expect(
       statusMismatch.transport.acquireLease(binding)

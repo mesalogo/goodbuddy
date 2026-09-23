@@ -1746,6 +1746,13 @@ export class AcpRemoteRuntime implements AgentRuntime {
     signal: AbortSignal
   ): Promise<SessionRecord> {
     let current = this.sessions.get(conversationId)
+    if (current?.binding.state === 'ready' && this.options.runtimeId === 'continue' &&
+      this.options.modelProfile !== undefined) {
+      // Continue keeps native history in process memory; seed the next process
+      // from the persisted conversation through the existing cold-open path.
+      await this.releaseConversation(conversationId, signal)
+      current = undefined
+    }
     if (
       current?.binding.activePromptOperationId &&
       this.options.modelProfile !== undefined &&

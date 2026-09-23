@@ -8586,11 +8586,11 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "平台功能" }));
     fireEvent.click(
       await screen.findByRole("tab", {
-        name: "远程项目（技术预览）",
+        name: "远程项目",
       }),
     );
     const remoteProjectsSwitch = await screen.findByRole("switch", {
-      name: "远程项目（技术预览）",
+      name: "远程项目",
     });
     expect(remoteProjectsSwitch).toBeChecked();
     fireEvent.click(remoteProjectsSwitch);

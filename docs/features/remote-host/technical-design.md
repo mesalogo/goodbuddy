@@ -49,8 +49,8 @@ Agent `0.11.23` 提供，显式请求期限与取消仍有效。当前问答源�
 
 ## 产品语义
 
-远程 Host 与项目能力是默认关闭的技术预览。用户在“设置 > 平台功能”的独立
-“远程项目（技术预览）”页签启用开关后，Renderer 才显示 SSH Host 管理、托管 SSH 项目创建和已保存
+远程 Host 与项目能力默认关闭。用户在“设置 > 平台功能”的独立
+“远程项目”页签启用开关后，Renderer 才显示 SSH Host 管理、托管 SSH 项目创建和已保存
 远程项目；Main 在 IPC 边界执行同一开关校验，避免隐藏界面被绕过。关闭开关不删除 Host、
 项目或凭据；当前远程项目切回第一个普通本地项目。应用启动仍固定
 选择普通本地项目，不会因为保存了远程项目而自动连接 Host。
@@ -185,7 +185,15 @@ Detached GoodBuddy Agent
   解析新的 current registry 并建立当前连接，无需刷新项目记录；当前环境无效时要求用户
   显式修复，但不在项目切换中下载或安装。失败或取消保留 Host 配置、凭据、项目、
   Workspace 和旧组件。
-- 显式 stop、升级、身份冲突或进程退出时清理 GoodBuddy 自己的 socket、状态和子进程；不得删除或覆盖无关 Host 文件。
+- 当前 Agent 可以常驻。新安装提升为 current 后，旧 Agent 每 250 ms 检查 registry 并进入
+  draining，不再接受新 Prompt；无活动任务时退出，有任务时等待完成。已连接 Desktop 的
+  终态 transcript ACK 也计入排空条件；断线任务完成后不等待离线 Desktop。待答问题仍是
+  活动任务。旧安装退出前可以重新 Attach 原任务，但不得重新 bootstrap 已退役安装。
+- Prompt 完成后释放空闲 Runtime；共享进程仍有其他活动任务时保留，最后一个任务完成后
+  关闭并核对进程树为空。保留语义 transcript 与会话标识；下一轮重建 Runtime，OpenCode
+  加载原生 session，Continue 通过已有冷启动路径从持久对话历史初始化。
+- 显式 stop/retire 可校验并停止已被 registry 替换的旧安装。退出只清理 GoodBuddy 自己的
+  socket、状态和子进程，不删除会话历史，不删除或覆盖无关 Host 文件。
 
 ### Host 级环境生命周期
 
@@ -871,6 +879,35 @@ goodbuddy-agent diagnostics --installation-id <installationId>
 - 同期全量 `npm test` 为 4,844 通过、67 跳过、11 失败；失败来自并行修改中的五个
   Renderer 帮助提示/焦点测试套件。更新后的五个套件连同更新设置大小展示回归共 64 项
   定向复跑全部通过；未把这次复跑记为又一轮全量通过。
+
+## 生命周期验证（2026-09-23）
+
+通过已有 `lifecycle-host` harness 重建当前源码的 Agent、daemon 和桌面驱动，使用已保存
+凭据与固定 Host Key 经 LAN 连接共享 Linux x64 Host。运行文件均位于独立
+`/root/tmp/gb-lifecycle-*` 目录，Runtime 使用 Host 已安装的 OpenCode。两次 Ask/Execute
+运行合计 8 次真实 Provider 请求，另一次空闲更新验证没有模型请求。
+
+- Ask 完成后测试所属子进程为 0；下一轮重建 Runtime、加载同一原生 session，并准确回忆
+  上轮标记。第二轮完成后子进程再次为 0。
+- Execute 启动等待 8 秒后写文件的工具任务，Desktop 断开，再把新安装提升为 current。
+  旧 daemon 进入 draining，活动进程仍在；重连并恢复原 operation 后正常收尾，旧 daemon
+  退出，测试所属子进程为 0。
+- 空闲更新中，旧 daemon 在提升后 3 秒断言窗口内退出，新 current daemon 仍为 ready。
+  各次运行清理时所属子进程均为 0，未修改共享安装 registry。
+
+8 个定向套件共 213 项通过，覆盖 CLI 退役安装 stop/retire、daemon 常驻与排空、共享及
+独占 Runtime 回收、待答问题仍属活动任务、断线恢复、原生历史加载和 Desktop 冷启动。
+远程 UI/IPC 定向复跑 28 项通过，SettingsPanel 完整套件通过；IPC/App 扩展运行共
+517 项通过、4 项失败，失败位于并行修改中的
+心跳、设置读取次数和监督者导航断言。全量 `npm test` 运行到 600 秒工具时限仍无最终汇总，
+期间报告数据库迁移、监督者和导航测试失败，不能记为全量通过。`npm run lint` 通过。
+类型检查早期通过，最终复跑被并行新增的 `tests/incremental-review-live.electron.test.ts:23`
+中环境变量对象类型错误阻塞。
+
+本次实机覆盖当前源码的 daemon、registry 提升、托管 ACP、真实 Runtime 与模型请求。
+未重复完整签名包安装和 UI 更新点击，也未在实机重跑 Continue 或问题答复；这些场景
+不能以本次 OpenCode 结果替代。历史发布说明中的技术预览记录保留，当前远程项目设置与
+说明文档已去除该标签；Linux 桌面控制等其他预览功能不受影响。
 
 ## 发布前完整回归（不能替代开发验证）
 

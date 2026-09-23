@@ -266,8 +266,8 @@ records are listed separately and do not introduce another feature status.
   first; invalid paths fail at actual launch. On managed Linux ARM Hosts,
   Runtime activation reuses the registry and manifest verified during setup
   instead of rehashing or rechecking the complete OpenCode binary.
-- [x] **Managed SSH OpenCode and Continue (technical preview)**: Controlled by the
-  separate Remote Projects (Technical Preview) tab under Settings / Platform
+- [x] **Managed SSH OpenCode and Continue**: Controlled by the
+  separate Remote Projects tab under Settings / Platform
   Features and disabled by default. Disabling it does not affect local
   projects, ordinary desktop capabilities, or desktop releases. When enabled,
   users can manage SSH Hosts with pinned Host Keys, browse bounded remote
@@ -279,6 +279,10 @@ records are listed separately and do not introduce another feature status.
   provider/tool rounds, Runtime processes, a stable model ledger, and a bounded
   semantic transcript over a private Unix socket and ACP v5. Work continues on
   the Host after Desktop exit, network loss, or local-process termination.
+  The current Agent may remain resident; a superseded Agent drains active work
+  before exiting. Idle Runtime processes are reclaimed after tasks finish,
+  while shared processes retain other active tasks, including pending questions.
+  Subsequent turns recreate the Runtime and restore conversation history.
   Reconnection attaches only to the original controller, binding, and
   operation, then atomically merges provenance into the original conversation
   without resending the Prompt. Model profiles and API keys enter Agent memory
