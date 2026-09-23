@@ -107,3 +107,31 @@ Follow-up validation: the seven selected IPC/UI regression cases and all seven
 OpenCode isolation cases passed locally. Type checks and lint passed. Full
 remote CI and the production build still require a new approved commit; these
 focused results do not satisfy that release gate.
+
+## Linux Executable Path Follow-up
+
+On 2026-09-23, local `main` was fast-forwarded from `163e245` to
+`073aa45a30efe99fab7a92f8aee2a36087db9c2a` after inspecting the four intervening
+commits. They update only the community QR codes in the two README files.
+The user authorized retaining these changes, fixing CI, pushing both remotes,
+and publishing Desktop `v0.13.12` and Agent `agent-v0.13.3` after successful
+candidate CI without another approval round. No LoongArch preview is requested.
+
+[Desktop CI 35854792610](https://github.com/mesalogo/goodbuddy/actions/runs/35854792610)
+reported 5,004 passing tests, three failures, and 43 skipped tests. All three
+failures were in the real OpenCode isolation test. It constructed
+`opencode-ai/bin/opencode` on Linux, but OpenCode 1.18.29 installs its npm
+executable as `bin/opencode.exe` on every platform. The test now reuses
+`resolveBundledRuntimePaths`, the existing production resolver, instead of
+constructing a platform-specific filename. Production Runtime code and both
+release-note files are unchanged.
+
+Local follow-up validation passed all nine tests in
+`opencode-selection-isolation.test.ts` and `bundled-runtimes.test.ts`, including
+the existing Linux development-path assertion, plus full type checks and lint.
+Release-note and package/lockfile version validation passed. The isolation
+tests made two requests to their local mock endpoint and zero real model
+requests. No full local suite, production build, package, or real-Host check
+was run for this test-only fix; it changes neither deployed Agent code nor
+the Desktop-to-Agent production path. Successful Linux main-branch CI and
+its production build remain required before tagging.

@@ -10,6 +10,7 @@ import { runtimeSettingsInputSchema } from '../../shared/contracts'
 import { RuntimeSettingsStore } from '../runtime-settings-store'
 import { applyRuntimeSelection } from './runtime-selection'
 import { OpenCodeRuntime } from './opencode-runtime'
+import { resolveBundledRuntimePaths } from './bundled-runtimes'
 
 const cipher = {
   isAvailable: () => false,
@@ -103,8 +104,9 @@ describe('OpenCode isolated configuration paths', () => {
       }))
       let launchEnvironment: NodeJS.ProcessEnv = {}
       let serverUrl = ''
-      const binaryPath = join(process.cwd(), 'node_modules', 'opencode-ai', 'bin',
-        process.platform === 'win32' ? 'opencode.exe' : 'opencode')
+      const binaryPath = resolveBundledRuntimePaths({
+        appPath: process.cwd(), resourcesPath: process.cwd(), packaged: false
+      }).opencode
       const runtime = new OpenCodeRuntime({
         embedded: true, binaryPath, defaultWorkspace: root,
         configPath: source === 'native-empty' ? '' : configPath,
