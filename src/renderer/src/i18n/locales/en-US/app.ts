@@ -787,6 +787,9 @@ export const app = {
     mermaidResetZoom: 'Reset zoom',
     mermaidZoomLevel: 'Current zoom level',
     mermaidCloseViewer: 'Close large Mermaid diagram',
+    mermaidExportPng: 'Export PNG',
+    mermaidExporting: 'Exporting PNG…',
+    mermaidExportError: 'Export failed. Click Export PNG to retry.',
     htmlPreview: 'HTML preview',
     htmlPreviewNotice:
       'Static safe preview with scripts and network access disabled',

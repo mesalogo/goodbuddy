@@ -464,6 +464,42 @@ flowchart LR
     ).toBe(false)
   })
 
+  it('releases SVG URLs after a failed PNG export and allows retry', async () => {
+    const createObjectURL = vi.fn(() => 'blob:mermaid-export')
+    const revokeObjectURL = vi.fn()
+    let rejectDecode: (reason: Error) => void = () => undefined
+    const decode = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      rejectDecode = reject
+    }))
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = createObjectURL
+      static revokeObjectURL = revokeObjectURL
+    })
+    vi.stubGlobal('Image', class {
+      src = ''
+      decode = decode
+    })
+    try {
+      render(<MarkdownRenderer>{'```mermaid\nflowchart LR\nA --> B\n```'}</MarkdownRenderer>)
+      fireEvent.click(await screen.findByRole('button', { name: '打开大图' }))
+      const button = screen.getByRole('button', { name: '导出 PNG' })
+      fireEvent.click(button)
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('aria-busy', 'true')
+      await act(async () => rejectDecode(new Error('Decode failed')))
+      expect(button).toBeEnabled()
+      expect(button).toHaveAccessibleDescription('导出失败，请点击“导出 PNG”重试。')
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:mermaid-export')
+      fireEvent.click(button)
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(decode).toHaveBeenCalledTimes(2)
+      await act(async () => rejectDecode(new Error('Decode failed again')))
+      expect(revokeObjectURL).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('closes Mermaid controls when streamed source changes', async () => {
     const { rerender } = render(
       <MarkdownRenderer>{`\`\`\`mermaid

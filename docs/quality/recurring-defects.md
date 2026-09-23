@@ -20,7 +20,7 @@
 [UI 设计系统](../../UI-DESIGN.md)。
 
 **防复发**：`WorkspacePrimitives.test.tsx` 的
-"releases the native drag region for every full-window overlay" 从 `styles.css` 自动发现
+"releases the native drag region for every full-window overlay" 从 Renderer 顶层全部 CSS 文件自动发现
 全部 `position: fixed` 遮罩并逐个校验，新增遗漏会直接失败。
 
 **历史**：`e9679fe`、`ca4a58c` 各修了一部分被人工点到的弹窗，同一批改动又新增了两个未覆盖

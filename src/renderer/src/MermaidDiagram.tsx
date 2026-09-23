@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify'
 import {
   Code2,
+  Download,
   Maximize2,
   RotateCcw,
   X,
@@ -247,6 +248,55 @@ function clampViewerZoom(zoom: number): number {
   return Math.min(MAX_VIEWER_ZOOM, Math.max(MIN_VIEWER_ZOOM, zoom))
 }
 
+async function downloadMermaidPng(svg: string, surface: HTMLElement): Promise<void> {
+  const root = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement
+  const width = Number.parseFloat(root.getAttribute('width') ?? '')
+  const height = Number.parseFloat(root.getAttribute('height') ?? '')
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error('Invalid diagram dimensions')
+  }
+  const styles = getComputedStyle(surface)
+  root.style.color = styles.color
+  const sourceUrl = URL.createObjectURL(new Blob(
+    [new XMLSerializer().serializeToString(root)],
+    { type: 'image/svg+xml;charset=utf-8' }
+  ))
+  try {
+    const image = new Image()
+    image.src = sourceUrl
+    await image.decode()
+    const padding = 16
+    const scale = Math.min(2, MAX_MERMAID_DIMENSION / (width + padding * 2),
+      MAX_MERMAID_DIMENSION / (height + padding * 2))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil((width + padding * 2) * scale)
+    canvas.height = Math.ceil((height + padding * 2) * scale)
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas is unavailable')
+    context.fillStyle = styles.backgroundColor
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.scale(scale, scale)
+    context.drawImage(image, padding, padding, width, height)
+    const png = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('PNG encoding failed')), 'image/png')
+    })
+    const downloadUrl = URL.createObjectURL(png)
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = 'mermaid-diagram.png'
+    document.body.append(link)
+    try {
+      link.click()
+    } finally {
+      link.remove()
+      // Keep the URL alive until Chromium has started the download.
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1_000)
+    }
+  } finally {
+    URL.revokeObjectURL(sourceUrl)
+  }
+}
+
 function MermaidViewer({
   onClose,
   svg
@@ -254,7 +304,9 @@ function MermaidViewer({
   const { i18n, t } = useTranslation('app')
   const titleId = useId()
   const hintId = useId()
+  const exportErrorId = useId()
   const dialogRef = useRef<HTMLElement>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const dragRef = useRef<{
     pointerId: number
@@ -265,6 +317,8 @@ function MermaidViewer({
   } | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
   const [zoom, setZoom] = useState(1)
+  const [exporting, setExporting] = useState(false)
+  const [exportFailed, setExportFailed] = useState(false)
   const pendingWheelZoomRef = useRef(0)
   const zoomFrameRef = useRef<number | undefined>(undefined)
   const percentFormatter = useMemo(
@@ -388,6 +442,29 @@ function MermaidViewer({
               <RotateCcw aria-hidden="true" size={16} />
             </button>
             <button
+              aria-label={t('markdown.mermaidExportPng')}
+              aria-busy={exporting}
+              aria-describedby={exportFailed ? exportErrorId : undefined}
+              className="icon-button"
+              disabled={exporting}
+              onClick={async () => {
+                if (!canvasRef.current || exporting) return
+                setExporting(true)
+                setExportFailed(false)
+                try {
+                  await downloadMermaidPng(svg, canvasRef.current)
+                } catch {
+                  setExportFailed(true)
+                } finally {
+                  setExporting(false)
+                }
+              }}
+              title={t(exporting ? 'markdown.mermaidExporting' : 'markdown.mermaidExportPng')}
+              type="button"
+            >
+              <Download aria-hidden="true" size={17} />
+            </button>
+            <button
               aria-label={t('markdown.mermaidCloseViewer')}
               className="icon-button"
               onClick={onClose}
@@ -398,6 +475,11 @@ function MermaidViewer({
               <X aria-hidden="true" size={18} />
             </button>
           </div>
+          {exportFailed && (
+            <small className="mermaid-viewer__export-error" id={exportErrorId} role="alert">
+              {t('markdown.mermaidExportError')}
+            </small>
+          )}
         </header>
         <div
           aria-label={t('markdown.mermaidViewerCanvas')}
@@ -444,6 +526,7 @@ function MermaidViewer({
             )
           }}
           role="region"
+          ref={canvasRef}
           tabIndex={0}
         >
           <div

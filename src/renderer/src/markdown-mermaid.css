@@ -84,18 +84,19 @@
 
 .mermaid-viewer-backdrop {
   position: fixed;
-  z-index: 120;
+  z-index: var(--z-dialog);
   display: grid;
   padding: var(--space-4);
   background: var(--overlay-backdrop);
-  inset: 38px 0 0;
+  inset: 0;
   place-items: center;
 }
 
 .mermaid-viewer {
   display: grid;
   width: min(1280px, 100%);
-  height: min(860px, calc(100vh - 70px));
+  height: min(860px, 100%);
+  min-width: 0;
   min-height: 0;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
@@ -108,6 +109,7 @@
   display: flex;
   min-width: 0;
   align-items: center;
+  flex-wrap: wrap;
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   justify-content: space-between;
@@ -147,7 +149,7 @@
 }
 
 .mermaid-viewer__canvas {
-  display: grid;
+  display: flex;
   min-width: 0;
   min-height: 0;
   padding: var(--space-6);
@@ -155,8 +157,8 @@
   background: var(--surface-subtle);
   cursor: grab;
   overscroll-behavior: contain;
-  place-items: center;
   touch-action: none;
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
 }
 
 .mermaid-viewer__canvas--dragging {
@@ -171,10 +173,17 @@
 
 .mermaid-viewer__diagram {
   display: grid;
+  flex: 0 0 auto;
+  margin: auto;
   min-width: max-content;
   min-height: max-content;
   transform-origin: center;
   place-items: center;
+}
+
+.mermaid-viewer__header .mermaid-viewer__export-error {
+  flex-basis: 100%;
+  color: var(--danger-strong);
 }
 
 .mermaid-viewer__diagram > svg {
@@ -187,10 +196,6 @@
 @media (max-width: 720px) {
   .mermaid-viewer-backdrop {
     padding: var(--space-2);
-  }
-
-  .mermaid-viewer {
-    height: calc(100vh - 54px);
   }
 
   .mermaid-viewer__header {

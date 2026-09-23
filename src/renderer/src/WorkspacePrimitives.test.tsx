@@ -6,7 +6,7 @@ import {
   render,
   screen
 } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -164,7 +164,10 @@ describe('WorkspacePrimitives', () => {
     // region, otherwise the native titlebar keeps the pointer and its controls
     // stop responding to hover and clicks.
     const overlays = [
-      ...stylesheet.matchAll(
+      ...readdirSync(join(process.cwd(), 'src', 'renderer', 'src'))
+        .filter((name) => name.endsWith('.css'))
+        .map((name) => readFileSync(join(process.cwd(), 'src', 'renderer', 'src', name), 'utf8'))
+        .join('\n').matchAll(
         /^(\.[\w-]*(?:backdrop|modal))\s*\{([^}]*)\}/gmu
       )
     ].filter(([, , body]) => /position:\s*fixed/u.test(body!))

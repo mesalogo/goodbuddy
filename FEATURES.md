@@ -106,6 +106,8 @@ records are listed separately and do not introduce another feature status.
   stash or discard. Managed SSH operations require Agent `0.11.23`.
 - [x] **Rich responses**: Supports GitHub Flavored Markdown, LaTeX math,
   constrained Mermaid diagrams, and static in-conversation HTML previews.
+  Mermaid's large-diagram viewer keeps all edges reachable when zoomed and
+  exports the complete diagram as PNG, independently of zoom and pan.
   Complete HTML and HTML code blocks can be previewed in place after an Agent
   reply finishes, with icon actions to reveal the source or open a full-screen
   preview. The feature is on by default and can be disabled under Platform
