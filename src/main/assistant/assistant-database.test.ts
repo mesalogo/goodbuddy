@@ -168,7 +168,11 @@ it('migrates schema 35 conversations to unpinned while retaining existing data a
   const original = database.getConversation(header.id)
   database.close()
   const legacy = new DatabaseSync(path)
-  legacy.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 35;')
+  legacy.exec(`ALTER TABLE conversations DROP COLUMN pinned;
+    ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+    DROP TABLE activity_history_records;
+    ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+    PRAGMA user_version = 35;`)
   legacy.close()
   try {
     database.initialize('C:\\Workspace')
@@ -311,6 +315,8 @@ it('preserves existing supervision data when upgrading schema 41 and reopening',
     ALTER TABLE supervision_entity_changes DROP COLUMN source_reference_ids_json;
     ALTER TABLE supervision_relations DROP COLUMN source_reference_ids_json;
     ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+    DROP TABLE activity_history_records;
+    ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
     PRAGMA user_version = 41;`)
   legacy.close()
   try {
@@ -1068,6 +1074,9 @@ describe('AssistantDatabase', () => {
       DROP TABLE model_usage_calls;
       ALTER TABLE projects DROP COLUMN runtime_selection_json;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 3;
     `)
     oldDatabase.close()
@@ -1225,6 +1234,9 @@ describe('AssistantDatabase', () => {
     legacy.exec(`
       DROP TABLE project_execution_spaces;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 26;
     `)
     legacy.close()
@@ -1335,6 +1347,9 @@ describe('AssistantDatabase', () => {
         runtime_bundle_digest TEXT NOT NULL
       );
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1407,6 +1422,9 @@ describe('AssistantDatabase', () => {
         (project_id, runtime_bundle_digest)
       VALUES ('${project.id}', 'sha256:${'d'.repeat(64)}');
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 30;
     `)
     legacy.close()
@@ -1498,6 +1516,9 @@ describe('AssistantDatabase', () => {
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1539,6 +1560,9 @@ describe('AssistantDatabase', () => {
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1581,6 +1605,9 @@ describe('AssistantDatabase', () => {
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1619,6 +1646,9 @@ describe('AssistantDatabase', () => {
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1646,6 +1676,9 @@ describe('AssistantDatabase', () => {
       DROP INDEX projects_built_in_default_unique;
       ALTER TABLE projects DROP COLUMN built_in_default;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 24;
     `)
     legacy.close()
@@ -1670,6 +1703,9 @@ describe('AssistantDatabase', () => {
     versionFive.exec(`
       DROP TABLE computer_control_actions;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 5;
     `)
     versionFive.close()
@@ -1791,6 +1827,9 @@ describe('AssistantDatabase', () => {
     raw.exec(`
       DROP INDEX IF EXISTS idx_tasks_schedule;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 21;
       COMMIT;
     `)
@@ -1881,6 +1920,9 @@ describe('AssistantDatabase', () => {
     legacy.exec(`
       DELETE FROM magic_todos;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 9;
     `)
     legacy.close()
@@ -1932,7 +1974,11 @@ describe('AssistantDatabase', () => {
         now,
         now
       )
-    legacy.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 16')
+    legacy.exec(`ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      PRAGMA user_version = 16`)
     legacy.close()
 
     const migrated = new AssistantDatabase(databasePath)
@@ -2877,7 +2923,11 @@ describe('AssistantDatabase', () => {
          WHERE id = ?`
       )
       .run(entry.id)
-    legacy.exec('ALTER TABLE conversations DROP COLUMN pinned; PRAGMA user_version = 23')
+    legacy.exec(`ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      PRAGMA user_version = 23`)
     legacy.close()
 
     const migrated = new AssistantDatabase(databasePath)
@@ -3013,6 +3063,9 @@ describe('AssistantDatabase', () => {
       INSERT INTO channel_events(channel, event_id, claimed_at)
         VALUES ('weixin', 'legacy-event', 1);
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 18;
     `)
     legacy.close()
@@ -3520,6 +3573,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE task_events DROP COLUMN remote_operation_id;
       ALTER TABLE task_events DROP COLUMN remote_binding_id;
       ALTER TABLE conversations DROP COLUMN pinned;
+      ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       PRAGMA user_version = 31;
     `)
     legacy.close()

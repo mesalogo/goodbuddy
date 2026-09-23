@@ -218,7 +218,10 @@ describe('Magic note SQLite and filesystem storage', () => {
       const entry = note.entries[0]!
       sql.prepare('UPDATE magic_note_entries SET content_json = ? WHERE id = ?').run(JSON.stringify(entry.content), entry.id)
     }
-    sql.exec('PRAGMA user_version = 37')
+    sql.exec(`ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      PRAGMA user_version = 37`)
     rmSync(join(directory, 'notes'), { recursive: true })
     const progress: number[] = []
     upgradeAssistantStorage(path, (value) => progress.push(value.processed))

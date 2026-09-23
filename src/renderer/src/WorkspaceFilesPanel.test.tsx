@@ -69,7 +69,7 @@ describe('WorkspaceFilesPanel', () => {
     expect(screen.queryByRole('navigation', { name: '路径' })).not.toBeInTheDocument()
   })
 
-  it('styles branch search as a shared field and preserves filtering, switching and creation', async () => {
+  it('floats branch search outside the workspace and preserves filtering, switching and creation', async () => {
     let current = 'main'
     const manage = vi.fn(async (_project: string, action: WorkspaceManagementAction): Promise<WorkspaceManagementResult> => {
       if (action.kind === 'switchBranch' || action.kind === 'createBranch') {
@@ -90,6 +90,10 @@ describe('WorkspaceFilesPanel', () => {
     const trigger = await screen.findByRole('button', { name: 'main' })
     fireEvent.click(trigger)
     const search = screen.getByRole('textbox', { name: '搜索本地或远程分支 / 新分支名称' })
+    const panel = screen.getByRole('dialog', { name: '分支' })
+    expect(panel.closest('.workspace-git')).toBeNull()
+    expect(panel.closest('.floating-portal')).not.toBeNull()
+    expect(trigger).toHaveAttribute('aria-controls', panel.id)
     expect(search.closest('label')).toHaveClass('field')
     expect(search.previousElementSibling?.tagName).toBe('SPAN')
     expect(search).toHaveFocus()
@@ -110,6 +114,9 @@ describe('WorkspaceFilesPanel', () => {
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' })
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('dialog', { name: '分支' })).not.toBeInTheDocument()
     expect(manage.mock.calls.some(([, action]) => action.kind === 'fetch')).toBe(false)
   })
 
@@ -205,6 +212,7 @@ describe('WorkspaceFilesPanel', () => {
     expect(css).toMatch(/\.workspace-git__branch-trigger\s*\{[^}]*width: auto;[^}]*height: 32px;[^}]*flex: 0 1 auto;[^}]*text-align: left/)
     expect(css).toMatch(/\.workspace-files__header\s*\{[^}]*justify-content: space-between/)
     expect(css).toMatch(/\.workspace-git__branches\s*\{[^}]*width: min\(100%, 360px\);[^}]*border-radius: var\(--radius-control\)/)
+    expect(css).toMatch(/\.workspace-git__branches\s*\{[^}]*position: fixed;[^}]*max-height: calc\(100vh - 32px\);[^}]*overflow: auto/)
     expect(css).toMatch(/\.workspace-git__branch-list\s*\{[^}]*max-height: 240px;[^}]*overflow: auto/)
     expect(css).toMatch(/\.workspace-git__create-branch\s*\{[^}]*justify-self: start/)
   })

@@ -1,7 +1,8 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronLeft, ChevronRight, Download, FileText, GitBranch } from 'lucide-react'
 import type { WorkspaceManagementAction, WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
+import { FloatingPortal } from './FloatingPortal'
 
 type Result<K extends WorkspaceManagementResult['kind']> = Extract<WorkspaceManagementResult, { kind: K }>
 
@@ -27,6 +28,8 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
   const returnTrigger = useRef<HTMLElement | null>(null)
   const fileTrigger = useRef<HTMLElement | null>(null)
   const branchTrigger = useRef<HTMLButtonElement>(null)
+  const branchPanel = useRef<HTMLDivElement>(null)
+  const branchPanelId = useId()
   const diffBack = useRef<HTMLButtonElement>(null)
   const commitBack = useRef<HTMLButtonElement>(null)
   const action = (value: WorkspaceManagementAction): Promise<WorkspaceManagementResult> => window.goodbuddy.workspace.manage(projectId, value)
@@ -43,6 +46,53 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
     return () => { branchCounter.current++ }
   }, [projectId, refreshToken])
   useEffect(() => { if (path) diffBack.current?.focus(); else if (commit) commitBack.current?.focus() }, [path, commit])
+  const positionBranches = useEffectEvent(() => {
+    const panel = branchPanel.current
+    const anchor = branchTrigger.current
+    if (!panel || !anchor) return
+    const viewport = window.visualViewport
+    const left = viewport?.offsetLeft ?? 0
+    const top = viewport?.offsetTop ?? 0
+    const width = viewport?.width ?? window.innerWidth
+    const height = viewport?.height ?? window.innerHeight
+    const rect = anchor.getBoundingClientRect()
+    const panelWidth = Math.max(0, Math.min(360, width - 32))
+    panel.style.width = `${panelWidth}px`
+    panel.style.maxHeight = `${Math.max(0, height - 32)}px`
+    const panelHeight = panel.getBoundingClientRect().height
+    const below = rect.bottom + 8
+    const y = below + panelHeight <= top + height - 16 ? below : rect.top - 8 - panelHeight
+    panel.style.left = `${Math.max(left + 16, Math.min(rect.left, left + width - panelWidth - 16))}px`
+    panel.style.top = `${Math.max(top + 16, Math.min(y, top + height - panelHeight - 16))}px`
+  })
+  useLayoutEffect(() => { if (branchOpen) positionBranches() })
+  useEffect(() => {
+    if (!branchOpen) return
+    branchPanel.current?.querySelector('input')?.focus({ preventScroll: true })
+    const outside = (event: Event): void => {
+      if (event.target instanceof Node && !branchTrigger.current?.contains(event.target) &&
+        !branchPanel.current?.contains(event.target)) setBranchOpen(false)
+    }
+    const reposition = (): void => positionBranches()
+    const observer = new ResizeObserver(reposition)
+    if (branchPanel.current) observer.observe(branchPanel.current)
+    if (branchTrigger.current) observer.observe(branchTrigger.current)
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('focusin', outside)
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    window.visualViewport?.addEventListener('resize', reposition)
+    window.visualViewport?.addEventListener('scroll', reposition)
+    return () => {
+      observer.disconnect()
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('focusin', outside)
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+      window.visualViewport?.removeEventListener('resize', reposition)
+      window.visualViewport?.removeEventListener('scroll', reposition)
+    }
+  }, [branchOpen])
   const run = async (value: WorkspaceManagementAction): Promise<void> => {
     if (busy) return
     setBusy(true); setError('')
@@ -92,16 +142,16 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
       <div className="workspace-git__current">
       <div className="workspace-git__toolbar">
         <div className="workspace-git__repository-actions">
-        <button ref={branchTrigger} className="model-button workspace-git__branch-trigger" type="button" aria-expanded={branchOpen} onClick={() => setBranchOpen(!branchOpen)}><GitBranch size={14} aria-hidden="true" /><span className="model-button__label" title={branches?.current}>{branches?.current || t('management.branch')}</span><ChevronDown size={14} aria-hidden="true" /></button>
+        <button ref={branchTrigger} className="model-button workspace-git__branch-trigger" type="button" aria-haspopup="dialog" aria-controls={branchOpen ? branchPanelId : undefined} aria-expanded={branchOpen} onClick={() => setBranchOpen(!branchOpen)}><GitBranch size={14} aria-hidden="true" /><span className="model-button__label" title={branches?.current}>{branches?.current || t('management.branch')}</span><ChevronDown size={14} aria-hidden="true" /></button>
         <button className="secondary-button workspace-git__fetch" type="button" title={t('management.fetch')} aria-label={t('management.fetch')} disabled={busy} onClick={() => void run({ kind: 'fetch' })}><Download size={14} aria-hidden="true" /></button>
         </div>
         {viewControl}
       </div>
-      {branchOpen && <div className="workspace-git__branches" onKeyDown={(event) => { if (event.key === 'Escape') { setBranchOpen(false); branchTrigger.current?.focus() } }}>
-        <label className="field"><span>{t('management.searchBranch')}</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+      {branchOpen && <FloatingPortal anchorRef={branchTrigger}><div ref={branchPanel} id={branchPanelId} role="dialog" aria-label={t('management.branch')} className="workspace-git__branches" onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setBranchOpen(false); branchTrigger.current?.focus() } }}>
+        <label className="field"><span>{t('management.searchBranch')}</span><input value={query} onChange={(event) => setQuery(event.target.value)} /></label>
         <div className="workspace-git__branch-list">{branches?.branches.filter((branch) => branch.name.toLowerCase().includes(query.toLowerCase())).map((branch) => <button className="workspace-files__changed-row" type="button" key={`${branch.remote}:${branch.name}`} disabled={busy} aria-current={!branch.remote && branches.current === branch.name ? 'true' : undefined} onClick={() => void run({ kind: 'switchBranch', branch: branch.name, remote: branch.remote })}><GitBranch size={14} aria-hidden="true" /><span title={branch.name}>{branch.name}</span><small>{t(branch.remote ? 'management.remote' : 'management.local')}</small></button>)}</div>
         <button className="secondary-button workspace-git__create-branch" type="button" disabled={busy || !query.trim()} onClick={() => void run({ kind: 'createBranch', branch: query })}>{t('management.createBranch')}</button>
-      </div>}
+      </div></FloatingPortal>}
       <div className="workspace-git__changes">{children}</div>
       </div>
       <div className="workspace-git__history-dock" style={{ flexBasis: historyOpen ? `${historySize}%` : undefined }}>

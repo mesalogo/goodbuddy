@@ -37,7 +37,10 @@ it('supervision preserves result history and protected identities within scope t
     const original = read(a.id)
     db.close()
     const legacy = new DatabaseSync(path)
-    legacy.exec('ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json; PRAGMA user_version = 42;')
+    legacy.exec(`ALTER TABLE supervision_results DROP COLUMN graph_snapshot_json;
+      DROP TABLE activity_history_records;
+      ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
+      PRAGMA user_version = 42;`)
     legacy.close()
     db.initialize(process.cwd())
     expect(read(a.id)).toEqual(original)

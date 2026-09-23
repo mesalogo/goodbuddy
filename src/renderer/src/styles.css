@@ -17995,14 +17995,18 @@ details.settings-section > :not(summary) + :not(summary) {
   border-color: var(--border-default);
 }
 .workspace-git__branches {
+  position: fixed;
   display: grid;
   width: min(100%, 360px);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   min-width: 0;
   gap: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
-  background: var(--surface-subtle);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-dialog);
   color: var(--text-primary);
   font-size: var(--font-body);
 }

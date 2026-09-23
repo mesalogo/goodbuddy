@@ -57,6 +57,25 @@ app.whenReady().then(async () => {
     await js(`window.dispatchEvent(new CustomEvent('fixture-theme', { detail: '${theme}' }))`)
     for (const [width, height] of [[1280, 800], [960, 720], [720, 640], [640, 420]]) {
       win.setContentSize(width, height); await settle()
+      const workspaceBounds = () => js(`['.workspace-git__changes', '.workspace-git__history-dock'].map(selector => {
+        const r = document.querySelector(selector).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]
+      })`)
+      const closedBounds = await workspaceBounds()
+      await click('.workspace-git__branch-trigger')
+      await wait('!!document.querySelector(".workspace-git__branches")')
+      assert.deepEqual(await workspaceBounds(), closedBounds, 'Branch popup moved workspace content')
+      assert(await js(`(() => {
+        const panel = document.querySelector('.workspace-git__branches')
+        const r = panel.getBoundingClientRect()
+        return getComputedStyle(panel).position === 'fixed' && !!panel.closest('.floating-portal') &&
+          !panel.closest('.workspace-git') && r.left >= 16 && r.top >= 16 &&
+          r.right <= innerWidth - 16 && r.bottom <= innerHeight - 16 &&
+          document.activeElement.matches('.workspace-git__branches input')
+      })()`), 'Branch popup must float within viewport and focus search')
+      await click('.workspace-git__branches input')
+      await screenshot(`${theme}-${width}-branch-menu`)
+      await key('Escape')
+      assert(await js('!document.querySelector(".workspace-git__branches") && document.activeElement.matches(".workspace-git__branch-trigger")'))
       await notify()
       await click('#settings')
       await wait('!!document.querySelector("[aria-haspopup=menu][aria-expanded=false]")')

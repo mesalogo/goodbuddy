@@ -4,6 +4,7 @@ import { AppNotificationViewport } from '../../src/renderer/src/App'
 import { SettingsPanel } from '../../src/renderer/src/SettingsPanel'
 import { ApplicationCenter } from '../../src/renderer/src/ApplicationCenter'
 import LocalInferencePage from '../../src/renderer/src/LocalInferencePage'
+import { WorkspaceGitTools } from '../../src/renderer/src/WorkspaceGitTools'
 import { defaultRuntimeSettings } from '../../src/shared/contracts'
 import { UiLocaleProvider } from '../../src/renderer/src/i18n/UiLocaleProvider'
 import { applyAppearanceTheme } from '../../src/renderer/src/theme'
@@ -16,6 +17,8 @@ const snapshot = {
   ocrModels: { rootDirectory: '', selectedDownloadSource: 'modelscope', catalog: [], installed: [], operations: [] }
 }
 Object.defineProperty(window, 'goodbuddy', { value: {
+  workspace: { manage: async () => ({ kind: 'branches', current: 'main', branches:
+    Array.from({ length: 20 }, (_, index) => ({ name: index ? `feature/branch-${index}` : 'main', remote: false })) }) },
   settings: { getRuntime: async () => ({ ...defaultRuntimeSettings, modelProfiles: [], embeddingConnections: [],
     opencodeModelSource: { kind: 'platform' }, continueModelSource: { kind: 'platform' }, deepseekHarnessModelSource: { kind: 'platform' } }),
     detectAgentRuntimes: async () => ({}) },
@@ -44,6 +47,11 @@ function Fixture(): React.JSX.Element {
       <button id="applications" onClick={() => setModal('applications')}>Applications</button>
       <button id="inference" onClick={() => setModal('inference')}>Inference</button>
       <button id="native" onClick={() => native.current!.showModal()}>Native dialog</button></div>
+    <div id="branch-workspace" style={{ position: 'fixed', top: 80, left: 16, width: 'min(420px, calc(100vw - 32px))', height: 260, display: 'flex' }}>
+      <WorkspaceGitTools projectId="fixture" onRefresh={async () => {}} viewControl={null}>
+        <div>Uncommitted workspace changes</div>
+      </WorkspaceGitTools>
+    </div>
     <AppNotificationViewport notifications={notifications} dispatch={action => {
       if ('dismiss' in action) setNotifications(items => items.filter(item => item.id !== action.dismiss))
     }} />
