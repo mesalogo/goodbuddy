@@ -78,6 +78,9 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await js('document.documentElement.dataset.theme = "light"'); await settle();
         const index = '.magic-notes-index-pane', handle = '.magic-notes-index-resize-handle', stream = '.magic-notes-stream-pane';
         assert.equal((await rect(index)).width, 168);
+        const firstRecord = await rect('.magic-note-record');
+        assert.equal(firstRecord.x, (await rect(index)).x, 'Thumbnails align with the left pane edge');
+        assert.equal(firstRecord.y, (await rect(stream)).y, 'Thumbnails align with the top of the note content');
         await drag(handle, 80); const dragged = (await rect(index)).width; assert(dragged > 240 && dragged < 260, 'Dragged index width: ' + dragged);
         await key(handle, 'Home'); assert.equal((await rect(index)).width, 140);
         await key(handle, 'Right'); assert.equal((await rect(index)).width, 156);
@@ -107,6 +110,10 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await screenshot('magic-notes-narrow');
         win.setContentSize(1280, 800); await settle(); await settle();
         assert.equal((await rect(index)).width, withoutAi);
+        await key('.magic-note-record', 'Tab');
+        await js('document.querySelector(".magic-note-record").focus()');
+        assert(await js('document.querySelector(".magic-note-record").matches(":focus-visible")'));
+        assert.equal(await js('getComputedStyle(document.querySelector(".magic-note-record")).outlineOffset'), '-2px', 'Focus outline stays inside the scroll viewport');
         await js('document.querySelector(' + JSON.stringify(editor) + ').focus()');
         await win.webContents.insertText('Composer growth check\\n'.repeat(30)); await settle();
         const grownHeight = (await rect(editor)).height;
