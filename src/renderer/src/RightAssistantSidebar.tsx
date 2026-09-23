@@ -2082,6 +2082,21 @@ export function RightAssistantSidebar({
         ) : null}
         {instance.appId === 'tasks' && (
           <section className="assistant-sidebar__section task-center">
+            <section className="task-center__stats" aria-label={t('sidebar.tasks.stats.label')}>
+            <p className="task-center__scope">{currentProject
+              ? t('sidebar.tasks.projectScope', { project: currentProject.name })
+              : t('sidebar.tasks.scope.currentProject')}</p>
+              <span className="task-center__eyebrow">{t('sidebar.tasks.stats.currentConversation')}</span>
+              <h3>{activeConversationId
+                ? currentStats?.title ?? conversationTitles.get(activeConversationId) ?? t('sidebar.tasks.stats.currentConversation')
+                : t('sidebar.tasks.stats.noConversation')}</h3>
+              <dl className="task-center__stat-grid">
+                <div><dt>{t('sidebar.tasks.stats.replyDuration')}</dt><dd>{currentStats ? formatDuration(currentStats.replyDurationMs) : t('sidebar.tasks.stats.unavailable')}</dd></div>
+                <div><dt>{t('sidebar.tasks.stats.messages')}</dt><dd>{currentStats ? currentStats.messageCount.toLocaleString(locale) : t('sidebar.tasks.stats.unavailable')}</dd></div>
+              </dl>
+              {currentStats?.incomplete && <p className="task-center__incomplete">{t('sidebar.tasks.stats.incomplete')}</p>}
+              <details><summary>{t('sidebar.tasks.stats.timeHelp')}</summary><p>{t('sidebar.tasks.stats.timeDescription')}</p></details>
+            </section>
             {supervisionEnabled && <>
             <SupervisionCard
               pinned={Boolean(instance.targetRef)}
@@ -2101,21 +2116,6 @@ export function RightAssistantSidebar({
               onOpenSupervisionConversation={onOpenSupervisionConversation}
             />
             </>}
-            <section className="task-center__stats" aria-label={t('sidebar.tasks.stats.label')}>
-            <p className="task-center__scope">{currentProject
-              ? t('sidebar.tasks.projectScope', { project: currentProject.name })
-              : t('sidebar.tasks.scope.currentProject')}</p>
-              <span className="task-center__eyebrow">{t('sidebar.tasks.stats.currentConversation')}</span>
-              <h3>{activeConversationId
-                ? currentStats?.title ?? conversationTitles.get(activeConversationId) ?? t('sidebar.tasks.stats.currentConversation')
-                : t('sidebar.tasks.stats.noConversation')}</h3>
-              <dl className="task-center__stat-grid">
-                <div><dt>{t('sidebar.tasks.stats.replyDuration')}</dt><dd>{currentStats ? formatDuration(currentStats.replyDurationMs) : t('sidebar.tasks.stats.unavailable')}</dd></div>
-                <div><dt>{t('sidebar.tasks.stats.messages')}</dt><dd>{currentStats ? currentStats.messageCount.toLocaleString(locale) : t('sidebar.tasks.stats.unavailable')}</dd></div>
-              </dl>
-              {currentStats?.incomplete && <p className="task-center__incomplete">{t('sidebar.tasks.stats.incomplete')}</p>}
-              <details><summary>{t('sidebar.tasks.stats.timeHelp')}</summary><p>{t('sidebar.tasks.stats.timeDescription')}</p></details>
-            </section>
             {!currentProject ? (
               <p className="assistant-sidebar__empty">
                 {t('sidebar.tasks.scope.noCurrentProject')}
