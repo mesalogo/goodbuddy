@@ -61,6 +61,51 @@ app
       await settle()
     }
     const reports = []
+    if (process.env.GOODBUDDY_SUPERVISOR_SIDEBAR) {
+      await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL)
+      await wait('!!document.querySelector(".supervision-card")')
+      await js('document.fonts.ready')
+      win.show()
+      win.focus()
+      for (const theme of ['light', 'dark']) {
+        await js(`document.documentElement.dataset.theme = '${theme}'`)
+        for (const width of [480, 300, 200]) {
+          win.setContentSize(width, 640)
+          await js('document.querySelector(".supervision-card__header button").focus()')
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' })
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' })
+          await settle()
+          const report = await js(`(() => {
+            const card = document.querySelector('.supervision-card');
+            const header = card.querySelector('.supervision-card__header');
+            const buttons = [...header.querySelectorAll('button')];
+            return {
+              width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+              cardWidth: card.clientWidth, cardScrollWidth: card.scrollWidth,
+              headerHeight: header.getBoundingClientRect().height,
+              buttons: buttons.map(b => ({ width: b.getBoundingClientRect().width,
+                height: b.getBoundingClientRect().height, background: getComputedStyle(b).backgroundColor })),
+              focus: getComputedStyle(document.activeElement).outlineStyle,
+              text: card.textContent
+            };
+          })()`)
+          assert(report.scrollWidth <= report.width, `Page overflow: ${JSON.stringify(report)}`)
+          assert(report.cardScrollWidth <= report.cardWidth, 'Card overflow')
+          assert.equal(report.headerHeight, 34)
+          assert(report.buttons.every(b => b.width === 34 && b.height === 34), 'Compact shared buttons')
+          assert.equal(report.focus, 'solid')
+          assert(!report.text.includes('simulated-conversation-uuid'), 'Raw UUID visible')
+          reports.push({ theme, ...report })
+          await writeFile(join(artifacts, `sidebar-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG())
+        }
+      }
+      assert.deepEqual(errors, [])
+      await writeFile(join(artifacts, 'sidebar-measurements.json'), JSON.stringify(reports, null, 2))
+      console.log(JSON.stringify({ artifacts, cases: reports.length, errors }))
+      win.destroy()
+      app.quit()
+      return
+    }
     await open(false)
     await js(
       'document.querySelector(".supervisor-workspace__legend .link-button").click()'

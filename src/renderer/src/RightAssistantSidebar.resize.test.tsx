@@ -151,6 +151,7 @@ function sidebarElement({
   workspaceProjectId,
   restoreFocusRef,
   activeConversationId,
+  conversationTitles = new Map(),
   supervisionEnabled,
   supervisionLibraries,
   conversationStats,
@@ -191,6 +192,7 @@ function sidebarElement({
   workspaceProjectId?: string
   restoreFocusRef?: { current: HTMLElement | null }
   activeConversationId?: string
+  conversationTitles?: ReadonlyMap<string, string>
   supervisionEnabled?: boolean
   supervisionLibraries?: React.ComponentProps<typeof RightAssistantSidebar>['supervisionLibraries']
   conversationStats?: React.ComponentProps<typeof RightAssistantSidebar>['conversationStats']
@@ -221,7 +223,7 @@ function sidebarElement({
         browserStates={browserStates}
         schedules={[]}
         tasks={tasks}
-        conversationTitles={new Map()}
+        conversationTitles={conversationTitles}
         currentProject={activeProject ?? undefined}
         projectNames={new Map()}
         onCreateCustomTask={onCreateCustomTask}
@@ -286,15 +288,37 @@ it.each([false, undefined])('does not mount or query supervision when enabled is
 it('pins the supervision target across conversation switches and restores following when unpinned', async () => {
   const overview = vi.fn(async () => [])
   Object.assign(window.goodbuddy, { supervision: { overview } })
-  const view = render(sidebarElement({ activeConversationId: 'A', supervisionEnabled: true }))
+  const conversationTitles = new Map([['A', '会话甲'], ['B', '会话乙']])
+  const view = render(sidebarElement({ activeConversationId: 'A', conversationTitles, supervisionEnabled: true }))
+  expect(screen.getByText('会话：会话甲')).toBeVisible()
+  const card = within(screen.getByRole('region', { name: '监督反馈' }))
+  expect(card.getByRole('button', { name: '固定监督目标' })).toHaveAttribute('aria-pressed', 'false')
   await waitFor(() => expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'A' } }))
   fireEvent.click(screen.getByRole('button', { name: '固定监督目标' }))
-  view.rerender(sidebarElement({ activeConversationId: 'B', supervisionEnabled: true }))
+  view.rerender(sidebarElement({ activeConversationId: 'B', conversationTitles, supervisionEnabled: true }))
+  expect(screen.getByText('已固定 · 会话：会话甲')).toBeVisible()
+  expect(card.getByRole('button', { name: '取消固定监督目标' })).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByRole('button', { name: '取消固定监督目标' })).toBeInTheDocument()
   expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'A' } })
   expect(localStorage.getItem('goodbuddy.workbar-layout.v1')).toContain('"conversationId":"A"')
   fireEvent.click(screen.getByRole('button', { name: '取消固定监督目标' }))
   await waitFor(() => expect(overview).toHaveBeenLastCalledWith({ target: { type: 'conversation', conversationId: 'B' } }))
+  expect(screen.getByText('会话：会话乙')).toBeVisible()
+})
+
+it('shows the task name while following and pinned, without displaying its raw ID', async () => {
+  const overview = vi.fn(async () => [])
+  Object.assign(window.goodbuddy, { supervision: { overview } })
+  const tasks = [{ id: 'task-uuid', title: '核对交付清单', conversationId: 'A' }] as AssistantTask[]
+  const view = render(sidebarElement({ tasks, selectedTaskId: 'task-uuid', supervisionEnabled: true }))
+  expect(screen.getByText('任务：核对交付清单')).toHaveAttribute('title', 'task-uuid')
+  fireEvent.click(screen.getByRole('button', { name: '固定监督目标' }))
+  view.rerender(sidebarElement({ tasks, activeConversationId: 'B', supervisionEnabled: true }))
+  expect(screen.getByText('已固定 · 任务：核对交付清单')).toBeVisible()
+  const callsBeforeRefresh = overview.mock.calls.length
+  fireEvent.click(screen.getByRole('button', { name: '刷新监督回顾' }))
+  await waitFor(() => expect(overview).toHaveBeenCalledTimes(callsBeforeRefresh + 1))
+  await waitFor(() => expect(overview).toHaveBeenLastCalledWith({ target: { type: 'task', taskId: 'task-uuid' } }))
 })
 
 it.each(['cancel', 'failure'] as const)('retries supervision knowledge preview after %s and shows returned content', async (outcome) => {

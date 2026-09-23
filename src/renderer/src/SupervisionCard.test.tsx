@@ -6,6 +6,17 @@ import i18n from './i18n'
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.goodbuddy = {} as never })
 const result = (id: string) => ({ id, storyLineId: id, sourceId: `source-${id}`, summary: `${id} recap`, scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' } })
 
+it('keeps unknown target IDs out of visible copy and disables actions without a target', async () => {
+  window.goodbuddy = { supervision: { overview: async () => [] } } as never
+  const view = render(<SupervisionCard target={{ type: 'conversation', conversationId: 'raw-uuid' }} onTogglePinned={vi.fn()} />)
+  expect(screen.getByText('会话：未命名会话')).toHaveAttribute('title', 'raw-uuid')
+  expect(screen.queryByText(/raw-uuid/)).not.toBeInTheDocument()
+  await act(async () => {})
+  view.rerender(<SupervisionCard onTogglePinned={vi.fn()} />)
+  expect(screen.getByRole('button', { name: '固定监督目标' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '刷新监督回顾' })).toBeDisabled()
+})
+
 it('graph navigation exposes only the matched result through a native bilingual button', async () => {
   const open = vi.fn()
   const overview = vi.fn().mockResolvedValueOnce([result('pinned')]).mockResolvedValueOnce([])

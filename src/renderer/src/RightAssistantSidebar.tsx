@@ -9,6 +9,7 @@ import {
   FileText,
   Maximize2,
   Minimize2,
+  Pin,
   Plus,
   RefreshCw,
   ShieldAlert,
@@ -216,6 +217,9 @@ type SupervisionCardProps = {
   target?: SupervisionTarget
   activeConversationId?: string
   conversationTitle?: string
+  taskTitle?: string
+  pinned?: boolean
+  onTogglePinned?: () => void
   supervisionLibraries?: KnowledgeLibrary[]
   onContinueSupervision?: (prompt: string, conversationId: string) => Promise<void>
   onOpenSupervisionConversation?: (conversationId: string) => void
@@ -229,6 +233,9 @@ function SupervisionCardContent({
   target,
   activeConversationId,
   conversationTitle,
+  taskTitle,
+  pinned = false,
+  onTogglePinned,
   supervisionLibraries: libraries,
   onContinueSupervision: onContinue,
   onOpenSupervisionGraph,
@@ -310,9 +317,14 @@ function SupervisionCardContent({
   }
 
   return <section className="assistant-sidebar__section supervision-card" aria-label="监督反馈">
-    <h3>监督反馈</h3>
-    {target && <p>{target.type === 'conversation' ? `会话：${conversationTitle ?? target.conversationId}` : `任务：${target.taskId}`}</p>}
-    <button type="button" className="link-button" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setMessage(''); setRefresh((value) => value + 1) }}>刷新监督回顾</button>
+    <div className="supervision-card__header">
+      <h3>监督反馈</h3>
+      <div className="supervision-card__actions">
+        {onTogglePinned && <button type="button" className={`icon-button${pinned ? ' icon-button--active' : ''}`} aria-label={pinned ? '取消固定监督目标' : '固定监督目标'} title={pinned ? '取消固定监督目标' : '固定监督目标'} aria-pressed={pinned} disabled={!target} onClick={onTogglePinned}><Pin aria-hidden="true" size={14} /></button>}
+        <button type="button" className="icon-button" aria-label="刷新监督回顾" title="刷新监督回顾" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setMessage(''); setRefresh((value) => value + 1) }}><RefreshCw aria-hidden="true" size={14} /></button>
+      </div>
+    </div>
+    {target && <p className="supervision-card__target" title={target.type === 'conversation' ? target.conversationId : target.taskId}>{pinned ? '已固定 · ' : ''}{target.type === 'conversation' ? `会话：${conversationTitle?.trim() || '未命名会话'}` : `任务：${taskTitle?.trim() || '未命名任务'}`}</p>}
     {!result ? <p className="assistant-sidebar__empty">{message || '暂无监督回顾'}</p> : <>
       <p>{result.summary || '监督回顾没有摘要'}</p>
       <p>{result.scope.kind === 'global' ? '全局回顾' : `项目范围：${result.scope.projectIds.join('、')}`} · {new Date(result.timeRange.from).toLocaleString()} – {new Date(result.timeRange.to).toLocaleString()}</p>
@@ -2071,19 +2083,18 @@ export function RightAssistantSidebar({
         {instance.appId === 'tasks' && (
           <section className="assistant-sidebar__section task-center">
             {supervisionEnabled && <>
-            <button type="button" className="link-button" disabled={!instance.targetRef && !selectedTaskId && !activeConversationId}
-              onClick={() => setWorkbarInstances((current) => current.map((item) => item.id === instance.id
-                ? { ...item, targetRef: item.targetRef ? undefined : selectedTaskId ? { type: 'task', taskId: selectedTaskId } : activeConversationId ? { type: 'conversation', conversationId: activeConversationId } : undefined }
-                : item))}>
-              {instance.targetRef ? '取消固定监督目标' : '固定监督目标'}
-            </button>
             <SupervisionCard
+              pinned={Boolean(instance.targetRef)}
+              onTogglePinned={() => setWorkbarInstances((current) => current.map((item) => item.id === instance.id
+                ? { ...item, targetRef: item.targetRef ? undefined : selectedTaskId ? { type: 'task', taskId: selectedTaskId } : activeConversationId ? { type: 'conversation', conversationId: activeConversationId } : undefined }
+                : item))}
               target={instance.targetRef?.type === 'conversation' || instance.targetRef?.type === 'task'
                 ? instance.targetRef
                 : selectedTaskId ? { type: 'task', taskId: selectedTaskId }
                 : activeConversationId ? { type: 'conversation', conversationId: activeConversationId } : undefined}
               activeConversationId={instance.targetRef?.type === 'conversation' ? instance.targetRef.conversationId : instance.targetRef?.type === 'task' ? tasks.find((task) => instance.targetRef?.type === 'task' && task.id === instance.targetRef.taskId)?.conversationId : activeConversationId}
-              conversationTitle={instance.targetRef?.type === 'conversation' ? conversationTitles.get(instance.targetRef.conversationId) : undefined}
+              conversationTitle={conversationTitles.get(instance.targetRef?.type === 'conversation' ? instance.targetRef.conversationId : instance.targetRef?.type === 'task' ? tasks.find((task) => instance.targetRef?.type === 'task' && task.id === instance.targetRef.taskId)?.conversationId ?? '' : activeConversationId ?? '')}
+              taskTitle={tasks.find((task) => task.id === (instance.targetRef?.type === 'task' ? instance.targetRef.taskId : selectedTaskId))?.title}
               supervisionLibraries={supervisionLibraries}
               onOpenSupervisionGraph={onOpenSupervisionGraph}
               onContinueSupervision={onContinueSupervision}

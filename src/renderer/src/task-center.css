@@ -1,3 +1,37 @@
+.assistant-sidebar__section.supervision-card {
+  min-width: 0;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-2);
+  font-size: var(--font-body);
+  overflow-wrap: anywhere;
+}
+
+.supervision-card__header,
+.supervision-card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.supervision-card__header { justify-content: space-between; }
+.supervision-card__actions { flex-wrap: wrap; }
+.supervision-card__header > .supervision-card__actions { flex: 0 0 auto; }
+.supervision-card .supervision-card__header h3,
+.supervision-card p { margin: 0; }
+.supervision-card__target { color: var(--text-secondary); }
+.supervision-card__source {
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.supervision-card__actions select { min-width: 0; max-width: 100%; }
+.supervision-card .icon-button:disabled {
+  background: transparent;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
 .task-center .task-center__scope {
   margin: 0 0 var(--space-2);
   color: var(--text-secondary);

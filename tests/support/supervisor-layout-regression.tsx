@@ -1,6 +1,7 @@
 // Simulated visual fixture only. No preload, user database, or model is used.
 import { createRoot } from 'react-dom/client'
 import { HeartbeatCenter } from '../../src/renderer/src/HeartbeatCenter'
+import { SupervisionCard } from '../../src/renderer/src/RightAssistantSidebar'
 import { PageShell } from '../../src/renderer/src/WorkspacePrimitives'
 import { UiLocaleProvider } from '../../src/renderer/src/i18n/UiLocaleProvider'
 import type { SupervisionGraphView } from '../../src/shared/supervision-contracts'
@@ -202,6 +203,7 @@ createRoot(document.getElementById('root')!).render(
           color: 'var(--text-secondary)',
           display: 'flex',
           flexWrap: 'wrap',
+          overflowWrap: 'anywhere',
           gap: 'var(--space-3)'
         }}
       >
@@ -212,7 +214,14 @@ createRoot(document.getElementById('root')!).render(
           </a>
         ))}
       </div>
-      <PageShell variant="supervisor">
+      {params.has('sidebar') ? <div className="assistant-sidebar__section task-center">
+        <SupervisionCard
+          target={{ type: 'conversation', conversationId: 'simulated-conversation-uuid' }}
+          conversationTitle={'模拟会话：核对项目交付清单与阶段回顾'.repeat(3)}
+          pinned
+          onTogglePinned={() => {}}
+        />
+      </div> : <PageShell variant="supervisor">
         <HeartbeatCenter
           configs={[]}
           runs={[]}
@@ -231,7 +240,7 @@ createRoot(document.getElementById('root')!).render(
           onUseFollowUpTask={() => {}}
           onRetryLoad={noop}
         />
-      </PageShell>
+      </PageShell>}
     </div>
   </UiLocaleProvider>
 )

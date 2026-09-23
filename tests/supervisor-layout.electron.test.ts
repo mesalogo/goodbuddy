@@ -8,7 +8,9 @@ import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
-it('renders the production supervisor at desktop, narrow, and mobile widths', async () => {
+it(process.env.GOODBUDDY_SUPERVISOR_SIDEBAR
+  ? 'renders the production supervision card at narrow widths in both themes'
+  : 'renders the production supervisor at desktop, narrow, and mobile widths', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-supervisor-'))
   const css = await readFile(
     'src/renderer/src/supervisor-workspace.css',
@@ -45,7 +47,7 @@ it('renders the production supervisor at desktop, narrow, and mobile widths', as
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       GOODBUDDY_SUPERVISOR_URL:
-        server.resolvedUrls!.local[0] + 'supervisor.html',
+        server.resolvedUrls!.local[0] + 'supervisor.html' + (process.env.GOODBUDDY_SUPERVISOR_SIDEBAR ? '?sidebar=1' : ''),
       GOODBUDDY_SUPERVISOR_DIRECTORY: directory,
       GOODBUDDY_SUPERVISOR_TOKENS: JSON.stringify([
         ...new Set(
