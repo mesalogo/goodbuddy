@@ -354,6 +354,33 @@ describe('ProjectSwitcher project activity integration', () => {
 })
 
 describe('ProjectSwitcher runtime fields', () => {
+  it('floats the project menu outside the sidebar and keeps menu interactions open', async () => {
+    renderSwitcher()
+    const trigger = screen.getByRole('button', { name: '当前项目' })
+    fireEvent.click(trigger)
+    const menu = screen.getByRole('menu')
+    expect(trigger.closest('.project-switcher')).not.toContainElement(menu)
+    expect(menu.closest('.floating-portal')?.parentElement).toBe(document.body)
+    expect(menu.style.width).toBe('380px')
+    const selected = within(menu).getByRole('menuitemradio', { checked: true })
+    await waitFor(() => expect(selected).toHaveFocus())
+    fireEvent.pointerDown(selected)
+    expect(menu).toBeInTheDocument()
+
+    const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(360)
+    fireEvent(window, new Event('resize'))
+    expect(menu.style.width).toBe('328px')
+    expect(menu.style.left).toBe('16px')
+    width.mockRestore()
+    fireEvent.keyDown(selected, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+
+    fireEvent.click(trigger)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
   it.each(['新建项目', '项目设置'])('keeps %s outside the sidebar and restores focus after closing', (name) => {
     renderSwitcher()
     const trigger = screen.getByRole('button', {

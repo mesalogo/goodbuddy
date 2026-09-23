@@ -16,7 +16,7 @@ import {
   X
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -57,6 +57,7 @@ import { ProjectWorkModeFields } from './ProjectWorkModeFields'
 import { ChannelIcon } from './ChannelIcon'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { InlineHelp } from './InlineHelp'
+import { FloatingPortal } from './FloatingPortal'
 import { displayErrorMessage } from './error-message'
 
 type ProjectSwitcherProps = {
@@ -739,6 +740,31 @@ export function ProjectSwitcher({
     }
   }
 
+  useLayoutEffect(() => {
+    if (!projectMenuOpen) return
+    const anchor = projectPickerButtonRef.current
+    const menu = projectPickerMenuRef.current
+    if (!anchor || !menu) return
+    const position = (): void => {
+      const rect = anchor.getBoundingClientRect()
+      const width = Math.min(380, window.innerWidth - 32)
+      menu.style.width = `${width}px`
+      menu.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`
+      menu.style.top = `${Math.max(16, Math.min(rect.bottom + 8, window.innerHeight - menu.offsetHeight - 16))}px`
+    }
+    position()
+    const observer = new ResizeObserver(position)
+    observer.observe(anchor)
+    observer.observe(menu)
+    window.addEventListener('resize', position)
+    window.addEventListener('scroll', position, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', position)
+      window.removeEventListener('scroll', position, true)
+    }
+  }, [projectMenuOpen])
+
   useEffect(() => {
     if (!projectMenuOpen) {
       return
@@ -757,7 +783,8 @@ export function ProjectSwitcher({
     const closeOutside = (event: Event): void => {
       if (
         event.target instanceof Node &&
-        !projectPickerRef.current?.contains(event.target)
+        !projectPickerRef.current?.contains(event.target) &&
+        !projectPickerMenuRef.current?.contains(event.target)
       ) {
         setProjectMenuOpen(false)
       }
@@ -1202,6 +1229,7 @@ export function ProjectSwitcher({
             <ChevronDown aria-hidden="true" size={14} />
           </button>
           {projectMenuOpen && (
+            <FloatingPortal anchorRef={projectPickerButtonRef}>
             <div
               aria-label={t('projectSwitcher.selector.ariaLabel')}
               className="project-switcher__menu"
@@ -1337,6 +1365,7 @@ export function ProjectSwitcher({
                 </div>
               )}
             </div>
+            </FloatingPortal>
           )}
         </div>
         <button
