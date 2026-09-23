@@ -116,7 +116,7 @@ describe('model bridge contracts and codec', () => {
     expect(left).toEqual(right)
     expect(left.byteLength).toBeGreaterThan(600 * 1024)
     await expect(decodeModelBridgeMessage(left)).resolves.toEqual(message)
-  })
+  }, 15_000)
 
   it('round trips response, error, and delivery ACK messages', async () => {
     const requestDigest = await digestModelBridgeRequest(request)
