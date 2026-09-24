@@ -7,7 +7,6 @@ import {
   CircleAlert,
   Circle,
   FileText,
-  FolderTree,
   Lightbulb,
   ListTodo,
   MoreHorizontal,
@@ -50,6 +49,7 @@ import type {
 import type { ApplicationSettings, MagicNoteCommentMode } from '../../shared/application-settings-contracts'
 import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
 import { MagicNoteContent } from './MagicNoteContent'
+import { MagicTodoDirectory } from './MagicTodoDirectory'
 import { MagicNoteEditor } from './MagicNoteEditor'
 import { MagicCanvasEditor, canvasHasContent, type MagicCanvasEditorHandle } from './MagicCanvasEditor'
 import type { MagicCanvasContentHandle } from './MagicCanvasContent'
@@ -106,6 +106,7 @@ type MagicNotesLayoutPreferences = {
   indexPaneWidth: number
   aiPaneOpen: boolean
   aiPaneWidth: number
+  todoPaneWidth: number
 }
 
 function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
@@ -113,7 +114,8 @@ function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
     indexPaneOpen: true,
     indexPaneWidth: defaultIndexPaneWidth,
     aiPaneOpen: true,
-    aiPaneWidth: defaultAiPaneWidth
+    aiPaneWidth: defaultAiPaneWidth,
+    todoPaneWidth: 320
   }
   try {
     const value = localStorage.getItem(magicNotesLayoutStorageKey)
@@ -124,6 +126,8 @@ function loadMagicNotesLayoutPreferences(): MagicNotesLayoutPreferences {
       MagicNotesLayoutPreferences
     >
     return {
+      todoPaneWidth: typeof parsed.todoPaneWidth === 'number' && Number.isFinite(parsed.todoPaneWidth)
+        ? Math.max(240, parsed.todoPaneWidth) : defaults.todoPaneWidth,
       indexPaneOpen: parsed.indexPaneOpen !== false,
       indexPaneWidth: typeof parsed.indexPaneWidth === 'number' && Number.isFinite(parsed.indexPaneWidth)
         ? Math.min(maximumIndexPaneWidth, Math.max(minimumIndexPaneWidth, parsed.indexPaneWidth))
@@ -466,8 +470,10 @@ export function MagicNotesWorkspace({
   )
   const [indexPaneOpen, setIndexPaneOpen] = useState(initialLayoutPreferences.indexPaneOpen)
   const [indexPaneWidth, setIndexPaneWidth] = useState(initialLayoutPreferences.indexPaneWidth)
+  const [todoPaneWidth, setTodoPaneWidth] = useState(initialLayoutPreferences.todoPaneWidth)
+  const [todoLayoutWidth, setTodoLayoutWidth] = useState(window.innerWidth)
   const [narrowIndexOpen, setNarrowIndexOpen] = useState(false)
-  const [resizingPane, setResizingPane] = useState<'ai' | 'index'>()
+  const [resizingPane, setResizingPane] = useState<'ai' | 'index' | 'todo'>()
   const [magicNotesLayoutWidth, setMagicNotesLayoutWidth] = useState(
     window.innerWidth
   )
@@ -521,7 +527,8 @@ export function MagicNotesWorkspace({
   const draftAnalysisContextRef = useRef(0)
   const lastDraftAnalysisStartedAtRef = useRef(0)
   const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
-  const paneResizeRef = useRef<{ pane: 'ai' | 'index'; pointerId: number; width: number } | undefined>(undefined)
+  const todoLayoutRef = useRef<HTMLDivElement>(null)
+  const paneResizeRef = useRef<{ pane: 'ai' | 'index' | 'todo'; pointerId: number; width: number } | undefined>(undefined)
   const composerRef = useRef<HTMLDivElement>(null)
   const continueEditingRef = useRef<HTMLButtonElement>(null)
   const discardDraftRef = useRef<HTMLButtonElement>(null)
@@ -603,9 +610,20 @@ export function MagicNotesWorkspace({
       indexPaneOpen,
       indexPaneWidth,
       aiPaneOpen,
-      aiPaneWidth
+      aiPaneWidth,
+      todoPaneWidth
     })
-  }, [indexPaneOpen, indexPaneWidth, aiPaneOpen, aiPaneWidth])
+  }, [indexPaneOpen, indexPaneWidth, aiPaneOpen, aiPaneWidth, todoPaneWidth])
+
+  useEffect(() => {
+    const layout = todoLayoutRef.current
+    if (!layout) return
+    const update = (): void => setTodoLayoutWidth(layout.getBoundingClientRect().width || window.innerWidth)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(layout)
+    return () => observer.disconnect()
+  }, [detailView, libraryView])
 
   useEffect(() => {
     const layout = magicNotesLayoutRef.current
@@ -1507,6 +1525,8 @@ export function MagicNotesWorkspace({
       ? [...entries, editingEntry] : [...entries]).reverse()
   }, [detail, editingEntry])
   const isNarrowLayout = magicNotesLayoutWidth <= 800
+  const todoPaneWidthLimits = { minimum: 240, maximum: Math.max(240, todoLayoutWidth - 301) }
+  const displayedTodoWidth = clampMagicNotesPaneWidth(todoPaneWidth, todoPaneWidthLimits)
   const indexExpanded = isNarrowLayout ? narrowIndexOpen : indexPaneOpen
   // Clamp displayed widths without replacing the user's saved desktop preferences.
   const layoutInnerWidth = Math.max(0, magicNotesLayoutWidth - 2)
@@ -1534,6 +1554,7 @@ export function MagicNotesWorkspace({
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     if (resize.pane === 'ai') setAiPaneWidth(resize.width)
+    else if (resize.pane === 'todo') setTodoPaneWidth(resize.width)
     else setIndexPaneWidth(resize.width)
     setResizingPane(undefined)
   }
@@ -1541,37 +1562,40 @@ export function MagicNotesWorkspace({
     const resize = paneResizeRef.current
     if (!resize || resize.pointerId !== event.pointerId) return
     const isAi = resize.pane === 'ai'
-    const limits = isAi ? aiPaneWidthLimits : indexPaneWidthLimits
-    if (isNarrowLayout) { finishPaneResize(event); return }
-    const bounds = getLayoutBounds()
+    const isTodo = resize.pane === 'todo'
+    const limits = isTodo ? todoPaneWidthLimits : isAi ? aiPaneWidthLimits : indexPaneWidthLimits
+    if (isTodo ? magicNotesLayoutWidth <= 700 : isNarrowLayout) { finishPaneResize(event); return }
+    const bounds = isTodo ? todoLayoutRef.current!.getBoundingClientRect() : getLayoutBounds()
     resize.width = clampMagicNotesPaneWidth(isAi ? bounds.right - 1 - event.clientX : event.clientX - bounds.left - 1, limits)
-    magicNotesLayoutRef.current?.style.setProperty(`--magic-notes-${resize.pane}-width`, `${resize.width}px`)
+    const layout = isTodo ? todoLayoutRef.current : magicNotesLayoutRef.current
+    layout?.style.setProperty(`--magic-notes-${resize.pane}-width`, `${resize.width}px`)
     event.currentTarget.setAttribute('aria-valuenow', String(resize.width))
-    event.currentTarget.setAttribute('aria-valuetext', t(isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width: resize.width }))
+    event.currentTarget.setAttribute('aria-valuetext', t(isTodo ? 'accessibility.todoPaneWidth' : isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width: resize.width }))
   }
-  const startPaneResize = (pane: 'ai' | 'index', event: React.PointerEvent<HTMLDivElement>): void => {
-    const limits = pane === 'ai' ? aiPaneWidthLimits : indexPaneWidthLimits
-    if (event.button !== 0 || isNarrowLayout || limits.maximum <= limits.minimum) return
+  const startPaneResize = (pane: 'ai' | 'index' | 'todo', event: React.PointerEvent<HTMLDivElement>): void => {
+    const limits = pane === 'todo' ? todoPaneWidthLimits : pane === 'ai' ? aiPaneWidthLimits : indexPaneWidthLimits
+    if (event.button !== 0 || (pane === 'todo' ? magicNotesLayoutWidth <= 700 : isNarrowLayout) || limits.maximum <= limits.minimum) return
     event.preventDefault()
-    paneResizeRef.current = { pane, pointerId: event.pointerId, width: pane === 'ai' ? displayedAiWidth : displayedIndexWidth }
+    paneResizeRef.current = { pane, pointerId: event.pointerId, width: pane === 'todo' ? displayedTodoWidth : pane === 'ai' ? displayedAiWidth : displayedIndexWidth }
     event.currentTarget.setPointerCapture(event.pointerId)
     setResizingPane(pane)
   }
-  const renderPaneSeparator = (pane: 'ai' | 'index'): React.JSX.Element => {
+  const renderPaneSeparator = (pane: 'ai' | 'index' | 'todo'): React.JSX.Element => {
     const isAi = pane === 'ai'
-    const limits = isAi ? aiPaneWidthLimits : indexPaneWidthLimits
-    const width = isAi ? displayedAiWidth : displayedIndexWidth
-    const enabled = !isNarrowLayout && limits.maximum > limits.minimum
-    const setWidth = isAi ? setAiPaneWidth : setIndexPaneWidth
+    const isTodo = pane === 'todo'
+    const limits = isTodo ? todoPaneWidthLimits : isAi ? aiPaneWidthLimits : indexPaneWidthLimits
+    const width = isTodo ? displayedTodoWidth : isAi ? displayedAiWidth : displayedIndexWidth
+    const enabled = (isTodo ? magicNotesLayoutWidth > 700 : !isNarrowLayout) && limits.maximum > limits.minimum
+    const setWidth = isTodo ? setTodoPaneWidth : isAi ? setAiPaneWidth : setIndexPaneWidth
     return <div
-      aria-controls={isAi ? 'magic-notes-ai-pane' : 'magic-notes-index'}
+      aria-controls={isTodo ? 'magic-todo-list' : isAi ? 'magic-notes-ai-pane' : 'magic-notes-index'}
       aria-disabled={!enabled}
-      aria-label={t(isAi ? 'accessibility.resizeAiPane' : 'accessibility.resizeIndexPane')}
+      aria-label={t(isTodo ? 'accessibility.resizeTodoPane' : isAi ? 'accessibility.resizeAiPane' : 'accessibility.resizeIndexPane')}
       aria-orientation="vertical"
       aria-valuemax={limits.maximum}
       aria-valuemin={limits.minimum}
       aria-valuenow={width}
-      aria-valuetext={t(isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width })}
+      aria-valuetext={t(isTodo ? 'accessibility.todoPaneWidth' : isAi ? 'accessibility.aiPaneWidth' : 'accessibility.indexPaneWidth', { width })}
       className={`magic-notes-pane-resize-handle magic-notes-${pane}-resize-handle`}
       onKeyDown={(event) => {
         if (!enabled) return
@@ -2310,8 +2334,8 @@ export function MagicNotesWorkspace({
                 value={todoFilter}
               />
               </div>
-              <div className={`magic-todo-workspace${selectedTodo ? ' magic-todo-workspace--selected' : ''}`}>
-              <div className="magic-notes-list">
+              <div ref={todoLayoutRef} style={{ '--magic-notes-todo-width': `${displayedTodoWidth}px` } as React.CSSProperties} className={`magic-todo-workspace${selectedTodo ? ' magic-todo-workspace--selected' : ''}${resizingPane === 'todo' ? ' magic-todo-workspace--resizing' : ''}`}>
+              <div className="magic-notes-list" id="magic-todo-list">
                 {loadStatus === 'loading' ? (
                   <p className="magic-notes-muted">
                     {t('status.loadingTodos')}
@@ -2342,16 +2366,12 @@ export function MagicNotesWorkspace({
                   </>
                 ) : (
                   todoDirectories.map((directory) => (
-                    <section
-                      className="magic-todo-directory"
+                    <MagicTodoDirectory
                       key={directory.noteId}
+                      noteId={directory.noteId}
+                      title={directory.noteTitle}
+                      count={directory.todos.length}
                     >
-                      <div className="magic-todo-directory__heading">
-                        <FolderTree aria-hidden="true" size={14} />
-                        <strong>{directory.noteTitle}</strong>
-                        <span>{directory.todos.length}</span>
-                      </div>
-                      <div className="magic-todo-directory__items">
                         {directory.todos.map((todo) => (
                           <div className="magic-todo-task" key={todo.id}>
                           <TodoListItem
@@ -2373,12 +2393,12 @@ export function MagicNotesWorkspace({
                           />
                           </div>
                         ))}
-                      </div>
-                    </section>
+                    </MagicTodoDirectory>
                   ))
                 )}
               </div>
-                          {selectedTodo ? (
+              {renderPaneSeparator('todo')}
+                           {selectedTodo ? (
                             <section
                               aria-label={t('todos.detailLabel')}
                               className="magic-todo-detail"

@@ -15,7 +15,9 @@ above the history, with text/canvas selection and Save. Creating a record resets
 that composer; editing a saved record requires its explicit Edit action. The separate To-dos view
 keeps search, status filters and grouped tasks on one page, with direct completion
 and a stable left list/right detail layout for instructions, source content and AI
-comments. Narrow containers use on-demand detail with an explicit return to the
+comments. The divider can be dragged and remembers its width; each note group
+can independently collapse its tasks while retaining its title and count.
+Narrow containers use on-demand detail with an explicit return to the
 mounted list. One content-sized button switches to the other view in the page
 header immediately before New note; status filters sit beside search and wrap
 when needed. Note detail removes the surrounding frame and stream padding while

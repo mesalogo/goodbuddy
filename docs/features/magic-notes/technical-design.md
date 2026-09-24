@@ -392,8 +392,16 @@ At a page container width of 700px or less, CSS hides the mounted list while a
 task is selected and shows an explicit return button in the detail area. Returning
 clears selection and restores row focus without scrolling; source-note return
 retains selection and focuses this visible return button on narrow layouts.
-There is no todo detail route, separate AI sidebar or resize handle. Note detail
-retains its existing AI pane preferences.
+There is no todo detail route or separate AI sidebar. A shared accessible resize
+separator displays a 1px line with a transparent 9px hit area and 8px adjacent
+content padding. It adjusts the list width, initially 320px, with a 240px minimum and at
+least 300px reserved for detail. Pointer dragging and 16px arrow steps/Home/End
+persist `todoPaneWidth` in `goodbuddy.magic-notes-layout.v1`. Narrow layouts hide
+the separator; window constraints do not overwrite the saved desktop width.
+Each source-note heading is a disclosure button with its matching task count.
+Groups start expanded and can independently hide their mounted rows without
+clearing the selected detail. Collapse state lasts while the group is mounted.
+Note detail retains its existing AI pane preferences.
 
 A single secondary button lives in `PageHeader.actions` before New note. Its
 label and icon describe the destination, and `requestDraftSwitch` retains the

@@ -181,6 +181,8 @@ export const magicNotes = {
   accessibility: {
     resizeAiPane: 'Resize the editor and AI comments panes',
     resizeIndexPane: 'Resize the record index',
+    resizeTodoPane: 'Resize the to-do list and details',
+    todoPaneWidth: 'To-do list width {{width}} pixels',
     indexPaneWidth: 'Record index width {{width}} pixels',
     aiPaneWidth: 'AI comments pane, {{width}} pixels'
   },

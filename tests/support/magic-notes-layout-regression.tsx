@@ -15,7 +15,11 @@ const note = {
 }
 window.goodbuddy = {
   magicNotes: {
-    list: async () => ({ notes: [note] }), get: async () => note, listTodos: async () => ({ todos: [] }),
+    list: async () => ({ notes: [note] }), get: async () => note, listTodos: async () => ({ todos: [{
+      id: 'layout-todo', noteId: note.id, noteTitle: note.title, entryId: 'layout-entry',
+      title: 'Layout task', instructions: 'Task details', completed: false, revision: 1,
+      comments: [], createdAt: note.createdAt, updatedAt: note.updatedAt
+    }] }),
     onChanged: () => () => {}, onAnalysisEvent: () => () => {}
   },
   updates: { getSettings: async () => ({ magicNoteCommentMode: 'after-save-manual', magicNoteCommentFormat: 'combined' }) }

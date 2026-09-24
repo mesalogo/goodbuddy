@@ -754,7 +754,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     await openTodo()
     const first = screen.getByRole('button', { name: /核对发布材料.*发布笔记/ })
     expect(screen.getByRole('button', { name: '切换到笔记' })).toBeVisible()
-    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+    expect(screen.getByRole('separator', { name: '调整待办列表与详情宽度' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '返回总览' })).not.toBeInTheDocument()
     expect(first).toHaveAttribute('aria-controls', `magic-todo-detail-${todo.id}`)
     const list = first.closest('.magic-notes-list')!
@@ -764,7 +764,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     const toolbar = screen.getByRole('searchbox').closest('.magic-todo-toolbar')!
     expect(toolbar).toContainElement(screen.getByRole('group', { name: '筛选待办' }))
     const css = readFileSync('src/renderer/src/styles.css', 'utf8')
-    expect(css).toMatch(/\.magic-todo-workspace\s*\{[^}]*grid-template-columns: minmax\(280px, 34%\) minmax\(0, 1fr\)/)
+    expect(css).toContain('grid-template-columns: var(--magic-notes-todo-width, 320px) 1px minmax(0, 1fr)')
     expect(css).toContain('@container magic-notes-page (max-width: 700px)')
     expect(css).toMatch(/\.magic-todo-workspace--selected > \.magic-notes-list,\s*\.magic-todo-detail--empty\s*\{\s*display: none/)
     fireEvent.click(screen.getByRole('button', { name: /准备演示.*演示笔记/ }))
@@ -784,6 +784,30 @@ describe('MagicNotesWorkspace detail behavior', () => {
     expect(screen.getByPlaceholderText('Search tasks, instructions, or source notes')).toHaveValue('验收')
     expect(screen.getByText('1 / 2 items')).toBeVisible()
     expect(listTodos).toHaveBeenCalledOnce()
+  })
+
+  it('resizes the todo split and collapses note groups without clearing the selected detail', async () => {
+    const view = render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openTodo()
+    const separator = screen.getByRole('separator', { name: '调整待办列表与详情宽度' })
+    Object.defineProperties(separator, { setPointerCapture: { value: vi.fn() }, hasPointerCapture: { value: () => true }, releasePointerCapture: { value: vi.fn() } })
+    fireEvent.pointerDown(separator, { button: 0, pointerId: 21 })
+    fireEvent.pointerMove(separator, { clientX: 401, pointerId: 21 })
+    fireEvent.pointerUp(separator, { pointerId: 21 })
+    expect(separator).toHaveAttribute('aria-valuenow', '400')
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    expect(separator).toHaveAttribute('aria-valuenow', '416')
+    const group = screen.getByRole('button', { name: '发布笔记 (1)' })
+    fireEvent.click(group)
+    expect(group).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: /核对发布材料.*发布笔记/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '待办详情' })).toBeVisible()
+    fireEvent.click(group)
+    expect(screen.getByRole('button', { name: /核对发布材料.*发布笔记/ })).toBeVisible()
+    view.unmount()
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openTodo()
+    expect(screen.getByRole('separator', { name: '调整待办列表与详情宽度' })).toHaveAttribute('aria-valuenow', '416')
   })
 
   it('retries source failures and ignores a late source from a previously expanded task', async () => {
@@ -851,7 +875,7 @@ describe('MagicNotesWorkspace detail behavior', () => {
     await openNote()
     fireEvent.click(screen.getByRole('button', { name: '显示 AI 评论' }))
     expect(screen.getByRole('separator', { name: '调整编辑区与 AI 评论宽度' })).toHaveAttribute('aria-valuenow', width)
-    expect(JSON.parse(localStorage.getItem('goodbuddy.magic-notes-layout.v1')!)).toEqual({ indexPaneOpen: true, indexPaneWidth: 168, aiPaneOpen: true, aiPaneWidth: Number(width) })
+    expect(JSON.parse(localStorage.getItem('goodbuddy.magic-notes-layout.v1')!)).toMatchObject({ indexPaneOpen: true, indexPaneWidth: 168, aiPaneOpen: true, aiPaneWidth: Number(width) })
   })
 
   it('resizes AI with pointer and keyboard and disables resizing in narrow layouts', async () => {

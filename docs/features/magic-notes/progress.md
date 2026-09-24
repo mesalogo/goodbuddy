@@ -1,5 +1,18 @@
 # Magic Notes Progress
 
+## 2026-09-24: Resizable Todo List and Collapsible Note Groups
+
+- Todo list/detail uses a 1px divider with a transparent 9px pointer target and
+  8px content padding on each side. Dragging and keyboard resizing persist the
+  list width; narrow layouts retain the saved desktop preference.
+- Source-note headings independently collapse their task rows while retaining
+  the count and selected detail. Buttons support native keyboard activation.
+- Focused workspace, disclosure and Electron layout tests passed: 3 files,
+  115 tests. Native Electron input verified dragging, keyboard expansion,
+  width restoration after reload and narrow-window transitions. Typecheck and
+  lint passed. A full-suite validation attempt was cancelled; no full-suite
+  success is claimed for this change.
+
 ## 2026-09-20: Shared Inline Help
 
 The canvas page-count question mark now uses `InlineHelp`, superseding the native
