@@ -29,6 +29,7 @@ const lifecycleActions = [
   'health',
   'status',
   'retire',
+  'cleanup-obsolete',
   'stop'
 ] as const
 const runtimeArchitectures = ['x64', 'arm64'] as const

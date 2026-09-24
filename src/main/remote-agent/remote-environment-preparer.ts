@@ -406,6 +406,16 @@ export class RemoteEnvironmentPreparer implements Preparer {
     )
     signal.throwIfAborted()
     }
+    try {
+      const cleanup = await lease.runAgentLifecycleAction(installationId, 'cleanup-obsolete', signal)
+      if (cleanup.exitCode !== 0 || JSON.parse(cleanup.stdout).complete !== true) {
+        console.warn('Obsolete Agent cleanup is incomplete; active or unproven installations were retained')
+      }
+    } catch {
+      // Cleanup does not invalidate an adopted environment, including older packages without this action.
+      console.warn('Obsolete Agent cleanup is unavailable; installed payloads were retained')
+    }
+    signal.throwIfAborted()
   }
 
   async #prepareUploadedArchive(options: {

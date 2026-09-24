@@ -3494,6 +3494,104 @@ describe('AcpRemoteRuntime Agent-owned prompts', () => {
     }
   })
 
+  it.each(['opencode', 'continue'] as const)('starts a fresh %s binding after a cached unknown terminal', async runtimeId => {
+    const fixture = ownedChannel({ runtimeId, state: 'outcome-unknown' })
+    const next = ownedChannel({ runtimeId })
+    try {
+      await expect(collect(fixture.instance.run(request, new AbortController().signal)))
+        .rejects.toThrow(/终态未知/iu)
+      const original = (await fixture.store.getByConversation(request.conversationId))!
+      expect(original).toMatchObject({ state: 'outcome-unknown', activePromptOperationId: request.requestId })
+      await expect(collect(fixture.instance.run(
+        { ...request, remoteRecoveryOnly: true }, new AbortController().signal
+      ))).rejects.toBeInstanceOf(RemotePromptRecoveryUnavailableError)
+      expect(fixture.channel.close).not.toHaveBeenCalled()
+      fixture.pageOwnedPromptTranscript.mockImplementation(next.pageOwnedPromptTranscript)
+      const events = await collect(fixture.instance.run({
+        ...request, requestId: 'after-unknown', prompt: 'new explicit request',
+        history: [{ role: 'user', content: 'previous question' }, { role: 'assistant', content: 'previous answer' }]
+      }, new AbortController().signal))
+      expect(events.some(event => event.type === 'done')).toBe(true)
+      expect(await fixture.store.getById(original.bindingId)).toMatchObject({ state: 'closed', activePromptOperationId: undefined })
+      const binding = (await fixture.store.getByConversation(request.conversationId))!
+      expect(binding.bindingId).not.toBe(original.bindingId)
+      expect(binding).toMatchObject({ state: 'ready', promptSequence: 0 })
+      expect(fixture.channel.close).toHaveBeenCalledOnce()
+      expect(fixture.preparePrompt).toHaveBeenCalledTimes(2)
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledTimes(2)
+      expect(fixture.startOwnedPrompt.mock.calls[1]![0]).toMatchObject({
+        bindingId: binding.bindingId, operationId: 'after-unknown', requestId: 'after-unknown'
+      })
+      expect(fixture.startOwnedPrompt.mock.calls[1]![0]).not.toHaveProperty('acpSessionId')
+      expect(JSON.stringify(fixture.startOwnedPrompt.mock.calls[1]![0])).toContain('previous answer')
+      expect(JSON.stringify(fixture.startOwnedPrompt.mock.calls[1]![0])).toContain('new explicit request')
+      expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+    } finally { await fixture.instance.dispose(); await next.instance.dispose() }
+  })
+
+  it.each(['opencode', 'continue'] as const)('does not prepare or start attach-only recovery from a cached ready %s session', async runtimeId => {
+    const fixture = ownedChannel({ runtimeId })
+    try {
+      await collect(fixture.instance.run(request, new AbortController().signal))
+      const binding = await fixture.store.getByConversation(request.conversationId)
+      await expect(collect(fixture.instance.run(
+        { ...request, remoteRecoveryOnly: true }, new AbortController().signal
+      ))).rejects.toBeInstanceOf(RemotePromptRecoveryUnavailableError)
+      expect(await fixture.store.getByConversation(request.conversationId)).toEqual(binding)
+      expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+      expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+      expect(fixture.channel.close).not.toHaveBeenCalled()
+    } finally { await fixture.instance.dispose() }
+  })
+
+  it('preserves a cached running operation when another explicit request arrives', async () => {
+    const fixture = ownedChannel()
+    try {
+      const stream = fixture.instance.run(request, new AbortController().signal)
+      await stream.next()
+      await stream.return()
+      const binding = await fixture.store.getByConversation(request.conversationId)
+      await expect(collect(fixture.instance.run(
+        { ...request, requestId: 'different-request' }, new AbortController().signal
+      ))).rejects.toThrow(/必须先恢复或取消原请求/iu)
+      expect(await fixture.store.getByConversation(request.conversationId)).toEqual(binding)
+      expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+      expect(fixture.channel.close).not.toHaveBeenCalled()
+      const recovered = await collect(fixture.instance.run(
+        { ...request, remoteRecoveryOnly: true }, new AbortController().signal
+      ))
+      expect(recovered.some(event => event.type === 'done')).toBe(true)
+      expect(fixture.preparePrompt).toHaveBeenCalledOnce()
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledOnce()
+    } finally { await fixture.instance.dispose() }
+  })
+
+  it('continues a cached ready session after a failed terminal', async () => {
+    const fixture = ownedChannel({ state: 'failed' })
+    const next = ownedChannel()
+    try {
+      await expect(collect(fixture.instance.run(request, new AbortController().signal)))
+        .rejects.toThrow('owned failure')
+      const binding = (await fixture.store.getByConversation(request.conversationId))!
+      expect(binding).toMatchObject({ state: 'ready', activePromptOperationId: undefined })
+      fixture.pageOwnedPromptTranscript.mockImplementation(next.pageOwnedPromptTranscript)
+      const events = await collect(fixture.instance.run(
+        { ...request, requestId: 'after-failure' }, new AbortController().signal
+      ))
+      expect(events.some(event => event.type === 'done')).toBe(true)
+      expect(await fixture.store.getByConversation(request.conversationId)).toMatchObject({
+        bindingId: binding.bindingId, state: 'ready', promptSequence: binding.promptSequence + 1
+      })
+      expect(fixture.startOwnedPrompt.mock.calls[1]![0]).toHaveProperty('acpSessionId', binding.acpSessionId)
+      expect(fixture.preparePrompt).toHaveBeenCalledTimes(2)
+      expect(fixture.startOwnedPrompt).toHaveBeenCalledTimes(2)
+      expect(fixture.attachOwnedPrompt).not.toHaveBeenCalled()
+      expect(fixture.channel.close).not.toHaveBeenCalled()
+    } finally { await fixture.instance.dispose(); await next.instance.dispose() }
+  })
+
   it('never starts a replacement prompt for attach-only recovery', async () => {
     const fixture = ownedChannel()
     const recoveryRequest = {

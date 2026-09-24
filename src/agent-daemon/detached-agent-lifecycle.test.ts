@@ -39,6 +39,24 @@ afterEach(() => {
 })
 
 describe('detached Agent lifecycle', () => {
+  it('only permits payload cleanup for a stopped recorded daemon under its bootstrap lock', async () => {
+    const harness = lifecycleHarness()
+    mkdirSync(harness.stateDirectory, { mode: 0o700 })
+    const cleanup = vi.fn(async () => {
+      expect(existsSync(harness.lockPath)).toBe(true)
+    })
+    await expect(harness.lifecycle.withStoppedInstallation(cleanup)).resolves.toBe(false)
+    await harness.becomeReady()
+    await expect(harness.lifecycle.withStoppedInstallation(cleanup)).resolves.toBe(false)
+    harness.identities.delete(childPid)
+    await expect(harness.lifecycle.withStoppedInstallation(cleanup)).resolves.toBe(true)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(harness.signals).toEqual([])
+    expect(existsSync(harness.lockPath)).toBe(false)
+    expect(harness.readRecord()).toBeDefined()
+    await expect(harness.lifecycle.withStoppedInstallation(async () => { throw new Error('deferred') })).rejects.toThrow('deferred')
+    expect(existsSync(harness.lockPath)).toBe(false)
+  })
   it('serializes concurrent bootstrap and records endpoint readiness', async () => {
     const harness = lifecycleHarness()
     harness.onSleep(async () => {

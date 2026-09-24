@@ -714,7 +714,6 @@ export async function reconcileOrphanedDirectLinuxStdioProcesses(options: {
     try {
       const actual = await readIdentity(record.processIdentity.pid)
       if (!sameLinuxRuntimeProcessIdentity(record.processIdentity, actual)) {
-        options.registry.remove(record.ownerId, record.state)
         conflicts += 1
         continue
       }
@@ -756,19 +755,14 @@ export async function reconcileOrphanedDirectLinuxStdioProcesses(options: {
           } else {
             // Without the recorded leader identity there is no safe process
             // to match immediately before a group signal.
-            options.registry.remove(record.ownerId, current.state)
             unknown += 1
           }
         } catch {
-          const latest = options.registry.get(record.ownerId)
-          if (latest !== undefined) options.registry.remove(record.ownerId, latest.state)
           unknown += 1
         }
       } else if (error instanceof DirectLinuxStdioProcessOwnerError && error.code === 'identity') {
-        if (current !== undefined) options.registry.remove(record.ownerId, current.state)
         conflicts += 1
       } else {
-        if (current !== undefined) options.registry.remove(record.ownerId, current.state)
         unknown += 1
       }
     }

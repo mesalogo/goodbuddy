@@ -29,6 +29,11 @@ function bootstrapOutput(
 }
 
 describe('fixed Agent SSH commands', () => {
+  it('runs obsolete cleanup through the current installation, never an obsolete binary', () => {
+    expect(buildFixedAgentSshCommand(verifyAgentInstallationId('agent-current'), {
+      kind: 'lifecycle', action: 'cleanup-obsolete'
+    })).toBe('exec "$HOME/.goodbuddy/agent/installations/agent-current/goodbuddy-agent" cleanup-obsolete --installation-id agent-current')
+  })
   it('uses one exact, fixed, non-mutating bootstrap probe command', () => {
     expect(AGENT_BOOTSTRAP_PROBE_COMMAND).toBe(
       `printf 'GOODBUDDY_AGENT_BOOTSTRAP_PROBE_V1\\n'; ` +

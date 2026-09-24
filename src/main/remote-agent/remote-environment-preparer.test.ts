@@ -102,6 +102,7 @@ type FixtureOptions = {
   uploadFile?: ReturnType<typeof vi.fn>
   activateAgent?: ReturnType<typeof vi.fn>
   activateRuntime?: ReturnType<typeof vi.fn>
+  cleanupObsolete?: () => Promise<{ exitCode: number; stdout: string; stderr: string }>
   pendingOperation?: PendingRemoteEnvironmentOperation
 }
 
@@ -165,7 +166,12 @@ function fixture(options: FixtureOptions = {}) {
     runAgentLifecycleAction: vi.fn(async (
       installationId: string,
       action: string
-    ) => (activateAgent as (
+    ) => action === 'cleanup-obsolete'
+      ? (options.cleanupObsolete ?? (async () => {
+          calls.push('cleanup-obsolete')
+          return { exitCode: 0, stdout: '{"complete":true}', stderr: '' }
+        }))()
+      : (activateAgent as (
         installationId: string,
         action: string
       ) => Promise<unknown>)(installationId, action)),
@@ -327,6 +333,19 @@ function fixture(options: FixtureOptions = {}) {
 }
 
 describe('RemoteEnvironmentPreparer', () => {
+  it.each([0, 2])('reports deferred or unsupported cleanup without failing a healthy update (exit=%s)', async exitCode => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const cleanupObsolete = vi.fn(async () => ({ exitCode, stdout: '{"complete":false}', stderr: '' }))
+    const value = fixture({ cleanupObsolete })
+    try {
+      await expect(value.preparer.prepare(HOST_ID, 'remote-download', undefined, new AbortController().signal)).resolves.toBeUndefined()
+      expect(cleanupObsolete).toHaveBeenCalledOnce()
+      expect(value.regularLease.runAgentLifecycleAction).toHaveBeenLastCalledWith(identity.agent.installationId, 'cleanup-obsolete', expect.any(AbortSignal))
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('incomplete'))
+    } finally {
+      warning.mockRestore()
+    }
+  })
   it('runs the remote compound graph in order, verifies identity, cleans explicitly, and emits the resolved method', async () => {
     const value = fixture()
     const progress: Array<{ method: string; phase: string }> = []
@@ -352,6 +371,7 @@ describe('RemoteEnvironmentPreparer', () => {
       'commit',
       'agent',
       'runtime',
+      'cleanup-obsolete',
       'cleanup',
       'remove-operation',
       'release-bootstrap',

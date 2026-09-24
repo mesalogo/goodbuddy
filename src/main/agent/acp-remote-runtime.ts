@@ -1746,6 +1746,31 @@ export class AcpRemoteRuntime implements AgentRuntime {
     signal: AbortSignal
   ): Promise<SessionRecord> {
     let current = this.sessions.get(conversationId)
+    if (current && request.remoteRecoveryOnly === true && !(
+      current.binding.state === 'prompt-running' &&
+      current.binding.activePromptOperationId === request.requestId
+    )) {
+      throw new RemotePromptRecoveryUnavailableError(
+        '没有可安全附加的远端 Agent 请求，且恢复不会重放任务'
+      )
+    }
+    if (current?.binding.state === 'prompt-running' &&
+      this.options.modelProfile !== undefined &&
+      current.binding.activePromptOperationId !== request.requestId) {
+      throw new Error('当前对话仍有 Agent 托管请求，必须先恢复或取消原请求')
+    }
+    if (current && current.binding.state !== 'ready' &&
+      current.binding.state !== 'prompt-running') {
+      // Let cold-open retire an unusable binding before starting a new request.
+      this.sessions.delete(conversationId)
+      this.contexts.delete(conversationId)
+      await this.awaitLocalOperation(
+        '关闭结果未知会话通道',
+        this.closeContext(current.context),
+        signal
+      ).catch(() => undefined)
+      current = undefined
+    }
     if (current?.binding.state === 'ready' && this.options.runtimeId === 'continue' &&
       this.options.modelProfile !== undefined) {
       // Continue keeps native history in process memory; seed the next process

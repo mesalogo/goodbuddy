@@ -615,6 +615,58 @@ describe('model bridge loopback helper', () => {
 describe('model bridge Unix broker', () => {
   const runOnUnix = process.platform === 'win32' ? it.skip : it
 
+  runOnUnix.each(['delivered', 'failed', 'forced', 'timeout'] as const)(
+    'settles a flushed HTTP response before completion close (%s)', async outcome => {
+      let releaseAck!: () => void
+      const ackGate = new Promise<void>(resolve => { releaseAck = resolve })
+      let enteredAck!: () => void
+      const ackEntered = new Promise<void>(resolve => { enteredAck = resolve })
+      const failDelivery = vi.fn()
+      const broker = new ModelBridgeBrokerServer({
+        scratchDirectory: privateTemporaryDirectory(),
+        dispatch: async () => ({
+          response: validResponse,
+          acknowledgeDelivery: async () => {
+            enteredAck()
+            await ackGate
+            if (outcome === 'failed') throw new Error('delivery failed')
+          },
+          failDelivery
+        })
+      })
+      await broker.listen()
+      const proxy = new ModelBridgeLoopbackProxy({ exchange: createUnixModelBridgeExchange({ socketPath: broker.socketPath }) })
+      const origin = await proxy.listen()
+      try {
+        const response = await sendHttp(origin, { path: '/v1/messages', body: '{}' })
+        expect(response.body).toBe('{"ok":true}')
+        await ackEntered
+        let closed = false
+        const close = broker.close({ waitForDelivery: outcome !== 'forced' }).then(() => { closed = true })
+        // An event-loop turn proves completion close has not torn down the ACK socket.
+        await new Promise<void>(resolve => setImmediate(resolve))
+        if (outcome === 'forced') {
+          await close
+          expect(failDelivery).toHaveBeenCalledOnce()
+        } else if (outcome === 'timeout') {
+          await expect(close).rejects.toThrow()
+          expect(failDelivery).toHaveBeenCalledOnce()
+        } else {
+          expect(closed).toBe(false)
+          expect(failDelivery).not.toHaveBeenCalled()
+          releaseAck()
+          await close
+          expect(failDelivery).toHaveBeenCalledTimes(outcome === 'failed' ? 1 : 0)
+        }
+        expect(existsSync(broker.socketPath)).toBe(false)
+      } finally {
+        releaseAck()
+        await proxy.close()
+        await broker.close()
+      }
+    }
+  )
+
   runOnUnix('routes shared Sessions concurrently and rejects queued work after its operation ends', async () => {
     let unblock!: () => void
     const blocked = new Promise<void>(resolve => { unblock = resolve })

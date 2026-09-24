@@ -36,7 +36,8 @@ export type AgentOwnedAcpPromptOptions = {
   completePrompt: (
     operationId: string,
     status: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown',
-    response?: PromptResponse
+    response: PromptResponse | undefined,
+    commitTerminal: () => void
   ) => void | Promise<void>
   resolveTerminalState?: (
     proposed: 'completed' | 'failed' | 'cancelled'
@@ -218,54 +219,30 @@ export class AgentOwnedAcpPrompt {
         })
     )
     this.#promptSettled = promptOperation.then(() => undefined, () => undefined)
+    const finish = async (proposed: 'completed' | 'failed' | 'cancelled', response?: PromptResponse, error?: unknown) => {
+      let state = this.#options.resolveTerminalState?.(proposed) ?? proposed
+      let completionError: unknown
+      let committed = false
+      const commitTerminal = () => {
+        if (committed) return
+        this.#appendTerminal(state, {
+          status: state,
+          ...(response === undefined ? { error: boundedError(error) } : { response }),
+          ...(completionError === undefined ? {} : { completionError: boundedError(completionError) })
+        })
+        committed = true
+      }
+      try {
+        await this.#options.completePrompt(request.operationId, state, response, commitTerminal)
+      } catch (error) {
+        state = 'outcome-unknown'
+        completionError = error
+      }
+      commitTerminal()
+    }
     this.#promptPromise = promptOperation.then(
-        async (response) => {
-          const proposed =
-            response.stopReason === 'cancelled'
-              ? 'cancelled'
-              : 'completed'
-          let state =
-            this.#options.resolveTerminalState?.(proposed) ?? proposed
-          let completionError: unknown
-          try {
-            await this.#options.completePrompt(
-              request.operationId,
-              state,
-              response
-            )
-          } catch (error) {
-            state = 'outcome-unknown'
-            completionError = error
-          }
-          this.#appendTerminal(state, {
-            status: state,
-            response,
-            ...(completionError === undefined
-              ? {}
-              : { completionError: boundedError(completionError) })
-          })
-        },
-        async (error: unknown) => {
-          let state =
-            this.#options.resolveTerminalState?.('failed') ?? 'failed'
-          let completionError: unknown
-          try {
-            await this.#options.completePrompt(
-              request.operationId,
-              state
-            )
-          } catch (completionFailure) {
-            state = 'outcome-unknown'
-            completionError = completionFailure
-          }
-          this.#appendTerminal(state, {
-            status: state,
-            error: boundedError(error),
-            ...(completionError === undefined
-              ? {}
-              : { completionError: boundedError(completionError) })
-          })
-        }
+        response => finish(response.stopReason === 'cancelled' ? 'cancelled' : 'completed', response),
+        error => finish('failed', undefined, error)
       )
       .finally(() => {
         this.#questions.clear()

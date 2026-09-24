@@ -159,6 +159,7 @@ export class ModelBridgeBrokerServer {
   readonly #maximumConnections: number
   readonly #requestTimeoutMs: number
   readonly #connections = new Set<Socket>()
+  readonly #requests = new Set<Promise<void>>()
   #server?: Server
   #socketIdentity?: FileIdentity
   #closing = false
@@ -227,7 +228,9 @@ export class ModelBridgeBrokerServer {
         socket.once('close', () => {
           this.#connections.delete(socket)
         })
-        void this.#serveOne(socket)
+        const request = this.#serveOne(socket)
+        this.#requests.add(request)
+        void request.finally(() => this.#requests.delete(request))
       }
     )
     this.#server = server
@@ -249,12 +252,12 @@ export class ModelBridgeBrokerServer {
     }
   }
 
-  async close(): Promise<void> {
+  async close(options: { waitForDelivery?: boolean } = {}): Promise<void> {
     if (this.#closePromise !== undefined) {
       await this.#closePromise
       return
     }
-    const closePromise = this.#close()
+    const closePromise = this.#close(options.waitForDelivery === true)
     this.#closePromise = closePromise
     try {
       await closePromise
@@ -265,20 +268,31 @@ export class ModelBridgeBrokerServer {
     }
   }
 
-  async #close(): Promise<void> {
+  async #close(waitForDelivery: boolean): Promise<void> {
     const server = this.#server
     this.#server = undefined
     this.#closing = true
     try {
-      for (const connection of this.#connections) {
-        connection.destroy()
+      try {
+        if (waitForDelivery) {
+          // Runtime can finish its prompt before the helper's delivery ACK arrives.
+          await raceWithAbort(
+            Promise.all([...this.#requests]),
+            AbortSignal.timeout(CLOSE_TIMEOUT_MS)
+          )
+        }
+      } finally {
+        for (const connection of this.#connections) {
+          connection.destroy()
+        }
+        await settleWithin(
+          Promise.all([
+            server === undefined ? Promise.resolve() : closeServer(server),
+            ...this.#requests
+          ]),
+          CLOSE_TIMEOUT_MS
+        )
       }
-      await settleWithin(
-        server === undefined
-          ? Promise.resolve()
-          : closeServer(server),
-        CLOSE_TIMEOUT_MS
-      )
     } finally {
       this.#connections.clear()
       removeSocketIfIdentityMatches(

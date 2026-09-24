@@ -24,6 +24,27 @@ afterEach(() => {
 })
 
 describe('direct Linux stdio Runtime ownership', () => {
+  it.each(['missing-leader', 'inspection-failed', 'pid-reused'])('retains uncertain orphan ownership for retry (%s)', async scenario => {
+    const registry = createRegistry()
+    registry.reserve({ ownerId: 'old', launchId: 'launch-old', processId: 'process-old', installationId: 'installation-old', ownerToken: 'a'.repeat(32) })
+    registry.markRunning('old', identity())
+    const sendSignal = vi.fn()
+    try {
+      const result = await reconcileOrphanedDirectLinuxStdioProcesses({
+        installationId: 'installation-old', registry, sendSignal,
+        readProcessIdentity: async () => {
+          if (scenario === 'pid-reused') return { ...identity(), startTimeTicks: 999n }
+          throw Object.assign(new Error('unavailable'), { code: scenario === 'missing-leader' ? 'ENOENT' : 'EACCES' })
+        },
+        listPidNamespaceMembers: async () => [{ ...identity(), pid: 43 }]
+      })
+      expect(result.unknown + result.conflicts).toBe(1)
+      expect(registry.get('old')).toBeDefined()
+      expect(sendSignal).not.toHaveBeenCalled()
+    } finally {
+      registry.close()
+    }
+  })
   it('keeps shared stdin available across Session completion without a cumulative prompt quota', async () => {
     const registry = createRegistry()
     const child = fakeChild()

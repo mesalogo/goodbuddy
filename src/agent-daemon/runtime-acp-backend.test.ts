@@ -283,6 +283,64 @@ class FakeProcess implements RuntimeAcpProcessOwner {
 
 type Harness = ReturnType<typeof harness>
 
+function deferred<T = void>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
+async function ownedHarness(shared: boolean) {
+  const root = await mkdtemp(join(tmpdir(), 'goodbuddy-terminal-race-'))
+  const transcript = new SemanticPromptStore(join(root, 'prompts.sqlite'))
+  const prompts: Array<() => Promise<void>> = []
+  const processes: FakeProcess[] = []
+  const setRoute = vi.spyOn(AgentAcpConnection.prototype, 'setModelRoute').mockResolvedValue()
+  const fixture = harness({
+    agentOwned: true, shareOwnedProcesses: shared, semanticStore: transcript, uniqueProcesses: true,
+    configureProcess: process => {
+      processes.push(process)
+      process.onWrite = payload => {
+        const request = JSON.parse(Buffer.from(payload).toString())
+        if (request.id === undefined) return
+        const reply = (result: unknown) => process.emit('stdout', `${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`)
+        if (request.method === 'session/prompt') {
+          prompts.push(() => reply({ stopReason: 'end_turn' }))
+          return
+        }
+        let result: unknown = {}
+        if (request.method === 'initialize') result = { protocolVersion: 1, agentCapabilities: {} }
+        if (request.method === 'session/new') result = { sessionId: `session-${processes.length}` }
+        if (request.method === 'session/set_config_option') result = {
+          configOptions: [{ id: 'model', name: 'Model', type: 'select', currentValue: request.params.value, options: [] }]
+        }
+        void reply(result)
+      }
+    }
+  })
+  await open(fixture)
+  return {
+    ...fixture, transcript, prompts, processes,
+    start: async (operationId = 'request-1', deadlineAt = UNBOUNDED_REMOTE_PROMPT_DEADLINE) => {
+      await invoke(fixture, 'runtime/preparePrompt', fixture.preparation({ operationId, requestId: operationId, deadlineAt }))
+      await invoke(fixture, 'runtime/startPrompt', {
+        bindingId: 'binding-1', operationId, requestId: operationId, prompt: [{ type: 'text', text: 'Finish' }]
+      })
+    },
+    page: (operationId = 'request-1') => transcript.page({
+      bindingId: 'binding-1', operationId, controllerId: fixture.context.controller.controllerId,
+      afterSequence: '0', limit: 10
+    }),
+    cleanup: async () => {
+      try { await fixture.backend.dispose() } finally {
+        setRoute.mockRestore()
+        transcript.close()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  }
+}
+
 function harness(input: {
   workMode?: 'ask' | 'execute'
   now?: number
@@ -465,6 +523,74 @@ function harness(input: {
 }
 
 describe('RuntimeAcpBackend', () => {
+  it.each([false, true])('commits completion before idle cleanup and preserves it on cleanup failure (shared=%s)', async shared => {
+    for (const failure of ['stop', 'reconcile'] as const) {
+      const fixture = await ownedHarness(shared)
+      const enteredStop = deferred()
+      const releaseStop = deferred()
+      const stop = vi.spyOn(fixture.process, 'stop').mockImplementationOnce(async () => {
+        enteredStop.resolve()
+        await releaseStop.promise
+        if (failure === 'stop') throw new Error('idle stop failed')
+      })
+      try {
+        await fixture.start()
+        await fixture.prompts[0]!()
+        await enteredStop.promise
+        expect(fixture.page()).toMatchObject({ state: 'completed', events: [{ kind: 'prompt-terminal', payload: { status: 'completed' } }] })
+        releaseStop.resolve()
+        await expect(invoke(fixture, 'runtime/reconcilePrompt', {
+          bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1'
+        })).resolves.toMatchObject({ status: 'terminal', terminalState: 'completed' })
+        expect(fixture.diagnostics.tryRecord).toHaveBeenCalledWith('daemon.stop.failed', expect.objectContaining({
+          reason: 'idle-runtime-cleanup', error: expect.any(Error)
+        }))
+        expect(fixture.page().events).toHaveLength(1)
+        expect(fixture.page().state).toBe('completed')
+      } finally {
+        releaseStop.resolve()
+        stop.mockRestore()
+        await fixture.cleanup()
+      }
+    }
+  })
+
+  it('waits for bridge delivery before committing the owned terminal or stopping Runtime', async () => {
+    const fixture = await ownedHarness(true)
+    const enteredClose = deferred()
+    const delivered = deferred()
+    fixture.bridgeCloses.mockImplementationOnce(async () => {
+      enteredClose.resolve()
+      await delivered.promise
+    })
+    try {
+      await fixture.start()
+      await fixture.prompts[0]!()
+      await enteredClose.promise
+      expect(fixture.bridgeCloses).toHaveBeenCalledWith({ waitForDelivery: true })
+      expect(fixture.page().state).toBe('running')
+      expect(fixture.process.stops).toEqual([])
+      delivered.resolve()
+      await invoke(fixture, 'runtime/getAcpCursors', { bindingId: 'binding-1' })
+      expect(fixture.page().state).toBe('completed')
+      expect(fixture.process.stops).toEqual(['binding-closed'])
+    } finally { delivered.resolve(); await fixture.cleanup() }
+  })
+
+  it.each([false, true])('keeps transcript and reconciliation unknown when completion delivery fails (shared=%s)', async shared => {
+    const fixture = await ownedHarness(shared)
+    fixture.bridgeCloses.mockRejectedValueOnce(new Error('delivery ACK timed out'))
+    try {
+      await fixture.start()
+      await fixture.prompts[0]!()
+      await vi.waitFor(() => expect(fixture.page().state).toBe('outcome-unknown'))
+      await expect(invoke(fixture, 'runtime/reconcilePrompt', {
+        bindingId: 'binding-1', operationId: 'request-1', requestId: 'request-1'
+      })).resolves.toMatchObject({ status: 'outcome-unknown' })
+      expect(fixture.page().events).toHaveLength(1)
+    } finally { await fixture.cleanup() }
+  })
+
   it('binds MCP image calls to authenticated blob framing and closes each prompt endpoint', async () => {
     const fixture = harness({ workMode: 'execute' })
     const client = new Client({ name: 'image-backend-test', version: '1' })

@@ -334,7 +334,9 @@ describe('AgentOwnedAcpPrompt', () => {
     )
     expect(completePrompt).toHaveBeenCalledWith(
       'operation-1',
-      'failed'
+      'failed',
+      undefined,
+      expect.any(Function)
     )
     expect(
       transcript.page({

@@ -32,6 +32,7 @@ import {
   readManagedAgentReleaseKeyRegistry,
   RegisteredAgentBundleError,
   verifyPublishedAgentBundle,
+  verifyInstalledAgentBundle,
   type VerifiedInstalledAgentBundle
 } from './installed-bundle-verifier'
 import { InstallationRegistry } from './installation-registry'
@@ -55,6 +56,7 @@ import {
   type DetachedAgentLifecycleOptions
 } from './detached-agent-lifecycle'
 import { readAgentDiagnostics } from './diagnostic-log'
+import { cleanupObsoleteInstallations } from './installation-cleanup'
 
 type CliIo = {
   input: Readable
@@ -119,7 +121,8 @@ const LIFECYCLE_ACTIONS = new Set([
   'status',
   'health',
   'stop',
-  'retire'
+  'retire',
+  'cleanup-obsolete'
 ])
 
 export async function runAgentCli(
@@ -578,6 +581,23 @@ async function runLifecycle(
   )
   const paths = resolveInstallationPaths(installationId, dependencies)
   switch (action) {
+    case 'cleanup-obsolete': {
+      const agentRoot = dirname(dirname(dirname(paths.executablePath)))
+      const releaseKeyRegistry = dependencies.releaseKeyRegistry ??
+        await readManagedAgentReleaseKeyRegistry(resolve(agentRoot, 'release-keys.json'))
+      const result = await cleanupObsoleteInstallations({
+        currentInstallationId: installationId,
+        agentRoot,
+        paths: id => resolveInstallationPaths(id, dependencies),
+        verify: id => (dependencies.verifyInstallation ?? verifyInstalledAgentBundle)(
+          dirname(resolveInstallationPaths(id, dependencies).executablePath),
+          { installationId: id, architecture: currentAgentArchitecture(), releaseKeyRegistry }
+        ),
+        createLifecycle: dependencies.createLifecycle
+      })
+      io.output.write(`${JSON.stringify(result)}\n`)
+      break
+    }
     case 'adopt': {
       const { verified, registry } =
         await verifyManagedInstallation(

@@ -304,7 +304,7 @@ type PreparedOperation = {
   acceptance: RemotePromptOperationAcceptance
   budget: RemotePromptOperationPreparation['budget']
   completion?: z.infer<typeof acpCompletePromptResultSchema>
-  terminalState?: 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  terminalState?: 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'outcome-unknown'
   processTree?: 'running' | 'empty'
   modelProfile?: AgentPromptModelProfile
   promptSequence: number
@@ -1529,12 +1529,13 @@ export class RuntimeAcpBackend {
           }
         } : {}),
         transcript: this.#options.semanticPrompts,
-        completePrompt: async (operationId, status) => {
+        completePrompt: async (operationId, status, _response, commitTerminal) => {
           await this.#enqueueControl(async () => {
             await this.#terminalizeOwnedPrompt(
               binding,
               operationId,
-              status
+              status,
+              commitTerminal
             )
           })
         },
@@ -1653,7 +1654,8 @@ export class RuntimeAcpBackend {
   async #terminalizeOwnedPrompt(
     binding: BindingState,
     operationId: string,
-    status: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown'
+    status: 'completed' | 'failed' | 'cancelled' | 'outcome-unknown',
+    commitTerminal: () => void
   ): Promise<void> {
     const prepared = binding.operations.get(operationId)
     if (
@@ -1663,16 +1665,15 @@ export class RuntimeAcpBackend {
     ) {
       return
     }
-    await this.#closeModelBridge(binding, true)
     try {
+      await this.#closeModelBridge(binding, true, false, true)
       if (!binding.sharedProcess) await binding.process.completePrompt()
-    } catch {
+    } catch (error) {
+      binding.poisoned = true
       binding.state = 'outcome-unknown'
       prepared.modelProfile = undefined
-      throw new RuntimeAcpBackendError(
-        'Runtime prompt completion failed',
-        'process'
-      )
+      await this.#stopAndReconcile(binding, 'identity-conflict').catch(() => undefined)
+      throw error
     }
     if (binding.poisoned || status === 'outcome-unknown') {
       binding.state = 'outcome-unknown'
@@ -1683,6 +1684,8 @@ export class RuntimeAcpBackend {
       ).catch(() => undefined)
       return
     }
+    // Persist the terminal while control is serialized, before exposing an idle binding.
+    commitTerminal()
     prepared.terminalState =
       status === 'cancelled'
         ? 'cancelled'
@@ -1710,7 +1713,15 @@ export class RuntimeAcpBackend {
       clearTimeout(binding.ownedPromptStartTimer)
       binding.ownedPromptStartTimer = undefined
     }
-    await this.#releaseIdleProcess(binding)
+    try {
+      await this.#releaseIdleProcess(binding)
+    } catch (error) {
+      this.#options.diagnostics?.tryRecord('daemon.stop.failed', {
+        runtimeId: binding.request.runtimeId,
+        reason: 'idle-runtime-cleanup',
+        error
+      })
+    }
   }
 
   async #startModelBridge(
@@ -1887,7 +1898,8 @@ export class RuntimeAcpBackend {
   async #closeModelBridge(
     binding: BindingState,
     poisonIfActive: boolean,
-    preserveRuntime = false
+    preserveRuntime = false,
+    waitForDelivery = false
   ): Promise<void> {
     binding.imageTool?.close()
     binding.imageTool = undefined
@@ -1902,7 +1914,7 @@ export class RuntimeAcpBackend {
       ).catch(() => undefined)
     }
     try {
-      await broker?.close()
+      await broker?.close({ waitForDelivery })
     } catch (error) {
       brokerError = error
     }
@@ -2038,6 +2050,9 @@ export class RuntimeAcpBackend {
         terminalState: 'completed',
         processTree: prepared.completion.processTree
       }
+    }
+    if (prepared.terminalState === 'outcome-unknown') {
+      return { status: 'outcome-unknown', processTree: 'unknown' }
     }
     if (prepared.terminalState !== undefined) {
       return {
@@ -2445,9 +2460,7 @@ export class RuntimeAcpBackend {
         },
         terminalState: terminal.status
       })
-      if (terminal.status !== 'outcome-unknown') {
-        prepared.terminalState = terminal.status
-      }
+      prepared.terminalState = terminal.status
     } catch {
       // A concurrent Agent-owned terminal transition already won.
     }

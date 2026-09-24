@@ -185,7 +185,7 @@ Detached GoodBuddy Agent
   解析新的 current registry 并建立当前连接，无需刷新项目记录；当前环境无效时要求用户
   显式修复，但不在项目切换中下载或安装。失败或取消保留 Host 配置、凭据、项目、
   Workspace 和旧组件。
-- 当前 Agent 可以常驻。新安装提升为 current 后，旧 Agent 每 250 ms 检查 registry 并进入
+- 当前 Agent 可以常驻。新安装提升为 current 后，已包含退役逻辑的旧 Agent 每 250 ms 检查 registry 并进入
   draining，不再接受新 Prompt；无活动任务时退出，有任务时等待完成。已连接 Desktop 的
   终态 transcript ACK 也计入排空条件；断线任务完成后不等待离线 Desktop。待答问题仍是
   活动任务。旧安装退出前可以重新 Attach 原任务，但不得重新 bootstrap 已退役安装。
@@ -194,6 +194,27 @@ Detached GoodBuddy Agent
   加载原生 session，Continue 通过已有冷启动路径从持久对话历史初始化。
 - 显式 stop/retire 可校验并停止已被 registry 替换的旧安装。退出只清理 GoodBuddy 自己的
   socket、状态和子进程，不删除会话历史，不删除或覆盖无关 Host 文件。
+
+### 升级残留清理
+
+Agent adoption 和所有 Runtime 激活成功后，Main 调用新安装的
+`cleanup-obsolete --installation-id <current-id>`。清理由当前 Agent 代码执行，不调用
+旧安装的二进制。命令扫描现存 Agent installation 目录，跳过 current 和 candidate，
+返回 `complete`、`removed` 与逐安装的 `deferred` 原因。清理不可用或存在延期项时记录
+警告，已成功的安装不回滚；下次更新或再次调用该命令时重试，没有后台清理服务。
+
+删除旧 payload 前须完整验证安装包，在既有 bootstrap lock 内确认原 daemon 的生命周期
+记录已失效，并只读检查已有 `semantic-prompts.sqlite` 与 journal。活动、结果未知、
+未确认的终态、尚存的 ACP channel，以及缺失或无法读取的记录都会阻止清理。随后根据
+该安装的 Runtime owner 记录回收可确认归属的孤儿进程；身份冲突、无法检查或仍有子进程
+的 owner 记录保留，等待重试。删除前还检查进程是否使用该 payload，并再次核对 registry。
+只删除已确认不再使用的 Agent 可执行文件目录，保留 state、历史和 Workspace。
+
+**仍存活的 legacy daemon 不会被此命令回收。** 旧实现没有原子排空并拒绝新工作的操作，
+持久记录也不足以证明存活 daemon 的内存任务为空。因此即使没有连接或没有持久操作，
+仍返回 `live-or-unproven-daemon-inactivity`，不能把升级后的旧版本自动退出规则追溯应用于
+缺少退役逻辑的进程。此轮不裁剪共享 Runtime digest 目录，也不扫描 payload 已丢失而
+仅剩 state 的安装。用户报告的六个 daemon、五个旧 helper 和约 2.67 GiB 占用未据此宣告解决。
 
 ### Host 级环境生命周期
 
@@ -909,6 +930,47 @@ goodbuddy-agent diagnostics --installation-id <installationId>
 不能以本次 OpenCode 结果替代。历史发布说明中的技术预览记录保留，当前远程项目设置与
 说明文档已去除该标签；Linux 桌面控制等其他预览功能不受影响。
 
+## 升级残留清理验证（2026-09-24）
+
+本轮在产品源码改动完成后，重新从工作区构建 cleanup CLI 和隔离验证脚本，并在共享
+Linux x64 Host 重跑。使用既有 GoodBuddy 加密凭据存储和固定 Host Key；没有输出凭据。
+本机临时 harness 位于 `C:/Users/jiang/AppData/Local/Temp/opencode/`，执行命令为：
+
+```powershell
+node "C:\Users\jiang\AppData\Local\Temp\opencode\upgrade-cleanup-build.cjs"
+node "C:\Users\jiang\AppData\Local\Temp\opencode\upgrade-cleanup-run.cjs"
+```
+
+`upgrade-cleanup-build.cjs` 打包 `upgrade-cleanup-cli.ts`、`upgrade-cleanup-linux.ts`
+和 `upgrade-cleanup-host.ts`；run 脚本通过 Electron 启动 host 驱动。Host 驱动读取共享安装
+registry 以定位 Node 和 koffi 依赖，仅在 `/root/tmp/gb-upgrade-upload-*` 上传测试脚本。
+远端执行形式如下，其中 `<current-id>` 来自共享 registry，`<upload-root>` 是本轮唯一目录：
+
+```sh
+NODE_PATH='/root/.goodbuddy/agent/installations/<current-id>/lib/node_modules' TMPDIR='<upload-root>' '<installed-node>' '<upload-root>/linux.cjs' '<upload-root>/cli.cjs'
+```
+
+场景在独立 `/root/tmp/gb-upgrade-cleanup-*` HOME 中生成临时签名测试安装和既有格式的
+生命周期、语义、journal、owner 记录，通过该 HOME 的 current 安装执行真实 CLI：
+`goodbuddy-agent cleanup-obsolete --installation-id current`。测试用实际 Node 进程表示
+不含退役逻辑的旧 daemon/helper，不是部署历史发布包或运行真实模型任务。
+
+本次构建与远端运行退出码均为 0。远端断言确认：孤儿 Runtime 被回收，所属旧安装 payload
+删除；存活 legacy daemon 延期；另一个带 `starting` 操作记录的进程存活；历史数据库字节
+不变；current/candidate payload 保留；第二次调用没有重复删除。运行输出为：
+
+```json
+{"passed":true,"productionCli":true,"realOrphanReclaimed":true,"liveLegacyDeferred":true,"activeWorkPreserved":true,"historyPreserved":true,"idempotent":true,"providerCalls":0}
+```
+
+测试结束清除自身进程和隔离目录，没有清理共享用户安装或修改其 registry。早先隔离实测
+发生在最终补充两个本地回归用例之前；本节记录的是之后重新构建源码的复跑。此前最终本地
+9 个定向套件 99 项通过，typecheck 和改动文件 ESLint 通过。
+
+本次三分钟时限内未找到可直接运行 backend/bridge Vitest 套件的 Linux harness，未安装
+额外测试依赖，故这两类 Linux 套件未运行。上述 cleanup 场景不替代这些套件，不证明完整
+UI 更新或签名复合包安装流程通过；真实模型调用为 0 次。
+
 ## 发布前完整回归（不能替代开发验证）
 
 以下清单只用于复核开发期间已经在真实 Host 上通过的链路，不得作为 Agent 改动的首次
@@ -927,3 +989,72 @@ goodbuddy-agent diagnostics --installation-id <installationId>
 9. 运行一次有界的真实模型调用，确认凭据不进入 Renderer、SSH 参数、远端环境或磁盘，
    只在当前 accepted operation 生命周期内进入 Agent 内存。
 10. 中断并恢复 SSH，确认活动 Runtime 不被网络抖动终止。
+
+## Prompt 完成与空闲回收验证（2026-09-24）
+
+Runtime 可以先收到完整模型正文并返回 ACP `end_turn`，随后 helper 才完成 delivery ACK。
+`RuntimeAcpBackend` 的正常完成路径现在要求 broker 等待已接收的 exchange 完成，最多等待
+2 秒，再关闭 socket；取消等强制关闭路径不等待这一步。ACK 超时或交付失败仍记录
+`outcome-unknown`，语义 transcript 与 reconciliation 保持一致。
+
+正常完成时，Agent 在串行 control 操作内先持久化语义终态，再将 binding 标为空闲并回收
+Runtime。回收失败记录 `daemon.stop.failed`，reason 为 `idle-runtime-cleanup`，不把已提交的
+`completed` 改成未知结果。确定性回归覆盖共享与独占 Runtime 的 stop/reconcile 失败，以及
+等待 ACK 期间不得提交终态或停止 Runtime。
+
+Desktop 的下一次显式发送会淘汰缓存中的不可用 binding，再通过 cold-open 创建新请求并
+传入已有对话历史。OpenCode 和 Continue 的未知终态均有回归；不会重放原来的未知请求。
+`remoteRecoveryOnly` 只允许附加同一活动 operation，已完成或结果未知的缓存不能借恢复
+入口发起新请求。缓存仍有活动 operation 时，不同 request ID 的发送被拒绝；普通失败后
+已回到 `ready` 的会话仍可继续使用。
+
+### 本机模拟范围
+
+`agent-owned-acp-prompt.local.test.ts` 使用本机已安装的 OpenCode 1.18.29、真实 ACP 和
+loopback fake model。测试暂缓 delivery ACK，确认正文 `ACK_OK` 和 ACP 完成先到达，释放
+ACK 后提交 `completed`，随后注入清理异常并确认终态不变。该用例注入了
+`completePrompt` 回调，没有经过完整 `RuntimeAcpBackend` 完成路径；backend 的提交顺序、
+清理诊断和 reconciliation 由 `runtime-acp-backend.test.ts` 的独立回归检查。
+
+本轮本机定向复跑 7 个套件，199 项通过、10 项 Unix-only 用例在 Windows 跳过，耗时
+5.60 秒。套件为 `runtime-acp-backend`、`agent-owned-acp-prompt`、
+`agent-owned-acp-prompt.local`、`model-bridge`、`model-bridge-client`、
+`runtime-composition` 和 `acp-remote-runtime`。本轮没有运行完整测试套件。
+
+### 最终源码 Linux 场景
+
+源码修正完成后，重新构建临时 `lifecycle-host-agent`、`lifecycle-host-daemon` 和
+`lifecycle-host-driver`，通过既有 GoodBuddy 加密凭据存储与固定 Host Key 连接共享
+Linux x64 Host。执行命令为：
+
+```powershell
+node "C:\Users\jiang\AppData\Local\Temp\opencode\lifecycle-host-build.cjs" agent daemon driver
+node "C:\Users\jiang\AppData\Local\Temp\opencode\lifecycle-host-run.cjs" driver --fake-model --completion-only
+```
+
+测试在独立 `/root/tmp/gb-lifecycle-*` HOME 启动当前源码的 Agent daemon，通过 Desktop
+`createManagedRemoteAcpRuntime`、SSH attach、Agent protocol、
+`createProductionRuntimeProtocol` 和 `RuntimeAcpBackend` 运行 Host 上已安装的 OpenCode。
+该路径使用真实 Runtime process owner、model bridge、ACP 和语义存储，没有注入 backend
+的 completion 回调。测试只替换 daemon 的外部模型 HTTP 响应，返回确定的 SSE 文本。
+
+两轮 Ask 均收到完成事件，每轮结束后测试目录所属的 Runtime/helper 进程数为 0。第二轮
+在回收后重新启动 Runtime，保留同一原生 session ID，模型请求中带有第一轮保存的标记。
+运行输出的关键记录为：
+
+```json
+{"inspected":true,"oldState":"ready","draining":false,"remainingOwnedProcesses":0,"realProviderCalls":0,"fakeModelCalls":1}
+{"inspected":true,"oldState":"ready","draining":false,"remainingOwnedProcesses":0,"realProviderCalls":0,"fakeModelCalls":2}
+{"currentSourceAsk":true,"runtimeRecreated":true,"nativeHistoryPreserved":true}
+{"stopped":true,"realProviderCalls":0,"fakeModelCalls":2,"remainingOwnedProcesses":0}
+{"exit":0,"stderrBytes":0}
+```
+
+构建和运行退出码均为 0，fake model exchange 共 2 次，真实 Provider 请求为 0 次。清理
+只停止测试 daemon、其 Runtime 进程并删除隔离目录；没有更改共享用户安装或 registry，
+没有停止无关 Host 进程。
+
+此次 Linux 场景验证正常完成、空闲回收和下一轮恢复原生历史；没有在 Host 上注入 ACK
+延迟或清理失败，也没有覆盖未知终态后的新 binding 场景、Continue、Execute、断线恢复、
+完整 UI 操作或签名包安装。故障时序与未知终态的下一次发送以本机定向回归为证据，不能用
+这两轮成功请求替代。

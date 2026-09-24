@@ -323,6 +323,21 @@ export class DetachedAgentLifecycle {
     return await this.stop()
   }
 
+  async withStoppedInstallation(action: () => Promise<void>): Promise<boolean> {
+    const verified = await this.#verifyAndBind()
+    ensurePrivateDirectory(this.#stateDirectory, { create: false })
+    const releaseLock = await this.#acquireBootstrapLock()
+    try {
+      const status = this.#statusAfterVerification(verified)
+      // Missing lifecycle evidence is not proof that an older daemon exited.
+      if (status.state !== 'stale') return false
+      await action()
+      return true
+    } finally {
+      releaseLock()
+    }
+  }
+
   #statusAfterVerification(
     verified: VerifiedInstalledAgentBundle
   ): DetachedLifecycleStatus {

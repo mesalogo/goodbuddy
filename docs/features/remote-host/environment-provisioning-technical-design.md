@@ -161,12 +161,15 @@ daemon 参与。两种 acquisition 的差别只在于如何把同一个签名 co
 4. commit 后在同一条已固定身份的 SSH lease 上执行 Agent bootstrap/readiness 和 Runtime
    activate。新 Agent 最多完整验证一次，新 Runtime 最多完整验证一次；注册成功后的
    health、capabilities 和 prompt 启动只读取 registry、签名 manifest 与入口 metadata。
-5. Main 确认 adoption 后显式执行 cleanup。cleanup 失败不回滚已经健康的 Agent/Runtime，
-   也不阻塞下一次更新。
+5. Agent adoption 和所有 Runtime 激活成功后，Main 通过新安装执行 `cleanup-obsolete`，
+   尽力回收已证明停止且无待处理工作的旧 Agent payload。命令返回逐安装的延期原因，
+   不支持该命令的旧包或清理失败不会回滚健康环境。随后显式清理本次 operation staging；
+   staging cleanup 失败也不阻塞下一次更新。
 
-新安装成为 current 后，旧 Agent 排空已有任务再退出，空闲旧 Agent 直接退出；当前 Agent
-可以常驻。Runtime 回收、待答问题与旧任务重连的规则见
-[远程主机技术设计](./technical-design.md)。
+新安装成为 current 后，包含退役逻辑的旧 Agent 排空已有任务再退出；当前 Agent 可以常驻。
+仍存活且缺少退役逻辑的 legacy daemon 不会被升级清理命令终止，不能用无连接推断其空闲。
+共享 Runtime digest 目录、历史和 Workspace 保留。清理条件、延期限制及验证记录见
+[远程主机技术设计](./technical-design.md#升级残留清理)。
 
 这不是两个并行安装管理器，也不存在把 Agent 与 Runtime payload 逐文件走 SFTP 安装的
 第二条路径。两种 acquisition 共享相同的 prepare、commit、adoption、finalize 与 cleanup。
