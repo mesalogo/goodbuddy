@@ -19,7 +19,8 @@ it('resizes record columns with native Electron input and preserves desktop widt
           '<html><body><script type="module" src="/tests/support/magic-notes-layout-regression.tsx"></script></body></html>'))
       })
     } }],
-    server: { host: '127.0.0.1', port: 0, watch: null }
+    server: { host: '127.0.0.1', port: 0, watch: null },
+    optimizeDeps: { entries: ['tests/support/magic-notes-layout-regression.tsx'] }
   })
   try {
     await server.listen()
@@ -31,7 +32,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
       app.commandLine.appendSwitch('force-device-scale-factor', '1');
       app.setPath('userData', ${JSON.stringify(join(directory, 'profile'))});
       app.whenReady().then(async () => {
-        const win = new BrowserWindow({ show: false, width: 1280, height: 800, useContentSize: true,
+        const win = new BrowserWindow({ show: true, width: 1280, height: 800, useContentSize: true,
           webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
         const js = code => win.webContents.executeJavaScript(code).catch(error => { throw new Error(code + ': ' + error.message); });
         const settle = () => js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -165,10 +166,16 @@ it('resizes record columns with native Electron input and preserves desktop widt
     let output = ''
     child.stdout.on('data', data => { output += data })
     child.stderr.on('data', data => { output += data })
-    // Hidden Electron windows can run rAF at 1 Hz; the measured scenario takes 63s.
-    const timeout = setTimeout(() => child.kill(), 90000)
+    // Native input and animation frames need a visible window, including under Xvfb.
+    let timedOut = false
+    const timeout = setTimeout(() => { timedOut = true; child.kill() }, 90000)
     try {
-      const code = await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
+      const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.once('close', (code, signal) => resolve({ code, signal }))
+        child.once('error', reject)
+      })
+      expect(timedOut, `Electron layout exceeded 90s (exit=${code}, signal=${signal}).\n${output}`).toBe(false)
+      expect(signal, output).toBeNull()
       expect(code, output).toBe(0)
     } finally { clearTimeout(timeout) }
     const result = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))

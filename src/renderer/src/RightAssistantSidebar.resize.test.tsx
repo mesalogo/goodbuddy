@@ -1795,8 +1795,11 @@ describe('RightAssistantSidebar resizing', () => {
     ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '关闭浏览器 · conversation-a' }))
-    await waitFor(() => expect(screen.queryByRole('tab', { name: '浏览器 · conversation-a' })).not.toBeInTheDocument())
-    expect(screen.queryByText('Close denied')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(browserApi.closeTab).toHaveBeenCalledTimes(2)
+      expect(screen.queryByRole('tab', { name: '浏览器 · conversation-a' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Close denied')).not.toBeInTheDocument()
+    })
   })
 
   it.each(['create', 'close'] as const)(

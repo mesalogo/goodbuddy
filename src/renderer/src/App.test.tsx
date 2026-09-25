@@ -9368,6 +9368,7 @@ describe("App", () => {
       supportsToolExecution: true, detail: "Ready",
     });
     const empty = await api.runtimeCustomization.getNativeSnapshot({ provider: "opencode" });
+    const retry = deferred<typeof empty>();
     vi.mocked(api.runtimeCustomization.getNativeSnapshot).mockClear();
     vi.mocked(api.runtimeCustomization.getNativeSnapshot)
       .mockResolvedValueOnce({
@@ -9375,18 +9376,26 @@ describe("App", () => {
         available: false,
         inventoryStatus: "unavailable",
       })
-      .mockResolvedValueOnce({
+      .mockReturnValueOnce(retry.promise);
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(api.runtimeCustomization.getNativeSnapshot).toHaveBeenCalledTimes(2),
+    );
+    openComposerOptions();
+    expect(screen.queryByRole("button", { name: /OpenCode Runtime Agent/u })).not.toBeInTheDocument();
+    await act(async () => {
+      retry.resolve({
         ...empty,
         available: true,
         inventoryStatus: "partial",
         agents: [{ id: "planner", name: "Planner", mode: "primary", native: true, hidden: false }],
         commands: [{ id: "review", name: "review", source: "command" }],
       });
-
-    render(<App />);
-
-    openComposerOptions();
-    fireEvent.click(await screen.findByRole("button", { name: /OpenCode Runtime Agent/u }));
+      await retry.promise;
+    });
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode Runtime Agent/u }));
     expect(screen.getByRole("menuitemradio", { name: /Planner/u })).toBeVisible();
     fireEvent.keyDown(screen.getByRole("menu", { name: "OpenCode Runtime Agent" }), { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: /Runtime 快捷操作/u }));
