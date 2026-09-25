@@ -1,0 +1,5 @@
+--- a/src/renderer/src/App.test.tsx
++++ b/src/renderer/src/App.test.tsx
+@@ -13972 +13972 @@
+-      supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300 }
++      supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300, responseKiB: 1024 }

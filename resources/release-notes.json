@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.14",
+      "releasedAt": "2026-09-26",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**待办列表调宽与分组折叠**：在魔法笔记的待办页面，可拖动列表与详情之间的分隔条，调整后的宽度会保留。可按来源笔记独立折叠待办分组，当前选中任务的详情不会因此清空。",
+            "**监督回顾进度与续跑**：回顾较长历史时，可查看处理阶段和已保存批次，并暂停后从活动记录继续。监督者设置提供并发、超时、批次大小、执行预算和响应容量，便于按模型能力调整。"
+          ],
+          "fixes": [
+            "**回顾覆盖与结果保存**：监督回顾改为分页读取所选历史，分批保存事实与来源，避免只处理截断后的输入。修复旧实体引用、汇总结果校验和长摘要报错，已保存的成功批次可在继续时复用。",
+            "**监督者页面更清楚**：工作回顾、自动监督、活动记录和设置各自承载对应内容，计划通过统一弹窗创建和编辑。工作回顾与活动记录使用面板可用全宽，侧栏监督反馈位于项目概览下方。",
+            "**直连模型搜索更完整**：文件搜索支持 ripgrep 原生参数，保留原生输出与退出码，大结果可分页续读。Ask 保持工作区只读，Execute 使用当前账号权限，无需另行安装 ripgrep。",
+            "**远程结果未知后继续对话**：远程请求结果未知时，再次显式发送消息会创建新的会话绑定并带入已有历史，不再复用失效绑定。自动恢复仍只附加原请求，不会自动重发结果未知的任务。",
+            "**布局与队列操作修正**：项目选择列表可浮出侧栏，窄窗口下自动收窄；助手工作栏恢复完整拖动命中区域，笔记缩略图与内容边缘对齐。没有附件的排队消息不再显示“查看附件”。",
+            "**远程任务完成与更新清理**：配套更新 Agent 0.13.4 后，远程任务等待模型交付确认再结束，空闲 Runtime 回收失败不再把已完成回答改成结果未知。更新 Host 环境时清理已确认停用的旧 Agent 程序和所属孤儿进程，保留会话历史、活动安装及状态不明的安装。"
+          ],
+          "notices": [
+            "首次启动会将数据库升级至 schema 47。升级前请备份完整用户数据，包括数据库及相邻 `notes/` 目录；旧客户端不能打开升级后的数据库，回退需使用升级前备份。",
+            "监督回顾只读且不调用工具，但会调用已配置模型并可能产生费用。分页覆盖不代表模型识别了每个事实，请结合保存的来源核对结果。",
+            "远程用户请先升级 Desktop 至 **0.13.14**，再下载并更新 Host 上的 Agent **0.13.4**。已有旧进程不会热更新，仍在运行或状态不明的旧安装不会被强制删除；Agent 独立发布，不替代桌面端的 Latest 版本。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Resizable to-do list and collapsible groups**: In Magic Notes, drag the divider between the to-do list and details to adjust and retain its width. Collapse each source-note group independently without clearing the selected task's details.",
+            "**Review progress and resume controls**: When reviewing longer histories, inspect execution stages and saved batches, pause, and continue from Activity. Supervisor settings expose concurrency, timeouts, batch sizes, execution budgets, and response capacity to match your model's capabilities."
+          ],
+          "fixes": [
+            "**Review coverage and saved results**: Supervisor now pages through the selected history and saves facts and sources in batches instead of processing truncated input. Fixes address historical entity references, summary validation, and long-summary errors; successfully saved batches can be reused when continuing.",
+            "**Clearer Supervisor pages**: Work review, Automatic supervision, Activity, and Settings each contain their corresponding controls and results, with a shared dialog for creating and editing plans. Work review and Activity use the available panel width, and sidebar supervision feedback appears below the project overview.",
+            "**More complete direct-model searches**: File searches support native ripgrep arguments, preserve native output and exit codes, and provide paged access to large results. Ask remains read-only within the workspace, while Execute uses current-account permissions; no separate ripgrep installation is needed.",
+            "**Continue remote conversations after an uncertain result**: Sending another message explicitly after an uncertain remote outcome creates a new session binding with existing history instead of reusing the failed binding. Automatic recovery still attaches only to the original request and never automatically resends a task with an uncertain outcome.",
+            "**Layout and queue controls**: The project picker can extend beyond the sidebar and narrows to fit small windows; the assistant workbar restores its full resize hit area, and note thumbnails align with content edges. Queued messages without attachments no longer show “View attachments.”",
+            "**Remote task completion and update cleanup**: With Agent 0.13.4, remote tasks wait for model delivery acknowledgement before completing, and idle Runtime cleanup failures no longer turn completed answers into uncertain outcomes. Host environment updates remove verified inactive Agent payloads and their owned orphan processes while retaining conversation history, active installations, and installations with uncertain state."
+          ],
+          "notices": [
+            "The first launch upgrades the database to schema 47. Back up complete user data, including the database and adjacent `notes/` directory, before upgrading; older clients cannot open the upgraded database, and rollback requires a pre-upgrade backup.",
+            "Supervision reviews are read-only and cannot call tools, but use the configured model and may incur charges. Paged coverage does not guarantee that the model identifies every fact; check results against their saved sources.",
+            "Remote users should upgrade Desktop to **0.13.14** before downloading and updating Host environments to Agent **0.13.4**. Existing older processes are not hot-updated, and active or uncertain older installations are not forcibly removed; Agent releases remain separate and do not replace the Desktop release marked Latest."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.13",
       "releasedAt": "2026-09-23",
       "notes": {

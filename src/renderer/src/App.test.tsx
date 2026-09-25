@@ -13969,7 +13969,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText(/每批消息数/), { target: { value: '30' } })
     fireEvent.click(screen.getByRole('button', { name: '保存回顾算法' }))
     await waitFor(() => expect(api.updates!.updateSettings).toHaveBeenLastCalledWith({
-      supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300 }
+      supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300, responseKiB: 1024 }
     }))
     await waitFor(() => expect(screen.getByRole('button', { name: '保存回顾算法' })).toBeDisabled())
     fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))

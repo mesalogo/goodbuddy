@@ -223,6 +223,9 @@ describe('Magic note SQLite and filesystem storage', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 37`)
     rmSync(join(directory, 'notes'), { recursive: true })

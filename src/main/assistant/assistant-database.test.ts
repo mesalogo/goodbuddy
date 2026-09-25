@@ -174,7 +174,10 @@ it('migrates schema 35 conversations to unpinned while retaining existing data a
     ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
     DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
     DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
-    DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+    DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
     PRAGMA user_version = 35;`)
   legacy.close()
   try {
@@ -325,7 +328,10 @@ it('preserves existing supervision data when upgrading schema 41 and reopening',
     DROP VIEW supervision_review_current;
     DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
     DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
-    DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
+    DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
+      DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
     PRAGMA user_version = 41;`)
   legacy.close()
   try {
@@ -1088,6 +1094,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 3;
     `)
@@ -1251,6 +1260,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 26;
     `)
@@ -1367,6 +1379,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 30;
     `)
@@ -1445,6 +1460,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 30;
     `)
@@ -1542,6 +1560,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
@@ -1589,6 +1610,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
@@ -1637,6 +1661,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
@@ -1681,6 +1708,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
@@ -1714,6 +1744,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 24;
     `)
@@ -1744,6 +1777,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 5;
     `)
@@ -1871,6 +1907,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 21;
       COMMIT;
@@ -1967,6 +2006,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 9;
     `)
@@ -2025,6 +2067,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 16`)
     legacy.close()
@@ -2977,6 +3022,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 23`)
     legacy.close()
@@ -3141,6 +3189,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 18;
     `)
@@ -3654,6 +3705,9 @@ describe('AssistantDatabase', () => {
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW IF EXISTS supervision_review_current;
+      DROP TABLE IF EXISTS supervision_review_navigation; DROP TABLE IF EXISTS supervision_review_batches;
+      DROP TABLE IF EXISTS supervision_review_sources; DROP TABLE IF EXISTS supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 31;
     `)
