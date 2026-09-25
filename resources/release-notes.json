@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "releases": [
     {
-      "version": "0.13.14",
+      "version": "0.13.15",
       "releasedAt": "2026-09-26",
       "notes": {
         "zh-CN": {
@@ -22,7 +22,7 @@
           "notices": [
             "首次启动会将数据库升级至 schema 47。升级前请备份完整用户数据，包括数据库及相邻 `notes/` 目录；旧客户端不能打开升级后的数据库，回退需使用升级前备份。",
             "监督回顾只读且不调用工具，但会调用已配置模型并可能产生费用。分页覆盖不代表模型识别了每个事实，请结合保存的来源核对结果。",
-            "远程用户请先升级 Desktop 至 **0.13.14**，再下载并更新 Host 上的 Agent **0.13.4**。已有旧进程不会热更新，仍在运行或状态不明的旧安装不会被强制删除；Agent 独立发布，不替代桌面端的 Latest 版本。"
+            "远程用户请先升级 Desktop 至 **0.13.15**，再下载并更新 Host 上的 Agent **0.13.4**。已有旧进程不会热更新，仍在运行或状态不明的旧安装不会被强制删除；Agent 独立发布，不替代桌面端的 Latest 版本。"
           ]
         },
         "en-US": {
@@ -42,7 +42,7 @@
           "notices": [
             "The first launch upgrades the database to schema 47. Back up complete user data, including the database and adjacent `notes/` directory, before upgrading; older clients cannot open the upgraded database, and rollback requires a pre-upgrade backup.",
             "Supervision reviews are read-only and cannot call tools, but use the configured model and may incur charges. Paged coverage does not guarantee that the model identifies every fact; check results against their saved sources.",
-            "Remote users should upgrade Desktop to **0.13.14** before downloading and updating Host environments to Agent **0.13.4**. Existing older processes are not hot-updated, and active or uncertain older installations are not forcibly removed; Agent releases remain separate and do not replace the Desktop release marked Latest."
+            "Remote users should upgrade Desktop to **0.13.15** before downloading and updating Host environments to Agent **0.13.4**. Existing older processes are not hot-updated, and active or uncertain older installations are not forcibly removed; Agent releases remain separate and do not replace the Desktop release marked Latest."
           ]
         }
       }

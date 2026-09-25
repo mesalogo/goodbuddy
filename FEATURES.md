@@ -322,7 +322,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.4`, while the current Desktop release candidate is `0.13.14`; formal
+  `0.13.4`, while the current Desktop release candidate is `0.13.15`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -851,10 +851,10 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- Current source candidates are Desktop `0.13.14` and Agent `0.13.4`, with
+- The current Desktop candidate is `0.13.15`; Agent `0.13.4` is published, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
-- Desktop `0.13.14` improves paged Supervisor reviews and resume behavior,
+- Desktop `0.13.15` carries forward the unpublished `0.13.14` changes to paged Supervisor reviews and resume behavior,
   native ripgrep searches, to-do layouts, and explicit remote follow-up after an
   uncertain result. Database schema 47 requires a complete pre-upgrade backup
   for rollback to older clients.
@@ -865,13 +865,14 @@ records are listed separately and do not introduce another feature status.
   preserves completed results when idle Runtime cleanup fails, and removes verified
   inactive Agent payloads and owned orphan processes after environment updates.
   History and active or uncertain installations are retained. Its independent
-  packages require Desktop `0.13.14`; upgrade Desktop first, then update the Host.
-- Release preparation requires the full local test suite, notes verification,
+  packages require Desktop `0.13.14` or later. Since `0.13.14` did not publish,
+  upgrade to Desktop `0.13.15` first, then update the Host.
+- Release preparation requires the full test suite, notes verification,
   typecheck, and lint. Candidate main-branch CI, its production build, native
   packaging, and publication verification remain separate acceptance steps.
   No local production build, packaging, or LoongArch preview is requested.
   Current validation status is recorded in the
-  [release preparation record](./docs/development/release-preparation-0.13.14.md).
+  [recovery preparation record](./docs/development/release-preparation-0.13.15.md).
 - Desktop `0.13.12` and Agent `0.13.3` have completed their native release jobs;
   this does not replace development-time real-Host scenario coverage.
 - Validation records remain separate from implementation status. Current-source
@@ -921,7 +922,7 @@ records are listed separately and do not introduce another feature status.
   Windows desktop-to-Linux checks cover installation, checklist updates, long lists,
   cancellation and restart recovery. Execute session MCP delivery passed real
   text-model Host checks with a substituted image service, not real image generation.
-  Candidate Agent `0.13.4` requires Desktop `0.13.14`; publication and native
+  Published Agent `0.13.4` requires Desktop `0.13.14` or later; publication and native
   platform acceptance remain separate from Linux development evidence. See the
   [validation record](./docs/features/remote-host/runtime-checklist-validation.md).
 
