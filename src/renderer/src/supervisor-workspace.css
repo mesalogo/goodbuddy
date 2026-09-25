@@ -1,9 +1,7 @@
 .supervisor-workspace {
   min-width: 0;
+  width: 100%;
   container: supervisor / inline-size;
-}
-.supervisor-workspace[data-view="overview"] {
-  width: min(100%, var(--content-reading));
 }
 .heartbeat-center > [role='tabpanel'] {
   min-width: 0;
@@ -623,7 +621,7 @@
   display: grid;
   gap: var(--space-4);
   min-width: 0;
-  width: min(100%, var(--content-dashboard));
+  width: 100%;
 }
 .supervisor-activity > .supervisor-workspace__action-bar {
   justify-content: flex-start;

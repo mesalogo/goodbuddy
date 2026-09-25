@@ -83,7 +83,7 @@ app
             const report = await js(`(() => {
               const box = selector => { const r = document.querySelector(selector)?.getBoundingClientRect(); return r && { left:r.left, right:r.right, width:r.width, height:r.height }; };
               return { width:innerWidth, pageWidth:document.documentElement.scrollWidth,
-                toolbar:box('.supervisor-workspace__toolbar'), history:box('.supervisor-workspace__result-navigation'), recap:box('.supervisor-workspace__recap'),
+                panel:box('.heartbeat-center > [role=tabpanel]:not([hidden])'), toolbar:box('.supervisor-workspace__toolbar'), history:box('.supervisor-workspace__result-navigation'), recap:box('.supervisor-workspace__recap'),
                 prose:box('.supervisor-workspace__prose'), activity:box('.supervisor-activity'),
                 steps:box('.supervisor-activity__steps'),
                 summaryLength:[...document.querySelectorAll('.supervisor-workspace__summary')].map(e=>e.textContent).join('').length,
@@ -93,13 +93,13 @@ app
             assert(report.pageWidth <= width, 'No page overflow')
             if (view !== 'activity') {
               assert(report.summaryLength > 2000 && report.tail, 'Long summary retained')
-              assert(report.recap.width <= 820, 'Whole recap uses reading frame')
+              assert(Math.abs(report.recap.width - report.panel.width) < 1, 'Recap fills the page panel')
               for (const control of [report.toolbar, report.history]) {
                 assert(Math.abs(control.left - report.recap.left) < 1 && Math.abs(control.right - report.recap.right) < 1, 'Toolbar, history and result share edges')
               }
               assert(report.prose.left - report.recap.left <= 25, 'No separately centered inner body')
             } else {
-              assert(report.activity.width <= 1040, 'Activity dashboard frame')
+              assert(Math.abs(report.activity.width - report.panel.width) < 1, 'Activity fills the page panel')
               if (width >= 1024) {
                 assert(report.steps.height < 40, 'Compact stage row')
                 assert(report.controls[2].left - report.controls[1].right <= 24, 'Refresh grouped with filter')
@@ -217,7 +217,7 @@ app
               if (scenario !== 'empty') {
                 assert.equal(report.paragraphs, 4)
                 assert(report.text.includes('外部评审时间') && report.text.includes('未解决事项'))
-                if (width === 1440) assert(report.proseWidth < 820, 'Bounded prose width')
+                assert(report.clientWidth - report.proseWidth <= 50, 'Prose fills the panel within card padding')
               } else assert(report.text.includes('还没有成功回顾'))
             } else {
               assert.equal(report.text.includes('暂无自动监督报告'), scenario !== 'populated')
