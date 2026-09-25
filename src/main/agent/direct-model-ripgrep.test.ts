@@ -1,138 +1,88 @@
-import { execFile, type ChildProcess } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rgPath } from '@vscode/ripgrep'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LocalWorkspaceAccess } from '../workspace'
-import { searchWorkspaceWithRipgrep, type WorkspaceRipgrepInput } from './direct-model-ripgrep'
+import { LocalDirectModelProcessService } from './direct-model-process-service'
+import { searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
 
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>()
-  const mocked = { ...actual, execFile: vi.fn(actual.execFile) }
-  return { ...mocked, default: mocked }
+let root: string
+let workspace: LocalWorkspaceAccess
+let service: LocalDirectModelProcessService
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), 'goodbuddy-rg-'))
+  workspace = new LocalWorkspaceAccess(root)
+  service = new LocalDirectModelProcessService()
+  await writeFile(join(root, 'valid.txt'), 'before\ntarget\nafter\n')
 })
-
-const input: WorkspaceRipgrepInput = {
-  path: '.', pattern: 'target', glob: [], fixedStrings: false,
-  ignoreCase: false, filesOnly: false, maxResults: 100
-}
-const match = JSON.stringify({
-  type: 'match',
-  data: {
-    path: { text: './valid.txt' }, lines: { text: 'target\n' },
-    line_number: 1, submatches: [{ start: 0 }]
-  }
-}) + '\n'
-const accessError = 'blocked: Permission denied (os error 13)'
-const directories: string[] = []
-const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process')
-
-function mockResult(code: number | string, stdout: string, stderr: string) {
-  const error = Object.assign(new Error(`process failed: ${code}`), { code })
-  vi.mocked(execFile).mockImplementation((file, args, options, callback) => {
-    if (file !== rgPath) return actual.execFile(file, args, options, callback)
-    const complete = callback as (error: Error, stdout: string, stderr: string) => void
-    complete(error, stdout, stderr)
-    return {} as ChildProcess
-  })
-  return error
-}
-
-function search(overrides: Partial<WorkspaceRipgrepInput> = {}, signal = new AbortController().signal) {
-  return searchWorkspaceWithRipgrep(
-    rgPath, { ...input, ...overrides }, new LocalWorkspaceAccess(process.cwd()), signal
-  )
-}
-
 afterEach(async () => {
-  vi.mocked(execFile).mockReset()
-  await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  await service.dispose()
+  await rm(root, { recursive: true, force: true })
 })
+const search = (args: string[], workMode: 'ask' | 'execute' = 'execute', signal = new AbortController().signal) =>
+  searchWorkspaceWithRipgrep(rgPath, { args }, workspace, signal, service, 'owner', workMode)
 
-describe('searchWorkspaceWithRipgrep', () => {
-  it('preserves formatted matches with bounded traversal diagnostics and an explicit warning', async () => {
-    mockResult(2, match, accessError + '\n' + 'x'.repeat(10_000))
-    const result = await search()
-    expect(vi.mocked(execFile).mock.calls.map((call) => call[0])).toContain(rgPath)
-    expect(result).toContain('valid.txt:1:1:target\\n')
-    expect(result).toContain('incomplete search coverage')
-    expect(result).toContain('missing results do not establish absence')
-    expect(result).toContain(accessError)
-    expect(result.length).toBeLessThan(2_500)
+describe('native ripgrep', () => {
+  it('preserves native context, file listing, JSON and multiple expressions', async () => {
+    expect((await search(['-A1', '-B1', '-e', 'target', '-e', 'absent', '.'], 'ask')).stdout).toContain('after')
+    expect((await search(['--files', '-g', '*.txt'], 'ask')).stdout).toContain('valid.txt')
+    expect((await search(['--json', 'target', '.'])).stdout).toContain('"type":"match"')
   })
-
-  it('preserves file listings and existing result truncation', async () => {
-    mockResult(2, './valid.txt\0./other.txt\0', accessError)
-    const result = await search({ filesOnly: true, maxResults: 1 })
-    expect(result).toContain('incomplete search coverage')
-    expect(result).toContain('\nvalid.txt\n...[truncated after 1 files]')
-    expect(result).not.toContain('other.txt')
+  it('preserves no matches, regex errors and partial results with exit codes', async () => {
+    expect(await search(['absent', '.'])).toMatchObject({ exitCode: 1, stdout: '' })
+    expect(await search(['[', '.'])).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('regex parse error') })
+    expect(await search(['target', 'valid.txt', 'missing.txt'], 'ask')).toMatchObject({
+      exitCode: 2, stdout: expect.stringContaining('target'), stderr: expect.stringContaining('missing.txt')
+    })
   })
-
-  it('qualifies a no-match summary when traversal was incomplete', async () => {
-    mockResult(2, JSON.stringify({ type: 'summary', data: {} }) + '\n', accessError)
-    const result = await search()
-    expect(result).toContain('incomplete search coverage')
-    expect(result).toContain('[no matches found in searched files]')
-    expect(result).not.toContain('[no matches found]')
+  it('retains more than the former 4 MiB capture and resumes through EOF', async () => {
+    const text = 'target '.repeat(700_000) + 'END-MARKER\n'
+    await writeFile(join(root, 'large.txt'), text)
+    const result = await search(['--no-line-number', 'target', 'large.txt'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdoutTruncated).toBe(true)
+    const reference = result.stdoutReference!
+    let output = result.stdout
+    let cursor = reference.nextCursor
+    while (cursor < reference.totalBytes) {
+      const page = await service.readOutput('owner', reference.handle, cursor)
+      output += page.content
+      cursor = page.nextCursor
+    }
+    expect(output).toBe(text)
+    await expect(service.readOutput('another', reference.handle)).rejects.toThrow()
+    await service.releaseConversation('owner')
+    await expect(service.readOutput('owner', reference.handle)).rejects.toThrow()
   })
-
-  it.each([false, true])('throws detailed errors with no stdout (filesOnly=%s)', async (filesOnly) => {
-    mockResult(2, '', accessError)
-    await expect(search({ filesOnly })).rejects.toThrow(accessError)
+  it.each([['--pre=cmd', 'target'], ['--hostname-bin', 'cmd', 'target'], ['-L', 'target'], ['-z', 'target'], ['target', '../outside'], ['-f../outside']])('keeps Ask boundaries for %j', async (...args) => {
+    await expect(search(args, 'ask')).rejects.toThrow()
   })
-
-  it('does not turn invalid regex diagnostics into successful partial output', async () => {
-    mockResult(2, match, 'regex parse error:\n    [\nerror: unclosed character class')
-    await expect(search({ pattern: '[' })).rejects.toThrow('unclosed character class')
+  it('supports cwd and literal shell characters while ignoring external config', async () => {
+    await mkdir(join(root, 'nested'))
+    await writeFile(join(root, 'nested', 'text.txt'), '$(echo unexpected); target\n')
+    await writeFile(join(root, 'config'), '--invalid-config-option\n')
+    const configured = new LocalDirectModelProcessService({ environment: { ...process.env, RIPGREP_CONFIG_PATH: join(root, 'config') } })
+    try {
+      const result = await searchWorkspaceWithRipgrep(rgPath, {
+        args: ['-F', '$(echo unexpected);', '.'], cwd: 'nested'
+      }, workspace, new AbortController().signal, configured, 'owner', 'ask')
+      expect(result).toMatchObject({ exitCode: 0, stdout: expect.stringContaining('$(echo unexpected); target') })
+    } finally { await configured.dispose() }
   })
-
-  it('keeps launch failures as errors even with stdout', async () => {
-    const error = mockResult('ENOENT', match, '')
-    await expect(search()).rejects.toMatchObject({ cause: error })
+  it('allows external Execute paths and rejects Ask directory links', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'goodbuddy-rg-outside-'))
+    try {
+      await writeFile(join(outside, 'outside.txt'), 'target\n')
+      await symlink(outside, join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
+      expect((await search(['target', outside])).exitCode).toBe(0)
+      await expect(search(['target', outside], 'ask')).rejects.toThrow('不能超出')
+      await expect(search(['target', 'linked'], 'ask')).rejects.toThrow()
+    } finally { await rm(outside, { recursive: true, force: true }) }
   })
-
-  it('preserves the cancellation reason even when partial stdout is available', async () => {
+  it('preserves cancellation', async () => {
     const controller = new AbortController()
-    const reason = new Error('cancel search')
-    controller.abort(reason)
-    mockResult(2, match, accessError)
-    await expect(search({}, controller.signal)).rejects.toBe(reason)
-  })
-
-  it('keeps exit 1 as a normal no-match result', async () => {
-    mockResult(1, '', '')
-    await expect(search()).resolves.toBe('[no matches found]')
-  })
-
-  it('preserves capture-limit truncation', async () => {
-    mockResult('ERR_CHILD_PROCESS_STDIO_MAXBUFFER', match, '')
-    await expect(search()).resolves.toBe('valid.txt:1:1:target\\n\n...[truncated after 1 matches]')
-  })
-
-  it.each([
-    { filesOnly: false, pattern: 'target', expected: 'valid.txt:1:1:target\\n' },
-    { filesOnly: true, pattern: 'target', expected: '\nvalid.txt' },
-    { filesOnly: false, pattern: 'absent', expected: '[no matches found in searched files]' }
-  ])('handles real bundled rg with a valid file plus a missing target ($filesOnly, $pattern)', async ({ filesOnly, pattern, expected }) => {
-    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-ripgrep-'))
-    directories.push(directory)
-    await writeFile(join(directory, 'valid.txt'), 'target\n')
-    // Add a second target at the process boundary: the public API stats its single target first.
-    vi.mocked(execFile).mockImplementation((file, args, options, callback) =>
-      actual.execFile(file, file === rgPath ? [...args as string[], 'missing.txt'] : args, options, callback)
-    )
-    const result = await searchWorkspaceWithRipgrep(
-      rgPath, { ...input, path: 'valid.txt', filesOnly, pattern },
-      new LocalWorkspaceAccess(directory), new AbortController().signal
-    )
-    expect(result).toContain(expected)
-    expect(result).toContain('incomplete search coverage (ripgrep exit code 2)')
-    expect(result).toContain('missing.txt')
-  })
-
-  it('rejects an invalid regex using the real bundled rg', async () => {
-    await expect(search({ pattern: '[' })).rejects.toThrow(/regex parse error/u)
+    controller.abort(new Error('cancelled'))
+    await expect(search(['target'], 'execute', controller.signal)).rejects.toThrow('cancelled')
   })
 })

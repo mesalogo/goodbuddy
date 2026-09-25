@@ -37,6 +37,7 @@ import {
   normalizeMcpToolSchema
 } from './mcp-tool-utils'
 import {
+  LocalDirectModelProcessService,
   processExecuteInputSchema,
   type DirectModelProcessService
 } from './direct-model-process-service'
@@ -48,7 +49,7 @@ import {
 } from '../assistant/direct-model-subagent-service'
 import type { LaunchEnvironmentProvider } from '../local-tool-environment'
 import type { BrowserTabId } from '../../shared/contracts'
-import { searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
+import { ripgrepInputSchema, searchWorkspaceWithRipgrep } from './direct-model-ripgrep'
 import { applyWorkspacePatch } from './workspace-apply-patch'
 import { readWorkspaceLines } from './workspace-read-lines'
 import {
@@ -141,33 +142,6 @@ const readInputSchema = z
     limit: z.number().int().min(1).default(200),
     offsetBytes: z.number().int().min(0).optional()
   })
-  .strict()
-
-const searchPathSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .refine((value) => !isAbsolute(value), '路径必须相对于工作区')
-  .refine((value) => !value.includes('\0'), '路径包含无效字符')
-  .refine(
-    (value) => !value.split(/[\\/]+/u).includes('..'),
-    '路径不能超出工作区'
-  )
-
-const ripgrepInputSchema = z
-  .object({
-    pattern: z.string().optional(),
-    path: searchPathSchema.default('.'),
-    glob: z.array(z.string().min(1)).default([]),
-    fixedStrings: z.boolean().default(false),
-    ignoreCase: z.boolean().default(false),
-    filesOnly: z.boolean().default(false),
-    maxResults: z.number().int().min(1).default(200)
-  })
-  .refine(
-    (input) => input.filesOnly || Boolean(input.pattern),
-    '内容搜索必须提供 pattern'
-  )
   .strict()
 
 const applyPatchInputSchema = z
@@ -692,6 +666,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         : workspace
   }
 
+  private readonly ripgrepService = new LocalDirectModelProcessService({ outputPrefix: 'rg' })
   private readonly workspaceAccess: WorkspaceAccess
 
   private getScopedTools(
@@ -766,7 +741,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       (this.webSearchEnabled ? 2 : 0) +
       (this.programming.processService ? 1 : 0) +
       (this.programming.subagentService ? 1 : 0) +
-      (this.programming.processService || this.programming.subagentService
+      (this.programming.ripgrepExecutablePath || this.programming.processService || this.programming.subagentService
         ? 1 : 0) +
       (this.knowledgeGateway ? maximumScopedToolCount : 0)
     )
@@ -835,34 +810,8 @@ export class ModelToolProvider implements ModelToolProviderLike {
         name: workspaceRipgrepTool.name,
         displayName: workspaceRipgrepTool.displayName,
         description:
-          'Search workspace contents or list files with bundled ripgrep. Returns compact path:line:column:text output. Use filesOnly to discover files. Paths are relative to the workspace.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pattern: {
-              type: 'string',
-              description: 'ripgrep 正则；filesOnly 为 false 时必填'
-            },
-            path: {
-              type: 'string',
-              description: '相对于工作区的搜索目录，默认为 .'
-            },
-            glob: {
-              type: 'array',
-              items: { type: 'string' },
-              description: '可选 ripgrep glob，例如 **/*.ts 或 !dist/**'
-            },
-            fixedStrings: { type: 'boolean', default: false },
-            ignoreCase: { type: 'boolean', default: false },
-            filesOnly: { type: 'boolean', default: false },
-            maxResults: {
-              type: 'integer',
-              minimum: 1,
-              default: 200
-            }
-          },
-          additionalProperties: false
-        },
+          'Run bundled rg with native args (no shell), e.g. ["--files","-g","*.ts"] or ["-n","-i","TODO","src"]. cwd defaults to the workspace. Returns native stdout, stderr and exitCode: 1 means no matches; 2 means incomplete search/error. Use output_read with output references to continue large results. Ask permits read-only workspace searches; Execute uses current-user permissions. External rg config is disabled.',
+        inputSchema: toModelToolJsonSchema(ripgrepInputSchema),
         source: 'builtin'
       },
       {
@@ -1010,7 +959,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): ModelToolDefinition[] {
     if (
       context.runtimeTarget !== 'model' ||
-      (!this.programming.processService && !this.programming.subagentService)
+      (!this.programming.ripgrepExecutablePath && !this.programming.processService && !this.programming.subagentService)
     ) {
       return []
     }
@@ -1019,7 +968,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
         name: outputReadTool.name,
         displayName: outputReadTool.displayName,
         description:
-          'Read retained process or Subagent output from this conversation. ' +
+          'Read retained search, process or Subagent output from this conversation. ' +
           'Use the reference handle and nextCursor to continue a preview, or cursor 0 to reread. ' +
           'Follow each page nextCursor until eof; cursors are UTF-8 byte offsets. ' +
           'Read-only in Ask and Execute. Handles expire when the conversation or runtime is released.',
@@ -1397,7 +1346,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       return {
         scopeKey: 'model:builtin:output_read',
         title: '允许续读工具输出？',
-        description: '读取当前会话已保留的进程或 Subagent 输出，不运行新命令。',
+        description: '读取当前会话已保留的搜索、进程或 Subagent 输出，不运行新命令。',
         toolName: tool.displayName,
         argumentSummary,
         allowPermanent: false
@@ -1426,9 +1375,11 @@ export class ModelToolProvider implements ModelToolProviderLike {
       description:
         tool.source === 'mcp'
           ? `该工具由已启用的 MCP Server「${tool.serverName ?? '未知'}」执行，并使用当前用户权限。`
-          : path
-            ? `目标位于当前工作区：${path}`
-            : '该工具仅允许访问当前工作区。',
+          : tool.name === 'workspace_rg' && context.workMode === 'execute'
+            ? '使用当前用户权限运行内置 rg。'
+            : path
+              ? `目标位于当前工作区：${path}`
+              : '该工具仅允许访问当前工作区。',
       toolName: tool.displayName,
       argumentSummary,
       allowPermanent: false
@@ -1746,13 +1697,18 @@ export class ModelToolProvider implements ModelToolProviderLike {
             throw new Error('GoodBuddy 内置 ripgrep 不可用')
           }
           const input = ripgrepInputSchema.parse(argumentsValue)
-          return createTextToolResult(
+          return createBoundedJsonObjectToolResult(
             await searchWorkspaceWithRipgrep(
               this.programming.ripgrepExecutablePath,
               input,
               this.workspaceAccess,
-              signal
-            )
+              signal,
+              this.ripgrepService,
+              context.conversationId,
+              context.workMode
+            ),
+            ['stdout', 'stderr'],
+            'ripgrep output could not be serialized'
           )
         }
         const input = readInputSchema.parse(argumentsValue)
@@ -1780,21 +1736,18 @@ export class ModelToolProvider implements ModelToolProviderLike {
           '工作区读取目标不是有效 UTF-8 文本',
           '工作区读取范围无效'
         ].includes(error.message)
-        const rgExecutionError = name === 'workspace_rg' && (
-          (error.cause instanceof Error && 'code' in error.cause && error.cause.code === 2) ||
-          error.message.startsWith('ripgrep failed (exit code 2); search coverage is incomplete.\n')
-        )
+        const rgModeError = name === 'workspace_rg' && error.message.startsWith('Ask mode does not allow ')
         if (!(error instanceof z.ZodError) &&
           !(typeof code === 'string' && expectedOsCodes.includes(code)) &&
           !(typeof remoteCode === 'string' && [
             ...expectedOsCodes, 'invalid-path', 'invalid-utf8',
             'not-directory', 'special-file', 'symlink-rejected'
           ].includes(remoteCode)) &&
-          !expectedWorkspaceError && !rgExecutionError) {
+          !expectedWorkspaceError && !rgModeError) {
           throw error
         }
         let nextAction = name === 'workspace_rg'
-          ? 'Use workspace-relative paths; adjust the search path/globs or correct the pattern (use fixedStrings for literal text).'
+          ? 'Correct native rg args or cwd; use -F for literal text and workspace paths in Ask mode.'
           : 'Use a workspace-relative path to an existing readable UTF-8 file; correct the path or offset/limit, and discover the filename if needed.'
         nextAction += ' Do not retry identical arguments.'
         if ((await this.getProcessTool(context, signal)).length > 0) {
@@ -1819,11 +1772,13 @@ export class ModelToolProvider implements ModelToolProviderLike {
         throw new Error('当前请求不允许续读工具输出')
       }
       const input = outputReadInputSchema.parse(argumentsValue)
-      const service = input.handle.startsWith('process:')
-        ? this.programming.processService
-        : input.handle.startsWith('subagent:')
-          ? this.programming.subagentService
-          : undefined
+      const service = input.handle.startsWith('rg:')
+        ? this.ripgrepService
+        : input.handle.startsWith('process:')
+          ? this.programming.processService
+          : input.handle.startsWith('subagent:')
+            ? this.programming.subagentService
+            : undefined
       if (!service) {
         throw new Error('分页输出句柄无效或服务不可用')
       }
@@ -1963,6 +1918,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     this.webSearchBindings = undefined
     await Promise.allSettled([
       ...clients.map((client) => client.close()),
+      this.ripgrepService.dispose(),
       this.programming.processService?.dispose(),
       this.programming.subagentService?.dispose(),
       this.workspaceAccess.dispose()
@@ -1971,6 +1927,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
 
   async releaseConversation(conversationId: string): Promise<void> {
     await Promise.allSettled([
+      this.ripgrepService.releaseConversation(conversationId),
       this.browserService?.releaseConversation(conversationId),
       this.programming.processService?.releaseConversation(
         conversationId

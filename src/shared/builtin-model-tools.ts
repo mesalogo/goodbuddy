@@ -18,7 +18,7 @@ export const builtinModelTools = [
     name: 'workspace_rg',
     displayName: '搜索工作区',
     description:
-      '使用 GoodBuddy 内置 ripgrep 搜索工作区内容或列出文件，返回带路径和行号的紧凑结果。',
+      '使用内置 ripgrep 原生参数搜索或列出文件；Ask 限于工作区只读搜索，Execute 使用当前账号权限，长输出可分页续读。',
     access: 'read',
     group: 'filesystem'
   },
@@ -113,7 +113,7 @@ export const builtinModelTools = [
   {
     name: 'output_read',
     displayName: '续读工具输出',
-    description: '按 cursor 分页读取当前会话已保留的进程或 Subagent 输出；会话释放后失效。',
+    description: '按 cursor 分页读取当前会话已保留的搜索、进程或 Subagent 输出；会话释放后失效。',
     access: 'read',
     group: 'programming'
   },

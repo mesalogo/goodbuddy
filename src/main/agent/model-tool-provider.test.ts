@@ -416,7 +416,7 @@ describe('ModelToolProvider', () => {
     })
     const listing = await provider.callTool(
       'workspace_rg',
-      { path: 'docs', filesOnly: true },
+      { args: ['--files', '--path-separator=/', 'docs'] },
       signal,
       toolContext
     )
@@ -428,14 +428,14 @@ describe('ModelToolProvider', () => {
     ])
     const matches = await provider.callTool(
       'workspace_rg',
-      { path: 'docs', pattern: 'target' },
+      { args: ['--path-separator=/', 'target', 'docs'] },
       signal,
       toolContext
     )
     expect(matches.parts).toEqual([
       expect.objectContaining({
         type: 'text',
-        text: expect.stringContaining('docs/search.txt:1:2:中target')
+        text: expect.stringContaining('docs/search.txt:1:中target')
       })
     ])
     const written = await provider.callTool(
@@ -493,16 +493,15 @@ describe('ModelToolProvider', () => {
     const signal = new AbortController().signal
     try {
       for (const args of [
-        { pattern: 'x', path: workspace }, { pattern: 'x', path: 'missing' },
-        { pattern: '[' }, { pattern: 'x', glob: ['['] }, { maxResults: 0 }
+        { args: 'x' }, { args: [1] }, { args: ['x'], extra: true }
       ]) {
         await expect(provider.callTool('workspace_rg', args, signal, toolContext)).rejects.toMatchObject({
           name: 'RecoverableModelToolError',
-          nextAction: expect.stringContaining('adjust the search path/globs')
+          nextAction: expect.stringContaining('Correct native rg args')
         })
       }
-      await expect(provider.callTool('workspace_rg', { pattern: '[', fixedStrings: true }, signal, toolContext))
-        .resolves.toMatchObject({ parts: [{ type: 'text', text: expect.stringContaining('note.txt:1:1:') }] })
+      await expect(provider.callTool('workspace_rg', { args: ['-F', '[', 'note.txt'] }, signal, toolContext))
+        .resolves.toMatchObject({ parts: [{ type: 'text', text: expect.stringContaining('1:[literal') }] })
     } finally {
       await provider.dispose()
     }
@@ -539,20 +538,14 @@ describe('ModelToolProvider', () => {
     }
   })
 
-  it('recovers the wrapped rg exit code 2 but leaves a missing executable fatal', async () => {
+  it('leaves a missing rg executable fatal', async () => {
     const workspace = await createWorkspace()
     const access = new LocalWorkspaceAccess(workspace)
-    const failure = new Error('regex parse error', {
-      cause: Object.assign(new Error('process failed'), { code: 2 })
-    })
-    vi.spyOn(access, 'stat').mockRejectedValueOnce(failure)
     const provider = new ModelToolProvider(access, [], undefined, undefined, false, {
       ripgrepExecutablePath: join(workspace, 'missing-rg.exe')
     })
     try {
-      await expect(provider.callTool('workspace_rg', { path: 'note.txt', pattern: '[' }, new AbortController().signal, toolContext))
-        .rejects.toMatchObject({ name: 'RecoverableModelToolError', cause: failure })
-      const error = await provider.callTool('workspace_rg', { pattern: 'x' }, new AbortController().signal, toolContext)
+      const error = await provider.callTool('workspace_rg', { args: ['x'] }, new AbortController().signal, toolContext)
         .catch((error: unknown) => error)
       expect(error).toBeInstanceOf(Error)
       expect(error).not.toBeInstanceOf(RecoverableModelToolError)
@@ -566,18 +559,19 @@ describe('ModelToolProvider', () => {
     const access = new LocalWorkspaceAccess(await createWorkspace())
     const provider = new ModelToolProvider(access, [], undefined, undefined, false, { ripgrepExecutablePath: rgPath })
     const operation = name === 'workspace_rg' ? vi.spyOn(access, 'stat') : vi.spyOn(access, 'readText')
-    const args = { path: 'note.txt', ...(name === 'workspace_rg' ? { pattern: 'x' } : {}) }
+    const args = name === 'workspace_rg' ? { args: ['x', 'note.txt'] } : { path: 'note.txt' }
+    const context = { ...toolContext, workMode: 'ask' as const }
     try {
       const abortError = new DOMException('cancelled', 'AbortError')
       operation.mockRejectedValueOnce(abortError)
-      await expect(provider.callTool(name, args, new AbortController().signal, toolContext)).rejects.toBe(abortError)
+      await expect(provider.callTool(name, args, new AbortController().signal, context)).rejects.toBe(abortError)
       const controller = new AbortController()
       const reason = new Error('cancelled during access')
       operation.mockImplementationOnce(async () => {
         controller.abort(reason)
         throw Object.assign(new Error('missing'), { code: 'ENOENT' })
       })
-      await expect(provider.callTool(name, args, controller.signal, toolContext)).rejects.toBe(reason)
+      await expect(provider.callTool(name, args, controller.signal, context)).rejects.toBe(reason)
       await expect(provider.callTool(name, {}, controller.signal, toolContext)).rejects.toBe(reason)
     } finally {
       await provider.dispose()
@@ -1040,6 +1034,7 @@ describe('ModelToolProvider', () => {
     } as unknown as KnowledgeMcpGateway
     const context = {
       conversationId: 'knowledge-capacity',
+      runtimeTarget: 'model',
       workMode: 'execute',
       knowledgeCapabilityToken: 'main-only-token'
     } satisfies ModelToolCallContext
@@ -1055,7 +1050,7 @@ describe('ModelToolProvider', () => {
       }))
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(82)
+      tools: createTools(81)
     })
     const validProvider = new ModelToolProvider(
       workspace,
@@ -1071,7 +1066,7 @@ describe('ModelToolProvider', () => {
     await validProvider.dispose()
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(83)
+      tools: createTools(82)
     })
     const overflowingProvider = new ModelToolProvider(
       workspace,
@@ -1086,7 +1081,7 @@ describe('ModelToolProvider', () => {
         context,
         new AbortController().signal
       )
-    ).resolves.toHaveLength(18)
+    ).resolves.toHaveLength(19)
     await overflowingProvider.dispose()
   })
 

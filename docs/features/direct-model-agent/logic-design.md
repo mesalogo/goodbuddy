@@ -26,8 +26,8 @@
     3 次；用户取消和已显示的部分输出禁止重放。
 12. Ask 可调用 `workspace_rg` 和 `workspace_read_text`，但不能调用
     `workspace_apply_patch`；Execute 可调用三者。
-13. 工作区搜索固定使用随包 ripgrep 的结构化输出，不把任意 ripgrep 参数转成命令执行。
-14. FR-7 / US-A6：预览之外的进程和 Subagent 输出保留在所属会话下，分页续读不启动新命令。
+13. 搜索直接使用随包 rg 的原生参数和输出；Ask 的参数检查保持工作区内只读，Execute 使用账号权限。
+14. FR-7 / US-A6：预览之外的搜索、进程和 Subagent 输出保留在所属会话下，分页续读不启动新命令。
     会话释放先停止活动工作，再删除输出；子会话结束不删除父会话拥有的 Subagent 结果。
 
 ## 2. 状态维度
@@ -58,7 +58,7 @@
 FR-4 / FR-12 / US-B0：Ask 工作区搜索和读取不依赖知识库、联网搜索或委派开关，不需要
 切到 Execute 或额外批准。MCP 服务器失败也不改变本机只读工具的可用性。
 
-`output_read` 在直连模型拥有进程或 Subagent 服务时提供，Ask/Execute 均可用，不取决于
+`output_read` 在直连模型拥有搜索、进程或 Subagent 服务时提供，Ask/Execute 均可用，不取决于
 本轮 Shell 可用性、是否允许再次委派或委派深度。读取只接受当前会话的句柄；其他 Runtime
 不注册该工具，调用边界同样拒绝。
 

@@ -52,10 +52,6 @@ export type ProcessExecuteInput = z.input<
   typeof processExecuteInputSchema
 >
 
-type ParsedProcessExecuteInput = z.output<
-  typeof processExecuteInputSchema
->
-
 export type ProcessShellSummary = {
   kind: 'powershell' | 'bash' | 'sh'
   label: string
@@ -132,6 +128,7 @@ export type DirectModelProcessSpawn = (
 ) => DirectModelProcessChild
 
 export type LocalDirectModelProcessServiceOptions = {
+  outputPrefix?: string
   platform?: NodeJS.Platform
   environment?: NodeJS.ProcessEnv
   toolBinDirectory?: string
@@ -296,7 +293,7 @@ function abortError(message: string): DOMException {
 }
 
 async function resolveWorkingDirectory(
-  input: ParsedProcessExecuteInput,
+  input: { cwd?: string },
   workspace: WorkspaceAccess
 ): Promise<{ canonicalPath: string; displayPath: string }> {
   if (input.cwd?.includes('\0')) {
@@ -343,7 +340,7 @@ export class LocalDirectModelProcessService
   implements DirectModelProcessService
 {
   private readonly activeCalls = new Map<string, Set<ActiveCall>>()
-  private readonly outputs = new PagedOutputStore('process')
+  private readonly outputs: PagedOutputStore
   private readonly shell: Promise<ResolvedProcessShell | undefined>
   private disposed = false
   private disposePromise?: Promise<void>
@@ -351,6 +348,7 @@ export class LocalDirectModelProcessService
   constructor(
     private readonly options: LocalDirectModelProcessServiceOptions = {}
   ) {
+    this.outputs = new PagedOutputStore(options.outputPrefix ?? 'process')
     this.shell = resolveProcessShell(options)
   }
 
@@ -375,6 +373,34 @@ export class LocalDirectModelProcessService
     context: DirectModelProcessExecutionContext
   ): Promise<ProcessExecuteResult> {
     const parsed = processExecuteInputSchema.parse(input)
+    return this.trackExecution(async (signal) => {
+      const shell = await this.shell
+      signal.throwIfAborted()
+      if (!shell) throw new Error('当前平台没有可用的命令 Shell')
+      return this.executeTracked({
+        executable: shell.executable, args: shellArguments(shell, parsed.command),
+        cwd: parsed.cwd, timeoutMs: parsed.timeoutMs, shell
+      }, context, signal)
+    }, context)
+  }
+
+  async executeFile(
+    executable: string,
+    args: string[],
+    context: DirectModelProcessExecutionContext,
+    cwd?: string,
+    timeoutMs?: number,
+    shell: ProcessShellSummary = { kind: 'sh', label: executable }
+  ): Promise<ProcessExecuteResult> {
+    return this.trackExecution((signal) => this.executeTracked(
+      { executable, args, cwd, timeoutMs, shell }, context, signal
+    ), context)
+  }
+
+  private async trackExecution(
+    run: (signal: AbortSignal) => Promise<ProcessExecuteResult>,
+    context: DirectModelProcessExecutionContext
+  ): Promise<ProcessExecuteResult> {
     if (this.disposed) {
       throw new Error('进程执行服务已关闭')
     }
@@ -406,7 +432,7 @@ export class LocalDirectModelProcessService
     }
 
     try {
-      return await this.executeTracked(parsed, context, controller.signal)
+      return await run(controller.signal)
     } finally {
       context.signal.removeEventListener('abort', cancelFromCaller)
       calls.delete(active)
@@ -418,16 +444,12 @@ export class LocalDirectModelProcessService
   }
 
   private async executeTracked(
-    input: ParsedProcessExecuteInput,
+    input: { executable: string; args: string[]; cwd?: string; timeoutMs?: number; shell: ProcessShellSummary },
     context: DirectModelProcessExecutionContext,
     signal: AbortSignal
   ): Promise<ProcessExecuteResult> {
     signal.throwIfAborted()
-    const shell = await this.shell
-    if (!shell) {
-      throw new Error('当前平台没有可用的命令 Shell')
-    }
-    signal.throwIfAborted()
+    const shell = input.shell
     const workingDirectory = await resolveWorkingDirectory(
       input,
       context.workspace
@@ -455,7 +477,7 @@ export class LocalDirectModelProcessService
         child = (
           this.options.spawnProcess ??
           (spawn as unknown as DirectModelProcessSpawn)
-        )(shell.executable, shellArguments(shell, input.command), {
+        )(input.executable, input.args, {
           cwd: workingDirectory.canonicalPath,
           detached: platform !== 'win32',
           env: environment,
@@ -485,9 +507,9 @@ export class LocalDirectModelProcessService
 
   private waitForProcess(
     child: DirectModelProcessChild,
-    shell: ResolvedProcessShell,
+    shell: ProcessShellSummary,
     cwd: string,
-    timeoutMs: number,
+    timeoutMs: number | undefined,
     cancellationSignal: AbortSignal,
     startedAt: number,
     stdout: PagedOutputWriter,
@@ -596,14 +618,14 @@ export class LocalDirectModelProcessService
         failure = error
         startCleanup()
       }
-      const timeout = setTimeout(() => {
+      const timeout = timeoutMs === undefined ? undefined : setTimeout(() => {
         if (settled || terminationReason === 'cancelled') {
           return
         }
         terminationReason = 'timeout'
         startCleanup()
       }, timeoutMs)
-      timeout.unref?.()
+      timeout?.unref?.()
 
       child.stdout?.once('error', failFromOutput)
       child.stderr?.once('error', failFromOutput)

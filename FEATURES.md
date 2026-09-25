@@ -392,15 +392,15 @@ records are listed separately and do not introduce another feature status.
   paths available to the current local or SSH account, including paths outside
   the workspace and native subagent work.
 - [x] **Efficient direct-model workspace tools**: Direct models use bundled
-  ripgrep for compact file discovery and content search, read large UTF-8 files
-  by line, and apply multi-file patches in Execute. Ask can search and read but
-  cannot patch or run commands; packaged ripgrep does not require a system install.
-  Actionable read/search errors let the model correct its arguments and
-  continue. Partial search results remain available with an explicit
-  incomplete-coverage warning.
+  ripgrep with native arguments for file discovery and content search, read large
+    UTF-8 files by line, and apply multi-file patches in Execute. Ask searches stay
+    read-only within the workspace; Execute searches use current-account permissions.
+    No system ripgrep install is required. Search preserves native output and exit
+    codes, with complete large results available through `output_read`; actionable
+    argument errors let the model correct its request and continue.
 - [x] **Long context and paged tool output**: Message history, long replies,
   and parsed document text no longer use the previous fixed truncation limits.
-  Direct models can continue reading stored command and Subagent output in
+  Direct models can continue reading stored search, command, and Subagent output in
   pages; the selected model's context window and bounded transports still apply.
 - [x] **Native Runtime interaction routing**: OpenCode and Continue questions
   support choices, yes/no, free-text answers, and skipping through the existing

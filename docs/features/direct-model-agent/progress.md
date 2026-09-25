@@ -18,6 +18,31 @@ DeepSeek Harness 和托管 SSH 路径不注入这些工具。既有功能的 Win
 全量项目验证已通过；本次分页验证记录见下方 2026-09-10 条目。macOS 与 Linux 真机验证
 仍需由对应平台完成。
 
+## 2026-09-25 原生 ripgrep 参数与完整输出
+
+- FR-12：`workspace_rg` 使用 `{ args: string[], cwd?: string }`，直接启动随包 rg，
+  保留原生 stdout、stderr 和退出码。此实现替代下方历史记录中的 JSON 解析与列号转换。
+- 搜索复用进程服务的取消、进程树清理和会话输出存储；超过旧 4 MiB 上限的结果及超长行
+  可通过 `output_read` 完整续读。Ask 保留工作区只读边界，Execute 使用当前账号权限。
+- Windows 真实随包 rg、生产 Provider 与 Runtime 接线聚焦回归：6 个文件，
+  `163 passed, 1 skipped`；覆盖原生参数、退出码 1/2、Ask 部分结果、长输出续读、
+  会话归属与清理。`npm run typecheck`、`npm run lint` 通过。
+- 全量 `npm test`：`5091 passed, 72 skipped, 25 failed`，另有一个文件未发现测试套件，
+  合计 7 个测试文件失败。失败涉及监督视图与旧 schema 夹具、监督设置 UI 断言和
+  `scripts/review-algorithm.test.mjs`；本次未修改这些路径。全量开始后的最终搜索调整
+  已由上述 6 文件聚焦回归复验，不能把本次整库验证记为通过。
+- 补充真实 DeepSeek 模型验收：Ask、Execute 两个场景均通过。模型通过原生参数调用
+  随包 rg，再通过 `output_read` 找回 110 KiB 超长单行末尾的随机标记；断言工具完成事件
+  进入 Runtime 活动。成功运行精确为 6 次上游请求（每个模式 3 次）、2 次搜索和 2 次续读。
+  首次测试因夹具未配置 rg 路径失败，控制台未保留请求计数，因此不推算整轮调用总数。
+  此验证覆盖真实 Runtime、Provider 和 rg，不作为完整桌面 UI 或 macOS/Linux 真机验证。
+- 最终聚焦回归：6 个文件，`169 passed, 1 skipped`；Typecheck、Lint 通过。
+  最新全量运行在 600 秒执行窗口后超时，日志停留在附件布局 Electron 测试，未生成最终
+  汇总，因此整库验证仍不能记为通过。
+- 已检查 `src/agent-daemon`、`src/main/remote-agent` 和远端 Runtime 打包入口：
+  它们不导入本机 rg 执行器、ModelToolProvider 或本机进程服务；远端工作区不提供该搜索
+  工具。因此本次不改变 gbagent 生产路径，不需要远端修复或 Host 验证。
+
 ## 2026-09-10 提交审查后的桌面 UI 验收
 
 - Windows 隔离配置使用本轮最终开发构建，通过普通输入框发送触发完整

@@ -2234,7 +2234,7 @@ describe('ModelAgentRuntime', () => {
       const reference = previous.stdoutReference!
       expect(reference).toBeDefined()
       const calls = [
-        { name: 'workspace_rg', arguments: { pattern: 'readonly-marker', glob: ['README.md'] } },
+        { name: 'workspace_rg', arguments: { args: ['-g', 'README.md', 'readonly-marker'] } },
         { name: 'workspace_read_text', arguments: { path: 'README.md' } },
         { name: 'output_read', arguments: { handle: reference.handle, cursor: reference.nextCursor } }
       ]
@@ -2261,7 +2261,7 @@ describe('ModelAgentRuntime', () => {
         (message: { role: string }) => message.role === 'tool'
       )
       expect(results).toHaveLength(3)
-      expect(results[0].content).toContain('README.md:1:1:readonly-marker')
+      expect(results[0].content).toContain('README.md:1:readonly-marker')
       expect(results[1].content).toContain('readonly-marker')
       expect(JSON.parse(results[2].content)).toMatchObject({
         content: expect.stringContaining('retained-tail'), eof: true

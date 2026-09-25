@@ -79,8 +79,10 @@ type BuiltinModelToolSummary = {
 
 ### 工具输入与执行
 
-- `workspace_rg` 接受 `pattern`、相对目录、glob、固定字符串、忽略大小写、文件列表模式和
-  最大结果数。Main 固定追加 `--no-config`，内容搜索读取 `--json`，对模型返回紧凑文本。
+- `workspace_rg` 接受 `{ args: string[], cwd?: string }`，直接启动随包 rg，不经过 Shell。
+  默认参数为 `--no-config --color=never --line-number`，随后传入原生 args；cwd 默认工作区。
+  保留原生 stdout、stderr 和退出码，不强制 JSON、不裁剪匹配行。完整输出复用进程服务的
+  临时文件与 `output_read`；搜索不另设时限，取消和会话释放终止进程树。
 - `workspace_read_text` 接受 `path`、从 1 开始的 `offset` 和 `limit`，通过现有
   `WorkspaceAccess.readText` 字节分页组装带行号结果；`offsetBytes` 提供原始字节续读，
   覆盖跨多个页面的超长单行。
@@ -89,7 +91,7 @@ type BuiltinModelToolSummary = {
 - Ask 只注册前两个只读工具；Execute 注册全部三个工具。旧的目录列表和整文件覆盖不再进入
   新工具清单。
 - 输入和目标文件不设固定总量上限。单次工具结果仍遵守直连模型上下文边界；读取返回续读
-  位置，搜索截断时要求模型缩小路径、glob 或表达式。
+  位置，搜索预览省略的内容通过 `output_read` 续读。
 
 ### 读取与搜索失败恢复
 
@@ -102,19 +104,16 @@ Runtime 向模型返回 `{ ok: false, recoverable: true, error, nextAction }` �
 提示不得原样重复失败参数。取消、远端断线、失效工作区、缺失 rg 可执行文件及未分类的内部
 错误继续向外传播，不转为可恢复结果。
 
-读取和搜索仍只接受工作区内相对路径，绝对路径即使指向工作区内文件也拒绝；原有越界及
-符号链接检查继续生效。仅当本机直连模型 Execute 的 `process_execute` 实际可用时，恢复
-提示才建议用它访问工作区外文件。此处理不改变 Windows 用户权限、UAC 或文件 ACL，
-也不提升进程权限；Ask 仍保持只读。
+`workspace_read_text` 仍只接受工作区内相对路径。搜索在 Ask 中检查 cwd、搜索路径、模式文件
+和忽略文件位于工作区内，并阻止 `--pre`、`--hostname-bin`、`--follow/-L`、`--search-zip/-z`，
+避免只读调用启动外部命令或跟随链接越界。Execute 原样接受 rg 参数及账号可访问的路径，
+不增加逐工具授权。两种模式均禁用外部 rg 配置，不提升系统权限。
 
 ripgrep 结果按退出状态处理：
 
 - exit 1 保持正常无匹配结果。
-- exit 2 有 stdout 且不是 regex/glob 编译错误时，保留已取得的匹配或文件列表，附加
-  `incomplete search coverage` 警告及有界 stderr。零匹配只代表已搜索部分，不能据此断言
-  整个目标不存在匹配；输出截断提示仍独立保留。
-- exit 2 无 stdout，或出现无效 regex/glob 编译错误时，搜索层抛错，再由 Provider 转为
-  上述可恢复结果；模型可修正表达式，字面搜索可使用 `fixedStrings`。
+- exit 2 返回原生 stderr 和已有 stdout，表示错误或搜索覆盖不完整；模型可修改参数继续。
+  无效正则同样返回 exit 2；字面搜索使用 `-F`。
 
 该契约属于桌面 `ModelAgentRuntime → ModelToolProvider` 内置工具路径，复用浏览器标签页
 关闭和元素引用失效已有的可恢复错误机制；浏览器分别提示 `browser_navigate` 或
@@ -203,7 +202,7 @@ type ProcessExecuteResult = {
 页面在字符边界结束；若请求大小容不下首个完整字符，最多扩展到 4 字节，保证续读前进。
 位于 UTF-8 延续字节的输入 cursor、负数、越界和未知字段均拒绝。
 
-Provider 根据 `process:` 或 `subagent:` 前缀选择服务，以当前 `conversationId` 校验所有者，
+Provider 根据 `rg:`、`process:` 或 `subagent:` 前缀选择服务，以当前 `conversationId` 校验所有者，
 不接受模型另传 owner。Ask/Execute 均可用，工具总数为此预留一个槽位；不要求本轮能够启动
 命令或再次委派。分页结果直接 JSON 序列化，不进行二次文本裁剪，以免 cursor 与内容不一致。
 32 KiB 的页面即使全部需要 JSON 转义，也能保留在现有工具结果容量内。

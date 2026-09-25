@@ -480,6 +480,68 @@ describe.runIf(enabled)('runtime end-to-end', () => {
     180_000
   )
 
+  it.each(['ask', 'execute'] as const)(
+    'searches native rg arguments and reads hidden output through real model in %s',
+    async (workMode) => {
+      const marker = `RG_TAIL_${crypto.randomUUID()}`
+      await writeFile(join(workspace, 'native-rg.txt'), `target ${' '.repeat(110 * 1024)}${marker}\n`)
+      const upstreamUrl = protocol === 'anthropic-messages'
+        ? createAnthropicMessagesUrl(baseUrl)
+        : protocol === 'openai-responses'
+          ? createOpenAIResponsesUrl(baseUrl)
+          : createOpenAIChatCompletionsUrl(baseUrl)
+      const probe = await createModelRequestProbe({ upstreamUrl, headerName: 'x-goodbuddy-rg-test' })
+      const provider = new ModelToolProvider(workspace, [], undefined, undefined, false, {
+        ripgrepExecutablePath: join(process.cwd(), '.runtime-resources', process.arch, process.platform === 'win32' ? 'rg.exe' : 'rg')
+      })
+      const listTools = provider.listTools.bind(provider)
+      vi.spyOn(provider, 'listTools').mockImplementation(async (context, signal) =>
+        (await listTools(context, signal)).filter((tool) => ['workspace_rg', 'output_read'].includes(tool.name)))
+      const callTool = provider.callTool.bind(provider)
+      const observed: Array<{ name: string; result: ProcessExecuteResult | PagedOutputPage }> = []
+      vi.spyOn(provider, 'callTool').mockImplementation(async (name, args, signal, context) => {
+        if (observed.length >= 4) throw new Error('Real rg test exceeded four tool calls')
+        const result = await callTool(name, args, signal, context)
+        const part = result.parts[0]
+        if (part?.type === 'text') observed.push({ name, result: JSON.parse(part.text) })
+        return result
+      })
+      const runtime = new ModelAgentRuntime({
+        apiKey, baseUrl: probe.baseUrl, model: modelName, protocol,
+        authentication: 'api-key', defaultWorkspace: workspace,
+        maximumOutputTokens: 1024, toolProvider: provider
+      })
+      try {
+        const events = await collectEvents(runtime.run({
+          requestId: crypto.randomUUID(), conversationId: crypto.randomUUID(), workMode,
+          prompt: [
+            'Call workspace_rg exactly once with args ["--no-line-number", "-F", "target", "native-rg.txt"].',
+            'The result has a hidden RG_TAIL_ marker after a long line of spaces.',
+            'Read the remaining output using output_read with stdoutReference.handle and stdoutReference.nextCursor.',
+            'Continue until eof. Reply only with the exact RG_TAIL_ marker. Do not guess or repeat the search.'
+          ].join('\n')
+        }, AbortSignal.timeout(180000), async () => 'once'))
+        expect(observed.filter((item) => item.name === 'workspace_rg')).toHaveLength(1)
+        const search = observed[0]!.result as ProcessExecuteResult
+        expect(search.exitCode).toBe(0)
+        expect(search.stdoutTruncated).toBe(true)
+        expect(search.stdout).not.toContain(marker)
+        const pages = observed.filter((item) => item.name === 'output_read')
+        expect(pages.length).toBeGreaterThan(0)
+        expect(pages.at(-1)!.result).toMatchObject({ eof: true })
+        expect(events.filter((event) => event.type === 'text').map((event) => event.delta).join('')).toContain(marker)
+        expect(events.some((event) => event.type === 'tool' && event.state === 'completed')).toBe(true)
+        expect(events.at(-1)).toMatchObject({ type: 'done' })
+      } finally {
+        console.info(JSON.stringify({ boundary: 'native-rg-pagination', workMode,
+          realModelCalls: probe.observations.length, toolCalls: observed.map((item) => item.name) }))
+        await runtime.dispose()
+        await probe.close()
+      }
+    },
+    200000
+  )
+
   it(
     'recovers hidden process output markers through real-model output_read pagination',
     async () => {
