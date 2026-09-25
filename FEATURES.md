@@ -750,7 +750,9 @@ records are listed separately and do not introduce another feature status.
 - [x] **Supervisor reviews, story graphs, and activity**: Review a selected scope
   and period, read dated supervision results and history in Work review, inspect saved result graphs and sources, confirm or revise entities,
   and preview local knowledge entity writes. Sidebar feedback follows or pins a
-  Conversation or Task and opens its matching result. Activity combines heartbeat
+  Conversation or Task and opens its matching result. It shows target names with
+  compact pin/refresh buttons and preserves long-title readability and keyboard
+  focus in narrow sidebars. Activity combines heartbeat
   and downstream review stages, including failures and links to older results.
   Automatic stages process only new, changed, or unprocessed source portions;
   no-change checks skip model calls. Manual review pages through the selected history
@@ -870,6 +872,8 @@ records are listed separately and do not introduce another feature status.
   No local production build, packaging, or LoongArch preview is requested.
   Current validation status is recorded in the
   [release preparation record](./docs/development/release-preparation-0.13.14.md).
+- Desktop `0.13.12` and Agent `0.13.3` have completed their native release jobs;
+  this does not replace development-time real-Host scenario coverage.
 - Validation records remain separate from implementation status. Current-source
   storage validation covers real local and Linux x64 Host tool workloads,
   concurrent projects/conversations, cancellation, and lossless database migration.
