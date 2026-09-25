@@ -25,6 +25,7 @@ export const supervisionRunRequestSchema = z
 export type SupervisionRunRequest = z.infer<typeof supervisionRunRequestSchema>
 
 export const supervisionActivityRequestSchema = z.object({
+  configId: z.string().min(1).max(256).optional(),
   limit: z.number().int().min(1).max(100).default(50),
   offset: z.number().int().min(0).max(100_000).default(0)
 }).strict()
@@ -33,7 +34,8 @@ export type SupervisionActivity = {
   id: string
   kind: 'supervision' | 'heartbeat'
   trigger: 'manual' | 'scheduled' | 'heartbeat'
-  status: 'running' | 'completed' | 'failed' | 'skipped' | 'no_change'
+  status: 'running' | 'completed' | 'failed' | 'skipped' | 'no_change' | 'paused'
+  reviewProgress?: import('./supervision-review-contracts').SupervisionReviewProgress
   scope: SupervisionRunRequest['scope'] | null
   startedAt: string
   completedAt: string | null
@@ -42,7 +44,7 @@ export type SupervisionActivity = {
   summary: string | null
   resultId: string | null
   heartbeatStatus: 'claimed' | 'completed' | 'failed' | 'skipped' | 'no_change' | null
-  supervisionStatus: 'running' | 'completed' | 'failed' | 'no_change' | null
+  supervisionStatus: 'running' | 'completed' | 'failed' | 'no_change' | 'paused' | null
 }
 
 export const supervisionEvidenceSchema = z
@@ -59,15 +61,15 @@ export const supervisionEvidenceSchema = z
 
 export type SupervisionEvidence = z.infer<typeof supervisionEvidenceSchema>
 
-const sourceReferenceIdsSchema = z.array(z.string().min(1).max(256)).max(20)
+const sourceReferenceIdsSchema = z.array(z.string().min(1).max(256))
 
 export const supervisionEventSchema = z
   .object({
-    title: z.string().min(1).max(240),
-    description: z.string().max(2_000),
+    title: z.string().min(1),
+    description: z.string(),
     occurredAt: z.string().datetime({ offset: true }),
     eventType: z.enum(['decision', 'change', 'discussion', 'milestone']),
-    entityIds: z.array(z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/)).max(40),
+    entityIds: z.array(z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/)),
     sourceReferenceIds: sourceReferenceIdsSchema
   })
   .strict()
@@ -76,8 +78,8 @@ export const supervisionEntitySchema = z
   .object({
     id: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
     persistedId: z.string().uuid().optional(),
-    label: z.string().min(1).max(240),
-    description: z.string().max(2_000),
+    label: z.string().min(1),
+    description: z.string(),
     sourceReferenceIds: sourceReferenceIdsSchema
   })
   .strict()
@@ -87,7 +89,7 @@ export const supervisionRelationSchema = z
     fromEntityId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
     toEntityId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
     relationType: z.enum(['supports', 'depends-on', 'contrasts', 'related']),
-    reason: z.string().max(1_000),
+    reason: z.string(),
     sourceReferenceIds: sourceReferenceIdsSchema
   })
   .strict()
@@ -95,19 +97,19 @@ export const supervisionRelationSchema = z
 export const supervisionEntityChangeSchema = z.object({
   entityId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
   changeType: z.enum(['proposed', 'added', 'verified', 'revised']),
-  description: z.string().max(2_000),
+  description: z.string(),
   sourceReferenceIds: sourceReferenceIdsSchema
 }).strict()
 
 export const supervisionSummaryOutputSchema = z
   .object({
-    summary: z.string().min(1).max(12_000),
-    changeDigest: z.string().max(4_000),
-  openItems: z.array(z.string().min(1).max(500)).max(20),
-  events: z.array(supervisionEventSchema).max(40),
-  entities: z.array(supervisionEntitySchema).max(40),
-  entityChanges: z.array(supervisionEntityChangeSchema).max(80),
-  relations: z.array(supervisionRelationSchema).max(80)
+    summary: z.string().min(1),
+    changeDigest: z.string(),
+    openItems: z.array(z.string().min(1)),
+    events: z.array(supervisionEventSchema),
+    entities: z.array(supervisionEntitySchema),
+    entityChanges: z.array(supervisionEntityChangeSchema),
+    relations: z.array(supervisionRelationSchema)
   })
   .strict()
 
@@ -115,13 +117,23 @@ export type SupervisionSummaryOutput = z.infer<
   typeof supervisionSummaryOutputSchema
 >
 
+// Navigation combines saved summaries; it cannot create or replace leaf facts.
+export const supervisionNavigationOutputSchema = supervisionSummaryOutputSchema.pick({
+  summary: true, changeDigest: true, openItems: true
+}).extend({
+  events: z.array(z.never()).max(0).optional(),
+  entities: z.array(z.never()).max(0).optional(),
+  entityChanges: z.array(z.never()).max(0).optional(),
+  relations: z.array(z.never()).max(0).optional()
+}).strict()
+
 export const supervisionEntityActionSchema = z
   .object({
     resultId: z.string().min(1).optional(),
     entityId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
     action: z.enum(['confirm', 'revise', 'revoke']),
-    label: z.string().trim().min(1).max(240).optional(),
-    description: z.string().max(2_000).optional()
+    label: z.string().trim().min(1).optional(),
+    description: z.string().optional()
   })
   .strict()
 
@@ -176,6 +188,8 @@ export type SupervisionEntityAction = z.infer<typeof supervisionEntityActionSche
 export type SupervisionRelationAction = z.infer<typeof supervisionRelationActionSchema>
 
 export const supervisionResultViewSchema = z.object({
+  runId: z.string().optional(),
+  coverage: z.record(z.string(), z.unknown()).optional(),
   storyLineId: z.string(),
   sourceId: z.string().nullable(),
   id: z.string(), summary: z.string(), changeDigest: z.string(), createdAt: z.string(),

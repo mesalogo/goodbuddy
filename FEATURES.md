@@ -737,8 +737,8 @@ records are listed separately and do not introduce another feature status.
   task approvals remain actionable in their task cards.
 - [x] **Memory and Smart Heartbeat**: Provides periodic review, suggested
   memories, insights, follow-up tasks, and auditable run history.
-- [x] **Automatic supervision settings and scope**: Supervisor / Settings is
-  the sole authoritative full-configuration entry. Daily or weekly plans can be
+- [x] **Automatic supervision settings and scope**: Supervisor / Automatic supervision is
+  the sole authoritative plan configuration, automatic report, and suggestion entry. Daily or weekly plans can be
   created and edited for Global or one or more selected Projects. Legacy
   single-project settings migrate without loss, and project-level memory and
   action output must explicitly target a Project in scope. Task Center and
@@ -746,7 +746,7 @@ records are listed separately and do not introduce another feature status.
   generation, and recall triggers remain to be designed. See the
   [Smart Heartbeat PRD](./docs/features/smart-heartbeat/prd.md).
 - [x] **Supervisor reviews, story graphs, and activity**: Review a selected scope
-  and period, inspect saved result graphs and sources, confirm or revise entities,
+  and period, read dated supervision results and history in Work review, inspect saved result graphs and sources, confirm or revise entities,
   and preview local knowledge entity writes. Sidebar feedback follows or pins a
   Conversation or Task and opens its matching result. Activity combines heartbeat
   and downstream review stages, including failures and links to older results.

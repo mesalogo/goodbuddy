@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { supervisionReviewSettingsSchema } from './supervision-review-contracts'
 import { magicNoteCommentFormatSchema } from './magic-notes-contracts'
 import { localToolEnvironmentSettingsSchema } from './local-tool-environment-contracts'
 import { modelDownloadSourceSchema } from './model-download-contracts'
@@ -31,6 +32,11 @@ export const magicNoteCanvasPageCountSchema = z.number().int().min(1).max(8)
 export const updateSourceSchema = z.enum(['github', 'mirror'])
 export type UpdateSource = z.infer<typeof updateSourceSchema>
 
+export const defaultSupervisionTimeoutSeconds = 240
+export const defaultSupervisorModelConcurrency = 1
+export const supervisorModelConcurrencySchema = z.number().int().min(1).max(4)
+export const supervisionTimeoutSecondsSchema = z.number().int().min(30).max(600)
+
 export const builtInApplicationIds = ['magic-notes', 'knowledge', 'heartbeat', 'local-inference'] as const
 export type BuiltInApplicationId = typeof builtInApplicationIds[number]
 export const editableApplicationIds = ['magic-notes', 'heartbeat', 'local-inference'] as const
@@ -61,6 +67,10 @@ const applicationPreferencesSchema = z
     localInferenceEnabled: z.boolean().default(true),
     magicNotesEnabled: z.boolean().default(true),
     heartbeatEnabled: z.boolean().optional(),
+    heartbeatReportTimeoutSeconds: supervisionTimeoutSecondsSchema.optional(),
+    supervisorOrganizeTimeoutSeconds: supervisionTimeoutSecondsSchema.optional(),
+    supervisorModelConcurrency: supervisorModelConcurrencySchema.optional(),
+    supervisionReview: supervisionReviewSettingsSchema.optional(),
     magicNotesShowIncompleteTodoCount: z.boolean().default(true),
     magicNoteCommentMode: magicNoteCommentModeSchema.default('immediate'),
     magicNoteCommentFormat: magicNoteCommentFormatSchema.default('combined'),

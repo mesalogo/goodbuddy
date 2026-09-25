@@ -4,18 +4,22 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 已接入自动增量、无变化状态、结果定位、目标过滤及同 scope 候选身份复用；完整历史回放和取消语义仍未完成 |
-| 日期 | 2026-09-20 |
+| 状态 | 生产分页、持久化批次、暂停/继续及设置已接线；27 条消息完整会话通过真实模型验证，较大样本仍未完成；完整历史回放未实现 |
+| 日期 | 2026-09-23 |
 | 产品设计 | [监督者应用产品设计](./supervisor-prd.md) |
 | 行为规则 | [监督者逻辑设计](./logic-design.md) |
 | 界面设计 | [监督者 UI 设计](./ui-design.md) |
-| 实施进度 | 共享契约、`SupervisorService`、SQLite schema 46、Preload IPC、定时投影、工作回顾、活动、结果图谱、来源读取、实体/关系状态操作、会话继续讨论、知识库预览写入和目标侧栏已接入 |
+| 实施进度 | SQLite schema 47；当前算法、设置和验收边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界) |
 
 本文回答如何在现有 GoodBuddy 桌面端中实现监督者。它不改变产品范围，也不把模拟 Demo 当作生产数据模型。
 
-当前实现边界：`src/main/assistant/supervisor-service.ts` 接收冻结的范围和时间区间，通过现有 AssistantDatabase 取得有界会话、任务、消息已有知识引用和已确认记忆，调用 ask Runtime 的结构化摘要器，校验来源引用与实体关系后在 SQLite 事务中保存。消息引用中的本地 library/document/chunk 和外部 locator 元数据写入监督来源；source-context 对本地引用调用现有 `KnowledgeService` 解析。记忆使用独立的 `memory` 来源类型，外部引用不触发远端全库检索。
+生产入口由 `supervision-production.ts` 组装服务、SQLite、共享池和 ask Runtime。`supervision-review-store.ts` 保存冻结来源清单，按有界页和片段供 `SupervisorService` 派发；叶子及连续位置先提交，导航和完整结果之后发布。消息已有知识引用保留本地或外部 locator，已确认记忆通过独立背景输入提供。不会检索外部全库。详细存储、调度及当前限制统一见[分块调度第 0 节](./review-scheduling-design.md#0-生产接线与剩余边界)。
 
-模型实体 `id` 只在单次输出内有效。Main 从同一 scope 的故事线提供最多 100 个未撤销实体候选，模型可用独立的 `persistedId` 引用其中一个 UUID。服务校验候选集成员和重复映射，保存事务再次按实体主键校验故事线归属及撤销状态。没有 `persistedId` 时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。
+模型实体 `id` 只在单次输出内有效。Main 从同一 scope 的故事线提供最多 100 个未撤销实体候选，生产提示只暴露 `candidateRef`（如 `known_1`）、名称和说明。模型显式选择候选后，Main 转换为严格 UUID 类型的内部 `persistedId`。服务校验候选集成员和重复映射，保存事务再次按实体主键校验故事线归属及撤销状态。没有有效候选引用时分配新 UUID，不按名称或裸模型 ID 合并。来源仍按每次结果分配 UUID，保留原始 `source_id` 和 locator。
+
+新实体省略 `candidateRef`，不要求模型生成数据库 ID。未知非空 `candidateRef`、冲突身份和候选集之外的 UUID 均拒绝。旧输出中的 `persistedId` 仅在 UUID 合法且属于候选集时复用；空值、占位符和格式错误值不能证明已有身份，保留为独立新实体。局部 ID 或同名不会触发合并。
+
+真实旧库存在 `goodbuddy` 等文本实体主键。候选读取为这些键生成稳定 UUID 别名，并在 Main 内保留 `storageId` 到原键的映射；模型看不到这两个字段。别名使用 scope 和原键的 SHA-256 摘要构造 UUID v8，保存时按精确映射查询原实体，保留历史图谱引用和人工确认字段，不迁移或重写原主键。新实体仍由 Main 分配随机 UUID。此兼容仅处理已经存在的旧库键，模型返回同样的文本不能直接复用实体。实测见[真实失败运行修复](./progress.md#2026-09-24-真实失败运行身份修复)。
 
 schema 42 为实体、实体变化和关系增加 `source_reference_ids_json`，保存映射后的来源 ID。升级只补列，旧记录、ID、确认状态及 locator 保留；此前未保存的引用使用空数组，已被覆盖或忽略的历史内容无法据此恢复。
 
@@ -31,21 +35,39 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 继续讨论入队时，无附件请求省略 `serializedContexts`；请求未指定 Runtime 时使用会话保存的选择。知识库预览与提交均检查目标库存在且为本地可写库，更新实体还检查其实际所属库。侧栏确认框展示 Main 返回的实体字段、目标库和来源正文，取消或写入失败后可以重新预览。
 
-手动监督 collector 将 UI 请求的 `timeRange` 原样传入 `buildHeartbeatInput` 的可选明确区间参数，查询时归一化为 UTC。消息按 `from <= created_at <= to` 在 LIMIT 前过滤，会话也在 LIMIT 前检查存在区间内消息；所选项目复用现有存在且 active 的校验。任务在创建时间或完成时间落入闭区间时收集，证据时间优先使用区间内完成时间，否则使用创建时间；任务状态为当前状态。手动心跳保留原有收集行为；自动运行使用下节的增量查询。
+监督来源清单将 UI 时间区间归一化为 UTC，先筛选再按稳定键分页。项目必须存在且 active；消息按闭区间筛选，任务按区间内创建或完成时间筛选。手动和自动监督共用该路径，自动清单另读取 supervisor checkpoint；手动心跳报告保留原有 collector。
 
-已确认记忆作为当前背景收集，不受事件时间区间筛选；`occurredAt` 使用数据库 `updated_at`，locator 保存真实创建、更新时间及 `current-background` 标识。模型指令禁止将当前记忆内容推断成历史时点的内容或区间事件。记忆没有历史内容快照；本次修复不增加历史还原能力，也不追溯修正已有监督结果。既有会话、消息、任务及总证据预算继续生效，严格时间筛选不代表区间内所有记录都会进入摘要。
+已确认记忆作为当前背景，不参与新增正文覆盖。最多四条、每条 500 字符，时间来自真实更新时间；模型不能把背景引用为本批新增证据。旧结果继续保留原来源类型和 locator。监督正文上限现用于分批，余段继续处理；心跳报告的有界输入语义没有改变。
+
+## 模型阶段超时与调度
+
+监督整理超时由 run 创建时冻结；共享模型池仍采用实时设置上限。`supervision:pause` 取消该 run 的排队和在途工作，`supervision:resume` 继续已保存批次；监督整理输出在流中按 `supervisionReview.responseKiB` 检查响应容量，默认 1024 KiB，可在设置页调整为 100 至 16384 KiB。该容量每次请求读取当前设置，继续旧运行也采用新值；超限保留成功批次并提示调高后继续。生成摘要及事实内容不设独立短字符限制，监督旧摘要读取保留全文，具体边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界)。以下报告领取和租约规则继续适用。
+
+手动和自动监督均在桌面 Main 调用生产工厂，Runtime 解析请求只有 `workMode: ask`，不携带 SSH 项目或执行空间。摘要校验、合并和持久化在 Main 完成；本次取消内容长度限制不改变 `gbagent`、远端 Runtime 启动或桌面到 Agent 协议。
+
+`ApplicationSettingsStore` 持久化报告和整理模型超时，均为 30..600 整数秒，默认 240。报告排队前冻结，监督创建 run 时冻结；计时从获槽及 Runtime 解析后开始，覆盖模型执行及其内部重试。流结束校验 signal 和完成事件，finally 释放临时会话，心跳报告保持原有 100KB 上限，监督整理使用上文的可调响应容量。采集、排队、保存和清理不计入模型超时。
+
+`supervisorModelConcurrency` 为 1 至 4 的整数，默认 1。报告和监督整理共用 Main 内 `SupervisionModelPool` FIFO 池，普通聊天不入池；降低上限不终止在途请求。报告槽位从领取前持有至报告完成或无变化提交后，在下游监督开始前释放，避免并发 1 时相互等待。监督服务外层运行仍串行；该池不是完整分块调度器，也不提供跨聊天与监督的提供商全局并发、RPM、TPM 或 Retry-After 控制。
+
+报告租约为 `max(300, reportTimeoutSeconds + 60)` 秒，300 是下限；每次到期领取最多一条。Runtime 解析后、模型请求开始前按冻结超时刷新租约，数据库要求运行 ID、owner、attempt、claimed 状态和未过期条件均匹配，否则拒绝启动模型。直连模型独立的 600 秒传输超时、网络重试、心跳重领及轮询不属于用户阶段时限。设置 UI 提供两个超时、共享并发及分页/分批/软预算字段。
+
+schema 47 的四张批次相关表使用外键随监督运行清理，未完成运行不新增自动过期删除规则。启动时原有 running 记录会标 failed，但已保存批次和配置保留，活动页仍可继续。发布逐页读取叶子并复用现有结果/来源/图谱写入，在同一事务更新完成状态和自动 checkpoint。
+
+当前设置及冻结范围见[当前设置合同](./review-scheduling-design.md#当前设置合同)。未实现的高级参数继续保留在目标清单，不显示为可保存控件；没有兼容原型数据库的读取器。
 
 ## 自动增量收集
+
+本节的 100 来源/2,000 码点批次查询现用于原心跳报告及旧服务测试；生产监督使用 schema 47 清单及批次位置，自动 checkpoint 只在完整发布时提交。已有 schema 46 指纹算法和 checkpoint 仍复用，不重置用户已处理位置。
 
 对应 FR-S4、FR-S10 和 US-S27，行为定义见[自动增量与手动重看](./logic-design.md#自动增量与手动重看)。schema 46 在现有数据库增加 `review_checkpoints`，主键为阶段、规范化 scope 和来源标识，保存版本指纹、已处理位置和来源长度。来源标识区分消息 ID、任务 ID 和消息内知识引用位置，不使用消息时间戳作为身份。
 
 消息正文写入时由 SQLite trigger 更新轻量 `review_revision`；范围、标题、角色和时间共同参与版本指纹。任务标题、状态、创建和完成时间，以及知识引用内容或定位变化分别使对应来源待处理。工具执行元数据更新不会把未修改的消息正文再次标为新增。删除来源时清理其进度。原始消息不复制到进度表；自动查询先排除已处理版本，再读取待处理片段，不重新载入每个会话的历史正文。
 
-查询按来源时间和 ID 排序，在过滤之后取最多 100 个来源，每个来源每轮读取后续最多 2,000 个 Unicode 字符。自动心跳新证据正文预算为 12,000 个 JS 字符，监督为 44,000；最多四条各 500 字符的已确认记忆和最近 2,000 字符摘要提供背景，监督仍执行 100 条及 48,000 字符证据上限。自动路径取消“只取最新 20 个会话、每会话最新 20 条”的预筛选，预算遗漏和长正文剩余部分留到后续检查。已超出下一次滚动窗口的来源不会自动扩大范围读取。
+原心跳增量查询按来源时间和 ID 排序，每轮最多 100 个来源、每个最多 2,000 码点，正文预算 12,000 UTF-16 单元。该报告路径的余段留待后续检查，窗口外来源不自动补读。生产监督另用冻结清单和持久化批次，未读尾部不会因继续时的滚动窗口变化而消失；旧监督分支的 44,000/48,000 字符上限已退出生产接线。
 
 只有实际送入模型、通过结果校验且成功落库的完整片段推进位置。心跳报告及其进度、监督结果及其进度分别在各自 SQLite 事务提交。监督服务串行执行，后续自动请求在前次保存后重新收集。报告成功而监督失败时，下一次自动检查跳过已成功的报告输入，但重试监督输入；无变化不创建报告、来源或图谱事件。
 
-已有同 scope 故事线的 scope 表示和实体 ID 保留；比较项目集合时忽略排序。模型接收最近摘要和同 scope 最多 100 个未撤销实体的 ID、名称、说明，显式返回 `persistedId` 才复用。不同范围不合并，已有重复实体不自动修复。知识引用继续以独立来源保存 locator；当前记忆和旧摘要不作为新事件。
+已有同 scope 故事线的 scope 表示和实体 ID 保留；比较项目集合时忽略排序。模型接收最近摘要和同 scope 最多 100 个未撤销实体的候选引用、名称、说明，显式选择候选才复用，身份转换按上文执行。不同范围不合并，已有重复实体不自动修复。知识引用继续以独立来源保存 locator；当前记忆和旧摘要不作为新事件。
 
 迁移在事务中扩展心跳计划及运行表的状态 CHECK，保留列、索引、ID、计划、报告与引用；消息版本列使用默认值，无需遍历或重写旧正文。进度初始为空，首次自动运行从配置窗口开始。报告保留期限覆盖 `no_change` 运行，但不删除来源进度；删除报告不触发重新消费。
 
@@ -53,9 +75,11 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 对应 FR-S10、US-S26。schema 45 在既有 `supervision_runs` 增加可空 `heartbeat_run_id` 和唯一索引，在 `heartbeat_runs` 增加执行范围、下游投影状态、错误及结束时间字段。迁移保留原记录，不补造旧关联。监督服务通过 store 的 start/fail 接线记录执行，保存结果事务更新同一 run；不增加调度器。心跳在执行前记录冻结范围和投影进度，报告事务仍保持原有含义，下游失败单独保存。手动心跳在生产路径使用实际结束时间，活动等待下游结束后才显示整次执行的结束时间。
 
-`supervision:activity` 沿用可信 sender 与 Zod 输入校验，接受 `limit`（1 至 100，默认 50）和 `offset`（0 至 100000）。应用未启用时返回空列表且不访问活动表。SQL 合并心跳及未关联的监督记录，关联查询使用运行 ID；返回状态、阶段、范围、时间、错误、摘要和 resultId，不调用模型。保留规则和历史缺失见[活动记录](./logic-design.md#活动记录)。
+`supervision:activity` 沿用可信 sender 与 Zod 输入校验，接受 `limit`（1 至 100，默认 50）、`offset`（0 至 100000）及可选 `configId`。应用未启用时返回空列表且不访问活动表。未筛选时 SQL 合并心跳及未关联的监督记录；筛选时在 LIMIT/OFFSET 前按 `heartbeat_runs.config_id` 精确匹配，排除独立手动回顾，不依赖计划名称或范围。关联查询使用运行 ID；返回状态、阶段、范围、时间、错误、摘要和 resultId，不调用模型。保留规则和历史缺失见[活动记录](./logic-design.md#活动记录)。
 
 Preload 暴露类型化 `supervision.activity()`。`overview({ resultId })` 支持按 ID 读取历史回顾，供活动跳转使用。Renderer 只在活动页签和 heartbeat 路由同时激活时串行定时读取，每次有界分页；effect 清理撤销定时器并使旧响应失效。App 关闭应用时卸载页面；读取没有执行副作用。该改动位于桌面 Main/Renderer，未修改 Agent 或远程 Runtime 协议。
+
+活动进度现在包含既有运行 JSON 中的持久 `phase` 及导航表计数 `navigationNodes`。`SupervisionReviewStages` 将实际阶段与监督运行状态组合呈现；`SupervisionBatchDetails` 按既有 10 批分页结果组织项目、会话和批次，新增批数变化时刷新已打开页。导航和叶子使用不同的严格输出 schema，继续仍复用成功叶子与导航节点。字段语义、旧记录缺失和同步阶段限制由[生产调度合同](./review-scheduling-design.md#已接入的调度与存储)统一定义；未增加任务调度器、数据库表或远程协议。
 
 ## 1. 总体方案
 
@@ -100,7 +124,11 @@ flowchart LR
 
 应用启停遵守[逻辑规则](./logic-design.md#应用启停与执行)。`ApplicationSettingsStore` 对新设置及缺失的 `heartbeatEnabled` 使用 `false`，保留显式布尔值。Main 在心跳 tick 调用 `processDue()` 前、`heartbeatsRunNow` 与 `supervisionRun` IPC 入口、心跳完成后的监督回顾回调中读取已保存设置，只有值为 `true` 才继续。此检查不取消已领取运行，也不改变普通任务调度链路。Renderer 由 App 将同一启用状态传入 `RightAssistantSidebar`，控制监督面板挂载。
 
-设置默认选中既有 `plans` 面板，直接渲染 `HeartbeatSettings`，沿用 App → Preload → Main 的计划 CRUD 接线。`heartbeatRecurrenceSchema` 与 `computeNextHeartbeatRun` 仅支持 daily/weekly；本轮不增加分钟间隔合同或调度分支。编辑草稿保存已有 `timezone` 和 `enabled`，新建仅在显式提交时使用本机时区创建启用计划。UI 命名统一为自动监督，内部 ID、翻译键、数据库及 IPC 名称保留。
+`HeartbeatCenter` 的五个顶层页签直接选择内容，无内部页签。overview 只由 `SupervisorWorkspace` 读取 `supervision.overview` 的统一结果，历史选择和图谱共享 resultId；新请求控件不改变所选结果的 scope/timeRange。`HeartbeatSections` 仅在 plans 输出内容，包含 `HeartbeatSettings`、范围与刷新、运行概览、指标、趋势、自动监督报告、记忆与行动建议及审计；activity 只渲染 `SupervisorActivity`，settings 只渲染两个算法参数表单。运行中的手动请求保留既有结果，活动入口清空计划筛选并聚焦 activity。计划列表放在当前状态下，复用唯一创建按钮及未配置说明。计划表单在原组件内通过 body Portal 显示，复用 `custom-task-dialog` 和 `activateModalFocus` / `trapTabFocus`，没有复制表单或嵌套 form。关闭确认、提交锁定及失败草稿由本地状态管理；保存继续调用 App 原有心跳 CRUD 回调。
+
+计划“执行记录”将 `activityPlanId` 交给活动查询，并切换、聚焦 activity 页签。更换计划时清空旧列表、重置 offset 并清理旧轮询，保留筛选控件的键盘焦点；该筛选不传入自动监督概览，返回 plans 时仍显示全部计划的统计和心跳审计。报告展开和追加条数保存在同一组件内，切换顶层页签仍保留；图谱继续由 `SupervisorWorkspace` 持有结果选择，活动结果跳转保留精确 resultId。此次仅调整桌面 UI 和只读活动查询，不修改 schema、Agent 或远程 Runtime。
+
+计划 CRUD 沿用 App → Preload → Main 接线。`heartbeatRecurrenceSchema` 与 `computeNextHeartbeatRun` 仅支持 daily/weekly；本轮不增加分钟间隔合同或调度分支。编辑草稿保存已有 `timezone` 和 `enabled`，新建仅在显式提交时使用本机时区创建启用计划。UI 命名统一为自动监督，内部 ID、翻译键、数据库及 IPC 名称保留。
 
 手动回顾和心跳回顾必须经过同一个 `SupervisorService.run()`，只在触发来源上区分。这样可以保证两者使用相同的范围校验、输入预算、输出契约、结果状态和来源处理。
 
@@ -126,10 +154,10 @@ sequenceDiagram
 
 运行状态与内容确认状态分开保存：
 
-- 当前监督运行状态：`running`、`completed`、`failed`、`no_change`。心跳及合并活动的映射见[活动记录](./logic-design.md#活动记录)。
+- 当前监督运行状态：`running`、`paused`、`completed`、`failed`、`no_change`。心跳及合并活动的映射见[活动记录](./logic-design.md#活动记录)。
 - 内容状态：来源事实、自动归纳、待核对、用户确认、用户修订、已移除关系。
 - 运行成功只表示模型结果已按契约保存，不表示所有实体和关系已经被用户确认。
-- 失败保留上次成功结果；取消和部分完成仍未接入生产状态。
+- 失败保留上次完整结果和本次已保存批次；暂停不生成完整结果，继续入口恢复同一 run。
 
 ## 3. 数据模型
 
@@ -165,14 +193,14 @@ erDiagram
 
 外键和索引要求：
 
-- 所有监督者对象使用 UUID；实体、来源和关系通过稳定 ID 关联，不能只按名称合并。
+- 新增监督者对象使用 UUID；已有文本实体主键按上文兼容映射保留。实体、来源和关系通过稳定 ID 关联，不能只按名称合并。
 - `supervision_runs` 按 `created_at`、`scope` 查询；事件按 `story_line_id, occurred_at` 查询。
 - 关系对 `(from_entity_id, to_entity_id, relation_type)` 建唯一约束，允许同一实体对存在不同关系类型。
 - 删除故事线只删除其组织关系，不删除共享实体、来源或知识库资料；删除知识库资料后来源标为不可用。
 - 整理结果、实体变化、关系变化和来源引用在同一 SQLite 事务中提交，提交失败全部回滚。
 - 只保存整理结果自身的对象内容与有界来源，不建立原会话、记忆或知识库的完整历史快照和独立向量索引。
 
-模型输出使用版本化共享契约，至少包含 `events`、`entities`、`entityChanges`、`relations`、`summary`、`openItems` 和每项的 `sourceReferenceIds`。Main 必须做数量、字符、枚举、ID 所属范围和引用存在性校验，未知字段拒绝或按契约版本处理，不能直接把模型 JSON 写入数据库。
+叶子模型输出使用严格共享契约，包含 `events`、`entities`、`entityChanges`、`relations`、`summary`、`changeDigest`、`openItems`，事实项保留 `sourceReferenceIds`。Main 校验数量、字符、枚举、ID 所属范围和引用存在性，拒绝未知字段后才保存。导航输出另用[导航合同](./review-scheduling-design.md#已接入的调度与存储)，允许省略空事实数组；该规则不适用于叶子。
 
 ## 4. Main、IPC 与 Renderer
 
@@ -267,5 +295,5 @@ IPC 返回图谱查询结果时使用分页和有界字段；详情中的来源�
 - 实体与关系 revoke 保存状态；界面没有 undo 或恢复入口。
 - 跨 run identity 依赖同 scope 候选 UUID 的显式引用，不自动合并历史重复实体；模型漏选候选时会创建新身份。
 - 结果图谱使用真实事件实体连线，侧栏已按固定目标过滤并支持结果直达图谱；逐事件状态回放和 Experiment 尚未实现。
-- 用户取消及其旧结果保留尚未贯通监督运行的生产状态链路；自动 `no_change` 见[自动增量收集](#自动增量收集)。
+- 用户暂停已接到排队/在途 signal，并保留已保存批次；源版本变更后的局部重算、完整模型配置冻结及其他限制见分块调度第 0 节。
 - 监督知识实体与知识库正文条目仍是不同对象，知识正文只能通过现有条目定位和预览接口处理。

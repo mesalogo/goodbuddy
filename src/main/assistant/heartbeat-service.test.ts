@@ -43,6 +43,41 @@ function configInput(projectId?: string) {
 }
 
 describe('HeartbeatService', () => {
+  it.each(['manual', 'scheduled'] as const)('keeps a 600-second %s report leased and snapshots its timeout', async (trigger) => {
+    const database = await createDatabase()
+    let seconds = 600
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const summarize = vi.fn<HeartbeatSummarizer['summarize']>(async () => {
+      await pending
+      return { summary: 'Report', highlights: [], proposedMemories: [], followUpTasks: [] }
+    })
+    const service = new HeartbeatService(database, { summarize }, () => undefined, undefined, async () => seconds)
+    const config = service.create(configInput(), now)
+    const startedAt = new Date(config.nextRunAt!)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(startedAt)
+    const claimNow = vi.spyOn(database, 'claimHeartbeatNow')
+    const claimDue = vi.spyOn(database, 'claimDueHeartbeats')
+    database.replaceConversations([{
+      id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Evidence', updatedAt: startedAt.getTime(),
+      messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review this evidence', createdAt: startedAt.getTime() }]
+    }])
+    const operation = trigger === 'manual'
+      ? service.runNow({ id: config.id, idempotencyKey: 'first' }, startedAt)
+      : service.processDue(startedAt)
+    try {
+      await vi.waitFor(() => expect(summarize).toHaveBeenCalledOnce())
+      seconds = 30
+      expect(summarize.mock.calls[0]![0].timeoutSeconds).toBe(600)
+      const active = database.listHeartbeatRuns(config.id)[0]!
+      expect(trigger === 'manual' ? claimNow.mock.calls[0]?.[4] : claimDue.mock.calls[0]?.[2]).toBe(660_000)
+      const duplicate = database.claimHeartbeatNow(config.id, 'second', 'other', new Date(startedAt.getTime() + 659_999))
+      expect(duplicate.acquired).toBe(false)
+      expect(duplicate.run.id).toBe(active.id)
+    } finally { release(); try { await operation } finally { database.close(); vi.useRealTimers() } }
+  })
+
   it('stores a bounded summary, artifact, paused tasks, and proposed memories', async () => {
     const database = await createDatabase()
     const project = database.listProjects()[0]!

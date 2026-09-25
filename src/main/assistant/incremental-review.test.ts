@@ -180,6 +180,9 @@ it('preserves schema-45 plans, reports, IDs and foreign keys while extending sta
   const savedEntries = db.listHeartbeatEntries(config.id)
   db.close()
   sql.exec(`PRAGMA foreign_keys = OFF; BEGIN;
+    DROP VIEW supervision_review_current;
+    DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
+    DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
     DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
     DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
     DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;`)

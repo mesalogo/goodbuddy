@@ -16,9 +16,10 @@ type Selection = { kind: 'event' | 'entity' | 'relation'; id: string }
 export type SupervisionGraphNavigation = { resultId: string; tab?: 'overview' | 'graph' }
 type Props = {
   graphNavigation?: SupervisionGraphNavigation
-  tab?: 'overview' | 'graph' | 'activity' | 'settings'
+  tab?: 'overview' | 'graph' | 'plans' | 'activity' | 'settings'
   projects?: AssistantProject[]
-  onTabChange?: (tab: 'overview' | 'graph' | 'activity' | 'settings') => void
+  onOpenActivity?: () => void
+  onTabChange?: (tab: 'overview' | 'graph' | 'plans' | 'activity' | 'settings') => void
 }
 const emptyGraph: SupervisionGraphView = {
   storyLine: null,
@@ -45,7 +46,8 @@ export function SupervisorWorkspace({
   graphNavigation,
   tab = 'overview',
   projects = [],
-  onTabChange
+  onTabChange,
+  onOpenActivity
 }: Props) {
   const { t, i18n } = useTranslation('heartbeat')
   const graphId = useId()
@@ -67,6 +69,7 @@ export function SupervisorWorkspace({
   const [projectId, setProjectId] = useState('global')
   const [days, setDays] = useState(7)
   const [lastRequest, setLastRequest] = useState<SupervisionRunRequest>()
+  const [pausedReview, setPausedReview] = useState(false)
   const [resultId, setResultId] = useState<string | undefined>(graphNavigation?.resultId)
   const [appliedNavigation, setAppliedNavigation] = useState(graphNavigation)
   if (appliedNavigation !== graphNavigation) {
@@ -187,12 +190,14 @@ export function SupervisorWorkspace({
       }
     }
     setLastRequest(request)
+    setPausedReview(false)
     setPending('run')
     setErrorAction('run')
     setError(undefined)
     try {
-      await api.run(request)
+      const outcome = await api.run(request) as { status?: string } | undefined
       if (generation !== loadGeneration.current) return
+      setPausedReview(outcome?.status === 'paused')
       selectedResult.current = undefined
       setPending(undefined)
       await refresh()
@@ -412,7 +417,7 @@ export function SupervisorWorkspace({
   const busy = !!api && (loading || pending !== undefined)
 
   return (
-    <div className="supervisor-workspace" aria-busy={busy}>
+    <div className="supervisor-workspace" data-view={tab} aria-busy={busy}>
       {!api ? (
         <div role="alert">
           <EmptyState
@@ -444,6 +449,10 @@ export function SupervisorWorkspace({
               </button>
             </div>
           )}
+          {(pending === 'run' || pausedReview) && <div className="supervisor-workspace__actions" role="status">
+            <span>{t(pausedReview ? 'reviewSettings.pausedHint' : 'supervisor.runningHint')}</span>
+            {onOpenActivity && <button className="link-button" onClick={onOpenActivity}>{t('activity.title')}</button>}
+          </div>}
           {error && (
             <div className="supervisor-workspace__inline-error" role="alert">
               <strong>{t('common.operationFailed')}</strong>
@@ -470,7 +479,8 @@ export function SupervisorWorkspace({
           )}
           {tab === 'overview' && (
             <>
-              <div className="supervisor-workspace__toolbar">
+              <div className="supervisor-workspace__toolbar" role="group" aria-label={t('supervisor.newReview')}>
+                <strong>{t('supervisor.newReview')}</strong>
                 <label>
                   {t('supervisor.scope')}
                   <select
@@ -522,52 +532,56 @@ export function SupervisorWorkspace({
               <p className="supervisor-workspace__muted">
                 {t('supervisor.sourcesHint')}
               </p>
+              {results.length > 0 && <div className="supervisor-workspace__result-navigation">
+                <label>
+                  {t('supervisor.history')}
+                  <select
+                    value={resultId ?? ''}
+                    disabled={busy}
+                    onChange={(event) => void refresh(event.target.value)}
+                  >
+                    {!results.some((item) => item.id === resultId) && <option value={resultId ?? ''}>{t('supervisor.loading')}</option>}
+                    {results.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {date(item.createdAt)} · {scopeText(item.scope)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {latest && <button className="secondary-button" onClick={() => onTabChange?.('graph')}>
+                  {t('supervisor.graph')}
+                </button>}
+              </div>}
               {latest ? (
                 <article className="supervisor-workspace__recap">
                   <div className="supervisor-workspace__section-heading">
                     <h2>{t('supervisor.latest')}</h2>
-                    <time>{date(latest.createdAt)}</time>
+                    <time dateTime={latest.createdAt}>{date(latest.createdAt)}</time>
                   </div>
                   <p>
                     {scopeText(latest.scope)} · {date(latest.timeRange.from)} –{' '}
                     {date(latest.timeRange.to)}
                   </p>
-                  <p className="supervisor-workspace__summary">
-                    {latest.summary}
-                  </p>
-                  {latest.changeDigest && <p>{latest.changeDigest}</p>}
-                  {latest.openItems.length > 0 && (
-                    <>
-                      <h3>{t('supervisor.openItems')}</h3>
-                      <ul>
-                        {latest.openItems.map((item, index) => (
-                          <li key={index}>{item}</li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                  <button
-                    className="secondary-button"
-                    onClick={() => onTabChange?.('graph')}
-                  >
-                    {t('supervisor.graph')}
-                  </button>
-                  {results.length > 1 && (
-                    <label>
-                      {t('supervisor.history')}
-                      <select
-                        value={latest.id}
-                        disabled={pending !== undefined}
-                        onChange={(event) => { setResultId(event.target.value); void refresh(event.target.value) }}
-                      >
-                        {results.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {date(item.createdAt)} · {scopeText(item.scope)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                  <div className="supervisor-workspace__prose">
+                    <h3>{t('supervisor.summary')}</h3>
+                    {latest.summary.split(/\r?\n\s*\r?\n/u).map((paragraph, index) => (
+                      <p className="supervisor-workspace__summary" key={index}>{paragraph}</p>
+                    ))}
+                    {latest.changeDigest && <>
+                      <h3>{t('supervisor.changes')}</h3>
+                      <p className="supervisor-workspace__summary">{latest.changeDigest}</p>
+                    </>}
+                    {latest.openItems.length > 0 && (
+                      <>
+                        <h3>{t('supervisor.openItems')}</h3>
+                        <ul>
+                          {latest.openItems.map((item, index) => (
+                            <li key={index}>{item}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </div>
                 </article>
               ) : (
                 !loading &&
@@ -1160,7 +1174,6 @@ export function SupervisorWorkspace({
                               {t('supervisor.label')}
                               <input
                                 value={revision}
-                                maxLength={240}
                                 onChange={(event) =>
                                   setRevision(event.target.value)
                                 }

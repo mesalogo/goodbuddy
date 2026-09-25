@@ -42,6 +42,9 @@ it('supervision preserves result history and protected identities within scope t
       ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW supervision_review_current;
+      DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
+      DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 42;`)
     legacy.close()

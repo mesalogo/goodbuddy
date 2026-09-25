@@ -7,6 +7,8 @@ import {
   applicationNavigationSchema,
   builtInApplicationIds,
   defaultApplicationNavigation,
+  defaultSupervisionTimeoutSeconds,
+  defaultSupervisorModelConcurrency,
   type ApplicationSettings
 } from '../shared/application-settings-contracts'
 import {
@@ -257,6 +259,9 @@ export const defaultApplicationSettings: ApplicationSettings = {
   localInferenceEnabled: true,
   magicNotesEnabled: true,
   heartbeatEnabled: false,
+  heartbeatReportTimeoutSeconds: defaultSupervisionTimeoutSeconds,
+  supervisorOrganizeTimeoutSeconds: defaultSupervisionTimeoutSeconds,
+  supervisorModelConcurrency: defaultSupervisorModelConcurrency,
   magicNotesShowIncompleteTodoCount: true,
   magicNoteCommentMode: 'immediate',
   magicNoteCommentFormat: 'combined',
@@ -527,6 +532,10 @@ export class ApplicationSettingsStore {
       localInferenceEnabled: stored.localInferenceEnabled,
       magicNotesEnabled: stored.magicNotesEnabled,
       heartbeatEnabled: stored.heartbeatEnabled ?? false,
+      heartbeatReportTimeoutSeconds: stored.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
+      supervisorOrganizeTimeoutSeconds: stored.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
+      supervisorModelConcurrency: stored.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency,
+      supervisionReview: stored.supervisionReview,
       magicNotesShowIncompleteTodoCount:
         stored.magicNotesShowIncompleteTodoCount,
       magicNoteCommentMode: stored.magicNoteCommentMode,
@@ -568,6 +577,10 @@ export class ApplicationSettingsStore {
         localInferenceEnabled: next.localInferenceEnabled,
         magicNotesEnabled: next.magicNotesEnabled,
         heartbeatEnabled: next.heartbeatEnabled ?? false,
+        heartbeatReportTimeoutSeconds: next.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
+        supervisorOrganizeTimeoutSeconds: next.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
+        supervisorModelConcurrency: next.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency,
+        supervisionReview: next.supervisionReview,
         magicNotesShowIncompleteTodoCount:
           next.magicNotesShowIncompleteTodoCount,
         magicNoteCommentMode: next.magicNoteCommentMode,

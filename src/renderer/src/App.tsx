@@ -11433,6 +11433,12 @@ function App(): React.JSX.Element {
                       }
                     >
                       {isApplicationEnabled(applicationSettings, 'heartbeat') ? <HeartbeatCenter
+                        applicationSettings={applicationSettings}
+                        applicationSettingsPending={applicationSettingsPending}
+                        applicationSettingsLocked={applicationSettingsUnconfirmed}
+                        applicationSettingsError={applicationSettingsError}
+                        onUpdateApplicationSettings={updateApplicationSettings}
+                        onRetryApplicationSettings={() => void reloadApplicationSettings()}
                         active={view === 'heartbeat'}
                         graphNavigation={supervisionGraphNavigation}
                         configs={assistantHeartbeats}

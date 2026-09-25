@@ -44,6 +44,49 @@ afterEach(async () => {
 })
 
 describe('ApplicationSettingsStore', () => {
+  it('persists review pagination and batch controls without enabling supervision', async () => {
+    const { filePath, store } = await createStore()
+    const supervisionReview = { pageSize: 1, batchCharacters: 16000, batchMessages: 50, executionSeconds: 3600 }
+    await store.update({ supervisionReview })
+    await store.update({ checkUpdatesOnStartup: false })
+    expect(await createApplicationSettingsStore(filePath).get()).toMatchObject({ supervisionReview, heartbeatEnabled: false })
+    for (const patch of [{ pageSize: 0 }, { batchCharacters: 16001 }, { batchMessages: 0 }, { executionSeconds: 29 }, { pageSize: 1.5 }]) {
+      await expect(store.update({ supervisionReview: { ...supervisionReview, ...patch } })).rejects.toThrow()
+    }
+  })
+  it.each([11, 12])('persists supervision concurrency and defaults missing values in version %s', async (version) => {
+    const { filePath, store } = await createStore()
+    const legacy = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null }
+    delete legacy.supervisorModelConcurrency
+    await writeFile(filePath, JSON.stringify(legacy))
+    expect((await store.get()).supervisorModelConcurrency).toBe(1)
+    await store.update({ supervisorModelConcurrency: 4 })
+    await store.update({ heartbeatReportTimeoutSeconds: 30 })
+    expect(await createApplicationSettingsStore(filePath).get()).toMatchObject({ supervisorModelConcurrency: 4, heartbeatReportTimeoutSeconds: 30 })
+    for (const value of [0, 5, 1.5, '2', null]) {
+      await expect(store.update({ supervisorModelConcurrency: value })).rejects.toThrow()
+    }
+    expect((await store.update({ supervisorModelConcurrency: 1 })).supervisorModelConcurrency).toBe(1)
+  })
+
+  it.each([11, 12])('defaults and independently persists supervision timeouts from version %s', async (version) => {
+    const { filePath, store } = await createStore()
+    const legacy = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null }
+    delete legacy.heartbeatReportTimeoutSeconds
+    delete legacy.supervisorOrganizeTimeoutSeconds
+    await writeFile(filePath, JSON.stringify(legacy))
+    expect(await store.get()).toMatchObject({ heartbeatReportTimeoutSeconds: 240, supervisorOrganizeTimeoutSeconds: 240 })
+    await store.update({ heartbeatReportTimeoutSeconds: 600 })
+    expect(await store.update({ supervisorOrganizeTimeoutSeconds: 30 })).toMatchObject({ heartbeatReportTimeoutSeconds: 600, supervisorOrganizeTimeoutSeconds: 30 })
+    await store.update({ checkUpdatesOnStartup: false })
+    expect(await createApplicationSettingsStore(filePath).get()).toMatchObject({ heartbeatReportTimeoutSeconds: 600, supervisorOrganizeTimeoutSeconds: 30 })
+    for (const value of [29, 601, 30.5, '240', null]) {
+      for (const field of ['heartbeatReportTimeoutSeconds', 'supervisorOrganizeTimeoutSeconds']) {
+        await expect(store.update({ [field]: value })).rejects.toThrow()
+      }
+    }
+  })
+
   it.each([11, 12])('defaults missing supervisor preference to off in version %s through unrelated updates and reload', async (version) => {
     const { filePath, store } = await createStore()
     const legacy = { ...defaultApplicationSettings, version, lastSeenReleaseNotesVersion: null }

@@ -6,6 +6,44 @@ import { SupervisorWorkspace } from './SupervisorWorkspace'
 const result = { id: 'result-1', storyLineId: 'story', sourceId: null, summary: 'Recap', changeDigest: '', createdAt: '2026-09-22T00:00:00.000Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-20T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' }, openItems: [] }
 
 describe('SupervisorWorkspace', () => {
+  it('keeps dated historical content and exact graph selection when configuring and running a new review', async () => {
+    const old = { ...result, id: 'old', summary: 'Earlier conclusion.\n\nImportant final conclusion.', changeDigest: 'Confirmed change', openItems: ['Pending decision'], createdAt: '2026-08-22T00:00:00.000Z' }
+    let finish!: () => void
+    const run = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+    const graph = vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
+    window.goodbuddy = { supervision: { overview: async () => [result, old], graph, run } } as never
+    const onTabChange = vi.fn()
+    const onOpenActivity = vi.fn()
+    const project = { id: 'project', name: 'New project', description: '', status: 'active', kind: 'user', rootPath: 'C:\\project', executionSpace: { kind: 'local', rootPath: 'C:\\project' }, defaultWorkMode: 'ask', createdAt: result.createdAt, updatedAt: result.createdAt } as const
+    render(<SupervisorWorkspace projects={[project]} onTabChange={onTabChange} onOpenActivity={onOpenActivity} />)
+    const history = await screen.findByLabelText('历史结果')
+    await waitFor(() => expect(history).toBeEnabled())
+    fireEvent.change(history, { target: { value: 'old' } })
+    await waitFor(() => expect(history).toBeEnabled())
+    expect(history).toHaveValue('old')
+    expect(screen.queryByText('最近一次成功回顾')).not.toBeInTheDocument()
+    expect(screen.getByText('Important final conclusion.')).toBeVisible()
+    expect(screen.getByText('Confirmed change')).toBeVisible()
+    expect(screen.getByText('Pending decision')).toBeVisible()
+    const recap = screen.getByRole('article')
+    const frozenText = recap.textContent
+    fireEvent.change(screen.getByLabelText('时间范围'), { target: { value: '30' } })
+    fireEvent.change(screen.getByLabelText('关注范围'), { target: { value: project.id } })
+    expect(recap.textContent).toBe(frozenText)
+    fireEvent.click(screen.getByRole('button', { name: '故事线图谱' }))
+    expect(onTabChange).toHaveBeenCalledWith('graph')
+    expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
+    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    expect(recap.textContent).toBe(frozenText)
+    expect(screen.getByText('Important final conclusion.')).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('新回顾正在整理')
+    expect(screen.getByRole('button', { name: '回顾整理中…' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '活动记录' }))
+    expect(onOpenActivity).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ scope: { kind: 'projects', projectIds: [project.id] } }))
+    await act(async () => finish())
+  })
   it('graph navigation discards a late overview before it can request the old graph', async () => {
     let resolveOverview!: (value: unknown) => void
     const overview = vi.fn().mockImplementationOnce(() => new Promise(resolve => { resolveOverview = resolve })).mockResolvedValue([result])

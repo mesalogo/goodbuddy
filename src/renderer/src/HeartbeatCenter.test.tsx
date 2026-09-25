@@ -23,6 +23,7 @@ import { HeartbeatCenter, type HeartbeatCenterProps } from './HeartbeatCenter'
 import { supervisionRunRequestSchema } from '../../shared/supervision-contracts'
 import { PageShell } from './WorkspacePrimitives'
 import i18n from './i18n'
+import { applicationSettingsSchema, defaultLocalToolEnvironmentSettings } from '../../shared/application-settings-contracts'
 
 afterEach(cleanup)
 
@@ -174,12 +175,9 @@ describe('HeartbeatCenter', () => {
       graph: vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
     } })
   })
-  function render(ui: React.ReactElement, overview = true) {
+  function render(ui: React.ReactElement, overview = false) {
     const result = renderComponent(ui)
-    fireEvent.click(screen.getByRole('tab', { name: i18n.t('supervisor.settings', { ns: 'heartbeat' }) }))
-    if (overview && screen.queryByRole('tab', { name: i18n.t('center.tabs.overview', { ns: 'heartbeat' }) })) {
-      fireEvent.click(screen.getByRole('tab', { name: i18n.t('center.tabs.overview', { ns: 'heartbeat' }) }))
-    }
+    fireEvent.click(screen.getByRole('tab', { name: i18n.t(overview ? 'activity.title' : 'supervisor.automatic', { ns: 'heartbeat' }) }))
     return result
   }
   afterEach(async () => {
@@ -205,12 +203,20 @@ describe('HeartbeatCenter', () => {
     expect(screen.getByRole('button', { name: t('supervisor.run') })).toBeEnabled()
     expect(screen.getByRole('combobox', { name: t('supervisor.scope') })).toBeVisible()
     expect(screen.getByText(t('supervisor.sourcesHint'))).toBeVisible()
-    for (const key of ['supervisor.recap', 'supervisor.graph', 'activity.title', 'supervisor.settings']) {
+    for (const key of ['supervisor.recap', 'supervisor.graph', 'supervisor.automatic', 'activity.title', 'supervisor.settings']) {
       fireEvent.click(screen.getByRole('tab', { name: t(key) }))
       const panel = screen.getByRole('tabpanel', { name: t(key) })
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
       expect(within(panel).queryByRole('heading', { name: t(key) })).not.toBeInTheDocument()
-      expect(within(panel).getByRole('button', { name: key === 'supervisor.settings' ? t('center.actions.refreshAriaLabel') : t('center.actions.refresh') })).toBeVisible()
+      expect(screen.getAllByRole('tablist')).toHaveLength(1)
+      expect(within(panel).queryByRole('tablist')).not.toBeInTheDocument()
+      if (key === 'supervisor.settings') {
+        expect(within(panel).queryByRole('button', { name: t('center.actions.refreshAriaLabel') })).not.toBeInTheDocument()
+        expect(panel.querySelector('.scope-badge')).not.toBeInTheDocument()
+        expect(within(panel).queryByRole('heading', { name: t('center.history.timelineTitle') })).not.toBeInTheDocument()
+      } else if (key !== 'supervisor.automatic') {
+        expect(within(panel).getByRole('button', { name: t('center.actions.refresh') })).toBeVisible()
+      }
       if (key === 'supervisor.graph') {
         expect(within(panel).getByRole('region', { name: t('supervisor.canvas') })).toBeVisible()
         expect(within(panel).getByRole('heading', { name: t('supervisor.inspector') })).toBeVisible()
@@ -222,12 +228,12 @@ describe('HeartbeatCenter', () => {
         expect(panel.querySelector('.scope-badge')).toBeVisible()
       }
     }
-    expect(screen.getByRole('heading', { name: t('settings.title') })).toBeVisible()
+    expect(screen.queryByLabelText(t('settings.nameLabel'))).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: t('supervisor.automatic') }))
     expect(screen.getByText(t('settings.scheduleHelp'))).toBeVisible()
-    expect(screen.getByRole('button', { name: t('settings.enableAriaLabel') })).toBeEnabled()
+    expect(screen.getByRole('button', { name: t('settings.createTitle') })).toBeEnabled()
     expect(screen.getByRole('button', { name: i18n.t('settings.runNowAriaLabel', { ns: 'heartbeat', name: config.name }) })).toBeVisible()
-    expect(document.querySelector('.supervisor-workspace__action-bar .scope-badge')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: t('center.actions.refreshAriaLabel') }))
+    fireEvent.click(screen.getByRole('button', { name: t('settings.refreshPlans') }))
     await waitFor(() => expect(props.onRefresh).toHaveBeenCalledOnce())
   })
 
@@ -238,17 +244,55 @@ describe('HeartbeatCenter', () => {
     const activity = vi.fn(async () => [{ id: 'run', kind: 'supervision', trigger: 'manual', status: 'completed', scope: old.scope, startedAt: old.createdAt, completedAt: old.createdAt, timeRange: old.timeRange, error: null, summary: 'Activity summary', resultId: 'old', heartbeatStatus: null, supervisionStatus: 'completed' }])
     vi.stubGlobal('goodbuddy', { supervision: { overview, graph, activity } })
     renderComponent(<HeartbeatCenter {...createProps()} />)
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['工作回顾', '故事线图谱', '活动', '设置'])
-    fireEvent.click(screen.getByRole('tab', { name: '活动' }))
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['工作回顾', '故事线图谱', '自动监督', '活动记录', '设置'])
+    fireEvent.click(screen.getByRole('tab', { name: '活动记录' }))
     fireEvent.click(await screen.findByRole('button', { name: '查看回顾' }))
     expect(await screen.findByText('Older review body')).toBeVisible()
     expect(screen.getByRole('tab', { name: '工作回顾' })).toHaveAttribute('aria-selected', 'true')
     expect(overview).toHaveBeenCalledWith({ resultId: 'old' })
     expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
-    fireEvent.click(screen.getByRole('tab', { name: '活动' }))
+    fireEvent.click(screen.getByRole('tab', { name: '活动记录' }))
     fireEvent.click(await screen.findByRole('button', { name: '在图谱中查看' }))
     expect(screen.getByRole('tab', { name: '故事线图谱' })).toHaveAttribute('aria-selected', 'true')
     await waitFor(() => expect(graph).toHaveBeenCalledTimes(2))
+  })
+
+  it.each(['zh-CN', 'en-US'])('edits separate supervision timeouts and preserves failed edits (%s)', async (language) => {
+    await i18n.changeLanguage(language)
+    const onUpdateApplicationSettings = vi.fn(async () => false)
+    const applicationSettings = applicationSettingsSchema.parse({ checkUpdatesOnStartup: true, updateSource: 'github', modelDownloadSource: 'modelscope', localToolEnvironment: defaultLocalToolEnvironmentSettings, conversationHtmlRenderingEnabled: true, remoteProjectsEnabled: false })
+    const props = createProps({ applicationSettings, onUpdateApplicationSettings })
+    const view = render(<HeartbeatCenter {...props} />, false)
+    fireEvent.click(screen.getByRole('tab', { name: i18n.t('supervisor.settings', { ns: 'heartbeat' }) }))
+    const t = (key: string) => i18n.t(key, { ns: 'heartbeat' })
+    const report = screen.getByLabelText(t('timeouts.report'))
+    const organize = screen.getByLabelText(t('timeouts.organize'))
+    const concurrency = screen.getByLabelText(t('timeouts.concurrency'))
+    expect(concurrency).toHaveValue(1)
+    expect(screen.getByText(t('timeouts.concurrencyHelp'))).toBeVisible()
+    expect(report).toHaveValue(240)
+    expect(organize).toHaveValue(240)
+    expect(screen.getByText(t('timeouts.transport'))).toBeVisible()
+    for (const value of ['', '29', '601', '30.5']) {
+      fireEvent.change(report, { target: { value } })
+      expect(screen.getByRole('button', { name: t('timeouts.save') })).toBeDisabled()
+    }
+    fireEvent.change(report, { target: { value: '600' } })
+    fireEvent.change(organize, { target: { value: '30' } })
+    for (const value of ['', '0', '5', '1.5']) {
+      fireEvent.change(concurrency, { target: { value } })
+      expect(screen.getByRole('button', { name: t('timeouts.save') })).toBeDisabled()
+    }
+    fireEvent.change(concurrency, { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: t('timeouts.save') }))
+    await waitFor(() => expect(onUpdateApplicationSettings).toHaveBeenCalledExactlyOnceWith({ heartbeatReportTimeoutSeconds: 600, supervisorOrganizeTimeoutSeconds: 30, supervisorModelConcurrency: 4 }))
+    view.rerender(<HeartbeatCenter {...props} applicationSettingsError="Save failed" />)
+    expect(report).toHaveValue(600)
+    expect(organize).toHaveValue(30)
+    expect(concurrency).toHaveValue(4)
+    expect(screen.getByText('Save failed')).toBeVisible()
+    view.rerender(<HeartbeatCenter {...props} applicationSettings={{ ...applicationSettings, heartbeatReportTimeoutSeconds: 600, supervisorOrganizeTimeoutSeconds: 30, supervisorModelConcurrency: 4 }} />)
+    expect(screen.getByRole('button', { name: t('timeouts.save') })).toBeDisabled()
   })
 
   it.each(['zh-CN', 'en-US'])('opens complete automatic supervision settings without creating defaults (%s)', async (language) => {
@@ -256,9 +300,11 @@ describe('HeartbeatCenter', () => {
     const props = createProps({ configs: [], runs: [], entries: [] })
     render(<HeartbeatCenter {...props} />, false)
     const t = (key: string) => i18n.t(key, { ns: 'heartbeat' })
-    expect(screen.getByRole('tab', { name: t('center.tabs.plans') })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: t('supervisor.automatic') })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText(t('settings.empty'))).toBeVisible()
     expect(screen.getByText(t('settings.scheduleHelp'))).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: t('settings.createTitle') }))
     expect(screen.getByLabelText(t('settings.recurrenceAriaLabel'))).toHaveValue('daily')
     expect(screen.getByLabelText(t('settings.timeAriaLabel'))).toHaveValue('09:00')
     expect(screen.getByLabelText(t('settings.lookbackAriaLabel'))).toHaveValue(48)
@@ -274,6 +320,7 @@ describe('HeartbeatCenter', () => {
   it.each(['daily', 'weekly'])('saves the explicitly configured %s plan and rejects invalid windows', async (frequency) => {
     const props = createProps({ configs: [], runs: [], entries: [] })
     render(<HeartbeatCenter {...props} />, false)
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('settings.createTitle', { ns: 'heartbeat' }) }))
     fireEvent.change(screen.getByLabelText('监督频率'), { target: { value: frequency } })
     if (frequency === 'weekly') fireEvent.change(screen.getByLabelText('监督星期'), { target: { value: '5' } })
     fireEvent.change(screen.getByLabelText('监督时间'), { target: { value: '16:35' } })
@@ -321,7 +368,7 @@ describe('HeartbeatCenter', () => {
     expect(props.onCreate).not.toHaveBeenCalled()
   })
 
-  it('keeps pause, resume, run and confirmed deletion available directly in settings', async () => {
+  it('keeps pause, resume, run and confirmed deletion available directly in automatic supervision', async () => {
     const props = createProps()
     const view = render(<HeartbeatCenter {...props} />, false)
     fireEvent.click(screen.getByRole('button', { name: `暂停 ${config.name}` }))
@@ -347,26 +394,14 @@ describe('HeartbeatCenter', () => {
       })
     ).toBeInTheDocument()
     expect(screen.queryByText('SMART HEARTBEAT')).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Run now' })
-    ).toBeInTheDocument()
-    expect(screen.getByText(entry.summary)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument()
+    expect(screen.getByText(entry.summary)).toBeVisible()
     expect(screen.getByText('Project: Default project')).toHaveClass(
       'scope-badge'
     )
-    expect(
-      screen.getByText(/Every day at 09:00 · Default project/u)
-    ).toBeInTheDocument()
-    const englishDate = new Intl.DateTimeFormat('en-US', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(new Date(config.nextRunAt))
-    expect(screen.getAllByText(englishDate).length).toBeGreaterThan(0)
 
     fireEvent.click(
-      screen.getByRole('tab', { name: /Pending suggestions/ })
+      screen.getByRole('tab', { name: i18n.t('supervisor.automatic', { ns: 'heartbeat' }) })
     )
     expect(screen.getByText(task.title)).toBeInTheDocument()
     expect(screen.getByText(task.instructions)).toBeInTheDocument()
@@ -377,6 +412,7 @@ describe('HeartbeatCenter', () => {
     fireEvent.click(
       screen.getByRole('tab', { name: 'Automatic supervision' })
     )
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('settings.createTitle', { ns: 'heartbeat' }) }))
     fireEvent.click(
       screen.getByRole('button', { name: 'Selected projects' })
     )
@@ -392,12 +428,9 @@ describe('HeartbeatCenter', () => {
     expect(screen.getByText('项目：默认项目')).toHaveClass(
       'scope-badge'
     )
-    expect(screen.getByText(/每天 09:00 · 默认项目/u)).toBeInTheDocument()
     expect(screen.getByText('1 个计划运行中')).toBeInTheDocument()
     expect(screen.getByText('50%')).toBeInTheDocument()
-    expect(
-      screen.getByText('本次心跳发现用户偏好简洁回复，并建议整理交付计划。')
-    ).toBeInTheDocument()
+    expect(screen.getByText(entry.summary)).toBeVisible()
 
     expect(screen.getByRole('region', { name: '当前状态' })).toBeInTheDocument()
   })
@@ -428,7 +461,7 @@ describe('HeartbeatCenter', () => {
     expect(screen.getByLabelText('2 个项目')).toHaveTextContent(
       '2 个项目'
     )
-    expect(screen.queryByText(/全局/u)).not.toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: '运行概览' })).queryByText(/全局/u)).not.toBeInTheDocument()
 
     rerender(
       <HeartbeatCenter
@@ -445,7 +478,7 @@ describe('HeartbeatCenter', () => {
         })}
       />
     )
-    expect(screen.getByLabelText('项目 + 全局')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: '运行概览' })).getByLabelText('项目 + 全局')).toBeInTheDocument()
 
     await i18n.changeLanguage('en-US')
     rerender(
@@ -468,14 +501,11 @@ describe('HeartbeatCenter', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: '报告趋势' })
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole('heading', { level: 2, name: '最近回顾' })
-    ).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '最近回顾' })).not.toBeInTheDocument()
     expect(screen.queryByText('CURRENT PULSE')).not.toBeInTheDocument()
     expect(screen.queryByText('GROWTH TREND')).not.toBeInTheDocument()
     expect(screen.queryByText('LATEST REPORT')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: /待处理建议/u }))
     expect(
       screen.getByRole('heading', { level: 2, name: '待确认记忆' })
     ).toBeInTheDocument()
@@ -485,26 +515,21 @@ describe('HeartbeatCenter', () => {
     expect(screen.queryByText('MEMORY GROWTH')).not.toBeInTheDocument()
     expect(screen.queryByText('NEXT ACTIONS')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: '报告与记录' }))
+    expect(screen.queryByRole('heading', { level: 2, name: '最近回顾' })).not.toBeInTheDocument()
     expect(
-      screen.getByRole('heading', { level: 2, name: '回顾报告' })
+      screen.getByRole('heading', { level: 2, name: '自动监督报告' })
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole('heading', { level: 2, name: '运行记录' })
-    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '运行记录' })).toBeVisible()
     expect(
       screen.queryByText('HEARTBEAT TIMELINE')
     ).not.toBeInTheDocument()
     expect(screen.queryByText('RUN AUDIT')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }))
     expect(
-      screen.getByRole('heading', { level: 2, name: '自动监督' })
+      screen.getByRole('heading', { level: 2, name: '回顾算法' })
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '自动监督' }))
-    expect(
-        screen.getByText('按计划只读回顾所选范围，不调用工具；建议由你确认和处理。')
-    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '新建计划' })).not.toBeInTheDocument()
   })
 
   it('turns heartbeat findings into explicit user actions', async () => {
@@ -522,7 +547,7 @@ describe('HeartbeatCenter', () => {
     )
 
     fireEvent.click(
-      screen.getByRole('tab', { name: /待处理建议/ })
+      screen.getByRole('tab', { name: '自动监督' })
     )
     expect(screen.getByText(memory.content)).toBeInTheDocument()
     expect(screen.getByText(task.title)).toBeInTheDocument()
@@ -562,24 +587,96 @@ describe('HeartbeatCenter', () => {
       />
     )
 
-    fireEvent.click(
-       screen.getByRole('button', { name: '立即回顾' })
-    )
+    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    fireEvent.click(screen.getByRole('button', { name: `立即运行 ${config.name}` }))
     await waitFor(() =>
       expect(onRunNow).toHaveBeenCalledWith(config.id)
     )
 
     fireEvent.click(
-      screen.getByRole('button', { name: '刷新监督者' })
+      screen.getByRole('button', { name: '刷新自动监督' })
     )
     await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce())
 
-    fireEvent.click(screen.getByRole('tab', { name: '报告与记录' }))
     expect(screen.getByText('模型暂时不可用')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '活动记录' }))
+    expect(screen.queryByText('模型暂时不可用')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
     fireEvent.click(
       screen.getByRole('button', { name: '展开完整报告' })
     )
-    expect(screen.getByText(entry.highlights[0]!)).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: '自动监督报告' })).getByText(entry.highlights[0]!)).toBeVisible()
+  })
+
+  it('keeps long automatic suggestions expandable after leaving and returning to the tab', () => {
+    const longMemory = { ...memory, content: memory.content.repeat(20) }
+    const longTask = { ...task, instructions: task.instructions.repeat(20) }
+    render(<HeartbeatCenter {...createProps({ memories: [longMemory], tasks: [longTask] })} />)
+    const memorySection = screen.getByRole('region', { name: '待确认记忆' })
+    const expand = within(memorySection).getByRole('button', { name: i18n.t('center.suggestions.expandContent', { ns: 'heartbeat' }) })
+    fireEvent.click(expand)
+    expect(expand).toHaveAttribute('aria-expanded', 'true')
+    expect(within(memorySection).getByText(longMemory.content)).toHaveClass('heartbeat-center__suggestion-content--expanded')
+    fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))
+    expect(screen.queryByText(longMemory.content)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    expect(screen.getByText(longMemory.content)).toHaveClass('heartbeat-center__suggestion-content--expanded')
+    const taskSection = screen.getByRole('region', { name: '行动建议' })
+    fireEvent.click(within(taskSection).getByRole('button', { name: i18n.t('center.suggestions.expandContent', { ns: 'heartbeat' }) }))
+    expect(within(taskSection).getByText(longTask.instructions)).toHaveClass('heartbeat-center__suggestion-content--expanded')
+  })
+
+  it('keeps report pagination, suggestion actions and run pagination in automatic supervision', async () => {
+    const props = createProps({
+      entries: Array.from({ length: 21 }, (_, index) => ({ ...entry, id: `entry-${index}`, summary: `Report ${index}` })),
+      runs: Array.from({ length: 21 }, (_, index) => ({ ...runs[1]!, id: `run-${index}`, error: `Run error ${index}` }))
+    })
+    renderComponent(<HeartbeatCenter {...props} />)
+    expect(screen.queryByRole('region', { name: '自动监督报告' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    const reports = screen.getByRole('region', { name: '自动监督报告' })
+    expect(within(reports).queryByText('Report 20')).not.toBeInTheDocument()
+    fireEvent.click(within(reports).getByRole('button', { name: i18n.t('center.history.loadMoreReports', { ns: 'heartbeat' }) }))
+    expect(within(reports).getByText('Report 20')).toBeVisible()
+    fireEvent.click(within(reports).getAllByRole('button', { name: '展开完整报告' })[20]!)
+    expect(within(reports).getByText(entry.highlights[0]!)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '忽略' }))
+    await waitFor(() => expect(props.onSetMemoryStatus).toHaveBeenCalledWith(memory.id, 'rejected'))
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('center.suggestions.ignoreSuggestion', { ns: 'heartbeat' }) }))
+    await waitFor(() => expect(props.onSetTaskStatus).toHaveBeenCalledWith(task.id, 'cancelled'))
+    fireEvent.keyDown(screen.getByRole('tab', { name: '工作回顾' }), { key: 'End' })
+    expect(screen.getByRole('tab', { name: '设置' })).toHaveFocus()
+    expect(screen.queryByRole('region', { name: '自动监督报告' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '运行记录' })).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('tab', { name: '设置' }), { key: 'ArrowLeft' })
+    expect(screen.getByRole('tab', { name: '活动记录' })).toHaveFocus()
+    expect(screen.queryByRole('region', { name: '运行记录' })).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('tab', { name: '活动记录' }), { key: 'ArrowLeft' })
+    expect(screen.getByRole('tab', { name: '自动监督' })).toHaveFocus()
+    const audit = screen.getByRole('region', { name: '运行记录' })
+    expect(within(audit).queryByText('Run error 20')).not.toBeInTheDocument()
+    fireEvent.click(within(audit).getByRole('button', { name: i18n.t('center.history.loadMoreRuns', { ns: 'heartbeat' }) }))
+    expect(within(audit).getByText('Run error 20')).toBeVisible()
+    fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))
+    expect(screen.queryByRole('region', { name: '自动监督报告' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    expect(within(screen.getByRole('region', { name: '自动监督报告' })).getByText('Report 20')).toBeVisible()
+    expect(screen.getByRole('button', { name: '收起报告' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it.each([false, true])('keeps successful supervision results independent of automatic reports (empty=%s)', async (empty) => {
+    window.goodbuddy.supervision.overview = vi.fn(async () => [{ id: 'result', storyLineId: 'story', sourceId: null, summary: 'Successful work review', changeDigest: '', createdAt: '2026-09-22T00:00:00Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' }, openItems: [] }]) as never
+    renderComponent(<HeartbeatCenter {...createProps(empty ? { configs: [], entries: [], runs: [], memories: [], tasks: [] } : {})} />)
+    expect(await screen.findByText('Successful work review')).toBeVisible()
+    const recap = screen.getByRole('tabpanel', { name: '工作回顾' })
+    expect(recap.querySelector('#heartbeat-panel-history, #heartbeat-panel-suggestions, .scope-badge')).toBeNull()
+    expect(within(recap).getAllByRole('button', { name: '刷新' })).toHaveLength(1)
+    expect(within(recap).queryByText(/暂无自动监督报告|还没有成功回顾/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    const reports = screen.getByRole('region', { name: '自动监督报告' })
+    expect(within(reports).queryByText(entry.summary) !== null).toBe(!empty)
+    expect(within(reports).queryByText(/暂无自动监督报告/) !== null).toBe(empty)
+    expect(screen.queryByText('Successful work review')).not.toBeInTheDocument()
   })
 
   it('explains the irreversible impact before deleting a plan', () => {
@@ -603,6 +700,7 @@ describe('HeartbeatCenter', () => {
   it('keeps scope choices visible while showing help for the selected scope', () => {
     render(<HeartbeatCenter {...createProps()} />)
     fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('settings.createTitle', { ns: 'heartbeat' }) }))
     const help = screen.getByRole('button', { name: '项目范围' })
     expect(help.closest('label, [role="tab"]')).toBeNull()
     fireEvent.click(help)
@@ -619,7 +717,7 @@ describe('HeartbeatCenter', () => {
     expect(screen.queryByRole('region', { name: '当前状态' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: '设置' }))
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(screen.getByRole('heading', { name: '自动监督' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '回顾算法' })).toBeInTheDocument()
   })
 
   it('passes manual project and time selections without requiring an automatic plan', async () => {
@@ -660,7 +758,7 @@ describe('HeartbeatCenter', () => {
     )
 
     fireEvent.click(
-      screen.getByRole('button', { name: '配置自动监督' })
+      screen.getByRole('button', { name: '创建自动监督计划' })
     )
     fireEvent.click(
       screen.getByRole('button', { name: '指定项目' })
@@ -728,7 +826,7 @@ describe('HeartbeatCenter', () => {
     )
 
     fireEvent.click(
-      screen.getByRole('button', { name: '配置自动监督' })
+      screen.getByRole('button', { name: '创建自动监督计划' })
     )
     expect(
       screen.getByRole('tab', { name: '自动监督' })
@@ -756,7 +854,7 @@ describe('HeartbeatCenter', () => {
     )
 
     expect(screen.getByText('正在加载监督者')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveAttribute(
+    expect(within(screen.getByRole('region', { name: '运行概览' })).getByRole('status')).toHaveAttribute(
       'aria-busy',
       'true'
     )
@@ -789,8 +887,187 @@ describe('HeartbeatCenter', () => {
 
     expect(screen.getByText('监督者刷新失败')).toBeInTheDocument()
     expect(screen.getByText(config.name)).toBeInTheDocument()
-    expect(
-      screen.getByText(entry.summary)
-    ).toBeInTheDocument()
+    expect(screen.getByText(entry.summary)).toBeVisible()
+  })
+
+  it.each(['zh-CN', 'en-US'])('uses the shared modal header and footer for create and edit (%s)', async (language) => {
+    await i18n.changeLanguage(language)
+    render(<HeartbeatCenter {...createProps()} />, false)
+    const t = (key: string) => i18n.t(key, { ns: 'heartbeat' })
+    for (const editing of [false, true]) {
+      const opener = screen.getByRole('button', { name: editing
+        ? i18n.t('settings.editAriaLabel', { ns: 'heartbeat', name: config.name })
+        : t('settings.createTitle') })
+      opener.focus()
+      fireEvent.click(opener)
+      const dialog = screen.getByRole('dialog', { name: t(editing ? 'settings.editTitle' : 'settings.createTitle') })
+      const header = dialog.querySelector(':scope > header')!
+      const footer = dialog.querySelector(':scope > footer')!
+      expect(header).toHaveClass('custom-task-dialog__header')
+      expect(footer).toHaveClass('custom-task-dialog__actions')
+      expect(dialog.querySelector(':scope > .custom-task-dialog__content')).not.toBeNull()
+      const close = within(header as HTMLElement).getByRole('button', { name: t('settings.close') })
+      expect(close).toHaveClass('icon-button')
+      expect(close).toHaveAttribute('title', t('settings.close'))
+      expect(header.querySelectorAll('button')).toHaveLength(1)
+      const cancel = within(footer as HTMLElement).getByRole('button', { name: t('supervisor.cancel') })
+      const save = within(footer as HTMLElement).getByRole('button', { name: t(editing ? 'settings.saveAriaLabel' : 'settings.enableAriaLabel') })
+      expect(cancel).toHaveClass('secondary-button')
+      expect(save).toHaveClass('primary-button')
+      expect(cancel.nextElementSibling).toBe(save)
+      close.focus()
+      fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+      expect(save).toHaveFocus()
+      fireEvent.keyDown(save, { key: 'Tab' })
+      expect(close).toHaveFocus()
+      fireEvent.click(cancel)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(opener).toHaveFocus()
+    }
+  })
+
+  it.each(['X', 'cancel', 'Escape', 'backdrop'])('guards unsaved changes through %s for create and edit', async (action) => {
+    const props = createProps()
+    render(<HeartbeatCenter {...props} />, false)
+    for (const editing of [false, true]) {
+      const opener = screen.getByRole('button', { name: editing ? `编辑 ${config.name}` : '创建自动监督计划' })
+      opener.focus()
+      fireEvent.click(opener)
+      const dismiss = () => {
+        if (action === 'Escape') fireEvent.keyDown(screen.getByLabelText('计划名称'), { key: 'Escape' })
+        else if (action === 'backdrop') fireEvent.mouseDown(screen.getByRole('dialog').parentElement!)
+        else fireEvent.click(screen.getByRole('button', { name: action === 'X' ? '关闭自动监督计划' : '取消' }))
+      }
+      dismiss()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(opener).toHaveFocus()
+      fireEvent.click(opener)
+      fireEvent.change(screen.getByLabelText('计划名称'), { target: { value: 'Unsaved draft' } })
+      dismiss()
+      expect(screen.getByRole('dialog')).toHaveAccessibleName('放弃未保存的计划修改？')
+      expect(screen.getByRole('button', { name: '继续编辑' })).toHaveFocus()
+      fireEvent.click(screen.getByRole('button', { name: '关闭自动监督计划' }))
+      await waitFor(() => expect(screen.getByLabelText('计划名称')).toHaveFocus())
+      expect(screen.getByLabelText('计划名称')).toHaveValue('Unsaved draft')
+      fireEvent.click(screen.getByRole('button', { name: '取消' }))
+      fireEvent.click(screen.getByRole('button', { name: '放弃修改' }))
+      expect(opener).toHaveFocus()
+    }
+    expect(props.onCreate).not.toHaveBeenCalled()
+    expect(props.onUpdate).not.toHaveBeenCalled()
+  })
+
+  it('locks every close action and duplicate submission while saving, then keeps the failed draft', async () => {
+    let rejectSave!: (reason: Error) => void
+    const onCreate = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectSave = reject }))
+    render(<HeartbeatCenter {...createProps({ onCreate })} />, false)
+    fireEvent.click(screen.getByRole('button', { name: '创建自动监督计划' }))
+    fireEvent.change(screen.getByLabelText('计划名称'), { target: { value: 'Pending draft' } })
+    const save = screen.getByRole('button', { name: '保存并启用计划' })
+    fireEvent.click(save)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-busy', 'true')
+    for (const button of [save, screen.getByRole('button', { name: '关闭自动监督计划' }), screen.getByRole('button', { name: '取消' })]) {
+      expect(button).toBeDisabled()
+      fireEvent.click(button)
+    }
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    fireEvent.mouseDown(dialog.parentElement!)
+    expect(dialog).toHaveAccessibleName('创建自动监督计划')
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    rejectSave(new Error('Save unavailable'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Save unavailable')
+    expect(screen.getByLabelText('计划名称')).toHaveValue('Pending draft')
+    expect(save).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '关闭自动监督计划' }))
+    expect(dialog).toHaveAccessibleName('放弃未保存的计划修改？')
+  })
+
+  it('keeps a failed create draft, guards Escape/backdrop/cancel, traps focus and restores the opener', async () => {
+    const onCreate = vi.fn(async () => {}).mockRejectedValueOnce(new Error('Cannot save plan'))
+    render(<HeartbeatCenter {...createProps({ onCreate })} />, false)
+    const opener = screen.getByRole('button', { name: '创建自动监督计划' })
+    opener.focus()
+    fireEvent.click(opener)
+    const name = screen.getByLabelText('计划名称')
+    expect(name).toHaveFocus()
+    expect(document.querySelector('form form')).toBeNull()
+    fireEvent.change(name, { target: { value: 'Draft plan' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存并启用计划' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot save plan')
+    expect(name).toHaveValue('Draft plan')
+    fireEvent.keyDown(name, { key: 'Escape' })
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('放弃未保存的计划修改？')
+    expect(screen.getByRole('button', { name: '继续编辑' })).toHaveFocus()
+    const discard = screen.getByRole('button', { name: '放弃修改' })
+    discard.focus()
+    fireEvent.keyDown(discard, { key: 'Tab' })
+    expect(screen.getByRole('button', { name: '关闭自动监督计划' })).toHaveFocus()
+    fireEvent.keyDown(discard, { key: 'Escape' })
+    expect(screen.getByLabelText('计划名称')).toHaveValue('Draft plan')
+    fireEvent.mouseDown(screen.getByRole('dialog').parentElement!)
+    fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    fireEvent.click(screen.getByRole('button', { name: '放弃修改' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+    fireEvent.click(opener)
+    expect(screen.getByLabelText('计划名称')).toHaveValue('定期回顾')
+    fireEvent.click(screen.getByRole('button', { name: '保存并启用计划' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(onCreate).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }))
+  })
+
+  it('opens exact plan activity even for equal names without duplicate audit and clears back to all activity', async () => {
+    const activity = vi.fn(async () => [])
+    window.goodbuddy.supervision.activity = activity
+    const other = { ...config, id: 'heartbeat-2' }
+    const props = createProps({ configs: [config, other], runs: [...runs, { ...runs[1]!, id: 'other-run', configId: other.id, error: 'Other plan failure' }] })
+    render(<HeartbeatCenter {...props} />, false)
+    fireEvent.click(screen.getAllByRole('button', { name: '执行记录' })[1]!)
+    await waitFor(() => expect(activity).toHaveBeenLastCalledWith({ limit: 50, offset: 0, configId: other.id }))
+    expect(screen.getByRole('combobox', { name: '监督计划' })).toHaveValue(other.id)
+    expect(screen.queryByText('Other plan failure')).not.toBeInTheDocument()
+    expect(screen.queryByText('模型暂时不可用')).not.toBeInTheDocument()
+    expect(await screen.findByText('此计划暂无执行记录')).toBeVisible()
+    const filter = screen.getByRole('combobox', { name: '监督计划' })
+    filter.focus()
+    fireEvent.change(filter, { target: { value: config.id } })
+    expect(filter).toHaveFocus()
+    await waitFor(() => expect(activity).toHaveBeenLastCalledWith({ limit: 50, offset: 0, configId: config.id }))
+    fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
+    expect(filter).toHaveFocus()
+    await waitFor(() => expect(activity).toHaveBeenLastCalledWith({ limit: 50, offset: 0 }))
+    expect(screen.queryByText('模型暂时不可用')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '自动监督' }))
+    expect(screen.getByText('模型暂时不可用')).toBeVisible()
+    expect(screen.getByText('Other plan failure')).toBeVisible()
+  })
+
+  it.each([false, true])('keeps the entire automatic overview with one create action out of activity (empty=%s)', async (empty) => {
+    const activity = vi.fn(async () => [])
+    window.goodbuddy.supervision.activity = activity
+    const props = createProps(empty ? { configs: [], entries: [], runs: [], memories: [], tasks: [] } : {})
+    render(<HeartbeatCenter {...props} />)
+    const panel = screen.getByRole('tabpanel', { name: '自动监督' })
+    for (const name of ['当前状态', '报告趋势', '运行记录']) {
+      expect(within(panel).getByRole('heading', { name })).toBeVisible()
+    }
+    expect(panel.querySelector('.heartbeat-center__metrics')).toBeVisible()
+    expect(panel.querySelector('.scope-badge')).toBeVisible()
+    expect(within(panel).getAllByRole('button', { name: '创建自动监督计划' })).toHaveLength(1)
+    expect(panel.querySelectorAll('#heartbeat-panel-overview .empty-state')).toHaveLength(0)
+    expect(within(panel).queryByText(i18n.t('settings.empty', { ns: 'heartbeat' })) !== null).toBe(empty)
+    fireEvent.click(within(panel).getByRole('button', { name: '刷新自动监督' }))
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('tab', { name: '活动记录' }))
+    await waitFor(() => expect(activity).toHaveBeenCalledOnce())
+    const activityPanel = screen.getByRole('tabpanel', { name: '活动记录' })
+    expect(activityPanel.querySelector('#heartbeat-panel-overview, #heartbeat-panel-plans, #heartbeat-runs-title, .heartbeat-center__metrics')).toBeNull()
+    expect(within(activityPanel).queryByRole('button', { name: '创建自动监督计划' })).not.toBeInTheDocument()
+    expect(within(activityPanel).queryByRole('button', { name: '刷新自动监督' })).not.toBeInTheDocument()
+    fireEvent.click(within(activityPanel).getByRole('button', { name: '刷新' }))
+    await waitFor(() => expect(activity).toHaveBeenCalledTimes(2))
+    expect(props.onRefresh).toHaveBeenCalledOnce()
   })
 })

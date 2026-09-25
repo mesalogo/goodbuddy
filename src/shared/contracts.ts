@@ -2192,6 +2192,9 @@ export type DesktopApi = {
     }>
   }
   supervision: {
+    pause: (input: { runId: string }) => Promise<void>
+    resume: (input: { runId: string }) => Promise<unknown>
+    batches: (input: { runId: string; offset?: number; limit?: number }) => Promise<import('./supervision-review-contracts').SupervisionReviewBatch[]>
     activity: (input?: import('./supervision-contracts').SupervisionActivityRequest) => Promise<import('./supervision-contracts').SupervisionActivity[]>
     overview: (input?: { target?: import('./supervision-contracts').SupervisionTarget; resultId?: string }) => Promise<import('./supervision-contracts').SupervisionResultView[]>
     run: (input: unknown) => Promise<unknown>

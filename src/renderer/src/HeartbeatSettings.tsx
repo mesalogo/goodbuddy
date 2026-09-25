@@ -1,5 +1,7 @@
-import { HeartPulse, Pencil } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Pencil, X } from 'lucide-react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import {
@@ -16,6 +18,7 @@ import {
 import { getProjectDisplayText } from './project-display'
 
 type HeartbeatSettingsProps = {
+  onOpenActivity?: (id: string) => void
   heartbeats: AssistantHeartbeatConfig[]
   projects: AssistantProject[]
   onCreate: (input: HeartbeatCreateInput) => Promise<void>
@@ -37,11 +40,22 @@ export function HeartbeatSettings({
   onUpdate,
   onSetPaused,
   onRemove,
-  onRunNow
+  onRunNow,
+  onOpenActivity
 }: HeartbeatSettingsProps): React.JSX.Element {
   const { t, i18n } = useTranslation('heartbeat')
   const { t: tWorkspace } = useTranslation('workspace')
   const [editingId, setEditingId] = useState<string>()
+  const [open, setOpen] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const keepEditingRef = useRef<HTMLButtonElement>(null)
+  const dialogId = useId()
+  useEffect(() => open ? activateModalFocus(() => nameRef.current) : undefined, [open])
+  useEffect(() => {
+    if (confirmDiscard) keepEditingRef.current?.focus()
+  }, [confirmDiscard])
   const [name, setName] = useState(t('settings.defaultName'))
   const [time, setTime] = useState('09:00')
   const [timezone, setTimezone] = useState(
@@ -97,6 +111,9 @@ export function HeartbeatSettings({
   }
 
   const editHeartbeat = (heartbeat: AssistantHeartbeatConfig): void => {
+    setError(undefined)
+    setDirty(false)
+    setOpen(true)
     setEditingId(heartbeat.id)
     setName(heartbeat.name)
     setTime(heartbeat.recurrence.localTime)
@@ -166,6 +183,15 @@ export function HeartbeatSettings({
     hasUnavailableProject ||
     !heartbeatCreateSchema.safeParse(input()).success
 
+  const close = (): void => {
+    if (pendingAction) return
+    if (confirmDiscard) {
+      setConfirmDiscard(false)
+      window.requestAnimationFrame(() => nameRef.current?.focus())
+    } else if (dirty) setConfirmDiscard(true)
+    else setOpen(false)
+  }
+
   const scopeLabel = (heartbeat: AssistantHeartbeatConfig): string => {
     if (heartbeat.scope.kind === 'global') {
       return t('settings.scope.global')
@@ -185,41 +211,50 @@ export function HeartbeatSettings({
   return (
     <div className="heartbeat-settings">
       <div className="heartbeat-settings__intro">
-        <div className="inline-help-label">
-          <h2>
-            <HeartPulse size={15} />
-            {t('settings.title')}
-          </h2>
-          <InlineHelp label={t('settings.title')}>{t('settings.description')}</InlineHelp>
-        </div>
+        <button className="primary-button" type="button" disabled={pendingAction !== undefined} onClick={() => {
+          resetForm()
+          setDirty(false)
+          setError(undefined)
+          setOpen(true)
+        }}>{t('settings.createTitle')}</button>
         <p>{t('settings.scheduleHelp')}</p>
         {heartbeats.length === 0 && <p role="status">{t('settings.empty')}</p>}
         {heartbeats.length > 0 && heartbeats.every((heartbeat) => !heartbeat.enabled) && (
           <p role="status">{t('settings.allPaused')}</p>
         )}
       </div>
-      <div className="heartbeat-settings__editor">
-        <div className="heartbeat-settings__editor-heading">
-          <strong>
-            {editingId
-              ? t('settings.editTitle')
-              : t('settings.createTitle')}
-          </strong>
-          {editingId && (
-            <button
-              className="secondary-button"
-              disabled={pendingAction !== undefined}
-              onClick={resetForm}
-              type="button"
-            >
-              {t('settings.cancelEdit')}
-            </button>
-          )}
-        </div>
+      {open && createPortal(<div className="custom-task-dialog" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !confirmDiscard) close()
+      }}>
+        <section className="custom-task-dialog__surface" role="dialog" aria-modal="true"
+          aria-busy={pendingAction !== undefined}
+          aria-labelledby={`${dialogId}-title`} aria-describedby={error ? `${dialogId}-error` : undefined}
+          tabIndex={-1} onKeyDown={(event) => {
+            if (event.defaultPrevented) return
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              event.stopPropagation()
+              close()
+            } else trapTabFocus(event, event.currentTarget)
+          }}>
+        <header className="custom-task-dialog__header">
+          <div>
+            <h2 id={`${dialogId}-title`}>{t(confirmDiscard ? 'settings.discardTitle' : editingId ? 'settings.editTitle' : 'settings.createTitle')}</h2>
+          </div>
+          <button className="icon-button" type="button" aria-label={t('settings.close')}
+            title={t('settings.close')} disabled={pendingAction !== undefined} onClick={close}>
+            <X aria-hidden="true" size={17} />
+          </button>
+        </header>
+        <div className="custom-task-dialog__content heartbeat-settings">
+        {confirmDiscard && <p>{t('settings.discardHint')}</p>}
+      <div hidden={confirmDiscard} onChangeCapture={() => setDirty(true)}>
+      <fieldset className="heartbeat-settings__editor" disabled={pendingAction !== undefined}>
         <p className="heartbeat-settings__empty">{t('settings.timezone', { timezone })}</p>
         <label className="heartbeat-settings__field">
           <span>{t('settings.nameLabel')}</span>
           <input
+            ref={nameRef}
             maxLength={120}
             onChange={(event) => setName(event.target.value)}
             value={name}
@@ -239,7 +274,7 @@ export function HeartbeatSettings({
           <SegmentedControl
             ariaLabel={t('settings.scope.ariaLabel')}
             disabled={pendingAction !== undefined}
-            onChange={setScopeKind}
+            onChange={(value) => { setScopeKind(value); setDirty(true) }}
             options={[
               {
                 label: t('settings.scope.global'),
@@ -366,6 +401,28 @@ export function HeartbeatSettings({
             />
           </label>
         </div>
+        <p>{scopeKind === 'global' ? t('settings.scope.global') : t('settings.scope.selectedProjectsSummary', {
+          count: selectedProjectIds.length,
+          names: selectedProjectIds.map(id => projectById.get(id)?.name ?? t('settings.scope.unavailableProject')).join(t('settings.scope.nameSeparator'))
+        })}</p>
+        {error && <p id={`${dialogId}-error`} className="heartbeat-settings__error" role="alert">{error}</p>}
+      </fieldset>
+      </div>
+      </div>
+      <footer className="custom-task-dialog__actions">
+        {confirmDiscard ? <>
+          <button ref={keepEditingRef} className="secondary-button" type="button" onClick={close}>
+            {t('settings.keepEditing')}
+          </button>
+          <button className="danger-solid" type="button" onClick={() => {
+            setError(undefined)
+            setConfirmDiscard(false)
+            setOpen(false)
+          }}>{t('settings.discard')}</button>
+        </> : <>
+        <button className="secondary-button" type="button" disabled={pendingAction !== undefined} onClick={close}>
+          {t('supervisor.cancel')}
+        </button>
         <button
           aria-label={
             editingId
@@ -382,18 +439,22 @@ export function HeartbeatSettings({
                 await onCreate(input())
               }
               resetForm()
+              setOpen(false)
             })
           }
           type="button"
         >
-          {pendingAction === 'create'
+          {pendingAction !== undefined
             ? t('settings.enabling')
             : editingId
               ? t('settings.save')
               : t('settings.enable')}
         </button>
-      </div>
-      {error && (
+        </>}
+      </footer>
+      </section>
+      </div>, document.body)}
+      {error && !open && (
         <p className="heartbeat-settings__error" role="alert">
           {error}
         </p>
@@ -438,6 +499,9 @@ export function HeartbeatSettings({
                 </small>
               </span>
               <div className="heartbeat-settings__actions">
+                {onOpenActivity && <button type="button" onClick={() => onOpenActivity(heartbeat.id)}>
+                  {t('settings.executionHistory')}
+                </button>}
                 <button
                   aria-label={t('settings.editAriaLabel', {
                     name: heartbeat.name

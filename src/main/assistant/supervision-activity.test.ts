@@ -92,6 +92,26 @@ it('records heartbeat failures before downstream execution and projection callba
   } finally { db.close() }
 })
 
+it('filters by exact plan ID before pagination, including plans with the same name and scope', async () => {
+  const db = new AssistantDatabase(':memory:')
+  db.initialize(process.cwd())
+  try {
+    const heartbeat = new HeartbeatService(db, { summarize: async () => { throw new Error('Expected failure') } }, () => {})
+    const input = { name: 'Daily', scope: request.scope, timezone: 'UTC', recurrence: { type: 'daily' as const, localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }
+    const first = heartbeat.create(input)
+    const second = heartbeat.create(input)
+    await heartbeat.runNow({ id: first.id, idempotencyKey: crypto.randomUUID() })
+    const firstId = db.listSupervisionActivity()[0]!.id
+    await heartbeat.runNow({ id: second.id, idempotencyKey: crypto.randomUUID() })
+    await service(db, async () => output).run(request)
+    expect(db.listSupervisionActivity(1, 0, first.id).map(row => row.id)).toEqual([firstId])
+    expect(db.listSupervisionActivity(1, 1, first.id)).toEqual([])
+    expect(db.listSupervisionActivity(50, 0, second.id)).toEqual([expect.objectContaining({ kind: 'heartbeat' })])
+    expect(db.listSupervisionActivity(50, 0, 'missing')).toEqual([])
+    expect(db.listSupervisionActivity()).toHaveLength(3)
+  } finally { db.close() }
+})
+
 it('upgrades schema 44 without inventing historical links and preserves runs on reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'supervision-activity-'))
   const path = join(directory, 'assistant.sqlite')
@@ -110,6 +130,9 @@ it('upgrades schema 44 without inventing historical links and preserves runs on 
       ALTER TABLE heartbeat_runs DROP COLUMN projection_completed_at;
       DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
       DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+      DROP VIEW supervision_review_current;
+      DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
+      DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
       DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
       PRAGMA user_version = 44;`)
     legacy.close()

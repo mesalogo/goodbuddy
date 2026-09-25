@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { defaultSupervisionTimeoutSeconds } from '../../shared/application-settings-contracts'
+import type { SupervisionModelSlot } from './supervision-model-pool'
 import {
   heartbeatCreateSchema,
   heartbeatHistorySchema,
@@ -28,6 +30,9 @@ export type HeartbeatToolAuthorizer = (
 ) => void | Promise<void>
 
 export type HeartbeatSummarizerRequest = {
+  timeoutSeconds: number
+  signal?: AbortSignal
+  onModelStart: () => void
   projectId?: string
   systemInstruction: string
   input: HeartbeatInputSnapshot
@@ -140,12 +145,15 @@ function parseSummaryOutput(value: unknown): unknown {
 
 export class HeartbeatService {
   private readonly workerId = `heartbeat:${randomUUID()}`
+  private readonly pendingManualRuns = new Map<string, Promise<AssistantHeartbeatRun>>()
 
   constructor(
     private readonly database: AssistantDatabase,
     private readonly summarizer: HeartbeatSummarizer,
     private readonly toolAuthorizer: HeartbeatToolAuthorizer,
-    private readonly onCompleted?: (completion: HeartbeatCompletion) => void | Promise<void>
+    private readonly onCompleted?: (completion: HeartbeatCompletion) => void | Promise<void>,
+    private readonly getReportTimeoutSeconds: () => Promise<number> = async () => defaultSupervisionTimeoutSeconds,
+    private readonly acquireReportSlot?: () => Promise<SupervisionModelSlot>
   ) {}
 
   list(input: unknown = {}): AssistantHeartbeatConfig[] {
@@ -192,35 +200,59 @@ export class HeartbeatService {
     now?: Date
   ): Promise<AssistantHeartbeatRun> {
     const parsed = heartbeatRunNowSchema.parse(input)
-    const startedAt = now ?? new Date()
-    const claim = this.database.claimHeartbeatNow(
-      parsed.id,
-      parsed.idempotencyKey,
-      this.workerId,
-      startedAt
-    )
-    if (!claim.acquired) {
-      return claim.run
+    const pending = this.pendingManualRuns.get(parsed.id)
+    if (pending) return pending
+    const operation = (async () => {
+      const timeoutSeconds = await this.getReportTimeoutSeconds()
+      const slot = await this.acquireReportSlot?.()
+      try {
+        slot?.signal.throwIfAborted()
+        const startedAt = now ?? new Date()
+        const claim = this.database.claimHeartbeatNow(
+          parsed.id,
+          parsed.idempotencyKey,
+          this.workerId,
+          startedAt,
+          Math.max(300, timeoutSeconds + 60) * 1000
+        )
+        if (!claim.acquired) return claim.run
+        return await this.executeClaim(claim, startedAt, now === undefined, timeoutSeconds, slot)
+      } finally { slot?.release() }
+    })()
+    this.pendingManualRuns.set(parsed.id, operation)
+    try {
+      return await operation
+    } finally {
+      this.pendingManualRuns.delete(parsed.id)
     }
-    return this.executeClaim(claim, startedAt, now === undefined)
   }
 
-  async processDue(now = new Date()): Promise<AssistantHeartbeatRun[]> {
-    const claims = this.database.claimDueHeartbeats(
-      this.workerId,
-      now
-    )
-    const results: AssistantHeartbeatRun[] = []
-    for (const claim of claims) {
-      results.push(await this.executeClaim(claim, now, true))
-    }
-    return results
+  async processDue(now?: Date): Promise<AssistantHeartbeatRun[]> {
+    const timeoutSeconds = await this.getReportTimeoutSeconds()
+    const slot = await this.acquireReportSlot?.()
+    try {
+      slot?.signal.throwIfAborted()
+      const startedAt = now ?? new Date()
+      // The database claims at most one due report per tick.
+      const claims = this.database.claimDueHeartbeats(
+        this.workerId,
+        startedAt,
+        Math.max(300, timeoutSeconds + 60) * 1000
+      )
+      const results: AssistantHeartbeatRun[] = []
+      for (const claim of claims) {
+        results.push(await this.executeClaim(claim, startedAt, true, timeoutSeconds, slot))
+      }
+      return results
+    } finally { slot?.release() }
   }
 
   private async executeClaim(
     claim: ClaimedHeartbeatRun,
     now: Date,
-    useFreshCompletionTime = false
+    useFreshCompletionTime: boolean,
+    timeoutSeconds: number,
+    slot?: SupervisionModelSlot
   ): Promise<AssistantHeartbeatRun> {
     try {
       this.database.setHeartbeatProjection(claim.run.id, 'running', claim.config.scope)
@@ -231,6 +263,7 @@ export class HeartbeatService {
       }, 'heartbeat', 12_000) : undefined
       if (batch && batch.evidence.length === 0) {
         const run = this.database.noChangeHeartbeatRun(claim, useFreshCompletionTime ? new Date() : now)
+        slot?.release()
         await this.projectCompletion({ config: claim.config, run })
         return run
       }
@@ -242,6 +275,13 @@ export class HeartbeatService {
         this.database.buildHeartbeatInput(claim.config, now)
       )
       const rawOutput = await this.summarizer.summarize({
+        timeoutSeconds,
+        signal: slot?.signal,
+        onModelStart: () => {
+          slot?.signal.throwIfAborted()
+          this.database.renewHeartbeatLease(claim, Math.max(300, timeoutSeconds + 60) * 1000,
+            useFreshCompletionTime ? new Date() : now)
+        },
         projectId:
           claim.config.scope.kind === 'projects' &&
           claim.config.scope.projectIds.length === 1
@@ -294,6 +334,7 @@ export class HeartbeatService {
         batch
       )
       const entry = this.database.getHeartbeatEntry(completedRun.entryId)
+      slot?.release()
       await this.projectCompletion({ config: claim.config, run: completedRun, entry })
       return completedRun
     } catch (error) {

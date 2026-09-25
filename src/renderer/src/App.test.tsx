@@ -691,6 +691,9 @@ const api: DesktopApi = {
     history: vi.fn(async () => ({ runs: [], entries: [] })),
   },
   supervision: {
+    pause: vi.fn(async () => undefined),
+    resume: vi.fn(async () => undefined),
+    batches: vi.fn(async () => []),
     activity: vi.fn(async () => []),
     overview: vi.fn(async () => []),
     run: vi.fn(async () => undefined),
@@ -13079,7 +13082,7 @@ describe("App", () => {
         name: "旧项目心跳",
         timezone: "Asia/Shanghai",
         recurrence: { type: "daily", localTime: "09:00" },
-        enabled: true,
+        enabled: false,
         lookbackHours: 24,
         retentionDays: 30,
         nextRunAt: "2026-08-05T01:00:00.000Z",
@@ -13090,12 +13093,23 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "监督者" }));
-    fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "自动监督" }));
     expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
     selectProjectOption(secondProject.name);
     fireEvent.click(screen.getByRole("button", { name: "监督者" }));
 
     expect(await screen.findAllByText("旧项目心跳")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '编辑 旧项目心跳' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.closest('.app-shell')).toBeNull();
+    expect(document.querySelector('.app-shell')).toHaveProperty('inert', true);
+    fireEvent.change(within(dialog).getByLabelText('计划名称'), { target: { value: 'Updated paused plan' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存自动监督计划' }));
+    await waitFor(() => expect(api.heartbeats.update).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000701', expect.objectContaining({
+      name: 'Updated paused plan', enabled: false, scope: { kind: 'projects', projectIds: [projectId] }
+    })));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(document.querySelector('.app-shell')).toHaveProperty('inert', false);
   });
 
   it("automatically snapshots the conversation project on new activity", async () => {
@@ -13930,6 +13944,37 @@ describe("App", () => {
     expect(screen.getByLabelText('知识工作区')).toBe(workspace)
     expect(workspace.closest('.app-shell')).toHaveProperty('inert', false)
     expect(entry === 'sidebar' ? nav : screen.getByRole('button', { name: '应用中心' })).toHaveFocus()
+  })
+
+  it('saves Supervisor timeouts and concurrency through application settings and restores them on reopen', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '监督者' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '设置' }))
+    const report = await screen.findByLabelText('心跳报告超时（秒）')
+    await waitFor(() => expect(report).toBeEnabled())
+    expect(report).toHaveValue(240)
+    fireEvent.change(report, { target: { value: '600' } })
+    fireEvent.change(screen.getByLabelText('监督者整理超时（秒）'), { target: { value: '30' } })
+    expect(screen.getByLabelText('监督模型并发数')).toHaveValue(1)
+    fireEvent.change(screen.getByLabelText('监督模型并发数'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存模型设置' }))
+    await waitFor(() => expect(api.updates!.updateSettings).toHaveBeenLastCalledWith({ heartbeatReportTimeoutSeconds: 600, supervisorOrganizeTimeoutSeconds: 30, supervisorModelConcurrency: 2 }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存模型设置' })).toBeDisabled())
+    fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }))
+    expect(screen.getByLabelText('心跳报告超时（秒）')).toHaveValue(600)
+    expect(screen.getByLabelText('监督者整理超时（秒）')).toHaveValue(30)
+    expect(screen.getByLabelText('监督模型并发数')).toHaveValue(2)
+    fireEvent.change(screen.getByLabelText(/每次读取来源条数/), { target: { value: '17' } })
+    fireEvent.change(screen.getByLabelText(/每批消息数/), { target: { value: '30' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存回顾算法' }))
+    await waitFor(() => expect(api.updates!.updateSettings).toHaveBeenLastCalledWith({
+      supervisionReview: { pageSize: 17, batchCharacters: 8000, batchMessages: 30, executionSeconds: 300 }
+    }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存回顾算法' })).toBeDisabled())
+    fireEvent.click(screen.getByRole('tab', { name: '工作回顾' }))
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }))
+    expect(screen.getByLabelText(/每次读取来源条数/)).toHaveValue(17)
   })
 
   it('hides the Supervisor sidebar entry without deleting automatic wake-up plans', async () => {

@@ -322,6 +322,9 @@ it('preserves existing supervision data when upgrading schema 41 and reopening',
     ALTER TABLE activity_history RENAME COLUMN record_order_json TO records_json;
     DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
     DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+    DROP VIEW supervision_review_current;
+    DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
+    DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;
     DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;
     PRAGMA user_version = 41;`)
   legacy.close()
@@ -3044,6 +3047,28 @@ describe('AssistantDatabase', () => {
     expect(database.getHeartbeatConfig(config.id).lastStatus).toBe(
       'claimed'
     )
+    database.close()
+  })
+
+  it('renews only a live heartbeat lease with matching ownership and attempt', async () => {
+    const database = await createDatabase()
+    const start = new Date('2026-08-16T01:00:00.000Z')
+    const config = database.createHeartbeatConfig({ scope: { kind: 'global' }, name: 'Lease', timezone: 'UTC',
+      recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 }, start)
+    const claim = database.claimHeartbeatNow(config.id, 'first', 'owner', start, 60_000)
+    const admission = new Date(start.getTime() + 30_000)
+    expect(() => database.renewHeartbeatLease({ ...claim, leaseOwner: 'other' }, 300_000, admission)).toThrow('no longer active')
+    expect(() => database.renewHeartbeatLease({ ...claim, run: { ...claim.run, attemptCount: 2 } }, 300_000, admission)).toThrow('no longer active')
+    database.renewHeartbeatLease(claim, 300_000, admission)
+    expect(database.claimHeartbeatNow(config.id, 'second', 'other', new Date(start.getTime() + 329_999)).acquired).toBe(false)
+    const expired = new Date(start.getTime() + 330_000)
+    expect(() => database.renewHeartbeatLease(claim, 300_000, expired)).toThrow('no longer active')
+    const [retry] = database.claimDueHeartbeats('owner', expired)
+    expect(retry?.run.attemptCount).toBe(2)
+    expect(() => database.renewHeartbeatLease(claim, 300_000, expired)).toThrow('no longer active')
+    database.renewHeartbeatLease(retry!, 300_000, expired)
+    database.completeHeartbeatRun(retry!, { summary: 'Report', highlights: [], proposedMemories: [], followUpTasks: [] }, expired)
+    expect(() => database.renewHeartbeatLease(retry!, 300_000, expired)).toThrow('no longer active')
     database.close()
   })
 

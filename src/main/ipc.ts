@@ -143,7 +143,8 @@ import {
   dingTalkChannelSettingsInputSchema,
   weComChannelSettingsInputSchema
 } from '../shared/channel-settings-contracts'
-import { applicationSettingsUpdateSchema } from '../shared/application-settings-contracts'
+import { applicationSettingsUpdateSchema, defaultSupervisionTimeoutSeconds, defaultSupervisorModelConcurrency } from '../shared/application-settings-contracts'
+import { SupervisionModelPool } from './assistant/supervision-model-pool'
 import {
   localToolDiagnoseInputSchema,
   localToolEnvironmentProgressSchema,
@@ -337,7 +338,8 @@ import {
   resolveWorkspaceEntryPath
 } from './assistant/workspace-changes-service'
 import { HeartbeatService } from './assistant/heartbeat-service'
-import { SupervisorService } from './assistant/supervisor-service'
+import { createProductionSupervisorService } from './assistant/supervision-production'
+import { supervisionReviewIdSchema, supervisionBatchesRequestSchema } from '../shared/supervision-review-contracts'
 import {
   supervisionEntityActionSchema,
   supervisionActivityRequestSchema,
@@ -349,8 +351,7 @@ import {
   supervisionContinueContextRequestSchema,
   supervisionContinueRequestSchema,
   supervisionKnowledgePreviewRequestSchema,
-  supervisionKnowledgeCommitRequestSchema,
-  type SupervisionEvidence
+  supervisionKnowledgeCommitRequestSchema
 } from '../shared/supervision-contracts'
 import { showDesktopNotificationWhenUnfocused } from './desktop-notification'
 import {
@@ -1423,7 +1424,7 @@ export function registerIpcHandlers(
     string,
     { requestId: string; runtime: AgentRuntime; question: Extract<AgentEvent, { type: 'question' }> }
   >()
-  const heartbeatControllers = new Set<AbortController>()
+  const supervisionModelPool = new SupervisionModelPool()
   let activeSshDirectoryBrowse: AbortController | undefined
   let shuttingDown = false
   let executionPaused = false
@@ -1621,6 +1622,7 @@ export function registerIpcHandlers(
   window.on('maximize', notifyMaximizedChanged)
   window.on('unmaximize', notifyMaximizedChanged)
   const removeApplicationSettingsListener = applicationSettingsStore?.onChanged((settings) => {
+    supervisionModelPool.setLimit(settings.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency)
     if (!window.isDestroyed()) {
       window.webContents.send(ipcChannels.applicationSettingsChanged, settings)
     }
@@ -1820,29 +1822,32 @@ export function registerIpcHandlers(
           throw new Error('智能心跳需要文本模型，当前默认连接仅支持图像生成')
         }
         const controller = new AbortController()
-        heartbeatControllers.add(controller)
+        const modelSignal = AbortSignal.any([...(request.signal ? [request.signal] : []), controller.signal])
+        modelSignal.throwIfAborted()
+        request.onModelStart()
+        let timeoutError: Error | undefined
         const timeout = setTimeout(
-          () =>
-            controller.abort(
-              new Error('Heartbeat summarization exceeded 4 minutes')
-            ),
-          4 * 60_000
+          () => {
+            timeoutError = new Error(`心跳报告模型阶段超过 ${request.timeoutSeconds} 秒，已停止本次报告；未保存结果`)
+            controller.abort(timeoutError)
+          },
+          request.timeoutSeconds * 1000
         )
         const requestId = randomUUID()
         const conversationId = `heartbeat:${requestId}`
-        assistantDatabase.createTask({
-          id: requestId,
-          projectId: request.projectId,
-          conversationId,
-          title: '智能心跳回顾',
-          instructions: '根据有界本地输入生成智能心跳报告',
-          workMode: 'ask',
-          origin: 'assistant',
-          visible: false
-        })
         let output = ''
         let completed = false
         try {
+          assistantDatabase.createTask({
+            id: requestId,
+            projectId: request.projectId,
+            conversationId,
+            title: '智能心跳回顾',
+            instructions: '根据有界本地输入生成智能心跳报告',
+            workMode: 'ask',
+            origin: 'assistant',
+            visible: false
+          })
           for await (const event of requestRuntime.run(
             {
               requestId,
@@ -1858,7 +1863,7 @@ export function registerIpcHandlers(
                 'Return only one JSON object. Do not wrap it in Markdown.'
               ].join('\n\n')
             },
-            controller.signal,
+            modelSignal,
             async (approval) => {
               await request.authorizeTool({
                 name: approval.toolName ?? approval.scopeKey,
@@ -1885,6 +1890,7 @@ export function registerIpcHandlers(
               completed = true
             }
           }
+          modelSignal.throwIfAborted()
           if (!completed) {
             throw new Error('Heartbeat summarizer did not report completion')
           }
@@ -1894,16 +1900,15 @@ export function registerIpcHandlers(
           assistantDatabase.updateTaskStatus(requestId, 'completed')
           return output
         } catch (error) {
-          const message = safeRuntimeError(error, '心跳摘要失败')
+          const message = safeRuntimeError(timeoutError ?? error, '心跳摘要失败')
           assistantDatabase.updateTaskStatus(
             requestId,
-            controller.signal.aborted ? 'cancelled' : 'failed',
+            modelSignal.aborted ? 'cancelled' : 'failed',
             message
           )
           throw new Error(message, { cause: error })
         } finally {
           clearTimeout(timeout)
-          heartbeatControllers.delete(controller)
           await requestRuntime.releaseConversation?.(conversationId)
         }
       }
@@ -1923,6 +1928,11 @@ export function registerIpcHandlers(
         scope: config.scope,
         timeRange: { from, to }
       }, run.id)
+    },
+    async () => (await applicationSettingsStore?.get())?.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds,
+    async () => {
+      supervisionModelPool.setLimit((await applicationSettingsStore?.get())?.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency)
+      return supervisionModelPool.acquire()
     }
   )
   const publishRemoteActivity = (
@@ -3620,10 +3630,7 @@ export function registerIpcHandlers(
       executionPaused = true
       try {
         abortActiveRequests('用户正在清除本地数据')
-        for (const controller of heartbeatControllers) {
-          controller.abort(new Error('用户正在清除本地数据'))
-        }
-        heartbeatControllers.clear()
+        supervisionModelPool.cancelAll(new Error('用户正在清除本地数据'))
         subagentService?.cancelAll('用户正在清除本地数据')
         approvalBroker.clear()
         await executionTracker.drain()
@@ -7110,90 +7117,8 @@ export function registerIpcHandlers(
       publishConversationChange()
     }
   )
-  const supervisorService = new SupervisorService(
-    {
-      incremental: async (request) => {
-        const batch = assistantDatabase.collectIncrementalReview(request, 'supervisor', 44_000)
-        if (batch.evidence.length) batch.evidence.push(...assistantDatabase.reviewBackground(request.scope))
-        return batch
-      },
-      collect: async (request) => {
-        const input = assistantDatabase.buildHeartbeatInput({
-          scope: request.scope, lookbackHours: 0
-        }, new Date(request.timeRange.to), request.timeRange)
-        const evidence: SupervisionEvidence[] = [
-          ...input.conversations.flatMap((conversation) => conversation.messages.flatMap((message) => {
-            const conversationEvidence = [{
-              id: `${conversation.id}:${message.id}`, sourceType: 'conversation' as const,
-              sourceId: conversation.id, title: conversation.title, content: message.content, occurredAt: message.createdAt
-            }]
-            const knowledgeEvidence = (message.sourceReferences ?? []).map((reference, index) => ({
-              id: `${conversation.id}:${message.id}:knowledge:${index}`,
-              sourceType: 'knowledge' as const,
-              sourceId: reference.chunkId ?? reference.documentId ?? reference.external?.sourceUrl ?? reference.libraryId,
-              title: reference.documentName || reference.sourceName,
-              content: reference.snippet,
-              occurredAt: message.createdAt,
-              locator: {
-                libraryId: reference.libraryId,
-                documentId: reference.documentId,
-                chunkId: reference.chunkId,
-                documentTitle: reference.documentName,
-                sourceDisplayName: reference.sourceName,
-                sourceLocation: reference.sourceLocation,
-                locator: reference.locator,
-                external: reference.external
-              }
-            }))
-            return [...conversationEvidence, ...knowledgeEvidence]
-          })),
-          ...input.tasks.map((task) => ({
-            id: `task:${task.id}`, sourceType: 'task' as const, sourceId: task.id,
-            title: task.title, content: `当前状态：${task.status}；创建时间：${task.createdAt}${task.completedAt ? `；完成时间：${task.completedAt}` : ''}`,
-            occurredAt: task.completedAt && Date.parse(task.completedAt) >= Date.parse(request.timeRange.from)
-              && Date.parse(task.completedAt) <= Date.parse(request.timeRange.to) ? task.completedAt : task.createdAt
-          })),
-          ...input.confirmedMemories.map((memory) => ({
-            id: `memory:${memory.id}`, sourceType: 'memory' as const, sourceId: memory.id,
-            title: '已确认记忆（当前背景，非区间事件）', content: memory.content, occurredAt: memory.updatedAt,
-            locator: { temporalRole: 'current-background', createdAt: memory.createdAt, updatedAt: memory.updatedAt }
-          }))
-        ]
-        return evidence
-      }
-    },
-    {
-      summarize: async (request) => {
-        const runtime = await resolveRequestRuntime({ workMode: 'ask' })
-        const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 4 * 60_000)
-        let output = ''
-        const conversationId = `supervision:${randomUUID()}`
-        try {
-          for await (const event of runtime.run({
-            requestId: randomUUID(), conversationId, workMode: 'ask',
-            prompt: [request.systemInstruction, 'OUTPUT CONTRACT:', request.outputContract,
-               'REVIEW TIME RANGE:', JSON.stringify(request.request.timeRange),
-                'KNOWN ENTITIES:', JSON.stringify(request.candidates),
-               'PREVIOUS SUMMARY (background only):', request.previousSummary ?? '',
-              'BOUNDED EVIDENCE:', JSON.stringify(request.evidence), 'Return only JSON.'].join('\n\n')
-          }, controller.signal, async (approval) => { await request.authorizeTool(approval.toolName ?? approval.scopeKey); return 'deny' })) {
-            if (event.type === 'text') output += event.delta
-            if (event.type === 'tool') throw new Error('监督者只允许只读模型摘要，不允许工具调用')
-            if (event.type === 'error') throw new Error(event.message)
-          }
-          return output
-        } finally { clearTimeout(timeout); await runtime.releaseConversation?.(conversationId) }
-      }
-    },
-    { scope: (scope) => assistantDatabase.resolveReviewScope(scope),
-      summary: (request) => assistantDatabase.reviewSummary(request.scope, 'supervisor'),
-      start: (request, heartbeatRunId) => assistantDatabase.startSupervisionRun(request, heartbeatRunId),
-      fail: (runId, error) => assistantDatabase.failSupervisionRun(runId, error),
-      noChange: (runId) => assistantDatabase.noChangeSupervisionRun(runId),
-      candidates: async (request) => assistantDatabase.listSupervisionCandidates(request),
-      save: async (result) => assistantDatabase.saveSupervisionResult(result) }
-  )
+  const supervisorService = createProductionSupervisorService(assistantDatabase,
+    async () => applicationSettingsStore?.get(), () => resolveRequestRuntime({ workMode: 'ask' }), supervisionModelPool)
 
   registerHandler(
     ipcChannels.conversationsBranchLocal,
@@ -7907,7 +7832,25 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     const request = supervisionActivityRequestSchema.parse(input ?? {})
     if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) return []
-    return assistantDatabase.listSupervisionActivity(request.limit, request.offset)
+    return assistantDatabase.listSupervisionActivity(request.limit, request.offset, request.configId).map(row => ({ ...row,
+      reviewProgress: row.reviewProgress ? supervisorService.progress(row.reviewProgress) : undefined }))
+  })
+  registerHandler(ipcChannels.supervisionPause, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { runId } = supervisionReviewIdSchema.parse(input)
+    supervisorService.pause(runId)
+  })
+  registerHandler(ipcChannels.supervisionResume, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { runId } = supervisionReviewIdSchema.parse(input)
+    if ((await applicationSettingsStore?.get())?.heartbeatEnabled !== true) throw new Error('Supervisor is disabled')
+    if (executionPaused || shuttingDown) throw new Error('Local data maintenance is in progress')
+    return trackExecution(supervisorService.resume(runId))
+  })
+  registerHandler(ipcChannels.supervisionBatches, (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const request = supervisionBatchesRequestSchema.parse(input)
+    return assistantDatabase.supervisionReviewStore().batches(request.runId, request.limit, request.offset)
   })
   registerHandler(ipcChannels.supervisionOverview, (event, input: unknown) => {
     assertTrustedSender(event, window)
@@ -7939,6 +7882,11 @@ export function registerIpcHandlers(
     )
     if (!source) throw new Error('监督来源不存在')
     if (source.sourceType === 'conversation') {
+      const locator = source.locatorJson ? JSON.parse(String(source.locatorJson)) as Record<string, unknown> : undefined
+      if (typeof locator?.messageId === 'string') {
+        return { ...source, contextType: 'conversation', conversationId: String(source.sourceId),
+          messageId: locator.messageId, content: source.content }
+      }
       const conversation = assistantDatabase.getConversation(String(source.sourceId))
       const messages = conversation.messages ?? []
       const message = messages.find((candidate) => candidate.createdAt === source.occurredAt)
@@ -9319,6 +9267,7 @@ export function registerIpcHandlers(
 
   return async () => {
     shuttingDown = true
+    supervisionModelPool.dispose()
     for (const id of diagnosticOperations) documentParsingService?.cancelDiagnostic(id)
     if (contextImports > 0) contextManager.cancelImport(true)
     for (const controller of attachmentParsing.values()) controller.abort(new Error('应用正在退出'))
@@ -9335,10 +9284,6 @@ export function registerIpcHandlers(
     window.removeListener('maximize', notifyMaximizedChanged)
     window.removeListener('unmaximize', notifyMaximizedChanged)
     abortActiveRequests('应用正在退出', true)
-    for (const controller of heartbeatControllers) {
-      controller.abort(new Error('应用正在退出'))
-    }
-    heartbeatControllers.clear()
     activeSshDirectoryBrowse?.abort(
       new DOMException(
         'SSH directory browse disposed',

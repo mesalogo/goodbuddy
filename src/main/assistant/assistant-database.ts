@@ -61,8 +61,8 @@ import type {
   TokenUsageRecord,
   TokenUsageSummary
 } from '../../shared/assistant-contracts'
-import type { StoredSupervisionResult } from './supervisor-service'
-import { supervisionResultViewSchema, type SupervisionTarget, type SupervisionGraphRequest, type SupervisionRunRequest, type SupervisionActivity } from '../../shared/supervision-contracts'
+import type { StoredSupervisionResult, SupervisionCandidate } from './supervisor-service'
+import { supervisionEntitySchema, supervisionResultViewSchema, type SupervisionTarget, type SupervisionGraphRequest, type SupervisionRunRequest, type SupervisionActivity } from '../../shared/supervision-contracts'
 import type { AgentEvent } from '../../shared/contracts'
 import type {
   SshHostProjectReference
@@ -119,7 +119,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 46
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 47
 
 export type RemoteTaskEventInput = {
   taskId: string
@@ -8176,6 +8176,18 @@ export class AssistantDatabase {
     }
   }
 
+  renewHeartbeatLease(claim: ClaimedHeartbeatRun, leaseMilliseconds: number, now = new Date()): void {
+    const timestamp = now.toISOString()
+    const result = this.requireDatabase().prepare(`UPDATE heartbeat_runs
+      SET lease_expires_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'claimed' AND lease_owner = ?
+        AND attempt_count = ? AND lease_expires_at > ?`).run(
+      new Date(now.getTime() + leaseMilliseconds).toISOString(), timestamp,
+      claim.run.id, claim.leaseOwner, claim.run.attemptCount, timestamp
+    )
+    if (result.changes !== 1) throw new Error('Heartbeat lease is no longer active')
+  }
+
   buildHeartbeatInput(
     config: Pick<AssistantHeartbeatConfig, 'scope' | 'lookbackHours'>,
     now = new Date(),
@@ -8419,12 +8431,12 @@ export class AssistantDatabase {
   }
 
   reviewSummary(scope: SupervisionRunRequest['scope'], stage: ReviewBatch['stage']): string | undefined {
-    const row = stage === 'supervisor' ? this.requireDatabase().prepare(`SELECT substr(r.summary, 1, 2000) AS summary
+    const row = stage === 'supervisor' ? this.requireDatabase().prepare(`SELECT r.summary AS summary
       FROM supervision_results r JOIN supervision_runs s ON s.id = r.run_id
       WHERE s.scope_json = ? ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`).get(JSON.stringify(this.resolveReviewScope(scope)))
       : this.requireDatabase().prepare(`SELECT substr(e.summary, 1, 2000) AS summary FROM heartbeat_entries e
         JOIN heartbeat_runs r ON r.id = e.run_id WHERE r.activity_scope_json = ? ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1`).get(JSON.stringify(scope))
-    return (row?.summary as string | undefined)?.slice(0, 2000)
+    return row?.summary as string | undefined
   }
 
   reviewBackground(scope: SupervisionRunRequest['scope']): ReviewBatch['evidence'] {
@@ -8480,11 +8492,19 @@ export class AssistantDatabase {
     return row ? toHeartbeatEntry(row) : undefined
   }
 
-  listSupervisionCandidates(request: StoredSupervisionResult['request']): Array<{ id: string; label: string; description: string }> {
-    return this.requireDatabase().prepare(`SELECT e.id, e.canonical_label AS label, e.description
+  listSupervisionCandidates(request: StoredSupervisionResult['request']): SupervisionCandidate[] {
+    const rows = this.requireDatabase().prepare(`SELECT e.id, e.canonical_label AS label, e.description
       FROM supervision_entities e JOIN story_lines s ON s.id = e.story_line_id
       WHERE s.scope_json = ? AND e.confirmation_state != 'revoked'
-      ORDER BY e.updated_at DESC, e.id LIMIT 100`).all(JSON.stringify(request.scope)) as Array<{ id: string; label: string; description: string }>
+      ORDER BY e.updated_at DESC, e.id LIMIT 100`).all(JSON.stringify(request.scope)) as SupervisionCandidate[]
+    return rows.map(candidate => {
+      if (supervisionEntitySchema.shape.persistedId.safeParse(candidate.id).success) return candidate
+      // Released databases contain text primary keys. Keep those keys and their
+      // graph references intact; use a stable UUID only inside the review contract.
+      const hash = createHash('sha256').update(JSON.stringify(['supervision-entity', request.scope, candidate.id])).digest('hex')
+      return { ...candidate, storageId: candidate.id,
+        id: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}` }
+    })
   }
 
   startSupervisionRun(request: SupervisionRunRequest, heartbeatRunId?: string): string {
@@ -8509,31 +8529,35 @@ export class AssistantDatabase {
         scope ? JSON.stringify(scope) : null, id)
   }
 
-  listSupervisionActivity(limit = 50, offset = 0): SupervisionActivity[] {
+  listSupervisionActivity(limit = 50, offset = 0, configId?: string): SupervisionActivity[] {
     const rows = this.requireDatabase().prepare(`
       SELECT s.id AS id, 'supervision' AS kind, s.trigger, s.status, s.scope_json AS scope,
         COALESCE(s.started_at, s.created_at) AS startedAt, s.completed_at AS completedAt,
         s.time_range_json AS timeRange, s.error, r.summary, r.id AS resultId,
-        NULL AS heartbeatStatus, s.status AS supervisionStatus
+        NULL AS heartbeatStatus, s.status AS supervisionStatus, s.id AS supervisionRunId
       FROM supervision_runs s LEFT JOIN supervision_results r ON r.run_id = s.id
-      WHERE s.heartbeat_run_id IS NULL OR NOT EXISTS (SELECT 1 FROM heartbeat_runs h WHERE h.id = s.heartbeat_run_id)
+      WHERE ? IS NULL AND (s.heartbeat_run_id IS NULL OR NOT EXISTS (SELECT 1 FROM heartbeat_runs h WHERE h.id = s.heartbeat_run_id))
       UNION ALL
       SELECT h.id, 'heartbeat', h.trigger,
         CASE WHEN h.status = 'claimed' THEN 'running'
           WHEN h.status = 'failed' OR s.status = 'failed' OR h.projection_status = 'failed' THEN 'failed'
           WHEN s.status = 'running' OR (h.status IN ('completed', 'no_change') AND h.projection_status = 'running') THEN 'running'
+          WHEN s.status = 'paused' THEN 'paused'
           WHEN s.status = 'completed' THEN 'completed'
           ELSE h.status END,
         COALESCE(s.scope_json, h.activity_scope_json), COALESCE(h.started_at, h.created_at),
         CASE WHEN s.status = 'running' OR h.status = 'claimed' OR h.projection_status = 'running' THEN NULL
           ELSE COALESCE(s.completed_at, h.projection_completed_at, h.completed_at) END,
         s.time_range_json, COALESCE(s.error, h.projection_error, h.error), COALESCE(r.summary, e.summary), r.id,
-        h.status, s.status
+        h.status, s.status, s.id
       FROM heartbeat_runs h LEFT JOIN supervision_runs s ON s.heartbeat_run_id = h.id
         LEFT JOIN supervision_results r ON r.run_id = s.id LEFT JOIN heartbeat_entries e ON e.id = h.entry_id
+      WHERE ? IS NULL OR h.config_id = ?
       ORDER BY startedAt DESC, id DESC LIMIT ? OFFSET ?
-    `).all(Math.max(1, Math.min(100, Math.trunc(limit))), Math.max(0, Math.trunc(offset)))
+    `).all(configId ?? null, configId ?? null, configId ?? null, Math.max(1, Math.min(100, Math.trunc(limit))), Math.max(0, Math.trunc(offset)))
     return rows.map((row) => ({ ...row,
+      reviewProgress: row.supervisionRunId && this.requireDatabase().prepare('SELECT run_id FROM supervision_review_runs WHERE run_id = ?').get(String(row.supervisionRunId))
+        ? this.supervisionReviewStore().progress(String(row.supervisionRunId)) : undefined,
       scope: row.scope ? JSON.parse(String(row.scope)) : null,
       timeRange: row.timeRange ? JSON.parse(String(row.timeRange)) : null
     })) as SupervisionActivity[]
@@ -8569,19 +8593,21 @@ export class AssistantDatabase {
         (id, run_id, summary, change_digest, open_items_json, coverage_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
         resultId, runId, result.output.summary, result.output.changeDigest,
-        JSON.stringify(result.output.openItems), JSON.stringify({ evidence: result.evidence.length }), timestamp
+        JSON.stringify(result.output.openItems), JSON.stringify(result.coverage ?? { evidence: result.evidence.length }), timestamp
       )
-      // Model IDs are local to one result, never persistent cross-run identities.
+      const saveFacts = (result: StoredSupervisionResult) => {
+      // Model IDs are local to one batch, never persistent cross-run identities.
       const sourceIds = new Map(result.evidence.map((source) => [source.id, randomUUID()]))
-      const candidates = new Set((result.candidates ?? []).map((entity) => entity.id))
+      const candidates = new Map((result.candidates ?? []).map(entity => [entity.id, entity.storageId ?? entity.id]))
       const currentCandidate = database.prepare("SELECT id FROM supervision_entities WHERE id = ? AND story_line_id = ? AND confirmation_state != 'revoked'")
       const entityIds = new Map<string, string>()
       for (const entity of result.output.entities) {
+        const storedId = entity.persistedId ? candidates.get(entity.persistedId) : undefined
         if (entityIds.has(entity.id) || (entity.persistedId &&
-            (!candidates.has(entity.persistedId) || !currentCandidate.get(entity.persistedId, story.id) || [...entityIds.values()].includes(entity.persistedId)))) {
+            (!storedId || !currentCandidate.get(storedId, story.id) || [...entityIds.values()].includes(storedId)))) {
           throw new Error('监督者实体身份不属于本次范围或重复')
         }
-        entityIds.set(entity.id, entity.persistedId ?? randomUUID())
+        entityIds.set(entity.id, storedId ?? randomUUID())
       }
       const persistentId = (ids: Map<string, string>, id: string): string => {
         const mapped = ids.get(id)
@@ -8643,8 +8669,32 @@ export class AssistantDatabase {
         story.id, persistentId(entityIds, relation.fromEntityId), persistentId(entityIds, relation.toEntityId), relation.relationType),
         source_reference_ids_json: sourceReferences(relation.sourceReferenceIds)
       }))
-      database.prepare('UPDATE supervision_results SET graph_snapshot_json = ? WHERE id = ?')
-        .run(JSON.stringify({ entities, relations }), resultId)
+      database.prepare(`UPDATE supervision_results SET graph_snapshot_json = json_object(
+        'entities', json((SELECT json_group_array(json(value)) FROM (
+          SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.entities')
+          UNION ALL SELECT value FROM json_each(?)
+        ))),
+        'relations', json((SELECT json_group_array(json(value)) FROM (
+          SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.relations')
+          UNION ALL SELECT value FROM json_each(?)
+        )))) WHERE id = ?`).run(JSON.stringify(entities), JSON.stringify(relations), resultId)
+      }
+      if (result.coverage && result.runId) {
+        for (let offset = 0;; offset += 10) {
+          const batches = this.supervisionReviewStore().batches(result.runId, 10, offset)
+          if (!batches.length) break
+          for (const batch of batches) saveFacts({ ...result, evidence: batch.evidence, output: batch.output })
+        }
+        // Explicit persisted identities may appear in several leaves. Keep one graph identity;
+        // each leaf's full description and references remain independently readable.
+        database.prepare(`UPDATE supervision_results SET graph_snapshot_json = json_object(
+          'entities', json((SELECT json_group_array(json(value)) FROM (
+            SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.entities') GROUP BY json_extract(value, '$.id')))),
+          'relations', json((SELECT json_group_array(json(value)) FROM (
+            SELECT value FROM json_each(supervision_results.graph_snapshot_json, '$.relations') GROUP BY json_extract(value, '$.id')))))
+          WHERE id = ?`).run(resultId)
+        this.supervisionReviewStore().commitCheckpoints(result.runId, result.request)
+      } else saveFacts(result)
       if (result.batch) this.saveReviewCheckpoints(result.batch)
       database.exec('COMMIT')
     } catch (error) {
@@ -8666,7 +8716,7 @@ export class AssistantDatabase {
       (SELECT sl.id FROM story_lines sl JOIN supervision_runs sr ON sr.scope_json = sl.scope_json WHERE sr.id = run_id) AS storyLineId,
       change_digest AS changeDigest, open_items_json AS openItems, coverage_json AS coverage,
       (SELECT id FROM supervision_sources WHERE result_id = supervision_results.id
-        AND (? IS NULL OR (source_type = ? AND source_id = ?)) ORDER BY occurred_at LIMIT 1) AS sourceId,
+        AND (? IS NULL OR (source_type = ? AND source_id = ?)) ORDER BY occurred_at, source_type, id LIMIT 1) AS sourceId,
       (SELECT scope_json FROM supervision_runs WHERE id = run_id) AS scope,
       (SELECT time_range_json FROM supervision_runs WHERE id = run_id) AS timeRange,
       created_at AS createdAt FROM supervision_results
@@ -8676,7 +8726,7 @@ export class AssistantDatabase {
             (SELECT 1 FROM json_each(sr.scope_json, '$.projectIds') WHERE value = ?)))))
       ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(sourceType, sourceType, sourceId, resultId ?? null, resultId ?? null, sourceType, sourceType, sourceId, owner?.projectId ?? null, limit).map((row) => {
         const result = row as Record<string, unknown>
-        return supervisionResultViewSchema.parse({ ...result, scope: JSON.parse(String(result.scope)), timeRange: JSON.parse(String(result.timeRange)), openItems: JSON.parse(String(result.openItems)) })
+        return supervisionResultViewSchema.parse({ ...result, coverage: JSON.parse(String(result.coverage)), scope: JSON.parse(String(result.scope)), timeRange: JSON.parse(String(result.timeRange)), openItems: JSON.parse(String(result.openItems)) })
       })
   }
 
@@ -11364,6 +11414,17 @@ export class AssistantDatabase {
         database.exec('PRAGMA foreign_keys = ON')
       }
     }
+    if (version.user_version < 47) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        database.exec(supervisionReviewMigration)
+        database.exec('PRAGMA user_version = 47; COMMIT;')
+      } catch (error) { database.exec('ROLLBACK'); throw error }
+    }
+  }
+
+  supervisionReviewStore(): SupervisionReviewStore {
+    return new SupervisionReviewStore(this.requireDatabase())
   }
 
   private requireDatabase(): DatabaseSync {
@@ -11380,3 +11441,4 @@ export class AssistantDatabase {
   }
 }
 import type { ImageOperation } from '../../shared/image-generation-contracts'
+import { SupervisionReviewStore, supervisionReviewMigration } from './supervision-review-store'

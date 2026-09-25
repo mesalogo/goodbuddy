@@ -6,7 +6,6 @@ import {
   History,
   Lightbulb,
   ListChecks,
-  Play,
   RefreshCw,
   Sparkles,
   XCircle
@@ -24,6 +23,8 @@ import type {
   HeartbeatUpdateInput
 } from '../../shared/assistant-contracts'
 import { HeartbeatSettings } from './HeartbeatSettings'
+import { defaultSupervisionTimeoutSeconds, supervisionTimeoutSecondsSchema, defaultSupervisorModelConcurrency, supervisorModelConcurrencySchema, type ApplicationSettings, type ApplicationSettingsUpdate } from '../../shared/application-settings-contracts'
+import { SupervisionReviewSettings } from './SupervisionReviewSettings'
 import { SupervisorWorkspace, type SupervisionGraphNavigation } from './SupervisorWorkspace'
 import { SupervisorActivity } from './SupervisorActivity'
 import './supervisor-workspace.css'
@@ -36,13 +37,13 @@ import {
   type WorkspaceScope
 } from './WorkspacePrimitives'
 
-type HeartbeatCenterTab =
-  | 'overview'
-  | 'suggestions'
-  | 'history'
-  | 'plans'
-
 export type HeartbeatCenterProps = {
+  applicationSettings?: ApplicationSettings
+  applicationSettingsPending?: boolean
+  applicationSettingsLocked?: boolean
+  applicationSettingsError?: string
+  onUpdateApplicationSettings?: (input: ApplicationSettingsUpdate) => Promise<boolean>
+  onRetryApplicationSettings?: () => void
   active?: boolean
   graphNavigation?: SupervisionGraphNavigation
   configs: AssistantHeartbeatConfig[]
@@ -95,7 +96,8 @@ export function HeartbeatCenter(props: HeartbeatCenterProps): React.JSX.Element 
 function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element {
   const { t } = useTranslation('heartbeat')
   const centerRef = useRef<HTMLElement>(null)
-  const [pageTab, setPageTab] = useState<'overview' | 'graph' | 'activity' | 'settings'>(props.graphNavigation ? 'graph' : 'overview')
+  const [pageTab, setPageTab] = useState<'overview' | 'graph' | 'plans' | 'activity' | 'settings'>(props.graphNavigation ? 'graph' : 'overview')
+  const [activityPlanId, setActivityPlanId] = useState('')
   const [activityNavigation, setActivityNavigation] = useState<SupervisionGraphNavigation>()
   const [appliedNavigation, setAppliedNavigation] = useState(props.graphNavigation)
   if (appliedNavigation !== props.graphNavigation) {
@@ -127,24 +129,34 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
         tabs={[
           { id: 'overview', label: t('supervisor.recap') },
           { id: 'graph', label: t('supervisor.graph') },
+          { id: 'plans', label: t('supervisor.automatic') },
           { id: 'activity', label: t('activity.title') },
           { id: 'settings', label: t('supervisor.settings') }
         ]}
       />
       <div
         role="tabpanel"
+        className="supervisor-center__sections"
         id={`supervisor-panel-${pageTab}`}
         aria-labelledby={`supervisor-tab-${pageTab}`}
       >
-        <div hidden={pageTab === 'settings' || pageTab === 'activity'}>
+        <div hidden={pageTab !== 'overview' && pageTab !== 'graph'}>
           <SupervisorWorkspace
             graphNavigation={activityNavigation ?? props.graphNavigation}
             tab={pageTab}
             onTabChange={setPageTab}
             projects={props.projects}
+            onOpenActivity={() => {
+              setActivityPlanId('')
+              setPageTab('activity')
+              window.requestAnimationFrame(() => centerRef.current?.querySelector<HTMLElement>('#supervisor-tab-activity')?.focus())
+            }}
           />
         </div>
         {pageTab === 'activity' && <SupervisorActivity
+          configId={activityPlanId || undefined}
+          configs={props.configs}
+          onPlanChange={setActivityPlanId}
           active={props.active !== false}
           projects={props.projects}
           onOpenResult={(resultId, tab) => {
@@ -152,13 +164,75 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
             setPageTab(tab)
           }}
         />}
-        {pageTab === 'settings' && <HeartbeatAutomationSettings {...props} />}
+        <HeartbeatSections {...props} pageTab={pageTab}
+          onOpenActivity={(id) => {
+            setActivityPlanId(id)
+            setPageTab('activity')
+            window.requestAnimationFrame(() => centerRef.current?.querySelector<HTMLElement>('#supervisor-tab-activity')?.focus())
+          }} />
+        {pageTab === 'settings' && <>
+          <SupervisionModelSettings {...props} />
+          <SupervisionReviewSettings settings={props.applicationSettings}
+            disabled={props.applicationSettingsPending || props.applicationSettingsLocked}
+            onSave={props.onUpdateApplicationSettings} />
+        </>}
       </div>
     </section>
   )
 }
 
-function HeartbeatAutomationSettings({
+function SupervisionModelSettings(props: HeartbeatCenterProps): React.JSX.Element {
+  const { t } = useTranslation('heartbeat')
+  const heartbeat = props.applicationSettings?.heartbeatReportTimeoutSeconds ?? defaultSupervisionTimeoutSeconds
+  const supervisor = props.applicationSettings?.supervisorOrganizeTimeoutSeconds ?? defaultSupervisionTimeoutSeconds
+  const concurrency = props.applicationSettings?.supervisorModelConcurrency ?? defaultSupervisorModelConcurrency
+  const [parallel, setParallel] = useState(String(concurrency))
+  const [report, setReport] = useState(String(heartbeat))
+  const [organize, setOrganize] = useState(String(supervisor))
+  const [saved, setSaved] = useState({ heartbeat, supervisor, concurrency })
+  if (saved.heartbeat !== heartbeat || saved.supervisor !== supervisor || saved.concurrency !== concurrency) {
+    setSaved({ heartbeat, supervisor, concurrency })
+    setParallel(String(concurrency))
+    setReport(String(heartbeat))
+    setOrganize(String(supervisor))
+  }
+  const valid = supervisionTimeoutSecondsSchema.safeParse(Number(report)).success &&
+    supervisionTimeoutSecondsSchema.safeParse(Number(organize)).success &&
+    supervisorModelConcurrencySchema.safeParse(Number(parallel)).success
+  const disabled = props.applicationSettingsPending || props.applicationSettingsLocked || !props.applicationSettings || !props.onUpdateApplicationSettings
+  return <form className="heartbeat-settings heartbeat-settings__editor" onSubmit={(event) => {
+    event.preventDefault()
+    if (!valid || disabled) return
+    void props.onUpdateApplicationSettings?.({ heartbeatReportTimeoutSeconds: Number(report), supervisorOrganizeTimeoutSeconds: Number(organize), supervisorModelConcurrency: Number(parallel) })
+  }}>
+    <h2>{t('timeouts.title')}</h2>
+    <p>{t('timeouts.help')}</p>
+    <label className="heartbeat-settings__field">{t('timeouts.report')}
+      <input type="number" min={30} max={600} step={1} value={report} disabled={disabled}
+        onChange={(event) => setReport(event.target.value)} />
+    </label>
+    <label className="heartbeat-settings__field">{t('timeouts.organize')}
+      <input type="number" min={30} max={600} step={1} value={organize} disabled={disabled}
+        onChange={(event) => setOrganize(event.target.value)} />
+    </label>
+    <p>{t('timeouts.transport')}</p>
+    <label className="heartbeat-settings__field">{t('timeouts.concurrency')}
+      <input type="number" min={1} max={4} step={1} value={parallel} disabled={disabled}
+        onChange={(event) => setParallel(event.target.value)} />
+    </label>
+    <p>{t('timeouts.concurrencyHelp')}</p>
+    {!valid && <p role="alert">{t('timeouts.invalid')}</p>}
+    {props.applicationSettingsError && <div role="alert">
+      <p>{props.applicationSettingsError}</p>
+      <button className="secondary-button" type="button" disabled={props.applicationSettingsPending} onClick={props.onRetryApplicationSettings}>{t('center.actions.retry')}</button>
+    </div>}
+    <button className="primary-button" type="submit" disabled={disabled || !valid || (Number(report) === heartbeat && Number(organize) === supervisor && Number(parallel) === concurrency)}>{t('timeouts.save')}</button>
+  </form>
+}
+
+function HeartbeatSections({
+  onOpenActivity,
+  pageTab,
   configs,
   runs,
   entries,
@@ -177,10 +251,12 @@ function HeartbeatAutomationSettings({
   loading = false,
   loadError,
   onRetryLoad
-}: HeartbeatCenterProps): React.JSX.Element {
+}: HeartbeatCenterProps & {
+  pageTab: 'overview' | 'graph' | 'plans' | 'activity' | 'settings'
+  onOpenActivity: (id: string) => void
+}): React.JSX.Element | null {
   const { t, i18n } = useTranslation('heartbeat')
   const { t: tWorkspace } = useTranslation('workspace')
-  const [tab, setTab] = useState<HeartbeatCenterTab>('plans')
   const [pendingAction, setPendingAction] = useState<string>()
   const [error, setError] = useState<string>()
   const [expandedEntryId, setExpandedEntryId] = useState<string>()
@@ -214,15 +290,6 @@ function HeartbeatAutomationSettings({
     countFormatter.format(value)
   const formatPercent = (value: number): string =>
     percentFormatter.format(value / 100)
-  const weekdayLabels = [
-    t('center.weekdays.sunday'),
-    t('center.weekdays.monday'),
-    t('center.weekdays.tuesday'),
-    t('center.weekdays.wednesday'),
-    t('center.weekdays.thursday'),
-    t('center.weekdays.friday'),
-    t('center.weekdays.saturday')
-  ]
   const runStatusLabels: Record<
     AssistantHeartbeatRun['status'],
     string
@@ -259,31 +326,6 @@ function HeartbeatAutomationSettings({
       ? t('common.unknownTime')
       : dateTimeFormatter.format(date)
   }
-  const recurrenceLabel = (
-    config: AssistantHeartbeatConfig
-  ): string =>
-    config.recurrence.type === 'weekly'
-      ? t('center.recurrence.weekly', {
-          weekday: weekdayLabels[config.recurrence.weekday],
-          time: config.recurrence.localTime
-        })
-      : t('center.recurrence.daily', {
-          time: config.recurrence.localTime
-        })
-  const scopeLabel = (config: AssistantHeartbeatConfig): string => {
-    if (config.scope.kind === 'global') {
-      return t('center.scope.global')
-    }
-    const projectNames = config.scope.projectIds.map((projectId) => {
-      const project = projects.find(
-        (candidate) => candidate.id === projectId
-      )
-      return project
-        ? getProjectDisplayText(project, tWorkspace).name
-        : t('settings.scope.unavailableProject')
-    })
-    return projectNames.join(t('settings.scope.nameSeparator'))
-  }
 
   const orderedEntries = useMemo(
     () => [...entries].sort(byNewest),
@@ -317,10 +359,6 @@ function HeartbeatAutomationSettings({
     () => tasks.filter((task) => followUpTaskIds.has(task.id)),
     [followUpTaskIds, tasks]
   )
-  const pendingTasks = followUpTasks.filter(
-    (task) =>
-      task.status !== 'completed' && task.status !== 'cancelled'
-  )
   const completedTasks = followUpTasks.filter(
     (task) => task.status === 'completed'
   )
@@ -335,9 +373,7 @@ function HeartbeatAutomationSettings({
     0
   )
   const activeConfigs = configs.filter((config) => config.enabled)
-  const primaryConfig = activeConfigs[0] ?? configs[0]
   const latestEntry = orderedEntries[0]
-  const attentionCount = pendingMemories.length + pendingTasks.length
   const healthPercent = percentage(completedRuns.length, terminalRuns.length)
   const memoryPercent = percentage(
     confirmedMemories.length,
@@ -428,66 +464,27 @@ function HeartbeatAutomationSettings({
     }
   }
 
-  const tabs: ReadonlyArray<{
-    id: HeartbeatCenterTab
-    label: string
-    count?: number
-  }> = [
-    { id: 'plans', label: t('center.tabs.plans') },
-    { id: 'overview', label: t('center.tabs.overview') },
-    {
-      id: 'suggestions',
-      label: t('center.tabs.suggestions'),
-      count: attentionCount
-    },
-    { id: 'history', label: t('center.tabs.history') }
-  ]
+  if (pageTab !== 'plans') return null
 
   return (
     <section
-      aria-label={t('supervisor.settings')}
-      className="heartbeat-center"
+      aria-label={t('center.tabs.overview')}
+      className="heartbeat-center supervisor-center__sections"
     >
-      <div className="supervisor-workspace__action-bar">
+      <div className="heartbeat-center__section-heading">
         <ScopeBadge scope={heartbeatScope} />
         {!initialLoadBlocked && (
           <div className="supervisor-workspace__actions">
               <button
-                aria-label={t('center.actions.refreshAriaLabel')}
+                aria-label={t('settings.refreshPlans')}
                 className="secondary-button"
                 disabled={loading || pendingAction !== undefined}
                 onClick={() => void runAction('refresh', onRefresh)}
                 type="button"
               >
                 <RefreshCw aria-hidden="true" size={14} />
-                {t('center.actions.refresh')}
+                {t('settings.refreshPlans')}
               </button>
-              {tab !== 'plans' && (primaryConfig ? (
-                <button
-                  className="primary-button"
-                  disabled={loading || pendingAction !== undefined}
-                  onClick={() =>
-                    void runAction(`run:${primaryConfig.id}`, () =>
-                      onRunNow(primaryConfig.id)
-                    )
-                  }
-                  type="button"
-                >
-                  <Play aria-hidden="true" size={14} />
-                  {pendingAction === `run:${primaryConfig.id}`
-                    ? t('center.actions.running')
-                    : t('center.actions.runOnce')}
-                </button>
-              ) : (
-                <button
-                  className="primary-button"
-                  disabled={loading}
-                  onClick={() => setTab('plans')}
-                  type="button"
-                >
-                  {t('center.actions.configure')}
-                </button>
-              ))}
           </div>
         )}
       </div>
@@ -542,20 +539,10 @@ function HeartbeatAutomationSettings({
 
       {!initialLoadBlocked && (
         <>
-      <PageTabs
-        ariaLabel={t('center.tabs.ariaLabel')}
-        idPrefix="heartbeat"
-        onChange={setTab}
-        tabs={tabs}
-        value={tab}
-      />
-
-      {tab === 'overview' && (
+      {pageTab === 'plans' && (
         <div
-          aria-labelledby="heartbeat-tab-overview"
           className="heartbeat-center__panel"
           id="heartbeat-panel-overview"
-          role="tabpanel"
         >
           <section
             aria-labelledby="heartbeat-status-title"
@@ -583,91 +570,18 @@ function HeartbeatAutomationSettings({
                   : t('center.currentStatus.disabled')}
               </span>
             </div>
-            {configs.length === 0 ? (
-              <EmptyState
-                action={
-                  <button
-                    className="primary-button"
-                    onClick={() => setTab('plans')}
-                    type="button"
-                  >
-                    {t('center.currentStatus.createPlan')}
-                  </button>
-                }
-                description={t(
-                  'center.currentStatus.emptyDescription'
-                )}
-                icon={<HeartPulse size={24} />}
-                level="section"
-                title={t('center.currentStatus.emptyTitle')}
+            <div className="heartbeat-center__panel heartbeat-center__plans" id="heartbeat-panel-plans">
+              <HeartbeatSettings
+                onOpenActivity={onOpenActivity}
+                heartbeats={configs}
+                onCreate={onCreate}
+                onRemove={onRemove}
+                onRunNow={onRunNow}
+                onSetPaused={onSetPaused}
+                onUpdate={onUpdate}
+                projects={projects}
               />
-            ) : (
-              <div className="heartbeat-center__config-grid">
-                {configs.map((config) => (
-                  <article
-                    className="heartbeat-center__config-card"
-                    key={config.id}
-                  >
-                    <header>
-                      <span
-                        className={
-                          config.enabled
-                            ? 'heartbeat-center__pulse-dot heartbeat-center__pulse-dot--active'
-                            : 'heartbeat-center__pulse-dot'
-                        }
-                      />
-                      <div>
-                        <strong>{config.name}</strong>
-                        <small>
-                          {recurrenceLabel(config)} ·{' '}
-                          {scopeLabel(config)}
-                        </small>
-                      </div>
-                    </header>
-                    <dl>
-                      <div>
-                        <dt>{t('center.config.nextHeartbeat')}</dt>
-                        <dd>{formatDateTime(config.nextRunAt)}</dd>
-                      </div>
-                      <div>
-                        <dt>{t('center.config.lastStatus')}</dt>
-                        <dd>
-                          {config.lastStatus
-                            ? runStatusLabels[config.lastStatus]
-                            : t('center.config.neverRun')}
-                        </dd>
-                      </div>
-                    </dl>
-                    <div>
-                      <button
-                        disabled={pendingAction !== undefined}
-                        onClick={() =>
-                          void runAction(`run:${config.id}`, () =>
-                            onRunNow(config.id)
-                          )
-                        }
-                        type="button"
-                      >
-                        {t('center.config.runNow')}
-                      </button>
-                      <button
-                        disabled={pendingAction !== undefined}
-                        onClick={() =>
-                          void runAction(`pause:${config.id}`, () =>
-                            onSetPaused(config.id, config.enabled)
-                          )
-                        }
-                        type="button"
-                      >
-                        {config.enabled
-                          ? t('center.config.pause')
-                          : t('center.config.resume')}
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
+            </div>
           </section>
 
           <dl
@@ -774,7 +688,7 @@ function HeartbeatAutomationSettings({
             </div>
           </dl>
 
-          <div className="heartbeat-center__overview-grid">
+          <div>
             <section
               aria-labelledby="heartbeat-trend-title"
               className="heartbeat-center__section"
@@ -866,71 +780,14 @@ function HeartbeatAutomationSettings({
               )}
             </section>
 
-            <section
-              aria-labelledby="latest-heartbeat-title"
-              className="heartbeat-center__section"
-            >
-              <div className="heartbeat-center__section-heading">
-                <div>
-                  <h2 id="latest-heartbeat-title">
-                    {t('center.latest.title')}
-                  </h2>
-                </div>
-                {latestEntry && (
-                  <time dateTime={latestEntry.createdAt}>
-                    {formatDateTime(latestEntry.createdAt)}
-                  </time>
-                )}
-              </div>
-              {latestEntry ? (
-                <div className="heartbeat-center__latest">
-                  <p>{latestEntry.summary}</p>
-                  {latestEntry.highlights.length > 0 && (
-                    <ul>
-                      {latestEntry.highlights.slice(0, 3).map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  )}
-                  <div>
-                    <button
-                      className="secondary-button"
-                      onClick={() => setTab('history')}
-                      type="button"
-                    >
-                      {t('center.latest.viewHistory')}
-                      <ChevronRight aria-hidden="true" size={14} />
-                    </button>
-                    {attentionCount > 0 && (
-                      <button
-                        className="primary-button"
-                        onClick={() => setTab('suggestions')}
-                        type="button"
-                      >
-                        {t('center.latest.handleSuggestions', {
-                          count: attentionCount,
-                          formattedCount: formatCount(attentionCount)
-                        })}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <p className="heartbeat-center__section-empty">
-                  {t('center.latest.empty')}
-                </p>
-              )}
-            </section>
           </div>
         </div>
       )}
 
-      {tab === 'suggestions' && (
+      {pageTab === 'plans' && (
         <div
-          aria-labelledby="heartbeat-tab-suggestions"
           className="heartbeat-center__panel heartbeat-center__suggestions"
           id="heartbeat-panel-suggestions"
-          role="tabpanel"
         >
           <section
             aria-labelledby="heartbeat-memory-title"
@@ -938,7 +795,7 @@ function HeartbeatAutomationSettings({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <h2 id="heartbeat-memory-title">
+                <h2 id="heartbeat-memory-title" tabIndex={-1}>
                   {t('center.suggestions.memoryTitle')}
                 </h2>
               </div>
@@ -1155,12 +1012,10 @@ function HeartbeatAutomationSettings({
         </div>
       )}
 
-      {tab === 'history' && (
+      {pageTab === 'plans' && (
         <div
-          aria-labelledby="heartbeat-tab-history"
-          className="heartbeat-center__panel heartbeat-center__history"
+          className="heartbeat-center__panel"
           id="heartbeat-panel-history"
-          role="tabpanel"
         >
           <section
             aria-labelledby="heartbeat-reports-title"
@@ -1168,7 +1023,7 @@ function HeartbeatAutomationSettings({
           >
             <div className="heartbeat-center__section-heading">
               <div>
-                <h2 id="heartbeat-reports-title">
+                <h2 id="heartbeat-reports-title" tabIndex={-1}>
                   <History aria-hidden="true" size={16} />
                   {t('center.history.timelineTitle')}
                 </h2>
@@ -1262,7 +1117,10 @@ function HeartbeatAutomationSettings({
             )}
           </section>
 
-          <section
+        </div>
+      )}
+
+      {pageTab === 'plans' && <section
             aria-labelledby="heartbeat-runs-title"
             className="heartbeat-center__section"
           >
@@ -1331,28 +1189,8 @@ function HeartbeatAutomationSettings({
                 {t('center.history.loadMoreRuns')}
               </button>
             )}
-          </section>
-        </div>
-      )}
+          </section>}
 
-      {tab === 'plans' && (
-        <div
-          aria-labelledby="heartbeat-tab-plans"
-          className="heartbeat-center__panel heartbeat-center__plans"
-          id="heartbeat-panel-plans"
-          role="tabpanel"
-        >
-          <HeartbeatSettings
-            heartbeats={configs}
-            onCreate={onCreate}
-            onRemove={onRemove}
-            onRunNow={onRunNow}
-            onSetPaused={onSetPaused}
-            onUpdate={onUpdate}
-            projects={projects}
-          />
-        </div>
-      )}
         </>
       )}
     </section>

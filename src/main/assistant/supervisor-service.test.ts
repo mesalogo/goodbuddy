@@ -52,13 +52,21 @@ const output = {
 }
 
 describe('SupervisorService', () => {
+  it('rejects a source alias when it identifies more than one input fragment', async () => {
+    const fragments = [0, 1].map(index => ({ ...evidence[0]!, id: `fragment-${index}`,
+      locator: { source: 'message:shared', start: index, end: index + 1 } }))
+    const service = new SupervisorService({ collect: async () => fragments }, { summarize: async () => ({
+      ...output, entities: [], events: [{ ...output.events[0], entityIds: [], sourceReferenceIds: ['message:shared'] }]
+    }) }, { save: vi.fn() })
+    await expect(service.run(request)).rejects.toThrow('本次范围之外')
+  })
   it('rejects invented persisted identities even when a local model id matches', async () => {
     const id = '00000000-0000-4000-8000-000000000001'
     const save = vi.fn()
     const service = new SupervisorService({ collect: async () => evidence },
       { summarize: async () => ({ ...output, events: [], entities: [{ ...output.entities[0], id, persistedId: id }] }) },
       { candidates: async () => [], save })
-    await expect(service.run(request)).rejects.toThrow('候选集')
+    await expect(service.run(request)).rejects.toThrow('outside KNOWN ENTITIES')
     expect(save).not.toHaveBeenCalled()
   })
   it('shares bounded evidence and stores a validated result', async () => {
