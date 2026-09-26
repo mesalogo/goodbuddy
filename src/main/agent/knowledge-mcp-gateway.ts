@@ -40,6 +40,8 @@ import {
   type ScopedDataToolName
 } from '../../shared/scoped-data-tools'
 import type { KnowledgeService } from '../knowledge/knowledge-service'
+import type { ObsidianService, ObsidianSettings } from '../obsidian/obsidian-service'
+import { obsidianReadToolNames, obsidianWriteToolNames } from '../../shared/obsidian-tools'
 import type {
   MagicNoteDetail,
   MagicNoteEntry,
@@ -199,6 +201,7 @@ type Capability = {
   browserConversationId?: string
   browserTabId?: BrowserTabId
   browserUsageLease?: BrowserTabUsageLease
+  obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' }
   expiresAt: number
   signal: AbortSignal
   brokerController: AbortController
@@ -244,6 +247,7 @@ export type KnowledgeMcpGatewayOptions = {
   now?: () => number
   magicNotesDatabase?: MagicNotesDatabase
   configService?: GoodBuddyConfigService
+  obsidianService?: ObsidianService
   browserService?: BrowserToolService & {
     createTab: BrowserService['createTab']
     listTabs(conversationId: string): BrowserTabSummary[]
@@ -367,11 +371,13 @@ export class KnowledgeMcpGateway {
   >()
   private readonly downstreamMcpCleanups = new Set<Promise<void>>()
   private readonly customMcpCleanups = new Set<Promise<void>>()
+  private readonly activeObsidianCalls = new Set<Promise<CallToolResult>>()
   private readonly now: () => number
   private readonly capabilityTtlMs: number
   private readonly maximumBodyBytes: number
   private readonly magicNotesDatabase?: MagicNotesDatabase
   private readonly configService?: GoodBuddyConfigService
+  private readonly obsidianService?: ObsidianService
   private readonly browserService?: BrowserToolService & {
     createTab: BrowserService['createTab']
     listTabs(conversationId: string): BrowserTabSummary[]
@@ -403,6 +409,7 @@ export class KnowledgeMcpGateway {
     this.now = options.now ?? Date.now
     this.magicNotesDatabase = options.magicNotesDatabase
     this.configService = options.configService
+    this.obsidianService = options.obsidianService
     this.browserService = options.browserService
     this.launchEnvironmentProvider = options.launchEnvironmentProvider
   }
@@ -458,7 +465,8 @@ export class KnowledgeMcpGateway {
     },
     browserConversationId?: string,
     browserTabId?: BrowserTabId,
-    browserUsageLease?: BrowserTabUsageLease
+    browserUsageLease?: BrowserTabUsageLease,
+    obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' }
   ): string | undefined {
     const effectiveMagicNotesAccess = this.magicNotesDatabase
       ? magicNotesAccess
@@ -466,6 +474,7 @@ export class KnowledgeMcpGateway {
     const effectiveConfigAccess = this.configService
       ? config?.access ?? 'none'
       : 'none'
+    const effectiveObsidian = this.obsidianService ? obsidian : undefined
     const effectiveBrowserConversationId = this.browserService
       ? browserConversationId
       : undefined
@@ -506,7 +515,8 @@ export class KnowledgeMcpGateway {
       authorizedLibraryIds.length === 0 &&
       effectiveMagicNotesAccess === 'none' &&
       effectiveConfigAccess === 'none' &&
-      !effectiveBrowserConversationId
+      !effectiveBrowserConversationId &&
+      !effectiveObsidian
     ) {
       return undefined
     }
@@ -518,6 +528,7 @@ export class KnowledgeMcpGateway {
         libraryIds: Object.freeze([...new Set(authorizedLibraryIds)]),
         magicNotesAccess: effectiveMagicNotesAccess,
         configAccess: effectiveConfigAccess,
+        obsidian: effectiveObsidian,
         browserConversationId: effectiveBrowserConversationId,
         browserTabId: effectiveBrowserTabId,
         browserUsageLease: effectiveBrowserUsageLease,
@@ -638,6 +649,14 @@ export class KnowledgeMcpGateway {
     void cleanup.finally(() => {
       this.customMcpCleanups.delete(cleanup)
     })
+  }
+
+  revokeObsidianCapabilities(): void {
+    for (const [token, capability] of this.capabilities) {
+      if (capability.obsidian) {
+        this.revoke(token)
+      }
+    }
   }
 
   private closeDownstreamMcpSession(
@@ -796,6 +815,8 @@ export class KnowledgeMcpGateway {
       ...(capability.configAccess === 'write'
         ? goodbuddyConfigWriteToolNames
         : []),
+      ...(capability.obsidian ? obsidianReadToolNames : []),
+      ...(capability.obsidian?.access === 'write' ? obsidianWriteToolNames : []),
       ...(capability.browserConversationId && capability.browserTabId
         ? browserToolNames
         : [])
@@ -1228,6 +1249,50 @@ export class KnowledgeMcpGateway {
     )
   }
 
+  async callObsidianTool(
+    token: string,
+    name: Extract<ScopedDataToolName, `obsidian_${string}`>,
+    input: unknown,
+    signal?: AbortSignal
+  ): Promise<CallToolResult> {
+    const capability = this.getCapability(token)
+    const definition = scopedDataToolByName.get(name)
+    if (
+      !this.obsidianService ||
+      !capability.obsidian ||
+      !definition ||
+      !name.startsWith('obsidian_') ||
+      (definition.access === 'write' && capability.obsidian.access !== 'write')
+    ) {
+      throw new Error('Obsidian capability is unavailable')
+    }
+    const effectiveSignal = AbortSignal.any([
+      capability.signal,
+      capability.brokerController.signal,
+      ...(signal ? [signal] : [])
+    ])
+    effectiveSignal.throwIfAborted()
+    const parsed = definition.inputSchema.parse(input) as Record<string, unknown>
+    const { vaultId, ...argumentsValue } = parsed
+    const pending = name === 'obsidian_list_vaults'
+      ? this.obsidianService.listVaults(capability.obsidian.settings).then((vaults) => ({
+          content: [{ type: 'text' as const, text: JSON.stringify({ vaults }) }]
+        }))
+      : this.obsidianService.callTool(capability.obsidian.settings, {
+          vaultId: vaultId as string | undefined,
+          name: name.slice('obsidian_'.length),
+          arguments: argumentsValue
+        }, effectiveSignal)
+    this.activeObsidianCalls.add(pending)
+    try {
+      const result = await pending
+      effectiveSignal.throwIfAborted()
+      return ensureBoundedCustomMcpResult(result)
+    } finally {
+      this.activeObsidianCalls.delete(pending)
+    }
+  }
+
   private requireConfig(
     token: string,
     requiredAccess: Exclude<MagicNotesCapabilityAccess, 'none'>
@@ -1513,6 +1578,26 @@ export class KnowledgeMcpGateway {
       case 'goodbuddy_config_plan':
       case 'goodbuddy_config_apply':
         return this.callGoodBuddyConfigTool(token, name, input)
+      case 'obsidian_list_vaults':
+      case 'obsidian_read_note':
+      case 'obsidian_write_note':
+      case 'obsidian_patch_note':
+      case 'obsidian_list_directory':
+      case 'obsidian_delete_note':
+      case 'obsidian_search_notes':
+      case 'obsidian_move_note':
+      case 'obsidian_move_file':
+      case 'obsidian_read_multiple_notes':
+      case 'obsidian_update_frontmatter':
+      case 'obsidian_get_notes_info':
+      case 'obsidian_get_frontmatter':
+      case 'obsidian_manage_tags':
+      case 'obsidian_get_vault_stats':
+      case 'obsidian_list_all_tags':
+      case 'obsidian_wiki_link':
+      case 'obsidian_get_note_outline':
+      case 'obsidian_read_note_lines':
+        return this.callObsidianTool(token, name, input, signal)
     }
   }
 
@@ -1662,18 +1747,20 @@ export class KnowledgeMcpGateway {
                 }]
               }
             }
+            const result = await this.callScopedTool(
+              token,
+              name as ScopedDataToolName,
+              parsedInput.data,
+              extra.signal
+            )
+            if (name.startsWith('obsidian_')) {
+              return result as CallToolResult
+            }
             return {
               content: [
                 {
                   type: 'text' as const,
-                  text: JSON.stringify(
-                    await this.callScopedTool(
-                      token,
-                      name as ScopedDataToolName,
-                      parsedInput.data,
-                      extra.signal
-                    )
-                  )
+                  text: JSON.stringify(result)
                 }
               ]
             }
@@ -1913,6 +2000,7 @@ export class KnowledgeMcpGateway {
     for (const token of [...this.capabilities.keys()]) {
       this.revoke(token)
     }
+    await Promise.allSettled([...this.activeObsidianCalls])
     await Promise.allSettled([...this.downstreamMcpCleanups])
     await Promise.allSettled([...this.customMcpCleanups])
     const server = this.server

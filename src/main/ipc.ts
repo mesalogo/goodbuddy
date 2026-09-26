@@ -127,6 +127,8 @@ import {
   computerCapabilityToggleInputSchema,
   mcpServerIdSchema,
   mcpServerInputSchema,
+  obsidianSettingsSchema,
+  obsidianConnectionTestResultSchema,
   skillAssignmentsInputSchema,
   skillIdSchema,
   skillImportKindSchema,
@@ -136,6 +138,7 @@ import {
   type CapabilitySnapshot,
   type CapabilityDiagnosticReport,
   type McpServerTestResult,
+  type ObsidianSettings,
   type WebSearchTestResult
 } from '../shared/capability-contracts'
 import {
@@ -158,6 +161,7 @@ import {
   agentPackageInventorySchema
 } from '../shared/agent-package-contracts'
 import { assertTrustedSender } from './trusted-ipc-sender'
+import type { ObsidianService } from './obsidian'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
 import type { TerminalSessionManager } from './terminal/terminal-session-manager'
 import { releaseNotesAcknowledgeSchema } from '../shared/release-notes-contracts'
@@ -576,6 +580,7 @@ async function grantScopedDataCapability(input: {
   libraryIds: readonly string[]
   magicNotesAccess: MagicNotesCapabilityAccess
   configAccess?: MagicNotesCapabilityAccess
+  obsidian?: { settings: ObsidianSettings; access: 'read' | 'write' }
   workspacePath?: string
   browserConversationId?: string
   browserTabId?: BrowserTabId
@@ -587,6 +592,7 @@ async function grantScopedDataCapability(input: {
   signal: AbortSignal
 }): Promise<ScopedDataCapability> {
   const enabledServers = new Set(input.enabledServers)
+  const obsidian = enabledServers.has('obsidian') ? input.obsidian : undefined
   const libraryIds = enabledServers.has('knowledge-base')
     ? input.libraryIds
     : []
@@ -604,7 +610,8 @@ async function grantScopedDataCapability(input: {
     (libraryIds.length === 0 &&
       magicNotesAccess === 'none' &&
       configAccess === 'none' &&
-      !browserConversationId)
+      !browserConversationId &&
+      !obsidian)
   ) {
     return { toolNames: [] }
   }
@@ -630,7 +637,19 @@ async function grantScopedDataCapability(input: {
           authorizeApply: input.authorizeConfigApply
         }
       : undefined
-  const token = browserConversationId
+  const token = obsidian
+    ? input.gateway.grant(
+        input.requestId,
+        libraryIds,
+        input.signal,
+        magicNotesAccess,
+        config,
+        browserConversationId,
+        browserTabId,
+        browserUsageLease,
+        obsidian
+      )
+    : browserConversationId
     ? input.gateway.grant(
         input.requestId,
         libraryIds,
@@ -1363,7 +1382,8 @@ export function registerIpcHandlers(
   >,
   terminalSessionManager?: TerminalSessionManager,
   localToolEnvironmentService?: LocalToolEnvironmentService,
-  imageGenerationService?: ImageGenerationService
+  imageGenerationService?: ImageGenerationService,
+  obsidianService?: ObsidianService
 ): () => Promise<void> {
   type ActiveRequestLease = {
     controller: AbortController
@@ -2594,10 +2614,16 @@ export function registerIpcHandlers(
               requestRuntimeTarget
             )
           : builtinMcpServerIdSchema.options.filter(
-              (id) => id !== 'builtin-browser'
+              (id): boolean => id !== 'builtin-browser' && id !== 'obsidian'
             )
         : []
       const notesCapability = await grantScopedDataCapability({
+        obsidian: enabledBuiltinMcpServers.includes('obsidian')
+          ? {
+              settings: await capabilityService.getObsidianSettings(),
+              access: schedule.workMode === 'execute' ? 'write' : 'read'
+            }
+          : undefined,
         gateway: knowledgeGateway,
         browserControl: browserControl as BrowserCapabilityControl | undefined,
         runtime: requestRuntime,
@@ -4178,7 +4204,7 @@ export function registerIpcHandlers(
               selectedRuntimeTarget
             )
           : builtinMcpServerIdSchema.options.filter(
-              (id) => id !== 'builtin-browser'
+              (id): boolean => id !== 'builtin-browser' && id !== 'obsidian'
             )
         : []
     ])
@@ -4211,6 +4237,12 @@ export function registerIpcHandlers(
       : undefined
     const imageToolAvailable = Boolean(await imageToolBinding?.describe())
     const scopedCapability = await grantScopedDataCapability({
+      obsidian: enabledBuiltinMcpServers.includes('obsidian')
+        ? {
+            settings: await capabilityService.getObsidianSettings(),
+            access: enrichedRequest.workMode === 'execute' ? 'write' : 'read'
+          }
+        : undefined,
       gateway: knowledgeGateway,
       browserControl: browserControl as BrowserCapabilityControl | undefined,
       runtime: selectedRuntime,
@@ -8132,10 +8164,46 @@ export function registerIpcHandlers(
   )
 
   registerHandler(
+    ipcChannels.capabilitiesUpdateObsidianSettings,
+    (event, input: unknown): Promise<CapabilitySnapshot> => {
+      assertTrustedSender(event, window)
+      const settings = obsidianSettingsSchema.parse(input)
+      knowledgeGateway?.revokeObsidianCapabilities()
+      return refreshCapabilities(
+        capabilityService.updateObsidianSettings(settings)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.capabilitiesTestObsidianConnection,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      const settings = obsidianSettingsSchema.parse(input)
+      if (!obsidianService) throw new Error('Obsidian 服务不可用')
+      return obsidianConnectionTestResultSchema.parse(
+        await obsidianService.testConnection(settings)
+      )
+    }
+  )
+
+  registerHandler(
+    ipcChannels.capabilitiesSelectObsidianVault,
+    async (event): Promise<string | null> => {
+      assertTrustedSender(event, window)
+      const result = await dialog.showOpenDialog(window, {
+        properties: ['openDirectory']
+      })
+      return result.canceled ? null : result.filePaths[0] ?? null
+    }
+  )
+
+  registerHandler(
     ipcChannels.capabilitiesToggleBuiltinMcp,
     (event, input: unknown): Promise<CapabilitySnapshot> => {
       assertTrustedSender(event, window)
       const value = builtinMcpServerToggleInputSchema.parse(input)
+      if (value.serverId === 'obsidian') knowledgeGateway?.revokeObsidianCapabilities()
       return refreshCapabilities(
         capabilityService.setBuiltinMcpServerEnabled(
           value.serverId,
@@ -8150,6 +8218,7 @@ export function registerIpcHandlers(
     (event, input: unknown): Promise<CapabilitySnapshot> => {
       assertTrustedSender(event, window)
       const value = builtinMcpServerAssignmentsInputSchema.parse(input)
+      if (value.serverId === 'obsidian') knowledgeGateway?.revokeObsidianCapabilities()
       return refreshCapabilities(
         capabilityService.setBuiltinMcpServerAssignments(
           value.serverId,

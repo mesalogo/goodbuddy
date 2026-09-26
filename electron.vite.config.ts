@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import type { Plugin } from 'vite'
+import { packageObsidianMcpVault } from './src/main/obsidian/package-mcpvault'
 
 type ProjectPackage = {
   dependencies?: Record<string, string>
@@ -106,7 +107,16 @@ export default defineConfig({
           'zod'
         ]
       }),
-      deepSeekHarnessBundleManifestPlugin()
+      deepSeekHarnessBundleManifestPlugin(),
+      {
+        name: 'obsidian-mcpvault-package',
+        async writeBundle(options) {
+          await packageObsidianMcpVault(
+            resolve('.'),
+            resolve(options.dir ?? 'out/main', 'obsidian-mcpvault')
+          )
+        }
+      }
     ],
     build: {
       rollupOptions: {

@@ -26,6 +26,7 @@ import type { AgentRuntime } from './agent/runtime'
 import { SelectedRuntimeManager } from './agent/selected-runtime-manager'
 import { LocalRuntimeRegistry } from './agent/local-runtime-registry'
 import { KnowledgeMcpGateway } from './agent/knowledge-mcp-gateway'
+import { ObsidianService } from './obsidian'
 import {
   applyRuntimeSelection,
   getConfiguredRuntimeTarget,
@@ -965,11 +966,17 @@ if (hasSingleInstanceLock) {
       applicationSettingsStore,
       capabilityService
     )
+    const obsidianService = new ObsidianService({
+      appPath: app.getAppPath(),
+      launchEnvironmentProvider:
+        startupLocalToolEnvironmentService.launchEnvironmentProvider
+    })
     const startupKnowledgeGateway = new KnowledgeMcpGateway(
       startupKnowledgeService,
       {
         magicNotesDatabase: startupAssistantDatabase,
         configService: goodbuddyConfigService,
+        obsidianService,
         browserService,
         launchEnvironmentProvider:
           startupLocalToolEnvironmentService.launchEnvironmentProvider
@@ -1477,7 +1484,8 @@ if (hasSingleInstanceLock) {
       startupRemoteAgentServices.connectionManager,
       terminalSessionManager,
       startupLocalToolEnvironmentService,
-      imageGenerationService
+      imageGenerationService,
+      obsidianService
     )
     removeFeedbackIpcHandler = registerFeedbackIpcHandler(
       mainWindow,

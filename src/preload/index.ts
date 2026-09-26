@@ -53,6 +53,7 @@ import type {
   CapabilitySnapshot,
   ComputerCapabilityId,
   McpServerTestResult,
+  ObsidianConnectionTestResult,
   WebSearchTestResult
 } from '../shared/capability-contracts'
 import type {
@@ -1450,6 +1451,12 @@ const desktopApi: DesktopApi = {
         serverId,
         enabled
       }) as Promise<CapabilitySnapshot>,
+    updateObsidianSettings: (input) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesUpdateObsidianSettings, input) as Promise<CapabilitySnapshot>,
+    testObsidianConnection: (input) =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesTestObsidianConnection, input) as Promise<ObsidianConnectionTestResult>,
+    selectObsidianVault: () =>
+      ipcRenderer.invoke(ipcChannels.capabilitiesSelectObsidianVault) as Promise<string | null>,
     setBuiltinMcpServerAssignments: (
       serverId: BuiltinMcpServerId,
       assignments

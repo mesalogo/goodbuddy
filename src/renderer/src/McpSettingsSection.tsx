@@ -12,7 +12,7 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { builtinMcpServers } from '../../shared/builtin-mcp-servers'
@@ -27,6 +27,7 @@ import type {
   McpServerSummary,
   McpServerTestResult,
   McpTransport,
+  ObsidianConnectionTestResult,
   RuntimeTarget,
   WebSearchTestResult
 } from '../../shared/capability-contracts'
@@ -119,6 +120,12 @@ export function McpSettingsSection({
     disabled: t('mcp.diagnosticStatuses.disabled')
   }
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>()
+  const [obsidianPath, setObsidianPath] = useState<string>()
+  const [obsidianResult, setObsidianResult] = useState<ObsidianConnectionTestResult>()
+  const [obsidianError, setObsidianError] = useState<string>()
+  const [obsidianSpecified, setObsidianSpecified] = useState<boolean>()
+  const vaultPath = obsidianPath ?? snapshot?.obsidian?.vaultPath ?? ''
+  const specifiedVault = obsidianSpecified ?? Boolean(snapshot?.obsidian?.vaultPath)
   const [editor, setEditor] = useState<McpEditor>()
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
@@ -310,6 +317,40 @@ export function McpSettingsSection({
     }
   }
 
+  const configureObsidian = async (action: 'save' | 'test' | 'select'): Promise<void> => {
+    setBusy(`obsidian:${action}`)
+    setObsidianError(undefined)
+    try {
+      const api = window.goodbuddy.capabilities
+      if (action === 'select') {
+        const path = await api.selectObsidianVault()
+        if (path !== null) {
+          setObsidianPath(path)
+          setObsidianSpecified(true)
+          setObsidianResult(undefined)
+        }
+      } else {
+        const input = { vaultPath: specifiedVault ? vaultPath.trim() : '' }
+        if (specifiedVault && !input.vaultPath) {
+          throw new Error(t('mcp.obsidian.folderRequired'))
+        }
+        if (action === 'save') {
+          const next = await api.updateObsidianSettings(input)
+          setSnapshot(next)
+          setObsidianPath(undefined)
+          setObsidianSpecified(undefined)
+        } else {
+          setObsidianResult(undefined)
+          setObsidianResult(await api.testObsidianConnection(input))
+        }
+      }
+    } catch (reason) {
+      setObsidianError(reason instanceof Error ? reason.message : t('mcp.errors.operation'))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
   const updateAssignment = (
     target: RuntimeTarget,
     checked: boolean
@@ -373,13 +414,13 @@ export function McpSettingsSection({
     trapTabFocus(event, editorDialogRef.current)
   }
 
-  const computerCapabilities = snapshot?.computerCapabilities ?? []
-  const desktopCapabilities = computerCapabilities.filter(
+  const computerCapabilities = useMemo(() => snapshot?.computerCapabilities ?? [], [snapshot?.computerCapabilities])
+  const desktopCapabilities = useMemo(() => computerCapabilities.filter(
     (capability) => capability.id !== 'host-browser-control'
-  )
-  const builtinMcpStates = new Map(
+  ), [computerCapabilities])
+  const builtinMcpStates = useMemo(() => new Map(
     snapshot?.builtinMcpServers?.map((server) => [server.id, server])
-  )
+  ), [snapshot?.builtinMcpServers])
   const webSearch = snapshot?.webSearch ?? {
     provider: 'exa' as const,
     enabled: true,
@@ -614,7 +655,7 @@ export function McpSettingsSection({
             const panelId = `mcp-server-tools-${server.id}`
             const state = builtinMcpStates.get(server.id) ?? {
               id: server.id,
-              enabled: server.id !== 'builtin-browser',
+              enabled: server.id !== 'builtin-browser' && server.id !== 'obsidian',
               assignments:
                 [...server.supportedAssignments] as CapabilityAssignments
             }
@@ -649,6 +690,8 @@ export function McpSettingsSection({
                           ? t('mcp.browser.unsupported')
                         : !featureAvailable
                           ? t('mcp.builtin.serverSummaryDisabled')
+                          : server.id === 'obsidian'
+                            ? t('mcp.obsidian.access')
                           : server.id === 'builtin-browser'
                             ? t('mcp.builtin.serverSummaryExecuteOnly')
                           : server.access === 'mixed'
@@ -681,7 +724,63 @@ export function McpSettingsSection({
                       : t('mcp.builtin.disabled')}
                   </span>
                 </label>
-                <p>{server.description}</p>
+                <p>{server.id === 'obsidian' ? t('mcp.obsidian.description') : server.description}</p>
+                {server.id === 'obsidian' && (
+                  <div className="capability-diagnostic capability-diagnostic--obsidian">
+                    <label className="field">
+                      <span>{t('mcp.obsidian.scope')}</span>
+                      <select
+                        disabled={Boolean(busy) || !snapshot}
+                        value={specifiedVault ? 'folder' : 'all'}
+                        onChange={(event) => {
+                          setObsidianSpecified(event.target.value === 'folder')
+                          setObsidianResult(undefined)
+                          setObsidianError(undefined)
+                        }}
+                      >
+                        <option value="all">{t('mcp.obsidian.all')}</option>
+                        <option value="folder">{t('mcp.obsidian.folder')}</option>
+                      </select>
+                    </label>
+                    {specifiedVault && (
+                      <label className="field">
+                        <span>{t('mcp.obsidian.path')}</span>
+                        <input
+                          aria-describedby={obsidianError ? 'obsidian-settings-error' : undefined}
+                          disabled={Boolean(busy)}
+                          maxLength={4096}
+                          value={vaultPath}
+                          onChange={(event) => {
+                            setObsidianPath(event.target.value)
+                            setObsidianResult(undefined)
+                            setObsidianError(undefined)
+                          }}
+                        />
+                      </label>
+                    )}
+                    <p>{t('mcp.obsidian.scopeHelp')}</p>
+                    <p>{t('mcp.obsidian.savedScope', { path: snapshot?.obsidian?.vaultPath || t('mcp.obsidian.all') })}</p>
+                    <div className="capability-card__actions">
+                      <button className="secondary-button" disabled={Boolean(busy) || !snapshot} onClick={() => void configureObsidian('select')} type="button">
+                        {t('mcp.obsidian.select')}
+                      </button>
+                      <button className="secondary-button" disabled={Boolean(busy) || !snapshot} onClick={() => void configureObsidian('test')} type="button">
+                        {busy === 'obsidian:test' ? t('mcp.obsidian.testing') : t('mcp.obsidian.test')}
+                      </button>
+                      <button className="primary-button" disabled={Boolean(busy) || !snapshot} onClick={() => void configureObsidian('save')} type="button">
+                        {busy === 'obsidian:save' ? t('mcp.editor.saving') : t('mcp.editor.save')}
+                      </button>
+                    </div>
+                    {obsidianError && <p className="settings-warning" id="obsidian-settings-error" role="alert">{obsidianError}</p>}
+                    {obsidianResult && (
+                      <div className="capability-diagnostic__result" role="status">
+                        <strong>{t('mcp.obsidian.result', { vaults: obsidianResult.vaults.length, tools: obsidianResult.toolCount })}</strong>
+                        {obsidianResult.vaults.length === 0 && <p>{t('mcp.obsidian.empty')}</p>}
+                        {obsidianResult.vaults.map((vault) => <p key={vault.id}>{vault.name}: <code>{vault.path}</code></p>)}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {!featureAvailable && (
                   <p className="computer-capability-risk">
                     <CircleAlert aria-hidden="true" size={13} />

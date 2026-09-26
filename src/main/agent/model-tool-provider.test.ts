@@ -19,6 +19,7 @@ import {
   type WorkspaceAccess
 } from '../workspace'
 import type { KnowledgeMcpGateway } from './knowledge-mcp-gateway'
+import { scopedDataToolByName } from '../../shared/scoped-data-tools'
 import {
   LocalDirectModelProcessService,
   type DirectModelProcessService,
@@ -1008,29 +1009,13 @@ describe('ModelToolProvider', () => {
     })
   })
 
-  it('reserves all scoped data tool slots for Execute', async () => {
+  it('reserves the granted scoped data tool slots for Execute', async () => {
     const workspace = await createWorkspace()
     const gateway = {
       listLibraries: vi.fn(() => []),
       search: vi.fn(async () => []),
       searchMagicNotes: vi.fn(() => []),
-      getAvailableToolNames: vi.fn(() => [
-        'knowledge_list',
-        'knowledge_search',
-        'note_list',
-        'note_get',
-        'note_search',
-        'note_create',
-        'note_update',
-        'note_entry_create',
-        'note_entry_update',
-        'note_entry_delete',
-        'note_delete',
-        'goodbuddy_config_capabilities',
-        'goodbuddy_config_get',
-        'goodbuddy_config_plan',
-        'goodbuddy_config_apply'
-      ])
+      getAvailableToolNames: vi.fn(() => [...scopedDataToolByName.keys()])
     } as unknown as KnowledgeMcpGateway
     const context = {
       conversationId: 'knowledge-capacity',
@@ -1050,7 +1035,7 @@ describe('ModelToolProvider', () => {
       }))
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(81)
+      tools: createTools(100 - 4 - scopedDataToolByName.size)
     })
     const validProvider = new ModelToolProvider(
       workspace,
@@ -1066,7 +1051,7 @@ describe('ModelToolProvider', () => {
     await validProvider.dispose()
 
     mocks.client.listTools.mockResolvedValueOnce({
-      tools: createTools(82)
+      tools: createTools(100 - 4 - scopedDataToolByName.size + 1)
     })
     const overflowingProvider = new ModelToolProvider(
       workspace,
@@ -1081,8 +1066,75 @@ describe('ModelToolProvider', () => {
         context,
         new AbortController().signal
       )
-    ).resolves.toHaveLength(19)
+    ).resolves.toHaveLength(4 + scopedDataToolByName.size)
     await overflowingProvider.dispose()
+  })
+
+  it('rechecks cached and refreshed MCP catalogs against each request scope without shrinking the cache', async () => {
+    const gateway = {
+      getAvailableToolNames: vi.fn(() => [...scopedDataToolByName.keys()])
+    } as unknown as KnowledgeMcpGateway
+    const provider = new ModelToolProvider(await createWorkspace(), [createMcpServer(true)],
+      undefined, gateway, false, { ripgrepExecutablePath: rgPath })
+    const unscoped = { ...toolContext, runtimeTarget: 'model' as const }
+    const scoped = { ...unscoped, knowledgeCapabilityToken: 'scoped' }
+    const signal = new AbortController().signal
+    const catalog = (count: number) => ({ tools: Array.from({ length: count }, (_, index) => ({
+      name: `remote_${index}`, inputSchema: { type: 'object' }
+    })) })
+    mocks.client.getServerCapabilities.mockReturnValue({ tools: { listChanged: true } })
+    mocks.client.listTools.mockResolvedValue(catalog(90))
+    try {
+      // Start with the narrower request to ensure it cannot poison later discovery.
+      await expect(provider.listTools(scoped, signal)).resolves.toHaveLength(4 + scopedDataToolByName.size)
+      const tools = await provider.listTools(unscoped, signal)
+      expect(tools).toHaveLength(94)
+      const name = tools.find((tool) => tool.source === 'mcp')!.name
+      await expect(provider.listTools(scoped, signal)).resolves.toHaveLength(4 + scopedDataToolByName.size)
+      await expect(provider.callTool(name, {}, signal, scoped)).rejects.toThrow('未知工具')
+      await expect(provider.listTools(unscoped, signal)).resolves.toHaveLength(94)
+      await expect(provider.callTool(name, {}, signal, unscoped)).resolves.toBeDefined()
+      expect(mocks.client.connect).toHaveBeenCalledOnce()
+      expect(mocks.client.listTools).toHaveBeenCalledOnce()
+
+      const options = mocks.Client.mock.calls[0]![1] as {
+        listChanged: { tools: { onChanged(error: Error | null): void } }
+      }
+      mocks.client.listTools.mockResolvedValue(catalog(96))
+      options.listChanged.tools.onChanged(null)
+      await expect(provider.listTools(scoped, signal)).resolves.toHaveLength(4 + scopedDataToolByName.size)
+      await expect(provider.listTools(unscoped, signal)).resolves.toHaveLength(100)
+      expect(mocks.client.listTools).toHaveBeenCalledTimes(2)
+
+      mocks.client.listTools.mockResolvedValue(catalog(100 - 4 - scopedDataToolByName.size))
+      options.listChanged.tools.onChanged(null)
+      await expect(provider.listTools(scoped, signal)).resolves.toHaveLength(100)
+      expect(mocks.client.connect).toHaveBeenCalledOnce()
+    } finally {
+      await provider.dispose()
+    }
+  })
+
+  it('enforces the aggregate MCP limit when a cached catalog gains scoped tools', async () => {
+    const gateway = {
+      getAvailableToolNames: vi.fn(() => [...scopedDataToolByName.keys()])
+    } as unknown as KnowledgeMcpGateway
+    mocks.client.listTools.mockResolvedValue({ tools: Array.from({ length: 40 }, (_, index) => ({
+      name: `remote_${index}`, inputSchema: { type: 'object' }
+    })) })
+    const provider = new ModelToolProvider(await createWorkspace(), [
+      createMcpServer(), { ...createMcpServer(), id: 'second', name: 'Second' }
+    ], undefined, gateway)
+    const signal = new AbortController().signal
+    try {
+      await expect(provider.listTools(toolContext, signal)).resolves.toHaveLength(82)
+      await expect(provider.listTools({ ...toolContext, knowledgeCapabilityToken: 'scoped' }, signal))
+        .rejects.toThrow('100')
+      await expect(provider.listTools(toolContext, signal)).resolves.toHaveLength(82)
+      expect(mocks.client.listTools).toHaveBeenCalledTimes(2)
+    } finally {
+      await provider.dispose()
+    }
   })
 
   it('loads every paginated MCP tool before exposing the catalog', async () => {
@@ -2149,6 +2201,38 @@ describe('ModelToolProvider', () => {
         toolContext
       )
     ).rejects.toThrow(message)
+  })
+
+  it.each([false, true])('preserves bounded native MCP error text (wrapped: %s)', async (wrapped) => {
+    mocks.client.listTools.mockResolvedValue({ tools: [{ name: 'read', inputSchema: { type: 'object' } }] })
+    const provider = new ModelToolProvider(await createWorkspace(), [createMcpServer()])
+    const signal = new AbortController().signal
+    try {
+      const tools = await provider.listTools(toolContext, signal)
+      const name = tools.find((tool) => tool.source === 'mcp')!.name
+      for (const detail of ['File not found: note.md', '\u4e2d'.repeat(100_000), '']) {
+        const result = { isError: true, content: [
+          { type: 'text', text: detail }, { type: 'text', text: 'Use list_directory.' }
+        ] }
+        mocks.client.callTool.mockResolvedValue(wrapped ? { toolResult: result } : result)
+        const error = await provider.callTool(name, {}, signal, toolContext).catch((reason: unknown) => reason)
+        expect(error).toBeInstanceOf(Error)
+        const message = (error as Error).message
+        expect(message).toContain('MCP Server')
+        expect(Buffer.byteLength(message)).toBeLessThanOrEqual(256 * 1024)
+        if (Buffer.byteLength(detail) > 256 * 1024) {
+          expect(message).toContain(detail.slice(0, 100))
+          expect(message).toContain('[GoodBuddy result truncated]')
+          expect(message).not.toContain('\ufffd')
+        } else {
+          expect(message).toContain(`${detail}\nUse list_directory.`)
+        }
+      }
+      mocks.client.callTool.mockResolvedValue({ isError: true, content: [] })
+      await expect(provider.callTool(name, {}, signal, toolContext)).rejects.toThrow('MCP Server')
+    } finally {
+      await provider.dispose()
+    }
   })
 
   it('counts encoded and decoded image data against the MCP result budget', async () => {

@@ -581,6 +581,17 @@ records are listed separately and do not introduce another feature status.
   DeepSeek Harness unsupported. Built-in MCP uses short-lived local authority
   for the current request, and user configuration cannot loosen Ask/Execute
   read/write boundaries.
+- **Obsidian integration (implemented in source, acceptance in progress)**:
+  Disabled by default, with all locally registered vaults as the default scope
+  and an optional folder that can be tested before saving or enabling.
+  Bundled MCPVault 0.16.0 provides all upstream abilities through 19 shared tools.
+  Automated production-component checks, Electron managed-Node tests, Windows
+  settings and chat UI checks, and restricted-network Windows x64 unpacked-app
+  checks passed. Physical-offline, installer, and other-platform acceptance
+  remain pending. DeepSeek
+  Harness and remote execution remain unavailable. See the
+  [feature docs and validation record](./docs/features/obsidian/README.md);
+  this is not a release claim.
 - [x] **MCP Tools**: Explicitly enabled custom MCP can be assigned to direct
   models, GoodBuddy-managed OpenCode, Continue Agent Execute, and DeepSeek
   Harness, and loads only in Execute. Agent child processes receive only

@@ -103,6 +103,13 @@ npm run build
 
 中间构建输出位于 `out`。该目录为生成内容，应修改源文件后重新构建，不要直接编辑。
 
+Obsidian 接入的构建钩子将锁定的 npm `@bitbonsai/mcpvault@0.16.0` 及递归运行依赖、
+许可证和原生辅助资源复制到 `out/main/obsidian-mcpvault`，桌面打包时解包到
+`app.asar.unpacked`。运行时复用现有工具执行环境的 Node，不执行在线 npm 安装。
+生产组件自动化、Electron 托管 Node、Windows 设置与聊天 UI，以及受限网络下的
+Windows x64 解包应用已验证；物理断网、安装器及其他系统验收待完成。
+验证记录见 [Obsidian 进度](./docs/features/obsidian/progress.md)。
+
 ## 图标生成
 
 应用图标源文件位于 `icons`。修改源图或图标处理逻辑后运行：

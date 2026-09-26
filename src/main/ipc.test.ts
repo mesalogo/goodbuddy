@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type {} from '@testing-library/jest-dom/vitest'
 import { EventEmitter } from 'node:events'
 import {
   mkdtemp,
+  mkdir,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { ipcChannels } from '../shared/ipc-channels'
 import type {
   AssistantProject,
@@ -36,6 +39,9 @@ import { KnowledgeService } from './knowledge/knowledge-service'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import { BrowserNavigationStoppedError } from './browser/browser-service'
 import { RemotePromptCancelledError } from './agent/acp-remote-runtime'
+import { CapabilityService } from './capabilities/capability-service'
+import { ObsidianService } from './obsidian'
+import { packageObsidianMcpVault } from './obsidian/package-mcpvault'
 import {
   registerIpcHandlers,
   sendRemoteEnvironmentUpdateProgress,
@@ -5109,7 +5115,8 @@ describe('registerIpcHandlers agent terminal state', () => {
     browserControl?: Record<string, unknown>,
     imageService?: ImageGenerationService,
     imageDatabase?: AssistantDatabase,
-    heartbeatEnabled?: boolean
+    heartbeatEnabled?: boolean,
+    obsidianService?: ObsidianService
   ) {
     const assistantDatabase = {
       createTask: vi.fn(),
@@ -5340,6 +5347,7 @@ describe('registerIpcHandlers agent terminal state', () => {
       goodbuddyConfigService as never
     ]
     args[43] = imageService
+    args[44] = obsidianService
     const dispose = registerIpcHandlers(...args)
     return {
       approvalBroker,
@@ -8626,6 +8634,178 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally {
       finish!()
       await harness.dispose()
+    }
+  })
+
+  it('tests an unsaved Obsidian UI draft through registered IPC and bundled MCPVault, then saves and refreshes', async () => {
+    const { createElement } = await import('react')
+    const { render, fireEvent, waitFor, cleanup } = await import('@testing-library/react/pure')
+    // Load the renderer at test runtime without pulling its JSX project into the Node typecheck.
+    const rendererModule = '../renderer/src/McpSettingsSection'
+    const { McpSettingsSection } = await import(rendererModule) as {
+      McpSettingsSection: import('react').ComponentType<{ onOpenImageModelSettings: () => void }>
+    }
+    const { default: i18n } = await import('i18next')
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-ipc-obsidian-'))
+    let harness: ReturnType<typeof createHarness> | undefined
+    try {
+      const vaultPath = join(root, 'Draft Vault')
+      await mkdir(vaultPath)
+      await writeFile(join(vaultPath, 'existing.md'), '# Keep this note\n')
+      const appPath = join(root, 'app.asar')
+      await packageObsidianMcpVault(process.cwd(), join(root, 'app.asar.unpacked', 'out', 'main', 'obsidian-mcpvault'))
+      const service = new ObsidianService({
+        appPath,
+        launchEnvironmentProvider: () => ({ PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? process.env.Path ?? ''}` })
+      })
+      const capabilities = new CapabilityService(
+        join(root, 'capabilities.json'), join(root, 'builtin'), join(root, 'imported'),
+        { isAvailable: () => true, encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() }
+      )
+      harness = createHarness(
+        { capability: 'chat' }, undefined, 'always', undefined, false,
+        undefined, undefined, undefined, false, undefined,
+        {
+          getSnapshot: capabilities.getSnapshot.bind(capabilities),
+          updateObsidianSettings: capabilities.updateObsidianSettings.bind(capabilities)
+        },
+        undefined, undefined, undefined, undefined, service
+      )
+      const event = trustedEvent(harness.webContents)
+      const test = electronMocks.handlers.get(ipcChannels.capabilitiesTestObsidianConnection)!
+      const save = electronMocks.handlers.get(ipcChannels.capabilitiesUpdateObsidianSettings)!
+      const pick = electronMocks.handlers.get(ipcChannels.capabilitiesSelectObsidianVault)!
+      expect(test).toBeTypeOf('function')
+      expect(save).toBeTypeOf('function')
+      expect(pick).toBeTypeOf('function')
+
+      // Replace only Electron transport; UI, handlers, persistence and MCPVault are real.
+      const invoke = async (channel: string, input?: unknown) =>
+        electronMocks.handlers.get(channel)!(event, input)
+      vi.stubGlobal('goodbuddy', { capabilities: {
+        getSnapshot: () => invoke(ipcChannels.capabilitiesSnapshot),
+        testObsidianConnection: (input: unknown) => invoke(ipcChannels.capabilitiesTestObsidianConnection, input),
+        updateObsidianSettings: (input: unknown) => invoke(ipcChannels.capabilitiesUpdateObsidianSettings, input),
+        selectObsidianVault: () => invoke(ipcChannels.capabilitiesSelectObsidianVault)
+      } })
+      const view = render(createElement(McpSettingsSection, { onOpenImageModelSettings: vi.fn() }))
+      const testButton = view.getByRole('button', { name: i18n.t('integrations:mcp.obsidian.test') })
+      await waitFor(() => expect(testButton).toBeEnabled())
+      fireEvent.change(view.getByRole('combobox', { name: i18n.t('integrations:mcp.obsidian.scope') }), { target: { value: 'folder' } })
+      const pathInput = view.getByRole('textbox', { name: i18n.t('integrations:mcp.obsidian.path') })
+      fireEvent.change(pathInput, { target: { value: vaultPath } })
+      fireEvent.click(testButton)
+      await waitFor(() => {
+        expect(view.getByText(vaultPath)).toBeVisible()
+        expect(testButton).toBeEnabled()
+      }, { timeout: 10_000 })
+      expect(await capabilities.getObsidianSettings()).toEqual({ vaultPath: '' })
+      expect(harness.onRuntimeSettingsChanged).not.toHaveBeenCalled()
+      expect(await readdir(vaultPath)).toEqual(['existing.md'])
+      expect(await readFile(join(vaultPath, 'existing.md'), 'utf8')).toBe('# Keep this note\n')
+
+      electronMocks.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [join(root, 'Cancelled Vault')] })
+      const pickButton = view.getByRole('button', { name: i18n.t('integrations:mcp.obsidian.select') })
+      fireEvent.click(pickButton)
+      await waitFor(() => {
+        expect(electronMocks.showOpenDialog).toHaveBeenCalledOnce()
+        expect(pickButton).toBeEnabled()
+        expect(pathInput).toHaveValue(vaultPath)
+      })
+      electronMocks.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [vaultPath] })
+      await expect(pick(event)).resolves.toBe(vaultPath)
+      expect(electronMocks.showOpenDialog).toHaveBeenLastCalledWith(
+        expect.objectContaining({ webContents: harness.webContents }), { properties: ['openDirectory'] }
+      )
+      expect(await capabilities.getObsidianSettings()).toEqual({ vaultPath: '' })
+
+      fireEvent.click(view.getByRole('button', { name: i18n.t('integrations:mcp.editor.save') }))
+      await waitFor(() => {
+        expect(view.getByText(i18n.t('integrations:mcp.obsidian.savedScope', { path: vaultPath }))).toBeVisible()
+        expect(testButton).toBeEnabled()
+      })
+      expect(harness.onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+      harness.onRuntimeSettingsChanged.mockClear()
+      await expect(save(event, { vaultPath: `  ${vaultPath}  ` })).resolves.toMatchObject({
+        obsidian: { vaultPath },
+        builtinMcpServers: expect.arrayContaining([expect.objectContaining({ id: 'obsidian', enabled: false })])
+      })
+      expect(await capabilities.getObsidianSettings()).toEqual({ vaultPath })
+      expect(harness.onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+      await expect(test(event, { vaultPath: join(root, 'missing') })).rejects.toThrow('missing or inaccessible')
+      expect(await capabilities.getObsidianSettings()).toEqual({ vaultPath })
+      expect(harness.onRuntimeSettingsChanged).toHaveBeenCalledOnce()
+      expect(() => save(event, { vaultPath: 42 })).toThrow()
+      await expect(test(event, { vaultPath: 42 })).rejects.toThrow()
+      const untrustedEvent = { ...event, sender: { ...harness.webContents, id: 99 } }
+      expect(() => save(untrustedEvent, { vaultPath })).toThrow('拒绝来自未知窗口的 IPC 请求')
+      await expect(test(untrustedEvent, { vaultPath })).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+      await expect(pick(untrustedEvent)).rejects.toThrow('拒绝来自未知窗口的 IPC 请求')
+    } finally {
+      cleanup()
+      vi.unstubAllGlobals()
+      await harness?.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each([
+    { enabled: false, assigned: true, workMode: 'ask' as const, access: undefined },
+    { enabled: true, assigned: false, workMode: 'execute' as const, access: undefined },
+    { enabled: true, assigned: true, workMode: 'ask' as const, access: 'read' },
+    { enabled: true, assigned: true, workMode: 'execute' as const, access: 'write' }
+  ])('routes Obsidian request grants with saved settings: %j', async ({ enabled, assigned, workMode, access }) => {
+    const root = await mkdtemp(join(tmpdir(), 'goodbuddy-ipc-obsidian-grant-'))
+    let harness: ReturnType<typeof createHarness> | undefined
+    try {
+      const capabilities = new CapabilityService(
+        join(root, 'capabilities.json'), join(root, 'builtin'), join(root, 'imported'),
+        { isAvailable: () => true, encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() }
+      )
+      const settings = { vaultPath: join(root, 'Saved Vault') }
+      await capabilities.updateObsidianSettings(settings)
+      if (enabled) await capabilities.setBuiltinMcpServerEnabled('obsidian', true)
+      if (!assigned) await capabilities.setBuiltinMcpServerAssignments('obsidian', ['continue'])
+      const received: AgentExecutionRequest[] = []
+      const gateway = {
+        grant: vi.fn(() => 'obsidian-capability'),
+        getAvailableToolNames: vi.fn(() => ['obsidian_list_vaults']),
+        drainReferences: vi.fn(() => []),
+        revoke: vi.fn()
+      }
+      const getObsidianSettings = vi.fn(() => capabilities.getObsidianSettings())
+      harness = createHarness({
+        runtimeId: 'model', capability: 'chat', supportsToolExecution: true,
+        async *run(request: AgentExecutionRequest) {
+          received.push(request)
+          yield { requestId: request.requestId, type: 'done' }
+        }
+      }, undefined, 'always', undefined, false, undefined, undefined, gateway, false, undefined, {
+        getEnabledBuiltinMcpServerIds: capabilities.getEnabledBuiltinMcpServerIds.bind(capabilities),
+        getObsidianSettings
+      })
+      const requestId = '00000000-0000-4000-8000-000000000026'
+      await harness.handler!(trustedEvent(harness.webContents), {
+        requestId, conversationId: 'obsidian-grant', prompt: 'List my vaults', workMode, knowledgeLibraryIds: []
+      })
+      await vi.waitFor(() => expect(harness!.assistantDatabase.updateTaskStatus).toHaveBeenCalledWith(requestId, 'completed'))
+      expect(received).toHaveLength(1)
+      if (access) {
+        expect(gateway.grant).toHaveBeenCalledExactlyOnceWith(
+          requestId, [], expect.any(AbortSignal), 'none', undefined, undefined, undefined, undefined,
+          { settings, access }
+        )
+        expect(received[0]?.knowledgeCapabilityToken).toBe('obsidian-capability')
+        expect(getObsidianSettings).toHaveBeenCalledOnce()
+        expect(gateway.revoke).toHaveBeenCalledWith('obsidian-capability')
+      } else {
+        expect(gateway.grant).not.toHaveBeenCalled()
+        expect(getObsidianSettings).not.toHaveBeenCalled()
+        expect(received[0]?.knowledgeCapabilityToken).toBeUndefined()
+      }
+    } finally {
+      await harness?.dispose()
+      await rm(root, { recursive: true, force: true })
     }
   })
 

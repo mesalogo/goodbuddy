@@ -143,6 +143,22 @@ export const integrations = {
     save: '保存通道设置'
   },
   mcp: {
+    obsidian: {
+      access: '读取与写入',
+      description: '读取、搜索和管理本机 Obsidian 仓库中的笔记、目录、标签与附件。',
+      scope: 'Obsidian 仓库范围',
+      all: '所有已注册的本机仓库',
+      folder: '指定文件夹',
+      path: 'Obsidian 仓库文件夹',
+      scopeHelp: '所有仓库从本机 Obsidian 注册信息中发现；指定文件夹则仅使用该仓库。有多个仓库时，工具调用必须明确指定仓库 ID。',
+      savedScope: '已保存范围：{{path}}',
+      select: '选择仓库文件夹',
+      test: '测试 Obsidian 连接',
+      testing: '正在测试 Obsidian 连接…',
+      folderRequired: '请选择或填写仓库文件夹。',
+      result: '发现 {{vaults}} 个仓库 · {{tools}} 个可用工具',
+      empty: '未找到本机仓库。请在 Obsidian 中打开仓库，或选择其文件夹。'
+    },
     title: 'MCP',
     description: '查看内置工具、内置 MCP，并管理外部 MCP Server',
     runtimeLabels: {

@@ -6,7 +6,6 @@ import { builtinModelTools } from '../../shared/builtin-model-tools'
 import {
   goodbuddyConfigWriteToolNames,
   magicNoteWriteToolNames,
-  maximumScopedToolCount,
   scopedDataToolByName,
   scopedReadToolNames,
   type ScopedDataToolName
@@ -121,7 +120,7 @@ const scopedToolJsonSchemas = new Map(
   [...scopedDataToolByName].map(([name, definition]) => {
     const schema = z.toJSONSchema(
       definition.inputSchema,
-      { target: 'draft-7' }
+      { target: 'draft-7', io: 'input' }
     ) as Record<string, unknown>
     Reflect.deleteProperty(schema, '$schema')
     return [name, schema] as const
@@ -539,7 +538,15 @@ function normalizeMcpResult(result: unknown): ModelToolResult {
   }
   const record = result as Record<string, unknown>
   if (record.isError === true) {
-    throw new Error('MCP Server 报告工具执行失败')
+    const detail = Array.isArray(record.content)
+      ? record.content.slice(0, MAX_MCP_CONTENT_BLOCKS).flatMap((item) =>
+          item?.type === 'text' && typeof item.text === 'string' ? [item.text] : []
+        ).join('\n')
+      : ''
+    const message = `MCP Server 报告工具执行失败${detail ? `\n${detail}` : ''}`
+    throw new Error(Buffer.byteLength(message) > MAX_TOOL_RESULT_BYTES
+      ? utf8Prefix(message, MAX_TOOL_RESULT_BYTES - Buffer.byteLength(TOOL_RESULT_TRUNCATION_MARKER)) + TOOL_RESULT_TRUNCATION_MARKER
+      : message)
   }
   if ('toolResult' in record) {
     if (
@@ -734,7 +741,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
     return tools
   }
 
-  private getReservedToolCount(): number {
+  private getReservedToolCount(scopedToolCount = 0): number {
     return (
       this.getBuiltinTools().length +
       (this.browserService ? browserToolNames.length : 0) +
@@ -743,7 +750,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       (this.programming.subagentService ? 1 : 0) +
       (this.programming.ripgrepExecutablePath || this.programming.processService || this.programming.subagentService
         ? 1 : 0) +
-      (this.knowledgeGateway ? maximumScopedToolCount : 0)
+      scopedToolCount
     )
   }
 
@@ -1097,6 +1104,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
 
   private async getMcpBindings(
     signal: AbortSignal,
+    scopedToolCount: number,
     refreshDynamic = false
   ): Promise<Map<string, McpToolBinding>> {
     signal.throwIfAborted()
@@ -1162,8 +1170,12 @@ export class ModelToolProvider implements ModelToolProviderLike {
     }
     signal.throwIfAborted()
     const bindings = new Map<string, McpToolBinding>()
-    const reservedToolCount = this.getReservedToolCount()
+    const reservedToolCount = this.getReservedToolCount(scopedToolCount)
     for (const connection of connections) {
+      // Cached catalogs are shared; a request's grant must not shrink the cache.
+      if (connection.tools.length > MAX_MODEL_TOOLS - reservedToolCount) {
+        continue
+      }
       for (const binding of connection.tools) {
         if (bindings.size + reservedToolCount >= MAX_MODEL_TOOLS) {
           throw new Error('直连模型工具总数超过 100 个安全限制')
@@ -1260,7 +1272,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       ]
     }
     const processTools = await this.getProcessTool(context, signal)
-    const bindings = await this.getMcpBindings(signal, true)
+    const bindings = await this.getMcpBindings(signal, scopedTools.length, true)
     const browserTools = this.getBrowserTools(context)
     return [
       ...workspaceTools,
@@ -1394,6 +1406,17 @@ export class ModelToolProvider implements ModelToolProviderLike {
   ): Promise<ModelToolResult> {
     signal.throwIfAborted()
     assertToolAuthorizedForWorkMode(name, context)
+    if (name.startsWith('obsidian_') && scopedDataToolByName.has(name as ScopedDataToolName)) {
+      if (!this.knowledgeGateway || !context.knowledgeCapabilityToken) {
+        throw new Error('Obsidian 工具授权不可用')
+      }
+      return normalizeMcpResult(await this.knowledgeGateway.callObsidianTool(
+        context.knowledgeCapabilityToken,
+        name as Extract<ScopedDataToolName, `obsidian_${string}`>,
+        argumentsValue,
+        signal
+      ))
+    }
     if (name === 'generate_image') {
       if (!context.imageToolBinding || !context.toolCallId) throw new Error('Image tool request binding is unavailable')
       return createTextToolResult(JSON.stringify(await context.imageToolBinding.call(argumentsValue, context.toolCallId, signal)))

@@ -154,6 +154,22 @@ export const integrations = {
     save: 'Save channel settings'
   },
   mcp: {
+    obsidian: {
+      access: 'Read and write',
+      description: 'Read, search, and manage notes, folders, tags, and attachments in local Obsidian vaults.',
+      scope: 'Obsidian vault scope',
+      all: 'All registered local vaults',
+      folder: 'Specified folder',
+      path: 'Obsidian vault folder',
+      scopeHelp: 'All vaults uses the local Obsidian registry. A specified folder selects one vault. When multiple vaults are available, tools require an explicit vault ID.',
+      savedScope: 'Saved scope: {{path}}',
+      select: 'Choose vault folder',
+      test: 'Test Obsidian connection',
+      testing: 'Testing Obsidian connection…',
+      folderRequired: 'Choose or enter a vault folder.',
+      result: '{{vaults}} vaults discovered · {{tools}} tools available',
+      empty: 'No local vaults found. Open a vault in Obsidian or choose its folder.'
+    },
     title: 'MCP',
     description:
       'View built-in tools and MCP servers, and manage external MCP servers',

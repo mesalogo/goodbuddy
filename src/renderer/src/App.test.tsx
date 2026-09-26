@@ -731,39 +731,55 @@ const api: DesktopApi = {
     getSnapshot: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     importSkill: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     removeSkill: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     setSkillEnabled: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     setSkillAssignments: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     setBuiltinMcpServerEnabled: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     setBuiltinMcpServerAssignments: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     saveMcpServer: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
     removeMcpServer: vi.fn(async () => ({
       skills: [],
       mcpServers: [],
+      obsidian: { vaultPath: "" },
     })),
+    updateObsidianSettings: vi.fn(async (obsidian) => ({
+      skills: [],
+      mcpServers: [],
+      obsidian,
+    })),
+    testObsidianConnection: vi.fn(async () => ({ vaults: [], toolCount: 0 })),
+    selectObsidianVault: vi.fn(async () => null),
     testMcpServer: vi.fn(async () => ({
       dynamicToolsSupported: false,
       toolCount: 0,

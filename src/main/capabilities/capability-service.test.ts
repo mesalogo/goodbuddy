@@ -137,6 +137,54 @@ afterEach(async () => {
 })
 
 describe('CapabilityService', () => {
+  it('persists Obsidian scope independently of enablement and assignments', async () => {
+    const { service, filePath, builtinRoot, importedRoot } = await createService()
+    expect(await service.getObsidianSettings()).toEqual({ vaultPath: '' })
+    const saved = await service.updateObsidianSettings({ vaultPath: '  /notes/work  ' })
+    expect(saved.obsidian).toEqual({ vaultPath: '/notes/work' })
+    expect(saved.builtinMcpServers).toContainEqual({
+      id: 'obsidian', enabled: false, assignments: ['model', 'opencode', 'continue']
+    })
+    await service.setBuiltinMcpServerEnabled('obsidian', true)
+    await service.setBuiltinMcpServerAssignments('obsidian', ['continue'])
+    const reloaded = new CapabilityService(filePath, builtinRoot, importedRoot, cipher)
+    expect(await reloaded.getObsidianSettings()).toEqual({ vaultPath: '/notes/work' })
+    expect((await reloaded.getSnapshot()).builtinMcpServers).toContainEqual({
+      id: 'obsidian', enabled: true, assignments: ['continue']
+    })
+    const settings = await reloaded.getObsidianSettings()
+    settings.vaultPath = '/mutated'
+    expect(await reloaded.getObsidianSettings()).toEqual({ vaultPath: '/notes/work' })
+    await expect(reloaded.updateObsidianSettings({ vaultPath: '', readOnly: true } as never)).rejects.toThrow()
+    expect((await reloaded.updateObsidianSettings({ vaultPath: ' ' })).obsidian).toEqual({ vaultPath: '' })
+  })
+
+  it.each([1, 5, 6])('loads version %i without enabling Obsidian or losing existing settings', async (version) => {
+    const { service, filePath, builtinRoot, importedRoot } = await createService()
+    await service.setBuiltinMcpServerEnabled('knowledge-base', false)
+    const stored = JSON.parse(await readFile(filePath, 'utf8'))
+    delete stored.obsidian
+    delete stored.builtinMcpServers.obsidian
+    stored.version = version
+    if (version === 5) delete stored.builtinMcpServers['builtin-browser']
+    if (version === 1) {
+      delete stored.builtinMcpServers
+      delete stored.webSearch
+      delete stored.computerCapabilities
+    }
+    await writeFile(filePath, JSON.stringify(stored))
+    const reloaded = new CapabilityService(filePath, builtinRoot, importedRoot, cipher)
+    const snapshot = await reloaded.getSnapshot()
+    expect(snapshot.obsidian).toEqual({ vaultPath: '' })
+    expect(snapshot.warnings).toBeUndefined()
+    expect(snapshot.builtinMcpServers).toContainEqual({
+      id: 'obsidian', enabled: false, assignments: ['model', 'opencode', 'continue']
+    })
+    if (version !== 1) expect(snapshot.builtinMcpServers).toContainEqual({
+      id: 'knowledge-base', enabled: false, assignments: ['model', 'opencode', 'continue']
+    })
+  })
+
   it('derives image assignments from saved profiles without persisting or exposing connection data', async () => {
     const image = { id: '00000000-0000-4000-8000-000000000001', name: 'Image', protocol: 'openai-images-generations', allowConversationInvocation: true, apiKey: 'must-not-leak' }
     let profiles = [image]
@@ -291,6 +339,11 @@ describe('CapabilityService', () => {
         },
         {
           id: 'builtin-browser',
+          enabled: false,
+          assignments: ['model', 'opencode', 'continue']
+        },
+        {
+          id: 'obsidian',
           enabled: false,
           assignments: ['model', 'opencode', 'continue']
         }

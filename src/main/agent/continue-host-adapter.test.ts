@@ -12,6 +12,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { scopedReadToolNames } from '../../shared/scoped-data-tools'
 import {
   ContinueHostAdapter,
   inspectContinueNativeConfiguration,
@@ -777,22 +778,7 @@ describe('ContinueHostAdapter', () => {
       expect(args).toEqual([
         '--config',
         expect.stringContaining('knowledge-config-'),
-        '--allow',
-        'knowledge_list',
-        '--allow',
-        'knowledge_search',
-        '--allow',
-        'note_list',
-        '--allow',
-        'note_get',
-        '--allow',
-        'note_search',
-        '--allow',
-        'goodbuddy_config_capabilities',
-        '--allow',
-        'goodbuddy_config_get',
-        '--allow',
-        'goodbuddy_config_plan',
+        ...scopedReadToolNames.flatMap((name) => ['--allow', name]),
         '--exclude',
         '*',
         'serve',

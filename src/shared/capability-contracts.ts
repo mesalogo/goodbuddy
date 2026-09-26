@@ -39,7 +39,8 @@ export const builtinMcpServerIdSchema = z.enum([
   'knowledge-base',
   'magic-notes',
   'goodbuddy-config',
-  'builtin-browser'
+  'builtin-browser',
+  'obsidian'
 ])
 export type BuiltinMcpServerId = z.infer<
   typeof builtinMcpServerIdSchema
@@ -365,6 +366,21 @@ export type WebSearchCapability = z.infer<
   typeof webSearchCapabilitySchema
 >
 
+export const obsidianSettingsSchema = z
+  .object({ vaultPath: z.string().trim().max(4096).default('') })
+  .strict()
+export type ObsidianSettings = z.infer<typeof obsidianSettingsSchema>
+
+export const obsidianConnectionTestResultSchema = z.object({
+  vaults: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    path: z.string()
+  }).strict()),
+  toolCount: z.number().int().min(0)
+}).strict()
+export type ObsidianConnectionTestResult = z.infer<typeof obsidianConnectionTestResultSchema>
+
 export const capabilitySnapshotSchema = z
   .object({
     skills: z.array(skillSummarySchema).max(256),
@@ -380,8 +396,9 @@ export const capabilitySnapshotSchema = z
       .optional(),
     builtinMcpServers: z
       .array(builtinMcpServerStateSummarySchema)
-      .max(4)
+      .max(5)
       .optional(),
+    obsidian: obsidianSettingsSchema.default({ vaultPath: '' }),
     mcpServers: z.array(mcpServerSummarySchema).max(64),
     webSearch: webSearchCapabilitySchema.optional(),
     computerCapabilities: z

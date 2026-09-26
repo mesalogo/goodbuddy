@@ -296,6 +296,7 @@ const capabilitySnapshot = {
     }
   ],
   mcpServers: [] as CapabilitySnapshot['mcpServers'],
+  obsidian: { vaultPath: '' },
   webSearch: {
     provider: 'exa' as const,
     enabled: true,
@@ -952,6 +953,12 @@ describe('SettingsPanel runtime files', () => {
           })),
           setWebSearchEnabled,
           testWebSearch,
+          updateObsidianSettings: vi.fn(async (obsidian) => ({
+            ...capabilitySnapshot,
+            obsidian
+          })),
+          testObsidianConnection: vi.fn(async () => ({ vaults: [], toolCount: 0 })),
+          selectObsidianVault: vi.fn(async () => null),
           setComputerCapabilityEnabled,
           setComputerCapabilityBrowserProfile: vi.fn(
             async () => capabilitySnapshot
@@ -5751,7 +5758,7 @@ describe('SettingsPanel runtime files', () => {
     ).toBeInTheDocument()
     expect(
       screen.getAllByRole('button', {
-        name: /(?:展开|收起)服务器 (?:知识库|笔记|GoodBuddy 配置|内置浏览器)/u
+        name: /(?:展开|收起)服务器 (?:知识库|笔记|Obsidian|GoodBuddy 配置|内置浏览器)/u
       })
     ).toHaveLength(builtinMcpServers.length)
     expect(

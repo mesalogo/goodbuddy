@@ -9,6 +9,7 @@ import {
 } from './scoped-data-tools'
 import { goodbuddyConfigTools } from './goodbuddy-config-tools'
 import { builtinModelTools } from './builtin-model-tools'
+import { obsidianScopedDataTools } from './obsidian-tools'
 
 export type BuiltinMcpServerSummary = {
   id: BuiltinMcpServerId
@@ -27,6 +28,19 @@ export type BuiltinMcpServerSummary = {
 }
 
 export const builtinMcpServers = [
+  {
+    id: 'obsidian',
+    name: 'Obsidian',
+    description: '读取、搜索和管理本机 Obsidian 仓库中的笔记、目录、标签与附件。',
+    tools: obsidianScopedDataTools.map(({ name, summary, access }) => ({
+      name,
+      description: summary,
+      access
+    })),
+    supportedAssignments: ['model', 'opencode', 'continue'],
+    access: 'mixed',
+    authorization: 'conversation-scoped'
+  },
   {
     id: 'knowledge-base',
     name: '知识库',

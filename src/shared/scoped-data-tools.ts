@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { obsidianScopedDataTools } from './obsidian-tools'
 import {
   goodbuddyConfigTools,
   type GoodBuddyConfigToolName
@@ -236,6 +237,7 @@ export const magicNoteScopedDataTools = [
 export const scopedDataTools = [
   ...knowledgeScopedDataTools,
   ...magicNoteScopedDataTools,
+  ...obsidianScopedDataTools,
   ...goodbuddyConfigTools
 ] as const
 

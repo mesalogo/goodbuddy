@@ -58,6 +58,7 @@
     "beforePack": "build/runtime-hooks.cjs",
     "asar": true,
     "asarUnpack": [
+      "out/main/obsidian-mcpvault/**/*",
       "out/main/package.json",
       "out/main/deepseek-harness-*",
       "out/main/embedding-inference-bootstrap.js",
@@ -366,6 +367,7 @@
   },
   "devDependencies": {
     "@antv/g6": "^5.1.1",
+    "@bitbonsai/mcpvault": "0.16.0",
     "@continuedev/cli": "1.5.47",
     "@eslint/js": "^10.0.1",
     "@fontsource-variable/inter": "^5.3.0",

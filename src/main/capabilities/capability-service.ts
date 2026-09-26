@@ -28,6 +28,8 @@ import {
   mcpServerIdSchema,
   mcpServerInputSchema,
   mcpServerSummarySchema,
+  obsidianSettingsSchema,
+  type ObsidianSettings,
   runtimeTargetSchema,
   skillIdSchema,
   skillSummarySchema,
@@ -132,7 +134,11 @@ const legacyBuiltinMcpServerStatesSchema = z
 
 const builtinMcpServerStatesSchema =
   legacyBuiltinMcpServerStatesSchema.extend({
-    'builtin-browser': builtinMcpServerStateSchema
+    'builtin-browser': builtinMcpServerStateSchema,
+    obsidian: builtinMcpServerStateSchema.default({
+      enabled: false,
+      assignments: ['model', 'opencode', 'continue']
+    })
   })
 
 const encryptedSecretSchema =
@@ -234,7 +240,8 @@ const storedCapabilitiesV5Schema = storedCapabilitiesV4Schema.extend({
 
 const storedCapabilitiesSchema = storedCapabilitiesV5Schema.extend({
   version: z.literal(6),
-  builtinMcpServers: builtinMcpServerStatesSchema
+  builtinMcpServers: builtinMcpServerStatesSchema,
+  obsidian: obsidianSettingsSchema.default({ vaultPath: '' })
 })
 
 type StoredCapabilitiesV1 = z.infer<typeof storedCapabilitiesV1Schema>
@@ -312,6 +319,7 @@ function defaultBuiltinMcpServerStates(
     'knowledge-base': defaultState(),
     'magic-notes': defaultState(),
     'goodbuddy-config': defaultState(),
+    obsidian: { ...defaultState(), enabled: false },
     'builtin-browser': {
       enabled: browserEnabled,
       assignments: ['model', 'opencode', 'continue']
@@ -324,6 +332,7 @@ function emptyStoredCapabilities(
 ): StoredCapabilities {
   return {
     version: 6,
+    obsidian: { vaultPath: '' },
     skills: {},
     builtinMcpServers: defaultBuiltinMcpServerStates(),
     mcpServers: [],
@@ -822,6 +831,7 @@ export class CapabilityService {
           storedCapabilitiesV1Schema.parse(raw)
         loaded = {
           version: 6,
+          obsidian: { vaultPath: '' },
           skills: legacy.skills,
           builtinMcpServers: defaultBuiltinMcpServerStates(),
           mcpServers: legacy.mcpServers,
@@ -834,6 +844,7 @@ export class CapabilityService {
         loaded = {
           ...legacy,
           version: 6,
+          obsidian: { vaultPath: '' },
           builtinMcpServers: defaultBuiltinMcpServerStates(
             legacy.computerCapabilities['host-browser-control'].enabled
           ),
@@ -845,6 +856,7 @@ export class CapabilityService {
         loaded = {
           ...legacy,
           version: 6,
+          obsidian: { vaultPath: '' },
           builtinMcpServers: defaultBuiltinMcpServerStates(
             legacy.computerCapabilities['host-browser-control'].enabled
           )
@@ -855,6 +867,7 @@ export class CapabilityService {
         loaded = {
           ...legacy,
           version: 6,
+          obsidian: { vaultPath: '' },
           builtinMcpServers: defaultBuiltinMcpServerStates(
             legacy.computerCapabilities['host-browser-control'].enabled
           )
@@ -865,7 +878,9 @@ export class CapabilityService {
         loaded = {
           ...legacy,
           version: 6,
+          obsidian: { vaultPath: '' },
           builtinMcpServers: {
+            obsidian: defaultBuiltinMcpServerStates().obsidian,
             ...legacy.builtinMcpServers,
             'builtin-browser': {
               enabled:
@@ -999,6 +1014,7 @@ export class CapabilityService {
           ? ['model', 'opencode', 'continue', 'deepseek-harness']
           : []
       },
+      obsidian: { ...state.obsidian },
       skills: catalog
         .map((skill) => ({
           ...skill,
@@ -1066,6 +1082,19 @@ export class CapabilityService {
     return createHash('sha256')
       .update(JSON.stringify(sanitized))
       .digest('hex')
+  }
+
+  async getObsidianSettings(): Promise<ObsidianSettings> {
+    return { ...(await this.load()).obsidian }
+  }
+
+  updateObsidianSettings(input: ObsidianSettings): Promise<CapabilitySnapshot> {
+    return this.queue(async () => {
+      const obsidian = obsidianSettingsSchema.parse(input)
+      const state = await this.load()
+      await this.persistUserChange({ ...state, obsidian })
+      return this.getSnapshot()
+    })
   }
 
   async getWebSearchCapabilityStatus(): Promise<{ enabled: boolean }> {

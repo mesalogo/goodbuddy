@@ -20,6 +20,8 @@ import type {
   ComputerCapabilityId,
   McpServerInput,
   McpServerTestResult,
+  ObsidianSettings,
+  ObsidianConnectionTestResult,
   SkillImportKind,
   WebSearchTestResult
 } from './capability-contracts'
@@ -2220,6 +2222,9 @@ export type DesktopApi = {
     remove: (expertId: string) => Promise<void>
   }
   capabilities: {
+    updateObsidianSettings: (input: ObsidianSettings) => Promise<CapabilitySnapshot>
+    testObsidianConnection: (input: ObsidianSettings) => Promise<ObsidianConnectionTestResult>
+    selectObsidianVault: () => Promise<string | null>
     getSnapshot: () => Promise<CapabilitySnapshot>
     importSkill: (kind: SkillImportKind) => Promise<CapabilitySnapshot>
     removeSkill: (skillId: string) => Promise<CapabilitySnapshot>

@@ -11880,6 +11880,22 @@ details.settings-section > :not(summary) + :not(summary) {
   flex: 0 0 auto;
 }
 
+.capability-diagnostic--obsidian {
+  min-width: 0;
+  align-items: stretch;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+
+.capability-diagnostic--obsidian .capability-card__actions {
+  flex-wrap: wrap;
+}
+
+.capability-diagnostic--obsidian code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .capability-diagnostic__result {
   display: flex;
   flex: 1;
