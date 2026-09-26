@@ -6,6 +6,15 @@
 
 ## 已验证
 
+### 2026-09-26 移除回顾自动时间预算暂停
+
+对应 FR-S4、FR-S6、FR-S10。生产服务移除提取循环和导航合并中的整次执行期限判断，持续处理至完成；已保存运行中的 `executionSeconds` 继续兼容读取，但不再控制暂停。设置页移除该控件，中英文帮助和活动配置改为持续处理说明。单次模型超时、共享并发、逐批保存、主动暂停及失败续跑保持原路径，具体合同见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界)。主动暂停仍中断在途请求，仅保留此前已保存批次。
+
+`npx vitest run src/main/assistant/supervision-review.test.ts src/renderer/src/SupervisionReviewSettings.test.tsx`：13 项通过。受控时钟超过保存的执行预算后，三个叶子及两个导航合并仍完成并发布；另验证主动暂停后复用成功批次和原分块配置、中英文设置不再出现整理时长控件。测试使用隔离 SQLite 和可控摘要器，不代表真实模型长时间运行实测。
+
+`npm run typecheck`、六个修改 TS/TSX 文件的定向 ESLint 和 `git diff --check` 通过。未运行全量测试，真实模型调用 0 次。核对 Main 的生产工厂接线，监督使用不携带项目的 `resolveRequestRuntime({ workMode: 'ask' })`；本次仅改变桌面回顾编排，不修改 Agent、远端 Runtime 或桌面到 Agent 协议。未提交或推送。
+
+
 ### 2026-09-24 长摘要与内容区对齐
 
 针对全局七天回顾的 `summary max 2000` 报错，代码确认导航输出 schema 的 `max(2000)`、服务层对叶子及导航的二次 2000 字符检查，以及模型提示词中的同值要求。另发现监督旧摘要通过 SQL `substr` 和 JavaScript `slice` 截断。以上监督路径限制已移除；生成内容和事实集合的合同见[生产调度合同](./review-scheduling-design.md#已接入的调度与存储)。未读取本次 16:03 失败的原始模型响应，不能据此声明该运行的具体失败节点。

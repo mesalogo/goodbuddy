@@ -11,6 +11,8 @@ it.each(['zh-CN', 'en-US'] as const)('shows actionable supervisor help without d
   render(<SupervisionReviewSettings />)
   const copy = i18nResources[locale].heartbeat
   expect(screen.getByText(copy.reviewSettings.pauseHelp)).toBeVisible()
+  expect(screen.queryByLabelText(new RegExp(copy.reviewSettings.executionSeconds))).not.toBeInTheDocument()
+  expect(copy.reviewSettings.pauseHelp).toContain(locale === 'zh-CN' ? '持续处理至完成' : 'continuously until complete')
   expect(i18n.exists('reviewSettings.pauseHelp', { ns: 'heartbeat', lng: locale })).toBe(true)
   expect(JSON.stringify(copy)).not.toMatch(/RPM|TPM|Retry-After|尚未实现|not implemented|没有按时间保存的操作审计|chronological audit log|暂不支持按分钟|Minute intervals are not supported/)
   expect(copy.timeouts.concurrencyHelp).toContain(locale === 'zh-CN' ? '仅限制监督请求' : 'This limits supervision only')

@@ -2,9 +2,11 @@
 
 日期：2026-09-24。状态：生产分块、持久化续跑、设置及活动入口已接线；27 条消息的完整会话通过真实模型验证，较早的 129 条消息实验仍未完成。当前实现以第 0 节为准，第 1 节保留改造前基线，第 2 至 11 节保留目标设计，第 12 节为早期隔离原型证据。
 
-本文针对全局七天 `supervision:run` 出现 `AbortError` 的反馈，设计完整分页、证据分块、模型任务调度和逐层汇总。用户已明确要求预算耗尽或失败后保留成功批次及位置，重启后可继续，不重复计算成功叶子。生产接线复用 `SupervisorService`、现有数据库及 `review_checkpoints`；不另建定时调度器。schema 47 的实现与目标差异见第 0 节。
+本文针对全局七天 `supervision:run` 出现 `AbortError` 的反馈，设计完整分页、证据分块、模型任务调度和逐层汇总。用户已明确要求主动暂停或失败后保留成功批次及位置，重启后可继续，不重复计算成功叶子。生产接线复用 `SupervisorService`、现有数据库及 `review_checkpoints`；不另建定时调度器。schema 47 的实现与目标差异见第 0 节。
 
 产品范围仍由[监督者产品设计](./supervisor-prd.md)定义；本设计对应 FR-S4、FR-S6、FR-S10 及 US-S12、US-S26、US-S27。既有规则见[逻辑设计](./logic-design.md#自动增量与手动重看)，实现架构见[技术设计](./technical-design.md)，已验证事实见[实施进度](./progress.md)。第 0 节以当前代码为准，其余目标须逐项核对实现状态；大范围回顾仍需独立性能验证。
+
+2026-09-26 修订：回顾持续分页、提取和汇总至完成，不再按整次运行的时间预算自动暂停。下文历史草案中的执行软预算、整次执行硬期限及按时间预算续跑方案已撤销；单次模型超时、并发限制、用户暂停和失败续跑仍保留。
 
 ## 0. 生产接线与剩余边界
 
@@ -16,7 +18,7 @@ schema 47 增加运行配置、来源清单、成功批次、导航节点四张�
 
 派发按项目及项目内会话轮转，每个会话同一轮至多一个批次，会话内按 sequence/source 排序。批次跨数据库页累计；长消息未装入部分保留待处理。每片最多 8,000 UTF-16 单元、每批最多 50 片，均为封块条件，不是范围上限。位置采用零基、左闭右开的 Unicode 码点；消息 locator 保存 messageId、conversationId、projectId、role、sequence、source、revision、start、end、length。知识引用另保留原 locator 及所属消息，任务使用当前状态和区间内创建/完成时间。
 
-成功叶子的输出、原文片段和连续 offset 在同一事务提交。失败或软预算到期保留此前批次。继续操作使用同一 run ID、时间范围和分块配置；重启后可继续。手动运行不读写自动 checkpoint。自动运行先恢复同 scope 的未完成 run；仅在全部来源连续覆盖、导航完成、最终发布事务成功时写入 `stage=supervisor` 的 checkpoint。空范围无需模型。
+成功叶子的输出、原文片段和连续 offset 在同一事务提交。失败或用户主动暂停保留此前批次。继续操作使用同一 run ID、时间范围和分块配置；重启后可继续。手动运行不读写自动 checkpoint。自动运行先恢复同 scope 的未完成 run；仅在全部来源连续覆盖、导航完成、最终发布事务成功时写入 `stage=supervisor` 的 checkpoint。空范围无需模型。
 
 叶子输出仍使用现有事件、实体、变化和关系契约，并校验引用与候选身份。会话、项目、scope 使用二叉递归合并导航摘要，单子透传，总共 N 个叶子至多 N-1 次合并。已成功导航节点按孩子 ID 保存，发布失败后可复用。叶子、导航及最终结果的生成文本不设字段字符上限，事实数组不设独立数量上限；导航节点仍不得生成替代叶子的事件或实体。发布事务逐页读取叶子，保存既有历史/图谱结构，保持历史定位、来源及用户确认状态；完整叶子同时通过独立批次接口分页读取。
 
@@ -24,7 +26,7 @@ schema 47 增加运行配置、来源清单、成功批次、导航节点四张�
 
 导航使用独立的严格输出 schema，要求 `summary`、`changeDigest`、`openItems`；四个事实数组允许省略或为空，非空数组、错误类型和额外字段仍拒绝。验证通过后才在内部补空数组，以复用现有导航存储形状。叶子继续要求四个数组齐全，不将缺字段当作成功；来源、事件实体、变化实体和关系端点均校验。继续时还会核对已保存叶子的引用，导航不覆盖其独立事实。
 
-`supervision:pause` 将父 signal 传入排队及在途模型；取消后的输出不提交。`supervision:resume` 恢复已保存 run；`supervision:batches` 默认每页 10 批、最多 20 批，返回完整叶子及来源。活动返回已保存批次、码点数、剩余来源、当前阶段、排队或执行中的模型任务数及已保存配置。软预算到期会等待已派发批次各自结束，随后显示 `paused`；完成判定不依赖摘要措辞。
+`supervision:pause` 将父 signal 传入排队及在途模型；取消后的输出不提交。`supervision:resume` 恢复已保存 run；`supervision:batches` 默认每页 10 批、最多 20 批，返回完整叶子及来源。活动返回已保存批次、码点数、剩余来源、当前阶段、排队或执行中的模型任务数及已保存配置。提取和导航汇总持续运行至完成，不按累计运行时长暂停；用户暂停会中断在途请求，仅保留已保存批次。完成判定不依赖摘要措辞。
 
 当前阶段以 `phase` 写入既有 `supervision_review_runs.state_json`，取值为 `collecting / extracting / summarizing / saving`；无新表或迁移。它记录服务最后进入的阶段，失败和重启后保留；完成仍由 `supervision_runs.status` 的发布事务决定。活动的 `navigationNodes` 从已保存导航表计数，`inFlight` 仍来自进程内计数。旧运行没有 phase 时不回填推测值。清单和最终发布为同步事务，短阶段不保证被轮询看到，清单事务失败也不会留下部分阶段记录。批次接口只有成功记录，没有逐个失败/在途任务或项目、会话聚合状态；界面仅按分页返回的真实归属组织详情。
 
@@ -35,12 +37,12 @@ schema 47 增加运行配置、来源清单、成功批次、导航节点四张�
 | `supervisionReview.pageSize` | 50 | 1..200 | 每次来源元数据页条数；不改变最终集合或批次边界 |
 | `supervisionReview.batchCharacters` | 8000 | 1000..16000 | 每批新正文 UTF-16 单元，不含提示、候选及 JSON |
 | `supervisionReview.batchMessages` | 20 | 1..50 | 每批不同消息数；任务等无消息 ID 的来源单独计数 |
-| `supervisionReview.executionSeconds` | 300 | 30..3600 | 每次执行软预算，继续后重新计时；到期停止新增工作 |
+| `supervisionReview.executionSeconds` | 300 | 30..3600 | 旧设置兼容字段，执行时忽略，设置页不再展示；恢复旧 run 同样不按此值暂停 |
 | `supervisorOrganizeTimeoutSeconds` | 240 | 30..600 | 创建回顾时冻结，节点获槽并解析 Runtime 后计时 |
 | `heartbeatReportTimeoutSeconds` | 240 | 30..600 | 维持报告发起时冻结及既有租约规则 |
 | `supervisorModelConcurrency` | 1 | 1..4 | 回顾保存接纳并发；共享池上限仍随应用设置实时变化，实际执行取较小值 |
 
-应用仍默认关闭。新参数由共享 Zod 合同、ApplicationSettingsStore、App 设置回调和 Renderer 表单保存；没有放置尚未生效的高级字段。
+应用仍默认关闭。除上述旧兼容字段外，参数由共享 Zod 合同、ApplicationSettingsStore、App 设置回调和 Renderer 表单保存；没有放置尚未生效的高级字段。
 
 ### 未完成与实测限制
 
@@ -221,7 +223,7 @@ run(request):
   admit bounded leaf tasks, round-robin by project and conversation
   run admitted leaves in a shared worker pool
   validate and persist each successful batch with facts, provenance and resume positions
-  if budget expires, a task fails or cancellation arrives: stop; retain batches; mark incomplete
+  if a task fails or cancellation arrives: stop; retain batches; mark incomplete
   continue paging all project/conversation/message/source groups until exhausted
   reduce within conversation, then project, then requested scope
   pass through singleton groups; reduce oversized groups in bounded rounds
@@ -231,7 +233,7 @@ run(request):
   return completed only after publication; otherwise return resumable incomplete status
 ```
 
-采集与叶子执行可交错，但入队和在飞任务有界，不使用对全部来源的 `Promise.all`。每批完成后持久化，再接纳下一批；时间不足就暂停。首次派发前用有界探测判断是否直通；穷尽范围后确实只有一个叶子时直接生成最终输出，通过校验后只调用一次模型。因预算只接纳一个叶子时仍是未完成 run。空范围及自动 `no_change` 必须在全部相关目录/来源页检查完毕后判定，不调用模型、不把预算未读误作无变化。
+采集与叶子执行可交错，但入队和在飞任务有界，不使用对全部来源的 `Promise.all`。每批完成后持久化，再接纳下一批，持续至全部来源及汇总完成。首次派发前用有界探测判断是否直通；穷尽范围后确实只有一个叶子时直接生成最终输出，通过校验后只调用一次模型。因预算只接纳一个叶子时仍是未完成 run。空范围及自动 `no_change` 必须在全部相关目录/来源页检查完毕后判定，不调用模型、不把预算未读误作无变化。
 
 叶子有多个时输出受限摘要卡及结构化事实，Main 保存卡片 token 到原文片段的映射。会话只有一个卡片时透传，项目只有一个会话摘要时透传，全局只有一个项目摘要时透传。不得为了层级外观额外调用模型。边界必须标清项目和会话，跨项目汇总仍使用原请求 scope 的候选实体集。
 
@@ -283,7 +285,7 @@ run(request):
 
 建议扩展 `coverage_json`：是否读完冻结范围、已处理新字符和片段数、覆盖项目/会话数、是否仍有来源、停止原因及恢复引用。精确片段继续用 locator，恢复记录关联批次输出，不仅保存一个总计数。总数未知时显示“仍有未读内容”，不用动态发现数充当固定分母。结果读取合同需显式暴露 coverage；当前数据库查询了 coverage，但共享结果 schema 未返回它。
 
-手动和自动均须跨重启继续同一未完成逻辑 run。Main 根据持久化 run ID 读取冻结范围、成功输出及位置，复查来源版本，恢复剩余页和未成功汇总；Renderer 不能自报已处理 offset。手动继续不污染自动位置；自动恢复先于创建同 scope 新 run。恢复后的单次执行重新获得执行预算，但不丢失既有进度。
+手动和自动均须跨重启继续同一未完成逻辑 run。Main 根据持久化 run ID 读取冻结范围、成功输出及位置，复查来源版本，恢复剩余页和未成功汇总；Renderer 不能自报已处理 offset。手动继续不污染自动位置；自动恢复先于创建同 scope 新 run。恢复后持续处理剩余工作，不按旧执行预算暂停，也不丢失既有进度。
 
 持久化续跑及手动“继续”入口是本设计的验收要求，不能以建议缩小范围替代。恢复记录的保留期限、主动放弃后的清理规则和具体 schema 尚未确定；不得在 run 未完成时自动删除唯一成功输出或继续所需位置。显式放弃可以终止后续工作，但不能标为完整覆盖。
 
@@ -297,7 +299,7 @@ run(request):
 
 若后续决定让心跳只触发监督、报告从同一结构化结果投影，必须先定义记忆建议和任务建议的共同输出契约、各自成功语义及旧报告展示，另行修改 FR-S4 和 US-S27；本轮不把该产品调整藏在调度重构里。也不使用多阶段事务将两个结果强行绑定。
 
-报告先获共享槽位再领取租约，并在实际模型请求开始前刷新；报告完成或无变化提交后释放槽位，再执行下游监督。领取与续租条件见当前控制清单。未来整次执行预算不能套到报告租约，也不能在报告完成前等待整棵监督树。现有 tick 防重入不替代共享池上限；监督过长会延迟到期检查，拟通过有界执行和持久化续跑控制，不另建后台调度服务。
+报告先获共享槽位再领取租约，并在实际模型请求开始前刷新；报告完成或无变化提交后释放槽位，再执行下游监督。领取与续租条件见当前控制清单。未来整次执行预算不能套到报告租约，也不能在报告完成前等待整棵监督树。现有 tick 防重入不替代共享池上限；监督过长仍可能延迟到期检查；移除自动时间预算暂停不改变 tick 的串行等待关系，不另建后台调度服务。
 
 ## 10. 活动与结果展示
 

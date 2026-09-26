@@ -4,7 +4,7 @@ import type { ApplicationSettings, ApplicationSettingsUpdate } from '../../share
 import { defaultSupervisionReviewSettings, supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 
 const fields = [
-  ['pageSize', 1, 200], ['batchCharacters', 1000, 16000], ['batchMessages', 1, 50], ['executionSeconds', 30, 3600], ['responseKiB', 100, 16384]
+  ['pageSize', 1, 200], ['batchCharacters', 1000, 16000], ['batchMessages', 1, 50], ['responseKiB', 100, 16384]
 ] as const
 
 export function SupervisionReviewSettings({ settings, disabled, onSave }: {

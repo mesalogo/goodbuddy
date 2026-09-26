@@ -86,18 +86,31 @@ it('reopens saved batches after failure, resumes exact Unicode offsets and only 
   expect(f.summarize).toHaveBeenCalledTimes(calls)
 })
 
-it('soft budget pauses without checkpointing and freezes configuration across continuation', async () => {
+it('continues extraction and navigation beyond the saved execution budget', async () => {
   const f = await fixture([['x'.repeat(2500)]], { concurrency: 1, executionSeconds: 30 })
   const clock = vi.spyOn(Date, 'now').mockReturnValue(time)
   f.summarize.mockImplementationOnce(async () => { clock.mockReturnValue(time + 31000); return empty })
   const result = await f.service().run(request)
+  expect(result.status).toBe('completed')
+  expect(result.coverage).toMatchObject({ batches: 3, remainingSources: 0, complete: true })
+  expect(f.summarize).toHaveBeenCalledTimes(5)
+  expect(f.db.supervisionReviewStore().batches(result.runId!, 100).flatMap(row => row.evidence).map(row => row.content.length)).toEqual([1000, 1000, 500])
+  clock.mockRestore()
+})
+
+it('still pauses on user request and resumes saved batches without changing batch settings', async () => {
+  const f = await fixture([['x'.repeat(2500)]], { concurrency: 1 })
+  const service = f.service()
+  f.summarize.mockImplementationOnce(async () => empty).mockImplementationOnce(async () => {
+    service.pause(f.db.listSupervisionActivity()[0]!.id)
+    return empty
+  })
+  const result = await service.run(request)
   expect(result.status).toBe('paused')
   expect(result.coverage).toMatchObject({ batches: 1, remainingSources: 1, complete: false })
   f.config.batchCharacters = 16000
-  const resumed = await f.service().resume(result.runId!)
-  expect(resumed.status).toBe('completed')
+  expect((await f.service().resume(result.runId!)).status).toBe('completed')
   expect(f.db.supervisionReviewStore().batches(result.runId!, 100).flatMap(row => row.evidence).map(row => row.content.length)).toEqual([1000, 1000, 500])
-  clock.mockRestore()
 })
 
 it('rejects changed source versions and rolls back offsets when batch persistence fails', async () => {

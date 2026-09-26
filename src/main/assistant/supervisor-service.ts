@@ -264,10 +264,9 @@ export class SupervisorService {
     this.controllers.set(runId, controller)
     const activity = { inFlight: 0 }
     this.activity.set(runId, activity)
-    const deadline = Date.now() + config.executionSeconds * 1000
     const empty: SupervisionSummaryOutput = { summary: 'No new evidence', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
     const paused = () => {
-      db.pause(runId, controller.signal.aborted ? 'Review paused by user' : 'Execution budget reached; continue to review remaining sources')
+      db.pause(runId, 'Review paused by user')
       return { runId, request, evidence: [], output: empty, status: 'paused' as const, coverage: db.progress(runId) }
     }
     try {
@@ -300,7 +299,6 @@ export class SupervisorService {
         if (controller.signal.aborted) return paused()
         const groups = db.groups(runId, config.concurrency)
         if (!groups.length) break
-        if (Date.now() >= deadline) return paused()
         const results = await Promise.allSettled(groups.map(async group => {
           controller.signal.throwIfAborted()
           const evidence = db.chunk(runId, group.projectId, group.conversationId, config)
@@ -324,7 +322,6 @@ export class SupervisorService {
         const id = createHash('sha256').update(JSON.stringify([left.id, right.id])).digest('hex')
         const cached = db.navigation(runId, id)
         if (cached) return { id, output: cached }
-        if (Date.now() >= deadline) throw new Error('REVIEW_SOFT_BUDGET')
         const evidence = [left, right].map(card => ({ id: card.id, sourceType: 'note' as const, sourceId: card.id,
           title: 'Retained review navigation', content: card.output.summary, occurredAt: request.timeRange.to }))
         const output = await summarize(evidence, true)
@@ -378,7 +375,7 @@ export class SupervisorService {
       await this.store.save(result)
       return result
     } catch (error) {
-      if (controller.signal.aborted || (error instanceof Error && error.message === 'REVIEW_SOFT_BUDGET')) return paused()
+      if (controller.signal.aborted) return paused()
       this.store.fail?.(runId, error instanceof Error ? error.message : 'Review failed')
       throw error
     } finally { this.controllers.delete(runId); this.activity.delete(runId) }
