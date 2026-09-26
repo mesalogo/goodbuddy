@@ -9,6 +9,7 @@ import type { ConversationMessageBlock } from '../../shared/assistant-contracts'
 import type { SubagentEvent } from '../../shared/contracts'
 import { AssistantDatabase, ASSISTANT_DATABASE_SCHEMA_VERSION } from './assistant-database'
 import {
+  getPendingAssistantStorageUpgrade,
   hasPendingAssistantStorageUpgrade,
   upgradeAssistantStorage
 } from './assistant-storage-upgrade'
@@ -54,6 +55,58 @@ function subagent(requestId: string): SubagentEvent {
 }
 
 describe('subagent progress storage', () => {
+  it.each([45, 46])('upgrades schema %i without reconverting history or vacuuming ordinary free pages', async (sourceVersion) => {
+    const { path, database, taskId } = await fixture()
+    const event = subagent(randomUUID())
+    event.progress = [{ id: randomUUID(), type: 'text', content: 'Keep current-format progress' }]
+    database.appendTaskEvent(taskId, 'subagent', event)
+    const note = database.createMagicNote({ title: 'Already migrated', content: { version: 1, ops: [{ insert: 'Keep note\n' }] } })
+    const header = { id: randomUUID(), title: 'Keep chat', updatedAt: 1000 }
+    const message = { id: randomUUID(), role: 'assistant' as const, state: 'complete' as const,
+      content: 'Normal chat update'.repeat(100_000), createdAt: 1000 }
+    database.saveLocalConversations([{ header, messages: [message] }])
+    database.saveLocalConversations([{ header, messages: [{ ...message, content: 'Final response' }] }])
+    const expected = database.getConversation(header.id)
+    database.close()
+    const sql = new DatabaseSync(path)
+    try {
+      sql.exec(`DROP VIEW supervision_review_current;
+        DROP TABLE supervision_review_navigation; DROP TABLE supervision_review_batches;
+        DROP TABLE supervision_review_sources; DROP TABLE supervision_review_runs;`)
+      if (sourceVersion === 45) sql.exec(`
+        DROP TRIGGER messages_review_insert; DROP TRIGGER messages_review_update;
+        DROP TRIGGER messages_review_delete; DROP TRIGGER tasks_review_delete;
+        DROP TABLE review_checkpoints; ALTER TABLE messages DROP COLUMN review_revision;`)
+      sql.exec(`PRAGMA user_version = ${sourceVersion}; PRAGMA wal_checkpoint(TRUNCATE)`)
+      expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBeGreaterThan(0)
+      const events = sql.prepare('SELECT * FROM task_events WHERE task_id = ? ORDER BY id').all(taskId)
+      expect(events.length).toBeGreaterThan(0)
+      expect(hasPendingAssistantStorageUpgrade(path)).toBe(true)
+      const confirmedUpgrade = getPendingAssistantStorageUpgrade(path)!
+      expect(confirmedUpgrade).toEqual({ migrateNotes: false, reclaimSpace: false })
+      const exec = vi.spyOn(DatabaseSync.prototype, 'exec')
+      const progress = vi.fn()
+      upgradeAssistantStorage(path, progress)
+      expect(exec.mock.calls.some(([statement]) => /VACUUM/i.test(statement))).toBe(false)
+      expect(progress.mock.calls.map(([value]) => value.stage)).not.toContain('compacting')
+      expect(progress.mock.calls.map(([value]) => value.stage)).not.toContain('converting')
+      expect(sql.prepare('PRAGMA user_version').get()!.user_version).toBe(ASSISTANT_DATABASE_SCHEMA_VERSION)
+      expect(sql.prepare('SELECT * FROM task_events WHERE task_id = ? ORDER BY id').all(taskId)).toEqual(events)
+      // A retry in the same startup must not gain reclamation just because free pages remain.
+      upgradeAssistantStorage(path, progress, () => false, { confirmedUpgrade })
+      expect(exec.mock.calls.some(([statement]) => /VACUUM/i.test(statement))).toBe(false)
+      database.initialize(dirname(path))
+      expect(database.getConversation(header.id)).toEqual(expected)
+      expect(database.getMagicNote(note.id)).toEqual(note)
+      database.close()
+      progress.mockClear()
+      upgradeAssistantStorage(path, progress)
+      expect(progress).not.toHaveBeenCalled()
+      expect(hasPendingAssistantStorageUpgrade(path)).toBe(false)
+      expect(sql.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    } finally { sql.close() }
+  })
+
   it('does not migrate or vacuum ordinary chat free pages on repeated startup', async () => {
     const { path, database } = await fixture()
     const header = { id: randomUUID(), title: 'Chat restart', updatedAt: 1000 }

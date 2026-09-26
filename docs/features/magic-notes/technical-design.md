@@ -175,12 +175,16 @@ Already converted entries are reconciled on retry. Matching body revisions do
 not require rehydrating binary payloads. Direct `AssistantDatabase.initialize`
 callers and tests also run storage repair.
 
-Space reclamation is separate from conversion. Every worker attempt checks
-`PRAGMA freelist_count` and runs checkpoint/VACUUM when free pages remain.
-Cancellation after the last converted entry or a VACUUM failure therefore
-allows reclamation to retry on the next startup, even with no legacy rows left.
-The schema marker alone does not establish that conversion and reclamation
-finished. General migration requirements are in the
+Space reclamation is separate from structure upgrades and conversion. Startup
+detects legacy note payloads and retains the conversion/reclamation decision in
+memory for that startup's worker retries. Only a required legacy conversion
+permits checking `PRAGMA freelist_count` and running VACUUM. A structure-only
+upgrade does not repair notes in the worker or reclaim ordinary free pages.
+Cancellation after conversion or a VACUUM failure can retry reclamation within
+the same startup. After quitting, startup checks the schema and remaining legacy
+payloads again; free pages alone do not trigger another upgrade, and SQLite can
+reuse them. No additional persistent migration marker is stored.
+General migration requirements are in the
 [database migration guide](../../development/database-migrations.md).
 
 ## Backup and Restore

@@ -1846,21 +1846,24 @@ export class AssistantDatabase {
   }
 
   // Called by the existing startup worker before the business connection opens.
-  upgradeMagicNoteStorage(
+  upgradeStorage(
     onProgress: (progress: AssistantStorageProgress) => void,
-    isCancelled: () => boolean
+    isCancelled: () => boolean,
+    upgrade: { migrateNotes: boolean; reclaimSpace: boolean }
   ): void {
     const database = new DatabaseSync(this.databasePath, { timeout: 5_000 })
     try {
       database.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
       this.migrate(database, onProgress, isCancelled)
       this.database = database
-      this.repairMagicNoteStorage(onProgress, isCancelled)
+      if (upgrade.migrateNotes) this.repairMagicNoteStorage(onProgress, isCancelled)
       if (isCancelled()) throw new DOMException('Upgrade cancelled', 'AbortError')
-      const free = database.prepare('PRAGMA freelist_count').get() as { freelist_count: number }
-      if (free.freelist_count > 0) {
-        onProgress({ stage: 'compacting', processed: 0, total: 0, bytesBefore: statSync(this.databasePath).size })
-        database.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM;')
+      if (upgrade.reclaimSpace) {
+        const free = database.prepare('PRAGMA freelist_count').get() as { freelist_count: number }
+        if (free.freelist_count > 0) {
+          onProgress({ stage: 'compacting', processed: 0, total: 0, bytesBefore: statSync(this.databasePath).size })
+          database.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM;')
+        }
       }
       database.exec('PRAGMA wal_checkpoint(TRUNCATE)')
     } finally {

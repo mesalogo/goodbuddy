@@ -6,7 +6,7 @@ import { backup, DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MagicNoteCanvasContent, MagicNoteContent } from '../../shared/magic-notes-contracts'
 import { AssistantDatabase, ASSISTANT_DATABASE_SCHEMA_VERSION } from '../assistant/assistant-database'
-import { upgradeAssistantStorage } from '../assistant/assistant-storage-upgrade'
+import { getPendingAssistantStorageUpgrade, upgradeAssistantStorage } from '../assistant/assistant-storage-upgrade'
 
 const actualFs = { renameSync: fs.renameSync, rmSync: fs.rmSync }
 
@@ -150,6 +150,7 @@ describe('Magic note SQLite and filesystem storage', () => {
     database.close()
     sql.prepare('UPDATE magic_note_entries SET content_json = ? WHERE id = ?').run(JSON.stringify(note.entries[0]!.content), note.entries[0]!.id)
     sql.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    const confirmedUpgrade = getPendingAssistantStorageUpgrade(path)!
     let cancelled = false
     const exec = DatabaseSync.prototype.exec
     const injected = vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (this: DatabaseSync, statement) {
@@ -162,9 +163,10 @@ describe('Magic note SQLite and filesystem storage', () => {
     injected.mockRestore()
     expect(sql.prepare("SELECT json_extract(content_json, '$.storage') AS storage FROM magic_note_entries").get()!.storage).toBe('file')
     expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBeGreaterThan(0)
+    expect(getPendingAssistantStorageUpgrade(path)).toBeUndefined()
     const stages: string[] = []
     upgradeAssistantStorage(path, (progress) => stages.push(progress.stage), () => false, {
-      pendingUpgradeConfirmed: true
+      confirmedUpgrade
     })
     expect(stages).toContain('compacting')
     expect(sql.prepare('PRAGMA freelist_count').get()!.freelist_count).toBe(0)
@@ -257,7 +259,9 @@ describe('Magic note SQLite and filesystem storage', () => {
     expect(JSON.parse(String(sql.prepare('SELECT content_json FROM magic_note_entries WHERE id = ?').get(entries[0]!.id)!.content_json))).toEqual(rich)
     sql.exec('DROP TRIGGER fail_note_migration')
     let cancelled = false
-    expect(() => upgradeAssistantStorage(path, () => { cancelled = true }, () => cancelled)).toThrow('cancelled')
+    expect(() => upgradeAssistantStorage(path, (progress) => {
+      if (progress.stage === 'converting') cancelled = true
+    }, () => cancelled)).toThrow('cancelled')
     expect(sql.prepare("SELECT COUNT(*) AS count FROM magic_note_entries WHERE json_extract(content_json, '$.storage') = 'file'").get()!.count).toBe(1)
     upgradeAssistantStorage(path, () => undefined)
     database.initialize(directory)

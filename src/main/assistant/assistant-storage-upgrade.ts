@@ -12,9 +12,14 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export function hasPendingAssistantStorageUpgrade(
+export type AssistantStorageUpgrade = {
+  migrateNotes: boolean
+  reclaimSpace: boolean
+}
+
+export function getPendingAssistantStorageUpgrade(
   databasePath: string
-): boolean {
+): AssistantStorageUpgrade | undefined {
   const database = new DatabaseSync(databasePath, {
     readOnly: true,
     timeout: 5_000
@@ -23,37 +28,50 @@ export function hasPendingAssistantStorageUpgrade(
     const row = database.prepare('PRAGMA user_version').get() as {
       user_version: number
     }
-    if (row.user_version < ASSISTANT_DATABASE_SCHEMA_VERSION) {
-      return true
-    }
     const noteTable = database.prepare(
       `SELECT 1
        FROM sqlite_master
        WHERE type = 'table' AND name = 'magic_note_entries'
        LIMIT 1`
     ).get()
-    if (!noteTable) return false
-    return Boolean(database.prepare(
+    const migrateNotes = Boolean(noteTable && database.prepare(
       `SELECT 1
        FROM magic_note_entries
        WHERE json_extract(content_json, '$.storage') IS NULL
           OR json_extract(content_json, '$.storage') <> 'file'
        LIMIT 1`
     ).get())
+    if (row.user_version >= ASSISTANT_DATABASE_SCHEMA_VERSION && !migrateNotes) return undefined
+    // Reclamation belongs to specific released data conversions, not every schema bump.
+    const legacySubagents = row.user_version > 0 &&
+      row.user_version < SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION &&
+      Boolean(database.prepare("SELECT 1 FROM task_events WHERE kind = 'subagent' LIMIT 1").get())
+    const legacyActivity = row.user_version > 0 && row.user_version < 44 &&
+      Boolean(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'activity_history'").get()) &&
+      Boolean(database.prepare("SELECT 1 FROM activity_history WHERE records_json <> '[]' LIMIT 1").get())
+    return { migrateNotes, reclaimSpace: migrateNotes || legacySubagents || legacyActivity }
   } finally {
     database.close()
   }
+}
+
+export function hasPendingAssistantStorageUpgrade(databasePath: string): boolean {
+  return getPendingAssistantStorageUpgrade(databasePath) !== undefined
 }
 
 export function upgradeAssistantStorage(
   databasePath: string,
   onProgress: (progress: AssistantStorageProgress) => void,
   isCancelled: () => boolean = () => false,
-  options: { pendingUpgradeConfirmed?: boolean } = {}
+  options: { confirmedUpgrade?: AssistantStorageUpgrade } = {}
 ): void {
-  if (!options.pendingUpgradeConfirmed && !hasPendingAssistantStorageUpgrade(databasePath)) return
+  const upgrade = options.confirmedUpgrade ?? getPendingAssistantStorageUpgrade(databasePath)
+  if (!upgrade) return
+  if (isCancelled()) throw new DOMException('Upgrade cancelled', 'AbortError')
   upgradeSubagentStorage(databasePath, onProgress, isCancelled)
-  new AssistantDatabase(databasePath).upgradeMagicNoteStorage(onProgress, isCancelled)
+  onProgress({ stage: 'upgrading', processed: 0, total: 0, bytesBefore: statSync(databasePath).size })
+  if (isCancelled()) throw new DOMException('Upgrade cancelled', 'AbortError')
+  new AssistantDatabase(databasePath).upgradeStorage(onProgress, isCancelled, upgrade)
 }
 
 function upgradeSubagentStorage(
@@ -137,7 +155,7 @@ function upgradeSubagentStorage(
     const free = database.prepare('PRAGMA freelist_count').get() as {
       freelist_count: number
     }
-    if (free.freelist_count > 0) {
+    if (tasks.length > 0 && free.freelist_count > 0) {
       progress.stage = 'compacting'
       onProgress({ ...progress })
       // Rebuild the now-small live database, not a second copy of the bloated input.

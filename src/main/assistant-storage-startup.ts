@@ -10,7 +10,7 @@ import {
 } from '../shared/assistant-storage-contracts'
 import { ipcChannels } from '../shared/ipc-channels'
 import { assertTrustedSender } from './trusted-ipc-sender'
-import { hasPendingAssistantStorageUpgrade } from './assistant/assistant-storage-upgrade'
+import { getPendingAssistantStorageUpgrade, type AssistantStorageUpgrade } from './assistant/assistant-storage-upgrade'
 import { loadMainWindow } from './window'
 
 export async function prepareAssistantStorage(
@@ -23,9 +23,10 @@ export async function prepareAssistantStorage(
     throw error
   })
   if (!file) return
-  if (!hasPendingAssistantStorageUpgrade(databasePath)) return
+  const upgrade = getPendingAssistantStorageUpgrade(databasePath)
+  if (!upgrade) return
   let progress: AssistantStorageProgress = {
-    stage: 'scanning', processed: 0, total: 0, bytesBefore: file.size
+    stage: 'upgrading', processed: 0, total: 0, bytesBefore: file.size
   }
   let shown = false
   let retry: (() => void) | undefined
@@ -53,13 +54,13 @@ export async function prepareAssistantStorage(
   try {
     while (!signal.aborted) {
       try {
-        await runStorageWorker(databasePath, signal, publish)
+        await runStorageWorker(databasePath, upgrade, signal, publish)
         return
       } catch (error) {
         if (signal.aborted) return
         publish({
           ...progress, stage: 'failed',
-          error: error instanceof Error ? error.message : '历史执行记录优化失败'
+          error: error instanceof Error ? error.message : '本地数据升级失败'
         })
         await new Promise<void>((resolve) => {
           const finish = (): void => {
@@ -81,6 +82,7 @@ export async function prepareAssistantStorage(
 
 function runStorageWorker(
   databasePath: string,
+  upgrade: AssistantStorageUpgrade,
   signal: AbortSignal,
   publish: (progress: AssistantStorageProgress) => void
 ): Promise<void> {
@@ -93,7 +95,7 @@ function runStorageWorker(
   return new Promise<void>((resolve, reject) => {
     const worker = new Worker(join(
       dirname(fileURLToPath(import.meta.url)), 'assistant-storage-worker.js'
-    ), { workerData: { databasePath, cancellation } })
+    ), { workerData: { databasePath, cancellation, upgrade } })
     let failure: Error | undefined
     let done = false
     worker.on('message', (message: {
@@ -107,13 +109,13 @@ function runStorageWorker(
       if (message.done || message.cancelled) done = true
     })
     worker.once('error', () => {
-      failure = new Error('无法启动历史执行记录优化，请重启 GoodBuddy 后重试。')
+      failure = new Error('无法启动本地数据升级，请重启 GoodBuddy 后重试。')
     })
     worker.once('exit', (code) => {
       signal.removeEventListener('abort', cancel)
       if (failure) reject(failure)
       else if (done && code === 0) resolve()
-      else reject(new Error('历史执行记录优化意外结束，请重试。'))
+      else reject(new Error('本地数据升级意外结束，请重试。'))
     })
   })
 }

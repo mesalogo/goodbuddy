@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const assistantStorageProgressSchema = z.object({
-  stage: z.enum(['scanning', 'converting', 'compacting', 'complete', 'failed']),
+  stage: z.enum(['upgrading', 'scanning', 'converting', 'compacting', 'complete', 'failed']),
   processed: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
   bytesBefore: z.number().nonnegative(),

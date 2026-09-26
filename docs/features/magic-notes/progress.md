@@ -467,8 +467,13 @@ Electron cases with substituted model output; live-provider checks remain opt-in
   migration and backup requirements are defined in the
   [storage contract](./technical-design.md#file-storage-and-writes).
 - The startup worker converts one entry per transaction and verifies hydrated
-  readback before clearing the legacy payload. Reclamation checks the freelist
-  on every attempt, including retries after conversion has finished. Committed
+  readback before clearing the legacy payload. The original implementation checked
+  the freelist on every attempt. This was narrowed by the September 21 startup
+  fix and the September 26 structure-upgrade fix: only a required legacy
+  conversion enables reclamation, with its decision retained for same-startup
+  retries, not later launches. Current rules are in the
+  [migration contract](./technical-design.md#schema-38-migration).
+  Committed
   saves/deletes/resets remain successful when manifest or GC cleanup fails;
   failures are logged and cleanup is retried on later access or reopen.
 - Storage implementation handoff reports 135/135 focused tests passed across

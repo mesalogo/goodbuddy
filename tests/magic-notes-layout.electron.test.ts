@@ -48,14 +48,19 @@ it('resizes record columns with native Electron input and preserves desktop widt
         const click = async selector => { await js('document.querySelector(' + JSON.stringify(selector) + ').click()'); await settle(); };
         const rect = selector => js('(() => { const r = document.querySelector(' + JSON.stringify(selector) + ').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()');
         const drag = async (selector, delta) => {
+          win.focus(); win.webContents.focus();
+          await wait('document.hasFocus()');
           const r = await rect(selector); const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + 80);
+          const target = 'document.querySelector(' + JSON.stringify(selector) + ')';
+          const before = await js(target + '.getAttribute("aria-valuenow")');
           win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+          await settle();
           win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
-          await settle();
-          win.webContents.sendInputEvent({ type: 'mouseMove', x: x + delta, y, button: 'left' });
-          await settle();
-          await new Promise(resolve => setTimeout(resolve, 80));
+          await wait('!!document.querySelector(".magic-notes-layout--resizing, .magic-todo-workspace--resizing")');
+          win.webContents.sendInputEvent({ type: 'mouseMove', x: x + delta, y, button: 'left', modifiers: ['leftButtonDown'] });
+          await wait(target + '.getAttribute("aria-valuenow") !== ' + JSON.stringify(before));
           win.webContents.sendInputEvent({ type: 'mouseUp', x: x + delta, y, button: 'left', clickCount: 1 });
+          await wait('!document.querySelector(".magic-notes-layout--resizing, .magic-todo-workspace--resizing")');
           await settle();
         };
         const key = async (selector, keyCode) => {

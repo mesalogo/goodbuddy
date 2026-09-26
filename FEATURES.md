@@ -194,7 +194,9 @@ records are listed separately and do not introduce another feature status.
   reopen the upgraded database. The schema-35 repair released in 0.13.2 also handles
   repeated tool blocks written after upgrading to 0.13.1, without deleting events.
   Terminal tasks release their write caches; duplicate remote replay does not
-  rebuild a released cache. See
+  rebuild a released cache. Structure-only upgrades do not reconvert history or
+  reclaim ordinary free pages; the startup page distinguishes structure updates,
+  legacy conversion, and actual space reclamation. See
   [storage and upgrade behavior](./docs/features/assistant-workbar/execution-history-storage.md).
 
 - [x] **Direct model Runtime**: Supports question answering, knowledge

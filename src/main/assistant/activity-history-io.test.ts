@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
-import { upgradeAssistantStorage } from './assistant-storage-upgrade'
+import { getPendingAssistantStorageUpgrade, upgradeAssistantStorage } from './assistant-storage-upgrade'
 
 it('migrates activity history and writes only changed records during streaming', () => {
   const directory = mkdtempSync(join(tmpdir(), 'goodbuddy-save-io-'))
@@ -41,6 +41,7 @@ it('migrates activity history and writes only changed records during streaming',
     }
     const beforeBytes = statSync(`${path}-wal`).size
     database.close()
+    expect(getPendingAssistantStorageUpgrade(path)).toEqual({ migrateNotes: false, reclaimSpace: true })
     upgradeAssistantStorage(path, () => undefined)
     database.initialize(directory)
     expect(database.getActivityHistory()).toEqual({ records, legacyHistoryMayBeIncomplete: true })

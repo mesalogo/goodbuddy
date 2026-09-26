@@ -40,17 +40,24 @@ export function StorageUpgrade(): React.JSX.Element {
     void poll()
     return () => { active = false; clearTimeout(timer) }
   }, [])
-  const title = en ? 'Optimizing saved execution history' : '正在优化历史执行记录'
   const stage = progress?.stage
+  const convertingHistory = stage === 'scanning' || stage === 'converting'
+  const title = stage === 'compacting'
+    ? en ? 'Reclaiming database space' : '正在回收数据库空间'
+    : convertingHistory
+      ? en ? 'Upgrading saved history' : '正在转换旧版历史数据'
+      : en ? 'Upgrading local data structures' : '正在升级本地数据结构'
   const status = stage === 'failed'
     ? progress?.error
     : stage === 'compacting'
       ? en ? 'Reclaiming disk space…' : '正在回收磁盘空间…'
       : stage === 'complete'
-        ? en ? 'Optimization complete. Starting GoodBuddy…' : '优化完成，正在启动 GoodBuddy…'
+        ? en ? 'Data upgrade complete. Starting GoodBuddy…' : '数据升级完成，正在启动 GoodBuddy…'
         : progress?.stage === 'converting'
           ? `${en ? 'Processed' : '已处理'} ${progress.processed.toLocaleString()} / ${progress.total.toLocaleString()}`
-          : en ? 'Checking saved execution history…' : '正在检查历史执行记录…'
+          : stage === 'scanning'
+            ? en ? 'Checking saved history…' : '正在检查旧版历史数据…'
+            : en ? 'Applying database structure updates…' : '正在更新数据库结构…'
   const act = async (action: 'retry' | 'quit'): Promise<void> => {
     try {
       setActionError('')
@@ -65,9 +72,17 @@ export function StorageUpgrade(): React.JSX.Element {
         <PageHeader
           headingId="storage-upgrade-title"
           title={title}
-          description={en
-            ? 'This update removes repeated copies of subagent progress. Your chats, execution details and results are preserved. Time depends on the history size and disk speed.'
-            : '本次更新清理子任务进度的重复副本，保留聊天、执行详情和结果。处理时间取决于历史数据量和磁盘速度。'}
+          description={convertingHistory
+            ? en
+              ? 'Converting older stored data to the current format. Your chats, execution details and results are preserved. Time depends on the data size and disk speed.'
+              : '正在将旧版存储数据转换为当前格式，保留聊天、执行详情和结果。处理时间取决于数据量和磁盘速度。'
+            : stage === 'compacting'
+              ? en
+                ? 'Reclaiming space after a required data conversion. Your chats, execution details and results are preserved.'
+                : '正在回收数据转换后释放的空间，保留聊天、执行详情和结果。'
+              : en
+                ? 'Updating the local database structure while preserving your chats, execution details and results. A structure update does not automatically reorganize history or reclaim disk space.'
+                : '正在更新本地数据库结构，保留聊天、执行详情和结果。结构升级不会自动整理历史或回收磁盘空间。'}
         />
         <p role={stage === 'failed' ? 'alert' : 'status'}>{status}</p>
         {progress?.stage === 'converting' && progress.total > 0 && (
@@ -77,8 +92,8 @@ export function StorageUpgrade(): React.JSX.Element {
           <p>{en ? 'Processing speed' : '处理速度'}：{Math.round(rate).toLocaleString()} {en ? 'events/s' : '条/秒'}</p>
         )}
         <p>{en
-          ? 'You can quit and retry on the next launch. Completed batches are preserved.'
-          : '可以退出并在下次启动时继续处理，已完成的批次会保留。'}</p>
+          ? 'You can quit and continue any remaining required upgrades on the next launch. Committed changes are preserved.'
+          : '可以退出，下次启动时继续尚未完成的必要升级；已提交的变更会保留。'}</p>
         {actionError && <p role="alert">{actionError}</p>}
         {stage === 'failed' && (
           <button className="primary-button" onClick={() => void act('retry')}>
