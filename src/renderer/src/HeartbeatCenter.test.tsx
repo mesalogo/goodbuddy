@@ -202,7 +202,7 @@ describe('HeartbeatCenter', () => {
     expect(screen.getByRole('heading', { name: t('supervisor.latest') })).toBeVisible()
     expect(screen.getByRole('button', { name: t('supervisor.run') })).toBeEnabled()
     expect(screen.getByRole('combobox', { name: t('supervisor.scope') })).toBeVisible()
-    expect(screen.getByText(t('supervisor.sourcesHint'))).toBeVisible()
+    expect(screen.queryByText(t('supervisor.sourcesHint'))).not.toBeInTheDocument()
     for (const key of ['supervisor.recap', 'supervisor.graph', 'supervisor.automatic', 'activity.title', 'supervisor.settings']) {
       fireEvent.click(screen.getByRole('tab', { name: t(key) }))
       const panel = screen.getByRole('tabpanel', { name: t(key) })
@@ -224,7 +224,7 @@ describe('HeartbeatCenter', () => {
       }
       if (key === 'activity.title') {
         await screen.findByText(t('activity.empty'))
-        expect(within(panel).getByText(t('activity.description'))).toBeVisible()
+        expect(within(panel).queryByText(t('activity.description'))).not.toBeInTheDocument()
         expect(panel.querySelector('.scope-badge')).toBeVisible()
       }
     }

@@ -2,6 +2,38 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.13.16",
+      "releasedAt": "2026-09-26",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**避免重复整理历史**：普通数据库结构升级不再因为存在空闲页而重新整理历史或执行全库空间回收。启动页会区分结构更新、旧内容转换和实际空间回收，真正需要转换的旧数据仍按原流程处理并保留已有内容。",
+            "**监督回顾持续处理**：回顾较长历史时，不再每隔固定时长自动暂停，减少反复点击继续的操作。仍可主动暂停并从已保存批次继续，单次模型请求的超时和并发设置保持有效。",
+            "**监督页面布局更清楚**：修复工作回顾空态挤在控件旁的问题，运行状态单独显示，减少顶部重复说明。活动记录突出处理阶段、已保存批次和剩余来源，次要统计可展开查看。"
+          ],
+          "notices": [
+            "本次仅更新 Desktop，Agent 保持 **0.13.4**，无需为这些修复更新 Host 环境。从 Desktop **0.13.15** 升级不新增数据库格式迁移；从更早版本升级时，仍应备份完整用户数据，包括数据库和相邻 `notes/` 目录。",
+            "监督回顾只读且不调用工具，但会使用已配置模型并可能产生费用。取消固定时长自动暂停后，较长回顾可能连续执行更多批次；可主动暂停，模型结果仍需结合保存的来源核对。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [],
+          "fixes": [
+            "**Avoid repeated history cleanup**: Ordinary database structure upgrades no longer reorganize history or reclaim the entire database merely because free pages exist. The startup page distinguishes structure updates, legacy data conversion, and actual space reclamation, while older data that genuinely needs conversion still follows the existing process without losing its contents.",
+            "**Keep Supervisor reviews running**: Reviews of longer histories no longer pause automatically at fixed time intervals, reducing repeated manual continuation. You can still pause and resume from saved batches, and per-request model timeouts and concurrency settings remain effective.",
+            "**Clearer Supervisor layouts**: Fixes the Work review empty state appearing beside its controls, gives run status its own area, and removes repeated introductory text. Activity emphasizes processing stages, saved batches, and remaining sources, with secondary statistics available in expandable details."
+          ],
+          "notices": [
+            "This release updates Desktop only. Agent remains at **0.13.4**, with no Host update required for these fixes; upgrading from Desktop **0.13.15** adds no database format migration. When upgrading from older versions, back up complete user data, including the database and adjacent `notes/` directory.",
+            "Supervisor reviews are read-only and cannot call tools, but use the configured model and may incur charges. Without fixed-duration automatic pauses, longer reviews may process more batches continuously; you can pause manually, and results should still be checked against their saved sources."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.13.15",
       "releasedAt": "2026-09-26",
       "notes": {

@@ -324,7 +324,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.13.4`, while the current Desktop release candidate is `0.13.15`; formal
+  `0.13.4`, while the current Desktop release candidate is `0.13.16`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -759,9 +759,11 @@ records are listed separately and do not introduce another feature status.
   Automatic stages process only new, changed, or unprocessed source portions;
   no-change checks skip model calls. Manual review pages through the selected history
   and saves batches with their facts and sources. Runs can pause and resume from
-  saved progress; settings expose concurrency, timeouts, batch sizes, execution
-  budgets, and response capacity. Activity shows execution stages and saved batch
-  details. Work review and activity use the available panel width.
+  saved progress, without fixed-duration automatic pauses; settings expose
+  concurrency, per-request timeouts, batch sizes, and response capacity.
+  Activity emphasizes connected stages and saved-batch coverage, with secondary
+  statistics in expandable details. Work review uses a vertical full-width
+  flow with a separate run status and correctly placed empty state.
   Calls remain read-only without tools and may incur model charges. See the
   [implementation and evidence](./docs/features/conversation-supervision/progress.md).
 - [ ] **Further supervision capabilities** (planned): Full event-by-event replay,
@@ -853,13 +855,16 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.13.15`; Agent `0.13.4` is published, with
+- The current Desktop candidate is `0.13.16`; Agent `0.13.4` is published, with
   OpenCode pinned to `1.18.29` and Continue to `1.5.47`. Publication status follows the independent
   Desktop and Agent release channels.
 - Desktop `0.13.15` carries forward the unpublished `0.13.14` changes to paged Supervisor reviews and resume behavior,
   native ripgrep searches, to-do layouts, and explicit remote follow-up after an
   uncertain result. Database schema 47 requires a complete pre-upgrade backup
   for rollback to older clients.
+- Desktop `0.13.16` separates structure upgrades from legacy history reclamation,
+  removes fixed-duration review pauses, and clarifies Supervisor layouts.
+  It adds no schema change over `0.13.15` and requires no Agent update.
 - Agent `0.13.3` reclaims idle Runtimes and retires displaced Agents after existing
   work drains. Its packages require Desktop `0.13.12`;
   update Desktop first, then the Host environment. Node remains `24.19.0`.
@@ -874,7 +879,7 @@ records are listed separately and do not introduce another feature status.
   packaging, and publication verification remain separate acceptance steps.
   No local production build, packaging, or LoongArch preview is requested.
   Current validation status is recorded in the
-  [recovery preparation record](./docs/development/release-preparation-0.13.15.md).
+  [release preparation record](./docs/development/release-preparation-0.13.16.md).
 - Desktop `0.13.12` and Agent `0.13.3` have completed their native release jobs;
   this does not replace development-time real-Host scenario coverage.
 - Validation records remain separate from implementation status. Current-source
