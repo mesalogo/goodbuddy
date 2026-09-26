@@ -1,10 +1,24 @@
 # 监督者实施进度
 
-日期：2026-09-24。
+日期：2026-09-26。
 
 当前记录以已验证生产行为为准。监督者尚未覆盖全部 user stories。
 
 ## 已验证
+
+### 2026-09-26 单次执行与取消集成复核
+
+对应 FR-S4、FR-S6、FR-S10、US-S24、US-S26。复核当前 Main、SQLite、IPC、Preload 与 Renderer diff，确认手动新建/继续遇到占用立即拒绝，自动回顾等待；取消立即落库，执行位置保留至并行批次及 Runtime 清理结束。UI 在此期间显示正在取消，X 仅关闭提示；已取消运行不能继续，也不会被自动恢复。实现合同见[单次执行与取消](./technical-design.md#单次执行与取消)，界面见[UI 设计](./ui-design.md)。
+
+发现并修复一个可达问题：活动页等待整个 `resume` 请求结束才释放操作锁，继续运行后的暂停和取消按钮因此一直禁用。现在发出继续请求后释放提交锁，独立处理完成/失败，Main 仍保证唯一执行。新增回归在修复前因暂停按钮禁用而失败，修复后验证继续中的取消、停止提示，以及原继续请求返回时不清除后续取消操作的状态。
+
+本轮验证：
+
+- `npx vitest run src/renderer/src/SupervisorActivity.test.tsx src/renderer/src/SupervisorWorkspace.test.tsx`：38 项通过，包含上述新增回归、取消清理期间的状态、重新进入页面、手动重复提示及 X 不取消。
+- `npx vitest run src/main/assistant/supervision-review.test.ts src/preload/supervision-activity.test.ts src/main/ipc.test.ts -t "reserves before setup|persists cancellation|allows a new review after|cancels navigation|projects cancellation|wakes waiting automatic|production supervision IPC cancels|supervision"`：27 项通过、144 项按名称跳过；其中 Preload 文件未命中过滤，另用 `npx vitest run src/preload/supervision-activity.test.ts` 单独验证，1 项通过。
+- `npx eslint src/renderer/src/SupervisorActivity.tsx src/renderer/src/SupervisorActivity.test.tsx` 通过；本轮文件的 `git diff --check` 通过。中文新增内容按 `deai-writing` 清单人工审校，文档链接目标已核对。
+
+上述测试使用隔离 SQLite、生产 handler/工厂及可控 Runtime、Renderer API 替身；本轮未运行 Electron 端到端、全量测试或类型检查，真实模型调用 0 次。用户提供的后端与前端实现代理测试通过记录作为先前证据，不并入本轮计数。远程不受影响的依据是 `ipc.ts` 生产工厂调用 `resolveRequestRuntime({ workMode: 'ask' })`，无项目、Runtime 选择或执行空间，解析直接返回桌面默认 Runtime；不进入 SSH/Agent 路径，未修改远程协议或取消实现。未运行远程实测，未改动其他工作的 Runtime/package 文件，未提交。
 
 ### 2026-09-26 移除回顾自动时间预算暂停
 

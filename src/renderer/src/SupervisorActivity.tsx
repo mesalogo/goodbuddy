@@ -3,6 +3,7 @@ import { History, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { AssistantHeartbeatConfig, AssistantProject } from '../../shared/assistant-contracts'
 import type { SupervisionActivity } from '../../shared/supervision-contracts'
+import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
 import { EmptyState, ScopeBadge } from './WorkspacePrimitives'
 import { SupervisionBatchDetails } from './SupervisionBatchDetails'
 import { SupervisionReviewStages } from './SupervisionReviewStages'
@@ -24,6 +25,9 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
   const [error, setError] = useState<string>()
   const [expanded, setExpanded] = useState<string>()
   const [pending, setPending] = useState<string>()
+  const [execution, setExecution] = useState<SupervisionReviewExecution>({ active: false })
+  const [stopping, setStopping] = useState<{ runId: string; kind: 'paused' | 'cancelled' }>()
+  const actionPending = useRef(false)
   const filterRef = useRef<HTMLSelectElement>(null)
   const [appliedConfigId, setAppliedConfigId] = useState(configId)
   if (appliedConfigId !== configId) {
@@ -43,12 +47,16 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
       setReading(true)
       try {
         if (!api?.activity) throw new Error(t('supervisor.unavailable'))
-        const result = await api.activity({ limit: 50, offset, ...(configId ? { configId } : {}) })
+        const [result, current] = await Promise.all([
+          api.activity({ limit: 50, offset, ...(configId ? { configId } : {}) }),
+          api.execution()
+        ])
         if (disposed) return
         setRows(result)
+        setExecution(current)
         setError(undefined)
         // One request at a time, only while this page is active.
-        timer = setTimeout(() => void load(), result.some((row) => row.status === 'running') ? 2000 : 10000)
+        timer = setTimeout(() => void load(), current.active || result.some((row) => row.status === 'running') ? 2000 : 10000)
       } catch (reason) {
         if (!disposed) setError(reason instanceof Error ? reason.message : t('common.operationFailed'))
       } finally {
@@ -68,14 +76,46 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
     setRefresh((value) => value + 1)
   }
   const date = (value: string) => new Date(value).toLocaleString(i18n.resolvedLanguage)
+  const control = async (row: SupervisionActivity, action: 'pause' | 'cancel' | 'resume') => {
+    if (actionPending.current || !row.reviewProgress) return
+    const runId = row.reviewProgress.runId
+    actionPending.current = true
+    setPending(row.id)
+    setError(undefined)
+    if (action !== 'resume') setStopping({ runId, kind: action === 'cancel' ? 'cancelled' : 'paused' })
+    try {
+      if (action === 'resume') {
+        const current = await api.execution()
+        setExecution(current)
+        if (current.active) {
+          setError(t('supervisor.runningHint'))
+          return
+        }
+        // Resume resolves only when execution stops; keep its pause/cancel controls available.
+        void api.resume({ runId }).then(
+          () => setRefresh(value => value + 1),
+          reason => setError(reason instanceof Error ? reason.message : String(reason))
+        )
+        return
+      }
+      await api[action]({ runId })
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      actionPending.current = false
+      setPending(undefined)
+      setStopping(undefined)
+      setRefresh(value => value + 1)
+    }
+  }
   const planScope = configs.find(config => config.id === configId)?.scope
   return <section className="supervisor-activity" aria-label={t('activity.title')} aria-busy={loading}>
     <div className="supervisor-workspace__action-bar">
       <ScopeBadge scope={planScope?.kind === 'global' ? { kind: 'global' }
         : planScope?.kind === 'projects' ? { kind: 'projects', projectCount: planScope.projectIds.length }
           : { kind: 'mixed' }} />
-      {onPlanChange && <label className="heartbeat-settings__field">{t('activity.planFilter')}
-        <select ref={filterRef} value={configId ?? ''} onChange={(event) => onPlanChange(event.target.value)}>
+      {onPlanChange && <label className="heartbeat-settings__field">
+        <select aria-label={t('activity.planFilter')} ref={filterRef} value={configId ?? ''} onChange={(event) => onPlanChange(event.target.value)}>
           <option value="">{t('activity.allPlans')}</option>
           {configId && !configs.some(config => config.id === configId) && <option value={configId}>{t('activity.unavailablePlan')}</option>}
           {configs.map(config => <option key={config.id} value={config.id}>{config.name}</option>)}
@@ -94,10 +134,14 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
     </div>}
     {loading ? <EmptyState icon={<RefreshCw size={24} />} variant="loading" title={t('activity.loading')} description={t('activity.loadingHint')} />
       : !error && rows.length === 0 ? <EmptyState icon={<History size={24} />} title={t(configId ? 'activity.filteredEmpty' : 'activity.empty')} description={t(configId ? 'activity.filteredEmptyHint' : 'activity.emptyHint')} />
-      : <ol className="supervisor-activity__list">{rows.map((row) => <li key={`${row.kind}:${row.id}`}>
+      : <ol className="supervisor-activity__list">{rows.map((row) => {
+        const runId = row.reviewProgress?.runId
+        const stoppingKind = runId && stopping?.runId === runId ? stopping.kind
+          : runId && execution.active && execution.runId === runId ? execution.stopping : undefined
+        return <li key={`${row.kind}:${row.id}`}>
         <article className="supervisor-activity__item">
           <header><strong>{t(`activity.kind.${row.kind}`)}</strong>
-            <span className={`supervisor-activity__status supervisor-activity__status--${row.status}`}>{t(`activity.status.${row.status}`)}</span>
+            <span className={`supervisor-activity__status supervisor-activity__status--${stoppingKind ? 'running' : row.status}`} role={stoppingKind ? 'status' : undefined}>{t(stoppingKind === 'cancelled' ? 'reviewSettings.cancelling' : stoppingKind === 'paused' ? 'reviewSettings.pausing' : `activity.status.${row.status}`)}</span>
             <time dateTime={row.startedAt} title={row.startedAt}>{date(row.startedAt)}</time>
           </header>
           <p className="supervisor-activity__scope">{!row.scope ? t('activity.unknownScope') : row.scope.kind === 'global' ? t('center.scope.global') : t('supervisor.projectScope', { names: row.scope.projectIds.map((id) => projects.find((project) => project.id === id)?.name ?? t('settings.scope.unavailableProject')).join(', ') })} · {t(`activity.triggers.${row.trigger}`)}</p>
@@ -110,19 +154,16 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
           {row.reviewProgress && <>
             {row.reviewProgress.restartRequired && <p>{t('reviewSettings.restartRequired')}</p>}
             <div className="supervisor-workspace__actions">
-              {row.supervisionStatus === 'running' && <button type="button" className="secondary-button" disabled={pending === row.id} onClick={() => {
-                setPending(row.id)
-                void api.pause({ runId: row.reviewProgress!.runId }).then(() => setRefresh(value => value + 1), reason => setError(String(reason))).finally(() => setPending(undefined))
-              }}>{t('reviewSettings.pause')}</button>}
-              {!row.reviewProgress.complete && !row.reviewProgress.restartRequired && (row.supervisionStatus === 'paused' || row.supervisionStatus === 'failed') && <button type="button" className="secondary-button" disabled={pending === row.id} onClick={() => {
-                setPending(row.id)
-                void api.resume({ runId: row.reviewProgress!.runId }).then(() => setRefresh(value => value + 1), reason => setError(String(reason))).finally(() => setPending(undefined))
-              }}>{t(row.reviewProgress.phase === 'summarizing' ? 'activity.resumeMerge' : row.reviewProgress.phase === 'saving' ? 'activity.resumeSave' : 'reviewSettings.resume')}</button>}
+              {(row.supervisionStatus === 'running' || stoppingKind) && <>
+                <button type="button" className="secondary-button" disabled={!!pending || !!stoppingKind} onClick={() => void control(row, 'pause')}>{t('reviewSettings.pause')}</button>
+                <button type="button" className="danger-ghost" disabled={!!pending || !!stoppingKind} onClick={() => void control(row, 'cancel')}>{t('reviewSettings.cancel')}</button>
+              </>}
+              {!stoppingKind && !row.reviewProgress.complete && !row.reviewProgress.restartRequired && (row.supervisionStatus === 'paused' || row.supervisionStatus === 'failed') && <button type="button" className="secondary-button" disabled={!!pending || execution.active} onClick={() => void control(row, 'resume')}>{t(row.reviewProgress.phase === 'summarizing' ? 'activity.resumeMerge' : row.reviewProgress.phase === 'saving' ? 'activity.resumeSave' : 'reviewSettings.resume')}</button>}
               <button type="button" className="secondary-button" aria-expanded={expanded === row.id} aria-controls={`batches-${row.id}`} onClick={() => setExpanded(expanded === row.id ? undefined : row.id)}>{t('reviewSettings.facts')}</button>
             </div>
           </>}
-          {row.reviewProgress && <SupervisionReviewStages row={row} />}
-          {row.error && <div className="supervisor-activity__failure">
+          {row.reviewProgress && <SupervisionReviewStages row={row} stopping={stoppingKind || undefined} />}
+          {row.error && row.supervisionStatus !== 'cancelled' && !stoppingKind && <div className="supervisor-activity__failure">
             <p>{t(row.status === 'paused' ? 'reviewSettings.pausedHint' : /persistedId|candidateRef|entity identity/.test(row.error)
               ? 'reviewSettings.identityError' : 'reviewSettings.runError')}</p>
             <details className="supervisor-activity__diagnostics"><summary>{t('reviewSettings.diagnostics')}</summary>
@@ -149,7 +190,7 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
             </details>}
           </details>
         </article>
-      </li>)}</ol>}
+      </li>})}</ol>}
     <nav className="supervisor-workspace__actions" aria-label={t('activity.pagination')}>
       <button className="secondary-button" type="button" disabled={loading || reading || !active || offset === 0} onClick={() => reload(Math.max(0, offset - 50))}>{t('activity.previous')}</button>
       <span>{t('activity.page', { page: offset / 50 + 1 })}</span>

@@ -10,7 +10,7 @@ import {
 import { reviewScope, type ReviewBatch } from './review-checkpoint'
 import { createHash } from 'node:crypto'
 import type { SupervisionReviewStore, ReviewConfiguration } from './supervision-review-store'
-import type { SupervisionReviewProgress } from '../../shared/supervision-review-contracts'
+import type { SupervisionReviewExecution, SupervisionReviewProgress } from '../../shared/supervision-review-contracts'
 
 export type SupervisorSummarizerRequest = {
   signal?: AbortSignal
@@ -36,7 +36,7 @@ export interface SupervisorEvidenceCollector {
 
 export type StoredSupervisionResult = {
   batch?: ReviewBatch
-  status?: 'completed' | 'no_change' | 'paused'
+  status?: 'completed' | 'no_change' | 'paused' | 'cancelled'
   coverage?: SupervisionReviewProgress
   runId?: string
   candidates?: SupervisionCandidate[]
@@ -170,7 +170,7 @@ function validateReferences(
 }
 
 export class SupervisorService {
-  private pending: Promise<unknown> = Promise.resolve()
+  private active?: { settled: Promise<unknown>; runId?: string; stopping?: 'paused' | 'cancelled' }
   private readonly controllers = new Map<string, AbortController>()
   private readonly activity = new Map<string, { inFlight: number }>()
   constructor(
@@ -181,9 +181,24 @@ export class SupervisorService {
   ) {}
 
   async run(input: unknown, heartbeatRunId?: string): Promise<StoredSupervisionResult> {
-    const result = this.pending.catch(() => undefined).then(() => this.execute(input, heartbeatRunId))
-    this.pending = result
-    return result
+    const request = supervisionRunRequestSchema.parse(input)
+    return this.admit(() => this.execute(request, heartbeatRunId), request.trigger === 'heartbeat')
+  }
+
+  execution(): SupervisionReviewExecution {
+    return { active: Boolean(this.active), runId: this.active?.runId, stopping: this.active?.stopping }
+  }
+
+  private async admit(operation: () => Promise<StoredSupervisionResult>, wait = false): Promise<StoredSupervisionResult> {
+    while (this.active) {
+      if (!wait) throw new Error('SUPERVISION_REVIEW_BUSY: 已有回顾正在执行或停止中，请等待结束后再开始或继续回顾。')
+      await this.active.settled.catch(() => undefined)
+    }
+    // Reserve before any asynchronous configuration, collection or resume work.
+    const active = { settled: Promise.resolve().then(operation) }
+    this.active = active
+    try { return await active.settled }
+    finally { if (this.active === active) this.active = undefined }
   }
 
   private async execute(input: unknown, heartbeatRunId?: string): Promise<StoredSupervisionResult> {
@@ -240,7 +255,19 @@ export class SupervisorService {
   }
 
   pause(runId: string): void {
+    if (this.active?.runId === runId && this.active.stopping !== 'cancelled') this.active.stopping = 'paused'
     this.controllers.get(runId)?.abort(new Error('Review paused by user'))
+  }
+
+  async cancel(runId: string): Promise<void> {
+    if (!this.review) throw new Error('SUPERVISION_REVIEW_UNAVAILABLE: 此回顾不支持取消。')
+    this.review.database().cancel(runId)
+    const active = this.active?.runId === runId ? this.active : undefined
+    if (active) {
+      active.stopping = 'cancelled'
+      this.controllers.get(runId)?.abort(new Error('Review cancelled by user'))
+      await active.settled.catch(() => undefined)
+    }
   }
 
   progress(progress: SupervisionReviewProgress): SupervisionReviewProgress {
@@ -249,9 +276,7 @@ export class SupervisorService {
 
   async resume(runId: string): Promise<StoredSupervisionResult> {
     if (!this.review) throw new Error('Resumable reviews are unavailable')
-    const operation = this.pending.catch(() => undefined).then(() => this.executeReview(undefined, undefined, runId))
-    this.pending = operation
-    return operation
+    return this.admit(() => this.executeReview(undefined, undefined, runId))
   }
 
   private async executeReview(input?: SupervisionRunRequest, heartbeatRunId?: string, resumeId?: string): Promise<StoredSupervisionResult> {
@@ -260,14 +285,16 @@ export class SupervisorService {
     const state = existing ? db.load(existing) : { request: input!, config: await this.review!.configuration() }
     const { request, config } = state
     const runId = existing ?? this.store.start!(request, heartbeatRunId)
+    if (this.active) this.active.runId = runId
     const controller = new AbortController()
     this.controllers.set(runId, controller)
     const activity = { inFlight: 0 }
     this.activity.set(runId, activity)
     const empty: SupervisionSummaryOutput = { summary: 'No new evidence', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
-    const paused = () => {
-      db.pause(runId, 'Review paused by user')
-      return { runId, request, evidence: [], output: empty, status: 'paused' as const, coverage: db.progress(runId) }
+    const stopped = (): StoredSupervisionResult => {
+      const status = this.active?.stopping === 'cancelled' ? 'cancelled' : 'paused'
+      if (status === 'paused') db.pause(runId, 'Review paused by user')
+      return { runId, request, evidence: [], output: empty, status, coverage: db.progress(runId) }
     }
     try {
       if (existing) db.resume(runId)
@@ -296,7 +323,7 @@ export class SupervisorService {
         return output
       }
       for (;;) {
-        if (controller.signal.aborted) return paused()
+        if (controller.signal.aborted) return stopped()
         const groups = db.groups(runId, config.concurrency)
         if (!groups.length) break
         const results = await Promise.allSettled(groups.map(async group => {
@@ -307,7 +334,7 @@ export class SupervisorService {
           controller.signal.throwIfAborted()
           db.save(runId, group.projectId, group.conversationId, evidence, output)
         }))
-        if (controller.signal.aborted) return paused()
+        if (controller.signal.aborted) return stopped()
         const failure = results.find(result => result.status === 'rejected')
         if (failure?.status === 'rejected') throw failure.reason
       }
@@ -325,6 +352,7 @@ export class SupervisorService {
         const evidence = [left, right].map(card => ({ id: card.id, sourceType: 'note' as const, sourceId: card.id,
           title: 'Retained review navigation', content: card.output.summary, occurredAt: request.timeRange.to }))
         const output = await summarize(evidence, true)
+        controller.signal.throwIfAborted()
         db.saveNavigation(runId, id, [left.id, right.id], output)
         return { id, output }
       }
@@ -375,7 +403,7 @@ export class SupervisorService {
       await this.store.save(result)
       return result
     } catch (error) {
-      if (controller.signal.aborted) return paused()
+      if (controller.signal.aborted) return stopped()
       this.store.fail?.(runId, error instanceof Error ? error.message : 'Review failed')
       throw error
     } finally { this.controllers.delete(runId); this.activity.delete(runId) }

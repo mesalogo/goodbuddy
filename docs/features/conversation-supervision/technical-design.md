@@ -43,7 +43,7 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 
 监督整理超时由 run 创建时冻结；共享模型池仍采用实时设置上限。`supervision:pause` 取消该 run 的排队和在途工作，`supervision:resume` 继续已保存批次；监督整理输出在流中按 `supervisionReview.responseKiB` 检查响应容量，默认 1024 KiB，可在设置页调整为 100 至 16384 KiB。该容量每次请求读取当前设置，继续旧运行也采用新值；超限保留成功批次并提示调高后继续。生成摘要及事实内容不设独立短字符限制，监督旧摘要读取保留全文，具体边界见[生产接线](./review-scheduling-design.md#0-生产接线与剩余边界)。以下报告领取和租约规则继续适用。
 
-手动和自动监督均在桌面 Main 调用生产工厂，Runtime 解析请求只有 `workMode: ask`，不携带 SSH 项目或执行空间。摘要校验、合并和持久化在 Main 完成；本次取消内容长度限制不改变 `gbagent`、远端 Runtime 启动或桌面到 Agent 协议。
+手动和自动监督均在桌面 Main 调用生产工厂，Runtime 解析请求只有 `workMode: ask`，不携带项目、Runtime 选择或执行空间。`resolveRequestRuntime` 因而返回桌面默认 Runtime，不进入 SSH 项目或 `selectedRuntimes.getRuntime` 分支；回顾 scope 只筛选证据。摘要校验、合并和持久化在 Main 完成，single-flight、取消及 UI 控制不改变 `gbagent`、远端 Runtime 启动或桌面到 Agent 协议。
 
 `ApplicationSettingsStore` 持久化报告和整理模型超时，均为 30..600 整数秒，默认 240。报告排队前冻结，监督创建 run 时冻结；计时从获槽及 Runtime 解析后开始，覆盖模型执行及其内部重试。流结束校验 signal 和完成事件，finally 释放临时会话，心跳报告保持原有 100KB 上限，监督整理使用上文的可调响应容量。采集、排队、保存和清理不计入模型超时。
 
@@ -54,6 +54,14 @@ schema 43 在结果上增加 `graph_snapshot_json`，保存当次实体名称、
 schema 47 的四张批次相关表使用外键随监督运行清理，未完成运行不新增自动过期删除规则。启动时原有 running 记录会标 failed，但已保存批次和配置保留，活动页仍可继续。发布逐页读取叶子并复用现有结果/来源/图谱写入，在同一事务更新完成状态和自动 checkpoint。
 
 当前设置及冻结范围见[当前设置合同](./review-scheduling-design.md#当前设置合同)。未实现的高级参数继续保留在目标清单，不显示为可保存控件；没有兼容原型数据库的读取器。
+
+### 单次执行与取消
+
+对应 FR-S4、FR-S6、FR-S10；状态规则见[活动记录](./logic-design.md#活动记录)。同一个 `SupervisorService` 在异步配置读取前占用唯一执行位置，`run` 和 `resume` 共用准入。已有执行或停止清理时，手动新建及继续立即返回 `SUPERVISION_REVIEW_BUSY`；`trigger: heartbeat` 等待当前 Promise 结束，醒来后重新检查占用。等待中的自动请求尚未创建监督 run，不占模型池；心跳报告在进入下游监督前已释放自己的槽位。
+
+`supervision:execution` 返回进程内 `{ active, runId?, stopping? }`，配置读取期间可有 `active: true` 而尚无 runId。`supervision:cancel({ runId })` 先在既有 `supervision_runs` 写入 `cancelled`、清除错误并保存取消时间，再向父 controller 传播 abort；重复取消保留原时间。该接口等待执行 Promise 结束，包含并行批次的 `allSettled` 和 Runtime `releaseConversation`，之后才释放准入。暂停只请求 abort，执行停止后保存 `paused`；取消优先于暂停。迟到模型输出不得保存叶子、导航或完整结果，成功批次保留，自动 checkpoint 不推进。发布是同步 SQLite 事务，已完成或无变化的运行拒绝取消，不撤销已发布结果；本次无 schema 迁移。
+
+Preload 暴露类型化 `execution`、`cancel`，取消输入使用 UUID schema 并校验可信 sender。活动 UI 用实时执行状态覆盖持久记录的停止显示；工作回顾挂载期间每两秒读取执行状态，发起前再次查询，Main 仍作最终准入判断。`resume` IPC 直到运行结束才返回，Renderer 发出请求后释放提交锁并独立处理结果，确保继续中的回顾仍可暂停或取消。状态条 X 仅修改本地显示状态。
 
 ## 自动增量收集
 
@@ -154,7 +162,7 @@ sequenceDiagram
 
 运行状态与内容确认状态分开保存：
 
-- 当前监督运行状态：`running`、`paused`、`completed`、`failed`、`no_change`。心跳及合并活动的映射见[活动记录](./logic-design.md#活动记录)。
+- 当前监督运行状态：`running`、`paused`、`cancelled`、`completed`、`failed`、`no_change`。心跳及合并活动的映射见[活动记录](./logic-design.md#活动记录)。
 - 内容状态：来源事实、自动归纳、待核对、用户确认、用户修订、已移除关系。
 - 运行成功只表示模型结果已按契约保存，不表示所有实体和关系已经被用户确认。
 - 失败保留上次完整结果和本次已保存批次；暂停不生成完整结果，继续入口恢复同一 run。
@@ -213,6 +221,8 @@ erDiagram
 | `supervision:overview` | 工作回顾、运行状态、未解决事项和最近结果 |
 | `supervision:run` | 手动开始一次整理，完成后返回包含 runId 的结果 |
 | `supervision:activity` | 有界读取真实执行和阶段状态 |
+| `supervision:execution` | 读取唯一执行位置及停止清理状态 |
+| `supervision:pause` / `supervision:cancel` / `supervision:resume` | 暂停、终止或继续指定回顾；生命周期见上文 |
 | `supervision:graph` | 按故事线、时间区间和回放时刻分页读取图谱 |
 | `supervision:object` | 读取事件、实体、关系及来源详情 |
 | `supervision:confirm` | 确认、修订或移除自动关系和实体变化 |
@@ -229,7 +239,7 @@ IPC 返回图谱查询结果时使用分页和有界字段；详情中的来源�
 - 监督者模型调用固定为 `ask` 语义，输入来自 `EvidenceCollector` 的有界快照，工具授权始终拒绝。
 - `Global`、Project、多项目和固定 Conversation/Task/Experiment 目标在 Main 冻结；模型不能生成或改变范围。
 - 每个来源引用必须属于本次冻结范围，跨范围引用、伪造项目 ID 和不存在的来源 ID 直接使结果失败。
-- 心跳运行沿用现有 `heartbeat_runs` 的领取、租约和重试机制；新增监督运行按心跳运行 ID 关联，活动据此合并阶段。没有新增取消协议。
+- 心跳运行沿用现有 `heartbeat_runs` 的领取、租约和重试机制；监督运行按心跳运行 ID 关联，活动据此合并阶段。监督取消不撤销已保存的心跳报告，合并活动优先显示监督已取消状态。
 - 同一配置同时触发手动和定时运行时，沿用现有幂等键和运行领取规则；已完成结果不能重复写入。
 - 用户确认或修订后的实体、关系不被后续整理静默覆盖；新证据以补充或冲突待核对状态写入。
 - 外部知识库只读。图谱可以引用保存到本地的外部片段和定位信息，不调用远端写入、不承诺打开远端原文。

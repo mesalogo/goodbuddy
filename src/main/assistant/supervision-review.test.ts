@@ -8,6 +8,7 @@ import { AssistantDatabase } from './assistant-database'
 import { SupervisorService, type SupervisorSummarizerRequest } from './supervisor-service'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
 import type { ReviewConfiguration } from './supervision-review-store'
+import { HeartbeatService } from './heartbeat-service'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { vi.useRealTimers(); for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -16,6 +17,165 @@ const request: SupervisionRunRequest = { trigger: 'manual', scope: { kind: 'glob
   from: new Date(time - 10000).toISOString(), to: new Date(time + 10000).toISOString()
 } }
 const empty = { summary: 'Navigation', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => { resolve = done })
+  return { promise, resolve }
+}
+
+it('reserves before setup, rejects manual and resume overlap, and lets automatic work wait for settlement', async () => {
+  const f = await fixture([['Evidence']])
+  const service = f.service()
+  const entered = deferred(), finish = deferred()
+  f.summarize.mockImplementationOnce(async () => { entered.resolve(); await finish.promise; return empty })
+  const first = service.run(request)
+  expect(service.execution()).toMatchObject({ active: true })
+  await expect(service.run(request)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
+  await entered.promise
+  const runId = service.execution().runId!
+  await expect(service.resume(runId)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
+  const automatic = service.run({ ...request, trigger: 'heartbeat' })
+  const nextAutomatic = service.run({ ...request, trigger: 'heartbeat' })
+  expect(f.db.listSupervisionActivity()).toHaveLength(1)
+  finish.resolve()
+  await expect(first).resolves.toMatchObject({ status: 'completed' })
+  await expect(automatic).resolves.toMatchObject({ status: 'completed' })
+  await expect(nextAutomatic).resolves.toMatchObject({ status: 'no_change' })
+  expect(service.execution().active).toBe(false)
+  expect(f.db.listSupervisionActivity()).toHaveLength(3)
+  expect(f.summarize).toHaveBeenCalledTimes(2)
+})
+
+it('persists cancellation immediately but holds the slot until every in-flight batch settles', async () => {
+  const f = await fixture([['First'], ['Second']])
+  const service = f.service()
+  const entered = deferred(), finish = deferred()
+  const signals: AbortSignal[] = []
+  f.summarize.mockImplementation(async input => {
+    signals.push(input.signal!)
+    if (signals.length === 2) entered.resolve()
+    await finish.promise
+    return empty // Simulate a provider that returns a late success after abort.
+  })
+  const pending = service.run({ ...request, trigger: 'heartbeat' })
+  await entered.promise
+  const runId = service.execution().runId!
+  let cancelled = false
+  const cancellation = service.cancel(runId).then(() => { cancelled = true })
+  expect(f.db.listSupervisionActivity()[0]).toMatchObject({ status: 'cancelled', supervisionStatus: 'cancelled', resultId: null })
+  expect(signals.every(signal => signal.aborted)).toBe(true)
+  expect(service.execution()).toEqual({ active: true, runId, stopping: 'cancelled' })
+  await expect(service.run(request)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
+  await expect(service.resume(runId)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
+  expect(cancelled).toBe(false)
+  service.pause(runId)
+  finish.resolve()
+  await cancellation
+  await expect(pending).resolves.toMatchObject({ status: 'cancelled' })
+  expect(service.execution().active).toBe(false)
+  expect(f.db.supervisionReviewStore().batches(runId)).toEqual([])
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(0)
+  expect(f.db.listSupervisionResults()).toEqual([])
+  await expect(service.resume(runId)).rejects.toThrow('SUPERVISION_REVIEW_CANCELLED')
+  expect(f.db.listSupervisionActivity()[0]!.status).toBe('cancelled')
+  await service.cancel(runId)
+  f.summarize.mockResolvedValue(empty)
+  const next = await service.run({ ...request, trigger: 'heartbeat' })
+  expect(next.runId).not.toBe(runId)
+  expect(next.status).toBe('completed')
+})
+
+it.each(['paused', 'failed'] as const)('allows a new review after %s and can cancel retained work without publishing checkpoints', async status => {
+  const f = await fixture([['x'.repeat(2500)]], { concurrency: 1 })
+  const service = f.service()
+  f.summarize.mockResolvedValueOnce(empty).mockImplementationOnce(async () => {
+    if (status === 'failed') throw new Error('Provider failed')
+    service.pause(service.execution().runId!)
+    return empty
+  })
+  const first = service.run({ ...request, trigger: 'heartbeat' })
+  if (status === 'failed') await expect(first).rejects.toThrow('Provider failed')
+  else await expect(first).resolves.toMatchObject({ status })
+  const runId = f.db.listSupervisionActivity()[0]!.id
+  expect(f.db.supervisionReviewStore().batches(runId)).toHaveLength(1)
+  await expect(service.run(request)).resolves.toMatchObject({ status: 'completed' })
+  await service.cancel(runId)
+  await expect(service.resume(runId)).rejects.toThrow('SUPERVISION_REVIEW_CANCELLED')
+  expect(f.db.supervisionReviewStore().batches(runId)).toHaveLength(1)
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(0)
+  f.db.close(); f.db.initialize(f.directory)
+  expect(f.db.listSupervisionActivity().find(row => row.id === runId)!.status).toBe('cancelled')
+  await expect(f.service().resume(runId)).rejects.toThrow('SUPERVISION_REVIEW_CANCELLED')
+})
+
+it('cancels navigation without publishing fully extracted source checkpoints', async () => {
+  const f = await fixture([['x'.repeat(1500)]], { concurrency: 1 })
+  const service = f.service()
+  const entered = deferred(), finish = deferred()
+  f.summarize.mockResolvedValueOnce(empty).mockResolvedValueOnce(empty).mockImplementationOnce(async () => {
+    entered.resolve(); await finish.promise; return empty
+  })
+  const pending = service.run({ ...request, trigger: 'heartbeat' })
+  await entered.promise
+  const runId = service.execution().runId!
+  const cancellation = service.cancel(runId)
+  finish.resolve()
+  await cancellation
+  await expect(pending).resolves.toMatchObject({ status: 'cancelled', coverage: { batches: 2, remainingSources: 0, complete: false } })
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints').get()!.n).toBe(0)
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM supervision_review_navigation').get()!.n).toBe(0)
+  expect(f.db.listSupervisionResults()).toEqual([])
+})
+
+it('projects cancellation into heartbeat activity while runtime cleanup is still pending', async () => {
+  const f = await fixture([['Evidence']])
+  const service = f.service()
+  const entered = deferred(), finish = deferred()
+  f.summarize.mockImplementationOnce(async () => { entered.resolve(); await finish.promise; return empty })
+  const heartbeat = new HeartbeatService(f.db, { summarize: async () => ({ summary: 'Report', highlights: [], proposedMemories: [], followUpTasks: [] }) }, () => {},
+    async ({ run }) => { await service.run({ ...request, trigger: 'heartbeat' }, run.id) })
+  const config = heartbeat.create({ name: 'Review', scope: request.scope, timezone: 'UTC',
+    recurrence: { type: 'daily', localTime: '09:00' }, enabled: true, lookbackHours: 24, retentionDays: 30 })
+  const pending = heartbeat.runNow({ id: config.id, idempotencyKey: randomUUID() })
+  await entered.promise
+  const runId = service.execution().runId!
+  const cancellation = service.cancel(runId)
+  expect(f.db.listSupervisionActivity()).toEqual([expect.objectContaining({ kind: 'heartbeat', status: 'cancelled',
+    heartbeatStatus: 'completed', supervisionStatus: 'cancelled', completedAt: expect.any(String), reviewProgress: expect.objectContaining({ runId }) })])
+  finish.resolve()
+  await cancellation
+  await pending
+  expect(f.db.listSupervisionActivity()[0]!.status).toBe('cancelled')
+  expect(f.sql.prepare('SELECT COUNT(*) AS n FROM review_checkpoints WHERE stage = ?').get('supervisor')!.n).toBe(0)
+})
+
+it.each(['paused', 'failed', 'cancelled'] as const)('wakes waiting automatic work after %s without overlapping requests', async status => {
+  const f = await fixture([['Evidence']])
+  const service = f.service()
+  const entered = deferred(), finish = deferred()
+  f.summarize.mockImplementationOnce(async () => {
+    entered.resolve(); await finish.promise
+    if (status === 'failed') throw new Error('Provider failed')
+    return empty
+  })
+  const pending = service.run(request)
+  const outcome = status === 'failed' ? expect(pending).rejects.toThrow('Provider failed')
+    : expect(pending).resolves.toMatchObject({ status })
+  await entered.promise
+  const runId = service.execution().runId!
+  const automatic = service.run({ ...request, trigger: 'heartbeat' })
+  const cancellation = status === 'cancelled' ? service.cancel(runId) : undefined
+  if (status === 'paused') service.pause(runId)
+  expect(f.summarize).toHaveBeenCalledTimes(1)
+  expect(f.db.listSupervisionActivity()).toHaveLength(1)
+  finish.resolve()
+  await cancellation
+  await outcome
+  await expect(automatic).resolves.toMatchObject({ status: 'completed' })
+  expect(f.summarize).toHaveBeenCalledTimes(2)
+  expect(service.execution().active).toBe(false)
+})
 
 async function fixture(contents: string[][], overrides: Partial<ReviewConfiguration> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-review-'))

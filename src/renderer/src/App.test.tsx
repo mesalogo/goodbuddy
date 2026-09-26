@@ -691,6 +691,8 @@ const api: DesktopApi = {
     history: vi.fn(async () => ({ runs: [], entries: [] })),
   },
   supervision: {
+    cancel: vi.fn(async () => undefined),
+    execution: vi.fn(async () => ({ active: false })),
     pause: vi.fn(async () => undefined),
     resume: vi.fn(async () => undefined),
     batches: vi.fn(async () => []),

@@ -267,6 +267,8 @@ export const ipcChannels = {
   supervisionOverview: 'supervision:overview',
   supervisionActivity: 'supervision:activity',
   supervisionPause: 'supervision:pause',
+  supervisionCancel: 'supervision:cancel',
+  supervisionExecution: 'supervision:execution',
   supervisionResume: 'supervision:resume',
   supervisionBatches: 'supervision:batches',
   supervisionRun: 'supervision:run',

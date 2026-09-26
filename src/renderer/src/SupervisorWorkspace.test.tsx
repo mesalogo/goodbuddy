@@ -1,9 +1,13 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render as renderComponent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { SupervisorWorkspace } from './SupervisorWorkspace'
 
 const result = { id: 'result-1', storyLineId: 'story', sourceId: null, summary: 'Recap', changeDigest: '', createdAt: '2026-09-22T00:00:00.000Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-20T00:00:00.000Z', to: '2026-09-22T00:00:00.000Z' }, openItems: [] }
+const render = (ui: React.ReactNode) => {
+  if (window.goodbuddy?.supervision) window.goodbuddy.supervision.execution ??= vi.fn().mockResolvedValue({ active: false })
+  return renderComponent(ui)
+}
 
 describe('SupervisorWorkspace', () => {
   it('keeps dated historical content and exact graph selection when configuring and running a new review', async () => {
@@ -34,15 +38,65 @@ describe('SupervisorWorkspace', () => {
     expect(onTabChange).toHaveBeenCalledWith('graph')
     expect(graph).toHaveBeenLastCalledWith({ resultId: 'old', storyLineId: 'story' })
     fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
     expect(recap.textContent).toBe(frozenText)
     expect(screen.getByText('Important final conclusion.')).toBeVisible()
     expect(screen.getByRole('status')).toHaveTextContent('新回顾正在整理')
-    expect(screen.getByRole('button', { name: '回顾整理中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '回顾当前进展' })).toBeEnabled()
+    expect(screen.getByLabelText('关注范围')).toBeEnabled()
+    expect(screen.getByLabelText('时间范围')).toBeEnabled()
+    expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
+    expect(screen.queryByText('关注范围')).not.toBeInTheDocument()
+    expect(screen.queryByText('时间范围')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    expect(screen.getByRole('status')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '活动记录' }))
     expect(onOpenActivity).toHaveBeenCalledOnce()
     expect(run).toHaveBeenCalledOnce()
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ scope: { kind: 'projects', projectIds: [project.id] } }))
     await act(async () => finish())
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+  it('discovers automatic execution on mount, preserves dismissal through polling, and guards start until cleanup', async () => {
+    vi.useFakeTimers()
+    const execution = vi.fn().mockResolvedValue({ active: true, runId: 'automatic', stopping: 'cancelled' })
+    const run = vi.fn().mockResolvedValue(undefined)
+    const cancel = vi.fn()
+    window.goodbuddy = { supervision: { execution, overview: async () => [], run, cancel } } as never
+    const view = render(<SupervisorWorkspace onOpenActivity={vi.fn()} />)
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
+    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+    await act(() => vi.advanceTimersByTimeAsync(2000))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(cancel).not.toHaveBeenCalled()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' })))
+    expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
+    expect(run).not.toHaveBeenCalled()
+    execution.mockResolvedValue({ active: false })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' })))
+    expect(run).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    view.unmount()
+    const calls = execution.mock.calls.length
+    await act(() => vi.advanceTimersByTimeAsync(10000))
+    expect(execution).toHaveBeenCalledTimes(calls)
+    vi.useRealTimers()
+  })
+
+  it('turns a backend busy race into a dismissible ongoing notice', async () => {
+    const run = vi.fn().mockRejectedValue(new Error('SUPERVISION_REVIEW_BUSY'))
+    window.goodbuddy = { supervision: { overview: async () => [], run } } as never
+    render(<SupervisorWorkspace onOpenActivity={vi.fn()} />)
+    await screen.findByText('还没有成功回顾')
+    fireEvent.click(screen.getByRole('button', { name: '回顾当前进展' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('新回顾正在整理'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '回顾当前进展' })).toBeEnabled()
   })
   it('graph navigation discards a late overview before it can request the old graph', async () => {
     let resolveOverview!: (value: unknown) => void
@@ -138,7 +192,7 @@ describe('SupervisorWorkspace', () => {
       expect(tokens, token).toContain(`${token}:`)
     }
   })
-  afterEach(() => { cleanup(); window.goodbuddy = {} as never })
+  afterEach(() => { cleanup(); vi.useRealTimers(); window.goodbuddy = {} as never })
   it('shows unavailable immediately and does not call supervision APIs when the bridge is absent', () => {
     window.goodbuddy = {} as never
 

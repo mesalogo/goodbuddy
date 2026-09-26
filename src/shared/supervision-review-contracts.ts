@@ -11,6 +11,11 @@ export const supervisionReviewSettingsSchema = z.object({
 export type SupervisionReviewSettings = z.infer<typeof supervisionReviewSettingsSchema>
 export const defaultSupervisionReviewSettings = supervisionReviewSettingsSchema.parse({})
 export const supervisionReviewIdSchema = z.object({ runId: z.string().uuid() }).strict()
+export type SupervisionReviewExecution = {
+  active: boolean
+  runId?: string
+  stopping?: 'paused' | 'cancelled'
+}
 export const supervisionBatchesRequestSchema = supervisionReviewIdSchema.extend({
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(20).default(10)

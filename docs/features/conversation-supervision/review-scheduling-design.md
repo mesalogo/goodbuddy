@@ -28,6 +28,8 @@ schema 47 增加运行配置、来源清单、成功批次、导航节点四张�
 
 `supervision:pause` 将父 signal 传入排队及在途模型；取消后的输出不提交。`supervision:resume` 恢复已保存 run；`supervision:batches` 默认每页 10 批、最多 20 批，返回完整叶子及来源。活动返回已保存批次、码点数、剩余来源、当前阶段、排队或执行中的模型任务数及已保存配置。提取和导航汇总持续运行至完成，不按累计运行时长暂停；用户暂停会中断在途请求，仅保留已保存批次。完成判定不依赖摘要措辞。
 
+2026-09-26 已接入整次回顾 single-flight、`supervision:cancel` 及实时 `supervision:execution`。手动重复请求不排队，自动请求等待；已取消运行从自动未完成查询中排除，也不能手动继续。持久取消与实际停止分开呈现，准入保留至 Runtime 清理结束。完整生命周期见[单次执行与取消](./technical-design.md#单次执行与取消)，第 1 节关于 `pending` 队列和缺少取消入口的描述仅为改造前基线。
+
 当前阶段以 `phase` 写入既有 `supervision_review_runs.state_json`，取值为 `collecting / extracting / summarizing / saving`；无新表或迁移。它记录服务最后进入的阶段，失败和重启后保留；完成仍由 `supervision_runs.status` 的发布事务决定。活动的 `navigationNodes` 从已保存导航表计数，`inFlight` 仍来自进程内计数。旧运行没有 phase 时不回填推测值。清单和最终发布为同步事务，短阶段不保证被轮询看到，清单事务失败也不会留下部分阶段记录。批次接口只有成功记录，没有逐个失败/在途任务或项目、会话聚合状态；界面仅按分页返回的真实归属组织详情。
 
 ### 当前设置合同

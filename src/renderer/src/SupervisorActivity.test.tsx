@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render as renderComponent, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { SupervisionActivity as Activity } from '../../shared/supervision-contracts'
 import { SupervisorActivity } from './SupervisorActivity'
@@ -10,6 +10,10 @@ const row: Activity = {
   id: 'run', kind: 'heartbeat', trigger: 'scheduled', status: 'running', scope: { kind: 'global' },
   startedAt: '2026-09-23T10:00:00Z', completedAt: null, timeRange: null, error: null,
   summary: 'Saved heartbeat', resultId: null, heartbeatStatus: 'completed', supervisionStatus: 'running'
+}
+const render = (ui: React.ReactNode) => {
+  if (window.goodbuddy?.supervision) window.goodbuddy.supervision.execution ??= vi.fn().mockResolvedValue({ active: false })
+  return renderComponent(ui)
 }
 afterEach(async () => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); await changeUiLocale('zh-CN') })
 
@@ -46,12 +50,48 @@ it('shows durable progress, pauses and continues the same run, and expands retai
   fireEvent.click(await screen.findByRole('button', { name: '暂停回顾' }))
   fireEvent.click(await screen.findByRole('button', { name: '继续已保存回顾' }))
   expect(pause).toHaveBeenCalledWith({ runId: 'saved-run' })
-  expect(resume).toHaveBeenCalledWith({ runId: 'saved-run' })
+  await waitFor(() => expect(resume).toHaveBeenCalledWith({ runId: 'saved-run' }))
   await waitFor(() => expect(activity).toHaveBeenCalledTimes(3))
   fireEvent.click(await screen.findByRole('button', { name: '已保留事实与来源' }))
   expect(await screen.findByText('Retained fact')).toBeInTheDocument()
   expect(batches).toHaveBeenCalledWith({ runId: 'saved-run', offset: 0, limit: 10 })
   expect(screen.getAllByText(/message-id \[0, 18\)/).length).toBeGreaterThan(0)
+})
+
+it('allows cancelling a resumed review before the resume request settles', async () => {
+  vi.useFakeTimers()
+  const progress = { runId: 'saved-run', phase: 'extracting', batches: 1, characters: 1000, sources: 2, remainingSources: 1, complete: false }
+  const activity = vi.fn().mockResolvedValue([{ ...row, status: 'paused', supervisionStatus: 'paused', reviewProgress: progress }])
+  const execution = vi.fn().mockResolvedValue({ active: false })
+  let finishResume!: () => void, finishCancel!: () => void
+  const resume = vi.fn(() => {
+    activity.mockResolvedValue([{ ...row, reviewProgress: progress }])
+    execution.mockResolvedValue({ active: true, runId: progress.runId })
+    return new Promise<void>(resolve => { finishResume = resolve })
+  })
+  const cancel = vi.fn(() => {
+    activity.mockResolvedValue([{ ...row, status: 'cancelled', supervisionStatus: 'cancelled', reviewProgress: progress }])
+    execution.mockResolvedValue({ active: true, runId: progress.runId, stopping: 'cancelled' })
+    return new Promise<void>(resolve => { finishCancel = resolve })
+  })
+  vi.stubGlobal('goodbuddy', { supervision: { activity, execution, resume, cancel } })
+  render(<SupervisorActivity active projects={[]} onOpenResult={vi.fn()} />)
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '继续已保存回顾' })))
+  await act(() => vi.advanceTimersByTimeAsync(10000))
+  expect(resume).toHaveBeenCalledExactlyOnceWith({ runId: progress.runId })
+  expect(screen.getByRole('button', { name: '暂停回顾' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: '取消回顾' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: '取消回顾' }))
+  expect(cancel).toHaveBeenCalledExactlyOnceWith({ runId: progress.runId })
+  await act(async () => finishResume())
+  expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
+  expect(screen.getByRole('button', { name: '取消回顾' })).toBeDisabled()
+  execution.mockResolvedValue({ active: false })
+  await act(async () => finishCancel())
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '继续已保存回顾' })).not.toBeInTheDocument()
 })
 
 it('shows no-change execution without a new result action', async () => {
@@ -63,6 +103,68 @@ it('shows no-change execution without a new result action', async () => {
   expect(await screen.findByText('无变化（未调用模型）')).toBeVisible()
   expect(screen.getByText('心跳报告: 无变化（未调用模型）')).toBeVisible()
   expect(screen.queryByRole('button', { name: '查看回顾' })).not.toBeInTheDocument()
+})
+
+it('cancels the automatic review ID and keeps cancelling visible until execution cleanup finishes', async () => {
+  vi.useFakeTimers()
+  const progress = { runId: 'review-id', phase: 'extracting', batches: 1, characters: 1000, sources: 2, remainingSources: 1, complete: false }
+  const activity = vi.fn().mockResolvedValue([{ ...row, reviewProgress: progress }])
+  const execution = vi.fn().mockResolvedValue({ active: true, runId: progress.runId })
+  let finish!: () => void
+  const cancel = vi.fn(() => {
+    activity.mockResolvedValue([{ ...row, status: 'cancelled', supervisionStatus: 'cancelled', error: 'Cancelled', reviewProgress: progress }])
+    execution.mockResolvedValue({ active: true, runId: progress.runId, stopping: 'cancelled' })
+    return new Promise<void>(resolve => { finish = resolve })
+  })
+  const pause = vi.fn()
+  vi.stubGlobal('goodbuddy', { supervision: { activity, execution, cancel, pause } })
+  const { container } = render(<SupervisorActivity active projects={[]} onOpenResult={vi.fn()} onPlanChange={vi.fn()} />)
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(screen.getByLabelText('监督计划')).toBeEnabled()
+  expect(screen.queryByText('监督计划')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '暂停回顾' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: '取消回顾' }))
+  expect(cancel).toHaveBeenCalledExactlyOnceWith({ runId: 'review-id' })
+  expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
+  expect(screen.getByRole('button', { name: '暂停回顾' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '取消回顾' })).toBeDisabled()
+  await act(() => vi.advanceTimersByTimeAsync(2000))
+  expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
+  expect(container.querySelector('[data-phase="extracting"]')).toHaveAttribute('data-state', 'cancelling')
+  expect(screen.queryByText('已取消')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '继续已保存回顾' })).not.toBeInTheDocument()
+  execution.mockResolvedValue({ active: false })
+  await act(async () => finish())
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(screen.getAllByText('已取消')).toHaveLength(2)
+  expect(screen.queryByRole('button', { name: /取消回顾|暂停回顾|继续已保存回顾/ })).not.toBeInTheDocument()
+  expect(screen.queryByText('本次运行失败，请查看错误详情后继续。已保存的批次仍保留。')).not.toBeInTheDocument()
+  expect(pause).not.toHaveBeenCalled()
+})
+
+it('rediscovers cancellation cleanup on mount and blocks resuming another saved run', async () => {
+  vi.useFakeTimers()
+  const progress = { runId: 'review-id', batches: 1, characters: 1000, sources: 2, remainingSources: 1, complete: false }
+  const activity = vi.fn().mockResolvedValue([
+    { ...row, status: 'cancelled', supervisionStatus: 'cancelled', reviewProgress: progress },
+    { ...row, id: 'paused', status: 'paused', supervisionStatus: 'paused', reviewProgress: { ...progress, runId: 'paused-review' } }
+  ])
+  const execution = vi.fn().mockResolvedValue({ active: true, runId: progress.runId, stopping: 'cancelled' })
+  const resume = vi.fn()
+  vi.stubGlobal('goodbuddy', { supervision: { activity, execution, resume } })
+  render(<SupervisorActivity active projects={[]} onOpenResult={vi.fn()} />)
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(screen.getByRole('status')).toHaveTextContent('正在取消回顾')
+  expect(screen.getByRole('button', { name: '继续已保存回顾' })).toBeDisabled()
+  execution.mockResolvedValue({ active: false })
+  await act(() => vi.advanceTimersByTimeAsync(2000))
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '继续已保存回顾' })).toBeEnabled()
+  execution.mockResolvedValue({ active: true, runId: 'new-automatic' })
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '继续已保存回顾' })))
+  expect(resume).not.toHaveBeenCalled()
+  expect(screen.getByRole('alert')).toHaveTextContent('新回顾正在整理')
 })
 
 it('polls sequentially only while active and ignores late responses after leaving', async () => {

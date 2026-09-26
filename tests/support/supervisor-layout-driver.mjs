@@ -63,7 +63,8 @@ app
     const reports = []
     if (process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT) {
       win.show()
-      for (const view of ['recap', 'empty', 'activity', 'pending', 'failure']) {
+      const controlsOnly = process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT === 'controls'
+      for (const view of controlsOnly ? ['activity', 'pending'] : ['recap', 'empty', 'activity', 'pending', 'failure']) {
         await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + (view === 'activity' ? '?activity=1' : '?recap=1&long-summary=1' + (view === 'failure' ? '&fail-run=1' : view === 'empty' ? '&state=empty' : '')))
         await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
         if (view === 'activity') {
@@ -76,7 +77,7 @@ app
         await js('document.fonts.ready')
         for (const theme of ['light', 'dark']) {
           await js(`document.documentElement.dataset.theme = '${theme}'`)
-          for (const width of [2000, 1440, 1024, 390]) {
+          for (const width of controlsOnly ? [1440, 1024, 390] : [2000, 1440, 1024, 390]) {
             win.setContentSize(width, 1100)
             await js('document.querySelector(".page-shell").scrollTop = 0')
             await settle()
@@ -90,7 +91,10 @@ app
                 stageConnectors:[...document.querySelectorAll('.supervisor-activity__steps li:not(:last-child)')].map(e=>getComputedStyle(e,'::after').borderTopWidth),
                 summaryLength:[...document.querySelectorAll('.supervisor-workspace__summary')].map(e=>e.textContent).join('').length,
                 tail:document.querySelector('.supervisor-workspace__prose')?.textContent.includes('长摘要末尾'),
-                controls:[...document.querySelectorAll('.supervisor-activity > .supervisor-workspace__action-bar > *')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top};}) };
+                 controls:[...document.querySelectorAll('.supervisor-activity > .supervisor-workspace__action-bar > *')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top};}),
+                 toolbarControls:[...document.querySelectorAll('.supervisor-workspace__toolbar select, .supervisor-workspace__toolbar button')].map(e=>({disabled:e.disabled,text:e.textContent,top:e.getBoundingClientRect().top,bottom:e.getBoundingClientRect().bottom})),
+                 notice:box('.supervisor-workspace__run-status'), dismiss:box('.supervisor-workspace__run-status .icon-button'),
+                 cancel:box('.supervisor-activity__item .danger-ghost') };
             })()`)
             assert(report.pageWidth <= width, 'No page overflow')
             if (view === 'empty') {
@@ -103,9 +107,18 @@ app
               for (const control of [report.toolbar, report.history]) {
                 assert(Math.abs(control.left - report.recap.left) < 1 && Math.abs(control.right - report.recap.right) < 1, 'Toolbar, history and result share edges')
               }
-              assert(report.prose.left - report.recap.left <= 25, 'No separately centered inner body')
+               assert(report.prose.left - report.recap.left <= 25, 'No separately centered inner body')
+               if (view === 'pending') {
+                 assert(report.toolbarControls.every(control => !control.disabled), 'Long review keeps toolbar enabled')
+                 assert.equal(report.toolbarControls[2].text, '回顾当前进展', 'Start name remains stable')
+                 assert(report.dismiss.width >= 28 && report.dismiss.height >= 28, 'Notice close target remains usable')
+                 assert(report.dismiss.right <= report.notice.right && report.dismiss.bottom <= report.notice.bottom, 'Close remains inside notice')
+                 assert(report.notice.right - report.dismiss.right <= 20, 'Notice close stays at the right edge on narrow screens')
+                 if (width >= 1024) assert(Math.max(...report.toolbarControls.map(control => control.top)) - Math.min(...report.toolbarControls.map(control => control.top)) <= 4, 'Toolbar stays on one aligned row')
+               }
             } else {
-              assert(Math.abs(report.activity.width - report.panel.width) < 1, 'Activity fills the page panel')
+               assert(Math.abs(report.activity.width - report.panel.width) < 1, 'Activity fills the page panel')
+               assert(report.cancel.width >= 28 && report.cancel.right <= report.panel.right, 'Cancel fits activity panel')
               if (width >= 1024) {
                 assert(report.steps.height < 40, 'Compact stage row')
                 assert(report.stageConnectors.every(value => value === '1px'), 'Connected stages')

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { BookOpen, Network, RefreshCw } from 'lucide-react'
+import { BookOpen, Network, RefreshCw, X } from 'lucide-react'
+import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
 import { EmptyState } from './WorkspacePrimitives'
 import type { AssistantProject } from '../../shared/assistant-contracts'
 import { heartbeatScopeSchema } from '../../shared/assistant-contracts'
@@ -70,6 +71,10 @@ export function SupervisorWorkspace({
   const [days, setDays] = useState(7)
   const [lastRequest, setLastRequest] = useState<SupervisionRunRequest>()
   const [pausedReview, setPausedReview] = useState(false)
+  const [execution, setExecution] = useState<SupervisionReviewExecution>({ active: false })
+  const [running, setRunning] = useState(false)
+  const runPending = useRef(false)
+  const [dismissedNotice, setDismissedNotice] = useState(false)
   const [resultId, setResultId] = useState<string | undefined>(graphNavigation?.resultId)
   const [appliedNavigation, setAppliedNavigation] = useState(graphNavigation)
   if (appliedNavigation !== graphNavigation) {
@@ -174,8 +179,34 @@ export function SupervisorWorkspace({
     return () => { window.clearTimeout(task); invalidate() }
   }, [refresh, graphNavigation])
 
+  useEffect(() => {
+    if (!api) return
+    let disposed = false
+    let wasActive = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      try {
+        const next = await api.execution()
+        if (!disposed) {
+          setExecution(next)
+          if (next.active && !wasActive && !runPending.current) setDismissedNotice(false)
+          wasActive = next.active
+        }
+      } catch (reason) {
+        if (!disposed) setError(reason instanceof Error ? reason.message : t('common.operationFailed'))
+      } finally {
+        if (!disposed) timer = setTimeout(() => void poll(), 2000)
+      }
+    }
+    void poll()
+    return () => { disposed = true; clearTimeout(timer) }
+  }, [api, t])
+
   const run = async () => {
-    if (!api || pending || loading) return
+    if (!api) return
+    setDismissedNotice(false)
+    if (runPending.current) return
+    runPending.current = true
     const generation = loadGeneration.current
     const to = new Date()
     const request: SupervisionRunRequest = {
@@ -189,23 +220,31 @@ export function SupervisorWorkspace({
         to: to.toISOString()
       }
     }
-    setLastRequest(request)
-    setPausedReview(false)
-    setPending('run')
     setErrorAction('run')
     setError(undefined)
     try {
+      const current = await api.execution()
+      setExecution(current)
+      if (current.active) return
+      setLastRequest(request)
+      setPausedReview(false)
+      setRunning(true)
       const outcome = await api.run(request) as { status?: string } | undefined
-      if (generation !== loadGeneration.current) return
+      setExecution(await api.execution())
       setPausedReview(outcome?.status === 'paused')
+      if (generation !== loadGeneration.current) return
       selectedResult.current = undefined
-      setPending(undefined)
       await refresh()
     } catch (reason) {
+      if (/SUPERVISION_REVIEW_BUSY/.test(String(reason))) {
+        setExecution({ active: true })
+        return
+      }
       if (generation !== loadGeneration.current) return
       setError(errorText(reason))
     } finally {
-      if (generation === loadGeneration.current) setPending(undefined)
+      runPending.current = false
+      setRunning(false)
     }
   }
 
@@ -415,6 +454,7 @@ export function SupervisorWorkspace({
     ? (JSON.parse(graph.storyLine.scope_json) as SupervisionRunRequest['scope'])
     : undefined
   const busy = !!api && (loading || pending !== undefined)
+  const showRunNotice = (execution.active || running || pausedReview) && !dismissedNotice
 
   return (
     <div className="supervisor-workspace" data-view={tab} aria-busy={busy}>
@@ -449,9 +489,10 @@ export function SupervisorWorkspace({
               </button>
             </div>
           )}
-          {(pending === 'run' || pausedReview) && <div className="supervisor-workspace__run-status" role="status">
-            <span>{t(pausedReview ? 'reviewSettings.pausedHint' : 'supervisor.runningHint')}</span>
+          {showRunNotice && <div className="supervisor-workspace__run-status" role="status">
+            <span>{t(execution.stopping === 'cancelled' ? 'reviewSettings.cancelling' : execution.stopping === 'paused' ? 'reviewSettings.pausing' : pausedReview && !running && !execution.active ? 'reviewSettings.pausedHint' : 'supervisor.runningHint')}</span>
             {onOpenActivity && <button className="link-button" onClick={onOpenActivity}>{t('activity.title')}</button>}
+            <button type="button" className="icon-button" aria-label={t('supervisor.dismiss')} title={t('supervisor.dismiss')} onClick={() => setDismissedNotice(true)}><X size={16} aria-hidden="true" /></button>
           </div>}
           {error && (
             <div className="supervisor-workspace__inline-error" role="alert">
@@ -481,10 +522,9 @@ export function SupervisorWorkspace({
             <>
               <div className="supervisor-workspace__toolbar" role="group" aria-label={t('supervisor.newReview')}>
                 <label>
-                  {t('supervisor.scope')}
                   <select
+                    aria-label={t('supervisor.scope')}
                     value={projectId}
-                    disabled={busy}
                     onChange={(event) => setProjectId(event.target.value)}
                   >
                     <option value="global">{t('center.scope.global')}</option>
@@ -498,10 +538,9 @@ export function SupervisorWorkspace({
                   </select>
                 </label>
                 <label>
-                  {t('supervisor.period')}
                   <select
+                    aria-label={t('supervisor.period')}
                     value={days}
-                    disabled={busy}
                     onChange={(event) => setDays(Number(event.target.value))}
                   >
                     {[1, 7, 30].map((value) => (
@@ -513,12 +552,9 @@ export function SupervisorWorkspace({
                 </label>
                 <button
                   className="primary-button"
-                  disabled={busy}
                   onClick={() => void run()}
                 >
-                  {pending === 'run'
-                    ? t('supervisor.running')
-                    : t('supervisor.run')}
+                  {t('supervisor.run')}
                 </button>
                 <button
                   className="secondary-button"

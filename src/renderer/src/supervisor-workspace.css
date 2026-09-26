@@ -15,16 +15,21 @@
   align-self: stretch;
 }
 .supervisor-workspace__run-status {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-control);
   background: var(--accent-subtle);
   color: var(--text-secondary);
+}
+.supervisor-workspace__run-status > span {
+  overflow-wrap: anywhere;
+}
+.supervisor-workspace__run-status > .icon-button {
+  grid-column: 3;
 }
 .supervisor-workspace p,
 .supervisor-workspace time {

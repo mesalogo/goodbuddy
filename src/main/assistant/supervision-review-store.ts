@@ -121,10 +121,12 @@ export class SupervisionReviewStore {
   }
 
   resume(runId: string): void {
+    const status = this.db.prepare('SELECT status FROM supervision_runs WHERE id = ?').get(runId)?.status
+    if (status === 'cancelled') throw new Error('SUPERVISION_REVIEW_CANCELLED: 此回顾已取消，不能继续。请开始新的回顾。')
     if (this.load(runId).restartRequired) throw new Error('Review source changed or was removed; start a new review')
     const changed = this.db.prepare(`UPDATE supervision_runs SET status = 'running', error = NULL, completed_at = NULL
       WHERE id = ? AND status IN ('paused', 'failed', 'running')`).run(runId)
-    if (!changed.changes) throw new Error('Review is already complete or unavailable')
+    if (!changed.changes) throw new Error('SUPERVISION_REVIEW_NOT_RESUMABLE: 此回顾已完成或不存在，请开始新的回顾。')
     // A changed/deleted source cannot be silently counted as covered. Saved facts remain accessible.
     let after = ''
     for (;;) {
@@ -142,6 +144,14 @@ export class SupervisionReviewStore {
   pause(runId: string, reason: string): void {
     this.db.prepare("UPDATE supervision_runs SET status = 'paused', error = ?, completed_at = ? WHERE id = ? AND status = 'running'")
       .run(reason, new Date().toISOString(), runId)
+  }
+
+  cancel(runId: string): void {
+    const changed = this.db.prepare(`UPDATE supervision_runs SET status = 'cancelled', error = NULL,
+      completed_at = CASE WHEN status = 'cancelled' THEN completed_at ELSE ? END
+      WHERE id = ? AND status IN ('running', 'paused', 'failed', 'cancelled')`)
+      .run(new Date().toISOString(), runId)
+    if (!changed.changes) throw new Error('SUPERVISION_REVIEW_NOT_CANCELLABLE: 此回顾已完成或不存在，无需取消。')
   }
 
   setPhase(runId: string, phase: NonNullable<SupervisionReviewProgress['phase']>): void {

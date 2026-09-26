@@ -5896,6 +5896,54 @@ describe('registerIpcHandlers agent terminal state', () => {
     } finally { finish(); await harness.dispose(); database.close(); vi.useRealTimers() }
   })
 
+  it('production supervision IPC cancels the runtime and holds admission until conversation cleanup settles', async () => {
+    const database = new AssistantDatabase(':memory:')
+    database.initialize(process.cwd())
+    const now = Date.now()
+    database.saveLocalConversations([{ header: { id: crypto.randomUUID(), projectId: database.listProjects()[0]!.id, title: 'Cancel review', updatedAt: now },
+      messages: [{ id: crypto.randomUUID(), role: 'user', state: 'complete', content: 'Review this', createdAt: now }] }])
+    let entered!: () => void, cleaning!: () => void, finish!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const cleanupStarted = new Promise<void>(resolve => { cleaning = resolve })
+    const cleanup = new Promise<void>(resolve => { finish = resolve })
+    const run = vi.fn(async function* (_input: AgentExecutionRequest, signal: AbortSignal) {
+      entered()
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+      signal.throwIfAborted()
+      yield { type: 'done' as const, requestId: _input.requestId }
+    })
+    const releaseConversation = vi.fn(async () => { cleaning(); await cleanup })
+    const harness = createHarness({ runtimeId: 'model', capability: 'chat', run, releaseConversation }, undefined, 'always', undefined, false,
+      undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, database)
+    try {
+      harness.getApplicationSettings.mockResolvedValue({ heartbeatEnabled: true })
+      const event = trustedEvent(harness.webContents)
+      const request = { trigger: 'manual', scope: { kind: 'global' }, timeRange: {
+        from: new Date(now - 1).toISOString(), to: new Date(now + 1).toISOString()
+      } }
+      const pending = electronMocks.handlers.get(ipcChannels.supervisionRun)!(event, request)
+      await started
+      const runId = database.listSupervisionActivity()[0]!.id
+      const input = { runId }
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionCancel)!({ sender: {} }, input)).rejects.toThrow()
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionCancel)!(event, { runId: 'invalid' })).rejects.toThrow()
+      const cancellation = electronMocks.handlers.get(ipcChannels.supervisionCancel)!(event, input)
+      await cleanupStarted
+      expect(database.listSupervisionActivity()[0]!.status).toBe('cancelled')
+      expect(electronMocks.handlers.get(ipcChannels.supervisionExecution)!(event)).toEqual({ active: true, runId, stopping: 'cancelled' })
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionRun)!(event, request)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionResume)!(event, input)).rejects.toThrow('SUPERVISION_REVIEW_BUSY')
+      finish()
+      await cancellation
+      await expect(pending).resolves.toMatchObject({ status: 'cancelled' })
+      expect(electronMocks.handlers.get(ipcChannels.supervisionExecution)!(event)).toMatchObject({ active: false })
+      await expect(electronMocks.handlers.get(ipcChannels.supervisionResume)!(event, input)).rejects.toThrow('SUPERVISION_REVIEW_CANCELLED')
+      expect(database.listSupervisionResults()).toEqual([])
+      expect(run).toHaveBeenCalledTimes(1)
+      expect(releaseConversation).toHaveBeenCalledTimes(1)
+    } finally { finish(); await harness.dispose(); database.close() }
+  })
+
   it('production supervision IPC pauses in-flight work and resumes saved batches without replaying them', async () => {
     const database = new AssistantDatabase(':memory:')
     database.initialize(process.cwd())

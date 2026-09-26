@@ -2192,6 +2192,8 @@ export type DesktopApi = {
     }>
   }
   supervision: {
+    cancel: (input: { runId: string }) => Promise<void>
+    execution: () => Promise<import('./supervision-review-contracts').SupervisionReviewExecution>
     pause: (input: { runId: string }) => Promise<void>
     resume: (input: { runId: string }) => Promise<unknown>
     batches: (input: { runId: string; offset?: number; limit?: number }) => Promise<import('./supervision-review-contracts').SupervisionReviewBatch[]>

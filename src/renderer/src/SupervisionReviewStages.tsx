@@ -3,7 +3,7 @@ import type { SupervisionActivity } from '../../shared/supervision-contracts'
 
 const phases = ['collecting', 'extracting', 'summarizing', 'saving'] as const
 
-export function SupervisionReviewStages({ row }: { row: SupervisionActivity }) {
+export function SupervisionReviewStages({ row, stopping }: { row: SupervisionActivity; stopping?: 'paused' | 'cancelled' }) {
   const { t } = useTranslation('heartbeat')
   const progress = row.reviewProgress!
   const current = progress.phase ? phases.indexOf(progress.phase) : -1
@@ -14,7 +14,7 @@ export function SupervisionReviewStages({ row }: { row: SupervisionActivity }) {
         const state = progress.complete ? (row.supervisionStatus === 'no_change' && index > 0 ? 'skipped' : 'completed')
           : index === 0 && current !== 0 ? 'completed'
             : current > index ? 'completed'
-              : current === index ? (row.supervisionStatus ?? row.status)
+              : current === index ? (stopping === 'cancelled' ? 'cancelling' : stopping === 'paused' ? 'pausing' : row.supervisionStatus ?? row.status)
                 : current < 0 ? 'unknown' : 'pending'
         return <li key={phase} data-phase={phase} data-state={state} aria-current={current === index && !progress.complete ? 'step' : undefined}>
           <span className="supervisor-activity__step-number" aria-hidden="true">{index + 1}</span>
@@ -24,6 +24,6 @@ export function SupervisionReviewStages({ row }: { row: SupervisionActivity }) {
     </ol>
     <p className="supervisor-activity__coverage">{t('activity.coverage', { batches: progress.batches, remaining: progress.remainingSources })}</p>
     {!progress.complete && !progress.phase && <p className="supervisor-activity__note">{t('activity.stageUnknown')}</p>}
-    {row.supervisionStatus === 'running' && <p className="supervisor-activity__note">{t('reviewSettings.inFlight', { count: progress.inFlight ?? 0 })}</p>}
+    {row.supervisionStatus === 'running' && !stopping && <p className="supervisor-activity__note">{t('reviewSettings.inFlight', { count: progress.inFlight ?? 0 })}</p>}
   </div>
 }

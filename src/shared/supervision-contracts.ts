@@ -34,7 +34,7 @@ export type SupervisionActivity = {
   id: string
   kind: 'supervision' | 'heartbeat'
   trigger: 'manual' | 'scheduled' | 'heartbeat'
-  status: 'running' | 'completed' | 'failed' | 'skipped' | 'no_change' | 'paused'
+  status: 'running' | 'completed' | 'failed' | 'skipped' | 'no_change' | 'paused' | 'cancelled'
   reviewProgress?: import('./supervision-review-contracts').SupervisionReviewProgress
   scope: SupervisionRunRequest['scope'] | null
   startedAt: string
@@ -44,7 +44,7 @@ export type SupervisionActivity = {
   summary: string | null
   resultId: string | null
   heartbeatStatus: 'claimed' | 'completed' | 'failed' | 'skipped' | 'no_change' | null
-  supervisionStatus: 'running' | 'completed' | 'failed' | 'no_change' | 'paused' | null
+  supervisionStatus: 'running' | 'completed' | 'failed' | 'no_change' | 'paused' | 'cancelled' | null
 }
 
 export const supervisionEvidenceSchema = z

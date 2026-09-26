@@ -151,7 +151,7 @@ function createProps(
 
 it('graph navigation reopens the graph tab on repeated requests and preserves normal tab changes', async () => {
   const graph = vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
-  window.goodbuddy = { supervision: { overview: async () => [], graph } } as never
+  window.goodbuddy = { supervision: { execution: async () => ({ active: false }), overview: async () => [], graph } } as never
   const props = createProps({ graphNavigation: { resultId: 'A' } })
   const view = renderComponent(<HeartbeatCenter {...props} />)
   const tab = screen.getByRole('tab', { name: '故事线图谱' })
@@ -171,6 +171,7 @@ it('graph navigation reopens the graph tab on repeated requests and preserves no
 describe('HeartbeatCenter', () => {
   beforeEach(() => {
     vi.stubGlobal('goodbuddy', { supervision: {
+      execution: vi.fn(async () => ({ active: false })),
       overview: vi.fn(async () => []),
       graph: vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
     } })
@@ -189,6 +190,7 @@ describe('HeartbeatCenter', () => {
     await i18n.changeLanguage(language)
     const t = (key: string) => i18n.t(key, { ns: 'heartbeat' })
     vi.stubGlobal('goodbuddy', { supervision: {
+      execution: vi.fn(async () => ({ active: false })),
       overview: vi.fn(async () => [{ id: 'result', storyLineId: 'story', sourceId: null, summary: 'Review summary', changeDigest: '', createdAt: '2026-09-22T00:00:00Z', scope: { kind: 'global' }, timeRange: { from: '2026-09-01T00:00:00Z', to: '2026-09-22T00:00:00Z' }, openItems: [] }]),
       activity: vi.fn(async () => []),
       graph: vi.fn(async () => ({ storyLine: { id: 'story', scope_json: JSON.stringify({ kind: 'global' }) }, events: [
@@ -242,7 +244,7 @@ describe('HeartbeatCenter', () => {
     const overview = vi.fn(async (input?: { resultId?: string }) => input?.resultId === 'old' ? [old] : [])
     const graph = vi.fn(async () => ({ storyLine: null, events: [], entities: [], relations: [], sources: [], eventEntities: [], eventSources: [] }))
     const activity = vi.fn(async () => [{ id: 'run', kind: 'supervision', trigger: 'manual', status: 'completed', scope: old.scope, startedAt: old.createdAt, completedAt: old.createdAt, timeRange: old.timeRange, error: null, summary: 'Activity summary', resultId: 'old', heartbeatStatus: null, supervisionStatus: 'completed' }])
-    vi.stubGlobal('goodbuddy', { supervision: { overview, graph, activity } })
+    vi.stubGlobal('goodbuddy', { supervision: { execution: async () => ({ active: false }), overview, graph, activity } })
     renderComponent(<HeartbeatCenter {...createProps()} />)
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['工作回顾', '故事线图谱', '自动监督', '活动记录', '设置'])
     fireEvent.click(screen.getByRole('tab', { name: '活动记录' }))

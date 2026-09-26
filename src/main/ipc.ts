@@ -7840,6 +7840,15 @@ export function registerIpcHandlers(
     const { runId } = supervisionReviewIdSchema.parse(input)
     supervisorService.pause(runId)
   })
+  registerHandler(ipcChannels.supervisionExecution, (event) => {
+    assertTrustedSender(event, window)
+    return supervisorService.execution()
+  })
+  registerHandler(ipcChannels.supervisionCancel, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    const { runId } = supervisionReviewIdSchema.parse(input)
+    await supervisorService.cancel(runId)
+  })
   registerHandler(ipcChannels.supervisionResume, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { runId } = supervisionReviewIdSchema.parse(input)

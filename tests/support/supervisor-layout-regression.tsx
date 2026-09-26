@@ -146,6 +146,7 @@ Object.defineProperty(window, 'goodbuddy', {
       ? {}
       : {
           supervision: {
+            execution: async () => ({ active: params.has('activity'), ...(params.has('activity') ? { runId: 'activity-1' } : {}) }),
             batches: async ({ runId, offset, limit }: { runId: string; offset: number; limit: number }) => Array.from({ length: runId === 'activity-0' ? 6 : 12 }, (_, index) => ({
               id: `leaf-${index}`, projectId: index < 3 ? 'Atlas' : 'Beacon', conversationId: `conversation-${Math.floor(index / 2)}`,
               evidence: [{ id: `source-${index}`, sourceType: 'conversation', sourceId: `conversation-${Math.floor(index / 2)}`,
@@ -156,7 +157,7 @@ Object.defineProperty(window, 'goodbuddy', {
                 changeDigest: '已补充负责人和待核对项。', openItems: ['核对外部评审日期。'],
                 events: [{ title: '验收安排', description: '先核对资料，再确认交付日期。', sourceReferenceIds: [`source-${index}`] }], entities: [], entityChanges: [], relations: [] }
             })).slice(offset, offset + limit),
-            resume: async () => {}, pause: async () => {},
+             resume: async () => {}, pause: async () => {}, cancel: async () => {},
             activity: async (input?: { configId?: string }) => ['running', 'failed', 'completed'].map((status, index) => ({
               id: `activity-${index}`, kind: index === 2 ? 'supervision' : 'heartbeat', trigger: index === 2 ? 'manual' : 'scheduled', status,
               scope: { kind: 'global' }, startedAt: '2026-09-23T08:00:00Z', completedAt: status === 'running' ? null : '2026-09-23T08:01:00Z',

@@ -8543,13 +8543,15 @@ export class AssistantDatabase {
       UNION ALL
       SELECT h.id, 'heartbeat', h.trigger,
         CASE WHEN h.status = 'claimed' THEN 'running'
+          WHEN s.status = 'cancelled' THEN 'cancelled'
           WHEN h.status = 'failed' OR s.status = 'failed' OR h.projection_status = 'failed' THEN 'failed'
           WHEN s.status = 'running' OR (h.status IN ('completed', 'no_change') AND h.projection_status = 'running') THEN 'running'
           WHEN s.status = 'paused' THEN 'paused'
           WHEN s.status = 'completed' THEN 'completed'
           ELSE h.status END,
         COALESCE(s.scope_json, h.activity_scope_json), COALESCE(h.started_at, h.created_at),
-        CASE WHEN s.status = 'running' OR h.status = 'claimed' OR h.projection_status = 'running' THEN NULL
+        CASE WHEN s.status = 'cancelled' THEN s.completed_at
+          WHEN s.status = 'running' OR h.status = 'claimed' OR h.projection_status = 'running' THEN NULL
           ELSE COALESCE(s.completed_at, h.projection_completed_at, h.completed_at) END,
         s.time_range_json, COALESCE(s.error, h.projection_error, h.error), COALESCE(r.summary, e.summary), r.id,
         h.status, s.status, s.id
