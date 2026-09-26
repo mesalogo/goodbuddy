@@ -89,7 +89,6 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
         <RefreshCw size={14} aria-hidden="true" />{t('center.actions.refresh')}
       </button>
     </div>
-    <p className="supervisor-activity__note">{t('activity.description')}</p>
     {error && <div role="alert" className="heartbeat-center__error"><p>{error}</p>
       <button className="secondary-button" type="button" onClick={() => reload()}>{t('center.actions.retry')}</button>
     </div>}
@@ -102,7 +101,6 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
             <time dateTime={row.startedAt} title={row.startedAt}>{date(row.startedAt)}</time>
           </header>
           <p className="supervisor-activity__scope">{!row.scope ? t('activity.unknownScope') : row.scope.kind === 'global' ? t('center.scope.global') : t('supervisor.projectScope', { names: row.scope.projectIds.map((id) => projects.find((project) => project.id === id)?.name ?? t('settings.scope.unavailableProject')).join(', ') })} · {t(`activity.triggers.${row.trigger}`)}</p>
-          {row.reviewProgress && <SupervisionReviewStages row={row} />}
           {!row.reviewProgress && <>
           <p className="supervisor-activity__stages">
             {row.heartbeatStatus && <span>{t('activity.heartbeatStage')}: {t(`statuses.run.${row.heartbeatStatus}`)}</span>}
@@ -123,6 +121,7 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
               <button type="button" className="secondary-button" aria-expanded={expanded === row.id} aria-controls={`batches-${row.id}`} onClick={() => setExpanded(expanded === row.id ? undefined : row.id)}>{t('reviewSettings.facts')}</button>
             </div>
           </>}
+          {row.reviewProgress && <SupervisionReviewStages row={row} />}
           {row.error && <div className="supervisor-activity__failure">
             <p>{t(row.status === 'paused' ? 'reviewSettings.pausedHint' : /persistedId|candidateRef|entity identity/.test(row.error)
               ? 'reviewSettings.identityError' : 'reviewSettings.runError')}</p>
@@ -141,6 +140,8 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
               <div><dt>{t('activity.finished')}</dt><dd>{row.completedAt ? date(row.completedAt) : t('common.unavailable')}</dd></div>
               {row.timeRange && <div><dt>{t('supervisor.period')}</dt><dd>{date(row.timeRange.from)} / {date(row.timeRange.to)}</dd></div>}
             </dl>
+            {row.reviewProgress && <p>{t('reviewSettings.progress', { batches: row.reviewProgress.batches, characters: row.reviewProgress.characters, remaining: row.reviewProgress.remainingSources })}</p>}
+            {row.reviewProgress?.navigationNodes !== undefined && <p>{t('activity.navigationSaved', { count: row.reviewProgress.navigationNodes })}</p>}
             {row.reviewProgress && row.heartbeatStatus && <p>{t('activity.heartbeatStage')}: {t(`statuses.run.${row.heartbeatStatus}`)}</p>}
             {row.summary && <p className="supervisor-activity__summary">{row.summary}</p>}
             {row.reviewProgress?.settings && <details><summary>{t('reviewSettings.configuration')}</summary>

@@ -449,7 +449,7 @@ export function SupervisorWorkspace({
               </button>
             </div>
           )}
-          {(pending === 'run' || pausedReview) && <div className="supervisor-workspace__actions" role="status">
+          {(pending === 'run' || pausedReview) && <div className="supervisor-workspace__run-status" role="status">
             <span>{t(pausedReview ? 'reviewSettings.pausedHint' : 'supervisor.runningHint')}</span>
             {onOpenActivity && <button className="link-button" onClick={onOpenActivity}>{t('activity.title')}</button>}
           </div>}
@@ -480,7 +480,6 @@ export function SupervisorWorkspace({
           {tab === 'overview' && (
             <>
               <div className="supervisor-workspace__toolbar" role="group" aria-label={t('supervisor.newReview')}>
-                <strong>{t('supervisor.newReview')}</strong>
                 <label>
                   {t('supervisor.scope')}
                   <select
@@ -529,9 +528,6 @@ export function SupervisorWorkspace({
                   {t('center.actions.refresh')}
                 </button>
               </div>
-              <p className="supervisor-workspace__muted">
-                {t('supervisor.sourcesHint')}
-              </p>
               {results.length > 0 && <div className="supervisor-workspace__result-navigation">
                 <label>
                   {t('supervisor.history')}

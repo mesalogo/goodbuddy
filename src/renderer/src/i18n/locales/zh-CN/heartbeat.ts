@@ -38,6 +38,7 @@ export const heartbeat = {
     phases: { collecting: '收集来源', extracting: '整理批次', summarizing: '合并摘要', saving: '发布回顾' },
     stageStates: { completed: '已完成', running: '进行中', failed: '失败', paused: '已暂停', pending: '未开始', unknown: '未记录', skipped: '无需执行', no_change: '无变化' },
     stageUnknown: '此历史运行未保存阶段信息。剩余来源为零不代表回顾已发布。',
+    coverage: '已保存 {{batches}} 批 · 剩余 {{remaining}} 个来源',
     navigationSaved: '已保存 {{count}} 次导航合并',
     resumeMerge: '继续合并摘要', resumeSave: '重试发布', runDetails: '运行详情与配置',
     treePageHint: '按项目、会话展开本页已保存批次。这里不包含尚未保存结果的任务。',

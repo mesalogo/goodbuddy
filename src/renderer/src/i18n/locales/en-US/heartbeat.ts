@@ -41,6 +41,7 @@ export const heartbeat = {
     phases: { collecting: 'Collect sources', extracting: 'Review batches', summarizing: 'Merge summaries', saving: 'Publish review' },
     stageStates: { completed: 'Complete', running: 'In progress', failed: 'Failed', paused: 'Paused', pending: 'Not started', unknown: 'Not recorded', skipped: 'Not needed', no_change: 'No changes' },
     stageUnknown: 'This historical run has no saved stage. Zero remaining sources does not mean the review was published.',
+    coverage: '{{batches}} saved batches · {{remaining}} sources remaining',
     navigationSaved: '{{count}} navigation merges saved',
     resumeMerge: 'Continue merging', resumeSave: 'Retry publication', runDetails: 'Run details and configuration',
     treePageHint: 'Expand projects and conversations to browse this page of saved batches. Tasks without a saved result are not listed here.',

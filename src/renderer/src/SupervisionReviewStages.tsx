@@ -22,8 +22,7 @@ export function SupervisionReviewStages({ row }: { row: SupervisionActivity }) {
         </li>
       })}
     </ol>
-    <p className="supervisor-activity__coverage">{t('reviewSettings.progress', { batches: progress.batches, characters: progress.characters, remaining: progress.remainingSources })}</p>
-    {progress.navigationNodes !== undefined && <p className="supervisor-activity__note">{t('activity.navigationSaved', { count: progress.navigationNodes })}</p>}
+    <p className="supervisor-activity__coverage">{t('activity.coverage', { batches: progress.batches, remaining: progress.remainingSources })}</p>
     {!progress.complete && !progress.phase && <p className="supervisor-activity__note">{t('activity.stageUnknown')}</p>}
     {row.supervisionStatus === 'running' && <p className="supervisor-activity__note">{t('reviewSettings.inFlight', { count: progress.inFlight ?? 0 })}</p>}
   </div>

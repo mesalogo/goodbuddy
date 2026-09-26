@@ -63,8 +63,8 @@ app
     const reports = []
     if (process.env.GOODBUDDY_SUPERVISOR_CONTENT_LAYOUT) {
       win.show()
-      for (const view of ['recap', 'activity', 'pending', 'failure']) {
-        await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + (view === 'activity' ? '?activity=1' : '?recap=1&long-summary=1' + (view === 'failure' ? '&fail-run=1' : '')))
+      for (const view of ['recap', 'empty', 'activity', 'pending', 'failure']) {
+        await win.loadURL(process.env.GOODBUDDY_SUPERVISOR_URL + (view === 'activity' ? '?activity=1' : '?recap=1&long-summary=1' + (view === 'failure' ? '&fail-run=1' : view === 'empty' ? '&state=empty' : '')))
         await wait('document.querySelector(".supervisor-workspace")?.getAttribute("aria-busy") === "false"')
         if (view === 'activity') {
           await js('document.querySelector("#supervisor-tab-activity").click()')
@@ -81,17 +81,23 @@ app
             await js('document.querySelector(".page-shell").scrollTop = 0')
             await settle()
             const report = await js(`(() => {
-              const box = selector => { const r = document.querySelector(selector)?.getBoundingClientRect(); return r && { left:r.left, right:r.right, width:r.width, height:r.height }; };
+              const box = selector => { const r = document.querySelector(selector)?.getBoundingClientRect(); return r && { left:r.left, right:r.right, width:r.width, height:r.height, top:r.top, bottom:r.bottom }; };
               return { width:innerWidth, pageWidth:document.documentElement.scrollWidth,
                 panel:box('.heartbeat-center > [role=tabpanel]:not([hidden])'), toolbar:box('.supervisor-workspace__toolbar'), history:box('.supervisor-workspace__result-navigation'), recap:box('.supervisor-workspace__recap'),
                 prose:box('.supervisor-workspace__prose'), activity:box('.supervisor-activity'),
                 steps:box('.supervisor-activity__steps'),
+                empty:box('.supervisor-workspace > .empty-state'), emptyTitle:box('.supervisor-workspace > .empty-state strong'),
+                stageConnectors:[...document.querySelectorAll('.supervisor-activity__steps li:not(:last-child)')].map(e=>getComputedStyle(e,'::after').borderTopWidth),
                 summaryLength:[...document.querySelectorAll('.supervisor-workspace__summary')].map(e=>e.textContent).join('').length,
                 tail:document.querySelector('.supervisor-workspace__prose')?.textContent.includes('长摘要末尾'),
                 controls:[...document.querySelectorAll('.supervisor-activity > .supervisor-workspace__action-bar > *')].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top};}) };
             })()`)
             assert(report.pageWidth <= width, 'No page overflow')
-            if (view !== 'activity') {
+            if (view === 'empty') {
+              assert(Math.abs(report.empty.width - report.panel.width) < 1, 'Empty state fills panel');
+              assert(Math.abs((report.emptyTitle.left + report.emptyTitle.right) / 2 - (report.panel.left + report.panel.right) / 2) < 1, 'Empty state title centered');
+              assert(report.empty.top >= report.toolbar.bottom, 'Empty state below toolbar');
+            } else if (view !== 'activity') {
               assert(report.summaryLength > 2000 && report.tail, 'Long summary retained')
               assert(Math.abs(report.recap.width - report.panel.width) < 1, 'Recap fills the page panel')
               for (const control of [report.toolbar, report.history]) {
@@ -102,6 +108,7 @@ app
               assert(Math.abs(report.activity.width - report.panel.width) < 1, 'Activity fills the page panel')
               if (width >= 1024) {
                 assert(report.steps.height < 40, 'Compact stage row')
+                assert(report.stageConnectors.every(value => value === '1px'), 'Connected stages')
                 assert(report.controls[2].left - report.controls[1].right <= 24, 'Refresh grouped with filter')
               }
             }
