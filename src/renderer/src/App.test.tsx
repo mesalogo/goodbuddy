@@ -13979,7 +13979,7 @@ describe("App", () => {
     expect(screen.getByLabelText('笔记标题')).toHaveValue('Captured discussion')
     fireEvent.click(within(screen.getByRole('region', { name: '快速笔记' })).getByRole('button', { name: '加入笔记' }))
     await waitFor(() => expect(api.magicNotes.create).toHaveBeenCalledWith(expect.objectContaining({ source: expect.objectContaining({ kind: 'conversation', conversationId: conversation.id, messageIds: messages.map(message => message.id) }), content: { version: 1, ops: [{ insert: 'Frozen edited capture\n' }] } })))
-  })
+  }, 15_000)
 
   it('adds an assistant reply to an explicitly selected note and opens the returned entry in the full workspace', async () => {
     await api.updates!.updateSettings({ magicNotesEnabled: true, magicNoteCommentMode: 'after-save-manual' })
@@ -14075,7 +14075,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: '返回原会话' }))
     expect(await screen.findByRole('button', { name: '原会话已不存在' })).toBeDisabled()
     expect(screen.getByText('Saved text')).toBeVisible()
-  })
+  }, 15_000)
 
   it('guards disabling Magic Notes with an unsaved quick draft before saving application settings', async () => {
     await api.updates!.updateSettings({ magicNotesEnabled: true })

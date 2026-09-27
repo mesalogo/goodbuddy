@@ -57,6 +57,10 @@ app.whenReady().then(async () => {
     await run(`${expression}.click()`)
   }
   async function key(keyCode: string): Promise<void> {
+    win.show()
+    win.focus()
+    win.webContents.focus()
+    await wait('document.hasFocus()', 'native window focus for keyboard input')
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode })
     if (keyCode === 'Enter') win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode })

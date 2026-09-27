@@ -61,6 +61,28 @@ Host Key、加密凭据连接。重新捆绑当前源码的 Agent CLI、daemon�
 后续均使用等待退出并记录脱敏输出的启动器；本轮探针 Electron 进程已退出。
 本地诊断证据在临时 `opencode/release-015-host/`，不提交脚本、日志或凭据。
 
+## 首次候选 CI 与测试修正
+
+用户批准的首次候选 `5a6ba6c14f5c58f3da5e9afe281b18e0cbdb1ae8`
+已推送至 `origin/main` 和 `github/main`，未创建两个发布标签。
+
+- [Agent CI 36329271991](https://github.com/mesalogo/goodbuddy/actions/runs/36329271991)
+  源码验证及 Linux x64、Linux arm64、Darwin arm64 原生构建全部通过。
+- [Desktop CI 36329271967](https://github.com/mesalogo/goodbuddy/actions/runs/36329271967)
+  为 5,342 通过、51 跳过、3 失败。两个 App 长历史场景超过默认 5 秒单用例时限；
+  会话采集 Electron 场景等待 Escape 返回笔记列表超时。生产构建未运行。
+- 测试修正仅让原生键盘辅助函数显示窗口、获取焦点并等待 `document.hasFocus()`，
+  然后发送真实输入；两个长历史场景采用仓库既有的 15 秒单用例时限。
+  不修改产品实现、不跳过 Linux、不关闭沙箱、不删除或放宽数据和键盘断言。
+- Windows 聚焦复验三个失败场景通过，其中真实 Electron 覆盖完整 502 条历史、
+  214px 窄栏键盘操作、浅深主题确认按钮、真实 IPC/SQLite 和重开保留。
+  修正后首次全量复验被中断，不计为通过；随后完整重跑为 **5,317 通过、
+  79 跳过、0 失败**，453 个文件通过、11 个跳过，耗时 646.48 秒。
+  类型检查、lint 和发布说明校验均通过，新候选 Linux CI 仍需独立通过。
+- 本次只改测试和验证文档，不改变 Agent、远程 Runtime 或模型桥；
+  沿用上方当前源码 Host 验证，不新增真实模型请求。
+- 新提交必须重新取得准确 SHA 批准，原发布说明正文保持不变。
+
 ## 数据、兼容与验收边界
 
 Desktop schema 48 新增魔法笔记会话来源元数据。升级前应备份完整用户数据，
