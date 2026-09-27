@@ -90,7 +90,6 @@ export function RuntimeNativeClientActions({ browser, contextKey, conversationId
       {t(pending === 'stop' ? 'composer.nativeClient.stopping' : pending ? 'composer.nativeClient.opening' : serviceId ? 'composer.nativeClient.reopen' : browser ? 'composer.nativeClient.browser' : 'composer.nativeClient.terminal')}
     </button>
     {browser && serviceId && <button className="composer-context-compact danger-ghost" type="button" disabled={!!pending} onClick={() => setConfirmStop(serviceId)}>{t('composer.nativeClient.stop')}</button>}
-    {browser && <span className="composer-native-client-note">{t('composer.nativeClient.description')}</span>}
     {serviceId && confirmStop === serviceId && <span className="composer-native-client-confirm" role="group" aria-label={t('composer.nativeClient.stop')}>
       <span>{t('composer.nativeClient.stopWarning')}</span>
       <button type="button" className="secondary-button" disabled={!!pending} onClick={() => setConfirmStop(undefined)}>{t('composer.nativeClient.cancel')}</button>
