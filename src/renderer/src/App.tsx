@@ -10007,7 +10007,7 @@ function App(): React.JSX.Element {
                                 title={t("composer.settings")}
                                 type="button"
                               >
-                                <SlidersHorizontal aria-hidden="true" size={17} />
+                                <SlidersHorizontal aria-hidden="true" size={18} />
                               </button>
                               <div
                                 aria-label={t("composer.settings")}
